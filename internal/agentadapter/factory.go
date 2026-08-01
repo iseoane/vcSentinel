@@ -24,17 +24,48 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 		}
 	}
 
+	todas := make([]string, 0, len(cfg.Agents))
+	for clave := range cfg.Agents {
+		todas = append(todas, clave)
+	}
+	sort.Strings(todas)
+
+	nombres := nombresAgentesEnPATH(cfg)
+	if len(nombres) == 0 {
+		return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(todas, ", "))
+	}
+	return &CLIAdapter{BinaryName: nombres[0], Config: cfg.Agents[nombres[0]]}, nil
+}
+
+// NewAgentAdapterNamed construye un adaptador CLI para un nombre de agente
+// explícito, sin resolución automática. Devuelve error si el nombre no está
+// configurado en vassentinel.yml.
+func NewAgentAdapterNamed(worktreePath string, nombre string) (AgentAdapter, error) {
+	cfg := config.CargarConfiguracionLocal(worktreePath)
+	agente, existe := cfg.Agents[nombre]
+	if !existe {
+		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
+	}
+	return &CLIAdapter{BinaryName: nombre, Config: agente}, nil
+}
+
+// NombresAdaptadoresDisponibles devuelve los nombres de agentes configurados en
+// vassentinel.yml cuyo binario está disponible en el PATH, en orden alfabético.
+func NombresAdaptadoresDisponibles(worktreePath string) []string {
+	cfg := config.CargarConfiguracionLocal(worktreePath)
+	return nombresAgentesEnPATH(cfg)
+}
+
+// nombresAgentesEnPATH filtra los agentes configurados que existen en el PATH,
+// en orden alfabético. Es la lógica compartida por la resolución automática de
+// NewAgentAdapter y por NombresAdaptadoresDisponibles.
+func nombresAgentesEnPATH(cfg config.Config) []string {
 	nombres := make([]string, 0, len(cfg.Agents))
 	for clave := range cfg.Agents {
-		nombres = append(nombres, clave)
-	}
-	sort.Strings(nombres)
-
-	for _, clave := range nombres {
 		if _, err := exec.LookPath(clave); err == nil {
-			return &CLIAdapter{BinaryName: clave, Config: cfg.Agents[clave]}, nil
+			nombres = append(nombres, clave)
 		}
 	}
-
-	return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(nombres, ", "))
+	sort.Strings(nombres)
+	return nombres
 }

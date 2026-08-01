@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -158,15 +161,265 @@ func ejecutarSlice(path string) {
 		return
 	}
 
-	adapter, err := agentadapter.NewAgentAdapter(path)
+	plan, err := git.ConstruirPlanFragmentacion(archivos, git.ConfirmarBypass)
 	if err != nil {
-		fmt.Printf("❌ Error configurando el adaptador: %v\n", err)
+		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
-	err = git.FragmentarYCommitear(archivos, adapter)
+
+	_, cancelado := elegirAdaptadorYGenerarMensajes(path, plan)
+	if cancelado {
+		fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+		return
+	}
+
+	if !aprobarYEjecutar(plan, path) {
+		fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+		return
+	}
+}
+
+// lectorStdin lee línea a línea la entrada estándar para los flujos interactivos.
+var lectorStdin = bufio.NewReader(os.Stdin)
+
+func leerLinea() (string, error) {
+	linea, err := lectorStdin.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(linea, "\r\n"), nil
+}
+
+// elegirAdaptadorYGenerarMensajes selecciona el adaptador (auto por defecto),
+// lo prueba una vez y genera los mensajes del plan. Si el adaptador automático
+// no existe, falla la sonda o falla al generar algún mensaje, ofrece al usuario
+// elegir mensajes automáticos, otro adaptador disponible o cancelar.
+func elegirAdaptadorYGenerarMensajes(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
+	adapter, err := agentadapter.NewAgentAdapter(path)
+	if err != nil {
+		fmt.Printf("⚠️ %v\n", err)
+		return bucleElegirAdaptador(path, plan)
+	}
+
+	if git.VerificarAdaptador(adapter) {
+		if fallbacks := git.GenerarMensajesLotes(plan, adapter); fallbacks == 0 {
+			return adapter, false
+		}
+		fmt.Println("⚠️ El agente automático falló al generar algunos mensajes.")
+		return bucleElegirAdaptador(path, plan)
+	}
+
+	fmt.Println("⚠️ El agente automático no respondió correctamente.")
+	return bucleElegirAdaptador(path, plan)
+}
+
+// bucleElegirAdaptador ofrece la elección de origen de los mensajes cuando el
+// adaptador automático no sirve: mensajes automáticos deterministas, un agente
+// de los disponibles o cancelar. Devuelve el adaptador elegido (nil si se eligen
+// mensajes automáticos) y si la operación quedó cancelada.
+func bucleElegirAdaptador(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
+	for {
+		nombres := agentadapter.NombresAdaptadoresDisponibles(path)
+		fmt.Println("\nElige cómo obtener los mensajes de commit:")
+		fmt.Println("  1) Usar mensajes automáticos deterministas para todos los lotes")
+		for i, nombre := range nombres {
+			fmt.Printf("  %d) Usar el agente %s\n", i+2, nombre)
+		}
+		fmt.Println("  c) Cancelar la operación")
+		fmt.Print("Opción: ")
+
+		respuesta, err := leerLinea()
+		if err != nil {
+			return nil, true
+		}
+		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+
+		switch {
+		case respuesta == "1" || respuesta == "a" || respuesta == "auto":
+			git.AplicarMensajesAutomaticos(plan)
+			return nil, false
+		case respuesta == "c" || respuesta == "cancelar":
+			return nil, true
+		default:
+			numero, err := strconv.Atoi(respuesta)
+			if err != nil || numero < 2 || numero > len(nombres)+1 {
+				fmt.Println("⚠️ Opción no válida. Intenta de nuevo.")
+				continue
+			}
+			nombre := nombres[numero-2]
+			adapter, err := agentadapter.NewAgentAdapterNamed(path, nombre)
+			if err != nil {
+				fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombre, err)
+				continue
+			}
+			if !git.VerificarAdaptador(adapter) {
+				fmt.Printf("⚠️ El agente %s no respondió correctamente. Elige otra opción.\n", nombre)
+				continue
+			}
+			if fallbacks := git.GenerarMensajesLotes(plan, adapter); fallbacks > 0 {
+				fmt.Printf("⚠️ El agente %s falló al generar algunos mensajes. Elige otra opción.\n", nombre)
+				continue
+			}
+			return adapter, false
+		}
+	}
+}
+
+// aprobarYEjecutar muestra el plan propuesto y dirige el flujo de aprobación:
+// aprobar todo, regenerar un mensaje con otro agente, editar un mensaje o
+// cancelar. Devuelve false si el usuario canceló sin commitear nada.
+func aprobarYEjecutar(plan *git.PlanFragmentacion, path string) bool {
+	for {
+		imprimirPlan(plan)
+		fmt.Println("\nOpciones:")
+		fmt.Println("  (A)probar todo y ejecutar (Enter)")
+		fmt.Println("  (R)egenerar mensaje de un lote con otro agente")
+		fmt.Println("  (E)ditar mensaje de un lote manualmente")
+		fmt.Println("  (C)ancelar sin commitear nada")
+		fmt.Print("Opción [A]: ")
+
+		linea, err := leerLinea()
+		if err != nil {
+			linea = ""
+		}
+		opcion := strings.ToLower(strings.TrimSpace(linea))
+
+		switch opcion {
+		case "", "a", "aprobar":
+			return ejecutarPlanAprobado(plan)
+		case "r", "regenerar":
+			regenerarMensajeLoteInteractivo(plan, path)
+		case "e", "editar":
+			editarMensajeLoteInteractivo(plan)
+		case "c", "cancelar":
+			return false
+		default:
+			fmt.Println("⚠️ Opción no válida. Usa A, R, E o C.")
+		}
+	}
+}
+
+func imprimirPlan(plan *git.PlanFragmentacion) {
+	fmt.Println("\n📋 Plan de fragmentación propuesto (nada se ha commiteado todavía):")
+	totalLineas := 0
+	for _, lote := range plan.Lotes {
+		sufijo := ""
+		if lote.MensajeDeterminista {
+			sufijo = " (automático)"
+		}
+		totalLineas += lote.LineasTotales
+		fmt.Printf("  [%s] lote #%d — %d archivos (%d líneas) — mensaje: %s%s\n",
+			lote.Capa, lote.Numero, len(lote.Rutas), lote.LineasTotales, lote.Mensaje, sufijo)
+	}
+	fmt.Printf("Total: %d lotes, %d líneas.\n", len(plan.Lotes), totalLineas)
+}
+
+func regenerarMensajeLoteInteractivo(plan *git.PlanFragmentacion, path string) {
+	fmt.Print("¿Qué lote quieres regenerar? (número): ")
+	linea, err := leerLinea()
+	if err != nil {
+		return
+	}
+	numero, err := strconv.Atoi(strings.TrimSpace(linea))
+	if err != nil {
+		fmt.Println("⚠️ Número de lote no válido.")
+		return
+	}
+
+	nombres := agentadapter.NombresAdaptadoresDisponibles(path)
+	for {
+		fmt.Printf("¿Con qué agente regeneras el lote #%d?\n", numero)
+		fmt.Println("  1) Mensaje automático determinista")
+		for i, nombre := range nombres {
+			fmt.Printf("  %d) %s\n", i+2, nombre)
+		}
+		fmt.Print("Opción: ")
+
+		respuesta, err := leerLinea()
+		if err != nil {
+			return
+		}
+		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+
+		switch {
+		case respuesta == "1" || respuesta == "a" || respuesta == "auto":
+			if err := git.AplicarMensajeAutomaticoLote(plan, numero); err != nil {
+				fmt.Printf("⚠️ %v\n", err)
+			}
+			return
+		case respuesta == "c" || respuesta == "cancelar":
+			return
+		default:
+			indice, err := strconv.Atoi(respuesta)
+			if err != nil || indice < 2 || indice > len(nombres)+1 {
+				fmt.Println("⚠️ Opción no válida. Intenta de nuevo.")
+				continue
+			}
+			nombre := nombres[indice-2]
+			adapter, err := agentadapter.NewAgentAdapterNamed(path, nombre)
+			if err != nil {
+				fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombre, err)
+				continue
+			}
+			if !git.VerificarAdaptador(adapter) {
+				fmt.Printf("⚠️ El agente %s no respondió correctamente. Elige otra opción.\n", nombre)
+				continue
+			}
+			if err := git.RegenerarMensajeLote(plan, numero, adapter); err != nil {
+				fmt.Printf("⚠️ %v\n", err)
+			}
+			return
+		}
+	}
+}
+
+func editarMensajeLoteInteractivo(plan *git.PlanFragmentacion) {
+	fmt.Print("¿Qué lote quieres editar? (número): ")
+	linea, err := leerLinea()
+	if err != nil {
+		return
+	}
+	numero, err := strconv.Atoi(strings.TrimSpace(linea))
+	if err != nil {
+		fmt.Println("⚠️ Número de lote no válido.")
+		return
+	}
+	fmt.Print("Nuevo mensaje de commit: ")
+	mensaje, err := leerLinea()
+	if err != nil {
+		return
+	}
+	if strings.TrimSpace(mensaje) == "" {
+		fmt.Println("⚠️ El mensaje no puede estar vacío.")
+		return
+	}
+	if err := git.EditarMensajeLote(plan, numero, mensaje); err != nil {
+		fmt.Printf("⚠️ %v\n", err)
+	}
+}
+
+func ejecutarPlanAprobado(plan *git.PlanFragmentacion) bool {
+	resultados, err := git.EjecutarPlanFragmentacion(plan)
 	if err != nil {
 		fmt.Printf("❌ Error crítico durante la creación de commits: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("\n🎉 ¡Historial fragmentado con éxito! Tus cambios están en commits de máximo 400 líneas.")
+	imprimirResumen(resultados)
+	return true
+}
+
+func imprimirResumen(resultados []git.ResultadoCommit) {
+	fmt.Printf("\n🎉 ¡Historial fragmentado con éxito! Se crearon %d commits.\n", len(resultados))
+	for _, r := range resultados {
+		fmt.Printf("  %s  [%s]  %d archivos  %s\n", r.Hash, r.Capa, r.Archivos, r.Mensaje)
+	}
+	limpio, err := git.WorktreeLimpio()
+	switch {
+	case err != nil:
+		fmt.Printf("⚠️ No se pudo verificar el estado del worktree: %v\n", err)
+	case limpio:
+		fmt.Println("✅ El worktree está limpio. Volumen bajo control.")
+	default:
+		fmt.Println("⚠️ Quedan cambios pendientes en el worktree. Revisa con 'sentinel check'.")
+	}
 }

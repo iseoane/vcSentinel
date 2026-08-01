@@ -173,41 +173,9 @@ func esCodigoGigante(f ArchivoModificado) bool {
 	return f.Capa != "config" && f.Lineas > limiteCodigoGigante
 }
 
-// gestionarArchivosGigantes aísla en commits propios los archivos que superan los
-// límites de volumen: los de configuración se commitean sin consultar al adaptador;
-// los de código fuente requieren confirmación. Devuelve los archivos restantes
-// agrupados por capa.
-func gestionarArchivosGigantes(porCapas map[string][]ArchivoModificado, confirmar func(ArchivoModificado) (bool, error)) (map[string][]ArchivoModificado, error) {
-	restantes := map[string][]ArchivoModificado{"config": {}, "backend": {}, "frontend": {}, "test": {}}
-	for _, capa := range ordenCapas {
-		for _, f := range porCapas[capa] {
-			switch {
-			case esConfigGigante(f):
-				if err := commitAislado(f.Ruta, mensajeAisladoDeps); err != nil {
-					return nil, err
-				}
-			case esCodigoGigante(f):
-				ok, err := confirmar(f)
-				if err != nil {
-					return nil, err
-				}
-				if !ok {
-					return nil, fmt.Errorf("fragmentación abortada: %s tiene %d líneas y supera el límite de %d", f.Ruta, f.Lineas, limiteCodigoGigante)
-				}
-				if err := commitAislado(f.Ruta, fmt.Sprintf(mensajeBypassGigante, filepath.Base(f.Ruta))); err != nil {
-					return nil, err
-				}
-			default:
-				restantes[capa] = append(restantes[capa], f)
-			}
-		}
-	}
-	return restantes, nil
-}
-
-// confirmarBypass pregunta al usuario si quiere fragmentar un archivo de código
+// ConfirmarBypass pregunta al usuario si quiere fragmentar un archivo de código
 // que supera el límite de volumen. Devuelve true solo si responde afirmativamente.
-func confirmarBypass(f ArchivoModificado) (bool, error) {
+func ConfirmarBypass(f ArchivoModificado) (bool, error) {
 	fmt.Printf("⚠️ ¡Alerta! El archivo %s tiene %d líneas y supera el límite de %d. ¿Quieres fragmentarlo igual? (s/N): ", f.Ruta, f.Lineas, limiteCodigoGigante)
 	var respuesta string
 	if _, err := fmt.Scanln(&respuesta); err != nil {
@@ -220,29 +188,6 @@ func confirmarBypass(f ArchivoModificado) (bool, error) {
 	default:
 		return false, nil
 	}
-}
-
-// FragmentarYCommitear fragmenta los cambios en commits de máximo
-// limiteLineasLote líneas, respetando el orden de capas y la protección de gigantes.
-func FragmentarYCommitear(archivos []ArchivoModificado, adapter agentadapter.AgentAdapter) error {
-	porCapas := map[string][]ArchivoModificado{"config": {}, "backend": {}, "frontend": {}, "test": {}}
-	for _, f := range archivos {
-		porCapas[f.Capa] = append(porCapas[f.Capa], f)
-	}
-
-	restantes, err := gestionarArchivosGigantes(porCapas, confirmarBypass)
-	if err != nil {
-		return err
-	}
-
-	batchNumero := 1
-	for _, lote := range construirSecuenciaLotes(restantes) {
-		if err := consolidarCommitLocal(lote.Rutas, lote.Capa, batchNumero, adapter); err != nil {
-			return err
-		}
-		batchNumero++
-	}
-	return nil
 }
 
 type loteConCapa struct {
@@ -286,26 +231,12 @@ func construirLotes(archivos []ArchivoModificado) [][]ArchivoModificado {
 	return lotes
 }
 
-func consolidarCommitLocal(rutas []string, capa string, numero int, adapter agentadapter.AgentAdapter) error {
-	argsAdd := append([]string{"add"}, rutas...)
-	if err := exec.Command("git", argsAdd...).Run(); err != nil {
-		return err
-	}
-
-	mensajeCommit, err := obtenerMensajeConDiff(rutas, capa, numero, adapter)
-	if err != nil {
-		mensajeCommit = fmt.Sprintf("chore(slice): auto-fragmented %s batch #%d", capa, numero)
-	}
-
-	return exec.Command("git", "commit", "-m", mensajeCommit).Run()
-}
-
 // obtenerMensajeConDiff prefiere el adaptador con capacidad de diff (AdapterConDiff);
-// si la extracción del diff staged falla o el adaptador no la implementa, usa la
+// si la extracción del diff pendiente falla o el adaptador no la implementa, usa la
 // interfaz base AgentAdapter.
 func obtenerMensajeConDiff(rutas []string, capa string, numero int, adapter agentadapter.AgentAdapter) (string, error) {
 	if adapterConDiff, ok := adapter.(agentadapter.AdapterConDiff); ok {
-		diff, err := diffCacheado()
+		diff, err := diffPendienteRutas(rutas)
 		if err == nil {
 			return adapterConDiff.ObtenerMensajeCommitConDiff(rutas, capa, numero, diff)
 		}
@@ -313,16 +244,9 @@ func obtenerMensajeConDiff(rutas []string, capa string, numero int, adapter agen
 	return adapter.ObtenerMensajeCommit(rutas, capa, numero)
 }
 
-// diffCacheado devuelve el micro-diff de la zona de preparación (git diff --cached).
-func diffCacheado() (string, error) {
-	return ejecutarGitSalida("diff", "--cached")
-}
-
-// commitAislado commitea un único archivo con un mensaje determinista,
-// sin consultar al adaptador de IA.
-func commitAislado(ruta string, mensaje string) error {
-	if err := exec.Command("git", "add", ruta).Run(); err != nil {
-		return err
-	}
-	return exec.Command("git", "commit", "-m", mensaje).Run()
+// diffPendienteRutas devuelve el diff de los archivos dados frente a HEAD,
+// combinando los cambios staged y unstaged sin necesidad de prepararlos.
+func diffPendienteRutas(rutas []string) (string, error) {
+	args := append([]string{"diff", "HEAD", "--"}, rutas...)
+	return ejecutarGitSalida(args...)
 }
