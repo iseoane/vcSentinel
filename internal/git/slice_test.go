@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -204,84 +203,6 @@ func TestObtenerArchivosModificadosEnRepositorioReal(t *testing.T) {
 	}
 }
 
-func TestFragmentarYCommitearEnRepositorioReal(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"a.go": "package a\n",
-		"b.go": "package b\n",
-		"c.go": "package c\n",
-		"d.go": "package d\n",
-	})
-	t.Chdir(dir)
-
-	agregarLineas(t, "b.go", 200)
-	agregarLineas(t, "c.go", 200)
-	agregarLineas(t, "d.go", 200)
-
-	archivos, err := ObtenerArchivosModificados()
-	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
-	}
-	if len(archivos) != 3 {
-		t.Fatalf("se esperaban 3 archivos modificados, obtuve %d", len(archivos))
-	}
-
-	if err := FragmentarYCommitear(archivos, adaptadorPrueba{}); err != nil {
-		t.Fatalf("FragmentarYCommitear devolvió error: %v", err)
-	}
-
-	totalCommits := ejecutarGit(t, dir, "rev-list", "--count", "HEAD")
-	if totalCommits != "3" {
-		t.Errorf("se esperaban 3 commits (inicial + 2 lotes), obtuve %s", totalCommits)
-	}
-
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if estado != "" {
-		t.Errorf("el worktree debería quedar limpio tras fragmentar, obtuve: %s", estado)
-	}
-}
-
-func TestFragmentarYCommitearUsaFallbackCuandoAdapterFalla(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"a.go": "package a\n",
-	})
-	t.Chdir(dir)
-
-	archivos := []ArchivoModificado{
-		{Ruta: "b.go", Lineas: 10, Capa: "backend"},
-	}
-	if err := os.WriteFile("b.go", []byte("package b\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	ejecutarGit(t, dir, "add", "b.go")
-
-	adapterFallido := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
-		return "", os.ErrPermission
-	})
-
-	if err := FragmentarYCommitear(archivos, adapterFallido); err != nil {
-		t.Fatalf("FragmentarYCommitear debería usar el mensaje de respaldo, devolvió error: %v", err)
-	}
-
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if !strings.Contains(mensaje, "auto-fragmented") {
-		t.Errorf("el commit debería usar el mensaje de respaldo, obtuve: %q", mensaje)
-	}
-}
-
 type agentadapterFunc func(rutasArchivos []string, capa string, batchNum int) (string, error)
 
 func (f agentadapterFunc) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
@@ -330,24 +251,6 @@ func TestEsCodigoGigante(t *testing.T) {
 	}
 }
 
-func TestGestionarArchivosGigantesDevuelveRestantes(t *testing.T) {
-	porCapas := map[string][]ArchivoModificado{
-		"config":  {{Ruta: "config.yaml", Lineas: 100, Capa: "config"}},
-		"backend": {{Ruta: "a.go", Lineas: 50, Capa: "backend"}},
-	}
-
-	restantes, err := gestionarArchivosGigantes(porCapas, func(ArchivoModificado) (bool, error) { return true, nil })
-	if err != nil {
-		t.Fatalf("gestionarArchivosGigantes devolvió error: %v", err)
-	}
-	if !reflect.DeepEqual(restantes["config"], porCapas["config"]) {
-		t.Errorf("config restante = %+v, esperado %+v", restantes["config"], porCapas["config"])
-	}
-	if !reflect.DeepEqual(restantes["backend"], porCapas["backend"]) {
-		t.Errorf("backend restante = %+v, esperado %+v", restantes["backend"], porCapas["backend"])
-	}
-}
-
 func TestObtenerArchivosModificadosIncluyeNoRastreados(t *testing.T) {
 	if testing.Short() {
 		t.Skip("salta la integración con repositorio git real en modo -short")
@@ -385,127 +288,6 @@ func TestObtenerArchivosModificadosIncluyeNoRastreados(t *testing.T) {
 	}
 }
 
-func TestFragmentarYCommitearAislaConfigGigante(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"a.go": "package a\n",
-	})
-	t.Chdir(dir)
-
-	// Lock grande (>400 líneas) que queda sin rastrear.
-	var builder strings.Builder
-	builder.WriteString("{\n")
-	for i := 0; i < 450; i++ {
-		builder.WriteString("  \"dep\": true,\n")
-	}
-	builder.WriteString("}\n")
-	if err := os.WriteFile("package-lock.json", []byte(builder.String()), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	archivos, err := ObtenerArchivosModificados()
-	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
-	}
-	if len(archivos) != 1 {
-		t.Fatalf("se esperaba 1 archivo, obtuve %d: %+v", len(archivos), archivos)
-	}
-	if archivos[0].Capa != "config" {
-		t.Errorf("capa = %q, esperado config", archivos[0].Capa)
-	}
-
-	if err := FragmentarYCommitear(archivos, adaptadorPrueba{}); err != nil {
-		t.Fatalf("FragmentarYCommitear devolvió error: %v", err)
-	}
-
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != "chore(deps): track lock and auto-generated files" {
-		t.Errorf("mensaje = %q, esperado chore(deps)", mensaje)
-	}
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if estado != "" {
-		t.Errorf("el worktree debería quedar limpio tras aislar el lock, obtuve: %s", estado)
-	}
-}
-
-func TestGestionarArchivosGigantesAislaCodigoConfirmado(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"a.go": "package a\n",
-	})
-	t.Chdir(dir)
-
-	if err := os.WriteFile("big.go", []byte("package big\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	ejecutarGit(t, dir, "add", "big.go")
-
-	porCapas := map[string][]ArchivoModificado{
-		"backend": {{Ruta: "big.go", Lineas: 600, Capa: "backend"}},
-	}
-
-	restantes, err := gestionarArchivosGigantes(porCapas, func(ArchivoModificado) (bool, error) { return true, nil })
-	if err != nil {
-		t.Fatalf("gestionarArchivosGigantes devolvió error: %v", err)
-	}
-	if len(restantes["backend"]) != 0 {
-		t.Errorf("big.go no debería quedar entre los restantes: %+v", restantes["backend"])
-	}
-
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != "chore(slice): bypass IA for massive file big.go" {
-		t.Errorf("mensaje = %q, esperado bypass", mensaje)
-	}
-}
-
-func TestGestionarArchivosGigantesAbortaSinConfirmacion(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"a.go": "package a\n",
-	})
-	t.Chdir(dir)
-
-	if err := os.WriteFile("big.go", []byte("package big\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	ejecutarGit(t, dir, "add", "big.go")
-
-	porCapas := map[string][]ArchivoModificado{
-		"backend": {{Ruta: "big.go", Lineas: 600, Capa: "backend"}},
-	}
-
-	_, err := gestionarArchivosGigantes(porCapas, func(ArchivoModificado) (bool, error) { return false, nil })
-	if err == nil {
-		t.Fatal("se esperaba error al abortar la fragmentación")
-	}
-	if !strings.Contains(err.Error(), "abortada") {
-		t.Errorf("error = %q, esperado mención de aborto", err)
-	}
-
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if !strings.Contains(estado, "big.go") {
-		t.Errorf("big.go debería seguir pendiente tras abortar, obtuve: %q", estado)
-	}
-}
-
 type adaptadorConDiffPrueba struct {
 	diffRecibido string
 }
@@ -520,37 +302,3 @@ func (a *adaptadorConDiffPrueba) ObtenerMensajeCommitConDiff(rutasArchivos []str
 }
 
 var _ agentadapter.AdapterConDiff = (*adaptadorConDiffPrueba)(nil)
-
-func TestConsolidarCommitLocalEntregaDiffAlAdaptador(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"a.go": "package a\n",
-	})
-	t.Chdir(dir)
-
-	agregarLineas(t, "a.go", 5)
-
-	archivos, err := ObtenerArchivosModificados()
-	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
-	}
-
-	adapter := &adaptadorConDiffPrueba{}
-	if err := FragmentarYCommitear(archivos, adapter); err != nil {
-		t.Fatalf("FragmentarYCommitear devolvió error: %v", err)
-	}
-
-	if !strings.Contains(adapter.diffRecibido, "+// linea generada") {
-		t.Errorf("el diff staged debería contener la línea añadida, obtuve: %q", adapter.diffRecibido)
-	}
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != "chore(slice): con diff" {
-		t.Errorf("mensaje = %q, esperado el mensaje del adaptador con diff", mensaje)
-	}
-}

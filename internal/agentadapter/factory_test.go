@@ -3,6 +3,7 @@ package agentadapter
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -160,5 +161,97 @@ func TestNewAgentAdapterSinBinariosDevuelveError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ningun agente") {
 		t.Errorf("el error debe mencionar 'ningun agente', obtuve: %v", err)
+	}
+}
+
+func TestNombresAdaptadoresDisponiblesOrdenados(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	dirBinarios := t.TempDir()
+	crearFalsoBinario(t, dirBinarios, "opencode")
+	crearFalsoBinario(t, dirBinarios, "claude")
+	fijarPATH(t, dirBinarios)
+	t.Setenv("MY_SUB_AGENT", "")
+
+	nombres := NombresAdaptadoresDisponibles(worktree)
+	esperado := []string{"claude", "opencode"}
+	if !reflect.DeepEqual(nombres, esperado) {
+		t.Errorf("NombresAdaptadoresDisponibles = %v, esperado %v", nombres, esperado)
+	}
+}
+
+func TestNombresAdaptadoresDisponiblesSoloLosDelPATH(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	dirBinarios := t.TempDir()
+	crearFalsoBinario(t, dirBinarios, "claude")
+	fijarPATH(t, dirBinarios)
+	t.Setenv("MY_SUB_AGENT", "")
+
+	nombres := NombresAdaptadoresDisponibles(worktree)
+	esperado := []string{"claude"}
+	if !reflect.DeepEqual(nombres, esperado) {
+		t.Errorf("NombresAdaptadoresDisponibles = %v, esperado %v", nombres, esperado)
+	}
+}
+
+func TestNombresAdaptadoresDisponiblesVacioSinPATH(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	dirVacio := t.TempDir()
+	fijarPATH(t, dirVacio)
+	t.Setenv("MY_SUB_AGENT", "")
+
+	nombres := NombresAdaptadoresDisponibles(worktree)
+	if len(nombres) != 0 {
+		t.Errorf("sin binarios debería devolver lista vacía, obtuve %v", nombres)
+	}
+}
+
+func TestNewAgentAdapterNamed(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	dirBinarios := t.TempDir()
+	crearFalsoBinario(t, dirBinarios, "claude")
+	fijarPATH(t, dirBinarios)
+	t.Setenv("MY_SUB_AGENT", "")
+
+	adapter, err := NewAgentAdapterNamed(worktree, "claude")
+	if err != nil {
+		t.Fatalf("NewAgentAdapterNamed devolvió error: %v", err)
+	}
+	cli, ok := adapter.(*CLIAdapter)
+	if !ok {
+		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+	}
+	if cli.BinaryName != "claude" {
+		t.Errorf("BinaryName esperado 'claude', obtuve %q", cli.BinaryName)
+	}
+}
+
+func TestNewAgentAdapterNamedDesconocidoDevuelveError(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	dirBinarios := t.TempDir()
+	crearFalsoBinario(t, dirBinarios, "claude")
+	fijarPATH(t, dirBinarios)
+	t.Setenv("MY_SUB_AGENT", "")
+
+	_, err := NewAgentAdapterNamed(worktree, "gemini")
+	if err == nil {
+		t.Fatal("se esperaba error con agente desconocido")
+	}
+	if !strings.Contains(err.Error(), "gemini") {
+		t.Errorf("el error debe mencionar el nombre del agente, obtuve: %v", err)
 	}
 }
