@@ -1,0 +1,257 @@
+package git
+
+import (
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+)
+
+// LotePlanificado representa un lote propuesto dentro del plan de fragmentación.
+// El mensaje puede nacer vacío (lotes normales) y completarse después con
+// GenerarMensajesLotes, o nacer fijo (gigantes).
+type LotePlanificado struct {
+	Capa                string
+	Numero              int
+	Rutas               []string
+	LineasTotales       int
+	Mensaje             string
+	MensajeAutomatico   string
+	MensajeDeterminista bool
+	EsGigante           bool
+}
+
+// PlanFragmentacion es la propuesta completa de fragmentación, construida sin
+// crear ningún commit: los lotes y sus mensajes se aprueban antes de ejecutar.
+type PlanFragmentacion struct {
+	Lotes []LotePlanificado
+}
+
+// ResultadoCommit resume un commit creado durante la ejecución del plan.
+type ResultadoCommit struct {
+	Hash     string
+	Mensaje  string
+	Capa     string
+	Archivos int
+}
+
+// ConstruirPlanFragmentacion agrupa los archivos por capa, aísla los gigantes en
+// lotes con mensajes deterministas y genera los lotes de batching con
+// construirLotes. Procesa cada capa completa (gigantes y lotes normales) en el
+// orden config → backend → frontend → test. No ejecuta ningún comando git: la
+// única interacción externa es confirmarBypass, que se invoca para los archivos
+// de código que superan el límite de volumen.
+func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass func(ArchivoModificado) (bool, error)) (*PlanFragmentacion, error) {
+	porCapas := agruparPorCapas(archivos)
+	lineasPorRuta := make(map[string]int, len(archivos))
+	for _, f := range archivos {
+		lineasPorRuta[f.Ruta] = f.Lineas
+	}
+
+	var plan PlanFragmentacion
+	numero := 1
+	for _, capa := range ordenCapas {
+		restantes := make([]ArchivoModificado, 0, len(porCapas[capa]))
+		for _, f := range porCapas[capa] {
+			switch {
+			case esConfigGigante(f):
+				plan.Lotes = append(plan.Lotes, loteGigante(f, mensajeAisladoDeps, numero))
+				numero++
+			case esCodigoGigante(f):
+				ok, err := confirmarBypass(f)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					return nil, fmt.Errorf("fragmentación abortada: %s tiene %d líneas y supera el límite de %d", f.Ruta, f.Lineas, limiteCodigoGigante)
+				}
+				plan.Lotes = append(plan.Lotes, loteGigante(f, fmt.Sprintf(mensajeBypassGigante, filepath.Base(f.Ruta)), numero))
+				numero++
+			default:
+				restantes = append(restantes, f)
+			}
+		}
+		for _, lote := range construirSecuenciaLotes(map[string][]ArchivoModificado{capa: restantes}) {
+			plan.Lotes = append(plan.Lotes, loteNormal(lote, numero, lineasPorRuta))
+			numero++
+		}
+	}
+	return &plan, nil
+}
+
+// GenerarMensajesLotes consulta al adaptador el mensaje de cada lote no gigante
+// y lo rellena en el plan. Si el adaptador falla para un lote, usa el mensaje
+// automático de respaldo y lo marca como determinista. Devuelve la cantidad de
+// lotes que cayeron al respaldo para que la UI ofrezca fallback.
+func GenerarMensajesLotes(plan *PlanFragmentacion, adapter agentadapter.AgentAdapter) int {
+	fallbacks := 0
+	for i := range plan.Lotes {
+		lote := &plan.Lotes[i]
+		if lote.EsGigante {
+			continue
+		}
+		mensaje, err := obtenerMensajeConDiff(lote.Rutas, lote.Capa, lote.Numero, adapter)
+		if err != nil {
+			lote.Mensaje = lote.MensajeAutomatico
+			lote.MensajeDeterminista = true
+			fallbacks++
+			continue
+		}
+		lote.Mensaje = mensaje
+		lote.MensajeDeterminista = false
+	}
+	return fallbacks
+}
+
+// AplicarMensajesAutomaticos reemplaza el mensaje de todos los lotes por su
+// mensaje determinista: el de respaldo para los lotes normales y el propio del
+// gigante para los aislados.
+func AplicarMensajesAutomaticos(plan *PlanFragmentacion) {
+	for i := range plan.Lotes {
+		lote := &plan.Lotes[i]
+		lote.Mensaje = lote.MensajeAutomatico
+		lote.MensajeDeterminista = true
+	}
+}
+
+// RegenerarMensajeLote regenera el mensaje de un único lote con el adaptador
+// dado. Si el adaptador falla, deja el mensaje automático de respaldo.
+func RegenerarMensajeLote(plan *PlanFragmentacion, numero int, adapter agentadapter.AgentAdapter) error {
+	lote, err := lotePorNumero(plan, numero)
+	if err != nil {
+		return err
+	}
+	mensaje, err := obtenerMensajeConDiff(lote.Rutas, lote.Capa, lote.Numero, adapter)
+	if err != nil {
+		lote.Mensaje = lote.MensajeAutomatico
+		lote.MensajeDeterminista = true
+		return nil
+	}
+	lote.Mensaje = mensaje
+	lote.MensajeDeterminista = false
+	return nil
+}
+
+// AplicarMensajeAutomaticoLote restaura el mensaje determinista de un lote.
+func AplicarMensajeAutomaticoLote(plan *PlanFragmentacion, numero int) error {
+	lote, err := lotePorNumero(plan, numero)
+	if err != nil {
+		return err
+	}
+	lote.Mensaje = lote.MensajeAutomatico
+	lote.MensajeDeterminista = true
+	return nil
+}
+
+// EditarMensajeLote fija manualmente el mensaje de un lote.
+func EditarMensajeLote(plan *PlanFragmentacion, numero int, mensaje string) error {
+	lote, err := lotePorNumero(plan, numero)
+	if err != nil {
+		return err
+	}
+	lote.Mensaje = strings.TrimSpace(mensaje)
+	lote.MensajeDeterminista = false
+	return nil
+}
+
+// VerificarAdaptador prueba un adaptador con una petición sintética mínima y
+// devuelve true si responde sin error. Permite detectar adaptadores no
+// disponibles o rotos antes de generar los mensajes de todo el plan.
+func VerificarAdaptador(adapter agentadapter.AgentAdapter) bool {
+	_, err := obtenerMensajeConDiff([]string{"sonda.txt"}, "backend", 0, adapter)
+	return err == nil
+}
+
+// EjecutarPlanFragmentacion commitea cada lote aprobado con su mensaje
+// pre-aprobado, en el orden del plan, y devuelve un resumen por commit creado.
+// Los gigantes se ejecutan por el mismo camino con su mensaje ya fijado.
+func EjecutarPlanFragmentacion(plan *PlanFragmentacion) ([]ResultadoCommit, error) {
+	var resultados []ResultadoCommit
+	for _, lote := range plan.Lotes {
+		mensaje := lote.Mensaje
+		if strings.TrimSpace(mensaje) == "" {
+			mensaje = lote.MensajeAutomatico
+		}
+		hash, err := commitLoteConMensaje(lote.Rutas, mensaje)
+		if err != nil {
+			return resultados, err
+		}
+		resultados = append(resultados, ResultadoCommit{
+			Hash:     hash,
+			Mensaje:  mensaje,
+			Capa:     lote.Capa,
+			Archivos: len(lote.Rutas),
+		})
+	}
+	return resultados, nil
+}
+
+// WorktreeLimpio indica si no quedan cambios pendientes en el worktree.
+func WorktreeLimpio() (bool, error) {
+	salida, err := ejecutarGitSalida("status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(salida) == "", nil
+}
+
+func agruparPorCapas(archivos []ArchivoModificado) map[string][]ArchivoModificado {
+	porCapas := map[string][]ArchivoModificado{"config": {}, "backend": {}, "frontend": {}, "test": {}}
+	for _, f := range archivos {
+		porCapas[f.Capa] = append(porCapas[f.Capa], f)
+	}
+	return porCapas
+}
+
+func loteGigante(f ArchivoModificado, mensaje string, numero int) LotePlanificado {
+	return LotePlanificado{
+		Capa:                f.Capa,
+		Numero:              numero,
+		Rutas:               []string{f.Ruta},
+		LineasTotales:       f.Lineas,
+		Mensaje:             mensaje,
+		MensajeAutomatico:   mensaje,
+		MensajeDeterminista: true,
+		EsGigante:           true,
+	}
+}
+
+func loteNormal(lote loteConCapa, numero int, lineasPorRuta map[string]int) LotePlanificado {
+	total := 0
+	for _, ruta := range lote.Rutas {
+		total += lineasPorRuta[ruta]
+	}
+	return LotePlanificado{
+		Capa:              lote.Capa,
+		Numero:            numero,
+		Rutas:             lote.Rutas,
+		LineasTotales:     total,
+		MensajeAutomatico: fmt.Sprintf("chore(slice): auto-fragmented %s batch #%d", lote.Capa, numero),
+	}
+}
+
+func lotePorNumero(plan *PlanFragmentacion, numero int) (*LotePlanificado, error) {
+	for i := range plan.Lotes {
+		if plan.Lotes[i].Numero == numero {
+			return &plan.Lotes[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no existe el lote #%d en el plan", numero)
+}
+
+func commitLoteConMensaje(rutas []string, mensaje string) (string, error) {
+	argsAdd := append([]string{"add"}, rutas...)
+	if err := exec.Command("git", argsAdd...).Run(); err != nil {
+		return "", err
+	}
+	if err := exec.Command("git", "commit", "-m", mensaje).Run(); err != nil {
+		return "", err
+	}
+	hash, err := ejecutarGitSalida("rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(hash), nil
+}
