@@ -16,11 +16,7 @@ type CLIAdapter struct {
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	archivosStr := strings.Join(rutasArchivos, " ")
-	promptAgente := fmt.Sprintf(
-		"Analizá estos archivos modificados de la capa [%s] (Lote #%d): %s. Generá un mensaje de commit semántico bajo el estándar Conventional Commits. Devolvé ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
-		capa, batchNum, archivosStr,
-	)
+	promptAgente := construirPromptAgente(capa, batchNum, rutasArchivos)
 
 	cmd := exec.Command(c.BinaryName, "-p", promptAgente)
 	env := os.Environ()
@@ -41,4 +37,12 @@ func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, b
 	}
 
 	return strings.TrimSpace(out.String()), nil
+}
+
+func construirPromptAgente(capa string, batchNum int, archivos []string) string {
+	archivosStr := strings.Join(archivos, " ")
+	return fmt.Sprintf(
+		"Analiza estos archivos modificados de la capa [%s] (Lote #%d): %s. Genera un mensaje de commit semántico bajo el estándar Conventional Commits. Devuelve ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
+		capa, batchNum, archivosStr,
+	)
 }

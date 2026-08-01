@@ -14,19 +14,27 @@ func CheckDiffLimits() (int, string, error) {
 		return 0, "ERROR", err
 	}
 
-	lines := strings.Split(out.String(), "\n")
-	addedLinesCount := 0
+	addedLinesCount := contarLineasAnadidas(out.String())
+	return addedLinesCount, clasificarEstado(addedLinesCount), nil
+}
 
-	for _, line := range lines {
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			addedLinesCount++
+func contarLineasAnadidas(diff string) int {
+	contador := 0
+	for _, linea := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(linea, "+") && !strings.HasPrefix(linea, "+++") {
+			contador++
 		}
 	}
+	return contador
+}
 
-	if addedLinesCount >= 200 && addedLinesCount <= 400 {
-		return addedLinesCount, "PUNTO_OPTIMO", nil
-	} else if addedLinesCount > 400 {
-		return addedLinesCount, "CRITICO", nil
+func clasificarEstado(lineas int) string {
+	switch {
+	case lineas >= 200 && lineas <= 400:
+		return "PUNTO_OPTIMO"
+	case lineas > 400:
+		return "CRITICO"
+	default:
+		return "PEQUENO"
 	}
-	return addedLinesCount, "PEQUENO", nil
 }

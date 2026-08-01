@@ -1,26 +1,40 @@
 package agentadapter
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"sort"
+	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-func NewAgentAdapter(worktreePath string) AgentAdapter {
-	agenteActivo := os.Getenv("MY_SUB_AGENT")
-	if agenteActivo == "" {
-		agenteActivo = "claude"
+func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
+	cfg := config.CargarConfiguracionLocal(worktreePath)
+
+	nombre := os.Getenv("MY_SUB_AGENT")
+	if nombre == "" {
+		nombre = cfg.ActiveAgent
 	}
 
-	tablaConfiguraciones := config.CargarConfiguracionLocal(worktreePath)
-	configDelAgente := tablaConfiguraciones[agenteActivo]
-
-	switch agenteActivo {
-	case "claude":
-		return &CLIAdapter{BinaryName: "claude", Config: configDelAgente}
-	case "opencode":
-		return &CLIAdapter{BinaryName: "opencode", Config: configDelAgente}
-	default:
-		return &CLIAdapter{BinaryName: "claude", Config: configDelAgente}
+	if nombre != "auto" {
+		if _, existe := cfg.Agents[nombre]; existe {
+			return &CLIAdapter{BinaryName: nombre, Config: cfg.Agents[nombre]}, nil
+		}
 	}
+
+	nombres := make([]string, 0, len(cfg.Agents))
+	for clave := range cfg.Agents {
+		nombres = append(nombres, clave)
+	}
+	sort.Strings(nombres)
+
+	for _, clave := range nombres {
+		if _, err := exec.LookPath(clave); err == nil {
+			return &CLIAdapter{BinaryName: clave, Config: cfg.Agents[clave]}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(nombres, ", "))
 }

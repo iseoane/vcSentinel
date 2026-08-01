@@ -4,6 +4,14 @@ setlocal
 
 cd /d "%~dp0"
 
+set VERSION=0.1.0
+if exist release.yml (
+    for /f "usebackq tokens=1,* delims=:" %%a in (`findstr /b /c:"version:" release.yml`) do set "VERSION=%%b"
+)
+set "VERSION=%VERSION: =%"
+set "VERSION=%VERSION:"=%"
+if defined SENTINEL_VERSION set VERSION=%SENTINEL_VERSION%
+
 echo === gofmt ===
 gofmt -w .
 if errorlevel 1 goto :fail
@@ -13,11 +21,12 @@ go vet ./...
 if errorlevel 1 goto :fail
 
 echo === build ===
-go build -ldflags="-s -w" -o sentinel.exe cmd/main.go
+if not exist "bin\%VERSION%" mkdir "bin\%VERSION%"
+go build -ldflags="-s -w -X main.version=%VERSION%" -o "bin\%VERSION%\sentinel.exe" cmd/main.go
 if errorlevel 1 goto :fail
 
 echo.
-echo OK: sentinel.exe generated
+echo OK: bin\%VERSION%\sentinel.exe generated
 exit /b 0
 
 :fail

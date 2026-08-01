@@ -1,8 +1,0 @@
-version: "1.0"
-agents:
-  claude:
-    model: "claude-5-sonnet"
-    reasoning_effort: "high"
-  opencode:
-    model: "deepseek-v4-flash"
-    reasoning_effort: "max"
