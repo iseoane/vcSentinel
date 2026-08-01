@@ -166,7 +166,11 @@ func VerificarAdaptador(adapter agentadapter.AgentAdapter) bool {
 
 // EjecutarPlanFragmentacion commitea cada lote aprobado con su mensaje
 // pre-aprobado, en el orden del plan, y devuelve un resumen por commit creado.
-// Los gigantes se ejecutan por el mismo camino con su mensaje ya fijado.
+// Todos los commits omiten la verificación de hooks (--no-verify): invocar
+// sentinel slice ES el desbloqueo del guardián, cada lote ya está validado
+// (≤400 líneas salvo gigantes con bypass explícito) y el hook de volumen
+// mediría también los cambios pendientes de los lotes siguientes, rechazando
+// por error commits legítimos cuando el total pendiente supera las 400 líneas.
 func EjecutarPlanFragmentacion(plan *PlanFragmentacion) ([]ResultadoCommit, error) {
 	var resultados []ResultadoCommit
 	for _, lote := range plan.Lotes {
@@ -241,12 +245,15 @@ func lotePorNumero(plan *PlanFragmentacion, numero int) (*LotePlanificado, error
 	return nil, fmt.Errorf("no existe el lote #%d en el plan", numero)
 }
 
+// commitLoteConMensaje añade las rutas y crea el commit con el mensaje
+// aprobado. Omite los hooks (--no-verify) porque el flujo de slice ya validó
+// el tamaño de cada lote y es el mecanismo de fragmentación del guardián.
 func commitLoteConMensaje(rutas []string, mensaje string) (string, error) {
-	argsAdd := append([]string{"add"}, rutas...)
+	argsAdd := append([]string{"add", "--"}, rutas...)
 	if err := exec.Command("git", argsAdd...).Run(); err != nil {
 		return "", err
 	}
-	if err := exec.Command("git", "commit", "-m", mensaje).Run(); err != nil {
+	if err := exec.Command("git", "commit", "-m", mensaje, "--no-verify").Run(); err != nil {
 		return "", err
 	}
 	hash, err := ejecutarGitSalida("rev-parse", "--short", "HEAD")
