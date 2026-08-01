@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
@@ -16,15 +17,26 @@ type CLIAdapter struct {
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	promptAgente := construirPromptAgente(capa, batchNum, rutasArchivos)
+	return c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos))
+}
 
-	cmd := exec.Command(c.BinaryName, "-p", promptAgente)
+// ProponerPlanRefactor pide al agente un plan de división para un archivo de
+// código masivo. Implementa AdapterRefactor.
+func (c *CLIAdapter) ProponerPlanRefactor(rutaArchivo string) (string, error) {
+	return c.ejecutarComando(construirPromptRefactor(rutaArchivo))
+}
+
+// ejecutarComando ejecuta el binario del agente con el prompt dado y devuelve
+// la salida estándar completa (recortada). Adapta los argumentos al binario:
+// claude usa "-p <prompt>"; opencode usa "run <prompt>".
+func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
+	cmd := exec.Command(c.BinaryName, c.comandoArgs(prompt)...)
 	env := os.Environ()
 
-	if c.BinaryName == "claude" {
+	if c.esClaude() {
 		env = append(env, fmt.Sprintf("CLAUDE_CODE_MODEL=%s", c.Config.Model))
 		env = append(env, fmt.Sprintf("CLAUDE_CODE_REASONING=%s", c.Config.ReasoningEffort))
-	} else if c.BinaryName == "opencode" {
+	} else if c.esOpenCode() {
 		env = append(env, fmt.Sprintf("OPENCODE_MODEL=%s", c.Config.Model))
 		env = append(env, fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort))
 	}
@@ -39,10 +51,40 @@ func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, b
 	return strings.TrimSpace(out.String()), nil
 }
 
+// comandoArgs devuelve los argumentos de invocación según el binario: opencode
+// usa el subcomando "run" con el prompt como mensaje; el resto usa "-p".
+func (c *CLIAdapter) comandoArgs(prompt string) []string {
+	if c.esOpenCode() {
+		return []string{"run", prompt}
+	}
+	return []string{"-p", prompt}
+}
+
+func (c *CLIAdapter) esClaude() bool {
+	return c.nombreBase() == "claude"
+}
+
+func (c *CLIAdapter) esOpenCode() bool {
+	return c.nombreBase() == "opencode"
+}
+
+// nombreBase extrae el nombre del binario sin ruta ni extensión, para tolerar
+// rutas completas o sufijos de plataforma (p. ej. "opencode.exe").
+func (c *CLIAdapter) nombreBase() string {
+	return strings.TrimSuffix(filepath.Base(c.BinaryName), filepath.Ext(c.BinaryName))
+}
+
 func construirPromptAgente(capa string, batchNum int, archivos []string) string {
 	archivosStr := strings.Join(archivos, " ")
 	return fmt.Sprintf(
 		"Analiza estos archivos modificados de la capa [%s] (Lote #%d): %s. Genera un mensaje de commit semántico bajo el estándar Conventional Commits. Devuelve ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
 		capa, batchNum, archivosStr,
+	)
+}
+
+func construirPromptRefactor(ruta string) string {
+	return fmt.Sprintf(
+		"Analiza el archivo %s. Propón un plan detallado para dividirlo en archivos más pequeños y cohesivos, respetando el principio de responsabilidad única (SRP). Devuelve el plan en texto plano: qué archivos crear, qué contenido debería moverse a cada uno y el orden sugerido. Sin marcas de markdown.",
+		ruta,
 	)
 }

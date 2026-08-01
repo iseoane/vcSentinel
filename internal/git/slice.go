@@ -16,7 +16,9 @@ import (
 const (
 	limiteLineasLote    = 400
 	limiteConfigGigante = 400
-	limiteCodigoGigante = 500
+	// LimiteCodigoGigante es el máximo de líneas sugerido para un archivo de
+	// código antes de ofrecer refactorizar, hacer bypass o abortar.
+	LimiteCodigoGigante = 500
 
 	mensajeAisladoDeps   = "chore(deps): track lock and auto-generated files"
 	mensajeBypassGigante = "chore(slice): bypass IA for massive file %s"
@@ -170,24 +172,7 @@ func esConfigGigante(f ArchivoModificado) bool {
 
 // esCodigoGigante indica si un archivo de código fuente supera el límite de bypass interactivo.
 func esCodigoGigante(f ArchivoModificado) bool {
-	return f.Capa != "config" && f.Lineas > limiteCodigoGigante
-}
-
-// ConfirmarBypass pregunta al usuario si quiere fragmentar un archivo de código
-// que supera el límite de volumen. Devuelve true solo si responde afirmativamente.
-func ConfirmarBypass(f ArchivoModificado) (bool, error) {
-	fmt.Printf("⚠️ ¡Alerta! El archivo %s tiene %d líneas y supera el límite de %d. ¿Quieres fragmentarlo igual? (s/N): ", f.Ruta, f.Lineas, limiteCodigoGigante)
-	var respuesta string
-	if _, err := fmt.Scanln(&respuesta); err != nil {
-		return false, err
-	}
-	respuesta = strings.ToLower(strings.TrimSpace(respuesta))
-	switch respuesta {
-	case "s", "si", "sí", "y", "yes":
-		return true, nil
-	default:
-		return false, nil
-	}
+	return f.Capa != "config" && f.Lineas > LimiteCodigoGigante
 }
 
 type loteConCapa struct {

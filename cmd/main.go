@@ -161,7 +161,7 @@ func ejecutarSlice(path string) {
 		return
 	}
 
-	plan, err := git.ConstruirPlanFragmentacion(archivos, git.ConfirmarBypass)
+	plan, err := git.ConstruirPlanFragmentacion(archivos, construirDecisionGigante(path))
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
@@ -176,6 +176,96 @@ func ejecutarSlice(path string) {
 	if !aprobarYEjecutar(plan, path) {
 		fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
 		return
+	}
+}
+
+// construirDecisionGigante devuelve el callback que decide qué hacer con un
+// archivo de código masivo (>500 líneas) durante la construcción del plan:
+// 1) refactorizar con IA, 2) hacer bypass IA o 3) abortar.
+func construirDecisionGigante(path string) func(git.ArchivoModificado) (bool, error) {
+	return func(f git.ArchivoModificado) (bool, error) {
+		for {
+			fmt.Printf("\n⚠️ El archivo %s tiene %d líneas y supera el máximo sugerido de %d.\n", f.Ruta, f.Lineas, git.LimiteCodigoGigante)
+			fmt.Println("¿Cómo quieres proceder?")
+			fmt.Println("  1) Refactorizar con IA: propone un plan de división del archivo (SRP)")
+			fmt.Println("  2) Bypass IA: fragmentar el archivo tal cual (sin revisión)")
+			fmt.Println("  3) Abortar la operación")
+			fmt.Print("Opción (1-3): ")
+
+			respuesta, err := leerLinea()
+			if err != nil {
+				return false, fmt.Errorf("error leyendo la opción: %w", err)
+			}
+			respuesta = strings.TrimSpace(respuesta)
+			switch respuesta {
+			case "1":
+				refactorizado, err := refactorizarGigante(path, f)
+				if err != nil {
+					return false, err
+				}
+				if !refactorizado {
+					continue
+				}
+				return false, fmt.Errorf("aplica el plan de refactorización propuesto y vuelve a ejecutar 'sentinel slice' para que el archivo ya dividido reingrese al plan")
+			case "2":
+				return true, nil
+			case "3":
+				return false, nil
+			default:
+				fmt.Println("Opción no válida. Elige 1, 2 o 3.")
+			}
+		}
+	}
+}
+
+// refactorizarGigante pide al agente un plan de división para el archivo masivo
+// y lo muestra para que el usuario lo aplique. Devuelve true si el usuario
+// confirmó que aplicará el plan (y debe re-ejecutar slice después).
+func refactorizarGigante(path string, f git.ArchivoModificado) (bool, error) {
+	adapter, err := agentadapter.NewAgentAdapter(path)
+	if err != nil {
+		fmt.Printf("⚠️ No se pudo crear el agente de refactorización: %v\n", err)
+		return false, nil
+	}
+
+	refactorizador, ok := adapter.(agentadapter.AdapterRefactor)
+	if !ok {
+		fmt.Println("⚠️ El agente activo no soporta propuestas de refactorización.")
+		return false, nil
+	}
+
+	if !git.VerificarAdaptador(adapter) {
+		fmt.Println("⚠️ El agente activo no respondió correctamente.")
+		return false, nil
+	}
+
+	fmt.Printf("🔍 Pidiendo al agente configurado un plan de división para %s...\n", f.Ruta)
+	planRefactor, err := refactorizador.ProponerPlanRefactor(f.Ruta)
+	if err != nil {
+		fmt.Printf("⚠️ El agente falló al generar el plan: %v\n", err)
+		return false, nil
+	}
+	if strings.TrimSpace(planRefactor) == "" {
+		fmt.Println("⚠️ El agente devolvió un plan vacío.")
+		return false, nil
+	}
+
+	fmt.Println("\n📋 Plan de división propuesto:")
+	for _, linea := range strings.Split(planRefactor, "\n") {
+		fmt.Printf("   %s\n", linea)
+	}
+
+	fmt.Print("\n¿Aplicarás este plan y volverás a ejecutar 'sentinel slice'? (s/N): ")
+	respuesta, err := leerLinea()
+	if err != nil {
+		return false, err
+	}
+	respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+	switch respuesta {
+	case "s", "si", "sí", "y", "yes":
+		return true, nil
+	default:
+		return false, nil
 	}
 }
 

@@ -118,3 +118,89 @@ func TestObtenerMensajeCommitConBinarioQueFalla(t *testing.T) {
 		t.Fatalf("se esperaba error cuando el binario falla")
 	}
 }
+
+func TestComandoArgsPorBinario(t *testing.T) {
+	prompt := "mensaje de prueba"
+	casos := []struct {
+		nombre   string
+		binario  string
+		esperado []string
+	}{
+		{"claude usa -p", "claude", []string{"-p", prompt}},
+		{"opencode usa run", "opencode", []string{"run", prompt}},
+		{"rutas completas se normalizan", filepath.Join("ruta", "a", "opencode"), []string{"run", prompt}},
+		{"extensiones de Windows se ignoran", "opencode.exe", []string{"run", prompt}},
+		{"ps1 se ignora para claude", "claude.ps1", []string{"-p", prompt}},
+		{"binarios no reconocidos usan -p", "otro-agente", []string{"-p", prompt}},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			adapter := &CLIAdapter{BinaryName: caso.binario}
+			obtenido := adapter.comandoArgs(prompt)
+			if len(obtenido) != len(caso.esperado) {
+				t.Fatalf("se esperaban %d argumentos (%v), obtuve %d (%v)", len(caso.esperado), caso.esperado, len(obtenido), obtenido)
+			}
+			for i := range caso.esperado {
+				if obtenido[i] != caso.esperado[i] {
+					t.Errorf("argumento %d esperado %q, obtuve %q", i, caso.esperado[i], obtenido[i])
+				}
+			}
+		})
+	}
+}
+
+func TestConstruirPromptRefactor(t *testing.T) {
+	prompt := construirPromptRefactor("internal/git/plan.go")
+
+	if !strings.Contains(prompt, "internal/git/plan.go") {
+		t.Errorf("el prompt debe contener la ruta del archivo, obtuve: %s", prompt)
+	}
+	if strings.Contains(prompt, "```") {
+		t.Errorf("el prompt no debe contener marcas de markdown, obtuve: %s", prompt)
+	}
+	if strings.Contains(prompt, "\"") {
+		t.Errorf("el prompt no debe contener comillas, obtuve: %s", prompt)
+	}
+}
+
+func TestProponerPlanRefactorConBinarioFalso(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con binario falso en modo -short")
+	}
+
+	dirBinarios := t.TempDir()
+	escribirFalsoBinarioConSalida(t, dirBinarios, "opencode", "Crear internal/git/refactor.go con la lógica extraída.")
+	fijarPATH(t, dirBinarios)
+
+	adapter := &CLIAdapter{BinaryName: "opencode"}
+	plan, err := adapter.ProponerPlanRefactor("internal/git/plan.go")
+	if err != nil {
+		t.Fatalf("ProponerPlanRefactor devolvió error: %v", err)
+	}
+	if !strings.Contains(plan, "refactor.go") {
+		t.Errorf("plan esperado con refactor.go, obtuve %q", plan)
+	}
+}
+
+func TestProponerPlanRefactorConBinarioQueFalla(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con binario falso en modo -short")
+	}
+
+	dirBinarios := t.TempDir()
+	ruta := filepath.Join(dirBinarios, "claude")
+	if runtime.GOOS == "windows" {
+		ruta += ".cmd"
+		os.WriteFile(ruta, []byte("@echo off\r\nexit /b 1\r\n"), 0755)
+	} else {
+		os.WriteFile(ruta, []byte("#!/bin/sh\nexit 1\n"), 0755)
+		os.Chmod(ruta, 0755)
+	}
+	fijarPATH(t, dirBinarios)
+
+	adapter := &CLIAdapter{BinaryName: "claude"}
+	if _, err := adapter.ProponerPlanRefactor("internal/git/plan.go"); err == nil {
+		t.Fatalf("se esperaba error cuando el binario falla")
+	}
+}

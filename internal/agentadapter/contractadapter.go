@@ -11,3 +11,10 @@ type AgentAdapter interface {
 type AdapterConDiff interface {
 	ObtenerMensajeCommitConDiff(rutasArchivos []string, capa string, batchNum int, diff string) (string, error)
 }
+
+// AdapterRefactor es una interfaz opcional que un adaptador puede implementar
+// para proponer un plan de división de un archivo de código masivo (violación
+// potencial de SRP). Devuelve el plan en texto plano.
+type AdapterRefactor interface {
+	ProponerPlanRefactor(rutaArchivo string) (string, error)
+}

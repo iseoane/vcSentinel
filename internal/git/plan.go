@@ -65,7 +65,7 @@ func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass fu
 					return nil, err
 				}
 				if !ok {
-					return nil, fmt.Errorf("fragmentación abortada: %s tiene %d líneas y supera el límite de %d", f.Ruta, f.Lineas, limiteCodigoGigante)
+					return nil, fmt.Errorf("fragmentación abortada: %s tiene %d líneas y supera el límite de %d", f.Ruta, f.Lineas, LimiteCodigoGigante)
 				}
 				plan.Lotes = append(plan.Lotes, loteGigante(f, fmt.Sprintf(mensajeBypassGigante, filepath.Base(f.Ruta)), numero))
 				numero++
