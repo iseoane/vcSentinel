@@ -58,15 +58,20 @@ func main() {
 			fmt.Printf("❌ Error en la actualización: %v\n", err)
 			os.Exit(1)
 		}
+	case "uninstall":
+		if err := setup.EjecutarDesinstalacionCompleta(); err != nil {
+			fmt.Printf("❌ Error en la desinstalación: %v\n", err)
+			os.Exit(1)
+		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'install' o 'upgrade'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | check | slice | install | upgrade]")
+	fmt.Println("Uso: sentinel [version | help | init | check | slice | install | upgrade | uninstall]")
 }
 
 func imprimirAyuda() {
