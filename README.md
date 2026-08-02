@@ -15,7 +15,8 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 | `sentinel check` | Audita el volumen de líneas del worktree: `PEQUENO`, `PUNTO_OPTIMO` (200–400) o `CRÍTICO` (>400, exit 1). |
 | `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
 | `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración e instala el hook global. |
-| `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub. |
+| `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub, con fallback a `go install` si la release no está disponible. |
+| `sentinel uninstall` | Elimina el binario y la configuración global (`~/.vas_sentinel/`). |
 | `sentinel version` / `sentinel --version` | Muestra la versión instalada. |
 | `sentinel help` / `sentinel --help` | Muestra la ayuda completa. |
 
@@ -94,9 +95,15 @@ Esto compila el binario en `$(go env GOPATH)/bin`. Asegúrate de que esa carpeta
 
 > **Repos privados:** `sentinel install` / `upgrade` resuelven el token en este orden: variable `GITHUB_TOKEN`, token de la sesión de `gh` (`gh auth token`) o pregunta interactiva. No necesitas exportar nada si ya tienes `gh` autenticado.
 
+> **Fallback a go install:** si la release no está disponible (red, token o asset ausente), `install`/`upgrade` reintentan automáticamente con `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest` y dejan el binario en el mismo destino.
+
 ## Actualizaciones automáticas
 
 `sentinel upgrade` descarga la última release y reemplaza el binario actual. En Windows el binario en ejecución está bloqueado, por lo que se renombra el actual a `.old` como respaldo durante la operación.
+
+## Desinstalación
+
+`sentinel uninstall` elimina el binario instalado (tanto `~/.vas_sentinel/bin/sentinel` en Windows como `/usr/local/bin/sentinel` en Linux, así como cualquier copia dentro de `GOPATH/bin`) y borra la configuración global `~/.vas_sentinel/`.
 
 ## Convención de nombres de assets
 
