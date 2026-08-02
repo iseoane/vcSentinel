@@ -80,7 +80,7 @@ func imprimirAyuda() {
 	fmt.Println("Subcomandos:")
 	fmt.Println("  version    Muestra la versión instalada.")
 	fmt.Println("  help       Muestra esta ayuda.")
-	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook global pre-commit.")
+	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook global pre-commit. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
 	fmt.Println("  check      Audita el volumen de líneas modificadas del worktree activo.")
 	fmt.Println("  slice      Fragmenta las modificaciones en commits de máximo 400 líneas.")
 	fmt.Println("  install    Descarga e instala la última release publicada desde GitHub.")
@@ -93,6 +93,17 @@ func imprimirAyuda() {
 }
 
 func ejecutarInit(path string) {
+	raiz, err := git.ObtenerRaizWorktree()
+	if err != nil {
+		fmt.Println("❌ init debe ejecutarse dentro de un repositorio Git (no se encontró la raíz del worktree).")
+		os.Exit(1)
+	}
+	if !git.EsMismaRuta(path, raiz) {
+		fmt.Printf("📂 Detectada la raíz del repositorio: %s\n", raiz)
+		fmt.Println("⚙️ Redirigiendo init a la raíz del repositorio...")
+		path = raiz
+	}
+
 	fmt.Println("⚙️ Inicializando VAS Sentinel en este entorno...")
 
 	archivosObjetivo := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}

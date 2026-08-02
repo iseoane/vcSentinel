@@ -43,7 +43,7 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 - `slice`: construye un plan por capas en orden fijo `config → backend → frontend → test`, lotes de ≤400 líneas. Genera los mensajes con el adaptador configurado; si el adaptador automático no responde, ofrece mensajes automáticos deterministas, otro agente disponible o cancelar. Muestra el plan para aprobación (A/R/E/C) antes de commitear, y resume los commits al final.
   - Archivos gigantes: config >400 líneas se aíslan con `chore(deps): track lock and auto-generated files`; código >500 líneas pide confirmación (`s/N`) y, si se confirma, hace bypass con `chore(slice): bypass IA for massive file <archivo>`; si se rechaza, aborta sin commitear nada.
   - Todos los commits de slice usan `--no-verify` (ver REGLA CRÍTICA DE VOLUMEN).
-- `init`: inyecta la regla de volumen en `AGENTS.md`, `CLAUDE.md`, `.claudecode.md`, crea `.vas_sentinel/vassentinel.yml` per-proyecto e instala el hook global en `~/.git_global_hooks/pre-commit` con la ruta absoluta del binario.
+- `init`: inyecta la regla de volumen en `AGENTS.md`, `CLAUDE.md`, `.claudecode.md`, crea `.vas_sentinel/vassentinel.yml` per-proyecto e instala el hook global en `~/.git_global_hooks/pre-commit` con la ruta absoluta del binario. Solo se ejecuta en la raíz del worktree Git: si se invoca desde un subdirectorio, redirige automáticamente a la raíz (via `git rev-parse --show-toplevel`); si no hay repositorio Git, aborta con error.
 
 ## Configuración
 
