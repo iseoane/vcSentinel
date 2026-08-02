@@ -15,6 +15,11 @@ import (
 const repoOwner = "ISeoane-Quental"
 const repoName = "vas.sentinel"
 
+// fallbackGoInstall habilita reintentar con go install cuando la descarga de
+// la release falla. Los tests lo desactivan para no ejecutar compilaciones
+// reales durante las pruebas de error.
+var fallbackGoInstall = true
+
 // tokenGitHub devuelve el token de GitHub configurado en el entorno. Un
 // repositorio privado exige autenticación tanto para consultar la release como
 // para descargar sus assets: el cliente usa este token en ambas peticiones.

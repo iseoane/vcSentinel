@@ -27,6 +27,12 @@ func EjecutarInstalacionCompleta() error {
 
 	release, err := obtenerUltimaRelease()
 	if err != nil {
+		if fallbackGoInstall {
+			if errFallback := InstalarViaGoInstall(); errFallback != nil {
+				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -44,6 +50,12 @@ func EjecutarInstalacionCompleta() error {
 	defer os.Remove(tmpPath)
 
 	if err := descargarBinario(asset.BrowserDownloadURL, tmpPath); err != nil {
+		if fallbackGoInstall {
+			if errFallback := InstalarViaGoInstall(); errFallback != nil {
+				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -64,6 +76,72 @@ func EjecutarInstalacionCompleta() error {
 
 	fmt.Printf("✅ Instalado en: %s\n", destino)
 	return nil
+}
+
+// InstalarViaGoInstall es el fallback de instalación cuando la descarga desde
+// la release falla (por ejemplo, repositorio privado sin token). Compila e
+// instala desde el código fuente con go install y deja el binario en el mismo
+// destino que una instalación normal.
+func InstalarViaGoInstall() error {
+	fmt.Println("⬇️ La descarga no está disponible. Reintentando con go install (compila desde el código fuente)...")
+
+	cmd := exec.Command("go", "install", "github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("go install falló (¿GOPRIVATE y credenciales git configuradas?): %w\n%s", err, output)
+	}
+
+	gopath, err := goEnvGOPATH()
+	if err != nil {
+		return err
+	}
+	binario := filepath.Join(gopath, "bin", nombreBinarioGo())
+
+	if err := instalarBinarioCompilado(binario); err != nil {
+		return err
+	}
+	return nil
+}
+
+// instalarBinarioCompilado instala un binario ya compilado en el destino del
+// sistema y crea la configuración global, igual que el flujo normal.
+func instalarBinarioCompilado(binario string) error {
+	var destino string
+	var err error
+	switch runtime.GOOS {
+	case "windows":
+		destino, err = instalarWindows(binario)
+	default:
+		destino, err = instalarLinux(binario)
+	}
+	if err != nil {
+		return err
+	}
+
+	if err := crearConfiguracionGlobal(); err != nil {
+		return err
+	}
+
+	fmt.Printf("✅ Instalado en: %s (vía go install)\n", destino)
+	return nil
+}
+
+// goEnvGOPATH devuelve el GOPATH configurado.
+func goEnvGOPATH() (string, error) {
+	cmd := exec.Command("go", "env", "GOPATH")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("no se pudo consultar GOPATH: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// nombreBinarioGo devuelve el nombre del binario que genera go install.
+func nombreBinarioGo() string {
+	if runtime.GOOS == "windows" {
+		return "sentinel.exe"
+	}
+	return "sentinel"
 }
 
 func rutaBinarioWindows(homeDir string) string {

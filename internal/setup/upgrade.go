@@ -16,6 +16,12 @@ func EjecutarUpgradeDesdeGitHub() error {
 
 	release, err := obtenerUltimaRelease()
 	if err != nil {
+		if fallbackGoInstall {
+			if errFallback := UpgradeViaGoInstall(); errFallback != nil {
+				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -40,6 +46,12 @@ func EjecutarUpgradeDesdeGitHub() error {
 	defer os.Remove(tmpPath)
 
 	if err := descargarBinario(asset.BrowserDownloadURL, tmpPath); err != nil {
+		if fallbackGoInstall {
+			if errFallback := UpgradeViaGoInstall(); errFallback != nil {
+				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -62,6 +74,51 @@ func EjecutarUpgradeDesdeGitHub() error {
 	}
 
 	fmt.Printf("✅ Actualizado a %s\n", release.TagName)
+	return nil
+}
+
+// UpgradeViaGoInstall es el fallback de actualización cuando la descarga desde
+// la release falla (por ejemplo, repositorio privado sin token). Compila la
+// última versión con go install y reemplaza el binario en ejecución.
+func UpgradeViaGoInstall() error {
+	fmt.Println("🔄 La descarga no está disponible. Reintentando con go install (compila desde el código fuente)...")
+
+	binarioActual, err := localizarBinarioActual()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("go", "install", "github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("go install falló (¿GOPRIVATE y credenciales git configuradas?): %w\n%s", err, output)
+	}
+
+	gopath, err := goEnvGOPATH()
+	if err != nil {
+		return err
+	}
+	binario := filepath.Join(gopath, "bin", nombreBinarioGo())
+
+	var respaldo string
+	switch runtime.GOOS {
+	case "windows":
+		respaldo, err = reemplazarWindows(binario, binarioActual)
+	default:
+		err = reemplazarLinux(binario, binarioActual)
+	}
+	if err != nil {
+		return err
+	}
+
+	if err := verificarBinario(binarioActual); err != nil {
+		if respaldo != "" {
+			return fmt.Errorf("el binario pudo quedar corrupto y tu respaldo está en %s: %w", respaldo, err)
+		}
+		return fmt.Errorf("el binario pudo quedar corrupto: %w", err)
+	}
+
+	fmt.Println("✅ Actualizado vía go install")
 	return nil
 }
 

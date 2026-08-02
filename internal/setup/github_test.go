@@ -287,8 +287,19 @@ func releaseValidaConAsset() string {
 	return `{"tag_name":"v1.2.3","assets":[{"name":"` + nombre + `","browser_download_url":"http://127.0.0.1:1/descarga"}]}`
 }
 
+// desactivarFallbackGoInstall apaga el reintento con go install durante un
+// test y lo restaura al terminar, para que los errores de red/descarga no
+// ejecuten compilaciones reales.
+func desactivarFallbackGoInstall(t *testing.T) {
+	t.Helper()
+	anterior := fallbackGoInstall
+	fallbackGoInstall = false
+	t.Cleanup(func() { fallbackGoInstall = anterior })
+}
+
 func TestEjecutarInstalacionCompleta(t *testing.T) {
 	t.Run("error de red detiene la instalacion", func(t *testing.T) {
+		desactivarFallbackGoInstall(t)
 		fijarClienteHTTPFalso(t, &transporteFalso{errorRed: errors.New("conexión rechazada")})
 		err := EjecutarInstalacionCompleta()
 		if err == nil {
@@ -312,6 +323,7 @@ func TestEjecutarInstalacionCompleta(t *testing.T) {
 	})
 
 	t.Run("descarga fallida detiene la instalacion", func(t *testing.T) {
+		desactivarFallbackGoInstall(t)
 		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, releaseValidaConAsset(), http.StatusOK)})
 		err := EjecutarInstalacionCompleta()
 		if err == nil {
@@ -325,6 +337,7 @@ func TestEjecutarInstalacionCompleta(t *testing.T) {
 
 func TestEjecutarUpgradeDesdeGitHub(t *testing.T) {
 	t.Run("error de red detiene la actualizacion", func(t *testing.T) {
+		desactivarFallbackGoInstall(t)
 		fijarClienteHTTPFalso(t, &transporteFalso{errorRed: errors.New("conexión rechazada")})
 		err := EjecutarUpgradeDesdeGitHub()
 		if err == nil {
@@ -348,6 +361,7 @@ func TestEjecutarUpgradeDesdeGitHub(t *testing.T) {
 	})
 
 	t.Run("descarga fallida detiene la actualizacion antes de reemplazar", func(t *testing.T) {
+		desactivarFallbackGoInstall(t)
 		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, releaseValidaConAsset(), http.StatusOK)})
 		err := EjecutarUpgradeDesdeGitHub()
 		if err == nil {
