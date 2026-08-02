@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -153,28 +154,39 @@ func ejecutarCheck(path string) {
 	fmt.Println("✅ Volumen bajo control. Puedes continuar.")
 }
 
+// errRefactorAplicado señala que un agente ya aplicó el plan de refactorización
+// y que ejecutarSlice debe recalcular el plan con el working tree actualizado.
+var errRefactorAplicado = errors.New("refactorización aplicada por el agente")
+
 func ejecutarSlice(path string) {
-	fmt.Println("✂️ Iniciando algoritmo de partición determinista...")
-	archivos, err := git.ObtenerArchivosModificados()
-	if err != nil || len(archivos) == 0 {
-		fmt.Println("📭 No hay modificaciones pendientes para procesar.")
-		return
-	}
+	for {
+		fmt.Println("✂️ Iniciando algoritmo de partición determinista...")
+		archivos, err := git.ObtenerArchivosModificados()
+		if err != nil || len(archivos) == 0 {
+			fmt.Println("📭 No hay modificaciones pendientes para procesar.")
+			return
+		}
 
-	plan, err := git.ConstruirPlanFragmentacion(archivos, construirDecisionGigante(path))
-	if err != nil {
-		fmt.Printf("❌ %v\n", err)
-		os.Exit(1)
-	}
+		plan, err := git.ConstruirPlanFragmentacion(archivos, construirDecisionGigante(path))
+		if errors.Is(err, errRefactorAplicado) {
+			fmt.Println("\n♻️ Refactorización aplicada. Recalculando el plan de fragmentación...")
+			continue
+		}
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
 
-	_, cancelado := elegirAdaptadorYGenerarMensajes(path, plan)
-	if cancelado {
-		fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
-		return
-	}
+		_, cancelado := elegirAdaptadorYGenerarMensajes(path, plan)
+		if cancelado {
+			fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+			return
+		}
 
-	if !aprobarYEjecutar(plan, path) {
-		fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+		if !aprobarYEjecutar(plan, path) {
+			fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+			return
+		}
 		return
 	}
 }
@@ -218,9 +230,12 @@ func construirDecisionGigante(path string) func(git.ArchivoModificado) (bool, er
 	}
 }
 
-// refactorizarGigante pide al agente un plan de división para el archivo masivo
-// y lo muestra para que el usuario lo aplique. Devuelve true si el usuario
-// confirmó que aplicará el plan (y debe re-ejecutar slice después).
+// refactorizarGigante pide al agente automático un plan de división para el
+// archivo masivo, lo muestra y pregunta cómo aplicarlo: manualmente por el
+// usuario, delegándolo en un agente (con fallback a otro agente si falla) o
+// cancelar. Devuelve (false, nil) para volver al menú anterior; devuelve un
+// error para abortar el slice (errRefactorAplicado si el agente ya aplicó el
+// plan y hay que recalcular el plan).
 func refactorizarGigante(path string, f git.ArchivoModificado) (bool, error) {
 	adapter, err := agentadapter.NewAgentAdapter(path)
 	if err != nil {
@@ -255,18 +270,130 @@ func refactorizarGigante(path string, f git.ArchivoModificado) (bool, error) {
 		fmt.Printf("   %s\n", linea)
 	}
 
-	fmt.Print("\n¿Aplicarás este plan y volverás a ejecutar 'sentinel slice'? (s/N): ")
-	respuesta, err := leerLinea()
+	for {
+		fmt.Println("\n¿Cómo quieres aplicar el plan?")
+		fmt.Println("  1) Aplicarlo yo: lo aplicas manualmente y luego ejecutas de nuevo 'sentinel slice'")
+		fmt.Println("  2) Delegarlo en un agente: el agente lo aplica y slice se re-ejecuta automáticamente")
+		fmt.Println("  c) Cancelar la refactorización")
+		fmt.Print("Opción (1, 2 o c): ")
+
+		respuesta, err := leerLinea()
+		if err != nil {
+			return false, fmt.Errorf("error leyendo la opción: %w", err)
+		}
+		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+		switch respuesta {
+		case "1":
+			return false, fmt.Errorf("aplica el plan de refactorización propuesto y vuelve a ejecutar 'sentinel slice' para que el archivo ya dividido reingrese al plan")
+		case "2":
+			aplicada, err := delegarRefactorizacion(path, f, planRefactor)
+			if err != nil {
+				return false, err
+			}
+			if aplicada {
+				return false, errRefactorAplicado
+			}
+			return false, nil
+		case "c", "cancelar":
+			return false, nil
+		default:
+			fmt.Println("Opción no válida. Elige 1, 2 o c.")
+		}
+	}
+}
+
+// delegarRefactorizacion pide al agente automático aplicar el plan de división
+// sobre el working tree. Si el agente automático no existe o falla, ofrece
+// elegir otro agente disponible o cancelar. Devuelve true si un agente aplicó
+// la refactorización.
+func delegarRefactorizacion(path string, f git.ArchivoModificado, planRefactor string) (bool, error) {
+	adapter, err := agentadapter.NewAgentAdapter(path)
+	if err != nil || !git.VerificarAdaptador(adapter) {
+		return bucleElegirAgenteRefactor(path, f, planRefactor)
+	}
+
+	refactorizador, ok := adapter.(agentadapter.AdapterRefactor)
+	if !ok {
+		return bucleElegirAgenteRefactor(path, f, planRefactor)
+	}
+
+	aplicada, err := aplicarRefactor(refactorizador, f.Ruta, planRefactor)
+	if err != nil || !aplicada {
+		return bucleElegirAgenteRefactor(path, f, planRefactor)
+	}
+	return true, nil
+}
+
+// bucleElegirAgenteRefactor ofrece elegir otro agente para aplicar el plan de
+// refactorización cuando el agente automático no pudo, o cancelar la
+// refactorización. Devuelve true si algún agente aplicó el plan.
+func bucleElegirAgenteRefactor(path string, f git.ArchivoModificado, planRefactor string) (bool, error) {
+	for {
+		nombres := agentadapter.NombresAdaptadoresDisponibles(path)
+		if len(nombres) == 0 {
+			fmt.Println("⚠️ No hay agentes disponibles para aplicar la refactorización.")
+			return false, nil
+		}
+
+		fmt.Println("\n⚠️ El agente automático no pudo aplicar el plan. Elige otro agente:")
+		for i, nombre := range nombres {
+			fmt.Printf("  %d) %s\n", i+1, nombre)
+		}
+		fmt.Println("  c) Cancelar la refactorización")
+		fmt.Print("Opción: ")
+
+		respuesta, err := leerLinea()
+		if err != nil {
+			return false, nil
+		}
+		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+		if respuesta == "c" || respuesta == "cancelar" {
+			return false, nil
+		}
+
+		numero, err := strconv.Atoi(respuesta)
+		if err != nil || numero < 1 || numero > len(nombres) {
+			fmt.Println("⚠️ Opción no válida. Intenta de nuevo.")
+			continue
+		}
+
+		adapter, err := agentadapter.NewAgentAdapterNamed(path, nombres[numero-1])
+		if err != nil {
+			fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombres[numero-1], err)
+			continue
+		}
+		refactorizador, ok := adapter.(agentadapter.AdapterRefactor)
+		if !ok {
+			fmt.Printf("⚠️ El agente %s no soporta refactorizaciones.\n", nombres[numero-1])
+			continue
+		}
+		if !git.VerificarAdaptador(adapter) {
+			fmt.Printf("⚠️ El agente %s no respondió correctamente. Elige otra opción.\n", nombres[numero-1])
+			continue
+		}
+
+		aplicada, err := aplicarRefactor(refactorizador, f.Ruta, planRefactor)
+		if err != nil || !aplicada {
+			fmt.Printf("⚠️ El agente %s falló al aplicar el plan. Elige otra opción.\n", nombres[numero-1])
+			continue
+		}
+		return true, nil
+	}
+}
+
+// aplicarRefactor ejecuta el plan de refactorización con el agente dado y
+// confirma que devolvió una respuesta no vacía.
+func aplicarRefactor(refactorizador agentadapter.AdapterRefactor, ruta string, planRefactor string) (bool, error) {
+	fmt.Printf("🔧 Pidiendo al agente seleccionado aplicar el plan sobre %s...\n", ruta)
+	resumen, err := refactorizador.AplicarPlanRefactor(ruta, planRefactor)
 	if err != nil {
 		return false, err
 	}
-	respuesta = strings.ToLower(strings.TrimSpace(respuesta))
-	switch respuesta {
-	case "s", "si", "sí", "y", "yes":
-		return true, nil
-	default:
-		return false, nil
+	if strings.TrimSpace(resumen) == "" {
+		return false, fmt.Errorf("el agente devolvió un resumen vacío")
 	}
+	fmt.Printf("✅ %s\n", strings.TrimSpace(resumen))
+	return true, nil
 }
 
 // lectorStdin lee línea a línea la entrada estándar para los flujos interactivos.

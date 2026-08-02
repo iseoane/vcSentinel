@@ -13,8 +13,13 @@ type AdapterConDiff interface {
 }
 
 // AdapterRefactor es una interfaz opcional que un adaptador puede implementar
-// para proponer un plan de división de un archivo de código masivo (violación
-// potencial de SRP). Devuelve el plan en texto plano.
+// para refactorizar un archivo de código masivo (violación potencial de SRP):
+// primero propone un plan de división y luego puede aplicarlo editando el
+// working tree (sin hacer commits).
 type AdapterRefactor interface {
+	// ProponerPlanRefactor devuelve el plan de división en texto plano.
 	ProponerPlanRefactor(rutaArchivo string) (string, error)
+	// AplicarPlanRefactor ordena al agente ejecutar el plan directamente sobre
+	// el working tree y devuelve un resumen breve de los cambios aplicados.
+	AplicarPlanRefactor(rutaArchivo string, plan string) (string, error)
 }

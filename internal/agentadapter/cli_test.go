@@ -204,3 +204,62 @@ func TestProponerPlanRefactorConBinarioQueFalla(t *testing.T) {
 		t.Fatalf("se esperaba error cuando el binario falla")
 	}
 }
+
+func TestConstruirPromptAplicarRefactor(t *testing.T) {
+	plan := "1. Crear parser.go\n2. Crear model.go"
+	prompt := construirPromptAplicarRefactor("internal/legacy/legacy.go", plan)
+
+	if !strings.Contains(prompt, "internal/legacy/legacy.go") {
+		t.Errorf("el prompt debe contener la ruta del archivo, obtuve: %s", prompt)
+	}
+	if !strings.Contains(prompt, "1. Crear parser.go") {
+		t.Errorf("el prompt debe incluir el plan, obtuve: %s", prompt)
+	}
+	if strings.Contains(prompt, "```") {
+		t.Errorf("el prompt no debe contener marcas de markdown, obtuve: %s", prompt)
+	}
+	if strings.Contains(prompt, "\"") {
+		t.Errorf("el prompt no debe contener comillas, obtuve: %s", prompt)
+	}
+}
+
+func TestAplicarPlanRefactorConBinarioFalso(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con binario falso en modo -short")
+	}
+
+	dirBinarios := t.TempDir()
+	escribirFalsoBinarioConSalida(t, dirBinarios, "opencode", "3 archivos creados, legacy.go eliminado")
+	fijarPATH(t, dirBinarios)
+
+	adapter := &CLIAdapter{BinaryName: "opencode"}
+	resumen, err := adapter.AplicarPlanRefactor("internal/legacy/legacy.go", "plan de prueba")
+	if err != nil {
+		t.Fatalf("AplicarPlanRefactor devolvió error: %v", err)
+	}
+	if !strings.Contains(resumen, "legacy.go") {
+		t.Errorf("resumen esperado con legacy.go, obtuve %q", resumen)
+	}
+}
+
+func TestAplicarPlanRefactorConBinarioQueFalla(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con binario falso en modo -short")
+	}
+
+	dirBinarios := t.TempDir()
+	ruta := filepath.Join(dirBinarios, "opencode")
+	if runtime.GOOS == "windows" {
+		ruta += ".cmd"
+		os.WriteFile(ruta, []byte("@echo off\r\nexit /b 1\r\n"), 0755)
+	} else {
+		os.WriteFile(ruta, []byte("#!/bin/sh\nexit 1\n"), 0755)
+		os.Chmod(ruta, 0755)
+	}
+	fijarPATH(t, dirBinarios)
+
+	adapter := &CLIAdapter{BinaryName: "opencode"}
+	if _, err := adapter.AplicarPlanRefactor("internal/legacy/legacy.go", "plan de prueba"); err == nil {
+		t.Fatalf("se esperaba error cuando el binario falla")
+	}
+}

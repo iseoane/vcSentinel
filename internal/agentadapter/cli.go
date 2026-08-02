@@ -26,6 +26,13 @@ func (c *CLIAdapter) ProponerPlanRefactor(rutaArchivo string) (string, error) {
 	return c.ejecutarComando(construirPromptRefactor(rutaArchivo))
 }
 
+// AplicarPlanRefactor ordena al agente ejecutar el plan de refactorización
+// directamente sobre el working tree, sin hacer commits. Implementa
+// AdapterRefactor.
+func (c *CLIAdapter) AplicarPlanRefactor(rutaArchivo string, plan string) (string, error) {
+	return c.ejecutarComando(construirPromptAplicarRefactor(rutaArchivo, plan))
+}
+
 // ejecutarComando ejecuta el binario del agente con el prompt dado y devuelve
 // la salida estándar completa (recortada). Adapta los argumentos al binario:
 // claude usa "-p <prompt>"; opencode usa "run <prompt>".
@@ -86,5 +93,12 @@ func construirPromptRefactor(ruta string) string {
 	return fmt.Sprintf(
 		"Analiza el archivo %s. Propón un plan detallado para dividirlo en archivos más pequeños y cohesivos, respetando el principio de responsabilidad única (SRP). Devuelve el plan en texto plano: qué archivos crear, qué contenido debería moverse a cada uno y el orden sugerido. Sin marcas de markdown.",
 		ruta,
+	)
+}
+
+func construirPromptAplicarRefactor(ruta string, plan string) string {
+	return fmt.Sprintf(
+		"Aplica el siguiente plan de refactorización sobre el archivo %s:\n%s\nRealiza los cambios directamente en el working tree: crea, mueve y edita los archivos necesarios. NO hagas commits ni ejecutes git. Devuelve un resumen breve de los archivos creados, modificados o eliminados. Sin marcas de markdown.",
+		ruta, plan,
 	)
 }
