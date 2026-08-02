@@ -27,7 +27,7 @@ func main() {
 	subcomando := os.Args[1]
 
 	switch subcomando {
-	case "--version", "-v":
+	case "--version", "-v", "version":
 		fmt.Printf("📦 VAS Sentinel versión: %s\n", version)
 		return
 	case "--help", "-h", "help":
@@ -59,20 +59,22 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'init', 'check', 'slice', 'install' o 'upgrade'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'install' o 'upgrade'.\n", subcomando)
 		os.Exit(1)
 	}
 }
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [init | check | slice | install | upgrade]")
+	fmt.Println("Uso: sentinel [version | help | init | check | slice | install | upgrade]")
 }
 
 func imprimirAyuda() {
 	imprimirUso()
 	fmt.Println()
 	fmt.Println("Subcomandos:")
+	fmt.Println("  version    Muestra la versión instalada.")
+	fmt.Println("  help       Muestra esta ayuda.")
 	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook global pre-commit.")
 	fmt.Println("  check      Audita el volumen de líneas modificadas del worktree activo.")
 	fmt.Println("  slice      Fragmenta las modificaciones en commits de máximo 400 líneas.")
@@ -80,8 +82,8 @@ func imprimirAyuda() {
 	fmt.Println("  upgrade    Reemplaza el binario actual por la última release publicada.")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  --version, -v   Muestra la versión instalada.")
-	fmt.Println("  --help, -h      Muestra esta ayuda.")
+	fmt.Println("  --version, -v   Muestra la versión instalada (equivalente a 'version').")
+	fmt.Println("  --help, -h      Muestra esta ayuda (equivalente a 'help').")
 }
 
 func ejecutarInit(path string) {

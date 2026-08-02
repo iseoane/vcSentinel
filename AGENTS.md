@@ -32,7 +32,7 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 
 ## Arquitectura
 
-- `cmd/main.go` — entrypoint CLI: subcomandos `init`, `check`, `slice` (+ `install`, `upgrade`)
+- `cmd/main.go` — entrypoint CLI: subcomandos `version`, `help`, `init`, `check`, `slice` (+ `install`, `upgrade`)
 - `internal/config` — parsea `vassentinel.yml` (model + reasoning_effort por agente), con precedencia per-proyecto (`.vas_sentinel/vassentinel.yml`) sobre global (`~/.vas_sentinel/vassentinel.yml`)
 - `internal/agentadapter` — interfaz `AgentAdapter` + `CLIAdapter` (claude/opencode) que delega la generación del mensaje de commit
 - `internal/git` — `CheckDiffLimits` (umbral de volumen), `ObtenerArchivosModificados` (numstat + untracked), plan de fragmentación y ejecución de lotes

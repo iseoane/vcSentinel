@@ -16,7 +16,8 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 | `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
 | `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración e instala el hook global. |
 | `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub. |
-| `sentinel --version` / `--help` | Versión instalada / ayuda completa. |
+| `sentinel version` / `sentinel --version` | Muestra la versión instalada. |
+| `sentinel help` / `sentinel --help` | Muestra la ayuda completa. |
 
 ## Slice: fragmentación con plan
 
