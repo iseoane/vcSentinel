@@ -49,7 +49,7 @@ func EjecutarInstalacionCompleta() error {
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	if err := descargarBinario(asset.BrowserDownloadURL, tmpPath); err != nil {
+	if err := descargarBinario(asset, tmpPath); err != nil {
 		if fallbackGoInstall {
 			if errFallback := InstalarViaGoInstall(); errFallback != nil {
 				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
@@ -85,8 +85,7 @@ func EjecutarInstalacionCompleta() error {
 func InstalarViaGoInstall() error {
 	fmt.Println("⬇️ La descarga no está disponible. Reintentando con go install (compila desde el código fuente)...")
 
-	cmd := exec.Command("go", "install", "github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
-	output, err := cmd.CombinedOutput()
+	output, err := ejecutarGoInstall()
 	if err != nil {
 		return fmt.Errorf("go install falló (¿GOPRIVATE y credenciales git configuradas?): %w\n%s", err, output)
 	}
@@ -101,6 +100,41 @@ func InstalarViaGoInstall() error {
 		return err
 	}
 	return nil
+}
+
+// ejecutarGoInstall compila e instala la última versión con go install. Para
+// repositorios privados configura GOPRIVATE (evita consultar sum.golang.org) y
+// entrega las credenciales a git vía GIT_CONFIG_COUNT, sin tocar la
+// configuración global del usuario.
+//
+// Intenta primero la última release (@latest) y, si esa versión no contiene el
+// paquete (release anterior a un cambio de estructura), cae a la rama main.
+func ejecutarGoInstall() ([]byte, error) {
+	PrepararTokenGitHub()
+
+	output, err := goInstallPaquete("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
+	if err != nil && strings.Contains(string(output), "does not contain package") {
+		fmt.Println("⚠️ La última release no incluye el paquete actual. Probando con la rama main...")
+		output, err = goInstallPaquete("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@main")
+	}
+	return output, err
+}
+
+// goInstallPaquete ejecuta go install de un paquete con el entorno preparado
+// para repositorios privados (GOPRIVATE + credenciales git temporales).
+func goInstallPaquete(paquete string) ([]byte, error) {
+	cmd := exec.Command("go", "install", paquete)
+	cmd.Env = append(os.Environ(), "GOPRIVATE=github.com/ISeoane-Quental/*")
+
+	if token := tokenGitHub(); token != "" {
+		cmd.Env = append(cmd.Env,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=url.https://x-access-token:"+token+"@github.com/.insteadOf",
+			"GIT_CONFIG_VALUE_0=https://github.com/",
+		)
+	}
+
+	return cmd.CombinedOutput()
 }
 
 // instalarBinarioCompilado instala un binario ya compilado en el destino del

@@ -85,6 +85,7 @@ func imprimirAyuda() {
 	fmt.Println("  slice      Fragmenta las modificaciones en commits de máximo 400 líneas.")
 	fmt.Println("  install    Descarga e instala la última release publicada desde GitHub.")
 	fmt.Println("  upgrade    Reemplaza el binario actual por la última release publicada.")
+	fmt.Println("  uninstall  Elimina el binario instalado y la configuración global.")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --version, -v   Muestra la versión instalada (equivalente a 'version').")

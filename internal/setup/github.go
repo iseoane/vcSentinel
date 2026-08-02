@@ -92,6 +92,10 @@ func esTerminalStdin() bool {
 type ReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	// URL es la dirección de la API de GitHub para el asset. Es la vía fiable
+	// de descarga en repositorios privados, donde browser_download_url
+	// responde 404 incluso con token.
+	URL string `json:"url"`
 }
 
 type ReleaseInfo struct {
@@ -164,7 +168,15 @@ func elegirAssetParaSistema(goos string, goarch string, assets []ReleaseAsset) (
 	return ReleaseAsset{}, fmt.Errorf("no se encontró un asset de release para tu sistema (%s/%s). Se esperaba el patrón %q. Assets disponibles: %s", goos, goarch, nombreEsperado, strings.Join(nombres, ", "))
 }
 
-func descargarBinario(url string, destPath string) error {
+// descargarBinario descarga un asset de release. En repositorios privados usa
+// la URL de la API del asset (Accept: application/octet-stream) en lugar del
+// browser_download_url, que responde 404 para ese caso.
+func descargarBinario(asset ReleaseAsset, destPath string) error {
+	url := asset.BrowserDownloadURL
+	if asset.URL != "" {
+		url = asset.URL
+	}
+
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("no se pudo construir la petición de descarga: %w", err)

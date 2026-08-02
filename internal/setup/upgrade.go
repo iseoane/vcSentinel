@@ -45,7 +45,7 @@ func EjecutarUpgradeDesdeGitHub() error {
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	if err := descargarBinario(asset.BrowserDownloadURL, tmpPath); err != nil {
+	if err := descargarBinario(asset, tmpPath); err != nil {
 		if fallbackGoInstall {
 			if errFallback := UpgradeViaGoInstall(); errFallback != nil {
 				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
@@ -88,8 +88,7 @@ func UpgradeViaGoInstall() error {
 		return err
 	}
 
-	cmd := exec.Command("go", "install", "github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
-	output, err := cmd.CombinedOutput()
+	output, err := ejecutarGoInstall()
 	if err != nil {
 		return fmt.Errorf("go install falló (¿GOPRIVATE y credenciales git configuradas?): %w\n%s", err, output)
 	}

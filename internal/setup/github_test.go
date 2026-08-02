@@ -98,10 +98,42 @@ func TestDescargarBinario(t *testing.T) {
 		defer servidor.Close()
 
 		destino := filepath.Join(t.TempDir(), "sentinel.exe")
-		if err := descargarBinario(servidor.URL, destino); err != nil {
+		if err := descargarBinario(ReleaseAsset{BrowserDownloadURL: servidor.URL}, destino); err != nil {
 			t.Fatalf("descargarBinario devolvió error: %v", err)
 		}
 
+		contenido, err := os.ReadFile(destino)
+		if err != nil {
+			t.Fatalf("no se pudo leer el destino: %v", err)
+		}
+		if string(contenido) != contenidoEsperado {
+			t.Errorf("contenido = %q, esperado %q", contenido, contenidoEsperado)
+		}
+	})
+
+	t.Run("usa la URL API del asset cuando está disponible", func(t *testing.T) {
+		const contenidoEsperado = "VIA-API"
+		var urlRecibida string
+		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			urlRecibida = r.URL.Path
+			if _, err := w.Write([]byte(contenidoEsperado)); err != nil {
+				t.Errorf("no se pudo escribir la respuesta: %v", err)
+			}
+		}))
+		defer servidor.Close()
+
+		destino := filepath.Join(t.TempDir(), "sentinel.exe")
+		asset := ReleaseAsset{
+			BrowserDownloadURL: "https://github.com/descarga-que-no-se-usa",
+			URL:                servidor.URL + "/assets/123",
+		}
+		if err := descargarBinario(asset, destino); err != nil {
+			t.Fatalf("descargarBinario devolvió error: %v", err)
+		}
+
+		if urlRecibida != "/assets/123" {
+			t.Errorf("se debió descargar desde la URL API del asset, se usó %q", urlRecibida)
+		}
 		contenido, err := os.ReadFile(destino)
 		if err != nil {
 			t.Fatalf("no se pudo leer el destino: %v", err)
@@ -127,7 +159,7 @@ func TestDescargarBinario(t *testing.T) {
 		defer os.Setenv("GITHUB_TOKEN", original)
 
 		destino := filepath.Join(t.TempDir(), "sentinel.exe")
-		if err := descargarBinario(servidor.URL, destino); err != nil {
+		if err := descargarBinario(ReleaseAsset{BrowserDownloadURL: servidor.URL}, destino); err != nil {
 			t.Fatalf("descargarBinario devolvió error: %v", err)
 		}
 		if !recibioToken {
@@ -142,7 +174,7 @@ func TestDescargarBinario(t *testing.T) {
 		defer servidor.Close()
 
 		destino := filepath.Join(t.TempDir(), "sentinel.exe")
-		err := descargarBinario(servidor.URL, destino)
+		err := descargarBinario(ReleaseAsset{BrowserDownloadURL: servidor.URL}, destino)
 		if err == nil {
 			t.Fatalf("se esperaba error con HTTP 404")
 		}
