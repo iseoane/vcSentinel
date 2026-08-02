@@ -1,0 +1,6 @@
+# Normalización de finales de línea: blobs siempre LF en el repo.
+# Los .bat necesitan CRLF en disco para que cmd.exe los parsee bien
+# (LF-only rompe bloques parenthesizados -> errores tipo "EM").
+* text=auto
+*.bat text eol=crlf
+*.sh text eol=lf
