@@ -19,7 +19,7 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 - Los binarios compilados van a `bin/<version>/` (nunca se commitean, están en `.gitignore`).
 - Verificación rápida de un cambio: `go build ./... && go vet ./...`
 - Publicar assets de release: `go run ./tools/release` (genera los binarios multiplataforma en `bin/<version>/`). Publicación completa con `infra/release.bat` o `infra/release.sh` (vet + assets + `gh release create`).
-- Bootstrap de instalación para quien no tiene el binario: `go install github.com/ISeoane-Quental/vas.sentinel/cmd@latest`.
+- Bootstrap de instalación para quien no tiene el binario: `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest` (el paquete se llama `sentinel`; un `go install .../cmd@latest` instalaría un binario llamado `cmd`, que colisiona con el de Windows).
 
 ## Multiplataforma (obligatorio)
 
@@ -32,7 +32,7 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 
 ## Arquitectura
 
-- `cmd/main.go` — entrypoint CLI: subcomandos `version`, `help`, `init`, `check`, `slice` (+ `install`, `upgrade`)
+- `cmd/sentinel/main.go` — entrypoint CLI: subcomandos `version`, `help`, `init`, `check`, `slice` (+ `install`, `upgrade`)
 - `internal/config` — parsea `vassentinel.yml` (model + reasoning_effort por agente), con precedencia per-proyecto (`.vas_sentinel/vassentinel.yml`) sobre global (`~/.vas_sentinel/vassentinel.yml`)
 - `internal/agentadapter` — interfaz `AgentAdapter` + `CLIAdapter` (claude/opencode) que delega la generación del mensaje de commit
 - `internal/git` — `CheckDiffLimits` (umbral de volumen), `ObtenerArchivosModificados` (numstat + untracked), plan de fragmentación y ejecución de lotes

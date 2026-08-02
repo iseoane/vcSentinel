@@ -1,17 +1,88 @@
 package setup
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 )
 
 const repoOwner = "ISeoane-Quental"
 const repoName = "vas.sentinel"
+
+// tokenGitHub devuelve el token de GitHub configurado en el entorno. Un
+// repositorio privado exige autenticación tanto para consultar la release como
+// para descargar sus assets: el cliente usa este token en ambas peticiones.
+func tokenGitHub() string {
+	return os.Getenv("GITHUB_TOKEN")
+}
+
+// PrepararTokenGitHub asegura que la operación de instalación/actualización
+// disponga de credenciales para repositorios privados. Orden de resolución:
+//  1. Variable de entorno GITHUB_TOKEN (si ya está definida, no hace nada).
+//  2. Token de gh CLI (gh auth token) cuando gh está autenticado.
+//  3. Pregunta interactiva al usuario por si dispone de un token.
+//
+// Devuelve el token resuelto (posiblemente vacío si no hay credenciales).
+func PrepararTokenGitHub() string {
+	if tokenGitHub() != "" {
+		return tokenGitHub()
+	}
+	if token := tokenDesdeGHCLI(); token != "" {
+		os.Setenv("GITHUB_TOKEN", token)
+		return token
+	}
+	return preguntarTokenGitHub()
+}
+
+// tokenDesdeGHCLI obtiene el token de gh CLI cuando el usuario ya está
+// autenticado en el repositorio (por ejemplo, porque publica releases). Devuelve
+// cadena vacía si gh no está disponible o no hay sesión iniciada.
+func tokenDesdeGHCLI() string {
+	cmd := exec.Command("gh", "auth", "token")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// preguntarTokenGitHub pide el token por teclado cuando no se pudo resolver de
+// otra forma. Devuelve cadena vacía si el usuario no dispone de token (o no
+// hay terminal interactiva).
+func preguntarTokenGitHub() string {
+	if !esTerminalStdin() {
+		return ""
+	}
+	fmt.Println("🔑 El repositorio es privado y no se encontró GITHUB_TOKEN en el entorno.")
+	fmt.Println("   Si tienes un token de GitHub, pégalo a continuación (vacío para continuar sin token):")
+	fmt.Print("   Token: ")
+
+	linea, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return ""
+	}
+	token := strings.TrimSpace(linea)
+	if token != "" {
+		os.Setenv("GITHUB_TOKEN", token)
+	}
+	return token
+}
+
+// esTerminalStdin indica si la entrada estándar es una terminal interactiva.
+// Evita que el prompt de token bloquee en tests, tuberías o ejecución no interactiva.
+func esTerminalStdin() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
 
 type ReleaseAsset struct {
 	Name               string `json:"name"`
@@ -32,7 +103,7 @@ func obtenerUltimaRelease() (ReleaseInfo, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "vas-sentinel")
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+	if token := tokenGitHub(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
@@ -89,8 +160,18 @@ func elegirAssetParaSistema(goos string, goarch string, assets []ReleaseAsset) (
 }
 
 func descargarBinario(url string, destPath string) error {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("no se pudo construir la petición de descarga: %w", err)
+	}
+	req.Header.Set("Accept", "application/octet-stream")
+	req.Header.Set("User-Agent", "vas-sentinel")
+	if token := tokenGitHub(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	client := &http.Client{}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("error de red al descargar el binario: %w", err)
 	}

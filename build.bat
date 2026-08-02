@@ -22,7 +22,7 @@ if errorlevel 1 goto :fail
 
 echo === build ===
 if not exist "bin\%VERSION%" mkdir "bin\%VERSION%"
-go build -ldflags="-s -w -X main.version=%VERSION%" -o "bin\%VERSION%\sentinel.exe" cmd/main.go
+go build -ldflags="-s -w -X main.version=%VERSION%" -o "bin\%VERSION%\sentinel.exe" cmd/sentinel/main.go
 if errorlevel 1 goto :fail
 
 echo.

@@ -23,6 +23,8 @@ agents:
 func EjecutarInstalacionCompleta() error {
 	fmt.Println("⬇️ Descargando la última versión desde GitHub...")
 
+	PrepararTokenGitHub()
+
 	release, err := obtenerUltimaRelease()
 	if err != nil {
 		return err

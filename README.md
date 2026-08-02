@@ -56,7 +56,7 @@ Verificación rápida de un cambio: `go build ./... && go vet ./...`
 
 ## Publicar una release
 
-1. Actualiza `version` en `release.yml`.
+1. Actualiza `version` en `release.yml` con una versión **superior** a la última publicada.
 2. Publica con los scripts de `infra/` (ejecutan vet, generan los assets multiplataforma y crean la release):
 
 ```bash
@@ -68,6 +68,8 @@ chmod +x infra/release.sh
 ./infra/release.sh
 ```
 
+> `tools/release` consulta la última release publicada con `gh` y **aborta si la versión de `release.yml` es igual o inferior**: debes incrementarla antes de publicar.
+
 También puedes hacerlo manualmente: `go run ./tools/release` para generar los assets en `bin/<version>/` y después `gh release create v<version> bin/<version>/*`.
 
 ## Instalación
@@ -75,7 +77,7 @@ También puedes hacerlo manualmente: `go run ./tools/release` para generar los a
 ### Opción A — Bootstrap con Go (no necesitas el binario previo)
 
 ```bash
-go install github.com/ISeoane-Quental/vas.sentinel/cmd@latest
+go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest
 ```
 
 Esto compila el binario en `$(go env GOPATH)/bin`. Asegúrate de que esa carpeta esté en tu `PATH` y comprueba con `sentinel --version`.
@@ -90,7 +92,7 @@ Esto compila el binario en `$(go env GOPATH)/bin`. Asegúrate de que esa carpeta
 - **Windows:** copia el binario a `~/.vas_sentinel/bin/` y lo añade al PATH de usuario.
 - **Debian/Linux:** instala en `/usr/local/bin/sentinel` (reintenta con `sudo`) y deja la ruta en `~/.zshrc` / `~/.bashrc`.
 
-> **Repos privados:** exporta `GITHUB_TOKEN` antes de `sentinel install` / `upgrade`.
+> **Repos privados:** `sentinel install` / `upgrade` resuelven el token en este orden: variable `GITHUB_TOKEN`, token de la sesión de `gh` (`gh auth token`) o pregunta interactiva. No necesitas exportar nada si ya tienes `gh` autenticado.
 
 ## Actualizaciones automáticas
 

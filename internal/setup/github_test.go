@@ -111,6 +111,30 @@ func TestDescargarBinario(t *testing.T) {
 		}
 	})
 
+	t.Run("envía Bearer con GITHUB_TOKEN definido", func(t *testing.T) {
+		const tokenEsperado = "token-privado-123"
+		recibioToken := false
+		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got == "Bearer "+tokenEsperado {
+				recibioToken = true
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer servidor.Close()
+
+		original := os.Getenv("GITHUB_TOKEN")
+		os.Setenv("GITHUB_TOKEN", tokenEsperado)
+		defer os.Setenv("GITHUB_TOKEN", original)
+
+		destino := filepath.Join(t.TempDir(), "sentinel.exe")
+		if err := descargarBinario(servidor.URL, destino); err != nil {
+			t.Fatalf("descargarBinario devolvió error: %v", err)
+		}
+		if !recibioToken {
+			t.Error("la descarga no envió el header Authorization con el token")
+		}
+	})
+
 	t.Run("respuesta 404 devuelve error", func(t *testing.T) {
 		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)

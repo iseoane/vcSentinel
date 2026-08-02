@@ -12,6 +12,8 @@ import (
 func EjecutarUpgradeDesdeGitHub() error {
 	fmt.Println("🔄 Buscando la última versión...")
 
+	PrepararTokenGitHub()
+
 	release, err := obtenerUltimaRelease()
 	if err != nil {
 		return err
