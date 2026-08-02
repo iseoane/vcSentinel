@@ -2,7 +2,7 @@ version: "1.0"
 active_agent: "auto"
 agents:
   claude:
-    model: "claude-5-sonnet"
+    model: "sonnet"
     reasoning_effort: "high"
   opencode:
     model: "deepseek-v4-flash"
