@@ -84,8 +84,8 @@ type DimensionResult struct {
 // Errores tipados del parseo, para que el llamador decida la degradación
 // (unavailable/block) sin adivinar.
 var (
-	ErrSalidaVacia      = errors.New("el agente devolvió una salida vacía")
-	ErrJSONLInvalido    = errors.New("ninguna línea JSONL válida con dimensión")
+	ErrSalidaVacia       = errors.New("el agente devolvió una salida vacía")
+	ErrJSONLInvalido     = errors.New("ninguna línea JSONL válida con dimensión")
 	ErrDimensionInvalida = errors.New("dimensión desconocida")
 	ErrVeredictoInvalido = errors.New("veredicto desconocido")
 )
@@ -109,11 +109,11 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 		}
 
 		var crudo struct {
-			Dim       string `json:"dim"`
-			Verdict   string `json:"verdict"`
+			Dim       string          `json:"dim"`
+			Verdict   string          `json:"verdict"`
 			Findings  []ReviewFinding `json:"findings"`
 			Questions []AgentQuestion `json:"questions"`
-			Reason    string `json:"reason"`
+			Reason    string          `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(linea), &crudo); err != nil {
 			descartadas++
