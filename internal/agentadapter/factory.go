@@ -56,6 +56,40 @@ func NombresAdaptadoresDisponibles(worktreePath string) []string {
 	return nombresAgentesEnPATH(cfg)
 }
 
+// NuevoAdaptadorConPerfil construye el CLIAdapter que corresponde a un perfil
+// resuelto: resuelve el binario (perfil -> active_agent -> auto), completa el
+// modelo y esfuerzo con los del agente cuando el perfil no los define y fija
+// el timeout de auditoría.
+func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (*CLIAdapter, error) {
+	binario := perfil.Binario
+	if binario == "" {
+		binario = cfg.ActiveAgent
+	}
+	if binario == "" || binario == "auto" {
+		disponibles := nombresAgentesEnPATH(cfg)
+		if len(disponibles) == 0 {
+			return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH")
+		}
+		binario = disponibles[0]
+	}
+
+	agente := cfg.Agents[binario]
+	modelo := perfil.Modelo
+	if modelo == "" {
+		modelo = agente.Model
+	}
+	esfuerzo := perfil.Esfuerzo
+	if esfuerzo == "" {
+		esfuerzo = agente.ReasoningEffort
+	}
+
+	return &CLIAdapter{
+		BinaryName: binario,
+		Config:     config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
+		Timeout:    cfg.Review.Timeout,
+	}, nil
+}
+
 // nombresAgentesEnPATH filtra los agentes configurados que existen en el PATH,
 // en orden alfabético. Es la lógica compartida por la resolución automática de
 // NewAgentAdapter y por NombresAdaptadoresDisponibles.

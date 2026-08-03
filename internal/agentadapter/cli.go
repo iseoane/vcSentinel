@@ -20,6 +20,14 @@ const TimeoutComando = 120 * time.Second
 type CLIAdapter struct {
 	BinaryName string
 	Config     config.AgentConfig
+	// Timeout es el límite por llamada; si es 0 se usa TimeoutComando.
+	Timeout time.Duration
+}
+
+// EjecutarPrompt ejecuta el binario con un prompt arbitrario y devuelve la
+// salida. Es la vía pública del motor de auditoría hacia el agente.
+func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
+	return c.ejecutarComando(prompt)
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
@@ -45,7 +53,11 @@ func (c *CLIAdapter) AplicarPlanRefactor(rutaArchivo string, plan string) (strin
 // con TimeoutComando si el agente no responde: un agente que espera entrada
 // interactiva no debe colgar la auditoría.
 func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
-	return c.ejecutarComandoConTimeout(prompt, TimeoutComando)
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = TimeoutComando
+	}
+	return c.ejecutarComandoConTimeout(prompt, timeout)
 }
 
 // ejecutarComandoConTimeout es la variante parametrizada de ejecutarComando;

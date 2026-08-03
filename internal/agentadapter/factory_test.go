@@ -1,257 +1,77 @@
 package agentadapter
 
 import (
-	"os"
-	"path/filepath"
-	"reflect"
-	"runtime"
-	"strings"
 	"testing"
+	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-func setHome(t *testing.T, home string) {
-	t.Helper()
-	// os.UserHomeDir() usa HOME en Unix y USERPROFILE en Windows.
-	claves := []string{"HOME"}
-	if runtime.GOOS == "windows" {
-		claves = append(claves, "USERPROFILE")
+func TestNuevoAdaptadorConPerfilExplicito(t *testing.T) {
+	cfg := config.Config{
+		ActiveAgent: "opencode",
+		Agents: map[string]config.AgentConfig{
+			"opencode": {Model: "base", ReasoningEffort: "medium"},
+		},
+		Profiles: map[string]config.ProfileConfig{
+			"deep": {Agent: "opencode", Model: "claude-sonnet", ReasoningEffort: "max"},
+		},
+		Review: config.ReviewConfig{Timeout: 30 * time.Second, Parallel: 2, Dims: map[string]string{"security": "deep"}},
 	}
-	originales := make(map[string]string, len(claves))
-	for _, clave := range claves {
-		originales[clave] = os.Getenv(clave)
-	}
-	for _, clave := range claves {
-		if err := os.Setenv(clave, home); err != nil {
-			t.Fatalf("no se pudo fijar %s: %v", clave, err)
-		}
-	}
-	t.Cleanup(func() {
-		for clave, valor := range originales {
-			os.Setenv(clave, valor)
-		}
-	})
-}
 
-func crearFalsoBinario(t *testing.T, dir string, nombre string) string {
-	t.Helper()
-	ruta := filepath.Join(dir, nombre)
-	var contenido string
-	if runtime.GOOS == "windows" {
-		ruta += ".cmd"
-		contenido = "@echo off\r\nexit /b 0\r\n"
-	} else {
-		contenido = "#!/bin/sh\nexit 0\n"
-	}
-	if err := os.WriteFile(ruta, []byte(contenido), 0755); err != nil {
-		t.Fatalf("no se pudo crear el binario falso %s: %v", ruta, err)
-	}
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(ruta, 0755); err != nil {
-			t.Fatalf("no se pudieron asignar permisos a %s: %v", ruta, err)
-		}
-	}
-	return ruta
-}
-
-func fijarPATH(t *testing.T, dirs ...string) {
-	t.Helper()
-	// PATH controlado y determinista: solo los directorios indicados.
-	// No se reusa el PATH real para no depender de agentes instalados.
-	valor := strings.Join(dirs, string(os.PathListSeparator))
-	t.Setenv("PATH", valor)
-}
-
-func escribirConfigPerProyecto(t *testing.T, worktree string, contenido string) {
-	t.Helper()
-	ruta := filepath.Join(worktree, "sentinel", "vassentinel.yml")
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
-		t.Fatalf("no se pudo crear el directorio de config: %v", err)
-	}
-	if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
-		t.Fatalf("no se pudo escribir la config: %v", err)
-	}
-}
-
-func TestNewAgentAdapterResuelveAutoDesdePATH(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "opencode")
-	fijarPATH(t, dirBinarios)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	adapter, err := NewAgentAdapter(worktree)
+	perfil := config.ResolverPerfil(cfg, "security", "")
+	adapter, err := NuevoAdaptadorConPerfil(cfg, perfil)
 	if err != nil {
-		t.Fatalf("NewAgentAdapter devolvió error: %v", err)
+		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
 	}
-	cli, ok := adapter.(*CLIAdapter)
-	if !ok {
-		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+	if adapter.BinaryName != "opencode" {
+		t.Errorf("binario = %q, esperado opencode", adapter.BinaryName)
 	}
-	if cli.BinaryName != "opencode" {
-		t.Errorf("BinaryName esperado 'opencode', obtuve %q", cli.BinaryName)
+	if adapter.Config.Model != "claude-sonnet" || adapter.Config.ReasoningEffort != "max" {
+		t.Errorf("config = %+v, esperado claude-sonnet/max del perfil", adapter.Config)
+	}
+	if adapter.Timeout != 30*time.Second {
+		t.Errorf("timeout = %v, esperado 30s de review.timeout", adapter.Timeout)
 	}
 }
 
-func TestNewAgentAdapterUsaActiveAgentDeConfig(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
+func TestNuevoAdaptadorConPerfilHeredaDelAgente(t *testing.T) {
+	cfg := config.Config{
+		ActiveAgent: "claude",
+		Agents: map[string]config.AgentConfig{
+			"claude": {Model: "claude-3-5-sonnet", ReasoningEffort: "high"},
+		},
+		Profiles: map[string]config.ProfileConfig{
+			"normal": {},
+		},
+		Review: config.ReviewConfig{Dims: map[string]string{}},
+	}
 
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "claude")
-	fijarPATH(t, dirBinarios)
-
-	escribirConfigPerProyecto(t, worktree, "active_agent: \"claude\"\n")
-	t.Setenv("MY_SUB_AGENT", "")
-
-	adapter, err := NewAgentAdapter(worktree)
+	perfil := config.ResolverPerfil(cfg, "logic", "")
+	adapter, err := NuevoAdaptadorConPerfil(cfg, perfil)
 	if err != nil {
-		t.Fatalf("NewAgentAdapter devolvió error: %v", err)
+		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
 	}
-	cli, ok := adapter.(*CLIAdapter)
-	if !ok {
-		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+	if adapter.BinaryName != "claude" {
+		t.Errorf("binario = %q, esperado claude (active_agent)", adapter.BinaryName)
 	}
-	if cli.BinaryName != "claude" {
-		t.Errorf("BinaryName esperado 'claude', obtuve %q", cli.BinaryName)
-	}
-}
-
-func TestNewAgentAdapterMYSudAgentPredomina(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "claude")
-	fijarPATH(t, dirBinarios)
-
-	// La config per-proyecto dice "opencode" pero MY_SUB_AGENT manda.
-	escribirConfigPerProyecto(t, worktree, "active_agent: \"opencode\"\n")
-	t.Setenv("MY_SUB_AGENT", "claude")
-
-	adapter, err := NewAgentAdapter(worktree)
-	if err != nil {
-		t.Fatalf("NewAgentAdapter devolvió error: %v", err)
-	}
-	cli, ok := adapter.(*CLIAdapter)
-	if !ok {
-		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
-	}
-	if cli.BinaryName != "claude" {
-		t.Errorf("BinaryName esperado 'claude' por MY_SUB_AGENT, obtuve %q", cli.BinaryName)
+	if adapter.Config.Model != "claude-3-5-sonnet" {
+		t.Errorf("modelo = %q, esperado heredar del agente", adapter.Config.Model)
 	}
 }
 
-func TestNewAgentAdapterSinBinariosDevuelveError(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirVacio := t.TempDir()
-	fijarPATH(t, dirVacio)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	_, err := NewAgentAdapter(worktree)
-	if err == nil {
-		t.Fatalf("se esperaba error sin agentes disponibles en el PATH")
+func TestNuevoAdaptadorSinAgentesEnPATH(t *testing.T) {
+	cfg := config.Config{
+		ActiveAgent: "auto",
+		Agents: map[string]config.AgentConfig{
+			"agente-inexistente-xyz": {Model: "m", ReasoningEffort: "low"},
+		},
+		Profiles: map[string]config.ProfileConfig{"normal": {}},
+		Review:   config.ReviewConfig{Dims: map[string]string{}},
 	}
-	if !strings.Contains(err.Error(), "ningun agente") {
-		t.Errorf("el error debe mencionar 'ningun agente', obtuve: %v", err)
-	}
-}
 
-func TestNombresAdaptadoresDisponiblesOrdenados(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "opencode")
-	crearFalsoBinario(t, dirBinarios, "claude")
-	fijarPATH(t, dirBinarios)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	nombres := NombresAdaptadoresDisponibles(worktree)
-	esperado := []string{"claude", "opencode"}
-	if !reflect.DeepEqual(nombres, esperado) {
-		t.Errorf("NombresAdaptadoresDisponibles = %v, esperado %v", nombres, esperado)
-	}
-}
-
-func TestNombresAdaptadoresDisponiblesSoloLosDelPATH(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "claude")
-	fijarPATH(t, dirBinarios)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	nombres := NombresAdaptadoresDisponibles(worktree)
-	esperado := []string{"claude"}
-	if !reflect.DeepEqual(nombres, esperado) {
-		t.Errorf("NombresAdaptadoresDisponibles = %v, esperado %v", nombres, esperado)
-	}
-}
-
-func TestNombresAdaptadoresDisponiblesVacioSinPATH(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirVacio := t.TempDir()
-	fijarPATH(t, dirVacio)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	nombres := NombresAdaptadoresDisponibles(worktree)
-	if len(nombres) != 0 {
-		t.Errorf("sin binarios debería devolver lista vacía, obtuve %v", nombres)
-	}
-}
-
-func TestNewAgentAdapterNamed(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "claude")
-	fijarPATH(t, dirBinarios)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	adapter, err := NewAgentAdapterNamed(worktree, "claude")
-	if err != nil {
-		t.Fatalf("NewAgentAdapterNamed devolvió error: %v", err)
-	}
-	cli, ok := adapter.(*CLIAdapter)
-	if !ok {
-		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
-	}
-	if cli.BinaryName != "claude" {
-		t.Errorf("BinaryName esperado 'claude', obtuve %q", cli.BinaryName)
-	}
-}
-
-func TestNewAgentAdapterNamedDesconocidoDevuelveError(t *testing.T) {
-	home := t.TempDir()
-	worktree := t.TempDir()
-	setHome(t, home)
-
-	dirBinarios := t.TempDir()
-	crearFalsoBinario(t, dirBinarios, "claude")
-	fijarPATH(t, dirBinarios)
-	t.Setenv("MY_SUB_AGENT", "")
-
-	_, err := NewAgentAdapterNamed(worktree, "gemini")
-	if err == nil {
-		t.Fatal("se esperaba error con agente desconocido")
-	}
-	if !strings.Contains(err.Error(), "gemini") {
-		t.Errorf("el error debe mencionar el nombre del agente, obtuve: %v", err)
+	perfil := config.ResolverPerfil(cfg, "logic", "")
+	if _, err := NuevoAdaptadorConPerfil(cfg, perfil); err == nil {
+		t.Error("sin agentes en el PATH se esperaba un error explícito")
 	}
 }
