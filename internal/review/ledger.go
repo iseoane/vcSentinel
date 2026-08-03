@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -58,6 +60,21 @@ func (l *Ledger) LeerFicha(sha string) (*Ficha, error) {
 		return nil, err
 	}
 	return &ficha, nil
+}
+
+// ListarFichas devuelve los SHAs con ficha de auditoría guardada, en orden
+// alfabético. No lee el contenido: para eso se usa LeerFicha por SHA.
+func (l *Ledger) ListarFichas() ([]string, error) {
+	coincidencias, err := filepath.Glob(filepath.Join(l.dir, "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	shas := make([]string, 0, len(coincidencias))
+	for _, ruta := range coincidencias {
+		shas = append(shas, strings.TrimSuffix(filepath.Base(ruta), ".json"))
+	}
+	sort.Strings(shas)
+	return shas, nil
 }
 
 // GuardarRevision añade una revisión a la ficha del SHA (creándola si es la

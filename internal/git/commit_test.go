@@ -126,3 +126,119 @@ func TestArchivosDeCommit(t *testing.T) {
 		t.Errorf("archivos = %+v, esperado [a.go]", archivos)
 	}
 }
+
+func TestSHAsHastaCronologico(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	shas, err := SHAsHasta("HEAD")
+	if err != nil {
+		t.Fatalf("SHAsHasta devolvió error: %v", err)
+	}
+	if len(shas) != 3 {
+		t.Fatalf("SHAsHasta = %d commits, esperado 3", len(shas))
+	}
+	primero, _ := MensajeCommit(shas[0])
+	ultimo, _ := MensajeCommit(shas[2])
+	if primero != "estado inicial" || ultimo != "feat(b): segundo commit" {
+		t.Errorf("orden roto: %q ... %q", primero, ultimo)
+	}
+}
+
+func TestRamaActual(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	ejecutarGit(t, dir, "checkout", "-b", "feature/x")
+	rama, err := RamaActual()
+	if err != nil {
+		t.Fatalf("RamaActual devolvió error: %v", err)
+	}
+	if rama != "feature/x" {
+		t.Errorf("RamaActual = %q, esperado feature/x", rama)
+	}
+}
+
+func TestResolverSHA(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	head, _ := SHAHead()
+	resuelto, err := ResolverSHA("HEAD")
+	if err != nil {
+		t.Fatalf("ResolverSHA(HEAD) devolvió error: %v", err)
+	}
+	if resuelto != head {
+		t.Errorf("ResolverSHA(HEAD) = %q, esperado %q", resuelto, head)
+	}
+
+	if _, err := ResolverSHA("HEAD~1"); err != nil {
+		t.Errorf("ResolverSHA(HEAD~1) devolvió error: %v", err)
+	}
+	if _, err := ResolverSHA("no-existe-esta-ref"); err == nil {
+		t.Error("ResolverSHA(ref inválida) debería fallar")
+	}
+}
+
+func TestExisteCommit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	head, _ := SHAHead()
+	if !ExisteCommit(head) {
+		t.Error("ExisteCommit(HEAD) = false, esperado true")
+	}
+	if ExisteCommit(strings.Repeat("0", 40)) {
+		t.Error("ExisteCommit(sha inexistente) = true, esperado false")
+	}
+}
+
+func TestUpstreamOMainEligeMain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	// Sin upstream: debe caer en la rama main o master local.
+	ejecutarGit(t, dir, "checkout", "-b", "main")
+	base, err := UpstreamOMain()
+	if err != nil {
+		t.Fatalf("UpstreamOMain devolvió error: %v", err)
+	}
+	if base != "main" {
+		t.Errorf("UpstreamOMain = %q, esperado main", base)
+	}
+}

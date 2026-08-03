@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"strings"
 )
 
@@ -54,6 +55,32 @@ func SHAsRango(desde, hasta string) ([]string, error) {
 	return shas, nil
 }
 
+// SHAsHasta devuelve los SHAs de todos los commits alcanzables desde la
+// expresión, del más antiguo al más reciente. Útil para --all: auditar todo
+// el historial pendiente.
+func SHAsHasta(expresion string) ([]string, error) {
+	salida, err := ejecutarGitSalida("rev-list", "--reverse", expresion)
+	if err != nil {
+		return nil, err
+	}
+	var shas []string
+	for _, linea := range strings.Split(salida, "\n") {
+		if sha := strings.TrimSpace(linea); sha != "" {
+			shas = append(shas, sha)
+		}
+	}
+	return shas, nil
+}
+
+// RamaActual devuelve el nombre de la rama actual (corta).
+func RamaActual() (string, error) {
+	salida, err := ejecutarGitSalida("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(salida), nil
+}
+
 // ArchivosDeCommit devuelve las rutas de los archivos que toca un commit,
 // útiles para deducir el saco (capa) de la auditoría.
 func ArchivosDeCommit(sha string) ([]string, error) {
@@ -68,4 +95,32 @@ func ArchivosDeCommit(sha string) ([]string, error) {
 		}
 	}
 	return archivos, nil
+}
+
+// ResolverSHA devuelve el SHA completo de una expresión (HEAD, HEAD~2, un sha
+// abreviado...).
+func ResolverSHA(expresion string) (string, error) {
+	salida, err := ejecutarGitSalida("rev-parse", "--verify", expresion+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(salida), nil
+}
+
+// ExisteCommit indica si el SHA existe como commit en el almacén de objetos.
+func ExisteCommit(sha string) bool {
+	_, err := ejecutarGitSalida("cat-file", "-e", sha+"^{commit}")
+	return err == nil
+}
+
+// UpstreamOMain devuelve el ref base para auditar cadenas de commits: el
+// upstream si existe; si no, la rama main local; si no, master.
+func UpstreamOMain() (string, error) {
+	for _, ref := range []string{"@{u}", "main", "master"} {
+		salida, err := ejecutarGitSalida("rev-parse", "--verify", "--quiet", ref)
+		if err == nil && strings.TrimSpace(salida) != "" {
+			return ref, nil
+		}
+	}
+	return "", errors.New("no se encontró upstream ni rama main/master para la cadena")
 }
