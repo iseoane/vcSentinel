@@ -45,7 +45,13 @@ func (c *CLIAdapter) AplicarPlanRefactor(rutaArchivo string, plan string) (strin
 // con TimeoutComando si el agente no responde: un agente que espera entrada
 // interactiva no debe colgar la auditoría.
 func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
-	ctx, cancelar := context.WithTimeout(context.Background(), TimeoutComando)
+	return c.ejecutarComandoConTimeout(prompt, TimeoutComando)
+}
+
+// ejecutarComandoConTimeout es la variante parametrizada de ejecutarComando;
+// permite a los tests acortar la espera sin tocar la constante de producción.
+func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Duration) (string, error) {
+	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
 	defer cancelar()
 
 	cmd := exec.CommandContext(ctx, c.BinaryName, c.comandoArgs(prompt)...)
