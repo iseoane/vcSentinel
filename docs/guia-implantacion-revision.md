@@ -41,6 +41,10 @@ de Git del repositorio.
 - `slice` en modo plan: propone lotes y mensajes, no commitea sin aprobación.
 - Los commits de slice usan `--no-verify`: invocar slice ES el desbloqueo y
   cada lote ya está validado.
+- **Dogfooding**: el desarrollo de VAS Sentinel se hace con su propio
+  guardián — `check` antes de cada cambio, `slice` al superar 400. Cuando la
+  auditoría exista (fase 1+), los commits de las propias fases se auditan con
+  `sentinel review` y los resultados quedan en el ledger local.
 
 ## 4. Ubicación del estado: `<git-dir>/vas-sentinel/`
 
@@ -208,7 +212,65 @@ Cada línea es un objeto:
 | `3` | `questions_pending` (el agente pidió aclaraciones) |
 | `4` | `provider_unavailable` (timeout, rate-limit, auth) |
 
-## 10. Semáforo y concurrencia
+## 10. Modelo, esfuerzo y perfiles
+
+No todas las auditorías merecen el mismo modelo ni el mismo presupuesto de
+razonamiento. La configuración distingue cuatro piezas:
+
+| Pieza | Qué es | Ejemplo |
+|---|---|---|
+| Agente (binario) | El programa que ejecuta el trabajo | `claude`, `opencode` |
+| Modelo | El cerebro dentro del agente | `deepseek-v4-flash`, `claude-3-5-sonnet` |
+| Esfuerzo | Cuánto razona el modelo | `low` / `high` / `max` |
+| Perfil | Receta con nombre: agente + modelo + esfuerzo | `cheap`, `normal`, `deep` |
+
+**Relación**: el agente es el contenedor, el modelo piensa dentro de él y el
+esfuerzo decide cuánto piensa. Un mismo agente puede servir varios modelos
+según su configuración local (p. ej. opencode lanza deepseek o claude según
+el proveedor activo); el modelo del perfil se inyecta por variables de entorno
+(`CLAUDE_CODE_MODEL` / `OPENCODE_MODEL` + su variante de razonamiento).
+
+**Decisión en runtime para cada dimensión**:
+
+1. ¿Qué binario? El del perfil asignado a la dimensión; si el perfil no lo
+   define, el de `active_agent` (`auto` = primer agente disponible en el PATH).
+2. ¿Qué modelo/esfuerzo? Los del perfil; si el perfil no los define, los de
+   `agents[binario]`.
+
+```yaml
+active_agent: auto
+agents:
+  claude:   { model: claude-3-5-sonnet,  reasoning_effort: high }
+  opencode: { model: deepseek-v4-flash,  reasoning_effort: max }
+profiles:
+  cheap:  { model: deepseek-v4-flash,  reasoning_effort: low }
+  normal: {}                                  # receta vacía = configuración base
+  deep:   { model: claude-3-5-sonnet,  reasoning_effort: max }
+review:
+  dims:
+    spec: cheap
+    style: cheap
+    tests: normal
+    logic: normal
+    design: deep
+    security: deep
+```
+
+**Criterio de asignación**: `style` y `spec` (comparar el diff contra el
+mensaje) son baratos; `tests` y `logic` medios; `design` y `security` son los
+más caros y los que más se benefician de un modelo fuerte. El beneficio
+principal es de coste, no de calidad: un perfil no transforma un modelo débil.
+
+**Override por invocación**: `sentinel review --profile deep` fuerza un perfil
+sobre el mapa de dimensiones (p. ej. para un commit muy grande en una
+dimensión nominalmente barata). El perfil usado queda registrado en la ficha
+(campo `model`) para trazabilidad.
+
+Este documento fija el modelo conceptual (las 4 piezas, la jerarquía y la
+decisión en runtime); la sintaxis exacta del YAML y los valores por defecto
+los decide el implementador en la fase 1.
+
+## 11. Semáforo y concurrencia
 
 - Auditorías de dimensiones en paralelo, default 2 (semáforo).
 - Timeout obligatorio por llamada (`context.WithTimeout` en `cli.go`), default
@@ -216,7 +278,7 @@ Cada línea es un objeto:
 - El agente automático (`CLIAdapter`) es one-shot y no interactivo; el timeout
   evita cuelgues de procesos que esperan entrada.
 
-## 11. Comandos PR
+## 12. Comandos PR
 
 ### 11.1 `sentinel pr review`
 
@@ -242,7 +304,7 @@ Cada línea es un objeto:
 - **PR descomunal**: umbral de 8 unidades de trabajo (commits) → propone PRs
   encadenadas (`--chain-pr`) en lugar de una PR gigante.
 
-## 12. Eventos y estado
+## 13. Eventos y estado
 
 - `events.jsonl` (append-only, `O_APPEND`, una línea por operación):
 
@@ -256,10 +318,11 @@ Cada línea es un objeto:
 - El ledger puede mentir si la IA aprueba mal: `status` muestra modelo y
   revisión para trazabilidad.
 
-## 13. Riesgos declarados
+## 14. Riesgos declarados
 
 1. La calidad del veredicto = calidad del modelo; un modelo débil puede
-   aprobar defectos. Mitigación: modelo configurable, revisión visible.
+   aprobar defectos. Mitigación: perfil configurable por dimensión (sección 10),
+   revisión visible en `status`.
 2. El ledger es local: dos máquinas no comparten fichas. Mitigación:
    `pr review` re-audita lo que falte; el ledger es caché, no autoridad.
 3. La revisión local no ve problemas globales (arquitectura entre commits).
@@ -267,7 +330,7 @@ Cada línea es un objeto:
 4. Re-auditar no es gratuito: `revisions[]` crece. Mitigación: solo crece con
    acciones explícitas; `pr review` usa `--only-unaudited`.
 
-## 14. Roadmap de fases
+## 15. Roadmap de fases
 
 ### Fase 0 — Infraestructura (este documento + código base)
 
@@ -285,6 +348,9 @@ Cada línea es un objeto:
 - `internal/review/engine.go`: semáforo, `--chain`, gates, degradación,
   `--answer`, exit codes.
 - `internal/review/prompts.go`: plantillas dimensión × saco.
+- Perfiles de agente/esfuerzo (sección 10): `profiles` + `review.dims` en
+  `vassentinel.yml`, resolución binario → modelo → esfuerzo, override
+  `--profile`.
 - Subcomandos `rebase`, `lint`, `review`, `status`.
 
 ### Fase 2 — Renderizado y PR
