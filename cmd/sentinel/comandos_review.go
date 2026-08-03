@@ -1,0 +1,214 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+)
+
+// ejecutarReview audita uno o más commits contra el motor y guarda la ficha en
+// el ledger. Códigos de salida (guía §9): 0 ok/warn, 1 block, 3 questions,
+// 4 provider_unavailable. Con --gate, además, cualquier CRITICAL salta a 1.
+func ejecutarReview(worktree string, args []string) {
+	flags, err := parsearFlagsAuditoria(args)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg := config.CargarConfiguracionLocal(worktree)
+	gitDir, err := git.ObtenerGitDir()
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+
+	shas, err := resolverShasAuditoria(flags)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	if len(shas) == 0 {
+		fmt.Println("✅ No hay commits que auditar.")
+		return
+	}
+
+	ledger := review.NuevoLedger(gitDir)
+	detalle := fmt.Sprintf("flags: all=%v chain=%v gate=%v dims=%q", flags.all, flags.chain, flags.gate, flags.dims)
+	exitFinal := 0
+
+	for _, sha := range shas {
+		mensaje, err := git.MensajeCommit(sha)
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudo leer el mensaje: %v\n", sha[:8], err)
+			continue
+		}
+		diff, err := git.DiffCommit(sha)
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudo leer el diff: %v\n", sha[:8], err)
+			continue
+		}
+		archivos, err := git.ArchivosDeCommit(sha)
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudieron leer los archivos: %v\n", sha[:8], err)
+			continue
+		}
+
+		dims := flags.dims
+		if len(dims) == 0 {
+			dims = review.DimensionesParaArchivos(archivos)
+		}
+
+		fabrica := func(dimension string) (review.AuditorAgente, string, error) {
+			perfil := config.ResolverPerfil(cfg, dimension, flags.profile)
+			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+			if err != nil {
+				return nil, perfil.Nombre, err
+			}
+			return adapter, perfil.Nombre, nil
+		}
+
+		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, review.OpcionesAuditoria{
+			SHA:            sha,
+			Mensaje:        mensaje,
+			Diff:           diff,
+			Dims:           dims,
+			Respuestas:     flags.answer,
+			PerfilOverride: flags.profile,
+		})
+
+		modelo := flags.profile
+		if modelo == "" {
+			modelo = "default"
+		}
+		revision := review.Revision{At: time.Now(), Result: resultado.Veredicto, Dims: dimsResultadosParaFicha(resultado.Dims)}
+		if err := ledger.GuardarRevision(sha, mensaje, calcularBucket(archivos), modelo, revision); err != nil {
+			fmt.Printf("⚠️ %s: no se pudo guardar la ficha: %v\n", sha[:8], err)
+		}
+
+		fmt.Print(resultado.String())
+
+		exit := codigoSalidaVeredicto(resultado.Veredicto)
+		if flags.gate && tieneHallazgosCriticos(resultado) {
+			exit = 1
+		}
+		if exit > exitFinal {
+			exitFinal = exit
+		}
+		if err := ops.RegistrarEvento(gitDir, "review", exit, []string{sha}, detalle, worktree); err != nil {
+			fmt.Printf("⚠️ No se pudo registrar el evento: %v\n", err)
+		}
+	}
+	os.Exit(exitFinal)
+}
+
+// resolverShasAuditoria calcula los SHAs a auditar según los flags: un solo
+// commit (default), la cadena desde el base (--chain) o todos los commits sin
+// ficha (--all).
+func resolverShasAuditoria(flags flagsAuditoria) ([]string, error) {
+	switch {
+	case flags.chain:
+		base, err := git.UpstreamOMain()
+		if err != nil {
+			return nil, err
+		}
+		return git.SHAsRango(base, flags.target)
+	case flags.all:
+		todos, err := git.SHAsHasta(flags.target)
+		if err != nil {
+			return nil, err
+		}
+		gitDir, err := git.ObtenerGitDir()
+		if err != nil {
+			return nil, err
+		}
+		ledger := review.NuevoLedger(gitDir)
+		auditados, err := ledger.ListarFichas()
+		if err != nil {
+			return nil, err
+		}
+		yaAuditados := map[string]bool{}
+		for _, sha := range auditados {
+			yaAuditados[sha] = true
+		}
+		var pendientes []string
+		for _, sha := range todos {
+			if !yaAuditados[sha] {
+				pendientes = append(pendientes, sha)
+			}
+		}
+		return pendientes, nil
+	default:
+		sha, err := git.ResolverSHA(flags.target)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudo resolver %q: %v", flags.target, err)
+		}
+		return []string{sha}, nil
+	}
+}
+
+// codigoSalidaVeredicto traduce el veredicto global al código de salida según
+// la guía §9: ok/warn 0, block 1, question 3, unavailable 4.
+func codigoSalidaVeredicto(veredicto string) int {
+	switch veredicto {
+	case review.VerdictBlock:
+		return 1
+	case review.VerdictQuestion:
+		return 3
+	case review.VerdictUnavailable:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// tieneHallazgosCriticos indica si alguna dimensión reportó CRITICAL.
+func tieneHallazgosCriticos(resultado review.ResultadoAuditoria) bool {
+	for _, rd := range resultado.Dims {
+		if rd.Resultado == nil {
+			continue
+		}
+		for _, hallazgo := range rd.Resultado.Findings {
+			if hallazgo.Severity == review.SevCritical {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dimsResultadosParaFicha copia los resultados de las dimensiones a la forma
+// que persiste la ficha (sin el error ni el perfil, que ya van en otros campos).
+func dimsResultadosParaFicha(dims []review.ResultadoDimension) []review.DimensionResult {
+	resultados := make([]review.DimensionResult, 0, len(dims))
+	for _, rd := range dims {
+		if rd.Resultado != nil {
+			resultados = append(resultados, *rd.Resultado)
+		}
+	}
+	return resultados
+}
+
+// calcularBucket deduce el saco del commit: "mixto" si toca varias capas; si
+// no, la capa de su único archivo (o "backend" como último recurso).
+func calcularBucket(archivos []string) string {
+	capas := map[string]bool{}
+	for _, archivo := range archivos {
+		capas[git.ClasificarCapa(archivo)] = true
+	}
+	if len(capas) == 1 {
+		for capa := range capas {
+			return capa
+		}
+	}
+	if len(capas) == 0 {
+		return "backend"
+	}
+	return "mixto"
+}

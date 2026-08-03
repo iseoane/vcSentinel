@@ -48,6 +48,14 @@ func main() {
 		ejecutarCheck(worktreeActual)
 	case "slice":
 		ejecutarSlice(worktreeActual)
+	case "review":
+		ejecutarReview(worktreeActual, os.Args[2:])
+	case "lint":
+		ejecutarLint(worktreeActual)
+	case "rebase":
+		ejecutarRebase()
+	case "status":
+		ejecutarStatus(worktreeActual, os.Args[2:])
 	case "install":
 		if err := setup.EjecutarInstalacionCompleta(); err != nil {
 			fmt.Printf("❌ Error en la instalación: %v\n", err)
@@ -64,14 +72,14 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | check | slice | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | check | slice | review | lint | rebase | status | install | upgrade | uninstall]")
 }
 
 func imprimirAyuda() {
@@ -83,6 +91,10 @@ func imprimirAyuda() {
 	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook global pre-commit. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
 	fmt.Println("  check      Audita el volumen de líneas modificadas del worktree activo.")
 	fmt.Println("  slice      Fragmenta las modificaciones en commits de máximo 400 líneas.")
+	fmt.Println("  review     Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha. Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\".")
+	fmt.Println("  lint       Ejecuta los comandos de lint_commands de la configuración.")
+	fmt.Println("  rebase     Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
+	fmt.Println("  status     Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con --json emite JSON.")
 	fmt.Println("  install    Descarga e instala la última release publicada desde GitHub.")
 	fmt.Println("  upgrade    Reemplaza el binario actual por la última release publicada.")
 	fmt.Println("  uninstall  Elimina el binario instalado y la configuración global.")
