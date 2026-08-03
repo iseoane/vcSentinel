@@ -2,14 +2,20 @@ package agentadapter
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
+
+// TimeoutComando es el límite de una llamada al agente (120 s). La fase 1 lo
+// hace configurable vía review.timeout en vassentinel.yml.
+const TimeoutComando = 120 * time.Second
 
 type CLIAdapter struct {
 	BinaryName string
@@ -35,9 +41,14 @@ func (c *CLIAdapter) AplicarPlanRefactor(rutaArchivo string, plan string) (strin
 
 // ejecutarComando ejecuta el binario del agente con el prompt dado y devuelve
 // la salida estándar completa (recortada). Adapta los argumentos al binario:
-// claude usa "-p <prompt>"; opencode usa "run <prompt>".
+// claude usa "-p <prompt>"; opencode usa "run <prompt>". El proceso se corta
+// con TimeoutComando si el agente no responde: un agente que espera entrada
+// interactiva no debe colgar la auditoría.
 func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
-	cmd := exec.Command(c.BinaryName, c.comandoArgs(prompt)...)
+	ctx, cancelar := context.WithTimeout(context.Background(), TimeoutComando)
+	defer cancelar()
+
+	cmd := exec.CommandContext(ctx, c.BinaryName, c.comandoArgs(prompt)...)
 	env := os.Environ()
 
 	if c.esClaude() {
