@@ -28,16 +28,16 @@ func TestClasificarCapa(t *testing.T) {
 		{nombre: "extension json", ruta: "config.json", esperado: "config"},
 		{nombre: "extension toml", ruta: "config.toml", esperado: "config"},
 		{nombre: "requirements.txt por nombre", ruta: "requirements.txt", esperado: "config"},
-		{nombre: "extension yml todavia no reconocida", ruta: "config.yml", esperado: "backend"},
+		{nombre: "extension yml reconocida como config", ruta: "config.yml", esperado: "config"},
 		{nombre: "codigo go en cmd", ruta: "cmd/main.go", esperado: "backend"},
 		{nombre: "test en subcarpeta precede a backend", ruta: "internal/mi_test/helper.go", esperado: "test"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := clasificarCapa(tt.ruta)
+			obtenido := ClasificarCapa(tt.ruta)
 			if obtenido != tt.esperado {
-				t.Errorf("clasificarCapa(%q) = %q, esperado %q", tt.ruta, obtenido, tt.esperado)
+				t.Errorf("ClasificarCapa(%q) = %q, esperado %q", tt.ruta, obtenido, tt.esperado)
 			}
 		})
 	}

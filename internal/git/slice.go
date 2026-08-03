@@ -69,7 +69,7 @@ func archivosRastreados() ([]ArchivoModificado, error) {
 			continue // Ignora binarios marcados con "-"
 		}
 		ruta := campos[2]
-		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: addCount, Capa: clasificarCapa(ruta)})
+		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: addCount, Capa: ClasificarCapa(ruta)})
 	}
 	return resultado, nil
 }
@@ -96,7 +96,7 @@ func archivosNoRastreados() ([]ArchivoModificado, error) {
 		if err != nil {
 			return nil, fmt.Errorf("no se pudo contar las líneas de %s: %w", ruta, err)
 		}
-		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: lineas, Capa: clasificarCapa(ruta)})
+		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: lineas, Capa: ClasificarCapa(ruta)})
 	}
 	return resultado, nil
 }
@@ -149,8 +149,8 @@ func contarLineasFisicas(ruta string) (int, error) {
 	return lineas, nil
 }
 
-// clasificarCapa determina la capa de un archivo según su ruta y extensión.
-func clasificarCapa(ruta string) string {
+// ClasificarCapa determina la capa de un archivo según su ruta y extensión.
+func ClasificarCapa(ruta string) string {
 	ext := filepath.Ext(ruta)
 	base := filepath.Base(ruta)
 	rutaLower := strings.ToLower(ruta)
@@ -159,7 +159,7 @@ func clasificarCapa(ruta string) string {
 		return "test"
 	} else if strings.Contains(rutaLower, "frontend") || ext == ".tsx" || ext == ".jsx" || ext == ".css" || ext == ".scss" {
 		return "frontend"
-	} else if ext == ".json" || ext == ".yaml" || ext == ".toml" || ext == ".lock" || ext == ".sum" || base == "requirements.txt" {
+	} else if ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" || ext == ".lock" || ext == ".sum" || base == "requirements.txt" {
 		return "config"
 	}
 	return "backend"
