@@ -12,20 +12,24 @@ import (
 
 // Revision es una auditoría concreta de un SHA. El array revisions[] es
 // append-only: re-auditar el mismo SHA añade una revisión, nunca pisa la
-// anterior. El veredicto mostrado es el de la última revisión.
+// anterior. El veredicto mostrado es el de la última revisión. Fixed indica
+// que esta revisión salió sin críticos cuando la anterior estaba en block.
 type Revision struct {
 	At     time.Time         `json:"at"`
 	Result string            `json:"result"`
+	Fixed  bool              `json:"fixed,omitempty"`
 	Dims   []DimensionResult `json:"dims"`
 }
 
 // Ficha es el registro completo de auditoría de un commit, guardado como
-// <git-dir>/vas-sentinel/<sha>.json.
+// <git-dir>/vas-sentinel/<sha>.json. FixedIn es el SHA del commit que
+// corrigió los hallazgos (se rellena cuando un fix re-audita los archivos).
 type Ficha struct {
 	SHA       string     `json:"sha"`
 	Message   string     `json:"message"`
 	Bucket    string     `json:"bucket"`
 	Model     string     `json:"model"`
+	FixedIn   string     `json:"fixed_in,omitempty"`
 	Revisions []Revision `json:"revisions"`
 }
 
@@ -99,7 +103,28 @@ func (l *Ledger) GuardarRevision(sha, mensaje, bucket, modelo string, revision R
 		ficha.Model = modelo
 	}
 	ficha.Revisions = append(ficha.Revisions, revision)
+	return l.guardarFicha(ficha)
+}
 
+// MarcarCorregida registra que los hallazgos del SHA fueron corregidos por el
+// commit fixedIn (trazabilidad hallazgo → corrección). No sobreescribe un
+// FixedIn ya existente: la primera corrección gana.
+func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
+	ficha, err := l.LeerFicha(sha)
+	if err != nil {
+		return err
+	}
+	if ficha == nil || ficha.FixedIn != "" {
+		return nil
+	}
+	ficha.FixedIn = fixedIn
+	return l.guardarFicha(ficha)
+}
+
+// guardarFicha persiste la ficha con escritura atómica temp + rename. En
+// Windows el destino existente se borra antes del rename porque el sistema no
+// permite sobrescribir con os.Rename.
+func (l *Ledger) guardarFicha(ficha *Ficha) error {
 	if err := os.MkdirAll(l.dir, 0755); err != nil {
 		return err
 	}
@@ -108,7 +133,7 @@ func (l *Ledger) GuardarRevision(sha, mensaje, bucket, modelo string, revision R
 		return err
 	}
 
-	destino := l.RutaFicha(sha)
+	destino := l.RutaFicha(ficha.SHA)
 	temp, err := os.CreateTemp(l.dir, "ficha-*.tmp")
 	if err != nil {
 		return err

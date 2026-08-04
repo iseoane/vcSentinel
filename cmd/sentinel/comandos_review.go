@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -87,12 +88,16 @@ func ejecutarReview(worktree string, args []string) {
 		if modelo == "" {
 			modelo = "default"
 		}
-		revision := review.Revision{At: time.Now(), Result: resultado.Veredicto, Dims: dimsResultadosParaFicha(resultado.Dims)}
+		fixed := revisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto)
+		revision := review.Revision{At: time.Now(), Result: resultado.Veredicto, Fixed: fixed, Dims: dimsResultadosParaFicha(resultado.Dims)}
 		if err := ledger.GuardarRevision(sha, mensaje, calcularBucket(archivos), modelo, revision); err != nil {
 			fmt.Printf("⚠️ %s: no se pudo guardar la ficha: %v\n", sha[:8], err)
 		}
 
 		fmt.Print(resultado.String())
+		if fixed {
+			fmt.Printf("  ✅ revisión anterior en block corregida por esta revisión\n")
+		}
 
 		exit := codigoSalidaVeredicto(resultado.Veredicto)
 		if flags.gate && tieneHallazgosCriticos(resultado) {
@@ -104,8 +109,88 @@ func ejecutarReview(worktree string, args []string) {
 		if err := ops.RegistrarEvento(gitDir, "review", exit, []string{sha}, detalle, worktree); err != nil {
 			fmt.Printf("⚠️ No se pudo registrar el evento: %v\n", err)
 		}
+		registrarCorrecciones(ledger, gitDir, sha, archivos, mensaje, exit, worktree)
 	}
 	os.Exit(exitFinal)
+}
+
+// revisionCorrigeBlockPrevio indica si esta auditoría (sin block) corrige una
+// revisión anterior del mismo SHA que estaba en block.
+func revisionCorrigeBlockPrevio(ledger *review.Ledger, sha, veredicto string) bool {
+	if veredicto == review.VerdictBlock {
+		return false
+	}
+	ficha, err := ledger.LeerFicha(sha)
+	if err != nil || ficha == nil || len(ficha.Revisions) == 0 {
+		return false
+	}
+	return ficha.Revisions[len(ficha.Revisions)-1].Result == review.VerdictBlock
+}
+
+// registrarCorrecciones asocia un commit fix (mensaje fix(...) que sale sin
+// críticos) con las fichas previas en block que tocan los mismos archivos:
+// marca su FixedIn y registra un evento fix.
+func registrarCorrecciones(ledger *review.Ledger, gitDir, sha string, archivos []string, mensaje string, exit int, worktree string) {
+	if exit != 0 || !strings.HasPrefix(mensaje, "fix(") {
+		return
+	}
+	shasPrevios, err := ledger.ListarFichas()
+	if err != nil {
+		return
+	}
+	archivosFix := map[string]bool{}
+	for _, a := range archivos {
+		archivosFix[a] = true
+	}
+
+	corregidos := []string{}
+	for _, shaPrev := range shasPrevios {
+		if shaPrev == sha {
+			continue
+		}
+		ficha, err := ledger.LeerFicha(shaPrev)
+		if err != nil || ficha == nil || len(ficha.Revisions) == 0 || ficha.FixedIn != "" {
+			continue
+		}
+		ultima := ficha.Revisions[len(ficha.Revisions)-1]
+		if ultima.Result != review.VerdictBlock {
+			continue
+		}
+		if !fixTocaHallazgos(archivosFix, ultima.Dims) {
+			continue
+		}
+		if err := ledger.MarcarCorregida(shaPrev, sha); err == nil {
+			corregidos = append(corregidos, shaPrev)
+		}
+	}
+
+	if len(corregidos) > 0 {
+		_ = ops.RegistrarEvento(gitDir, "fix", 0, []string{sha},
+			"corrige: "+strings.Join(corregidos, ","), worktree)
+		fmt.Printf("  🔧 fix %s marcado como corrección de: %s\n", shaCorto(sha), strings.Join(corregidos, ","))
+	}
+}
+
+// shaCorto recorta un SHA a 8 caracteres sin reventar si es más corto (los
+// tests usan SHAs cortos).
+func shaCorto(sha string) string {
+	if len(sha) <= 8 {
+		return sha
+	}
+	return sha[:8]
+}
+
+// fixTocaHallazgos indica si el commit fix toca algún archivo señalado en los
+// hallazgos de las dimensiones previas.
+func fixTocaHallazgos(archivosFix map[string]bool, dims []review.DimensionResult) bool {
+	for _, dim := range dims {
+		for _, hallazgo := range dim.Findings {
+			if archivosFix[hallazgo.File] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // resolverShasAuditoria calcula los SHAs a auditar según los flags: un solo

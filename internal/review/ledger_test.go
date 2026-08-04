@@ -107,3 +107,41 @@ func TestLedgerEscrituraAtomica(temp *testing.T) {
 		}
 	})
 }
+
+func TestLedgerMarcarCorregida(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+
+	rev := Revision{At: time.Now().UTC(), Result: VerdictBlock}
+	if err := ledger.GuardarRevision("aaa111", "feat(x): con bug", "backend", "m", rev); err != nil {
+		t.Fatalf("GuardarRevision devolvió error: %v", err)
+	}
+
+	if err := ledger.MarcarCorregida("aaa111", "bbb222"); err != nil {
+		t.Fatalf("MarcarCorregida devolvió error: %v", err)
+	}
+	ficha, err := ledger.LeerFicha("aaa111")
+	if err != nil {
+		t.Fatalf("LeerFicha devolvió error: %v", err)
+	}
+	if ficha.FixedIn != "bbb222" {
+		t.Errorf("FixedIn = %q, esperado bbb222", ficha.FixedIn)
+	}
+
+	// La primera corrección gana: no se sobreescribe con una posterior.
+	if err := ledger.MarcarCorregida("aaa111", "ccc333"); err != nil {
+		t.Fatalf("segunda MarcarCorregida devolvió error: %v", err)
+	}
+	ficha, _ = ledger.LeerFicha("aaa111")
+	if ficha.FixedIn != "bbb222" {
+		t.Errorf("FixedIn = %q, esperado que bbb222 gane", ficha.FixedIn)
+	}
+}
+
+func TestLedgerMarcarCorregidaSinFichaEsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+	if err := ledger.MarcarCorregida("noexiste", "bbb222"); err != nil {
+		t.Fatalf("MarcarCorregida sobre SHA sin ficha devolvió error: %v", err)
+	}
+}

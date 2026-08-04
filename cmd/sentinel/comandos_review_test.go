@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
@@ -83,5 +84,84 @@ func TestTieneHallazgosCriticos(t *testing.T) {
 	}
 	if tieneHallazgosCriticos(review.ResultadoAuditoria{}) {
 		t.Error("sin hallazgos no debería haber críticos")
+	}
+}
+
+func TestRevisionCorrigeBlockPrevio(t *testing.T) {
+	dir := t.TempDir()
+	ledger := review.NuevoLedger(dir)
+
+	// Sin ficha previa: no corrige.
+	if revisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictOK) {
+		t.Error("sin ficha previa no debería marcar corrección")
+	}
+
+	// Previa en block y nueva sin block: corrige.
+	rev := review.Revision{At: time.Now().UTC(), Result: review.VerdictBlock}
+	if err := ledger.GuardarRevision("abc123", "msg", "backend", "m", rev); err != nil {
+		t.Fatal(err)
+	}
+	if !revisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictOK) {
+		t.Error("previa en block y nueva ok debería marcar corrección")
+	}
+	if revisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictBlock) {
+		t.Error("nueva en block no corrige nada")
+	}
+}
+
+func TestRegistrarCorreccionesMarcaFicha(t *testing.T) {
+	dir := t.TempDir()
+	ledger := review.NuevoLedger(dir)
+
+	// Ficha previa en block con hallazgo en internal/a.go.
+	rev := review.Revision{
+		At: time.Now().UTC(), Result: review.VerdictBlock,
+		Dims: []review.DimensionResult{{
+			Dim: review.DimLogic, Verdict: review.VerdictBlock,
+			Findings: []review.ReviewFinding{{
+				Severity: review.SevCritical, File: "internal/a.go", Line: 10,
+				Description: "bug real",
+			}},
+		}},
+	}
+	if err := ledger.GuardarRevision("aaa111", "feat(x): con bug", "backend", "m", rev); err != nil {
+		t.Fatal(err)
+	}
+
+	// Un fix que toca internal/a.go sale sin críticos: debe marcar la ficha.
+	registrarCorrecciones(ledger, dir, "bbb222", []string{"internal/a.go"}, "fix(x): arregla", 0, "worktree")
+	ficha, err := ledger.LeerFicha("aaa111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ficha.FixedIn != "bbb222" {
+		t.Errorf("FixedIn = %q, esperado bbb222", ficha.FixedIn)
+	}
+
+	// Un fix que NO toca los archivos del hallazgo no marca nada.
+	if err := ledger.GuardarRevision("ccc333", "feat(y): otro", "backend", "m",
+		review.Revision{At: time.Now().UTC(), Result: review.VerdictBlock,
+			Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictBlock,
+				Findings: []review.ReviewFinding{{Severity: review.SevCritical, File: "internal/b.go", Line: 1, Description: "otro"}}}}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	registrarCorrecciones(ledger, dir, "ddd444", []string{"internal/a.go"}, "fix(y): arregla", 0, "worktree")
+	ficha, err = ledger.LeerFicha("ccc333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ficha.FixedIn != "" {
+		t.Errorf("FixedIn = %q, esperado vacío (el fix no toca b.go)", ficha.FixedIn)
+	}
+
+	// Un commit que sale en block nunca registra correcciones.
+	registrarCorrecciones(ledger, dir, "eee555", []string{"internal/a.go"}, "fix(z): intento", 1, "worktree")
+	ficha, err = ledger.LeerFicha("ccc333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ficha.FixedIn != "" {
+		t.Errorf("FixedIn = %q, esperado vacío (el fix salió en block)", ficha.FixedIn)
 	}
 }

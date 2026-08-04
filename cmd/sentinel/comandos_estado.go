@@ -235,9 +235,11 @@ func ejecutarStatus(worktree string, args []string) {
 	huerfanos := 0
 	for _, sha := range shas {
 		veredicto := "sin revisión"
+		fixedIn := ""
 		ficha, err := ledger.LeerFicha(sha)
 		if err == nil && ficha != nil && len(ficha.Revisions) > 0 {
 			veredicto = ficha.Revisions[len(ficha.Revisions)-1].Result
+			fixedIn = ficha.FixedIn
 		}
 		esHuerfano := !git.ExisteCommit(sha)
 		if esHuerfano {
@@ -246,6 +248,7 @@ func ejecutarStatus(worktree string, args []string) {
 		fichas = append(fichas, map[string]any{
 			"sha":       sha,
 			"veredicto": veredicto,
+			"fixedIn":   fixedIn,
 			"huerfana":  esHuerfano,
 		})
 	}
@@ -276,7 +279,11 @@ func ejecutarStatus(worktree string, args []string) {
 	fmt.Printf("📊 Líneas modificadas en este Worktree: %d [%s]\n", lineas, estado)
 	fmt.Printf("🔎 Fichas de auditoría: %d (huérfanas: %d)\n", len(fichas), huerfanos)
 	for _, ficha := range fichas {
-		fmt.Printf("  %s  %s\n", ficha["sha"], ficha["veredicto"])
+		corregida := ""
+		if ficha["fixedIn"] != "" {
+			corregida = fmt.Sprintf("  🔧 corregida en %s", ficha["fixedIn"])
+		}
+		fmt.Printf("  %s  %s%s\n", ficha["sha"], ficha["veredicto"], corregida)
 	}
 	if len(eventos) > 0 {
 		fmt.Printf("🕒 Últimos eventos:\n")
