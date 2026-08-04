@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
 // Revision es una auditoría concreta de un SHA. El array revisions[] es
@@ -119,6 +121,37 @@ func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
 	}
 	ficha.FixedIn = fixedIn
 	return l.guardarFicha(ficha)
+}
+
+// EliminarFicha borra la ficha de un SHA. No devuelve error si no existe:
+// eliminar algo que ya no está es un no-op.
+func (l *Ledger) EliminarFicha(sha string) error {
+	ruta := l.RutaFicha(sha)
+	if err := os.Remove(ruta); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// PurgarHuerfanas borra las fichas cuyo SHA ya no existe en el repositorio
+// (commits reescritos por rebase, amend o squash). Devuelve la lista de SHAs
+// eliminados.
+func (l *Ledger) PurgarHuerfanas() ([]string, error) {
+	shas, err := l.ListarFichas()
+	if err != nil {
+		return nil, err
+	}
+	eliminados := []string{}
+	for _, sha := range shas {
+		if git.ExisteCommit(sha) {
+			continue
+		}
+		if err := l.EliminarFicha(sha); err != nil {
+			return eliminados, err
+		}
+		eliminados = append(eliminados, sha)
+	}
+	return eliminados, nil
 }
 
 // guardarFicha persiste la ficha con escritura atómica temp + rename. En

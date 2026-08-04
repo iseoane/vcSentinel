@@ -20,12 +20,13 @@ type FabricaAuditor func(dimension string) (AuditorAgente, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
-	SHA             string
-	Mensaje         string
-	Diff            string
-	Dims            []string
-	Respuestas      string // --answer: aclaraciones del usuario (1 ronda extra)
-	PerfilOverride  string // --profile: fuerza un perfil sobre el mapa
+	SHA            string
+	Mensaje        string
+	Diff           string
+	Dims           []string
+	Respuestas     string            // --answer: aclaraciones del usuario (1 ronda extra)
+	PerfilOverride string            // --profile: fuerza un perfil sobre el mapa
+	OnDimension    func(dim string)  // opcional: avisa cuando arranca cada dimensión
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -97,6 +98,9 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if opts.OnDimension != nil {
+				opts.OnDimension(dimension)
+			}
 
 			rd := ResultadoDimension{Dim: dimension}
 			agente, perfil, err := fabrica(dimension)

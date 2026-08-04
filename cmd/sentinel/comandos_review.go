@@ -44,7 +44,26 @@ func ejecutarReview(worktree string, args []string) {
 	detalle := fmt.Sprintf("flags: all=%v chain=%v gate=%v dims=%q", flags.all, flags.chain, flags.gate, flags.dims)
 	exitFinal := 0
 
-	for _, sha := range shas {
+	if flags.prune {
+		eliminados, err := ledger.PurgarHuerfanas()
+		if err != nil {
+			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
+			os.Exit(1)
+		}
+		if len(eliminados) == 0 {
+			fmt.Println("? --prune: no hay fichas huérfanas (todos los SHAs existen).")
+		} else {
+			fmt.Printf("? --prune: eliminadas %d fichas de commits que ya no existen.\n", len(eliminados))
+			for _, sha := range eliminados {
+				fmt.Printf("  - %s\n", sha)
+			}
+		}
+		os.Exit(0)
+	}
+	total := len(shas)
+
+	for idx, sha := range shas {
+		fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		mensaje, err := git.MensajeCommit(sha)
 		if err != nil {
 			fmt.Printf("⚠️ %s: no se pudo leer el mensaje: %v\n", sha[:8], err)
@@ -82,6 +101,9 @@ func ejecutarReview(worktree string, args []string) {
 			Dims:           dims,
 			Respuestas:     flags.answer,
 			PerfilOverride: flags.profile,
+			OnDimension: func(dim string) {
+				fmt.Printf("  ⏳ %s …\n", dim)
+			},
 		})
 
 		modelo := flags.profile

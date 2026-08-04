@@ -23,6 +23,7 @@ type flagsAuditoria struct {
 	all      bool
 	chain    bool
 	gate     bool
+	prune    bool // borra fichas de commits que ya no existen en el repo
 	profile  string
 	answer   string
 	jsonOut  bool
@@ -41,6 +42,8 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 			flags.chain = true
 		case "--gate":
 			flags.gate = true
+		case "--prune":
+			flags.prune = true
 		case "--json":
 			flags.jsonOut = true
 		case "--dims", "--profile", "--answer":
@@ -192,13 +195,18 @@ func ejecutarRebase() {
 }
 
 // flagsNoAplicablesAStatus indica si los flags parseados no aplican a status
-// (que solo entiende --json). Se rechazan en lugar de aceptarse en silencio.
+// (que solo entiende --json y --prune). Se rechazan en lugar de aceptarse en
+// silencio.
 func flagsNoAplicablesAStatus(flags flagsAuditoria) bool {
 	return flags.targetOk || len(flags.dims) > 0 || flags.all || flags.chain || flags.gate ||
 		flags.profile != "" || flags.answer != ""
 }
 
-// ejecutarStatus resume el estado del guardián: volumen pendiente, fichas de
+// purgarHuerfanas borra las fichas de commits que ya no existen en el repo y
+// devuelve los SHAs eliminados. Útil tras rebase/amend/squash.
+func purgarHuerfanas(gitDir string) ([]string, error) {
+	return review.NuevoLedger(gitDir).PurgarHuerfanas()
+}// ejecutarStatus resume el estado del guardián: volumen pendiente, fichas de
 // auditoría y últimos eventos. Con --json emite la misma información en JSON.
 func ejecutarStatus(worktree string, args []string) {
 	flags, err := parsearFlagsAuditoria(args)
@@ -206,10 +214,10 @@ func ejecutarStatus(worktree string, args []string) {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
-	// status solo entiende --json; el resto de flags de auditoría no aplican
-	// aquí y se rechazan en lugar de aceptarse en silencio.
+	// status solo entiende --json y --prune; el resto de flags de auditoría no
+	// aplican aquí y se rechazan en lugar de aceptarse en silencio.
 	if flagsNoAplicablesAStatus(flags) {
-		fmt.Println("❌ status solo acepta el flag --json.")
+		fmt.Println("? status solo acepta los flags --json y --prune.")
 		os.Exit(1)
 	}
 
@@ -226,6 +234,24 @@ func ejecutarStatus(worktree string, args []string) {
 	}
 
 	ledger := review.NuevoLedger(gitDir)
+
+	if flags.prune {
+		eliminados, err := ledger.PurgarHuerfanas()
+		if err != nil {
+			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
+			os.Exit(1)
+		}
+		if len(eliminados) == 0 {
+			fmt.Println("? --prune: no hay fichas huérfanas (todos los SHAs existen).")
+		} else {
+			fmt.Printf("? --prune: eliminadas %d fichas de commits que ya no existen.\n", len(eliminados))
+			for _, sha := range eliminados {
+				fmt.Printf("  - %s\n", sha)
+			}
+		}
+		os.Exit(0)
+	}
+
 	shas, err := ledger.ListarFichas()
 	if err != nil {
 		fmt.Printf("⚠️ No se pudieron listar las fichas: %v\n", err)

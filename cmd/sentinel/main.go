@@ -56,6 +56,8 @@ func main() {
 		ejecutarRebase()
 	case "status":
 		ejecutarStatus(worktreeActual, os.Args[2:])
+	case "pr":
+		ejecutarPr(worktreeActual, os.Args[2:])
 	case "install":
 		if err := setup.EjecutarInstalacionCompleta(); err != nil {
 			fmt.Printf("❌ Error en la instalación: %v\n", err)
@@ -72,14 +74,14 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'pr', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | check | slice | review | lint | rebase | status | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | check | slice | review | lint | rebase | status | pr | install | upgrade | uninstall]")
 }
 
 func imprimirAyuda() {
@@ -94,7 +96,8 @@ func imprimirAyuda() {
 	fmt.Println("  review     Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha. Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\".")
 	fmt.Println("  lint       Ejecuta los comandos de lint_commands de la configuración.")
 	fmt.Println("  rebase     Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
-	fmt.Println("  status     Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con --json emite JSON.")
+	fmt.Println("  status     Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con --json emite JSON; con --prune borra fichas huérfanas.")
+	fmt.Println("  pr         Crea un pull request con gh; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a 'gh pr create'.")
 	fmt.Println("  install    Descarga e instala la última release publicada desde GitHub.")
 	fmt.Println("  upgrade    Reemplaza el binario actual por la última release publicada.")
 	fmt.Println("  uninstall  Elimina el binario instalado y la configuración global.")

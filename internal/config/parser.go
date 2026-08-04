@@ -9,10 +9,12 @@ import (
 	"time"
 )
 
-// AgentConfig define el modelo y esfuerzo por defecto de un agente (binario).
+// AgentConfig define el modelo y esfuerzo por defecto de un agente (binario)
+// y los perfiles anidados que ese agente ofrece (esquema v2).
 type AgentConfig struct {
 	Model           string
 	ReasoningEffort string
+	Profiles        map[string]ProfileConfig
 }
 
 // ProfileConfig es una receta con nombre: agente + modelo + esfuerzo. El
@@ -48,14 +50,26 @@ func configuracionPorDefecto() Config {
 	return Config{
 		ActiveAgent: "auto",
 		Agents: map[string]AgentConfig{
-			"claude":   {Model: "claude-3-5-sonnet", ReasoningEffort: "high"},
-			"opencode": {Model: "deepseek-v4-flash-free", ReasoningEffort: "max"},
+			"claude": {
+				Model:           "claude-5-sonnet",
+				ReasoningEffort: "high",
+				Profiles: map[string]ProfileConfig{
+					"cheap":  {Model: "claude-5-sonnet", ReasoningEffort: "low"},
+					"normal": {Model: "claude-5-sonnet", ReasoningEffort: "high"},
+					"deep":   {Model: "claude-opus", ReasoningEffort: "high"},
+				},
+			},
+			"opencode": {
+				Model:           "deepseek-v4-flash-free",
+				ReasoningEffort: "max",
+				Profiles: map[string]ProfileConfig{
+					"cheap":  {Model: "deepseek-v4-flash-free", ReasoningEffort: "default"},
+					"normal": {Model: "deepseek-v4-flash-free", ReasoningEffort: "high"},
+					"deep":   {Model: "deepseek-v4-flash-free", ReasoningEffort: "max"},
+				},
+			},
 		},
-		Profiles: map[string]ProfileConfig{
-			"cheap":  {Model: "deepseek-v4-flash-free", ReasoningEffort: "default"},
-			"normal": {},
-			"deep":   {Model: "claude-3-5-sonnet", ReasoningEffort: "high"},
-		},
+		Profiles: map[string]ProfileConfig{}, // compat v1: perfiles globales
 		Review: ReviewConfig{
 			Timeout:  300 * time.Second,
 			Parallel: 2,
@@ -108,8 +122,8 @@ func CargarConfiguracionLocal(worktreePath string) Config {
 // aplicarDesdeRuta parsea el archivo en ruta (si existe) sobre cfg,
 // sobreescribiendo los campos presentes. El parser es por niveles de
 // indentación relativos (robusto a 2 o 4 espacios por nivel) y soporta las
-// secciones active_agent, agents, profiles, review (con dims) y
-// lint_commands.
+// secciones active_agent, agents (con perfiles anidados), profiles, review
+// (con dims) y lint_commands.
 func aplicarDesdeRuta(cfg *Config, ruta string) {
 	file, err := os.Open(ruta)
 	if err != nil {
@@ -122,6 +136,8 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 	indentEntidad := -1
 	subseccion := ""
 	indentSubseccion := -1
+	perfil := ""
+	indentPerfil := -1
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -136,8 +152,8 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 
 		switch {
 		case indent == 0:
-			entidad, subseccion = "", ""
-			indentEntidad, indentSubseccion = -1, -1
+			entidad, subseccion, perfil = "", "", ""
+			indentEntidad, indentSubseccion, indentPerfil = -1, -1, -1
 			switch clave {
 			case "active_agent":
 				cfg.ActiveAgent = limpiarValor(valor)
@@ -152,14 +168,48 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 			default:
 				seccion = ""
 			}
-		case seccion == "agents" || seccion == "profiles":
+		case seccion == "agents":
+			// nivel 1: el agente; nivel 2: "profiles:" o campos base del
+			// agente; nivel 3: el perfil; nivel 4: campos del perfil.
+			if (entidad == "" || indent <= indentEntidad) && cierraBloque {
+				entidad = clave
+				indentEntidad = indent
+				subseccion, perfil = "", ""
+				indentSubseccion, indentPerfil = -1, -1
+				continue
+			}
+			if entidad == "" {
+				continue
+			}
+			if indent > indentEntidad && cierraBloque && clave == "profiles" && indent > indentSubseccion {
+				subseccion = "profiles"
+				indentSubseccion = indent
+				perfil = ""
+				indentPerfil = -1
+				continue
+			}
+			if subseccion == "profiles" {
+				if indent > indentSubseccion && cierraBloque && (perfil == "" || indent <= indentPerfil) {
+					perfil = clave
+					indentPerfil = indent
+					continue
+				}
+				if perfil != "" && indent > indentPerfil && clave != "" {
+					aplicarCampoPerfilAgente(cfg, entidad, perfil, clave, limpiarValor(valor))
+				}
+				continue
+			}
+			if indent > indentEntidad && clave != "" && !cierraBloque {
+				aplicarCampoEntidad(cfg, "agents", entidad, clave, limpiarValor(valor))
+			}
+		case seccion == "profiles":
 			if (entidad == "" || indent <= indentEntidad) && cierraBloque {
 				entidad = clave
 				indentEntidad = indent
 				continue
 			}
 			if entidad != "" && indent > indentEntidad && clave != "" {
-				aplicarCampoEntidad(cfg, seccion, entidad, clave, limpiarValor(valor))
+				aplicarCampoEntidad(cfg, "profiles", entidad, clave, limpiarValor(valor))
 			}
 		case seccion == "review":
 			if (subseccion == "" || indent <= indentSubseccion) && cierraBloque {
@@ -217,6 +267,24 @@ func aplicarCampoEntidad(cfg *Config, seccion, entidad, clave, valor string) {
 		}
 		cfg.Profiles[entidad] = perfil
 	}
+}
+
+// aplicarCampoPerfilAgente aplica un campo a un perfil anidado dentro de un
+// agente (esquema v2: agents.<agente>.profiles.<perfil>).
+func aplicarCampoPerfilAgente(cfg *Config, agente, perfil, clave, valor string) {
+	a := cfg.Agents[agente]
+	if a.Profiles == nil {
+		a.Profiles = map[string]ProfileConfig{}
+	}
+	p := a.Profiles[perfil]
+	switch clave {
+	case "model":
+		p.Model = valor
+	case "reasoning_effort":
+		p.ReasoningEffort = valor
+	}
+	a.Profiles[perfil] = p
+	cfg.Agents[agente] = a
 }
 
 // contarIndent cuenta los espacios iniciales de una línea.
