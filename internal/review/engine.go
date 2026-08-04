@@ -24,25 +24,25 @@ type OpcionesAuditoria struct {
 	Mensaje        string
 	Diff           string
 	Dims           []string
-	Respuestas     string            // --answer: aclaraciones del usuario (1 ronda extra)
-	PerfilOverride string            // --profile: fuerza un perfil sobre el mapa
-	OnDimension    func(dim string)  // opcional: avisa cuando arranca cada dimensión
+	Respuestas     string           // --answer: aclaraciones del usuario (1 ronda extra)
+	PerfilOverride string           // --profile: fuerza un perfil sobre el mapa
+	OnDimension    func(dim string) // opcional: avisa cuando arranca cada dimensión
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
 type ResultadoDimension struct {
-	Dim        string
-	Perfil     string
-	Resultado  *DimensionResult
-	Error      error
+	Dim       string
+	Perfil    string
+	Resultado *DimensionResult
+	Error     error
 }
 
 // ResultadoAuditoria agrega el veredicto global del commit.
 type ResultadoAuditoria struct {
-	SHA        string
-	Dims       []ResultadoDimension
-	Veredicto  string // ok | warn | block | question | unavailable
-	Preguntas  []AgentQuestion
+	SHA       string
+	Dims      []ResultadoDimension
+	Veredicto string // ok | warn | block | question | unavailable
+	Preguntas []AgentQuestion
 }
 
 // dimensionesPorCapa es la matriz saco × dimensión: qué dimensiones se auditan

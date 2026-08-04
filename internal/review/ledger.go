@@ -133,9 +133,11 @@ func (l *Ledger) EliminarFicha(sha string) error {
 	return nil
 }
 
-// PurgarHuerfanas borra las fichas cuyo SHA ya no existe en el repositorio
-// (commits reescritos por rebase, amend o squash). Devuelve la lista de SHAs
-// eliminados.
+// PurgarHuerfanas borra las fichas cuyo SHA ya no es alcanzable desde ningún
+// ref (commits reescritos por rebase, amend o squash: siguen en el object
+// store como dangling, pero ContenidoEnAlgunRef los detecta). Devuelve la
+// lista de SHAs eliminados; si algo falla a mitad, devuelve el error junto
+// con los SHAs que sí llegó a eliminar.
 func (l *Ledger) PurgarHuerfanas() ([]string, error) {
 	shas, err := l.ListarFichas()
 	if err != nil {
@@ -143,7 +145,7 @@ func (l *Ledger) PurgarHuerfanas() ([]string, error) {
 	}
 	eliminados := []string{}
 	for _, sha := range shas {
-		if git.ExisteCommit(sha) {
+		if git.ContenidoEnAlgunRef(sha) {
 			continue
 		}
 		if err := l.EliminarFicha(sha); err != nil {

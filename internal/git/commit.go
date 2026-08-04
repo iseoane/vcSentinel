@@ -108,9 +108,24 @@ func ResolverSHA(expresion string) (string, error) {
 }
 
 // ExisteCommit indica si el SHA existe como commit en el almacén de objetos.
+// Nota: un commit reescrito por rebase/amend/squash sigue existiendo como
+// objeto dangling; para saber si sigue vivo en la historia usa
+// ContenidoEnAlgunRef.
 func ExisteCommit(sha string) bool {
 	_, err := ejecutarGitSalida("cat-file", "-e", sha+"^{commit}")
 	return err == nil
+}
+
+// ContenidoEnAlgunRef indica si el SHA es alcanzable desde algún ref local o
+// remoto (git branch -a --contains). Un commit reescrito por rebase, amend o
+// squash deja de estar contenido en ningún ref y aquí devuelve false: es la
+// semántica correcta para detectar fichas huérfanas del ledger.
+func ContenidoEnAlgunRef(sha string) bool {
+	salida, err := ejecutarGitSalida("branch", "-a", "--contains", sha)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(salida) != ""
 }
 
 // UpstreamOMain devuelve el ref base para auditar cadenas de commits: el

@@ -8,9 +8,9 @@ import (
 
 // agenteFake devuelve salidas fijas y cuenta las llamadas.
 type agenteFake struct {
-	respuestas  []string
-	llamadas    int
-	mu          sync.Mutex
+	respuestas []string
+	llamadas   int
+	mu         sync.Mutex
 }
 
 func (a *agenteFake) EjecutarPrompt(prompt string) (string, error) {
