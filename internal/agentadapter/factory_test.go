@@ -24,7 +24,7 @@ func TestNuevoAdaptadorConPerfilExplicito(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
 	}
-	if adapter.BinaryName != "opencode" {
+	if adapter.nombreBase() != "opencode" {
 		t.Errorf("binario = %q, esperado opencode", adapter.BinaryName)
 	}
 	if adapter.Config.Model != "claude-sonnet" || adapter.Config.ReasoningEffort != "max" {
@@ -52,7 +52,7 @@ func TestNuevoAdaptadorConPerfilHeredaDelAgente(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
 	}
-	if adapter.BinaryName != "claude" {
+	if adapter.nombreBase() != "claude" {
 		t.Errorf("binario = %q, esperado claude (active_agent)", adapter.BinaryName)
 	}
 	if adapter.Config.Model != "claude-3-5-sonnet" {

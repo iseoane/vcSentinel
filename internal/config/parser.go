@@ -49,12 +49,12 @@ func configuracionPorDefecto() Config {
 		ActiveAgent: "auto",
 		Agents: map[string]AgentConfig{
 			"claude":   {Model: "claude-3-5-sonnet", ReasoningEffort: "high"},
-			"opencode": {Model: "deepseek-v4-flash", ReasoningEffort: "max"},
+			"opencode": {Model: "deepseek-v4-flash-free", ReasoningEffort: "max"},
 		},
 		Profiles: map[string]ProfileConfig{
-			"cheap":  {Model: "deepseek-v4-flash", ReasoningEffort: "low"},
+			"cheap":  {Model: "deepseek-v4-flash-free", ReasoningEffort: "default"},
 			"normal": {},
-			"deep":   {Model: "claude-3-5-sonnet", ReasoningEffort: "max"},
+			"deep":   {Model: "claude-3-5-sonnet", ReasoningEffort: "high"},
 		},
 		Review: ReviewConfig{
 			Timeout:  300 * time.Second,

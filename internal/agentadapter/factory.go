@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -20,7 +22,7 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 
 	if nombre != "auto" {
 		if _, existe := cfg.Agents[nombre]; existe {
-			return &CLIAdapter{BinaryName: nombre, Config: cfg.Agents[nombre]}, nil
+			return &CLIAdapter{BinaryName: resolverBinarioReal(nombre), Config: cfg.Agents[nombre]}, nil
 		}
 	}
 
@@ -34,7 +36,7 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 	if len(nombres) == 0 {
 		return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(todas, ", "))
 	}
-	return &CLIAdapter{BinaryName: nombres[0], Config: cfg.Agents[nombres[0]]}, nil
+	return &CLIAdapter{BinaryName: resolverBinarioReal(nombres[0]), Config: cfg.Agents[nombres[0]]}, nil
 }
 
 // NewAgentAdapterNamed construye un adaptador CLI para un nombre de agente
@@ -46,7 +48,7 @@ func NewAgentAdapterNamed(worktreePath string, nombre string) (AgentAdapter, err
 	if !existe {
 		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
 	}
-	return &CLIAdapter{BinaryName: nombre, Config: agente}, nil
+	return &CLIAdapter{BinaryName: resolverBinarioReal(nombre), Config: agente}, nil
 }
 
 // NombresAdaptadoresDisponibles devuelve los nombres de agentes configurados en
@@ -61,19 +63,20 @@ func NombresAdaptadoresDisponibles(worktreePath string) []string {
 // modelo y esfuerzo con los del agente cuando el perfil no los define y fija
 // el timeout de auditoría.
 func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (*CLIAdapter, error) {
-	binario := perfil.Binario
-	if binario == "" {
-		binario = cfg.ActiveAgent
+	nombre := perfil.Binario
+	if nombre == "" {
+		nombre = cfg.ActiveAgent
 	}
-	if binario == "" || binario == "auto" {
+	if nombre == "" || nombre == "auto" {
 		disponibles := nombresAgentesEnPATH(cfg)
 		if len(disponibles) == 0 {
 			return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH")
 		}
-		binario = disponibles[0]
+		nombre = disponibles[0]
 	}
+	binario := resolverBinarioReal(nombre)
 
-	agente := cfg.Agents[binario]
+	agente := cfg.Agents[nombre]
 	modelo := perfil.Modelo
 	if modelo == "" {
 		modelo = agente.Model
@@ -88,6 +91,45 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (*
 		Config:     config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
 		Timeout:    cfg.Review.Timeout,
 	}, nil
+}
+
+// resolverBinarioReal convierte un shim npm (.cmd/.bat) en la ruta del
+// binario real al que apunta. Ejecutar shims .cmd con exec.Command usa cmd.exe
+// y rompe el quoting de prompts largos (límite de línea + comillas), así que
+// se extrae el .exe destino de la línea "node_modules\...\bin\X.exe" del shim.
+// Si no hay shim o no se puede resolver, devuelve el nombre tal cual.
+func resolverBinarioReal(nombre string) string {
+	if filepath.IsAbs(nombre) || strings.ContainsAny(nombre, `/\`) {
+		return nombre
+	}
+	ruta, err := exec.LookPath(nombre)
+	if err != nil {
+		return nombre
+	}
+	if ext := strings.ToLower(filepath.Ext(ruta)); ext != ".cmd" && ext != ".bat" {
+		return ruta
+	}
+
+	datos, err := os.ReadFile(ruta)
+	if err != nil {
+		return ruta
+	}
+	// Los shims npm usan "%dp0%\node_modules\<paquete>\bin\<binario>.exe" (la
+	// variable apunta al directorio del propio shim); algunos usan "%~dp0".
+	patron := regexp.MustCompile(`([A-Za-z]:\\[^"\r\n]*node_modules[^"\r\n]*\.exe|(?:%dp0%|%~dp0)\\[^"\r\n]*node_modules[^"\r\n]*\.exe)`)
+	coincidencia := patron.FindString(string(datos))
+	if coincidencia == "" {
+		return ruta
+	}
+	// El .cmd de npm usa %dp0% (directorio del shim): la ruta extraída es
+	// relativa a ese directorio, no al CWD del proceso.
+	if strings.HasPrefix(coincidencia, "%dp0%") {
+		return filepath.Join(filepath.Dir(ruta), coincidencia[len("%dp0%"):])
+	}
+	if strings.HasPrefix(coincidencia, "%~dp0") {
+		return filepath.Join(filepath.Dir(ruta), coincidencia[len("%~dp0"):])
+	}
+	return coincidencia
 }
 
 // nombresAgentesEnPATH filtra los agentes configurados que existen en el PATH,

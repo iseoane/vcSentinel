@@ -1,9 +1,10 @@
 version: "1.0"
-active_agent: "auto"
+active_agent: "opencode"
 agents:
   claude:
     model: "sonnet"
     reasoning_effort: "high"
   opencode:
-    model: "deepseek-v4-flash"
+    model: "deepseek-v4-flash-free"
     reasoning_effort: "max"
+

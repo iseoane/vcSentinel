@@ -19,13 +19,13 @@ func TestResolverPerfilDesdeDims(t *testing.T) {
 	if perfil.Nombre != "deep" {
 		t.Errorf("security -> perfil %q, esperado deep", perfil.Nombre)
 	}
-	if perfil.Modelo != "claude-3-5-sonnet" || perfil.Esfuerzo != "max" {
-		t.Errorf("perfil deep = %+v, esperado claude-3-5-sonnet/max", perfil)
+	if perfil.Modelo != "claude-3-5-sonnet" || perfil.Esfuerzo != "high" {
+		t.Errorf("perfil deep = %+v, esperado claude-3-5-sonnet/high", perfil)
 	}
 
 	perfil = ResolverPerfil(cfg, "spec", "")
-	if perfil.Nombre != "cheap" || perfil.Esfuerzo != "low" {
-		t.Errorf("spec -> %+v, esperado cheap/low", perfil)
+	if perfil.Nombre != "cheap" || perfil.Esfuerzo != "default" {
+		t.Errorf("spec -> %+v, esperado cheap/default", perfil)
 	}
 }
 

@@ -47,6 +47,7 @@ Diff to audit:
 %s
 
 Audit rules:
+- Do NOT run any commands, tools or scripts. Do NOT inspect the repository. Answer immediately from the commit message and diff provided above.
 - Report only actionable findings introduced by this diff; distinguish pre-existing issues from new ones.
 - Severity: CRITICAL only for a real defect introduced here; WARNING for reasonable debt; ADVISORY for suggestions.
 - Use code smells as a guide: primitive obsession, duplicated code, feature envy, switch/if chains, long parameter lists, etc.
