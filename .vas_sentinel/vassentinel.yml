@@ -1,10 +1,39 @@
-version: "1.0"
+version: "2.0"
 active_agent: "opencode"
 agents:
   claude:
-    model: "sonnet"
+    model: "claude-5-sonnet"
     reasoning_effort: "high"
+    profiles:
+      cheap:
+        model: "claude-5-sonnet"
+        reasoning_effort: "low"
+      normal:
+        model: "claude-5-sonnet"
+        reasoning_effort: "high"
+      deep:
+        model: "claude-opus"
+        reasoning_effort: "high"
   opencode:
     model: "deepseek-v4-flash-free"
     reasoning_effort: "max"
-
+    profiles:
+      cheap:
+        model: "deepseek-v4-flash-free"
+        reasoning_effort: "default"
+      normal:
+        model: "deepseek-v4-flash-free"
+        reasoning_effort: "high"
+      deep:
+        model: "deepseek-v4-flash-free"
+        reasoning_effort: "max"
+review:
+  timeout: 600
+  parallel: 2
+  dims:
+    spec: "opencode.cheap"
+    style: "opencode.cheap"
+    tests: "opencode.normal"
+    logic: "opencode.normal"
+    design: "opencode.deep"
+    security: "opencode.deep"
