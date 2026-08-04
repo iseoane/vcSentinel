@@ -45,10 +45,44 @@ func TestParsearFlagsAuditoriaErrores(t *testing.T) {
 		{"flag sin valor", []string{"--profile"}},
 		{"opción desconocida", []string{"--nada"}},
 		{"dos targets", []string{"abc", "def"}},
+		{"HEAD explicito y otro target", []string{"HEAD", "abc123"}},
 	}
 	for _, prueba := range pruebas {
 		if _, err := parsearFlagsAuditoria(prueba.args); err == nil {
 			t.Errorf("%s: debería devolver error", prueba.nombre)
+		}
+	}
+}
+
+func TestParsearFlagsAuditoriaHeadExplicito(t *testing.T) {
+	flags, err := parsearFlagsAuditoria([]string{"HEAD"})
+	if err != nil {
+		t.Fatalf("parsearFlagsAuditoria(HEAD) devolvió error: %v", err)
+	}
+	if flags.target != "HEAD" || !flags.targetOk {
+		t.Errorf("target = %q targetOk = %v, esperado HEAD/true", flags.target, flags.targetOk)
+	}
+}
+
+func TestStatusRechazaFlagsNoAplicables(t *testing.T) {
+	pruebas := []struct {
+		nombre string
+		args   []string
+	}{
+		{"--dims", []string{"--dims", "logic"}},
+		{"--profile", []string{"--profile", "deep"}},
+		{"--chain", []string{"--chain"}},
+		{"--gate", []string{"--gate"}},
+		{"--all", []string{"--all"}},
+		{"target", []string{"abc123"}},
+	}
+	for _, prueba := range pruebas {
+		flags, err := parsearFlagsAuditoria(prueba.args)
+		if err != nil {
+			t.Fatalf("%s: parsearFlagsAuditoria devolvió error: %v", prueba.nombre, err)
+		}
+		if !flagsNoAplicablesAStatus(flags) {
+			t.Errorf("%s: debería detectarse como no aplicable a status", prueba.nombre)
 		}
 	}
 }

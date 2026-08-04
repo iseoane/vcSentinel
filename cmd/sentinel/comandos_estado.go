@@ -17,14 +17,15 @@ import (
 
 // flagsAuditoria son las opciones comunes de review y status.
 type flagsAuditoria struct {
-	target  string // SHA a auditar (default HEAD)
-	dims    []string
-	all     bool
-	chain   bool
-	gate    bool
-	profile string
-	answer  string
-	jsonOut bool
+	target   string // SHA a auditar (default HEAD)
+	targetOk bool   // distingue "HEAD" explícito del default
+	dims     []string
+	all      bool
+	chain    bool
+	gate     bool
+	profile  string
+	answer   string
+	jsonOut  bool
 }
 
 // parsearFlagsAuditoria recorre los argumentos del subcomando y extrae las
@@ -64,10 +65,11 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 			if strings.HasPrefix(arg, "-") {
 				return flags, fmt.Errorf("opción desconocida: %s", arg)
 			}
-			if flags.target != "HEAD" {
+			if flags.targetOk {
 				return flags, fmt.Errorf("solo se acepta un target de auditoría, recibí %q y %q", flags.target, arg)
 			}
 			flags.target = arg
+			flags.targetOk = true
 		}
 	}
 	return flags, nil
@@ -163,9 +165,16 @@ func ejecutarRebase() {
 		return
 	}
 
-	remoto := upstream
-	if partes := strings.Split(upstream, "/"); len(partes) > 1 {
+	remoto := ""
+	if upstream == "@{u}" {
+		// El remoto real viene de la config de la rama, no del ref simbólico.
+		remoto = git.RemotoDeRama(rama)
+	} else if partes := strings.Split(upstream, "/"); len(partes) > 1 {
 		remoto = partes[0]
+	}
+	if remoto == "" {
+		fmt.Println("❌ No se pudo determinar el remoto para el fetch. Revisa branch." + rama + ".remote.")
+		os.Exit(1)
 	}
 	if salida, err := ejecutarEnShell("git fetch " + remoto); err != nil {
 		fmt.Printf("❌ Falló el fetch (%s):\n%s", remoto, salida)
@@ -182,12 +191,25 @@ func ejecutarRebase() {
 	fmt.Printf("✅ %s rebaseada sobre %s.\n", rama, upstream)
 }
 
+// flagsNoAplicablesAStatus indica si los flags parseados no aplican a status
+// (que solo entiende --json). Se rechazan en lugar de aceptarse en silencio.
+func flagsNoAplicablesAStatus(flags flagsAuditoria) bool {
+	return flags.targetOk || len(flags.dims) > 0 || flags.all || flags.chain || flags.gate ||
+		flags.profile != "" || flags.answer != ""
+}
+
 // ejecutarStatus resume el estado del guardián: volumen pendiente, fichas de
 // auditoría y últimos eventos. Con --json emite la misma información en JSON.
 func ejecutarStatus(worktree string, args []string) {
 	flags, err := parsearFlagsAuditoria(args)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	// status solo entiende --json; el resto de flags de auditoría no aplican
+	// aquí y se rechazan en lugar de aceptarse en silencio.
+	if flagsNoAplicablesAStatus(flags) {
+		fmt.Println("❌ status solo acepta el flag --json.")
 		os.Exit(1)
 	}
 

@@ -127,7 +127,14 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 			return nil, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim)
 		}
 		if !veredictosValidos[crudo.Verdict] {
-			return nil, fmt.Errorf("%w: %q (dimensión %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim)
+			if len(crudo.Findings) == 0 {
+				return nil, fmt.Errorf("%w: %q (dimensión %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim)
+			}
+			// Veredictos de facto ("issues", "error", ...) con hallazgos se
+			// derivan de las severidades en lugar de abortar la auditoría.
+			normalizaciones = append(normalizaciones,
+				fmt.Sprintf("veredicto %q normalizado según severidades de hallazgos", crudo.Verdict))
+			crudo.Verdict = ""
 		}
 
 		hallazgos := make([]ReviewFinding, 0, len(crudo.Findings))
@@ -145,7 +152,7 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 		}
 		return &DimensionResult{
 			Dim:          crudo.Dim,
-			Verdict:      crudo.Verdict,
+			Verdict:      veredictoFinal(crudo.Verdict, hallazgos, &normalizaciones),
 			Findings:     hallazgos,
 			Questions:    crudo.Questions,
 			Reason:       crudo.Reason,
@@ -157,6 +164,42 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 		return nil, ErrSalidaVacia
 	}
 	return nil, ErrJSONLInvalido
+}
+
+// veredictoFinal decide el veredicto de una dimensión tras el parseo: los
+// hallazgos mandan sobre el veredicto declarado. Un ok declarado con CRITICAL
+// sube a block; un veredicto de facto (derivado de severidades) se resuelve
+// aquí. question y unavailable se respetan tal cual.
+func veredictoFinal(declarado string, hallazgos []ReviewFinding, normalizaciones *[]string) string {
+	if declarado == VerdictQuestion || declarado == VerdictUnavailable {
+		return declarado
+	}
+
+	derivado := veredictoDeSeveridades(hallazgos)
+	if declarado == "" {
+		return derivado
+	}
+	if derivado != declarado && derivado != VerdictOK {
+		*normalizaciones = append(*normalizaciones,
+			fmt.Sprintf("veredicto %q elevado a %q por severidades de hallazgos", declarado, derivado))
+		return derivado
+	}
+	return declarado
+}
+
+// veredictoDeSeveridades mapea hallazgos a veredicto: CRITICAL -> block,
+// WARNING/ADVISORY -> warn, sin hallazgos -> ok.
+func veredictoDeSeveridades(hallazgos []ReviewFinding) string {
+	peor := VerdictOK
+	for _, h := range hallazgos {
+		switch h.Severity {
+		case SevCritical:
+			return VerdictBlock
+		case SevWarning, SevAdvisory:
+			peor = VerdictWarn
+		}
+	}
+	return peor
 }
 
 // extraerBloqueJSONL recorta la salida al segmento entre BEGIN_REVIEW y

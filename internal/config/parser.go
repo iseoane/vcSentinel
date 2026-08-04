@@ -57,7 +57,7 @@ func configuracionPorDefecto() Config {
 			"deep":   {Model: "claude-3-5-sonnet", ReasoningEffort: "max"},
 		},
 		Review: ReviewConfig{
-			Timeout:  120 * time.Second,
+			Timeout:  300 * time.Second,
 			Parallel: 2,
 			Dims: map[string]string{
 				"spec":     "cheap",

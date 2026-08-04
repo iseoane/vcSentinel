@@ -13,9 +13,10 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-// TimeoutComando es el límite de una llamada al agente (120 s). La fase 1 lo
-// hace configurable vía review.timeout en vassentinel.yml.
-const TimeoutComando = 120 * time.Second
+// TimeoutComando es el límite de una llamada al agente (300 s). La fase 1 lo
+// hace configurable vía review.timeout en vassentinel.yml; este es el fallback
+// cuando un adaptador no define Timeout.
+const TimeoutComando = 300 * time.Second
 
 type CLIAdapter struct {
 	BinaryName string

@@ -124,3 +124,13 @@ func UpstreamOMain() (string, error) {
 	}
 	return "", errors.New("no se encontró upstream ni rama main/master para la cadena")
 }
+
+// RemotoDeRama devuelve el remoto configurado para una rama (branch.<rama>.remote)
+// o vacío si la rama no tiene remoto.
+func RemotoDeRama(rama string) string {
+	salida, err := ejecutarGitSalida("config", "--get", "branch."+rama+".remote")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(salida)
+}

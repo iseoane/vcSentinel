@@ -72,6 +72,59 @@ func TestParsearDimensionResultDesconocida(t *testing.T) {
 	}
 }
 
+func TestParsearDimensionResultVeredictoDeFactoConHallazgos(t *testing.T) {
+	// El agente real devuelve a veces "issues" como veredicto con hallazgos:
+	// con hallazgos se deriva de las severidades, sin hallazgos es un error.
+	salida := `{"dim":"logic","verdict":"issues","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"WARNING","description":"d"}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if resultado.Verdict != VerdictWarn {
+		t.Errorf("verdict = %q, esperado %q derivado de WARNING", resultado.Verdict, VerdictWarn)
+	}
+	if len(resultado.Advertencias) == 0 {
+		t.Error("se esperaba advertencia por la normalización del veredicto")
+	}
+
+	if _, err := ParsearDimensionResult(`{"dim":"logic","verdict":"issues"}`); !errors.Is(err, ErrVeredictoInvalido) {
+		t.Errorf("veredicto de facto sin hallazgos debería ser %v, obtenido %v", ErrVeredictoInvalido, err)
+	}
+}
+
+func TestParsearDimensionResultOkConCriticoSubeABlock(t *testing.T) {
+	salida := `{"dim":"security","verdict":"ok","findings":[{"dimension":"security","file":"a.go","line":2,"severity":"CRITICAL","description":"secreto expuesto"}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if resultado.Verdict != VerdictBlock {
+		t.Errorf("verdict = %q, esperado %q (los hallazgos mandan)", resultado.Verdict, VerdictBlock)
+	}
+}
+
+func TestParsearDimensionResultOkConWarningSubeAWarn(t *testing.T) {
+	salida := `{"dim":"style","verdict":"ok","findings":[{"dimension":"style","file":"a.go","line":3,"severity":"ADVISORY","description":"nombre confuso"}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if resultado.Verdict != VerdictWarn {
+		t.Errorf("verdict = %q, esperado %q (ADVISORY presente)", resultado.Verdict, VerdictWarn)
+	}
+}
+
+func TestParsearDimensionResultQuestionSeRespeta(t *testing.T) {
+	salida := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"¿X?"}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if resultado.Verdict != VerdictQuestion {
+		t.Errorf("verdict = %q, esperado %q", resultado.Verdict, VerdictQuestion)
+	}
+}
+
 func TestParsearDimensionResultSeveridadDesconocida(t *testing.T) {
 	salida := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"FATAL","description":"d"}]}`
 	resultado, err := ParsearDimensionResult(salida)
