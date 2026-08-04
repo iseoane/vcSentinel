@@ -108,6 +108,22 @@ Cada línea es un objeto:
 - `unavailable`: sin tokens/rate-limit; se guarda con razón
   (`rate_limit`, `auth`, `timeout`, `empty`). Nunca es bloqueante.
 
+### Normalización de veredictos (de facto → derivados)
+
+Los agentes reales no siempre respetan el contrato (p. ej. devuelven
+`"verdict":"issues"`). La normalización en `internal/review/finding.go`
+resuelve el veredicto final así:
+
+1. `question` / `unavailable` explícitos → se respetan tal cual.
+2. Veredicto de facto con hallazgos (`issues`, etc.) → se deriva de las
+   severidades: CRITICAL → `block`, WARNING → `warn`, solo ADVISORY → `warn`
+   con severidad máxima visible.
+3. `ok` declarado con hallazgos CRITICAL → se eleva a `block`; con WARNING /
+   ADVISORY → `warn`. La elevación es ascendente: nunca se degrada un `block`
+   declarado con severidades menores.
+4. Veredicto inválido sin hallazgos → `ErrVeredictoInvalido` (no se inventa
+   un PASS).
+
 ### Ejemplo con preguntas
 
 ```json
@@ -147,6 +163,11 @@ Cada línea es un objeto:
 
 - **Huérfanos**: SHA del ledger ausente del historial (`git log`) → se reporta
   en `status` como huérfano, no se borra automáticamente.
+- **Trazabilidad de correcciones** (`fixed_in`): un commit posterior con
+  mensaje `fix(` y veredicto no bloqueante marca como corregida la ficha de
+  cualquier commit previo en `block` cuyos archivos toca el fix
+  (`Ficha.FixedIn`, `Revision.Fixed`). La primera corrección gana
+  (`MarcarCorregida` es idempotente). `status` muestra `🔧 corregida en <sha>`.
 - **`pr review`** muestra revisión: `spec ✅ (2ª rev — CRITICAL superado)`.
 
 ## 7. Dimensiones: definiciones, matriz y prompt maestro
@@ -191,6 +212,10 @@ Cada línea es un objeto:
 8. Si la información es insuficiente: veredicto `question` con `questions[]`
    (máx. 3, concisas, contestables sí/no o elección concreta).
 9. Salida exclusivamente JSONL. Cero markdown fuera de los delimitadores.
+10. **Prohibición explícita de herramientas**: el prompt ordena NO ejecutar
+    comandos ni inspeccionar el repositorio. `opencode run` es un agente con
+    herramientas: sin esta regla se pone a hacer builds/tests y se cuelga
+    hasta el timeout en vez de responder.
 
 ## 8. Resiliencia sin tokens
 
@@ -220,8 +245,8 @@ razonamiento. La configuración distingue cuatro piezas:
 | Pieza | Qué es | Ejemplo |
 |---|---|---|
 | Agente (binario) | El programa que ejecuta el trabajo | `claude`, `opencode` |
-| Modelo | El cerebro dentro del agente | `deepseek-v4-flash`, `claude-3-5-sonnet` |
-| Esfuerzo | Cuánto razona el modelo | `low` / `high` / `max` |
+| Modelo | El cerebro dentro del agente | `deepseek-v4-flash-free`, `claude-3-5-sonnet` |
+| Esfuerzo | Cuánto razona el modelo | deepseek: `default`/`high`/`max`; claude: `high` |
 | Perfil | Receta con nombre: agente + modelo + esfuerzo | `cheap`, `normal`, `deep` |
 
 **Relación**: el agente es el contenedor, el modelo piensa dentro de él y el
@@ -229,6 +254,20 @@ esfuerzo decide cuánto piensa. Un mismo agente puede servir varios modelos
 según su configuración local (p. ej. opencode lanza deepseek o claude según
 el proveedor activo); el modelo del perfil se inyecta por variables de entorno
 (`CLAUDE_CODE_MODEL` / `OPENCODE_MODEL` + su variante de razonamiento).
+
+**Valores de esfuerzo por proveedor (importante)**: los valores NO son
+universales. opencode valida el esfuerzo según el proveedor del modelo: para
+deepseek los valores son `default`/`high`/`max` (un `low` se ignora o falla
+silenciosamente); para claude, `high` (el `max` no es válido). Un modelo
+inexistente en `OPENCODE_MODEL` (p. ej. `deepseek-v4-flash` en lugar del real
+`deepseek-v4-flash-free`) se ignora silenciosamente y opencode usa el modelo
+del agente por defecto.
+
+**Shims npm en Windows**: si el agente se instala como shim `.cmd`
+(global npm), `exec.Command` lo ejecuta vía `cmd.exe`, que rompe el quoting
+de prompts largos (auditorías con diff). El adaptador resuelve el `.exe` real
+buscando la línea `%dp0%\node_modules\...\bin\X.exe` del shim
+(`resolverBinarioReal` en `internal/agentadapter/factory.go`).
 
 **Decisión en runtime para cada dimensión**:
 
@@ -238,14 +277,14 @@ el proveedor activo); el modelo del perfil se inyecta por variables de entorno
    `agents[binario]`.
 
 ```yaml
-active_agent: auto
+active_agent: opencode
 agents:
   claude:   { model: claude-3-5-sonnet,  reasoning_effort: high }
-  opencode: { model: deepseek-v4-flash,  reasoning_effort: max }
+  opencode: { model: deepseek-v4-flash-free,  reasoning_effort: max }
 profiles:
-  cheap:  { model: deepseek-v4-flash,  reasoning_effort: low }
+  cheap:  { model: deepseek-v4-flash-free,  reasoning_effort: default }
   normal: {}                                  # receta vacía = configuración base
-  deep:   { model: claude-3-5-sonnet,  reasoning_effort: max }
+  deep:   { model: claude-3-5-sonnet,  reasoning_effort: high }
 review:
   dims:
     spec: cheap
@@ -274,7 +313,8 @@ los decide el implementador en la fase 1.
 
 - Auditorías de dimensiones en paralelo, default 2 (semáforo).
 - Timeout obligatorio por llamada (`context.WithTimeout` en `cli.go`), default
-  120 s, configurable en `vassentinel.yml` (`review.timeout`).
+  300 s (subido de 120 s tras verificar que opencode con diff real tarda
+  ~2–3 min), configurable en `vassentinel.yml` (`review.timeout`).
 - El agente automático (`CLIAdapter`) es one-shot y no interactivo; el timeout
   evita cuelgues de procesos que esperan entrada.
 
