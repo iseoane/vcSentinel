@@ -86,6 +86,46 @@ func TestLedgerArchivoCorruptoEsError(t *testing.T) {
 	}
 }
 
+func TestLedgerEliminarFichaInexistenteEsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+	if err := ledger.EliminarFicha("ffffffffffffffffffffffffffffffffffffffff"); err != nil {
+		t.Fatalf("EliminarFicha de ficha inexistente devolvió error: %v", err)
+	}
+}
+
+func TestLedgerPurgarHuerfanas(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+
+	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
+	for _, sha := range []string{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	} {
+		if err := ledger.GuardarRevision(sha, "feat(x): cosa", "backend", "modelo-test", rev); err != nil {
+			t.Fatalf("GuardarRevision(%s) devolvió error: %v", sha, err)
+		}
+	}
+
+	// Sin un repositorio Git detrás, cat-file falla y ambas fichas son
+	// huérfanas: el purge debe vaciar el ledger.
+	eliminados, err := ledger.PurgarHuerfanas()
+	if err != nil {
+		t.Fatalf("PurgarHuerfanas devolvió error: %v", err)
+	}
+	if len(eliminados) != 2 {
+		t.Errorf("PurgarHuerfanas eliminó %d fichas, esperado 2", len(eliminados))
+	}
+	restantes, err := ledger.ListarFichas()
+	if err != nil {
+		t.Fatalf("ListarFichas devolvió error: %v", err)
+	}
+	if len(restantes) != 0 {
+		t.Errorf("tras purgar quedan %d fichas, esperado 0: %v", len(restantes), restantes)
+	}
+}
+
 func TestLedgerEscrituraAtomica(temp *testing.T) {
 	// Varias escrituras consecutivas nunca dejan un archivo a medias: al final
 	// siempre hay JSON válido con la última revisión.

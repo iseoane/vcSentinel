@@ -11,21 +11,40 @@ func TestResolverPerfilDesdeDims(t *testing.T) {
 	if perfil.Nombre != "normal" {
 		t.Errorf("logic -> perfil %q, esperado normal", perfil.Nombre)
 	}
-	if perfil.Binario != "" || perfil.Modelo != "" || perfil.Esfuerzo != "" {
-		t.Errorf("el perfil normal debería heredar todo (vació), obtenido %+v", perfil)
-	}
 
 	perfil = ResolverPerfil(cfg, "security", "")
 	if perfil.Nombre != "deep" {
 		t.Errorf("security -> perfil %q, esperado deep", perfil.Nombre)
 	}
-	if perfil.Modelo != "claude-3-5-sonnet" || perfil.Esfuerzo != "high" {
-		t.Errorf("perfil deep = %+v, esperado claude-3-5-sonnet/high", perfil)
-	}
 
 	perfil = ResolverPerfil(cfg, "spec", "")
-	if perfil.Nombre != "cheap" || perfil.Esfuerzo != "default" {
-		t.Errorf("spec -> %+v, esperado cheap/default", perfil)
+	if perfil.Nombre != "cheap" {
+		t.Errorf("spec -> %+v, esperado cheap", perfil)
+	}
+}
+
+func TestResolverPerfilV2AgentePuntoPerfil(t *testing.T) {
+	cfg := configuracionPorDefecto()
+
+	perfil := ResolverPerfil(cfg, "logic", "opencode.cheap")
+	if perfil.Binario != "opencode" || perfil.Modelo != "deepseek-v4-flash-free" || perfil.Esfuerzo != "default" {
+		t.Errorf("opencode.cheap = %+v, esperado opencode/deepseek-v4-flash-free/default", perfil)
+	}
+
+	perfil = ResolverPerfil(cfg, "logic", "claude.deep")
+	if perfil.Binario != "claude" || perfil.Modelo != "claude-opus" {
+		t.Errorf("claude.deep = %+v, esperado claude/claude-opus", perfil)
+	}
+}
+
+func TestResolverPerfilV2HeredaDelAgente(t *testing.T) {
+	cfg := configuracionPorDefecto()
+	// Perfil anidado sin modelo propio: hereda el del agente.
+	cfg.Agents["opencode"].Profiles["extra"] = ProfileConfig{ReasoningEffort: "medium"}
+
+	perfil := ResolverPerfil(cfg, "logic", "opencode.extra")
+	if perfil.Modelo != "deepseek-v4-flash-free" || perfil.Esfuerzo != "medium" {
+		t.Errorf("opencode.extra = %+v, esperado heredar modelo del agente + medium", perfil)
 	}
 }
 
@@ -40,12 +59,12 @@ func TestResolverPerfilConOverride(t *testing.T) {
 
 func TestResolverPerfilDimsConfiguradas(t *testing.T) {
 	cfg := configuracionPorDefecto()
-	cfg.Review.Dims["logic"] = "cheap"
-	cfg.Profiles["cheap"] = ProfileConfig{Agent: "opencode", Model: "mini"}
+	cfg.Review.Dims["logic"] = "opencode.cheap"
+	cfg.Agents["opencode"].Profiles["cheap"] = ProfileConfig{Model: "mini"}
 
 	perfil := ResolverPerfil(cfg, "logic", "")
-	if perfil.Nombre != "cheap" || perfil.Binario != "opencode" || perfil.Modelo != "mini" {
-		t.Errorf("perfil = %+v, esperado cheap con opencode/mini", perfil)
+	if perfil.Nombre != "opencode.cheap" || perfil.Binario != "opencode" || perfil.Modelo != "mini" {
+		t.Errorf("perfil = %+v, esperado opencode.cheap con opencode/mini", perfil)
 	}
 }
 

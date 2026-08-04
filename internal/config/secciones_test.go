@@ -6,28 +6,29 @@ import (
 	"time"
 )
 
-// TestSeccionesNuevas verifica el parseo de profiles, review (timeout,
-// parallel, dims) y lint_commands.
+// TestSeccionesNuevas verifica el parseo de profiles anidados por agente (v2),
+// review (timeout, parallel, dims) y lint_commands.
 func TestSeccionesNuevas(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
 	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
-profiles:
-  cheap:
-    model: "flash-mini"
-    reasoning_effort: "low"
-  deep:
-    agent: "claude"
-    model: "claude-sonnet"
-    reasoning_effort: "max"
+agents:
+  opencode:
+    profiles:
+      cheap:
+        model: "flash-mini"
+        reasoning_effort: "low"
+      deep:
+        model: "flash-max"
+        reasoning_effort: "high"
 review:
   timeout: 30
   parallel: 4
   dims:
-    spec: cheap
-    security: deep
+    spec: opencode.cheap
+    security: opencode.deep
 lint_commands:
   - "gofmt -l ."
   - "go vet ./..."
@@ -35,11 +36,12 @@ lint_commands:
 
 	cfg := CargarConfiguracionLocal(worktree)
 
-	if cfg.Profiles["cheap"].Model != "flash-mini" || cfg.Profiles["cheap"].ReasoningEffort != "low" {
-		t.Errorf("perfil cheap = %+v, esperado flash-mini/low", cfg.Profiles["cheap"])
+	opencode := cfg.Agents["opencode"]
+	if opencode.Profiles["cheap"].Model != "flash-mini" || opencode.Profiles["cheap"].ReasoningEffort != "low" {
+		t.Errorf("perfil opencode.cheap = %+v, esperado flash-mini/low", opencode.Profiles["cheap"])
 	}
-	if cfg.Profiles["deep"].Agent != "claude" || cfg.Profiles["deep"].Model != "claude-sonnet" {
-		t.Errorf("perfil deep = %+v, esperado claude/claude-sonnet", cfg.Profiles["deep"])
+	if opencode.Profiles["deep"].Model != "flash-max" || opencode.Profiles["deep"].ReasoningEffort != "high" {
+		t.Errorf("perfil opencode.deep = %+v, esperado flash-max/high", opencode.Profiles["deep"])
 	}
 	if cfg.Review.Timeout != 30*time.Second {
 		t.Errorf("Review.Timeout = %v, esperado 30s", cfg.Review.Timeout)
@@ -47,8 +49,8 @@ lint_commands:
 	if cfg.Review.Parallel != 4 {
 		t.Errorf("Review.Parallel = %d, esperado 4", cfg.Review.Parallel)
 	}
-	if cfg.Review.Dims["spec"] != "cheap" || cfg.Review.Dims["security"] != "deep" {
-		t.Errorf("Review.Dims = %+v, esperado spec->cheap y security->deep", cfg.Review.Dims)
+	if cfg.Review.Dims["spec"] != "opencode.cheap" || cfg.Review.Dims["security"] != "opencode.deep" {
+		t.Errorf("Review.Dims = %+v, esperado spec->opencode.cheap y security->opencode.deep", cfg.Review.Dims)
 	}
 	// El merge acumula comandos globales + per-proyecto: verificamos que los
 	// per-proyecto estén presentes (puede haber más si existe config global).
@@ -64,7 +66,7 @@ lint_commands:
 }
 
 // TestDefaultsPerfiles verifica que sin config los perfiles y dims por defecto
-// existen y son coherentes con la guía.
+// existen y son coherentes con la guía (perfiles anidados por agente, v2).
 func TestDefaultsPerfiles(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
@@ -72,9 +74,11 @@ func TestDefaultsPerfiles(t *testing.T) {
 
 	cfg := CargarConfiguracionLocal(worktree)
 
-	for _, perfil := range []string{"cheap", "normal", "deep"} {
-		if _, existe := cfg.Profiles[perfil]; !existe {
-			t.Errorf("falta el perfil %q por defecto", perfil)
+	for _, agente := range []string{"claude", "opencode"} {
+		for _, perfil := range []string{"cheap", "normal", "deep"} {
+			if _, existe := cfg.Agents[agente].Profiles[perfil]; !existe {
+				t.Errorf("falta el perfil %q.%q por defecto", agente, perfil)
+			}
 		}
 	}
 	if cfg.Review.Dims["spec"] != "cheap" || cfg.Review.Dims["security"] != "deep" {
