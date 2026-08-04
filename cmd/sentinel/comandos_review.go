@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -45,19 +46,21 @@ func ejecutarReview(worktree string, args []string) {
 	exitFinal := 0
 
 	if flags.prune {
-		eliminados, err := ledger.PurgarHuerfanas()
+		// --prune es un modo standalone: combinarlo con targets o flags de
+		// auditoría sería ignorarlos en silencio (cf. flagsNoAplicablesAStatus).
+		soloPrune := len(flags.targets) == 1 && flags.targets[0] == "HEAD" &&
+			len(flags.dims) == 0 && !flags.all && !flags.chain && !flags.gate &&
+			flags.profile == "" && flags.answer == ""
+		if !soloPrune {
+			fmt.Println("? review --prune no se combina con targets ni flags de auditoría (--dims/--all/--chain/--gate/--profile/--answer).")
+			os.Exit(1)
+		}
+		eliminados, err := purgarHuerfanasConEventos(gitDir)
 		if err != nil {
 			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
 			os.Exit(1)
 		}
-		if len(eliminados) == 0 {
-			fmt.Println("? --prune: no hay fichas huérfanas (todos los SHAs existen).")
-		} else {
-			fmt.Printf("? --prune: eliminadas %d fichas de commits que ya no existen.\n", len(eliminados))
-			for _, sha := range eliminados {
-				fmt.Printf("  - %s\n", sha)
-			}
-		}
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
 	}
 	total := len(shas)
@@ -215,19 +218,26 @@ func fixTocaHallazgos(archivosFix map[string]bool, dims []review.DimensionResult
 	return false
 }
 
-// resolverShasAuditoria calcula los SHAs a auditar según los flags: un solo
-// commit (default), la cadena desde el base (--chain) o todos los commits sin
-// ficha (--all).
+// resolverShasAuditoria calcula los SHAs a auditar según los flags: la lista
+// de commits pedida (default HEAD), la cadena desde el base (--chain) o todos
+// los commits sin ficha (--all). --chain/--all no se combinan con targets
+// explícitos: no tiene sentido mezclar dos criterios de selección.
 func resolverShasAuditoria(flags flagsAuditoria) ([]string, error) {
 	switch {
 	case flags.chain:
+		if len(flags.targets) > 1 {
+			return nil, errors.New("--chain no se combina con una lista de commits: usa un solo target como extremo")
+		}
 		base, err := git.UpstreamOMain()
 		if err != nil {
 			return nil, err
 		}
-		return git.SHAsRango(base, flags.target)
+		return git.SHAsRango(base, flags.targets[0])
 	case flags.all:
-		todos, err := git.SHAsHasta(flags.target)
+		if len(flags.targets) > 1 {
+			return nil, errors.New("--all no se combina con una lista de commits: audita todo el historial sin ficha")
+		}
+		todos, err := git.SHAsHasta(flags.targets[0])
 		if err != nil {
 			return nil, err
 		}
@@ -252,11 +262,15 @@ func resolverShasAuditoria(flags flagsAuditoria) ([]string, error) {
 		}
 		return pendientes, nil
 	default:
-		sha, err := git.ResolverSHA(flags.target)
-		if err != nil {
-			return nil, fmt.Errorf("no se pudo resolver %q: %v", flags.target, err)
+		resueltos := make([]string, 0, len(flags.targets))
+		for _, expresion := range flags.targets {
+			sha, err := git.ResolverSHA(expresion)
+			if err != nil {
+				return nil, fmt.Errorf("no se pudo resolver %q: %v", expresion, err)
+			}
+			resueltos = append(resueltos, sha)
 		}
-		return []string{sha}, nil
+		return resueltos, nil
 	}
 }
 

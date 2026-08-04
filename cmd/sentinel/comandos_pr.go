@@ -22,15 +22,15 @@ func ejecutarPr(worktree string, args []string) {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
-	eliminados, err := purgarHuerfanas(gitDir)
+	eliminados, err := purgarHuerfanasConEventos(gitDir)
 	if err != nil {
-		fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
-		os.Exit(1)
+		// La limpieza es auxiliar al PR: se avisa y se continúa, no se aborta.
+		fmt.Printf("? Aviso: no se pudieron purgar fichas huérfanas (%v). El PR se crea igualmente.\n", err)
 	}
 	if len(eliminados) == 0 {
 		fmt.Println("? Limpieza previa: no hay fichas huérfanas.")
 	} else {
-		fmt.Printf("? Limpieza previa: eliminadas %d fichas de commits que ya no existen.\n", len(eliminados))
+		fmt.Printf("? Limpieza previa: eliminadas %d fichas de commits que ya no existen (y sus eventos).\n", len(eliminados))
 		for _, sha := range eliminados {
 			fmt.Printf("  - %s\n", sha)
 		}

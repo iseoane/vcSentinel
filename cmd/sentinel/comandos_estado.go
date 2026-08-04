@@ -17,22 +17,23 @@ import (
 
 // flagsAuditoria son las opciones comunes de review y status.
 type flagsAuditoria struct {
-	target   string // SHA a auditar (default HEAD)
-	targetOk bool   // distingue "HEAD" explícito del default
-	dims     []string
-	all      bool
-	chain    bool
-	gate     bool
-	prune    bool // borra fichas de commits que ya no existen en el repo
-	profile  string
-	answer   string
-	jsonOut  bool
+	targets []string // SHAs o expresiones a auditar (default [HEAD])
+	dims    []string
+	all     bool
+	chain   bool
+	gate    bool
+	prune   bool // borra fichas de commits que ya no existen en el repo
+	profile string
+	answer  string
+	jsonOut bool
 }
 
 // parsearFlagsAuditoria recorre los argumentos del subcomando y extrae las
 // opciones con su valor. Los flags con valor consumen el siguiente argumento.
+// Cada argumento posicional es un target: se admiten varios para auditar
+// varios commits en una sola invocación (el contador i/N los numera).
 func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
-	flags := flagsAuditoria{target: "HEAD"}
+	flags := flagsAuditoria{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
@@ -68,12 +69,11 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 			if strings.HasPrefix(arg, "-") {
 				return flags, fmt.Errorf("opción desconocida: %s", arg)
 			}
-			if flags.targetOk {
-				return flags, fmt.Errorf("solo se acepta un target de auditoría, recibí %q y %q", flags.target, arg)
-			}
-			flags.target = arg
-			flags.targetOk = true
+			flags.targets = append(flags.targets, arg)
 		}
+	}
+	if len(flags.targets) == 0 {
+		flags.targets = []string{"HEAD"}
 	}
 	return flags, nil
 }
@@ -198,7 +198,7 @@ func ejecutarRebase() {
 // (que solo entiende --json y --prune). Se rechazan en lugar de aceptarse en
 // silencio.
 func flagsNoAplicablesAStatus(flags flagsAuditoria) bool {
-	return flags.targetOk || len(flags.dims) > 0 || flags.all || flags.chain || flags.gate ||
+	return len(flags.targets) > 0 || len(flags.dims) > 0 || flags.all || flags.chain || flags.gate ||
 		flags.profile != "" || flags.answer != ""
 }
 
@@ -206,7 +206,51 @@ func flagsNoAplicablesAStatus(flags flagsAuditoria) bool {
 // devuelve los SHAs eliminados. Útil tras rebase/amend/squash.
 func purgarHuerfanas(gitDir string) ([]string, error) {
 	return review.NuevoLedger(gitDir).PurgarHuerfanas()
-}// ejecutarStatus resume el estado del guardián: volumen pendiente, fichas de
+}
+
+// purgarHuerfanasConEventos purga las fichas huérfanas y, por cada SHA
+// eliminado, borra también sus líneas del events.jsonl: los eventos de
+// commits que siguen vivos se conservan siempre. Un fallo en la limpieza de
+// eventos devuelve error pero las fichas ya purgadas no se restauran.
+func purgarHuerfanasConEventos(gitDir string) ([]string, error) {
+	eliminados, err := purgarHuerfanas(gitDir)
+	if err != nil || len(eliminados) == 0 {
+		return eliminados, err
+	}
+	if _, err := ops.PurgeEventosDe(gitDir, eliminados); err != nil {
+		return eliminados, fmt.Errorf("fichas purgadas pero falló limpiar sus eventos: %w", err)
+	}
+	return eliminados, nil
+}
+
+// reportarPurga muestra el resultado de purgarHuerfanasConEventos en texto o
+// JSON según jsonOut. Comparte la presentación entre status, review y pr para
+// no duplicar el formato.
+func reportarPurga(gitDir string, eliminados []string, jsonOut bool, worktree string) {
+	if jsonOut {
+		salida := map[string]any{
+			"worktree": worktree,
+			"purgadas": eliminados,
+		}
+		datos, err := json.MarshalIndent(salida, "", "  ")
+		if err != nil {
+			fmt.Printf("? No se pudo serializar el estado: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(datos))
+		return
+	}
+	if len(eliminados) == 0 {
+		fmt.Println("? --prune: no hay fichas huérfanas (todos los SHAs existen).")
+		return
+	}
+	fmt.Printf("? --prune: eliminadas %d fichas de commits que ya no existen (y sus eventos).\n", len(eliminados))
+	for _, sha := range eliminados {
+		fmt.Printf("  - %s\n", sha)
+	}
+}
+
+// ejecutarStatus resume el estado del guardián: volumen pendiente, fichas de
 // auditoría y últimos eventos. Con --json emite la misma información en JSON.
 func ejecutarStatus(worktree string, args []string) {
 	flags, err := parsearFlagsAuditoria(args)
@@ -236,19 +280,12 @@ func ejecutarStatus(worktree string, args []string) {
 	ledger := review.NuevoLedger(gitDir)
 
 	if flags.prune {
-		eliminados, err := ledger.PurgarHuerfanas()
+		eliminados, err := purgarHuerfanasConEventos(gitDir)
 		if err != nil {
 			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
 			os.Exit(1)
 		}
-		if len(eliminados) == 0 {
-			fmt.Println("? --prune: no hay fichas huérfanas (todos los SHAs existen).")
-		} else {
-			fmt.Printf("? --prune: eliminadas %d fichas de commits que ya no existen.\n", len(eliminados))
-			for _, sha := range eliminados {
-				fmt.Printf("  - %s\n", sha)
-			}
-		}
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
 	}
 
@@ -267,7 +304,7 @@ func ejecutarStatus(worktree string, args []string) {
 			veredicto = ficha.Revisions[len(ficha.Revisions)-1].Result
 			fixedIn = ficha.FixedIn
 		}
-		esHuerfano := !git.ExisteCommit(sha)
+		esHuerfano := !git.ContenidoEnAlgunRef(sha)
 		if esHuerfano {
 			huerfanos++
 		}

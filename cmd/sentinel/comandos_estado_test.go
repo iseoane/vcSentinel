@@ -1,16 +1,19 @@
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParsearFlagsAuditoriaDefault(t *testing.T) {
 	flags, err := parsearFlagsAuditoria(nil)
 	if err != nil {
 		t.Fatalf("parsearFlagsAuditoria(nil) devolvió error: %v", err)
 	}
-	if flags.target != "HEAD" {
-		t.Errorf("target = %q, esperado HEAD", flags.target)
+	if len(flags.targets) != 1 || flags.targets[0] != "HEAD" {
+		t.Errorf("targets = %+v, esperado [HEAD]", flags.targets)
 	}
-	if flags.all || flags.chain || flags.gate || flags.jsonOut {
+	if flags.all || flags.chain || flags.gate || flags.jsonOut || flags.prune {
 		t.Error("flags booleanos deberían estar apagados por defecto")
 	}
 }
@@ -23,8 +26,8 @@ func TestParsearFlagsAuditoriaCompletas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsearFlagsAuditoria devolvió error: %v", err)
 	}
-	if flags.target != "abc123" {
-		t.Errorf("target = %q, esperado abc123", flags.target)
+	if len(flags.targets) != 1 || flags.targets[0] != "abc123" {
+		t.Errorf("targets = %+v, esperado [abc123]", flags.targets)
 	}
 	if len(flags.dims) != 2 || flags.dims[0] != "logic" || flags.dims[1] != "security" {
 		t.Errorf("dims = %+v, esperado [logic security]", flags.dims)
@@ -37,6 +40,16 @@ func TestParsearFlagsAuditoriaCompletas(t *testing.T) {
 	}
 }
 
+func TestParsearFlagsAuditoriaMultiplesTargets(t *testing.T) {
+	flags, err := parsearFlagsAuditoria([]string{"abc123", "def456", "HEAD~2"})
+	if err != nil {
+		t.Fatalf("parsearFlagsAuditoria devolvió error: %v", err)
+	}
+	if !reflect.DeepEqual(flags.targets, []string{"abc123", "def456", "HEAD~2"}) {
+		t.Errorf("targets = %+v, esperado [abc123 def456 HEAD~2]", flags.targets)
+	}
+}
+
 func TestParsearFlagsAuditoriaErrores(t *testing.T) {
 	pruebas := []struct {
 		nombre string
@@ -44,8 +57,6 @@ func TestParsearFlagsAuditoriaErrores(t *testing.T) {
 	}{
 		{"flag sin valor", []string{"--profile"}},
 		{"opción desconocida", []string{"--nada"}},
-		{"dos targets", []string{"abc", "def"}},
-		{"HEAD explicito y otro target", []string{"HEAD", "abc123"}},
 	}
 	for _, prueba := range pruebas {
 		if _, err := parsearFlagsAuditoria(prueba.args); err == nil {
@@ -59,8 +70,8 @@ func TestParsearFlagsAuditoriaHeadExplicito(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsearFlagsAuditoria(HEAD) devolvió error: %v", err)
 	}
-	if flags.target != "HEAD" || !flags.targetOk {
-		t.Errorf("target = %q targetOk = %v, esperado HEAD/true", flags.target, flags.targetOk)
+	if !reflect.DeepEqual(flags.targets, []string{"HEAD"}) {
+		t.Errorf("targets = %+v, esperado [HEAD]", flags.targets)
 	}
 }
 
