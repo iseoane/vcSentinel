@@ -251,6 +251,31 @@ texto posterior`)
 	}
 }
 
+// TestCierreJSON: el matcher de llaves balanceadas tolera strings, escapes y
+// anidamiento, y detecta objetos sin cerrar.
+func TestCierreJSON(t *testing.T) {
+	casos := []struct {
+		nombre  string
+		salida  string
+		desde   int
+		espera  int
+		cerrado bool
+	}{
+		{"simple", `{"a":1}`, 0, 6, true},
+		{"anidado", `{"a":{"b":2}}`, 0, 12, true},
+		{"llaves en string", `{"a":"{b}"}`, 0, 10, true},
+		{"escape de comilla", `{"a":"\"}x"}`, 0, 11, true},
+		{"objeto incompleto", `{"a":1`, 0, 0, false},
+	}
+	for _, caso := range casos {
+		fin, ok := cierreJSON(caso.salida, caso.desde)
+		if ok != caso.cerrado || (ok && fin != caso.espera) {
+			t.Errorf("%s: cierreJSON(%q) = (%d, %v), esperado (%d, %v)",
+				caso.nombre, caso.salida, fin, ok, caso.espera, caso.cerrado)
+		}
+	}
+}
+
 // TestConstruirPromptOverview: el prompt muestra los commits de la rama.
 func TestConstruirPromptOverview(t *testing.T) {
 	fichas := []Ficha{

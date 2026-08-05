@@ -10,6 +10,11 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
+// ErrSinFabrica señala que no hay fábrica de auditores configurada para el
+// overview. Es un error de configuración, no de ejecución: se puede comparar
+// con errors.Is desde el caller.
+var ErrSinFabrica = errors.New("sin fábrica de auditores configurada")
+
 // LimiteDecisionChain es el umbral de volumen (líneas añadidas+borradas) a
 // partir del cual una rama propone cadena de PRs salvo coherencia demostrada.
 // Es el mismo umbral del guardián de volumen: la decisión de PR sigue la
@@ -174,7 +179,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 // el caller conoce la causa exacta.
 func overviewDeRama(opts OpcionesRama, rama string, fichas []Ficha) (*ResultadoOverview, error) {
 	if opts.Fabrica == nil {
-		return nil, errors.New("sin fábrica de auditores configurada")
+		return nil, ErrSinFabrica
 	}
 	agente, _, err := opts.Fabrica(DimSpec)
 	if err != nil {
