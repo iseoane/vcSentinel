@@ -121,10 +121,7 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 			conservadas = append(conservadas, append([]byte(nil), bytes...))
 			continue
 		}
-		purgar, aviso, err := actaResuelta(ev.Detail, consultarEstado)
-		if err != nil {
-			return res, err
-		}
+		purgar, aviso := actaResuelta(ev.Detail, consultarEstado)
 		if purgar {
 			res.Purgadas++
 			continue
@@ -146,39 +143,50 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 	if res.Purgadas == 0 {
 		return res, nil
 	}
-	return res, reescribirEventos(ruta, conservadas)
+	return res, escribirLogTemporal(ruta, conservadas)
 }
 
 // actaResuelta decide si la acta de una PR es una PR resuelta (purgar),
-// devolviendo también un aviso si no se pudo verificar (se conserva).
-func actaResuelta(detail string, consultarEstado func(int) (string, error)) (bool, string, error) {
+// devolviendo también un aviso si no se pudo verificar (se conserva). Un
+// detail corrupto NO aborta la purga: se conserva con aviso (best-effort,
+// nunca se destruye por incertidumbre).
+func actaResuelta(detail string, consultarEstado func(int) (string, error)) (bool, string) {
 	var acta DetallePrCreate
 	if err := json.Unmarshal([]byte(detail), &acta); err != nil {
-		return false, "", err
+		return false, "acta con detail inválido: se conserva"
 	}
 	numero, ok := numeroDePR(acta.PrURL)
 	if !ok {
-		return false, "acta sin pr_url (fallback): no verificable, se conserva", nil
+		return false, "acta sin pr_url (fallback): no verificable, se conserva"
 	}
 	estado, err := consultarEstado(numero)
 	if err != nil {
-		return false, "PR #" + strconv.Itoa(numero) + " no verificable (gh/red): se conserva", nil
+		return false, "PR #" + strconv.Itoa(numero) + " no verificable (gh/red): se conserva"
 	}
 	switch estado {
 	case "MERGED", "CLOSED":
-		return true, "", nil
+		return true, ""
 	default:
-		return false, "", nil
+		return false, ""
 	}
 }
 
-// numeroDePR extrae el número de la URL de una PR (/pull/<nº>).
+// numeroDePR extrae el número de la URL de una PR (/pull/<nº>, tolerando
+// sufijos como /pull/42/files).
 func numeroDePR(url string) (int, bool) {
 	idx := strings.LastIndex(url, "/pull/")
 	if idx < 0 {
 		return 0, false
 	}
-	n, err := strconv.Atoi(url[idx+len("/pull/"):])
+	resto := url[idx+len("/pull/"):]
+	fin := 0
+	for fin < len(resto) && resto[fin] >= '0' && resto[fin] <= '9' {
+		fin++
+	}
+	if fin == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(resto[:fin])
 	if err != nil || n <= 0 {
 		return 0, false
 	}
@@ -202,9 +210,12 @@ func estadoPRConGH(numero int) (string, error) {
 	return crudo.State, nil
 }
 
-// reescribirEventos escribe las líneas conservadas en el log con escritura
-// atómica temp + rename (mismo patrón que PurgeEventosDe).
-func reescribirEventos(ruta string, lineas [][]byte) error {
+// escribirLogTemporal escribe las líneas en un archivo temporal y lo
+// reemplaza de forma atómica y segura sobre el log: NUNCA borra el original
+// antes de tener el nuevo escrito. En Windows un os.Rename sobre un destino
+// existente falla, por lo que el reemplazo es backup → rename → limpieza:
+// ante cualquier fallo el log original se conserva (como .bak o intacto).
+func escribirLogTemporal(ruta string, lineas [][]byte) error {
 	temp, err := os.CreateTemp(filepath.Dir(ruta), "events-*.tmp")
 	if err != nil {
 		return err
@@ -213,7 +224,10 @@ func reescribirEventos(ruta string, lineas [][]byte) error {
 	defer os.Remove(rutaTemp)
 	escribir := bufio.NewWriter(temp)
 	for _, linea := range lineas {
-		escribir.Write(append(linea, '\n'))
+		if _, err := escribir.Write(append(linea, '\n')); err != nil {
+			temp.Close()
+			return err
+		}
 	}
 	if err := escribir.Flush(); err != nil {
 		temp.Close()
@@ -222,10 +236,21 @@ func reescribirEventos(ruta string, lineas [][]byte) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Remove(ruta); err != nil && !errors.Is(err, os.ErrNotExist) {
+
+	rutaBak := ruta + ".bak"
+	if err := os.Rename(ruta, rutaBak); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		// No había log previo: el temporal pasa a ser el log.
+		return os.Rename(rutaTemp, ruta)
+	}
+	if err := os.Rename(rutaTemp, ruta); err != nil {
+		// Restaurar el original; el temporal se limpia con el defer.
+		_ = os.Rename(rutaBak, ruta)
 		return err
 	}
-	return os.Rename(rutaTemp, ruta)
+	return os.Remove(rutaBak)
 }
 
 // PurgeEventosDe reescribe el log eliminando las líneas que referencian
@@ -277,31 +302,7 @@ func PurgeEventosDe(gitDir string, shas []string) (int, error) {
 	if eliminadas == 0 {
 		return 0, nil
 	}
-
-	temp, err := os.CreateTemp(filepath.Dir(ruta), "events-*.tmp")
-	if err != nil {
-		return eliminadas, err
-	}
-	rutaTemp := temp.Name()
-	defer os.Remove(rutaTemp)
-	escribir := bufio.NewWriter(temp)
-	for _, linea := range conservadas {
-		escribir.Write(append(linea, '\n'))
-	}
-	if err := escribir.Flush(); err != nil {
-		temp.Close()
-		return eliminadas, err
-	}
-	if err := temp.Close(); err != nil {
-		return eliminadas, err
-	}
-	if err := os.Remove(ruta); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return eliminadas, err
-	}
-	if err := os.Rename(rutaTemp, ruta); err != nil {
-		return eliminadas, err
-	}
-	return eliminadas, nil
+	return eliminadas, escribirLogTemporal(ruta, conservadas)
 }
 
 // eventosTocanShas indica si la lista de SHAs del evento contiene alguno de
@@ -348,28 +349,7 @@ func RotarEventos(gitDir string, n int) error {
 	} else if n <= 0 {
 		lineas = nil
 	}
-
-	temp, err := os.CreateTemp(filepath.Dir(ruta), "events-*.tmp")
-	if err != nil {
-		return err
-	}
-	rutaTemp := temp.Name()
-	defer os.Remove(rutaTemp)
-	escribir := bufio.NewWriter(temp)
-	for _, linea := range lineas {
-		escribir.Write(append(linea, '\n'))
-	}
-	if err := escribir.Flush(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Remove(ruta); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return os.Rename(rutaTemp, ruta)
+	return escribirLogTemporal(ruta, lineas)
 }
 
 // UltimosEventos devuelve los n eventos más recientes del log (el más nuevo
