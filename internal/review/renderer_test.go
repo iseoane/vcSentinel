@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fichaAyuda construye una ficha realista para los tests del renderer.
@@ -33,19 +34,20 @@ func TestRenderMatrizBasica(t *testing.T) {
 
 	salida := RenderMatriz(fichas)
 
-	// Cabecera: las seis dimensiones canónicas siempre, en orden fijo.
-	if !strings.Contains(salida, "| Commit | logic | style | design | tests | security | spec |") {
-		t.Errorf("cabecera de matriz incorrecta:\n%s", salida)
+	// Aserción exacta: cabecera completa canónica, filas en orden y celdas
+	// con el veredicto de la última revisión (— para dimensiones ausentes).
+	esperado := "| Commit | logic | style | design | tests | security | spec |\n" +
+		"|---|---|---|---|---|---|---|\n" +
+		"| `6b127cd` docs(review): concepto fase 2 | ✅ | — | — | — | 🚨 | ✅ |\n" +
+		"| `945b5b5` feat(config): comandos de verificacion | — | — | — | ⚠️ | — | ✅ |\n"
+	if salida != esperado {
+		t.Errorf("matriz no coincide:\ngot:\n%s\nwant:\n%s", salida, esperado)
 	}
-	// Celdas por commit: block en security, warn en tests, dim ausente como —.
-	if !strings.Contains(salida, "`6b127cd`") || !strings.Contains(salida, "🚨") {
-		t.Errorf("falta la fila de 6b127cd con block:\n%s", salida)
-	}
-	if !strings.Contains(salida, "`945b5b5`") || !strings.Contains(salida, "⚠️") {
-		t.Errorf("falta la fila de 945b5b5 con warn:\n%s", salida)
-	}
-	if !strings.Contains(salida, "| — |") {
-		t.Errorf("faltan celdas de dimensión ausente (—):\n%s", salida)
+}
+
+func TestRenderMatrizVacia(t *testing.T) {
+	if salida := RenderMatriz(nil); !strings.Contains(salida, "No hay commits auditados") {
+		t.Errorf("matriz vacía = %q, esperado aviso de sin commits", salida)
 	}
 }
 
@@ -133,5 +135,67 @@ func TestTruncarCuerpo(t *testing.T) {
 	}
 	if !strings.Contains(got, "truncado") || !strings.Contains(got, "omitieron") {
 		t.Errorf("el truncamiento debe estar marcado explícitamente, got: %q", got)
+	}
+}
+
+// TestTruncarCuerpoLimiteNulo: sin límite (0 o negativo) el texto no cambia.
+func TestTruncarCuerpoLimiteNulo(t *testing.T) {
+	texto := "abc"
+	if got := TruncarCuerpo(texto, 0); got != texto {
+		t.Errorf("TruncarCuerpo(0) = %q, esperado sin cambios", got)
+	}
+	if got := TruncarCuerpo(texto, -5); got != texto {
+		t.Errorf("TruncarCuerpo(-5) = %q, esperado sin cambios", got)
+	}
+}
+
+// TestTruncarCuerpoMarcadorMayorQueLimite: cuando ni el marcador cabe, el
+// resultado es solo el marcador recortado al límite, sin contenido del texto.
+func TestTruncarCuerpoMarcadorMayorQueLimite(t *testing.T) {
+	got := TruncarCuerpo(strings.Repeat("x", 500), 10)
+	if len(got) > 10 {
+		t.Errorf("TruncarCuerpo = %d bytes, esperado ≤10", len(got))
+	}
+	if strings.Contains(got, "x") {
+		t.Errorf("el resultado no debe contener contenido del texto, got: %q", got)
+	}
+}
+
+// TestTruncarCuerpoNoParteRunas: el corte nunca parte una runa UTF-8 y el
+// resultado siempre es texto válido.
+func TestTruncarCuerpoNoParteRunas(t *testing.T) {
+	texto := "áéíóúüñ " + strings.Repeat("ñ", 200)
+	got := TruncarCuerpo(texto, 57)
+	if len(got) > 57 {
+		t.Errorf("TruncarCuerpo = %d bytes, esperado ≤57", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("TruncarCuerpo partió una runa UTF-8: %q", got)
+	}
+}
+
+// TestRenderResumenVacio: sin fichas, el resumen avisa en lugar de inventar.
+func TestRenderResumenVacio(t *testing.T) {
+	if salida := RenderResumen(nil); !strings.Contains(salida, "No hay commits auditados") {
+		t.Errorf("resumen vacío = %q, esperado aviso de sin commits", salida)
+	}
+}
+
+// TestConteoQuestionUnavailable: el conteo global incluye question y
+// unavailable solo cuando existen.
+func TestConteoQuestionUnavailable(t *testing.T) {
+	fichas := []Ficha{
+		fichaAyuda("aaaaaaa", "feat(a): a", "m",
+			revisionAyuda(VerdictQuestion, DimensionResult{Dim: DimSpec, Verdict: VerdictQuestion})),
+		fichaAyuda("bbbbbbb", "feat(b): b", "m",
+			revisionAyuda(VerdictUnavailable, DimensionResult{Dim: DimSpec, Verdict: VerdictUnavailable})),
+	}
+
+	salida := RenderResumen(fichas)
+	if !strings.Contains(salida, "❓ question: 1") || !strings.Contains(salida, "⛔ unavailable: 1") {
+		t.Errorf("faltan los conteos de question/unavailable:\n%s", salida)
+	}
+	if strings.Contains(salida, "🔧") {
+		t.Errorf("no debe haber correcciones en este fixture:\n%s", salida)
 	}
 }

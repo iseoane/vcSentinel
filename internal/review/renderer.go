@@ -3,10 +3,15 @@ package review
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
-// Orden canónico de las columnas de la matriz commit × dimensión.
-var ordenDimensiones = []string{DimLogic, DimStyle, DimDesign, DimTests, DimSecurity, DimSpec}
+// ordenColumnas devuelve el orden canónico de las columnas de la matriz
+// commit × dimensión. Es una función (no un slice a nivel de paquete) para
+// que ningún llamador pueda mutar el orden global de la matriz.
+func ordenColumnas() []string {
+	return []string{DimLogic, DimStyle, DimDesign, DimTests, DimSecurity, DimSpec}
+}
 
 // veredictoEmoji mapea un veredicto de dimensión (o un resultado de revisión)
 // a su icono de tabla. La última revisión de cada ficha manda.
@@ -90,26 +95,22 @@ func RenderMatriz(fichas []Ficha) string {
 		return "_No hay commits auditados._"
 	}
 
+	columnas := ordenColumnas()
 	var b strings.Builder
-	b.WriteString("| Commit | " + strings.Join(ordenDimensiones, " | ") + " |\n")
-	b.WriteString("|" + strings.Repeat("---|", len(ordenDimensiones)+1) + "\n")
+	b.WriteString("| Commit | " + strings.Join(columnas, " | ") + " |\n")
+	b.WriteString("|" + strings.Repeat("---|", len(columnas)+1) + "\n")
 	for _, ficha := range fichas {
 		sha := ficha.SHA
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		celdas := make([]string, 0, len(ordenDimensiones))
-		for _, dim := range ordenDimensiones {
+		celdas := make([]string, 0, len(columnas))
+		for _, dim := range columnas {
 			celdas = append(celdas, celdaMatriz(ficha, dim))
 		}
 		b.WriteString(fmt.Sprintf("| `%s` %s | %s |\n", sha, mensajeCorto(ficha.Message), strings.Join(celdas, " | ")))
 	}
 	return b.String()
-}
-
-// resultadoEmoji mapea el resultado global de una revisión a su icono.
-func resultadoEmoji(resultado string) string {
-	return veredictoEmoji(resultado)
 }
 
 // conteoResultados cuenta las fichas por resultado global de su última
@@ -205,7 +206,7 @@ func RenderResumen(fichas []Ficha) string {
 			corregida = fmt.Sprintf("🔧 corregida en `%s`", fi)
 		}
 		b.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %d | %s |\n",
-			sha, resultadoEmoji(ultima.Result), ultima.Result, ficha.Model, len(ficha.Revisions), corregida))
+			sha, veredictoEmoji(ultima.Result), ultima.Result, ficha.Model, len(ficha.Revisions), corregida))
 	}
 
 	b.WriteString("\n### Riesgos\n")
@@ -223,18 +224,54 @@ func RenderResumen(fichas []Ficha) string {
 // marcadorTruncamiento es el texto que señala un cuerpo recortado.
 var marcadorTruncamiento = "\n\n> ⚠️ Cuerpo truncado: se omitieron %d bytes.\n"
 
-// TruncarCuerpo recorta un texto al límite de bytes del body (GitHub limita
-// el cuerpo de un PR) marcando el truncamiento de forma explícita. El tamaño
-// del resultado nunca supera maxBytes.
-func TruncarCuerpo(texto string, maxBytes int) string {
-	if len(texto) <= maxBytes || maxBytes <= 0 {
+// recortarRunas recorta texto a maxBytes sin partir una runa UTF-8. Un límite
+// no positivo devuelve el texto vacío. El corte es válido si el primer byte
+// descartado inicia una runa; si es un byte de continuación, la runa quedó
+// partida y se retrocede un byte.
+func recortarRunas(texto string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(texto) <= maxBytes {
 		return texto
 	}
-	marcador := fmt.Sprintf(marcadorTruncamiento, 0)
-	marcador = fmt.Sprintf(marcadorTruncamiento, len(texto)-(maxBytes-len(marcador)))
-	if len(marcador) > maxBytes {
-		return marcador[:maxBytes]
+	cortado := texto[:maxBytes]
+	for len(cortado) > 0 && !utf8.RuneStart(texto[len(cortado)]) {
+		cortado = cortado[:len(cortado)-1]
 	}
-	conservado := texto[:maxBytes-len(marcador)]
+	return cortado
+}
+
+// TruncarCuerpo recorta un texto al límite de bytes del body (GitHub limita
+// el cuerpo de un PR) marcando el truncamiento de forma explícita y con el
+// número exacto de bytes omitidos. El tamaño del resultado nunca supera
+// maxBytes y el corte nunca parte una runa UTF-8.
+func TruncarCuerpo(texto string, maxBytes int) string {
+	if maxBytes <= 0 || len(texto) <= maxBytes {
+		return texto
+	}
+
+	// Presupuesto para el contenido: el marcador sin el número ocupa su
+	// tamaño fijo; los dígitos del conteo se ajustan después.
+	base := strings.Replace(marcadorTruncamiento, "%d", "", 1)
+	presupuesto := maxBytes - len(base)
+	if presupuesto <= 0 {
+		return recortarRunas(fmt.Sprintf(marcadorTruncamiento, 0), maxBytes)
+	}
+
+	conservado := recortarRunas(texto, presupuesto)
+	marcador := fmt.Sprintf(marcadorTruncamiento, len(texto)-len(conservado))
+	if len(conservado)+len(marcador) > maxBytes {
+		// Los dígitos del conteo desplazan el marcador: recortar el
+		// contenido lo justo y recalcular con el número exacto.
+		exceso := len(conservado) + len(marcador) - maxBytes
+		conservado = recortarRunas(conservado, len(conservado)-exceso)
+		marcador = fmt.Sprintf(marcadorTruncamiento, len(texto)-len(conservado))
+	}
+	if len(conservado)+len(marcador) > maxBytes {
+		// Caso extremo (conteos con muchos dígitos): ni el marcador solo
+		// cabe, se recorta a sí mismo.
+		marcador = recortarRunas(marcador, maxBytes-len(conservado))
+	}
 	return conservado + marcador
 }
