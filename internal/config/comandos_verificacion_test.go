@@ -69,6 +69,12 @@ test_commands:
 `)
 
 	cfg := CargarConfiguracionLocal(worktree)
+	// ADVISORY 3: el merge debe producir exactamente los dos comandos, sin
+	// duplicados ni comandos añadidos de más (el conteo de coincidencias por
+	// sí solo no detecta listas infladas).
+	if len(cfg.TestCommands) != 2 {
+		t.Fatalf("TestCommands = %+v, esperado exactamente 2 (global + per-proyecto)", cfg.TestCommands)
+	}
 	encontrados := 0
 	for _, cmd := range cfg.TestCommands {
 		if cmd == "go test ./..." || cmd == "go test -race ./internal/review" {
@@ -77,5 +83,37 @@ test_commands:
 	}
 	if encontrados != 2 {
 		t.Errorf("TestCommands = %+v, esperado merge global + per-proyecto", cfg.TestCommands)
+	}
+}
+
+// TestComandosVerificacionPrecedenciaBuild verifica el merge de
+// build_commands (ADVISORY 4): los comandos per-proyecto se acumulan a los
+// globales, igual que test_commands y lint_commands.
+func TestComandosVerificacionPrecedenciaBuild(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
+build_commands:
+  - "go build ./..."
+`)
+	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+build_commands:
+  - "go build -race ./cmd/sentinel"
+`)
+
+	cfg := CargarConfiguracionLocal(worktree)
+	if len(cfg.BuildCommands) != 2 {
+		t.Fatalf("BuildCommands = %+v, esperado exactamente 2 (global + per-proyecto)", cfg.BuildCommands)
+	}
+	encontrados := 0
+	for _, cmd := range cfg.BuildCommands {
+		if cmd == "go build ./..." || cmd == "go build -race ./cmd/sentinel" {
+			encontrados++
+		}
+	}
+	if encontrados != 2 {
+		t.Errorf("BuildCommands = %+v, esperado merge global + per-proyecto", cfg.BuildCommands)
 	}
 }
