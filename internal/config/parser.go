@@ -36,8 +36,11 @@ type ReviewConfig struct {
 // Config es la configuración completa de VAS Sentinel con precedencia
 // defaults -> global -> per-proyecto.
 type Config struct {
-	ActiveAgent  string
-	Agents       map[string]AgentConfig
+	ActiveAgent string
+	Agents      map[string]AgentConfig
+	// AgentOrder preserva el orden de declaración de los agentes en el yml
+	// (el archivo más específico manda); alimenta la resolución automática.
+	AgentOrder   []string
 	Profiles     map[string]ProfileConfig
 	Review       ReviewConfig
 	LintCommands []string
@@ -69,7 +72,8 @@ func configuracionPorDefecto() Config {
 				},
 			},
 		},
-		Profiles: map[string]ProfileConfig{}, // compat v1: perfiles globales
+		AgentOrder: []string{"claude", "opencode"},
+		Profiles:   map[string]ProfileConfig{}, // compat v1: perfiles globales
 		Review: ReviewConfig{
 			Timeout:  300 * time.Second,
 			Parallel: 2,
@@ -138,6 +142,9 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 	indentSubseccion := -1
 	perfil := ""
 	indentPerfil := -1
+	// ordenArchivo registra el orden en que este archivo declara los agentes
+	// de nivel 1; al final se reconstruye AgentOrder con ese orden a la cabeza.
+	ordenArchivo := []string{}
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -176,6 +183,16 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 				indentEntidad = indent
 				subseccion, perfil = "", ""
 				indentSubseccion, indentPerfil = -1, -1
+				yaRegistrado := false
+				for _, nombre := range ordenArchivo {
+					if nombre == clave {
+						yaRegistrado = true
+						break
+					}
+				}
+				if !yaRegistrado {
+					ordenArchivo = append(ordenArchivo, clave)
+				}
 				continue
 			}
 			if entidad == "" {
@@ -239,6 +256,21 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 				}
 			}
 		}
+	}
+
+	if len(ordenArchivo) > 0 {
+		enArchivo := make(map[string]bool, len(ordenArchivo))
+		for _, nombre := range ordenArchivo {
+			enArchivo[nombre] = true
+		}
+		nuevoOrden := make([]string, 0, len(ordenArchivo)+len(cfg.AgentOrder))
+		nuevoOrden = append(nuevoOrden, ordenArchivo...)
+		for _, nombre := range cfg.AgentOrder {
+			if !enArchivo[nombre] {
+				nuevoOrden = append(nuevoOrden, nombre)
+			}
+		}
+		cfg.AgentOrder = nuevoOrden
 	}
 }
 

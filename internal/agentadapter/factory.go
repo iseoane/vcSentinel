@@ -36,7 +36,17 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 	if len(nombres) == 0 {
 		return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(todas, ", "))
 	}
-	return &CLIAdapter{BinaryName: resolverBinarioReal(nombres[0]), Config: cfg.Agents[nombres[0]]}, nil
+
+	// Camino auto: cadena con un adaptador por cada agente disponible, en el
+	// orden de configuración del yml (fallback en cadena por petición).
+	cadena := &CadenaAdaptador{}
+	for _, agente := range nombres {
+		cadena.adaptadores = append(cadena.adaptadores, &CLIAdapter{
+			BinaryName: resolverBinarioReal(agente),
+			Config:     cfg.Agents[agente],
+		})
+	}
+	return cadena, nil
 }
 
 // NewAgentAdapterNamed construye un adaptador CLI para un nombre de agente
@@ -52,17 +62,19 @@ func NewAgentAdapterNamed(worktreePath string, nombre string) (AgentAdapter, err
 }
 
 // NombresAdaptadoresDisponibles devuelve los nombres de agentes configurados en
-// vassentinel.yml cuyo binario está disponible en el PATH, en orden alfabético.
+// vassentinel.yml cuyo binario está disponible en el PATH, en el orden en que
+// aparecen en el yml (alfabético si no hay orden declarado).
 func NombresAdaptadoresDisponibles(worktreePath string) []string {
 	cfg := config.CargarConfiguracionLocal(worktreePath)
 	return nombresAgentesEnPATH(cfg)
 }
 
-// NuevoAdaptadorConPerfil construye el CLIAdapter que corresponde a un perfil
+// NuevoAdaptadorConPerfil construye el adaptador que corresponde a un perfil
 // resuelto: resuelve el binario (perfil -> active_agent -> auto), completa el
 // modelo y esfuerzo con los del agente cuando el perfil no los define y fija
-// el timeout de auditoría.
-func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (*CLIAdapter, error) {
+// el timeout de auditoría. En el camino auto devuelve un CadenaAdaptador con
+// un adaptador por agente disponible, cada uno con el perfil de SU agente.
+func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (AdaptadorPrompt, error) {
 	nombre := perfil.Binario
 	if nombre == "" {
 		nombre = cfg.ActiveAgent
@@ -72,7 +84,7 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (*
 		if len(disponibles) == 0 {
 			return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH")
 		}
-		nombre = disponibles[0]
+		return construirCadenaPerfil(cfg, disponibles, perfil), nil
 	}
 	binario := resolverBinarioReal(nombre)
 
@@ -91,6 +103,22 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (*
 		Config:     config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
 		Timeout:    cfg.Review.Timeout,
 	}, nil
+}
+
+// construirCadenaPerfil crea la cadena de adaptadores del camino auto: un
+// CLIAdapter por cada agente disponible (en el orden recibido), cada uno con
+// el modelo/esfuerzo de SU perfil anidado, no el del perfil resuelto.
+func construirCadenaPerfil(cfg config.Config, disponibles []string, perfil config.PerfilResuelto) *CadenaAdaptador {
+	cadena := &CadenaAdaptador{}
+	for _, agente := range disponibles {
+		modelo, esfuerzo := config.ResolverPerfilAgente(cfg, agente, perfil.Nombre)
+		cadena.adaptadores = append(cadena.adaptadores, &CLIAdapter{
+			BinaryName: resolverBinarioReal(agente),
+			Config:     config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
+			Timeout:    cfg.Review.Timeout,
+		})
+	}
+	return cadena
 }
 
 // resolverBinarioReal convierte un shim npm (.cmd/.bat) en la ruta del
@@ -132,16 +160,25 @@ func resolverBinarioReal(nombre string) string {
 	return coincidencia
 }
 
-// nombresAgentesEnPATH filtra los agentes configurados que existen en el PATH,
-// en orden alfabético. Es la lógica compartida por la resolución automática de
-// NewAgentAdapter y por NombresAdaptadoresDisponibles.
+// nombresAgentesEnPATH filtra los agentes configurados que existen en el PATH.
+// Si cfg.AgentOrder tiene elementos, conserva ese orden; si está vacío (por
+// ejemplo, una Config construida a mano en tests) cae al orden alfabético.
+// Es la lógica compartida por la resolución automática de NewAgentAdapter, por
+// NuevoAdaptadorConPerfil y por NombresAdaptadoresDisponibles.
 func nombresAgentesEnPATH(cfg config.Config) []string {
-	nombres := make([]string, 0, len(cfg.Agents))
-	for clave := range cfg.Agents {
+	orden := cfg.AgentOrder
+	if len(orden) == 0 {
+		orden = make([]string, 0, len(cfg.Agents))
+		for clave := range cfg.Agents {
+			orden = append(orden, clave)
+		}
+		sort.Strings(orden)
+	}
+	nombres := make([]string, 0, len(orden))
+	for _, clave := range orden {
 		if _, err := exec.LookPath(clave); err == nil {
 			nombres = append(nombres, clave)
 		}
 	}
-	sort.Strings(nombres)
 	return nombres
 }

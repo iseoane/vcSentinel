@@ -16,6 +16,11 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 | `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
 | `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración e instala el hook global. |
 | `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub, con fallback a `go install` si la release no está disponible. |
+| `sentinel review` | Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha en el ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--prune` `--json`. |
+| `sentinel lint` | Ejecuta los comandos definidos en `lint_commands` de la configuración. |
+| `sentinel rebase` | Actualiza la rama con `fetch` + `rebase` contra su upstream (pide confirmación). |
+| `sentinel status` | Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con `--json` emite JSON; con `--prune` borra fichas huérfanas. |
+| `sentinel pr` | Crea un pull request con `gh`; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a `gh pr create`. |
 | `sentinel uninstall` | Elimina el binario y la configuración global (`~/.vas_sentinel/`). |
 | `sentinel version` / `sentinel --version` | Muestra la versión instalada. |
 | `sentinel help` / `sentinel --help` | Muestra la ayuda completa. |
@@ -121,18 +126,49 @@ La configuración se busca en este orden (el primero que define un campo predomi
 2. **Global:** `~/.vas_sentinel/vassentinel.yml` — creado por `sentinel install`
 3. **Defaults** integrados
 
-`active_agent` (default `auto`) selecciona el agente: `auto` usa el primer agente de `agents:` cuyo binario esté en el PATH; también puedes fijar `active_agent: "claude"` u `"opencode"`. `MY_SUB_AGENT` sigue existiendo como override temporal en la terminal, pero ya no es el mecanismo principal.
+`active_agent` (default `auto`) selecciona el agente. En `auto`, la preferencia
+sigue el **orden en que los agentes están declarados en el yml** (no alfabético):
+el primero cuyo binario esté en el PATH se usa primero y, si falla en una
+petición, se prueba el siguiente en ese mismo orden (fallback en cadena por
+petición, nunca cacheado). También puedes fijar `active_agent: "claude"` u
+`"opencode"` para un agente concreto. `MY_SUB_AGENT` sigue existiendo como
+override temporal en la terminal, pero ya no es el mecanismo principal.
+
+Cada agente define su modelo y esfuerzo base, más **perfiles** anidados
+(`cheap`, `normal`, `deep`…) que sobreescriben modelo y/o esfuerzo. Las
+dimensiones de auditoría (`review.dims`) mapean cada dimensión a un perfil en
+dos sintaxis: `agente.perfil` (agente explícito) o solo `perfil` (se aplica el
+`active_agent`: el perfil de ese agente si es concreto, o la cadena auto en
+orden del yml con fallback).
 
 Ejemplo de `.vas_sentinel/vassentinel.yml`:
 
 ```yaml
-version: "1.0"
+version: "2.0"
 active_agent: "auto"
 agents:
   claude:
     model: "claude-5-sonnet"
     reasoning_effort: "high"
+    profiles:
+      cheap:  { model: "claude-5-sonnet", reasoning_effort: "low" }
+      normal: { model: "claude-5-sonnet", reasoning_effort: "high" }
+      deep:   { model: "claude-opus",     reasoning_effort: "high" }
   opencode:
-    model: "deepseek-v4-flash"
+    model: "deepseek-v4-flash-free"
     reasoning_effort: "max"
+    profiles:
+      cheap:  { model: "deepseek-v4-flash-free", reasoning_effort: "default" }
+      normal: { model: "deepseek-v4-flash-free", reasoning_effort: "high" }
+      deep:   { model: "deepseek-v4-flash-free", reasoning_effort: "max" }
+review:
+  timeout: 600
+  parallel: 2
+  dims:
+    spec: "opencode.cheap"
+    style: "opencode.cheap"
+    tests: "opencode.normal"
+    logic: "opencode.normal"
+    design: "deep"
+    security: "deep"
 ```

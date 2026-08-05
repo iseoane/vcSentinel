@@ -2,10 +2,28 @@ package config
 
 import "strings"
 
+// ResolverPerfilAgente resuelve el perfil anidado de UN agente concreto:
+// lee cfg.Agents[agente].Profiles[perfil] y hace fallback al modelo y esfuerzo
+// base del agente cuando el perfil no los define. Devuelve modelo y esfuerzo.
+func ResolverPerfilAgente(cfg Config, agente, perfil string) (modelo, esfuerzo string) {
+	a := cfg.Agents[agente]
+	p := a.Profiles[perfil]
+	modelo = p.Model
+	if modelo == "" {
+		modelo = a.Model
+	}
+	esfuerzo = p.ReasoningEffort
+	if esfuerzo == "" {
+		esfuerzo = a.ReasoningEffort
+	}
+	return modelo, esfuerzo
+}
+
 // PerfilResuelto es el resultado de resolver qué agente, modelo y esfuerzo
 // usan una dimensión de auditoría concreta. Los campos vacíos indican
-// "heredar del nivel inferior": Binario "" = active_agent (auto = primero
-// disponible en el PATH); Modelo/Esfuerzo "" = los del agente elegido.
+// "heredar del nivel inferior": Binario "" = active_agent (auto = los agentes
+// disponibles en el orden de configuración del yml, con fallback en cadena);
+// Modelo/Esfuerzo "" = los del agente elegido.
 type PerfilResuelto struct {
 	Nombre   string
 	Binario  string
@@ -35,16 +53,7 @@ func ResolverPerfil(cfg Config, dimension, override string) PerfilResuelto {
 
 	// v2: "agente.perfil"
 	if agente, perfil, ok := strings.Cut(nombre, "."); ok {
-		a := cfg.Agents[agente]
-		p := a.Profiles[perfil]
-		modelo := p.Model
-		if modelo == "" {
-			modelo = a.Model
-		}
-		esfuerzo := p.ReasoningEffort
-		if esfuerzo == "" {
-			esfuerzo = a.ReasoningEffort
-		}
+		modelo, esfuerzo := ResolverPerfilAgente(cfg, agente, perfil)
 		return PerfilResuelto{Nombre: nombre, Binario: agente, Modelo: modelo, Esfuerzo: esfuerzo}
 	}
 

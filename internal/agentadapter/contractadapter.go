@@ -4,6 +4,13 @@ type AgentAdapter interface {
 	ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error)
 }
 
+// AdaptadorPrompt es la interfaz mínima para ejecutar un prompt arbitrario
+// contra el agente. La usa el motor de auditoría y la satisfacen tanto
+// CLIAdapter como CadenaAdaptador.
+type AdaptadorPrompt interface {
+	EjecutarPrompt(prompt string) (string, error)
+}
+
 // AdapterConDiff es una interfaz opcional que un adaptador puede implementar
 // para recibir el micro-diff exacto de la zona de preparación (git diff --cached)
 // antes de generar el mensaje de commit. Si el adaptador no la implementa,

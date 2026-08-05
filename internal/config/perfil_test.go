@@ -76,3 +76,32 @@ func TestResolverPerfilDimensionDesconocida(t *testing.T) {
 		t.Errorf("dimensión sin mapear -> %q, esperado normal", perfil.Nombre)
 	}
 }
+
+// TestResolverPerfilAgente verifica el helper de perfil anidado de un agente
+// concreto: perfil definido, perfil sin modelo (hereda del agente) y perfil
+// inexistente (hereda todo del agente).
+func TestResolverPerfilAgente(t *testing.T) {
+	cfg := configuracionPorDefecto()
+
+	t.Run("perfil anidado definido", func(t *testing.T) {
+		modelo, esfuerzo := ResolverPerfilAgente(cfg, "opencode", "cheap")
+		if modelo != "deepseek-v4-flash-free" || esfuerzo != "default" {
+			t.Errorf("opencode.cheap = %s/%s, esperado deepseek-v4-flash-free/default", modelo, esfuerzo)
+		}
+	})
+
+	t.Run("perfil sin modelo hereda del agente", func(t *testing.T) {
+		cfg.Agents["opencode"].Profiles["extra"] = ProfileConfig{ReasoningEffort: "medium"}
+		modelo, esfuerzo := ResolverPerfilAgente(cfg, "opencode", "extra")
+		if modelo != "deepseek-v4-flash-free" || esfuerzo != "medium" {
+			t.Errorf("opencode.extra = %s/%s, esperado heredar modelo del agente + medium", modelo, esfuerzo)
+		}
+	})
+
+	t.Run("perfil inexistente hereda todo del agente", func(t *testing.T) {
+		modelo, esfuerzo := ResolverPerfilAgente(cfg, "claude", "no-existe")
+		if modelo != "claude-5-sonnet" || esfuerzo != "high" {
+			t.Errorf("claude.no-existe = %s/%s, esperado heredar todo del agente", modelo, esfuerzo)
+		}
+	})
+}

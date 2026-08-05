@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -105,6 +106,70 @@ func TestConfigLegacyAgents(t *testing.T) {
 	}
 	if cfg.Agents["claude"].Model != "claude-legacy" {
 		t.Errorf("Model = %q, esperado claude-legacy", cfg.Agents["claude"].Model)
+	}
+}
+
+// TestAgentOrderYml verifica que AgentOrder preserva el orden de declaración
+// de los agentes en el yml (claude antes que opencode).
+func TestAgentOrderYml(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+agents:
+  claude:
+    model: "claude-x"
+  opencode:
+    model: "opencode-x"
+`)
+
+	cfg := CargarConfiguracionLocal(worktree)
+	esperado := []string{"claude", "opencode"}
+	if !reflect.DeepEqual(cfg.AgentOrder, esperado) {
+		t.Errorf("AgentOrder = %v, esperado %v", cfg.AgentOrder, esperado)
+	}
+}
+
+// TestAgentOrderDefaults verifica que sin configuración el orden por defecto
+// es claude antes que opencode.
+func TestAgentOrderDefaults(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	cfg := CargarConfiguracionLocal(worktree)
+	esperado := []string{"claude", "opencode"}
+	if !reflect.DeepEqual(cfg.AgentOrder, esperado) {
+		t.Errorf("AgentOrder = %v, esperado %v", cfg.AgentOrder, esperado)
+	}
+}
+
+// TestAgentOrderPerProyectoReordena verifica que el archivo más específico
+// (per-proyecto) manda el orden de los agentes que declara y que los agentes
+// no declarados conservan su posición relativa anterior.
+func TestAgentOrderPerProyectoReordena(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
+agents:
+  claude:
+    model: "claude-g"
+  opencode:
+    model: "opencode-g"
+`)
+	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+agents:
+  opencode:
+    model: "opencode-l"
+`)
+
+	cfg := CargarConfiguracionLocal(worktree)
+	esperado := []string{"opencode", "claude"}
+	if !reflect.DeepEqual(cfg.AgentOrder, esperado) {
+		t.Errorf("AgentOrder = %v, esperado %v", cfg.AgentOrder, esperado)
 	}
 }
 
