@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -266,6 +267,8 @@ func TestCierreJSON(t *testing.T) {
 		{"llaves en string", `{"a":"{b}"}`, 0, 10, true},
 		{"escape de comilla", `{"a":"\"}x"}`, 0, 11, true},
 		{"objeto incompleto", `{"a":1`, 0, 0, false},
+		{"desde no cero", `xx {"a":1} yy`, 3, 9, true},
+		{"desde no cero incompleto", `xx {"a":1`, 3, 0, false},
 	}
 	for _, caso := range casos {
 		fin, ok := cierreJSON(caso.salida, caso.desde)
@@ -273,6 +276,15 @@ func TestCierreJSON(t *testing.T) {
 			t.Errorf("%s: cierreJSON(%q) = (%d, %v), esperado (%d, %v)",
 				caso.nombre, caso.salida, fin, ok, caso.espera, caso.cerrado)
 		}
+	}
+}
+
+// TestOverviewSinFabrica: sin fábrica el overview falla con el centinela
+// ErrSinFabrica, comparable con errors.Is desde el caller.
+func TestOverviewSinFabrica(t *testing.T) {
+	_, err := overviewDeRama(OpcionesRama{}, "feature", nil)
+	if !errors.Is(err, ErrSinFabrica) {
+		t.Errorf("overviewDeRama sin fábrica = %v, esperado errors.Is ErrSinFabrica", err)
 	}
 }
 
