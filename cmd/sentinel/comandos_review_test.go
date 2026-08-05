@@ -50,9 +50,9 @@ func TestDimsResultadosParaFicha(t *testing.T) {
 		{Dim: review.DimSecurity, Error: errors.New("fallo")},
 		{Dim: review.DimSpec, Resultado: &review.DimensionResult{Dim: review.DimSpec, Verdict: review.VerdictBlock}},
 	}
-	resultados := dimsResultadosParaFicha(rd)
+	resultados := review.DimsResultadosParaFicha(rd)
 	if len(resultados) != 2 {
-		t.Fatalf("dimsResultadosParaFicha = %d resultados, esperado 2 (filtra nil)", len(resultados))
+		t.Fatalf("DimsResultadosParaFicha = %d resultados, esperado 2 (filtra nil)", len(resultados))
 	}
 	if resultados[0].Verdict != review.VerdictOK || resultados[1].Verdict != review.VerdictBlock {
 		t.Errorf("verdicts = %q/%q, esperado ok/block", resultados[0].Verdict, resultados[1].Verdict)
@@ -92,7 +92,7 @@ func TestRevisionCorrigeBlockPrevio(t *testing.T) {
 	ledger := review.NuevoLedger(dir)
 
 	// Sin ficha previa: no corrige.
-	if revisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictOK) {
+	if review.RevisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictOK) {
 		t.Error("sin ficha previa no debería marcar corrección")
 	}
 
@@ -101,10 +101,10 @@ func TestRevisionCorrigeBlockPrevio(t *testing.T) {
 	if err := ledger.GuardarRevision("abc123", "msg", "backend", "m", rev); err != nil {
 		t.Fatal(err)
 	}
-	if !revisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictOK) {
+	if !review.RevisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictOK) {
 		t.Error("previa en block y nueva ok debería marcar corrección")
 	}
-	if revisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictBlock) {
+	if review.RevisionCorrigeBlockPrevio(ledger, "abc123", review.VerdictBlock) {
 		t.Error("nueva en block no corrige nada")
 	}
 }

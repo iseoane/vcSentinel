@@ -113,8 +113,8 @@ func ejecutarReview(worktree string, args []string) {
 		if modelo == "" {
 			modelo = "default"
 		}
-		fixed := revisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto)
-		revision := review.Revision{At: time.Now(), Result: resultado.Veredicto, Fixed: fixed, Dims: dimsResultadosParaFicha(resultado.Dims)}
+		fixed := review.RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto)
+		revision := review.Revision{At: time.Now(), Result: resultado.Veredicto, Fixed: fixed, Dims: review.DimsResultadosParaFicha(resultado.Dims)}
 		if err := ledger.GuardarRevision(sha, mensaje, calcularBucket(archivos), modelo, revision); err != nil {
 			fmt.Printf("⚠️ %s: no se pudo guardar la ficha: %v\n", sha[:8], err)
 		}
@@ -137,19 +137,6 @@ func ejecutarReview(worktree string, args []string) {
 		registrarCorrecciones(ledger, gitDir, sha, archivos, mensaje, exit, worktree)
 	}
 	os.Exit(exitFinal)
-}
-
-// revisionCorrigeBlockPrevio indica si esta auditoría (sin block) corrige una
-// revisión anterior del mismo SHA que estaba en block.
-func revisionCorrigeBlockPrevio(ledger *review.Ledger, sha, veredicto string) bool {
-	if veredicto == review.VerdictBlock {
-		return false
-	}
-	ficha, err := ledger.LeerFicha(sha)
-	if err != nil || ficha == nil || len(ficha.Revisions) == 0 {
-		return false
-	}
-	return ficha.Revisions[len(ficha.Revisions)-1].Result == review.VerdictBlock
 }
 
 // registrarCorrecciones asocia un commit fix (mensaje fix(...) que sale sin
@@ -302,18 +289,6 @@ func tieneHallazgosCriticos(resultado review.ResultadoAuditoria) bool {
 		}
 	}
 	return false
-}
-
-// dimsResultadosParaFicha copia los resultados de las dimensiones a la forma
-// que persiste la ficha (sin el error ni el perfil, que ya van en otros campos).
-func dimsResultadosParaFicha(dims []review.ResultadoDimension) []review.DimensionResult {
-	resultados := make([]review.DimensionResult, 0, len(dims))
-	for _, rd := range dims {
-		if rd.Resultado != nil {
-			resultados = append(resultados, *rd.Resultado)
-		}
-	}
-	return resultados
 }
 
 // calcularBucket deduce el saco del commit: "mixto" si toca varias capas; si
