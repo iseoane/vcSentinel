@@ -115,3 +115,54 @@ func TestNumstatRangoVacio(t *testing.T) {
 		t.Errorf("NumstatRango = %d, esperado 0", vol)
 	}
 }
+
+// TestMergeBaseSinBase: dos ramas sin ancestro común son un error explícito,
+// porque no existe base sobre la que medir el rango.
+func TestMergeBaseSinBase(t *testing.T) {
+	prepararRepoTemp(t)
+	commitEnRepo(t, "a.txt", "main\n")
+	// Rama huérfana: un commit raíz desconectado de main.
+	ejecutar(t, "checkout", "--orphan", "otra")
+	commitEnRepo(t, "b.txt", "otra\n")
+	ejecutar(t, "checkout", "main")
+
+	if _, err := MergeBase("main", "otra"); err == nil {
+		t.Error("MergeBase aceptó dos ramas sin ancestro común")
+	}
+}
+
+// TestNumstatRangoInvalido: un rango con una revisión inexistente falla.
+func TestNumstatRangoInvalido(t *testing.T) {
+	prepararRepoTemp(t)
+	commitEnRepo(t, "a.txt", "x\n")
+
+	if _, err := NumstatRango("no-existe", "HEAD"); err == nil {
+		t.Error("NumstatRango aceptó una revisión inexistente")
+	}
+}
+
+// TestNumstatRangoBinario: un archivo binario llega como "-" en el numstat y
+// no debe sumar líneas ni romper el conteo del resto.
+func TestNumstatRangoBinario(t *testing.T) {
+	prepararRepoTemp(t)
+	commitEnRepo(t, "a.txt", "x\n")
+	ejecutar(t, "checkout", "-b", "feature")
+
+	if err := os.WriteFile("bin.dat", []byte{0x00, 0x01, 0x02, 0x00, 0xFF}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("a.txt", []byte("x\ny\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ejecutar(t, "add", "-A")
+	ejecutar(t, "commit", "-m", "feat: con binario")
+
+	vol, err := NumstatRango("main", "HEAD")
+	if err != nil {
+		t.Fatalf("NumstatRango falló: %v", err)
+	}
+	// Solo cuenta la línea añadida en a.txt; el binario se ignora.
+	if vol != 1 {
+		t.Errorf("NumstatRango = %d, esperado 1 (el binario no suma líneas)", vol)
+	}
+}

@@ -7,15 +7,17 @@ import (
 )
 
 func TestDetectarCIVerdadero(t *testing.T) {
-	worktree := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(worktree, ".github", "workflows"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(worktree, ".github", "workflows", "ci.yml"), []byte("jobs: {}\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if !DetectarCI(worktree) {
-		t.Error("DetectarCI = false con .github/workflows/ci.yml presente")
+	for _, nombre := range []string{"ci.yml", "ci.yaml"} {
+		worktree := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(worktree, ".github", "workflows"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(worktree, ".github", "workflows", nombre), []byte("jobs: {}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if !DetectarCI(worktree) {
+			t.Errorf("DetectarCI = false con .github/workflows/%s presente", nombre)
+		}
 	}
 }
 
