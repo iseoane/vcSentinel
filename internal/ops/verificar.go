@@ -37,8 +37,10 @@ type ResultadoComando struct {
 type ResultadoVerificacion struct {
 	Modo     string // determinista | delegado | omitido | configurar
 	Comandos []ResultadoComando
-	Tested   []string // contrato tested del agente (comandos que ejecutó)
-	Motivo   string   // no_configurado | omitido | agente_no_respondio | ...
+	// Tested es EVIDENCIA mostrada en la plantilla, nunca una lista para
+	// volver a ejecutar: los comandos ya los lanzó el agente con shell libre.
+	Tested []string
+	Motivo string // no_configurado | omitido | agente_no_respondio | ...
 }
 
 // OpcionesVerificar configura la verificación. Ejecutar y Preguntar son
@@ -90,7 +92,9 @@ func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
 	}
 	respuesta, err := opts.Preguntar(textoAvisoVerificacion(ciDetectada))
 	if err != nil {
-		return ResultadoVerificacion{Modo: ModoOmitido, Motivo: "no_configurado"}, err
+		// La verificación nunca bloquea: si el aviso no se pudo leer se
+		// degrada a omitido con motivo propio y sin error.
+		return ResultadoVerificacion{Modo: ModoOmitido, Motivo: "aviso_no_respondio"}, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(respuesta)) {
 	case "configurar", "c":
@@ -107,6 +111,11 @@ func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
 		}
 		tested, err := parsearContratoTested(salida)
 		if err != nil {
+			// Distinguir la incapacidad del agente (unavailable) de una
+			// violación del protocolo: motivos distintos para el evento.
+			if strings.Contains(strings.ToLower(salida), "unavailable") {
+				return ResultadoVerificacion{Modo: ModoOmitido, Motivo: "agente_unavailable"}, nil
+			}
 			return ResultadoVerificacion{Modo: ModoOmitido, Motivo: "contrato_invalido"}, nil
 		}
 		return ResultadoVerificacion{Modo: ModoDelegado, Tested: tested}, nil
@@ -118,7 +127,7 @@ func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
 // si hay CI detectada (la verificación externa cubrirá el PR).
 func textoAvisoVerificacion(ciDetectada bool) string {
 	var b strings.Builder
-	b.WriteString("No hay comandos de verificación configurados (test_commands en vassentinel.yml).\n")
+	b.WriteString("No hay comandos de verificación configurados (lint_commands/test_commands/build_commands en vassentinel.yml).\n")
 	if ciDetectada {
 		b.WriteString("Se detectó CI en el repositorio: el PR tendrá verificación automática externa.\n")
 	} else {
@@ -170,7 +179,9 @@ func parsearContratoTested(salida string) ([]string, error) {
 
 // ejecutarShell lanza un comando a través de la shell del sistema en el
 // worktree y devuelve su exit code (0 en éxito; -1 si no fue un fallo del
-// comando sino de la ejecución).
+// comando sino de la ejecución). Los comandos vienen del vassentinel.yml del
+// usuario: ejecutar con shell es el diseño (confianza equivalente al propio
+// yml); no sanitizar aquí.
 func ejecutarShell(worktree, comando string) (int, error) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {

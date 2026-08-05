@@ -1,10 +1,17 @@
 package ops
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+)
+
+// Sentinelas de ficción para los tests de las ramas de error.
+var (
+	errBinarioAusente = errors.New("binario de verificación ausente")
+	errSinRespuesta    = errors.New("sin respuesta del aviso")
 )
 
 // agenteFakeVerificar implementa AdaptadorPrompt para los tests de la
@@ -69,6 +76,80 @@ func TestVerificarDeterminista(t *testing.T) {
 	}
 }
 
+// TestVerificarDeterministaErrorEjecucion: si un comando no se puede lanzar
+// (binario ausente), la verificación falla con el error, no con exit code.
+func TestVerificarDeterministaErrorEjecucion(t *testing.T) {
+	_, err := Verificar(OpcionesVerificar{
+		Cfg: config.Config{TestCommands: []string{"go test ./..."}},
+		Ejecutar: func(comando string) (int, error) {
+			return 0, errBinarioAusente
+		},
+	})
+	if err == nil {
+		t.Error("Verificar aceptó un error de ejecución sin propagarlo")
+	}
+}
+
+// TestVerificarSinConfigDelegaSinAgente: elegir delegar sin agente degrada a
+// omitido, nunca bloquea.
+func TestVerificarSinConfigDelegaSinAgente(t *testing.T) {
+	verif, err := Verificar(OpcionesVerificar{
+		Preguntar: func(aviso string) (string, error) {
+			return "delegar", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Verificar falló: %v", err)
+	}
+	if verif.Modo != ModoOmitido || verif.Motivo != "sin_agente" {
+		t.Errorf("Modo = %q Motivo = %q, esperado omitido/sin_agente", verif.Modo, verif.Motivo)
+	}
+}
+
+// TestVerificarPreguntarErrorNoBloquea: si el aviso no se puede leer, se
+// degrada a omitido con motivo propio y SIN error (la verificación nunca
+// bloquea el flujo).
+func TestVerificarPreguntarErrorNoBloquea(t *testing.T) {
+	verif, err := Verificar(OpcionesVerificar{
+		Preguntar: func(aviso string) (string, error) {
+			return "", errSinRespuesta
+		},
+	})
+	if err != nil {
+		t.Fatalf("Verificar no debe propagar el error del aviso: %v", err)
+	}
+	if verif.Modo != ModoOmitido || verif.Motivo != "aviso_no_respondio" {
+		t.Errorf("Modo = %q Motivo = %q, esperado omitido/aviso_no_respondio", verif.Modo, verif.Motivo)
+	}
+}
+
+// TestVerificarAgenteFallaNoBloquea: un agente que no responde (o devuelve
+// unavailable) degrada a omitido con motivo: aviso, nunca bloqueo.
+func TestVerificarAgenteFallaNoBloquea(t *testing.T) {
+	casos := map[string]struct {
+		agente *agenteFakeVerificar
+		motivo string
+	}{
+		"unavailable":    {&agenteFakeVerificar{salida: "unavailable"}, "agente_unavailable"},
+		"contrato inválido": {&agenteFakeVerificar{salida: "respuesta sin contrato"}, "contrato_invalido"},
+		"error":          {&agenteFakeVerificar{salida: "", err: errSinAgente}, "agente_no_respondio"},
+	}
+	for nombre, caso := range casos {
+		verif, err := Verificar(OpcionesVerificar{
+			Agente: caso.agente,
+			Preguntar: func(aviso string) (string, error) {
+				return "delegar", nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("%s: Verificar falló: %v", nombre, err)
+		}
+		if verif.Modo != ModoOmitido || verif.Motivo != caso.motivo {
+			t.Errorf("%s: Modo = %q Motivo = %q, esperado omitido/%s", nombre, verif.Modo, verif.Motivo, caso.motivo)
+		}
+	}
+}
+
 // TestVerificarSinConfigDelega: sin comandos configurados, el aviso ofrece
 // delegar y el agente devuelve el contrato tested.
 func TestVerificarSinConfigDelega(t *testing.T) {
@@ -125,28 +206,6 @@ func TestVerificarSinConfigConfigurar(t *testing.T) {
 	}
 	if verif.Modo != ModoConfigurar {
 		t.Errorf("Modo = %q, esperado %q", verif.Modo, ModoConfigurar)
-	}
-}
-
-// TestVerificarAgenteFallaNoBloquea: un agente que no responde (o devuelve
-// unavailable) degrada a omitido con motivo: aviso, nunca bloqueo.
-func TestVerificarAgenteFallaNoBloquea(t *testing.T) {
-	for nombre, agente := range map[string]*agenteFakeVerificar{
-		"unavailable": {salida: "unavailable"},
-		"error":       {salida: "", err: errSinAgente},
-	} {
-		verif, err := Verificar(OpcionesVerificar{
-			Agente: agente,
-			Preguntar: func(aviso string) (string, error) {
-				return "delegar", nil
-			},
-		})
-		if err != nil {
-			t.Fatalf("%s: Verificar falló: %v", nombre, err)
-		}
-		if verif.Modo != ModoOmitido || verif.Motivo == "" {
-			t.Errorf("%s: Modo = %q Motivo = %q, esperado omitido con motivo", nombre, verif.Modo, verif.Motivo)
-		}
 	}
 }
 
