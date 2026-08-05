@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -47,7 +48,10 @@ type ResultadoVerificacion struct {
 // inyectables para poder testear sin lanzar comandos reales ni leer stdin.
 type OpcionesVerificar struct {
 	Worktree string
-	Cfg      config.Config
+	// GitDir, si no está vacío, registra el evento pr-verify (§13) al
+	// terminar: detalle {cmd, exit} por comando, tested o motivo.
+	GitDir string
+	Cfg    config.Config
 	// Ejecutar (nil = shell real) devuelve el exit code de un comando.
 	Ejecutar func(comando string) (int, error)
 	// Agente es la vía de delegación (contrato tested); nil = no delegable.
@@ -59,7 +63,20 @@ type OpcionesVerificar struct {
 // Verificar implementa la verificación dual: vía 1 determinista si hay
 // comandos lint/test/build configurados; si no, aviso con elección
 // (configurar | omitir | delegar) y delegación con shell libre si se elige.
+// Con GitDir, registra el evento pr-verify (§13) tras el cálculo.
 func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
+	verif, err := verificarInterno(opts)
+	if err != nil || opts.GitDir == "" {
+		return verif, err
+	}
+	if err := registrarEventoPrVerify(opts.GitDir, opts.Worktree, verif); err != nil {
+		return verif, fmt.Errorf("verificación en modo %s, pero no se pudo registrar el evento pr-verify: %w", verif.Modo, err)
+	}
+	return verif, nil
+}
+
+// verificarInterno calcula el resultado sin efectos secundarios (sin evento).
+func verificarInterno(opts OpcionesVerificar) (ResultadoVerificacion, error) {
 	comandos := append([]string{}, opts.Cfg.LintCommands...)
 	comandos = append(comandos, opts.Cfg.TestCommands...)
 	comandos = append(comandos, opts.Cfg.BuildCommands...)
@@ -201,4 +218,37 @@ func ejecutarShell(worktree, comando string) (int, error) {
 		return exitErr.ExitCode(), nil
 	}
 	return -1, err
+}
+
+// registrarEventoPrVerify persiste el evento pr-verify (§5) con el detail del
+// esquema: por comando {cmd, exit}; o el contrato tested; o el motivo.
+func registrarEventoPrVerify(gitDir, worktree string, verif ResultadoVerificacion) error {
+	switch verif.Modo {
+	case ModoDeterminista:
+		comandos := make([]map[string]any, 0, len(verif.Comandos))
+		peor := 0
+		for _, c := range verif.Comandos {
+			comandos = append(comandos, map[string]any{"cmd": c.Comando, "exit": c.Exit})
+			if c.Exit > peor {
+				peor = c.Exit
+			}
+		}
+		detalle, err := json.Marshal(map[string]any{"comandos": comandos})
+		if err != nil {
+			return err
+		}
+		return RegistrarEvento(gitDir, "pr-verify", peor, nil, string(detalle), worktree)
+	case ModoDelegado:
+		detalle, err := json.Marshal(map[string]any{"tested": verif.Tested})
+		if err != nil {
+			return err
+		}
+		return RegistrarEvento(gitDir, "pr-verify", 0, nil, string(detalle), worktree)
+	default:
+		detalle, err := json.Marshal(map[string]any{"motivo": verif.Motivo})
+		if err != nil {
+			return err
+		}
+		return RegistrarEvento(gitDir, "pr-verify", 0, nil, string(detalle), worktree)
+	}
 }

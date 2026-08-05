@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -70,6 +73,159 @@ func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail, worktr
 		return RotarEventos(gitDir, maxEventosLineas)
 	}
 	return nil
+}
+
+// DetallePrCreate es el esquema del detail del evento pr-create (§13): la
+// acta de publicación. Sin pr_url la acta es por fallback y no es verificable.
+type DetallePrCreate struct {
+	PrURL    string `json:"pr_url"`
+	Fallback bool   `json:"fallback"`
+	ChainPR  bool   `json:"chain_pr"`
+}
+
+// PurgaResultado resume la purga de actas de PRs resueltas.
+type PurgaResultado struct {
+	Purgadas    int
+	Conservadas int
+	// Avisos documenta lo que no se pudo verificar (sin gh/red, actas sin URL):
+	// la purga es best-effort y nunca destruye por incertidumbre.
+	Avisos []string
+}
+
+// PurgeEventosDePRsResueltas consulta el estado de las PRs de los eventos
+// pr-create (gh pr view <nº> --json state) y purga las actas de PRs
+// MERGED/CLOSED. Conserva OPEN/DRAFT, las actas por fallback (sin URL) y todo
+// lo que no se pueda verificar. consultarEstado es inyectable para tests; nil
+// usa gh real.
+func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) (string, error)) (PurgaResultado, error) {
+	res := PurgaResultado{}
+	ruta := filepath.Join(gitDir, eventosRel)
+	archivo, err := os.Open(ruta)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return res, nil
+		}
+		return res, err
+	}
+
+	if consultarEstado == nil {
+		consultarEstado = estadoPRConGH
+	}
+
+	var conservadas [][]byte
+	scanner := bufio.NewScanner(archivo)
+	for scanner.Scan() {
+		bytes := scanner.Bytes()
+		var ev Evento
+		if json.Unmarshal(bytes, &ev) != nil || ev.Cmd != "pr-create" {
+			conservadas = append(conservadas, append([]byte(nil), bytes...))
+			continue
+		}
+		purgar, aviso, err := actaResuelta(ev.Detail, consultarEstado)
+		if err != nil {
+			return res, err
+		}
+		if purgar {
+			res.Purgadas++
+			continue
+		}
+		res.Conservadas++
+		if aviso != "" {
+			res.Avisos = append(res.Avisos, aviso)
+		}
+		conservadas = append(conservadas, append([]byte(nil), bytes...))
+	}
+	errCierre := archivo.Close()
+	if err := scanner.Err(); err != nil {
+		return res, err
+	}
+	if errCierre != nil {
+		return res, errCierre
+	}
+
+	if res.Purgadas == 0 {
+		return res, nil
+	}
+	return res, reescribirEventos(ruta, conservadas)
+}
+
+// actaResuelta decide si la acta de una PR es una PR resuelta (purgar),
+// devolviendo también un aviso si no se pudo verificar (se conserva).
+func actaResuelta(detail string, consultarEstado func(int) (string, error)) (bool, string, error) {
+	var acta DetallePrCreate
+	if err := json.Unmarshal([]byte(detail), &acta); err != nil {
+		return false, "", err
+	}
+	numero, ok := numeroDePR(acta.PrURL)
+	if !ok {
+		return false, "acta sin pr_url (fallback): no verificable, se conserva", nil
+	}
+	estado, err := consultarEstado(numero)
+	if err != nil {
+		return false, "PR #" + strconv.Itoa(numero) + " no verificable (gh/red): se conserva", nil
+	}
+	switch estado {
+	case "MERGED", "CLOSED":
+		return true, "", nil
+	default:
+		return false, "", nil
+	}
+}
+
+// numeroDePR extrae el número de la URL de una PR (/pull/<nº>).
+func numeroDePR(url string) (int, bool) {
+	idx := strings.LastIndex(url, "/pull/")
+	if idx < 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(url[idx+len("/pull/"):])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// estadoPRConGH consulta gh pr view <nº> --json state y devuelve el estado.
+// Cualquier fallo (gh ausente, sin red) es un error: la purga lo trata como
+// best-effort y conserva la acta.
+func estadoPRConGH(numero int) (string, error) {
+	salida, err := exec.Command("gh", "pr", "view", strconv.Itoa(numero), "--json", "state").Output()
+	if err != nil {
+		return "", err
+	}
+	var crudo struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(salida, &crudo); err != nil {
+		return "", err
+	}
+	return crudo.State, nil
+}
+
+// reescribirEventos escribe las líneas conservadas en el log con escritura
+// atómica temp + rename (mismo patrón que PurgeEventosDe).
+func reescribirEventos(ruta string, lineas [][]byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(ruta), "events-*.tmp")
+	if err != nil {
+		return err
+	}
+	rutaTemp := temp.Name()
+	defer os.Remove(rutaTemp)
+	escribir := bufio.NewWriter(temp)
+	for _, linea := range lineas {
+		escribir.Write(append(linea, '\n'))
+	}
+	if err := escribir.Flush(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(ruta); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(rutaTemp, ruta)
 }
 
 // PurgeEventosDe reescribe el log eliminando las líneas que referencian
