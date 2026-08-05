@@ -40,10 +40,12 @@ type Config struct {
 	Agents      map[string]AgentConfig
 	// AgentOrder preserva el orden de declaración de los agentes en el yml
 	// (el archivo más específico manda); alimenta la resolución automática.
-	AgentOrder   []string
-	Profiles     map[string]ProfileConfig
-	Review       ReviewConfig
-	LintCommands []string
+	AgentOrder    []string
+	Profiles      map[string]ProfileConfig
+	Review        ReviewConfig
+	LintCommands  []string
+	TestCommands  []string
+	BuildCommands []string
 }
 
 // DimensionesPorDefecto son las seis dimensiones canónicas de auditoría.
@@ -86,7 +88,9 @@ func configuracionPorDefecto() Config {
 				"security": "deep",
 			},
 		},
-		LintCommands: []string{},
+		LintCommands:  []string{},
+		TestCommands:  []string{},
+		BuildCommands: []string{},
 	}
 }
 
@@ -127,7 +131,7 @@ func CargarConfiguracionLocal(worktreePath string) Config {
 // sobreescribiendo los campos presentes. El parser es por niveles de
 // indentación relativos (robusto a 2 o 4 espacios por nivel) y soporta las
 // secciones active_agent, agents (con perfiles anidados), profiles, review
-// (con dims) y lint_commands.
+// (con dims), lint_commands, test_commands y build_commands.
 func aplicarDesdeRuta(cfg *Config, ruta string) {
 	file, err := os.Open(ruta)
 	if err != nil {
@@ -172,6 +176,10 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 				seccion = "review"
 			case "lint_commands":
 				seccion = "lint"
+			case "test_commands":
+				seccion = "test"
+			case "build_commands":
+				seccion = "build"
 			default:
 				seccion = ""
 			}
@@ -249,10 +257,17 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 					}
 				}
 			}
-		case seccion == "lint":
+		case seccion == "lint" || seccion == "test" || seccion == "build":
 			if indent >= 1 && strings.HasPrefix(texto, "-") {
 				if cmd := limpiarValor(strings.TrimSpace(strings.TrimPrefix(texto, "-"))); cmd != "" {
-					cfg.LintCommands = append(cfg.LintCommands, cmd)
+					switch seccion {
+					case "lint":
+						cfg.LintCommands = append(cfg.LintCommands, cmd)
+					case "test":
+						cfg.TestCommands = append(cfg.TestCommands, cmd)
+					case "build":
+						cfg.BuildCommands = append(cfg.BuildCommands, cmd)
+					}
 				}
 			}
 		}
