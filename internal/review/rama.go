@@ -38,13 +38,14 @@ type ResultadoOverview struct {
 // ResultadoRama agrega el análisis completo de la rama: los SHAs del rango,
 // las fichas, el volumen real y la decisión single/chain.
 type ResultadoRama struct {
-	Rama       string
-	SHAs       []string
-	Pendientes []string
-	Fichas     []Ficha
-	Volumen    int
-	Overview   *ResultadoOverview // nil si no se pidió o no se pudo obtener
-	Decision   string             // "single" | "chain"
+	Rama          string
+	SHAs          []string
+	Pendientes    []string
+	Fichas        []Ficha
+	Volumen       int
+	Overview      *ResultadoOverview // nil si no se pidió o no se pudo obtener
+	OverviewError string             // por qué no hay overview, si se pidió y falló
+	Decision      string             // "single" | "chain"
 }
 
 // AnalizarRama analiza la rama actual contra su base (guía §12.1): resuelve
@@ -109,7 +110,11 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 		Fichas: fichas, Volumen: volumen,
 	}
 	if opts.Overview {
-		res.Overview = overviewDeRama(opts, rama, fichas)
+		overview, err := overviewDeRama(opts, rama, fichas)
+		res.Overview = overview
+		if err != nil {
+			res.OverviewError = err.Error()
+		}
 	}
 
 	// Decisión por dos ejes: volumen real + coherencia (guía §12.1).
@@ -164,25 +169,26 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 }
 
 // overviewDeRama ejecuta la llamada Spec de rama (una sola, no una por
-// commit) y devuelve nil si no se pudo obtener (el análisis no falla por un
-// overview opcional).
-func overviewDeRama(opts OpcionesRama, rama string, fichas []Ficha) *ResultadoOverview {
+// commit). El error se propaga para que un fallo del overview no decida en
+// silencio: el análisis sigue (con decisión chain como fallback seguro) pero
+// el caller conoce la causa exacta.
+func overviewDeRama(opts OpcionesRama, rama string, fichas []Ficha) (*ResultadoOverview, error) {
 	if opts.Fabrica == nil {
-		return nil
+		return nil, errors.New("sin fábrica de auditores configurada")
 	}
 	agente, _, err := opts.Fabrica(DimSpec)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("no se pudo crear el auditor de rama: %w", err)
 	}
 	salida, err := agente.EjecutarPrompt(ConstruirPromptOverview(rama, fichas))
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("el auditor de rama no respondió: %w", err)
 	}
 	overview, err := ParseOverview(salida)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("respuesta de coherencia inválida: %w", err)
 	}
-	return overview
+	return overview, nil
 }
 
 // ConstruirPromptOverview pide al agente la coherencia del conjunto de
@@ -200,24 +206,67 @@ func ConstruirPromptOverview(rama string, fichas []Ficha) string {
 	return b.String()
 }
 
-// ParseOverview extrae la respuesta de coherencia del texto del agente: el
-// primer objeto JSON que contenga el campo "coherente" (tolera texto
-// alrededor y JSON multilínea).
+// ParseOverview extrae la respuesta de coherencia del texto del agente:
+// recorre los objetos JSON balanceados y toma el primero que contenga el
+// campo "coherente" (tolera texto alrededor, JSON multilínea y preamble JSON).
 func ParseOverview(salida string) (*ResultadoOverview, error) {
-	inicio := strings.Index(salida, "{")
-	fin := strings.LastIndex(salida, "}")
-	if inicio < 0 || fin <= inicio {
-		return nil, errors.New("el agente no devolvió un JSON de coherencia")
+	desde := 0
+	for {
+		inicio := strings.Index(salida[desde:], "{")
+		if inicio < 0 {
+			return nil, errors.New("el agente no devolvió un JSON de coherencia")
+		}
+		inicio += desde
+		fin, ok := cierreJSON(salida, inicio)
+		if !ok {
+			return nil, errors.New("el agente no devolvió un JSON de coherencia")
+		}
+		candidato := salida[inicio : fin+1]
+		if strings.Contains(candidato, "coherente") {
+			var overview ResultadoOverview
+			if err := json.Unmarshal([]byte(candidato), &overview); err != nil {
+				return nil, fmt.Errorf("JSON de coherencia inválido: %v", err)
+			}
+			return &overview, nil
+		}
+		desde = fin + 1
 	}
-	candidato := salida[inicio : fin+1]
-	if !strings.Contains(candidato, "coherente") {
-		return nil, errors.New("el JSON no contiene el campo \"coherente\"")
+}
+
+// cierreJSON devuelve el índice del '}' que cierra el objeto JSON que empieza
+// en inicio, sin confundirse con llaves dentro de strings.
+func cierreJSON(salida string, inicio int) (int, bool) {
+	profundidad := 0
+	enString := false
+	escapado := false
+	for i := inicio; i < len(salida); i++ {
+		c := salida[i]
+		if enString {
+			if escapado {
+				escapado = false
+				continue
+			}
+			switch c {
+			case '\\':
+				escapado = true
+			case '"':
+				enString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			enString = true
+		case '{':
+			profundidad++
+		case '}':
+			profundidad--
+			if profundidad == 0 {
+				return i, true
+			}
+		}
 	}
-	var overview ResultadoOverview
-	if err := json.Unmarshal([]byte(candidato), &overview); err != nil {
-		return nil, fmt.Errorf("JSON de coherencia inválido: %v", err)
-	}
-	return &overview, nil
+	return 0, false
 }
 
 // shaCortoRama recorta un SHA a 8 caracteres sin reventar si es más corto.

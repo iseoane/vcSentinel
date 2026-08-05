@@ -228,6 +228,27 @@ texto posterior`)
 	if _, err := ParseOverview("respuesta sin JSON"); err == nil {
 		t.Error("ParseOverview aceptó una salida sin JSON")
 	}
+
+	// JSON presente pero sin el campo "coherente": rechazo por guarda.
+	if _, err := ParseOverview(`{"rationale":"solo texto"}`); err == nil {
+		t.Error("ParseOverview aceptó un JSON sin el campo coherente")
+	}
+
+	// JSON con "coherente" pero sintácticamente inválido: rechazo por Unmarshal.
+	if _, err := ParseOverview(`{"coherente": tru}`); err == nil {
+		t.Error("ParseOverview aceptó un JSON malformado")
+	}
+
+	// Preamble JSON antes del objeto de coherencia: debe tomar el objeto que
+	// contiene "coherente", no el primer { con el último }.
+	conPreamble, err := ParseOverview(`{"metadato":1}
+{"coherente":false,"rationale":"Dos unidades con costuras."}`)
+	if err != nil {
+		t.Fatalf("ParseOverview no toleró un preamble JSON: %v", err)
+	}
+	if conPreamble.Coherente {
+		t.Errorf("ParseOverview = %+v, esperado coherente=false", conPreamble)
+	}
 }
 
 // TestConstruirPromptOverview: el prompt muestra los commits de la rama.

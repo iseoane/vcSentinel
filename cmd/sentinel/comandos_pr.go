@@ -118,7 +118,7 @@ func parsearFlagsPrReview(args []string) (flagsPrReview, error) {
 // detalleEventoPrReview construye el detail del evento pr-review: string con
 // JSON serializado (esquema de la guía §13).
 func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (string, error) {
-	detalle, err := json.Marshal(map[string]any{
+	detalle := map[string]any{
 		"base":      base,
 		"rama":      res.Rama,
 		"auditadas": len(res.Fichas),
@@ -127,15 +127,21 @@ func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (str
 		"ci":        ci,
 		"overview":  res.Overview != nil,
 		"chain_pr":  res.Decision == "chain",
-	})
+	}
+	// Un fallo del overview no debe quedar en silencio en el evento: si se
+	// pidió y falló, la decisión chain lleva su causa.
+	if res.OverviewError != "" {
+		detalle["overview_error"] = res.OverviewError
+	}
+	datos, err := json.Marshal(detalle)
 	if err != nil {
 		return "", err
 	}
-	return string(detalle), nil
+	return string(datos), nil
 }
 
 // textoDecision explica la decisión single/chain en la salida terminal.
-func textoDecision(decision string, volumen int, coherente bool) string {
+func textoDecision(decision string, volumen int) string {
 	switch decision {
 	case "chain":
 		return "Decisión PR: cadena (--chain-pr, fase 6). La rama supera " +
@@ -147,7 +153,6 @@ func textoDecision(decision string, volumen int, coherente bool) string {
 		}
 		return "Decisión PR: una sola PR (volumen dentro del umbral)."
 	}
-	_ = coherente // reservado para matices futuros de la decisión
 	return "Decisión PR: " + decision
 }
 
@@ -207,14 +212,17 @@ func ejecutarPrReview(worktree string, args []string) {
 
 	if flags.jsonOut {
 		salida := map[string]any{
-			"rama":      res.Rama,
-			"base":      base,
-			"shas":      res.SHAs,
+			"rama":       res.Rama,
+			"base":       base,
+			"shas":       res.SHAs,
 			"pendientes": res.Pendientes,
-			"fichas":    res.Fichas,
-			"volumen":   res.Volumen,
-			"decision":  res.Decision,
-			"overview":  res.Overview,
+			"fichas":     res.Fichas,
+			"volumen":    res.Volumen,
+			"decision":   res.Decision,
+			"overview":   res.Overview,
+		}
+		if res.OverviewError != "" {
+			salida["overview_error"] = res.OverviewError
 		}
 		datos, err := json.MarshalIndent(salida, "", "  ")
 		if err != nil {
@@ -233,5 +241,8 @@ func ejecutarPrReview(worktree string, args []string) {
 	fmt.Println()
 	fmt.Println(review.RenderResumen(res.Fichas))
 	fmt.Println()
-	fmt.Println(textoDecision(res.Decision, res.Volumen, res.Overview != nil && res.Overview.Coherente))
+	fmt.Println(textoDecision(res.Decision, res.Volumen))
+	if res.OverviewError != "" {
+		fmt.Printf("? Aviso: el overview no se pudo obtener (%s); se decidió por volumen.\n", res.OverviewError)
+	}
 }

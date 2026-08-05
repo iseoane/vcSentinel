@@ -90,21 +90,38 @@ func TestDetalleEventoPrReview(t *testing.T) {
 			t.Errorf("detail[%q] = %v, esperado %v", clave, crudo[clave], esperado)
 		}
 	}
+	if _, hay := crudo["overview_error"]; hay {
+		t.Errorf("detail[overview_error] presente sin OverviewError: %v", crudo["overview_error"])
+	}
+
+	// Con OverviewError, el evento debe llevarlo para que un fallo del
+	// overview no quede en silencio.
+	res.OverviewError = "el auditor de rama no respondió: boom"
+	detalle, err = detalleEventoPrReview("main", res, true)
+	if err != nil {
+		t.Fatalf("detalleEventoPrReview falló: %v", err)
+	}
+	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
+		t.Fatalf("detail no es JSON válido: %v\n%s", err, detalle)
+	}
+	if crudo["overview_error"] != "el auditor de rama no respondió: boom" {
+		t.Errorf("detail[overview_error] = %v", crudo["overview_error"])
+	}
 }
 
 // TestTextoDecisionPrReview: la salida de decisión distingue single/chain y
 // explica el motivo.
 func TestTextoDecisionPrReview(t *testing.T) {
-	single := textoDecision("single", 100, false)
+	single := textoDecision("single", 100)
 	if !strings.Contains(single, "una sola PR") || strings.Contains(single, "cadena") {
-		t.Errorf("textoDecision(single, 100) = %q", single)
+		t.Errorf(`textoDecision("single", 100) = %q`, single)
 	}
-	chain := textoDecision("chain", 450, false)
+	chain := textoDecision("chain", 450)
 	if !strings.Contains(chain, "cadena") {
-		t.Errorf("textoDecision(chain, 450) = %q", chain)
+		t.Errorf(`textoDecision("chain", 450) = %q`, chain)
 	}
-	singleGrande := textoDecision("single", 450, true)
+	singleGrande := textoDecision("single", 450)
 	if !strings.Contains(singleGrande, "coherente") {
-		t.Errorf("textoDecision(single, 450, coherente) = %q", singleGrande)
+		t.Errorf(`textoDecision("single", 450) = %q`, singleGrande)
 	}
 }
