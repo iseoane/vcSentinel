@@ -97,7 +97,7 @@ func imprimirAyuda() {
 	fmt.Println("  lint       Ejecuta los comandos de lint_commands de la configuración.")
 	fmt.Println("  rebase     Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
 	fmt.Println("  status     Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con --json emite JSON; con --prune borra fichas huérfanas.")
-	fmt.Println("  pr         Crea un pull request con gh; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a 'gh pr create'.")
+	fmt.Println("  pr         Crea un pull request con gh (passthrough); pr review analiza la rama sin publicar (matriz + decisión single/chain). Flags de pr review: --base X --only-unaudited --overview --json.")
 	fmt.Println("  install    Descarga e instala la última release publicada desde GitHub.")
 	fmt.Println("  upgrade    Reemplaza el binario actual por la última release publicada.")
 	fmt.Println("  uninstall  Elimina el binario instalado y la configuración global.")
