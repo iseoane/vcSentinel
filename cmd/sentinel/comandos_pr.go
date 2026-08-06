@@ -362,7 +362,11 @@ func copiarPortapapeles(texto string) error {
 
 // copiarPortapapelesCon es la versión inyectable de copiarPortapapeles:
 // existe decide qué herramienta está disponible; ejecutar lanza la copia.
-// Devuelve un error explícito si no hay ninguna herramienta.
+// Usa la PRIMERA herramienta del orden canónico (clip > wl-copy > xclip) que
+// exista en el PATH: si esa ejecución falla, no se intenta la siguiente. Es
+// una decisión deliberada: la primera disponible es la canónica de la
+// plataforma y un fallo suyo casi siempre indica un entorno roto, no un
+// fallo de la herramienta.
 func copiarPortapapelesCon(texto string, existe func(string) bool, ejecutar func(string, string) error) error {
 	candidatos := []string{"clip", "wl-copy", "xclip"}
 	for _, nombre := range candidatos {
@@ -384,9 +388,12 @@ func publicarPR(worktree, rutaPlantilla, cuerpo string) (string, bool, error) {
 	if _, err := exec.LookPath("gh"); err == nil {
 		cmd := exec.Command("gh", "pr", "create", "--draft", "-F", rutaPlantilla)
 		cmd.Dir = worktree
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
 		salida, err := cmd.Output()
 		if err != nil {
-			return "", false, fmt.Errorf("gh pr create terminó con error (código %d)", exitCodeDeError(err))
+			return "", false, fmt.Errorf("gh pr create terminó con error (código %d): %s",
+				exitCodeDeError(err), strings.TrimSpace(stderr.String()))
 		}
 		return strings.TrimSpace(string(salida)), false, nil
 	}
@@ -500,9 +507,14 @@ func ejecutarPrCreate(worktree string, args []string) {
 		os.Exit(1)
 	}
 	if fallback {
+		// El archivo es el artefacto entregable del fallback: se conserva.
 		fmt.Println("? Plantilla en portapapeles: crea la PR manualmente con ese contenido.")
 	} else {
 		fmt.Printf("? PR creada: %s\n", prURL)
+		// El cuerpo ya vive en la PR: el temporal efímero se limpia.
+		if err := os.Remove(rutaPlantilla); err != nil {
+			fmt.Printf("? Aviso: no se pudo limpiar el archivo temporal (%v).\n", err)
+		}
 	}
 
 	detalle, err := detalleEventoPrCreate(prURL, fallback, flags.chainPR)
