@@ -295,6 +295,20 @@ func TestVerificarParaPlantillaTraduceComandos(t *testing.T) {
 	}
 }
 
+// TestVerificarParaPlantillaNilUsaLaRutaReal: el guard defensivo (verificar
+// nil -> ops.Verificar) no se puede quitar sin romper el test: sin comandos
+// configurados, la ruta real pasa por el aviso interactivo y, sin respuesta
+// en stdin, degrada a omitido sin panic.
+func TestVerificarParaPlantillaNilUsaLaRutaReal(t *testing.T) {
+	plantilla := verificarParaPlantillaCon("worktree", "", config.Config{}, nil)
+	if plantilla.Modo != ops.ModoOmitido {
+		t.Errorf("con nil la ruta real debe degradar a omitido, got %q", plantilla.Modo)
+	}
+	if plantilla.Motivo != "aviso_no_respondio" {
+		t.Errorf("sin respuesta en el aviso el motivo debe ser aviso_no_respondio, got %q", plantilla.Motivo)
+	}
+}
+
 // TestPublicarPRFallbackReleeElArchivo: sin gh, el cuerpo del fallback se
 // re-lee del archivo recién escrito (no del parámetro perdido).
 func TestPublicarPRFallbackReleeElArchivo(t *testing.T) {
