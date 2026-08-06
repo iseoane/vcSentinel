@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,6 +217,13 @@ func estadoPRConGH(numero int) (string, error) {
 // existente falla, por lo que el reemplazo es backup → rename → limpieza:
 // ante cualquier fallo el log original se conserva (como .bak o intacto).
 func escribirLogTemporal(ruta string, lineas [][]byte) error {
+	return escribirLogTemporalRenombrando(ruta, lineas, os.Rename)
+}
+
+// escribirLogTemporalRenombrando es la variante testeable de
+// escribirLogTemporal: la operación de rename es inyectable para poder
+// ejercitar las rutas de fallo y restauración sin depender del filesystem.
+func escribirLogTemporalRenombrando(ruta string, lineas [][]byte, renombrar func(string, string) error) error {
 	temp, err := os.CreateTemp(filepath.Dir(ruta), "events-*.tmp")
 	if err != nil {
 		return err
@@ -238,19 +246,33 @@ func escribirLogTemporal(ruta string, lineas [][]byte) error {
 	}
 
 	rutaBak := ruta + ".bak"
-	if err := os.Rename(ruta, rutaBak); err != nil {
+	// Limpiar un .bak residual de una ejecución interrumpida: en Windows
+	// os.Rename falla si el destino ya existe y bloquearía la siguiente
+	// rotación/purga. El .bak residual nunca tiene datos más nuevos que el
+	// propio log, así que eliminarlo no pierde información.
+	if err := os.Remove(rutaBak); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := renombrar(ruta, rutaBak); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		// No había log previo: el temporal pasa a ser el log.
-		return os.Rename(rutaTemp, ruta)
+		return renombrar(rutaTemp, ruta)
 	}
-	if err := os.Rename(rutaTemp, ruta); err != nil {
-		// Restaurar el original; el temporal se limpia con el defer.
-		_ = os.Rename(rutaBak, ruta)
+	if err := renombrar(rutaTemp, ruta); err != nil {
+		// Restaurar el original; si la restauración también falla, el log
+		// queda a salvo como .bak y se informa dónde recuperarlo.
+		if errRest := renombrar(rutaBak, ruta); errRest != nil {
+			return fmt.Errorf("%v (restauración fallida: %v; log de respaldo en %s)", err, errRest, rutaBak)
+		}
 		return err
 	}
-	return os.Remove(rutaBak)
+	// Limpieza del .bak best-effort: el log ya está correctamente escrito;
+	// un fallo aquí (lock de antivirus, permisos) no debe reportarse como
+	// fallo de la operación.
+	_ = os.Remove(rutaBak)
+	return nil
 }
 
 // PurgeEventosDe reescribe el log eliminando las líneas que referencian
