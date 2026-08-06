@@ -349,3 +349,110 @@ func TestRenderPlantillaSinOverviewHonesta(t *testing.T) {
 		t.Errorf("sin overview debe decirse, no omitirse en silencio: %s", salida)
 	}
 }
+
+// TestBloqueantesDeRamaFiltraCriticos: solo los CRITICAL de la última
+// revisión bloquean; vacíos, sin revisión y severidades menores no cuentan.
+func TestBloqueantesDeRamaFiltraCriticos(t *testing.T) {
+	critico := ReviewFinding{Dimension: DimSecurity, File: "a.go", Line: 42,
+		Severity: SevCritical, Description: "dato expuesto"}
+	casos := []struct {
+		nombre string
+		fichas []Ficha
+		want   int
+	}{
+		{
+			nombre: "sin fichas no bloquea nada",
+			fichas: nil,
+			want:   0,
+		},
+		{
+			nombre: "ficha sin revisiones no bloquea",
+			fichas: []Ficha{fichaAyuda("u1", "feat(a)", "m")},
+			want:   0,
+		},
+		{
+			nombre: "solo severidades menores no bloquea",
+			fichas: []Ficha{fichaAyuda("u1", "feat(a)", "m",
+				revisionAyuda("warn",
+					DimensionResult{Dim: DimTests, Verdict: VerdictWarn,
+						Findings: []ReviewFinding{{Dimension: DimTests, Severity: SevWarning, Description: "frágil"}}},
+					DimensionResult{Dim: DimSpec, Verdict: VerdictOK,
+						Findings: []ReviewFinding{{Dimension: DimSpec, Severity: SevAdvisory, Description: "scope"}}},
+				))},
+			want: 0,
+		},
+		{
+			nombre: "mezcla con al menos un CRITICAL lista solo los criticos",
+			fichas: []Ficha{
+				fichaAyuda("u1", "feat(a)", "m",
+					revisionAyuda("block",
+						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
+							Findings: []ReviewFinding{
+								critico,
+								{Dimension: DimSecurity, Severity: SevWarning, Description: "menor"},
+							}},
+					)),
+				fichaAyuda("u2", "feat(b)", "m", revisionAyuda("ok")),
+			},
+			want: 1,
+		},
+		{
+			nombre: "solo la ultima revision manda",
+			fichas: []Ficha{fichaAyuda("u1", "feat(a)", "m",
+				revisionAyuda("block",
+					DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
+						Findings: []ReviewFinding{critico}}),
+				revisionAyuda("ok",
+					DimensionResult{Dim: DimSecurity, Verdict: VerdictOK}),
+			)},
+			want: 0,
+		},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			got := BloqueantesDeRama(caso.fichas)
+			if len(got) != caso.want {
+				t.Errorf("BloqueantesDeRama() = %d hallazgos, esperado %d: %+v",
+					len(got), caso.want, got)
+			}
+		})
+	}
+}
+
+// TestRenderPlantillaSeccionRiesgos: la sección "## Riesgos" aparece con el
+// placeholder cuando no hay riesgos y con las líneas renderizadas cuando hay
+// hallazgos CRITICAL/WARNING pendientes (los ADVISORY no se listan).
+func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
+	fichasSinRiesgos := []Ficha{fichaAyuda("u1", "feat(a)", "m", revisionAyuda("ok"))}
+	salidaVacia := RenderPlantillaPr(fichasSinRiesgos, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
+	if !strings.Contains(salidaVacia, "## Riesgos") {
+		t.Fatalf("falta la sección Riesgos: %s", salidaVacia)
+	}
+	if !strings.Contains(salidaVacia, "Sin riesgos pendientes") {
+		t.Errorf("sin riesgos debe mostrar el placeholder honesto: %s", salidaVacia)
+	}
+
+	fichasConRiesgos := []Ficha{fichaAyuda("u1", "feat(a)", "m",
+		revisionAyuda("warn",
+			DimensionResult{Dim: DimSecurity, Verdict: VerdictWarn,
+				Findings: []ReviewFinding{
+					{Dimension: DimSecurity, File: "a.go", Line: 7,
+						Severity: SevCritical, Description: "dato expuesto"},
+					{Dimension: DimSpec, File: "b.go", Line: 1,
+						Severity: SevAdvisory, Description: "scope amplio"},
+				}},
+		))}
+	salidaCon := RenderPlantillaPr(fichasConRiesgos, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
+	if !strings.Contains(salidaCon, "dato expuesto") {
+		t.Errorf("el CRITICAL debe listarse en Riesgos: %s", salidaCon)
+	}
+	if !strings.Contains(salidaCon, "CRITICAL") {
+		t.Errorf("la línea de riesgo debe citar la severidad: %s", salidaCon)
+	}
+	if strings.Contains(salidaCon, "scope amplio") {
+		t.Errorf("los ADVISORY no son riesgos y no deben listarse: %s", salidaCon)
+	}
+	if strings.Contains(salidaCon, "Sin riesgos pendientes") {
+		t.Errorf("con riesgos no debe mostrarse el placeholder: %s", salidaCon)
+	}
+}
