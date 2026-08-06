@@ -296,12 +296,16 @@ func detalleEventoPrCreate(prURL string, fallback, chain bool) (string, error) {
 
 // verificarParaPlantilla ejecuta la verificación honesta (guía §12.3) y la
 // traduce a la sección de la plantilla: exit codes reales por comando
-// configurado, contrato tested del agente o motivo de omisión.
-func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) (review.VerificacionPlantilla, error) {
+// configurado, contrato tested del agente o motivo de omisión. Un fallo de la
+// verificación NUNCA queda en silencio: se refleja como motivo en la
+// plantilla para que el PR sea transparente sobre lo que se comprobó.
+func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) review.VerificacionPlantilla {
 	perfil := config.ResolverPerfil(cfg, "", "")
 	adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 	if err != nil {
 		// Sin agente no hay vía de delegación; la vía determinista sigue viva.
+		// ops.Verificar acepta Agente nil (lo comprueba antes de usarlo):
+		// la delegación se degrada a "sin_agente", nunca panic.
 		adapter = nil
 	}
 	verif, err := ops.Verificar(ops.OpcionesVerificar{
@@ -320,7 +324,10 @@ func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) (review.
 		},
 	})
 	if err != nil {
-		return review.VerificacionPlantilla{}, err
+		return review.VerificacionPlantilla{
+			Modo:   ops.ModoOmitido,
+			Motivo: fmt.Sprintf("error_de_verificacion: %v", err),
+		}
 	}
 	plantilla := review.VerificacionPlantilla{
 		Modo:   verif.Modo,
@@ -330,7 +337,16 @@ func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) (review.
 	for _, c := range verif.Comandos {
 		plantilla.Comandos = append(plantilla.Comandos, review.ComandoVerificado{Comando: c.Comando, Exit: c.Exit})
 	}
-	return plantilla, nil
+	return plantilla
+}
+
+// salirSiError centraliza el patrón de salida del CLI: imprime el error y
+// abandona con código 1. Sin error no hace nada.
+func salirSiError(err error) {
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // escribirPlantillaPR guarda el cuerpo del PR en un archivo temporal y
@@ -382,9 +398,10 @@ func copiarPortapapelesCon(texto string, existe func(string) bool, ejecutar func
 }
 
 // publicarPR publica el PR con gh pr create --draft -F plantilla. Si gh no
-// está en el PATH, fallback a archivo + portapapeles (guía §12.4). Devuelve
-// la URL del PR (vacía en fallback) y si se usó el fallback.
-func publicarPR(worktree, rutaPlantilla, cuerpo string) (string, bool, error) {
+// está en el PATH, fallback a archivo + portapapeles (guía §12.4): el cuerpo
+// se re-lee del archivo recién escrito. Devuelve la URL del PR (vacía en
+// fallback) y si se usó el fallback.
+func publicarPR(worktree, rutaPlantilla string) (string, bool, error) {
 	if _, err := exec.LookPath("gh"); err == nil {
 		cmd := exec.Command("gh", "pr", "create", "--draft", "-F", rutaPlantilla)
 		cmd.Dir = worktree
@@ -398,25 +415,26 @@ func publicarPR(worktree, rutaPlantilla, cuerpo string) (string, bool, error) {
 		return strings.TrimSpace(string(salida)), false, nil
 	}
 
+	cuerpo, err := os.ReadFile(rutaPlantilla)
+	if err != nil {
+		return "", true, fmt.Errorf("no se pudo releer la plantilla para el portapapeles: %w", err)
+	}
 	fmt.Printf("? gh no está en el PATH: la plantilla quedó en %s y se copia al portapapeles.\n", rutaPlantilla)
-	if err := copiarPortapapeles(cuerpo); err != nil {
+	if err := copiarPortapapeles(string(cuerpo)); err != nil {
 		return "", true, err
 	}
 	return "", true, nil
 }
 
-// gateBlock lista los hallazgos CRITICAL de la rama y decide si el gate de
-// block permite publicar (guía §12.4): block sin superar -> no publica y
-// lista los bloqueantes; --force lo supera explícitamente.
-func gateBlock(fichas []review.Ficha, force bool) (permitido bool, bloqueantes []string) {
+// gateBlock decide si el gate de block permite publicar (guía §12.4): block
+// sin superar -> no publica y devuelve los hallazgos CRITICAL que lo causan;
+// --force lo supera explícitamente. Devuelve los hallazgos ESTRUCTURADOS: el
+// formateo es responsabilidad del CLI, no del gate.
+func gateBlock(fichas []review.Ficha, force bool) (permitido bool, bloqueantes []review.ReviewFinding) {
 	if review.VeredictoDeRama(fichas) != review.VerdictBlock || force {
 		return true, nil
 	}
-	for _, h := range review.BloqueantesDeRama(fichas) {
-		bloqueantes = append(bloqueantes,
-			fmt.Sprintf("  - [%s] %s (%s:%d)", h.Severity, h.Description, h.File, h.Line))
-	}
-	return false, bloqueantes
+	return false, review.BloqueantesDeRama(fichas)
 }
 
 // ejecutarPrCreate implementa pr create (guía §12.4): pipeline compartido de
@@ -424,17 +442,11 @@ func gateBlock(fichas []review.Ficha, force bool) (permitido bool, bloqueantes [
 // fallback a portapapeles. Registra el evento pr-create al terminar.
 func ejecutarPrCreate(worktree string, args []string) {
 	flags, err := parsearFlagsPrCreate(args)
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
+	salirSiError(err)
 
 	cfg := config.CargarConfiguracionLocal(worktree)
 	gitDir, err := git.ObtenerGitDir()
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
+	salirSiError(err)
 
 	fabrica := func(dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
@@ -460,10 +472,7 @@ func ejecutarPrCreate(worktree string, args []string) {
 			fmt.Printf("  ⏳ %s …\n", dim)
 		},
 	})
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
+	salirSiError(err)
 
 	if len(res.Fichas) == 0 {
 		fmt.Println("_No hay commits auditados en la rama._")
@@ -474,8 +483,8 @@ func ejecutarPrCreate(worktree string, args []string) {
 	permitido, bloqueantes := gateBlock(res.Fichas, flags.force)
 	if !permitido {
 		fmt.Println("🚨 Veredicto de auditoría: block. No se publica la PR. Bloqueantes:")
-		for _, b := range bloqueantes {
-			fmt.Println(b)
+		for _, h := range bloqueantes {
+			fmt.Printf("  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
 		}
 		fmt.Println("Resuelve los bloqueantes o repite con --force para publicar igualmente.")
 		os.Exit(1)
@@ -489,23 +498,14 @@ func ejecutarPrCreate(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	verificacion, err := verificarParaPlantilla(worktree, gitDir, cfg)
-	if err != nil {
-		fmt.Printf("? Aviso: la verificación no completó (%v); la plantilla lo reflejará honestamente.\n", err)
-	}
+	verificacion := verificarParaPlantilla(worktree, gitDir, cfg)
 
 	cuerpo := review.RenderPlantillaPr(res.Fichas, res.Overview, verificacion, version)
 	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
+	salirSiError(err)
 
-	prURL, fallback, err := publicarPR(worktree, rutaPlantilla, cuerpo)
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
+	prURL, fallback, err := publicarPR(worktree, rutaPlantilla)
+	salirSiError(err)
 	if fallback {
 		// El archivo es el artefacto entregable del fallback: se conserva.
 		fmt.Println("? Plantilla en portapapeles: crea la PR manualmente con ese contenido.")

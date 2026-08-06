@@ -183,8 +183,9 @@ func TestGateBlockListaCriticosYNiega(t *testing.T) {
 	if len(bloqueantes) != 1 {
 		t.Fatalf("debe listar el CRITICAL, lista = %v", bloqueantes)
 	}
-	if !strings.Contains(bloqueantes[0], "CRITICAL") || !strings.Contains(bloqueantes[0], "secreto en el log") {
-		t.Errorf("el bloqueante debe citar severidad y descripción: %s", bloqueantes[0])
+	h := bloqueantes[0]
+	if h.Severity != review.SevCritical || h.Description != "secreto en el log" {
+		t.Errorf("el bloqueante debe conservar severidad y descripción: %+v", h)
 	}
 }
 
