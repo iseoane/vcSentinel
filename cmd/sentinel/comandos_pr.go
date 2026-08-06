@@ -409,30 +409,45 @@ func copiarPortapapelesCon(texto string, existe func(string) bool, ejecutar func
 	return errors.New("no se encontró ninguna herramienta de portapapeles (clip/wl-copy/xclip)")
 }
 
+// opcionesPublicarPR agrupa las dependencias inyectables de publicarPRCon:
+// ghDisponible decide si gh está en el PATH, ejecutarGh lanza gh y devuelve
+// su salida (args completos, incluyendo el worktree como cwd), copiar se usa
+// solo en el fallback (portapapeles).
+type opcionesPublicarPR struct {
+	ghDisponible func(string) bool
+	ejecutarGh   func(worktree string, args ...string) ([]byte, error)
+	copiar       func(string) error
+}
+
 // publicarPR publica el PR con gh pr create --draft -F plantilla. Si gh no
 // está en el PATH, fallback a archivo + portapapeles (guía §12.4): el cuerpo
 // se re-lee del archivo recién escrito. Devuelve la URL del PR (vacía en
 // fallback) y si se usó el fallback.
 func publicarPR(worktree, rutaPlantilla string) (string, bool, error) {
-	return publicarPRCon(worktree, rutaPlantilla,
-		func(nombre string) bool { _, err := exec.LookPath(nombre); return err == nil },
-		copiarPortapapeles)
+	return publicarPRCon(worktree, rutaPlantilla, opcionesPublicarPR{
+		ghDisponible: func(nombre string) bool { _, err := exec.LookPath(nombre); return err == nil },
+		ejecutarGh: func(worktree string, args ...string) ([]byte, error) {
+			cmd := exec.Command("gh", args...)
+			cmd.Dir = worktree
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			salida, err := cmd.Output()
+			if err != nil {
+				return nil, fmt.Errorf("gh pr create terminó con error (código %d): %s",
+					exitCodeDeError(err), strings.TrimSpace(stderr.String()))
+			}
+			return salida, nil
+		},
+		copiar: copiarPortapapeles,
+	})
 }
 
-// publicarPRCon es la versión inyectable de publicarPR: ghDisponible decide si
-// gh está en el PATH; copiar se usa solo en el fallback (portapapeles).
-func publicarPRCon(worktree, rutaPlantilla string, ghDisponible func(string) bool,
-	copiar func(string) error) (string, bool, error) {
-
-	if ghDisponible("gh") {
-		cmd := exec.Command("gh", "pr", "create", "--draft", "-F", rutaPlantilla)
-		cmd.Dir = worktree
-		var stderr strings.Builder
-		cmd.Stderr = &stderr
-		salida, err := cmd.Output()
+// publicarPRCon es la versión inyectable de publicarPR (seam de prueba).
+func publicarPRCon(worktree, rutaPlantilla string, opciones opcionesPublicarPR) (string, bool, error) {
+	if opciones.ghDisponible("gh") {
+		salida, err := opciones.ejecutarGh(worktree, "pr", "create", "--draft", "-F", rutaPlantilla)
 		if err != nil {
-			return "", false, fmt.Errorf("gh pr create terminó con error (código %d): %s",
-				exitCodeDeError(err), strings.TrimSpace(stderr.String()))
+			return "", false, err
 		}
 		return strings.TrimSpace(string(salida)), false, nil
 	}
@@ -442,7 +457,7 @@ func publicarPRCon(worktree, rutaPlantilla string, ghDisponible func(string) boo
 		return "", true, fmt.Errorf("no se pudo releer la plantilla para el portapapeles: %w", err)
 	}
 	fmt.Printf("? gh no está en el PATH: la plantilla quedó en %s y se copia al portapapeles.\n", rutaPlantilla)
-	if err := copiar(string(cuerpo)); err != nil {
+	if err := opciones.copiar(string(cuerpo)); err != nil {
 		return "", true, err
 	}
 	return "", true, nil

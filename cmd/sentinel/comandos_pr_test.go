@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -302,9 +303,10 @@ func TestPublicarPRFallbackReleeElArchivo(t *testing.T) {
 		t.Fatal(err)
 	}
 	var copiado string
-	url, fallback, err := publicarPRCon("worktree", ruta,
-		func(string) bool { return false },
-		func(texto string) error { copiado = texto; return nil })
+	url, fallback, err := publicarPRCon("worktree", ruta, opcionesPublicarPR{
+		ghDisponible: func(string) bool { return false },
+		copiar:       func(texto string) error { copiado = texto; return nil },
+	})
 	if err != nil {
 		t.Fatalf("fallback no debería fallar: %v", err)
 	}
@@ -323,9 +325,10 @@ func TestPublicarPRFallbackReleeElArchivo(t *testing.T) {
 // escritura y la re-lectura, el error es explícito y el fallback se marca.
 func TestPublicarPRFallbackArchivoIlegible(t *testing.T) {
 	ruta := filepath.Join(t.TempDir(), "fantasma.md")
-	_, fallback, err := publicarPRCon("worktree", ruta,
-		func(string) bool { return false },
-		func(string) error { t.Fatal("sin contenido no debe copiar nada"); return nil })
+	_, fallback, err := publicarPRCon("worktree", ruta, opcionesPublicarPR{
+		ghDisponible: func(string) bool { return false },
+		copiar:       func(string) error { t.Fatal("sin contenido no debe copiar nada"); return nil },
+	})
 	if err == nil || !strings.Contains(err.Error(), "releer") {
 		t.Fatalf("el archivo ilegible debe fallar con aviso de relectura: %v", err)
 	}
@@ -334,18 +337,60 @@ func TestPublicarPRFallbackArchivoIlegible(t *testing.T) {
 	}
 }
 
-// TestPublicarPRConGhSoloCuandoExiste: con gh disponible se usa gh (la URL
-// sale del propio gh); sin gh nunca se invoca.
-func TestPublicarPRConUsaGhCuandoExiste(t *testing.T) {
+// TestPublicarPRConUsaGhConArgumentosExactos: con gh disponible se usa gh con
+// los argumentos del contrato (pr create --draft -F) y el worktree como cwd;
+// la URL sale de la salida de gh, sin portapapeles.
+func TestPublicarPRConUsaGhConArgumentosExactos(t *testing.T) {
 	ruta := filepath.Join(t.TempDir(), "plantilla.md")
 	if err := os.WriteFile(ruta, []byte("cuerpo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := publicarPRCon("worktree", ruta,
-		func(string) bool { return true },
-		func(string) error { t.Fatal("con gh no debe usar portapapeles"); return nil })
-	if err == nil {
-		t.Fatal("con gh real en el PATH y worktree no-Git debe fallar (gh devuelve error), no copiar")
+	var worktreeVisto string
+	var argsVistos []string
+	url, fallback, err := publicarPRCon("el-worktree", ruta, opcionesPublicarPR{
+		ghDisponible: func(string) bool { return true },
+		ejecutarGh: func(worktree string, args ...string) ([]byte, error) {
+			worktreeVisto = worktree
+			argsVistos = args
+			return []byte("https://github.com/ejemplo/repo/pull/9\n"), nil
+		},
+		copiar: func(string) error { t.Fatal("con gh no debe usar portapapeles"); return nil },
+	})
+	if err != nil {
+		t.Fatalf("gh simulado no debería fallar: %v", err)
+	}
+	if fallback {
+		t.Fatal("con gh no debe activarse el fallback")
+	}
+	if url != "https://github.com/ejemplo/repo/pull/9" {
+		t.Errorf("la URL debe salir de gh (trimmed), got %q", url)
+	}
+	if worktreeVisto != "el-worktree" {
+		t.Errorf("gh debe ejecutarse con el worktree como cwd, got %q", worktreeVisto)
+	}
+	esperados := []string{"pr", "create", "--draft", "-F", ruta}
+	if !reflect.DeepEqual(argsVistos, esperados) {
+		t.Errorf("argumentos de gh = %v, esperados %v", argsVistos, esperados)
+	}
+}
+
+// TestPublicarPRConGhFallidoSePropaga: si gh termina con error, su stderr se
+// propaga en el mensaje y no se cae al portapapeles.
+func TestPublicarPRConGhFallidoSePropaga(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "plantilla.md")
+	if err := os.WriteFile(ruta, []byte("cuerpo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, fallback, err := publicarPRCon("el-worktree", ruta, opcionesPublicarPR{
+		ghDisponible: func(string) bool { return true },
+		ejecutarGh:   func(string, ...string) ([]byte, error) { return nil, errors.New("gh: repo no configurado") },
+		copiar:       func(string) error { t.Fatal("con gh fallido no debe copiar"); return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "gh: repo no configurado") {
+		t.Fatalf("el error de gh debe propagarse: %v", err)
+	}
+	if fallback {
+		t.Fatal("un fallo de gh no es fallback (el fallback solo aplica sin gh)")
 	}
 }
 
