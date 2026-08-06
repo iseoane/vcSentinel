@@ -296,9 +296,10 @@ func TruncarCuerpo(texto string, maxBytes int) string {
 	return conservado + marcador
 }
 
-// veredictoDeRama resume el peor veredicto global de la rama: el del commit
-// con la revisión más severa. Sin fichas devuelve VerdictOK.
-func veredictoDeRama(fichas []Ficha) string {
+// VeredictoDeRama resume el peor veredicto global de la rama: el del commit
+// con la revisión más severa. Sin fichas devuelve VerdictOK. Lo usan la
+// plantilla de PR y el gate de block de pr create.
+func VeredictoDeRama(fichas []Ficha) string {
 	peor := VerdictOK
 	for _, ficha := range fichas {
 		ultima, ok := ultimaRevision(ficha)
@@ -333,7 +334,7 @@ func ordenSeveridad(veredicto string) int {
 // lineaRiesgo es la primera línea de la plantilla: emoji del veredicto de
 // auditoría (NO el estado de CI, guía §12.4) más el conteo global.
 func lineaRiesgo(fichas []Ficha) string {
-	vd := veredictoDeRama(fichas)
+	vd := VeredictoDeRama(fichas)
 	return fmt.Sprintf("%s **Veredicto de auditoría: %s** — %s",
 		veredictoEmoji(vd), vd, conteoResultados(fichas))
 }
@@ -370,10 +371,30 @@ func seccionVerificacion(v VerificacionPlantilla) string {
 	return b.String()
 }
 
+// BloqueantesDeRama devuelve los hallazgos CRITICAL de la última revisión de
+// cada ficha: son los bloqueos del gate de pr create (guía §12.4).
+func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
+	var bloqueantes []ReviewFinding
+	for _, ficha := range fichas {
+		ultima, ok := ultimaRevision(ficha)
+		if !ok {
+			continue
+		}
+		for _, dr := range ultima.Dims {
+			for _, h := range dr.Findings {
+				if h.Severity == SevCritical {
+					bloqueantes = append(bloqueantes, h)
+				}
+			}
+		}
+	}
+	return bloqueantes
+}
+
 // RenderPlantillaPr construye el cuerpo del PR (sentinel_pr.md, guía §12.4):
-// línea de riesgo, rationale del overview, matriz, sección de verificación
-// honesta y firma con versión. El cuerpo se trunca al límite de GitHub con el
-// marcador explícito.
+// línea de riesgo, rationale del overview, matriz, riesgos con emojis por
+// severidad, sección de verificación honesta y firma con versión. El cuerpo
+// se trunca al límite de GitHub con el marcador explícito.
 func RenderPlantillaPr(fichas []Ficha, overview *ResultadoOverview, verificacion VerificacionPlantilla, version string) string {
 	var b strings.Builder
 	b.WriteString(lineaRiesgo(fichas) + "\n\n")
@@ -387,6 +408,17 @@ func RenderPlantillaPr(fichas []Ficha, overview *ResultadoOverview, verificacion
 
 	b.WriteString("## Matriz de auditoría\n")
 	b.WriteString(RenderMatriz(fichas) + "\n\n")
+
+	b.WriteString("## Riesgos\n")
+	pendientes := riesgos(fichas)
+	if len(pendientes) == 0 {
+		b.WriteString("_Sin riesgos pendientes en la última revisión._\n\n")
+	} else {
+		for _, r := range pendientes {
+			b.WriteString(r + "\n")
+		}
+		b.WriteString("\n")
+	}
 
 	b.WriteString("## Verificación\n")
 	b.WriteString(seccionVerificacion(verificacion) + "\n")

@@ -249,8 +249,8 @@ func TestVeredictoDeRamaPonderado(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
-			if got := veredictoDeRama(c.fichas); got != c.esperado {
-				t.Errorf("veredictoDeRama = %q, esperado %q", got, c.esperado)
+			if got := VeredictoDeRama(c.fichas); got != c.esperado {
+				t.Errorf("VeredictoDeRama = %q, esperado %q", got, c.esperado)
 			}
 		})
 	}
