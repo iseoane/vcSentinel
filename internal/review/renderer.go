@@ -313,6 +313,8 @@ func veredictoDeRama(fichas []Ficha) string {
 }
 
 // ordenSeveridad ordena los veredictos para poder comparar gravedad.
+// Contrato de sincronización: al añadir un veredicto nuevo (constante
+// Verdict*), actualizar también este ranking y veredictoDeRama.
 func ordenSeveridad(veredicto string) int {
 	switch veredicto {
 	case VerdictBlock:
@@ -331,8 +333,9 @@ func ordenSeveridad(veredicto string) int {
 // lineaRiesgo es la primera línea de la plantilla: emoji del veredicto de
 // auditoría (NO el estado de CI, guía §12.4) más el conteo global.
 func lineaRiesgo(fichas []Ficha) string {
+	vd := veredictoDeRama(fichas)
 	return fmt.Sprintf("%s **Veredicto de auditoría: %s** — %s",
-		veredictoEmoji(veredictoDeRama(fichas)), veredictoDeRama(fichas), conteoResultados(fichas))
+		veredictoEmoji(vd), vd, conteoResultados(fichas))
 }
 
 // seccionVerificacion describe la verificación de forma honesta (§12.3):
