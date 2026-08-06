@@ -165,13 +165,20 @@ type VerificacionPlantilla struct {
 	Motivo   string              // por qué no se ejecutó (omisión/configuración)
 }
 
+// estaPendiente decide si una ficha aún aporta al veredicto de la rama. Una
+// ficha corregida (FixedIn) ya no cuenta: su block fue resuelto en un commit
+// posterior fuera de ella. Es la única definición de "pendiente" del paquete.
+func estaPendiente(ficha Ficha) bool {
+	return ficha.FixedIn == ""
+}
+
 // riesgos reúne los hallazgos CRITICAL y WARNING de la última revisión de
-// cada ficha (los ADVISORY son información, no riesgos). Las fichas corregidas
-// (FixedIn) no aportan riesgos pendientes.
+// cada ficha pendiente (los ADVISORY son información, no riesgos). Las fichas
+// corregidas (FixedIn) no aportan riesgos pendientes.
 func riesgos(fichas []Ficha) []string {
 	var lineas []string
 	for _, ficha := range fichas {
-		if ficha.FixedIn != "" {
+		if !estaPendiente(ficha) {
 			continue
 		}
 		ultima, ok := ultimaRevision(ficha)
@@ -309,7 +316,7 @@ func TruncarCuerpo(texto string, maxBytes int) string {
 func VeredictoDeRama(fichas []Ficha) string {
 	peor := VerdictOK
 	for _, ficha := range fichas {
-		if ficha.FixedIn != "" {
+		if !estaPendiente(ficha) {
 			// Corregida: ya no aporta al veredicto de la rama.
 			continue
 		}
@@ -389,7 +396,7 @@ func seccionVerificacion(v VerificacionPlantilla) string {
 func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 	var bloqueantes []ReviewFinding
 	for _, ficha := range fichas {
-		if ficha.FixedIn != "" {
+		if !estaPendiente(ficha) {
 			continue
 		}
 		ultima, ok := ultimaRevision(ficha)
