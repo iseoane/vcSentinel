@@ -256,6 +256,17 @@ func TestVeredictoDeRamaPonderado(t *testing.T) {
 	}
 }
 
+// TestVeredictoDeRamaCorregidaNoBloquea: un block corregido en un commit
+// posterior (FixedIn) ya no aporta al veredicto de la rama.
+func TestVeredictoDeRamaCorregidaNoBloquea(t *testing.T) {
+	bloqueada := fichaAyuda("u1", "feat(a)", "m", revisionAyuda("block"))
+	bloqueada.FixedIn = "a1b2c3d"
+	fichas := []Ficha{bloqueada, fichaAyuda("u2", "feat(b)", "m", revisionAyuda("ok"))}
+	if got := VeredictoDeRama(fichas); got != VerdictOK {
+		t.Errorf("VeredictoDeRama = %q, esperado ok (block corregido)", got)
+	}
+}
+
 func TestSeccionVerificacion(t *testing.T) {
 	t.Run("determinista con exit codes", func(t *testing.T) {
 		salida := seccionVerificacion(VerificacionPlantilla{
@@ -407,6 +418,18 @@ func TestBloqueantesDeRamaFiltraCriticos(t *testing.T) {
 			)},
 			want: 0,
 		},
+		{
+			nombre: "block corregido no bloquea",
+			fichas: func() []Ficha {
+				corregida := fichaAyuda("f1", "feat(a)", "m",
+					revisionAyuda("block",
+						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
+							Findings: []ReviewFinding{critico}}))
+				corregida.FixedIn = "a1b2c3d"
+				return []Ficha{corregida}
+			}(),
+			want: 0,
+		},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -454,5 +477,20 @@ func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
 	}
 	if strings.Contains(salidaCon, "Sin riesgos pendientes") {
 		t.Errorf("con riesgos no debe mostrarse el placeholder: %s", salidaCon)
+	}
+
+	// Un block corregido (FixedIn) no es un riesgo pendiente.
+	corregida := fichaAyuda("f1", "feat(a)", "m",
+		revisionAyuda("block",
+			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
+				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical, Description: "dato expuesto"}}},
+		))
+	corregida.FixedIn = "a1b2c3d"
+	salidaCorregida := RenderPlantillaPr([]Ficha{corregida}, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
+	if strings.Contains(salidaCorregida, "dato expuesto") {
+		t.Errorf("los hallazgos de una ficha corregida no son riesgos pendientes: %s", salidaCorregida)
+	}
+	if !strings.Contains(salidaCorregida, "Sin riesgos pendientes") {
+		t.Errorf("con todo corregido debe mostrarse el placeholder: %s", salidaCorregida)
 	}
 }

@@ -166,10 +166,14 @@ type VerificacionPlantilla struct {
 }
 
 // riesgos reúne los hallazgos CRITICAL y WARNING de la última revisión de
-// cada ficha (los ADVISORY son información, no riesgos).
+// cada ficha (los ADVISORY son información, no riesgos). Las fichas corregidas
+// (FixedIn) no aportan riesgos pendientes.
 func riesgos(fichas []Ficha) []string {
 	var lineas []string
 	for _, ficha := range fichas {
+		if ficha.FixedIn != "" {
+			continue
+		}
 		ultima, ok := ultimaRevision(ficha)
 		if !ok {
 			continue
@@ -297,11 +301,18 @@ func TruncarCuerpo(texto string, maxBytes int) string {
 }
 
 // VeredictoDeRama resume el peor veredicto global de la rama: el del commit
-// con la revisión más severa. Sin fichas devuelve VerdictOK. Lo usan la
-// plantilla de PR y el gate de block de pr create.
+// con la revisión más severa. Ignora las fichas ya corregidas (FixedIn): su
+// block original fue resuelto en un commit posterior, y el gate no puede
+// bloquear la publicación por un hallazgo corregido. Sin fichas pendientes
+// devuelve VerdictOK. Lo usan la plantilla de PR y el gate de block de
+// pr create.
 func VeredictoDeRama(fichas []Ficha) string {
 	peor := VerdictOK
 	for _, ficha := range fichas {
+		if ficha.FixedIn != "" {
+			// Corregida: ya no aporta al veredicto de la rama.
+			continue
+		}
 		ultima, ok := ultimaRevision(ficha)
 		if !ok {
 			continue
@@ -372,10 +383,15 @@ func seccionVerificacion(v VerificacionPlantilla) string {
 }
 
 // BloqueantesDeRama devuelve los hallazgos CRITICAL de la última revisión de
-// cada ficha: son los bloqueos del gate de pr create (guía §12.4).
+// cada ficha: son los bloqueos del gate de pr create (guía §12.4). Las fichas
+// corregidas (FixedIn) no aportan bloqueantes: su block ya fue resuelto en un
+// commit posterior.
 func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 	var bloqueantes []ReviewFinding
 	for _, ficha := range fichas {
+		if ficha.FixedIn != "" {
+			continue
+		}
 		ultima, ok := ultimaRevision(ficha)
 		if !ok {
 			continue
