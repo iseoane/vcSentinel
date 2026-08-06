@@ -3,10 +3,14 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
@@ -241,6 +245,107 @@ func TestCopiarPortapapelesFalloSePropaga(t *testing.T) {
 		func(string, string) error { return errors.New("clip roto") })
 	if err == nil || !strings.Contains(err.Error(), "clip") {
 		t.Fatalf("el fallo de la herramienta debe propagarse: %v", err)
+	}
+}
+
+// TestVerificarParaPlantillaErrorNuncaSilencioso: un fallo de la verificación
+// se refleja como motivo en la plantilla (contrato "nunca en silencio").
+func TestVerificarParaPlantillaErrorNuncaSilencioso(t *testing.T) {
+	plantilla := verificarParaPlantillaCon("worktree", "gitdir", config.Config{},
+		func(ops.OpcionesVerificar) (ops.ResultadoVerificacion, error) {
+			return ops.ResultadoVerificacion{}, errors.New("build roto")
+		})
+	if plantilla.Modo != ops.ModoOmitido {
+		t.Errorf("con error el modo debe ser omitido, got %q", plantilla.Modo)
+	}
+	if !strings.Contains(plantilla.Motivo, "error_de_verificacion") ||
+		!strings.Contains(plantilla.Motivo, "build roto") {
+		t.Errorf("el motivo debe reflejar el error real, got %q", plantilla.Motivo)
+	}
+}
+
+// TestVerificarParaPlantillaTraduceComandos: un resultado determinista se
+// traduce a ComandoVerificado con su exit code real.
+func TestVerificarParaPlantillaTraduceComandos(t *testing.T) {
+	plantilla := verificarParaPlantillaCon("worktree", "gitdir", config.Config{},
+		func(ops.OpcionesVerificar) (ops.ResultadoVerificacion, error) {
+			return ops.ResultadoVerificacion{
+				Modo: ops.ModoDeterminista,
+				Comandos: []ops.ResultadoComando{
+					{Comando: "go test ./...", Exit: 0},
+					{Comando: "go vet ./...", Exit: 1},
+				},
+			}, nil
+		})
+	if plantilla.Modo != ops.ModoDeterminista {
+		t.Errorf("modo = %q, esperado determinista", plantilla.Modo)
+	}
+	if len(plantilla.Comandos) != 2 {
+		t.Fatalf("debe traducir los 2 comandos, got %d", len(plantilla.Comandos))
+	}
+	if plantilla.Comandos[0].Comando != "go test ./..." || plantilla.Comandos[0].Exit != 0 {
+		t.Errorf("comando 1 mal traducido: %+v", plantilla.Comandos[0])
+	}
+	if plantilla.Comandos[1].Exit != 1 {
+		t.Errorf("el exit code 1 debe conservarse: %+v", plantilla.Comandos[1])
+	}
+	if plantilla.Motivo != "" {
+		t.Errorf("sin error no debe haber motivo, got %q", plantilla.Motivo)
+	}
+}
+
+// TestPublicarPRFallbackReleeElArchivo: sin gh, el cuerpo del fallback se
+// re-lee del archivo recién escrito (no del parámetro perdido).
+func TestPublicarPRFallbackReleeElArchivo(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "plantilla.md")
+	if err := os.WriteFile(ruta, []byte("cuerpo del PR"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var copiado string
+	url, fallback, err := publicarPRCon("worktree", ruta,
+		func(string) bool { return false },
+		func(texto string) error { copiado = texto; return nil })
+	if err != nil {
+		t.Fatalf("fallback no debería fallar: %v", err)
+	}
+	if !fallback {
+		t.Fatal("sin gh debe activarse el fallback")
+	}
+	if url != "" {
+		t.Errorf("en fallback la URL debe quedar vacía, got %q", url)
+	}
+	if copiado != "cuerpo del PR" {
+		t.Errorf("el cuerpo copiado debe releerse del archivo, got %q", copiado)
+	}
+}
+
+// TestPublicarPRFallbackArchivoIlegible: si el archivo desaparece entre la
+// escritura y la re-lectura, el error es explícito y el fallback se marca.
+func TestPublicarPRFallbackArchivoIlegible(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "fantasma.md")
+	_, fallback, err := publicarPRCon("worktree", ruta,
+		func(string) bool { return false },
+		func(string) error { t.Fatal("sin contenido no debe copiar nada"); return nil })
+	if err == nil || !strings.Contains(err.Error(), "releer") {
+		t.Fatalf("el archivo ilegible debe fallar con aviso de relectura: %v", err)
+	}
+	if !fallback {
+		t.Fatal("el fallo de relectura sigue siendo fallback")
+	}
+}
+
+// TestPublicarPRConGhSoloCuandoExiste: con gh disponible se usa gh (la URL
+// sale del propio gh); sin gh nunca se invoca.
+func TestPublicarPRConUsaGhCuandoExiste(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "plantilla.md")
+	if err := os.WriteFile(ruta, []byte("cuerpo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := publicarPRCon("worktree", ruta,
+		func(string) bool { return true },
+		func(string) error { t.Fatal("con gh no debe usar portapapeles"); return nil })
+	if err == nil {
+		t.Fatal("con gh real en el PATH y worktree no-Git debe fallar (gh devuelve error), no copiar")
 	}
 }
 

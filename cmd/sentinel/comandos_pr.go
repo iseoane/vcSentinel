@@ -300,6 +300,18 @@ func detalleEventoPrCreate(prURL string, fallback, chain bool) (string, error) {
 // verificación NUNCA queda en silencio: se refleja como motivo en la
 // plantilla para que el PR sea transparente sobre lo que se comprobó.
 func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) review.VerificacionPlantilla {
+	return verificarParaPlantillaCon(worktree, gitDir, cfg, ops.Verificar)
+}
+
+// verificarParaPlantillaCon es la versión inyectable de verificarParaPlantilla:
+// verificar nil se sustituye por ops.Verificar en producción.
+func verificarParaPlantillaCon(worktree, gitDir string, cfg config.Config,
+	verificar func(ops.OpcionesVerificar) (ops.ResultadoVerificacion, error)) review.VerificacionPlantilla {
+
+	if verificar == nil {
+		verificar = ops.Verificar
+	}
+
 	perfil := config.ResolverPerfil(cfg, "", "")
 	adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 	if err != nil {
@@ -308,7 +320,7 @@ func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) review.V
 		// la delegación se degrada a "sin_agente", nunca panic.
 		adapter = nil
 	}
-	verif, err := ops.Verificar(ops.OpcionesVerificar{
+	verif, err := verificar(ops.OpcionesVerificar{
 		Worktree: worktree,
 		GitDir:   gitDir,
 		Cfg:      cfg,
@@ -402,7 +414,17 @@ func copiarPortapapelesCon(texto string, existe func(string) bool, ejecutar func
 // se re-lee del archivo recién escrito. Devuelve la URL del PR (vacía en
 // fallback) y si se usó el fallback.
 func publicarPR(worktree, rutaPlantilla string) (string, bool, error) {
-	if _, err := exec.LookPath("gh"); err == nil {
+	return publicarPRCon(worktree, rutaPlantilla,
+		func(nombre string) bool { _, err := exec.LookPath(nombre); return err == nil },
+		copiarPortapapeles)
+}
+
+// publicarPRCon es la versión inyectable de publicarPR: ghDisponible decide si
+// gh está en el PATH; copiar se usa solo en el fallback (portapapeles).
+func publicarPRCon(worktree, rutaPlantilla string, ghDisponible func(string) bool,
+	copiar func(string) error) (string, bool, error) {
+
+	if ghDisponible("gh") {
 		cmd := exec.Command("gh", "pr", "create", "--draft", "-F", rutaPlantilla)
 		cmd.Dir = worktree
 		var stderr strings.Builder
@@ -420,7 +442,7 @@ func publicarPR(worktree, rutaPlantilla string) (string, bool, error) {
 		return "", true, fmt.Errorf("no se pudo releer la plantilla para el portapapeles: %w", err)
 	}
 	fmt.Printf("? gh no está en el PATH: la plantilla quedó en %s y se copia al portapapeles.\n", rutaPlantilla)
-	if err := copiarPortapapeles(string(cuerpo)); err != nil {
+	if err := copiar(string(cuerpo)); err != nil {
 		return "", true, err
 	}
 	return "", true, nil
