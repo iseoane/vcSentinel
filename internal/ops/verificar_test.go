@@ -11,7 +11,7 @@ import (
 // Sentinelas de ficción para los tests de las ramas de error.
 var (
 	errBinarioAusente = errors.New("binario de verificación ausente")
-	errSinRespuesta    = errors.New("sin respuesta del aviso")
+	errSinRespuesta   = errors.New("sin respuesta del aviso")
 )
 
 // agenteFakeVerificar implementa AdaptadorPrompt para los tests de la
@@ -130,9 +130,9 @@ func TestVerificarAgenteFallaNoBloquea(t *testing.T) {
 		agente *agenteFakeVerificar
 		motivo string
 	}{
-		"unavailable":    {&agenteFakeVerificar{salida: "unavailable"}, "agente_unavailable"},
+		"unavailable":       {&agenteFakeVerificar{salida: "unavailable"}, "agente_unavailable"},
 		"contrato inválido": {&agenteFakeVerificar{salida: "respuesta sin contrato"}, "contrato_invalido"},
-		"error":          {&agenteFakeVerificar{salida: "", err: errSinAgente}, "agente_no_respondio"},
+		"error":             {&agenteFakeVerificar{salida: "", err: errSinAgente}, "agente_no_respondio"},
 	}
 	for nombre, caso := range casos {
 		verif, err := Verificar(OpcionesVerificar{

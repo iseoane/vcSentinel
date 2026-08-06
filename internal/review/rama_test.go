@@ -181,9 +181,9 @@ func TestDecisionChainPorVolumen(t *testing.T) {
 // decisión cuando el volumen supera el umbral.
 func TestDecisionOverview(t *testing.T) {
 	casos := []struct {
-		nombre   string
+		nombre    string
 		coherente string
-		esperado string
+		esperado  string
 	}{
 		{"coherente → single", `{"coherente":true,"rationale":"Un único cambio: los commits comparten el mismo objetivo y archivos."}`, "single"},
 		{"incoherente → chain", `{"coherente":false,"rationale":"Unidades independientes con costuras entre sí."}`, "chain"},
