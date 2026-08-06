@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
@@ -29,15 +31,14 @@ func verboPr(args []string) string {
 }
 
 // ejecutarPr despacha el subcomando pr (fase 2): pr review analiza la rama
-// sin publicar nada; pr create se implementa en la fase 6 y por ahora avisa;
-// el resto mantiene el passthrough legacy a gh pr create.
+// sin publicar nada; pr create analiza, aplica el gate de block y publica con
+// la plantilla honesta; el resto mantiene el passthrough legacy a gh pr create.
 func ejecutarPr(worktree string, args []string) {
 	switch verboPr(args) {
 	case "review":
 		ejecutarPrReview(worktree, args[1:])
 	case "create":
-		fmt.Println("? pr create se implementa en la fase 6 del plan (plantilla honesta + gate de block). Usa 'gh pr create' o 'sentinel pr' directamente.")
-		os.Exit(1)
+		ejecutarPrCreate(worktree, args[1:])
 	default:
 		ejecutarPrLegacy(args)
 	}
@@ -244,5 +245,271 @@ func ejecutarPrReview(worktree string, args []string) {
 	fmt.Println(textoDecision(res.Decision, res.Volumen))
 	if res.OverviewError != "" {
 		fmt.Printf("? Aviso: el overview no se pudo obtener (%s); se decidió por volumen.\n", res.OverviewError)
+	}
+}
+
+// flagsPrCreate son las opciones de pr create.
+type flagsPrCreate struct {
+	base    string
+	chainPR bool // --chain-pr: publicar la rama completa aunque sea descomunal
+	force   bool // --force: superar el gate de block
+}
+
+// parsearFlagsPrCreate parsea las opciones de pr create con la misma sintaxis
+// simple de pares "flag valor" que el resto de subcomandos.
+func parsearFlagsPrCreate(args []string) (flagsPrCreate, error) {
+	var flags flagsPrCreate
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--base":
+			if i+1 >= len(args) {
+				return flags, fmt.Errorf("--base requiere un valor (rama de comparación)")
+			}
+			i++
+			flags.base = args[i]
+		case "--chain-pr":
+			flags.chainPR = true
+		case "--force":
+			flags.force = true
+		default:
+			return flags, fmt.Errorf("opción desconocida para pr create: %s", arg)
+		}
+	}
+	return flags, nil
+}
+
+// detalleEventoPrCreate construye el detail del evento pr-create (guía §13):
+// acta de publicación con pr_url, fallback y chain_pr.
+func detalleEventoPrCreate(prURL string, fallback, chain bool) (string, error) {
+	detalle := map[string]any{
+		"pr_url":   prURL,
+		"fallback": fallback,
+		"chain_pr": chain,
+	}
+	datos, err := json.Marshal(detalle)
+	if err != nil {
+		return "", err
+	}
+	return string(datos), nil
+}
+
+// verificarParaPlantilla ejecuta la verificación honesta (guía §12.3) y la
+// traduce a la sección de la plantilla: exit codes reales por comando
+// configurado, contrato tested del agente o motivo de omisión.
+func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) (review.VerificacionPlantilla, error) {
+	perfil := config.ResolverPerfil(cfg, "", "")
+	adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+	if err != nil {
+		// Sin agente no hay vía de delegación; la vía determinista sigue viva.
+		adapter = nil
+	}
+	verif, err := ops.Verificar(ops.OpcionesVerificar{
+		Worktree: worktree,
+		GitDir:   gitDir,
+		Cfg:      cfg,
+		Agente:   adapter,
+		Preguntar: func(aviso string) (string, error) {
+			fmt.Println(aviso)
+			fmt.Print("> ")
+			var respuesta string
+			if _, err := fmt.Scanln(&respuesta); err != nil {
+				return "", err
+			}
+			return respuesta, nil
+		},
+	})
+	if err != nil {
+		return review.VerificacionPlantilla{}, err
+	}
+	plantilla := review.VerificacionPlantilla{
+		Modo:   verif.Modo,
+		Tested: verif.Tested,
+		Motivo: verif.Motivo,
+	}
+	for _, c := range verif.Comandos {
+		plantilla.Comandos = append(plantilla.Comandos, review.ComandoVerificado{Comando: c.Comando, Exit: c.Exit})
+	}
+	return plantilla, nil
+}
+
+// escribirPlantillaPR guarda el cuerpo del PR en un archivo temporal y
+// devuelve su ruta. El archivo temporal evita ensuciar el worktree: la
+// plantilla es un artefacto efímero de publicación.
+func escribirPlantillaPR(cuerpo string) (string, error) {
+	archivo, err := os.CreateTemp("", "sentinel_pr_*.md")
+	if err != nil {
+		return "", fmt.Errorf("no se pudo crear el archivo temporal de la plantilla: %w", err)
+	}
+	defer archivo.Close()
+	if _, err := archivo.WriteString(cuerpo); err != nil {
+		return "", fmt.Errorf("no se pudo escribir la plantilla: %w", err)
+	}
+	return archivo.Name(), nil
+}
+
+// copiarPortapapeles copia texto al portapapeles del sistema según la
+// plataforma: clip (Windows), wl-copy (Wayland), xclip (X11).
+func copiarPortapapeles(texto string) error {
+	return copiarPortapapelesCon(texto,
+		func(nombre string) bool { _, err := exec.LookPath(nombre); return err == nil },
+		func(nombre, contenido string) error {
+			c := exec.Command(nombre)
+			c.Stdin = strings.NewReader(contenido)
+			return c.Run()
+		})
+}
+
+// copiarPortapapelesCon es la versión inyectable de copiarPortapapeles:
+// existe decide qué herramienta está disponible; ejecutar lanza la copia.
+// Devuelve un error explícito si no hay ninguna herramienta.
+func copiarPortapapelesCon(texto string, existe func(string) bool, ejecutar func(string, string) error) error {
+	candidatos := []string{"clip", "wl-copy", "xclip"}
+	for _, nombre := range candidatos {
+		if !existe(nombre) {
+			continue
+		}
+		if err := ejecutar(nombre, texto); err != nil {
+			return fmt.Errorf("no se pudo copiar al portapapeles con %s: %w", nombre, err)
+		}
+		return nil
+	}
+	return errors.New("no se encontró ninguna herramienta de portapapeles (clip/wl-copy/xclip)")
+}
+
+// publicarPR publica el PR con gh pr create --draft -F plantilla. Si gh no
+// está en el PATH, fallback a archivo + portapapeles (guía §12.4). Devuelve
+// la URL del PR (vacía en fallback) y si se usó el fallback.
+func publicarPR(worktree, rutaPlantilla, cuerpo string) (string, bool, error) {
+	if _, err := exec.LookPath("gh"); err == nil {
+		cmd := exec.Command("gh", "pr", "create", "--draft", "-F", rutaPlantilla)
+		cmd.Dir = worktree
+		salida, err := cmd.Output()
+		if err != nil {
+			return "", false, fmt.Errorf("gh pr create terminó con error (código %d)", exitCodeDeError(err))
+		}
+		return strings.TrimSpace(string(salida)), false, nil
+	}
+
+	fmt.Printf("? gh no está en el PATH: la plantilla quedó en %s y se copia al portapapeles.\n", rutaPlantilla)
+	if err := copiarPortapapeles(cuerpo); err != nil {
+		return "", true, err
+	}
+	return "", true, nil
+}
+
+// gateBlock lista los hallazgos CRITICAL de la rama y decide si el gate de
+// block permite publicar (guía §12.4): block sin superar -> no publica y
+// lista los bloqueantes; --force lo supera explícitamente.
+func gateBlock(fichas []review.Ficha, force bool) (permitido bool, bloqueantes []string) {
+	if review.VeredictoDeRama(fichas) != review.VerdictBlock || force {
+		return true, nil
+	}
+	for _, h := range review.BloqueantesDeRama(fichas) {
+		bloqueantes = append(bloqueantes,
+			fmt.Sprintf("  - [%s] %s (%s:%d)", h.Severity, h.Description, h.File, h.Line))
+	}
+	return false, bloqueantes
+}
+
+// ejecutarPrCreate implementa pr create (guía §12.4): pipeline compartido de
+// analizarRama, gate de block, plantilla honesta y publicación con gh o
+// fallback a portapapeles. Registra el evento pr-create al terminar.
+func ejecutarPrCreate(worktree string, args []string) {
+	flags, err := parsearFlagsPrCreate(args)
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg := config.CargarConfiguracionLocal(worktree)
+	gitDir, err := git.ObtenerGitDir()
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
+
+	fabrica := func(dimension string) (review.AuditorAgente, string, error) {
+		perfil := config.ResolverPerfil(cfg, dimension, "")
+		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+		if err != nil {
+			return nil, perfil.Nombre, err
+		}
+		return adapter, perfil.Nombre, nil
+	}
+
+	base := flags.base
+	if base == "" {
+		base = "main"
+	}
+	ledger := review.NuevoLedger(gitDir)
+	res, err := review.AnalizarRama(ledger, review.OpcionesRama{
+		Base:           base,
+		SoloPendientes: false,
+		Overview:       true,
+		Fabrica:        fabrica,
+		Parallel:       cfg.Review.Parallel,
+		OnDimension: func(dim string) {
+			fmt.Printf("  ⏳ %s …\n", dim)
+		},
+	})
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(res.Fichas) == 0 {
+		fmt.Println("_No hay commits auditados en la rama._")
+		os.Exit(1)
+	}
+
+	// Gate de block: sin superar no se publica.
+	permitido, bloqueantes := gateBlock(res.Fichas, flags.force)
+	if !permitido {
+		fmt.Println("🚨 Veredicto de auditoría: block. No se publica la PR. Bloqueantes:")
+		for _, b := range bloqueantes {
+			fmt.Println(b)
+		}
+		fmt.Println("Resuelve los bloqueantes o repite con --force para publicar igualmente.")
+		os.Exit(1)
+	}
+
+	// Rama descomunal sin --chain-pr: se propone la cadena, no se publica una
+	// PR gigante (guía §12.4).
+	if res.Decision == "chain" && !flags.chainPR {
+		fmt.Println("🚨 Rama descomunal: supera el umbral de volumen sin coherencia demostrada.")
+		fmt.Println("Se propone dividirla en PRs encadenadas (--chain-pr) en lugar de una PR gigante.")
+		os.Exit(1)
+	}
+
+	verificacion, err := verificarParaPlantilla(worktree, gitDir, cfg)
+	if err != nil {
+		fmt.Printf("? Aviso: la verificación no completó (%v); la plantilla lo reflejará honestamente.\n", err)
+	}
+
+	cuerpo := review.RenderPlantillaPr(res.Fichas, res.Overview, verificacion, version)
+	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
+
+	prURL, fallback, err := publicarPR(worktree, rutaPlantilla, cuerpo)
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
+	if fallback {
+		fmt.Println("? Plantilla en portapapeles: crea la PR manualmente con ese contenido.")
+	} else {
+		fmt.Printf("? PR creada: %s\n", prURL)
+	}
+
+	detalle, err := detalleEventoPrCreate(prURL, fallback, flags.chainPR)
+	if err != nil {
+		fmt.Printf("? Aviso: no se pudo construir el detalle del evento: %v\n", err)
+	}
+	if err := ops.RegistrarEvento(gitDir, "pr-create", 0, res.SHAs, detalle, worktree); err != nil {
+		fmt.Printf("? Aviso: no se pudo registrar el evento: %v\n", err)
 	}
 }
