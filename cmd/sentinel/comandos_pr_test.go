@@ -317,7 +317,7 @@ func TestPublicarPRFallbackReleeElArchivo(t *testing.T) {
 		t.Fatal(err)
 	}
 	var copiado string
-	url, fallback, err := publicarPRCon("worktree", ruta, opcionesPublicarPR{
+	url, fallback, err := publicarPRCon("worktree", ruta, "", opcionesPublicarPR{
 		ghDisponible: func(string) bool { return false },
 		copiar:       func(texto string) error { copiado = texto; return nil },
 	})
@@ -339,7 +339,7 @@ func TestPublicarPRFallbackReleeElArchivo(t *testing.T) {
 // escritura y la re-lectura, el error es explícito y el fallback se marca.
 func TestPublicarPRFallbackArchivoIlegible(t *testing.T) {
 	ruta := filepath.Join(t.TempDir(), "fantasma.md")
-	_, fallback, err := publicarPRCon("worktree", ruta, opcionesPublicarPR{
+	_, fallback, err := publicarPRCon("worktree", ruta, "", opcionesPublicarPR{
 		ghDisponible: func(string) bool { return false },
 		copiar:       func(string) error { t.Fatal("sin contenido no debe copiar nada"); return nil },
 	})
@@ -361,7 +361,7 @@ func TestPublicarPRConUsaGhConArgumentosExactos(t *testing.T) {
 	}
 	var worktreeVisto string
 	var argsVistos []string
-	url, fallback, err := publicarPRCon("el-worktree", ruta, opcionesPublicarPR{
+	url, fallback, err := publicarPRCon("el-worktree", ruta, "", opcionesPublicarPR{
 		ghDisponible: func(string) bool { return true },
 		ejecutarGh: func(worktree string, args ...string) ([]byte, error) {
 			worktreeVisto = worktree
@@ -395,7 +395,7 @@ func TestPublicarPRConGhFallidoSePropaga(t *testing.T) {
 	if err := os.WriteFile(ruta, []byte("cuerpo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, fallback, err := publicarPRCon("el-worktree", ruta, opcionesPublicarPR{
+	_, fallback, err := publicarPRCon("el-worktree", ruta, "", opcionesPublicarPR{
 		ghDisponible: func(string) bool { return true },
 		ejecutarGh:   func(string, ...string) ([]byte, error) { return nil, errors.New("gh: repo no configurado") },
 		copiar:       func(string) error { t.Fatal("con gh fallido no debe copiar"); return nil },
@@ -405,6 +405,56 @@ func TestPublicarPRConGhFallidoSePropaga(t *testing.T) {
 	}
 	if fallback {
 		t.Fatal("un fallo de gh no es fallback (el fallback solo aplica sin gh)")
+	}
+}
+
+// TestPublicarPRConBaseExplícita: cuando el usuario da --base, esa misma base
+// debe propagarse a gh pr create (la revisión y la PR no pueden divergir).
+func TestPublicarPRConBaseExplícita(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "plantilla.md")
+	if err := os.WriteFile(ruta, []byte("cuerpo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var argsVistos []string
+	_, _, err := publicarPRCon("el-worktree", ruta, "develop", opcionesPublicarPR{
+		ghDisponible: func(string) bool { return true },
+		ejecutarGh: func(worktree string, args ...string) ([]byte, error) {
+			argsVistos = args
+			return []byte("https://github.com/ejemplo/repo/pull/11\n"), nil
+		},
+		copiar: func(string) error { t.Fatal("con gh no debe usar portapapeles"); return nil },
+	})
+	if err != nil {
+		t.Fatalf("gh simulado no debería fallar: %v", err)
+	}
+	esperados := []string{"pr", "create", "--draft", "--base", "develop", "-F", ruta}
+	if !reflect.DeepEqual(argsVistos, esperados) {
+		t.Errorf("con --base los argumentos de gh = %v, esperados %v", argsVistos, esperados)
+	}
+}
+
+// TestPublicarPRConBaseVacíaNoAñadeFlag: sin --base, gh usa el default
+// upstream y no recibe --base.
+func TestPublicarPRConBaseVacíaNoAñadeFlag(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "plantilla.md")
+	if err := os.WriteFile(ruta, []byte("cuerpo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var argsVistos []string
+	_, _, err := publicarPRCon("el-worktree", ruta, "", opcionesPublicarPR{
+		ghDisponible: func(string) bool { return true },
+		ejecutarGh: func(worktree string, args ...string) ([]byte, error) {
+			argsVistos = args
+			return []byte("https://github.com/PR/pull/12\n"), nil
+		},
+		copiar: func(string) error { t.Fatal("con gh no debe usar portapapeles"); return nil },
+	})
+	if err != nil {
+		t.Fatalf("gh simulado no debería fallar: %v", err)
+	}
+	esperados := []string{"pr", "create", "--draft", "-F", ruta}
+	if !reflect.DeepEqual(argsVistos, esperados) {
+		t.Errorf("sin --base los argumentos de gh = %v, esperados %v", argsVistos, esperados)
 	}
 }
 

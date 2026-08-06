@@ -423,8 +423,8 @@ type opcionesPublicarPR struct {
 // está en el PATH, fallback a archivo + portapapeles (guía §12.4): el cuerpo
 // se re-lee del archivo recién escrito. Devuelve la URL del PR (vacía en
 // fallback) y si se usó el fallback.
-func publicarPR(worktree, rutaPlantilla string) (string, bool, error) {
-	return publicarPRCon(worktree, rutaPlantilla, opcionesPublicarPR{
+func publicarPR(worktree, rutaPlantilla, base string) (string, bool, error) {
+	return publicarPRCon(worktree, rutaPlantilla, base, opcionesPublicarPR{
 		ghDisponible: func(nombre string) bool { _, err := exec.LookPath(nombre); return err == nil },
 		ejecutarGh: func(worktree string, args ...string) ([]byte, error) {
 			cmd := exec.Command("gh", args...)
@@ -443,9 +443,16 @@ func publicarPR(worktree, rutaPlantilla string) (string, bool, error) {
 }
 
 // publicarPRCon es la versión inyectable de publicarPR (seam de prueba).
-func publicarPRCon(worktree, rutaPlantilla string, opciones opcionesPublicarPR) (string, bool, error) {
+func publicarPRCon(worktree, rutaPlantilla, base string, opciones opcionesPublicarPR) (string, bool, error) {
 	if opciones.ghDisponible("gh") {
-		salida, err := opciones.ejecutarGh(worktree, "pr", "create", "--draft", "-F", rutaPlantilla)
+		args := []string{"pr", "create", "--draft"}
+		if base != "" {
+			// La PR debe targetear la MISMA base que se auditó: sin --base
+			// explícito, la revisión y la PR podrían divergir en silencio.
+			args = append(args, "--base", base)
+		}
+		args = append(args, "-F", rutaPlantilla)
+		salida, err := opciones.ejecutarGh(worktree, args...)
 		if err != nil {
 			return "", false, err
 		}
@@ -541,7 +548,7 @@ func ejecutarPrCreate(worktree string, args []string) {
 	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
 	salirSiError(err)
 
-	prURL, fallback, err := publicarPR(worktree, rutaPlantilla)
+	prURL, fallback, err := publicarPR(worktree, rutaPlantilla, base)
 	salirSiError(err)
 	if fallback {
 		// El archivo es el artefacto entregable del fallback: se conserva.
