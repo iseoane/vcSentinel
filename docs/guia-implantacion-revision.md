@@ -395,9 +395,13 @@ revisión — la revisión nunca corre tests.
   - Límite de tamaño de body con truncamiento marcado.
 - **Gate**: audita lo pendiente automáticamente; `block` sin superar → no
   publica (exit 1, lista los bloqueantes). El usuario resuelve o fuerza.
+  Las fichas corregidas (`fixed_in` en el ledger) NO bloquean: su block fue
+  resuelto en un commit posterior, y el gate solo mira las pendientes.
 - Publica con `gh pr create --draft -F sentinel_pr.md`; si `gh` no está,
   fallback a archivo + portapapeles multiplataforma (`clip` / `wl-copy` /
-  `xclip`).
+  `xclip`). Si el usuario da `--base`, ese MISMO valor se propaga a
+  `gh pr create --base`: la revisión y la PR no pueden targetear ramas
+  distintas en silencio.
 - **PR descomunal**: decisión por volumen + coherencia (12.1) → propone
   `--chain-pr` en lugar de una PR gigante.
 
