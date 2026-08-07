@@ -18,6 +18,11 @@ import (
 
 var version = "dev"
 
+// reglasVolumen es el bloque exacto que 'init' inyecta en AGENTS.md, CLAUDE.md
+// y .claudecode.md; 'uninit' busca este mismo texto para retirarlo, así que
+// ambos deben compartirlo literalmente.
+const reglasVolumen = "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
+
 func main() {
 	if len(os.Args) < 2 {
 		imprimirUso()
@@ -44,19 +49,28 @@ func main() {
 	switch subcomando {
 	case "init":
 		ejecutarInit(worktreeActual)
+	case "uninit":
+		ejecutarUninit(worktreeActual)
 	case "check":
+		requireInicializado(worktreeActual)
 		ejecutarCheck(worktreeActual)
 	case "slice":
+		requireInicializado(worktreeActual)
 		ejecutarSlice(worktreeActual)
 	case "review":
+		requireInicializado(worktreeActual)
 		ejecutarReview(worktreeActual, os.Args[2:])
 	case "lint":
+		requireInicializado(worktreeActual)
 		ejecutarLint(worktreeActual)
 	case "rebase":
+		requireInicializado(worktreeActual)
 		ejecutarRebase()
 	case "status":
+		requireInicializado(worktreeActual)
 		ejecutarStatus(worktreeActual, os.Args[2:])
 	case "pr":
+		requireInicializado(worktreeActual)
 		ejecutarPr(worktreeActual, os.Args[2:])
 	case "install":
 		if err := setup.EjecutarInstalacionCompleta(); err != nil {
@@ -74,14 +88,26 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'pr', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'pr', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		os.Exit(1)
+	}
+}
+
+// requireInicializado exige que el worktree tenga la configuración
+// per-proyecto (sentinel init) antes de ejecutar cualquier subcomando que
+// dependa de ella; sin ella, corta con exit 1 en vez de fallar más adelante
+// con un error menos claro.
+func requireInicializado(worktreeActual string) {
+	if !setup.EstaInicializado(worktreeActual) {
+		fmt.Println("❌ Este repositorio no ha sido inicializado con VAS Sentinel.")
+		fmt.Println("Ejecuta 'sentinel init' para configurar el guardián en este proyecto.")
 		os.Exit(1)
 	}
 }
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | check | slice | review | lint | rebase | status | pr | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | pr | install | upgrade | uninstall]")
 }
 
 func imprimirAyuda() {
@@ -90,7 +116,8 @@ func imprimirAyuda() {
 	fmt.Println("Subcomandos:")
 	fmt.Println("  version    Muestra la versión instalada.")
 	fmt.Println("  help       Muestra esta ayuda.")
-	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook global pre-commit. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
+	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook pre-commit del repositorio. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
+	fmt.Println("  uninit     Revierte 'init' en este repositorio: retira las reglas de volumen, borra la config per-proyecto y elimina el hook pre-commit (solo si sigue siendo el que instaló VAS Sentinel).")
 	fmt.Println("  check      Audita el volumen de líneas modificadas del worktree activo.")
 	fmt.Println("  slice      Fragmenta las modificaciones en commits de máximo 400 líneas.")
 	fmt.Println("  review     Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha. Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\".")
@@ -122,26 +149,42 @@ func ejecutarInit(path string) {
 	fmt.Println("⚙️ Inicializando VAS Sentinel en este entorno...")
 
 	archivosObjetivo := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}
-	reglas := "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
 
 	for _, nombre := range archivosObjetivo {
 		f, err := os.OpenFile(filepath.Join(path, nombre), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err == nil {
-			f.WriteString(reglas)
+			f.WriteString(reglasVolumen)
 			f.Close()
 			fmt.Printf("📝 Reglas de volumen inyectadas en: %s\n", nombre)
 		}
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	folderHooks := filepath.Join(homeDir, ".git_global_hooks")
-	os.MkdirAll(folderHooks, 0755)
+	if _, err := exec.LookPath("git"); err != nil {
+		fmt.Println("❌ git no está en el PATH. Instálalo antes de ejecutar 'sentinel init'.")
+		os.Exit(1)
+	}
 
-	exec.Command("git", "config", "--global", "core.hooksPath", filepath.ToSlash(folderHooks)).Run()
+	// El hook se escribe directamente en el common-dir del repositorio (el
+	// mismo para todos sus worktrees enlazados): sin carpeta global ni
+	// core.hooksPath, Git ya lo detecta ahí por defecto y no afecta a ningún
+	// otro repositorio del usuario.
+	commonDir, err := git.ObtenerGitCommonDir(path)
+	if err != nil {
+		fmt.Printf("❌ No se pudo determinar el directorio Git del repositorio: %v\n", err)
+		os.Exit(1)
+	}
+	hooksDir := filepath.Join(commonDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		fmt.Printf("❌ No se pudo crear %s: %v\n", hooksDir, err)
+		os.Exit(1)
+	}
 
 	scriptContent := generarScriptHook()
-	hookPath := filepath.Join(folderHooks, "pre-commit")
-	os.WriteFile(hookPath, []byte(scriptContent), 0755)
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookPath, []byte(scriptContent), 0755); err != nil {
+		fmt.Printf("❌ No se pudo escribir el hook en %s: %v\n", hookPath, err)
+		os.Exit(1)
+	}
 
 	if err := setup.CrearConfiguracionPerProyecto(path); err != nil {
 		fmt.Printf("⚠️ No se pudo crear la configuración per-proyecto: %v\n", err)
@@ -149,7 +192,101 @@ func ejecutarInit(path string) {
 		fmt.Println("📄 Configuración per-proyecto creada en: .vas_sentinel/vassentinel.yml")
 	}
 
-	fmt.Println("⚓ Git Hook global 'pre-commit' instalado. Entorno securizado con éxito.")
+	fmt.Println("⚓ Git Hook 'pre-commit' instalado en este repositorio. Entorno securizado con éxito.")
+}
+
+// ejecutarUninit revierte en este repositorio exactamente lo que 'init' hizo:
+// retira el bloque de reglas de AGENTS.md/CLAUDE.md/.claudecode.md, borra la
+// config per-proyecto y elimina el hook 'pre-commit' — pero solo si su
+// contenido coincide byte a byte con el que generarScriptHook produciría hoy;
+// si no coincide (otra herramienta lo reemplazó, o es de otro origen), lo deja
+// intacto y avisa en vez de borrar algo que no instaló VAS Sentinel.
+func ejecutarUninit(path string) {
+	raiz, err := git.ObtenerRaizWorktree()
+	if err != nil {
+		fmt.Println("❌ uninit debe ejecutarse dentro de un repositorio Git (no se encontró la raíz del worktree).")
+		os.Exit(1)
+	}
+	if !git.EsMismaRuta(path, raiz) {
+		fmt.Printf("📂 Detectada la raíz del repositorio: %s\n", raiz)
+		fmt.Println("⚙️ Redirigiendo uninit a la raíz del repositorio...")
+		path = raiz
+	}
+
+	fmt.Println("🗑️ Revirtiendo VAS Sentinel en este repositorio...")
+
+	for _, nombre := range []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"} {
+		retiradas, err := quitarReglasDeArchivo(filepath.Join(path, nombre))
+		switch {
+		case err != nil:
+			fmt.Printf("⚠️ No se pudo limpiar %s: %v\n", nombre, err)
+		case retiradas:
+			fmt.Printf("📝 Reglas de volumen retiradas de: %s\n", nombre)
+		}
+	}
+
+	rutaConfig := filepath.Join(path, ".vas_sentinel", "vassentinel.yml")
+	if err := os.Remove(rutaConfig); err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Printf("⚠️ No se pudo eliminar %s: %v\n", rutaConfig, err)
+		}
+	} else {
+		fmt.Println("📄 Configuración per-proyecto eliminada: .vas_sentinel/vassentinel.yml")
+	}
+
+	commonDir, err := git.ObtenerGitCommonDir(path)
+	if err != nil {
+		fmt.Printf("⚠️ No se pudo determinar el directorio Git del repositorio: %v\n", err)
+	} else {
+		quitarHookSiEsDeSentinel(filepath.Join(commonDir, "hooks", "pre-commit"))
+	}
+
+	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
+}
+
+// quitarReglasDeArchivo retira el bloque reglasVolumen del archivo si está
+// presente y devuelve si hizo algún cambio. Un archivo inexistente o sin el
+// bloque no es error: simplemente no había nada que retirar.
+func quitarReglasDeArchivo(ruta string) (bool, error) {
+	datos, err := os.ReadFile(ruta)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !strings.Contains(string(datos), reglasVolumen) {
+		return false, nil
+	}
+	nuevo := strings.Replace(string(datos), reglasVolumen, "", 1)
+	if strings.TrimSpace(nuevo) == "" {
+		// El archivo no tenía contenido propio: init lo creó solo para el
+		// bloque de reglas, así que uninit lo borra en vez de dejarlo vacío.
+		return true, os.Remove(ruta)
+	}
+	return true, os.WriteFile(ruta, []byte(nuevo), 0644)
+}
+
+// quitarHookSiEsDeSentinel borra el hook pre-commit en hookPath solo si su
+// contenido coincide exactamente con el que generarScriptHook produce ahora;
+// si difiere (otro origen) o no existe, no lo toca.
+func quitarHookSiEsDeSentinel(hookPath string) {
+	actual, err := os.ReadFile(hookPath)
+	switch {
+	case os.IsNotExist(err):
+		return
+	case err != nil:
+		fmt.Printf("⚠️ No se pudo leer el hook existente: %v\n", err)
+		return
+	case string(actual) != generarScriptHook():
+		fmt.Println("⚠️ El hook 'pre-commit' actual no coincide con el instalado por VAS Sentinel: no se toca.")
+		return
+	}
+	if err := os.Remove(hookPath); err != nil {
+		fmt.Printf("⚠️ No se pudo eliminar el hook: %v\n", err)
+		return
+	}
+	fmt.Println("⚓ Hook 'pre-commit' eliminado.")
 }
 
 // generarScriptHook devuelve el contenido del hook pre-commit adaptado al
