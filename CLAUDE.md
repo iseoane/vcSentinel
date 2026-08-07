@@ -28,7 +28,7 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 - Usa `filepath.Join` para construir rutas; nunca concatenes `/` a mano.
 - Usa `filepath.ToSlash` al pasar rutas a git (p. ej. `core.hooksPath`).
 - El hook `pre-commit` es `#!/bin/sh` y funciona en ambos: Git para Windows lo ejecuta con `sh.exe`.
-- El hook global (`~/.git_global_hooks/pre-commit`) ejecuta `sentinel check` y requiere que el binario esté en el PATH (o que el hook use la ruta absoluta del binario).
+- El hook `pre-commit` se escribe directamente en el common-dir del repositorio (`<git-common-dir>/hooks/pre-commit`, vía `git rev-parse --git-common-dir`), no en una carpeta global ni con `core.hooksPath`: solo afecta al repo donde se corrió `init`, y es el mismo para todos sus worktrees enlazados. Ejecuta `sentinel check` con la ruta absoluta del binario.
 
 ## Arquitectura
 
@@ -43,7 +43,7 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 - `slice`: construye un plan por capas en orden fijo `config → backend → frontend → test`, lotes de ≤400 líneas. Genera los mensajes con el adaptador configurado; si el adaptador automático no responde, ofrece mensajes automáticos deterministas, otro agente disponible o cancelar. Muestra el plan para aprobación (A/R/E/C) antes de commitear, y resume los commits al final.
   - Archivos gigantes: config >400 líneas se aíslan con `chore(deps): track lock and auto-generated files`; código >500 líneas pide confirmación (`s/N`) y, si se confirma, hace bypass con `chore(slice): bypass IA for massive file <archivo>`; si se rechaza, aborta sin commitear nada.
   - Todos los commits de slice usan `--no-verify` (ver REGLA CRÍTICA DE VOLUMEN).
-- `init`: inyecta la regla de volumen en `AGENTS.md`, `CLAUDE.md`, `.claudecode.md`, crea `.vas_sentinel/vassentinel.yml` per-proyecto e instala el hook global en `~/.git_global_hooks/pre-commit` con la ruta absoluta del binario.
+- `init`: inyecta la regla de volumen en `AGENTS.md`, `CLAUDE.md`, `.claudecode.md`, crea `.vas_sentinel/vassentinel.yml` per-proyecto e instala el hook `pre-commit` directamente en `<git-common-dir>/hooks/` del repositorio (sin carpeta global ni `core.hooksPath`), con la ruta absoluta del binario. Así solo se activa en el repo donde se corrió `init`, sin afectar otros repos del usuario.
 
 ## Configuración
 
