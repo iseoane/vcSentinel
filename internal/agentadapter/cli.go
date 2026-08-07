@@ -49,10 +49,11 @@ func (c *CLIAdapter) AplicarPlanRefactor(rutaArchivo string, plan string) (strin
 }
 
 // ejecutarComando ejecuta el binario del agente con el prompt dado y devuelve
-// la salida estándar completa (recortada). Adapta los argumentos al binario:
-// claude usa "-p <prompt>"; opencode usa "run <prompt>". El proceso se corta
-// con TimeoutComando si el agente no responde: un agente que espera entrada
-// interactiva no debe colgar la auditoría.
+// la salida estándar completa (recortada). Para opencode y claude el prompt
+// viaja por stdin (ver comandoPrompt); para el resto de binarios se pasa como
+// argumento de "-p". El proceso se corta con TimeoutComando si el agente no
+// responde: un agente que espera entrada interactiva no debe colgar la
+// auditoría.
 func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -67,7 +68,8 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
 	defer cancelar()
 
-	cmd := exec.CommandContext(ctx, c.BinaryName, c.comandoArgs(prompt)...)
+	args, viaStdin := c.comandoPrompt(prompt)
+	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
 	env := os.Environ()
 
 	if c.esClaude() {
@@ -81,6 +83,12 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
+	// opencode y claude leen el prompt de stdin; los demás binarios lo reciben
+	// como argumento. Pasar el prompt por stdin evita el límite de 32.767
+	// caracteres de la línea de comandos de Windows.
+	if viaStdin {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 	if err := cmd.Run(); err != nil {
 		return "", err
 	}
@@ -88,13 +96,18 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 	return strings.TrimSpace(out.String()), nil
 }
 
-// comandoArgs devuelve los argumentos de invocación según el binario: opencode
-// usa el subcomando "run" con el prompt como mensaje; el resto usa "-p".
-func (c *CLIAdapter) comandoArgs(prompt string) []string {
+// comandoPrompt devuelve los argumentos de invocación según el binario y si el
+// prompt viaja por stdin: opencode usa el subcomando "run" y claude "-p", ambos
+// leyendo el prompt de stdin (sin límite de longitud); cualquier otro binario
+// recibe el prompt como argumento de "-p" (comportamiento anterior).
+func (c *CLIAdapter) comandoPrompt(prompt string) ([]string, bool) {
 	if c.esOpenCode() {
-		return []string{"run", prompt}
+		return []string{"run"}, true
 	}
-	return []string{"-p", prompt}
+	if c.esClaude() {
+		return []string{"-p"}, true
+	}
+	return []string{"-p", prompt}, false
 }
 
 func (c *CLIAdapter) esClaude() bool {
