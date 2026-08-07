@@ -51,10 +51,15 @@ func ResolverPerfil(cfg Config, dimension, override string) PerfilResuelto {
 		nombre = "normal"
 	}
 
-	// v2: "agente.perfil"
+	// v2: "agente.perfil". El prefijo solo cuenta como agente si está
+	// configurado: un nombre de perfil que lleva punto por sí mismo (p. ej.
+	// "gpt-4.1") se partiría en un binario inexistente y sin herencia de
+	// modelo ni esfuerzo. Si el prefijo no es un agente, cae a la vía v1.
 	if agente, perfil, ok := strings.Cut(nombre, "."); ok {
-		modelo, esfuerzo := ResolverPerfilAgente(cfg, agente, perfil)
-		return PerfilResuelto{Nombre: nombre, Binario: agente, Modelo: modelo, Esfuerzo: esfuerzo}
+		if _, existe := cfg.Agents[agente]; existe {
+			modelo, esfuerzo := ResolverPerfilAgente(cfg, agente, perfil)
+			return PerfilResuelto{Nombre: nombre, Binario: agente, Modelo: modelo, Esfuerzo: esfuerzo}
+		}
 	}
 
 	// v1/compat: perfil global con agente propio, o perfil anidado del agente activo.

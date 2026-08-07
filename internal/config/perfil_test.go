@@ -48,6 +48,50 @@ func TestResolverPerfilV2HeredaDelAgente(t *testing.T) {
 	}
 }
 
+// TestResolverPerfilPuntoSinAgenteNoRompe verifica que un nombre de perfil con
+// punto que NO corresponde a un agente configurado (p. ej. "gpt-4.1") no se
+// parte como "agente.perfil": partirlo dejaría Binario en un binario
+// inexistente y sin herencia de modelo/esfuerzo. Debe caer a la vía v1.
+func TestResolverPerfilPuntoSinAgenteNoRompe(t *testing.T) {
+	cfg := configuracionPorDefecto()
+
+	perfil := ResolverPerfil(cfg, "logic", "gpt-4.1")
+	if perfil.Binario == "gpt-4" {
+		t.Errorf("perfil = %+v: 'gpt-4' no es un agente configurado, no debe usarse como binario", perfil)
+	}
+	if perfil.Nombre != "gpt-4.1" {
+		t.Errorf("Nombre = %q, esperado el nombre completo gpt-4.1", perfil.Nombre)
+	}
+}
+
+// TestResolverPerfilPuntoSinAgenteHeredaDelActivo verifica que, además de no
+// partirse, el perfil desconocido con punto hereda del agente activo como
+// cualquier otro perfil v1: nunca debe quedarse sin modelo ni sin esfuerzo.
+func TestResolverPerfilPuntoSinAgenteHeredaDelActivo(t *testing.T) {
+	cfg := configuracionPorDefecto()
+	cfg.ActiveAgent = "claude"
+
+	perfil := ResolverPerfil(cfg, "logic", "gpt-4.1")
+	if perfil.Binario != "claude" {
+		t.Errorf("Binario = %q, esperado el agente activo claude", perfil.Binario)
+	}
+	if perfil.Modelo == "" || perfil.Esfuerzo == "" {
+		t.Errorf("perfil = %+v, esperado heredar modelo y esfuerzo del agente activo", perfil)
+	}
+}
+
+// TestResolverPerfilV2SigueFuncionandoConAgenteReal blinda la vía v2 frente al
+// arreglo anterior: un nombre con punto cuyo prefijo SÍ es un agente
+// configurado debe seguir partiéndose.
+func TestResolverPerfilV2SigueFuncionandoConAgenteReal(t *testing.T) {
+	cfg := configuracionPorDefecto()
+
+	perfil := ResolverPerfil(cfg, "logic", "claude.cheap")
+	if perfil.Binario != "claude" {
+		t.Errorf("Binario = %q, esperado claude", perfil.Binario)
+	}
+}
+
 func TestResolverPerfilConOverride(t *testing.T) {
 	cfg := configuracionPorDefecto()
 
