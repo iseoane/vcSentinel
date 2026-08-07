@@ -2,7 +2,9 @@ package review
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -123,6 +125,70 @@ func TestLedgerPurgarHuerfanas(t *testing.T) {
 	}
 	if len(restantes) != 0 {
 		t.Errorf("tras purgar quedan %d fichas, esperado 0: %v", len(restantes), restantes)
+	}
+}
+
+// TestLedgerPurgarHuerfanasDangling cubre el caso real: un commit reescrito
+// con amend sigue existiendo en el object store como dangling, pero ya no es
+// alcanzable desde ningún ref. ContenidoEnAlgunRef lo detecta y la ficha se
+// purga; un commit vivo se conserva.
+func TestLedgerPurgarHuerfanasDangling(t *testing.T) {
+	repo := t.TempDir()
+	ejecutarGitEn := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		salida, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v devolvió error: %v\n%s", args, err, salida)
+		}
+		return strings.TrimSpace(string(salida))
+	}
+
+	ejecutarGitEn("init", "-q")
+	ejecutarGitEn("config", "user.email", "test@local")
+	ejecutarGitEn("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("uno\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ejecutarGitEn("add", "a.txt")
+	ejecutarGitEn("commit", "-q", "-m", "primero")
+	shaVivo := ejecutarGitEn("rev-parse", "HEAD")
+
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("uno\ndos\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ejecutarGitEn("add", "a.txt")
+	ejecutarGitEn("commit", "-q", "-m", "segundo")
+	shaDangling := ejecutarGitEn("rev-parse", "HEAD")
+	// Amend reescribe el commit: el SHA anterior queda dangling pero sigue
+	// siendo un objeto válido en el almacén.
+	ejecutarGitEn("commit", "--amend", "-q", "-m", "segundo corregido")
+	if shaVivo == shaDangling {
+		t.Fatal("los SHAs no pueden coincidir")
+	}
+
+	// El ledger se apunta al repo real para que ContenidoEnAlgunRef resuelva
+	// contra sus refs.
+	t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
+	t.Setenv("GIT_WORK_TREE", repo)
+	ledger := NuevoLedger(t.TempDir())
+	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
+	for _, sha := range []string{shaVivo, shaDangling} {
+		if err := ledger.GuardarRevision(sha, "msg", "backend", "modelo", rev); err != nil {
+			t.Fatalf("GuardarRevision(%s) devolvió error: %v", sha, err)
+		}
+	}
+
+	eliminados, err := ledger.PurgarHuerfanas()
+	if err != nil {
+		t.Fatalf("PurgarHuerfanas devolvió error: %v", err)
+	}
+	if len(eliminados) != 1 || eliminados[0] != shaDangling {
+		t.Errorf("PurgarHuerfanas eliminó %v, esperado solo %s (el dangling)", eliminados, shaDangling)
+	}
+	if ficha, _ := ledger.LeerFicha(shaVivo); ficha == nil {
+		t.Errorf("la ficha del commit vivo %s no debería haberse purgado", shaVivo)
 	}
 }
 

@@ -137,7 +137,8 @@ func (l *Ledger) EliminarFicha(sha string) error {
 // ref (commits reescritos por rebase, amend o squash: siguen en el object
 // store como dangling, pero ContenidoEnAlgunRef los detecta). Devuelve la
 // lista de SHAs eliminados; si algo falla a mitad, devuelve el error junto
-// con los SHAs que sí llegó a eliminar.
+// con los SHAs que sí llegó a eliminar. El caso del commit reescrito por
+// amend queda cubierto por TestLedgerPurgarHuerfanasDangling.
 func (l *Ledger) PurgarHuerfanas() ([]string, error) {
 	shas, err := l.ListarFichas()
 	if err != nil {
