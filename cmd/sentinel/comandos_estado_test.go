@@ -3,6 +3,9 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
 func TestParsearFlagsAuditoriaDefault(t *testing.T) {
@@ -95,5 +98,69 @@ func TestStatusRechazaFlagsNoAplicables(t *testing.T) {
 		if !flagsNoAplicablesAStatus(flags) {
 			t.Errorf("%s: debería detectarse como no aplicable a status", prueba.nombre)
 		}
+	}
+}
+
+func TestParsearFlagsAuditoriaTimeout(t *testing.T) {
+	flags, err := parsearFlagsAuditoria([]string{"--timeout", "900"})
+	if err != nil {
+		t.Fatalf("parsearFlagsAuditoria(--timeout 900) devolvió error: %v", err)
+	}
+	if flags.timeout != 900*time.Second {
+		t.Errorf("timeout = %v, esperado 900s", flags.timeout)
+	}
+}
+
+func TestParsearFlagsAuditoriaTimeoutAusenteEsCero(t *testing.T) {
+	flags, err := parsearFlagsAuditoria([]string{"HEAD"})
+	if err != nil {
+		t.Fatalf("parsearFlagsAuditoria devolvió error: %v", err)
+	}
+	if flags.timeout != 0 {
+		t.Errorf("timeout = %v, esperado 0 (sin override)", flags.timeout)
+	}
+}
+
+func TestParsearFlagsAuditoriaTimeoutInvalido(t *testing.T) {
+	pruebas := []struct {
+		nombre string
+		args   []string
+	}{
+		{"sin valor", []string{"--timeout"}},
+		{"no numérico", []string{"--timeout", "mucho"}},
+		{"cero", []string{"--timeout", "0"}},
+		{"negativo", []string{"--timeout", "-30"}},
+	}
+	for _, prueba := range pruebas {
+		if _, err := parsearFlagsAuditoria(prueba.args); err == nil {
+			t.Errorf("--timeout %s: debería devolver error", prueba.nombre)
+		}
+	}
+}
+
+func TestStatusRechazaTimeout(t *testing.T) {
+	flags, err := parsearFlagsAuditoria([]string{"--timeout", "900"})
+	if err != nil {
+		t.Fatalf("parsearFlagsAuditoria devolvió error: %v", err)
+	}
+	if !flagsNoAplicablesAStatus(flags) {
+		t.Error("--timeout debería detectarse como no aplicable a status")
+	}
+}
+
+func TestAplicarTimeoutFlag(t *testing.T) {
+	base := config.Config{Review: config.ReviewConfig{Timeout: 600 * time.Second}}
+
+	sinFlag := aplicarTimeoutFlag(base, flagsAuditoria{})
+	if sinFlag.Review.Timeout != 600*time.Second {
+		t.Errorf("sin --timeout: Timeout = %v, esperado el de la config (600s)", sinFlag.Review.Timeout)
+	}
+
+	conFlag := aplicarTimeoutFlag(base, flagsAuditoria{timeout: 900 * time.Second})
+	if conFlag.Review.Timeout != 900*time.Second {
+		t.Errorf("con --timeout: Timeout = %v, esperado 900s", conFlag.Review.Timeout)
+	}
+	if base.Review.Timeout != 600*time.Second {
+		t.Errorf("aplicarTimeoutFlag mutó la config original: %v", base.Review.Timeout)
 	}
 }

@@ -24,7 +24,7 @@ func ejecutarReview(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	cfg := config.CargarConfiguracionLocal(worktree)
+	cfg := aplicarTimeoutFlag(config.CargarConfiguracionLocal(worktree), flags)
 	gitDir, err := git.ObtenerGitDir()
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
@@ -50,9 +50,9 @@ func ejecutarReview(worktree string, args []string) {
 		// auditoría sería ignorarlos en silencio (cf. flagsNoAplicablesAStatus).
 		soloPrune := len(flags.targets) == 1 && flags.targets[0] == "HEAD" &&
 			len(flags.dims) == 0 && !flags.all && !flags.chain && !flags.gate &&
-			flags.profile == "" && flags.answer == ""
+			flags.profile == "" && flags.answer == "" && flags.timeout == 0
 		if !soloPrune {
-			fmt.Println("? review --prune no se combina con targets ni flags de auditoría (--dims/--all/--chain/--gate/--profile/--answer).")
+			fmt.Println("? review --prune no se combina con targets ni flags de auditoría (--dims/--all/--chain/--gate/--profile/--answer/--timeout).")
 			os.Exit(1)
 		}
 		eliminados, err := purgarHuerfanasConEventos(gitDir)

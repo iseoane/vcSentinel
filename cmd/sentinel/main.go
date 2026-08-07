@@ -132,7 +132,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "check", "Audita el volumen de líneas modificadas del worktree activo.")
 	imprimirItemAyuda(&b, "slice", "Fragmenta las modificaciones en commits de máximo 400 líneas.")
 	imprimirItemAyuda(&b, "review", "Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha.")
-	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\".")
+	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
 	imprimirItemAyuda(&b, "lint", "Ejecuta los comandos de lint_commands de la configuración.")
 	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
 	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")

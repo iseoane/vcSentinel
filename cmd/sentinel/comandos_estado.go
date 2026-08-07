@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -26,6 +28,9 @@ type flagsAuditoria struct {
 	profile string
 	answer  string
 	jsonOut bool
+	// timeout es el override por invocación del límite por llamada al agente
+	// (review.timeout de la config). Cero significa "sin override".
+	timeout time.Duration
 }
 
 // parsearFlagsAuditoria recorre los argumentos del subcomando y extrae las
@@ -47,7 +52,7 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 			flags.prune = true
 		case "--json":
 			flags.jsonOut = true
-		case "--dims", "--profile", "--answer":
+		case "--dims", "--profile", "--answer", "--timeout":
 			if i+1 >= len(args) {
 				return flags, fmt.Errorf("el flag %s necesita un valor", arg)
 			}
@@ -64,6 +69,12 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 				flags.profile = valor
 			case "--answer":
 				flags.answer = valor
+			case "--timeout":
+				segundos, err := strconv.Atoi(strings.TrimSpace(valor))
+				if err != nil || segundos <= 0 {
+					return flags, fmt.Errorf("--timeout necesita un número de segundos positivo, recibido %q", valor)
+				}
+				flags.timeout = time.Duration(segundos) * time.Second
 			}
 		default:
 			if strings.HasPrefix(arg, "-") {
@@ -199,7 +210,18 @@ func ejecutarRebase() {
 // silencio.
 func flagsNoAplicablesAStatus(flags flagsAuditoria) bool {
 	return len(flags.targets) > 0 || len(flags.dims) > 0 || flags.all || flags.chain || flags.gate ||
-		flags.profile != "" || flags.answer != ""
+		flags.profile != "" || flags.answer != "" || flags.timeout > 0
+}
+
+// aplicarTimeoutFlag devuelve la configuración con el timeout de auditoría
+// sobrescrito por --timeout cuando se pasó. Sin el flag la config manda: el
+// flag es un override por invocación, no un cambio persistente. Devuelve una
+// copia; nunca muta la config recibida.
+func aplicarTimeoutFlag(cfg config.Config, flags flagsAuditoria) config.Config {
+	if flags.timeout > 0 {
+		cfg.Review.Timeout = flags.timeout
+	}
+	return cfg
 }
 
 // purgarHuerfanas borra las fichas de commits que ya no existen en el repo y

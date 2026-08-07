@@ -16,7 +16,7 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 | `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
 | `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración e instala el hook global. |
 | `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub, con fallback a `go install` si la release no está disponible. |
-| `sentinel review` | Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha en el ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--prune` `--json`. |
+| `sentinel review` | Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha en el ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--timeout N` `--prune` `--json`. `--timeout` sobrescribe `review.timeout` solo en esa invocación (segundos). |
 | `sentinel lint` | Ejecuta los comandos definidos en `lint_commands` de la configuración. |
 | `sentinel rebase` | Actualiza la rama con `fetch` + `rebase` contra su upstream (pide confirmación). |
 | `sentinel status` | Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con `--json` emite JSON; con `--prune` borra fichas huérfanas. |
