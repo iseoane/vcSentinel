@@ -85,3 +85,24 @@ S5 eventos PR: infra ya existe (events.jsonl); se registran desde S3/S4/S6
   y contrato `tested` obligatorio; fallo → aviso, nunca bloquea.
 - `gh pr view` requiere red: la purga de actas es best-effort.
 - El template debe mantenerse honesto: sin PASS inventado (regla de oro).
+
+## Estado final (cierre de la fase)
+
+Todas las unidades S1–S6 se implementaron, auditaron y fusionaron en `main`
+(hash de cierre: `9fb3925`). Verificación final: `go build ./...` +
+`go vet ./...` + `go test ./...` en verde, y `build.bat` generando
+`bin\0.1.2\sentinel.exe` sin errores.
+
+Desviaciones del diseño registradas en la guía en vez del plan:
+
+- El gate de `pr create` ignora las fichas corregidas (`fixed_in`) al decidir el
+  bloqueo — extraído a `estaPendiente` (`aa6f84a`).
+- `--base` configurado en el yml se propaga a `gh pr create` (`2d607c8`);
+  corregido un duplicado de flag que rompía la publicación.
+- El fallback de portapapeles se conserva como en el diseño y el temporal de
+  plantilla se limpia tras publicar o fallar (`d457fdc`).
+- La auditoría resumida de la rama usa `--base`+`--only-unaudited` y `--json`:
+  el template no verifica nada por sí mismo, solo informa.
+
+Todo el plantel de la fase (S1–S6) se auditó con `sentinel review`; hallazgos
+corregidos quedan en el ledger (`fixed_in`). No quedan scorecards en `block`.
