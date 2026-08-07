@@ -110,28 +110,88 @@ func imprimirUso() {
 	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | pr | install | upgrade | uninstall]")
 }
 
+// imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
 func imprimirAyuda() {
-	imprimirUso()
-	fmt.Println()
-	fmt.Println("Subcomandos:")
-	fmt.Println("  version    Muestra la versión instalada.")
-	fmt.Println("  help       Muestra esta ayuda.")
-	fmt.Println("  init       Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook pre-commit del repositorio. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
-	fmt.Println("  uninit     Revierte 'init' en este repositorio: retira las reglas de volumen, borra la config per-proyecto y elimina el hook pre-commit (solo si sigue siendo el que instaló VAS Sentinel).")
-	fmt.Println("  check      Audita el volumen de líneas modificadas del worktree activo.")
-	fmt.Println("  slice      Fragmenta las modificaciones en commits de máximo 400 líneas.")
-	fmt.Println("  review     Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha. Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\".")
-	fmt.Println("  lint       Ejecuta los comandos de lint_commands de la configuración.")
-	fmt.Println("  rebase     Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
-	fmt.Println("  status     Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con --json emite JSON; con --prune borra fichas huérfanas.")
-	fmt.Println("  pr         Crea un pull request con gh (passthrough); pr review analiza la rama sin publicar (matriz + decisión single/chain). Flags de pr review: --base X --only-unaudited --overview --json.")
-	fmt.Println("  install    Descarga e instala la última release publicada desde GitHub.")
-	fmt.Println("  upgrade    Reemplaza el binario actual por la última release publicada.")
-	fmt.Println("  uninstall  Elimina el binario instalado y la configuración global.")
-	fmt.Println()
-	fmt.Println("Flags:")
-	fmt.Println("  --version, -v   Muestra la versión instalada (equivalente a 'version').")
-	fmt.Println("  --help, -h      Muestra esta ayuda (equivalente a 'help').")
+	fmt.Print(construirAyuda())
+}
+
+// construirAyuda devuelve el texto de la ayuda. Las descripciones de los
+// subcomandos se envuelven a un ancho fijo con las continuaciones alineadas en
+// la columna de descripción (14 espacios), para que nada invada la zona de
+// argumentos de los ítems.
+func construirAyuda() string {
+	var b strings.Builder
+	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
+	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
+	b.WriteString("             lint | rebase | status | pr | install | upgrade | uninstall]\n\n")
+	b.WriteString("Subcomandos:\n")
+	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
+	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
+	imprimirItemAyuda(&b, "init", "Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook pre-commit del repositorio. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
+	imprimirItemAyuda(&b, "uninit", "Reverte 'init' en este repositorio: retira las reglas de volumen, borra la config per-proyecto y elimina el hook pre-commit (solo si sigue siendo el que instaló VAS Sentinel).")
+	imprimirItemAyuda(&b, "check", "Audita el volumen de líneas modificadas del worktree activo.")
+	imprimirItemAyuda(&b, "slice", "Fragmenta las modificaciones en commits de máximo 400 líneas.")
+	imprimirItemAyuda(&b, "review", "Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha.")
+	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\".")
+	imprimirItemAyuda(&b, "lint", "Ejecuta los comandos de lint_commands de la configuración.")
+	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
+	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")
+	imprimirItemAyuda(&b, "", "Con --json emite JSON; con --prune borra fichas huérfanas.")
+	imprimirItemAyuda(&b, "pr", "Crea un pull request con gh (passthrough).")
+	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
+	imprimirItemAyuda(&b, "", "Flags de pr review: --base X --only-unaudited --overview --json.")
+	imprimirItemAyuda(&b, "install", "Descarga e instala la última release publicada desde GitHub.")
+	imprimirItemAyuda(&b, "upgrade", "Reemplaza el binario actual por la última release publicada.")
+	imprimirItemAyuda(&b, "uninstall", "Elimina el binario instalado y la configuración global.")
+	b.WriteString("\nFlags:\n")
+	b.WriteString("  --version, -v   Muestra la versión instalada (equivalente a 'version').\n")
+	b.WriteString("  --help, -h      Muestra esta ayuda (equivalente a 'help').\n")
+	return b.String()
+}
+
+// imprimirItemAyuda añade una entrada de subcomando: si nombre es no vacío,
+// se coloca en la columna de comando (2 espacios + hasta 12 de nombre); las
+// líneas siguientes se alinean en la columna de descripción. La descripción se
+// envuelve a un ancho acorde para no superar el ancho máximo de línea.
+func imprimirItemAyuda(b *strings.Builder, nombre, descripcion string) {
+	const anchoDescripcion = 96
+	if nombre == "" {
+		for _, linea := range envolver(descripcion, anchoDescripcion) {
+			b.WriteString("              " + linea + "\n")
+		}
+		return
+	}
+	for i, linea := range envolver(descripcion, anchoDescripcion) {
+		if i == 0 {
+			fmt.Fprintf(b, "  %-12s%s\n", nombre, linea)
+		} else {
+			b.WriteString("              " + linea + "\n")
+		}
+	}
+}
+
+// envolver divide texto en líneas de como máximo ancho caracteres cortando por
+// los espacios y sin cortar palabras. Devuelve al menos una línea (vacía si el
+// texto lo es).
+func envolver(texto string, ancho int) []string {
+	var lineas []string
+	actual := ""
+	for _, palabra := range strings.Fields(texto) {
+		if actual == "" {
+			actual = palabra
+			continue
+		}
+		if len(actual)+1+len(palabra) <= ancho {
+			actual += " " + palabra
+			continue
+		}
+		lineas = append(lineas, actual)
+		actual = palabra
+	}
+	if actual != "" || len(lineas) == 0 {
+		lineas = append(lineas, actual)
+	}
+	return lineas
 }
 
 func ejecutarInit(path string) {

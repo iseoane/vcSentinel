@@ -55,3 +55,8 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 - Mensajes de commit: Conventional Commits (`chore(slice): ...`, etc.).
 - Textos de UI y prompts: castellano estándar, NO voseo — "Puedes", "Analiza", "Devuelve", nunca "Podés", "Analizá", "Devolvé".
 - Los prompts al agente devuelven SOLO la línea del mensaje de commit, sin markdown ni comillas.
+
+## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)
+- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: "sentinel check".
+- Si el estado es "CRÍTICO" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.
+- Debes detenerte de inmediato e invocar: "sentinel slice" para fragmentar el código acumulado antes de continuar.

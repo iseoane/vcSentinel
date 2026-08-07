@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -52,12 +53,41 @@ var veredictosValidos = map[string]bool{
 	VerdictUnavailable: true,
 }
 
+// Linea es el número de línea de un hallazgo. Los agentes a veces emiten
+// "line" como número y a veces como string ("126"); UnmarshalJSON acepta
+// ambos para que un string numérico no descarte el hallazgo completo.
+type Linea int
+
+// UnmarshalJSON acepta tanto un número JSON como un string numérico. Un
+// string no numérico (p. ej. "L126-130") produce error para que la línea
+// JSONL se descarte como inválida.
+func (l *Linea) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		if err != nil {
+			return fmt.Errorf("línea no numérica %q", s)
+		}
+		*l = Linea(n)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*l = Linea(n)
+	return nil
+}
+
 // ReviewFinding es un hallazgo concreto del agente sobre una línea de un
 // archivo del commit auditado.
 type ReviewFinding struct {
 	Dimension   string `json:"dimension"`
 	File        string `json:"file"`
-	Line        int    `json:"line"`
+	Line        Linea  `json:"line"`
 	Severity    string `json:"severity"`
 	Description string `json:"description"`
 	Suggestion  string `json:"suggestion"`

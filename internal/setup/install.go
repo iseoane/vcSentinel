@@ -40,6 +40,17 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # repo necesite distinto de tu config global (~/.vas_sentinel/vassentinel.yml,
 # creada por 'sentinel install'). Todo lo que no definas se resuelve desde ahí.
 #
+# Verificación determinista SIN agente: si defines estas listas, 'pr review'
+# ejecuta los comandos directamente en la shell del sistema y NUNCA consulta
+# al agente (el agente solo se ofrece cuando no hay nada configurado).
+# Descomenta y ajusta:
+# lint_commands:
+#   - "go vet ./..."
+# test_commands:
+#   - "go test ./..."
+# build_commands:
+#   - "go build ./..."
+#
 # Ejemplo (descomenta y ajusta):
 # active_agent: "claude"
 # agents:

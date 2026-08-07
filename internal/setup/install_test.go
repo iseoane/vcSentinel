@@ -98,6 +98,28 @@ func TestCrearConfiguracionPerProyecto(t *testing.T) {
 	})
 }
 
+// TestPlantillaPerProyectoDocumentaVerificacionDeterminista: la plantilla que
+// init escribe debe mostrar al usuario (comentadas) las claves que activan la
+// verificación determinista sin agente — lint_commands, test_commands y
+// build_commands — con su efecto y un ejemplo ejecutable.
+func TestPlantillaPerProyectoDocumentaVerificacionDeterminista(t *testing.T) {
+	contenido := archivoConfiguracionPerProyectoBase
+	for _, clave := range []string{"lint_commands", "test_commands", "build_commands"} {
+		if !strings.Contains(contenido, clave) {
+			t.Errorf("la plantilla per-proyecto no documenta %q", clave)
+		}
+	}
+	if !strings.Contains(contenido, "Verificación determinista SIN agente") {
+		t.Error("la plantilla debe explicar que estas claves activan la verificación determinista")
+	}
+	if !strings.Contains(contenido, `go test ./...`) {
+		t.Error("la plantilla debe mostrar un ejemplo de test_commands")
+	}
+	if !strings.Contains(contenido, `go build ./...`) {
+		t.Error("la plantilla debe mostrar un ejemplo de build_commands")
+	}
+}
+
 func TestMoverYReemplazar(t *testing.T) {
 	dir := t.TempDir()
 	origen := filepath.Join(dir, "origen")
