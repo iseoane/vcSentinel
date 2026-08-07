@@ -211,10 +211,11 @@ func ejecutarInit(path string) {
 	archivosObjetivo := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}
 
 	for _, nombre := range archivosObjetivo {
-		f, err := os.OpenFile(filepath.Join(path, nombre), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err == nil {
-			f.WriteString(reglasVolumen)
-			f.Close()
+		escrito, err := inyectarReglasDeArchivo(filepath.Join(path, nombre))
+		switch {
+		case err != nil:
+			fmt.Printf("⚠️ No se pudo inyectar en %s: %v\n", nombre, err)
+		case escrito:
 			fmt.Printf("📝 Reglas de volumen inyectadas en: %s\n", nombre)
 		}
 	}
@@ -304,9 +305,37 @@ func ejecutarUninit(path string) {
 	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
 }
 
-// quitarReglasDeArchivo retira el bloque reglasVolumen del archivo si está
-// presente y devuelve si hizo algún cambio. Un archivo inexistente o sin el
-// bloque no es error: simplemente no había nada que retirar.
+// inyectarReglasDeArchivo añade el bloque reglasVolumen al final del archivo
+// SOLO si todavía no está presente (init idempotente): ejecutar init dos veces
+// no duplica la inserción. Devuelve si escribió algo. El archivo inexistente
+// se crea con el bloque.
+func inyectarReglasDeArchivo(ruta string) (bool, error) {
+	datos, err := os.ReadFile(ruta)
+	if err == nil && strings.Contains(string(datos), reglasVolumen) {
+		// El bloque ya está: no tocar el archivo (init repetido o archivo de
+		// otra fuente que ya lo documenta).
+		return false, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+
+	f, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(reglasVolumen); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// quitarReglasDeArchivo retira TODAS las apariciones del bloque reglasVolumen
+// del archivo si está presente y devuelve si hizo algún cambio. Un archivo
+// inexistente o sin el bloque no es error: simplemente no había nada que
+// retirar. Retirar todas las apariciones repara también los duplicados que
+// dejaron versiones anteriores de init.
 func quitarReglasDeArchivo(ruta string) (bool, error) {
 	datos, err := os.ReadFile(ruta)
 	if err != nil {
@@ -318,7 +347,7 @@ func quitarReglasDeArchivo(ruta string) (bool, error) {
 	if !strings.Contains(string(datos), reglasVolumen) {
 		return false, nil
 	}
-	nuevo := strings.Replace(string(datos), reglasVolumen, "", 1)
+	nuevo := strings.ReplaceAll(string(datos), reglasVolumen, "")
 	if strings.TrimSpace(nuevo) == "" {
 		// El archivo no tenía contenido propio: init lo creó solo para el
 		// bloque de reglas, así que uninit lo borra en vez de dejarlo vacío.
