@@ -48,7 +48,7 @@ del proyecto; A y F después porque escriben fuera del worktree.
 | # | Grupo | Comando | Flags que acepta | Estado | Veredicto | Informe |
 |---|---|---|---|---|---|---|
 | 1 | B — Guardián | `check` | *(ninguno)* | ✅ | 🔴 DEFECTO | `b-guardian.md` |
-| 2 | B — Guardián | `slice` | *(ninguno)* | ✅ | 🟡 DUDA | `b-guardian.md` |
+| 2 | B — Guardián | `slice` | *(ninguno)* | ✅ | 🟠 PARCIAL | `b-guardian.md` |
 | 3 | A — Ciclo de vida | `init` | *(ninguno)* | ⬜ | — | `a-ciclo-vida.md` |
 | 4 | A — Ciclo de vida | `uninit` | *(ninguno)* | ⬜ | — | `a-ciclo-vida.md` |
 | 5 | F — Distribución | `install` | *(ninguno)* | ⬜ | — | `f-distribucion.md` |

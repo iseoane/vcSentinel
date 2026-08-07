@@ -77,6 +77,18 @@ podido escribir 3000 líneas nuevas con la bendición explícita de `check`.
 `archivosNoRastreados`, este último vía `git status --short -uall`
 (`slice.go:79`).
 
+La divergencia se observó sin forzarla, al final de una ejecución real de
+`slice` en un repositorio de pruebas (quedaba un directorio sin rastrear):
+
+```
+⚠️ Quedan cambios pendientes en el worktree. Revisa con 'sentinel check'.
+$ sentinel check
+📊 Líneas modificadas en este Worktree: 0 [PEQUENO]
+✅ Volumen bajo control. Puedes continuar.
+```
+
+`slice` remite a `check`, y `check` niega lo que `slice` acaba de afirmar.
+
 Las dos mitades del guardián discrepan sobre qué es "el volumen pendiente".
 Consecuencias directas:
 
@@ -163,14 +175,39 @@ usuario apruebe. Los commits resultantes usan `--no-verify`.
 
 Comparte **B2** y **B3** con `check`; ambos nacen en `slice.go`.
 
-#### B7 · Analizado sin ejecutar — límite de esta auditoría
+#### B7 · Verificado de extremo a extremo con stdin canalizado
 
-El flujo de `slice` es **interactivo**: exige aprobación A/R/E/C y confirmación
-`s/N` para los archivos gigantes. No pude ejercitarlo de extremo a extremo desde
-una sesión no interactiva, así que la ejecución real del plan
-(`EjecutarPlanFragmentacion`) queda **verificada solo por lectura y por sus
-tests**, no por ejecución. Marcado como DUDA, no como VERIFICADO, conforme a la
-regla de evidencia.
+El flujo camino-feliz **sí se ejercitó**, en un repositorio desechable con 715
+líneas repartidas en tres capas:
+
+```
+$ printf 'A\n' | sentinel slice
+  [config]  lote #1 — 2 archivos (278 líneas)
+  [backend] lote #2 — 4 archivos (316 líneas)
+  [test]    lote #3 — 1 archivos (121 líneas)
+🎉 ¡Historial fragmentado con éxito! Se crearon 3 commits.
+```
+
+Capas en el orden fijo declarado, todos los lotes ≤400 líneas, tres commits
+reales en el historial. `slice` cumple su contrato.
+
+Corrección respecto a la primera versión de este informe: se afirmó que `slice`
+no era probable sin sesión interactiva. **Es falso.** `leerLinea` lee de la
+variable de paquete `lectorStdin` (`cmd/sentinel/main.go:660`), así que acepta
+entrada canalizada y, en tests, admite sustitución directa.
+
+#### B8 · WARNING · La capa interactiva no tiene ni un test
+
+La costura de inyección existe pero nadie la usa: `lectorStdin` no aparece en
+ningún `cmd/sentinel/*_test.go`. El reparto de cobertura es desigual:
+
+| Capa | Cobertura |
+|---|---|
+| `internal/git` — plan y ejecución | 26 tests, incluidos repositorio real, omisión de hooks, gigantes y mensajes aprobados |
+| `cmd/sentinel` — diálogo A/R/E/C | ninguno |
+
+Quedan sin cubrir: `C` cancela sin commitear, opción inválida reintenta, Enter
+vacío aprueba, `3` en un archivo gigante aborta, y EOF con stdin cerrado.
 
 #### Lo que sí se puede afirmar
 
@@ -187,9 +224,16 @@ regla de evidencia.
 
 | Prioridad | Cambio | Coste | Riesgo |
 |---|---|---|---|
-| 1 | **B3**: arreglar el parseo del numstat (compartido con `check`) | Bajo | Bajo |
-| 2 | **B7**: flag `--dry-run` o `--yes` que permita ejercitar el plan sin interacción. Hoy no hay forma de probar `slice` en CI ni desde un agente | Medio | Bajo |
-| 3 | Revisar el `--no-verify` una vez cerrado B2: con una medición unificada, el hook dejaría de rechazar lotes legítimos y el bypass podría sobrar | Bajo | Medio — tocar el desbloqueo del guardián merece su propio análisis |
+| 1 | **B8**: tests de la máquina de diálogo sustituyendo `lectorStdin` por un `strings.Reader` con `t.Cleanup`. Sin refactor ni flags nuevos: la costura ya existe | Bajo | Ninguno |
+| 2 | **B3**: arreglar el parseo del numstat (compartido con `check`) | Bajo | Bajo |
+| 3 | **B8**: extraer de `aprobarYEjecutar` una función pura `decidirAccion(opcion string)`, separando leer / decidir / ejecutar. Testeable por tabla, sin stdin | Medio | Bajo |
+| 4 | Revisar el `--no-verify` una vez cerrado B2: con una medición unificada, el hook dejaría de rechazar lotes legítimos y el bypass podría sobrar | Bajo | Medio — tocar el desbloqueo del guardián merece su propio análisis |
+
+**Descartado: un flag `--yes` o `--dry-run` de autoaprobación.** Se propuso en la
+primera versión de este informe y se retira. `slice` commitea con `--no-verify`;
+un modo que apruebe sin preguntar convertiría el único control humano del
+desbloqueo del guardián en algo que un agente puede saltarse solo. Para CI basta
+con stdin canalizado, que es explícito y no vive en el binario.
 
 ---
 
@@ -203,4 +247,5 @@ regla de evidencia.
 | B4 | 🟠 WARNING | `check` | Confirmado por lectura de código |
 | B5 | 🔵 ADVISORY | `check` | Confirmado por lectura de código |
 | B6 | 🔵 ADVISORY | `check` | Confirmado por ejecución (confirma H1) |
-| B7 | 🟡 DUDA | `slice` | No verificable sin sesión interactiva |
+| B7 | 🟢 VERIFICADO | `slice` | Ejecutado de extremo a extremo: 3 commits correctos |
+| B8 | 🟠 WARNING | `slice` | Confirmado: cero tests en la capa interactiva |
