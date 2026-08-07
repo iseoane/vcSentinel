@@ -1,5 +1,5 @@
 version: "2.0"
-active_agent: "opencode"
+active_agent: "auto"
 agents:
   claude:
     model: "claude-opus"
@@ -35,9 +35,9 @@ review:
   timeout: 600
   parallel: 2
   dims:
-    spec: "opencode.cheap"
-    style: "opencode.cheap"
-    tests: "opencode.normal"
-    logic: "opencode.normal"
+    spec: "cheap"
+    style: "cheap"
+    tests: "normal"
+    logic: "normal"
     design: "deep"
     security: "deep"
