@@ -14,6 +14,8 @@ agents:
       deep:
         model: "claude-opus"
         reasoning_effort: "high"
+      commit:
+        reasoning_effort: "low"
   opencode:
     model: "deepseek-v4-flash-free"
     reasoning_effort: "high"
@@ -27,6 +29,8 @@ agents:
       deep:
         model: "deepseek-v4-flash-free"
         reasoning_effort: "max"
+      commit:
+        reasoning_effort: "low"
 review:
   timeout: 600
   parallel: 2

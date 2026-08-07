@@ -583,7 +583,7 @@ func leerLinea() (string, error) {
 // no existe, falla la sonda o falla al generar algún mensaje, ofrece al usuario
 // elegir mensajes automáticos, otro adaptador disponible o cancelar.
 func elegirAdaptadorYGenerarMensajes(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
-	adapter, err := agentadapter.NewAgentAdapter(path)
+	adapter, err := agentadapter.NewAgentAdapterParaMensaje(path)
 	if err != nil {
 		fmt.Printf("⚠️ %v\n", err)
 		return bucleElegirAdaptador(path, plan)
@@ -635,7 +635,7 @@ func bucleElegirAdaptador(path string, plan *git.PlanFragmentacion) (agentadapte
 				continue
 			}
 			nombre := nombres[numero-2]
-			adapter, err := agentadapter.NewAgentAdapterNamed(path, nombre)
+			adapter, err := agentadapter.NewAgentAdapterNamedParaMensaje(path, nombre)
 			if err != nil {
 				fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombre, err)
 				continue
@@ -744,7 +744,7 @@ func regenerarMensajeLoteInteractivo(plan *git.PlanFragmentacion, path string) {
 				continue
 			}
 			nombre := nombres[indice-2]
-			adapter, err := agentadapter.NewAgentAdapterNamed(path, nombre)
+			adapter, err := agentadapter.NewAgentAdapterNamedParaMensaje(path, nombre)
 			if err != nil {
 				fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombre, err)
 				continue

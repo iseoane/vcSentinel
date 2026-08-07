@@ -15,9 +15,18 @@ agents:
   claude:
     model: "claude-5-sonnet"
     reasoning_effort: "high"
+    # Perfil 'commit' (mensajes de 'sentinel slice'): razonamiento bajo
+    # porque nombrar un commit no necesita el razonamiento del resto de la
+    # tarea. Ejemplo (descomenta y ajusta):
+    # profiles:
+    #   commit:
+    #     reasoning_effort: "low"
   opencode:
     model: "deepseek-v4-flash"
     reasoning_effort: "max"
+    # profiles:
+    #   commit:
+    #     reasoning_effort: "low"
 `
 
 // archivoConfiguracionPerProyectoBase es el template que init escribe en el
@@ -37,6 +46,12 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 #   claude:
 #     model: "claude-opus"
 #     reasoning_effort: "high"
+#     profiles:
+#       commit:
+#         reasoning_effort: "low"
+# (El perfil 'commit' define el modelo/esfuerzo que 'sentinel slice' usa para
+# generar los mensajes de commit; si no lo defines, se usa el modelo/esfuerzo
+# base del agente sin ningún cambio de comportamiento.)
 `
 
 func EjecutarInstalacionCompleta() error {

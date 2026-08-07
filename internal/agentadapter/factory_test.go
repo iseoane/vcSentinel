@@ -188,3 +188,84 @@ func TestNombresAgentesEnPATHConservaOrdenYml(t *testing.T) {
 		t.Errorf("nombresAgentesEnPATH = %v, esperado %v (orden del yml)", obtenido, esperado)
 	}
 }
+
+// TestNuevoAdaptadorMensajeUsaPerfilCommit verifica que el helper compartido,
+// en su variante "commit", aplica el perfil anidado de razonamiento bajo del
+// agente y hereda el modelo base cuando el perfil solo define el esfuerzo.
+func TestNuevoAdaptadorMensajeUsaPerfilCommit(t *testing.T) {
+	cfg := config.Config{
+		ActiveAgent: "opencode",
+		Agents: map[string]config.AgentConfig{
+			"opencode": {
+				Model:           "base",
+				ReasoningEffort: "high",
+				Profiles: map[string]config.ProfileConfig{
+					"commit": {ReasoningEffort: "low"},
+				},
+			},
+		},
+	}
+
+	adapter, err := nuevoAdaptador(cfg, "opencode", "commit")
+	if err != nil {
+		t.Fatalf("nuevoAdaptador devolvió error: %v", err)
+	}
+	cli, ok := adapter.(*CLIAdapter)
+	if !ok {
+		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+	}
+	if cli.nombreBase() != "opencode" {
+		t.Errorf("binario = %q, esperado opencode", cli.BinaryName)
+	}
+	// El perfil commit define solo reasoning_effort: el modelo se hereda del agente.
+	if cli.Config.Model != "base" {
+		t.Errorf("modelo = %q, esperado heredar 'base' del agente", cli.Config.Model)
+	}
+	if cli.Config.ReasoningEffort != "low" {
+		t.Errorf("esfuerzo = %q, esperado 'low' del perfil commit", cli.Config.ReasoningEffort)
+	}
+}
+
+// TestNuevoAdaptadorMensajeSinPerfilCaeAlBase verifica la compatibilidad:
+// cuando el agente no define el perfil commit, el adaptador queda con la misma
+// configuración que devolvería NewAgentAdapterNamed (modelo/esfuerzo base).
+func TestNuevoAdaptadorMensajeSinPerfilCaeAlBase(t *testing.T) {
+	cfg := config.Config{
+		ActiveAgent: "opencode",
+		Agents: map[string]config.AgentConfig{
+			"opencode": {Model: "deepseek-v4-flash-free", ReasoningEffort: "high"},
+		},
+	}
+
+	adapter, err := nuevoAdaptador(cfg, "opencode", "commit")
+	if err != nil {
+		t.Fatalf("nuevoAdaptador devolvió error: %v", err)
+	}
+	cli, ok := adapter.(*CLIAdapter)
+	if !ok {
+		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+	}
+	esperado := cfg.Agents["opencode"]
+	if !reflect.DeepEqual(cli.Config, esperado) {
+		t.Errorf("config = %+v, esperado %+v (igual que el agente)", cli.Config, esperado)
+	}
+}
+
+// TestNuevoAdaptadorMensajeAgenteInexistente verifica que la variante de
+// mensaje mantiene el error de NewAgentAdapterNamed para agentes no
+// configurados.
+func TestNuevoAdaptadorMensajeAgenteInexistente(t *testing.T) {
+	cfg := config.Config{
+		ActiveAgent: "opencode",
+		Agents:      map[string]config.AgentConfig{"opencode": {Model: "base"}},
+	}
+
+	adapter, err := nuevoAdaptador(cfg, "agente-inexistente-xyz", "commit")
+	if err == nil {
+		t.Fatalf("se esperaba un error para agente no configurado, obtuve %T/%v", adapter, err)
+	}
+	esperado := `el agente "agente-inexistente-xyz" no está configurado en vassentinel.yml`
+	if err.Error() != esperado {
+		t.Errorf("error = %q, esperado %q (compatibilidad con NewAgentAdapterNamed)", err.Error(), esperado)
+	}
+}
