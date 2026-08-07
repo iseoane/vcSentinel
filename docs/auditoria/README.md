@@ -47,8 +47,8 @@ del proyecto; A y F después porque escriben fuera del worktree.
 
 | # | Grupo | Comando | Flags que acepta | Estado | Veredicto | Informe |
 |---|---|---|---|---|---|---|
-| 1 | B — Guardián | `check` | *(ninguno)* | ⬜ | — | `b-guardian.md` |
-| 2 | B — Guardián | `slice` | *(ninguno)* | ⬜ | — | `b-guardian.md` |
+| 1 | B — Guardián | `check` | *(ninguno)* | ✅ | 🔴 DEFECTO | `b-guardian.md` |
+| 2 | B — Guardián | `slice` | *(ninguno)* | ✅ | 🟡 DUDA | `b-guardian.md` |
 | 3 | A — Ciclo de vida | `init` | *(ninguno)* | ⬜ | — | `a-ciclo-vida.md` |
 | 4 | A — Ciclo de vida | `uninit` | *(ninguno)* | ⬜ | — | `a-ciclo-vida.md` |
 | 5 | F — Distribución | `install` | *(ninguno)* | ⬜ | — | `f-distribucion.md` |
@@ -82,7 +82,7 @@ confirman o se descartan dentro de la ficha de su comando.
 
 | # | Hallazgo | Evidencia | Comando afectado | Estado |
 |---|---|---|---|---|
-| H1 | Los subcomandos sin flags ignoran `os.Args[2:]` en silencio: `sentinel check --loquesea` se acepta sin error | `cmd/sentinel/main.go:54-73,85-89` | `check`, `slice`, `lint`, `rebase`, `init`, `uninit`, `install`, `upgrade`, `uninstall` | ⬜ sin verificar |
+| H1 | Los subcomandos sin flags ignoran `os.Args[2:]` en silencio: `sentinel check --loquesea` se acepta sin error | `cmd/sentinel/main.go:54-73,85-89`. Ejecutado: `sentinel check --loquesea` sale 0 sin aviso (ver B6 en `b-guardian.md`) | `check`, `slice`, `lint`, `rebase`, `init`, `uninit`, `install`, `upgrade`, `uninstall` | 🟢 confirmado para `check`; resto pendiente |
 | H2 | Sin cobertura de tests en las rutas de entrada de varios comandos | CodeGraph: `ejecutarInit`, `ejecutarUninit`, `ejecutarPr`, `PrepararTokenGitHub`, `LotePlanificado` | `init`, `uninit`, `pr`, `install`/`upgrade`, `slice` | ⬜ sin verificar |
 | H3 | `main.go` con 902 líneas concentra lógica de negocio en el paquete `cmd` (arquitectura plana) — coincide con el `design:warn` de la auditoría de `d45a208` | `cmd/sentinel/main.go` | transversal | ⬜ sin verificar |
 | H4 | Con `active_agent: auto` la ficha registra el **nombre del perfil**, no el agente que respondió. Si la cadena cae de `claude` a `opencode`, el veredicto queda sin constancia de quién lo emitió: agujero de trazabilidad en el ledger | cadena en `internal/agentadapter/cadena.go:75-88`; el modelo guardado sale de `flags.profile` en `cmd/sentinel/comandos_review.go:112-118`. Comprobado: la ficha de `6c079a8` guarda `"model": "default"` tras responder claude | `review`, `pr review` | 🟢 confirmado (código + ejecución) — **sin corregir** |
