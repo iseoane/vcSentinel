@@ -20,6 +20,25 @@ agents:
     reasoning_effort: "max"
 `
 
+// archivoConfiguracionPerProyectoBase es el template que init escribe en el
+// repo. Deliberadamente NO fija active_agent/agents con valores literales: si
+// lo hiciera, sobreescribiría en todos los repos las preferencias definidas
+// en la config global (defaults -> global -> per-proyecto), dejando el yml
+// global sin ningún efecto real. Solo lo que el usuario descomente aquí
+// sobreescribe la config global para este repo.
+const archivoConfiguracionPerProyectoBase = `version: "1.0"
+# Config per-proyecto de VAS Sentinel. Solo sobreescribe aquí lo que este
+# repo necesite distinto de tu config global (~/.vas_sentinel/vassentinel.yml,
+# creada por 'sentinel install'). Todo lo que no definas se resuelve desde ahí.
+#
+# Ejemplo (descomenta y ajusta):
+# active_agent: "claude"
+# agents:
+#   claude:
+#     model: "claude-opus"
+#     reasoning_effort: "high"
+`
+
 func EjecutarInstalacionCompleta() error {
 	fmt.Println("⬇️ Descargando la última versión desde GitHub...")
 
@@ -331,6 +350,13 @@ func existeArchivo(ruta string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// EstaInicializado indica si el worktree tiene la configuración per-proyecto
+// (.vas_sentinel/vassentinel.yml), es decir, si ya pasó por 'sentinel init'.
+func EstaInicializado(worktreePath string) bool {
+	ruta := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
+	return existeArchivo(ruta)
+}
+
 // crearConfiguracionGlobal materializa el archivo de configuración global en
 // ~/.vas_sentinel/vassentinel.yml si todavía no existe. No lo sobreescribe.
 func crearConfiguracionGlobal() error {
@@ -365,7 +391,7 @@ func CrearConfiguracionPerProyecto(worktreePath string) error {
 	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
 		return fmt.Errorf("no se pudo crear el directorio %s: %w", filepath.Dir(ruta), err)
 	}
-	if err := os.WriteFile(ruta, []byte(archivoConfiguracionBase), 0644); err != nil {
+	if err := os.WriteFile(ruta, []byte(archivoConfiguracionPerProyectoBase), 0644); err != nil {
 		return fmt.Errorf("no se pudo crear el archivo de configuración per-proyecto %s: %w", ruta, err)
 	}
 	return nil

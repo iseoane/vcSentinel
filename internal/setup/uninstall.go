@@ -40,7 +40,7 @@ func EjecutarDesinstalacionCompleta() error {
 	}
 
 	fmt.Println("✅ VAS Sentinel desinstalado.")
-	fmt.Println("   El hook global pre-commit (si existe en ~/.git_global_hooks) no se elimina: gestiona hooks de git, no de sentinel.")
+	fmt.Println("   El hook pre-commit instalado en cada repositorio (.git/hooks/pre-commit) no se elimina: gestiona hooks de git, no de sentinel.")
 	return nil
 }
 
