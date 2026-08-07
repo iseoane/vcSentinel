@@ -143,14 +143,26 @@ func TestRotarEventosDescartaLineasCorruptas(t *testing.T) {
 	if err := RotarEventos(dir, 10); err != nil {
 		t.Fatalf("RotarEventos devolvió error: %v", err)
 	}
-	// La rotación conserva los bytes crudos de todas las líneas (incluidas
-	// las corruptas); es UltimosEventos quien descarta las que no parsean.
+	// La rotación descarta las líneas corruptas: quedan solo los eventos
+	// que parsean, en orden.
 	eventos, err := UltimosEventos(dir, 10)
 	if err != nil {
 		t.Fatalf("UltimosEventos devolvió error: %v", err)
 	}
 	if len(eventos) != 2 {
-		t.Errorf("eventos = %d, esperado 2 (las corruptas se filtran al leer)", len(eventos))
+		t.Errorf("eventos = %d, esperado 2 (la corrupta se descartó en la rotación)", len(eventos))
+	}
+	// El más reciente primero (review se registró después de status).
+	if eventos[0].Cmd != "review" || eventos[1].Cmd != "status" {
+		t.Errorf("orden = %q, %q; esperado review, status", eventos[0].Cmd, eventos[1].Cmd)
+	}
+	// El archivo ya no contiene la línea corrupta.
+	contenido, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(contenido), "corrupto") {
+		t.Errorf("la línea corrupta sigue en el archivo tras la rotación")
 	}
 }
 

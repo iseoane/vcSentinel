@@ -338,9 +338,11 @@ func eventosTocanShas(evento []string, objetivo map[string]bool) bool {
 	return false
 }
 
-// RotarEventos poda el log dejando las últimas n líneas (las más recientes).
-// Lo hace con escritura atómica temp + rename: si algo falla, el log original
-// se conserva intacto. Un n <= 0 vacía el archivo.
+// RotarEventos poda el log dejando las últimas n líneas válidas (las más
+// recientes). Descarta las líneas corruptas (JSON inválido): solo los eventos
+// que parsean cuentan para la poda y se conservan. Lo hace con escritura
+// atómica temp + rename: si algo falla, el log original se conserva intacto.
+// Un n <= 0 vacía el archivo.
 func RotarEventos(gitDir string, n int) error {
 	ruta := filepath.Join(gitDir, eventosRel)
 	archivo, err := os.Open(ruta)
@@ -354,6 +356,10 @@ func RotarEventos(gitDir string, n int) error {
 	var lineas [][]byte
 	scanner := bufio.NewScanner(archivo)
 	for scanner.Scan() {
+		var ev Evento
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue // línea corrupta: se descarta en la rotación
+		}
 		linea := make([]byte, len(scanner.Bytes()))
 		copy(linea, scanner.Bytes())
 		lineas = append(lineas, linea)
