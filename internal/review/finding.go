@@ -193,7 +193,64 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 	if strings.TrimSpace(bloque) == "" {
 		return nil, ErrSalidaVacia
 	}
+	// Fallback: algunos modelos (p. ej. el perfil cheap con reasoning low)
+	// emiten el objeto JSON formateado en varias líneas (pretty-printed)
+	// dentro del bloque. Ninguna línea individual es JSONL válido, pero el
+	// bloque completo sí es un objeto JSON; parsearlo entero evita que una
+	// auditoría válida se degrade a unavailable.
+	if res, ok := parsearObjetoMultilinea(bloque); ok {
+		return res, nil
+	}
 	return nil, ErrJSONLInvalido
+}
+
+// parsearObjetoMultilinea intenta interpretar el bloque como un único objeto
+// JSON (tolerando formato pretty-printed con saltos de línea). Devuelve ok
+// solo si el parseo completo tiene éxito y la dimensión es canónica.
+func parsearObjetoMultilinea(bloque string) (*DimensionResult, bool) {
+	var crudo struct {
+		Dim       string          `json:"dim"`
+		Verdict   string          `json:"verdict"`
+		Findings  []ReviewFinding `json:"findings"`
+		Questions []AgentQuestion `json:"questions"`
+		Reason    string          `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(bloque)), &crudo); err != nil {
+		return nil, false
+	}
+	if crudo.Dim == "" || !DimensionesValidas[crudo.Dim] {
+		return nil, false
+	}
+
+	var normalizaciones []string
+	verdict := crudo.Verdict
+	if !veredictosValidos[verdict] {
+		if len(crudo.Findings) == 0 {
+			return nil, false
+		}
+		normalizaciones = append(normalizaciones,
+			fmt.Sprintf("veredicto %q normalizado según severidades de hallazgos", verdict))
+		verdict = ""
+	}
+
+	hallazgos := make([]ReviewFinding, 0, len(crudo.Findings))
+	for _, h := range crudo.Findings {
+		if h.Severity != SevCritical && h.Severity != SevWarning && h.Severity != SevAdvisory {
+			normalizaciones = append(normalizaciones,
+				fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", h.Severity, h.File, h.Line))
+			h.Severity = SevAdvisory
+		}
+		hallazgos = append(hallazgos, h)
+	}
+
+	return &DimensionResult{
+		Dim:          crudo.Dim,
+		Verdict:      veredictoFinal(verdict, hallazgos, &normalizaciones),
+		Findings:     hallazgos,
+		Questions:    crudo.Questions,
+		Reason:       crudo.Reason,
+		Advertencias: normalizaciones,
+	}, true
 }
 
 // veredictoFinal decide el veredicto de una dimensión tras el parseo: los
