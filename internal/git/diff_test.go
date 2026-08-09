@@ -114,6 +114,79 @@ func TestCheckDiffLimitsEnRepositorioReal(t *testing.T) {
 	})
 }
 
+func TestCheckDiffLimitsIncluyeArchivosNoRastreados(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioPrueba(t, map[string]string{
+		"a.go": "package a\n",
+	})
+	t.Chdir(dir)
+
+	// Archivo nuevo sin stagear (untracked) de más de 400 líneas: debe verse
+	// como CRITICO, no como PEQUENO. Reproduce B1: "git diff HEAD" ignora los
+	// archivos sin rastrear.
+	contenido := strings.Repeat("// linea generada\n", 450)
+	if err := os.WriteFile(filepath.Join(dir, "nuevo.go"), []byte(contenido), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lineas, estado, err := CheckDiffLimits()
+	if err != nil {
+		t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+	}
+	if lineas != 450 {
+		t.Errorf("líneas = %d, esperado 450", lineas)
+	}
+	if estado != "CRITICO" {
+		t.Errorf("estado = %q, esperado CRITICO", estado)
+	}
+}
+
+func TestCheckDiffLimitsCoincideConObtenerArchivosModificados(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioPrueba(t, map[string]string{
+		"a.go": "package a\n",
+	})
+	t.Chdir(dir)
+
+	// Mezcla de archivo rastreado modificado y archivo nuevo sin rastrear:
+	// check y slice deben medir exactamente el mismo volumen (B2).
+	agregarLineas(t, "a.go", 100)
+	contenidoNuevo := strings.Repeat("// linea\n", 50)
+	if err := os.WriteFile(filepath.Join(dir, "nuevo.go"), []byte(contenidoNuevo), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lineas, _, err := CheckDiffLimits()
+	if err != nil {
+		t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+	}
+
+	archivos, err := ObtenerArchivosModificados()
+	if err != nil {
+		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+	}
+	sumaEsperada := 0
+	for _, a := range archivos {
+		sumaEsperada += a.Lineas
+	}
+
+	if lineas != sumaEsperada {
+		t.Errorf("CheckDiffLimits = %d, ObtenerArchivosModificados suma %d; deben coincidir", lineas, sumaEsperada)
+	}
+}
+
 func prepararRepositorioPrueba(t *testing.T, archivos map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
