@@ -59,6 +59,12 @@ func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass fu
 			case esConfigGigante(f):
 				plan.Lotes = append(plan.Lotes, loteGigante(f, mensajeAisladoDeps, numero))
 				numero++
+			case esDocumentacionExtensa(f):
+				// Un documento largo se aísla como la configuración: nunca
+				// entra por la rama de código masivo, que ofrecería dividirlo
+				// con IA aplicando SRP.
+				plan.Lotes = append(plan.Lotes, loteGigante(f, fmt.Sprintf(mensajeAisladoDocs, filepath.Base(f.Ruta)), numero))
+				numero++
 			case esCodigoGigante(f):
 				ok, err := confirmarBypass(f)
 				if err != nil {

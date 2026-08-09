@@ -21,6 +21,7 @@ const (
 	LimiteCodigoGigante = 500
 
 	mensajeAisladoDeps   = "chore(deps): track lock and auto-generated files"
+	mensajeAisladoDocs   = "docs(slice): isolate extensive document %s"
 	mensajeBypassGigante = "chore(slice): bypass IA for massive file %s"
 )
 
@@ -54,13 +55,23 @@ func archivosRastreados() ([]ArchivoModificado, error) {
 		return nil, err
 	}
 
+	return parsearNumstat(salida), nil
+}
+
+// parsearNumstat interpreta la salida de "git diff --numstat", que separa
+// añadidas/borradas/ruta con tabuladores. Se corta por los dos primeros
+// tabuladores (SplitN) en vez de por espacios, así una ruta con espacios se
+// conserva íntegra en el tercer campo. Para los renombrados, ese campo no es
+// una ruta utilizable tal cual: rutaDestino lo reduce a la ruta de destino,
+// la única que existe en el worktree y que "git add" acepta.
+func parsearNumstat(salida string) []ArchivoModificado {
 	var resultado []ArchivoModificado
 	for _, linea := range strings.Split(salida, "\n") {
-		linea = strings.TrimSpace(linea)
+		linea = strings.TrimRight(linea, "\r")
 		if linea == "" {
 			continue
 		}
-		campos := strings.Fields(linea)
+		campos := strings.SplitN(linea, "\t", 3)
 		if len(campos) < 3 {
 			continue
 		}
@@ -68,30 +79,53 @@ func archivosRastreados() ([]ArchivoModificado, error) {
 		if err != nil {
 			continue // Ignora binarios marcados con "-"
 		}
-		ruta := campos[2]
+		ruta := rutaDestino(campos[2])
 		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: addCount, Capa: ClasificarCapa(ruta)})
 	}
-	return resultado, nil
+	return resultado
 }
 
-// archivosNoRastreados detecta los archivos nuevos (??) y cuenta sus líneas físicas.
+// rutaDestino reduce el tercer campo del numstat a la ruta de destino cuando
+// describe un renombrado. Git emite los renombrados en dos formas:
+//
+//   - plana: "viejo archivo.go => nuevo archivo.go" — la cadena completa no
+//     es una ruta, solo la mitad derecha lo es.
+//   - abreviada con llaves: "dir/{viejo => sub1/nuevo}.go" — solo cambia el
+//     tramo entre llaves; hay que sustituirlo por su mitad derecha y
+//     conservar el prefijo y el sufijo comunes.
+//
+// Si el campo no describe un renombrado, se devuelve tal cual.
+func rutaDestino(campo string) string {
+	if apertura := strings.Index(campo, "{"); apertura != -1 {
+		if cierreRelativo := strings.Index(campo[apertura:], "}"); cierreRelativo != -1 {
+			cierre := apertura + cierreRelativo
+			contenido := campo[apertura+1 : cierre]
+			if partes := strings.SplitN(contenido, " => ", 2); len(partes) == 2 {
+				return campo[:apertura] + partes[1] + campo[cierre+1:]
+			}
+		}
+	}
+	if partes := strings.SplitN(campo, " => ", 2); len(partes) == 2 {
+		return partes[1]
+	}
+	return campo
+}
+
+// archivosNoRastreados detecta los archivos nuevos (??) y cuenta sus líneas
+// físicas. Usa "--porcelain -z" en vez de "--short": con "--short", git
+// entrecomilla cualquier ruta con espacios o caracteres especiales y escapa
+// los no ASCII (p. ej. una tilde) con secuencias octales, lo que rompía tanto
+// el recuento (archivo inexistente) como el "git add" posterior de slice.
+// "-z" separa los registros con NUL y emite las rutas en crudo, sin comillas
+// ni escapes: elimina la clase entera de errores en vez de parchear un caso.
 func archivosNoRastreados() ([]ArchivoModificado, error) {
-	salida, err := ejecutarGitSalida("status", "--short", "-uall")
+	salida, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
 	if err != nil {
 		return nil, err
 	}
 
 	var resultado []ArchivoModificado
-	for _, linea := range strings.Split(salida, "\n") {
-		linea = strings.TrimSpace(linea)
-		if !strings.HasPrefix(linea, "??") {
-			continue
-		}
-		campos := strings.Fields(linea)
-		if len(campos) < 2 {
-			continue
-		}
-		ruta := campos[1]
+	for _, ruta := range rutasNoRastreadas(salida) {
 		lineas, err := contarLineasFisicas(ruta)
 		if err != nil {
 			return nil, fmt.Errorf("no se pudo contar las líneas de %s: %w", ruta, err)
@@ -99,6 +133,24 @@ func archivosNoRastreados() ([]ArchivoModificado, error) {
 		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: lineas, Capa: ClasificarCapa(ruta)})
 	}
 	return resultado, nil
+}
+
+// rutasNoRastreadas extrae las rutas de los archivos no rastreados ("??") de
+// la salida de "git status --porcelain -z -uall". Cada registro va separado
+// por NUL; los no rastreados tienen un único registro con el prefijo "?? ".
+// Los renombrados de archivos rastreados generan un registro adicional sin
+// ese prefijo (la ruta antigua), que se ignora igual que cualquier otro
+// estado que no sea "??".
+func rutasNoRastreadas(salida string) []string {
+	var rutas []string
+	for _, registro := range strings.Split(salida, "\x00") {
+		ruta, esNoRastreado := strings.CutPrefix(registro, "?? ")
+		if !esNoRastreado {
+			continue
+		}
+		rutas = append(rutas, ruta)
+	}
+	return rutas
 }
 
 // ejecutarGitSalida ejecuta git y devuelve la salida estándar completa.
@@ -170,8 +222,32 @@ func esConfigGigante(f ArchivoModificado) bool {
 	return f.Capa == "config" && f.Lineas > limiteConfigGigante
 }
 
-// esCodigoGigante indica si un archivo de código fuente supera el límite de bypass interactivo.
+// esDocumentacionExtensa indica si un documento supera el límite de
+// aislamiento. Se aísla en su propio lote como la configuración, pero NUNCA
+// entra por la rama de código masivo: proponer un plan de división SRP sobre
+// prosa no tiene ningún sentido.
+func esDocumentacionExtensa(f ArchivoModificado) bool {
+	return ClaseArchivo(f.Ruta) == ClaseDocs && f.Lineas > limiteConfigGigante
+}
+
+// esAisladoEnSuLote indica si un archivo va solo en su lote en vez de
+// agruparse: lo generado siempre, y la configuración o la documentación
+// cuando superan el límite de aislamiento.
+func esAisladoEnSuLote(f ArchivoModificado) bool {
+	if ClaseArchivo(f.Ruta) == ClaseGenerada {
+		return true
+	}
+	return esConfigGigante(f) || esDocumentacionExtensa(f)
+}
+
+// esCodigoGigante indica si un archivo de código fuente supera el límite de
+// bypass interactivo. Solo aplica a código: la documentación y los archivos
+// generados se aíslan (esAisladoEnSuLote) en lugar de ofrecer refactorización.
 func esCodigoGigante(f ArchivoModificado) bool {
+	switch ClaseArchivo(f.Ruta) {
+	case ClaseDocs, ClaseGenerada, ClaseConfig:
+		return false
+	}
 	return f.Capa != "config" && f.Lineas > LimiteCodigoGigante
 }
 

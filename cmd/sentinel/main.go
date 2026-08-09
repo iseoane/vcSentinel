@@ -400,13 +400,19 @@ func generarScriptHook() string {
 }
 
 func ejecutarCheck(path string) {
-	totalLines, status, err := git.CheckDiffLimits()
+	volumen, err := git.MedirVolumen()
 	if err != nil {
 		fmt.Printf("❌ Error en Git: %v\n", err)
 		os.Exit(1)
 	}
+	status := volumen.Estado
 
-	fmt.Printf("📊 Líneas modificadas en este Worktree: %d [%s]\n", totalLines, status)
+	fmt.Printf("📊 Líneas añadidas de código en este Worktree: %d [%s]\n", volumen.Bloqueante, status)
+	if volumen.Informativo > 0 {
+		// La documentación y lo generado se informan pero no frenan: el
+		// guardián mide revisabilidad de código, no bytes.
+		fmt.Printf("📄 Además, %d líneas de documentación y archivos generados (no cuentan para el límite).\n", volumen.Informativo)
+	}
 	if status == "CRITICO" {
 		fmt.Println("⛔ ¡Peligro! El volumen supera las 400 líneas. Debes fragmentar con: sentinel slice")
 		os.Exit(1)
@@ -464,6 +470,11 @@ func construirDecisionGigante(path string) func(git.ArchivoModificado) (bool, er
 			fmt.Println("  3) Abortar la operación")
 			fmt.Print("Opción (1-3): ")
 
+			// Un EOF aquí (stdin cerrado) no hace bypass ni nada por defecto:
+			// se propaga como error y ConstruirPlanFragmentacion aborta la
+			// fragmentación. aprobarYEjecutar aplica el mismo criterio ante
+			// EOF (cancela, ver B9): mantén ambos diálogos coherentes ante un
+			// stdin cerrado si se modifica cualquiera de los dos.
 			respuesta, err := leerLinea()
 			if err != nil {
 				return false, fmt.Errorf("error leyendo la opción: %w", err)
@@ -742,6 +753,36 @@ func bucleElegirAdaptador(path string, plan *git.PlanFragmentacion) (agentadapte
 	}
 }
 
+// accion representa la decisión tomada en el menú de aprobación del plan de
+// fragmentación, separada de la lectura de stdin y de su ejecución para que
+// decidirAccion se pueda probar sin simular entrada ni tocar el plan ni git.
+type accion int
+
+const (
+	accionInvalida accion = iota
+	accionAprobar
+	accionRegenerar
+	accionEditar
+	accionCancelar
+)
+
+// decidirAccion traduce la línea leída del menú de aprobación a la acción
+// correspondiente. Es una función pura: no lee stdin ni tiene efectos.
+func decidirAccion(linea string) accion {
+	switch strings.ToLower(strings.TrimSpace(linea)) {
+	case "", "a", "aprobar":
+		return accionAprobar
+	case "r", "regenerar":
+		return accionRegenerar
+	case "e", "editar":
+		return accionEditar
+	case "c", "cancelar":
+		return accionCancelar
+	default:
+		return accionInvalida
+	}
+}
+
 // aprobarYEjecutar muestra el plan propuesto y dirige el flujo de aprobación:
 // aprobar todo, regenerar un mensaje con otro agente, editar un mensaje o
 // cancelar. Devuelve false si el usuario canceló sin commitear nada.
@@ -755,20 +796,31 @@ func aprobarYEjecutar(plan *git.PlanFragmentacion, path string) bool {
 		fmt.Println("  (C)ancelar sin commitear nada")
 		fmt.Print("Opción [A]: ")
 
+		// B9 (CRITICAL): un error de leerLinea (EOF con stdin cerrado — CI,
+		// nohup, una tubería que termina, un agente sin consola) NO es una
+		// respuesta del usuario y no puede tratarse como línea vacía: la
+		// línea vacía real (Enter, sin error) sí debe aprobar, porque es el
+		// default que anuncia el propio menú ("Opción [A]:"). Por eso la
+		// decisión de EOF se toma aquí, antes de decidirAccion — decidirAccion
+		// sigue siendo una función pura que solo clasifica texto, nunca debe
+		// conocer el estado de error de la lectura. Este mismo criterio
+		// (EOF cancela, no aprueba ni hace bypass) es el que ya aplicaba
+		// construirDecisionGigante; que ningún cambio futuro vuelva a
+		// separarlos.
 		linea, err := leerLinea()
 		if err != nil {
-			linea = ""
+			fmt.Println("\n⚠️ Entrada estándar cerrada (EOF). Operación cancelada, no se ha commiteado nada.")
+			return false
 		}
-		opcion := strings.ToLower(strings.TrimSpace(linea))
 
-		switch opcion {
-		case "", "a", "aprobar":
+		switch decidirAccion(linea) {
+		case accionAprobar:
 			return ejecutarPlanAprobado(plan)
-		case "r", "regenerar":
+		case accionRegenerar:
 			regenerarMensajeLoteInteractivo(plan, path)
-		case "e", "editar":
+		case accionEditar:
 			editarMensajeLoteInteractivo(plan)
-		case "c", "cancelar":
+		case accionCancelar:
 			return false
 		default:
 			fmt.Println("⚠️ Opción no válida. Usa A, R, E o C.")
