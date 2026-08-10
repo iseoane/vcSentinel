@@ -139,6 +139,8 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "uninit", "Reverte 'init' en este repositorio: retira las reglas de volumen, borra la config per-proyecto y elimina el hook pre-commit (solo si sigue siendo el que instaló VAS Sentinel).")
 	imprimirItemAyuda(&b, "check", "Audita el volumen de líneas modificadas del worktree activo.")
 	imprimirItemAyuda(&b, "slice", "Fragmenta las modificaciones en commits de máximo 400 líneas.")
+	imprimirItemAyuda(&b, "", "slice plan [--json] propone sin commitear (exit 3 si hay decisiones).")
+	imprimirItemAyuda(&b, "", "slice apply --plan X --answers Y ejecuta un plan ya aprobado.")
 	imprimirItemAyuda(&b, "review", "Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha.")
 	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
 	imprimirItemAyuda(&b, "lint", "Ejecuta los comandos de lint_commands de la configuración.")
