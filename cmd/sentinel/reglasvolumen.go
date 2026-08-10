@@ -5,17 +5,26 @@ import (
 	"strings"
 )
 
-// patronReglasVolumen reconoce el bloque reglasVolumen con cualquier mezcla de
-// finales de línea. Nace de la propia constante, así que no puede
-// desincronizarse de ella: si el bloque cambia, el patrón cambia con él.
-//
-// Es la corrección de B10. Comparar con strings.Contains contra una constante
-// que solo usa \n fallaba en los archivos reales de Windows, que `* text=auto`
-// deja con finales mixtos: init dejaba de ser idempotente y uninit no podía
-// retirar un bloque que no reconocía. Se normaliza la COMPARACIÓN, nunca el
-// archivo del usuario: reescribir sus finales de línea para poder compararlo
-// sería un daño mayor que el defecto.
-var patronReglasVolumen = regexp.MustCompile(patronDeBloque(reglasVolumen))
+// patronReglasVolumenMarcado reconoce el bloque delimitado por
+// marcadorInicio/marcadorFin sea cual sea el texto interior (redacción
+// distinta entre versiones) y sea cual sea la mezcla de finales de línea.
+// Es la corrección de B12: antes de esto, init/uninit comparaban contra el
+// texto literal exacto de reglasVolumen, así que un cambio de redacción entre
+// versiones dejaba bloques huérfanos que uninit no podía retirar y provocaba
+// que init inyectara un segundo bloque en vez de reconocer el existente.
+var patronReglasVolumenMarcado = regexp.MustCompile(patronDeBloqueMarcado())
+
+// patronReglasVolumenLegado reconoce el bloque EXACTO (sin marcadores) que
+// las versiones anteriores a los marcadores inyectaban. Se conserva solo para
+// detectar y retirar/migrar esos bloques ya existentes; ninguna versión desde
+// esta vuelve a escribir en este formato.
+var patronReglasVolumenLegado = regexp.MustCompile(patronDeBloque(reglasVolumenLegado))
+
+func patronDeBloqueMarcado() string {
+	cabecera := patronDeBloque("\n" + marcadorInicio + "\n")
+	cola := patronDeBloque("\n" + marcadorFin + "\n")
+	return cabecera + `(?s:.*?)` + cola
+}
 
 func patronDeBloque(bloque string) string {
 	lineas := strings.Split(strings.ReplaceAll(bloque, "\r\n", "\n"), "\n")
@@ -23,19 +32,54 @@ func patronDeBloque(bloque string) string {
 	for _, linea := range lineas {
 		partes = append(partes, regexp.QuoteMeta(linea))
 	}
+	if len(partes) > 0 && partes[0] == "" {
+		// El bloque empieza con salto de línea (todos los que maneja este
+		// archivo lo hacen). Ese salto separa el bloque del contenido previo,
+		// pero si el bloque es lo primero del archivo no hay nada antes que
+		// lo preceda: versiones antiguas de init llegaron a escribirlo así en
+		// archivos nuevos (p. ej. .claudecode.md de este propio repo, con dos
+		// copias del bloque legado pegadas desde el byte 0). Exigir siempre
+		// "\r?\n" antes dejaba esa primera copia sin reconocer y, por tanto,
+		// sin poder retirarla ni migrarla.
+		return `(?:\A|\r?\n)` + strings.Join(partes[1:], "\r?\n")
+	}
 	return strings.Join(partes, "\r?\n")
 }
 
-// contieneReglasVolumen indica si el archivo ya trae el bloque, sea cual sea
-// la mezcla de finales de línea con la que esté escrito.
+// contieneReglasVolumen indica si el archivo ya trae el bloque, marcado (de
+// esta versión o de una futura que comparta los marcadores) o legado (de una
+// versión anterior a los marcadores), sea cual sea la mezcla de finales de
+// línea con la que esté escrito.
 func contieneReglasVolumen(contenido string) bool {
-	return patronReglasVolumen.MatchString(contenido)
+	return patronReglasVolumenMarcado.MatchString(contenido) || patronReglasVolumenLegado.MatchString(contenido)
 }
 
-// quitarReglasVolumen retira TODAS las apariciones del bloque y deja el resto
-// del archivo byte a byte como estaba, incluidos sus finales de línea.
+// quitarReglasVolumen retira TODAS las apariciones del bloque, marcado o
+// legado, y deja el resto del archivo byte a byte como estaba, incluidos sus
+// finales de línea.
 func quitarReglasVolumen(contenido string) string {
-	return patronReglasVolumen.ReplaceAllString(contenido, "")
+	contenido = quitarTodasLasCoincidencias(patronReglasVolumenMarcado, contenido)
+	return quitarTodasLasCoincidencias(patronReglasVolumenLegado, contenido)
+}
+
+// quitarTodasLasCoincidencias aplica el patrón hasta que deja de cambiar algo
+// el resultado (punto fijo). Una sola pasada de ReplaceAllString no basta
+// cuando dos copias del bloque están pegadas con un único salto de línea de
+// separación (el caso real de .claudecode.md, escrito por un binario tan
+// antiguo que ni siquiera anteponía su propio salto de línea): la primera
+// copia consume ese único "\r?\n" como su propio final, y a la segunda copia
+// ya no le queda un salto de línea delante para que su propio patrón la
+// reconozca en la misma pasada. Repetir hasta el punto fijo lo resuelve: tras
+// quitar la primera copia, la segunda queda al principio del texto resultante
+// y la rama "\A" del patrón la reconoce en la siguiente vuelta.
+func quitarTodasLasCoincidencias(patron *regexp.Regexp, contenido string) string {
+	for {
+		siguiente := patron.ReplaceAllString(contenido, "")
+		if siguiente == contenido {
+			return contenido
+		}
+		contenido = siguiente
+	}
 }
 
 // reglasVolumenPara adapta el bloque al final de línea que ya domina en el

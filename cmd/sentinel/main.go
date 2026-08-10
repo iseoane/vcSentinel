@@ -18,10 +18,27 @@ import (
 
 var version = "dev"
 
-// reglasVolumen es el bloque exacto que 'init' inyecta en AGENTS.md, CLAUDE.md
-// y .claudecode.md; 'uninit' busca este mismo texto para retirarlo, así que
-// ambos deben compartirlo literalmente.
-const reglasVolumen = "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
+// marcadorInicio y marcadorFin delimitan el bloque de reglas de volumen de
+// forma estable entre versiones: init/uninit lo detectan y lo retiran por
+// estos marcadores, no por el texto interior, así una futura versión puede
+// reformular la redacción sin dejar de ser idempotente ni dejar huérfanos.
+const marcadorInicio = "<!-- vas-sentinel:begin -->"
+const marcadorFin = "<!-- vas-sentinel:end -->"
+
+// cuerpoReglasVolumen es el texto visible de la regla, libre de cambiar de
+// redacción entre versiones: la detección no depende de él.
+const cuerpoReglasVolumen = "## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
+
+// reglasVolumen es el bloque que 'init' inyecta hoy en AGENTS.md, CLAUDE.md y
+// .claudecode.md, envuelto en marcadorInicio/marcadorFin.
+const reglasVolumen = "\n" + marcadorInicio + "\n" + cuerpoReglasVolumen + marcadorFin + "\n"
+
+// reglasVolumenLegado es el bloque EXACTO (sin marcadores) que todas las
+// versiones anteriores a esta inyectaban. Se congela tal cual para siempre:
+// nunca se vuelve a escribir en este formato, solo se reconoce y se retira,
+// para poder limpiar y migrar los archivos que ya lo tienen de versiones
+// previas (incluidos los de este propio repo).
+const reglasVolumenLegado = "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -323,20 +340,35 @@ func ejecutarUninit(path string) {
 	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
 }
 
-// inyectarReglasDeArchivo añade el bloque reglasVolumen al final del archivo
-// SOLO si todavía no está presente (init idempotente): ejecutar init dos veces
-// no duplica la inserción. Devuelve si escribió algo. El archivo inexistente
-// se crea con el bloque.
+// inyectarReglasDeArchivo añade el bloque de reglas al final del archivo SOLO
+// si todavía no está presente en formato marcado (init idempotente): ejecutar
+// init dos veces no duplica la inserción, sea cual sea la versión que la
+// escribió. Si el archivo trae el bloque legado (sin marcadores, de una
+// versión anterior a esta), lo migra: retira TODAS sus apariciones —repara
+// también los duplicados que dejaron versiones anteriores no idempotentes— y
+// escribe un único bloque marcado. El archivo inexistente se crea con el
+// bloque. Devuelve si escribió algo.
 func inyectarReglasDeArchivo(ruta string) (bool, error) {
 	datos, err := os.ReadFile(ruta)
-	if err == nil && contieneReglasVolumen(string(datos)) {
-		// El bloque ya está: no tocar el archivo (init repetido o archivo de
-		// otra fuente que ya lo documenta). La comparación tolera finales de
-		// línea mixtos, ver reglasvolumen.go (B10).
-		return false, nil
-	}
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
+	}
+	contenido := string(datos)
+
+	if patronReglasVolumenMarcado.MatchString(contenido) {
+		// Ya tiene el bloque marcado, sea de esta versión o de una futura que
+		// comparta los mismos marcadores: nada que hacer.
+		return false, nil
+	}
+
+	if patronReglasVolumenLegado.MatchString(contenido) {
+		// quitarReglasVolumen (no un ReplaceAllString directo) porque retira
+		// hasta el punto fijo: necesario cuando dos copias legadas están
+		// pegadas con un único salto de línea de separación, ver
+		// quitarTodasLasCoincidencias en reglasvolumen.go.
+		sinLegado := quitarReglasVolumen(contenido)
+		nuevo := sinLegado + reglasVolumenPara(sinLegado)
+		return true, os.WriteFile(ruta, []byte(nuevo), 0644)
 	}
 
 	f, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -344,7 +376,7 @@ func inyectarReglasDeArchivo(ruta string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(reglasVolumenPara(string(datos))); err != nil {
+	if _, err := f.WriteString(reglasVolumenPara(contenido)); err != nil {
 		return false, err
 	}
 	return true, nil
