@@ -7,15 +7,13 @@
 package validation
 
 import (
-	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentshell"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
@@ -94,7 +92,7 @@ func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]
 	ejecutar := opts.Ejecutar
 	if ejecutar == nil {
 		ejecutar = func(comando string) (int, string, error) {
-			return ejecutarShellCombinado(opts.Worktree, comando)
+			return agentshell.Ejecutar(opts.Worktree, comando)
 		}
 	}
 
@@ -224,7 +222,7 @@ func delegarSinCapabilities(opts OpcionesEjecucion) ([]ValidationRun, error) {
 	if err != nil {
 		return nil, nil
 	}
-	tested, err := parsearContratoTested(salida)
+	tested, err := agentshell.ParsearContratoTested(salida)
 	if err != nil {
 		return nil, nil
 	}
@@ -250,58 +248,9 @@ func promptDelegacion() string {
 		"Si no puedes ejecutar las pruebas, devuelve SOLO: unavailable"
 }
 
-// parsearContratoTested extrae los comandos de la línea "tested: ..." de la
-// salida del agente y rechaza unavailable / ausencia de contrato. No se
-// importa de internal/ops porque allí no está exportada: mismo criterio de
-// parseo, duplicado deliberadamente para no acoplar los dos paquetes.
-func parsearContratoTested(salida string) ([]string, error) {
-	if strings.Contains(strings.ToLower(salida), "unavailable") {
-		return nil, errors.New("el agente no pudo ejecutar las pruebas (unavailable)")
-	}
-	for _, linea := range strings.Split(salida, "\n") {
-		recortada := strings.TrimSpace(linea)
-		idx := strings.Index(recortada, "tested:")
-		if idx < 0 {
-			continue
-		}
-		resto := strings.TrimSpace(recortada[idx+len("tested:"):])
-		var comandos []string
-		for _, c := range strings.Split(resto, ";") {
-			c = strings.TrimSpace(c)
-			if c != "" {
-				comandos = append(comandos, c)
-			}
-		}
-		if len(comandos) == 0 {
-			return nil, errors.New("contrato tested vacío")
-		}
-		return comandos, nil
-	}
-	return nil, errors.New("la salida no contiene un contrato tested")
-}
-
-// ejecutarShellCombinado lanza un comando por la shell del sistema en el
-// worktree y devuelve exit code + salida combinada (stdout+stderr). Mismo
-// criterio de confianza que internal/ops.ejecutarShell: los comandos vienen
-// del vassentinel.yml del usuario, no se sanitizan aquí.
-func ejecutarShellCombinado(worktree, comando string) (int, string, error) {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", comando)
-	} else {
-		cmd = exec.Command("sh", "-c", comando)
-	}
-	if worktree != "" {
-		cmd.Dir = worktree
-	}
-	salidaBytes, err := cmd.CombinedOutput()
-	salida := string(salidaBytes)
-	if err == nil {
-		return 0, salida, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), salida, nil
-	}
-	return -1, salida, err
-}
+// El parseo del contrato tested y la ejecución por shell con salida
+// combinada viven en internal/agentshell: son la misma lógica, byte a byte
+// en el caso del parseo, que ya usaba internal/ops.Verificar. Antes de esta
+// extracción cada paquete tenía su propia copia; ahora ambos importan
+// internal/agentshell (sin dependencias de ops ni de validation, así que no
+// se crea un ciclo).

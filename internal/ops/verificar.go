@@ -4,11 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentshell"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
@@ -167,57 +166,22 @@ func promptVerificacion() string {
 }
 
 // parsearContratoTested extrae los comandos de la línea "tested: ..." de la
-// salida del agente y rechaza unavailable / ausencia de contrato.
+// salida del agente y rechaza unavailable / ausencia de contrato. Delega en
+// internal/agentshell (compartido con internal/validation) para no duplicar
+// el parseo; se conserva este nombre no exportado porque los tests de este
+// paquete lo llaman directamente.
 func parsearContratoTested(salida string) ([]string, error) {
-	if strings.Contains(strings.ToLower(salida), "unavailable") {
-		return nil, errors.New("el agente no pudo ejecutar las pruebas (unavailable)")
-	}
-	for _, linea := range strings.Split(salida, "\n") {
-		recortada := strings.TrimSpace(linea)
-		idx := strings.Index(recortada, "tested:")
-		if idx < 0 {
-			continue
-		}
-		resto := strings.TrimSpace(recortada[idx+len("tested:"):])
-		var comandos []string
-		for _, c := range strings.Split(resto, ";") {
-			c = strings.TrimSpace(c)
-			if c != "" {
-				comandos = append(comandos, c)
-			}
-		}
-		if len(comandos) == 0 {
-			return nil, errors.New("contrato tested vacío")
-		}
-		return comandos, nil
-	}
-	return nil, errors.New("la salida no contiene un contrato tested")
+	return agentshell.ParsearContratoTested(salida)
 }
 
 // ejecutarShell lanza un comando a través de la shell del sistema en el
 // worktree y devuelve su exit code (0 en éxito; -1 si no fue un fallo del
-// comando sino de la ejecución). Los comandos vienen del vassentinel.yml del
-// usuario: ejecutar con shell es el diseño (confianza equivalente al propio
-// yml); no sanitizar aquí.
+// comando sino de la ejecución). Delega en internal/agentshell.Ejecutar
+// (compartido con internal/validation) y descarta la salida combinada: este
+// paquete solo necesita el exit code para el modo determinista.
 func ejecutarShell(worktree, comando string) (int, error) {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", comando)
-	} else {
-		cmd = exec.Command("sh", "-c", comando)
-	}
-	if worktree != "" {
-		cmd.Dir = worktree
-	}
-	err := cmd.Run()
-	if err == nil {
-		return 0, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), nil
-	}
-	return -1, err
+	exit, _, err := agentshell.Ejecutar(worktree, comando)
+	return exit, err
 }
 
 // registrarEventoPrVerify persiste el evento pr-verify (§5) con el detail del
