@@ -88,13 +88,16 @@ func ejecutarReview(worktree string, args []string) {
 			dims = review.DimensionesParaArchivos(archivos)
 		}
 
+		// El recolector anota qué agente atendió cada dimensión para que la
+		// ficha registre el autor real y no el perfil pedido (H4/T0.2).
+		autoria := &recolectorAutoria{}
 		fabrica := func(dimension string) (review.AuditorAgente, string, error) {
 			perfil := config.ResolverPerfil(cfg, dimension, flags.profile)
 			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 			if err != nil {
 				return nil, perfil.Nombre, err
 			}
-			return adapter, perfil.Nombre, nil
+			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, perfil.Nombre, nil
 		}
 
 		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, review.OpcionesAuditoria{
@@ -114,7 +117,16 @@ func ejecutarReview(worktree string, args []string) {
 			modelo = "default"
 		}
 		fixed := review.RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto)
-		revision := review.Revision{At: time.Now(), Result: resultado.Veredicto, Fixed: fixed, Dims: review.DimsResultadosParaFicha(resultado.Dims)}
+		efectivo := autoria.consolidar()
+		revision := review.Revision{
+			At:     time.Now(),
+			Result: resultado.Veredicto,
+			Fixed:  fixed,
+			Agent:  efectivo.Binario,
+			Model:  efectivo.Modelo,
+			Effort: efectivo.Esfuerzo,
+			Dims:   review.DimsResultadosParaFicha(resultado.Dims),
+		}
 		if err := ledger.GuardarRevision(sha, mensaje, calcularBucket(archivos), modelo, revision); err != nil {
 			fmt.Printf("⚠️ %s: no se pudo guardar la ficha: %v\n", sha[:8], err)
 		}

@@ -16,10 +16,18 @@ import (
 // append-only: re-auditar el mismo SHA añade una revisión, nunca pisa la
 // anterior. El veredicto mostrado es el de la última revisión. Fixed indica
 // que esta revisión salió sin críticos cuando la anterior estaba en block.
+// Agent, Model y Effort identifican al agente que REALMENTE atendió la
+// revisión, no el perfil que se le pidió (H4/T0.2): con `active_agent: auto`
+// la cadena puede caer a otro binario y el veredicto quedaría sin autor. Son
+// opcionales: una ficha v1 escrita antes de T0.2 no los trae y se sigue
+// leyendo sin error.
 type Revision struct {
 	At     time.Time         `json:"at"`
 	Result string            `json:"result"`
 	Fixed  bool              `json:"fixed,omitempty"`
+	Agent  string            `json:"agent,omitempty"`
+	Model  string            `json:"model,omitempty"`
+	Effort string            `json:"effort,omitempty"`
 	Dims   []DimensionResult `json:"dims"`
 }
 

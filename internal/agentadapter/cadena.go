@@ -19,6 +19,9 @@ type adaptadorCompleto interface {
 // AdapterRefactor y AdaptadorPrompt.
 type CadenaAdaptador struct {
 	adaptadores []adaptadorCompleto
+	// registro anota qué hijo atendió la última petición, para que la ficha
+	// de auditoría pueda registrar el autor real y no el perfil pedido (H4).
+	registro registroEfectivo
 }
 
 // EjecutarPrompt prueba cada adaptador en orden y devuelve la primera salida
@@ -80,6 +83,8 @@ func (c *CadenaAdaptador) primeroExitoso(intentar func(adaptadorCompleto) (strin
 	for _, adaptador := range c.adaptadores {
 		salida, err := intentar(adaptador)
 		if err == nil {
+			// Solo el que respondió queda registrado como autor.
+			c.registro.registrar(adaptador)
 			return salida, nil
 		}
 		errores = append(errores, fmt.Sprintf("%s: %v", nombreAdaptador(adaptador), err))
