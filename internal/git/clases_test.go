@@ -123,7 +123,7 @@ func TestArchivoGiganteDeDocumentacionNoOfreceRefactor(t *testing.T) {
 	if esCodigoGigante(documento) {
 		t.Error("un documento de 1792 líneas no debe tratarse como código masivo")
 	}
-	if !esAisladoEnSuLote(documento) {
+	if !esDocumentacionExtensa(documento) {
 		t.Error("un documento largo debe aislarse en su propio lote, como los archivos de config")
 	}
 

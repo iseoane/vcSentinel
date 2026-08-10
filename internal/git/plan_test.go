@@ -39,6 +39,34 @@ func TestConstruirPlanFragmentacionAgrupaPorCapasEnOrden(t *testing.T) {
 	}
 }
 
+// TestConstruirPlanFragmentacionNoMezclaClases cubre T0.12: un .go y un .md
+// que caen en la misma capa ("backend", el caso por defecto de
+// ClasificarCapa para un .md) no deben terminar en el mismo lote. Antes de
+// esta tarea, agruparPorCapas solo miraba la capa y los mezclaba, como pasó
+// de verdad en el commit 3160133 (código y doc de diseño en un solo commit).
+func TestConstruirPlanFragmentacionNoMezclaClases(t *testing.T) {
+	archivos := []ArchivoModificado{
+		{Ruta: "cmd/main.go", Lineas: 50, Capa: "backend"},
+		{Ruta: "docs/guia.md", Lineas: 50, Capa: "backend"},
+	}
+	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	if err != nil {
+		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+	}
+	if len(plan.Lotes) != 2 {
+		t.Fatalf("se esperaban 2 lotes (uno por clase), obtuve %d", len(plan.Lotes))
+	}
+	for _, lote := range plan.Lotes {
+		clases := make(map[string]bool)
+		for _, ruta := range lote.Rutas {
+			clases[ClaseArchivo(ruta)] = true
+		}
+		if len(clases) > 1 {
+			t.Errorf("lote #%d mezcla clases: rutas %v", lote.Numero, lote.Rutas)
+		}
+	}
+}
+
 func TestConstruirPlanFragmentacionMantieneAgrupacionPorLimites(t *testing.T) {
 	archivos := []ArchivoModificado{
 		{Ruta: "a.go", Lineas: 200, Capa: "backend"},
@@ -78,9 +106,24 @@ func TestConstruirPlanFragmentacionAislaConfigGigante(t *testing.T) {
 	if len(plan.Lotes) != 2 {
 		t.Fatalf("se esperaban 2 lotes (gigante + normal), obtuve %d", len(plan.Lotes))
 	}
-	gigante := plan.Lotes[0]
+	// Desde T0.12 los lotes se agrupan primero por clase de archivo
+	// (ClaseArchivo) en el orden config → source → test → docs → generated.
+	// "package-lock.json" es clase "generated" (esGenerado por sufijo
+	// "-lock.json"), aunque su capa de negocio sea "config"; por eso el lote
+	// normal de código (clase "source") sale antes que el gigante aislado.
+	normal := plan.Lotes[0]
+	if normal.EsGigante || normal.Numero != 1 {
+		t.Errorf("lote normal = %+v", normal)
+	}
+	if normal.Mensaje != "" {
+		t.Errorf("el mensaje del lote normal debe nacer vacío y generarse luego, obtuve %q", normal.Mensaje)
+	}
+	if normal.MensajeDeterminista {
+		t.Errorf("el lote normal no debería nacer determinista")
+	}
+	gigante := plan.Lotes[1]
 	if !gigante.EsGigante {
-		t.Errorf("el primer lote debería ser gigante, obtuve %+v", gigante)
+		t.Errorf("el segundo lote debería ser gigante, obtuve %+v", gigante)
 	}
 	if gigante.Mensaje != mensajeAisladoDeps {
 		t.Errorf("mensaje gigante = %q, esperado %q", gigante.Mensaje, mensajeAisladoDeps)
@@ -93,16 +136,6 @@ func TestConstruirPlanFragmentacionAislaConfigGigante(t *testing.T) {
 	}
 	if gigante.LineasTotales != 450 {
 		t.Errorf("líneas gigante = %d, esperado 450", gigante.LineasTotales)
-	}
-	normal := plan.Lotes[1]
-	if normal.EsGigante || normal.Numero != 2 {
-		t.Errorf("lote normal = %+v", normal)
-	}
-	if normal.Mensaje != "" {
-		t.Errorf("el mensaje del lote normal debe nacer vacío y generarse luego, obtuve %q", normal.Mensaje)
-	}
-	if normal.MensajeDeterminista {
-		t.Errorf("el lote normal no debería nacer determinista")
 	}
 }
 
@@ -306,8 +339,10 @@ func TestAplicarMensajesAutomaticos(t *testing.T) {
 	if len(plan.Lotes) != 2 {
 		t.Fatalf("se esperaban 2 lotes (gigante + normal), obtuve %d", len(plan.Lotes))
 	}
-	gigante := plan.Lotes[0]
-	normal := plan.Lotes[1]
+	// Igual que en TestConstruirPlanFragmentacionAislaConfigGigante: por clase,
+	// "a.go" (source) sale antes que "package-lock.json" (generated).
+	normal := plan.Lotes[0]
+	gigante := plan.Lotes[1]
 	GenerarMensajesLotes(plan, adaptadorPrueba{})
 	if normal.MensajeDeterminista {
 		t.Fatal("precondición: el lote normal debería ser no determinista antes de aplicar automáticos")

@@ -296,6 +296,113 @@ func TestObtenerUltimaRelease(t *testing.T) {
 	})
 }
 
+// TestPreguntarTokenGitHub_LeeSinEco comprueba que el token entra por la
+// costura de inyección (sin pasar por bufio.Stdin en el test) y que jamás
+// aparece en la salida estándar del proceso.
+func TestPreguntarTokenGitHub_LeeSinEco(t *testing.T) {
+	t.Run("token inyectado se resuelve sin aparecer en stdout", func(t *testing.T) {
+		tokenOriginal := os.Getenv("GITHUB_TOKEN")
+		os.Unsetenv("GITHUB_TOKEN")
+		defer os.Setenv("GITHUB_TOKEN", tokenOriginal)
+
+		terminalOriginal := esTerminalStdin
+		esTerminalStdin = func() bool { return true }
+		defer func() { esTerminalStdin = terminalOriginal }()
+
+		const tokenFalso = "token-secreto-xyz-789"
+		lectorOriginal := leerTokenSinEco
+		leerTokenSinEco = func() (string, error) { return tokenFalso, nil }
+		defer func() { leerTokenSinEco = lectorOriginal }()
+
+		stdoutOriginal := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("no se pudo crear el pipe: %v", err)
+		}
+		os.Stdout = w
+
+		token := preguntarTokenGitHub()
+
+		w.Close()
+		os.Stdout = stdoutOriginal
+		salida, _ := io.ReadAll(r)
+
+		if token != tokenFalso {
+			t.Errorf("token = %q, esperado %q", token, tokenFalso)
+		}
+		if os.Getenv("GITHUB_TOKEN") != tokenFalso {
+			t.Errorf("GITHUB_TOKEN no quedó fijado con el token inyectado")
+		}
+		if strings.Contains(string(salida), tokenFalso) {
+			t.Errorf("el token no debe aparecer en la salida estandar, salida: %q", salida)
+		}
+	})
+
+	t.Run("error del lector no fija token y devuelve vacio", func(t *testing.T) {
+		tokenOriginal := os.Getenv("GITHUB_TOKEN")
+		os.Unsetenv("GITHUB_TOKEN")
+		defer os.Setenv("GITHUB_TOKEN", tokenOriginal)
+
+		terminalOriginal := esTerminalStdin
+		esTerminalStdin = func() bool { return true }
+		defer func() { esTerminalStdin = terminalOriginal }()
+
+		lectorOriginal := leerTokenSinEco
+		leerTokenSinEco = func() (string, error) { return "", errors.New("sin terminal disponible") }
+		defer func() { leerTokenSinEco = lectorOriginal }()
+
+		if token := preguntarTokenGitHub(); token != "" {
+			t.Errorf("token = %q, esperado vacio ante error del lector", token)
+		}
+		if os.Getenv("GITHUB_TOKEN") != "" {
+			t.Errorf("GITHUB_TOKEN no debe quedar fijado cuando el lector falla")
+		}
+	})
+
+	t.Run("mecanismo real falla cerrado cuando stdin no es una terminal", func(t *testing.T) {
+		// No inyecta leerTokenSinEco: ejercita leerTokenSinEcoDelSistema real
+		// (term.ReadPassword) contra un stdin que no es una terminal, que es
+		// justo el caso que antes leía con eco en silencio en vez de fallar.
+		stdinOriginal := os.Stdin
+		lector, escritor, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("no se pudo crear el pipe: %v", err)
+		}
+		os.Stdin = lector
+		defer func() { os.Stdin = stdinOriginal }()
+
+		if _, err := escritor.WriteString("token-que-no-debe-leerse\n"); err != nil {
+			t.Fatalf("no se pudo escribir en el pipe: %v", err)
+		}
+		escritor.Close()
+
+		token, err := leerTokenSinEcoDelSistema()
+		if err == nil {
+			t.Fatalf("se esperaba error al no poder desactivar el eco, token=%q", token)
+		}
+		if token != "" {
+			t.Errorf("token = %q, se esperaba vacio cuando falla el mecanismo sin eco", token)
+		}
+	})
+
+	t.Run("sin terminal interactiva no invoca al lector", func(t *testing.T) {
+		terminalOriginal := esTerminalStdin
+		esTerminalStdin = func() bool { return false }
+		defer func() { esTerminalStdin = terminalOriginal }()
+
+		lectorOriginal := leerTokenSinEco
+		invocado := false
+		leerTokenSinEco = func() (string, error) { invocado = true; return "no-deberia-usarse", nil }
+		defer func() { leerTokenSinEco = lectorOriginal }()
+
+		preguntarTokenGitHub()
+
+		if invocado {
+			t.Errorf("no debe invocarse el lector sin terminal interactiva")
+		}
+	})
+}
+
 func TestElegirAssetParaSO(t *testing.T) {
 	nombre := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
