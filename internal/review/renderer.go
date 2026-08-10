@@ -163,6 +163,15 @@ type VerificacionPlantilla struct {
 	Comandos []ComandoVerificado // exit codes reales por comando
 	Tested   []string            // contrato tested del agente (delegación)
 	Motivo   string              // por qué no se ejecutó (omisión/configuración)
+
+	// Validacion son los exit codes reales de internal/validation (T1.8),
+	// ejecutados ANTES de la revisión semántica de la rama. Es una naturaleza
+	// de evidencia distinta de Comandos (que traduce ops.Verificar, la
+	// verificación post-hoc de tests/build): misma FORMA (comando + exit code
+	// real, por eso se reusa ComandoVerificado sin duplicar el tipo), pero
+	// distinto ORIGEN — de ahí el campo propio y su propia sección en la
+	// plantilla, nunca mezclada con Comandos.
+	Validacion []ComandoVerificado
 }
 
 // estaPendiente decide si una ficha aún aporta al veredicto de la rama. Una
@@ -389,6 +398,25 @@ func seccionVerificacion(v VerificacionPlantilla) string {
 	return b.String()
 }
 
+// seccionValidacion describe la validación previa (T1.8, internal/validation):
+// exit codes reales de las capabilities ejecutadas ANTES de la revisión
+// semántica. Nunca inventa un PASS: sin comandos, lo dice explícitamente en
+// vez de omitirlo en silencio (misma regla de oro que seccionVerificacion).
+func seccionValidacion(cmds []ComandoVerificado) string {
+	if len(cmds) == 0 {
+		return "- ⚪ Sin comandos de validación configurados.\n"
+	}
+	var b strings.Builder
+	for _, c := range cmds {
+		icono := "✅"
+		if c.Exit != 0 {
+			icono = "❌"
+		}
+		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icono, c.Comando, c.Exit))
+	}
+	return b.String()
+}
+
 // BloqueantesDeRama devuelve los hallazgos CRITICAL de la última revisión de
 // cada ficha: son los bloqueos del gate de pr create (guía §12.4). Las fichas
 // corregidas (FixedIn) no aportan bloqueantes: su block ya fue resuelto en un
@@ -421,6 +449,11 @@ func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 func RenderPlantillaPr(fichas []Ficha, overview *ResultadoOverview, verificacion VerificacionPlantilla, version string) string {
 	var b strings.Builder
 	b.WriteString(lineaRiesgo(fichas) + "\n\n")
+
+	// Validación previa (T1.8): lo que corrió ANTES de auditar, en su propia
+	// sección — nunca mezclada con la verificación post-hoc de más abajo.
+	b.WriteString("## Validación\n")
+	b.WriteString(seccionValidacion(verificacion.Validacion) + "\n")
 
 	b.WriteString("## Rationale\n")
 	if overview != nil {

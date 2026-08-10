@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
 // verboPr decide la rama del subcomando pr: "review" y "create" son verbos
@@ -251,12 +253,16 @@ func ejecutarPrReview(worktree string, args []string) {
 // flagsPrCreate son las opciones de pr create.
 type flagsPrCreate struct {
 	base    string
-	chainPR bool // --chain-pr: publicar la rama completa aunque sea descomunal
-	force   bool // --force: superar el gate de block
+	chainPR bool   // --chain-pr: publicar la rama completa aunque sea descomunal
+	force   bool   // --force: superar la validación en rojo (T1.8: el único gate que bloquea)
+	reason  string // --reason: motivo explícito y obligatorio junto a --force
 }
 
 // parsearFlagsPrCreate parsea las opciones de pr create con la misma sintaxis
-// simple de pares "flag valor" que el resto de subcomandos.
+// simple de pares "flag valor" que el resto de subcomandos. --force exige
+// --reason (T1.8): con el veredicto semántico ya en advisory, la validación es
+// el único gate real que se puede forzar, y forzarla sin motivo no queda
+// registrado en el evento de forma útil.
 func parsearFlagsPrCreate(args []string) (flagsPrCreate, error) {
 	var flags flagsPrCreate
 	for i := 0; i < len(args); i++ {
@@ -272,20 +278,35 @@ func parsearFlagsPrCreate(args []string) (flagsPrCreate, error) {
 			flags.chainPR = true
 		case "--force":
 			flags.force = true
+		case "--reason":
+			if i+1 >= len(args) {
+				return flags, fmt.Errorf("--reason requiere un valor (motivo del --force)")
+			}
+			i++
+			flags.reason = args[i]
 		default:
 			return flags, fmt.Errorf("opción desconocida para pr create: %s", arg)
 		}
+	}
+	if flags.force && flags.reason == "" {
+		return flags, fmt.Errorf("--force requiere --reason con el motivo explícito de por qué se supera la validación")
 	}
 	return flags, nil
 }
 
 // detalleEventoPrCreate construye el detail del evento pr-create (guía §13):
-// acta de publicación con pr_url, fallback y chain_pr.
-func detalleEventoPrCreate(prURL string, fallback, chain bool) (string, error) {
+// acta de publicación con pr_url, fallback y chain_pr. Amplía T1.8: force
+// registra si se superó la validación en rojo, y motivo (solo si force) deja
+// constancia explícita de por qué — la excepción nunca queda en silencio.
+func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo string) (string, error) {
 	detalle := map[string]any{
 		"pr_url":   prURL,
 		"fallback": fallback,
 		"chain_pr": chain,
+		"force":    force,
+	}
+	if force {
+		detalle["motivo"] = motivo
 	}
 	datos, err := json.Marshal(detalle)
 	if err != nil {
@@ -470,27 +491,110 @@ func publicarPRCon(worktree, rutaPlantilla, base string, opciones opcionesPublic
 	return "", true, nil
 }
 
-// gateBlock decide si el gate de block permite publicar (guía §12.4): block
-// sin superar -> no publica y devuelve los hallazgos CRITICAL que lo causan;
-// --force lo supera explícitamente. Devuelve los hallazgos ESTRUCTURADOS: el
-// formateo es responsabilidad del CLI, no del gate.
-func gateBlock(fichas []review.Ficha, force bool) (permitido bool, bloqueantes []review.ReviewFinding) {
-	if review.VeredictoDeRama(fichas) != review.VerdictBlock || force {
-		return true, nil
+// avisoSemantico decide si el veredicto semántico de la rama merece un aviso
+// destacado en la publicación (T1.8): el gate de bloqueo por veredicto pasa a
+// advisory, igual que internal/gate desde T1.7 — la validación (más abajo) es
+// ahora el único gate que puede impedir publicar. avisoSemantico NUNCA decide
+// si se publica, solo si hay que avisar. Devuelve los hallazgos CRITICAL
+// ESTRUCTURADOS: el formateo sigue siendo responsabilidad del CLI.
+//
+// Antes se llamaba gateBlock y devolvía "permitido"; se renombra porque una
+// función que ya no bloquea no puede seguir llamándose "gate...Block" sin
+// mentir sobre lo que hace.
+func avisoSemantico(fichas []review.Ficha) (avisar bool, bloqueantes []review.ReviewFinding) {
+	if review.VeredictoDeRama(fichas) != review.VerdictBlock {
+		return false, nil
 	}
-	return false, review.BloqueantesDeRama(fichas)
+	return true, review.BloqueantesDeRama(fichas)
 }
 
-// ejecutarPrCreate implementa pr create (guía §12.4): pipeline compartido de
-// analizarRama, gate de block, plantilla honesta y publicación con gh o
-// fallback a portapapeles. Registra el evento pr-create al terminar.
-func ejecutarPrCreate(worktree string, args []string) {
-	flags, err := parsearFlagsPrCreate(args)
-	salirSiError(err)
+// comandosDeValidacion traduce las ValidationRun de internal/validation a
+// ComandoVerificado para la plantilla: misma forma de evidencia (comando +
+// exit code real), por eso se reusa el tipo en vez de duplicarlo — lo que
+// cambia es el origen (validación previa, no la verificación post-hoc de
+// ops.Verificar), de ahí que viva en su propio campo/sección.
+func comandosDeValidacion(runs []validation.ValidationRun) []review.ComandoVerificado {
+	cmds := make([]review.ComandoVerificado, 0, len(runs))
+	for _, r := range runs {
+		cmds = append(cmds, review.ComandoVerificado{Comando: r.Comando, Exit: r.Exit})
+	}
+	return cmds
+}
 
-	cfg := config.CargarConfiguracionLocal(worktree)
-	gitDir, err := git.ObtenerGitDir()
-	salirSiError(err)
+// depsPrCreate agrupa las costuras inyectables del pipeline de pr create
+// (T1.8): permite testear el ORDEN (validación antes de auditar, cero tokens
+// si falla) sin git, agentes ni gh reales. En producción, ejecutarPrCreate las
+// resuelve a las funciones reales.
+type depsPrCreate struct {
+	cargarConfig       func(worktree string) config.Config
+	obtenerGitDir      func() (string, error)
+	ejecutarValidacion func(perfil string, alcance []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error)
+	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
+	verificar          func(worktree, gitDir string, cfg config.Config) review.VerificacionPlantilla
+	publicar           func(worktree, rutaPlantilla, base string) (string, bool, error)
+	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error
+}
+
+// ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
+// falla sin --force, ni se llama a AnalizarRama: cero tokens), aviso advisory
+// del veredicto semántico, plantilla honesta con las dos naturalezas de
+// evidencia y publicación con gh o fallback a portapapeles.
+func ejecutarPrCreate(worktree string, args []string) {
+	os.Exit(ejecutarPrCreateCon(os.Stdout, worktree, args, depsPrCreate{
+		cargarConfig:       config.CargarConfiguracionLocal,
+		obtenerGitDir:      git.ObtenerGitDir,
+		ejecutarValidacion: validation.EjecutarPerfilSobreCandidato,
+		analizarRama: func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
+			return review.AnalizarRama(review.NuevoLedger(gitDir), opts)
+		},
+		verificar:       verificarParaPlantilla,
+		publicar:        publicarPR,
+		registrarEvento: ops.RegistrarEvento,
+	}))
+}
+
+// ejecutarPrCreateCon es la versión inyectable de ejecutarPrCreate (seam de
+// prueba): devuelve el exit code sin terminar el proceso, mismo patrón que
+// ejecutarGate.
+func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsPrCreate) int {
+	flags, err := parsearFlagsPrCreate(args)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+
+	cfg := deps.cargarConfig(worktree)
+	gitDir, err := deps.obtenerGitDir()
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+
+	// Validación PRIMERO (T1.8): reusa internal/validation (misma pieza que
+	// usa internal/gate, ver comandos_gate.go), no el orquestador completo de
+	// gate, porque AnalizarRama audita la RAMA entera, no un único commit como
+	// hace AuditarCommit. Si falla sin --force, AnalizarRama NUNCA se invoca:
+	// cero tokens gastados.
+	runs, err := deps.ejecutarValidacion(perfilGatePorDefecto, nil, validation.OpcionesEjecucion{
+		Worktree: worktree,
+		Cfg:      cfg,
+	})
+	if err != nil {
+		fmt.Fprintf(w, "? No se pudo ejecutar la validación: %v\n", err)
+		return 1
+	}
+	hallazgos := validation.Hallazgos(runs, cfg.Validation.Capabilities)
+	if len(hallazgos) > 0 {
+		if !flags.force {
+			fmt.Fprintln(w, "🚨 Validación en rojo: no se publica la PR. Comandos:")
+			for _, h := range hallazgos {
+				fmt.Fprintf(w, "  - ✖ %s (%s):\n%s\n", h.Capability, h.Comando, strings.TrimSpace(h.Evidencia))
+			}
+			fmt.Fprintln(w, "Corrige los comandos en rojo o repite con --force --reason \"motivo\" para publicar igualmente.")
+			return 1
+		}
+		fmt.Fprintf(w, "⚠️  Validación en rojo superada con --force (motivo: %s).\n", flags.reason)
+	}
 
 	fabrica := func(dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
@@ -505,67 +609,74 @@ func ejecutarPrCreate(worktree string, args []string) {
 	if base == "" {
 		base = "main"
 	}
-	ledger := review.NuevoLedger(gitDir)
-	res, err := review.AnalizarRama(ledger, review.OpcionesRama{
+	res, err := deps.analizarRama(gitDir, review.OpcionesRama{
 		Base:           base,
 		SoloPendientes: false,
 		Overview:       true,
 		Fabrica:        fabrica,
 		Parallel:       cfg.Review.Parallel,
 		OnDimension: func(dim string) {
-			fmt.Printf("  ⏳ %s …\n", dim)
+			fmt.Fprintf(w, "  ⏳ %s …\n", dim)
 		},
 	})
-	salirSiError(err)
-
-	if len(res.Fichas) == 0 {
-		fmt.Println("_No hay commits auditados en la rama._")
-		os.Exit(1)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 
-	// Gate de block: sin superar no se publica.
-	permitido, bloqueantes := gateBlock(res.Fichas, flags.force)
-	if !permitido {
-		fmt.Println("🚨 Veredicto de auditoría: block. No se publica la PR. Bloqueantes:")
+	if len(res.Fichas) == 0 {
+		fmt.Fprintln(w, "_No hay commits auditados en la rama._")
+		return 1
+	}
+
+	// Gate semántico advisory (T1.8): nunca bloquea, solo avisa destacado.
+	if avisar, bloqueantes := avisoSemantico(res.Fichas); avisar {
+		fmt.Fprintln(w, "⚠️  AVISO: veredicto de auditoría semántica = block (no bloquea la publicación, advisory).")
 		for _, h := range bloqueantes {
-			fmt.Printf("  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
+			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
 		}
-		fmt.Println("Resuelve los bloqueantes o repite con --force para publicar igualmente.")
-		os.Exit(1)
 	}
 
 	// Rama descomunal sin --chain-pr: se propone la cadena, no se publica una
 	// PR gigante (guía §12.4).
 	if res.Decision == "chain" && !flags.chainPR {
-		fmt.Println("🚨 Rama descomunal: supera el umbral de volumen sin coherencia demostrada.")
-		fmt.Println("Se propone dividirla en PRs encadenadas (--chain-pr) en lugar de una PR gigante.")
-		os.Exit(1)
+		fmt.Fprintln(w, "🚨 Rama descomunal: supera el umbral de volumen sin coherencia demostrada.")
+		fmt.Fprintln(w, "Se propone dividirla en PRs encadenadas (--chain-pr) en lugar de una PR gigante.")
+		return 1
 	}
 
-	verificacion := verificarParaPlantilla(worktree, gitDir, cfg)
+	verificacion := deps.verificar(worktree, gitDir, cfg)
+	verificacion.Validacion = comandosDeValidacion(runs)
 
 	cuerpo := review.RenderPlantillaPr(res.Fichas, res.Overview, verificacion, version)
 	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
-	salirSiError(err)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
 
-	prURL, fallback, err := publicarPR(worktree, rutaPlantilla, base)
-	salirSiError(err)
+	prURL, fallback, err := deps.publicar(worktree, rutaPlantilla, base)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
 	if fallback {
 		// El archivo es el artefacto entregable del fallback: se conserva.
-		fmt.Println("? Plantilla en portapapeles: crea la PR manualmente con ese contenido.")
+		fmt.Fprintln(w, "? Plantilla en portapapeles: crea la PR manualmente con ese contenido.")
 	} else {
-		fmt.Printf("? PR creada: %s\n", prURL)
+		fmt.Fprintf(w, "? PR creada: %s\n", prURL)
 		// El cuerpo ya vive en la PR: el temporal efímero se limpia.
 		if err := os.Remove(rutaPlantilla); err != nil {
-			fmt.Printf("? Aviso: no se pudo limpiar el archivo temporal (%v).\n", err)
+			fmt.Fprintf(w, "? Aviso: no se pudo limpiar el archivo temporal (%v).\n", err)
 		}
 	}
 
-	detalle, err := detalleEventoPrCreate(prURL, fallback, flags.chainPR)
+	detalle, err := detalleEventoPrCreate(prURL, fallback, flags.chainPR, flags.force, flags.reason)
 	if err != nil {
-		fmt.Printf("? Aviso: no se pudo construir el detalle del evento: %v\n", err)
+		fmt.Fprintf(w, "? Aviso: no se pudo construir el detalle del evento: %v\n", err)
 	}
-	if err := ops.RegistrarEvento(gitDir, "pr-create", 0, res.SHAs, detalle, worktree); err != nil {
-		fmt.Printf("? Aviso: no se pudo registrar el evento: %v\n", err)
+	if err := deps.registrarEvento(gitDir, "pr-create", 0, res.SHAs, detalle, worktree); err != nil {
+		fmt.Fprintf(w, "? Aviso: no se pudo registrar el evento: %v\n", err)
 	}
+	return 0
 }
