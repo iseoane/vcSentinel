@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -177,6 +178,76 @@ func TestParsearDimensionResultPreguntas(t *testing.T) {
 	}
 	if len(resultado.Questions) != 1 || resultado.Questions[0].ID != "Q1" {
 		t.Errorf("questions = %+v, esperado una con ID Q1", resultado.Questions)
+	}
+}
+
+func TestHallazgoSerializacionIdaYVuelta(t *testing.T) {
+	original := Hallazgo{
+		ID:     "h-1",
+		Source: SourceReview,
+		Producer: Productor{
+			Agente:           "claude",
+			Binario:          "",
+			Modelo:           "claude-sonnet-5",
+			Esfuerzo:         "high",
+			ModeloVerificado: true,
+		},
+		Dimension:   DimLogic,
+		Severity:    SevCritical,
+		Confidence:  0.87,
+		Status:      StatusPending,
+		Title:       "condición siempre verdadera",
+		Description: "el condicional nunca evalúa a falso por el operador usado",
+		Location: Ubicacion{
+			Archivo:     "internal/a.go",
+			Blob:        "deadbeef",
+			LineaInicio: 10,
+			LineaFin:    12,
+			Simbolo:     "FuncionX",
+		},
+		Evidence:       "if x >= 0 || x < 0 {",
+		Impact:         "la rama de error nunca se ejecuta",
+		Recommendation: "usa un único operador de comparación",
+		Fixable:        FixableNeedsReview,
+		IntroducedBy:   "abc123",
+		Fingerprint:    "sha256:xyz",
+	}
+
+	crudo, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal devolvió error: %v", err)
+	}
+
+	var reconstruido Hallazgo
+	if err := json.Unmarshal(crudo, &reconstruido); err != nil {
+		t.Fatalf("Unmarshal devolvió error: %v", err)
+	}
+
+	if reconstruido != original {
+		t.Errorf("el hallazgo no sobrevivió el ciclo completo:\noriginal:      %+v\nreconstruido:  %+v", original, reconstruido)
+	}
+}
+
+func TestHallazgoConviveConReviewFindingV1EnElMismoPaquete(t *testing.T) {
+	// Una ficha v1 debe poder seguir deserializándose sin error en el mismo
+	// paquete que ya define el nuevo tipo Hallazgo (v2): ambos conviven sin
+	// que la existencia de v2 rompa la lectura de v1.
+	crudoV1 := `{"dimension":"logic","file":"a.go","line":5,"severity":"WARNING","description":"d","suggestion":"s"}`
+	var findingV1 ReviewFinding
+	if err := json.Unmarshal([]byte(crudoV1), &findingV1); err != nil {
+		t.Fatalf("Unmarshal de ReviewFinding v1 devolvió error: %v", err)
+	}
+	if findingV1.Dimension != DimLogic || findingV1.Line != 5 {
+		t.Errorf("finding v1 mal deserializado: %+v", findingV1)
+	}
+
+	crudoV2 := `{"id":"h-2","source":"validation","producer":{"agent":"validation","model_verified":false},"dimension":"tests","severity":"CRITICAL","confidence":1.0,"status":"pending","title":"t","description":"d","location":{"file":"b.go","line_start":1},"evidence":"e","fixable":"manual","fingerprint":"f"}`
+	var hallazgoV2 Hallazgo
+	if err := json.Unmarshal([]byte(crudoV2), &hallazgoV2); err != nil {
+		t.Fatalf("Unmarshal de Hallazgo v2 devolvió error: %v", err)
+	}
+	if hallazgoV2.Source != SourceValidation || hallazgoV2.Confidence != 1.0 {
+		t.Errorf("hallazgo v2 mal deserializado: %+v", hallazgoV2)
 	}
 }
 

@@ -93,6 +93,91 @@ type ReviewFinding struct {
 	Suggestion  string `json:"suggestion"`
 }
 
+// Fuentes posibles de un Hallazgo (finding v2): de qué produjo el hallazgo.
+const (
+	SourceValidation = "validation" // comando determinista (internal/validation)
+	SourceReview     = "review"     // inferencia semántica de un agente LLM
+)
+
+// Estados del ciclo de vida de un Hallazgo (finding v2). pending es el
+// estado inicial; confirmed/refuted los fija la refutación mecánica o el
+// agente; accepted_by_user y reopened los fija un humano; fixed lo fija la
+// verificación posterior al parche.
+const (
+	StatusPending        = "pending"
+	StatusConfirmed      = "confirmed"
+	StatusRefuted        = "refuted"
+	StatusAcceptedByUser = "accepted_by_user"
+	StatusFixed          = "fixed"
+	StatusReopened       = "reopened"
+)
+
+// Niveles de confianza para aplicar automáticamente la corrección sugerida
+// de un Hallazgo. safe: aplicable sin revisión; needs_review: aplicable pero
+// un humano debe confirmar; manual: no hay corrección mecánica posible.
+const (
+	FixableSafe        = "safe"
+	FixableNeedsReview = "needs_review"
+	FixableManual      = "manual"
+)
+
+// Productor identifica quién o qué generó un Hallazgo: un agente LLM (con su
+// modelo y esfuerzo) o un comando determinista (binario). ModeloVerificado
+// distingue un modelo cuyo nombre fue confirmado por el propio agente
+// (p. ej. vía --version o metadata de la API) de uno asumido por config.
+type Productor struct {
+	Agente           string `json:"agent"`
+	Binario          string `json:"binary,omitempty"`
+	Modelo           string `json:"model,omitempty"`
+	Esfuerzo         string `json:"reasoning_effort,omitempty"`
+	ModeloVerificado bool   `json:"model_verified"`
+}
+
+// Ubicacion sitúa un Hallazgo en el código. Blob es el hash del contenido del
+// archivo en el momento del hallazgo: permite detectar si el archivo cambió
+// desde entonces sin depender de que la línea siga significando lo mismo.
+type Ubicacion struct {
+	Archivo     string `json:"file"`
+	Blob        string `json:"blob,omitempty"`
+	LineaInicio int    `json:"line_start"`
+	LineaFin    int    `json:"line_end,omitempty"`
+	Simbolo     string `json:"symbol,omitempty"`
+}
+
+// Hallazgo es el finding v2: convive con ReviewFinding (v1) sin sustituirlo.
+// Añade procedencia (Source/Producer), certeza (Confidence), ciclo de vida
+// (Status) y evidencia literal para que un falso positivo se pueda refutar
+// mecánicamente sin releer el código a mano.
+//
+// internal/validation.Hallazgo (F1) tiene forma similar (Source/Severity/
+// Evidencia) pero nació en otro paquete para otro propósito: el resultado de
+// un comando determinista (lint/test/build), no de un agente LLM. Esta
+// estructura NO importa ni depende de internal/validation a propósito: son
+// conceptos análogos, no el mismo tipo, y unificarlos (si llega a hacer
+// falta) es tarea de una fase futura (F6, agregador, según el README de
+// reingeniería). Un Hallazgo con Source=SourceValidation se rellenaría con
+// Confidence: 1.0 (certeza total: es un exit code real, no una inferencia
+// semántica) y Producer describiendo el comando ejecutado (Binario/Agente)
+// en vez de un modelo LLM (Modelo/Esfuerzo/ModeloVerificado quedarían vacíos).
+type Hallazgo struct {
+	ID             string    `json:"id"`
+	Source         string    `json:"source"`
+	Producer       Productor `json:"producer"`
+	Dimension      string    `json:"dimension"`
+	Severity       string    `json:"severity"`
+	Confidence     float64   `json:"confidence"`
+	Status         string    `json:"status"`
+	Title          string    `json:"title"`
+	Description    string    `json:"description"`
+	Location       Ubicacion `json:"location"`
+	Evidence       string    `json:"evidence"`
+	Impact         string    `json:"impact,omitempty"`
+	Recommendation string    `json:"recommendation,omitempty"`
+	Fixable        string    `json:"fixable"`
+	IntroducedBy   string    `json:"introduced_by,omitempty"`
+	Fingerprint    string    `json:"fingerprint"`
+}
+
 // AgentQuestion es una aclaración que el agente necesita para poder auditar.
 type AgentQuestion struct {
 	ID   string `json:"id"`
