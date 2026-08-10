@@ -254,3 +254,127 @@ func TestEjecutarPerfil_ErrorDeEjecucionSePropaga(t *testing.T) {
 		t.Error("EjecutarPerfil aceptó un error de ejecución sin propagarlo")
 	}
 }
+
+// --- CRITICAL 1: la vía delegada no puede fallar nunca, y eso debe ser
+// explícito, no una casualidad de que Exit se quede en su valor cero. ---
+
+// TestFallo_RunDelegadoNuncaFallaPorDisenoExplicito: un run delegado con
+// Exit != 0 (simulado deliberadamente: la vía delegada real nunca fija Exit,
+// pero si alguna vez lo hiciera, esto debe seguir sin fallar) y una capacidad
+// REAL (no la zero-value que se obtendría de un mapa sin la clave "delegado")
+// no debe considerarse fallido. Si Fallo dependiera del valor cero de Exit
+// para "no fallar nunca", este Exit=1 lo delataría.
+func TestFallo_RunDelegadoNuncaFallaPorDisenoExplicito(t *testing.T) {
+	run := ValidationRun{Capability: capabilityDelegada, Exit: 1, Salida: "esto simula un fallo"}
+	capacidadReal := config.CapabilityConfig{FailsWhen: config.FailsWhenExitCode}
+	if Fallo(run, capacidadReal) {
+		t.Error("Fallo consideró fallido un run delegado con Exit != 0: la vía delegada nunca debe fallar por diseño explícito, no por casualidad del valor cero de Exit")
+	}
+}
+
+// TestHallazgos_RunDelegadoExcluidoAunqueExitSeaDistintoDeCero: mismo caso
+// que arriba pero a través de Hallazgos, con una capability REAL registrada
+// deliberadamente bajo la clave "delegado" en el mapa (para descartar que el
+// comportamiento dependa de que esa clave no exista y devuelva el valor cero
+// de config.CapabilityConfig{}).
+func TestHallazgos_RunDelegadoExcluidoAunqueExitSeaDistintoDeCero(t *testing.T) {
+	runs := []ValidationRun{
+		{Capability: capabilityDelegada, Exit: 1, Salida: "simulación de fallo"},
+	}
+	capacidades := map[string]config.CapabilityConfig{
+		capabilityDelegada: {FailsWhen: config.FailsWhenExitCode},
+	}
+	hallazgos := Hallazgos(runs, capacidades)
+	if len(hallazgos) != 0 {
+		t.Fatalf("hallazgos = %+v, esperado 0: la vía delegada nunca produce hallazgos, por diseño", hallazgos)
+	}
+}
+
+// TestHallazgos_PerfilDelegadoSinHallazgos: caso de uso real end-to-end, el
+// mismo que ya pasaba antes del fix (por el bug): un perfil delegado con el
+// agente reportando "tested: comando-x" no produce ningún Hallazgo. Se
+// conserva como regresión ahora que el comportamiento es explícito.
+func TestHallazgos_PerfilDelegadoSinHallazgos(t *testing.T) {
+	agente := &agenteFake{salida: "tested: comando-x"}
+	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+		Cfg:    config.Config{},
+		Agente: agente,
+	})
+	if err != nil {
+		t.Fatalf("EjecutarPerfil falló: %v", err)
+	}
+	hallazgos := Hallazgos(runs, nil)
+	if len(hallazgos) != 0 {
+		t.Fatalf("hallazgos = %+v, esperado 0 para un perfil delegado", hallazgos)
+	}
+}
+
+// --- CRITICAL 2: alcance calculado en tiempo de ejecución se interpola sin
+// validar en un comando que corre por shell: inyección de comandos. ---
+
+// TestResolverComando_AlcanceConMetacaracterDevuelveError: cada elemento de
+// alcance debe pasar una lista blanca de caracteres seguros (letras, dígitos,
+// /, ., _, -) antes de interpolarse; si no, error explícito y ningún comando
+// construido con el valor sin validar.
+func TestResolverComando_AlcanceConMetacaracterDevuelveError(t *testing.T) {
+	capacidad := config.CapabilityConfig{SupportsScope: true, ScopedCommand: "go test {packages}"}
+	casos := []struct {
+		nombre   string
+		elemento string
+	}{
+		{"punto y coma", "pkg; rm -rf /tmp/algo"},
+		{"backtick", "pkg`whoami`"},
+		{"cifrado de variable", "pkg$(whoami)"},
+		{"espacio inesperado", "pkg extra"},
+		{"comillas", `pkg"algo"`},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			_, _, _, err := resolverComando(capacidad, []string{"./internal/valido", c.elemento})
+			if err == nil {
+				t.Fatalf("resolverComando aceptó el elemento de alcance %q sin error", c.elemento)
+			}
+		})
+	}
+}
+
+// TestEjecutarPerfil_AlcanceInyeccionNoEjecutaComando: EjecutarPerfil propaga
+// el error de resolverComando y JAMÁS invoca Ejecutar con un comando
+// construido a partir de un alcance sin validar.
+func TestEjecutarPerfil_AlcanceInyeccionNoEjecutaComando(t *testing.T) {
+	cfg := cfgConCapability("test", config.CapabilityConfig{
+		Command:       "go test ./...",
+		SupportsScope: true,
+		ScopedCommand: "go test {packages}",
+	})
+	runs, err := EjecutarPerfil("standard", []string{"./internal/a", "pkg; rm -rf /tmp/algo"}, OpcionesEjecucion{
+		Cfg: cfg,
+		Ejecutar: func(comando string) (int, string, error) {
+			t.Fatalf("no debía ejecutarse ningún comando, pero se llamó con %q", comando)
+			return 0, "", nil
+		},
+	})
+	if err == nil {
+		t.Fatal("EjecutarPerfil aceptó un alcance con metacaracteres de shell sin error")
+	}
+	if len(runs) != 0 {
+		t.Errorf("runs = %+v, esperado vacío cuando el alcance es inválido", runs)
+	}
+}
+
+// TestResolverComando_AlcanceValidoSigueFuncionando: elementos de alcance
+// legítimos (rutas de paquete Go normales) siguen interpolándose igual que
+// antes; la validación no debe romper el caso de uso real.
+func TestResolverComando_AlcanceValidoSigueFuncionando(t *testing.T) {
+	capacidad := config.CapabilityConfig{SupportsScope: true, ScopedCommand: "go test {packages}"}
+	comando, etiqueta, motivo, err := resolverComando(capacidad, []string{"./internal/a", "./internal/b-2"})
+	if err != nil {
+		t.Fatalf("resolverComando falló con alcance válido: %v", err)
+	}
+	if comando != "go test ./internal/a ./internal/b-2" {
+		t.Errorf("comando = %q, inesperado", comando)
+	}
+	if etiqueta != AlcanceParcial || motivo == "" {
+		t.Errorf("etiqueta = %q, motivo = %q, esperado parcial con motivo", etiqueta, motivo)
+	}
+}

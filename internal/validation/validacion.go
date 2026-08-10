@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -103,7 +104,10 @@ func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]
 		if !ok {
 			return runs, fmt.Errorf("el perfil %q referencia la capability %q, que no está configurada", perfil, nombre)
 		}
-		comando, alcanceEtiqueta, motivo := resolverComando(capacidad, alcance)
+		comando, alcanceEtiqueta, motivo, err := resolverComando(capacidad, alcance)
+		if err != nil {
+			return runs, fmt.Errorf("alcance inválido para la capability %q: %w", nombre, err)
+		}
 
 		inicio := time.Now()
 		exit, salida, err := ejecutar(comando)
@@ -124,20 +128,53 @@ func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]
 	return runs, nil
 }
 
+// elementoAlcanceValido es la lista blanca de caracteres seguros para un
+// elemento de alcance (nombre de paquete/ruta Go): letras, dígitos, /, ., _,
+// -. A diferencia de Command/ScopedCommand (literales del vassentinel.yml del
+// usuario, de confianza por diseño, ver ejecutarShellCombinado), alcance se
+// calcula en tiempo de ejecución y se interpola sin comillas en un comando
+// que corre después por sh -c/cmd /c: cualquier otro carácter (;, `, $, "
+// etc.) permitiría inyectar un comando arbitrario. No se intenta "escapar"
+// el string para el shell de destino (frágil y distinto entre cmd/sh):
+// rechazar con error lo que no encaje en la lista blanca es más simple y más
+// seguro.
+var elementoAlcanceValido = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`)
+
 // resolverComando decide qué variante del comando usar y por qué: scoped
 // solo si hay alcance Y la capability lo soporta; si no, el comando completo
-// sin acotar (regla exacta de la ficha de T1.3).
-func resolverComando(capacidad config.CapabilityConfig, alcance []string) (comando, etiqueta, motivo string) {
+// sin acotar (regla exacta de la ficha de T1.3). Antes de interpolar alcance
+// en scoped_command, valida cada elemento contra elementoAlcanceValido; si
+// alguno no encaja, devuelve error y ningún comando (nunca se construye un
+// comando a partir de un elemento sin validar).
+func resolverComando(capacidad config.CapabilityConfig, alcance []string) (comando, etiqueta, motivo string, err error) {
 	if len(alcance) > 0 && capacidad.SupportsScope {
+		for _, elemento := range alcance {
+			if !elementoAlcanceValido.MatchString(elemento) {
+				return "", "", "", fmt.Errorf("elemento de alcance %q contiene caracteres no permitidos (solo letras, dígitos, /, ., _, -)", elemento)
+			}
+		}
 		acotado := strings.ReplaceAll(capacidad.ScopedCommand, marcadorPaquetes, strings.Join(alcance, " "))
-		return acotado, AlcanceParcial, fmt.Sprintf("acotado a %d paquete(s) afectado(s)", len(alcance))
+		return acotado, AlcanceParcial, fmt.Sprintf("acotado a %d paquete(s) afectado(s)", len(alcance)), nil
 	}
-	return capacidad.Command, AlcanceCompleto, ""
+	return capacidad.Command, AlcanceCompleto, "", nil
 }
 
 // Fallo determina si una ValidationRun se considera fallida según fails_when
 // (config.FailsWhenExitCode es el default, incluido el caso vacío).
+//
+// Un run delegado (Capability == capabilityDelegada) NUNCA falla por esta
+// vía, y esa decisión es explícita, no un efecto colateral de que Exit se
+// quede en su valor cero: capabilityDelegada es un marcador interno, no una
+// capability real del yml, así que no existe un fails_when del que partir
+// para él. El contrato tested del agente es evidencia narrativa (aviso,
+// nunca bloqueo, mismo criterio que internal/ops.Verificar), jamás un exit
+// code verificado localmente; tratarlo como si lo fuera sería inventar un
+// PASS o un FAIL según convenga. Por eso se corta aquí antes de mirar
+// capacidad.FailsWhen, en vez de confiar en que Exit valga 0.
 func Fallo(run ValidationRun, capacidad config.CapabilityConfig) bool {
+	if run.Capability == capabilityDelegada {
+		return false
+	}
 	if capacidad.FailsWhen == config.FailsWhenOutputNotEmpty {
 		return strings.TrimSpace(run.Salida) != ""
 	}
@@ -147,9 +184,19 @@ func Fallo(run ValidationRun, capacidad config.CapabilityConfig) bool {
 // Hallazgos traduce las ValidationRun fallidas (según Fallo) a findings
 // mínimos: severidad CRITICAL fija (sin grados en esta fase) y la salida real
 // como evidencia, nunca un PASS inventado.
+//
+// Los runs delegados se excluyen aquí, ANTES de mirar Fallo: capabilityDelegada
+// no es una clave real de "capacidades" (viene del contrato tested del
+// agente, no del yml), así que no hay fails_when que aplicarles. Son
+// evidencia informativa del contrato tested, no verificación local, y por
+// diseño explícito nunca pueden producir un Hallazgo por este camino (ver el
+// comentario de Fallo).
 func Hallazgos(runs []ValidationRun, capacidades map[string]config.CapabilityConfig) []Hallazgo {
 	var hallazgos []Hallazgo
 	for _, run := range runs {
+		if run.Capability == capabilityDelegada {
+			continue
+		}
 		if !Fallo(run, capacidades[run.Capability]) {
 			continue
 		}
