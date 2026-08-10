@@ -230,19 +230,11 @@ func esDocumentacionExtensa(f ArchivoModificado) bool {
 	return ClaseArchivo(f.Ruta) == ClaseDocs && f.Lineas > limiteConfigGigante
 }
 
-// esAisladoEnSuLote indica si un archivo va solo en su lote en vez de
-// agruparse: lo generado siempre, y la configuración o la documentación
-// cuando superan el límite de aislamiento.
-func esAisladoEnSuLote(f ArchivoModificado) bool {
-	if ClaseArchivo(f.Ruta) == ClaseGenerada {
-		return true
-	}
-	return esConfigGigante(f) || esDocumentacionExtensa(f)
-}
-
 // esCodigoGigante indica si un archivo de código fuente supera el límite de
-// bypass interactivo. Solo aplica a código: la documentación y los archivos
-// generados se aíslan (esAisladoEnSuLote) en lugar de ofrecer refactorización.
+// bypass interactivo. Solo aplica a código: la documentación se aísla con
+// esDocumentacionExtensa y lo generado nunca se mezcla con código porque
+// ConstruirPlanFragmentacion agrupa primero por clase, así que ninguno de los
+// dos necesita ofrecer refactorización.
 func esCodigoGigante(f ArchivoModificado) bool {
 	switch ClaseArchivo(f.Ruta) {
 	case ClaseDocs, ClaseGenerada, ClaseConfig:

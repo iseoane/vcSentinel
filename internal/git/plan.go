@@ -37,14 +37,20 @@ type ResultadoCommit struct {
 	Archivos int
 }
 
-// ConstruirPlanFragmentacion agrupa los archivos por capa, aísla los gigantes en
+// ConstruirPlanFragmentacion agrupa los archivos primero por clase
+// (ClaseArchivo) y, dentro de cada clase, por capa; aísla los gigantes en
 // lotes con mensajes deterministas y genera los lotes de batching con
-// construirLotes. Procesa cada capa completa (gigantes y lotes normales) en el
-// orden config → backend → frontend → test. No ejecuta ningún comando git: la
-// única interacción externa es confirmarBypass, que se invoca para los archivos
-// de código que superan el límite de volumen.
+// construirLotes. Procesa cada clase completa (gigantes y lotes normales) en
+// el orden config → source → test → docs → generated (ordenClases), y dentro
+// de cada clase respeta el orden de capa de siempre (ordenCapas). Agrupar
+// primero por clase es lo que evita que un lote mezcle código y
+// documentación: ClasificarCapa manda los .md al caso por defecto
+// ("backend"), así que agrupar solo por capa los mezclaba con el código de
+// esa misma capa (visto en el commit 3160133). No ejecuta ningún comando
+// git: la única interacción externa es confirmarBypass, que se invoca para
+// los archivos de código que superan el límite de volumen.
 func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass func(ArchivoModificado) (bool, error)) (*PlanFragmentacion, error) {
-	porCapas := agruparPorCapas(archivos)
+	porClases := agruparPorClases(archivos)
 	lineasPorRuta := make(map[string]int, len(archivos))
 	for _, f := range archivos {
 		lineasPorRuta[f.Ruta] = f.Lineas
@@ -52,9 +58,9 @@ func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass fu
 
 	var plan PlanFragmentacion
 	numero := 1
-	for _, capa := range ordenCapas {
-		restantes := make([]ArchivoModificado, 0, len(porCapas[capa]))
-		for _, f := range porCapas[capa] {
+	for _, clase := range ordenClases {
+		restantes := make([]ArchivoModificado, 0, len(porClases[clase]))
+		for _, f := range porClases[clase] {
 			switch {
 			case esConfigGigante(f):
 				plan.Lotes = append(plan.Lotes, loteGigante(f, mensajeAisladoDeps, numero))
@@ -79,7 +85,7 @@ func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass fu
 				restantes = append(restantes, f)
 			}
 		}
-		for _, lote := range construirSecuenciaLotes(map[string][]ArchivoModificado{capa: restantes}) {
+		for _, lote := range construirSecuenciaLotes(agruparPorCapas(restantes)) {
 			plan.Lotes = append(plan.Lotes, loteNormal(lote, numero, lineasPorRuta))
 			numero++
 		}
@@ -213,6 +219,22 @@ func agruparPorCapas(archivos []ArchivoModificado) map[string][]ArchivoModificad
 		porCapas[f.Capa] = append(porCapas[f.Capa], f)
 	}
 	return porCapas
+}
+
+// ordenClases fija el orden de salida de los lotes por clase de archivo:
+// config → source → test → docs → generated. Es el eje que agrupa antes que
+// la capa, para que ningún lote mezcle clases (T0.12).
+var ordenClases = []string{ClaseConfig, ClaseSource, ClaseTest, ClaseDocs, ClaseGenerada}
+
+// agruparPorClases separa los archivos por ClaseArchivo, sin tocar la capa:
+// son dos ejes distintos que ConstruirPlanFragmentacion combina en cascada.
+func agruparPorClases(archivos []ArchivoModificado) map[string][]ArchivoModificado {
+	porClases := make(map[string][]ArchivoModificado, len(ordenClases))
+	for _, f := range archivos {
+		clase := ClaseArchivo(f.Ruta)
+		porClases[clase] = append(porClases[clase], f)
+	}
+	return porClases
 }
 
 func loteGigante(f ArchivoModificado, mensaje string, numero int) LotePlanificado {

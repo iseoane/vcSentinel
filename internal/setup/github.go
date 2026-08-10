@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 const repoOwner = "ISeoane-Quental"
@@ -59,7 +60,9 @@ func tokenDesdeGHCLI() string {
 
 // preguntarTokenGitHub pide el token por teclado cuando no se pudo resolver de
 // otra forma. Devuelve cadena vacía si el usuario no dispone de token (o no
-// hay terminal interactiva).
+// hay terminal interactiva). La lectura nunca hace eco del secreto: se
+// degrada a "sin token" en vez de leer con eco en silencio cuando no hay una
+// terminal interactiva de por medio (tuberías, CI).
 func preguntarTokenGitHub() string {
 	if !esTerminalStdin() {
 		return ""
@@ -68,11 +71,13 @@ func preguntarTokenGitHub() string {
 	fmt.Println("   Si tienes un token de GitHub, pégalo a continuación (vacío para continuar sin token):")
 	fmt.Print("   Token: ")
 
-	linea, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	token, err := leerTokenSinEco()
 	if err != nil {
+		fmt.Println()
+		fmt.Printf("⚠️  No se pudo leer el token sin eco (%v). Se continúa sin token.\n", err)
 		return ""
 	}
-	token := strings.TrimSpace(linea)
+	token = strings.TrimSpace(token)
 	if token != "" {
 		os.Setenv("GITHUB_TOKEN", token)
 	}
@@ -80,13 +85,36 @@ func preguntarTokenGitHub() string {
 }
 
 // esTerminalStdin indica si la entrada estándar es una terminal interactiva.
-// Evita que el prompt de token bloquee en tests, tuberías o ejecución no interactiva.
-func esTerminalStdin() bool {
+// Evita que el prompt de token bloquee en tests, tuberías o ejecución no
+// interactiva. Variable (no función) para poder inyectarla en los tests sin
+// depender de una terminal real.
+var esTerminalStdin = func() bool {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return false
 	}
 	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// leerTokenSinEco es la costura de inyección: en producción delega en el
+// mecanismo real que desactiva el eco de terminal; los tests la sustituyen
+// para no depender de una terminal real.
+var leerTokenSinEco = leerTokenSinEcoDelSistema
+
+// leerTokenSinEcoDelSistema lee el token sin que el terminal lo repita en
+// pantalla, usando term.ReadPassword (misma familia de llamada que ssh/sudo:
+// TCGETS/TCSETS en Unix, modo de consola en Windows) sobre el descriptor de
+// stdin. Falla CERRADO a propósito: si no puede desactivar el eco -por
+// ejemplo, porque stdin no es una terminal real, aunque haya superado el
+// chequeo de esTerminalStdin- devuelve error y no lee ni un byte. Leer con
+// eco en silencio ante ese fallo es justo el defecto que esta función existe
+// para evitar: un secreto expuesto es peor que no tener secreto.
+func leerTokenSinEcoDelSistema() (string, error) {
+	bytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	if err != nil {
+		return "", fmt.Errorf("no se pudo desactivar el eco de la terminal: %w", err)
+	}
+	return string(bytes), nil
 }
 
 type ReleaseAsset struct {
