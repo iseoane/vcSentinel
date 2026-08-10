@@ -25,6 +25,28 @@ var ErrSinFabrica = errors.New("sin fábrica de auditores configurada")
 // silencio del umbral del guardián (B4).
 const LimiteDecisionChain = git.LimiteLineasRevisables
 
+// StoreBlobs es el mínimo que AnalizarRama necesita del store de T2.5/T2.6
+// para reutilizar revisiones por contenido de blob en vez de por SHA (T2.7):
+// un rebase cambia el SHA de un commit sin tocar el contenido de sus
+// archivos, así que consultar por blob es lo que sobrevive al rebase.
+//
+// Se define aquí, en internal/review, y NO en internal/store, a propósito:
+// internal/store ya importa internal/review (review.Hallazgo, review.Ledger
+// en la migración v1), así que si este paquete importara internal/store se
+// crearía un ciclo review→store→review. *store.Store implementa esta
+// interfaz de forma estructural, sin que ninguno de los dos paquetes
+// necesite conocer al otro por nombre.
+type StoreBlobs interface {
+	// YaRevisado indica si blob ya se vio en algún commit auditado
+	// anteriormente (bajo cualquier SHA) y devuelve los hallazgos v2
+	// asociados, si los hay (ver store.Store.YaRevisado).
+	YaRevisado(blob string) (bool, []Hallazgo, error)
+	// RegistrarBlobsCommit guarda los blobs de un commit recién auditado
+	// para que un rebase futuro pueda reconocerlos (ver
+	// store.Store.RegistrarBlobsCommit).
+	RegistrarBlobsCommit(sha string, blobs map[string]string) error
+}
+
 // OpcionesRama define el análisis de una rama completa contra su base.
 type OpcionesRama struct {
 	Base           string // rama de comparación; vacío = "main"
@@ -42,6 +64,12 @@ type OpcionesRama struct {
 	OnDimension func(dim string)
 	Fabrica     FabricaAuditor
 	Parallel    int
+	// Store es opcional (nil-safe): si no es nil, AnalizarRama consulta por
+	// blob antes que por SHA para decidir pendientes (T2.7, criterio de
+	// salida de F2: un rebase que no altera contenido conserva el 100% de
+	// los findings) y registra los blobs de cada commit que audite. Sin
+	// Store, el comportamiento es el de antes de T2.7: solo el ledger v1.
+	Store StoreBlobs
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -88,6 +116,18 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 
 	var pendientes []string
 	for _, sha := range shas {
+		if opts.Store != nil {
+			cubierto, err := commitCubiertoPorBlobs(opts.Store, sha)
+			if err != nil {
+				return nil, err
+			}
+			if cubierto {
+				// El contenido de este commit ya se revisó bajo otro SHA
+				// (rebase típico): no hace falta volver a auditarlo aunque
+				// el ledger v1 no tenga ficha para este SHA nuevo.
+				continue
+			}
+		}
 		ficha, err := ledger.LeerFicha(sha)
 		if err != nil {
 			return nil, err
@@ -184,7 +224,75 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		Fixed:  RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto),
 		Dims:   DimsResultadosParaFicha(resultado.Dims),
 	}
-	return ledger.GuardarRevision(sha, mensaje, "pr", modelo, revision)
+	if err := ledger.GuardarRevision(sha, mensaje, "pr", modelo, revision); err != nil {
+		return err
+	}
+
+	if opts.Store != nil {
+		// Registra los blobs de este commit para que un rebase futuro pueda
+		// reconocerlos vía YaRevisado (T2.7). No se inventan hallazgos v2 a
+		// partir del veredicto v1 (regla de oro: nunca fabricar evidencia):
+		// el IndiceCommit queda con Fingerprints vacío y solo Blobs poblado,
+		// que ya basta para que YaRevisado funcione ("revisado sin
+		// hallazgos" es lo esperado mientras el agente siga emitiendo v1,
+		// hasta F5).
+		blobs, err := blobsDeArchivos(sha, archivos)
+		if err != nil {
+			return err
+		}
+		if err := opts.Store.RegistrarBlobsCommit(sha, blobs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// blobsDeArchivos resuelve el blob de cada archivo de un commit (archivo →
+// blob), para registrarlo en el store o consultarlo antes de auditar (T2.7).
+// Un commit sin archivos (caso degenerado) devuelve un mapa nil, no vacío:
+// así el llamador distingue "no hay nada que registrar" sin necesitar un
+// chequeo de longitud aparte.
+func blobsDeArchivos(sha string, archivos []string) (map[string]string, error) {
+	if len(archivos) == 0 {
+		return nil, nil
+	}
+	blobs := make(map[string]string, len(archivos))
+	for _, archivo := range archivos {
+		blob, err := git.BlobDeArchivoEnCommit(sha, archivo)
+		if err != nil {
+			return nil, err
+		}
+		blobs[archivo] = blob
+	}
+	return blobs, nil
+}
+
+// commitCubiertoPorBlobs indica si TODOS los archivos de sha ya tienen su
+// blob marcado como revisado en el store: en ese caso el contenido de este
+// commit ya se auditó bajo otro SHA y no hace falta volver a auditarlo. Un
+// commit sin archivos nunca se considera cubierto (nada que reutilizar).
+func commitCubiertoPorBlobs(s StoreBlobs, sha string) (bool, error) {
+	archivos, err := git.ArchivosDeCommit(sha)
+	if err != nil {
+		return false, err
+	}
+	blobs, err := blobsDeArchivos(sha, archivos)
+	if err != nil {
+		return false, err
+	}
+	if len(blobs) == 0 {
+		return false, nil
+	}
+	for _, blob := range blobs {
+		revisado, _, err := s.YaRevisado(blob)
+		if err != nil {
+			return false, err
+		}
+		if !revisado {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // overviewDeRama ejecuta la llamada Spec de rama (una sola, no una por

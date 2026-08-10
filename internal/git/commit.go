@@ -112,6 +112,22 @@ func ContenidoDeArchivoEnCommit(sha, archivo string) (string, error) {
 	return salida, nil
 }
 
+// BlobDeArchivoEnCommit devuelve el hash de blob (objeto git) del contenido
+// de un archivo tal como existía en un commit concreto, vía
+// "git rev-parse <sha>:<archivo>" (esa forma ya resuelve directamente al
+// blob, sin necesitar el sufijo "^{blob}"). Es la clave que sobrevive a un
+// rebase: el SHA del commit cambia, pero el blob de un archivo cuyo
+// contenido no cambió es idéntico bajo cualquier SHA que lo contenga. Si el
+// archivo no existe en ese commit, error explícito (mismo criterio que
+// ContenidoDeArchivoEnCommit).
+func BlobDeArchivoEnCommit(sha, archivo string) (string, error) {
+	salida, err := ejecutarGitSalida("rev-parse", sha+":"+archivo)
+	if err != nil {
+		return "", fmt.Errorf("no se pudo resolver el blob de %q en el commit %q: %w", archivo, sha, err)
+	}
+	return strings.TrimSpace(salida), nil
+}
+
 // ResolverSHA devuelve el SHA completo de una expresión (HEAD, HEAD~2, un sha
 // abreviado...).
 func ResolverSHA(expresion string) (string, error) {
