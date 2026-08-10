@@ -1,0 +1,260 @@
+// Package validation ejecuta perfiles de validación (T1.3): capabilities
+// configurables por el usuario (config.ValidationConfig, T1.2), agrupadas en
+// perfiles, con una variante opcional acotada a un subconjunto de paquetes.
+// Es el sucesor, para el nuevo modelo de capabilities/perfiles, de la
+// verificación dual de internal/ops.Verificar; internal/ops queda intacto en
+// esta tarea (F2 traerá el finding v2 completo).
+package validation
+
+import (
+	"errors"
+	"fmt"
+	"os/exec"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+)
+
+// Alcance de una ValidationRun: completo (command sin acotar) o parcial
+// (scoped_command acotado a los paquetes afectados).
+const (
+	AlcanceCompleto = "completo"
+	AlcanceParcial  = "parcial"
+)
+
+// capabilityDelegada identifica, dentro de ValidationRun.Capability, los runs
+// que vienen del contrato tested delegado al agente (perfil sin capabilities
+// configuradas), no de una capability real del yml.
+const capabilityDelegada = "delegado"
+
+// marcadorPaquetes es el marcador literal que scoped_command debe contener;
+// coincide con el que documenta config.CapabilityConfig.ScopedCommand.
+const marcadorPaquetes = "{packages}"
+
+// ValidationRun es el resultado de ejecutar una capability. Forma exacta
+// pedida por la ficha de T1.3: la evidencia de un finding sale de aquí.
+type ValidationRun struct {
+	Capability    string
+	Comando       string
+	Alcance       string // completo | parcial
+	MotivoAlcance string
+	Exit          int
+	DuracionMs    int64
+	Salida        string // recortada, para la evidencia del finding
+}
+
+// Hallazgo es el finding mínimo de validación de esta fase: el tipo v2
+// completo (evidencia estructurada, severidad tipada) llega en F2. Aquí basta
+// con no inventar nunca un PASS y mostrar la salida real del comando fallido.
+type Hallazgo struct {
+	Source     string // fijo "validation"
+	Severity   string // fijo "CRITICAL": sin grados de severidad en esta fase
+	Capability string
+	Comando    string
+	Evidencia  string
+}
+
+// EjecutorComando ejecuta un comando y devuelve su exit code y la salida
+// combinada (stdout+stderr): fails_when=output_not_empty necesita la salida
+// real, no solo el exit code (caso "gofmt -l .", que sale 0 con archivos
+// listados).
+type EjecutorComando func(comando string) (exit int, salida string, err error)
+
+// OpcionesEjecucion configura EjecutarPerfil. Ejecutar y Agente son
+// inyectables (misma costura que internal/ops.OpcionesVerificar) para poder
+// testear sin lanzar procesos reales ni depender de un agente de verdad.
+type OpcionesEjecucion struct {
+	Worktree string
+	Cfg      config.Config
+	// Ejecutar (nil = shell real) corre el comando y devuelve exit + salida.
+	Ejecutar EjecutorComando
+	// Agente es la vía de delegación (contrato tested), usada solo cuando el
+	// perfil no tiene capabilities configuradas; nil = no delegable.
+	Agente agentadapter.AdaptadorPrompt
+}
+
+// EjecutarPerfil corre, en el orden en que ValidationConfig.Profiles[perfil]
+// las lista, las capabilities del perfil indicado. Si alcance no está vacío y
+// la capability tiene SupportsScope, usa ScopedCommand acotado; si no, usa
+// Command sin acotar. Si el perfil no tiene capabilities configuradas (yml
+// sin capabilities configuradas), delega al agente con el contrato tested,
+// igual que hacía internal/ops.Verificar cuando no había lint/test/build
+// commands: es el mismo hueco de configuración, ahora expresado como perfil
+// vacío en vez de listas de comandos sueltas.
+func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]ValidationRun, error) {
+	nombres := opts.Cfg.Validation.Profiles[perfil]
+	if len(nombres) == 0 {
+		return delegarSinCapabilities(opts)
+	}
+
+	ejecutar := opts.Ejecutar
+	if ejecutar == nil {
+		ejecutar = func(comando string) (int, string, error) {
+			return ejecutarShellCombinado(opts.Worktree, comando)
+		}
+	}
+
+	runs := make([]ValidationRun, 0, len(nombres))
+	for _, nombre := range nombres {
+		capacidad, ok := opts.Cfg.Validation.Capabilities[nombre]
+		if !ok {
+			return runs, fmt.Errorf("el perfil %q referencia la capability %q, que no está configurada", perfil, nombre)
+		}
+		comando, alcanceEtiqueta, motivo := resolverComando(capacidad, alcance)
+
+		inicio := time.Now()
+		exit, salida, err := ejecutar(comando)
+		duracion := time.Since(inicio).Milliseconds()
+		if err != nil {
+			return runs, fmt.Errorf("no se pudo ejecutar %q (capability %q): %w", comando, nombre, err)
+		}
+		runs = append(runs, ValidationRun{
+			Capability:    nombre,
+			Comando:       comando,
+			Alcance:       alcanceEtiqueta,
+			MotivoAlcance: motivo,
+			Exit:          exit,
+			DuracionMs:    duracion,
+			Salida:        salida,
+		})
+	}
+	return runs, nil
+}
+
+// resolverComando decide qué variante del comando usar y por qué: scoped
+// solo si hay alcance Y la capability lo soporta; si no, el comando completo
+// sin acotar (regla exacta de la ficha de T1.3).
+func resolverComando(capacidad config.CapabilityConfig, alcance []string) (comando, etiqueta, motivo string) {
+	if len(alcance) > 0 && capacidad.SupportsScope {
+		acotado := strings.ReplaceAll(capacidad.ScopedCommand, marcadorPaquetes, strings.Join(alcance, " "))
+		return acotado, AlcanceParcial, fmt.Sprintf("acotado a %d paquete(s) afectado(s)", len(alcance))
+	}
+	return capacidad.Command, AlcanceCompleto, ""
+}
+
+// Fallo determina si una ValidationRun se considera fallida según fails_when
+// (config.FailsWhenExitCode es el default, incluido el caso vacío).
+func Fallo(run ValidationRun, capacidad config.CapabilityConfig) bool {
+	if capacidad.FailsWhen == config.FailsWhenOutputNotEmpty {
+		return strings.TrimSpace(run.Salida) != ""
+	}
+	return run.Exit != 0
+}
+
+// Hallazgos traduce las ValidationRun fallidas (según Fallo) a findings
+// mínimos: severidad CRITICAL fija (sin grados en esta fase) y la salida real
+// como evidencia, nunca un PASS inventado.
+func Hallazgos(runs []ValidationRun, capacidades map[string]config.CapabilityConfig) []Hallazgo {
+	var hallazgos []Hallazgo
+	for _, run := range runs {
+		if !Fallo(run, capacidades[run.Capability]) {
+			continue
+		}
+		hallazgos = append(hallazgos, Hallazgo{
+			Source:     "validation",
+			Severity:   "CRITICAL",
+			Capability: run.Capability,
+			Comando:    run.Comando,
+			Evidencia:  run.Salida,
+		})
+	}
+	return hallazgos
+}
+
+// delegarSinCapabilities es el fallback cuando el perfil no tiene
+// capabilities configuradas: delega al agente con el mismo contrato tested
+// que ya usaba internal/ops.Verificar. La validación nunca bloquea: sin
+// agente, o si el agente no responde o rompe el contrato, degrada a una lista
+// vacía sin error (mismo criterio de "aviso, nunca bloqueo" de internal/ops).
+func delegarSinCapabilities(opts OpcionesEjecucion) ([]ValidationRun, error) {
+	if opts.Agente == nil {
+		return nil, nil
+	}
+	salida, err := opts.Agente.EjecutarPrompt(promptDelegacion())
+	if err != nil {
+		return nil, nil
+	}
+	tested, err := parsearContratoTested(salida)
+	if err != nil {
+		return nil, nil
+	}
+	runs := make([]ValidationRun, 0, len(tested))
+	for _, comando := range tested {
+		runs = append(runs, ValidationRun{
+			Capability:    capabilityDelegada,
+			Comando:       comando,
+			Alcance:       AlcanceCompleto,
+			MotivoAlcance: "delegado al agente (contrato tested): el perfil no tiene capabilities configuradas",
+		})
+	}
+	return runs, nil
+}
+
+// promptDelegacion es el mismo contrato tested que internal/ops.Verificar:
+// shell libre, una línea final "tested: <comando>; ...", o unavailable.
+func promptDelegacion() string {
+	return "Eres el paso de validación de VAS Sentinel.\n" +
+		"Tienes shell libre: descubre las pruebas del proyecto (Makefile, go.mod, scripts, convenciones del lenguaje) y ejecútalas.\n" +
+		"Devuelve SOLO una línea final con el contrato tested, con los comandos ejecutados separados por ;:\n" +
+		"tested: <comando>; <comando>\n" +
+		"Si no puedes ejecutar las pruebas, devuelve SOLO: unavailable"
+}
+
+// parsearContratoTested extrae los comandos de la línea "tested: ..." de la
+// salida del agente y rechaza unavailable / ausencia de contrato. No se
+// importa de internal/ops porque allí no está exportada: mismo criterio de
+// parseo, duplicado deliberadamente para no acoplar los dos paquetes.
+func parsearContratoTested(salida string) ([]string, error) {
+	if strings.Contains(strings.ToLower(salida), "unavailable") {
+		return nil, errors.New("el agente no pudo ejecutar las pruebas (unavailable)")
+	}
+	for _, linea := range strings.Split(salida, "\n") {
+		recortada := strings.TrimSpace(linea)
+		idx := strings.Index(recortada, "tested:")
+		if idx < 0 {
+			continue
+		}
+		resto := strings.TrimSpace(recortada[idx+len("tested:"):])
+		var comandos []string
+		for _, c := range strings.Split(resto, ";") {
+			c = strings.TrimSpace(c)
+			if c != "" {
+				comandos = append(comandos, c)
+			}
+		}
+		if len(comandos) == 0 {
+			return nil, errors.New("contrato tested vacío")
+		}
+		return comandos, nil
+	}
+	return nil, errors.New("la salida no contiene un contrato tested")
+}
+
+// ejecutarShellCombinado lanza un comando por la shell del sistema en el
+// worktree y devuelve exit code + salida combinada (stdout+stderr). Mismo
+// criterio de confianza que internal/ops.ejecutarShell: los comandos vienen
+// del vassentinel.yml del usuario, no se sanitizan aquí.
+func ejecutarShellCombinado(worktree, comando string) (int, string, error) {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/c", comando)
+	} else {
+		cmd = exec.Command("sh", "-c", comando)
+	}
+	if worktree != "" {
+		cmd.Dir = worktree
+	}
+	salidaBytes, err := cmd.CombinedOutput()
+	salida := string(salidaBytes)
+	if err == nil {
+		return 0, salida, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), salida, nil
+	}
+	return -1, salida, err
+}
