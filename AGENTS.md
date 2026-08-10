@@ -102,7 +102,9 @@ Los subcomandos sin flags rechazan cualquier argumento extra con salida 1.
 - Los prompts al agente devuelven SOLO la línea del mensaje de commit, sin markdown ni comillas.
 - El idioma de los mensajes de commit lo fija `commit_language` en el yml (por defecto `es`, el del historial). El prompt lo dice explícitamente y con un ejemplo: sin fijarlo, el modelo mezclaba idiomas dentro de la misma ejecución.
 
+<!-- vas-sentinel:begin -->
 ## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)
 - Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: "sentinel check".
 - Si el estado es "CRÍTICO" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.
 - Debes detenerte de inmediato e invocar: "sentinel slice" para fragmentar el código acumulado antes de continuar.
+<!-- vas-sentinel:end -->
