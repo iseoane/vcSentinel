@@ -235,7 +235,7 @@ Leyenda: ⬜ pendiente · 🔄 en curso · ✅ cerrada con evidencia
 
 | Fase | Estado | Cierre | Notas |
 |---|---|---|---|
-| F0 | 🔄 | — | Cerradas: T0.0, T0.1 (13 commits), T0.3, T0.8, T0.2, T0.5, T0.7, T0.9, T0.10, T0.11, T0.12, T0.13. Pendientes: T0.4, T0.6 |
+| F0 | ✅ | T0.0–T0.13 | Todas cerradas: T0.0, T0.1 (13 commits), T0.2, T0.3, T0.4, T0.5, T0.6, T0.7, T0.8, T0.9, T0.10, T0.11, T0.12, T0.13 |
 | F1 | ⬜ | — | |
 | F2 | ⬜ | — | |
 | F3 | ⬜ | — | |
