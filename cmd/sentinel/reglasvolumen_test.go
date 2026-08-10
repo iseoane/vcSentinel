@@ -127,3 +127,114 @@ func TestInyectarEnArchivoLFSigueUsandoLF(t *testing.T) {
 		t.Error("se introdujo CRLF en un archivo con finales LF")
 	}
 }
+
+// TestInyectarMigraBloqueLegadoDuplicado reproduce el caso EXACTO que tiene
+// hoy .claudecode.md de este repo: dos copias del bloque legado (sin
+// marcadores), fruto de un binario anterior a la fix de idempotencia. init
+// debe migrar: retirar ambas copias legadas y dejar un único bloque marcado.
+func TestInyectarMigraBloqueLegadoDuplicado(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), ".claudecode.md")
+	escribirArchivo(t, ruta, "# Guía\n"+reglasVolumenLegado+reglasVolumenLegado)
+
+	escribio, err := inyectarReglasDeArchivo(ruta)
+	if err != nil {
+		t.Fatalf("inyectarReglasDeArchivo devolvió error: %v", err)
+	}
+	if !escribio {
+		t.Fatal("init no migró el bloque legado duplicado")
+	}
+
+	contenido := leerArchivo(t, ruta)
+	if strings.Count(contenido, marcadorInicio) != 1 {
+		t.Errorf("se esperaba exactamente 1 marcadorInicio, contenido: %q", contenido)
+	}
+	if strings.Count(contenido, marcadorFin) != 1 {
+		t.Errorf("se esperaba exactamente 1 marcadorFin, contenido: %q", contenido)
+	}
+	if strings.Count(contenido, "REGLA CRÍTICA DE VOLUMEN") != 1 {
+		t.Errorf("se esperaba exactamente 1 aparición de la regla, contenido: %q", contenido)
+	}
+	if !strings.Contains(contenido, "# Guía") {
+		t.Errorf("se perdió el contenido propio del archivo: %q", contenido)
+	}
+
+	escribioOtraVez, err := inyectarReglasDeArchivo(ruta)
+	if err != nil {
+		t.Fatalf("segunda inyección devolvió error: %v", err)
+	}
+	if escribioOtraVez {
+		t.Error("init no es idempotente tras la migración: volvió a escribir")
+	}
+}
+
+// TestInyectarMigraBloqueLegadoSinContenidoPrevio cubre el caso real de este
+// repo: un archivo cuyo ÚNICO contenido son dos copias del bloque legado
+// pegadas desde el byte 0 (sin línea previa, así que la primera copia no
+// tiene ningún salto de línea por delante). Antes de este test, la regex
+// exigía siempre un "\r?\n" delante del bloque, así que dejaba esa primera
+// copia sin reconocer: init migraba solo la segunda y el archivo terminaba
+// con un bloque legado huérfano más el bloque marcado nuevo.
+func TestInyectarMigraBloqueLegadoSinContenidoPrevio(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), ".claudecode.md")
+	sinLeadingNewline := strings.TrimPrefix(reglasVolumenLegado, "\n")
+	escribirArchivo(t, ruta, sinLeadingNewline+sinLeadingNewline)
+
+	escribio, err := inyectarReglasDeArchivo(ruta)
+	if err != nil {
+		t.Fatalf("inyectarReglasDeArchivo devolvió error: %v", err)
+	}
+	if !escribio {
+		t.Fatal("init no migró el bloque legado sin contenido previo")
+	}
+
+	contenido := leerArchivo(t, ruta)
+	if strings.Count(contenido, marcadorInicio) != 1 {
+		t.Errorf("se esperaba exactamente 1 marcadorInicio, contenido: %q", contenido)
+	}
+	if strings.Count(contenido, "REGLA CRÍTICA DE VOLUMEN") != 1 {
+		t.Errorf("se esperaba exactamente 1 aparición de la regla, contenido: %q", contenido)
+	}
+}
+
+// TestContieneReconoceBloqueMarcadoConOtraRedaccion simula una versión futura
+// que reformuló el texto interior del bloque. La detección debe seguir
+// funcionando porque depende solo de los marcadores, no del texto.
+func TestContieneReconoceBloqueMarcadoConOtraRedaccion(t *testing.T) {
+	bloqueFuturo := "\n" + marcadorInicio + "\nOtra redacción completamente distinta.\nMás líneas.\n" + marcadorFin + "\n"
+
+	if !contieneReglasVolumen("# Guía\n" + bloqueFuturo) {
+		t.Error("no se reconoció un bloque marcado con redacción distinta a la actual")
+	}
+}
+
+// TestQuitarRetiraBloqueMarcadoConOtraRedaccion comprueba que un bloque
+// marcado con redacción futura distinta puede retirarse igual, sin quedar
+// huérfano.
+func TestQuitarRetiraBloqueMarcadoConOtraRedaccion(t *testing.T) {
+	bloqueFuturo := "\n" + marcadorInicio + "\nOtra redacción completamente distinta.\nMás líneas.\n" + marcadorFin + "\n"
+
+	restante := quitarReglasVolumen("# Guía\n" + bloqueFuturo)
+	if strings.Contains(restante, marcadorInicio) {
+		t.Errorf("quedó marcadorInicio sin retirar: %q", restante)
+	}
+	if strings.Contains(restante, marcadorFin) {
+		t.Errorf("quedó marcadorFin sin retirar: %q", restante)
+	}
+	if !strings.Contains(restante, "# Guía") {
+		t.Errorf("se perdió el contenido propio del archivo: %q", restante)
+	}
+}
+
+// TestQuitarRetiraMezclaDeLegadoYMarcado cubre un repo a medio migrar: una
+// copia legada y una copia marcada a la vez. uninit debe retirar ambas.
+func TestQuitarRetiraMezclaDeLegadoYMarcado(t *testing.T) {
+	contenido := "# Guía\n" + reglasVolumenLegado + reglasVolumen
+
+	restante := quitarReglasVolumen(contenido)
+	if strings.Contains(restante, "REGLA CRÍTICA DE VOLUMEN") {
+		t.Errorf("quedó texto de la regla sin retirar: %q", restante)
+	}
+	if strings.Contains(restante, marcadorInicio) || strings.Contains(restante, marcadorFin) {
+		t.Errorf("quedaron marcadores sin retirar: %q", restante)
+	}
+}
