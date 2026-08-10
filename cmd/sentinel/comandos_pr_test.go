@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
 // TestVerboPr: el dispatch decide entre review, create y el passthrough
@@ -158,21 +160,28 @@ func hallazgoCritico() review.ReviewFinding {
 	}
 }
 
-func TestGateBlockPermiteSinBlock(t *testing.T) {
+// TestAvisoSemanticoSinBlockNoAvisa: sin veredicto block, no hay nada que
+// avisar (antes gateBlock devolvía permitido=true; ahora ni siquiera decide
+// si se publica, T1.8 lo dejó fuera de ese camino).
+func TestAvisoSemanticoSinBlockNoAvisa(t *testing.T) {
 	fichas := []review.Ficha{
 		fichaCreateAyuda("abc1234", review.VerdictOK,
 			review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK}),
 	}
-	permitido, bloqueantes := gateBlock(fichas, false)
-	if !permitido {
-		t.Fatal("una rama sin block debe permitir publicar")
+	avisar, bloqueantes := avisoSemantico(fichas)
+	if avisar {
+		t.Fatal("sin block no hay nada que avisar")
 	}
 	if len(bloqueantes) != 0 {
 		t.Fatalf("sin bloqueantes, lista = %v", bloqueantes)
 	}
 }
 
-func TestGateBlockListaCriticosYNiega(t *testing.T) {
+// TestAvisoSemanticoConBlockAvisaYListaCriticos: el veredicto block ya NO
+// impide publicar (T1.8 lo pasa a advisory); avisoSemantico solo señala el
+// aviso destacado y devuelve los CRITICAL estructurados para que el CLI los
+// muestre.
+func TestAvisoSemanticoConBlockAvisaYListaCriticos(t *testing.T) {
 	fichas := []review.Ficha{
 		fichaCreateAyuda("abc1234", review.VerdictBlock,
 			review.DimensionResult{
@@ -181,9 +190,9 @@ func TestGateBlockListaCriticosYNiega(t *testing.T) {
 				Findings: []review.ReviewFinding{hallazgoCritico()},
 			}),
 	}
-	permitido, bloqueantes := gateBlock(fichas, false)
-	if permitido {
-		t.Fatal("block sin --force debe negar la publicación")
+	avisar, bloqueantes := avisoSemantico(fichas)
+	if !avisar {
+		t.Fatal("block debe disparar el aviso destacado")
 	}
 	if len(bloqueantes) != 1 {
 		t.Fatalf("debe listar el CRITICAL, lista = %v", bloqueantes)
@@ -191,24 +200,6 @@ func TestGateBlockListaCriticosYNiega(t *testing.T) {
 	h := bloqueantes[0]
 	if h.Severity != review.SevCritical || h.Description != "secreto en el log" {
 		t.Errorf("el bloqueante debe conservar severidad y descripción: %+v", h)
-	}
-}
-
-func TestGateBlockForceSupera(t *testing.T) {
-	fichas := []review.Ficha{
-		fichaCreateAyuda("abc1234", review.VerdictBlock,
-			review.DimensionResult{
-				Dim:      review.DimSecurity,
-				Verdict:  review.VerdictBlock,
-				Findings: []review.ReviewFinding{hallazgoCritico()},
-			}),
-	}
-	permitido, bloqueantes := gateBlock(fichas, true)
-	if !permitido {
-		t.Fatal("--force debe superar el gate de block")
-	}
-	if len(bloqueantes) != 0 {
-		t.Fatalf("con --force no se lista bloqueantes, lista = %v", bloqueantes)
 	}
 }
 
@@ -459,7 +450,7 @@ func TestPublicarPRConBaseVacíaNoAñadeFlag(t *testing.T) {
 }
 
 func TestDetalleEventoPrCreate(t *testing.T) {
-	detalle, err := detalleEventoPrCreate("https://github.com/x/pr/1", false, false)
+	detalle, err := detalleEventoPrCreate("https://github.com/x/pr/1", false, false, false, "")
 	if err != nil {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
@@ -470,13 +461,16 @@ func TestDetalleEventoPrCreate(t *testing.T) {
 	if crudo["pr_url"] != "https://github.com/x/pr/1" {
 		t.Errorf("pr_url = %v", crudo["pr_url"])
 	}
-	if crudo["fallback"] != false || crudo["chain_pr"] != false {
-		t.Errorf("fallback/chain_pr = %v/%v", crudo["fallback"], crudo["chain_pr"])
+	if crudo["fallback"] != false || crudo["chain_pr"] != false || crudo["force"] != false {
+		t.Errorf("fallback/chain_pr/force = %v/%v/%v", crudo["fallback"], crudo["chain_pr"], crudo["force"])
+	}
+	if _, hay := crudo["motivo"]; hay {
+		t.Errorf("sin force no debe haber motivo: %v", crudo["motivo"])
 	}
 }
 
 func TestDetalleEventoPrCreateFallbackYChain(t *testing.T) {
-	detalle, err := detalleEventoPrCreate("", true, true)
+	detalle, err := detalleEventoPrCreate("", true, true, false, "")
 	if err != nil {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
@@ -492,12 +486,28 @@ func TestDetalleEventoPrCreateFallbackYChain(t *testing.T) {
 	}
 }
 
+// TestDetalleEventoPrCreateForceConMotivo: la excepción de --force queda
+// registrada en el evento con el motivo explícito (T1.8).
+func TestDetalleEventoPrCreateForceConMotivo(t *testing.T) {
+	detalle, err := detalleEventoPrCreate("https://github.com/x/pr/2", false, false, true, "motivo real")
+	if err != nil {
+		t.Fatalf("detalle no debería fallar: %v", err)
+	}
+	var crudo map[string]any
+	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
+		t.Fatalf("detail debe ser JSON válido: %v", err)
+	}
+	if crudo["force"] != true || crudo["motivo"] != "motivo real" {
+		t.Errorf("force/motivo = %v/%v", crudo["force"], crudo["motivo"])
+	}
+}
+
 func TestParsearFlagsPrCreate(t *testing.T) {
-	flags, err := parsearFlagsPrCreate([]string{"--base", "develop", "--chain-pr", "--force"})
+	flags, err := parsearFlagsPrCreate([]string{"--base", "develop", "--chain-pr", "--force", "--reason", "motivo real"})
 	if err != nil {
 		t.Fatalf("parseo no debería fallar: %v", err)
 	}
-	if flags.base != "develop" || !flags.chainPR || !flags.force {
+	if flags.base != "develop" || !flags.chainPR || !flags.force || flags.reason != "motivo real" {
 		t.Errorf("flags = %+v", flags)
 	}
 }
@@ -511,5 +521,160 @@ func TestParsearFlagsPrCreateBaseSinValor(t *testing.T) {
 func TestParsearFlagsPrCreateDesconocida(t *testing.T) {
 	if _, err := parsearFlagsPrCreate([]string{"--nope"}); err == nil {
 		t.Fatal("opción desconocida debe fallar")
+	}
+}
+
+// TestParsearFlagsPrCreateForceSinReason: --force sin --reason es un error
+// explícito (T1.8): la validación es el único gate real y forzarla sin motivo
+// no puede quedar en silencio.
+func TestParsearFlagsPrCreateForceSinReason(t *testing.T) {
+	_, err := parsearFlagsPrCreate([]string{"--force"})
+	if err == nil {
+		t.Fatal("--force sin --reason debe fallar")
+	}
+	if !strings.Contains(err.Error(), "reason") && !strings.Contains(err.Error(), "motivo") {
+		t.Errorf("el error debe pedir el motivo, got: %v", err)
+	}
+}
+
+// TestParsearFlagsPrCreateReasonSinValor: --reason sin valor falla igual que
+// el resto de flags de valor.
+func TestParsearFlagsPrCreateReasonSinValor(t *testing.T) {
+	if _, err := parsearFlagsPrCreate([]string{"--force", "--reason"}); err == nil {
+		t.Fatal("--reason sin valor debe fallar")
+	}
+}
+
+// TestEjecutarPrCreateCon_ValidacionRojaSinForce_NoPublicaNiAuditaRama cubre
+// la regla central de T1.8: si la validación falla sin --force, ni se publica
+// ni se gasta un token en la revisión semántica (AnalizarRama nunca se llama).
+func TestEjecutarPrCreateCon_ValidacionRojaSinForce_NoPublicaNiAuditaRama(t *testing.T) {
+	var analizarRamaLlamado, publicarLlamado bool
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
+		cargarConfig:  func(string) config.Config { return config.Config{} },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1, Salida: "FAIL"}}, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			analizarRamaLlamado = true
+			return nil, nil
+		},
+		publicar: func(string, string, string) (string, bool, error) {
+			publicarLlamado = true
+			return "", false, nil
+		},
+	})
+	if codigo != 1 {
+		t.Fatalf("codigo = %d, esperado 1", codigo)
+	}
+	if analizarRamaLlamado {
+		t.Fatal("la validación en rojo sin --force no debe invocar AnalizarRama: cero tokens")
+	}
+	if publicarLlamado {
+		t.Fatal("la validación en rojo sin --force no debe publicar")
+	}
+	if !strings.Contains(salida.String(), "go test ./...") || !strings.Contains(salida.String(), "FAIL") {
+		t.Errorf("debe listar el comando en rojo con su salida real: %s", salida.String())
+	}
+}
+
+// TestEjecutarPrCreateCon_ForceSinReason_ErrorSinTocarNada: --force sin
+// --reason falla en el parseo, antes de tocar config/git/validación.
+func TestEjecutarPrCreateCon_ForceSinReason_ErrorSinTocarNada(t *testing.T) {
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force"}, depsPrCreate{
+		cargarConfig: func(string) config.Config {
+			t.Fatal("no debe cargar configuración sin --reason: el error es de parseo")
+			return config.Config{}
+		},
+	})
+	if codigo != 1 {
+		t.Fatalf("codigo = %d, esperado 1", codigo)
+	}
+	if !strings.Contains(salida.String(), "motivo") {
+		t.Errorf("debe pedir el motivo explícitamente: %s", salida.String())
+	}
+}
+
+// TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion cubre el
+// tercer escenario de aceptación: con --force --reason, la validación en rojo
+// se supera, se publica igual y el evento registra force+motivo.
+func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var detalleRegistrado string
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
+		cargarConfig:  func(string) config.Config { return config.Config{} },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1}}, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/9", false, nil },
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+			detalleRegistrado = detalle
+			return nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
+	}
+	var crudo map[string]any
+	if err := json.Unmarshal([]byte(detalleRegistrado), &crudo); err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, detalleRegistrado)
+	}
+	if crudo["force"] != true || crudo["motivo"] != "motivo real" {
+		t.Errorf("el evento debe registrar force y motivo, got %+v", crudo)
+	}
+}
+
+// TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestacado
+// cubre el cuarto escenario: con validación en verde, un veredicto semántico
+// block ya no bloquea (advisory) — publica igual con el aviso destacado
+// visible tanto en la salida como en la plantilla generada.
+func TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestacado(t *testing.T) {
+	fichaBlock := fichaCreateAyuda("abc1234", review.VerdictBlock,
+		review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictBlock,
+			Findings: []review.ReviewFinding{hallazgoCritico()}})
+	var cuerpoPublicado string
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
+		cargarConfig:  func(string) config.Config { return config.Config{} },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil // validación en verde: sin runs, sin hallazgos
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar: func(worktree, ruta, base string) (string, bool, error) {
+			datos, err := os.ReadFile(ruta)
+			if err != nil {
+				t.Fatalf("no se pudo leer la plantilla publicada: %v", err)
+			}
+			cuerpoPublicado = string(datos)
+			return "https://github.com/x/pr/10", false, nil
+		},
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el veredicto semántico ya no bloquea)", codigo)
+	}
+	if !strings.Contains(salida.String(), "AVISO") {
+		t.Errorf("la salida debe mostrar el aviso destacado del veredicto block: %s", salida.String())
+	}
+	if !strings.Contains(cuerpoPublicado, "block") {
+		t.Errorf("la plantilla publicada debe mostrar el veredicto block: %s", cuerpoPublicado)
 	}
 }

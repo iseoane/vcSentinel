@@ -309,6 +309,51 @@ func TestSeccionVerificacion(t *testing.T) {
 	})
 }
 
+// TestSeccionValidacion: exit codes reales de internal/validation (T1.8),
+// distintos de seccionVerificacion — sin comandos, nunca inventa un PASS.
+func TestSeccionValidacion(t *testing.T) {
+	t.Run("con exit codes reales", func(t *testing.T) {
+		salida := seccionValidacion([]ComandoVerificado{
+			{Comando: "go vet ./...", Exit: 0},
+			{Comando: "go test ./...", Exit: 1},
+		})
+		if !strings.Contains(salida, "go vet ./...") || !strings.Contains(salida, "exit 0") {
+			t.Errorf("faltan los comandos en verde: %s", salida)
+		}
+		if !strings.Contains(salida, "❌") || !strings.Contains(salida, "exit 1") {
+			t.Errorf("el exit no nulo debe marcarse: %s", salida)
+		}
+	})
+	t.Run("sin comandos no inventa nada", func(t *testing.T) {
+		salida := seccionValidacion(nil)
+		if strings.Contains(salida, "✅") {
+			t.Errorf("sin comandos no debe inventar un PASS: %s", salida)
+		}
+	})
+}
+
+// TestRenderPlantillaPrDistingueValidacionYVerificacion: la plantilla separa
+// la validación previa (ValidationRun) de la verificación post-hoc
+// (ops.Verificar) en dos secciones propias, sin mezclarlas (T1.8).
+func TestRenderPlantillaPrDistingueValidacionYVerificacion(t *testing.T) {
+	fichas := []Ficha{fichaAyuda("u1", "feat(a)", "m", revisionAyuda("ok"))}
+	verificacion := VerificacionPlantilla{
+		Modo:       "determinista",
+		Comandos:   []ComandoVerificado{{Comando: "go test ./... (post-hoc)", Exit: 0}},
+		Validacion: []ComandoVerificado{{Comando: "go build ./... (validacion previa)", Exit: 1}},
+	}
+	salida := RenderPlantillaPr(fichas, nil, verificacion, "0.2.0")
+	if !strings.Contains(salida, "## Validación") {
+		t.Fatalf("falta la sección de validación previa: %s", salida)
+	}
+	if !strings.Contains(salida, "go build ./... (validacion previa)") {
+		t.Errorf("la validación previa debe listar su propio comando: %s", salida)
+	}
+	if !strings.Contains(salida, "go test ./... (post-hoc)") {
+		t.Errorf("la verificación post-hoc debe seguir apareciendo: %s", salida)
+	}
+}
+
 func TestRenderPlantillaPr(t *testing.T) {
 	fichas := []Ficha{
 		fichaAyuda("u1a", "feat(a)", "m",
