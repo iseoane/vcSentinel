@@ -1,12 +1,116 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
+
+// TestHelperProcess NO es un test real: es el proceso hijo que arrancan los
+// tests de exit code de este paquete para ejercer funciones que llaman a
+// os.Exit sin matar el proceso `go test` padre (patrón estándar de Go, el
+// mismo que usa la librería os/exec para probarse a sí misma). Sin el guard
+// de la variable de entorno, una corrida normal de `go test` la trata como un
+// test vacío que pasa.
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("VAS_SENTINEL_HELPER_PROCESS") != "1" {
+		return
+	}
+	worktree := os.Getenv("VAS_SENTINEL_HELPER_WORKTREE")
+	switch os.Getenv("VAS_SENTINEL_HELPER_FN") {
+	case "ejecutarLint":
+		ejecutarLint(worktree)
+	case "ejecutarReview":
+		ejecutarReview(worktree, []string{"HEAD"})
+	case "ejecutarPrReview":
+		ejecutarPrReview(worktree, nil)
+	}
+	os.Exit(0)
+}
+
+// ejecutarComoSubproceso relanza este mismo binario de test para invocar fn
+// (una de las ramas de TestHelperProcess) sobre worktree, y captura su salida
+// combinada y su exit code. home fija HOME/USERPROFILE del subproceso: el
+// yml global del usuario real de la máquina nunca debe filtrarse al test.
+// cmd.Dir se fija a worktree (nunca al cwd real del repo de vas.sentinel):
+// si el fix bajo prueba regresara y la función siguiera de largo tras el
+// error de config, cualquier comando git/agente que intente lanzar debe
+// operar sobre el tmpdir aislado, no sobre este repositorio real.
+func ejecutarComoSubproceso(t *testing.T, fn, worktree, home string) (salida string, exitCode int) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
+	cmd.Dir = worktree
+	env := []string{
+		"VAS_SENTINEL_HELPER_PROCESS=1",
+		"VAS_SENTINEL_HELPER_FN=" + fn,
+		"VAS_SENTINEL_HELPER_WORKTREE=" + worktree,
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+	}
+	for _, kv := range os.Environ() {
+		clave := strings.SplitN(kv, "=", 2)[0]
+		if clave == "HOME" || clave == "USERPROFILE" || strings.HasPrefix(kv, "VAS_SENTINEL_HELPER_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = env
+
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	if err == nil {
+		return buf.String(), 0
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("no se pudo ejecutar el subproceso de %s: %v", fn, err)
+	}
+	return buf.String(), exitErr.ExitCode()
+}
+
+// escribirYmlConClaveDesconocida escribe un vassentinel.yml per-proyecto con
+// una clave fuera del esquema, para los tests de propagación de error de F1.
+func escribirYmlConClaveDesconocida(t *testing.T, worktree string) {
+	t.Helper()
+	ruta := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+		t.Fatalf("no se pudo crear %s: %v", filepath.Dir(ruta), err)
+	}
+	contenido := "active_agent: \"claude\"\nclave_inexistente: true\n"
+	if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
+		t.Fatalf("no se pudo escribir %s: %v", ruta, err)
+	}
+}
+
+// TestEjecutarLint_ClaveDesconocidaEnYml_Exit1ConLinea cubre el Fix 1 (F1,
+// hallazgo del orquestador): antes de este fix, ejecutarLint usaba
+// CargarConfiguracionLocal (sin error), así que una clave desconocida en el
+// yml se ignoraba en silencio y, al no quedar lint_commands configurados por
+// el yml roto, el comando terminaba con "no hay comandos de lint" y exit 0 —
+// exactamente lo contrario de lo que exige la ficha. Con
+// CargarConfiguracionLocalEstricta debe cortar con exit 1 y el error visible.
+func TestEjecutarLint_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	escribirYmlConClaveDesconocida(t, worktree)
+
+	salida, exit := ejecutarComoSubproceso(t, "ejecutarLint", worktree, home)
+
+	if exit != 1 {
+		t.Errorf("exit esperado 1, obtuve %d (salida: %q)", exit, salida)
+	}
+	if !strings.Contains(salida, "line") {
+		t.Errorf("la salida debe incluir la línea del error del yml, obtuve: %q", salida)
+	}
+}
 
 func TestParsearFlagsAuditoriaDefault(t *testing.T) {
 	flags, err := parsearFlagsAuditoria(nil)

@@ -92,7 +92,14 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 // ejecutarLint ejecuta los comandos de lint_commands de la configuración.
 // Cada comando corre en el shell del sistema; si cualquiera falla, salida 1.
 func ejecutarLint(worktree string) {
-	cfg := config.CargarConfiguracionLocal(worktree)
+	// Config ESTRICTA (hallazgo del orquestador, fuera del texto original de
+	// la ficha): una clave desconocida en el yml debe cortar aquí con error
+	// explícito, no seguir en silencio con la config por defecto.
+	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
 	if len(cfg.LintCommands) == 0 {
 		fmt.Println("✅ No hay comandos de lint configurados (lint_commands en vassentinel.yml).")
 		return

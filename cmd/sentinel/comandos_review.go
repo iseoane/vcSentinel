@@ -24,7 +24,15 @@ func ejecutarReview(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	cfg := aplicarTimeoutFlag(config.CargarConfiguracionLocal(worktree), flags)
+	// Config ESTRICTA (hallazgo del orquestador, fuera del texto original de
+	// la ficha): una clave desconocida en el yml debe cortar aquí con error
+	// explícito, no seguir en silencio con la config por defecto.
+	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	cfg = aplicarTimeoutFlag(cfg, flags)
 	gitDir, err := git.ObtenerGitDir()
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)

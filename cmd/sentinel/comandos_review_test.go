@@ -2,11 +2,33 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
+
+// TestEjecutarReview_ClaveDesconocidaEnYml_Exit1ConLinea cubre el Fix 1 (F1,
+// hallazgo del orquestador): ejecutarReview usaba CargarConfiguracionLocal
+// (sin error). Con un yml roto, antes seguía adelante en silencio hasta
+// fallar más tarde con un error de git ajeno al problema real (el worktree de
+// este test no es un repo); con CargarConfiguracionLocalEstricta debe cortar
+// aquí mismo con exit 1 y el error del yml visible.
+func TestEjecutarReview_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	escribirYmlConClaveDesconocida(t, worktree)
+
+	salida, exit := ejecutarComoSubproceso(t, "ejecutarReview", worktree, home)
+
+	if exit != 1 {
+		t.Errorf("exit esperado 1, obtuve %d (salida: %q)", exit, salida)
+	}
+	if !strings.Contains(salida, "line") {
+		t.Errorf("la salida debe incluir la línea del error del yml, obtuve: %q", salida)
+	}
+}
 
 func TestCodigoSalidaVeredicto(t *testing.T) {
 	pruebas := []struct {

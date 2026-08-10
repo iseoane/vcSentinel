@@ -52,6 +52,30 @@ validation:
 `,
 			contiene: "{packages}",
 		},
+		{
+			// fails_when tiene un dominio cerrado (exit_code/output_not_empty):
+			// un typo como "exit-cede" debe fallar en la carga, no degradarse en
+			// silencio a un criterio de fallo distinto en tiempo de ejecución.
+			nombre: "fails_when con valor fuera del dominio cerrado",
+			yml: `
+validation:
+  capabilities:
+    lint:
+      command: "go vet ./..."
+      fails_when: "exit-cede"
+`,
+			contiene: "lint",
+		},
+		{
+			// mode también tiene un dominio cerrado (worktree/inplace): un typo
+			// como "worktre" no puede aceptarse en silencio.
+			nombre: "mode con valor fuera del dominio cerrado",
+			yml: `
+validation:
+  mode: "worktre"
+`,
+			contiene: "worktre",
+		},
 	}
 
 	for _, c := range casos {
@@ -69,6 +93,56 @@ validation:
 				t.Errorf("error = %v, esperado que contenga %q", err, c.contiene)
 			}
 		})
+	}
+}
+
+// TestValidacionFailsWhenInvalidoNombraCapabilityYValor cubre el hallazgo del
+// orquestador: fails_when no validaba contra su dominio cerrado
+// (FailsWhenExitCode/FailsWhenOutputNotEmpty), así que un typo se aceptaba en
+// silencio. El error debe nombrar explícitamente la capability y el valor
+// recibido, no solo uno de los dos.
+func TestValidacionFailsWhenInvalidoNombraCapabilityYValor(t *testing.T) {
+	worktree := t.TempDir()
+	ruta := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	escribirConfig(t, ruta, `
+validation:
+  capabilities:
+    lint:
+      command: "go vet ./..."
+      fails_when: "exit-cede"
+`)
+
+	cfg := configuracionPorDefecto()
+	err := aplicarDesdeRuta(&cfg, ruta)
+	if err == nil {
+		t.Fatal("se esperaba un error, obtuve nil")
+	}
+	if !strings.Contains(err.Error(), "lint") {
+		t.Errorf("error = %v, esperado que nombre la capability 'lint'", err)
+	}
+	if !strings.Contains(err.Error(), "exit-cede") {
+		t.Errorf("error = %v, esperado que nombre el valor inválido 'exit-cede'", err)
+	}
+}
+
+// TestValidacionModeInvalidoNombraElValor cubre el mismo hallazgo para mode:
+// el error debe nombrar el valor recibido, sin degradarse en silencio al
+// default.
+func TestValidacionModeInvalidoNombraElValor(t *testing.T) {
+	worktree := t.TempDir()
+	ruta := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	escribirConfig(t, ruta, `
+validation:
+  mode: "worktre"
+`)
+
+	cfg := configuracionPorDefecto()
+	err := aplicarDesdeRuta(&cfg, ruta)
+	if err == nil {
+		t.Fatal("se esperaba un error, obtuve nil")
+	}
+	if !strings.Contains(err.Error(), "worktre") {
+		t.Errorf("error = %v, esperado que nombre el valor inválido 'worktre'", err)
 	}
 }
 

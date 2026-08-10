@@ -432,6 +432,15 @@ func aplicarValidacion(cfg *Config, raw *validationYAML) error {
 			capacidad.Command = *capRaw.Command
 		}
 		if capRaw.FailsWhen != nil {
+			// fails_when tiene un dominio cerrado (T1.1/T1.2 lo definen como
+			// exit_code/output_not_empty): un typo como "exit-cede" no puede
+			// aceptarse en silencio, degradaría el criterio de fallo en tiempo
+			// de ejecución sin que el operador se entere (hallazgo del
+			// orquestador, fuera del texto original de la ficha).
+			if *capRaw.FailsWhen != FailsWhenExitCode && *capRaw.FailsWhen != FailsWhenOutputNotEmpty {
+				return fmt.Errorf("validation.capabilities.%s: fails_when %q inválido (valores válidos: %q, %q)",
+					nombre, *capRaw.FailsWhen, FailsWhenExitCode, FailsWhenOutputNotEmpty)
+			}
 			capacidad.FailsWhen = *capRaw.FailsWhen
 		} else if capacidad.FailsWhen == "" {
 			capacidad.FailsWhen = FailsWhenExitCode
@@ -462,6 +471,12 @@ func aplicarValidacion(cfg *Config, raw *validationYAML) error {
 		cfg.Validation.Profiles[perfil] = nombresCapabilities
 	}
 	if raw.Mode != nil {
+		// mode también tiene un dominio cerrado (worktree/inplace): mismo
+		// motivo que fails_when, arriba.
+		if *raw.Mode != ModeWorktree && *raw.Mode != ModeInplace {
+			return fmt.Errorf("validation.mode: %q inválido (valores válidos: %q, %q)",
+				*raw.Mode, ModeWorktree, ModeInplace)
+		}
 		cfg.Validation.Mode = *raw.Mode
 	}
 	return nil
