@@ -6,11 +6,14 @@ import "errors"
 // deliberadamente ligero, solo qué fingerprints de review.Hallazgo tocan a
 // ese SHA (el contenido completo de cada hallazgo vive en
 // findings/<fingerprint>.json). Message queda como contexto opcional para no
-// tener que releer el commit de git al inspeccionar el índice.
+// tener que releer el commit de git al inspeccionar el índice. V1 (T2.6) es
+// opcional y solo se rellena cuando el índice viene de migrar una ficha v1
+// (review.Ficha, ledger pre-T2.6): ver CompatV1 en migracion.go.
 type IndiceCommit struct {
-	SHA          string   `json:"sha"`
-	Message      string   `json:"message,omitempty"`
-	Fingerprints []string `json:"fingerprints"`
+	SHA          string    `json:"sha"`
+	Message      string    `json:"message,omitempty"`
+	Fingerprints []string  `json:"fingerprints"`
+	V1           *CompatV1 `json:"v1_compat,omitempty"`
 }
 
 // GuardarIndiceCommit persiste idx en commits/<sha>.json.

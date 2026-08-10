@@ -135,7 +135,7 @@ func ejecutarReview(worktree string, args []string) {
 			Effort: efectivo.Esfuerzo,
 			Dims:   review.DimsResultadosParaFicha(resultado.Dims),
 		}
-		if err := ledger.GuardarRevision(sha, mensaje, calcularBucket(archivos), modelo, revision); err != nil {
+		if err := ledger.GuardarRevision(sha, mensaje, "", modelo, revision); err != nil {
 			fmt.Printf("⚠️ %s: no se pudo guardar la ficha: %v\n", sha[:8], err)
 		}
 
@@ -309,22 +309,4 @@ func tieneHallazgosCriticos(resultado review.ResultadoAuditoria) bool {
 		}
 	}
 	return false
-}
-
-// calcularBucket deduce el saco del commit: "mixto" si toca varias capas; si
-// no, la capa de su único archivo (o "backend" como último recurso).
-func calcularBucket(archivos []string) string {
-	capas := map[string]bool{}
-	for _, archivo := range archivos {
-		capas[git.ClasificarCapa(archivo)] = true
-	}
-	if len(capas) == 1 {
-		for capa := range capas {
-			return capa
-		}
-	}
-	if len(capas) == 0 {
-		return "backend"
-	}
-	return "mixto"
 }

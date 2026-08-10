@@ -48,24 +48,6 @@ func TestCodigoSalidaVeredicto(t *testing.T) {
 	}
 }
 
-func TestCalcularBucket(t *testing.T) {
-	pruebas := []struct {
-		nombre   string
-		archivos []string
-		esperado string
-	}{
-		{"un archivo backend", []string{"cmd/main.go"}, "backend"},
-		{"config", []string{"vassentinel.yml"}, "config"},
-		{"varias capas", []string{"internal/a.go", "internal/a_test.go"}, "mixto"},
-		{"sin archivos", nil, "backend"},
-	}
-	for _, prueba := range pruebas {
-		if got := calcularBucket(prueba.archivos); got != prueba.esperado {
-			t.Errorf("%s: calcularBucket = %q, esperado %q", prueba.nombre, got, prueba.esperado)
-		}
-	}
-}
-
 func TestDimsResultadosParaFicha(t *testing.T) {
 	rd := []review.ResultadoDimension{
 		{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK}},
