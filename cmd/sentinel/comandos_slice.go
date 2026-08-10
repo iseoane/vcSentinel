@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
@@ -49,6 +50,61 @@ func ejecutarSlicePlan(salida io.Writer, args []string) int {
 		return codigoSalidaDecisionesPendientes
 	}
 	return 0
+}
+
+// ejecutarSliceApply ejecuta un plan previamente emitido, solo con las
+// respuestas explícitas del usuario. Devuelve 0 si commiteó, 1 si se negó.
+func ejecutarSliceApply(salida io.Writer, args []string) int {
+	rutaPlan, rutaRespuestas := "", ""
+	for i := 0; i < len(args); i++ {
+		valor := ""
+		if i+1 < len(args) {
+			valor = args[i+1]
+		}
+		switch args[i] {
+		case "--plan":
+			rutaPlan, i = valor, i+1
+		case "--answers":
+			rutaRespuestas, i = valor, i+1
+		default:
+			fmt.Fprintf(salida, "❌ Opción desconocida para 'slice apply': %s\n", args[i])
+			return 1
+		}
+	}
+	if rutaPlan == "" || rutaRespuestas == "" {
+		fmt.Fprintln(salida, "❌ Uso: sentinel slice apply --plan <plan.json> --answers <respuestas.json>")
+		return 1
+	}
+
+	var plan git.PlanSerializado
+	if err := leerJSON(rutaPlan, &plan); err != nil {
+		fmt.Fprintf(salida, "❌ No se pudo leer el plan: %v\n", err)
+		return 1
+	}
+	var respuestas git.RespuestasPlan
+	if err := leerJSON(rutaRespuestas, &respuestas); err != nil {
+		fmt.Fprintf(salida, "❌ No se pudieron leer las respuestas: %v\n", err)
+		return 1
+	}
+
+	resultados, err := git.AplicarPlanAprobado(&plan, respuestas)
+	if err != nil {
+		fmt.Fprintf(salida, "❌ %v\n", err)
+		return 1
+	}
+	for _, resultado := range resultados {
+		fmt.Fprintf(salida, "✅ %s [%s] %s (%d archivos)\n", resultado.Hash, resultado.Capa, resultado.Mensaje, resultado.Archivos)
+	}
+	fmt.Fprintf(salida, "\n🎉 %d commits creados a partir del plan aprobado.\n", len(resultados))
+	return 0
+}
+
+func leerJSON(ruta string, destino any) error {
+	contenido, err := os.ReadFile(ruta)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(contenido, destino)
 }
 
 func imprimirPlanSerializado(salida io.Writer, plan *git.PlanSerializado) {

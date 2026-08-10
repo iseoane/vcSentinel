@@ -82,11 +82,23 @@ func ConstruirPlanParaAgente() (*PlanSerializado, error) {
 	if err != nil {
 		return nil, err
 	}
-	estado, err := HashEstadoWorktree()
+	serializado := SerializarPlan(plan, registrador.pendientes, "")
+	estado, err := HashEstadoWorktree(RutasDelPlan(serializado))
 	if err != nil {
 		return nil, err
 	}
-	return SerializarPlan(plan, registrador.pendientes, estado), nil
+	serializado.EstadoWorktree = estado
+	return serializado, nil
+}
+
+// RutasDelPlan devuelve, ordenadas, todas las rutas que el plan commitearía.
+func RutasDelPlan(plan *PlanSerializado) []string {
+	var rutas []string
+	for _, lote := range plan.Lotes {
+		rutas = append(rutas, lote.Rutas...)
+	}
+	sort.Strings(rutas)
+	return rutas
 }
 
 // SerializarPlan proyecta el plan y calcula su PlanID a partir de los lotes.
@@ -138,33 +150,31 @@ func IDDecision(ruta string) string {
 	return hex.EncodeToString(suma[:8])
 }
 
-// HashEstadoWorktree resume el árbol pendiente: las rutas con cambios y el
-// contenido de cada una. Es la congelación del candidato aplicada a slice —
-// T0.10 rechaza aplicar un plan calculado sobre otro estado. Un archivo
-// borrado no tiene contenido que hashear: cuenta solo por su línea de estado.
-func HashEstadoWorktree() (string, error) {
-	salida, err := ejecutarGitSalida("status", "--porcelain")
-	if err != nil {
-		return "", err
-	}
-	lineas := make([]string, 0, 16)
-	for _, linea := range strings.Split(salida, "\n") {
-		if strings.TrimSpace(linea) != "" {
-			lineas = append(lineas, linea)
-		}
-	}
-	sort.Strings(lineas)
-
+// HashEstadoWorktree congela el estado exacto de las rutas que el plan
+// commitearía: su línea de estado en git y el hash de su contenido. T0.10 lo
+// usa para negarse a aplicar un plan calculado sobre otro estado.
+//
+// Se ata a las rutas del plan y no al worktree entero a propósito: el propio
+// flujo escribe plan.json y respuestas.json, y con un hash global cualquier
+// artefacto de aprobación invalidaría el plan que aprueba. La garantía se
+// mantiene, porque apply solo commitea rutas del plan y cada una se verifica;
+// un archivo nuevo ajeno al plan no se commitea y por eso no lo invalida.
+func HashEstadoWorktree(rutas []string) (string, error) {
 	h := sha256.New()
-	for _, linea := range lineas {
-		fmt.Fprintf(h, "%s\n", linea)
-		ruta := strings.TrimSpace(linea)
-		if idx := strings.Index(ruta, " "); idx >= 0 {
-			ruta = strings.TrimSpace(ruta[idx:])
+	for _, ruta := range rutas {
+		estado, err := ejecutarGitSalida("status", "--porcelain", "--", ruta)
+		if err != nil {
+			return "", err
 		}
-		if contenido, err := ejecutarGitSalida("hash-object", "--", ruta); err == nil {
-			fmt.Fprintf(h, "%s\n", strings.TrimSpace(contenido))
+		fmt.Fprintf(h, "%s|%s|", ruta, strings.TrimSpace(estado))
+		contenido, err := ejecutarGitSalida("hash-object", "--", ruta)
+		if err != nil {
+			// El archivo ya no existe: cuenta como ausente, que es un estado
+			// distinto de cualquier contenido y por tanto invalida el plan.
+			fmt.Fprint(h, "ausente\n")
+			continue
 		}
+		fmt.Fprintf(h, "%s\n", strings.TrimSpace(contenido))
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
