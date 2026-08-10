@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -95,6 +96,20 @@ func ArchivosDeCommit(sha string) ([]string, error) {
 		}
 	}
 	return archivos, nil
+}
+
+// ContenidoDeArchivoEnCommit devuelve el contenido exacto de un archivo tal
+// como existía en un commit concreto ("git show <sha>:<archivo>"). Si el
+// archivo no existe en ese commit (renombrado, borrado, ruta mal escrita por
+// el agente que audita), devuelve un error explícito en vez de una cadena
+// vacía silenciosa: el llamador necesita distinguir "archivo vacío" de
+// "archivo no resuelto" para decidir si un hallazgo es válido.
+func ContenidoDeArchivoEnCommit(sha, archivo string) (string, error) {
+	salida, err := ejecutarGitSalida("show", sha+":"+archivo)
+	if err != nil {
+		return "", fmt.Errorf("no se pudo leer %q en el commit %q: %w", archivo, sha, err)
+	}
+	return salida, nil
 }
 
 // ResolverSHA devuelve el SHA completo de una expresión (HEAD, HEAD~2, un sha

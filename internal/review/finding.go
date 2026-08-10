@@ -178,6 +178,84 @@ type Hallazgo struct {
 	Fingerprint    string    `json:"fingerprint"`
 }
 
+// Motivos de descarte de un Hallazgo durante la validación de evidencia.
+const (
+	MotivoSinEvidencia          = "sin evidencia: Evidence vacío"
+	MotivoArchivoNoResuelto     = "no se pudo resolver el contenido del archivo citado"
+	MotivoEvidenciaNoEncontrada = "la evidencia no aparece literalmente en el contenido del archivo"
+)
+
+// Descarte registra por qué se descartó un Hallazgo al validar su evidencia.
+// Descartar un hallazgo nunca invalida la ejecución completa (T2.2): el
+// motivo viaja junto al hallazgo para que quede trazabilidad de qué se perdió
+// y por qué, sin abortar la validación de los demás.
+type Descarte struct {
+	Hallazgo Hallazgo
+	Motivo   string
+}
+
+// HallazgosConEvidenciaValida filtra los Hallazgo (finding v2) cuya Evidence
+// no se puede comprobar mecánicamente contra el contenido real del archivo
+// que citan: es el filtro más barato contra alucinaciones de un LLM, sin
+// necesidad de que otro modelo lo juzgue.
+//
+// leerContenido es una costura de inyección deliberada: internal/review NO
+// importa internal/git para no acoplar el modelo de dominio de la auditoría
+// a la implementación concreta de lectura de git. Quien llama pasa un cierre
+// (p. ej. sobre git.ContenidoDeArchivoEnCommit) atado al commit que se está
+// auditando.
+//
+// Un hallazgo se descarta si Evidence está vacío, si Location.Archivo está
+// vacío o su contenido no se puede resolver, o si Evidence (normalizado) no
+// aparece literalmente en el contenido del archivo (normalizado). Descartar
+// un hallazgo nunca detiene la validación de los demás ni propaga el error
+// de leerContenido hacia arriba: de N hallazgos, si uno es inválido, los
+// otros N-1 sobreviven intactos.
+func HallazgosConEvidenciaValida(hallazgos []Hallazgo, leerContenido func(archivo string) (string, error)) ([]Hallazgo, []Descarte) {
+	validos := make([]Hallazgo, 0, len(hallazgos))
+	var descartes []Descarte
+	for _, h := range hallazgos {
+		if motivo := motivoDescarteEvidencia(h, leerContenido); motivo != "" {
+			descartes = append(descartes, Descarte{Hallazgo: h, Motivo: motivo})
+			continue
+		}
+		validos = append(validos, h)
+	}
+	return validos, descartes
+}
+
+// motivoDescarteEvidencia devuelve el motivo por el que un Hallazgo se
+// descartaría, o "" si su evidencia es válida.
+func motivoDescarteEvidencia(h Hallazgo, leerContenido func(archivo string) (string, error)) string {
+	if strings.TrimSpace(h.Evidence) == "" {
+		return MotivoSinEvidencia
+	}
+	if strings.TrimSpace(h.Location.Archivo) == "" {
+		return MotivoArchivoNoResuelto
+	}
+	contenido, err := leerContenido(h.Location.Archivo)
+	if err != nil {
+		return MotivoArchivoNoResuelto
+	}
+	if !strings.Contains(normalizarParaComparar(contenido), normalizarParaComparar(h.Evidence)) {
+		return MotivoEvidenciaNoEncontrada
+	}
+	return ""
+}
+
+// normalizarParaComparar recorta espacios al principio/final de cada línea y
+// unifica fin de línea (\r\n -> \n), solo para comparar evidencia: tolera que
+// un LLM reindente al citar código sin tolerar un parecido vago (no toca nada
+// más: ni comentarios ni indentación intermedia).
+func normalizarParaComparar(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	lineas := strings.Split(s, "\n")
+	for i, linea := range lineas {
+		lineas[i] = strings.TrimSpace(linea)
+	}
+	return strings.Join(lineas, "\n")
+}
+
 // AgentQuestion es una aclaración que el agente necesita para poder auditar.
 type AgentQuestion struct {
 	ID   string `json:"id"`

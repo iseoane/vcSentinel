@@ -251,6 +251,127 @@ func TestHallazgoConviveConReviewFindingV1EnElMismoPaquete(t *testing.T) {
 	}
 }
 
+// hallazgoConEvidencia construye un Hallazgo mínimo válido salvo por
+// Evidence/Location.Archivo, que ajusta cada test según lo que quiera probar.
+func hallazgoConEvidencia(id, archivo, evidencia string) Hallazgo {
+	return Hallazgo{
+		ID:        id,
+		Source:    SourceReview,
+		Dimension: DimLogic,
+		Severity:  SevWarning,
+		Status:    StatusPending,
+		Location:  Ubicacion{Archivo: archivo},
+		Evidence:  evidencia,
+		Fixable:   FixableManual,
+	}
+}
+
+func TestHallazgosConEvidenciaValidaEvidenciaInventadaSeDescarta(t *testing.T) {
+	leer := func(archivo string) (string, error) {
+		return "func Real() {\n\treturn nil\n}\n", nil
+	}
+	h := hallazgoConEvidencia("h-1", "a.go", "esto no aparece en ningún lado")
+
+	validos, descartes := HallazgosConEvidenciaValida([]Hallazgo{h}, leer)
+
+	if len(validos) != 0 {
+		t.Errorf("validos = %d, esperado 0 (evidencia inventada)", len(validos))
+	}
+	if len(descartes) != 1 || descartes[0].Motivo != MotivoEvidenciaNoEncontrada {
+		t.Errorf("descartes = %+v, esperado 1 con motivo %q", descartes, MotivoEvidenciaNoEncontrada)
+	}
+}
+
+func TestHallazgosConEvidenciaValidaToleraReindentacion(t *testing.T) {
+	// El contenido real tiene la línea con una indentación distinta a la que
+	// citó el LLM: la normalización (trim de bordes) debe tolerarlo.
+	leer := func(archivo string) (string, error) {
+		return "func F() {\n        if x >= 0 || x < 0 {\n            return true\n        }\n}\n", nil
+	}
+	h := hallazgoConEvidencia("h-2", "a.go", "if x >= 0 || x < 0 {")
+
+	validos, descartes := HallazgosConEvidenciaValida([]Hallazgo{h}, leer)
+
+	if len(descartes) != 0 {
+		t.Errorf("descartes = %+v, esperado ninguno (solo cambia indentación)", descartes)
+	}
+	if len(validos) != 1 || validos[0].ID != "h-2" {
+		t.Errorf("validos = %+v, esperado [h-2]", validos)
+	}
+}
+
+func TestHallazgosConEvidenciaValidaDescartaSoloElInvalido(t *testing.T) {
+	contenidoA := "package a\n\nfunc A() {\n\treturn\n}\n"
+	leer := func(archivo string) (string, error) {
+		switch archivo {
+		case "a.go":
+			return contenidoA, nil
+		default:
+			return "", errors.New("archivo no encontrado en el commit")
+		}
+	}
+
+	valido1 := hallazgoConEvidencia("h-ok-1", "a.go", "func A() {")
+	invalido := hallazgoConEvidencia("h-malo", "a.go", "esto jamás apareció")
+	valido2 := hallazgoConEvidencia("h-ok-2", "a.go", "package a")
+
+	validos, descartes := HallazgosConEvidenciaValida([]Hallazgo{valido1, invalido, valido2}, leer)
+
+	if len(validos) != 2 {
+		t.Fatalf("validos = %d, esperado 2 (sobreviven los dos correctos)", len(validos))
+	}
+	if validos[0].ID != "h-ok-1" || validos[1].ID != "h-ok-2" {
+		t.Errorf("validos = %+v, esperado [h-ok-1, h-ok-2] en orden", validos)
+	}
+	if len(descartes) != 1 || descartes[0].Hallazgo.ID != "h-malo" {
+		t.Errorf("descartes = %+v, esperado solo h-malo", descartes)
+	}
+}
+
+func TestHallazgosConEvidenciaValidaEvidenciaVacia(t *testing.T) {
+	leer := func(archivo string) (string, error) { return "contenido", nil }
+	h := hallazgoConEvidencia("h-3", "a.go", "")
+
+	validos, descartes := HallazgosConEvidenciaValida([]Hallazgo{h}, leer)
+
+	if len(validos) != 0 {
+		t.Errorf("validos = %d, esperado 0 (evidencia vacía)", len(validos))
+	}
+	if len(descartes) != 1 || descartes[0].Motivo != MotivoSinEvidencia {
+		t.Errorf("descartes = %+v, esperado 1 con motivo %q", descartes, MotivoSinEvidencia)
+	}
+}
+
+func TestHallazgosConEvidenciaValidaArchivoNoResueltoNoPropagaError(t *testing.T) {
+	// La lectura del contenido falla (archivo renombrado/borrado/ruta mal
+	// escrita): el hallazgo se descarta, pero la función no debe propagar el
+	// error ni entrar en panic.
+	leer := func(archivo string) (string, error) {
+		return "", errors.New("el archivo no existe en ese commit")
+	}
+	h := hallazgoConEvidencia("h-4", "no-existe.go", "algo")
+
+	validos, descartes := HallazgosConEvidenciaValida([]Hallazgo{h}, leer)
+
+	if len(validos) != 0 {
+		t.Errorf("validos = %d, esperado 0 (archivo no resuelto)", len(validos))
+	}
+	if len(descartes) != 1 || descartes[0].Motivo != MotivoArchivoNoResuelto {
+		t.Errorf("descartes = %+v, esperado 1 con motivo %q", descartes, MotivoArchivoNoResuelto)
+	}
+}
+
+func TestHallazgosConEvidenciaValidaArchivoVacioEnLocation(t *testing.T) {
+	leer := func(archivo string) (string, error) { return "contenido", nil }
+	h := hallazgoConEvidencia("h-5", "", "algo")
+
+	_, descartes := HallazgosConEvidenciaValida([]Hallazgo{h}, leer)
+
+	if len(descartes) != 1 || descartes[0].Motivo != MotivoArchivoNoResuelto {
+		t.Errorf("descartes = %+v, esperado 1 con motivo %q", descartes, MotivoArchivoNoResuelto)
+	}
+}
+
 func TestParsearDimensionResultUnavailable(t *testing.T) {
 	salida := `{"dim":"security","verdict":"unavailable","reason":"rate_limit"}`
 	resultado, err := ParsearDimensionResult(salida)

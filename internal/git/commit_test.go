@@ -221,6 +221,32 @@ func TestExisteCommit(t *testing.T) {
 	}
 }
 
+func TestContenidoDeArchivoEnCommit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	shas, _ := SHAsRango("", "HEAD")
+	// shas[1] es "feat(a): primer commit", que añade a.go con "package a\n".
+	contenido, err := ContenidoDeArchivoEnCommit(shas[1], "a.go")
+	if err != nil {
+		t.Fatalf("ContenidoDeArchivoEnCommit devolvió error: %v", err)
+	}
+	if contenido != "package a\n" {
+		t.Errorf("contenido = %q, esperado %q", contenido, "package a\n")
+	}
+
+	if _, err := ContenidoDeArchivoEnCommit(shas[1], "no-existe.go"); err == nil {
+		t.Error("ContenidoDeArchivoEnCommit con archivo inexistente en ese commit debería devolver error")
+	}
+}
+
 func TestUpstreamOMainEligeMain(t *testing.T) {
 	if testing.Short() {
 		t.Skip("salta la integración con repositorio git real en modo -short")
