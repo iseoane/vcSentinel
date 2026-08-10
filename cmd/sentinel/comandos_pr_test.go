@@ -574,7 +574,7 @@ func TestEjecutarPrCreateCon_ValidacionRojaSinForce_NoPublicaNiAuditaRama(t *tes
 	var analizarRamaLlamado, publicarLlamado bool
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
-		cargarConfig:  func(string) config.Config { return config.Config{} },
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
 		obtenerGitDir: func() (string, error) { return "gitdir", nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1, Salida: "FAIL"}}, nil
@@ -607,9 +607,9 @@ func TestEjecutarPrCreateCon_ValidacionRojaSinForce_NoPublicaNiAuditaRama(t *tes
 func TestEjecutarPrCreateCon_ForceSinReason_ErrorSinTocarNada(t *testing.T) {
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force"}, depsPrCreate{
-		cargarConfig: func(string) config.Config {
+		cargarConfig: func(string) (config.Config, error) {
 			t.Fatal("no debe cargar configuración sin --reason: el error es de parseo")
-			return config.Config{}
+			return config.Config{}, nil
 		},
 	})
 	if codigo != 1 {
@@ -629,7 +629,7 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 	var detalleRegistrado string
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
-		cargarConfig:  func(string) config.Config { return config.Config{} },
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
 		obtenerGitDir: func() (string, error) { return "gitdir", nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1}}, nil
@@ -658,6 +658,88 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 	}
 }
 
+// TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcurrio
+// cubre el Fix 2 (hallazgo del orquestador): --force --reason con la
+// validación YA en verde (sin hallazgos) no tiene ningún efecto real que
+// superar, así que no debe avisar de una "validación superada" que no
+// ocurrió, y el evento debe registrar force:false sin motivo — el flag
+// existió en la invocación pero no ejerció ningún efecto.
+func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcurrio(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var detalleRegistrado string
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil // validación en verde: sin runs, sin hallazgos
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/11", false, nil },
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+			detalleRegistrado = detalle
+			return nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (sin hallazgos, publica igual)", codigo)
+	}
+	if strings.Contains(salida.String(), "superada") {
+		t.Errorf("sin hallazgos que superar no debe avisar de una validación superada: %s", salida.String())
+	}
+	var crudo map[string]any
+	if err := json.Unmarshal([]byte(detalleRegistrado), &crudo); err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, detalleRegistrado)
+	}
+	if crudo["force"] != false {
+		t.Errorf("force debe registrar false: no había nada que forzar, got %+v", crudo)
+	}
+	if _, hay := crudo["motivo"]; hay {
+		t.Errorf("sin efecto real de --force no debe quedar motivo en el evento: %v", crudo)
+	}
+}
+
+// TestEjecutarPrCreateCon_CargaConfigConError_Exit1SinValidarNiPublicar cubre
+// el Fix 3 (hallazgo del orquestador): pr create debe usar la carga ESTRICTA
+// de configuración (config.CargarConfiguracionLocalEstricta en producción,
+// ver ejecutarPrCreate). Con un yml roto, debe cortar aquí mismo con exit 1 y
+// el error visible, sin llegar a ejecutar la validación ni a publicar nada.
+func TestEjecutarPrCreateCon_CargaConfigConError_Exit1SinValidarNiPublicar(t *testing.T) {
+	var validacionLlamada, publicarLlamado bool
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
+		cargarConfig: func(string) (config.Config, error) {
+			return config.Config{}, errors.New("vassentinel.yml: line 2: field clave_inexistente not found in type config.Config")
+		},
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			validacionLlamada = true
+			return nil, nil
+		},
+		publicar: func(string, string, string) (string, bool, error) {
+			publicarLlamado = true
+			return "", false, nil
+		},
+	})
+	if codigo != 1 {
+		t.Fatalf("codigo = %d, esperado 1", codigo)
+	}
+	if !strings.Contains(salida.String(), "line") {
+		t.Errorf("el error del yml roto debe quedar visible en la salida, got: %s", salida.String())
+	}
+	if validacionLlamada {
+		t.Fatal("con el yml roto no debe llegar a ejecutar la validación")
+	}
+	if publicarLlamado {
+		t.Fatal("con el yml roto no debe publicar nada")
+	}
+}
+
 // TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestacado
 // cubre el cuarto escenario: con validación en verde, un veredicto semántico
 // block ya no bloquea (advisory) — publica igual con el aviso destacado
@@ -669,7 +751,7 @@ func TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestac
 	var cuerpoPublicado string
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
-		cargarConfig:  func(string) config.Config { return config.Config{} },
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
 		obtenerGitDir: func() (string, error) { return "gitdir", nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return nil, nil // validación en verde: sin runs, sin hallazgos

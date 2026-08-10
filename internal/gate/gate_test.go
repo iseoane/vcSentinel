@@ -174,14 +174,18 @@ func TestEjecutarValidacionFalla_ErrorInfraestructura(t *testing.T) {
 	}
 }
 
-// TestCodigoSalida fija la tabla exacta de exit codes de la ficha.
+// TestCodigoSalida fija la tabla exacta de exit codes de la ficha. Un estado
+// desconocido (que EjecutarGate nunca debería producir, pero que este
+// paquete tampoco puede reconocer) NUNCA falla abierto en PASS: se traduce
+// al mismo código que REVIEW_INFRASTRUCTURE_ERROR (corrección sobre el
+// defecto de diseño original, ver comentario de CodigoSalida).
 func TestCodigoSalida(t *testing.T) {
 	casos := map[string]int{
 		EstadoPass:                      0,
 		EstadoValidationFailed:          1,
 		EstadoNeedsUserReview:           2,
 		EstadoReviewInfrastructureError: 4,
-		"ESTADO_DESCONOCIDO":            0,
+		"ESTADO_DESCONOCIDO":            4,
 	}
 	for estado, esperado := range casos {
 		if got := CodigoSalida(estado); got != esperado {

@@ -533,7 +533,7 @@ func comandosDeValidacion(runs []validation.ValidationRun) []review.ComandoVerif
 // si falla) sin git, agentes ni gh reales. En producción, ejecutarPrCreate las
 // resuelve a las funciones reales.
 type depsPrCreate struct {
-	cargarConfig       func(worktree string) config.Config
+	cargarConfig       func(worktree string) (config.Config, error)
 	obtenerGitDir      func() (string, error)
 	ejecutarValidacion func(perfil string, alcance []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error)
 	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
@@ -548,7 +548,11 @@ type depsPrCreate struct {
 // evidencia y publicación con gh o fallback a portapapeles.
 func ejecutarPrCreate(worktree string, args []string) {
 	os.Exit(ejecutarPrCreateCon(os.Stdout, worktree, args, depsPrCreate{
-		cargarConfig:       config.CargarConfiguracionLocal,
+		// Config ESTRICTA (hallazgo del orquestador, F1): pr create es
+		// justo el comando cuyo punto entero es "la validación manda", así
+		// que un yml roto debe fallar alto igual que gate/pr review/status,
+		// nunca seguir en silencio con la config por defecto.
+		cargarConfig:       config.CargarConfiguracionLocalEstricta,
 		obtenerGitDir:      git.ObtenerGitDir,
 		ejecutarValidacion: validation.EjecutarPerfilSobreCandidato,
 		analizarRama: func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
@@ -570,7 +574,11 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		return 1
 	}
 
-	cfg := deps.cargarConfig(worktree)
+	cfg, err := deps.cargarConfig(worktree)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
 	gitDir, err := deps.obtenerGitDir()
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
@@ -591,6 +599,13 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		return 1
 	}
 	hallazgos := validation.Hallazgos(runs, cfg.Validation.Capabilities)
+	// forzoValidacionEnRojo distingue la PRESENCIA del flag --force de su
+	// EFECTO real (hallazgo del orquestador, Fix 2): solo es true cuando de
+	// verdad había hallazgos en rojo que --force tuvo que superar. Si
+	// --force se pasó pero la validación ya estaba en verde, el flag no
+	// ejerció ningún efecto y el evento no debe registrar una excepción que
+	// nunca ocurrió.
+	var forzoValidacionEnRojo bool
 	if len(hallazgos) > 0 {
 		if !flags.force {
 			fmt.Fprintln(w, "🚨 Validación en rojo: no se publica la PR. Comandos:")
@@ -600,6 +615,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 			fmt.Fprintln(w, "Corrige los comandos en rojo o repite con --force --reason \"motivo\" para publicar igualmente.")
 			return 1
 		}
+		forzoValidacionEnRojo = true
 		fmt.Fprintf(w, "⚠️  Validación en rojo superada con --force (motivo: %s).\n", flags.reason)
 	}
 
@@ -678,7 +694,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		}
 	}
 
-	detalle, err := detalleEventoPrCreate(prURL, fallback, flags.chainPR, flags.force, flags.reason)
+	detalle, err := detalleEventoPrCreate(prURL, fallback, flags.chainPR, forzoValidacionEnRojo, flags.reason)
 	if err != nil {
 		fmt.Fprintf(w, "? Aviso: no se pudo construir el detalle del evento: %v\n", err)
 	}

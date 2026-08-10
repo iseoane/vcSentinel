@@ -26,10 +26,16 @@ const (
 
 // CodigoSalida traduce Resultado.Estado al exit code exacto pedido por la
 // ficha: 0 PASS, 1 VALIDATION_FAILED, 2 NEEDS_USER_REVIEW,
-// 4 REVIEW_INFRASTRUCTURE_ERROR. Un estado desconocido se trata como PASS
-// (nunca bloquea por un valor que este paquete no reconoce).
+// 4 REVIEW_INFRASTRUCTURE_ERROR. Un estado desconocido NUNCA se trata como
+// PASS: un gate cuyo propósito es bloquear no puede fallar abierto ante un
+// valor que este mismo paquete no reconoce (p. ej. un estado nuevo añadido en
+// EjecutarGate y olvidado aquí), así que se traduce al mismo código que
+// REVIEW_INFRASTRUCTURE_ERROR (4): un estado no reconocido es un problema de
+// la propia infraestructura del gate, no una validación superada.
 func CodigoSalida(estado string) int {
 	switch estado {
+	case EstadoPass:
+		return 0
 	case EstadoValidationFailed:
 		return 1
 	case EstadoNeedsUserReview:
@@ -37,7 +43,7 @@ func CodigoSalida(estado string) int {
 	case EstadoReviewInfrastructureError:
 		return 4
 	default:
-		return 0
+		return 4
 	}
 }
 
