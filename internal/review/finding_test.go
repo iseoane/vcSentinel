@@ -455,6 +455,78 @@ func TestFingerprintUsaArchivoCuandoNoHaySimbolo(t *testing.T) {
 	}
 }
 
+func TestParsearDimensionResultFindingSoloV1NoGeneraHallazgo(t *testing.T) {
+	// Contrato de hoy (F1-F4): el agente solo manda campos v1 dentro de
+	// "findings". Hallazgos debe quedar vacío: no se detecta nada v2 porque
+	// no hay ningún campo exclusivo de v2 presente.
+	salida := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"a.go","line":10,"severity":"WARNING","description":"d","suggestion":"s"}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("Findings = %d, esperado 1", len(resultado.Findings))
+	}
+	if len(resultado.Hallazgos) != 0 {
+		t.Errorf("Hallazgos = %+v, esperado vacío (finding solo v1)", resultado.Hallazgos)
+	}
+}
+
+func TestParsearDimensionResultFindingV1YV2GeneraAmbos(t *testing.T) {
+	// Un finding con campos v1 (file/line/severity/description) Y algunos
+	// campos v2 (evidence/confidence) debe aparecer en ambos lados: Findings
+	// (v1, compatibilidad) y Hallazgos (v2, adelantándose a F5).
+	salida := `{"dim":"security","verdict":"warn","findings":[{"file":"a.go","line":7,"severity":"WARNING","description":"posible fuga","evidence":"token := req.Header.Get(\"X\")","confidence":0.6}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("Findings = %d, esperado 1", len(resultado.Findings))
+	}
+	if resultado.Findings[0].File != "a.go" || resultado.Findings[0].Severity != SevWarning {
+		t.Errorf("Findings[0] = %+v, no coincide con v1 esperado", resultado.Findings[0])
+	}
+	if len(resultado.Hallazgos) != 1 {
+		t.Fatalf("Hallazgos = %d, esperado 1", len(resultado.Hallazgos))
+	}
+	h := resultado.Hallazgos[0]
+	if h.Dimension != DimSecurity {
+		t.Errorf("Hallazgos[0].Dimension = %q, esperado %q (dimensión de la línea)", h.Dimension, DimSecurity)
+	}
+	if h.Confidence != 0.6 {
+		t.Errorf("Hallazgos[0].Confidence = %v, esperado 0.6", h.Confidence)
+	}
+	if h.Evidence == "" {
+		t.Error("Hallazgos[0].Evidence vacío, esperado el valor del finding")
+	}
+	if h.Fingerprint == "" {
+		t.Error("Hallazgos[0].Fingerprint vacío, esperado calculado")
+	}
+}
+
+func TestParsearDimensionResultSeveridadV2DesconocidaSeNormaliza(t *testing.T) {
+	// Misma regla de normalización de severidad que v1 (T2.4: un solo
+	// criterio), aplicada también al Hallazgo v2 derivado del mismo finding.
+	salida := `{"dim":"logic","verdict":"warn","findings":[{"file":"a.go","line":1,"severity":"FATAL","description":"d","evidence":"e"}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if len(resultado.Hallazgos) != 1 {
+		t.Fatalf("Hallazgos = %d, esperado 1", len(resultado.Hallazgos))
+	}
+	if resultado.Hallazgos[0].Severity != SevAdvisory {
+		t.Errorf("Hallazgos[0].Severity = %q, esperado normalizada a %q", resultado.Hallazgos[0].Severity, SevAdvisory)
+	}
+	if resultado.Findings[0].Severity != SevAdvisory {
+		t.Errorf("Findings[0].Severity = %q, esperado normalizada a %q", resultado.Findings[0].Severity, SevAdvisory)
+	}
+	if len(resultado.Advertencias) == 0 {
+		t.Error("se esperaba advertencia por la normalización de severidad v2")
+	}
+}
+
 func TestParsearDimensionResultUnavailable(t *testing.T) {
 	salida := `{"dim":"security","verdict":"unavailable","reason":"rate_limit"}`
 	resultado, err := ParsearDimensionResult(salida)

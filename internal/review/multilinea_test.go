@@ -119,6 +119,45 @@ END_REVIEW`
 	}
 }
 
+// TestParsearDimensionResultJSONMultilineaConCamposV2: el fallback multilínea
+// (parsearObjetoMultilinea) también debe reconocer los campos exclusivos de
+// v2 (Hallazgo) dentro de un finding, igual que el camino JSONL de una línea.
+func TestParsearDimensionResultJSONMultilineaConCamposV2(t *testing.T) {
+	salida := `BEGIN_REVIEW
+{
+  "dim": "design",
+  "verdict": "warn",
+  "findings": [
+    {
+      "file": "b.go",
+      "line": 3,
+      "severity": "WARNING",
+      "description": "acoplamiento innecesario",
+      "evidence": "import legacy",
+      "title": "acoplamiento a módulo legacy"
+    }
+  ]
+}
+END_REVIEW`
+
+	res, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error con campos v2 en multilínea: %v", err)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("len(Findings) = %d, esperado 1", len(res.Findings))
+	}
+	if len(res.Hallazgos) != 1 {
+		t.Fatalf("len(Hallazgos) = %d, esperado 1 (campos v2 detectados en pretty-printed)", len(res.Hallazgos))
+	}
+	if res.Hallazgos[0].Title != "acoplamiento a módulo legacy" {
+		t.Errorf("Hallazgos[0].Title = %q, esperado el título del finding", res.Hallazgos[0].Title)
+	}
+	if res.Hallazgos[0].Dimension != "design" {
+		t.Errorf("Hallazgos[0].Dimension = %q, esperado design (dimensión de la línea)", res.Hallazgos[0].Dimension)
+	}
+}
+
 // TestParseJSONMultilineaConBasuraAlrededor: texto de salida alrededor del
 // objeto (razonamiento del agente fuera del bloque) no debe romper el fallback.
 func TestParseJSONMultilineaConBasuraAlrededor(t *testing.T) {

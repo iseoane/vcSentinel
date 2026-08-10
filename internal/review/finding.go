@@ -321,13 +321,153 @@ type AgentQuestion struct {
 // DimensionResult es el veredicto del agente para una dimensión concreta.
 // Advertencias recoge normalizaciones aplicadas durante el parseo (p. ej.
 // severidad desconocida rebajada a ADVISORY) y no se serializa en la ficha.
+//
+// Hallazgos (T2.4) es paralelo a Findings, no un sustituto: cada finding
+// crudo del array "findings" que trae al menos un campo exclusivo de v2
+// (Hallazgo) se decodifica ADEMÁS como Hallazgo completo y se añade aquí,
+// sin dejar de aparecer también en Findings (v1). Un finding que hoy solo
+// trae los campos v1 (el contrato real del agente hasta F5) deja Hallazgos
+// vacío: la capacidad de parsear v2 no depende de que el prompt ya lo emita.
 type DimensionResult struct {
 	Dim          string          `json:"dim"`
 	Verdict      string          `json:"verdict"`
 	Findings     []ReviewFinding `json:"findings,omitempty"`
+	Hallazgos    []Hallazgo      `json:"hallazgos,omitempty"`
 	Questions    []AgentQuestion `json:"questions,omitempty"`
 	Reason       string          `json:"reason,omitempty"`
 	Advertencias []string        `json:"-"`
+}
+
+// findingCrudo decodifica un elemento del array "findings" de una línea
+// JSONL (o del objeto multilínea) aceptando a la vez los campos v1
+// (ReviewFinding, siempre presentes hoy) y los campos exclusivos de v2
+// (Hallazgo, F5). Los campos v1 comparten clave JSON con su homólogo de
+// Hallazgo donde existe (severity/description): no hay dos campos para lo
+// mismo, solo dos estructuras de destino a partir del mismo dato decodificado
+// una sola vez.
+//
+// Los campos exclusivos de v2 son punteros a propósito: nil distingue "el
+// agente no mandó este campo" de "lo mandó con su valor cero" (p. ej.
+// confidence: 0), que es justo la señal usada por esV2() para decidir si el
+// finding trae forma v2 sin exigir que el agente mande todos los campos v2
+// a la vez.
+type findingCrudo struct {
+	Dimension   string `json:"dimension"`
+	File        string `json:"file"`
+	Line        Linea  `json:"line"`
+	Severity    string `json:"severity"`
+	Description string `json:"description"`
+	Suggestion  string `json:"suggestion"`
+
+	ID             *string    `json:"id"`
+	Source         *string    `json:"source"`
+	Producer       *Productor `json:"producer"`
+	Confidence     *float64   `json:"confidence"`
+	Status         *string    `json:"status"`
+	Title          *string    `json:"title"`
+	Evidence       *string    `json:"evidence"`
+	Location       *Ubicacion `json:"location"`
+	Impact         *string    `json:"impact"`
+	Recommendation *string    `json:"recommendation"`
+	Fixable        *string    `json:"fixable"`
+	IntroducedBy   *string    `json:"introduced_by"`
+}
+
+// esV2 indica si el finding crudo trae al menos un campo exclusivo de v2.
+func (f findingCrudo) esV2() bool {
+	return f.ID != nil || f.Source != nil || f.Producer != nil || f.Confidence != nil ||
+		f.Status != nil || f.Title != nil || f.Evidence != nil || f.Location != nil ||
+		f.Impact != nil || f.Recommendation != nil || f.Fixable != nil || f.IntroducedBy != nil
+}
+
+// aReviewFinding proyecta los campos v1 del finding crudo, ignorando los
+// exclusivos de v2: es el mismo ReviewFinding que se construía antes de T2.4.
+func (f findingCrudo) aReviewFinding() ReviewFinding {
+	return ReviewFinding{
+		Dimension:   f.Dimension,
+		File:        f.File,
+		Line:        f.Line,
+		Severity:    f.Severity,
+		Description: f.Description,
+		Suggestion:  f.Suggestion,
+	}
+}
+
+// aHallazgo construye el Hallazgo (v2) completo del finding crudo.
+// dimensionLinea es la dimensión declarada por la línea/objeto contenedor
+// (crudo.Dim), no un campo del finding individual. Si el finding no trae
+// Location explícita, se usa File/Line (v1) como ubicación de respaldo, para
+// que Fingerprint no colisione hallazgos de archivos distintos bajo una
+// ubicación vacía.
+func (f findingCrudo) aHallazgo(dimensionLinea string) Hallazgo {
+	ubicacion := Ubicacion{Archivo: f.File, LineaInicio: int(f.Line)}
+	if f.Location != nil {
+		ubicacion = *f.Location
+	}
+	h := Hallazgo{
+		Dimension:   dimensionLinea,
+		Severity:    f.Severity,
+		Description: f.Description,
+		Location:    ubicacion,
+	}
+	if f.ID != nil {
+		h.ID = *f.ID
+	}
+	if f.Source != nil {
+		h.Source = *f.Source
+	}
+	if f.Producer != nil {
+		h.Producer = *f.Producer
+	}
+	if f.Confidence != nil {
+		h.Confidence = *f.Confidence
+	}
+	if f.Status != nil {
+		h.Status = *f.Status
+	}
+	if f.Title != nil {
+		h.Title = *f.Title
+	}
+	if f.Evidence != nil {
+		h.Evidence = *f.Evidence
+	}
+	if f.Impact != nil {
+		h.Impact = *f.Impact
+	}
+	if f.Recommendation != nil {
+		h.Recommendation = *f.Recommendation
+	}
+	if f.Fixable != nil {
+		h.Fixable = *f.Fixable
+	}
+	if f.IntroducedBy != nil {
+		h.IntroducedBy = *f.IntroducedBy
+	}
+	h.Fingerprint = Fingerprint(h)
+	return h
+}
+
+// procesarFindings convierte los findings crudos de una línea/objeto en sus
+// formas v1 (ReviewFinding, compatibilidad) y v2 (Hallazgo, solo para los que
+// traen algún campo exclusivo). Normaliza la severidad UNA vez por finding
+// con el mismo criterio que ya existía para v1 (T2.4: no crear dos criterios
+// de normalización distintos), y esa severidad normalizada es la que ven
+// tanto el ReviewFinding como el Hallazgo resultantes.
+func procesarFindings(crudos []findingCrudo, dimensionLinea string, normalizaciones *[]string) ([]ReviewFinding, []Hallazgo) {
+	findingsV1 := make([]ReviewFinding, 0, len(crudos))
+	var hallazgosV2 []Hallazgo
+	for _, f := range crudos {
+		if f.Severity != SevCritical && f.Severity != SevWarning && f.Severity != SevAdvisory {
+			*normalizaciones = append(*normalizaciones,
+				fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", f.Severity, f.File, f.Line))
+			f.Severity = SevAdvisory
+		}
+		findingsV1 = append(findingsV1, f.aReviewFinding())
+		if f.esV2() {
+			hallazgosV2 = append(hallazgosV2, f.aHallazgo(dimensionLinea))
+		}
+	}
+	return findingsV1, hallazgosV2
 }
 
 // Errores tipados del parseo, para que el llamador decida la degradación
@@ -360,7 +500,7 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 		var crudo struct {
 			Dim       string          `json:"dim"`
 			Verdict   string          `json:"verdict"`
-			Findings  []ReviewFinding `json:"findings"`
+			Findings  []findingCrudo  `json:"findings"`
 			Questions []AgentQuestion `json:"questions"`
 			Reason    string          `json:"reason"`
 		}
@@ -386,23 +526,16 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 			crudo.Verdict = ""
 		}
 
-		hallazgos := make([]ReviewFinding, 0, len(crudo.Findings))
-		for _, h := range crudo.Findings {
-			if h.Severity != SevCritical && h.Severity != SevWarning && h.Severity != SevAdvisory {
-				normalizaciones = append(normalizaciones,
-					fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", h.Severity, h.File, h.Line))
-				h.Severity = SevAdvisory
-			}
-			hallazgos = append(hallazgos, h)
-		}
+		findingsV1, hallazgosV2 := procesarFindings(crudo.Findings, crudo.Dim, &normalizaciones)
 
 		if descartadas > 0 {
 			normalizaciones = append(normalizaciones, fmt.Sprintf("%d líneas no JSONL descartadas", descartadas))
 		}
 		return &DimensionResult{
 			Dim:          crudo.Dim,
-			Verdict:      veredictoFinal(crudo.Verdict, hallazgos, &normalizaciones),
-			Findings:     hallazgos,
+			Verdict:      veredictoFinal(crudo.Verdict, findingsV1, &normalizaciones),
+			Findings:     findingsV1,
+			Hallazgos:    hallazgosV2,
 			Questions:    crudo.Questions,
 			Reason:       crudo.Reason,
 			Advertencias: normalizaciones,
@@ -430,7 +563,7 @@ func parsearObjetoMultilinea(bloque string) (*DimensionResult, bool) {
 	var crudo struct {
 		Dim       string          `json:"dim"`
 		Verdict   string          `json:"verdict"`
-		Findings  []ReviewFinding `json:"findings"`
+		Findings  []findingCrudo  `json:"findings"`
 		Questions []AgentQuestion `json:"questions"`
 		Reason    string          `json:"reason"`
 	}
@@ -452,20 +585,13 @@ func parsearObjetoMultilinea(bloque string) (*DimensionResult, bool) {
 		verdict = ""
 	}
 
-	hallazgos := make([]ReviewFinding, 0, len(crudo.Findings))
-	for _, h := range crudo.Findings {
-		if h.Severity != SevCritical && h.Severity != SevWarning && h.Severity != SevAdvisory {
-			normalizaciones = append(normalizaciones,
-				fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", h.Severity, h.File, h.Line))
-			h.Severity = SevAdvisory
-		}
-		hallazgos = append(hallazgos, h)
-	}
+	findingsV1, hallazgosV2 := procesarFindings(crudo.Findings, crudo.Dim, &normalizaciones)
 
 	return &DimensionResult{
 		Dim:          crudo.Dim,
-		Verdict:      veredictoFinal(verdict, hallazgos, &normalizaciones),
-		Findings:     hallazgos,
+		Verdict:      veredictoFinal(verdict, findingsV1, &normalizaciones),
+		Findings:     findingsV1,
+		Hallazgos:    hallazgosV2,
 		Questions:    crudo.Questions,
 		Reason:       crudo.Reason,
 		Advertencias: normalizaciones,
