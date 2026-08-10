@@ -1,12 +1,14 @@
 package config
 
 import (
-	"bufio"
+	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // AgentConfig define el modelo y esfuerzo por defecto de un agente (binario)
@@ -125,244 +127,220 @@ func rutaConfigPerProyecto(worktreePath string) string {
 func CargarConfiguracionLocal(worktreePath string) Config {
 	cfg := configuracionPorDefecto()
 
+	// CargarConfiguracionLocal conserva su firma sin error (mismo contrato de
+	// hoy para sus llamadores); el error estricto de aplicarDesdeRuta queda
+	// disponible para quien lo invoque directamente (ver tests), pendiente de
+	// decidir en otra tarea cómo se hace visible al operador del CLI.
 	if ruta, err := rutaConfigGlobal(); err == nil {
-		aplicarDesdeRuta(&cfg, ruta)
+		_ = aplicarDesdeRuta(&cfg, ruta)
 	}
 
-	aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath))
+	_ = aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath))
 
 	return cfg
 }
 
-// aplicarDesdeRuta parsea el archivo en ruta (si existe) sobre cfg,
-// sobreescribiendo los campos presentes. El parser es por niveles de
-// indentación relativos (robusto a 2 o 4 espacios por nivel) y soporta las
-// secciones active_agent, agents (con perfiles anidados), profiles, review
-// (con dims), lint_commands, test_commands y build_commands.
-func aplicarDesdeRuta(cfg *Config, ruta string) {
-	file, err := os.Open(ruta)
+// perfilAgenteYAML es un perfil anidado dentro de un agente
+// (agents.<agente>.profiles.<perfil>, esquema v2): solo model/reasoning_effort,
+// el agente lo da la clave exterior.
+type perfilAgenteYAML struct {
+	Model           *string `yaml:"model"`
+	ReasoningEffort *string `yaml:"reasoning_effort"`
+}
+
+// perfilGlobalYAML es un perfil de nivel superior (sección profiles, compat
+// v1): agent es opcional, si falta se usa el active_agent.
+type perfilGlobalYAML struct {
+	Agent           *string `yaml:"agent"`
+	Model           *string `yaml:"model"`
+	ReasoningEffort *string `yaml:"reasoning_effort"`
+}
+
+// agenteYAML es la entrada de un agente en agents.<nombre>.
+type agenteYAML struct {
+	Model           *string                     `yaml:"model"`
+	ReasoningEffort *string                     `yaml:"reasoning_effort"`
+	Profiles        map[string]perfilAgenteYAML `yaml:"profiles"`
+}
+
+// reviewYAML es la sección review. Timeout/Parallel se decodifican como
+// yaml.Node (no int directo) para conservar la tolerancia histórica a
+// valores no numéricos (se ignoran y queda el default), igual que hacía
+// strconv.Atoi en el parser artesanal.
+type reviewYAML struct {
+	Timeout  yaml.Node         `yaml:"timeout"`
+	Parallel yaml.Node         `yaml:"parallel"`
+	Dims     map[string]string `yaml:"dims"`
+}
+
+// configYAML es el esquema completo tal cual lo consume yaml.v3 con
+// KnownFields(true): una clave fuera de esta lista (p. ej. "comand" en vez de
+// "command") hace fallar la decodificación con archivo y línea, en vez de
+// ignorarse en silencio como el parser artesanal anterior.
+//
+// Version no tiene campo equivalente en Config: no se usa en ningún cálculo
+// hoy, pero los ymls reales de este repo la declaran (ver
+// .vas_sentinel/vassentinel.yml), así que debe aceptarse para no romper la
+// decodificación estricta de configuración existente. Añadir esa sección a
+// Config es otra tarea.
+type configYAML struct {
+	Version        *string                     `yaml:"version"`
+	ActiveAgent    *string                     `yaml:"active_agent"`
+	Agents         map[string]agenteYAML       `yaml:"agents"`
+	Profiles       map[string]perfilGlobalYAML `yaml:"profiles"`
+	Review         *reviewYAML                 `yaml:"review"`
+	CommitLanguage *string                     `yaml:"commit_language"`
+	LintCommands   []string                    `yaml:"lint_commands"`
+	TestCommands   []string                    `yaml:"test_commands"`
+	BuildCommands  []string                    `yaml:"build_commands"`
+}
+
+// ordenAgentesYAML se decodifica SIN KnownFields, solo para leer el orden
+// textual de las claves de "agents" a través de su yaml.Node: los mapas de Go
+// no preservan orden de declaración, así que es el único punto donde se
+// puede recuperar. La validación estricta de esas mismas claves ya la hizo el
+// decode de configYAML antes de llegar aquí.
+type ordenAgentesYAML struct {
+	Agents yaml.Node `yaml:"agents"`
+}
+
+// aplicarDesdeRuta decodifica el archivo en ruta (si existe) con validación
+// estricta de claves y aplica sobre cfg los campos presentes, sobreescribiendo
+// solo esos. Devuelve un error (con archivo y línea) cuando el archivo existe
+// pero tiene una clave fuera del esquema o está mal formado.
+func aplicarDesdeRuta(cfg *Config, ruta string) error {
+	datos, err := os.ReadFile(ruta)
 	if err != nil {
+		// Archivo ausente: global y per-proyecto son opcionales.
+		return nil
+	}
+
+	var raw configYAML
+	decoder := yaml.NewDecoder(bytes.NewReader(datos))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
+		if err == io.EOF {
+			return nil // archivo vacío: nada que aplicar.
+		}
+		return fmt.Errorf("%s: %w", ruta, err)
+	}
+
+	aplicarValoresYAML(cfg, &raw)
+
+	var orden ordenAgentesYAML
+	if err := yaml.Unmarshal(datos, &orden); err == nil {
+		aplicarOrdenAgentes(cfg, clavesEnOrden(&orden.Agents))
+	}
+
+	return nil
+}
+
+// aplicarValoresYAML aplica sobre cfg los campos presentes en raw, campo a
+// campo (solo sobreescribe lo que el archivo declara explícitamente).
+func aplicarValoresYAML(cfg *Config, raw *configYAML) {
+	if raw.ActiveAgent != nil {
+		cfg.ActiveAgent = *raw.ActiveAgent
+	}
+	if raw.CommitLanguage != nil {
+		cfg.CommitLanguage = *raw.CommitLanguage
+	}
+	for nombre, agenteRaw := range raw.Agents {
+		agente := cfg.Agents[nombre]
+		if agenteRaw.Model != nil {
+			agente.Model = *agenteRaw.Model
+		}
+		if agenteRaw.ReasoningEffort != nil {
+			agente.ReasoningEffort = *agenteRaw.ReasoningEffort
+		}
+		for perfilNombre, perfilRaw := range agenteRaw.Profiles {
+			if agente.Profiles == nil {
+				agente.Profiles = map[string]ProfileConfig{}
+			}
+			perfil := agente.Profiles[perfilNombre]
+			if perfilRaw.Model != nil {
+				perfil.Model = *perfilRaw.Model
+			}
+			if perfilRaw.ReasoningEffort != nil {
+				perfil.ReasoningEffort = *perfilRaw.ReasoningEffort
+			}
+			agente.Profiles[perfilNombre] = perfil
+		}
+		cfg.Agents[nombre] = agente
+	}
+	for nombre, perfilRaw := range raw.Profiles {
+		perfil := cfg.Profiles[nombre]
+		if perfilRaw.Agent != nil {
+			perfil.Agent = *perfilRaw.Agent
+		}
+		if perfilRaw.Model != nil {
+			perfil.Model = *perfilRaw.Model
+		}
+		if perfilRaw.ReasoningEffort != nil {
+			perfil.ReasoningEffort = *perfilRaw.ReasoningEffort
+		}
+		cfg.Profiles[nombre] = perfil
+	}
+	if raw.Review != nil {
+		if n, ok := decodificarEnteroPositivo(&raw.Review.Timeout); ok {
+			cfg.Review.Timeout = time.Duration(n) * time.Second
+		}
+		if n, ok := decodificarEnteroPositivo(&raw.Review.Parallel); ok {
+			cfg.Review.Parallel = n
+		}
+		for dim, perfilDim := range raw.Review.Dims {
+			cfg.Review.Dims[dim] = perfilDim
+		}
+	}
+	cfg.LintCommands = append(cfg.LintCommands, raw.LintCommands...)
+	cfg.TestCommands = append(cfg.TestCommands, raw.TestCommands...)
+	cfg.BuildCommands = append(cfg.BuildCommands, raw.BuildCommands...)
+}
+
+// decodificarEnteroPositivo intenta leer nodo como entero positivo. Devuelve
+// ok=false si el nodo está ausente (Kind cero), no es numérico o no es
+// positivo, igual que hacía strconv.Atoi + "n > 0" en el parser artesanal:
+// un valor inválido se ignora en silencio y queda el default.
+func decodificarEnteroPositivo(nodo *yaml.Node) (int, bool) {
+	if nodo.Kind == 0 {
+		return 0, false
+	}
+	var n int
+	if err := nodo.Decode(&n); err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// clavesEnOrden devuelve las claves de un yaml.Node de tipo mapping en el
+// orden textual en que aparecen en el archivo.
+func clavesEnOrden(nodo *yaml.Node) []string {
+	if nodo == nil || nodo.Kind != yaml.MappingNode {
+		return nil
+	}
+	claves := make([]string, 0, len(nodo.Content)/2)
+	for i := 0; i < len(nodo.Content); i += 2 {
+		claves = append(claves, nodo.Content[i].Value)
+	}
+	return claves
+}
+
+// aplicarOrdenAgentes reconstruye cfg.AgentOrder con ordenArchivo (el orden de
+// declaración en el archivo procesado) a la cabeza, seguido de los agentes ya
+// conocidos que ese archivo no declara, en su orden relativo anterior.
+func aplicarOrdenAgentes(cfg *Config, ordenArchivo []string) {
+	if len(ordenArchivo) == 0 {
 		return
 	}
-	defer file.Close()
-
-	seccion := ""
-	entidad := ""
-	indentEntidad := -1
-	subseccion := ""
-	indentSubseccion := -1
-	perfil := ""
-	indentPerfil := -1
-	// ordenArchivo registra el orden en que este archivo declara los agentes
-	// de nivel 1; al final se reconstruye AgentOrder con ese orden a la cabeza.
-	ordenArchivo := []string{}
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		linea := strings.TrimRight(scanner.Text(), " \t")
-		texto := strings.TrimSpace(linea)
-		if texto == "" || strings.HasPrefix(texto, "#") {
-			continue
-		}
-		indent := contarIndent(linea)
-		clave, valor := dividirClaveValor(texto)
-		cierraBloque := strings.HasSuffix(texto, ":") && valor == ""
-
-		switch {
-		case indent == 0:
-			entidad, subseccion, perfil = "", "", ""
-			indentEntidad, indentSubseccion, indentPerfil = -1, -1, -1
-			switch clave {
-			case "active_agent":
-				cfg.ActiveAgent = limpiarValor(valor)
-			case "commit_language":
-				cfg.CommitLanguage = limpiarValor(valor)
-			case "agents":
-				seccion = "agents"
-			case "profiles":
-				seccion = "profiles"
-			case "review":
-				seccion = "review"
-			case "lint_commands":
-				seccion = "lint"
-			case "test_commands":
-				seccion = "test"
-			case "build_commands":
-				seccion = "build"
-			default:
-				seccion = ""
-			}
-		case seccion == "agents":
-			// nivel 1: el agente; nivel 2: "profiles:" o campos base del
-			// agente; nivel 3: el perfil; nivel 4: campos del perfil.
-			if (entidad == "" || indent <= indentEntidad) && cierraBloque {
-				entidad = clave
-				indentEntidad = indent
-				subseccion, perfil = "", ""
-				indentSubseccion, indentPerfil = -1, -1
-				yaRegistrado := false
-				for _, nombre := range ordenArchivo {
-					if nombre == clave {
-						yaRegistrado = true
-						break
-					}
-				}
-				if !yaRegistrado {
-					ordenArchivo = append(ordenArchivo, clave)
-				}
-				continue
-			}
-			if entidad == "" {
-				continue
-			}
-			if indent > indentEntidad && cierraBloque && clave == "profiles" && indent > indentSubseccion {
-				subseccion = "profiles"
-				indentSubseccion = indent
-				perfil = ""
-				indentPerfil = -1
-				continue
-			}
-			if subseccion == "profiles" {
-				if indent > indentSubseccion && cierraBloque && (perfil == "" || indent <= indentPerfil) {
-					perfil = clave
-					indentPerfil = indent
-					continue
-				}
-				if perfil != "" && indent > indentPerfil && clave != "" {
-					aplicarCampoPerfilAgente(cfg, entidad, perfil, clave, limpiarValor(valor))
-				}
-				continue
-			}
-			if indent > indentEntidad && clave != "" && !cierraBloque {
-				aplicarCampoEntidad(cfg, "agents", entidad, clave, limpiarValor(valor))
-			}
-		case seccion == "profiles":
-			if (entidad == "" || indent <= indentEntidad) && cierraBloque {
-				entidad = clave
-				indentEntidad = indent
-				continue
-			}
-			if entidad != "" && indent > indentEntidad && clave != "" {
-				aplicarCampoEntidad(cfg, "profiles", entidad, clave, limpiarValor(valor))
-			}
-		case seccion == "review":
-			if (subseccion == "" || indent <= indentSubseccion) && cierraBloque {
-				subseccion = clave
-				indentSubseccion = indent
-				continue
-			}
-			if subseccion == "dims" && indent > indentSubseccion && clave != "" && valor != "" {
-				cfg.Review.Dims[clave] = limpiarValor(valor)
-			}
-			if subseccion == "" && clave != "" {
-				switch clave {
-				case "timeout":
-					if n, err := strconv.Atoi(limpiarValor(valor)); err == nil && n > 0 {
-						cfg.Review.Timeout = time.Duration(n) * time.Second
-					}
-				case "parallel":
-					if n, err := strconv.Atoi(limpiarValor(valor)); err == nil && n > 0 {
-						cfg.Review.Parallel = n
-					}
-				}
-			}
-		case seccion == "lint" || seccion == "test" || seccion == "build":
-			if indent >= 1 && strings.HasPrefix(texto, "-") {
-				if cmd := limpiarValor(strings.TrimSpace(strings.TrimPrefix(texto, "-"))); cmd != "" {
-					switch seccion {
-					case "lint":
-						cfg.LintCommands = append(cfg.LintCommands, cmd)
-					case "test":
-						cfg.TestCommands = append(cfg.TestCommands, cmd)
-					case "build":
-						cfg.BuildCommands = append(cfg.BuildCommands, cmd)
-					}
-				}
-			}
+	enArchivo := make(map[string]bool, len(ordenArchivo))
+	for _, nombre := range ordenArchivo {
+		enArchivo[nombre] = true
+	}
+	nuevoOrden := make([]string, 0, len(ordenArchivo)+len(cfg.AgentOrder))
+	nuevoOrden = append(nuevoOrden, ordenArchivo...)
+	for _, nombre := range cfg.AgentOrder {
+		if !enArchivo[nombre] {
+			nuevoOrden = append(nuevoOrden, nombre)
 		}
 	}
-
-	if len(ordenArchivo) > 0 {
-		enArchivo := make(map[string]bool, len(ordenArchivo))
-		for _, nombre := range ordenArchivo {
-			enArchivo[nombre] = true
-		}
-		nuevoOrden := make([]string, 0, len(ordenArchivo)+len(cfg.AgentOrder))
-		nuevoOrden = append(nuevoOrden, ordenArchivo...)
-		for _, nombre := range cfg.AgentOrder {
-			if !enArchivo[nombre] {
-				nuevoOrden = append(nuevoOrden, nombre)
-			}
-		}
-		cfg.AgentOrder = nuevoOrden
-	}
-}
-
-// aplicarCampoEntidad aplica un campo (model, reasoning_effort, agent) a un
-// agente o perfil según la sección activa.
-func aplicarCampoEntidad(cfg *Config, seccion, entidad, clave, valor string) {
-	switch {
-	case seccion == "agents":
-		agente := cfg.Agents[entidad]
-		switch clave {
-		case "model":
-			agente.Model = valor
-		case "reasoning_effort":
-			agente.ReasoningEffort = valor
-		}
-		cfg.Agents[entidad] = agente
-	case seccion == "profiles":
-		perfil := cfg.Profiles[entidad]
-		switch clave {
-		case "agent":
-			perfil.Agent = valor
-		case "model":
-			perfil.Model = valor
-		case "reasoning_effort":
-			perfil.ReasoningEffort = valor
-		}
-		cfg.Profiles[entidad] = perfil
-	}
-}
-
-// aplicarCampoPerfilAgente aplica un campo a un perfil anidado dentro de un
-// agente (esquema v2: agents.<agente>.profiles.<perfil>).
-func aplicarCampoPerfilAgente(cfg *Config, agente, perfil, clave, valor string) {
-	a := cfg.Agents[agente]
-	if a.Profiles == nil {
-		a.Profiles = map[string]ProfileConfig{}
-	}
-	p := a.Profiles[perfil]
-	switch clave {
-	case "model":
-		p.Model = valor
-	case "reasoning_effort":
-		p.ReasoningEffort = valor
-	}
-	a.Profiles[perfil] = p
-	cfg.Agents[agente] = a
-}
-
-// contarIndent cuenta los espacios iniciales de una línea.
-func contarIndent(linea string) int {
-	n := 0
-	for n < len(linea) && linea[n] == ' ' {
-		n++
-	}
-	return n
-}
-
-// dividirClaveValor separa "clave: valor" en sus dos partes. Una línea que
-// termina en ":" sin valor devuelve clave con valor vacío.
-func dividirClaveValor(texto string) (string, string) {
-	partes := strings.SplitN(texto, ":", 2)
-	if len(partes) == 1 {
-		return strings.TrimSpace(partes[0]), ""
-	}
-	return strings.TrimSpace(partes[0]), strings.TrimSpace(partes[1])
-}
-
-// limpiarValor elimina comillas dobles y simples alrededor de un valor.
-func limpiarValor(valor string) string {
-	return strings.Trim(valor, `"'`)
+	cfg.AgentOrder = nuevoOrden
 }
