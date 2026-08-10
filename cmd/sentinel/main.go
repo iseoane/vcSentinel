@@ -56,6 +56,9 @@ func main() {
 		ejecutarCheck(worktreeActual)
 	case "slice":
 		requireInicializado(worktreeActual)
+		if len(os.Args) > 2 && os.Args[2] == "plan" {
+			os.Exit(ejecutarSlicePlan(os.Stdout, os.Args[3:]))
+		}
 		ejecutarSlice(worktreeActual)
 	case "review":
 		requireInicializado(worktreeActual)
