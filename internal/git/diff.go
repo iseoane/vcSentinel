@@ -63,11 +63,15 @@ func contarLineasAnadidas(diff string) int {
 	return contador
 }
 
+// clasificarEstado traduce las líneas AÑADIDAS de código al veredicto del
+// guardián. Compara contra los umbrales de umbrales.go, no contra literales:
+// antes de T0.4 el 400 estaba escrito aquí a mano y podía divergir del que
+// usan la fragmentación y la decisión de cadena de PRs (B4).
 func clasificarEstado(lineas int) string {
 	switch {
-	case lineas >= 200 && lineas <= 400:
+	case lineas >= UmbralPuntoOptimo && lineas <= LimiteLineasRevisables:
 		return "PUNTO_OPTIMO"
-	case lineas > 400:
+	case lineas > LimiteLineasRevisables:
 		return "CRITICO"
 	default:
 		return "PEQUENO"

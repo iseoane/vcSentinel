@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	limiteLineasLote    = 400
-	limiteConfigGigante = 400
-	// LimiteCodigoGigante es el máximo de líneas sugerido para un archivo de
-	// código antes de ofrecer refactorizar, hacer bypass o abortar.
-	LimiteCodigoGigante = 500
+	// Ambos derivan de LimiteLineasRevisables (umbrales.go): un lote y un
+	// archivo de configuración aislado se miden con la misma vara que el
+	// guardián, y recalibrar el guardián debe arrastrarlos.
+	limiteLineasLote    = LimiteLineasRevisables
+	limiteConfigGigante = LimiteLineasRevisables
 
 	mensajeAisladoDeps   = "chore(deps): track lock and auto-generated files"
 	mensajeAisladoDocs   = "docs(slice): isolate extensive document %s"

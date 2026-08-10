@@ -17,9 +17,13 @@ var ErrSinFabrica = errors.New("sin fábrica de auditores configurada")
 
 // LimiteDecisionChain es el umbral de volumen (líneas añadidas+borradas) a
 // partir del cual una rama propone cadena de PRs salvo coherencia demostrada.
-// Es el mismo umbral del guardián de volumen: la decisión de PR sigue la
-// regla de volumen del proyecto.
-const LimiteDecisionChain = 400
+//
+// Deriva de git.LimiteLineasRevisables POR DECISIÓN, no por casualidad: la
+// decisión de partir un PR sigue la misma regla de volumen que el guardián,
+// porque mide lo mismo — cuánto cambio puede revisar una persona de una
+// sentada. Antes de T0.4 era un 400 escrito aparte que podía divergir en
+// silencio del umbral del guardián (B4).
+const LimiteDecisionChain = git.LimiteLineasRevisables
 
 // OpcionesRama define el análisis de una rama completa contra su base.
 type OpcionesRama struct {
