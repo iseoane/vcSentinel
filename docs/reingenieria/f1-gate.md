@@ -336,3 +336,65 @@ real, o `tested` del agente, o la línea explícita «tests no ejecutados».
 - Test: validación en rojo → `gh` **no se invoca** (comprobable con el seam
   `opcionesPublicarPR`).
 - Test: `--force` sin motivo → se pide motivo; con motivo → queda registrado.
+
+---
+
+## Cierre de fase — desviaciones respecto al diseño (hash de cierre `ac455be`)
+
+- **T0.0 no estaba en pie al abrir la fase**: el hook `pre-commit` apuntaba al
+  binario de desarrollo del repo (`bin/0.2.0/sentinel`), no a
+  `~/.vas_sentinel/bin/sentinel`. Se perdió al mover el proyecto a WSL. Se
+  rehizo como paso 0, antes de T1.1.
+- **Cadencia de revisión semántica por tarea, descartada**: el README (§4.2)
+  proponía `sentinel review HEAD` tras cada tarea hasta que existiera `gate`.
+  Se comprobó que el costo total en tokens es el mismo que un único pase al
+  cierre (el ledger no repite trabajo ya hecho), así que se reservó un único
+  `sentinel pr review --base origin/main` al cerrar la fase. Hallazgo
+  colateral de ese pase: el comando revisa cada commit pendiente
+  individualmente (mismo motor que `review HEAD`, sin agregación), y su log
+  de progreso no identifica a qué commit pertenece cada línea — deuda de UX
+  del comando, no de esta fase, sin arreglar.
+- **T1.8 partía de un `--force` ya existente** en `comandos_pr.go` (no
+  documentado en la ficha original): se adaptó para exigir `--reason` y
+  registrar la excepción, en vez de crearse desde cero.
+- **T1.7 tomó una decisión de diseño no especificada por la ficha**: qué
+  perfil de `validation.profiles` usar. Se añadió `--profile` (default
+  `"standard"`); `--stage` solo identifica el punto del ciclo de vida para
+  mensajes/registro, es un eje independiente del perfil ejecutado.
+- **Requisito añadido por el orquestador, fuera del texto original**: el
+  criterio de salida #4 de la fase (clave desconocida → error explícito)
+  exigió `config.CargarConfiguracionLocalEstricta`, no prevista en ninguna
+  ficha de T1.1-T1.8. Se añadió en T1.7 para `gate`, y se extendió después a
+  `status`, `review`, `pr review` y `pr create` en una corrección posterior.
+- **`gateBlock` (comandos_pr.go) se renombró a `avisoSemantico`** en T1.8:
+  cambió de bloquear la publicación a solo avisar, y un nombre que ya no
+  describe lo que hace es peor que renombrarlo.
+- **Correcciones tras una revisión de rama post-cierre** (`sentinel pr
+  review --base origin/main` sobre los 21 commits de la fase, ver hallazgos
+  en el ledger): se encontraron y corrigieron 2 CRITICAL y varios warnings
+  antes de considerar la fase realmente cerrada —
+  - `8ff1b3c`: la vía de delegación al agente (T1.3) nunca podía producir un
+    hallazgo aunque el agente reportara un fallo real (PASS fabricado por
+    construcción, `Capability: "delegado"` sin entrada en `capacidades`);
+    además, `alcance` se interpolaba sin validar en `scoped_command`
+    (inyección de comandos vía shell). Ambos corregidos.
+  - `b5bad54`: `CargarConfiguracionLocalEstricta` no se usaba en `status`,
+    `review` ni `pr review`; `mode`/`fails_when` no se validaban contra su
+    dominio cerrado (typos silenciosos). Ambos corregidos.
+  - `e48f0a5`: el snapshot de validación se anclaba siempre a `ArbolDe("HEAD")`
+    en vez de al árbol real del candidato congelado (que usa un stash-anchor
+    si el worktree ya estaba sucio al llamar), así que un worktree sucio
+    desde el principio (no durante la ejecución) validaba el HEAD limpio, no
+    lo que el usuario creía estar validando. Corregido.
+  - `ac455be`: `gate.CodigoSalida` fallaba abierto (estado desconocido → exit
+    0/PASS); `pr create` no usaba la carga estricta de config; `--force`
+    registraba una excepción en el evento aunque la validación estuviera en
+    verde y no hubiera nada que forzar. Los tres corregidos.
+  - Advertencias documentadas y NO corregidas en esta fase (deuda conocida
+    para F2 o una tarea de hardening dedicada): duplicación entre
+    `internal/validation` e `internal/ops` del parseo del contrato `tested` y
+    de la ejecución shell; `PurgarSnapshots` traga errores de limpieza;
+    `ArbolDe` no valida la revisión recibida (riesgo de option-injection si
+    algún día recibe entrada no confiable); tests de integración de
+    `comandos_pr_test.go` no herméticos (escriben en rutas relativas del cwd
+    real sin `t.TempDir()`).

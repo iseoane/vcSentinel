@@ -236,7 +236,7 @@ Leyenda: ⬜ pendiente · 🔄 en curso · ✅ cerrada con evidencia
 | Fase | Estado | Cierre | Notas |
 |---|---|---|---|
 | F0 | ✅ | T0.0–T0.13 | Todas cerradas: T0.0, T0.1 (13 commits), T0.2, T0.3, T0.4, T0.5, T0.6, T0.7, T0.8, T0.9, T0.10, T0.11, T0.12, T0.13 |
-| F1 | ⬜ | — | |
+| F1 | ✅ | `ac455be` | T1.1–T1.8 cerradas (`5c728a5`..`f2dbc21`) + 4 correcciones de una revisión semántica de rama post-cierre (`8ff1b3c`, `b5bad54`, `e48f0a5`, `ac455be`), incluidos 2 CRITICAL de seguridad. Ver desviaciones abajo. |
 | F2 | ⬜ | — | |
 | F3 | ⬜ | — | |
 | F4 | ⬜ | — | |
