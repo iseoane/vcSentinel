@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -35,6 +36,51 @@ type ReviewConfig struct {
 	Dims map[string]string
 }
 
+// Valores posibles de CapabilityConfig.FailsWhen: cuándo se considera que una
+// capability de validación falló. exit_code es el default histórico (el
+// mismo criterio que ya usan lint_commands/test_commands/build_commands).
+const (
+	FailsWhenExitCode       = "exit_code"
+	FailsWhenOutputNotEmpty = "output_not_empty"
+)
+
+// Valores posibles de ValidationConfig.Mode: dónde se ejecutan las
+// capabilities de validación.
+const (
+	ModeWorktree = "worktree"
+	ModeInplace  = "inplace"
+)
+
+// marcadorPaquetes es el marcador literal que todo scoped_command debe
+// contener: el ejecutor (fuera del alcance de esta tarea) lo sustituye por
+// los paquetes a los que se acota la validación.
+const marcadorPaquetes = "{packages}"
+
+// CapabilityConfig describe un chequeo de validación configurable por el
+// usuario (T1.2): comando a ejecutar, criterio de fallo y, opcionalmente, una
+// variante acotada a un subconjunto de paquetes.
+type CapabilityConfig struct {
+	Command   string
+	FailsWhen string
+	// SupportsScope y ScopedCommand habilitan una variante del comando
+	// acotada a los paquetes afectados (p. ej. tras un slice parcial).
+	SupportsScope bool
+	ScopedCommand string
+	// Timeout en segundos; 0 significa "sin timeout explícito propio", el
+	// ejecutor decide su default.
+	Timeout int
+}
+
+// ValidationConfig agrupa las capabilities configurables por el usuario, los
+// perfiles que las combinan por nombre y el modo de ejecución (T1.2).
+type ValidationConfig struct {
+	Capabilities map[string]CapabilityConfig
+	// Profiles asigna un nombre de perfil de validación a la lista ordenada
+	// de capabilities que agrupa (deben existir en Capabilities).
+	Profiles map[string][]string
+	Mode     string
+}
+
 // Config es la configuración completa de VAS Sentinel con precedencia
 // defaults -> global -> per-proyecto.
 type Config struct {
@@ -45,6 +91,7 @@ type Config struct {
 	AgentOrder []string
 	Profiles   map[string]ProfileConfig
 	Review     ReviewConfig
+	Validation ValidationConfig
 	// CommitLanguage fija el idioma de los mensajes de commit que genera el
 	// agente (T0.13). Por defecto, el del historial del repositorio.
 	CommitLanguage string
@@ -97,6 +144,11 @@ func configuracionPorDefecto() Config {
 				"security": "deep",
 			},
 		},
+		Validation: ValidationConfig{
+			Capabilities: map[string]CapabilityConfig{},
+			Profiles:     map[string][]string{},
+			Mode:         ModeWorktree,
+		},
 		LintCommands:  []string{},
 		TestCommands:  []string{},
 		BuildCommands: []string{},
@@ -137,6 +189,8 @@ func CargarConfiguracionLocal(worktreePath string) Config {
 
 	_ = aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath))
 
+	traducirComandosLegadoACapabilities(&cfg)
+
 	return cfg
 }
 
@@ -173,6 +227,30 @@ type reviewYAML struct {
 	Dims     map[string]string `yaml:"dims"`
 }
 
+// capabilityYAML es una entrada de validation.capabilities.<nombre> (T1.2).
+// El nombre de la capability es una etiqueta libre elegida por el usuario
+// (no un enum cerrado en Go); lo único fijo es esta forma. Command es
+// obligatorio en la práctica (sin él la capability no ejecuta nada), pero
+// esta tarea solo exige las tres validaciones de forma listadas en el
+// diseño: quien declare una capability sin command se queda con la cadena
+// vacía, sin fallar la carga.
+type capabilityYAML struct {
+	Command       *string `yaml:"command"`
+	FailsWhen     *string `yaml:"fails_when"`
+	SupportsScope *bool   `yaml:"supports_scope"`
+	ScopedCommand *string `yaml:"scoped_command"`
+	Timeout       *int    `yaml:"timeout"`
+}
+
+// validationYAML es la sección validation completa (T1.2): capabilities
+// configurables por el usuario, perfiles que las agrupan por nombre y modo
+// de ejecución.
+type validationYAML struct {
+	Capabilities map[string]capabilityYAML `yaml:"capabilities"`
+	Profiles     map[string][]string       `yaml:"profiles"`
+	Mode         *string                   `yaml:"mode"`
+}
+
 // configYAML es el esquema completo tal cual lo consume yaml.v3 con
 // KnownFields(true): una clave fuera de esta lista (p. ej. "comand" en vez de
 // "command") hace fallar la decodificación con archivo y línea, en vez de
@@ -189,6 +267,7 @@ type configYAML struct {
 	Agents         map[string]agenteYAML       `yaml:"agents"`
 	Profiles       map[string]perfilGlobalYAML `yaml:"profiles"`
 	Review         *reviewYAML                 `yaml:"review"`
+	Validation     *validationYAML             `yaml:"validation"`
 	CommitLanguage *string                     `yaml:"commit_language"`
 	LintCommands   []string                    `yaml:"lint_commands"`
 	TestCommands   []string                    `yaml:"test_commands"`
@@ -225,7 +304,9 @@ func aplicarDesdeRuta(cfg *Config, ruta string) error {
 		return fmt.Errorf("%s: %w", ruta, err)
 	}
 
-	aplicarValoresYAML(cfg, &raw)
+	if err := aplicarValoresYAML(cfg, &raw); err != nil {
+		return fmt.Errorf("%s: %w", ruta, err)
+	}
 
 	var orden ordenAgentesYAML
 	if err := yaml.Unmarshal(datos, &orden); err == nil {
@@ -237,7 +318,10 @@ func aplicarDesdeRuta(cfg *Config, ruta string) error {
 
 // aplicarValoresYAML aplica sobre cfg los campos presentes en raw, campo a
 // campo (solo sobreescribe lo que el archivo declara explícitamente).
-func aplicarValoresYAML(cfg *Config, raw *configYAML) {
+// Devuelve error cuando validation.capabilities/profiles no respeta la forma
+// exigida (ver aplicarValidacion): a diferencia del resto de secciones, aquí
+// un valor inválido no puede ignorarse en silencio.
+func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 	if raw.ActiveAgent != nil {
 		cfg.ActiveAgent = *raw.ActiveAgent
 	}
@@ -294,6 +378,96 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) {
 	cfg.LintCommands = append(cfg.LintCommands, raw.LintCommands...)
 	cfg.TestCommands = append(cfg.TestCommands, raw.TestCommands...)
 	cfg.BuildCommands = append(cfg.BuildCommands, raw.BuildCommands...)
+
+	if raw.Validation != nil {
+		if err := aplicarValidacion(cfg, raw.Validation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// aplicarValidacion aplica sobre cfg.Validation los campos presentes en raw y
+// valida su forma. A diferencia del resto del parser (donde un valor
+// inválido se ignora y queda el default), aquí una capability o un perfil mal
+// formado producen un error explícito: un perfil que promete una capability
+// que no existe, o una capability scoped sin scoped_command o sin el
+// marcador {packages}, son errores de configuración que el operador debe
+// corregir, no defaults silenciosos que oculten el problema.
+func aplicarValidacion(cfg *Config, raw *validationYAML) error {
+	for nombre, capRaw := range raw.Capabilities {
+		capacidad := cfg.Validation.Capabilities[nombre]
+		if capRaw.Command != nil {
+			capacidad.Command = *capRaw.Command
+		}
+		if capRaw.FailsWhen != nil {
+			capacidad.FailsWhen = *capRaw.FailsWhen
+		} else if capacidad.FailsWhen == "" {
+			capacidad.FailsWhen = FailsWhenExitCode
+		}
+		if capRaw.SupportsScope != nil {
+			capacidad.SupportsScope = *capRaw.SupportsScope
+		}
+		if capRaw.ScopedCommand != nil {
+			capacidad.ScopedCommand = *capRaw.ScopedCommand
+		}
+		if capRaw.Timeout != nil {
+			capacidad.Timeout = *capRaw.Timeout
+		}
+		if capacidad.SupportsScope && capacidad.ScopedCommand == "" {
+			return fmt.Errorf("validation.capabilities.%s: supports_scope=true requiere scoped_command", nombre)
+		}
+		if capacidad.ScopedCommand != "" && !strings.Contains(capacidad.ScopedCommand, marcadorPaquetes) {
+			return fmt.Errorf("validation.capabilities.%s: scoped_command debe contener el marcador %s", nombre, marcadorPaquetes)
+		}
+		cfg.Validation.Capabilities[nombre] = capacidad
+	}
+	for perfil, nombresCapabilities := range raw.Profiles {
+		for _, nombreCap := range nombresCapabilities {
+			if _, existe := cfg.Validation.Capabilities[nombreCap]; !existe {
+				return fmt.Errorf("validation.profiles.%s: la capability %q no está declarada en validation.capabilities", perfil, nombreCap)
+			}
+		}
+		cfg.Validation.Profiles[perfil] = nombresCapabilities
+	}
+	if raw.Mode != nil {
+		cfg.Validation.Mode = *raw.Mode
+	}
+	return nil
+}
+
+// traducirComandosLegadoACapabilities genera capabilities implícitas a
+// partir de lint_commands/test_commands/build_commands cuando el yml no
+// declara ninguna validation.capabilities explícita. Decisión: una config
+// vieja que solo conoce el esquema de comandos anterior a T1.2 debe seguir
+// produciendo un resultado utilizable para quien pida "las capabilities
+// configuradas" (tarea futura), sin obligar al usuario a reescribir su yml.
+// Si el usuario ya declaró validation.capabilities, esa declaración manda:
+// no se mezclan dos fuentes de verdad para las mismas capabilities. Los
+// comandos de una misma lista se combinan con "&&" en un único Command
+// porque CapabilityConfig modela un comando, no una lista.
+func traducirComandosLegadoACapabilities(cfg *Config) {
+	if len(cfg.Validation.Capabilities) > 0 {
+		return
+	}
+	agregarCapabilityImplicita(cfg, "lint", cfg.LintCommands)
+	agregarCapabilityImplicita(cfg, "unit_test", cfg.TestCommands)
+	agregarCapabilityImplicita(cfg, "build", cfg.BuildCommands)
+}
+
+// agregarCapabilityImplicita añade a cfg.Validation.Capabilities una entrada
+// con nombre a partir de comandos, si hay al menos uno.
+func agregarCapabilityImplicita(cfg *Config, nombre string, comandos []string) {
+	if len(comandos) == 0 {
+		return
+	}
+	if cfg.Validation.Capabilities == nil {
+		cfg.Validation.Capabilities = map[string]CapabilityConfig{}
+	}
+	cfg.Validation.Capabilities[nombre] = CapabilityConfig{
+		Command:   strings.Join(comandos, " && "),
+		FailsWhen: FailsWhenExitCode,
+	}
 }
 
 // decodificarEnteroPositivo intenta leer nodo como entero positivo. Devuelve
