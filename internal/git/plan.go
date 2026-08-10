@@ -276,13 +276,22 @@ func lotePorNumero(plan *PlanFragmentacion, numero int) (*LotePlanificado, error
 // commitLoteConMensaje añade las rutas y crea el commit con el mensaje
 // aprobado. Omite los hooks (--no-verify) porque el flujo de slice ya validó
 // el tamaño de cada lote y es el mecanismo de fragmentación del guardián.
+//
+// El add usa -f: las rutas de un lote siempre vienen de
+// ObtenerArchivosModificados, que solo reporta archivos trackeados
+// modificados o untracked NO ignorados, así que forzar el add nunca cuela un
+// ignorado genuino. Lo que sí cubre es el caso real de un archivo que ya
+// estaba trackeado cuando .gitignore empezó a afectarle después (p. ej.
+// .atl/): sin -f, git add avisa y sale con código 1 aunque de todos modos deja
+// el archivo en stage, y ese error abortaba el lote entero sin dejar rastro
+// del motivo real (B13: antes de este cambio solo se veía "exit status 1").
 func commitLoteConMensaje(rutas []string, mensaje string) (string, error) {
-	argsAdd := append([]string{"add", "--"}, rutas...)
-	if err := exec.Command("git", argsAdd...).Run(); err != nil {
-		return "", err
+	argsAdd := append([]string{"add", "-f", "--"}, rutas...)
+	if salida, err := exec.Command("git", argsAdd...).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git add falló: %w: %s", err, strings.TrimSpace(string(salida)))
 	}
-	if err := exec.Command("git", "commit", "-m", mensaje, "--no-verify").Run(); err != nil {
-		return "", err
+	if salida, err := exec.Command("git", "commit", "-m", mensaje, "--no-verify").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git commit falló: %w: %s", err, strings.TrimSpace(string(salida)))
 	}
 	hash, err := ejecutarGitSalida("rev-parse", "--short", "HEAD")
 	if err != nil {
