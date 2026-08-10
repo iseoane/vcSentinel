@@ -34,6 +34,31 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 3. **Aprobación** — muestra el plan completo y espera tu decisión: **(A)probar todo**, **(R)egenerar** un mensaje con otro agente, **(E)ditar** un mensaje manualmente o **(C)ancelar**. Enter aprueba.
 4. **Resumen** — lista los commits creados y verifica que el worktree quedó limpio.
 
+### Flujo conducido por un agente
+
+El diálogo anterior es un REPL sobre `stdin`: un agente no puede conducirlo. Para eso existe la vía de dos pasos, que **no cambia quién decide** — la decisión sigue siendo tuya, solo cambia el transporte de la pregunta:
+
+```bash
+sentinel slice plan --json > plan.json   # propone; no commitea nada
+# exit 0 → no hay nada que preguntar
+# exit 3 → el plan trae decisiones_pendientes que debes responder tú
+sentinel slice apply --plan plan.json --answers respuestas.json
+```
+
+`respuestas.json` liga la aprobación a un plan concreto:
+
+```json
+{ "plan_id": "<el plan_id del plan emitido>", "respuestas": { "<id de la decisión>": "bypass" } }
+```
+
+Tres ligaduras que `apply` verifica antes de crear un solo commit:
+
+1. **Al árbol** — si cambió el contenido de alguna ruta del plan, se niega y hay que replanificar.
+2. **Al plan** — las respuestas llevan el `plan_id`; una aprobación de un plan anterior no sirve.
+3. **Sin defaults** — toda decisión pendiente exige respuesta explícita (`bypass` o `abortar`). Ni siquiera «aprobar todo» es implícito.
+
+Esto elimina el accidente de confundir «nadie al teclado» con «el humano aprobó». Lo que **no** promete es impedir que un agente deliberado llame a `git commit` por su cuenta: eso queda fuera del modelo de amenaza.
+
 Casos especiales:
 
 - **Archivos gigantes:** config >400 líneas se aísla automáticamente (`chore(deps): track lock and auto-generated files`); código >500 líneas pide confirmación y hace bypass explícito (`chore(slice): bypass IA for massive file …`) o aborta sin commitear nada.

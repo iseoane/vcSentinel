@@ -158,6 +158,25 @@ tareas se detiene en el commit esperando una sesión interactiva.
 A partir de **F1**, el paso 7 pasa a ser `sentinel gate --stage pre-push`, que ya
 ejecuta validación antes que revisión.
 
+### 4.2.1 Trampa del dogfooding: recompilar antes de fragmentar
+
+**Si la tarea modificó la lógica de `slice`, `check` o las clases de archivo,
+recompila e instala el binario ANTES de fragmentar.** El binario que ejecuta la
+fragmentación es el mismo que estamos cambiando: usar el anterior aplica el
+criterio viejo y produce commits que la tarea acababa de arreglar.
+
+Ocurrió de verdad al cerrar T0.12: se lanzó `slice` con el binario previo al
+cambio y hubo que abortarlo antes de que commiteara con el agrupado antiguo.
+
+```
+gofmt -w . && go vet ./... \
+  && go build -ldflags="-s -w -X main.version=<version>" -o bin/<version>/sentinel.exe ./cmd/sentinel \
+  && cp bin/<version>/sentinel.exe ~/.vas_sentinel/bin/sentinel.exe
+```
+
+Nota: `build.bat` no es invocable desde Git Bash con `cmd //c`; estos son sus
+mismos pasos.
+
 ### 4.3 Puerta de fase
 
 ```
@@ -216,7 +235,7 @@ Leyenda: ⬜ pendiente · 🔄 en curso · ✅ cerrada con evidencia
 
 | Fase | Estado | Cierre | Notas |
 |---|---|---|---|
-| F0 | 🔄 | — | Cerradas: T0.0, T0.1 (13 commits), T0.3, T0.8, T0.12. Pendientes: T0.2, T0.4–T0.7, T0.9–T0.11, T0.13 |
+| F0 | 🔄 | — | Cerradas: T0.0, T0.1 (13 commits), T0.3, T0.8, T0.9, T0.10, T0.11, T0.12. Pendientes: T0.2, T0.4–T0.7, T0.13 |
 | F1 | ⬜ | — | |
 | F2 | ⬜ | — | |
 | F3 | ⬜ | — | |

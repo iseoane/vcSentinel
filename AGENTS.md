@@ -10,6 +10,18 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 - `sentinel slice` trabaja en modo plan: propone los lotes y los mensajes, y NO commitea nada hasta que el usuario apruebe el plan.
 - Los commits de slice omiten la verificación del hook (`--no-verify`): invocar slice ES el desbloqueo del guardián y cada lote ya está validado (≤400 líneas, salvo gigantes con bypass explícito). El hook de volumen mide el total pendiente y rechazaría por error commits legítimos durante la fragmentación.
 
+### Si eres un agente: usa el flujo de dos pasos
+
+`sentinel slice` sin argumentos es un REPL sobre `stdin` y no puedes conducirlo. Usa en su lugar:
+
+1. `sentinel slice plan --json > plan.json` — propone y **no commitea nada**. Es idempotente: sobre el mismo árbol devuelve el mismo `plan_id`.
+   - Exit `0`: no hay nada que preguntar.
+   - Exit `3`: el plan trae `decisiones_pendientes[]`. **Trasládaselas al usuario tal cual y espera su respuesta.** No respondas por él ni elijas un valor por defecto.
+2. Escribe `respuestas.json` con la respuesta literal del usuario: `{"plan_id": "<plan_id>", "respuestas": {"<id>": "bypass"|"abortar"}}`.
+3. `sentinel slice apply --plan plan.json --answers respuestas.json` — commitea solo si el árbol no cambió, las respuestas son de ese `plan_id` y toda decisión tiene respuesta explícita.
+
+La decisión sigue siendo del humano: este flujo cambia el transporte de la pregunta, no quién la contesta.
+
 ## Build y verificación
 
 - **Windows:** `build.bat` → genera `bin\<version>\sentinel.exe`
