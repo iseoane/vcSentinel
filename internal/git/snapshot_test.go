@@ -38,6 +38,21 @@ func TestArbolDeCoincideConRevParse(t *testing.T) {
 	}
 }
 
+// TestArbolDeRechazaRevisionQueEmpiezaConGuion cubre B14: una revisión que
+// empieza con "-" se interpretaría como una opción de "git rev-parse" en vez
+// de como el nombre de una revisión (option injection), así que debe
+// rechazarse antes de interpolarla en el comando.
+func TestArbolDeRechazaRevisionQueEmpiezaConGuion(t *testing.T) {
+	requiereGitReal(t)
+
+	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	t.Chdir(dir)
+
+	if _, err := ArbolDe("--upload-pack=touch /tmp/pwned"); err == nil {
+		t.Fatal("ArbolDe debería rechazar una revisión que empieza con \"-\"")
+	}
+}
+
 func TestCrearSnapshotContieneLosArchivosDelArbol(t *testing.T) {
 	requiereGitReal(t)
 
@@ -158,6 +173,40 @@ func TestPurgarSnapshotsConAntiguedadCortaPurgaElRecienCreado(t *testing.T) {
 	}
 	if _, err := os.Stat(ruta); !os.IsNotExist(err) {
 		t.Errorf("el snapshot debería haberse purgado, pero sigue existiendo (err=%v)", err)
+	}
+}
+
+// TestPurgarSnapshotsPropagaErrorSiNoPuedeEliminar cubre B15: hoy la función
+// devuelve nil incondicional aunque "worktree remove" y su reintento con
+// --force fallen los dos, así que el llamador cree que el disco quedó
+// limpio cuando en realidad el snapshot roto sigue ahí. Se simula con un
+// directorio que NO es un worktree registrado (git no puede quitarlo con
+// ninguna de las dos vías) y con una fecha de modificación antigua para que
+// entre en el rango a purgar.
+func TestPurgarSnapshotsPropagaErrorSiNoPuedeEliminar(t *testing.T) {
+	requiereGitReal(t)
+
+	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	t.Chdir(dir)
+
+	snapshots, err := directorioSnapshots()
+	if err != nil {
+		t.Fatalf("directorioSnapshots devolvió error: %v", err)
+	}
+	rutaRota := filepath.Join(snapshots, "no-es-un-worktree")
+	if err := os.MkdirAll(rutaRota, 0755); err != nil {
+		t.Fatalf("no se pudo crear el directorio roto: %v", err)
+	}
+	antigua := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(rutaRota, antigua, antigua); err != nil {
+		t.Fatalf("no se pudo envejecer el directorio roto: %v", err)
+	}
+
+	if err := PurgarSnapshots(time.Minute); err == nil {
+		t.Fatal("PurgarSnapshots debería devolver error: no pudo eliminar un snapshot roto")
+	}
+	if _, err := os.Stat(rutaRota); err != nil {
+		t.Errorf("el directorio roto debería seguir existiendo tras el fallo, pero: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,12 @@ import (
 
 // ArbolDe devuelve el tree OID de una revisión.
 func ArbolDe(revision string) (string, error) {
+	// Una revisión que empieza con "-" se interpretaría como una opción de
+	// "git rev-parse" en vez de como el nombre de la revisión (B14): quien
+	// llame con una entrada no confiable podría inyectar opciones de git.
+	if strings.HasPrefix(revision, "-") {
+		return "", fmt.Errorf("revisión inválida %q: no puede empezar con \"-\"", revision)
+	}
 	salida, err := ejecutarGitSalida("rev-parse", revision+"^{tree}")
 	if err != nil {
 		return "", err
@@ -112,6 +119,7 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 
 	limite := time.Now().Add(-antiguedad)
 	huboEliminacion := false
+	var errores []error
 	for _, entrada := range entradas {
 		if !entrada.IsDir() {
 			continue
@@ -125,7 +133,16 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		}
 		ruta := filepath.Join(snapshots, entrada.Name())
 		if _, err := ejecutarGitSalida("worktree", "remove", ruta); err != nil {
-			_, _ = ejecutarGitSalida("worktree", "remove", "--force", ruta)
+			if _, errForzado := ejecutarGitSalida("worktree", "remove", "--force", ruta); errForzado != nil {
+				// Ni la vía normal ni --force pudieron limpiar este
+				// snapshot (B15): se acumula el error en vez de devolver
+				// nil, que haría creer al llamador que el disco quedó
+				// limpio cuando el directorio roto sigue ahí. El resto del
+				// bucle continúa: es limpieza best-effort por snapshot, un
+				// fallo aislado no debe impedir purgar los demás.
+				errores = append(errores, fmt.Errorf("no se pudo eliminar el snapshot %s: %w", ruta, errForzado))
+				continue
+			}
 		}
 		huboEliminacion = true
 	}
@@ -133,5 +150,5 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 	if huboEliminacion {
 		_, _ = ejecutarGitSalida("worktree", "prune")
 	}
-	return nil
+	return errors.Join(errores...)
 }
