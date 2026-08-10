@@ -831,3 +831,73 @@ func TestWorktreeLimpio(t *testing.T) {
 		t.Error("un worktree con cambios debería reportar no limpio")
 	}
 }
+
+// TestEjecutarPlanFragmentacionCommiteaArchivoTrackeadoQueGitignoreIgnoraDespues
+// reproduce B13: un archivo ya trackeado (como .atl/ en este repo) al que
+// .gitignore empieza a afectar después. Sin -f, 'git add' sobre esa ruta
+// avisa y sale con código 1 aunque de todos modos deja el archivo en stage,
+// y ese error abortaba el lote entero.
+func TestEjecutarPlanFragmentacionCommiteaArchivoTrackeadoQueGitignoreIgnoraDespues(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioPrueba(t, map[string]string{
+		"registro.txt": "estado inicial\n",
+	})
+	t.Chdir(dir)
+
+	if err := os.WriteFile(".gitignore", []byte("registro.txt\n"), 0644); err != nil {
+		t.Fatalf("no se pudo escribir .gitignore: %v", err)
+	}
+	ejecutarGit(t, dir, "add", "-f", ".gitignore")
+	ejecutarGit(t, dir, "commit", "-q", "-m", "ignora registro.txt")
+
+	agregarLineas(t, "registro.txt", 5)
+
+	plan := &PlanFragmentacion{Lotes: []LotePlanificado{
+		{Capa: "backend", Numero: 1, Rutas: []string{"registro.txt"}, Mensaje: "chore(slice): prueba"},
+	}}
+
+	resultados, err := EjecutarPlanFragmentacion(plan)
+	if err != nil {
+		t.Fatalf("EjecutarPlanFragmentacion devolvió error con un archivo trackeado e ignorado: %v", err)
+	}
+	if len(resultados) != 1 || resultados[0].Hash == "" {
+		t.Fatalf("se esperaba 1 commit con hash, obtuve %+v", resultados)
+	}
+	estado := ejecutarGit(t, dir, "status", "--porcelain")
+	if estado != "" {
+		t.Errorf("el worktree debería quedar limpio, obtuve: %s", estado)
+	}
+}
+
+// TestEjecutarPlanFragmentacionErrorIncluyeSalidaDeGit comprueba que un fallo
+// real de git ya no se reduce a "exit status 1": debe incluir la salida de
+// git (aquí, el aviso de pathspec) para poder diagnosticarlo sin adivinar.
+func TestEjecutarPlanFragmentacionErrorIncluyeSalidaDeGit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	t.Chdir(dir)
+
+	plan := &PlanFragmentacion{Lotes: []LotePlanificado{
+		{Capa: "backend", Numero: 1, Rutas: []string{"no-existe.go"}, Mensaje: "chore(slice): prueba"},
+	}}
+
+	_, err := EjecutarPlanFragmentacion(plan)
+	if err == nil {
+		t.Fatal("se esperaba error: la ruta del lote no existe")
+	}
+	if !strings.Contains(err.Error(), "pathspec") {
+		t.Errorf("el error debería incluir la salida real de git (pathspec), obtuve: %v", err)
+	}
+}
