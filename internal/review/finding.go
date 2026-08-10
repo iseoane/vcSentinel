@@ -1,6 +1,8 @@
 package review
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -254,6 +256,60 @@ func normalizarParaComparar(s string) string {
 		lineas[i] = strings.TrimSpace(linea)
 	}
 	return strings.Join(lineas, "\n")
+}
+
+// Fingerprint calcula una huella estable de un Hallazgo (finding v2) para
+// poder rastrear "el mismo defecto" entre dos revisiones aunque el archivo se
+// haya reindentado o se haya renumerado por una edición en otra parte: no usa
+// Location.LineaInicio/LineaFin (los números de línea son el dato menos
+// estable del hallazgo, cambian con cualquier edición previa en el archivo) ni
+// Location.Blob (identifica una versión exacta del archivo, no el defecto en
+// sí, que puede sobrevivir varios commits sin tocarse).
+//
+// Componentes, en este orden:
+//  1. Dimension: la categoría del hallazgo (logic, security, ...).
+//  2. Location.Simbolo si está disponible (más preciso: sobrevive a que el
+//     símbolo se mueva de línea o incluso de archivo); si el agente no lo
+//     resolvió, cae en Location.Archivo para no colisionar hallazgos de
+//     archivos distintos bajo una clave vacía.
+//  3. Evidence normalizada con normalizarParaComparar (T2.2): la misma
+//     normalización que ya tolera reindentado al validar evidencia contra el
+//     contenido del archivo: aquí sirve exactamente para lo mismo, tolerar
+//     reindentado sin duplicar la lógica de comparación.
+//  4. Title como "regla": Description e Impact narran detalles concretos de
+//     la instancia (qué línea, qué valor, qué consecuencia observada), que
+//     varían aunque el TIPO de defecto sea el mismo; Title es la etiqueta que
+//     el propio agente usa para nombrar el tipo de problema (p. ej.
+//     "condición siempre verdadera") y se repite igual entre instancias del
+//     mismo defecto, que es justo lo que necesita la propiedad de "regla".
+func Fingerprint(h Hallazgo) string {
+	simboloORuta := h.Location.Simbolo
+	if simboloORuta == "" {
+		simboloORuta = h.Location.Archivo
+	}
+	entrada := empaquetarConLongitud(
+		h.Dimension,
+		simboloORuta,
+		normalizarParaComparar(h.Evidence),
+		h.Title,
+	)
+	suma := sha256.Sum256([]byte(entrada))
+	return hex.EncodeToString(suma[:])
+}
+
+// empaquetarConLongitud concatena componentes prefijando cada uno con su
+// longitud decimal y ":". Un separador simple como "|" sería ambiguo si algún
+// componente lo contuviera literalmente (p. ej. evidencia con un "|" dentro de
+// una expresión lógica); prefijar con la longitud hace que la concatenación
+// sea inambigua sin importar qué caracteres traiga cada componente.
+func empaquetarConLongitud(componentes ...string) string {
+	var b strings.Builder
+	for _, c := range componentes {
+		b.WriteString(strconv.Itoa(len(c)))
+		b.WriteByte(':')
+		b.WriteString(c)
+	}
+	return b.String()
 }
 
 // AgentQuestion es una aclaración que el agente necesita para poder auditar.

@@ -372,6 +372,89 @@ func TestHallazgosConEvidenciaValidaArchivoVacioEnLocation(t *testing.T) {
 	}
 }
 
+// hallazgoParaFingerprint construye un Hallazgo mínimo con los campos que
+// intervienen en Fingerprint, dejando el resto en su cero-valor: los tests de
+// esta sección solo varían Simbolo/Archivo, Evidence, Title y las líneas.
+func hallazgoParaFingerprint(dimension, simbolo, archivo, evidencia, title string, lineaInicio, lineaFin int) Hallazgo {
+	return Hallazgo{
+		Dimension: dimension,
+		Title:     title,
+		Evidence:  evidencia,
+		Location: Ubicacion{
+			Archivo:     archivo,
+			Simbolo:     simbolo,
+			LineaInicio: lineaInicio,
+			LineaFin:    lineaFin,
+		},
+	}
+}
+
+func TestFingerprintEstableAnteReindentadoYCambioDeLinea(t *testing.T) {
+	// Mismo hallazgo lógico, pero el LLM lo citó con otra indentación y en
+	// otras líneas (p. ej. el archivo se reformateó entre dos ejecuciones):
+	// el fingerprint no debe depender de espacios de borde ni de la línea.
+	a := hallazgoParaFingerprint(DimLogic, "FuncionX", "a.go",
+		"if x >= 0 || x < 0 {", "condición siempre verdadera", 10, 12)
+	b := hallazgoParaFingerprint(DimLogic, "FuncionX", "a.go",
+		"    if x >= 0 || x < 0 {   ", "condición siempre verdadera", 45, 47)
+
+	if Fingerprint(a) != Fingerprint(b) {
+		t.Errorf("fingerprints distintos ante reindentado/renumeración: %q vs %q", Fingerprint(a), Fingerprint(b))
+	}
+}
+
+func TestFingerprintEstableAnteRenumeracionPorEdicionEnOtraParteDelArchivo(t *testing.T) {
+	// El archivo creció o perdió líneas ANTES del hallazgo (p. ej. se añadió
+	// un import): la evidencia y el símbolo no cambian, solo la numeración.
+	a := hallazgoParaFingerprint(DimSecurity, "ValidarToken", "auth.go",
+		"if token == \"\" { return nil }", "validación de entrada ausente", 20, 20)
+	b := hallazgoParaFingerprint(DimSecurity, "ValidarToken", "auth.go",
+		"if token == \"\" { return nil }", "validación de entrada ausente", 63, 63)
+
+	if Fingerprint(a) != Fingerprint(b) {
+		t.Errorf("fingerprints distintos tras renumeración pura: %q vs %q", Fingerprint(a), Fingerprint(b))
+	}
+}
+
+func TestFingerprintDistintoParaMismoDefectoEnDosSimbolos(t *testing.T) {
+	// Mismo defecto (misma evidencia y regla) pero copiado/pegado en dos
+	// funciones distintas: son dos instancias del defecto, no la misma.
+	a := hallazgoParaFingerprint(DimLogic, "FuncionA", "a.go",
+		"if x >= 0 || x < 0 {", "condición siempre verdadera", 1, 1)
+	b := hallazgoParaFingerprint(DimLogic, "FuncionB", "a.go",
+		"if x >= 0 || x < 0 {", "condición siempre verdadera", 1, 1)
+
+	if Fingerprint(a) == Fingerprint(b) {
+		t.Errorf("se esperaban fingerprints distintos para símbolos distintos, ambos %q", Fingerprint(a))
+	}
+}
+
+func TestFingerprintDistintoParaDosDefectosEnMismoSimbolo(t *testing.T) {
+	// Misma función, pero dos defectos independientes dentro de ella: deben
+	// poder rastrearse por separado en revisiones sucesivas.
+	a := hallazgoParaFingerprint(DimLogic, "FuncionX", "a.go",
+		"if x >= 0 || x < 0 {", "condición siempre verdadera", 1, 1)
+	b := hallazgoParaFingerprint(DimLogic, "FuncionX", "a.go",
+		"return nil // TODO", "retorno sin manejar el error", 5, 5)
+
+	if Fingerprint(a) == Fingerprint(b) {
+		t.Errorf("se esperaban fingerprints distintos para defectos distintos, ambos %q", Fingerprint(a))
+	}
+}
+
+func TestFingerprintUsaArchivoCuandoNoHaySimbolo(t *testing.T) {
+	// Sin símbolo (el agente no siempre lo resuelve), el fingerprint debe
+	// caer en Location.Archivo en vez de quedar vacío o colisionar con todo.
+	a := hallazgoParaFingerprint(DimStyle, "", "b.go",
+		"var x int", "variable sin usar", 1, 1)
+	b := hallazgoParaFingerprint(DimStyle, "", "c.go",
+		"var x int", "variable sin usar", 1, 1)
+
+	if Fingerprint(a) == Fingerprint(b) {
+		t.Errorf("se esperaban fingerprints distintos para archivos distintos sin símbolo, ambos %q", Fingerprint(a))
+	}
+}
+
 func TestParsearDimensionResultUnavailable(t *testing.T) {
 	salida := `{"dim":"security","verdict":"unavailable","reason":"rate_limit"}`
 	resultado, err := ParsearDimensionResult(salida)
