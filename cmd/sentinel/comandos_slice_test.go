@@ -40,6 +40,52 @@ func TestEjecutarSlicePlanDevuelveTresConDecisionPendiente(t *testing.T) {
 	}
 }
 
+// TestSlicePlanYApplyCaminoCompleto recorre el flujo de dos pasos de T0.10:
+// plan → respuestas del usuario → apply, sin ninguna lectura de stdin.
+func TestSlicePlanYApplyCaminoCompleto(t *testing.T) {
+	prepararRepoParaPlan(t)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatalf("no se pudo escribir app.go: %v", err)
+	}
+
+	var salidaPlan bytes.Buffer
+	if codigo := ejecutarSlicePlan(&salidaPlan, []string{"--json"}); codigo != 0 {
+		t.Fatalf("plan exit = %d, esperado 0. Salida: %s", codigo, salidaPlan.String())
+	}
+	if err := os.WriteFile("plan.json", salidaPlan.Bytes(), 0644); err != nil {
+		t.Fatalf("no se pudo escribir plan.json: %v", err)
+	}
+
+	var plan struct {
+		PlanID string `json:"plan_id"`
+	}
+	if err := json.Unmarshal(salidaPlan.Bytes(), &plan); err != nil {
+		t.Fatalf("plan no serializable: %v", err)
+	}
+	respuestas := []byte(`{"plan_id":"` + plan.PlanID + `","respuestas":{}}`)
+	if err := os.WriteFile("respuestas.json", respuestas, 0644); err != nil {
+		t.Fatalf("no se pudo escribir respuestas.json: %v", err)
+	}
+
+	// Escribir los artefactos de aprobación dentro del repo NO invalida el
+	// plan: el hash del árbol se ata a las rutas del plan (app.go), no al
+	// worktree entero.
+	var salidaApply bytes.Buffer
+	if codigo := ejecutarSliceApply(&salidaApply, []string{"--plan", "plan.json", "--answers", "respuestas.json"}); codigo != 0 {
+		t.Fatalf("apply exit = %d, esperado 0. Salida: %s", codigo, salidaApply.String())
+	}
+	if !strings.Contains(salidaApply.String(), "commits creados") {
+		t.Errorf("no se confirmaron commits: %s", salidaApply.String())
+	}
+
+	// Reaplicar el mismo plan ya no es posible: app.go quedó commiteado, así
+	// que el estado de sus rutas cambió.
+	var salidaRepeticion bytes.Buffer
+	if codigo := ejecutarSliceApply(&salidaRepeticion, []string{"--plan", "plan.json", "--answers", "respuestas.json"}); codigo != 1 {
+		t.Fatalf("reaplicar exit = %d, esperado 1. Salida: %s", codigo, salidaRepeticion.String())
+	}
+}
+
 func prepararRepoParaPlan(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())

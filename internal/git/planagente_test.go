@@ -86,14 +86,14 @@ func TestEstadoWorktreeCambiaConElContenido(t *testing.T) {
 	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
 		t.Fatalf("no se pudo escribir app.go: %v", err)
 	}
-	antes, err := HashEstadoWorktree()
+	antes, err := HashEstadoWorktree([]string{"app.go"})
 	if err != nil {
 		t.Fatalf("HashEstadoWorktree falló: %v", err)
 	}
 	if err := os.WriteFile("app.go", []byte("package app\n\nfunc Nuevo() {}\n"), 0644); err != nil {
 		t.Fatalf("no se pudo reescribir app.go: %v", err)
 	}
-	despues, err := HashEstadoWorktree()
+	despues, err := HashEstadoWorktree([]string{"app.go"})
 	if err != nil {
 		t.Fatalf("HashEstadoWorktree falló: %v", err)
 	}
