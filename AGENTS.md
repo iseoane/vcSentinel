@@ -44,10 +44,37 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 
 ## Arquitectura
 
-- `cmd/sentinel/main.go` — entrypoint CLI: subcomandos `version`, `help`, `init`, `check`, `slice` (+ `install`, `upgrade`, `uninstall`)
-- `internal/config` — parsea `vassentinel.yml` (model + reasoning_effort por agente), con precedencia per-proyecto (`.vas_sentinel/vassentinel.yml`) sobre global (`~/.vas_sentinel/vassentinel.yml`)
-- `internal/agentadapter` — interfaz `AgentAdapter` + `CLIAdapter` (claude/opencode) que delega la generación del mensaje de commit
-- `internal/git` — `CheckDiffLimits` (umbral de volumen), `ObtenerArchivosModificados` (numstat + untracked), plan de fragmentación y ejecución de lotes
+- `cmd/sentinel` — entrypoint CLI y diálogos interactivos. `main.go` despacha los subcomandos; `comandos_review.go`, `comandos_estado.go` y `comandos_pr.go` implementan `review`, `status` y `pr`.
+- `internal/config` — parsea `vassentinel.yml` (agentes, perfiles anidados, `commit_language`, comandos de lint/test/build), con precedencia defaults → global (`~/.vas_sentinel/vassentinel.yml`) → per-proyecto (`.vas_sentinel/vassentinel.yml`).
+- `internal/agentadapter` — `AgentAdapter` + `CLIAdapter` (claude/opencode) y `CadenaAdaptador`, que prueba los agentes en orden y hace fallback por petición. Reporta el agente efectivo que atendió cada llamada.
+- `internal/git` — umbrales de volumen (`umbrales.go`), medición (`MedirVolumen`), plan de fragmentación (`plan.go`), vía no interactiva `plan`/`apply` (`planagente.go`, `aplicarplan.go`) y clasificación de archivos (`clases.go`).
+- `internal/review` — motor de auditoría por dimensiones, prompts, ledger de fichas por commit y análisis de rama (decisión single/chain).
+- `internal/ops` — registro de eventos en el common-dir: alta, rotación, purga y lectura de los últimos.
+- `internal/setup` — instalación, upgrade y desinstalación del binario, y plantillas de configuración.
+
+Documentos de referencia: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md) (hacia dónde va el producto) y [`docs/reingenieria/`](docs/reingenieria/) (plan por fases y estado de las tareas).
+
+## Subcomandos
+
+| Subcomando | Qué hace |
+|---|---|
+| `version` | Versión instalada. |
+| `help` | Ayuda de subcomandos. |
+| `init` | Inyecta la regla de volumen, crea la config per-proyecto e instala el hook `pre-commit`. |
+| `uninit` | Revierte `init` en este repositorio. |
+| `check` | Audita el volumen de líneas añadidas de código del worktree. |
+| `slice` | Fragmenta los cambios en commits de ≤400 líneas (REPL interactivo). |
+| `slice plan` | Propone el plan sin commitear. `--json`; exit 3 si hay decisiones pendientes. |
+| `slice apply` | Ejecuta un plan aprobado. `--plan X --answers Y`. |
+| `review` | Audita un commit contra las dimensiones de su saco y guarda la ficha. |
+| `lint` | Ejecuta los `lint_commands` de la configuración. |
+| `rebase` | `fetch` + `rebase` contra el upstream, con confirmación. |
+| `status` | Volumen, fichas de auditoría y últimos eventos. `--json`, `--prune`. |
+| `pr` | Crea un pull request con `gh` (passthrough). |
+| `pr review` | Analiza la rama sin publicar: matriz y decisión single/chain. |
+| `install` / `upgrade` / `uninstall` | Gestión del binario instalado. |
+
+Los subcomandos sin flags rechazan cualquier argumento extra con salida 1.
 
 ## Lógica de negocio clave
 
@@ -55,11 +82,17 @@ Código y scripts DEBEN funcionar igual en Windows y Debian:
 - `slice`: construye un plan por capas en orden fijo `config → backend → frontend → test`, lotes de ≤400 líneas. Genera los mensajes con el adaptador configurado; si el adaptador automático no responde, ofrece mensajes automáticos deterministas, otro agente disponible o cancelar. Muestra el plan para aprobación (A/R/E/C) antes de commitear, y resume los commits al final.
   - Archivos gigantes: config >400 líneas se aíslan con `chore(deps): track lock and auto-generated files`; código >500 líneas pide confirmación (`s/N`) y, si se confirma, hace bypass con `chore(slice): bypass IA for massive file <archivo>`; si se rechaza, aborta sin commitear nada.
   - Todos los commits de slice usan `--no-verify` (ver REGLA CRÍTICA DE VOLUMEN).
+- `review`: audita un commit por dimensiones (`logic`, `style`, `design`, `tests`, `security`, `spec`), cada una con su perfil de agente. Guarda una ficha por commit en `<git-common-dir>/vas-sentinel/<sha>.json`, con `revisions[]` append-only. Cada revisión registra el agente EFECTIVO que respondió (`agent`/`model`/`effort`), no el perfil pedido.
+- `pr review`: analiza la rama contra su base y decide single vs. chain con `review.LimiteDecisionChain` (el mismo 400 del guardián, por decisión). Si hay `lint_commands`/`test_commands`/`build_commands`, la verificación es determinista y NO consulta al agente.
+- `status`: combina volumen, fichas del ledger y últimos eventos (`internal/ops`), que se registran en el common-dir con rotación y purga.
 - `init`: inyecta la regla de volumen en `AGENTS.md`, `CLAUDE.md`, `.claudecode.md`, crea `.vas_sentinel/vassentinel.yml` per-proyecto e instala el hook `pre-commit` directamente en `<git-common-dir>/hooks/` del repositorio (sin carpeta global ni `core.hooksPath`), con la ruta absoluta del binario. Así solo se activa en el repo donde se corrió `init`, sin afectar otros repos del usuario. Solo se ejecuta en la raíz del worktree Git: si se invoca desde un subdirectorio, redirige automáticamente a la raíz (via `git rev-parse --show-toplevel`); si no hay repositorio Git, aborta con error.
 
 ## Configuración
 
-- `vassentinel.yml`: `active_agent` (default `auto`) — agente activo; `agents:` con `model` y `reasoning_effort` por agente. `auto` usa el primer agente de `agents:` disponible en el PATH. Precedencia: per-proyecto `.vas_sentinel/vassentinel.yml` > global `~/.vas_sentinel/vassentinel.yml` > defaults.
+- `vassentinel.yml`: `active_agent` (default `auto`) — agente activo; `agents:` con `model`, `reasoning_effort` y perfiles anidados por agente. `auto` usa el primer agente de `agents:` disponible en el PATH. Precedencia: per-proyecto `.vas_sentinel/vassentinel.yml` > global `~/.vas_sentinel/vassentinel.yml` > defaults.
+- `commit_language` (default `es`): idioma de los mensajes de commit que genera `slice`.
+- `review:` con `timeout`, `parallel` y `dims:` (perfil por dimensión canónica). `lint_commands`, `test_commands` y `build_commands` habilitan la verificación determinista de `pr review` SIN consultar al agente.
+- Umbrales: `internal/git/umbrales.go` es la única fuente. `LimiteLineasRevisables` (400) manda sobre el guardián, el tamaño de lote y `review.LimiteDecisionChain`; `LimiteCodigoGigante` (500) dispara la decisión de archivo masivo.
 - `MY_SUB_AGENT` (env): override opcional — ya no es el mecanismo principal.
 
 ## Convenciones

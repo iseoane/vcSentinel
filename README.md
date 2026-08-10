@@ -5,7 +5,7 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 ## Quick path
 
 1. Compila: `build.bat` (Windows) o `./build.sh` (Debian) → `bin/<version>/sentinel(.exe)`
-2. Configura: `sentinel init` → crea `.vas_sentinel/vassentinel.yml` e instala el hook global `pre-commit`
+2. Configura: `sentinel init` → crea `.vas_sentinel/vassentinel.yml` e instala el hook `pre-commit` en este repositorio (no es global: no afecta a tus otros repos)
 3. Trabaja: ejecuta `sentinel check` antes de cualquier cambio. Si dice **CRÍTICO** (>400 líneas), detente y ejecuta `sentinel slice`.
 
 ## Comandos
@@ -14,13 +14,17 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 |---|---|
 | `sentinel check` | Audita el volumen de líneas del worktree: `PEQUENO`, `PUNTO_OPTIMO` (200–400) o `CRÍTICO` (>400, exit 1). |
 | `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
-| `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración e instala el hook global. |
+| `sentinel slice plan` | Propone el plan **sin commitear nada**. Con `--json` emite el plan completo; exit 3 si hay decisiones que solo tú puedes responder. |
+| `sentinel slice apply` | Ejecuta un plan ya aprobado: `--plan plan.json --answers respuestas.json`. |
+| `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración per-proyecto e instala el hook `pre-commit` **en este repositorio** (en su common-dir, no en una carpeta global: no afecta a tus otros repos). |
+| `sentinel uninit` | Revierte `init` en este repositorio: retira la regla de volumen, borra la config per-proyecto y elimina el hook (solo si sigue siendo el que instaló VAS Sentinel). |
 | `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub, con fallback a `go install` si la release no está disponible. |
 | `sentinel review` | Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha en el ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--timeout N` `--prune` `--json`. `--timeout` sobrescribe `review.timeout` solo en esa invocación (segundos). |
 | `sentinel lint` | Ejecuta los comandos definidos en `lint_commands` de la configuración. |
 | `sentinel rebase` | Actualiza la rama con `fetch` + `rebase` contra su upstream (pide confirmación). |
 | `sentinel status` | Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con `--json` emite JSON; con `--prune` borra fichas huérfanas. |
 | `sentinel pr` | Crea un pull request con `gh`; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a `gh pr create`. |
+| `sentinel pr review` | Analiza la rama sin publicar: matriz de fichas y decisión single/chain. Flags: `--base X` `--only-unaudited` `--overview` `--json`. |
 | `sentinel uninstall` | Elimina el binario y la configuración global (`~/.vas_sentinel/`). |
 | `sentinel version` / `sentinel --version` | Muestra la versión instalada. |
 | `sentinel help` / `sentinel --help` | Muestra la ayuda completa. |
