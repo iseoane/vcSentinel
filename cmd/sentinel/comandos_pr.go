@@ -203,6 +203,9 @@ func ejecutarPrReview(worktree string, args []string) {
 		Overview:       flags.overview,
 		Fabrica:        fabrica,
 		Parallel:       cfg.Review.Parallel,
+		OnCommit: func(idx, total int, sha string) {
+			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
+		},
 		OnDimension: func(dim string) {
 			fmt.Printf("  ⏳ %s …\n", dim)
 		},
@@ -638,6 +641,9 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		Overview:       true,
 		Fabrica:        fabrica,
 		Parallel:       cfg.Review.Parallel,
+		OnCommit: func(idx, total int, sha string) {
+			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
+		},
 		OnDimension: func(dim string) {
 			fmt.Fprintf(w, "  ⏳ %s …\n", dim)
 		},

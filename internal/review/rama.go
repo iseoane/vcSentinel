@@ -32,9 +32,16 @@ type OpcionesRama struct {
 	Overview       bool   // --overview: 1 llamada Spec de rama para la coherencia
 	PerfilOverride string
 	Respuestas     string // aclaraciones para la ronda extra de preguntas
-	OnDimension    func(dim string)
-	Fabrica        FabricaAuditor
-	Parallel       int
+	// OnCommit avisa antes de empezar a auditar cada commit pendiente (idx
+	// desde 0, total = len(pendientes)): sin esto, el progreso de
+	// OnDimension no permite saber a qué commit pertenece cada dimensión
+	// que arranca, porque AnalizarRama audita varios commits en la misma
+	// pasada y el propio motor no conoce el contexto de "rama" (deuda
+	// documentada al cerrar F1).
+	OnCommit    func(idx, total int, sha string)
+	OnDimension func(dim string)
+	Fabrica     FabricaAuditor
+	Parallel    int
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -91,7 +98,10 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 	}
 
 	if !opts.SoloPendientes {
-		for _, sha := range pendientes {
+		for idx, sha := range pendientes {
+			if opts.OnCommit != nil {
+				opts.OnCommit(idx, len(pendientes), sha)
+			}
 			if err := auditarCommitRama(ledger, sha, opts); err != nil {
 				return nil, fmt.Errorf("no se pudo auditar %s: %v", sha, err)
 			}

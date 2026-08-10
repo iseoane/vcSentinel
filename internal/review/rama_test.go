@@ -131,6 +131,45 @@ func TestAnalizarRamaAuditaPendientes(t *testing.T) {
 	}
 }
 
+// TestAnalizarRamaAvisaOnCommitPorCadaPendienteEnOrden cubre la deuda de
+// trazabilidad documentada al cerrar F1: sin OnCommit, el progreso de
+// OnDimension no dice a qué commit pertenece, porque AnalizarRama audita
+// varios commits en la misma pasada.
+func TestAnalizarRamaAvisaOnCommitPorCadaPendienteEnOrden(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	sha1 := commitEnRama(t, "feat1.txt", "1\n2\n")
+	sha2 := commitEnRama(t, "feat2.txt", "3\n4\n")
+	ledger := NuevoLedger(gitDir)
+	stub := &auditorStub{auditSalida: salidaAuditOK}
+
+	type aviso struct {
+		idx, total int
+		sha        string
+	}
+	var avisos []aviso
+
+	_, err := AnalizarRama(ledger, OpcionesRama{
+		Fabrica:  fabricaStub(stub),
+		Parallel: 1,
+		OnCommit: func(idx, total int, sha string) {
+			avisos = append(avisos, aviso{idx, total, sha})
+		},
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama falló: %v", err)
+	}
+
+	esperados := []aviso{{0, 2, sha1}, {1, 2, sha2}}
+	if len(avisos) != len(esperados) {
+		t.Fatalf("OnCommit se llamó %d veces, esperado %d: %+v", len(avisos), len(esperados), avisos)
+	}
+	for i, e := range esperados {
+		if avisos[i] != e {
+			t.Errorf("aviso %d = %+v, esperado %+v", i, avisos[i], e)
+		}
+	}
+}
+
 // TestAnalizarRamaSoloPendientes: con la opción activada no audita nada nuevo
 // y devuelve las fichas ya existentes.
 func TestAnalizarRamaSoloPendientes(t *testing.T) {
