@@ -448,3 +448,100 @@ que la decisión sigue siendo del humano.
 **No tocar el bloque literal de reglas sin coordinarlo con T0.7**: `uninit` lo
 busca byte a byte (`main.go:24`, `main.go:339`). Si T0.7 ya normalizó la
 comparación, esta tarea puede reescribir el bloque; si no, no.
+
+---
+
+## T0.12 — `slice` deja de mezclar documentación con código
+
+| | |
+|---|---|
+| Agente | sonnet / xhigh |
+| Presupuesto | ≤ 180 líneas |
+| Depende de | T0.1 |
+| Commit | `fix(slice): no mezclar documentacion y codigo en el mismo lote` |
+
+**Contexto**
+
+- `internal/git/clases.go` (`ClaseArchivo`, ya implementado en T0.8)
+- `internal/git/plan.go` (`agruparPorCapas` :211, `ConstruirPlanFragmentacion` :46)
+- `internal/git/slice.go` (`construirSecuenciaLotes`, `ordenCapas`)
+
+**Evidencia del problema, de esta misma sesión.** El commit `3160133` salió así:
+
+```
+feat(git): add file class taxonomy with observability design doc
+  docs/reingenieria/f9-observabilidad.md
+  internal/git/clases.go
+```
+
+Un commit que es dos cosas, porque `ClasificarCapa` manda los `.md` a `backend`
+(cae en el caso por defecto, `slice.go:214-227`). No es anecdótico: las tareas
+restantes de la reingeniería producen código y documentación juntos, así que se
+repetiría en cada una.
+
+**Hacer**
+
+1. Agrupar primero por **clase** (`ClaseArchivo`) y dentro de cada clase
+   mantener el orden de capa actual. Ningún lote mezcla clases.
+2. Orden de salida de los lotes: `config → source → test → docs → generated`.
+3. El límite de 400 líneas por lote no cambia.
+
+**Alcance estricto**: esto **no** es el clustering por cohesión. Solo impide
+mezclar clases. La agrupación por componentes conexas sigue siendo **F3-T3.7**,
+y la configurabilidad de las reglas de clase sigue siendo **F3-T3.1**.
+
+**No tocar**: el diálogo A/R/E/C, el trato de archivos gigantes, ni el
+`--no-verify` y su justificación (`plan.go:167-173`).
+
+**Aceptación**
+
+- Test: un cambio con `.go` y `.md` produce lotes donde ningún lote contiene
+  ambas clases.
+- Test: los lotes siguen siendo ≤400 líneas.
+- Los tests existentes de `plan_test.go` que sigan aplicando pasan; los que
+  cambien se adaptan **explicando por qué** en el informe.
+
+---
+
+## T0.13 — El prompt de mensajes de commit no fija el idioma
+
+| | |
+|---|---|
+| Agente | sonnet / xhigh |
+| Presupuesto | ≤ 120 líneas |
+| Depende de | T0.1 |
+| Commit | `fix(agentadapter): fijar el idioma del mensaje de commit en el prompt` |
+
+**Contexto**
+
+- `internal/agentadapter/cli.go` (`construirPromptAgente` :1074)
+- `internal/agentadapter/cli_test.go`
+- `CLAUDE.md` → sección «Convenciones»
+
+**Evidencia de esta sesión.** La fragmentación de T0.1 produjo 13 commits con el
+idioma **mezclado**: 11 en inglés y 2 en castellano, decididos al azar por el
+modelo dentro de la misma ejecución.
+
+```
+docs(reingenieria): add F1 gate documentation
+docs(reingenieria): añadir contrato del store para la fase 2
+docs(reingenieria): add F3 risk change analysis document
+docs(reingenieria): añadir diseño de la fase 4 de grafo incremental
+```
+
+**Causa**: `construirPromptAgente` pide «un mensaje de commit semántico bajo el
+estándar Conventional Commits» y no dice en qué idioma. El historial del
+repositorio está en castellano sin tildes.
+
+**Hacer**
+
+1. Fijar el idioma en el prompt, explícitamente y con un ejemplo.
+2. Hacerlo configurable en el yml (`commit_language`, por defecto el del
+   historial) en lugar de codificarlo: no todos los repositorios escriben en
+   castellano.
+
+**Aceptación**: test de que el prompt generado contiene la instrucción de idioma
+y el ejemplo.
+
+**Nota**: es un defecto de *prompt*, no de arquitectura. Se arregla aquí porque
+ensucia el historial de todas las fases siguientes.

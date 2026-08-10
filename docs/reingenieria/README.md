@@ -216,7 +216,7 @@ Leyenda: ⬜ pendiente · 🔄 en curso · ✅ cerrada con evidencia
 
 | Fase | Estado | Cierre | Notas |
 |---|---|---|---|
-| F0 | ⬜ | — | Bloquea todo lo demás: `check` en CRÍTICO |
+| F0 | 🔄 | — | Cerradas: T0.0, T0.1 (13 commits), T0.3, T0.8, T0.12. Pendientes: T0.2, T0.4–T0.7, T0.9–T0.11, T0.13 |
 | F1 | ⬜ | — | |
 | F2 | ⬜ | — | |
 | F3 | ⬜ | — | |

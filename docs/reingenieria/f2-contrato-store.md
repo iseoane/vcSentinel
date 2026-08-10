@@ -202,6 +202,11 @@ el layout nuevo.
    `.git/worktrees/<n>/vas-sentinel/` con fichas, se trasladan al compartido.
 2. **De formato**: `<sha>.json` v1 → `commits/<sha>.json` + `findings/<fp>.json`.
 
+**Además**: retirar `calcularBucket` (`cmd/sentinel/comandos_review.go:297`), que
+hoy deriva `Ficha.Bucket` de `ClasificarCapa` y es su tercer consumidor. En el
+índice de trazabilidad el «bucket» no aporta: lo sustituye el `ChangeProfile`
+(F3-T3.2). Mientras F3 no exista, basta con conservar el campo sin recalcularlo.
+
 **Reglas**
 
 - Idempotente: ejecutarla dos veces no duplica nada.

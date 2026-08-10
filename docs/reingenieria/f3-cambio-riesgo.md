@@ -53,6 +53,18 @@ También: `.gitattributes linguist-generated` como señal de `generated`.
 **Compatibilidad**: `ClasificarCapa` se conserva como envoltorio deprecado
 mientras `slice` no migre (T3.7), para que la fase sea reversible por partes.
 
+**Mapa de consumidores de `ClasificarCapa`** (verificado). Muere en tres sitios
+distintos, y conviene no darla por retirada antes de tiempo:
+
+| Consumidor | Para qué | Dónde se retira |
+|---|---|---|
+| `slice.go:83,133` → `ArchivoModificado.Capa` | Agrupar los lotes | **T3.7** (y parcialmente ya en F0-T0.12) |
+| `engine.go:65` → `dimensionesPorCapa` | Qué dimensiones se auditan | **F5-T5.2**, bundles por riesgo |
+| `comandos_review.go:299` → `calcularBucket` | `Ficha.Bucket` | **F2-T2.6**, al pasar la ficha a índice de trazabilidad |
+
+El tercero es un hueco detectado al revisar el plan: no estaba nombrado en
+ninguna ficha. El «bucket» de la ficha lo sustituye el `ChangeProfile` de T3.2.
+
 **Aceptación**: test por tabla con los falsos positivos reales — `latest/x.go`,
 `contest.go`, `internal/setup/install_test.go` — y con precedencia entre reglas
 solapadas.
