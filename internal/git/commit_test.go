@@ -247,6 +247,52 @@ func TestContenidoDeArchivoEnCommit(t *testing.T) {
 	}
 }
 
+func TestBlobDeArchivoEnCommit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	dir := prepararRepositorioConCommits(t)
+	t.Chdir(dir)
+
+	shas, _ := SHAsRango("", "HEAD")
+	// shas[1] es "feat(a): primer commit", que añade a.go con "package a\n".
+	blob, err := BlobDeArchivoEnCommit(shas[1], "a.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit devolvió error: %v", err)
+	}
+	if blob == "" {
+		t.Fatal("BlobDeArchivoEnCommit devolvió un hash vacío")
+	}
+
+	// Verificación independiente: git cat-file -p <blob> debe devolver
+	// exactamente el contenido que se escribió en el commit.
+	contenido, err := ejecutarGitSalida("cat-file", "-p", blob)
+	if err != nil {
+		t.Fatalf("git cat-file -p %s falló: %v", blob, err)
+	}
+	if contenido != "package a\n" {
+		t.Errorf("contenido del blob = %q, esperado %q", contenido, "package a\n")
+	}
+
+	// b.go tiene contenido distinto: su blob debe ser distinto al de a.go
+	// (confirma que no es un hash fijo, sino del contenido real).
+	blobB, err := BlobDeArchivoEnCommit(shas[2], "b.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit devolvió error: %v", err)
+	}
+	if blobB == blob {
+		t.Errorf("blob de b.go coincide con el de a.go: %s", blob)
+	}
+
+	if _, err := BlobDeArchivoEnCommit(shas[1], "no-existe.go"); err == nil {
+		t.Error("BlobDeArchivoEnCommit con archivo inexistente en ese commit debería devolver error")
+	}
+}
+
 func TestUpstreamOMainEligeMain(t *testing.T) {
 	if testing.Short() {
 		t.Skip("salta la integración con repositorio git real en modo -short")
