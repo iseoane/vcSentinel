@@ -194,6 +194,37 @@ func CargarConfiguracionLocal(worktreePath string) Config {
 	return cfg
 }
 
+// CargarConfiguracionLocalEstricta carga la configuración con la misma
+// precedencia que CargarConfiguracionLocal (defaults -> global ->
+// per-proyecto) pero SIN descartar en silencio el error de aplicarDesdeRuta:
+// una clave desconocida en el yml (global o per-proyecto) se propaga con
+// archivo y línea (T1.1), en vez de ignorarse.
+//
+// Requisito añadido por el orquestador para el criterio de salida #4 de la
+// fase F1 ("una clave desconocida en vassentinel.yml produce error explícito
+// con la línea, no silencio"): 'gate' (T1.7) es el primer punto de entrada
+// donde esto debe ser visible, por ser el comando consolidado nuevo.
+// CargarConfiguracionLocal NO cambia (mismo contrato sin error para no
+// romper a sus llamadores actuales); esta función es la variante estricta
+// para quien pueda propagar el error al operador.
+func CargarConfiguracionLocalEstricta(worktreePath string) (Config, error) {
+	cfg := configuracionPorDefecto()
+
+	if ruta, err := rutaConfigGlobal(); err == nil {
+		if err := aplicarDesdeRuta(&cfg, ruta); err != nil {
+			return Config{}, err
+		}
+	}
+
+	if err := aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath)); err != nil {
+		return Config{}, err
+	}
+
+	traducirComandosLegadoACapabilities(&cfg)
+
+	return cfg, nil
+}
+
 // perfilAgenteYAML es un perfil anidado dentro de un agente
 // (agents.<agente>.profiles.<perfil>, esquema v2): solo model/reasoning_effort,
 // el agente lo da la clave exterior.

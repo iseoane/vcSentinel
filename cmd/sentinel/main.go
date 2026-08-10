@@ -93,6 +93,9 @@ func main() {
 	case "review":
 		requireInicializado(worktreeActual)
 		ejecutarReview(worktreeActual, os.Args[2:])
+	case "gate":
+		requireInicializado(worktreeActual)
+		os.Exit(ejecutarGate(os.Stdout, worktreeActual, os.Args[2:]))
 	case "lint":
 		requireInicializado(worktreeActual)
 		ejecutarLint(worktreeActual)
