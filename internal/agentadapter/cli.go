@@ -21,6 +21,9 @@ const TimeoutComando = 300 * time.Second
 type CLIAdapter struct {
 	BinaryName string
 	Config     config.AgentConfig
+	// CommitLanguage fija el idioma de los mensajes de commit generados. Si
+	// está vacío se usa IdiomaPorDefecto.
+	CommitLanguage string
 	// Timeout es el límite por llamada; si es 0 se usa TimeoutComando.
 	Timeout time.Duration
 }
@@ -32,7 +35,7 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	return c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos))
+	return c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
 }
 
 // ProponerPlanRefactor pide al agente un plan de división para un archivo de
@@ -124,11 +127,15 @@ func (c *CLIAdapter) nombreBase() string {
 	return strings.TrimSuffix(filepath.Base(c.BinaryName), filepath.Ext(c.BinaryName))
 }
 
-func construirPromptAgente(capa string, batchNum int, archivos []string) string {
+// construirPromptAgente arma el prompt del mensaje de commit. El idioma se
+// fija explícitamente y con un ejemplo (T0.13): sin decirlo, el modelo lo
+// elegía al azar y mezclaba idiomas dentro de la misma ejecución.
+func construirPromptAgente(capa string, batchNum int, archivos []string, idioma string) string {
 	archivosStr := strings.Join(archivos, " ")
+	instruccion, ejemplo := instruccionDeIdioma(idioma)
 	return fmt.Sprintf(
-		"Analiza estos archivos modificados de la capa [%s] (Lote #%d): %s. Genera un mensaje de commit semántico bajo el estándar Conventional Commits. Devuelve ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
-		capa, batchNum, archivosStr,
+		"Analiza estos archivos modificados de la capa [%s] (Lote #%d): %s. Genera un mensaje de commit semántico bajo el estándar Conventional Commits. %s Ejemplo del formato esperado: %s. Devuelve ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
+		capa, batchNum, archivosStr, instruccion, ejemplo,
 	)
 }
 

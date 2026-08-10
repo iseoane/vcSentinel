@@ -51,6 +51,11 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # build_commands:
 #   - "go build ./..."
 #
+# Idioma de los mensajes de commit que genera 'sentinel slice'. Por defecto
+# "es" (el del historial de este repositorio). Sin fijarlo, el agente lo
+# elegía al azar y mezclaba idiomas dentro de la misma fragmentación.
+# commit_language: "en"
+#
 # Ejemplo (descomenta y ajusta):
 # active_agent: "claude"
 # agents:

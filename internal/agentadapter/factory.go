@@ -105,8 +105,9 @@ func nuevoAdaptador(cfg config.Config, nombre, perfil string) (AgentAdapter, err
 		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
 	}
 	return &CLIAdapter{
-		BinaryName: resolverBinarioReal(nombre),
-		Config:     configAgente(cfg, nombre, perfil),
+		BinaryName:     resolverBinarioReal(nombre),
+		Config:         configAgente(cfg, nombre, perfil),
+		CommitLanguage: cfg.CommitLanguage,
 	}, nil
 }
 
@@ -117,8 +118,9 @@ func construirCadena(cfg config.Config, disponibles []string, perfil string) *Ca
 	cadena := &CadenaAdaptador{}
 	for _, agente := range disponibles {
 		cadena.adaptadores = append(cadena.adaptadores, &CLIAdapter{
-			BinaryName: resolverBinarioReal(agente),
-			Config:     configAgente(cfg, agente, perfil),
+			BinaryName:     resolverBinarioReal(agente),
+			Config:         configAgente(cfg, agente, perfil),
+			CommitLanguage: cfg.CommitLanguage,
 		})
 	}
 	return cadena
@@ -173,9 +175,10 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (A
 	}
 
 	return &CLIAdapter{
-		BinaryName: binario,
-		Config:     config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
-		Timeout:    cfg.Review.Timeout,
+		BinaryName:     binario,
+		Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
+		CommitLanguage: cfg.CommitLanguage,
+		Timeout:        cfg.Review.Timeout,
 	}, nil
 }
 
@@ -187,9 +190,10 @@ func construirCadenaPerfil(cfg config.Config, disponibles []string, perfil confi
 	for _, agente := range disponibles {
 		modelo, esfuerzo := config.ResolverPerfilAgente(cfg, agente, perfil.Nombre)
 		cadena.adaptadores = append(cadena.adaptadores, &CLIAdapter{
-			BinaryName: resolverBinarioReal(agente),
-			Config:     config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
-			Timeout:    cfg.Review.Timeout,
+			BinaryName:     resolverBinarioReal(agente),
+			Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
+			CommitLanguage: cfg.CommitLanguage,
+			Timeout:        cfg.Review.Timeout,
 		})
 	}
 	return cadena

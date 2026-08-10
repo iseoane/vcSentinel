@@ -40,12 +40,15 @@ type Config struct {
 	Agents      map[string]AgentConfig
 	// AgentOrder preserva el orden de declaración de los agentes en el yml
 	// (el archivo más específico manda); alimenta la resolución automática.
-	AgentOrder    []string
-	Profiles      map[string]ProfileConfig
-	Review        ReviewConfig
-	LintCommands  []string
-	TestCommands  []string
-	BuildCommands []string
+	AgentOrder []string
+	Profiles   map[string]ProfileConfig
+	Review     ReviewConfig
+	// CommitLanguage fija el idioma de los mensajes de commit que genera el
+	// agente (T0.13). Por defecto, el del historial del repositorio.
+	CommitLanguage string
+	LintCommands   []string
+	TestCommands   []string
+	BuildCommands  []string
 }
 
 // DimensionesPorDefecto son las seis dimensiones canónicas de auditoría.
@@ -54,6 +57,10 @@ var DimensionesPorDefecto = []string{"logic", "style", "design", "tests", "secur
 func configuracionPorDefecto() Config {
 	return Config{
 		ActiveAgent: "auto",
+		// "es" y no agentadapter.IdiomaPorDefecto: agentadapter ya importa
+		// config, así que referenciarlo aquí crearía un ciclo. Los tests de
+		// agentadapter fijan que ambos valores coinciden.
+		CommitLanguage: "es",
 		Agents: map[string]AgentConfig{
 			"claude": {
 				Model:           "claude-5-sonnet",
@@ -168,6 +175,8 @@ func aplicarDesdeRuta(cfg *Config, ruta string) {
 			switch clave {
 			case "active_agent":
 				cfg.ActiveAgent = limpiarValor(valor)
+			case "commit_language":
+				cfg.CommitLanguage = limpiarValor(valor)
 			case "agents":
 				seccion = "agents"
 			case "profiles":
