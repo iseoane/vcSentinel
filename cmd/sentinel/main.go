@@ -321,9 +321,10 @@ func ejecutarUninit(path string) {
 // se crea con el bloque.
 func inyectarReglasDeArchivo(ruta string) (bool, error) {
 	datos, err := os.ReadFile(ruta)
-	if err == nil && strings.Contains(string(datos), reglasVolumen) {
+	if err == nil && contieneReglasVolumen(string(datos)) {
 		// El bloque ya está: no tocar el archivo (init repetido o archivo de
-		// otra fuente que ya lo documenta).
+		// otra fuente que ya lo documenta). La comparación tolera finales de
+		// línea mixtos, ver reglasvolumen.go (B10).
 		return false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
@@ -335,7 +336,7 @@ func inyectarReglasDeArchivo(ruta string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(reglasVolumen); err != nil {
+	if _, err := f.WriteString(reglasVolumenPara(string(datos))); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -354,10 +355,10 @@ func quitarReglasDeArchivo(ruta string) (bool, error) {
 		}
 		return false, err
 	}
-	if !strings.Contains(string(datos), reglasVolumen) {
+	if !contieneReglasVolumen(string(datos)) {
 		return false, nil
 	}
-	nuevo := strings.ReplaceAll(string(datos), reglasVolumen, "")
+	nuevo := quitarReglasVolumen(string(datos))
 	if strings.TrimSpace(nuevo) == "" {
 		// El archivo no tenía contenido propio: init lo creó solo para el
 		// bloque de reglas, así que uninit lo borra en vez de dejarlo vacío.
