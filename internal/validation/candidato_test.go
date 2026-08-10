@@ -109,6 +109,53 @@ func TestEjecutarPerfilSobreCandidato_WorktreeSinCambios_EjecutaSobreSnapshotYNo
 	}
 }
 
+// TestEjecutarPerfilSobreCandidato_WorktreeSucioAlCongelar_ElSnapshotRefleja
+// ElCandidatoNoSoloHEAD reproduce el hallazgo de la revisión de fase F1: si
+// el worktree YA estaba sucio antes de llamar a esta función (no durante la
+// ejecución, que es el caso que ya cubre SigueVigente), el snapshot debe
+// reflejar ese contenido sin commitear —el que Congelar() ancla vía
+// stash-anchor—, no el árbol limpio de HEAD. Antes del fix, el snapshot se
+// creaba siempre con ArbolDe("HEAD") y este test habría visto "inicial" en
+// vez de "sucio".
+func TestEjecutarPerfilSobreCandidato_WorktreeSucioAlCongelar_ElSnapshotRefleja(t *testing.T) {
+	dir := repoDeCandidatoTest(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "archivo.txt"), []byte("sucio\n"), 0644); err != nil {
+		t.Fatalf("no se pudo ensuciar el worktree: %v", err)
+	}
+
+	opts := OpcionesEjecucion{Worktree: dir, Cfg: cfgPerfilCandidatoTest(config.ModeWorktree)}
+	opts.Ejecutar = func(comando string) (int, string, error) { return 0, "ok", nil }
+
+	if _, err := EjecutarPerfilSobreCandidato("perfil", nil, opts); err != nil {
+		t.Fatalf("no esperaba error, obtuve: %v", err)
+	}
+
+	// Inspeccionar el snapshot que la función bajo prueba REALMENTE creó (no
+	// uno recalculado aparte, que CrearSnapshot generaría igual sin importar
+	// lo que hiciera la función: eso no probaría nada sobre su comportamiento
+	// real). Un repo de prueba recién creado solo puede tener un snapshot.
+	commonDir, err := git.ObtenerGitCommonDir(dir)
+	if err != nil {
+		t.Fatalf("no se pudo obtener el common-dir: %v", err)
+	}
+	dirSnapshots := filepath.Join(commonDir, "vas-sentinel", "snapshots")
+	entradas, err := os.ReadDir(dirSnapshots)
+	if err != nil {
+		t.Fatalf("no se pudo leer el directorio de snapshots: %v", err)
+	}
+	if len(entradas) != 1 {
+		t.Fatalf("esperaba exactamente 1 snapshot, hay %d", len(entradas))
+	}
+	contenido, err := os.ReadFile(filepath.Join(dirSnapshots, entradas[0].Name(), "archivo.txt"))
+	if err != nil {
+		t.Fatalf("no se pudo leer archivo.txt del snapshot real: %v", err)
+	}
+	if string(contenido) != "sucio\n" {
+		t.Fatalf("el snapshot real contiene %q, esperaba el contenido sucio del candidato congelado, no el de HEAD", contenido)
+	}
+}
+
 func TestEjecutarPerfilSobreCandidato_WorktreeModificadoDuranteEjecucion_QuedaObsoleto(t *testing.T) {
 	dir := repoDeCandidatoTest(t)
 

@@ -26,7 +26,7 @@ var ErrCandidatoObsoleto = errors.New("el candidato cambió durante la validaci�
 //     porque la guarda ya exigió que nada esté a medio commitear.
 //   - worktree (default, también cuando Mode viene vacío): congela el
 //     candidato (git.Congelar) ANTES de ejecutar, corre la validación sobre
-//     un snapshot aislado del árbol de HEAD (git.CrearSnapshot) y, al
+//     un snapshot aislado del árbol del candidato congelado (git.CrearSnapshot) y, al
 //     terminar, comprueba que el candidato sigue vigente (git.SigueVigente).
 //     Si dejó de estarlo —el HEAD o el árbol del worktree real cambiaron
 //     durante la ejecución—, el resultado se descarta y se devuelve
@@ -57,14 +57,14 @@ func EjecutarPerfilSobreCandidato(perfil string, alcance []string, opts Opciones
 		return nil, fmt.Errorf("no se pudo congelar el candidato antes de validar: %w", err)
 	}
 
-	// El snapshot se ancla siempre al árbol de HEAD (no al de Congelar, que
-	// en worktree sucio usaría un stash-anchor): es la decisión de diseño de
-	// T1.6, no una elección de este código.
-	arbolHead, err := git.ArbolDe("HEAD")
-	if err != nil {
-		return nil, fmt.Errorf("no se pudo resolver el árbol de HEAD para el snapshot: %w", err)
-	}
-	snapshot, err := git.CrearSnapshot(arbolHead)
+	// El snapshot se ancla al árbol de candidato.Arbol, no a un ArbolDe("HEAD")
+	// recalculado aparte: Congelar ya decidió el árbol correcto (el de HEAD si
+	// el worktree estaba limpio, o el stash-anchor si estaba sucio). Anclar a
+	// HEAD por separado ignoraría cambios sin commitear que ya existían ANTES
+	// de llamar a esta función, y SigueVigente los daría por buenos si nada
+	// más cambiaba durante la ejecución: el resultado parecería vigente pero
+	// habría validado un árbol distinto del que el usuario congeló.
+	snapshot, err := git.CrearSnapshot(candidato.Arbol)
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo crear el snapshot de validación: %w", err)
 	}
