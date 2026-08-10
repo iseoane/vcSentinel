@@ -46,6 +46,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Un argumento que el subcomando no admite corta antes de ejecutar nada:
+	// vale más un error claro que una operación que parece haber obedecido a
+	// un flag que en realidad ignoró (H1/B6).
+	if mensaje := validarArgumentos(subcomando, os.Args[2:]); mensaje != "" {
+		fmt.Println(mensaje)
+		os.Exit(1)
+	}
+
 	switch subcomando {
 	case "init":
 		ejecutarInit(worktreeActual)
