@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	internalchange "github.com/ISeoane-Quental/vas.sentinel/internal/change"
 )
 
 // LotePlanificado representa un lote propuesto dentro del plan de fragmentación.
@@ -37,41 +39,77 @@ type ResultadoCommit struct {
 	Archivos int
 }
 
-// ConstruirPlanFragmentacion agrupa los archivos primero por clase
-// (ClaseArchivo) y, dentro de cada clase, por capa; aísla los gigantes en
-// lotes con mensajes deterministas y genera los lotes de batching con
-// construirLotes. Procesa cada clase completa (gigantes y lotes normales) en
-// el orden config → source → test → docs → generated (ordenClases), y dentro
-// de cada clase respeta el orden de capa de siempre (ordenCapas). Agrupar
-// primero por clase es lo que evita que un lote mezcle código y
-// documentación: ClasificarCapa manda los .md al caso por defecto
-// ("backend"), así que agrupar solo por capa los mezclaba con el código de
-// esa misma capa (visto en el commit 3160133). No ejecuta ningún comando
-// git: la única interacción externa es confirmarBypass, que se invoca para
-// los archivos de código que superan el límite de volumen.
+// ConstruirPlanFragmentacion usa la proximidad estructural de Cohesion. La vía
+// productiva llama a ConstruirPlanFragmentacionConLector para sumar también el
+// co-cambio histórico; este wrapper sin I/O mantiene los tests y consumidores
+// que construyen planes a partir de una lista ya materializada.
 func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass func(ArchivoModificado) (bool, error)) (*PlanFragmentacion, error) {
-	porClases := agruparPorClases(archivos)
+	return ConstruirPlanFragmentacionConLector(archivos, confirmarBypass, func(...string) (string, error) { return "", nil })
+}
+
+// ConstruirPlanFragmentacionConLector agrupa primero por clúster de cohesión y
+// ordena cada clúster por clase (config → source → test → docs → generated).
+// Un clúster solo se parte cuando construirLotes alcanza el límite de 400.
+func ConstruirPlanFragmentacionConLector(archivos []ArchivoModificado, confirmarBypass func(ArchivoModificado) (bool, error), lector internalchange.LectorGit) (*PlanFragmentacion, error) {
+	porRuta := make(map[string]ArchivoModificado, len(archivos))
+	rutas := make([]string, 0, len(archivos))
 	lineasPorRuta := make(map[string]int, len(archivos))
 	for _, f := range archivos {
+		porRuta[filepath.ToSlash(f.Ruta)] = f
+		rutas = append(rutas, f.Ruta)
 		lineasPorRuta[f.Ruta] = f.Lineas
 	}
+	cohesion, err := internalchange.Cohesion(rutas, lector)
+	if err != nil {
+		return nil, err
+	}
+	grupos := make([][]ArchivoModificado, 0, len(cohesion.Grupos))
+	for _, rutasGrupo := range cohesion.Grupos {
+		grupo := make([]ArchivoModificado, 0, len(rutasGrupo))
+		for _, ruta := range rutasGrupo {
+			grupo = append(grupo, porRuta[ruta])
+		}
+		ordenarPorClase(grupo)
+		grupos = append(grupos, grupo)
+	}
+	sort.SliceStable(grupos, func(i, j int) bool {
+		claseI, claseJ := rangoClaseGrupo(grupos[i]), rangoClaseGrupo(grupos[j])
+		if claseI != claseJ {
+			return claseI < claseJ
+		}
+		return rangoCapaGrupo(grupos[i]) < rangoCapaGrupo(grupos[j])
+	})
 
 	var plan PlanFragmentacion
 	numero := 1
-	for _, clase := range ordenClases {
-		restantes := make([]ArchivoModificado, 0, len(porClases[clase]))
-		for _, f := range porClases[clase] {
+	for _, grupo := range grupos {
+		restantes := make([]ArchivoModificado, 0, len(grupo))
+		agregarRestantes := func() {
+			for _, archivosLote := range construirLotes(restantes) {
+				rutasLote := make([]string, 0, len(archivosLote))
+				for _, archivo := range archivosLote {
+					rutasLote = append(rutasLote, archivo.Ruta)
+				}
+				plan.Lotes = append(plan.Lotes, loteNormal(loteConCapa{Capa: capaDelLote(archivosLote), Rutas: rutasLote}, numero, lineasPorRuta))
+				numero++
+			}
+			restantes = restantes[:0]
+		}
+		for _, f := range grupo {
 			switch {
 			case esConfigGigante(f):
+				agregarRestantes()
 				plan.Lotes = append(plan.Lotes, loteGigante(f, mensajeAisladoDeps, numero))
 				numero++
 			case esDocumentacionExtensa(f):
+				agregarRestantes()
 				// Un documento largo se aísla como la configuración: nunca
 				// entra por la rama de código masivo, que ofrecería dividirlo
 				// con IA aplicando SRP.
 				plan.Lotes = append(plan.Lotes, loteGigante(f, fmt.Sprintf(mensajeAisladoDocs, filepath.Base(f.Ruta)), numero))
 				numero++
 			case esCodigoGigante(f):
+				agregarRestantes()
 				ok, err := confirmarBypass(f)
 				if err != nil {
 					return nil, err
@@ -85,12 +123,59 @@ func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass fu
 				restantes = append(restantes, f)
 			}
 		}
-		for _, lote := range construirSecuenciaLotes(agruparPorCapas(restantes)) {
-			plan.Lotes = append(plan.Lotes, loteNormal(lote, numero, lineasPorRuta))
-			numero++
-		}
+		agregarRestantes()
 	}
 	return &plan, nil
+}
+
+func rangoCapaGrupo(grupo []ArchivoModificado) int {
+	mejor := len(ordenCapas)
+	for _, archivo := range grupo {
+		for i, capa := range ordenCapas {
+			if archivo.Capa == capa && i < mejor {
+				mejor = i
+			}
+		}
+	}
+	return mejor
+}
+
+func ordenarPorClase(archivos []ArchivoModificado) {
+	sort.SliceStable(archivos, func(i, j int) bool {
+		return rangoClase(ClaseArchivo(archivos[i].Ruta)) < rangoClase(ClaseArchivo(archivos[j].Ruta))
+	})
+}
+
+func rangoClaseGrupo(grupo []ArchivoModificado) int {
+	mejor := len(ordenClases)
+	for _, archivo := range grupo {
+		if rango := rangoClase(ClaseArchivo(archivo.Ruta)); rango < mejor {
+			mejor = rango
+		}
+	}
+	return mejor
+}
+
+func rangoClase(clase string) int {
+	for i, candidata := range ordenClases {
+		if clase == candidata {
+			return i
+		}
+	}
+	return len(ordenClases)
+}
+
+func capaDelLote(archivos []ArchivoModificado) string {
+	if len(archivos) == 0 {
+		return "cohesion"
+	}
+	capa := archivos[0].Capa
+	for _, archivo := range archivos[1:] {
+		if archivo.Capa != capa {
+			return "cohesion"
+		}
+	}
+	return capa
 }
 
 // GenerarMensajesLotes consulta al adaptador el mensaje de cada lote no gigante

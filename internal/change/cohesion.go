@@ -11,6 +11,10 @@ type ResultadoCohesion struct {
 	Clusters        int
 	Puntuacion      float64
 	SugerenciaSplit bool
+	// Grupos conserva las rutas de cada componente en orden de entrada. Es
+	// información operativa para slice; la salida pública de explain proyecta
+	// solo el resumen estable de cohesión.
+	Grupos [][]string
 }
 
 // Cohesion conecta rutas por co-cambio histórico y proximidad estructural.
@@ -42,7 +46,24 @@ func Cohesion(rutas []string, git LectorGit) (ResultadoCohesion, error) {
 		Clusters:        clusters,
 		Puntuacion:      1 / float64(clusters),
 		SugerenciaSplit: clusters > 1,
+		Grupos:          gruposDeComponentes(rutas, componentes),
 	}, nil
+}
+
+func gruposDeComponentes(rutas []string, componentes *conjuntoDisjunto) [][]string {
+	indicePorRaiz := make(map[int]int)
+	var grupos [][]string
+	for i, ruta := range rutas {
+		raiz := componentes.raiz(i)
+		indice, existe := indicePorRaiz[raiz]
+		if !existe {
+			indice = len(grupos)
+			indicePorRaiz[raiz] = indice
+			grupos = append(grupos, nil)
+		}
+		grupos[indice] = append(grupos[indice], ruta)
+	}
+	return grupos
 }
 
 // loteMaximoRutasHistorial acota cuántas rutas van en un solo "git log --

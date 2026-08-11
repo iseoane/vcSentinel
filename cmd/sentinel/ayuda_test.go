@@ -53,7 +53,7 @@ func TestAyudaTraeTodosLosSubcomandos(t *testing.T) {
 	ayuda := construirAyuda()
 	for _, nombre := range []string{
 		"version", "help", "init", "uninit", "check", "slice", "review",
-		"lint", "rebase", "status", "pr", "install", "upgrade", "uninstall",
+		"lint", "rebase", "status", "explain", "pr", "install", "upgrade", "uninstall",
 	} {
 		if !strings.Contains(ayuda, "  "+nombre+" ") {
 			t.Errorf("la ayuda no documenta el subcomando %q", nombre)

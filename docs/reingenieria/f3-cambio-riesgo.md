@@ -200,6 +200,7 @@ con un cambio cohesivo grande → 1 clúster, sin sugerencia de split.
 | Presupuesto | ≤ 200 líneas |
 | Depende de | T3.4, T3.5 |
 | Commit | `feat(cli): subcomando explain con perfil, riesgo y sus reglas` |
+| Estado | ✅ Completada |
 
 **Contexto**: `cmd/sentinel/main.go` (dispatcher), `cmd/sentinel/comandos_estado.go`
 
@@ -221,6 +222,7 @@ una caja negra y nadie puede rebatirlo.
 | Presupuesto | ≤ 280 líneas |
 | Depende de | T3.5, T3.6 |
 | Commit | `feat(slice): agrupar lotes por cohesion en vez de por capa` |
+| Estado | ✅ Completada |
 
 **Contexto**: `internal/git/plan.go` (`ConstruirPlanFragmentacion`, :46),
 `internal/git/plan_test.go`

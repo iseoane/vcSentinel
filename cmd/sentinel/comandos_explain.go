@@ -1,0 +1,163 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
+)
+
+type caracteristicaExplicada struct {
+	Name      string                      `json:"name"`
+	State     change.EstadoCaracteristica `json:"state"`
+	Heuristic bool                        `json:"heuristic,omitempty"`
+	Detector  string                      `json:"detector"`
+}
+
+type salidaExplain struct {
+	Profile         change.ChangeProfile      `json:"profile"`
+	Characteristics []caracteristicaExplicada `json:"characteristics"`
+	Risk            struct {
+		Level   risk.Nivel `json:"level"`
+		Explain string     `json:"explain"`
+	} `json:"risk"`
+	Cohesion struct {
+		Clusters       int     `json:"clusters"`
+		Score          float64 `json:"score"`
+		SuggestedSplit bool    `json:"suggested_split"`
+	} `json:"cohesion"`
+}
+
+var detectoresExplain = map[string]string{
+	"public_api":         "identificador exportado añadido o ruta declarada como API",
+	"database":           "migración, SQL o ruta declarada de datos",
+	"security_sensitive": "ruta sensible o identificador auth/token/crypto/password/secret",
+	"concurrency":        "aparición de go, sync, chan o context en líneas añadidas",
+	"behavior_change":    "código no test y no comentario añadido",
+	"test_covered":       "tests del paquete confirmados por diff o mapa de tests",
+	"cross_module":       "dos o más módulos de primer nivel tocados",
+	"generated_code":     "clase generada, .gitattributes o marcador de generación",
+	"ci_cd":              "ruta clasificada como CI/CD",
+	"infrastructure":     "ruta clasificada como infraestructura",
+}
+
+func ejecutarExplain(salida io.Writer, args []string) error {
+	return ejecutarExplainCon(salida, args, change.PerfilDeCambio, ejecutarGitParaChange)
+}
+
+func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, string) (change.ChangeProfile, error), lector change.LectorGit) error {
+	base, head, jsonOut, err := parsearExplain(args)
+	if err != nil {
+		return err
+	}
+	perfilCambio, err := perfil(base, head)
+	if err != nil {
+		return fmt.Errorf("no se pudo calcular el perfil: %w", err)
+	}
+	rango := base + ".." + head
+	rutas, err := rutasExplain(lector, rango)
+	if err != nil {
+		return err
+	}
+	lineas, err := lineasAnadidasExplain(lector, rango)
+	if err != nil {
+		return err
+	}
+	gitattributes, _ := lector("show", head+":.gitattributes")
+	caracteristicas := change.DetectarCaracteristicas(change.EntradaCaracteristicas{
+		Rutas: rutas, LineasAnadidas: lineas, Gitattributes: gitattributes,
+		PatronesSensibles: []string{"**/auth/**", "**/*auth*.go", "**/security/**"},
+	})
+	resultadoRiesgo := risk.Evaluar(perfilCambio, caracteristicas)
+	cohesion, err := change.Cohesion(rutas, lector)
+	if err != nil {
+		return err
+	}
+
+	resultado := salidaExplain{Profile: perfilCambio}
+	for _, caracteristica := range caracteristicas {
+		resultado.Characteristics = append(resultado.Characteristics, caracteristicaExplicada{
+			Name: caracteristica.Nombre, State: caracteristica.Estado,
+			Heuristic: caracteristica.Heuristica, Detector: detectoresExplain[caracteristica.Nombre],
+		})
+	}
+	resultado.Risk.Level, resultado.Risk.Explain = resultadoRiesgo.Nivel, resultadoRiesgo.Explicacion
+	resultado.Cohesion.Clusters, resultado.Cohesion.Score = cohesion.Clusters, cohesion.Puntuacion
+	resultado.Cohesion.SuggestedSplit = cohesion.SugerenciaSplit
+
+	if jsonOut {
+		encoder := json.NewEncoder(salida)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resultado)
+	}
+	fmt.Fprintf(salida, "Perfil: kind=%s, files=%d, +%d/-%d, modules=%s\n", perfilCambio.Kind, perfilCambio.Size.Files, perfilCambio.Size.Added, perfilCambio.Size.Deleted, strings.Join(perfilCambio.Modules, ", "))
+	fmt.Fprintln(salida, "Características:")
+	for _, caracteristica := range resultado.Characteristics {
+		fmt.Fprintf(salida, "- %s=%s — %s\n", caracteristica.Name, caracteristica.State, caracteristica.Detector)
+	}
+	fmt.Fprintf(salida, "Riesgo: %s — %s\n", resultado.Risk.Level, resultado.Risk.Explain)
+	fmt.Fprintf(salida, "Cohesión: clusters=%d score=%.2f suggested_split=%t\n", resultado.Cohesion.Clusters, resultado.Cohesion.Score, resultado.Cohesion.SuggestedSplit)
+	return nil
+}
+
+func parsearExplain(args []string) (base, head string, jsonOut bool, err error) {
+	rango := "HEAD^..HEAD"
+	for _, arg := range args {
+		if arg == "--json" {
+			jsonOut = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") || rango != "HEAD^..HEAD" {
+			return "", "", false, fmt.Errorf("uso: sentinel explain [<base>..<head>] [--json]")
+		}
+		rango = arg
+	}
+	base, head, ok := strings.Cut(rango, "..")
+	if !ok || base == "" || head == "" || strings.Contains(head, "..") {
+		return "", "", false, fmt.Errorf("rango inválido %q: usa <base>..<head>", rango)
+	}
+	return base, head, jsonOut, nil
+}
+
+func rutasExplain(lector change.LectorGit, rango string) ([]string, error) {
+	salida, err := lector("diff", "--name-only", "-z", "-M", rango)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudieron listar las rutas de %s: %w", rango, err)
+	}
+	var rutas []string
+	for _, ruta := range strings.Split(strings.TrimSuffix(salida, "\x00"), "\x00") {
+		if ruta != "" {
+			rutas = append(rutas, filepath.ToSlash(ruta))
+		}
+	}
+	return rutas, nil
+}
+
+func lineasAnadidasExplain(lector change.LectorGit, rango string) (map[string][]string, error) {
+	salida, err := lector("diff", "--no-color", "--unified=0", rango)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudieron leer las líneas añadidas de %s: %w", rango, err)
+	}
+	resultado := make(map[string][]string)
+	ruta := ""
+	for _, linea := range strings.Split(salida, "\n") {
+		if strings.HasPrefix(linea, "+++ b/") {
+			ruta = filepath.ToSlash(strings.TrimPrefix(linea, "+++ b/"))
+			continue
+		}
+		if ruta != "" && strings.HasPrefix(linea, "+") && !strings.HasPrefix(linea, "+++") {
+			resultado[ruta] = append(resultado[ruta], strings.TrimPrefix(linea, "+"))
+		}
+	}
+	return resultado, nil
+}
+
+func ejecutarGitParaChange(args ...string) (string, error) {
+	salida, err := exec.Command("git", args...).Output()
+	return string(salida), err
+}

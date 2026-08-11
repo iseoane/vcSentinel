@@ -39,6 +39,44 @@ func TestConstruirPlanFragmentacionAgrupaPorCapasEnOrden(t *testing.T) {
 	}
 }
 
+func TestConstruirPlanFragmentacionAgrupaPorCohesionYOrdenaClases(t *testing.T) {
+	archivos := []ArchivoModificado{
+		{Ruta: "internal/auth/login_test.go", Lineas: 40, Capa: "test"},
+		{Ruta: "cmd/tool/main.go", Lineas: 30, Capa: "backend"},
+		{Ruta: "internal/auth/login.go", Lineas: 40, Capa: "backend"},
+		{Ruta: "internal/auth/config.yaml", Lineas: 20, Capa: "config"},
+	}
+	plan, err := ConstruirPlanFragmentacionConLector(archivos,
+		func(ArchivoModificado) (bool, error) { return true, nil },
+		func(args ...string) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("ConstruirPlanFragmentacionConLector devolvió error: %v", err)
+	}
+	if len(plan.Lotes) != 2 {
+		t.Fatalf("lotes = %+v, esperados 2 clústeres", plan.Lotes)
+	}
+	esperado := []string{"internal/auth/config.yaml", "internal/auth/login.go", "internal/auth/login_test.go"}
+	if !reflect.DeepEqual(plan.Lotes[0].Rutas, esperado) {
+		t.Fatalf("cluster auth = %v, esperado %v", plan.Lotes[0].Rutas, esperado)
+	}
+}
+
+func TestConstruirPlanFragmentacionSoloParteClusterPorLimite(t *testing.T) {
+	archivos := []ArchivoModificado{
+		{Ruta: "internal/auth/a.go", Lineas: 250, Capa: "backend"},
+		{Ruta: "internal/auth/b.go", Lineas: 250, Capa: "backend"},
+	}
+	plan, err := ConstruirPlanFragmentacionConLector(archivos,
+		func(ArchivoModificado) (bool, error) { return true, nil },
+		func(args ...string) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Lotes) != 2 || plan.Lotes[0].LineasTotales > 400 || plan.Lotes[1].LineasTotales > 400 {
+		t.Fatalf("límite no respetado: %+v", plan.Lotes)
+	}
+}
+
 // TestConstruirPlanFragmentacionNoMezclaClases cubre T0.12: un .go y un .md
 // que caen en la misma capa ("backend", el caso por defecto de
 // ClasificarCapa para un .md) no deben terminar en el mismo lote. Antes de

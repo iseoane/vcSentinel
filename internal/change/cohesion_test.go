@@ -2,6 +2,7 @@ package change
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,18 @@ func TestCohesionPorComponentesConexas(t *testing.T) {
 				t.Errorf("llamadas a git = %d, quiere 1", llamadas)
 			}
 		})
+	}
+}
+
+func TestCohesionDevuelveMiembrosDeCadaCluster(t *testing.T) {
+	rutas := []string{"internal/auth/config.yaml", "internal/auth/login.go", "cmd/tool/main.go"}
+	resultado, err := Cohesion(rutas, func(args ...string) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("Cohesion devolvió error: %v", err)
+	}
+	esperado := [][]string{{"internal/auth/config.yaml", "internal/auth/login.go"}, {"cmd/tool/main.go"}}
+	if !reflect.DeepEqual(resultado.Grupos, esperado) {
+		t.Fatalf("grupos = %v, esperado %v", resultado.Grupos, esperado)
 	}
 }
 

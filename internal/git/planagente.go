@@ -78,7 +78,7 @@ func ConstruirPlanParaAgente() (*PlanSerializado, error) {
 		return nil, err
 	}
 	registrador := &registradorDecisiones{}
-	plan, err := ConstruirPlanFragmentacion(archivos, registrador.callback)
+	plan, err := ConstruirPlanFragmentacionConLector(archivos, registrador.callback, ejecutarGitSalida)
 	if err != nil {
 		return nil, err
 	}

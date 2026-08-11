@@ -105,6 +105,12 @@ func main() {
 	case "status":
 		requireInicializado(worktreeActual)
 		ejecutarStatus(worktreeActual, os.Args[2:])
+	case "explain":
+		requireInicializado(worktreeActual)
+		if err := ejecutarExplain(os.Stdout, os.Args[2:]); err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
 	case "pr":
 		requireInicializado(worktreeActual)
 		ejecutarPr(worktreeActual, os.Args[2:])
@@ -124,7 +130,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'pr', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
@@ -143,7 +149,7 @@ func requireInicializado(worktreeActual string) {
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | pr | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | install | upgrade | uninstall]")
 }
 
 // imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
@@ -159,7 +165,7 @@ func construirAyuda() string {
 	var b strings.Builder
 	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
 	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             lint | rebase | status | pr | install | upgrade | uninstall]\n\n")
+	b.WriteString("             lint | rebase | status | explain | pr | install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcomandos:\n")
 	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
 	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
@@ -175,6 +181,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
 	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")
 	imprimirItemAyuda(&b, "", "Con --json emite JSON; con --prune borra fichas huérfanas.")
+	imprimirItemAyuda(&b, "explain", "Explica el perfil, los detectores, el riesgo y la cohesión de un rango. Uso: explain [base..head] [--json].")
 	imprimirItemAyuda(&b, "pr", "Crea un pull request con gh (passthrough).")
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
 	imprimirItemAyuda(&b, "", "Flags de pr review: --base X --only-unaudited --overview --json.")
@@ -487,7 +494,7 @@ func ejecutarSlice(path string) {
 			return
 		}
 
-		plan, err := git.ConstruirPlanFragmentacion(archivos, construirDecisionGigante(path))
+		plan, err := git.ConstruirPlanFragmentacionConLector(archivos, construirDecisionGigante(path), ejecutarGitParaChange)
 		if errors.Is(err, errRefactorAplicado) {
 			fmt.Println("\n♻️ Refactorización aplicada. Recalculando el plan de fragmentación...")
 			continue
