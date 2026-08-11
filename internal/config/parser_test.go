@@ -91,6 +91,34 @@ func TestPrecedenciaConfig(t *testing.T) {
 	})
 }
 
+// TestConfigChangeClasses verifica change.classes: sin config de usuario
+// aplican los defaults, y al declararla el usuario la reemplaza preservando
+// el orden textual (la precedencia del clasificador).
+func TestConfigChangeClasses(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	t.Run("sin config de usuario aplican los defaults", func(t *testing.T) {
+		cfg := CargarConfiguracionLocal(worktree)
+		if len(cfg.Change.Reglas) == 0 {
+			t.Fatal("Change.Reglas debería tener los defaults, está vacío")
+		}
+	})
+
+	t.Run("change.classes de usuario reemplaza los defaults preservando orden", func(t *testing.T) {
+		escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+			"change:\n  classes:\n    infra: [\"**/*.tf\"]\n    docs: [\"**/*.md\"]\n")
+		cfg := CargarConfiguracionLocal(worktree)
+		if len(cfg.Change.Reglas) != 2 {
+			t.Fatalf("Change.Reglas esperado 2 reglas de usuario, obtuve %d", len(cfg.Change.Reglas))
+		}
+		if cfg.Change.Reglas[0].Clase != "infra" || cfg.Change.Reglas[1].Clase != "docs" {
+			t.Errorf("orden de declaración no preservado: %+v", cfg.Change.Reglas)
+		}
+	})
+}
+
 // TestRutasConfig verifica las rutas exactas donde se busca cada nivel.
 func TestRutasConfig(t *testing.T) {
 	home := t.TempDir()

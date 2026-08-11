@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 )
 
 // AgentConfig define el modelo y esfuerzo por defecto de un agente (binario)
@@ -81,6 +83,12 @@ type ValidationConfig struct {
 	Mode     string
 }
 
+// ChangeConfig agrupa las reglas de change.classes (T3.1) que consume
+// change.ClasificarPorRuta: el orden de Reglas ES la precedencia.
+type ChangeConfig struct {
+	Reglas []change.Regla
+}
+
 // Config es la configuración completa de VAS Sentinel con precedencia
 // defaults -> global -> per-proyecto.
 type Config struct {
@@ -92,6 +100,7 @@ type Config struct {
 	Profiles   map[string]ProfileConfig
 	Review     ReviewConfig
 	Validation ValidationConfig
+	Change     ChangeConfig
 	// CommitLanguage fija el idioma de los mensajes de commit que genera el
 	// agente (T0.13). Por defecto, el del historial del repositorio.
 	CommitLanguage string
@@ -152,6 +161,7 @@ func configuracionPorDefecto() Config {
 		LintCommands:  []string{},
 		TestCommands:  []string{},
 		BuildCommands: []string{},
+		Change:        ChangeConfig{Reglas: change.ReglasPorDefecto()},
 	}
 }
 
@@ -282,6 +292,12 @@ type validationYAML struct {
 	Mode         *string                   `yaml:"mode"`
 }
 
+// changeYAML es la sección change.classes: cada clase a su lista de globs.
+// El mapa no preserva el orden textual; aplicarOrdenClases lo recupera.
+type changeYAML struct {
+	Classes map[string][]string `yaml:"classes"`
+}
+
 // configYAML es el esquema completo tal cual lo consume yaml.v3 con
 // KnownFields(true): una clave fuera de esta lista (p. ej. "comand" en vez de
 // "command") hace fallar la decodificación con archivo y línea, en vez de
@@ -303,6 +319,7 @@ type configYAML struct {
 	LintCommands   []string                    `yaml:"lint_commands"`
 	TestCommands   []string                    `yaml:"test_commands"`
 	BuildCommands  []string                    `yaml:"build_commands"`
+	Change         *changeYAML                 `yaml:"change"`
 }
 
 // ordenAgentesYAML se decodifica SIN KnownFields, solo para leer el orden
@@ -342,6 +359,10 @@ func aplicarDesdeRuta(cfg *Config, ruta string) error {
 	var orden ordenAgentesYAML
 	if err := yaml.Unmarshal(datos, &orden); err == nil {
 		aplicarOrdenAgentes(cfg, clavesEnOrden(&orden.Agents))
+	}
+
+	if raw.Change != nil {
+		aplicarOrdenClases(cfg, datos, raw.Change.Classes)
 	}
 
 	return nil
@@ -563,4 +584,31 @@ func aplicarOrdenAgentes(cfg *Config, ordenArchivo []string) {
 		}
 	}
 	cfg.AgentOrder = nuevoOrden
+}
+
+// ordenClasesYAML lee sin KnownFields el orden textual de change.classes
+// (mismo motivo que ordenAgentesYAML).
+type ordenClasesYAML struct {
+	Change struct {
+		Classes yaml.Node `yaml:"classes"`
+	} `yaml:"change"`
+}
+
+// aplicarOrdenClases reconstruye cfg.Change.Reglas en el orden textual del
+// archivo. Al declarar change.classes el usuario reemplaza los defaults
+// (mismo criterio que active_agent): no se fusionan dos fuentes de reglas.
+func aplicarOrdenClases(cfg *Config, datos []byte, classes map[string][]string) {
+	if len(classes) == 0 {
+		return
+	}
+	var orden ordenClasesYAML
+	if err := yaml.Unmarshal(datos, &orden); err != nil {
+		return
+	}
+	claves := clavesEnOrden(&orden.Change.Classes)
+	reglas := make([]change.Regla, 0, len(claves))
+	for _, clave := range claves {
+		reglas = append(reglas, change.Regla{Clase: clave, Patrones: classes[clave]})
+	}
+	cfg.Change.Reglas = reglas
 }
