@@ -87,6 +87,51 @@ func TestDetectorInfrastructure(t *testing.T) {
 		EntradaCaracteristicas{Rutas: []string{"internal/app/app.go"}})
 }
 
+// TestDetectorConcurrencyNoConfundePalabrasEnCastellano cubre el falso
+// positivo real de la revisión de T3.3: "go " como subcadena sin límite de
+// palabra coincidía con palabras habituales en castellano.
+func TestDetectorConcurrencyNoConfundePalabrasEnCastellano(t *testing.T) {
+	casos := []string{"algo cambia aqui", "tengo una duda", "esto es muy largo", "tal vez luego"}
+	for _, linea := range casos {
+		entrada := EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {linea}}}
+		if got := detectarConcurrencia(entrada).Estado; got != CaracteristicaAusente {
+			t.Errorf("linea %q = %q, quiere ausente (falso positivo de \"go \")", linea, got)
+		}
+	}
+	if got := detectarConcurrencia(EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {"go ejecutar()"}}}).Estado; got != CaracteristicaPresente {
+		t.Errorf("\"go ejecutar()\" = %q, quiere presente", got)
+	}
+}
+
+// TestDetectorSecurityYConcurrencyDeclaranHeuristica: coinciden por
+// subcadena, igual que public_api, así que deben declararse igual de
+// heurísticos (revisión de T3.3).
+func TestDetectorSecurityYConcurrencyDeclaranHeuristica(t *testing.T) {
+	seguridad := detectarSeguridadSensible(EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {"token := 1"}}})
+	if !seguridad.Heuristica {
+		t.Error("security_sensitive debe declarar heuristic=true")
+	}
+	concurrencia := detectarConcurrencia(EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {"go ejecutar()"}}})
+	if !concurrencia.Heuristica {
+		t.Error("concurrency debe declarar heuristic=true")
+	}
+}
+
+// TestDetectoresUsanReglasInyectadas cubre la revisión de T3.3: antes de
+// este fix, detectarCICD (vía contieneClase) ignoraba EntradaCaracteristicas
+// y llamaba siempre a ReglasPorDefecto(), así que una regla de usuario nunca
+// podía cambiar la clasificación.
+func TestDetectoresUsanReglasInyectadas(t *testing.T) {
+	reglasPersonalizadas := []Regla{{Clase: ClaseCI, Patrones: []string{"pipelines/**"}}}
+	entrada := EntradaCaracteristicas{Rutas: []string{"pipelines/build.yaml"}, Reglas: reglasPersonalizadas}
+	if got := detectarCICD(entrada).Estado; got != CaracteristicaPresente {
+		t.Errorf("ci_cd con regla inyectada = %q, quiere presente", got)
+	}
+	if got := detectarCICD(EntradaCaracteristicas{Rutas: []string{"pipelines/build.yaml"}}).Estado; got != CaracteristicaAusente {
+		t.Errorf("ci_cd sin la regla inyectada (solo defaults) = %q, quiere ausente", got)
+	}
+}
+
 func TestDetectarCaracteristicasIncluyeTodosLosDetectores(t *testing.T) {
 	got := DetectarCaracteristicas(EntradaCaracteristicas{})
 	if len(got) != 10 {

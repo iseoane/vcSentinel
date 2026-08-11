@@ -34,9 +34,29 @@ type EntradaCaracteristicas struct {
 	PatronesData      []string
 	PatronesSensibles []string
 	MapaTests         map[string]bool
+	// Reglas son las reglas de clasificación a usar; si está vacío, los
+	// detectores caen en ReglasPorDefecto(). Un único punto de configuración
+	// para todos, en vez de que unos detectores acepten reglas inyectadas y
+	// otros llamen al global directamente (revisión de T3.3).
+	Reglas []Regla
 }
 
 var identificadorExportado = regexp.MustCompile(`\b[A-Z][A-Za-z0-9_]*\b`)
+
+// marcaGoStatement exige un límite de palabra antes de "go ": sin él,
+// "algo ", "tengo ", "luego ", "largo " (habituales en comentarios e
+// identificadores en castellano) disparaban un falso positivo de
+// concurrencia (revisión de T3.3).
+var marcaGoStatement = regexp.MustCompile(`\bgo `)
+
+// reglasDe devuelve entrada.Reglas si se inyectaron, o los defaults si no:
+// mismo criterio en todo detector que necesite clasificar rutas.
+func reglasDe(e EntradaCaracteristicas) []Regla {
+	if len(e.Reglas) > 0 {
+		return e.Reglas
+	}
+	return ReglasPorDefecto()
+}
 
 // DetectarCaracteristicas ejecuta todos los detectores en un orden estable.
 func DetectarCaracteristicas(entrada EntradaCaracteristicas) []Caracteristica {
@@ -73,11 +93,14 @@ func detectarSeguridadSensible(e EntradaCaracteristicas) Caracteristica {
 		}
 		return false
 	})
-	return resultado("security_sensitive", presente)
+	return Caracteristica{Nombre: "security_sensitive", Estado: estado(presente), Heuristica: true}
 }
 func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
-	marcas := []string{"go ", "sync.", "chan ", "context."}
+	marcas := []string{"sync.", "chan ", "context."}
 	presente := algunaLinea(e.LineasAnadidas, func(linea string) bool {
+		if marcaGoStatement.MatchString(linea) {
+			return true
+		}
 		for _, marca := range marcas {
 			if strings.Contains(linea, marca) {
 				return true
@@ -85,10 +108,10 @@ func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
 		}
 		return false
 	})
-	return resultado("concurrency", presente)
+	return Caracteristica{Nombre: "concurrency", Estado: estado(presente), Heuristica: true}
 }
 func detectarCambioDeComportamiento(e EntradaCaracteristicas) Caracteristica {
-	reglas := ReglasPorDefecto()
+	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
 		if ClasificarPorRuta(ruta, reglas) != ClaseSource {
 			continue
@@ -103,7 +126,7 @@ func detectarCambioDeComportamiento(e EntradaCaracteristicas) Caracteristica {
 }
 func detectarCoberturaDeTests(e EntradaCaracteristicas) Caracteristica {
 	paquetes, pruebas := map[string]bool{}, map[string]bool{}
-	reglas := ReglasPorDefecto()
+	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
 		clase := ClasificarPorRuta(ruta, reglas)
 		if clase != ClaseSource && clase != ClaseTest {
@@ -141,8 +164,9 @@ func detectarCruceDeModulos(e EntradaCaracteristicas) Caracteristica {
 	return resultado("cross_module", len(modulosDeRutas(e.Rutas)) >= 2)
 }
 func detectarCodigoGenerado(e EntradaCaracteristicas) Caracteristica {
+	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
-		if Clasificar(ruta, ReglasPorDefecto(), e.Gitattributes) == ClaseGenerated {
+		if Clasificar(ruta, reglas, e.Gitattributes) == ClaseGenerated {
 			return resultado("generated_code", true)
 		}
 	}
@@ -158,10 +182,10 @@ func detectarCodigoGenerado(e EntradaCaracteristicas) Caracteristica {
 	return resultado("generated_code", algunaLinea(e.LineasAnadidas, marcador))
 }
 func detectarCICD(e EntradaCaracteristicas) Caracteristica {
-	return resultado("ci_cd", contieneClase(e.Rutas, ClaseCI))
+	return resultado("ci_cd", contieneClase(e, ClaseCI))
 }
 func detectarInfraestructura(e EntradaCaracteristicas) Caracteristica {
-	return resultado("infrastructure", contieneClase(e.Rutas, ClaseInfra))
+	return resultado("infrastructure", contieneClase(e, ClaseInfra))
 }
 func resultado(nombre string, presente bool) Caracteristica {
 	return Caracteristica{Nombre: nombre, Estado: estado(presente)}
@@ -172,9 +196,9 @@ func estado(presente bool) EstadoCaracteristica {
 	}
 	return CaracteristicaAusente
 }
-func contieneClase(rutas []string, clase string) bool {
-	reglas := ReglasPorDefecto()
-	for _, ruta := range rutas {
+func contieneClase(e EntradaCaracteristicas, clase string) bool {
+	reglas := reglasDe(e)
+	for _, ruta := range e.Rutas {
 		if ClasificarPorRuta(ruta, reglas) == clase {
 			return true
 		}
