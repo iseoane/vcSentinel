@@ -132,3 +132,55 @@ func TestCohesionTroceaRutasEnLotesParaGitLog(t *testing.T) {
 		t.Errorf("Clusters = %d, quiere 1 (mismo directorio)", resultado.Clusters)
 	}
 }
+
+// TestCohesionFusionaCoCambioEntreLotes cubre el CRITICAL de la revisión de
+// T3.5: dos archivos co-cambiados en el MISMO commit histórico, pero
+// repartidos en lotes distintos de "git log", deben seguir uniéndose. Antes
+// del fix, cada lote solo veía sus propios archivos por commit y la unión se
+// perdía en silencio en el caso exitoso (no solo cuando fallaba un lote).
+//
+// 250 rutas totalmente aisladas entre sí por directorio/módulo (sin ninguna
+// proximidad estructural), salvo un par —una en el lote 1, otra en el lote
+// 2— que comparten un commit histórico simulado. Sin fusión entre lotes:
+// 250 clústeres (el par nunca se une). Con fusión: 249 (el par se funde).
+func TestCohesionFusionaCoCambioEntreLotes(t *testing.T) {
+	const (
+		archivoLote1 = "grupo_a/unico/archivo0.go"
+		archivoLote2 = "grupo_b/unico/archivo200.go"
+	)
+	rutas := make([]string, 250)
+	for i := range rutas {
+		rutas[i] = fmt.Sprintf("filler/idx%03d/f.go", i)
+	}
+	rutas[0] = archivoLote1
+	rutas[200] = archivoLote2
+
+	llamadas := 0
+	falso := func(args ...string) (string, error) {
+		llamadas++
+		var salida strings.Builder
+		tieneLote1 := contains(args, archivoLote1)
+		tieneLote2 := contains(args, archivoLote2)
+		if tieneLote1 || tieneLote2 {
+			salida.WriteString("commit:shaCompartido\n\n")
+			if tieneLote1 {
+				salida.WriteString(archivoLote1 + "\n")
+			}
+			if tieneLote2 {
+				salida.WriteString(archivoLote2 + "\n")
+			}
+		}
+		return salida.String(), nil
+	}
+
+	resultado, err := Cohesion(rutas, falso)
+	if err != nil {
+		t.Fatalf("Cohesion devolvió error: %v", err)
+	}
+	if llamadas != 2 {
+		t.Fatalf("llamadas a git = %d, quiere 2", llamadas)
+	}
+	if resultado.Clusters != 249 {
+		t.Fatalf("Clusters = %d, quiere 249 (250 aislados con un par fusionado por co-cambio entre lotes)", resultado.Clusters)
+	}
+}

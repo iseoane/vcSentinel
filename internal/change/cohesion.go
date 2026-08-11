@@ -31,11 +31,11 @@ func Cohesion(rutas []string, git LectorGit) (ResultadoCohesion, error) {
 	componentes := nuevoConjuntoDisjunto(len(rutas))
 	conectarPorProximidad(rutas, componentes)
 
-	historial, err := historialCoCambio(git, rutas)
+	porCommit, err := historialCoCambio(git, rutas)
 	if err != nil {
 		return ResultadoCohesion{}, err
 	}
-	conectarPorHistorial(historial, rutas, componentes)
+	conectarPorHistorial(porCommit, rutas, componentes)
 
 	clusters := componentes.contar()
 	return ResultadoCohesion{
@@ -48,15 +48,25 @@ func Cohesion(rutas []string, git LectorGit) (ResultadoCohesion, error) {
 // loteMaximoRutasHistorial acota cuántas rutas van en un solo "git log --
 // <rutas...>": pasar cientos de rutas sin trocear arriesga el límite de
 // argumentos del proceso (ARG_MAX), justo en el caso que esta herramienta
-// existe para detectar (revisión de T3.5). No degrada con proximidad-solo si
-// un lote falla: sigue el mismo criterio fail-fast que PerfilDeCambio ante un
-// error de git, en vez de devolver una puntuación parcial sin avisar.
+// existe para detectar. No degrada con proximidad-solo si un lote falla:
+// sigue el mismo criterio fail-fast que PerfilDeCambio ante un error de git,
+// en vez de devolver una puntuación parcial sin avisar.
 const loteMaximoRutasHistorial = 200
 
-// historialCoCambio agrega el historial de "git log --name-only" en lotes
-// para no superar loteMaximoRutasHistorial rutas por invocación.
-func historialCoCambio(git LectorGit, rutas []string) (string, error) {
-	var historial strings.Builder
+// historialCoCambio agrega, por SHA de commit, los archivos (del conjunto de
+// rutas) que aparecieron en ese commit, FUSIONANDO entre lotes.
+//
+// Bug real corregido (revisión de T3.5, CRITICAL): con lotes independientes,
+// "git log -- <lote>" solo reporta por commit los archivos de ESE lote. Dos
+// rutas co-cambiadas en el mismo commit histórico pero repartidas en lotes
+// distintos nunca coincidían bajo el mismo bloque tras concatenar texto: cada
+// una aparecía en un bloque "commit:<mismo-sha>" separado, y
+// conectarPorHistorial las trataba como grupos independientes, perdiendo la
+// señal en silencio justo en el caso que loteMaximoRutasHistorial existe para
+// cubrir (muchas rutas). Fusionar por SHA antes de conectar evita esto: un
+// mismo commit acumula los archivos que le aporte cualquier lote.
+func historialCoCambio(git LectorGit, rutas []string) (map[string][]string, error) {
+	porCommit := map[string][]string{}
 	for inicio := 0; inicio < len(rutas); inicio += loteMaximoRutasHistorial {
 		fin := inicio + loteMaximoRutasHistorial
 		if fin > len(rutas) {
@@ -66,12 +76,29 @@ func historialCoCambio(git LectorGit, rutas []string) (string, error) {
 		args = append(args, rutas[inicio:fin]...)
 		salida, err := diffGit(git, "estas rutas", "leer el co-cambio histórico", args...)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		historial.WriteString(salida)
-		historial.WriteString("\n")
+		fusionarHistorial(salida, porCommit)
 	}
-	return historial.String(), nil
+	return porCommit, nil
+}
+
+// fusionarHistorial parsea un bloque "commit:<sha>" + rutas y ACUMULA sus
+// archivos en porCommit[sha], en vez de sobrescribir: así una llamada
+// posterior (otro lote) que reporte el mismo commit se suma a la anterior.
+func fusionarHistorial(salida string, porCommit map[string][]string) {
+	var commitActual string
+	for _, linea := range strings.Split(salida, "\n") {
+		linea = strings.TrimSpace(linea)
+		if sha, esCommit := strings.CutPrefix(linea, "commit:"); esCommit {
+			commitActual = sha
+			continue
+		}
+		if linea == "" || commitActual == "" {
+			continue
+		}
+		porCommit[commitActual] = append(porCommit[commitActual], linea)
+	}
 }
 
 func normalizarRutas(rutas []string) []string {
@@ -110,30 +137,23 @@ func conectarConPrimero(grupo map[string]int, clave string, indice int, componen
 	grupo[clave] = indice
 }
 
-func conectarPorHistorial(historial string, rutas []string, componentes *conjuntoDisjunto) {
+func conectarPorHistorial(porCommit map[string][]string, rutas []string, componentes *conjuntoDisjunto) {
 	indices := make(map[string]int, len(rutas))
 	for i, ruta := range rutas {
 		indices[ruta] = i
 	}
 
-	var commit []int
-	unirCommit := func() {
-		for i := 1; i < len(commit); i++ {
-			componentes.unir(commit[0], commit[i])
+	for _, archivos := range porCommit {
+		var indicesCommit []int
+		for _, archivo := range archivos {
+			if indice, existe := indices[filepath.ToSlash(archivo)]; existe {
+				indicesCommit = append(indicesCommit, indice)
+			}
 		}
-		commit = nil
-	}
-	for _, linea := range strings.Split(historial, "\n") {
-		linea = strings.TrimSpace(linea)
-		if strings.HasPrefix(linea, "commit:") {
-			unirCommit()
-			continue
-		}
-		if indice, existe := indices[filepath.ToSlash(linea)]; existe {
-			commit = append(commit, indice)
+		for i := 1; i < len(indicesCommit); i++ {
+			componentes.unir(indicesCommit[0], indicesCommit[i])
 		}
 	}
-	unirCommit()
 }
 
 type conjuntoDisjunto struct {
