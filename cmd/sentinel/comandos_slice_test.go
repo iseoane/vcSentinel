@@ -12,27 +12,50 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/consent"
 	gitinterno "github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
-type adapterSlicePlanFake struct{}
+type adapterSlicePlanFake struct {
+	baseCalls int
+	diffCalls int
+}
 
-func (*adapterSlicePlanFake) ObtenerMensajeCommit([]string, string, int) (string, error) {
+func (a *adapterSlicePlanFake) ObtenerMensajeCommit([]string, string, int) (string, error) {
+	a.baseCalls++
+	return "", errors.New("el método base no debe ejecutarse")
+}
+
+func (a *adapterSlicePlanFake) ObtenerMensajeCommitConDiff([]string, string, int, string) (string, error) {
+	a.diffCalls++
 	return "feat(slice): mensaje desde perfil commit", nil
 }
 
-func TestEjecutarSlicePlanUsaFactoryDeMensajes(t *testing.T) {
+func TestEjecutarSlicePlanConsentidoUsaAdapterConDiffSinMetodoBase(t *testing.T) {
 	prepararRepoParaPlan(t)
-	escribirConsentimientoDiff(t, true)
+	escribirSolicitudDiff(t, true)
+	for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+		if err := exec.Command("git", args...).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := consent.OtorgarDiffExterno("."); err != nil {
+		t.Fatal(err)
+	}
+	if !permiteDiffAgenteExterno(".") {
+		estado, err := consent.EstadoDiffExterno(".")
+		t.Fatalf("solicitud+grant no habilitaron diff: estado=%+v err=%v", estado, err)
+	}
 	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	cwd, _ := os.Getwd()
 	var rutaFactory string
 	anterior := nuevoAgentAdapterParaMensaje
+	fake := &adapterSlicePlanFake{}
 	nuevoAgentAdapterParaMensaje = func(ruta string) (agentadapter.AgentAdapter, error) {
 		rutaFactory = ruta
-		return &adapterSlicePlanFake{}, nil
+		return fake, nil
 	}
 	t.Cleanup(func() { nuevoAgentAdapterParaMensaje = anterior })
 
@@ -54,11 +77,14 @@ func TestEjecutarSlicePlanUsaFactoryDeMensajes(t *testing.T) {
 	if plan.Lotes[0].Mensaje != "feat(slice): mensaje desde perfil commit" {
 		t.Fatalf("mensaje serializado = %q", plan.Lotes[0].Mensaje)
 	}
+	if fake.diffCalls != 1 || fake.baseCalls != 0 {
+		t.Fatalf("llamadas diff/base = %d/%d", fake.diffCalls, fake.baseCalls)
+	}
 }
 
 func TestEjecutarSlicePlanSinConsentimientoNoInvocaAgente(t *testing.T) {
 	prepararRepoParaPlan(t)
-	escribirConsentimientoDiff(t, false)
+	escribirSolicitudDiff(t, true)
 	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +109,7 @@ func TestEjecutarSlicePlanSinConsentimientoNoInvocaAgente(t *testing.T) {
 func TestElegirAdaptadorSinConsentimientoUsaFallbackDeterminista(t *testing.T) {
 	ruta := t.TempDir()
 	t.Chdir(ruta)
-	escribirConsentimientoDiff(t, false)
+	escribirSolicitudDiff(t, false)
 	plan := &gitinterno.PlanFragmentacion{Lotes: []gitinterno.LotePlanificado{{
 		Numero: 1, MensajeAutomatico: "chore(slice): fallback local",
 	}}}
@@ -202,12 +228,12 @@ func prepararRepoParaPlan(t *testing.T) {
 	}
 }
 
-func escribirConsentimientoDiff(t *testing.T, permitido bool) {
+func escribirSolicitudDiff(t *testing.T, permitido bool) {
 	t.Helper()
 	if err := os.MkdirAll(".vas_sentinel", 0755); err != nil {
 		t.Fatal(err)
 	}
-	contenido := fmt.Sprintf("allow_external_agent_diff: %t\n", permitido)
+	contenido := fmt.Sprintf("request_external_agent_diff: %t\n", permitido)
 	if err := os.WriteFile(filepath.Join(".vas_sentinel", "vassentinel.yml"), []byte(contenido), 0644); err != nil {
 		t.Fatal(err)
 	}

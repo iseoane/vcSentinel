@@ -63,7 +63,7 @@ func TestSliceAceptaSusSubcomandos(t *testing.T) {
 // TestSubcomandosConFlagsPropiosNoSeTocan: review, status y pr parsean sus
 // propios argumentos, así que el dispatcher no debe adelantarse a rechazarlos.
 func TestSubcomandosConFlagsPropiosNoSeTocan(t *testing.T) {
-	for _, subcomando := range []string{"review", "status", "pr"} {
+	for _, subcomando := range []string{"review", "status", "pr", "consentimiento-diff"} {
 		if mensaje := validarArgumentos(subcomando, []string{"--json", "HEAD~1"}); mensaje != "" {
 			t.Errorf("%s: el dispatcher no debe validar sus flags, obtuve: %s", subcomando, mensaje)
 		}

@@ -105,6 +105,9 @@ func main() {
 	case "status":
 		requireInicializado(worktreeActual)
 		ejecutarStatus(worktreeActual, os.Args[2:])
+	case "consentimiento-diff":
+		requireInicializado(worktreeActual)
+		os.Exit(ejecutarConsentimientoDiff(os.Stdout, worktreeActual, os.Args[2:]))
 	case "explain":
 		requireInicializado(worktreeActual)
 		if err := ejecutarExplain(os.Stdout, os.Args[2:]); err != nil {
@@ -130,7 +133,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
@@ -149,7 +152,7 @@ func requireInicializado(worktreeActual string) {
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | consentimiento-diff | install | upgrade | uninstall]")
 }
 
 // imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
@@ -165,7 +168,7 @@ func construirAyuda() string {
 	var b strings.Builder
 	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
 	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             lint | rebase | status | explain | pr | install | upgrade | uninstall]\n\n")
+	b.WriteString("             lint | rebase | status | explain | pr | consentimiento-diff | install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcomandos:\n")
 	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
 	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
@@ -185,6 +188,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "pr", "Crea un pull request con gh (passthrough).")
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
 	imprimirItemAyuda(&b, "", "Flags de pr review: --base X --only-unaudited --overview --json.")
+	imprimirItemAyuda(&b, "consentimiento-diff", "Gestiona el grant local por usuario y repositorio: otorgar, revocar o estado.")
 	imprimirItemAyuda(&b, "install", "Descarga e instala la última release publicada desde GitHub.")
 	imprimirItemAyuda(&b, "upgrade", "Reemplaza el binario actual por la última release publicada.")
 	imprimirItemAyuda(&b, "uninstall", "Elimina el binario instalado y la configuración global.")
@@ -208,7 +212,11 @@ func imprimirItemAyuda(b *strings.Builder, nombre, descripcion string) {
 	}
 	for i, linea := range envolver(descripcion, anchoDescripcion) {
 		if i == 0 {
-			fmt.Fprintf(b, "  %-12s%s\n", nombre, linea)
+			separador := ""
+			if len(nombre) >= 12 {
+				separador = " "
+			}
+			fmt.Fprintf(b, "  %-12s%s%s\n", nombre, separador, linea)
 		} else {
 			b.WriteString("              " + linea + "\n")
 		}
@@ -745,7 +753,7 @@ func leerLinea() (string, error) {
 // elegir mensajes automáticos, otro adaptador disponible o cancelar.
 func elegirAdaptadorYGenerarMensajes(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
 	if !permiteDiffAgenteExterno(path) {
-		fmt.Println("ℹ️ No se envía código al agente: allow_external_agent_diff está desactivado; se usan mensajes deterministas locales.")
+		fmt.Println("ℹ️ No se envía código al agente: falta la solicitud del repositorio o el consentimiento local; se usan mensajes deterministas locales.")
 		git.AplicarMensajesAutomaticos(plan)
 		return nil, false
 	}
@@ -911,7 +919,7 @@ func imprimirPlan(plan *git.PlanFragmentacion) {
 
 func regenerarMensajeLoteInteractivo(plan *git.PlanFragmentacion, path string) {
 	if !permiteDiffAgenteExterno(path) {
-		fmt.Println("⚠️ No se puede regenerar con un agente sin allow_external_agent_diff: el micro-diff expondría código fuente al proveedor externo.")
+		fmt.Println("⚠️ No se puede regenerar: falta la solicitud del repositorio o el consentimiento local para exponer el micro-diff.")
 		return
 	}
 	fmt.Print("¿Qué lote quieres regenerar? (número): ")

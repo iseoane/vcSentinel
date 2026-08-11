@@ -91,21 +91,26 @@ func TestPrecedenciaConfig(t *testing.T) {
 	})
 }
 
-func TestConsentimientoDiffAgenteExterno(t *testing.T) {
+func TestSolicitudRepositorioDiffAgenteExterno(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
 	cfg := CargarConfiguracionLocal(worktree)
-	if cfg.AllowExternalAgentDiff {
-		t.Fatal("allow_external_agent_diff debe ser false por defecto")
+	if cfg.RequestExternalAgentDiff {
+		t.Fatal("request_external_agent_diff debe ser false por defecto")
 	}
 
+	escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"),
+		"request_external_agent_diff: true\n")
+	if RepositorioSolicitaDiffAgenteExterno(worktree) {
+		t.Fatal("la configuración global no puede solicitar diffs por el repositorio")
+	}
 	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
-		"allow_external_agent_diff: true\n")
+		"request_external_agent_diff: true\n")
 	cfg = CargarConfiguracionLocal(worktree)
-	if !cfg.AllowExternalAgentDiff {
-		t.Fatal("allow_external_agent_diff: true no fue aplicado")
+	if !cfg.RequestExternalAgentDiff || !RepositorioSolicitaDiffAgenteExterno(worktree) {
+		t.Fatal("request_external_agent_diff: true no fue aplicado como solicitud del repositorio")
 	}
 }
 

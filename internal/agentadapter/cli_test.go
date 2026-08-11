@@ -3,6 +3,7 @@ package agentadapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -206,6 +207,21 @@ func TestExtraerMensajeCommitOpenCode(t *testing.T) {
 				t.Fatalf("mensaje = %q, esperado %q", mensaje, caso.esperado)
 			}
 		})
+	}
+}
+
+func TestExtraerMensajeCommitOpenCodeAceptaLineaJSONLGrandeAcotada(t *testing.T) {
+	salida := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): validar jsonl grande\"}}\n", strings.Repeat("x", 70*1024))
+	mensaje, err := extraerMensajeCommitOpenCode(salida)
+	if err != nil || mensaje != "feat(slice): validar jsonl grande" {
+		t.Fatalf("mensaje = %q, err = %v", mensaje, err)
+	}
+}
+
+func TestExtraerMensajeCommitOpenCodeRechazaLineaJSONLSobreLimite(t *testing.T) {
+	salida := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024))
+	if _, err := extraerMensajeCommitOpenCode(salida); err == nil {
+		t.Fatal("se aceptó una línea JSONL por encima del límite explícito")
 	}
 }
 

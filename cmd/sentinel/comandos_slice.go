@@ -8,6 +8,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/consent"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
@@ -39,8 +40,8 @@ func ejecutarSlicePlan(salida io.Writer, args []string) int {
 		return 1
 	}
 	var adapter agentadapter.AgentAdapter
-	// El micro-diff contiene código fuente: solo puede salir del equipo cuando
-	// el repositorio lo autoriza de forma persistida y explícita.
+	// El micro-diff contiene código fuente: requiere solicitud versionada y
+	// consentimiento local del usuario para este repositorio.
 	if permiteDiffAgenteExterno(raiz) {
 		adapter, _ = nuevoAgentAdapterParaMensaje(raiz)
 	}
@@ -68,7 +69,11 @@ func ejecutarSlicePlan(salida io.Writer, args []string) int {
 }
 
 func permiteDiffAgenteExterno(raiz string) bool {
-	return config.CargarConfiguracionLocal(raiz).AllowExternalAgentDiff
+	if !config.RepositorioSolicitaDiffAgenteExterno(raiz) {
+		return false
+	}
+	estado, err := consent.EstadoDiffExterno(raiz)
+	return err == nil && estado.Otorgado
 }
 
 // ejecutarSliceApply ejecuta un plan previamente emitido, solo con las

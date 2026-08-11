@@ -56,10 +56,10 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # elegía al azar y mezclaba idiomas dentro de la misma fragmentación.
 # commit_language: "en"
 #
-# Exposición de datos: generar mensajes semánticos envía micro-diffs con código
-# fuente al proveedor externo configurado. El valor predeterminado es false y
-# usa mensajes deterministas locales; activa esta opción solo con consentimiento.
-# allow_external_agent_diff: true
+# Solicitud del repositorio: permite generar mensajes semánticos externos, pero
+# NO es consentimiento personal. También se requiere el grant local y no
+# versionado de 'sentinel consentimiento-diff otorgar'.
+request_external_agent_diff: false
 #
 # Ejemplo (descomenta y ajusta):
 # active_agent: "claude"

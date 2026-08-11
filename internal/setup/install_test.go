@@ -98,6 +98,15 @@ func TestCrearConfiguracionPerProyecto(t *testing.T) {
 	})
 }
 
+func TestPlantillaSolicitaDiffExternoDesactivadoPorDefecto(t *testing.T) {
+	if !strings.Contains(archivoConfiguracionPerProyectoBase, "request_external_agent_diff: false") {
+		t.Fatal("la plantilla debe declarar la solicitud externa en false")
+	}
+	if strings.Contains(archivoConfiguracionPerProyectoBase, "allow_external_agent_diff") {
+		t.Fatal("la plantilla conserva el antiguo nombre ambiguo de consentimiento")
+	}
+}
+
 // TestPlantillaPerProyectoDocumentaVerificacionDeterminista: la plantilla que
 // init escribe debe mostrar al usuario (comentadas) las claves que activan la
 // verificación determinista sin agente — lint_commands, test_commands y

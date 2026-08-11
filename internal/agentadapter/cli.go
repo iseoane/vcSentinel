@@ -141,6 +141,7 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 
 func extraerMensajeCommitOpenCode(salida string) (string, error) {
 	scanner := bufio.NewScanner(strings.NewReader(salida))
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	mensaje := ""
 	textos := 0
 	lineas := 0
