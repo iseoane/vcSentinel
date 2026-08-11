@@ -83,12 +83,6 @@ type ValidationConfig struct {
 	Mode     string
 }
 
-// ChangeConfig agrupa las reglas de change.classes (T3.1) que consume
-// change.ClasificarPorRuta: el orden de Reglas ES la precedencia.
-type ChangeConfig struct {
-	Reglas []change.Regla
-}
-
 // Config es la configuración completa de VAS Sentinel con precedencia
 // defaults -> global -> per-proyecto.
 type Config struct {
@@ -100,7 +94,10 @@ type Config struct {
 	Profiles   map[string]ProfileConfig
 	Review     ReviewConfig
 	Validation ValidationConfig
-	Change     ChangeConfig
+	// Change son las reglas de change.classes (T3.1) que consume
+	// change.ClasificarPorRuta: el orden ES la precedencia. Sin struct
+	// envoltorio porque no agrupa nada más que esto (revisión de T3.1).
+	Change []change.Regla
 	// CommitLanguage fija el idioma de los mensajes de commit que genera el
 	// agente (T0.13). Por defecto, el del historial del repositorio.
 	CommitLanguage string
@@ -161,7 +158,7 @@ func configuracionPorDefecto() Config {
 		LintCommands:  []string{},
 		TestCommands:  []string{},
 		BuildCommands: []string{},
-		Change:        ChangeConfig{Reglas: change.ReglasPorDefecto()},
+		Change:        change.ReglasPorDefecto(),
 	}
 }
 
@@ -594,11 +591,16 @@ type ordenClasesYAML struct {
 	} `yaml:"change"`
 }
 
-// aplicarOrdenClases reconstruye cfg.Change.Reglas en el orden textual del
-// archivo. Al declarar change.classes el usuario reemplaza los defaults
-// (mismo criterio que active_agent): no se fusionan dos fuentes de reglas.
+// aplicarOrdenClases reconstruye cfg.Change en el orden textual del archivo.
+// Al declarar change.classes el usuario reemplaza los defaults (mismo
+// criterio que active_agent): no se fusionan dos fuentes de reglas.
+//
+// classes nil (la clave "classes" no aparece bajo "change:") deja los
+// defaults intactos; classes no nil pero vacío ("classes: {}", declarado a
+// propósito) vacía cfg.Change: son dos intenciones distintas del usuario y
+// antes se confundían (revisión de T3.1, ambas caían en el mismo "return").
 func aplicarOrdenClases(cfg *Config, datos []byte, classes map[string][]string) {
-	if len(classes) == 0 {
+	if classes == nil {
 		return
 	}
 	var orden ordenClasesYAML
@@ -610,5 +612,5 @@ func aplicarOrdenClases(cfg *Config, datos []byte, classes map[string][]string) 
 	for _, clave := range claves {
 		reglas = append(reglas, change.Regla{Clase: clave, Patrones: classes[clave]})
 	}
-	cfg.Change.Reglas = reglas
+	cfg.Change = reglas
 }

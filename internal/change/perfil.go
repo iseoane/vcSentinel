@@ -46,15 +46,28 @@ type ChangeSymbols struct {
 
 type cambioRuta struct{ antes, despues string }
 
+// LectorGit abstrae las lecturas de git que necesita este paquete: una
+// función en vez de una interfaz con métodos porque todas comparten la misma
+// forma (argumentos -> salida cruda, error) y la única variación real son los
+// argumentos. Desacopla claseDeCambio/esRefactor de invocar git real y
+// permite testearlos con dobles de prueba (revisión de T3.2).
+type LectorGit func(args ...string) (string, error)
+
 // PerfilDeCambio calcula las señales deterministas disponibles en F3 para el
 // rango base..head; las señales que necesitan grafo se incorporan en F4.
 func PerfilDeCambio(base, head string) (ChangeProfile, error) {
+	return perfilDeCambioCon(base, head, salidaGit)
+}
+
+// perfilDeCambioCon es PerfilDeCambio con el lector de git inyectado: variante
+// testeable sin invocar git real.
+func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) {
 	rango := base + ".." + head
-	rutas, err := rutasDelDiff(rango)
+	rutas, err := rutasDelDiff(git, rango)
 	if err != nil {
 		return ChangeProfile{}, err
 	}
-	cambios, err := cambiosDeRuta(rango)
+	cambios, err := cambiosDeRuta(git, rango)
 	if err != nil {
 		return ChangeProfile{}, err
 	}
@@ -67,19 +80,21 @@ func PerfilDeCambio(base, head string) (ChangeProfile, error) {
 		Modules:     modulosDeRutas(rutas),
 		FileClasses: conteoDeClases(rutas),
 	}
-	if perfil.Size.Added, perfil.Size.Deleted, err = lineasDelDiff(rango); err != nil {
+	if perfil.Size.Added, perfil.Size.Deleted, err = lineasDelDiff(git, rango); err != nil {
 		return ChangeProfile{}, err
 	}
-	if perfil.Size.Hunks, err = hunksDelDiff(rango); err != nil {
+	if perfil.Size.Hunks, err = hunksDelDiff(git, rango); err != nil {
 		return ChangeProfile{}, err
 	}
-	mensajes, err := salidaGit("log", "--format=%s", rango)
+	mensajes, err := diffGit(git, rango, "leer los mensajes", "log", "--format=%s", rango)
 	if err != nil {
-		return ChangeProfile{}, fmt.Errorf("no se pudieron leer los mensajes de %s: %w", rango, err)
+		return ChangeProfile{}, err
 	}
-	perfil.Kind = claseDeCambio(rutas, cambios, base, head, mensajes)
+	perfil.Kind = claseDeCambio(git, entradaClasificacion{rutas: rutas, cambios: cambios, base: base, head: head, mensajes: mensajes})
 	return perfil, nil
 }
+
+// salidaGit es la implementación real de LectorGit, sobre la CLI de git.
 func salidaGit(args ...string) (string, error) {
 	salida, err := exec.Command("git", args...).Output()
 	if err != nil {
@@ -87,17 +102,29 @@ func salidaGit(args ...string) (string, error) {
 	}
 	return string(salida), nil
 }
-func rutasDelDiff(rango string) ([]string, error) {
-	salida, err := salidaGit("diff", "--name-only", "-z", "-M", rango)
+
+// diffGit ejecuta una lectura de git y envuelve el error con la descripción
+// de la acción en un solo lugar, en vez de repetir el mismo fmt.Errorf en
+// cada función de lectura (revisión de T3.2).
+func diffGit(git LectorGit, rango, accion string, args ...string) (string, error) {
+	salida, err := git(args...)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudieron listar los archivos de %s: %w", rango, err)
+		return "", fmt.Errorf("no se pudieron %s de %s: %w", accion, rango, err)
+	}
+	return salida, nil
+}
+
+func rutasDelDiff(git LectorGit, rango string) ([]string, error) {
+	salida, err := diffGit(git, rango, "listar los archivos", "diff", "--name-only", "-z", "-M", rango)
+	if err != nil {
+		return nil, err
 	}
 	return rutasNulas(salida), nil
 }
-func cambiosDeRuta(rango string) ([]cambioRuta, error) {
-	salida, err := salidaGit("diff", "--name-status", "-z", "-M", rango)
+func cambiosDeRuta(git LectorGit, rango string) ([]cambioRuta, error) {
+	salida, err := diffGit(git, rango, "listar los cambios", "diff", "--name-status", "-z", "-M", rango)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudieron listar los cambios de %s: %w", rango, err)
+		return nil, err
 	}
 	partes := rutasNulas(salida)
 	var cambios []cambioRuta
@@ -134,10 +161,10 @@ func rutasNulas(salida string) []string {
 	}
 	return partes
 }
-func lineasDelDiff(rango string) (int, int, error) {
-	salida, err := salidaGit("diff", "--numstat", rango)
+func lineasDelDiff(git LectorGit, rango string) (int, int, error) {
+	salida, err := diffGit(git, rango, "medir las líneas", "diff", "--numstat", rango)
 	if err != nil {
-		return 0, 0, fmt.Errorf("no se pudieron medir las líneas de %s: %w", rango, err)
+		return 0, 0, err
 	}
 	var added, deleted int
 	for _, linea := range strings.Split(salida, "\n") {
@@ -154,10 +181,10 @@ func lineasDelDiff(rango string) (int, int, error) {
 	}
 	return added, deleted, nil
 }
-func hunksDelDiff(rango string) (int, error) {
-	salida, err := salidaGit("diff", "--no-color", "--unified=0", rango)
+func hunksDelDiff(git LectorGit, rango string) (int, error) {
+	salida, err := diffGit(git, rango, "medir los hunks", "diff", "--no-color", "--unified=0", rango)
 	if err != nil {
-		return 0, fmt.Errorf("no se pudieron medir los hunks de %s: %w", rango, err)
+		return 0, err
 	}
 	hunks := 0
 	for _, linea := range strings.Split(salida, "\n") {
@@ -191,14 +218,26 @@ func modulosDeRutas(rutas []string) []string {
 	return modulos
 }
 
+// entradaClasificacion agrupa las señales ya derivadas (rutas, cambios) y los
+// identificadores/texto crudos (base, head, mensajes) que claseDeCambio
+// necesita: un struct en vez de 5 parámetros posicionales, para que sumar una
+// señal nueva en F4 no siga ampliando la firma (revisión de T3.2).
+type entradaClasificacion struct {
+	rutas    []string
+	cambios  []cambioRuta
+	base     string
+	head     string
+	mensajes string
+}
+
 // claseDeCambio aplica el orden del contrato de mayor a menor prioridad: una
 // señal inequívoca debe ocultar etiquetas más generales del mismo diff.
-func claseDeCambio(rutas []string, cambios []cambioRuta, base, head, mensajes string) string {
-	clases := conteoDeClases(rutas)
+func claseDeCambio(git LectorGit, entrada entradaClasificacion) string {
+	clases := conteoDeClases(entrada.rutas)
 	switch {
 	case clases[ClaseGenerated] > 0:
 		return "generated"
-	case tocaDependencias(rutas):
+	case tocaDependencias(entrada.rutas):
 		return "dependency"
 	case clases[ClaseInfra] > 0:
 		return "infra"
@@ -208,11 +247,11 @@ func claseDeCambio(rutas []string, cambios []cambioRuta, base, head, mensajes st
 		return "configuration"
 	case clases[ClaseDocs] > 0:
 		return "documentation"
-	case clases[ClaseTest] == len(rutas) && len(rutas) > 0:
+	case clases[ClaseTest] == len(entrada.rutas) && len(entrada.rutas) > 0:
 		return "test_only"
-	case esRefactor(cambios, base, head):
+	case esRefactor(git, entrada.cambios, entrada.base, entrada.head):
 		return "refactor"
-	case tocaCodigoExistente(cambios) && contieneBugfix(mensajes):
+	case tocaCodigoExistente(entrada.cambios) && contieneBugfix(entrada.mensajes):
 		return "bugfix"
 	default:
 		return "feature"
@@ -248,11 +287,11 @@ func contieneBugfix(mensajes string) bool {
 
 type funcionCambiada struct{ nombre, cuerpo, ruta string }
 
-func esRefactor(cambios []cambioRuta, base, head string) bool {
+func esRefactor(git LectorGit, cambios []cambioRuta, base, head string) bool {
 	var antes, despues []funcionCambiada
 	for _, cambio := range cambios {
-		antes = append(antes, funcionesEnRevision(base, cambio.antes)...)
-		despues = append(despues, funcionesEnRevision(head, cambio.despues)...)
+		antes = append(antes, funcionesEnRevision(git, base, cambio.antes)...)
+		despues = append(despues, funcionesEnRevision(git, head, cambio.despues)...)
 	}
 	for _, antigua := range antes {
 		for _, nueva := range despues {
@@ -263,11 +302,11 @@ func esRefactor(cambios []cambioRuta, base, head string) bool {
 	}
 	return false
 }
-func funcionesEnRevision(revision, ruta string) []funcionCambiada {
+func funcionesEnRevision(git LectorGit, revision, ruta string) []funcionCambiada {
 	if ruta == "" || !strings.HasSuffix(ruta, ".go") {
 		return nil
 	}
-	contenido, err := salidaGit("show", revision+":"+filepath.ToSlash(ruta))
+	contenido, err := git("show", revision+":"+filepath.ToSlash(ruta))
 	if err != nil {
 		return nil
 	}

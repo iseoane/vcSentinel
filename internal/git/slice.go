@@ -202,6 +202,15 @@ func contarLineasFisicas(ruta string) (int, error) {
 }
 
 // ClasificarCapa determina la capa de un archivo según su ruta y extensión.
+//
+// Clasifica por subcadena (p. ej. "test" en cualquier parte de la ruta), lo
+// que produce falsos positivos documentados en F3 (latest/x.go, contest.go).
+// internal/change.ClasificarPorRuta (T3.1) corrige esto con globs explícitos,
+// pero coexiste con esta función hasta T3.7: sus tres consumidores (agrupar
+// lotes de slice, elegir dimensiones de review, calcular el bucket de la
+// ficha) migran en tareas separadas (T3.7, F5-T5.2, F2-T2.6 ya cerrada para
+// el tercero), no de un salto. No eliminar esta función ni redirigirla aquí
+// sin cerrar esa migración: ver docs/reingenieria/f3-cambio-riesgo.md, T3.1.
 func ClasificarCapa(ruta string) string {
 	ext := filepath.Ext(ruta)
 	base := filepath.Base(ruta)

@@ -64,6 +64,50 @@ func TestPerfilDeCambioKind(t *testing.T) {
 	}
 }
 
+// TestPerfilDeCambioConLectorGitFalso prueba que la lógica de clasificación
+// es inyectable: un doble de prueba basta, sin invocar git real (revisión de
+// T3.2: antes exec.Command("git", ...) estaba acoplado directamente en el
+// dominio, sin ningún puerto intermedio que permitiera esto).
+func TestPerfilDeCambioConLectorGitFalso(t *testing.T) {
+	llamadas := 0
+	falso := func(args ...string) (string, error) {
+		llamadas++
+		switch {
+		case args[0] == "diff" && contains(args, "--name-only"):
+			return "internal/nuevo/nuevo.go\x00", nil
+		case args[0] == "diff" && contains(args, "--name-status"):
+			return "M\x00internal/nuevo/nuevo.go\x00", nil
+		case args[0] == "diff" && contains(args, "--numstat"):
+			return "3\t0\tinternal/nuevo/nuevo.go\n", nil
+		case args[0] == "diff":
+			return "@@ -0,0 +1,3 @@\n", nil
+		case args[0] == "log":
+			return "feat: crea capacidad\n", nil
+		}
+		return "", nil
+	}
+
+	perfil, err := perfilDeCambioCon("HEAD~1", "HEAD", falso)
+	if err != nil {
+		t.Fatalf("perfilDeCambioCon devolvió error: %v", err)
+	}
+	if perfil.Kind != "feature" {
+		t.Errorf("Kind = %q, quiere %q", perfil.Kind, "feature")
+	}
+	if llamadas == 0 {
+		t.Fatal("el doble de prueba nunca se invocó: el test no prueba nada")
+	}
+}
+
+func contains(args []string, buscado string) bool {
+	for _, a := range args {
+		if a == buscado {
+			return true
+		}
+	}
+	return false
+}
+
 type archivoSintetico struct{ ruta, contenido string }
 
 func prepararRepositorio(t *testing.T, repo string) {

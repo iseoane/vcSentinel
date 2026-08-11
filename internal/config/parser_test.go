@@ -101,8 +101,8 @@ func TestConfigChangeClasses(t *testing.T) {
 
 	t.Run("sin config de usuario aplican los defaults", func(t *testing.T) {
 		cfg := CargarConfiguracionLocal(worktree)
-		if len(cfg.Change.Reglas) == 0 {
-			t.Fatal("Change.Reglas debería tener los defaults, está vacío")
+		if len(cfg.Change) == 0 {
+			t.Fatal("Change debería tener los defaults, está vacío")
 		}
 	})
 
@@ -110,11 +110,38 @@ func TestConfigChangeClasses(t *testing.T) {
 		escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
 			"change:\n  classes:\n    infra: [\"**/*.tf\"]\n    docs: [\"**/*.md\"]\n")
 		cfg := CargarConfiguracionLocal(worktree)
-		if len(cfg.Change.Reglas) != 2 {
-			t.Fatalf("Change.Reglas esperado 2 reglas de usuario, obtuve %d", len(cfg.Change.Reglas))
+		if len(cfg.Change) != 2 {
+			t.Fatalf("Change esperado 2 reglas de usuario, obtuve %d", len(cfg.Change))
 		}
-		if cfg.Change.Reglas[0].Clase != "infra" || cfg.Change.Reglas[1].Clase != "docs" {
-			t.Errorf("orden de declaración no preservado: %+v", cfg.Change.Reglas)
+		if cfg.Change[0].Clase != "infra" || cfg.Change[1].Clase != "docs" {
+			t.Errorf("orden de declaración no preservado: %+v", cfg.Change)
+		}
+	})
+
+	// change.classes ausente y change.classes explícitamente vacío ("{}") son
+	// intenciones distintas del usuario: antes ambas caían en el mismo "sin
+	// cambios" porque el código solo miraba len(classes) == 0 (hallazgo de la
+	// revisión de T3.1, internal/config/parser.go:598).
+	t.Run("change.classes vacio explicito vacia las reglas, a diferencia de no declararla", func(t *testing.T) {
+		escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), "change:\n  classes: {}\n")
+		cfg := CargarConfiguracionLocal(worktree)
+		if cfg.Change == nil || len(cfg.Change) != 0 {
+			t.Fatalf("Change esperado vacío pero declarado (no nil), obtuve %#v", cfg.Change)
+		}
+	})
+
+	// La revisión de los fixes de T3.1 señaló que la distinción nil/vacío solo
+	// se probó en la capa per-proyecto: confirma que la capa GLOBAL, que pasa
+	// por el mismo aplicarDesdeRuta/aplicarOrdenClases, se comporta igual.
+	t.Run("la distincion nil/vacio tambien aplica en la capa global", func(t *testing.T) {
+		home2 := t.TempDir()
+		worktree2 := t.TempDir()
+		setHome(t, home2)
+		escribirConfig(t, filepath.Join(home2, ".vas_sentinel", "vassentinel.yml"), "change:\n  classes: {}\n")
+
+		cfg := CargarConfiguracionLocal(worktree2)
+		if cfg.Change == nil || len(cfg.Change) != 0 {
+			t.Fatalf("Change esperado vacío pero declarado (no nil) desde la config global, obtuve %#v", cfg.Change)
 		}
 	})
 }
