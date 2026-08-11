@@ -13,11 +13,14 @@ func comprobarDetector(t *testing.T, detector func(EntradaCaracteristicas) Carac
 }
 
 func TestDetectorPublicAPI(t *testing.T) {
-	positiva := EntradaCaracteristicas{Rutas: []string{"api/handler.go"}, LineasAnadidas: map[string][]string{"api/handler.go": {"func Exportada() {}"}}}
-	negativa := EntradaCaracteristicas{Rutas: []string{"internal/app.go"}, LineasAnadidas: map[string][]string{"internal/app.go": {"func privada() {}"}}}
+	positiva := EntradaCaracteristicas{Symbols: ChangeSymbols{ExportedTouched: 1, Complete: true}}
+	negativa := EntradaCaracteristicas{Symbols: ChangeSymbols{Modified: 1, Complete: true}}
 	comprobarDetector(t, detectarAPIPublica, positiva, negativa)
-	if !detectarAPIPublica(positiva).Heuristica {
-		t.Error("public_api debe declarar heuristic=true")
+	if detectarAPIPublica(positiva).Heuristica {
+		t.Error("public_api exacta no debe declarar heuristic=true")
+	}
+	if got := detectarAPIPublica(EntradaCaracteristicas{}).Estado; got != CaracteristicaIndeterminada {
+		t.Errorf("public_api sin AST completo = %q, quiere indeterminate", got)
 	}
 }
 

@@ -34,7 +34,7 @@ type salidaExplain struct {
 }
 
 var detectoresExplain = map[string]string{
-	"public_api":         "identificador exportado añadido o ruta declarada como API",
+	"public_api":         "firma o declaración exportada cambiada en AST",
 	"database":           "migración, SQL o ruta declarada de datos",
 	"security_sensitive": "ruta sensible o identificador auth/token/crypto/password/secret",
 	"concurrency":        "aparición de go, sync, chan o context en líneas añadidas",
@@ -70,7 +70,7 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	}
 	gitattributes, _ := lector("show", head+":.gitattributes")
 	caracteristicas := change.DetectarCaracteristicas(change.EntradaCaracteristicas{
-		Rutas: rutas, LineasAnadidas: lineas, Gitattributes: gitattributes,
+		Symbols: perfilCambio.Symbols, Rutas: rutas, LineasAnadidas: lineas, Gitattributes: gitattributes,
 		PatronesSensibles: []string{"**/auth/**", "**/*auth*.go", "**/security/**"},
 	})
 	resultadoRiesgo := risk.Evaluar(perfilCambio, caracteristicas)

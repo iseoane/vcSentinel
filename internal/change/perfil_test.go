@@ -54,11 +54,39 @@ func TestPerfilDeCambioKind(t *testing.T) {
 			if perfil.Size.Files != 1+len(caso.extra) || perfil.Size.Added == 0 || perfil.Size.Hunks == 0 {
 				t.Errorf("Size = %#v, quiere archivos, líneas y hunks del diff", perfil.Size)
 			}
-			if perfil.Symbols != (ChangeSymbols{}) {
-				t.Errorf("Symbols = %#v, quiere ceros explícitos", perfil.Symbols)
-			}
 			if caso.nombre == "generated domina infra" && (perfil.FileClasses[ClaseGenerated] != 1 || perfil.FileClasses[ClaseInfra] != 1) {
 				t.Errorf("FileClasses = %#v, quiere ambas clases contadas", perfil.FileClasses)
+			}
+		})
+	}
+}
+
+func TestPerfilDeCambioDerivaSimbolosExactos(t *testing.T) {
+	casos := []struct {
+		nombre, antes, despues string
+		quiere                 ChangeSymbols
+	}{
+		{"solo cuerpo y nombre de parámetro", "func Publica(a int) int { return a }", "func Publica(b int) int { return b + 1 }", ChangeSymbols{Modified: 1, Complete: true}},
+		{"firma", "func Publica(a int) int { return a }", "func Publica(a string) int { return len(a) }", ChangeSymbols{Modified: 1, ExportedTouched: 1, Complete: true}},
+		{"nombre de parámetro en interfaz", "type Publica interface { Metodo(a int) }", "type Publica interface { Metodo(b int) }", ChangeSymbols{Modified: 1, Complete: true}},
+		{"tipo y metodo", "", "type Publico struct { Campo int }; func (Publico) Metodo() {}", ChangeSymbols{Added: 2, ExportedTouched: 2, Complete: true}},
+		{"interfaz eliminada", "type Publica interface { Metodo() error }", "", ChangeSymbols{Deleted: 1, ExportedTouched: 1, Complete: true}},
+		{"parse invalido", "", "func Rota(", ChangeSymbols{}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			repo := t.TempDir()
+			prepararRepositorio(t, repo)
+			escribirArchivo(t, repo, "internal/demo/api.go", "package demo\n"+caso.antes+"\n")
+			ejecutarGit(t, repo, "add", ".")
+			ejecutarGit(t, repo, "commit", "-m", "chore: base API")
+			escribirArchivo(t, repo, "internal/demo/api.go", "package demo\n"+caso.despues+"\n")
+			ejecutarGit(t, repo, "add", ".")
+			ejecutarGit(t, repo, "commit", "-m", "feat: API")
+			t.Chdir(repo)
+			perfil, err := PerfilDeCambio("HEAD~1", "HEAD")
+			if err != nil || perfil.Symbols != caso.quiere {
+				t.Fatalf("Symbols=%#v err=%v, quiere %#v", perfil.Symbols, err, caso.quiere)
 			}
 		})
 	}
@@ -73,6 +101,8 @@ func TestPerfilDeCambioConLectorGitFalso(t *testing.T) {
 	falso := func(args ...string) (string, error) {
 		llamadas++
 		switch {
+		case args[0] == "rev-parse":
+			return args[1][:len(args[1])-7] + "-tree\n", nil
 		case args[0] == "diff" && contains(args, "--name-only"):
 			return "internal/nuevo/nuevo.go\x00", nil
 		case args[0] == "diff" && contains(args, "--name-status"):

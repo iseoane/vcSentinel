@@ -26,11 +26,11 @@ type Caracteristica struct {
 // EntradaCaracteristicas contiene señales ya derivadas del diff y de la
 // política. Los mapas se indexan por rutas Git normalizadas con "/".
 type EntradaCaracteristicas struct {
+	Symbols           ChangeSymbols
 	Rutas             []string
 	LineasAnadidas    map[string][]string
 	Contenidos        map[string]string
 	Gitattributes     string
-	PatronesAPI       []string
 	PatronesData      []string
 	PatronesSensibles []string
 	MapaTests         map[string]bool
@@ -40,8 +40,6 @@ type EntradaCaracteristicas struct {
 	// otros llamen al global directamente (revisión de T3.3).
 	Reglas []Regla
 }
-
-var identificadorExportado = regexp.MustCompile(`\b[A-Z][A-Za-z0-9_]*\b`)
 
 // marcasConcurrencia usan límite de palabra en las cuatro, no solo en "go ":
 // una subcadena suelta ("context." dentro de un identificador más largo,
@@ -74,10 +72,10 @@ func DetectarCaracteristicas(entrada EntradaCaracteristicas) []Caracteristica {
 	}
 }
 func detectarAPIPublica(e EntradaCaracteristicas) Caracteristica {
-	presente := rutasCoinciden(e.Rutas, e.PatronesAPI) || algunaLinea(e.LineasAnadidas, func(linea string) bool {
-		return esCodigo(linea) && identificadorExportado.MatchString(linea)
-	})
-	return resultadoHeuristico("public_api", presente)
+	if !e.Symbols.Complete {
+		return Caracteristica{"public_api", CaracteristicaIndeterminada, false}
+	}
+	return resultado("public_api", e.Symbols.ExportedTouched > 0)
 }
 func detectarBaseDeDatos(e EntradaCaracteristicas) Caracteristica {
 	presente := rutasCoinciden(e.Rutas, e.PatronesData)
@@ -193,8 +191,8 @@ func resultado(nombre string, presente bool) Caracteristica {
 }
 
 // resultadoHeuristico es resultado() para detectores que coinciden por
-// subcadena/identificador en vez de una señal exacta (public_api,
-// security_sensitive, concurrency): único punto de construcción también para
+// subcadena/identificador en vez de una señal exacta (security_sensitive y
+// concurrency): único punto de construcción también para
 // el caso heurístico, en vez de que cada detector heurístico monte su propio
 // Caracteristica{...} a mano (revisión de T3.3).
 func resultadoHeuristico(nombre string, presente bool) Caracteristica {

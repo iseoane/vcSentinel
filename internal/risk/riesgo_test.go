@@ -41,6 +41,7 @@ func TestEvaluar(t *testing.T) {
 			want:   NivelLow,
 			regla:  "kind=test_only",
 		},
+		{nombre: "refactor completo sin API es low", kind: "refactor", want: NivelLow, regla: "refactor"},
 		{
 			nombre:  "public api es elevated",
 			kind:    "feature",
@@ -85,6 +86,7 @@ func TestEvaluar(t *testing.T) {
 			want:   NivelStandard,
 			regla:  "por defecto",
 		},
+		{nombre: "behavior con grafo incompleto es high", kind: "feature", estados: map[string]change.EstadoCaracteristica{"behavior_change": change.CaracteristicaPresente}, want: NivelHigh, regla: "grafo incompleto"},
 		{
 			nombre: "high gana al competir con elevated",
 			kind:   "feature",
@@ -106,7 +108,8 @@ func TestEvaluar(t *testing.T) {
 	vistos := make(map[Nivel]bool)
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
-			resultado := Evaluar(change.ChangeProfile{Kind: caso.kind}, caracteristicasCon(caso.estados))
+			perfil := change.ChangeProfile{Kind: caso.kind, Symbols: change.ChangeSymbols{Complete: !strings.Contains(caso.nombre, "incompleto")}}
+			resultado := Evaluar(perfil, caracteristicasCon(caso.estados))
 			if resultado.Nivel != caso.want {
 				t.Fatalf("Nivel = %q; want %q", resultado.Nivel, caso.want)
 			}

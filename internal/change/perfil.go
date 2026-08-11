@@ -35,13 +35,14 @@ type ChangeSize struct {
 	Hunks   int `json:"hunks"`
 }
 
-// ChangeSymbols es explícito aunque F3 no calcule símbolos: el cero significa
-// «todavía sin grafo», no la ausencia accidental de la dimensión del contrato.
+// ChangeSymbols resume la comparación AST; Complete distingue cero cambios de
+// una comparación que no pudo ser exacta.
 type ChangeSymbols struct {
-	Added           int `json:"added"`
-	Modified        int `json:"modified"`
-	Deleted         int `json:"deleted"`
-	ExportedTouched int `json:"exported_touched"`
+	Added           int  `json:"added"`
+	Modified        int  `json:"modified"`
+	Deleted         int  `json:"deleted"`
+	ExportedTouched int  `json:"exported_touched"`
+	Complete        bool `json:"complete"`
 }
 
 type cambioRuta struct{ antes, despues string }
@@ -53,8 +54,7 @@ type cambioRuta struct{ antes, despues string }
 // permite testearlos con dobles de prueba (revisión de T3.2).
 type LectorGit func(args ...string) (string, error)
 
-// PerfilDeCambio calcula las señales deterministas disponibles en F3 para el
-// rango base..head; las señales que necesitan grafo se incorporan en F4.
+// PerfilDeCambio calcula señales deterministas sobre los árboles inmutables del rango.
 func PerfilDeCambio(base, head string) (ChangeProfile, error) {
 	return perfilDeCambioCon(base, head, salidaGit)
 }
@@ -62,7 +62,15 @@ func PerfilDeCambio(base, head string) (ChangeProfile, error) {
 // perfilDeCambioCon es PerfilDeCambio con el lector de git inyectado: variante
 // testeable sin invocar git real.
 func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) {
-	rango := base + ".." + head
+	baseTree, err := arbolDeRevision(git, base)
+	if err != nil {
+		return ChangeProfile{}, err
+	}
+	headTree, err := arbolDeRevision(git, head)
+	if err != nil {
+		return ChangeProfile{}, err
+	}
+	rango := baseTree + ".." + headTree
 	rutas, err := rutasDelDiff(git, rango)
 	if err != nil {
 		return ChangeProfile{}, err
@@ -76,7 +84,7 @@ func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) 
 		Base:        base,
 		Head:        head,
 		Size:        ChangeSize{Files: len(rutas)},
-		Symbols:     ChangeSymbols{},
+		Symbols:     simbolosCambiados(git, cambios, baseTree, headTree),
 		Modules:     modulosDeRutas(rutas),
 		FileClasses: conteoDeClases(rutas),
 	}
@@ -86,12 +94,17 @@ func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) 
 	if perfil.Size.Hunks, err = hunksDelDiff(git, rango); err != nil {
 		return ChangeProfile{}, err
 	}
-	mensajes, err := diffGit(git, rango, "leer los mensajes", "log", "--format=%s", rango)
+	mensajes, err := diffGit(git, base+".."+head, "leer los mensajes", "log", "--format=%s", base+".."+head)
 	if err != nil {
 		return ChangeProfile{}, err
 	}
-	perfil.Kind = claseDeCambio(git, entradaClasificacion{rutas: rutas, cambios: cambios, base: base, head: head, mensajes: mensajes})
+	perfil.Kind = claseDeCambio(git, entradaClasificacion{rutas: rutas, cambios: cambios, base: baseTree, head: headTree, mensajes: mensajes})
 	return perfil, nil
+}
+
+func arbolDeRevision(git LectorGit, revision string) (string, error) {
+	salida, err := diffGit(git, revision, "resolver el árbol", "rev-parse", revision+"^{tree}")
+	return strings.TrimSpace(salida), err
 }
 
 // salidaGit es la implementación real de LectorGit, sobre la CLI de git.

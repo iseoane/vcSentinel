@@ -70,13 +70,12 @@ type regla struct {
 // nivel del informe (docs/arquitectura/replanteamiento-objetivo.md, §9.2):
 // Evaluar no asume prioridad por posición, calcula el máximo real al final.
 //
-// Decisiones deliberadas de alcance para F3: como Symbols todavía siempre vale
-// cero y no expresa completitud del grafo, se omiten tanto «refactor con grafo
-// completo y sin API pública tocada» (low) como «grafo incompleto con
-// behavior_change» (high); ambas alternativas quedan para F4. Al no analizar
-// semver todavía, cualquier kind=dependency satisface provisionalmente la
-// alternativa high de cambio de versión mayor.
+// Symbols.Complete habilita las reglas F4 de completitud. El análisis semver de
+// dependencias sigue fuera de alcance: kind=dependency conserva provisionalmente high.
 var reglasDeRiesgo = []regla{
+	{NivelHigh, func(perfil change.ChangeProfile, cs []change.Caracteristica) (bool, string) {
+		return !perfil.Symbols.Complete && estadoDe(cs, caracteristicaCambioComport) == change.CaracteristicaPresente, "high por behavior_change con grafo incompleto"
+	}},
 	{NivelHigh, func(perfil change.ChangeProfile, cs []change.Caracteristica) (bool, string) {
 		if nombre := primeraPresente(cs, caracteristicaSecuridadSensible, caracteristicaBaseDeDatos); nombre != "" {
 			return true, "high por " + nombre + " presente"
@@ -109,6 +108,9 @@ var reglasDeRiesgo = []regla{
 			return true, "low por kind=test_only"
 		}
 		return false, ""
+	}},
+	{NivelLow, func(perfil change.ChangeProfile, cs []change.Caracteristica) (bool, string) {
+		return perfil.Kind == "refactor" && perfil.Symbols.Complete && estadoDe(cs, caracteristicaAPIPublica) == change.CaracteristicaAusente, "low por refactor con grafo completo sin public_api"
 	}},
 	{NivelNone, func(perfil change.ChangeProfile, cs []change.Caracteristica) (bool, string) {
 		if (perfil.Kind == kindDocumentation || perfil.Kind == kindGenerated) &&

@@ -15,7 +15,7 @@ func TestEjecutarExplainJSONExponePerfilDetectoresRiesgoYCohesion(t *testing.T) 
 	perfil := change.ChangeProfile{
 		Base: "BASE", Head: "HEAD", Kind: "feature",
 		Size:    change.ChangeSize{Files: 2, Added: 2, Hunks: 1},
-		Symbols: change.ChangeSymbols{}, Modules: []string{"internal/auth"},
+		Symbols: change.ChangeSymbols{ExportedTouched: 1, Complete: true}, Modules: []string{"internal/auth"},
 		FileClasses: map[string]int{"source": 1, "docs": 1},
 	}
 	lector := func(args ...string) (string, error) {
@@ -53,7 +53,7 @@ func TestEjecutarExplainJSONExponePerfilDetectoresRiesgoYCohesion(t *testing.T) 
 	if err := json.Unmarshal(salida.Bytes(), &got); err != nil {
 		t.Fatalf("salida JSON inválida: %v\n%s", err, salida.String())
 	}
-	if got.Profile.Kind != "feature" || got.Profile.Symbols != (change.ChangeSymbols{}) {
+	if got.Profile.Kind != "feature" || got.Profile.Symbols != perfil.Symbols {
 		t.Errorf("perfil = %+v", got.Profile)
 	}
 	seguridadEncontrada := false
