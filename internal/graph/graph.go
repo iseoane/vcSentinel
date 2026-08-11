@@ -66,17 +66,31 @@ func (a AlcanceAfectado) Paquetes() []string    { return clonar(a.paquetes) }
 func (a AlcanceAfectado) Tests() []string       { return clonar(a.tests) }
 func (a AlcanceAfectado) Explicacion() []string { return clonar(a.explicacion) }
 
+// AutorizacionAlcance es la única entrada válida para ejecutar parcialmente.
+// Su valor cero no autoriza; solo AutorizarAlcanceParcial puede crearla válida.
+type AutorizacionAlcance struct {
+	alcance    alcanceAfectado
+	autorizada bool
+}
+
+func (a AutorizacionAlcance) Autorizada() bool      { return a.autorizada }
+func (a AutorizacionAlcance) Paquetes() []string    { return clonar(a.alcance.paquetes) }
+func (a AutorizacionAlcance) Tests() []string       { return clonar(a.alcance.tests) }
+func (a AutorizacionAlcance) Explicacion() []string { return clonar(a.alcance.explicacion) }
+
 // AutorizarAlcanceParcial falla cerrado ante resultados ajenos, incompletos,
 // contradictorios o sin una entrada y un alcance explicable válidos.
-func AutorizarAlcanceParcial(resultado ResultadoAnalisis) (AlcanceAfectado, bool) {
+func AutorizarAlcanceParcial(resultado ResultadoAnalisis) (AutorizacionAlcance, bool) {
 	a := resultado.alcance
 	e := resultado.evidencia
 	if !resultado.confiable || resultado.identidad == "" || !e.completo || e.motivo != "" || len(e.noCubiertos) != 0 ||
-		!validos(resultado.rutas) || (len(a.paquetes) == 0 && len(a.tests) == 0) ||
+		!validos(resultado.rutas) || len(a.paquetes) == 0 ||
 		!validosOpcionales(a.paquetes) || !validosOpcionales(a.tests) || !validos(a.explicacion) {
-		return AlcanceAfectado{}, false
+		return AutorizacionAlcance{}, false
 	}
-	return copiarAlcance(a), true
+	return AutorizacionAlcance{alcance: alcanceAfectado{
+		paquetes: clonar(a.paquetes), tests: clonar(a.tests), explicacion: clonar(a.explicacion),
+	}, autorizada: true}, true
 }
 
 func copiarAlcance(a alcanceAfectado) AlcanceAfectado {

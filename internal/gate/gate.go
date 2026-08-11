@@ -66,8 +66,8 @@ type Opciones struct {
 	// vida (mensajes/registro), Perfil identifica QUÉ se valida — son ejes
 	// independientes (decisión de diseño de T1.7, documentada también en
 	// cmd/sentinel/comandos_gate.go).
-	Perfil  string
-	Alcance []string
+	Perfil         string
+	RutasCambiadas []string
 
 	OpcionesValidacion validation.OpcionesEjecucion
 	// EjecutarValidacion es la función de orquestación de T1.6
@@ -96,7 +96,7 @@ func EjecutarGate(opts Opciones) Resultado {
 		ejecutarValidacion = validation.EjecutarPerfilSobreCandidato
 	}
 
-	runs, err := ejecutarValidacion(opts.Perfil, opts.Alcance, opts.OpcionesValidacion)
+	runs, err := ejecutarValidacion(opts.Perfil, opts.RutasCambiadas, opts.OpcionesValidacion)
 	if err != nil {
 		// Un fallo al ORQUESTAR la validación (candidato obsoleto, snapshot no
 		// creado, capability mal referenciada en el perfil...) es

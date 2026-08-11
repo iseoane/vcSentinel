@@ -127,6 +127,9 @@ func TestPlantillaPerProyectoDocumentaVerificacionDeterminista(t *testing.T) {
 	if !strings.Contains(contenido, `go build ./...`) {
 		t.Error("la plantilla debe mostrar un ejemplo de build_commands")
 	}
+	if !strings.Contains(contenido, `supports_scope: true`) || !strings.Contains(contenido, `scoped_command: "go test {packages}"`) {
+		t.Error("la plantilla debe documentar el scope real de unit_test")
+	}
 }
 
 func TestMoverYReemplazar(t *testing.T) {

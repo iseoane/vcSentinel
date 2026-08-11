@@ -15,6 +15,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentshell"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 )
 
 // Alcance de una ValidationRun: completo (command sin acotar) o parcial
@@ -68,6 +69,10 @@ type EjecutorComando func(comando string) (exit int, salida string, err error)
 type OpcionesEjecucion struct {
 	Worktree string
 	Cfg      config.Config
+	// ProveedorGraph se invoca únicamente sobre el snapshot congelado. Nil
+	// conserva validación completa, igual que un error o análisis incompleto.
+	ProveedorGraph func(snapshot, treeOID string) graph.GraphProvider
+	autorizacion   graph.AutorizacionAlcance
 	// Ejecutar (nil = shell real) corre el comando y devuelve exit + salida.
 	Ejecutar EjecutorComando
 	// Agente es la vía de delegación (contrato tested), usada solo cuando el
@@ -75,15 +80,14 @@ type OpcionesEjecucion struct {
 	Agente agentadapter.AdaptadorPrompt
 }
 
-// EjecutarPerfil corre, en el orden en que ValidationConfig.Profiles[perfil]
-// las lista, las capabilities del perfil indicado. Si alcance no está vacío y
-// la capability tiene SupportsScope, usa ScopedCommand acotado; si no, usa
-// Command sin acotar. Si el perfil no tiene capabilities configuradas (yml
+// EjecutarPerfil corre las capabilities del perfil en orden. Solo una
+// graph.AutorizacionAlcance válida puede seleccionar ScopedCommand; cualquier
+// otro estado usa Command completo. Si el perfil no tiene capabilities (yml
 // sin capabilities configuradas), delega al agente con el contrato tested,
 // igual que hacía internal/ops.Verificar cuando no había lint/test/build
 // commands: es el mismo hueco de configuración, ahora expresado como perfil
 // vacío en vez de listas de comandos sueltas.
-func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]ValidationRun, error) {
+func EjecutarPerfil(perfil string, opts OpcionesEjecucion) ([]ValidationRun, error) {
 	nombres := opts.Cfg.Validation.Profiles[perfil]
 	if len(nombres) == 0 {
 		return delegarSinCapabilities(opts)
@@ -102,10 +106,7 @@ func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]
 		if !ok {
 			return runs, fmt.Errorf("el perfil %q referencia la capability %q, que no está configurada", perfil, nombre)
 		}
-		comando, alcanceEtiqueta, motivo, err := resolverComando(capacidad, alcance)
-		if err != nil {
-			return runs, fmt.Errorf("alcance inválido para la capability %q: %w", nombre, err)
-		}
+		comando, alcanceEtiqueta, motivo := resolverComando(capacidad, opts.autorizacion)
 
 		inicio := time.Now()
 		exit, salida, err := ejecutar(comando)
@@ -138,23 +139,30 @@ func EjecutarPerfil(perfil string, alcance []string, opts OpcionesEjecucion) ([]
 // seguro.
 var elementoAlcanceValido = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`)
 
-// resolverComando decide qué variante del comando usar y por qué: scoped
-// solo si hay alcance Y la capability lo soporta; si no, el comando completo
-// sin acotar (regla exacta de la ficha de T1.3). Antes de interpolar alcance
+// resolverComando decide qué variante usar: scoped solo con autorización opaca
+// del grafo Y soporte declarado; si no, el comando completo exacto. Antes de
+// interpolar alcance
 // en scoped_command, valida cada elemento contra elementoAlcanceValido; si
-// alguno no encaja, devuelve error y ningún comando (nunca se construye un
-// comando a partir de un elemento sin validar).
-func resolverComando(capacidad config.CapabilityConfig, alcance []string) (comando, etiqueta, motivo string, err error) {
-	if len(alcance) > 0 && capacidad.SupportsScope {
-		for _, elemento := range alcance {
-			if !elementoAlcanceValido.MatchString(elemento) {
-				return "", "", "", fmt.Errorf("elemento de alcance %q contiene caracteres no permitidos (solo letras, dígitos, /, ., _, -)", elemento)
-			}
-		}
-		acotado := strings.ReplaceAll(capacidad.ScopedCommand, marcadorPaquetes, strings.Join(alcance, " "))
-		return acotado, AlcanceParcial, fmt.Sprintf("acotado a %d paquete(s) afectado(s)", len(alcance)), nil
+// alguno no encaja, conserva Command exacto (nunca construye un comando a
+// partir de un elemento sin validar).
+func resolverComando(capacidad config.CapabilityConfig, autorizacion graph.AutorizacionAlcance) (comando, etiqueta, motivo string) {
+	if !capacidad.SupportsScope {
+		return capacidad.Command, AlcanceCompleto, "comando completo: la capability no declara supports_scope"
 	}
-	return capacidad.Command, AlcanceCompleto, "", nil
+	if !autorizacion.Autorizada() {
+		return capacidad.Command, AlcanceCompleto, "comando completo: grafo ausente, con error, incompleto o no autorizado"
+	}
+	if !strings.Contains(capacidad.ScopedCommand, marcadorPaquetes) {
+		return capacidad.Command, AlcanceCompleto, "comando completo: scoped_command inválido"
+	}
+	alcance := autorizacion.Paquetes()
+	for _, elemento := range alcance {
+		if !elementoAlcanceValido.MatchString(elemento) {
+			return capacidad.Command, AlcanceCompleto, fmt.Sprintf("comando completo: paquete autorizado %q no es seguro para interpolación shell", elemento)
+		}
+	}
+	acotado := strings.ReplaceAll(capacidad.ScopedCommand, marcadorPaquetes, strings.Join(alcance, " "))
+	return acotado, AlcanceParcial, fmt.Sprintf("grafo completo autorizó %d paquete(s) afectado(s): %s", len(alcance), strings.Join(autorizacion.Explicacion(), "; "))
 }
 
 // Fallo determina si una ValidationRun se considera fallida según fails_when

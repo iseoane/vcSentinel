@@ -9,7 +9,15 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 )
+
+type proveedorGraphConError struct{}
+
+func (proveedorGraphConError) Nombre() string { return "error" }
+func (proveedorGraphConError) Analizar([]string) (graph.ResultadoAnalisis, error) {
+	return graph.ResultadoAnalisis{}, errors.New("graph no disponible")
+}
 
 // repoDeCandidatoTest crea un repositorio git real (con un commit inicial) en
 // un directorio temporal y posiciona ahí el cwd del proceso de test: las
@@ -32,7 +40,16 @@ func repoDeCandidatoTest(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "archivo.txt"), []byte("inicial\n"), 0644); err != nil {
 		t.Fatalf("no se pudo escribir archivo.txt: %v", err)
 	}
-	correr("add", "archivo.txt")
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "a"), 0755); err != nil {
+		t.Fatalf("no se pudo crear paquete de prueba: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/candidato\n\ngo 1.26\n"), 0644); err != nil {
+		t.Fatalf("no se pudo escribir go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "a", "a.go"), []byte("package a\n"), 0644); err != nil {
+		t.Fatalf("no se pudo escribir a.go: %v", err)
+	}
+	correr("add", ".")
 	correr("commit", "-m", "inicial")
 
 	t.Chdir(dir)
@@ -225,5 +242,60 @@ func TestEjecutarPerfilSobreCandidato_InplaceConWorktreeLimpio_EjecutaSobreElWor
 	despues := contarSnapshots(t, dir)
 	if despues != antes {
 		t.Fatalf("el modo inplace no debía crear ningún snapshot: antes=%d despues=%d", antes, despues)
+	}
+}
+
+func TestEjecutarPerfilSobreCandidato_AlcanceSoloConGrafoCompleto(t *testing.T) {
+	dir := repoDeCandidatoTest(t)
+	cfg := cfgPerfilCandidatoTest(config.ModeWorktree)
+	cfg.Validation.Capabilities["cap1"] = config.CapabilityConfig{
+		Command:       "go test ./...",
+		SupportsScope: true,
+		ScopedCommand: "go test {packages}",
+	}
+
+	casos := []struct {
+		nombre, ruta, comando, alcance, scoped string
+		errorGraph                             bool
+	}{
+		{"incompleto ejecuta el comando completo exacto", "archivo.txt", "go test ./...", AlcanceCompleto, "go test {packages}", false},
+		{"completo sustituye el paquete autorizado", "internal/a/a.go", "go test example.com/candidato/internal/a", AlcanceParcial, "go test {packages}", false},
+		{"scoped_command inválido ejecuta el completo exacto", "internal/a/a.go", "go test ./...", AlcanceCompleto, "go test ./internal/...", false},
+		{"error ejecuta el comando completo exacto", "internal/a/a.go", "go test ./...", AlcanceCompleto, "go test {packages}", true},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			cfgCaso := cfg
+			capacidad := cfg.Validation.Capabilities["cap1"]
+			capacidad.ScopedCommand = caso.scoped
+			cfgCaso.Validation.Capabilities = map[string]config.CapabilityConfig{"cap1": capacidad}
+			var ejecutado string
+			runs, err := EjecutarPerfilSobreCandidato("perfil", []string{caso.ruta}, OpcionesEjecucion{
+				Worktree: dir,
+				Cfg:      cfgCaso,
+				ProveedorGraph: func(snapshot, treeOID string) graph.GraphProvider {
+					if snapshot == dir || treeOID == "" {
+						t.Fatalf("el grafo recibió el worktree vivo o un tree OID vacío: snapshot=%q tree=%q", snapshot, treeOID)
+					}
+					if caso.errorGraph {
+						return proveedorGraphConError{}
+					}
+					return graph.NuevoProveedorNativo(snapshot, treeOID)
+				},
+				Ejecutar: func(comando string) (int, string, error) {
+					ejecutado = comando
+					return 0, "", nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("EjecutarPerfilSobreCandidato falló: %v", err)
+			}
+			if ejecutado != caso.comando || runs[0].Comando != caso.comando {
+				t.Fatalf("comando = %q, run = %q; esperado exacto %q", ejecutado, runs[0].Comando, caso.comando)
+			}
+			if runs[0].Alcance != caso.alcance || runs[0].MotivoAlcance == "" {
+				t.Fatalf("decisión de alcance no explicada: %+v", runs[0])
+			}
+		})
 	}
 }

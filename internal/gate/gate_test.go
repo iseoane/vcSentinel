@@ -64,6 +64,10 @@ func opcionesBase(cfg config.Config, ejecutar validation.EjecutorComando, fabric
 	}
 }
 
+func ejecutarPerfilSinCandidato(perfil string, _ []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+	return validation.EjecutarPerfil(perfil, opts)
+}
+
 // TestValidacionEnRojo_NoLanzaRevision cubre la aceptación #1: si la
 // validación falla, el motor de revisión semántica NUNCA se invoca (orden
 // fijo: validación primero) y el estado es VALIDATION_FAILED.
@@ -73,7 +77,7 @@ func TestValidacionEnRojo_NoLanzaRevision(t *testing.T) {
 	opts := opcionesBase(cfg, func(string) (int, string, error) {
 		return 1, "salida real del comando fallido", nil
 	}, fabricaContadora(&llamadas, "", nil))
-	opts.EjecutarValidacion = validation.EjecutarPerfil
+	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 
 	resultado := EjecutarGate(opts)
 
@@ -99,7 +103,7 @@ func TestValidacionEnVerdeConCritical_NoBloquea(t *testing.T) {
 	opts := opcionesBase(cfg, func(string) (int, string, error) {
 		return 0, "", nil
 	}, fabricaContadora(&llamadas, salidaAgente, nil))
-	opts.EjecutarValidacion = validation.EjecutarPerfil
+	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 
 	resultado := EjecutarGate(opts)
 
@@ -125,7 +129,7 @@ func TestRevisionConPreguntas_NecesitaRevisionHumana(t *testing.T) {
 	opts := opcionesBase(cfg, func(string) (int, string, error) {
 		return 0, "", nil
 	}, fabricaContadora(&llamadas, salidaAgente, nil))
-	opts.EjecutarValidacion = validation.EjecutarPerfil
+	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 
 	resultado := EjecutarGate(opts)
 
@@ -144,7 +148,7 @@ func TestRevisionSinAgenteDisponible_ErrorInfraestructura(t *testing.T) {
 	}, func(dimension string) (review.AuditorAgente, string, error) {
 		return nil, "perfil-test", errAgenteNoDisponibleTest
 	})
-	opts.EjecutarValidacion = validation.EjecutarPerfil
+	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 
 	resultado := EjecutarGate(opts)
 

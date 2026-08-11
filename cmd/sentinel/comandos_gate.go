@@ -8,6 +8,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -65,10 +66,14 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	}
 
 	resultado := gate.EjecutarGate(gate.Opciones{
-		Perfil: perfil,
+		Perfil:         perfil,
+		RutasCambiadas: archivos,
 		OpcionesValidacion: validation.OpcionesEjecucion{
 			Worktree: worktree,
 			Cfg:      cfg,
+			ProveedorGraph: func(snapshot, treeOID string) graph.GraphProvider {
+				return graph.NuevoProveedorNativo(snapshot, treeOID)
+			},
 		},
 		FabricaAuditor: fabricaAuditorGate(cfg),
 		Parallel:       cfg.Review.Parallel,

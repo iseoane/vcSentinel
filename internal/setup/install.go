@@ -51,6 +51,18 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # build_commands:
 #   - "go build ./..."
 #
+# Validación por paquetes: habilita scope solo en comandos que lo soporten de
+# verdad. go test acepta import paths; gofmt, go vet y go build quedan completos.
+# validation:
+#   capabilities:
+#     unit_test:
+#       command: "go test ./..."
+#       supports_scope: true
+#       scoped_command: "go test {packages}"
+#   profiles:
+#     standard: [unit_test]
+#   mode: worktree
+#
 # Idioma de los mensajes de commit que genera 'sentinel slice'. Por defecto
 # "es" (el del historial de este repositorio). Sin fijarlo, el agente lo
 # elegía al azar y mezclaba idiomas dentro de la misma fragmentación.

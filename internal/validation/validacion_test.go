@@ -38,7 +38,7 @@ func TestEjecutarPerfil_CapabilityFallaExitCode(t *testing.T) {
 		Command:   "go vet ./...",
 		FailsWhen: config.FailsWhenExitCode,
 	})
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg: cfg,
 		Ejecutar: func(comando string) (int, string, error) {
 			return 1, "vet: paquete roto", nil
@@ -70,7 +70,7 @@ func TestEjecutarPerfil_OutputNotEmptyFallaConExitoCero(t *testing.T) {
 		Command:   "gofmt -l .",
 		FailsWhen: config.FailsWhenOutputNotEmpty,
 	})
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg: cfg,
 		Ejecutar: func(comando string) (int, string, error) {
 			return 0, "archivo_sin_formatear.go\n", nil
@@ -92,7 +92,7 @@ func TestEjecutarPerfil_OutputNotEmptyNoFallaSiVacia(t *testing.T) {
 		Command:   "gofmt -l .",
 		FailsWhen: config.FailsWhenOutputNotEmpty,
 	})
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg: cfg,
 		Ejecutar: func(comando string) (int, string, error) {
 			return 0, "", nil
@@ -107,60 +107,33 @@ func TestEjecutarPerfil_OutputNotEmptyNoFallaSiVacia(t *testing.T) {
 	}
 }
 
-// TestEjecutarPerfil_ScopedCommand: con alcance no vacío y SupportsScope,
-// usa scoped_command con {packages} sustituido y Alcance == "parcial".
-func TestEjecutarPerfil_ScopedCommand(t *testing.T) {
+// Sin una autorización opaca del grafo, "parcial" es imposible aunque la
+// capability soporte scope.
+func TestEjecutarPerfil_SinAutorizacionUsaCommandCompleto(t *testing.T) {
 	cfg := cfgConCapability("test", config.CapabilityConfig{
 		Command:       "go test ./...",
-		FailsWhen:     config.FailsWhenExitCode,
 		SupportsScope: true,
 		ScopedCommand: "go test {packages}",
 	})
-	var comandoRecibido string
-	runs, err := EjecutarPerfil("standard", []string{"./internal/a", "./internal/b"}, OpcionesEjecucion{
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg: cfg,
 		Ejecutar: func(comando string) (int, string, error) {
-			comandoRecibido = comando
 			return 0, "", nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("EjecutarPerfil falló: %v", err)
 	}
-	if len(runs) != 1 {
-		t.Fatalf("runs = %+v, esperado 1", runs)
-	}
-	if runs[0].Alcance != AlcanceParcial {
-		t.Errorf("Alcance = %q, esperado %q", runs[0].Alcance, AlcanceParcial)
-	}
-	if runs[0].MotivoAlcance == "" {
-		t.Error("MotivoAlcance vacío, se esperaba una explicación del acotamiento")
-	}
-	esperado := "go test ./internal/a ./internal/b"
-	if comandoRecibido != esperado || runs[0].Comando != esperado {
-		t.Errorf("comando = %q, esperado %q", comandoRecibido, esperado)
+	if runs[0].Alcance != AlcanceCompleto || runs[0].Comando != "go test ./..." || runs[0].MotivoAlcance == "" {
+		t.Errorf("runs[0] = %+v, esperado command completo sin acotar", runs[0])
 	}
 }
 
-// TestEjecutarPerfil_SinAlcanceUsaCommandCompleto: aunque la capability
-// soporte scope, sin alcance se usa command sin acotar.
-func TestEjecutarPerfil_SinAlcanceUsaCommandCompleto(t *testing.T) {
-	cfg := cfgConCapability("test", config.CapabilityConfig{
-		Command:       "go test ./...",
-		SupportsScope: true,
-		ScopedCommand: "go test {packages}",
-	})
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
-		Cfg: cfg,
-		Ejecutar: func(comando string) (int, string, error) {
-			return 0, "", nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("EjecutarPerfil falló: %v", err)
-	}
-	if runs[0].Alcance != AlcanceCompleto || runs[0].Comando != "go test ./..." {
-		t.Errorf("runs[0] = %+v, esperado command completo sin acotar", runs[0])
+func TestElementoAlcanceValido_RechazaMetacaracteresDeShell(t *testing.T) {
+	for _, elemento := range []string{"pkg; rm -rf /tmp/algo", "pkg`whoami`", "pkg$(whoami)", "pkg extra", `pkg"algo"`} {
+		if elementoAlcanceValido.MatchString(elemento) {
+			t.Errorf("la lista blanca aceptó %q", elemento)
+		}
 	}
 }
 
@@ -169,7 +142,7 @@ func TestEjecutarPerfil_SinAlcanceUsaCommandCompleto(t *testing.T) {
 // al contrato tested (mismo camino que ya cubría internal/ops.Verificar).
 func TestEjecutarPerfil_SinCapabilitiesDelegaContratoTested(t *testing.T) {
 	agente := &agenteFake{salida: "todo verde\ntested: make test; go vet ./..."}
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg:    config.Config{},
 		Agente: agente,
 	})
@@ -192,7 +165,7 @@ func TestEjecutarPerfil_SinCapabilitiesDelegaContratoTested(t *testing.T) {
 // TestEjecutarPerfil_SinCapabilitiesSinAgenteNoBloquea: sin capabilities y
 // sin agente, degrada a lista vacía sin error: la validación nunca bloquea.
 func TestEjecutarPerfil_SinCapabilitiesSinAgenteNoBloquea(t *testing.T) {
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{Cfg: config.Config{}})
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{Cfg: config.Config{}})
 	if err != nil {
 		t.Fatalf("EjecutarPerfil falló: %v", err)
 	}
@@ -210,7 +183,7 @@ func TestEjecutarPerfil_AgenteFallaNoBloquea(t *testing.T) {
 		"sin contrato": {salida: "respuesta sin contrato"},
 	}
 	for nombre, agente := range casos {
-		runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{Cfg: config.Config{}, Agente: agente})
+		runs, err := EjecutarPerfil("standard", OpcionesEjecucion{Cfg: config.Config{}, Agente: agente})
 		if err != nil {
 			t.Fatalf("%s: EjecutarPerfil falló: %v", nombre, err)
 		}
@@ -229,7 +202,7 @@ func TestEjecutarPerfil_CapabilityDesconocidaEnPerfil(t *testing.T) {
 			Profiles:     map[string][]string{"standard": {"inexistente"}},
 		},
 	}
-	_, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	_, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg: cfg,
 		Ejecutar: func(comando string) (int, string, error) {
 			return 0, "", nil
@@ -244,7 +217,7 @@ func TestEjecutarPerfil_CapabilityDesconocidaEnPerfil(t *testing.T) {
 // lanzar (no exit code, sino fallo de ejecución), el error se propaga.
 func TestEjecutarPerfil_ErrorDeEjecucionSePropaga(t *testing.T) {
 	cfg := cfgConCapability("test", config.CapabilityConfig{Command: "go test ./..."})
-	_, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	_, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg: cfg,
 		Ejecutar: func(comando string) (int, string, error) {
 			return 0, "", errors.New("binario ausente")
@@ -296,7 +269,7 @@ func TestHallazgos_RunDelegadoExcluidoAunqueExitSeaDistintoDeCero(t *testing.T) 
 // conserva como regresión ahora que el comportamiento es explícito.
 func TestHallazgos_PerfilDelegadoSinHallazgos(t *testing.T) {
 	agente := &agenteFake{salida: "tested: comando-x"}
-	runs, err := EjecutarPerfil("standard", nil, OpcionesEjecucion{
+	runs, err := EjecutarPerfil("standard", OpcionesEjecucion{
 		Cfg:    config.Config{},
 		Agente: agente,
 	})
@@ -306,75 +279,5 @@ func TestHallazgos_PerfilDelegadoSinHallazgos(t *testing.T) {
 	hallazgos := Hallazgos(runs, nil)
 	if len(hallazgos) != 0 {
 		t.Fatalf("hallazgos = %+v, esperado 0 para un perfil delegado", hallazgos)
-	}
-}
-
-// --- CRITICAL 2: alcance calculado en tiempo de ejecución se interpola sin
-// validar en un comando que corre por shell: inyección de comandos. ---
-
-// TestResolverComando_AlcanceConMetacaracterDevuelveError: cada elemento de
-// alcance debe pasar una lista blanca de caracteres seguros (letras, dígitos,
-// /, ., _, -) antes de interpolarse; si no, error explícito y ningún comando
-// construido con el valor sin validar.
-func TestResolverComando_AlcanceConMetacaracterDevuelveError(t *testing.T) {
-	capacidad := config.CapabilityConfig{SupportsScope: true, ScopedCommand: "go test {packages}"}
-	casos := []struct {
-		nombre   string
-		elemento string
-	}{
-		{"punto y coma", "pkg; rm -rf /tmp/algo"},
-		{"backtick", "pkg`whoami`"},
-		{"cifrado de variable", "pkg$(whoami)"},
-		{"espacio inesperado", "pkg extra"},
-		{"comillas", `pkg"algo"`},
-	}
-	for _, c := range casos {
-		t.Run(c.nombre, func(t *testing.T) {
-			_, _, _, err := resolverComando(capacidad, []string{"./internal/valido", c.elemento})
-			if err == nil {
-				t.Fatalf("resolverComando aceptó el elemento de alcance %q sin error", c.elemento)
-			}
-		})
-	}
-}
-
-// TestEjecutarPerfil_AlcanceInyeccionNoEjecutaComando: EjecutarPerfil propaga
-// el error de resolverComando y JAMÁS invoca Ejecutar con un comando
-// construido a partir de un alcance sin validar.
-func TestEjecutarPerfil_AlcanceInyeccionNoEjecutaComando(t *testing.T) {
-	cfg := cfgConCapability("test", config.CapabilityConfig{
-		Command:       "go test ./...",
-		SupportsScope: true,
-		ScopedCommand: "go test {packages}",
-	})
-	runs, err := EjecutarPerfil("standard", []string{"./internal/a", "pkg; rm -rf /tmp/algo"}, OpcionesEjecucion{
-		Cfg: cfg,
-		Ejecutar: func(comando string) (int, string, error) {
-			t.Fatalf("no debía ejecutarse ningún comando, pero se llamó con %q", comando)
-			return 0, "", nil
-		},
-	})
-	if err == nil {
-		t.Fatal("EjecutarPerfil aceptó un alcance con metacaracteres de shell sin error")
-	}
-	if len(runs) != 0 {
-		t.Errorf("runs = %+v, esperado vacío cuando el alcance es inválido", runs)
-	}
-}
-
-// TestResolverComando_AlcanceValidoSigueFuncionando: elementos de alcance
-// legítimos (rutas de paquete Go normales) siguen interpolándose igual que
-// antes; la validación no debe romper el caso de uso real.
-func TestResolverComando_AlcanceValidoSigueFuncionando(t *testing.T) {
-	capacidad := config.CapabilityConfig{SupportsScope: true, ScopedCommand: "go test {packages}"}
-	comando, etiqueta, motivo, err := resolverComando(capacidad, []string{"./internal/a", "./internal/b-2"})
-	if err != nil {
-		t.Fatalf("resolverComando falló con alcance válido: %v", err)
-	}
-	if comando != "go test ./internal/a ./internal/b-2" {
-		t.Errorf("comando = %q, inesperado", comando)
-	}
-	if etiqueta != AlcanceParcial || motivo == "" {
-		t.Errorf("etiqueta = %q, motivo = %q, esperado parcial con motivo", etiqueta, motivo)
 	}
 }

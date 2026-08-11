@@ -3,9 +3,11 @@ package validation
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 )
 
 // ErrCandidatoObsoleto señala que el árbol (o el HEAD) del repositorio
@@ -39,7 +41,7 @@ var ErrCandidatoObsoleto = errors.New("el candidato cambió durante la validaci�
 // worktree real sí tiene; una capability que dependa de eso fallará ahí
 // aunque pasaría en el worktree real. El modo inplace existe como
 // alternativa configurable exactamente para ese caso.
-func EjecutarPerfilSobreCandidato(perfil string, alcance []string, opts OpcionesEjecucion) ([]ValidationRun, error) {
+func EjecutarPerfilSobreCandidato(perfil string, rutasCambiadas []string, opts OpcionesEjecucion) ([]ValidationRun, error) {
 	modo := opts.Cfg.Validation.Mode
 	if modo == "" {
 		modo = config.ModeWorktree
@@ -49,7 +51,7 @@ func EjecutarPerfilSobreCandidato(perfil string, alcance []string, opts Opciones
 		if err := git.ExigirWorktreeLimpioEnInplace(modo); err != nil {
 			return nil, err
 		}
-		return EjecutarPerfil(perfil, alcance, opts)
+		return EjecutarPerfil(perfil, opts)
 	}
 
 	candidato, err := git.Congelar()
@@ -70,7 +72,14 @@ func EjecutarPerfilSobreCandidato(perfil string, alcance []string, opts Opciones
 	}
 
 	opts.Worktree = snapshot
-	runs, err := EjecutarPerfil(perfil, alcance, opts)
+	opts.autorizacion = graph.AutorizacionAlcance{}
+	if opts.ProveedorGraph != nil && len(rutasCambiadas) > 0 {
+		resultado, errorGraph := opts.ProveedorGraph(snapshot, candidato.Arbol).Analizar(rutasCambiadas)
+		if errorGraph == nil && resultado.IdentidadSnapshot() == candidato.Arbol && mismasRutas(resultado.RutasAnalizadas(), rutasCambiadas) {
+			opts.autorizacion, _ = graph.AutorizarAlcanceParcial(resultado)
+		}
+	}
+	runs, err := EjecutarPerfil(perfil, opts)
 	if err != nil {
 		return runs, err
 	}
@@ -86,4 +95,23 @@ func EjecutarPerfilSobreCandidato(perfil string, alcance []string, opts Opciones
 		return nil, ErrCandidatoObsoleto
 	}
 	return runs, nil
+}
+
+func mismasRutas(analizadas, cambiadas []string) bool {
+	if len(analizadas) != len(cambiadas) {
+		return false
+	}
+	pendientes := make(map[string]int, len(cambiadas))
+	for _, ruta := range cambiadas {
+		pendientes[filepath.ToSlash(filepath.Clean(filepath.FromSlash(ruta)))]++
+	}
+	for _, ruta := range analizadas {
+		pendientes[ruta]--
+	}
+	for _, cantidad := range pendientes {
+		if cantidad != 0 {
+			return false
+		}
+	}
+	return true
 }
