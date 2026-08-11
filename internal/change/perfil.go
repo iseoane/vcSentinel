@@ -205,9 +205,8 @@ func conteoDeClases(rutas []string) map[string]int {
 func modulosDeRutas(rutas []string) []string {
 	conjunto := make(map[string]bool)
 	for _, ruta := range rutas {
-		partes := strings.Split(filepath.ToSlash(ruta), "/")
-		if len(partes) >= 3 {
-			conjunto[filepath.ToSlash(filepath.Join(partes[0], partes[1]))] = true
+		if modulo := moduloDeRuta(ruta); modulo != "" {
+			conjunto[modulo] = true
 		}
 	}
 	modulos := make([]string, 0, len(conjunto))
@@ -216,6 +215,23 @@ func modulosDeRutas(rutas []string) []string {
 	}
 	sort.Strings(modulos)
 	return modulos
+}
+
+// profundidadModulo son los segmentos mínimos de ruta para que exista un
+// "módulo" (dos primeros directorios, p. ej. "internal/review"): menos que
+// eso es la raíz del repo o un solo directorio, no un módulo identificable.
+const profundidadModulo = 3
+
+// moduloDeRuta es el único punto de verdad del criterio de "módulo" del
+// paquete: modulosDeRutas (cross_module) y Cohesion (proximidad estructural,
+// T3.5) lo comparten en vez de reimplementar cada uno su propio corte de
+// segmentos (revisión de T3.5).
+func moduloDeRuta(ruta string) string {
+	partes := strings.Split(filepath.ToSlash(ruta), "/")
+	if len(partes) < profundidadModulo {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Join(partes[0], partes[1]))
 }
 
 // entradaClasificacion agrupa las señales ya derivadas (rutas, cambios) y los

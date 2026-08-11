@@ -31,9 +31,7 @@ func Cohesion(rutas []string, git LectorGit) (ResultadoCohesion, error) {
 	componentes := nuevoConjuntoDisjunto(len(rutas))
 	conectarPorProximidad(rutas, componentes)
 
-	args := []string{"log", "--format=commit:%H", "--name-only", "--"}
-	args = append(args, rutas...)
-	historial, err := diffGit(git, "estas rutas", "leer el co-cambio histórico", args...)
+	historial, err := historialCoCambio(git, rutas)
 	if err != nil {
 		return ResultadoCohesion{}, err
 	}
@@ -45,6 +43,35 @@ func Cohesion(rutas []string, git LectorGit) (ResultadoCohesion, error) {
 		Puntuacion:      1 / float64(clusters),
 		SugerenciaSplit: clusters > 1,
 	}, nil
+}
+
+// loteMaximoRutasHistorial acota cuántas rutas van en un solo "git log --
+// <rutas...>": pasar cientos de rutas sin trocear arriesga el límite de
+// argumentos del proceso (ARG_MAX), justo en el caso que esta herramienta
+// existe para detectar (revisión de T3.5). No degrada con proximidad-solo si
+// un lote falla: sigue el mismo criterio fail-fast que PerfilDeCambio ante un
+// error de git, en vez de devolver una puntuación parcial sin avisar.
+const loteMaximoRutasHistorial = 200
+
+// historialCoCambio agrega el historial de "git log --name-only" en lotes
+// para no superar loteMaximoRutasHistorial rutas por invocación.
+func historialCoCambio(git LectorGit, rutas []string) (string, error) {
+	var historial strings.Builder
+	for inicio := 0; inicio < len(rutas); inicio += loteMaximoRutasHistorial {
+		fin := inicio + loteMaximoRutasHistorial
+		if fin > len(rutas) {
+			fin = len(rutas)
+		}
+		args := []string{"log", "--format=commit:%H", "--name-only", "--"}
+		args = append(args, rutas[inicio:fin]...)
+		salida, err := diffGit(git, "estas rutas", "leer el co-cambio histórico", args...)
+		if err != nil {
+			return "", err
+		}
+		historial.WriteString(salida)
+		historial.WriteString("\n")
+	}
+	return historial.String(), nil
 }
 
 func normalizarRutas(rutas []string) []string {
@@ -81,14 +108,6 @@ func conectarConPrimero(grupo map[string]int, clave string, indice int, componen
 		return
 	}
 	grupo[clave] = indice
-}
-
-func moduloDeRuta(ruta string) string {
-	partes := strings.Split(filepath.ToSlash(ruta), "/")
-	if len(partes) < 3 {
-		return ""
-	}
-	return filepath.ToSlash(filepath.Join(partes[0], partes[1]))
 }
 
 func conectarPorHistorial(historial string, rutas []string, componentes *conjuntoDisjunto) {

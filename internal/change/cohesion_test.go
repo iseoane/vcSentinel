@@ -1,6 +1,10 @@
 package change
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestCohesionPorComponentesConexas(t *testing.T) {
 	casos := []struct {
@@ -82,5 +86,49 @@ func TestCohesionPorComponentesConexas(t *testing.T) {
 				t.Errorf("llamadas a git = %d, quiere 1", llamadas)
 			}
 		})
+	}
+}
+
+// TestCohesionTroceaRutasEnLotesParaGitLog cubre la revisión de T3.5: pasar
+// más de loteMaximoRutasHistorial rutas de una sola vez a "git log -- ..."
+// arriesgaba el límite de argumentos del proceso. Con 250 rutas debe haber 2
+// llamadas (200 + 50), ninguna con más de loteMaximoRutasHistorial rutas.
+func TestCohesionTroceaRutasEnLotesParaGitLog(t *testing.T) {
+	rutas := make([]string, 250)
+	for i := range rutas {
+		rutas[i] = fmt.Sprintf("internal/mismo/archivo%03d.go", i)
+	}
+
+	llamadas := 0
+	var tamanosDeLote []int
+	falso := func(args ...string) (string, error) {
+		llamadas++
+		rutasEnEsteLote := 0
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "internal/mismo/") {
+				rutasEnEsteLote++
+			}
+		}
+		tamanosDeLote = append(tamanosDeLote, rutasEnEsteLote)
+		if rutasEnEsteLote > loteMaximoRutasHistorial {
+			t.Fatalf("lote de %d rutas supera loteMaximoRutasHistorial=%d", rutasEnEsteLote, loteMaximoRutasHistorial)
+		}
+		return "", nil
+	}
+
+	resultado, err := Cohesion(rutas, falso)
+	if err != nil {
+		t.Fatalf("Cohesion devolvió error: %v", err)
+	}
+	if llamadas != 2 {
+		t.Fatalf("llamadas a git = %d, quiere 2 (250 rutas en lotes de %d)", llamadas, loteMaximoRutasHistorial)
+	}
+	if tamanosDeLote[0] != loteMaximoRutasHistorial || tamanosDeLote[1] != 50 {
+		t.Errorf("tamaños de lote = %v, quiere [%d, 50]", tamanosDeLote, loteMaximoRutasHistorial)
+	}
+	// Mismo directorio ("internal/mismo"): proximidad estructural las conecta
+	// a todas en un único clúster, independientemente del historial vacío.
+	if resultado.Clusters != 1 {
+		t.Errorf("Clusters = %d, quiere 1 (mismo directorio)", resultado.Clusters)
 	}
 }
