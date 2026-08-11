@@ -139,13 +139,53 @@ func TestProveedorNativoAtestaArchivosConsumidos(t *testing.T) {
 	}
 }
 
+func TestProveedorNativoIgnoraGoWorkDesactivado(t *testing.T) {
+	dir := crearModulo(t, map[string]string{
+		"go.mod":  "module example.test/s\n\ngo 1.26\n",
+		"go.work": "go 1.26\n\nuse .\n",
+		"main.go": "package s\n",
+	})
+	oid := treeOID(t, dir)
+	os.WriteFile(filepath.Join(dir, "go.work"), []byte("go 1.26\n\nuse ./missing\n"), 0644)
+	git(t, dir, "update-index", "--assume-unchanged", "go.work")
+	resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"})
+	if !resultado.Completo() {
+		t.Fatalf("go.work consumido pese a GOWORK=off: %q", resultado.MotivoIncompleto())
+	}
+}
+
+func TestProveedorNativoIgnoraObjetosDeReemplazo(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	original := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	esperado := treeOID(t, dir)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package hostile\n"), 0644)
+	git(t, dir, "commit", "-qam", "replacement")
+	reemplazo := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	git(t, dir, "reset", "--hard", "-q", original)
+	git(t, dir, "replace", original, reemplazo)
+	if actual := treeOID(t, dir); actual == esperado {
+		t.Fatal("refs/replace no alteró HEAD^{tree}; el fixture no prueba la defensa")
+	}
+	resultado, _ := NuevoProveedorNativo(dir, esperado).Analizar([]string{"main.go"})
+	if !resultado.Completo() {
+		t.Fatalf("refs/replace alteró la atestación: %q", resultado.MotivoIncompleto())
+	}
+}
+
 func TestProveedorNativoSaneaEntornoGit(t *testing.T) {
 	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	hostil := crearModulo(t, map[string]string{"go.mod": "module hostile.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
 	t.Setenv("GIT_DIR", filepath.Join(hostil, ".git"))
 	t.Setenv("GIT_WORK_TREE", hostil)
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(hostil, "hostile-config"))
+	configHostil := filepath.Join(hostil, "hostile-config")
+	os.WriteFile(configHostil, []byte("configuración inválida\n"), 0644)
+	t.Setenv("GIT_CONFIG_GLOBAL", configHostil)
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err == nil {
+		t.Fatal("la configuración global hostil no altera Git; el fixture no prueba el saneado")
+	}
 	resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"})
 	if !resultado.Completo() {
 		t.Fatalf("entorno Git redirigió la atestación: %q", resultado.MotivoIncompleto())
@@ -224,6 +264,9 @@ func TestCargaNoAutorizaArchivosFueraDelSnapshot(t *testing.T) {
 	resultado, _ := p.Analizar([]string{"main.go"})
 	if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "archivo de paquete fuera") {
 		t.Fatalf("archivo externo autorizado: %q", resultado.MotivoIncompleto())
+	}
+	if strings.Contains(resultado.MotivoIncompleto(), fuera) {
+		t.Fatalf("motivo expone ruta absoluta consumida: %q", resultado.MotivoIncompleto())
 	}
 }
 

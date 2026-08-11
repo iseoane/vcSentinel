@@ -16,7 +16,20 @@ import (
 )
 
 type cargadorPaquetes func(*packages.Config, ...string) ([]*packages.Package, error)
-type verificadorSnapshot func(string, string, []string) error
+type faseVerificacion uint8
+
+const (
+	verificarIdentidad faseVerificacion = iota
+	verificarConsumidos
+)
+
+type solicitudVerificacion struct {
+	directorio, identidad string
+	fase                  faseVerificacion
+	consumidos            []string
+}
+
+type verificadorSnapshot func(solicitudVerificacion) error
 
 type proveedorNativo struct {
 	directorio string
@@ -51,7 +64,8 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 		razones = append(razones, "snapshot no resoluble: "+err.Error())
 	} else {
 		p.directorio = directorio
-		if err := p.verificar(p.directorio, p.identidad, nil); err != nil {
+		solicitud := solicitudVerificacion{directorio: p.directorio, identidad: p.identidad, fase: verificarIdentidad}
+		if err := p.verificar(solicitud); err != nil {
 			razones = append(razones, "snapshot no verificable: "+err.Error())
 		}
 	}
@@ -102,7 +116,11 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 	}
 	p.expandirAlcance(cambiados, &alcance)
 	if p.directorio != "" {
-		if err := p.verificar(p.directorio, p.identidad, archivosConsumidos(paquetes)); err != nil {
+		solicitud := solicitudVerificacion{
+			directorio: p.directorio, identidad: p.identidad,
+			fase: verificarConsumidos, consumidos: archivosConsumidos(paquetes),
+		}
+		if err := p.verificar(solicitud); err != nil {
 			razones = append(razones, "snapshot no verificable al completar: "+err.Error())
 		}
 	}
@@ -138,7 +156,7 @@ func (p *proveedorNativo) construirGrafo(paquetes []*packages.Package, razones *
 		for _, archivo := range append(append(paquete.GoFiles, paquete.OtherFiles...), paquete.EmbedFiles...) {
 			resuelto, err := filepath.EvalSymlinks(archivo)
 			if err != nil || !dentroDe(p.directorio, resuelto) {
-				*razones = append(*razones, fmt.Sprintf("archivo de paquete fuera del snapshot: %s", archivo))
+				*razones = append(*razones, "archivo de paquete fuera del snapshot")
 				continue
 			}
 			relativa, _ := filepath.Rel(p.directorio, resuelto)
@@ -245,7 +263,8 @@ func archivosConsumidos(paquetes []*packages.Package) []string {
 	return archivos
 }
 
-func verificarSnapshotGit(directorio, esperado string, consumidos []string) error {
+func verificarSnapshotGit(solicitud solicitudVerificacion) error {
+	directorio, esperado := solicitud.directorio, solicitud.identidad
 	gitDir, err := gitSnapshot(directorio, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return fmt.Errorf("repositorio Git no verificable")
@@ -271,11 +290,14 @@ func verificarSnapshotGit(directorio, esperado string, consumidos []string) erro
 			blobs[ruta] = campos[2]
 		}
 	}
-	for _, ruta := range []string{"go.mod", "go.sum", "go.work", filepath.Join("vendor", "modules.txt")} {
-		if _, ok := blobs[filepath.ToSlash(ruta)]; ok {
-			consumidos = append(consumidos, filepath.Join(directorio, ruta))
-		} else if _, err := os.Stat(filepath.Join(directorio, ruta)); err == nil {
-			consumidos = append(consumidos, filepath.Join(directorio, ruta))
+	consumidos := solicitud.consumidos
+	if solicitud.fase == verificarConsumidos {
+		for _, ruta := range []string{"go.mod", "go.sum", filepath.Join("vendor", "modules.txt")} {
+			if _, ok := blobs[filepath.ToSlash(ruta)]; ok {
+				consumidos = append(consumidos, filepath.Join(directorio, ruta))
+			} else if _, err := os.Stat(filepath.Join(directorio, ruta)); err == nil {
+				consumidos = append(consumidos, filepath.Join(directorio, ruta))
+			}
 		}
 	}
 	ordenarUnicos(&consumidos)
@@ -285,7 +307,7 @@ func verificarSnapshotGit(directorio, esperado string, consumidos []string) erro
 		}
 		resuelto, err := filepath.EvalSymlinks(archivo)
 		if err != nil || !dentroDe(directorio, resuelto) {
-			return fmt.Errorf("blob consumido fuera del snapshot: %s", archivo)
+			return fmt.Errorf("blob consumido fuera del snapshot")
 		}
 		relativa, _ := filepath.Rel(directorio, resuelto)
 		ruta := filepath.ToSlash(relativa)
@@ -322,7 +344,7 @@ func gitEnRepositorio(directorio, gitDir string, entrada []byte, args ...string)
 }
 
 func entornoGitSaneado() []string {
-	entorno := []string{"LC_ALL=C", "LANG=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0"}
+	entorno := []string{"LC_ALL=C", "LANG=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_NO_REPLACE_OBJECTS=1", "GIT_OPTIONAL_LOCKS=0"}
 	for _, variable := range os.Environ() {
 		nombre, _, _ := strings.Cut(variable, "=")
 		if !strings.HasPrefix(nombre, "GIT_") && nombre != "LANG" && nombre != "LC_ALL" && !strings.HasPrefix(nombre, "LC_") && nombre != "GOWORK" {
