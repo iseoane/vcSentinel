@@ -91,6 +91,24 @@ func TestPrecedenciaConfig(t *testing.T) {
 	})
 }
 
+func TestConsentimientoDiffAgenteExterno(t *testing.T) {
+	home := t.TempDir()
+	worktree := t.TempDir()
+	setHome(t, home)
+
+	cfg := CargarConfiguracionLocal(worktree)
+	if cfg.AllowExternalAgentDiff {
+		t.Fatal("allow_external_agent_diff debe ser false por defecto")
+	}
+
+	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		"allow_external_agent_diff: true\n")
+	cfg = CargarConfiguracionLocal(worktree)
+	if !cfg.AllowExternalAgentDiff {
+		t.Fatal("allow_external_agent_diff: true no fue aplicado")
+	}
+}
+
 // TestConfigChangeClasses verifica change.classes: sin config de usuario
 // aplican los defaults, y al declararla el usuario la reemplaza preservando
 // el orden textual (la precedencia del clasificador).

@@ -744,6 +744,11 @@ func leerLinea() (string, error) {
 // no existe, falla la sonda o falla al generar algún mensaje, ofrece al usuario
 // elegir mensajes automáticos, otro adaptador disponible o cancelar.
 func elegirAdaptadorYGenerarMensajes(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
+	if !permiteDiffAgenteExterno(path) {
+		fmt.Println("ℹ️ No se envía código al agente: allow_external_agent_diff está desactivado; se usan mensajes deterministas locales.")
+		git.AplicarMensajesAutomaticos(plan)
+		return nil, false
+	}
 	adapter, err := agentadapter.NewAgentAdapterParaMensaje(path)
 	if err != nil {
 		fmt.Printf("⚠️ %v\n", err)
@@ -905,6 +910,10 @@ func imprimirPlan(plan *git.PlanFragmentacion) {
 }
 
 func regenerarMensajeLoteInteractivo(plan *git.PlanFragmentacion, path string) {
+	if !permiteDiffAgenteExterno(path) {
+		fmt.Println("⚠️ No se puede regenerar con un agente sin allow_external_agent_diff: el micro-diff expondría código fuente al proveedor externo.")
+		return
+	}
 	fmt.Print("¿Qué lote quieres regenerar? (número): ")
 	linea, err := leerLinea()
 	if err != nil {

@@ -56,6 +56,11 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # elegía al azar y mezclaba idiomas dentro de la misma fragmentación.
 # commit_language: "en"
 #
+# Exposición de datos: generar mensajes semánticos envía micro-diffs con código
+# fuente al proveedor externo configurado. El valor predeterminado es false y
+# usa mensajes deterministas locales; activa esta opción solo con consentimiento.
+# allow_external_agent_diff: true
+#
 # Ejemplo (descomenta y ajusta):
 # active_agent: "claude"
 # agents:

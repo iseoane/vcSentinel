@@ -1,11 +1,11 @@
 package agentadapter
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +40,9 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
+	if c.esOpenCode() {
+		return "", fmt.Errorf("opencode requiere la via consentida con micro-diff para generar mensajes de commit")
+	}
 	salida, err := c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
 	if err != nil {
 		return "", err
@@ -137,21 +140,23 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 }
 
 func extraerMensajeCommitOpenCode(salida string) (string, error) {
-	decoder := json.NewDecoder(strings.NewReader(salida))
+	scanner := bufio.NewScanner(strings.NewReader(salida))
 	mensaje := ""
 	textos := 0
-	for {
+	lineas := 0
+	for scanner.Scan() {
+		linea := scanner.Bytes()
+		if len(bytes.TrimSpace(linea)) == 0 {
+			return "", fmt.Errorf("salida JSONL invalida de opencode: linea vacia")
+		}
+		lineas++
 		var evento struct {
 			Type string `json:"type"`
 			Part struct {
 				Text string `json:"text"`
 			} `json:"part"`
 		}
-		err := decoder.Decode(&evento)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
+		if err := json.Unmarshal(linea, &evento); err != nil {
 			return "", fmt.Errorf("salida JSONL invalida de opencode: %w", err)
 		}
 		if evento.Type != "text" {
@@ -162,6 +167,12 @@ func extraerMensajeCommitOpenCode(salida string) (string, error) {
 			return "", fmt.Errorf("opencode devolvio multiples eventos de texto")
 		}
 		mensaje = evento.Part.Text
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("salida JSONL invalida de opencode: %w", err)
+	}
+	if lineas == 0 {
+		return "", fmt.Errorf("salida JSONL vacia de opencode")
 	}
 	if textos != 1 {
 		return "", fmt.Errorf("opencode no devolvio un evento de texto")

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
@@ -37,7 +38,12 @@ func ejecutarSlicePlan(salida io.Writer, args []string) int {
 		fmt.Fprintf(salida, "❌ %v\n", err)
 		return 1
 	}
-	adapter, _ := nuevoAgentAdapterParaMensaje(raiz)
+	var adapter agentadapter.AgentAdapter
+	// El micro-diff contiene código fuente: solo puede salir del equipo cuando
+	// el repositorio lo autoriza de forma persistida y explícita.
+	if permiteDiffAgenteExterno(raiz) {
+		adapter, _ = nuevoAgentAdapterParaMensaje(raiz)
+	}
 	plan, err := git.ConstruirPlanParaAgenteConAdapter(adapter)
 	if err != nil {
 		fmt.Fprintf(salida, "❌ %v\n", err)
@@ -59,6 +65,10 @@ func ejecutarSlicePlan(salida io.Writer, args []string) int {
 		return codigoSalidaDecisionesPendientes
 	}
 	return 0
+}
+
+func permiteDiffAgenteExterno(raiz string) bool {
+	return config.CargarConfiguracionLocal(raiz).AllowExternalAgentDiff
 }
 
 // ejecutarSliceApply ejecuta un plan previamente emitido, solo con las

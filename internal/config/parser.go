@@ -101,9 +101,12 @@ type Config struct {
 	// CommitLanguage fija el idioma de los mensajes de commit que genera el
 	// agente (T0.13). Por defecto, el del historial del repositorio.
 	CommitLanguage string
-	LintCommands   []string
-	TestCommands   []string
-	BuildCommands  []string
+	// AllowExternalAgentDiff autoriza exponer micro-diffs del repositorio al
+	// proveedor externo al generar mensajes de slice. Es false por defecto.
+	AllowExternalAgentDiff bool
+	LintCommands           []string
+	TestCommands           []string
+	BuildCommands          []string
 }
 
 // DimensionesPorDefecto son las seis dimensiones canónicas de auditoría.
@@ -115,7 +118,8 @@ func configuracionPorDefecto() Config {
 		// "es" y no agentadapter.IdiomaPorDefecto: agentadapter ya importa
 		// config, así que referenciarlo aquí crearía un ciclo. Los tests de
 		// agentadapter fijan que ambos valores coinciden.
-		CommitLanguage: "es",
+		CommitLanguage:         "es",
+		AllowExternalAgentDiff: false,
 		Agents: map[string]AgentConfig{
 			"claude": {
 				Model:           "claude-5-sonnet",
@@ -306,17 +310,18 @@ type changeYAML struct {
 // decodificación estricta de configuración existente. Añadir esa sección a
 // Config es otra tarea.
 type configYAML struct {
-	Version        *string                     `yaml:"version"`
-	ActiveAgent    *string                     `yaml:"active_agent"`
-	Agents         map[string]agenteYAML       `yaml:"agents"`
-	Profiles       map[string]perfilGlobalYAML `yaml:"profiles"`
-	Review         *reviewYAML                 `yaml:"review"`
-	Validation     *validationYAML             `yaml:"validation"`
-	CommitLanguage *string                     `yaml:"commit_language"`
-	LintCommands   []string                    `yaml:"lint_commands"`
-	TestCommands   []string                    `yaml:"test_commands"`
-	BuildCommands  []string                    `yaml:"build_commands"`
-	Change         *changeYAML                 `yaml:"change"`
+	Version                *string                     `yaml:"version"`
+	ActiveAgent            *string                     `yaml:"active_agent"`
+	Agents                 map[string]agenteYAML       `yaml:"agents"`
+	Profiles               map[string]perfilGlobalYAML `yaml:"profiles"`
+	Review                 *reviewYAML                 `yaml:"review"`
+	Validation             *validationYAML             `yaml:"validation"`
+	CommitLanguage         *string                     `yaml:"commit_language"`
+	AllowExternalAgentDiff *bool                       `yaml:"allow_external_agent_diff"`
+	LintCommands           []string                    `yaml:"lint_commands"`
+	TestCommands           []string                    `yaml:"test_commands"`
+	BuildCommands          []string                    `yaml:"build_commands"`
+	Change                 *changeYAML                 `yaml:"change"`
 }
 
 // ordenAgentesYAML se decodifica SIN KnownFields, solo para leer el orden
@@ -376,6 +381,9 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 	}
 	if raw.CommitLanguage != nil {
 		cfg.CommitLanguage = *raw.CommitLanguage
+	}
+	if raw.AllowExternalAgentDiff != nil {
+		cfg.AllowExternalAgentDiff = *raw.AllowExternalAgentDiff
 	}
 	for nombre, agenteRaw := range raw.Agents {
 		agente := cfg.Agents[nombre]

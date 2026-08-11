@@ -79,29 +79,17 @@ func leerCapturaAgente(t *testing.T, ruta string) capturaAgente {
 	return captura
 }
 
-func TestObtenerMensajeCommitOpenCodeMantieneElRepositorio(t *testing.T) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
-	}
+func TestObtenerMensajeCommitOpenCodeSinDiffFallaSinInvocarProceso(t *testing.T) {
 	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
 	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
 	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "opencode"), Timeout: 10 * time.Second}
 
-	mensaje, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1)
-	if err != nil {
-		t.Fatalf("ObtenerMensajeCommit devolvió error: %v", err)
+	if _, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
+		t.Fatal("OpenCode sin micro-diff consentido debe fallar cerrado")
 	}
-	if mensaje != "feat(adapter): conservar contexto del repositorio" {
-		t.Fatalf("mensaje = %q", mensaje)
-	}
-	captura := leerCapturaAgente(t, capturaRuta)
-	if !mismaRuta(captura.Dir, cwd) {
-		t.Fatalf("cwd del agente = %q, esperado el repositorio %q", captura.Dir, cwd)
-	}
-	if !reflect.DeepEqual(captura.Args, []string{"run"}) {
-		t.Fatalf("argumentos = %v, esperados [run] sin aislamiento", captura.Args)
+	if _, err := os.Stat(capturaRuta); !os.IsNotExist(err) {
+		t.Fatalf("OpenCode fue invocado sin micro-diff consentido: %v", err)
 	}
 }
 
@@ -182,6 +170,9 @@ func TestExtraerMensajeCommitOpenCode(t *testing.T) {
 			valida:   true,
 		},
 		{nombre: "json malformado", salida: "{\"type\":\"text\"", valida: false},
+		{nombre: "objetos concatenados en una linea", salida: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valida: false},
+		{nombre: "linea vacia intermedia", salida: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valida: false},
+		{nombre: "contenido en blanco", salida: "   \n", valida: false},
 		{nombre: "sin texto", salida: "{\"type\":\"step_finish\"}\n", valida: false},
 		{
 			nombre: "text sin payload",

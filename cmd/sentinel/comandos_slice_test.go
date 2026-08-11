@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	gitinterno "github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
 type adapterSlicePlanFake struct{}
@@ -21,6 +23,7 @@ func (*adapterSlicePlanFake) ObtenerMensajeCommit([]string, string, int) (string
 
 func TestEjecutarSlicePlanUsaFactoryDeMensajes(t *testing.T) {
 	prepararRepoParaPlan(t)
+	escribirConsentimientoDiff(t, true)
 	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +53,47 @@ func TestEjecutarSlicePlanUsaFactoryDeMensajes(t *testing.T) {
 	}
 	if plan.Lotes[0].Mensaje != "feat(slice): mensaje desde perfil commit" {
 		t.Fatalf("mensaje serializado = %q", plan.Lotes[0].Mensaje)
+	}
+}
+
+func TestEjecutarSlicePlanSinConsentimientoNoInvocaAgente(t *testing.T) {
+	prepararRepoParaPlan(t)
+	escribirConsentimientoDiff(t, false)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	invocado := false
+	nuevoAgentAdapterParaMensaje = func(string) (agentadapter.AgentAdapter, error) {
+		invocado = true
+		return &adapterSlicePlanFake{}, nil
+	}
+
+	var salida bytes.Buffer
+	if codigo := ejecutarSlicePlan(&salida, []string{"--json"}); codigo != 0 {
+		t.Fatalf("exit = %d: %s", codigo, salida.String())
+	}
+	if invocado {
+		t.Fatal("se invocó el factory del agente sin consentimiento para exponer el micro-diff")
+	}
+	if !strings.Contains(salida.String(), "chore(slice): auto-fragmented") {
+		t.Fatalf("no se usó el fallback determinista: %s", salida.String())
+	}
+}
+
+func TestElegirAdaptadorSinConsentimientoUsaFallbackDeterminista(t *testing.T) {
+	ruta := t.TempDir()
+	t.Chdir(ruta)
+	escribirConsentimientoDiff(t, false)
+	plan := &gitinterno.PlanFragmentacion{Lotes: []gitinterno.LotePlanificado{{
+		Numero: 1, MensajeAutomatico: "chore(slice): fallback local",
+	}}}
+
+	adapter, cancelado := elegirAdaptadorYGenerarMensajes(ruta, plan)
+	if adapter != nil || cancelado {
+		t.Fatalf("adapter = %v, cancelado = %t", adapter, cancelado)
+	}
+	if plan.Lotes[0].Mensaje != "chore(slice): fallback local" || !plan.Lotes[0].MensajeDeterminista {
+		t.Fatalf("lote sin fallback determinista: %+v", plan.Lotes[0])
 	}
 }
 
@@ -155,5 +199,16 @@ func prepararRepoParaPlan(t *testing.T) {
 		if err := exec.Command("git", args...).Run(); err != nil {
 			t.Fatalf("preparación %v falló: %v", args, err)
 		}
+	}
+}
+
+func escribirConsentimientoDiff(t *testing.T, permitido bool) {
+	t.Helper()
+	if err := os.MkdirAll(".vas_sentinel", 0755); err != nil {
+		t.Fatal(err)
+	}
+	contenido := fmt.Sprintf("allow_external_agent_diff: %t\n", permitido)
+	if err := os.WriteFile(filepath.Join(".vas_sentinel", "vassentinel.yml"), []byte(contenido), 0644); err != nil {
+		t.Fatal(err)
 	}
 }

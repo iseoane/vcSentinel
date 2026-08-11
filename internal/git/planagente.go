@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 )
 
 // Respuestas admitidas para una decisión pendiente del plan. No hay valor por
@@ -80,7 +78,11 @@ func ConstruirPlanParaAgente() (*PlanSerializado, error) {
 
 // ConstruirPlanParaAgenteConAdapter intenta generar mensajes semánticos antes
 // de serializar; un adaptador ausente o fallido conserva el fallback del plan.
-func ConstruirPlanParaAgenteConAdapter(adapter agentadapter.AgentAdapter) (*PlanSerializado, error) {
+type generadorMensajesCommit interface {
+	ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error)
+}
+
+func ConstruirPlanParaAgenteConAdapter(adapter generadorMensajesCommit) (*PlanSerializado, error) {
 	archivos, err := ObtenerArchivosModificados()
 	if err != nil {
 		return nil, err

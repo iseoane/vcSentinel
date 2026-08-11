@@ -1,5 +1,8 @@
 version: "2.0"
 active_agent: "opencode"
+# Autoriza enviar micro-diffs con código fuente al proveedor externo para
+# generar mensajes semánticos de slice. Consentimiento explícito del usuario.
+allow_external_agent_diff: true
 agents:
   claude:
     model: "claude-sonnet"
