@@ -104,6 +104,73 @@ func TestProveedorNativoVerificaSnapshotAntesDeConfiar(t *testing.T) {
 	}
 }
 
+func TestProveedorNativoAtestaArchivosConsumidos(t *testing.T) {
+	casos := []struct {
+		nombre string
+		mutar  func(*testing.T, string)
+	}{
+		{"go ignorado", func(t *testing.T, dir string) {
+			os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored.go\n"), 0644)
+			git(t, dir, "add", ".gitignore")
+			git(t, dir, "commit", "-qm", "ignore")
+			os.WriteFile(filepath.Join(dir, "ignored.go"), []byte("package s\n"), 0644)
+		}},
+		{"rastreado assume unchanged", func(t *testing.T, dir string) {
+			os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// alterado\n"), 0644)
+			git(t, dir, "update-index", "--assume-unchanged", "main.go")
+			if estado := strings.TrimSpace(git(t, dir, "status", "--porcelain")); estado != "" {
+				t.Fatalf("el fixture debe ocultar el cambio a status: %q", estado)
+			}
+		}},
+		{"metadata de módulo", func(t *testing.T, dir string) {
+			os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module hostile.test/s\n\ngo 1.26\n"), 0644)
+			git(t, dir, "update-index", "--assume-unchanged", "go.mod")
+		}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+			caso.mutar(t, dir)
+			resultado, _ := proveedorDelModulo(t, dir).Analizar([]string{"main.go"})
+			if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "blob") {
+				t.Fatalf("bytes no atestados: completo=%v motivo=%q", resultado.Completo(), resultado.MotivoIncompleto())
+			}
+		})
+	}
+}
+
+func TestProveedorNativoSaneaEntornoGit(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	hostil := crearModulo(t, map[string]string{"go.mod": "module hostile.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	t.Setenv("GIT_DIR", filepath.Join(hostil, ".git"))
+	t.Setenv("GIT_WORK_TREE", hostil)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(hostil, "hostile-config"))
+	resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"})
+	if !resultado.Completo() {
+		t.Fatalf("entorno Git redirigió la atestación: %q", resultado.MotivoIncompleto())
+	}
+}
+
+func TestProveedorNativoRevalidaTrasCarga(t *testing.T) {
+	dir := crearModulo(t, map[string]string{
+		"go.mod":   "module example.test/s\n\ngo 1.26\n",
+		"main.go":  "package s\n",
+		"other.go": "package s\n",
+	})
+	p := proveedorDelModulo(t, dir)
+	cargar := p.cargar
+	p.cargar = func(config *packages.Config, patrones ...string) ([]*packages.Package, error) {
+		paquetes, err := cargar(config, patrones...)
+		os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// mutado durante carga\n"), 0644)
+		return paquetes, err
+	}
+	resultado, _ := p.Analizar([]string{"main.go", "other.go"})
+	if resultado.Completo() || !reflect.DeepEqual(resultado.NoCubiertos(), []string{"main.go", "other.go"}) {
+		t.Fatalf("mutación temporal autorizada: completo=%v no cubiertos=%v motivo=%q", resultado.Completo(), resultado.NoCubiertos(), resultado.MotivoIncompleto())
+	}
+}
+
 func TestProveedorNativoRechazaEscapePorSymlink(t *testing.T) {
 	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	fuera := filepath.Join(t.TempDir(), "fuera.go")

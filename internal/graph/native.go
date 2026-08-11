@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"bytes"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -15,7 +16,7 @@ import (
 )
 
 type cargadorPaquetes func(*packages.Config, ...string) ([]*packages.Package, error)
-type verificadorSnapshot func(string, string) error
+type verificadorSnapshot func(string, string, []string) error
 
 type proveedorNativo struct {
 	directorio string
@@ -50,14 +51,14 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 		razones = append(razones, "snapshot no resoluble: "+err.Error())
 	} else {
 		p.directorio = directorio
-		if err := p.verificar(p.directorio, p.identidad); err != nil {
+		if err := p.verificar(p.directorio, p.identidad, nil); err != nil {
 			razones = append(razones, "snapshot no verificable: "+err.Error())
 		}
 	}
 	config := &packages.Config{
-		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedEmbedFiles | packages.NeedForTest,
+		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedEmbedFiles | packages.NeedForTest | packages.NeedModule,
 		Dir:   p.directorio,
-		Env:   append(os.Environ(), "GOWORK=off"),
+		Env:   append(entornoGitSaneado(), "GOWORK=off"),
 		Tests: true,
 	}
 	var paquetes []*packages.Package
@@ -100,13 +101,13 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 		}
 	}
 	p.expandirAlcance(cambiados, &alcance)
-	if len(razones) > 0 && len(noCubiertos) == 0 {
-		noCubiertos = append(noCubiertos, rutas...)
-	}
 	if p.directorio != "" {
-		if err := p.verificar(p.directorio, p.identidad); err != nil {
+		if err := p.verificar(p.directorio, p.identidad, archivosConsumidos(paquetes)); err != nil {
 			razones = append(razones, "snapshot no verificable al completar: "+err.Error())
 		}
+	}
+	if len(razones) > 0 && len(noCubiertos) == 0 {
+		noCubiertos = append(noCubiertos, rutas...)
 	}
 	ordenarUnicos(&razones)
 	ordenarUnicos(&noCubiertos)
@@ -223,22 +224,112 @@ func esConfiguracionGlobal(ruta string) bool {
 		base == "build.yml" || base == "build.yaml" || base == "build.xml"
 }
 
-func verificarSnapshotGit(directorio, esperado string) error {
-	arbol, err := gitSnapshot(directorio, "rev-parse", "HEAD^{tree}")
+func archivosConsumidos(paquetes []*packages.Package) []string {
+	var archivos []string
+	for _, paquete := range paquetes {
+		if strings.HasSuffix(paquete.PkgPath, ".test") {
+			continue
+		}
+		archivos = append(archivos, paquete.GoFiles...)
+		archivos = append(archivos, paquete.CompiledGoFiles...)
+		archivos = append(archivos, paquete.OtherFiles...)
+		archivos = append(archivos, paquete.EmbedFiles...)
+		if paquete.Module != nil {
+			archivos = append(archivos, paquete.Module.GoMod)
+			if paquete.Module.Replace != nil {
+				archivos = append(archivos, paquete.Module.Replace.GoMod)
+			}
+		}
+	}
+	ordenarUnicos(&archivos)
+	return archivos
+}
+
+func verificarSnapshotGit(directorio, esperado string, consumidos []string) error {
+	gitDir, err := gitSnapshot(directorio, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return fmt.Errorf("repositorio Git no verificable")
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	arbol, err := gitEnRepositorio(directorio, gitDir, nil, "rev-parse", "HEAD^{tree}")
 	if err != nil || strings.TrimSpace(arbol) != esperado {
 		return fmt.Errorf("tree OID distinto del esperado")
 	}
-	estado, err := gitSnapshot(directorio, "status", "--porcelain", "--untracked-files=all")
-	if err != nil || strings.TrimSpace(estado) != "" {
+	noRastreados, err := gitEnRepositorio(directorio, gitDir, nil, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil || noRastreados != "" {
 		return fmt.Errorf("directorio sucio o con archivos no rastreados")
+	}
+	salida, err := gitEnRepositorio(directorio, gitDir, nil, "ls-tree", "-rz", "--full-tree", esperado)
+	if err != nil {
+		return fmt.Errorf("árbol esperado no legible")
+	}
+	blobs := map[string]string{}
+	for _, entrada := range strings.Split(salida, "\x00") {
+		cabecera, ruta, ok := strings.Cut(entrada, "\t")
+		campos := strings.Fields(cabecera)
+		if ok && len(campos) == 3 && campos[1] == "blob" {
+			blobs[ruta] = campos[2]
+		}
+	}
+	for _, ruta := range []string{"go.mod", "go.sum", "go.work", filepath.Join("vendor", "modules.txt")} {
+		if _, ok := blobs[filepath.ToSlash(ruta)]; ok {
+			consumidos = append(consumidos, filepath.Join(directorio, ruta))
+		} else if _, err := os.Stat(filepath.Join(directorio, ruta)); err == nil {
+			consumidos = append(consumidos, filepath.Join(directorio, ruta))
+		}
+	}
+	ordenarUnicos(&consumidos)
+	for _, archivo := range consumidos {
+		if archivo == "" {
+			continue
+		}
+		resuelto, err := filepath.EvalSymlinks(archivo)
+		if err != nil || !dentroDe(directorio, resuelto) {
+			return fmt.Errorf("blob consumido fuera del snapshot: %s", archivo)
+		}
+		relativa, _ := filepath.Rel(directorio, resuelto)
+		ruta := filepath.ToSlash(relativa)
+		esperadoBlob, ok := blobs[ruta]
+		if !ok {
+			return fmt.Errorf("blob consumido no rastreado: %s", ruta)
+		}
+		contenido, err := os.ReadFile(resuelto)
+		if err != nil {
+			return fmt.Errorf("blob consumido no legible: %s", ruta)
+		}
+		actual, err := gitEnRepositorio(directorio, gitDir, contenido, "hash-object", "--stdin")
+		if err != nil || strings.TrimSpace(actual) != esperadoBlob {
+			return fmt.Errorf("blob consumido distinto del árbol: %s", ruta)
+		}
 	}
 	return nil
 }
 
 func gitSnapshot(directorio string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", directorio}, args...)...)
+	cmd := exec.Command("git", append([]string{"-c", "core.attributesFile=" + os.DevNull, "-c", "diff.external=", "-C", directorio}, args...)...)
+	cmd.Env = entornoGitSaneado()
 	salida, err := cmd.CombinedOutput()
 	return string(salida), err
+}
+
+func gitEnRepositorio(directorio, gitDir string, entrada []byte, args ...string) (string, error) {
+	base := []string{"-c", "core.attributesFile=" + os.DevNull, "-c", "diff.external=", "--git-dir", gitDir, "--work-tree", directorio}
+	cmd := exec.Command("git", append(base, args...)...)
+	cmd.Env = entornoGitSaneado()
+	cmd.Stdin = bytes.NewReader(entrada)
+	salida, err := cmd.CombinedOutput()
+	return string(salida), err
+}
+
+func entornoGitSaneado() []string {
+	entorno := []string{"LC_ALL=C", "LANG=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0"}
+	for _, variable := range os.Environ() {
+		nombre, _, _ := strings.Cut(variable, "=")
+		if !strings.HasPrefix(nombre, "GIT_") && nombre != "LANG" && nombre != "LC_ALL" && !strings.HasPrefix(nombre, "LC_") && nombre != "GOWORK" {
+			entorno = append(entorno, variable)
+		}
+	}
+	return entorno
 }
 
 func resolverEnSnapshot(directorio, ruta string) (string, error) {
