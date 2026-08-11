@@ -17,6 +17,7 @@ package main
 // CLI sin depender de un agente real.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -38,11 +39,25 @@ func main() {
 	}
 	time.Sleep(time.Duration(segundos) * time.Second)
 
+	prompt := ""
 	if posicionP >= 0 && posicionP < len(os.Args)-1 {
-		fmt.Print(os.Args[posicionP+1])
+		prompt = os.Args[posicionP+1]
+	} else if datos, err := io.ReadAll(os.Stdin); err == nil {
+		prompt = string(datos)
+	}
+
+	if ruta := os.Getenv("VAS_SENTINEL_TEST_CAPTURE"); ruta != "" {
+		dir, _ := os.Getwd()
+		datos, _ := json.Marshal(struct {
+			Args  []string `json:"args"`
+			Dir   string   `json:"dir"`
+			Stdin string   `json:"stdin"`
+		}{Args: os.Args[1:], Dir: dir, Stdin: prompt})
+		_ = os.WriteFile(ruta, datos, 0600)
+	}
+	if salida := os.Getenv("VAS_SENTINEL_TEST_OUTPUT"); salida != "" {
+		fmt.Print(salida)
 		return
 	}
-	if datos, err := io.ReadAll(os.Stdin); err == nil {
-		fmt.Print(string(datos))
-	}
+	fmt.Print(prompt)
 }

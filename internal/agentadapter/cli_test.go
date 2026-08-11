@@ -2,6 +2,7 @@ package agentadapter
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +16,10 @@ import (
 )
 
 func TestPrepararComandoCommitOpenCodeAislaLaEjecucion(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+	}
 	adapter := CLIAdapter{
 		BinaryName: "opencode",
 		Config:     config.AgentConfig{Model: "openai/gpt-5.6-sol", ReasoningEffort: "high"},
@@ -24,14 +29,16 @@ func TestPrepararComandoCommitOpenCodeAislaLaEjecucion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepararComandoCommit devolvió error: %v", err)
 	}
-	defer limpiar()
 
-	esperados := []string{"opencode", "run", "--pure", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", cmd.Dir}
+	esperados := []string{"opencode", "run", "--pure", "--agent", "title", "--format", "json", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", cmd.Dir}
 	if !reflect.DeepEqual(cmd.Args, esperados) {
 		t.Fatalf("argumentos = %v, esperados %v", cmd.Args, esperados)
 	}
 	if cmd.Dir == "" {
 		t.Fatal("OpenCode debe ejecutarse en un directorio neutral")
+	}
+	if mismaRuta(cmd.Dir, cwd) {
+		t.Fatalf("cmd.Dir = %q, debe ser distinto del cwd del repositorio %q", cmd.Dir, cwd)
 	}
 	datos, err := io.ReadAll(cmd.Stdin)
 	if err != nil {
@@ -39,6 +46,100 @@ func TestPrepararComandoCommitOpenCodeAislaLaEjecucion(t *testing.T) {
 	}
 	if string(datos) != "feat(test): mensaje" {
 		t.Fatalf("stdin = %q, esperado el prompt completo", datos)
+	}
+
+	limpiar()
+	if _, err := os.Stat(cmd.Dir); !os.IsNotExist(err) {
+		t.Fatalf("el directorio aislado sigue existiendo tras limpiar: %v", err)
+	}
+}
+
+type capturaAgente struct {
+	Args  []string `json:"args"`
+	Dir   string   `json:"dir"`
+	Stdin string   `json:"stdin"`
+}
+
+func mismaRuta(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && filepath.Clean(absA) == filepath.Clean(absB)
+}
+
+func leerCapturaAgente(t *testing.T, ruta string) capturaAgente {
+	t.Helper()
+	datos, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer la captura del agente: %v", err)
+	}
+	var captura capturaAgente
+	if err := json.Unmarshal(datos, &captura); err != nil {
+		t.Fatalf("captura inválida: %v", err)
+	}
+	return captura
+}
+
+func TestObtenerMensajeCommitOpenCodeMantieneElRepositorio(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+	}
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
+	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "opencode"), Timeout: 10 * time.Second}
+
+	mensaje, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1)
+	if err != nil {
+		t.Fatalf("ObtenerMensajeCommit devolvió error: %v", err)
+	}
+	if mensaje != "feat(adapter): conservar contexto del repositorio" {
+		t.Fatalf("mensaje = %q", mensaje)
+	}
+	captura := leerCapturaAgente(t, capturaRuta)
+	if !mismaRuta(captura.Dir, cwd) {
+		t.Fatalf("cwd del agente = %q, esperado el repositorio %q", captura.Dir, cwd)
+	}
+	if !reflect.DeepEqual(captura.Args, []string{"run"}) {
+		t.Fatalf("argumentos = %v, esperados [run] sin aislamiento", captura.Args)
+	}
+}
+
+func TestObtenerMensajeCommitConDiffOpenCodeEjecutaAislado(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+	}
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"fix(adapter): usar el micro diff aislado\"}}\n{\"type\":\"step_finish\"}\n")
+	adapter := CLIAdapter{
+		BinaryName: compilarAgenteConNombre(t, "opencode"),
+		Config:     config.AgentConfig{Model: "openai/gpt-5.6-sol", ReasoningEffort: "high"},
+		Timeout:    10 * time.Second,
+	}
+	microDiff := "diff --git a/x.go b/x.go\n+func corregida() {}"
+
+	mensaje, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, microDiff)
+	if err != nil {
+		t.Fatalf("ObtenerMensajeCommitConDiff devolvió error: %v", err)
+	}
+	if mensaje != "fix(adapter): usar el micro diff aislado" {
+		t.Fatalf("mensaje = %q", mensaje)
+	}
+	captura := leerCapturaAgente(t, capturaRuta)
+	if mismaRuta(captura.Dir, cwd) {
+		t.Fatalf("cwd aislado = %q, no debe ser el repositorio", captura.Dir)
+	}
+	esperados := []string{"run", "--pure", "--agent", "title", "--format", "json", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", captura.Dir}
+	if !reflect.DeepEqual(captura.Args, esperados) {
+		t.Fatalf("argumentos = %v, esperados %v", captura.Args, esperados)
+	}
+	if !strings.Contains(captura.Stdin, microDiff) {
+		t.Fatalf("stdin no contiene el micro-diff real: %q", captura.Stdin)
+	}
+	if _, err := os.Stat(captura.Dir); !os.IsNotExist(err) {
+		t.Fatalf("el cwd aislado sigue existiendo tras la ejecución: %v", err)
 	}
 }
 
@@ -62,6 +163,56 @@ func TestValidarMensajeCommit(t *testing.T) {
 			}
 			if caso.valida && mensaje != strings.TrimSpace(caso.salida) {
 				t.Fatalf("mensaje = %q, esperado %q", mensaje, strings.TrimSpace(caso.salida))
+			}
+		})
+	}
+}
+
+func TestExtraerMensajeCommitOpenCode(t *testing.T) {
+	casos := []struct {
+		nombre   string
+		salida   string
+		esperado string
+		valida   bool
+	}{
+		{
+			nombre:   "un texto entre eventos",
+			salida:   "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): describir el cambio\"}}\n{\"type\":\"step_finish\"}\n",
+			esperado: "feat(slice): describir el cambio",
+			valida:   true,
+		},
+		{nombre: "json malformado", salida: "{\"type\":\"text\"", valida: false},
+		{nombre: "sin texto", salida: "{\"type\":\"step_finish\"}\n", valida: false},
+		{
+			nombre: "text sin payload",
+			salida: "{\"type\":\"text\",\"part\":{}}\n",
+			valida: false,
+		},
+		{
+			nombre: "textos conflictivos",
+			salida: "{\"type\":\"text\",\"part\":{\"text\":\"feat: primero\"}}\n{\"type\":\"text\",\"part\":{\"text\":\"fix: segundo\"}}\n",
+			valida: false,
+		},
+		{
+			nombre: "payload multilinea",
+			salida: "{\"type\":\"text\",\"part\":{\"text\":\"explicacion\\nfeat: cambio\"}}\n",
+			valida: false,
+		},
+		{
+			nombre: "payload no convencional",
+			salida: "{\"type\":\"text\",\"part\":{\"text\":\"cambio sin formato\"}}\n",
+			valida: false,
+		},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			mensaje, err := extraerMensajeCommitOpenCode(caso.salida)
+			if (err == nil) != caso.valida {
+				t.Fatalf("extraerMensajeCommitOpenCode error = %v", err)
+			}
+			if mensaje != caso.esperado {
+				t.Fatalf("mensaje = %q, esperado %q", mensaje, caso.esperado)
 			}
 		})
 	}

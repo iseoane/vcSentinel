@@ -3,7 +3,9 @@ package agentadapter
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +40,11 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	return c.ejecutarMensajeCommit(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
+	salida, err := c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
+	if err != nil {
+		return "", err
+	}
+	return validarMensajeCommit(salida)
 }
 
 // ObtenerMensajeCommitConDiff incorpora el cambio preparado al prompt para que
@@ -101,7 +107,7 @@ func (c *CLIAdapter) ejecutarMensajeCommit(prompt string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", err
 	}
-	return validarMensajeCommit(out.String())
+	return extraerMensajeCommitOpenCode(out.String())
 }
 
 // prepararComandoCommit ejecuta OpenCode fuera del repositorio y sin plugins
@@ -112,7 +118,7 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 		return nil, nil, fmt.Errorf("crear directorio neutral para opencode: %w", err)
 	}
 	limpiar := func() { _ = os.RemoveAll(dir) }
-	args := []string{"run", "--pure"}
+	args := []string{"run", "--pure", "--agent", "title", "--format", "json"}
 	if c.Config.Model != "" {
 		args = append(args, "--model", c.Config.Model)
 	}
@@ -128,6 +134,39 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 	)
 	cmd.Stdin = strings.NewReader(prompt)
 	return cmd, limpiar, nil
+}
+
+func extraerMensajeCommitOpenCode(salida string) (string, error) {
+	decoder := json.NewDecoder(strings.NewReader(salida))
+	mensaje := ""
+	textos := 0
+	for {
+		var evento struct {
+			Type string `json:"type"`
+			Part struct {
+				Text string `json:"text"`
+			} `json:"part"`
+		}
+		err := decoder.Decode(&evento)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("salida JSONL invalida de opencode: %w", err)
+		}
+		if evento.Type != "text" {
+			continue
+		}
+		textos++
+		if textos > 1 {
+			return "", fmt.Errorf("opencode devolvio multiples eventos de texto")
+		}
+		mensaje = evento.Part.Text
+	}
+	if textos != 1 {
+		return "", fmt.Errorf("opencode no devolvio un evento de texto")
+	}
+	return validarMensajeCommit(mensaje)
 }
 
 func validarMensajeCommit(salida string) (string, error) {
