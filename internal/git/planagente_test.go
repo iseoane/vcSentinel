@@ -1,10 +1,26 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
 )
+
+type adapterPlanFake struct {
+	mensaje string
+	err     error
+	diff    string
+}
+
+func (a *adapterPlanFake) ObtenerMensajeCommit([]string, string, int) (string, error) {
+	return a.mensaje, a.err
+}
+
+func (a *adapterPlanFake) ObtenerMensajeCommitConDiff(_ []string, _ string, _ int, diff string) (string, error) {
+	a.diff = diff
+	return a.mensaje, a.err
+}
 
 // escribirGigante crea un archivo de código con más líneas que
 // LimiteCodigoGigante para forzar la rama de decisión pendiente.
@@ -75,6 +91,37 @@ func TestConstruirPlanParaAgenteEsIdempotente(t *testing.T) {
 	}
 	if primero.EstadoWorktree != segundo.EstadoWorktree {
 		t.Errorf("estado_worktree no determinista: %q vs %q", primero.EstadoWorktree, segundo.EstadoWorktree)
+	}
+}
+
+func TestConstruirPlanParaAgenteGeneraMensajesConFallbackEstable(t *testing.T) {
+	prepararRepoTemp(t)
+	commitEnRepo(t, "base.txt", "base\n")
+	commitEnRepo(t, "app.go", "package app\n")
+	if err := os.WriteFile("app.go", []byte("package app\n\nfunc nueva() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	exitoso := &adapterPlanFake{mensaje: "feat(slice): describir lote"}
+	semantico, err := ConstruirPlanParaAgenteConAdapter(exitoso)
+	if err != nil {
+		t.Fatalf("plan semántico falló: %v", err)
+	}
+	fallido, err := ConstruirPlanParaAgenteConAdapter(&adapterPlanFake{err: errors.New("agente caído")})
+	if err != nil {
+		t.Fatalf("plan con fallback falló: %v", err)
+	}
+	if semantico.Lotes[0].Mensaje != "feat(slice): describir lote" {
+		t.Fatalf("mensaje semántico = %q", semantico.Lotes[0].Mensaje)
+	}
+	if !strings.Contains(exitoso.diff, "+func nueva()") {
+		t.Fatalf("el adaptador no recibió el micro-diff: %q", exitoso.diff)
+	}
+	if fallido.Lotes[0].Mensaje != "chore(slice): auto-fragmented backend batch #1" {
+		t.Fatalf("fallback = %q", fallido.Lotes[0].Mensaje)
+	}
+	if semantico.PlanID != fallido.PlanID {
+		t.Fatalf("PlanID depende del mensaje: %q != %q", semantico.PlanID, fallido.PlanID)
 	}
 }
 

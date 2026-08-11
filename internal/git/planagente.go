@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 )
 
 // Respuestas admitidas para una decisión pendiente del plan. No hay valor por
@@ -73,6 +75,12 @@ func (r *registradorDecisiones) callback(f ArchivoModificado) (bool, error) {
 // crear ningún commit ni leer stdin. Es seguro ejecutarlo tantas veces como
 // haga falta.
 func ConstruirPlanParaAgente() (*PlanSerializado, error) {
+	return ConstruirPlanParaAgenteConAdapter(nil)
+}
+
+// ConstruirPlanParaAgenteConAdapter intenta generar mensajes semánticos antes
+// de serializar; un adaptador ausente o fallido conserva el fallback del plan.
+func ConstruirPlanParaAgenteConAdapter(adapter agentadapter.AgentAdapter) (*PlanSerializado, error) {
 	archivos, err := ObtenerArchivosModificados()
 	if err != nil {
 		return nil, err
@@ -81,6 +89,9 @@ func ConstruirPlanParaAgente() (*PlanSerializado, error) {
 	plan, err := ConstruirPlanFragmentacionConLector(archivos, registrador.callback, ejecutarGitSalida)
 	if err != nil {
 		return nil, err
+	}
+	if adapter != nil {
+		GenerarMensajesLotes(plan, adapter)
 	}
 	serializado := SerializarPlan(plan, registrador.pendientes, "")
 	estado, err := HashEstadoWorktree(RutasDelPlan(serializado))

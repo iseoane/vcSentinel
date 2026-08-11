@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
@@ -13,6 +14,8 @@ import (
 // decisiones que solo el usuario puede responder. Se distingue del 1 (error)
 // para que un orquestador sepa que debe preguntar, no que algo falló.
 const codigoSalidaDecisionesPendientes = 3
+
+var nuevoAgentAdapterParaMensaje = agentadapter.NewAgentAdapterParaMensaje
 
 // ejecutarSlicePlan emite el plan de fragmentación sin commitear nada y
 // devuelve el código de salida: 0 si no hay decisiones pendientes, 3 si las
@@ -29,7 +32,13 @@ func ejecutarSlicePlan(salida io.Writer, args []string) int {
 		return 1
 	}
 
-	plan, err := git.ConstruirPlanParaAgente()
+	raiz, err := git.ObtenerRaizWorktree()
+	if err != nil {
+		fmt.Fprintf(salida, "❌ %v\n", err)
+		return 1
+	}
+	adapter, _ := nuevoAgentAdapterParaMensaje(raiz)
+	plan, err := git.ConstruirPlanParaAgenteConAdapter(adapter)
 	if err != nil {
 		fmt.Fprintf(salida, "❌ %v\n", err)
 		return 1

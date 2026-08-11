@@ -3,11 +3,55 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 )
+
+type adapterSlicePlanFake struct{}
+
+func (*adapterSlicePlanFake) ObtenerMensajeCommit([]string, string, int) (string, error) {
+	return "feat(slice): mensaje desde perfil commit", nil
+}
+
+func TestEjecutarSlicePlanUsaFactoryDeMensajes(t *testing.T) {
+	prepararRepoParaPlan(t)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	var rutaFactory string
+	anterior := nuevoAgentAdapterParaMensaje
+	nuevoAgentAdapterParaMensaje = func(ruta string) (agentadapter.AgentAdapter, error) {
+		rutaFactory = ruta
+		return &adapterSlicePlanFake{}, nil
+	}
+	t.Cleanup(func() { nuevoAgentAdapterParaMensaje = anterior })
+
+	var salida bytes.Buffer
+	if codigo := ejecutarSlicePlan(&salida, []string{"--json"}); codigo != 0 {
+		t.Fatalf("exit = %d: %s", codigo, salida.String())
+	}
+	var plan struct {
+		Lotes []struct {
+			Mensaje string `json:"mensaje"`
+		} `json:"lotes"`
+	}
+	if err := json.Unmarshal(salida.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(rutaFactory) != filepath.Clean(cwd) {
+		t.Fatalf("factory recibió %q, esperada raíz %q", rutaFactory, cwd)
+	}
+	if plan.Lotes[0].Mensaje != "feat(slice): mensaje desde perfil commit" {
+		t.Fatalf("mensaje serializado = %q", plan.Lotes[0].Mensaje)
+	}
+}
 
 // TestEjecutarSlicePlanDevuelveTresConDecisionPendiente cubre el contrato de
 // exit de T0.9: 3 cuando hay una decisión que solo el usuario puede responder.
@@ -89,6 +133,11 @@ func TestSlicePlanYApplyCaminoCompleto(t *testing.T) {
 func prepararRepoParaPlan(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
+	anterior := nuevoAgentAdapterParaMensaje
+	nuevoAgentAdapterParaMensaje = func(string) (agentadapter.AgentAdapter, error) {
+		return nil, errors.New("agente no disponible en test")
+	}
+	t.Cleanup(func() { nuevoAgentAdapterParaMensaje = anterior })
 	for _, args := range [][]string{
 		{"init", "-b", "main"},
 		{"config", "user.email", "test@vas.sentinel"},
