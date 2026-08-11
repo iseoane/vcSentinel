@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -45,6 +46,12 @@ type StoreBlobs interface {
 	// para que un rebase futuro pueda reconocerlos (ver
 	// store.Store.RegistrarBlobsCommit).
 	RegistrarBlobsCommit(sha string, blobs map[string]string) error
+	// SHAsDeBlob devuelve los SHAs de commit que registraron blob, o nil si
+	// nunca se registró (ver store.Store.SHAsDeBlob). commitCubiertoPorBlobs
+	// lo usa para calcular la intersección exacta de SHAs entre todos los
+	// blobs de un commit, no solo si "algún" SHA cubre cada blob por
+	// separado.
+	SHAsDeBlob(blob string) ([]string, error)
 }
 
 // OpcionesRama define el análisis de una rama completa contra su base.
@@ -117,14 +124,23 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 	var pendientes []string
 	for _, sha := range shas {
 		if opts.Store != nil {
-			cubierto, err := commitCubiertoPorBlobs(opts.Store, sha)
+			cubierto, shaOrigen, err := commitCubiertoPorBlobs(opts.Store, sha)
 			if err != nil {
 				return nil, err
 			}
 			if cubierto {
 				// El contenido de este commit ya se revisó bajo otro SHA
-				// (rebase típico): no hace falta volver a auditarlo aunque
-				// el ledger v1 no tenga ficha para este SHA nuevo.
+				// (rebase típico): no hace falta volver a auditarlo, pero
+				// hay que ADOPTAR su ficha bajo el SHA nuevo. Si solo
+				// hiciéramos continue, ledger.LeerFicha(sha) devolvería nil
+				// más abajo y los hallazgos reales de la ficha vieja
+				// (huérfana) desaparecerían de res.Fichas — justo lo que el
+				// criterio de salida de F2 prohíbe. Un fallo aquí se
+				// propaga: no hay forma segura de perderlo en silencio sin
+				// perder también el hallazgo.
+				if err := ledger.AdoptarFicha(shaOrigen, sha); err != nil {
+					return nil, err
+				}
 				continue
 			}
 		}
@@ -230,18 +246,27 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 
 	if opts.Store != nil {
 		// Registra los blobs de este commit para que un rebase futuro pueda
-		// reconocerlos vía YaRevisado (T2.7). No se inventan hallazgos v2 a
-		// partir del veredicto v1 (regla de oro: nunca fabricar evidencia):
-		// el IndiceCommit queda con Fingerprints vacío y solo Blobs poblado,
-		// que ya basta para que YaRevisado funcione ("revisado sin
-		// hallazgos" es lo esperado mientras el agente siga emitiendo v1,
-		// hasta F5).
+		// reconocerlos vía SHAsDeBlob/YaRevisado (T2.7). No se inventan
+		// hallazgos v2 a partir del veredicto v1 (regla de oro: nunca
+		// fabricar evidencia): el IndiceCommit queda con Fingerprints vacío
+		// y solo Blobs poblado, que ya basta para que YaRevisado funcione
+		// ("revisado sin hallazgos" es lo esperado mientras el agente siga
+		// emitiendo v1, hasta F5).
+		//
+		// Un fallo aquí NO es fatal para esta auditoría: la ficha ya se
+		// guardó arriba con GuardarRevision, que es lo único que importa
+		// ahora mismo. Registrar blobs es solo una optimización de
+		// reutilización futura (T2.7 fix); abortar AnalizarRama por esto
+		// tiraría un resultado real ya persistido. Se avisa por stderr en
+		// vez de propagar el error, para no perder la señal en silencio sin
+		// hacerla fatal.
 		blobs, err := blobsDeArchivos(sha, archivos)
 		if err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "vas-sentinel: no se pudieron resolver los blobs de %s, se continúa sin registrar (optimización de reutilización futura, no afecta esta auditoría): %v\n", sha, err)
+			return nil
 		}
 		if err := opts.Store.RegistrarBlobsCommit(sha, blobs); err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "vas-sentinel: no se pudieron registrar los blobs de %s en el store, se continúa sin registrar (optimización de reutilización futura, no afecta esta auditoría): %v\n", sha, err)
 		}
 	}
 	return nil
@@ -267,32 +292,68 @@ func blobsDeArchivos(sha string, archivos []string) (map[string]string, error) {
 	return blobs, nil
 }
 
-// commitCubiertoPorBlobs indica si TODOS los archivos de sha ya tienen su
-// blob marcado como revisado en el store: en ese caso el contenido de este
-// commit ya se auditó bajo otro SHA y no hace falta volver a auditarlo. Un
+// commitCubiertoPorBlobs indica si el contenido de sha coincide EXACTAMENTE
+// con el de UN ÚNICO commit anterior: calcula la intersección de los SHAs
+// que registraron cada blob de sha (SHAsDeBlob, no YaRevisado — YaRevisado
+// solo dice "algún SHA cubre este blob", perdiendo de vista si es el MISMO
+// SHA para todos) y, si la intersección no está vacía, cubierto=true y
+// shaOrigen es uno cualquiera de esos candidatos: todos registraron el
+// conjunto completo de blobs de sha, así que adoptar la ficha de cualquiera
+// es igual de seguro (elección arbitraria entre candidatos válidos, no hay
+// un "mejor"). Es el caso típico de un rebase: el commit se reescribe sin
+// tocar su contenido.
+//
+// Si algún blob no tiene NINGÚN SHA registrado, o si la intersección se
+// vacía en cualquier punto, sha NO se considera cubierto: sus archivos
+// vendrían de una MEZCLA de commits previos distintos (p. ej. un squash), y
+// ahí no hay una única ficha previa que adoptar sin inventar contenido.
+// Perder la reutilización es preferible a perder hallazgos reales. Un
 // commit sin archivos nunca se considera cubierto (nada que reutilizar).
-func commitCubiertoPorBlobs(s StoreBlobs, sha string) (bool, error) {
+func commitCubiertoPorBlobs(s StoreBlobs, sha string) (cubierto bool, shaOrigen string, err error) {
 	archivos, err := git.ArchivosDeCommit(sha)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	blobs, err := blobsDeArchivos(sha, archivos)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if len(blobs) == 0 {
-		return false, nil
+		return false, "", nil
 	}
+
+	var candidatos map[string]bool
 	for _, blob := range blobs {
-		revisado, _, err := s.YaRevisado(blob)
+		shas, err := s.SHAsDeBlob(blob)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
-		if !revisado {
-			return false, nil
+		if len(shas) == 0 {
+			return false, "", nil
+		}
+		vistos := make(map[string]bool, len(shas))
+		for _, shaBlob := range shas {
+			vistos[shaBlob] = true
+		}
+		if candidatos == nil {
+			candidatos = vistos
+			continue
+		}
+		interseccion := make(map[string]bool, len(candidatos))
+		for shaBlob := range candidatos {
+			if vistos[shaBlob] {
+				interseccion[shaBlob] = true
+			}
+		}
+		candidatos = interseccion
+		if len(candidatos) == 0 {
+			return false, "", nil
 		}
 	}
-	return true, nil
+	for shaBlob := range candidatos {
+		return true, shaBlob, nil
+	}
+	return false, "", nil
 }
 
 // overviewDeRama ejecuta la llamada Spec de rama (una sola, no una por

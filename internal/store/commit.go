@@ -52,6 +52,13 @@ func (s *Store) LeerIndiceCommit(sha string) (*IndiceCommit, error) {
 // un análisis de rama) podría pisar hallazgos ya registrados. Pensada para el
 // caller que audita un commit y solo conoce sus blobs, no fingerprints v2
 // (T2.7: AnalizarRama sigue emitiendo v1 hasta F5).
+//
+// blobs se FUSIONA dentro de idx.Blobs (archivo por archivo), no lo
+// sustituye: una llamada anterior sobre el mismo sha con un conjunto de
+// blobs distinto (hoy AnalizarRama solo llama una vez con el conjunto
+// completo, pero el contrato debe ser seguro también si eso cambia) dejaría,
+// con una sustitución del mapa completo, sus entradas huérfanas en
+// blobs/<blob>.json sin que idx.Blobs volviera a apuntarlas.
 func (s *Store) RegistrarBlobsCommit(sha string, blobs map[string]string) error {
 	idx, err := s.LeerIndiceCommit(sha)
 	if err != nil {
@@ -60,6 +67,11 @@ func (s *Store) RegistrarBlobsCommit(sha string, blobs map[string]string) error 
 	if idx == nil {
 		idx = &IndiceCommit{SHA: sha}
 	}
-	idx.Blobs = blobs
+	if idx.Blobs == nil {
+		idx.Blobs = make(map[string]string, len(blobs))
+	}
+	for archivo, blob := range blobs {
+		idx.Blobs[archivo] = blob
+	}
 	return s.GuardarIndiceCommit(idx)
 }

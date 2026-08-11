@@ -3,6 +3,7 @@ package review
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -129,6 +130,46 @@ func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
 	}
 	ficha.FixedIn = fixedIn
 	return l.guardarFicha(ficha)
+}
+
+// AdoptarFicha copia la ficha de desde bajo el SHA hacia. Es el fix de T2.7
+// para commitCubiertoPorBlobs: cuando un rebase reescribe un commit sin
+// tocar su contenido, el commit se cubre por blob bajo un SHA anterior, pero
+// si AnalizarRama solo hiciera "continue" sin escribir nada bajo el SHA
+// nuevo, ledger.LeerFicha(hacia) devolvería nil y los hallazgos reales de la
+// ficha vieja (huérfana, bajo un SHA que ya no existe en la rama)
+// desaparecerían de res.Fichas. Adoptar la ficha bajo el SHA nuevo es lo que
+// los mantiene recuperables.
+//
+// desde debería existir siempre que la llame commitCubiertoPorBlobs, porque
+// salió del store, que solo registra commits ya auditados: por eso, a
+// diferencia de MarcarCorregida (donde "no hay nada que marcar" es un
+// estado válido y se resuelve como no-op), que desde no tenga ficha aquí es
+// un error real, no algo que ignorar en silencio.
+//
+// Idempotente: llamarlo dos veces con los mismos argumentos sobrescribe con
+// el mismo contenido, sin duplicar nada. Revisions se copia a un slice
+// nuevo (no se comparte el subyacente de la ficha origen) por higiene de
+// aliasing, no porque Revision se mute después de guardarse.
+func (l *Ledger) AdoptarFicha(desde, hacia string) error {
+	origen, err := l.LeerFicha(desde)
+	if err != nil {
+		return err
+	}
+	if origen == nil {
+		return fmt.Errorf("ledger: no hay ficha en %s para adoptar hacia %s", desde, hacia)
+	}
+	revisiones := make([]Revision, len(origen.Revisions))
+	copy(revisiones, origen.Revisions)
+	adoptada := &Ficha{
+		SHA:       hacia,
+		Message:   origen.Message,
+		Bucket:    origen.Bucket,
+		Model:     origen.Model,
+		FixedIn:   origen.FixedIn,
+		Revisions: revisiones,
+	}
+	return l.guardarFicha(adoptada)
 }
 
 // EliminarFicha borra la ficha de un SHA. No devuelve error si no existe:

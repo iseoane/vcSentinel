@@ -45,6 +45,30 @@ func (s *Store) registrarBlobs(idx *IndiceCommit) error {
 	return nil
 }
 
+// leerIndiceBlob lee blobs/<blob>.json. ok=false si el blob nunca se
+// registró (sin error). Compartido por YaRevisado y SHAsDeBlob para no
+// duplicar la deserialización del índice invertido.
+func (s *Store) leerIndiceBlob(blob string) (ib indiceBlob, ok bool, err error) {
+	ok, err = s.leerJSON(subdirBlobs, blob, &ib)
+	return ib, ok, err
+}
+
+// SHAsDeBlob devuelve los SHAs de commit que registraron blob (índice
+// invertido blobs/<blob>.json), o nil si el blob nunca se registró (sin
+// error). A diferencia de YaRevisado, que resuelve hallazgos v2 por
+// fingerprint, expone los SHAs crudos: lo necesita commitCubiertoPorBlobs
+// (internal/review) para calcular la INTERSECCIÓN exacta de SHAs entre
+// todos los blobs de un commit, no solo si "algún" SHA cubre cada blob por
+// separado (eso permitía colar una mezcla de commits distintos, p. ej. un
+// squash, como si fuera un único rebase seguro).
+func (s *Store) SHAsDeBlob(blob string) ([]string, error) {
+	ib, ok, err := s.leerIndiceBlob(blob)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return ib.SHAs, nil
+}
+
 // YaRevisado indica si blob ya apareció en algún IndiceCommit guardado
 // anteriormente (revisado=true), y devuelve los review.Hallazgo (v2) cuya
 // Location.Blob coincide con él.
@@ -58,8 +82,7 @@ func (s *Store) registrarBlobs(idx *IndiceCommit) error {
 // confundiría con "no se sabe". Por eso revisado es un booleano explícito,
 // independiente de si hallazgos tiene elementos.
 func (s *Store) YaRevisado(blob string) (revisado bool, hallazgos []review.Hallazgo, err error) {
-	var ib indiceBlob
-	ok, err := s.leerJSON(subdirBlobs, blob, &ib)
+	ib, ok, err := s.leerIndiceBlob(blob)
 	if err != nil {
 		return false, nil, err
 	}
