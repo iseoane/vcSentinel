@@ -472,6 +472,26 @@ func TestParsearDimensionResultFindingSoloV1NoGeneraHallazgo(t *testing.T) {
 	}
 }
 
+// TestParsearDimensionResultLocationVaciaUsaRespaldoV1 reproduce B16: un
+// "location": {} explícito (presente, pero sin Archivo ni Simbolo) no debe
+// pisar el respaldo File/Line de v1 con una ubicación vacía, porque eso
+// reintroduce la colisión de Fingerprint entre archivos distintos que el
+// respaldo existe para evitar.
+func TestParsearDimensionResultLocationVaciaUsaRespaldoV1(t *testing.T) {
+	salida := `{"dim":"security","verdict":"warn","findings":[{"file":"a.go","line":7,"severity":"WARNING","description":"x","evidence":"y","location":{}}]}`
+	resultado, err := ParsearDimensionResult(salida)
+	if err != nil {
+		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
+	}
+	if len(resultado.Hallazgos) != 1 {
+		t.Fatalf("Hallazgos = %d, esperado 1", len(resultado.Hallazgos))
+	}
+	loc := resultado.Hallazgos[0].Location
+	if loc.Archivo != "a.go" || loc.LineaInicio != 7 {
+		t.Errorf("Location = %+v, esperado el respaldo v1 (Archivo=a.go, LineaInicio=7), no una ubicación vacía", loc)
+	}
+}
+
 func TestParsearDimensionResultFindingV1YV2GeneraAmbos(t *testing.T) {
 	// Un finding con campos v1 (file/line/severity/description) Y algunos
 	// campos v2 (evidence/confidence) debe aparecer en ambos lados: Findings

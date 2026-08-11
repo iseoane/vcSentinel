@@ -3,6 +3,7 @@ package git
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -105,7 +106,11 @@ func ArchivosDeCommit(sha string) ([]string, error) {
 // vacía silenciosa: el llamador necesita distinguir "archivo vacío" de
 // "archivo no resuelto" para decidir si un hallazgo es válido.
 func ContenidoDeArchivoEnCommit(sha, archivo string) (string, error) {
-	salida, err := ejecutarGitSalida("show", sha+":"+archivo)
+	// filepath.ToSlash: git siempre espera "/" en un pathspec <rev>:<ruta>,
+	// aunque el archivo llegue con separadores de Windows (regla
+	// multiplataforma del proyecto: nunca concatenar rutas a git sin
+	// normalizar primero).
+	salida, err := ejecutarGitSalida("show", sha+":"+filepath.ToSlash(archivo))
 	if err != nil {
 		return "", fmt.Errorf("no se pudo leer %q en el commit %q: %w", archivo, sha, err)
 	}
@@ -121,7 +126,10 @@ func ContenidoDeArchivoEnCommit(sha, archivo string) (string, error) {
 // archivo no existe en ese commit, error explícito (mismo criterio que
 // ContenidoDeArchivoEnCommit).
 func BlobDeArchivoEnCommit(sha, archivo string) (string, error) {
-	salida, err := ejecutarGitSalida("rev-parse", sha+":"+archivo)
+	// Mismo motivo que ContenidoDeArchivoEnCommit: el pathspec <rev>:<ruta>
+	// de git siempre usa "/", sea cual sea el separador con el que llegó
+	// archivo.
+	salida, err := ejecutarGitSalida("rev-parse", sha+":"+filepath.ToSlash(archivo))
 	if err != nil {
 		return "", fmt.Errorf("no se pudo resolver el blob de %q en el commit %q: %w", archivo, sha, err)
 	}

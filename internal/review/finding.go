@@ -401,7 +401,12 @@ func (f findingCrudo) aReviewFinding() ReviewFinding {
 // ubicación vacía.
 func (f findingCrudo) aHallazgo(dimensionLinea string) Hallazgo {
 	ubicacion := Ubicacion{Archivo: f.File, LineaInicio: int(f.Line)}
-	if f.Location != nil {
+	// Guard por VACÍO, no solo por nil: un "location": {} explícito en el
+	// JSON produce un *Ubicacion no nil pero sin Archivo ni Simbolo, así que
+	// mirar solo f.Location != nil dejaría pasar una ubicación vacía y
+	// reintroduciría la colisión de Fingerprint entre archivos distintos que
+	// el respaldo v1 (File/Line) existe justamente para evitar.
+	if f.Location != nil && (f.Location.Archivo != "" || f.Location.Simbolo != "") {
 		ubicacion = *f.Location
 	}
 	h := Hallazgo{
