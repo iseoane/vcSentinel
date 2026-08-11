@@ -83,9 +83,12 @@ func parsearFlagsAuditoria(args []string) (flagsAuditoria, error) {
 			flags.targets = append(flags.targets, arg)
 		}
 	}
-	if len(flags.targets) == 0 {
-		flags.targets = []string{"HEAD"}
-	}
+	// Sin default a "HEAD" aquí (B17): esta función la comparten status y
+	// review, y solo review tiene un concepto de "target" (default en
+	// resolverShasAuditoria, cmd/sentinel/comandos_review.go). Rellenar
+	// targets aquí incondicionalmente hacía que flagsNoAplicablesAStatus
+	// nunca pudiera distinguir "el usuario no pasó nada" de "el usuario pasó
+	// un target": sentinel status sin argumentos SIEMPRE se rechazaba.
 	return flags, nil
 }
 

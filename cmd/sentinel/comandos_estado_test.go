@@ -113,12 +113,15 @@ func TestEjecutarLint_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
 }
 
 func TestParsearFlagsAuditoriaDefault(t *testing.T) {
+	// Sin argumentos, targets queda vacío (B17): el default a "HEAD" ya no
+	// vive aquí, porque esta función la comparten status (sin concepto de
+	// target) y review (que sí lo aplica en resolverShasAuditoria).
 	flags, err := parsearFlagsAuditoria(nil)
 	if err != nil {
 		t.Fatalf("parsearFlagsAuditoria(nil) devolvió error: %v", err)
 	}
-	if len(flags.targets) != 1 || flags.targets[0] != "HEAD" {
-		t.Errorf("targets = %+v, esperado [HEAD]", flags.targets)
+	if len(flags.targets) != 0 {
+		t.Errorf("targets = %+v, esperado vacío", flags.targets)
 	}
 	if flags.all || flags.chain || flags.gate || flags.jsonOut || flags.prune {
 		t.Error("flags booleanos deberían estar apagados por defecto")
@@ -202,6 +205,23 @@ func TestStatusRechazaFlagsNoAplicables(t *testing.T) {
 		if !flagsNoAplicablesAStatus(flags) {
 			t.Errorf("%s: debería detectarse como no aplicable a status", prueba.nombre)
 		}
+	}
+}
+
+// TestStatusAceptaInvocacionDesnuda reproduce el bug real: "sentinel status"
+// sin ningún argumento siempre se rechazaba, porque parsearFlagsAuditoria
+// rellenaba targets con ["HEAD"] incondicionalmente (para que review/lint no
+// tuvieran que repetir ese default), y flagsNoAplicablesAStatus no podía
+// distinguir "el usuario no pasó nada" de "el usuario pasó un target". status
+// no tiene ningún target que aceptar, así que la invocación desnuda debe
+// pasar limpia.
+func TestStatusAceptaInvocacionDesnuda(t *testing.T) {
+	flags, err := parsearFlagsAuditoria(nil)
+	if err != nil {
+		t.Fatalf("parsearFlagsAuditoria(nil) devolvió error: %v", err)
+	}
+	if flagsNoAplicablesAStatus(flags) {
+		t.Error("sentinel status sin argumentos debería aceptarse, no rechazarse")
 	}
 }
 

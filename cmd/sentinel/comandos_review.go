@@ -56,7 +56,10 @@ func ejecutarReview(worktree string, args []string) {
 	if flags.prune {
 		// --prune es un modo standalone: combinarlo con targets o flags de
 		// auditoría sería ignorarlos en silencio (cf. flagsNoAplicablesAStatus).
-		soloPrune := len(flags.targets) == 1 && flags.targets[0] == "HEAD" &&
+		// Sin targets: parsearFlagsAuditoria ya no rellena "HEAD" por defecto
+		// (B17), así que "solo --prune" se detecta por targets VACÍO, no por
+		// targets == ["HEAD"].
+		soloPrune := len(flags.targets) == 0 &&
 			len(flags.dims) == 0 && !flags.all && !flags.chain && !flags.gate &&
 			flags.profile == "" && flags.answer == "" && flags.timeout == 0
 		if !soloPrune {
@@ -230,6 +233,13 @@ func fixTocaHallazgos(archivosFix map[string]bool, dims []review.DimensionResult
 // los commits sin ficha (--all). --chain/--all no se combinan con targets
 // explícitos: no tiene sentido mezclar dos criterios de selección.
 func resolverShasAuditoria(flags flagsAuditoria) ([]string, error) {
+	// Default a HEAD vive aquí, no en parsearFlagsAuditoria (B17): es la
+	// única función que necesita un target por defecto (status no tiene
+	// concepto de target). flags se recibe por valor: mutar targets aquí no
+	// afecta a la copia que ya usó flagsNoAplicablesAStatus.
+	if len(flags.targets) == 0 {
+		flags.targets = []string{"HEAD"}
+	}
 	switch {
 	case flags.chain:
 		if len(flags.targets) > 1 {
