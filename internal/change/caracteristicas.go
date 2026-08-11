@@ -43,11 +43,16 @@ type EntradaCaracteristicas struct {
 
 var identificadorExportado = regexp.MustCompile(`\b[A-Z][A-Za-z0-9_]*\b`)
 
-// marcaGoStatement exige un límite de palabra antes de "go ": sin él,
-// "algo ", "tengo ", "luego ", "largo " (habituales en comentarios e
-// identificadores en castellano) disparaban un falso positivo de
-// concurrencia (revisión de T3.3).
-var marcaGoStatement = regexp.MustCompile(`\bgo `)
+// marcasConcurrencia usan límite de palabra en las cuatro, no solo en "go ":
+// una subcadena suelta ("context." dentro de un identificador más largo,
+// p. ej.) es el mismo riesgo de falso positivo que ya se corrigió para "go "
+// (habitual en castellano: "algo ", "tengo ", "luego ") (revisión de T3.3).
+var marcasConcurrencia = []*regexp.Regexp{
+	regexp.MustCompile(`\bgo `),
+	regexp.MustCompile(`\bsync\.`),
+	regexp.MustCompile(`\bchan `),
+	regexp.MustCompile(`\bcontext\.`),
+}
 
 // reglasDe devuelve entrada.Reglas si se inyectaron, o los defaults si no:
 // mismo criterio en todo detector que necesite clasificar rutas.
@@ -72,7 +77,7 @@ func detectarAPIPublica(e EntradaCaracteristicas) Caracteristica {
 	presente := rutasCoinciden(e.Rutas, e.PatronesAPI) || algunaLinea(e.LineasAnadidas, func(linea string) bool {
 		return esCodigo(linea) && identificadorExportado.MatchString(linea)
 	})
-	return Caracteristica{Nombre: "public_api", Estado: estado(presente), Heuristica: true}
+	return resultadoHeuristico("public_api", presente)
 }
 func detectarBaseDeDatos(e EntradaCaracteristicas) Caracteristica {
 	presente := rutasCoinciden(e.Rutas, e.PatronesData)
@@ -93,22 +98,18 @@ func detectarSeguridadSensible(e EntradaCaracteristicas) Caracteristica {
 		}
 		return false
 	})
-	return Caracteristica{Nombre: "security_sensitive", Estado: estado(presente), Heuristica: true}
+	return resultadoHeuristico("security_sensitive", presente)
 }
 func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
-	marcas := []string{"sync.", "chan ", "context."}
 	presente := algunaLinea(e.LineasAnadidas, func(linea string) bool {
-		if marcaGoStatement.MatchString(linea) {
-			return true
-		}
-		for _, marca := range marcas {
-			if strings.Contains(linea, marca) {
+		for _, marca := range marcasConcurrencia {
+			if marca.MatchString(linea) {
 				return true
 			}
 		}
 		return false
 	})
-	return Caracteristica{Nombre: "concurrency", Estado: estado(presente), Heuristica: true}
+	return resultadoHeuristico("concurrency", presente)
 }
 func detectarCambioDeComportamiento(e EntradaCaracteristicas) Caracteristica {
 	reglas := reglasDe(e)
@@ -189,6 +190,17 @@ func detectarInfraestructura(e EntradaCaracteristicas) Caracteristica {
 }
 func resultado(nombre string, presente bool) Caracteristica {
 	return Caracteristica{Nombre: nombre, Estado: estado(presente)}
+}
+
+// resultadoHeuristico es resultado() para detectores que coinciden por
+// subcadena/identificador en vez de una señal exacta (public_api,
+// security_sensitive, concurrency): único punto de construcción también para
+// el caso heurístico, en vez de que cada detector heurístico monte su propio
+// Caracteristica{...} a mano (revisión de T3.3).
+func resultadoHeuristico(nombre string, presente bool) Caracteristica {
+	c := resultado(nombre, presente)
+	c.Heuristica = true
+	return c
 }
 func estado(presente bool) EstadoCaracteristica {
 	if presente {

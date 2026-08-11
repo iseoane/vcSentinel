@@ -101,6 +101,17 @@ func TestDetectorConcurrencyNoConfundePalabrasEnCastellano(t *testing.T) {
 	if got := detectarConcurrencia(EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {"go ejecutar()"}}}).Estado; got != CaracteristicaPresente {
 		t.Errorf("\"go ejecutar()\" = %q, quiere presente", got)
 	}
+	// mismo riesgo que "go ", señalado en la ADVISORY de la revisión de T3.3
+	// para el resto de marcas: "context." dentro de un identificador más
+	// largo no debe disparar un falso positivo.
+	sinLimite := EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {"miscontext.Valor = 1"}}}
+	if got := detectarConcurrencia(sinLimite).Estado; got != CaracteristicaAusente {
+		t.Errorf("\"miscontext.\" = %q, quiere ausente (falso positivo de \"context.\")", got)
+	}
+	conLimite := EntradaCaracteristicas{LineasAnadidas: map[string][]string{"app.go": {"context.Background()"}}}
+	if got := detectarConcurrencia(conLimite).Estado; got != CaracteristicaPresente {
+		t.Errorf("\"context.Background()\" = %q, quiere presente", got)
+	}
 }
 
 // TestDetectorSecurityYConcurrencyDeclaranHeuristica: coinciden por
