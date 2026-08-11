@@ -1,11 +1,14 @@
 package graph
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/tools/go/packages"
@@ -43,8 +46,11 @@ func TestProveedorNativoCargaGrafoBasico(t *testing.T) {
 func TestProveedorNativoCacheaCargaPorTreeOID(t *testing.T) {
 	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "a/a.go": "package a\n", "b/b.go": "package b\nimport _ \"example.test/s/a\"\n"})
 	cargas := 0
-	analizar := func(oid, ruta string) ResultadoAnalisis {
+	analizar := func(oid, ruta, goos string) ResultadoAnalisis {
 		p := NuevoProveedorNativo(dir, oid)
+		if goos != "" {
+			p.contexto.GOOS = goos
+		}
 		cargar := p.cargar
 		p.cargar = func(config *packages.Config, patrones ...string) ([]*packages.Package, error) {
 			cargas++
@@ -55,14 +61,124 @@ func TestProveedorNativoCacheaCargaPorTreeOID(t *testing.T) {
 	}
 
 	oid := treeOID(t, dir)
-	analizar(oid, "a/a.go")
-	segundo := analizar(oid, "b/b.go")
+	analizar(oid, "a/a.go", "")
+	segundo := analizar(oid, "b/b.go", "")
 	cargasMismoArbol := cargas
+	goos := "windows"
+	if contextoCargaActual().GOOS == goos {
+		goos = "linux"
+	}
+	analizar(oid, "a/a.go", goos)
+	cargasOtroContexto := cargas
 	os.WriteFile(filepath.Join(dir, "b", "b.go"), []byte("package b\n"), 0644)
 	git(t, dir, "commit", "-qam", "segundo árbol")
-	analizar(treeOID(t, dir), "b/b.go")
-	if cargasMismoArbol != 1 || cargas != 2 || !reflect.DeepEqual(segundo.Alcance().Paquetes(), []string{"example.test/s/b"}) {
-		t.Fatalf("cargas mismo/otro árbol=%d/%d; alcance del hit=%v", cargasMismoArbol, cargas, segundo.Alcance().Paquetes())
+	analizar(treeOID(t, dir), "b/b.go", "")
+	if cargasMismoArbol != 1 || cargasOtroContexto != 2 || cargas != 3 || !reflect.DeepEqual(segundo.Alcance().Paquetes(), []string{"example.test/s/b"}) {
+		t.Fatalf("cargas mismo/contexto/árbol=%d/%d/%d; alcance del hit=%v", cargasMismoArbol, cargasOtroContexto, cargas, segundo.Alcance().Paquetes())
+	}
+}
+
+func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	if resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"}); !resultado.Completo() {
+		t.Fatal(resultado.MotivoIncompleto())
+	}
+	ruta := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	valida, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	casos := []struct {
+		nombre   string
+		preparar func()
+	}{
+		{"malformada", func() { os.WriteFile(ruta, []byte("{"), 0600) }},
+		{"versión distinta", func() {
+			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"version": 2`, `"version": 1`, 1)), 0600)
+		}},
+		{"tree distinto", func() {
+			os.WriteFile(ruta, []byte(strings.Replace(string(valida), oid, strings.Repeat("0", len(oid)), 1)), 0600)
+		}},
+		{"fingerprint distinto", func() {
+			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"fingerprint": "`, `"fingerprint": "distinto-`, 1)), 0600)
+		}},
+		{"sobredimensionada", func() { os.WriteFile(ruta, make([]byte, maxCacheGrafo+1), 0600) }},
+		{"symlink", func() {
+			os.Remove(ruta)
+			if err := os.Symlink(filepath.Join(t.TempDir(), "destino"), ruta); err != nil {
+				t.Skipf("symlinks no disponibles: %v", err)
+			}
+		}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			caso.preparar()
+			p := NuevoProveedorNativo(dir, oid)
+			cargas := 0
+			cargar := p.cargar
+			p.cargar = func(c *packages.Config, patrones ...string) ([]*packages.Package, error) {
+				cargas++
+				return cargar(c, patrones...)
+			}
+			resultado, _ := p.Analizar([]string{"main.go"})
+			if !resultado.Completo() || cargas != 1 {
+				t.Fatalf("completo=%v cargas=%d motivo=%q", resultado.Completo(), cargas, resultado.MotivoIncompleto())
+			}
+			valida, err = os.ReadFile(ruta)
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestProveedorNativoSoloPersisteTrasVerificacion(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	p := NuevoProveedorNativo(dir, oid)
+	p.verificar = func(s solicitudVerificacion) error {
+		if s.fase == verificarConsumidos {
+			return errors.New("fallo final")
+		}
+		return verificarSnapshotGit(s)
+	}
+	resultado, _ := p.Analizar([]string{"main.go"})
+	ruta := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	if resultado.Completo() || !errors.Is(func() error { _, err := os.Stat(ruta); return err }(), os.ErrNotExist) {
+		t.Fatalf("resultado=%q cache persistida=%v", resultado.MotivoIncompleto(), ruta)
+	}
+}
+
+func TestProveedorNativoCacheConcurrenteEsSegura(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	var cargas atomic.Int32
+	var wg sync.WaitGroup
+	errores := make(chan string, 12)
+	for range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p := NuevoProveedorNativo(dir, oid)
+			cargar := p.cargar
+			p.cargar = func(c *packages.Config, patrones ...string) ([]*packages.Package, error) {
+				cargas.Add(1)
+				return cargar(c, patrones...)
+			}
+			resultado, _ := p.Analizar([]string{"main.go"})
+			if !resultado.Completo() {
+				errores <- resultado.MotivoIncompleto()
+			}
+		}()
+	}
+	wg.Wait()
+	close(errores)
+	for err := range errores {
+		t.Error(err)
+	}
+	if cargas.Load() == 0 {
+		t.Fatal("ningún lector construyó la cache")
 	}
 }
 

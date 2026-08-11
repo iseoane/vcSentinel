@@ -15,15 +15,19 @@ import (
 	gitinterno "github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
-const versionCacheGrafo = 1
+const (
+	versionCacheGrafo = 2
+	maxCacheGrafo     = 16 << 20
+)
 
 type cacheGrafo struct {
-	Version    int                 `json:"version"`
-	TreeOID    string              `json:"tree_oid"`
-	Imports    map[string][]string `json:"imports"`
-	Archivos   map[string]string   `json:"files"`
-	Tests      map[string]string   `json:"tests"`
-	Consumidos []string            `json:"consumed"`
+	Version     int                 `json:"version"`
+	TreeOID     string              `json:"tree_oid"`
+	Fingerprint string              `json:"fingerprint"`
+	Imports     map[string][]string `json:"imports"`
+	Archivos    map[string]string   `json:"files"`
+	Tests       map[string]string   `json:"tests"`
+	Consumidos  []string            `json:"consumed"`
 }
 
 func oidSeguro(oid string) bool {
@@ -62,8 +66,8 @@ func rutaCacheValida(ruta string) bool {
 	return ruta != "" && ruta != "." && ruta != ".." && !filepath.IsAbs(nativa) && !strings.HasPrefix(ruta, "../") && filepath.ToSlash(filepath.Clean(nativa)) == ruta
 }
 
-func (c cacheGrafo) valida(oid string) bool {
-	if c.Version != versionCacheGrafo || c.TreeOID != oid || !oidSeguro(oid) || len(c.Archivos) == 0 {
+func (c cacheGrafo) valida(oid, fingerprint string) bool {
+	if c.Version != versionCacheGrafo || c.TreeOID != oid || c.Fingerprint != fingerprint || !oidSeguro(oid) || len(c.Archivos) == 0 {
 		return false
 	}
 	for _, ruta := range c.Consumidos {
@@ -99,14 +103,27 @@ func (p *proveedorNativo) cargarCache() ([]string, bool) {
 	}
 	defer raiz.Close()
 	nombre := p.identidad + ".json"
-	datos, err := raiz.ReadFile(nombre)
+	info, err := raiz.Lstat(nombre)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, false
+	}
+	archivo, err := raiz.Open(nombre)
+	if err != nil {
+		return nil, false
+	}
+	defer archivo.Close()
+	limitado := &io.LimitedReader{R: archivo, N: maxCacheGrafo + 1}
+	datos, err := io.ReadAll(limitado)
+	if err != nil || len(datos) > maxCacheGrafo {
+		return nil, false
+	}
 	var c cacheGrafo
 	dec := json.NewDecoder(bytes.NewReader(datos))
 	dec.DisallowUnknownFields()
-	if err != nil || len(datos) > 16<<20 || dec.Decode(&c) != nil || dec.Decode(&struct{}{}) != io.EOF || !c.valida(p.identidad) {
+	if dec.Decode(&c) != nil || dec.Decode(&struct{}{}) != io.EOF || !c.valida(p.identidad, p.contexto.fingerprint()) {
 		return nil, false
 	}
-	p.imports, p.archivos, p.tests = c.Imports, c.Archivos, c.Tests
+	p.imports, p.archivos, p.tests = clonarImports(c.Imports), clonarMapa(c.Archivos), clonarMapa(c.Tests)
 	for i, ruta := range c.Consumidos {
 		c.Consumidos[i] = filepath.Join(p.directorio, filepath.FromSlash(ruta))
 	}
@@ -123,8 +140,11 @@ func (p *proveedorNativo) guardarCache(consumidos []string) {
 		relativas = append(relativas, filepath.ToSlash(relativa))
 	}
 	ordenarUnicos(&relativas)
-	c := cacheGrafo{versionCacheGrafo, p.identidad, p.imports, p.archivos, p.tests, relativas}
-	datos, _ := json.MarshalIndent(c, "", "  ")
+	c := cacheGrafo{versionCacheGrafo, p.identidad, p.contexto.fingerprint(), clonarImports(p.imports), clonarMapa(p.archivos), clonarMapa(p.tests), relativas}
+	datos, err := json.MarshalIndent(c, "", "  ")
+	if err != nil || len(datos) > maxCacheGrafo {
+		return
+	}
 	raiz, err := raizCache(p.directorio)
 	if err != nil {
 		return
@@ -138,8 +158,24 @@ func (p *proveedorNativo) guardarCache(consumidos []string) {
 	}
 	defer archivo.Close()
 	if _, err := archivo.Write(append(datos, '\n')); err == nil && archivo.Close() == nil {
-		_ = raiz.Link(temporal, p.identidad+".json")
+		_ = raiz.Rename(temporal, p.identidad+".json")
 	}
+}
+
+func clonarImports(origen map[string][]string) map[string][]string {
+	destino := make(map[string][]string, len(origen))
+	for clave, valores := range origen {
+		destino[clave] = clonar(valores)
+	}
+	return destino
+}
+
+func clonarMapa(origen map[string]string) map[string]string {
+	destino := make(map[string]string, len(origen))
+	for clave, valor := range origen {
+		destino[clave] = valor
+	}
+	return destino
 }
 
 func PurgarCacheGrafo(directorio string, antiguedad time.Duration) error {

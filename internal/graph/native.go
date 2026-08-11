@@ -2,12 +2,14 @@ package graph
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,42 @@ import (
 
 type cargadorPaquetes func(*packages.Config, ...string) ([]*packages.Package, error)
 type faseVerificacion uint8
+
+type contextoCarga struct {
+	GOOS, GOARCH, GoVersion, GOROOT, CGO, GOCACHE, GOPATH, GOMODCACHE string
+	SystemRoot, Temp                                                  string
+	Mode                                                              packages.LoadMode
+	Patterns, BuildFlags                                              []string
+}
+
+func contextoCargaActual() contextoCarga {
+	home, _ := os.UserHomeDir()
+	cache, _ := os.UserCacheDir()
+	gopath := filepath.Join(home, "go")
+	return contextoCarga{
+		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, GoVersion: runtime.Version(), GOROOT: runtime.GOROOT(), CGO: "0",
+		GOCACHE: filepath.Join(cache, "go-build"), GOPATH: gopath, GOMODCACHE: filepath.Join(gopath, "pkg", "mod"),
+		SystemRoot: os.Getenv("SystemRoot"), Temp: os.TempDir(),
+		Mode:     packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedEmbedFiles | packages.NeedForTest | packages.NeedModule,
+		Patterns: []string{"./..."}, BuildFlags: []string{"-mod=readonly", "-tags="},
+	}
+}
+
+func (c contextoCarga) entorno() []string {
+	entorno := []string{
+		"GOOS=" + c.GOOS, "GOARCH=" + c.GOARCH, "CGO_ENABLED=" + c.CGO,
+		"GOROOT=" + c.GOROOT, "PATH=" + filepath.Join(c.GOROOT, "bin"),
+		"GOCACHE=" + c.GOCACHE, "GOPATH=" + c.GOPATH, "GOMODCACHE=" + c.GOMODCACHE,
+		"GOWORK=off", "GOFLAGS=", "GOEXPERIMENT=none", "GOTOOLCHAIN=local", "GOENV=off",
+		"GOPROXY=off", "GOSUMDB=off",
+	}
+	return append(entorno, "SystemRoot="+c.SystemRoot, "TMPDIR="+c.Temp, "TEMP="+c.Temp, "TMP="+c.Temp)
+}
+
+func (c contextoCarga) fingerprint() string {
+	suma := sha256.Sum256([]byte(fmt.Sprintf("%q\n%d\n%t\n%q\n%q", append([]string{c.GoVersion}, c.entorno()...), c.Mode, true, c.Patterns, c.BuildFlags)))
+	return fmt.Sprintf("%x", suma)
+}
 
 const (
 	verificarIdentidad faseVerificacion = iota
@@ -36,6 +74,7 @@ type proveedorNativo struct {
 	identidad  string
 	cargar     cargadorPaquetes
 	verificar  verificadorSnapshot
+	contexto   contextoCarga
 	imports    map[string][]string
 	archivos   map[string]string
 	tests      map[string]string
@@ -47,7 +86,7 @@ func NuevoProveedorNativo(directorioSnapshot, identidadArbol string) *proveedorN
 	if directorioSnapshot != "" {
 		directorio, _ = filepath.Abs(directorioSnapshot)
 	}
-	return &proveedorNativo{directorio: directorio, identidad: identidadArbol, cargar: packages.Load, verificar: verificarSnapshotGit}
+	return &proveedorNativo{directorio: directorio, identidad: identidadArbol, cargar: packages.Load, verificar: verificarSnapshotGit, contexto: contextoCargaActual()}
 }
 
 func (*proveedorNativo) Nombre() string { return "native" }
@@ -69,17 +108,12 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 			razones = append(razones, "snapshot no verificable: "+err.Error())
 		}
 	}
-	config := &packages.Config{
-		Mode:  packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedEmbedFiles | packages.NeedForTest | packages.NeedModule,
-		Dir:   p.directorio,
-		Env:   append(entornoGitSaneado(), "GOWORK=off"),
-		Tests: true,
-	}
+	config := &packages.Config{Mode: p.contexto.Mode, Dir: p.directorio, Env: p.contexto.entorno(), Tests: true, BuildFlags: clonar(p.contexto.BuildFlags)}
 	var paquetes []*packages.Package
 	var err error
 	consumidos, cacheHit := p.cargarCache()
 	if p.directorio != "" && !cacheHit {
-		paquetes, err = p.cargar(config, "./...")
+		paquetes, err = p.cargar(config, p.contexto.Patterns...)
 	}
 	if err != nil {
 		razones = append(razones, "error de carga: "+err.Error())
