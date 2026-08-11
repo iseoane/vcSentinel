@@ -9,70 +9,80 @@ import (
 
 func TestEvaluar(t *testing.T) {
 	casos := []struct {
-		nombre  string
-		kind    string
-		estados map[string]change.EstadoCaracteristica
-		want    Nivel
-		regla   string
+		nombre   string
+		kind     string
+		complete bool
+		estados  map[string]change.EstadoCaracteristica
+		want     Nivel
+		regla    string
 	}{
 		{
-			nombre: "generated sin caracteristicas de riesgo",
-			kind:   "generated",
-			want:   NivelNone,
-			regla:  "kind=generated",
+			nombre:   "generated sin caracteristicas de riesgo",
+			kind:     "generated",
+			complete: true,
+			want:     NivelNone,
+			regla:    "kind=generated",
 		},
 		{
-			nombre:  "security sensitive eleva un cambio pequeno",
-			kind:    "feature",
-			estados: map[string]change.EstadoCaracteristica{"security_sensitive": change.CaracteristicaPresente},
-			want:    NivelHigh,
-			regla:   "security_sensitive",
+			nombre:   "security sensitive eleva un cambio pequeno",
+			kind:     "feature",
+			complete: true,
+			estados:  map[string]change.EstadoCaracteristica{"security_sensitive": change.CaracteristicaPresente},
+			want:     NivelHigh,
+			regla:    "security_sensitive",
 		},
 		{
-			nombre:  "database es high",
-			kind:    "feature",
-			estados: map[string]change.EstadoCaracteristica{"database": change.CaracteristicaPresente},
-			want:    NivelHigh,
-			regla:   "database",
+			nombre:   "database es high",
+			kind:     "feature",
+			complete: true,
+			estados:  map[string]change.EstadoCaracteristica{"database": change.CaracteristicaPresente},
+			want:     NivelHigh,
+			regla:    "database",
 		},
 		{
-			nombre: "test only es low",
-			kind:   "test_only",
-			want:   NivelLow,
-			regla:  "kind=test_only",
+			nombre:   "test only es low",
+			kind:     "test_only",
+			complete: true,
+			want:     NivelLow,
+			regla:    "kind=test_only",
 		},
-		{nombre: "refactor completo sin API es low", kind: "refactor", want: NivelLow, regla: "refactor"},
+		{nombre: "refactor completo sin API es low", kind: "refactor", complete: true, want: NivelLow, regla: "refactor"},
 		{
-			nombre:  "public api es elevated",
-			kind:    "feature",
-			estados: map[string]change.EstadoCaracteristica{"public_api": change.CaracteristicaPresente},
-			want:    NivelElevated,
-			regla:   "public_api",
-		},
-		{
-			nombre:  "cross module es elevated",
-			kind:    "feature",
-			estados: map[string]change.EstadoCaracteristica{"cross_module": change.CaracteristicaPresente},
-			want:    NivelElevated,
-			regla:   "cross_module",
+			nombre:   "public api es elevated",
+			kind:     "feature",
+			complete: true,
+			estados:  map[string]change.EstadoCaracteristica{"public_api": change.CaracteristicaPresente},
+			want:     NivelElevated,
+			regla:    "public_api",
 		},
 		{
-			nombre:  "concurrency es elevated",
-			kind:    "feature",
-			estados: map[string]change.EstadoCaracteristica{"concurrency": change.CaracteristicaPresente},
-			want:    NivelElevated,
-			regla:   "concurrency",
+			nombre:   "cross module es elevated",
+			kind:     "feature",
+			complete: true,
+			estados:  map[string]change.EstadoCaracteristica{"cross_module": change.CaracteristicaPresente},
+			want:     NivelElevated,
+			regla:    "cross_module",
 		},
 		{
-			nombre:  "behavior sin tests es elevated",
-			kind:    "bugfix",
-			estados: map[string]change.EstadoCaracteristica{"behavior_change": change.CaracteristicaPresente},
-			want:    NivelElevated,
-			regla:   "behavior_change sin test_covered",
+			nombre:   "concurrency es elevated",
+			kind:     "feature",
+			complete: true,
+			estados:  map[string]change.EstadoCaracteristica{"concurrency": change.CaracteristicaPresente},
+			want:     NivelElevated,
+			regla:    "concurrency",
 		},
 		{
-			nombre: "behavior sin cobertura confirmada es elevated",
-			kind:   "bugfix",
+			nombre:   "behavior sin tests es elevated",
+			kind:     "bugfix",
+			complete: true,
+			estados:  map[string]change.EstadoCaracteristica{"behavior_change": change.CaracteristicaPresente},
+			want:     NivelElevated,
+			regla:    "behavior_change sin test_covered",
+		},
+		{
+			nombre:   "behavior sin cobertura confirmada es elevated",
+			kind:     "bugfix",
+			complete: true,
 			estados: map[string]change.EstadoCaracteristica{
 				"behavior_change": change.CaracteristicaPresente,
 				"test_covered":    change.CaracteristicaIndeterminada,
@@ -81,15 +91,17 @@ func TestEvaluar(t *testing.T) {
 			regla: "behavior_change sin test_covered",
 		},
 		{
-			nombre: "sin regla especial usa standard",
-			kind:   "feature",
-			want:   NivelStandard,
-			regla:  "por defecto",
+			nombre:   "sin regla especial usa standard",
+			kind:     "feature",
+			complete: true,
+			want:     NivelStandard,
+			regla:    "por defecto",
 		},
-		{nombre: "behavior con grafo incompleto es high", kind: "feature", estados: map[string]change.EstadoCaracteristica{"behavior_change": change.CaracteristicaPresente}, want: NivelHigh, regla: "grafo incompleto"},
+		{nombre: "behavior con grafo incompleto es high", kind: "feature", complete: false, estados: map[string]change.EstadoCaracteristica{"behavior_change": change.CaracteristicaPresente}, want: NivelHigh, regla: "grafo incompleto"},
 		{
-			nombre: "high gana al competir con elevated",
-			kind:   "feature",
+			nombre:   "high gana al competir con elevated",
+			kind:     "feature",
+			complete: true,
 			estados: map[string]change.EstadoCaracteristica{
 				"public_api":         change.CaracteristicaPresente,
 				"security_sensitive": change.CaracteristicaPresente,
@@ -98,17 +110,18 @@ func TestEvaluar(t *testing.T) {
 			regla: "security_sensitive",
 		},
 		{
-			nombre: "dependency se simplifica a high",
-			kind:   "dependency",
-			want:   NivelHigh,
-			regla:  "kind=dependency",
+			nombre:   "dependency se simplifica a high",
+			kind:     "dependency",
+			complete: true,
+			want:     NivelHigh,
+			regla:    "kind=dependency",
 		},
 	}
 
 	vistos := make(map[Nivel]bool)
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
-			perfil := change.ChangeProfile{Kind: caso.kind, Symbols: change.ChangeSymbols{Complete: !strings.Contains(caso.nombre, "incompleto")}}
+			perfil := change.ChangeProfile{Kind: caso.kind, Symbols: change.ChangeSymbols{Complete: caso.complete}}
 			resultado := Evaluar(perfil, caracteristicasCon(caso.estados))
 			if resultado.Nivel != caso.want {
 				t.Fatalf("Nivel = %q; want %q", resultado.Nivel, caso.want)

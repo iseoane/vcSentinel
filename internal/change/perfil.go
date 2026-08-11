@@ -103,7 +103,7 @@ func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) 
 }
 
 func arbolDeRevision(git LectorGit, revision string) (string, error) {
-	salida, err := diffGit(git, revision, "resolver el árbol", "rev-parse", revision+"^{tree}")
+	salida, err := diffGit(git, revision, "resolver el árbol", "rev-parse", "--verify", "--end-of-options", revision+"^{tree}")
 	return strings.TrimSpace(salida), err
 }
 

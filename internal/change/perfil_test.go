@@ -1,9 +1,13 @@
 package change
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -72,6 +76,10 @@ func TestPerfilDeCambioDerivaSimbolosExactos(t *testing.T) {
 		{"tipo y metodo", "", "type Publico struct { Campo int }; func (Publico) Metodo() {}", ChangeSymbols{Added: 2, ExportedTouched: 2, Complete: true}},
 		{"interfaz eliminada", "type Publica interface { Metodo() error }", "", ChangeSymbols{Deleted: 1, ExportedTouched: 1, Complete: true}},
 		{"parse invalido", "", "func Rota(", ChangeSymbols{}},
+		{"tipo privado alcanzable transitivamente", "type oculto struct { interno }; type interno struct { Campo int }; func Publica() oculto { return oculto{} }", "type oculto struct { interno }; type interno struct { Campo string }; func Publica() oculto { return oculto{} }", ChangeSymbols{Modified: 1, ExportedTouched: 1, Complete: true}},
+		{"tipo privado no resuelto", "type oculto struct { campo int }", "type oculto struct { campo string }", ChangeSymbols{Modified: 1}},
+		{"var y const", "var Publica = 1; const Constante = 1", "var Publica = 2; const Constante = 2", ChangeSymbols{Modified: 2, ExportedTouched: 2, Complete: true}},
+		{"metodos puntero y valor", "type Publico struct{}; func (Publico) Valor() {}", "type Publico struct{}; func (*Publico) Puntero() {}", ChangeSymbols{Added: 1, Deleted: 1, ExportedTouched: 2, Complete: true}},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -89,6 +97,54 @@ func TestPerfilDeCambioDerivaSimbolosExactos(t *testing.T) {
 				t.Fatalf("Symbols=%#v err=%v, quiere %#v", perfil.Symbols, err, caso.quiere)
 			}
 		})
+	}
+}
+
+func TestSimbolosFallanCerradoFueraDelAnalizador(t *testing.T) {
+	contenido := map[string]string{
+		"base:api.ts": "export const API = 1", "head:api.ts": "export const API = 2",
+		"base:api.pb.go": "no importa", "head:api.pb.go": "tampoco",
+	}
+	git := func(args ...string) (string, error) { return contenido[args[1]], nil }
+	if got := simbolosCambiados(git, []cambioRuta{{"api.ts", "api.ts"}}, "base", "head"); got.Complete {
+		t.Fatalf("fuente TypeScript declarada completa: %#v", got)
+	}
+	if got := simbolosCambiados(git, []cambioRuta{{"api.pb.go", "api.pb.go"}}, "base", "head"); !got.Complete {
+		t.Fatalf("generado no debe exigir analizador: %#v", got)
+	}
+}
+
+func TestSimbolosIncluyenPaqueteYPurezaDeFirma(t *testing.T) {
+	git := func(args ...string) (string, error) {
+		if args[1] == "base:api.go" {
+			return "package antes\nfunc Publica(a int) int { return a }", nil
+		}
+		return "package despues\nfunc Publica(a int) int { return a }", nil
+	}
+	got := simbolosCambiados(git, []cambioRuta{{"api.go", "api.go"}}, "base", "head")
+	if got.Modified != 1 || got.ExportedTouched != 1 || !got.Complete {
+		t.Fatalf("cambio de paquete no detectado: %#v", got)
+	}
+
+	fset := token.NewFileSet()
+	archivo, _ := parser.ParseFile(fset, "api.go", "package p\nfunc Publica(nombre int) int", 0)
+	tipo := archivo.Decls[0].(*ast.FuncDecl).Type
+	antes := imprimirAST(fset, tipo)
+	primera := imprimirAPI(fset, tipo)
+	if despues := imprimirAST(fset, tipo); despues != antes {
+		t.Fatalf("imprimirAPI mutó AST: antes=%q después=%q", antes, despues)
+	}
+	if segunda := imprimirAPI(fset, tipo); segunda != primera {
+		t.Fatalf("firma depende del orden: primera=%q segunda=%q", primera, segunda)
+	}
+}
+
+func TestArbolDeRevisionProtegeOpciones(t *testing.T) {
+	var got []string
+	_, _ = arbolDeRevision(func(args ...string) (string, error) { got = args; return "tree\n", nil }, "-maliciosa")
+	want := []string{"rev-parse", "--verify", "--end-of-options", "-maliciosa^{tree}"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("git args = %q, quiere %q", got, want)
 	}
 }
 
