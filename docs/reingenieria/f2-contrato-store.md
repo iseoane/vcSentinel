@@ -249,3 +249,68 @@ privadas; tras migrar, todo accesible desde el compartido y nada perdido.
 > Test contra repositorio real: auditar tres commits, hacer `git rebase` que
 > reescribe los SHAs sin alterar el contenido, y comprobar que **cero** commits
 > necesitan re-revisión.
+
+---
+
+## Cierre de fase — desviaciones respecto al diseño (hash de cierre `a1cd03b`)
+
+- **Dato no previsto por la ficha**: F1 ya había creado `internal/validation.Hallazgo`
+  (Source/Severity/Capability/Comando/Evidencia), un tipo con forma similar al finding
+  v2 de T2.1. Se decidió NO unificarlos en esta fase (evitar un acoplamiento
+  review↔validation que ninguna otra pieza de F2 necesitaba); la unificación, si
+  llega, queda para F6 (agregador). Documentado en el comentario de `Hallazgo` en
+  `finding.go`.
+- **T2.4 tuvo que resolver un ciclo de paquetes real**: `internal/store` importa
+  `internal/review` (para `review.Hallazgo` y la migración de `review.Ledger`), así
+  que `internal/review` NO puede importar `internal/store` sin crear
+  review→store→review. Se resolvió con una interfaz estructural (`StoreBlobs`,
+  definida en `internal/review`) que `*store.Store` satisface sin que ninguno de los
+  dos paquetes conozca al otro por nombre — mismo patrón para el test de aceptación,
+  que vive en `internal/review/rebase_test.go` como `package review_test` (caja
+  negra) porque un test interno también reproduciría el ciclo.
+- **Migración de formato (T2.6) no convierte v1→v2 findings**: un `ReviewFinding` v1
+  no tiene `Evidence`, así que calcularle un `Fingerprint` real habría sido fabricar
+  evidencia que nunca existió. Los `IndiceCommit` migrados desde v1 guardan el
+  contenido v1 tal cual en un campo de compatibilidad (`CompatV1`), con
+  `Fingerprints` vacío; los findings v2 reales solo empiezan a poblarse cuando el
+  agente emita esos campos (F5).
+- **`calcularBucket` retirado** (`cmd/sentinel/comandos_review.go`, parte de T2.6
+  según la propia ficha): confirmado con `grep` antes de tocarlo que `Ficha.Bucket`
+  solo tenía 2 consumidores, ambos dentro de `ledger.go`. Las fichas nuevas se
+  guardan con `Bucket: ""`; el campo del struct no se borra (compatibilidad de
+  lectura con fichas v1 antiguas que sí lo llevan).
+- **Corrección post-cierre real, no cosmética**: la primera versión de T2.7
+  optimizaba el reuso por blob (evitaba re-auditar tras un rebase) pero **perdía los
+  findings reales** del commit reutilizado — `AnalizarRama` construía `Fichas`
+  iterando los SHAs actuales y leyendo el ledger por ese SHA nuevo, que nunca se
+  escribía para un commit saltado. Esto contradecía el criterio de salida literal
+  ("conserva el 100% de los findings", no solo "evita re-auditar"), y el test de
+  aceptación original no lo detectaba porque su stub nunca producía hallazgos.
+  Corregido: `commitCubiertoPorBlobs` ahora exige que TODOS los archivos de un
+  commit coincidan con un ÚNICO SHA previo (intersección de los SHAs que registraron
+  cada blob) antes de considerarlo cubierto, y en ese caso `Ledger.AdoptarFicha`
+  copia la ficha del SHA de origen bajo el SHA nuevo. Si los archivos vinieran de
+  una mezcla de commits previos distintos (p. ej. un squash), se trata como NO
+  cubierto y se audita de nuevo — perder la reutilización es preferible a perder
+  hallazgos reales. `TestAnalizarRamaSobreviveRebaseViaBlob` se extendió para
+  probar esto con un hallazgo real, no solo el conteo de llamadas al auditor.
+- **Otras dos correcciones post-cierre** (mismo pase de revisión): `RegistrarBlobsCommit`
+  fusiona `IndiceCommit.Blobs` en vez de sustituirlo, y un fallo al registrar blobs ya
+  no aborta `AnalizarRama` si la auditoría y el ledger se guardaron bien (una
+  optimización de reutilización no debe ser fatal para el resultado real). Y en
+  `ContenidoDeArchivoEnCommit`/`BlobDeArchivoEnCommit` (T2.2) se normalizan las rutas
+  con `filepath.ToSlash` antes de pasarlas a git, y el parseo v2 (T2.4) ya no acepta
+  un `"location": {}` explícito como respaldo válido (solo el respaldo v1 File/Line
+  cuando la ubicación v2 viene realmente vacía).
+- **Deuda documentada, NO corregida en esta fase** (para F5/F6 o una tarea de
+  hardening dedicada): tipos de dominio como cadenas libres sin validación
+  (`Source`/`Status`/`Fixable`/`Severity`, T2.1); el filtro de evidencia (T2.2) valida
+  contra el archivo completo, no contra `Location.Line`, así que evidencia real pero
+  desplazada de línea pasa el filtro; el fingerprint (T2.3) colapsa dos defectos
+  distintos con evidencia idéntica dentro del mismo símbolo, y su estabilidad depende
+  de que el agente resuelva `Location.Simbolo` de forma consistente entre ejecuciones;
+  `MigrarDesdeV1` (T2.6) no valida el origen de las fichas de worktrees enlazados
+  (asume un único usuario de confianza) y su idempotencia no reconcilia revisiones
+  añadidas después de una primera migración; la escritura del índice invertido de
+  blobs (T2.7) no es atómica como conjunto (cada archivo sí, el lote no) y puede
+  perder actualizaciones bajo escritura concurrente sobre el mismo blob.

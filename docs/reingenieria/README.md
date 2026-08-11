@@ -237,7 +237,7 @@ Leyenda: ⬜ pendiente · 🔄 en curso · ✅ cerrada con evidencia
 |---|---|---|---|
 | F0 | ✅ | T0.0–T0.13 | Todas cerradas: T0.0, T0.1 (13 commits), T0.2, T0.3, T0.4, T0.5, T0.6, T0.7, T0.8, T0.9, T0.10, T0.11, T0.12, T0.13 |
 | F1 | ✅ | `ac455be` | T1.1–T1.8 cerradas (`5c728a5`..`f2dbc21`) + 4 correcciones de una revisión semántica de rama post-cierre (`8ff1b3c`, `b5bad54`, `e48f0a5`, `ac455be`), incluidos 2 CRITICAL de seguridad. Ver desviaciones abajo. |
-| F2 | ⬜ | — | |
+| F2 | ✅ | `a1cd03b` | T2.1–T2.7 cerradas (`f35e1be`..`0ff43bf`) + 3 correcciones post-cierre (`b446df1`/`a200046`, `a1cd03b`): la más importante, los findings reales se perdían al reutilizar por blob tras un rebase — corregido con `Ledger.AdoptarFicha`. Ver desviaciones en `f2-contrato-store.md`. |
 | F3 | ⬜ | — | |
 | F4 | ⬜ | — | |
 | F5 | ⬜ | — | |
