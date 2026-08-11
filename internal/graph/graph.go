@@ -23,15 +23,17 @@ type alcanceAfectado struct {
 // ResultadoAnalisis vincula la entrada analizada, el alcance y su evidencia.
 // Su valor cero no es confiable; solo graph puede producir un valor autorizable.
 type ResultadoAnalisis struct {
+	identidad string
 	rutas     []string
 	alcance   alcanceAfectado
 	evidencia evidenciaCompletitud
 	confiable bool
 }
 
-func nuevoResultadoAnalisis(rutas []string, alcance alcanceAfectado, evidencia evidenciaCompletitud) ResultadoAnalisis {
+func nuevoResultadoAnalisis(identidad string, rutas []string, alcance alcanceAfectado, evidencia evidenciaCompletitud) ResultadoAnalisis {
 	return ResultadoAnalisis{
-		rutas: clonar(rutas),
+		identidad: identidad,
+		rutas:     clonar(rutas),
 		alcance: alcanceAfectado{
 			paquetes:    clonar(alcance.paquetes),
 			tests:       clonar(alcance.tests),
@@ -46,6 +48,7 @@ func nuevoResultadoAnalisis(rutas []string, alcance alcanceAfectado, evidencia e
 	}
 }
 
+func (r ResultadoAnalisis) IdentidadSnapshot() string { return r.identidad }
 func (r ResultadoAnalisis) RutasAnalizadas() []string { return clonar(r.rutas) }
 func (r ResultadoAnalisis) Completo() bool            { return r.evidencia.completo }
 func (r ResultadoAnalisis) MotivoIncompleto() string  { return r.evidencia.motivo }
@@ -68,7 +71,7 @@ func (a AlcanceAfectado) Explicacion() []string { return clonar(a.explicacion) }
 func AutorizarAlcanceParcial(resultado ResultadoAnalisis) (AlcanceAfectado, bool) {
 	a := resultado.alcance
 	e := resultado.evidencia
-	if !resultado.confiable || !e.completo || e.motivo != "" || len(e.noCubiertos) != 0 ||
+	if !resultado.confiable || resultado.identidad == "" || !e.completo || e.motivo != "" || len(e.noCubiertos) != 0 ||
 		!validos(resultado.rutas) || (len(a.paquetes) == 0 && len(a.tests) == 0) ||
 		!validosOpcionales(a.paquetes) || !validosOpcionales(a.tests) || !validos(a.explicacion) {
 		return AlcanceAfectado{}, false

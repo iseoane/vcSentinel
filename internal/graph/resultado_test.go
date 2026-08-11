@@ -7,7 +7,7 @@ import (
 
 func TestResultadoNativoVinculaEntradaEvidenciaYAlcance(t *testing.T) {
 	rutas := []string{"internal/git/diff.go"}
-	resultado := nuevoResultadoAnalisis(rutas, alcanceAfectado{
+	resultado := nuevoResultadoAnalisis("tree-1", rutas, alcanceAfectado{
 		paquetes:    []string{"internal/git"},
 		tests:       []string{"./internal/git"},
 		explicacion: []string{"diff.go pertenece a internal/git"},
@@ -58,7 +58,7 @@ func TestResultadoNativoFallaCerrado(t *testing.T) {
 
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
-			resultado := nuevoResultadoAnalisis(caso.rutas, caso.alcance, caso.evidencia)
+			resultado := nuevoResultadoAnalisis("tree-1", caso.rutas, caso.alcance, caso.evidencia)
 			if _, autorizado := AutorizarAlcanceParcial(resultado); autorizado {
 				t.Fatal("un estado incompleto o contradictorio fue autorizado")
 			}
