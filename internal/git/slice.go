@@ -2,11 +2,13 @@ package git
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -19,6 +21,9 @@ const (
 	// guardián, y recalibrar el guardián debe arrastrarlos.
 	limiteLineasLote    = LimiteLineasRevisables
 	limiteConfigGigante = LimiteLineasRevisables
+	// El micro-diff se envía a un proceso externo: limita tanto cada archivo
+	// nuevo como el resultado total antes de materializar su contenido completo.
+	limiteBytesMicroDiff = 1 << 20
 
 	mensajeAisladoDeps   = "chore(deps): track lock and auto-generated files"
 	mensajeAisladoDocs   = "docs(slice): isolate extensive document %s"
@@ -306,9 +311,75 @@ func obtenerMensajeConDiff(rutas []string, capa string, numero int, adapter agen
 	return adapter.ObtenerMensajeCommit(rutas, capa, numero)
 }
 
-// diffPendienteRutas devuelve el diff de los archivos dados frente a HEAD,
-// combinando los cambios staged y unstaged sin necesidad de prepararlos.
+// diffPendienteRutas devuelve el diff de los archivos dados frente a HEAD e
+// incorpora archivos no rastreados sin preparar ni modificar el índice.
 func diffPendienteRutas(rutas []string) (string, error) {
-	args := append([]string{"diff", "HEAD", "--"}, rutas...)
-	return ejecutarGitSalida(args...)
+	args := append([]string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD", "--"}, rutas...)
+	rastreado, err := ejecutarGitSalida(args...)
+	if err != nil {
+		return "", err
+	}
+	if len(rastreado) > limiteBytesMicroDiff {
+		return "", fmt.Errorf("el diff rastreado supera el límite de %d bytes para el micro-diff", limiteBytesMicroDiff)
+	}
+
+	args = append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, rutas...)
+	salida, err := ejecutarGitSalida(args...)
+	if err != nil {
+		return "", err
+	}
+	noRastreados := strings.Split(strings.TrimSuffix(salida, "\x00"), "\x00")
+	if len(noRastreados) == 1 && noRastreados[0] == "" {
+		return rastreado, nil
+	}
+	sort.Strings(noRastreados)
+
+	var diff strings.Builder
+	diff.WriteString(rastreado)
+	for _, ruta := range noRastreados {
+		info, err := os.Lstat(filepath.FromSlash(ruta))
+		if err != nil {
+			return "", fmt.Errorf("no se pudo leer el archivo no rastreado %s: %w", ruta, err)
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("el archivo no rastreado %s no es un archivo regular", ruta)
+		}
+		if info.Size() > limiteBytesMicroDiff {
+			return "", fmt.Errorf("el archivo no rastreado %s supera el límite de %d bytes para el micro-diff", ruta, limiteBytesMicroDiff)
+		}
+
+		numstat, err := ejecutarGitDiffNoIndex("--numstat", os.DevNull, ruta)
+		if err != nil {
+			return "", err
+		}
+		if strings.HasPrefix(numstat, "-\t-\t") {
+			return "", fmt.Errorf("el archivo no rastreado %s es binario; no se enviará su contenido", ruta)
+		}
+		parche, err := ejecutarGitDiffNoIndex("--patch", os.DevNull, ruta)
+		if err != nil {
+			return "", err
+		}
+		if diff.Len()+len(parche) > limiteBytesMicroDiff {
+			return "", fmt.Errorf("el micro-diff supera el límite de %d bytes", limiteBytesMicroDiff)
+		}
+		diff.WriteString(parche)
+	}
+	return diff.String(), nil
+}
+
+func ejecutarGitDiffNoIndex(formato, origen, destino string) (string, error) {
+	cmd := exec.Command("git", "diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", formato, "--", origen, destino)
+	salida, err := cmd.Output()
+	if err == nil {
+		return string(salida), nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return string(salida), nil
+	}
+	detalle := ""
+	if exitErr != nil {
+		detalle = strings.TrimSpace(string(exitErr.Stderr))
+	}
+	return "", fmt.Errorf("git diff --no-index falló para %s: %w: %s", destino, err, detalle)
 }
