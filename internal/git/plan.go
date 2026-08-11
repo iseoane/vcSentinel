@@ -55,7 +55,13 @@ func ConstruirPlanFragmentacionConLector(archivos []ArchivoModificado, confirmar
 	rutas := make([]string, 0, len(archivos))
 	lineasPorRuta := make(map[string]int, len(archivos))
 	for _, f := range archivos {
-		porRuta[filepath.ToSlash(f.Ruta)] = f
+		// f.Ruta viene siempre de "git status"/"git diff" (archivosRastreados,
+		// archivosNoRastreados en slice.go): git reporta rutas separadas por "/"
+		// en todo SO, así que un backslash aquí es un carácter literal del
+		// nombre, no un separador que convertir. filepath.ToSlash/Clean solo
+		// necesitan normalizar "./", "//" y similares.
+		f.Ruta = filepath.ToSlash(filepath.Clean(f.Ruta))
+		porRuta[f.Ruta] = f
 		rutas = append(rutas, f.Ruta)
 		lineasPorRuta[f.Ruta] = f.Lineas
 	}

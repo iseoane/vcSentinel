@@ -64,7 +64,7 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	if err != nil {
 		return err
 	}
-	lineas, err := lineasAnadidasExplain(lector, rango)
+	lineas, err := lineasAnadidasExplain(lector, rango, rutas)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,8 @@ func parsearExplain(args []string) (base, head string, jsonOut bool, err error) 
 		rango = arg
 	}
 	base, head, ok := strings.Cut(rango, "..")
-	if !ok || base == "" || head == "" || strings.Contains(head, "..") {
+	if !ok || base == "" || head == "" || strings.Contains(head, "..") ||
+		strings.HasPrefix(base, "-") || strings.HasPrefix(head, "-") {
 		return "", "", false, fmt.Errorf("rango inválido %q: usa <base>..<head>", rango)
 	}
 	return base, head, jsonOut, nil
@@ -138,20 +139,22 @@ func rutasExplain(lector change.LectorGit, rango string) ([]string, error) {
 	return rutas, nil
 }
 
-func lineasAnadidasExplain(lector change.LectorGit, rango string) (map[string][]string, error) {
-	salida, err := lector("diff", "--no-color", "--unified=0", rango)
-	if err != nil {
-		return nil, fmt.Errorf("no se pudieron leer las líneas añadidas de %s: %w", rango, err)
-	}
+func lineasAnadidasExplain(lector change.LectorGit, rango string, rutas []string) (map[string][]string, error) {
 	resultado := make(map[string][]string)
-	ruta := ""
-	for _, linea := range strings.Split(salida, "\n") {
-		if strings.HasPrefix(linea, "+++ b/") {
-			ruta = filepath.ToSlash(strings.TrimPrefix(linea, "+++ b/"))
-			continue
+	for _, ruta := range rutas {
+		salida, err := lector("diff", "--no-color", "--unified=0", rango, "--", ":(literal)"+ruta)
+		if err != nil {
+			return nil, fmt.Errorf("no se pudieron leer las líneas añadidas de %s en %s: %w", rango, ruta, err)
 		}
-		if ruta != "" && strings.HasPrefix(linea, "+") && !strings.HasPrefix(linea, "+++") {
-			resultado[ruta] = append(resultado[ruta], strings.TrimPrefix(linea, "+"))
+		enHunk := false
+		for _, linea := range strings.Split(salida, "\n") {
+			if strings.HasPrefix(linea, "@@") {
+				enHunk = true
+				continue
+			}
+			if enHunk && strings.HasPrefix(linea, "+") {
+				resultado[ruta] = append(resultado[ruta], strings.TrimPrefix(linea, "+"))
+			}
 		}
 	}
 	return resultado, nil

@@ -77,6 +77,31 @@ func TestConstruirPlanFragmentacionSoloParteClusterPorLimite(t *testing.T) {
 	}
 }
 
+// La ruta gira sobre "./" en vez de sobre una barra invertida: git siempre
+// reporta rutas separadas por "/" (incluso ejecutándose en Windows), así que
+// una barra invertida en una ruta de git es un carácter literal del nombre
+// de archivo, no un separador a convertir. filepath.Clean sí necesita
+// normalizar "./" para que la ruta acabe en el mismo clúster que su vecina.
+func TestConstruirPlanFragmentacionNormalizaRutasUnaSolaVez(t *testing.T) {
+	archivos := []ArchivoModificado{
+		{Ruta: `internal/auth/./login.go`, Lineas: 40, Capa: "backend"},
+		{Ruta: `internal/auth/login_test.go`, Lineas: 20, Capa: "test"},
+	}
+	plan, err := ConstruirPlanFragmentacionConLector(archivos,
+		func(ArchivoModificado) (bool, error) { return true, nil },
+		func(args ...string) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Lotes) != 1 {
+		t.Fatalf("lotes = %+v, esperado un clúster normalizado", plan.Lotes)
+	}
+	esperado := []string{"internal/auth/login.go", "internal/auth/login_test.go"}
+	if !reflect.DeepEqual(plan.Lotes[0].Rutas, esperado) || plan.Lotes[0].LineasTotales != 60 {
+		t.Fatalf("lote = %+v, rutas esperadas %v y 60 líneas", plan.Lotes[0], esperado)
+	}
+}
+
 // TestConstruirPlanFragmentacionNoMezclaClases cubre T0.12: un .go y un .md
 // que caen en la misma capa ("backend", el caso por defecto de
 // ClasificarCapa para un .md) no deben terminar en el mismo lote. Antes de

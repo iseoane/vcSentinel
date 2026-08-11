@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -69,5 +70,41 @@ func TestEjecutarExplainJSONExponePerfilDetectoresRiesgoYCohesion(t *testing.T) 
 	}
 	if got.Cohesion.Clusters != 2 || !got.Cohesion.SuggestedSplit {
 		t.Errorf("cohesión = %+v", got.Cohesion)
+	}
+}
+
+func TestParsearExplainRechazaComponentesQueParecenOpciones(t *testing.T) {
+	for _, rango := range []string{"--output=robo..HEAD", "HEAD..--output=robo"} {
+		t.Run(rango, func(t *testing.T) {
+			if _, _, _, err := parsearExplain([]string{rango}); err == nil {
+				t.Fatalf("parsearExplain aceptó el rango peligroso %q", rango)
+			}
+		})
+	}
+}
+
+func TestLineasAnadidasExplainUsaRutasNulasYSepardorGit(t *testing.T) {
+	rutas := []string{"dir/ruta rara\t.go", "-opcion.go"}
+	lector := func(args ...string) (string, error) {
+		if len(args) < 3 || args[len(args)-2] != "--" {
+			t.Fatalf("git diff no separó opciones de ruta: %v", args)
+		}
+		pathspec := args[len(args)-1]
+		ruta, esLiteral := strings.CutPrefix(pathspec, ":(literal)")
+		if !esLiteral {
+			t.Fatalf("git diff no forzó pathspec literal (magia de ':' sin desactivar): %v", pathspec)
+		}
+		return "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -0,0 +1,2 @@\n+++ b/no-es-cabecera\n+contenido de " + ruta + "\n", nil
+	}
+
+	lineas, err := lineasAnadidasExplain(lector, "BASE..HEAD", rutas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ruta := range rutas {
+		esperado := []string{"++ b/no-es-cabecera", "contenido de " + ruta}
+		if got := lineas[ruta]; !reflect.DeepEqual(got, esperado) {
+			t.Fatalf("líneas de %q = %q, esperado %q", ruta, got, esperado)
+		}
 	}
 }
