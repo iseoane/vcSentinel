@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"strings"
 )
 
 type simboloAST struct {
@@ -14,11 +15,11 @@ type simboloAST struct {
 	apiDeterminada bool
 }
 
-func simbolosCambiados(git LectorGit, cambios []cambioRuta, base, head string) ChangeSymbols {
+func simbolosCambiados(git LectorGit, cambios []cambioRuta, base, head string, clasificar func(string) string) ChangeSymbols {
 	resultado := ChangeSymbols{Complete: true}
 	for _, cambio := range cambios {
-		antes, okAntes := simbolosEnRevision(git, base, cambio.antes)
-		despues, okDespues := simbolosEnRevision(git, head, cambio.despues)
+		antes, okAntes := simbolosEnRevision(git, base, cambio.antes, clasificar)
+		despues, okDespues := simbolosEnRevision(git, head, cambio.despues, clasificar)
 		if !okAntes || !okDespues {
 			resultado.Complete = false
 			continue
@@ -58,9 +59,9 @@ func simbolosCambiados(git LectorGit, cambios []cambioRuta, base, head string) C
 	return resultado
 }
 
-func simbolosEnRevision(git LectorGit, revision, ruta string) (map[string]simboloAST, bool) {
+func simbolosEnRevision(git LectorGit, revision, ruta string, clasificar func(string) string) (map[string]simboloAST, bool) {
 	resultado := map[string]simboloAST{}
-	if ruta == "" || ClasificarPorRuta(ruta, ReglasPorDefecto()) != ClaseSource {
+	if ruta == "" || clasificar(ruta) != ClaseSource {
 		return resultado, true
 	}
 	if filepath.Ext(ruta) != ".go" {
@@ -133,9 +134,9 @@ func imprimirAPI(fset *token.FileSet, nodo ast.Node) string {
 func copiarNodoAPI(texto string, original ast.Node) (ast.Node, *token.FileSet) {
 	fset := token.NewFileSet()
 	if _, ok := original.(*ast.FuncType); ok {
-		nodo, err := parser.ParseExprFrom(fset, "api.go", texto, 0)
+		archivo, err := parser.ParseFile(fset, "api.go", "package api\nfunc placeholder"+strings.TrimPrefix(texto, "func"), 0)
 		if err == nil {
-			return nodo, fset
+			return archivo.Decls[0].(*ast.FuncDecl).Type, fset
 		}
 	}
 	prefijo := "var "
@@ -161,10 +162,12 @@ func tiposPrivadosAlcanzables(archivo *ast.File) map[string]bool {
 		}
 	}
 	alcanzables := map[string]bool{}
+	var cola []string
 	marcar := func(n ast.Node) {
 		ast.Inspect(n, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && tipos[id.Name] != nil {
+			if id, ok := n.(*ast.Ident); ok && tipos[id.Name] != nil && !alcanzables[id.Name] {
 				alcanzables[id.Name] = true
+				cola = append(cola, id.Name)
 			}
 			return true
 		})
@@ -188,13 +191,10 @@ func tiposPrivadosAlcanzables(archivo *ast.File) map[string]bool {
 			}
 		}
 	}
-	for cambio := true; cambio; {
-		cambio = false
-		for nombre := range alcanzables {
-			antes := len(alcanzables)
-			marcar(tipos[nombre].Type)
-			cambio = cambio || len(alcanzables) != antes
-		}
+	for len(cola) > 0 {
+		nombre := cola[0]
+		cola = cola[1:]
+		marcar(tipos[nombre].Type)
 	}
 	return alcanzables
 }

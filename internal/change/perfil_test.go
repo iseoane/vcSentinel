@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +73,9 @@ func TestPerfilDeCambioDerivaSimbolosExactos(t *testing.T) {
 		quiere                 ChangeSymbols
 	}{
 		{"solo cuerpo y nombre de parámetro", "func Publica(a int) int { return a }", "func Publica(b int) int { return b + 1 }", ChangeSymbols{Modified: 1, Complete: true}},
+		{"nombre de parámetro genérico", "func Publica[T any](valor T) T { return valor }", "func Publica[T any](otro T) T { return otro }", ChangeSymbols{Modified: 1, Complete: true}},
+		{"restricción genérica", "func Publica[T any](valor T) T { return valor }", "func Publica[T comparable](valor T) T { return valor }", ChangeSymbols{Modified: 1, ExportedTouched: 1, Complete: true}},
+		{"resultado genérico", "func Publica[T any](valor T) T { return valor }", "func Publica[T any](valor T) []T { return nil }", ChangeSymbols{Modified: 1, ExportedTouched: 1, Complete: true}},
 		{"firma", "func Publica(a int) int { return a }", "func Publica(a string) int { return len(a) }", ChangeSymbols{Modified: 1, ExportedTouched: 1, Complete: true}},
 		{"nombre de parámetro en interfaz", "type Publica interface { Metodo(a int) }", "type Publica interface { Metodo(b int) }", ChangeSymbols{Modified: 1, Complete: true}},
 		{"tipo y metodo", "", "type Publico struct { Campo int }; func (Publico) Metodo() {}", ChangeSymbols{Added: 2, ExportedTouched: 2, Complete: true}},
@@ -106,10 +111,11 @@ func TestSimbolosFallanCerradoFueraDelAnalizador(t *testing.T) {
 		"base:api.pb.go": "no importa", "head:api.pb.go": "tampoco",
 	}
 	git := func(args ...string) (string, error) { return contenido[args[1]], nil }
-	if got := simbolosCambiados(git, []cambioRuta{{"api.ts", "api.ts"}}, "base", "head"); got.Complete {
+	clasificar := func(ruta string) string { return ClasificarPorRuta(ruta, ReglasPorDefecto()) }
+	if got := simbolosCambiados(git, []cambioRuta{{"api.ts", "api.ts"}}, "base", "head", clasificar); got.Complete {
 		t.Fatalf("fuente TypeScript declarada completa: %#v", got)
 	}
-	if got := simbolosCambiados(git, []cambioRuta{{"api.pb.go", "api.pb.go"}}, "base", "head"); !got.Complete {
+	if got := simbolosCambiados(git, []cambioRuta{{"api.pb.go", "api.pb.go"}}, "base", "head", clasificar); !got.Complete {
 		t.Fatalf("generado no debe exigir analizador: %#v", got)
 	}
 }
@@ -121,13 +127,13 @@ func TestSimbolosIncluyenPaqueteYPurezaDeFirma(t *testing.T) {
 		}
 		return "package despues\nfunc Publica(a int) int { return a }", nil
 	}
-	got := simbolosCambiados(git, []cambioRuta{{"api.go", "api.go"}}, "base", "head")
+	got := simbolosCambiados(git, []cambioRuta{{"api.go", "api.go"}}, "base", "head", func(string) string { return ClaseSource })
 	if got.Modified != 1 || got.ExportedTouched != 1 || !got.Complete {
 		t.Fatalf("cambio de paquete no detectado: %#v", got)
 	}
 
 	fset := token.NewFileSet()
-	archivo, _ := parser.ParseFile(fset, "api.go", "package p\nfunc Publica(nombre int) int", 0)
+	archivo, _ := parser.ParseFile(fset, "api.go", "package p\nfunc Publica[T any](nombre T) T", 0)
 	tipo := archivo.Decls[0].(*ast.FuncDecl).Type
 	antes := imprimirAST(fset, tipo)
 	primera := imprimirAPI(fset, tipo)
@@ -136,6 +142,24 @@ func TestSimbolosIncluyenPaqueteYPurezaDeFirma(t *testing.T) {
 	}
 	if segunda := imprimirAPI(fset, tipo); segunda != primera {
 		t.Fatalf("firma depende del orden: primera=%q segunda=%q", primera, segunda)
+	}
+}
+
+func TestTiposPrivadosAlcanzablesCadenaLarga(t *testing.T) {
+	const longitud = 2000
+	var fuente strings.Builder
+	fuente.WriteString("package p\nfunc Publica() tipo0 { panic(0) }\n")
+	for i := 0; i < longitud-1; i++ {
+		fuente.WriteString("type tipo" + strconv.Itoa(i) + " tipo" + strconv.Itoa(i+1) + "\n")
+	}
+	fuente.WriteString("type tipo" + strconv.Itoa(longitud-1) + " int\n")
+	archivo, err := parser.ParseFile(token.NewFileSet(), "api.go", fuente.String(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alcanzables := tiposPrivadosAlcanzables(archivo)
+	if len(alcanzables) != longitud {
+		t.Fatalf("tipos alcanzables = %d, quiere %d", len(alcanzables), longitud)
 	}
 }
 

@@ -79,12 +79,14 @@ func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) 
 	if err != nil {
 		return ChangeProfile{}, err
 	}
+	reglas := ReglasPorDefecto()
+	clasificar := func(ruta string) string { return ClasificarPorRuta(ruta, reglas) }
 
 	perfil := ChangeProfile{
 		Base:        base,
 		Head:        head,
 		Size:        ChangeSize{Files: len(rutas)},
-		Symbols:     simbolosCambiados(git, cambios, baseTree, headTree),
+		Symbols:     simbolosCambiados(git, cambios, baseTree, headTree, clasificar),
 		Modules:     modulosDeRutas(rutas),
 		FileClasses: conteoDeClases(rutas),
 	}
