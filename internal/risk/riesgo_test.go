@@ -124,6 +124,42 @@ func TestEvaluar(t *testing.T) {
 	}
 }
 
+// TestEstadoDeNoSubestimaConDuplicados cubre la revisión de T3.4: un
+// "security_sensitive" ausente ANTES de uno presente en el slice no debe
+// esconder el presente y hacer que el riesgo real (high) se subestime.
+func TestEstadoDeNoSubestimaConDuplicados(t *testing.T) {
+	duplicadas := []change.Caracteristica{
+		{Nombre: "security_sensitive", Estado: change.CaracteristicaAusente},
+		{Nombre: "security_sensitive", Estado: change.CaracteristicaPresente},
+	}
+	resultado := Evaluar(change.ChangeProfile{Kind: "feature"}, duplicadas)
+	if resultado.Nivel != NivelHigh {
+		t.Fatalf("Nivel con duplicados = %q; want %q (security_sensitive presente en cualquier posición)", resultado.Nivel, NivelHigh)
+	}
+}
+
+// TestConstantesCaracteristicaCoincidenConChange detecta drift entre las
+// constantes locales de nombre de característica y los Nombre reales que
+// devuelve change.DetectarCaracteristicas: sin esta prueba, un cambio de
+// literal en internal/change rompería este paquete en silencio, sin fallo de
+// compilación (revisión de T3.4).
+func TestConstantesCaracteristicaCoincidenConChange(t *testing.T) {
+	nombresReales := map[string]bool{}
+	for _, c := range change.DetectarCaracteristicas(change.EntradaCaracteristicas{}) {
+		nombresReales[c.Nombre] = true
+	}
+	locales := []string{
+		caracteristicaSecuridadSensible, caracteristicaBaseDeDatos, caracteristicaAPIPublica,
+		caracteristicaCruceDeModulos, caracteristicaConcurrencia, caracteristicaCambioComport,
+		caracteristicaCoberturaTests,
+	}
+	for _, nombre := range locales {
+		if !nombresReales[nombre] {
+			t.Errorf("la constante %q ya no coincide con ningún Nombre real de change.DetectarCaracteristicas: revisar drift con internal/change", nombre)
+		}
+	}
+}
+
 func caracteristicasCon(estados map[string]change.EstadoCaracteristica) []change.Caracteristica {
 	nombres := []string{
 		"public_api", "database", "security_sensitive", "concurrency", "behavior_change",
