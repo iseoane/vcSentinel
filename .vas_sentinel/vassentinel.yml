@@ -1,5 +1,5 @@
 version: "2.0"
-active_agent: "auto"
+active_agent: "opencode"
 agents:
   claude:
     model: "claude-opus"
@@ -17,27 +17,42 @@ agents:
       commit:
         reasoning_effort: "low"
   opencode:
-    model: "deepseek-v4-flash-free"
+    model: "openai/gpt-5.6-sol"
     reasoning_effort: "high"
     profiles:
       cheap:
-        model: "deepseek-v4-flash-free"
-        reasoning_effort: "default"
+        model: "openai/gpt-5.6-sol"
+        reasoning_effort: "low"
       normal:
-        model: "deepseek-v4-flash-free"
-        reasoning_effort: "high"
+        model: "openai/gpt-5.6-sol"
+        reasoning_effort: "medium"
       deep:
-        model: "deepseek-v4-flash-free"
-        reasoning_effort: "max"
+        model: "openai/gpt-5.6-sol"
+        reasoning_effort: "high"
       commit:
         reasoning_effort: "low"
 review:
   timeout: 600
   parallel: 2
   dims:
-    spec: "cheap"
-    style: "cheap"
+    spec: "normal"
+    style: "normal"
     tests: "normal"
-    logic: "normal"
+    logic: "deep"
     design: "deep"
     security: "deep"
+validation:
+  capabilities:
+    format:
+      command: "gofmt -l ."
+      fails_when: output_not_empty
+    lint:
+      command: "go vet ./..."
+    build:
+      command: "go build ./..."
+    unit_test:
+      command: "go test ./..."
+      timeout: 120
+  profiles:
+    standard: [format, lint, build, unit_test]
+  mode: worktree

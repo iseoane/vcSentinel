@@ -1,0 +1,46 @@
+{
+  "plan_id": "f1fa2cc81d2a13bbb80eb51a23cf729b31a870199e24de5d387d97366e855da0",
+  "estado_worktree": "47d9db6794e767fc5ad3b181d720db69f21026ff6b426ba9597a4243841b21f5",
+  "lotes": [
+    {
+      "numero": 1,
+      "capa": "config",
+      "rutas": [
+        ".vas_sentinel/vassentinel.yml",
+        ".claude/settings.json",
+        "plan.json"
+      ],
+      "lineas": 31,
+      "mensaje": "chore(slice): auto-fragmented config batch #1",
+      "es_gigante": false
+    },
+    {
+      "numero": 2,
+      "capa": "backend",
+      "rutas": [
+        "cmd/sentinel/main.go",
+        "internal/change/cohesion.go",
+        "internal/git/plan.go",
+        "internal/git/planagente.go",
+        "cmd/sentinel/comandos_explain.go"
+      ],
+      "lineas": 274,
+      "mensaje": "chore(slice): auto-fragmented backend batch #2",
+      "es_gigante": false
+    },
+    {
+      "numero": 3,
+      "capa": "test",
+      "rutas": [
+        "cmd/sentinel/ayuda_test.go",
+        "internal/change/cohesion_test.go",
+        "internal/git/plan_test.go",
+        "cmd/sentinel/comandos_explain_test.go"
+      ],
+      "lineas": 125,
+      "mensaje": "chore(slice): auto-fragmented test batch #3",
+      "es_gigante": false
+    }
+  ],
+  "decisiones_pendientes": []
+}
