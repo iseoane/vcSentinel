@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 // hace configurable vía review.timeout en vassentinel.yml; este es el fallback
 // cuando un adaptador no define Timeout.
 const TimeoutComando = 300 * time.Second
+
+var patronMensajeCommit = regexp.MustCompile(`^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-zA-Z0-9._/-]+\))?!?: .+$`)
 
 type CLIAdapter struct {
 	BinaryName string
@@ -35,7 +38,14 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	return c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
+	return c.ejecutarMensajeCommit(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
+}
+
+// ObtenerMensajeCommitConDiff incorpora el cambio preparado al prompt para que
+// el agente no necesite leer el repositorio durante la generación del mensaje.
+func (c *CLIAdapter) ObtenerMensajeCommitConDiff(rutasArchivos []string, capa string, batchNum int, diff string) (string, error) {
+	prompt := construirPromptAgenteConDiff(capa, batchNum, rutasArchivos, diff, c.idiomaCommit())
+	return c.ejecutarMensajeCommit(prompt)
 }
 
 // ProponerPlanRefactor pide al agente un plan de división para un archivo de
@@ -63,6 +73,69 @@ func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
 		timeout = TimeoutComando
 	}
 	return c.ejecutarComandoConTimeout(prompt, timeout)
+}
+
+func (c *CLIAdapter) ejecutarMensajeCommit(prompt string) (string, error) {
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = TimeoutComando
+	}
+	if !c.esOpenCode() {
+		salida, err := c.ejecutarComandoConTimeout(prompt, timeout)
+		if err != nil {
+			return "", err
+		}
+		return validarMensajeCommit(salida)
+	}
+
+	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
+	defer cancelar()
+	cmd, limpiar, err := c.prepararComandoCommit(ctx, prompt)
+	if err != nil {
+		return "", err
+	}
+	defer limpiar()
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return validarMensajeCommit(out.String())
+}
+
+// prepararComandoCommit ejecuta OpenCode fuera del repositorio y sin plugins
+// externos. El micro-diff ya viaja en el prompt, por lo que no pierde contexto.
+func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
+	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("crear directorio neutral para opencode: %w", err)
+	}
+	limpiar := func() { _ = os.RemoveAll(dir) }
+	args := []string{"run", "--pure"}
+	if c.Config.Model != "" {
+		args = append(args, "--model", c.Config.Model)
+	}
+	if c.Config.ReasoningEffort != "" {
+		args = append(args, "--variant", c.Config.ReasoningEffort)
+	}
+	args = append(args, "--dir", dir)
+	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("OPENCODE_MODEL=%s", c.Config.Model),
+		fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort),
+	)
+	cmd.Stdin = strings.NewReader(prompt)
+	return cmd, limpiar, nil
+}
+
+func validarMensajeCommit(salida string) (string, error) {
+	mensaje := strings.TrimSpace(salida)
+	if strings.ContainsAny(mensaje, "\r\n") || !patronMensajeCommit.MatchString(mensaje) {
+		return "", fmt.Errorf("el agente no devolvio una unica linea Conventional Commit")
+	}
+	return mensaje, nil
 }
 
 // ejecutarComandoConTimeout es la variante parametrizada de ejecutarComando;
@@ -137,6 +210,10 @@ func construirPromptAgente(capa string, batchNum int, archivos []string, idioma 
 		"Analiza estos archivos modificados de la capa [%s] (Lote #%d): %s. Genera un mensaje de commit semántico bajo el estándar Conventional Commits. %s Ejemplo del formato esperado: %s. Devuelve ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
 		capa, batchNum, archivosStr, instruccion, ejemplo,
 	)
+}
+
+func construirPromptAgenteConDiff(capa string, batchNum int, archivos []string, diff string, idioma string) string {
+	return fmt.Sprintf("%s\n\nMicro-diff preparado:\n%s", construirPromptAgente(capa, batchNum, archivos, idioma), diff)
 }
 
 func construirPromptRefactor(ruta string) string {

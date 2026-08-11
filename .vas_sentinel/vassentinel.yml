@@ -2,7 +2,7 @@ version: "2.0"
 active_agent: "opencode"
 agents:
   claude:
-    model: "claude-opus"
+    model: "claude-sonnet"
     reasoning_effort: "medium"
     profiles:
       cheap:
@@ -17,12 +17,12 @@ agents:
       commit:
         reasoning_effort: "low"
   opencode:
-    model: "openai/gpt-5.6-sol"
+    model: "openai/gpt-5.6-terra"
     reasoning_effort: "high"
     profiles:
       cheap:
-        model: "openai/gpt-5.6-sol"
-        reasoning_effort: "low"
+        model: "openai/gpt-5.6-terra"
+        reasoning_effort: "high"
       normal:
         model: "openai/gpt-5.6-sol"
         reasoning_effort: "medium"
@@ -35,8 +35,8 @@ review:
   timeout: 600
   parallel: 2
   dims:
-    spec: "normal"
-    style: "normal"
+    spec: "cheap"
+    style: "cheap"
     tests: "normal"
     logic: "deep"
     design: "deep"

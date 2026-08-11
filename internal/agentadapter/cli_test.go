@@ -1,6 +1,8 @@
 package agentadapter
 
 import (
+	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,75 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
+
+func TestPrepararComandoCommitOpenCodeAislaLaEjecucion(t *testing.T) {
+	adapter := CLIAdapter{
+		BinaryName: "opencode",
+		Config:     config.AgentConfig{Model: "openai/gpt-5.6-sol", ReasoningEffort: "high"},
+	}
+
+	cmd, limpiar, err := adapter.prepararComandoCommit(context.Background(), "feat(test): mensaje")
+	if err != nil {
+		t.Fatalf("prepararComandoCommit devolvió error: %v", err)
+	}
+	defer limpiar()
+
+	esperados := []string{"opencode", "run", "--pure", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", cmd.Dir}
+	if !reflect.DeepEqual(cmd.Args, esperados) {
+		t.Fatalf("argumentos = %v, esperados %v", cmd.Args, esperados)
+	}
+	if cmd.Dir == "" {
+		t.Fatal("OpenCode debe ejecutarse en un directorio neutral")
+	}
+	datos, err := io.ReadAll(cmd.Stdin)
+	if err != nil {
+		t.Fatalf("no se pudo leer stdin: %v", err)
+	}
+	if string(datos) != "feat(test): mensaje" {
+		t.Fatalf("stdin = %q, esperado el prompt completo", datos)
+	}
+}
+
+func TestValidarMensajeCommit(t *testing.T) {
+	casos := []struct {
+		nombre string
+		salida string
+		valida bool
+	}{
+		{nombre: "convencional", salida: "feat(slice): agrupar por cohesion", valida: true},
+		{nombre: "multilinea", salida: "He revisado los cambios\nfeat(slice): agrupar por cohesion", valida: false},
+		{nombre: "texto generico", salida: "He revisado los cambios", valida: false},
+		{nombre: "vacia", salida: "  ", valida: false},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			mensaje, err := validarMensajeCommit(caso.salida)
+			if (err == nil) != caso.valida {
+				t.Fatalf("validarMensajeCommit(%q) error = %v", caso.salida, err)
+			}
+			if caso.valida && mensaje != strings.TrimSpace(caso.salida) {
+				t.Fatalf("mensaje = %q, esperado %q", mensaje, strings.TrimSpace(caso.salida))
+			}
+		})
+	}
+}
+
+func TestObtenerMensajeCommitConDiffIncluyeElDiff(t *testing.T) {
+	prompt := construirPromptAgenteConDiff("backend", 2, []string{"internal/git/plan.go"}, "diff --git a/x b/x\n+linea", "es")
+	if !strings.Contains(prompt, "diff --git a/x b/x\n+linea") {
+		t.Fatalf("el prompt no contiene el micro-diff: %q", prompt)
+	}
+}
+
+func TestObtenerMensajeCommitOpenCodeRechazaSalidaNoConvencional(t *testing.T) {
+	binario := compilarAgenteConNombre(t, "opencode")
+	adapter := CLIAdapter{BinaryName: binario, Timeout: 10 * time.Second}
+
+	if _, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
+		t.Fatal("se esperaba error al recibir el prompt completo como salida")
+	}
+}
 
 // compilarSleeper compila el helper de testdata/sleeper a un ejecutable
 // temporal y devuelve su ruta. Los tests que lo usan se saltan en -short.
