@@ -77,14 +77,19 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 	}
 	var paquetes []*packages.Package
 	var err error
-	if p.directorio != "" {
+	consumidos, cacheHit := p.cargarCache()
+	if p.directorio != "" && !cacheHit {
 		paquetes, err = p.cargar(config, "./...")
 	}
 	if err != nil {
 		razones = append(razones, "error de carga: "+err.Error())
 	}
-	p.construirGrafo(paquetes, &razones)
-	if len(paquetes) == 0 {
+	if !cacheHit {
+		p.construirGrafo(paquetes, &razones)
+		consumidos = archivosConsumidos(paquetes)
+	}
+	cachePendiente := !cacheHit && len(razones) == 0 && len(paquetes) > 0
+	if !cacheHit && len(paquetes) == 0 {
 		razones = append(razones, "error de carga: no se cargaron paquetes")
 	}
 
@@ -118,10 +123,12 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 	if p.directorio != "" {
 		solicitud := solicitudVerificacion{
 			directorio: p.directorio, identidad: p.identidad,
-			fase: verificarConsumidos, consumidos: archivosConsumidos(paquetes),
+			fase: verificarConsumidos, consumidos: consumidos,
 		}
 		if err := p.verificar(solicitud); err != nil {
 			razones = append(razones, "snapshot no verificable al completar: "+err.Error())
+		} else if cachePendiente {
+			p.guardarCache(consumidos)
 		}
 	}
 	if len(razones) > 0 && len(noCubiertos) == 0 {

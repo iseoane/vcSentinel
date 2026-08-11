@@ -40,6 +40,32 @@ func TestProveedorNativoCargaGrafoBasico(t *testing.T) {
 	}
 }
 
+func TestProveedorNativoCacheaCargaPorTreeOID(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "a/a.go": "package a\n", "b/b.go": "package b\nimport _ \"example.test/s/a\"\n"})
+	cargas := 0
+	analizar := func(oid, ruta string) ResultadoAnalisis {
+		p := NuevoProveedorNativo(dir, oid)
+		cargar := p.cargar
+		p.cargar = func(config *packages.Config, patrones ...string) ([]*packages.Package, error) {
+			cargas++
+			return cargar(config, patrones...)
+		}
+		resultado, _ := p.Analizar([]string{ruta})
+		return resultado
+	}
+
+	oid := treeOID(t, dir)
+	analizar(oid, "a/a.go")
+	segundo := analizar(oid, "b/b.go")
+	cargasMismoArbol := cargas
+	os.WriteFile(filepath.Join(dir, "b", "b.go"), []byte("package b\n"), 0644)
+	git(t, dir, "commit", "-qam", "segundo árbol")
+	analizar(treeOID(t, dir), "b/b.go")
+	if cargasMismoArbol != 1 || cargas != 2 || !reflect.DeepEqual(segundo.Alcance().Paquetes(), []string{"example.test/s/b"}) {
+		t.Fatalf("cargas mismo/otro árbol=%d/%d; alcance del hit=%v", cargasMismoArbol, cargas, segundo.Alcance().Paquetes())
+	}
+}
+
 func TestProveedorNativoFallaCerrado(t *testing.T) {
 	casos := []struct {
 		nombre, ruta, contenido, motivo string
