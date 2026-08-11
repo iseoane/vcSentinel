@@ -33,6 +33,33 @@ func TestStoreLeerIndiceCommitInexistente(t *testing.T) {
 	}
 }
 
+// TestRegistrarBlobsCommitFusionaConjuntosDistintos cubre la corrección de
+// T2.7: dos llamadas sobre el mismo sha con conjuntos de blobs SIN
+// solapamiento deben acumularse (unión), no que la segunda pise a la
+// primera. Antes del fix, idx.Blobs = blobs sustituía el mapa completo y la
+// entrada de la primera llamada quedaba huérfana en blobs/<blob>.json.
+func TestRegistrarBlobsCommitFusionaConjuntosDistintos(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+
+	if err := s.RegistrarBlobsCommit("sha1", map[string]string{"a.go": "blobA"}); err != nil {
+		t.Fatalf("primera llamada: %v", err)
+	}
+	if err := s.RegistrarBlobsCommit("sha1", map[string]string{"b.go": "blobB"}); err != nil {
+		t.Fatalf("segunda llamada: %v", err)
+	}
+
+	leido, err := s.LeerIndiceCommit("sha1")
+	if err != nil {
+		t.Fatalf("LeerIndiceCommit: %v", err)
+	}
+	if leido == nil || len(leido.Blobs) != 2 {
+		t.Fatalf("Blobs = %+v, esperado la unión de ambas llamadas (2 entradas)", leido)
+	}
+	if leido.Blobs["a.go"] != "blobA" || leido.Blobs["b.go"] != "blobB" {
+		t.Errorf("Blobs = %+v, esperado {a.go:blobA, b.go:blobB}", leido.Blobs)
+	}
+}
+
 func TestStoreIndiceCommitCorruptoEsError(t *testing.T) {
 	dir := t.TempDir()
 	s := NuevoStore(dir)

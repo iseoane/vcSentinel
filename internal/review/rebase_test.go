@@ -23,13 +23,39 @@ import (
 
 // stubAuditorRebase implementa review.AuditorAgente y cuenta cuántas veces
 // se le invoca para auditar (no para el overview, que no se usa aquí).
+// Devuelve un hallazgo REAL (no solo un veredicto "ok"): sin esto, el bug de
+// B-01 (los findings desaparecen tras adoptar por blob) no se detecta,
+// porque un stub que nunca produce hallazgos no puede probar que
+// sobrevivan.
 type stubAuditorRebase struct {
 	llamadas int
 }
 
+// descripcionHallazgoRebase identifica el hallazgo real inyectado por el
+// stub, para comprobar después que sigue siendo recuperable bajo el SHA
+// post-rebase.
+const descripcionHallazgoRebase = "hallazgo real de prueba de rebase"
+
 func (a *stubAuditorRebase) EjecutarPrompt(prompt string) (string, error) {
 	a.llamadas++
-	return "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n", nil
+	return "BEGIN_REVIEW\n" +
+		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + descripcionHallazgoRebase + `","suggestion":"revisar antes del rebase"}]}` +
+		"\nEND_REVIEW\n", nil
+}
+
+// fichaTieneHallazgo recorre todas las revisiones/dimensiones de una ficha
+// buscando un ReviewFinding con esa descripción exacta.
+func fichaTieneHallazgo(f review.Ficha, descripcion string) bool {
+	for _, rev := range f.Revisions {
+		for _, dim := range rev.Dims {
+			for _, hallazgo := range dim.Findings {
+				if hallazgo.Description == descripcion {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func fabricaStubRebase(a *stubAuditorRebase) review.FabricaAuditor {
@@ -108,6 +134,13 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 	if llamadasAntes == 0 {
 		t.Fatal("el auditor debería haberse invocado en la primera pasada")
 	}
+	if len(res.SHAs) != 3 {
+		t.Fatalf("SHAs antes del rebase = %v, esperado 3 commits", res.SHAs)
+	}
+	// El commit del medio (b.txt) es el que rastreamos: SHAsRango devuelve
+	// los SHAs en orden cronológico (--reverse), así que la posición se
+	// conserva a través del rebase porque el rebase no reordena commits.
+	shaBAntes := res.SHAs[1]
 
 	// Rebase real: avanza main con un commit ajeno a "feature" y reescribe
 	// los 3 commits de feature sobre esa nueva base. El contenido de a.txt,
@@ -132,5 +165,32 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 	}
 	if stub.llamadas != llamadasAntes {
 		t.Errorf("el auditor se invocó %d veces más tras el rebase, esperado 0 llamadas nuevas", stub.llamadas-llamadasAntes)
+	}
+
+	// El criterio de salida real de F2 no es solo "Pendientes = 0 y el
+	// auditor no se re-invoca" (eso ya lo prueba lo anterior): es que el
+	// HALLAZGO REAL sigue siendo recuperable bajo el SHA nuevo del commit
+	// reescrito. Antes del fix de B-01, AnalizarRama hacía "continue" sin
+	// escribir nada bajo el SHA nuevo y este hallazgo desaparecía de
+	// res2.Fichas.
+	if len(res2.SHAs) != 3 {
+		t.Fatalf("SHAs tras el rebase = %v, esperado 3 commits", res2.SHAs)
+	}
+	shaBDespues := res2.SHAs[1]
+	if shaBDespues == shaBAntes {
+		t.Fatal("el SHA de b.txt no cambió tras el rebase: el test no prueba nada")
+	}
+
+	var fichaB *review.Ficha
+	for i := range res2.Fichas {
+		if res2.Fichas[i].SHA == shaBDespues {
+			fichaB = &res2.Fichas[i]
+		}
+	}
+	if fichaB == nil {
+		t.Fatalf("no hay ficha para el SHA post-rebase de b.txt (%s) en res2.Fichas: el hallazgo real desapareció", shaBDespues)
+	}
+	if !fichaTieneHallazgo(*fichaB, descripcionHallazgoRebase) {
+		t.Errorf("la ficha adoptada bajo %s no conserva el hallazgo real: %+v", shaBDespues, fichaB)
 	}
 }

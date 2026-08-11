@@ -78,6 +78,40 @@ func TestYaRevisadoBlobConHallazgos(t *testing.T) {
 	}
 }
 
+// TestSHAsDeBlobNuncaRegistrado: un blob que nunca se registró devuelve
+// nil sin error (distinto de un blob registrado con lista vacía, que en la
+// práctica no ocurre porque registrarBlobs solo escribe cuando hay un SHA
+// que añadir, pero el contrato de "nunca visto" debe ser inequívoco).
+func TestSHAsDeBlobNuncaRegistrado(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+
+	shas, err := s.SHAsDeBlob("blob-nunca-registrado")
+	if err != nil {
+		t.Fatalf("SHAsDeBlob: %v", err)
+	}
+	if shas != nil {
+		t.Errorf("shas = %v, esperado nil para un blob nunca registrado", shas)
+	}
+}
+
+// TestSHAsDeBlobDevuelveLosRegistrados: cubre el camino feliz que usa
+// commitCubiertoPorBlobs (internal/review) para calcular intersecciones.
+func TestSHAsDeBlobDevuelveLosRegistrados(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	idx := &IndiceCommit{SHA: "sha-x", Blobs: map[string]string{"a.go": "blob-x"}}
+	if err := s.GuardarIndiceCommit(idx); err != nil {
+		t.Fatalf("GuardarIndiceCommit: %v", err)
+	}
+
+	shas, err := s.SHAsDeBlob("blob-x")
+	if err != nil {
+		t.Fatalf("SHAsDeBlob: %v", err)
+	}
+	if len(shas) != 1 || shas[0] != "sha-x" {
+		t.Errorf("shas = %v, esperado [sha-x]", shas)
+	}
+}
+
 // TestRegistrarBlobsCommitPreservaFingerprints: RegistrarBlobsCommit no debe
 // pisar los Fingerprints/V1 que ya tuviera el IndiceCommit de ese sha.
 func TestRegistrarBlobsCommitPreservaFingerprints(t *testing.T) {

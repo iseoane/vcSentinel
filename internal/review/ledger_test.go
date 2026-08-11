@@ -244,6 +244,104 @@ func TestLedgerMarcarCorregida(t *testing.T) {
 	}
 }
 
+// TestLedgerAdoptarFicha cubre el fix de T2.7: adoptar la ficha de un SHA
+// origen bajo un SHA destino nuevo debe conservar Message/Bucket/Model y
+// TODAS las revisiones (incluidos los hallazgos reales), recuperables con
+// LeerFicha(hacia).
+func TestLedgerAdoptarFicha(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+
+	rev := Revision{
+		At:     time.Now().UTC(),
+		Result: VerdictWarn,
+		Dims: []DimensionResult{{
+			Dim:     DimLogic,
+			Verdict: VerdictWarn,
+			Findings: []ReviewFinding{{
+				Dimension:   DimLogic,
+				File:        "b.txt",
+				Severity:    SevWarning,
+				Description: "hallazgo real de prueba",
+			}},
+		}},
+	}
+	if err := ledger.GuardarRevision("sha-viejo", "feat(b): cosa", "pr", "modelo-test", rev); err != nil {
+		t.Fatalf("GuardarRevision: %v", err)
+	}
+
+	if err := ledger.AdoptarFicha("sha-viejo", "sha-nuevo"); err != nil {
+		t.Fatalf("AdoptarFicha: %v", err)
+	}
+
+	adoptada, err := ledger.LeerFicha("sha-nuevo")
+	if err != nil {
+		t.Fatalf("LeerFicha(sha-nuevo): %v", err)
+	}
+	if adoptada == nil {
+		t.Fatal("LeerFicha(sha-nuevo) devolvió nil tras AdoptarFicha")
+	}
+	if adoptada.SHA != "sha-nuevo" || adoptada.Message != "feat(b): cosa" || adoptada.Bucket != "pr" || adoptada.Model != "modelo-test" {
+		t.Errorf("ficha adoptada = %+v, no coincide con la de origen", adoptada)
+	}
+	if len(adoptada.Revisions) != 1 || len(adoptada.Revisions[0].Dims) != 1 || len(adoptada.Revisions[0].Dims[0].Findings) != 1 {
+		t.Fatalf("revisiones adoptadas = %+v, esperado el hallazgo real intacto", adoptada.Revisions)
+	}
+	if adoptada.Revisions[0].Dims[0].Findings[0].Description != "hallazgo real de prueba" {
+		t.Errorf("hallazgo adoptado = %+v, esperado conservar la descripción original", adoptada.Revisions[0].Dims[0].Findings[0])
+	}
+
+	// La ficha origen sigue existiendo: adoptar no es mover.
+	if origen, _ := ledger.LeerFicha("sha-viejo"); origen == nil {
+		t.Error("la ficha origen no debería desaparecer al adoptarla")
+	}
+}
+
+// TestLedgerAdoptarFichaSHAOrigenInexistenteEsError: a diferencia de
+// MarcarCorregida, adoptar de un SHA sin ficha es un error real, no un
+// no-op silencioso — el SHA origen debería existir siempre porque
+// commitCubiertoPorBlobs lo obtiene del store, que solo registra commits ya
+// auditados.
+func TestLedgerAdoptarFichaSHAOrigenInexistenteEsError(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+
+	if err := ledger.AdoptarFicha("no-existe", "sha-nuevo"); err == nil {
+		t.Error("AdoptarFicha de un SHA origen sin ficha debería devolver error")
+	}
+	if ficha, _ := ledger.LeerFicha("sha-nuevo"); ficha != nil {
+		t.Error("AdoptarFicha que falla no debería crear ninguna ficha destino")
+	}
+}
+
+// TestLedgerAdoptarFichaEsIdempotente: llamarla dos veces con los mismos
+// argumentos no falla ni duplica nada raro, solo sobrescribe con el mismo
+// contenido.
+func TestLedgerAdoptarFichaEsIdempotente(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+
+	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
+	if err := ledger.GuardarRevision("sha-viejo", "feat(x)", "pr", "m", rev); err != nil {
+		t.Fatalf("GuardarRevision: %v", err)
+	}
+
+	if err := ledger.AdoptarFicha("sha-viejo", "sha-nuevo"); err != nil {
+		t.Fatalf("primera adopción: %v", err)
+	}
+	if err := ledger.AdoptarFicha("sha-viejo", "sha-nuevo"); err != nil {
+		t.Fatalf("segunda adopción (idempotente): %v", err)
+	}
+
+	adoptada, err := ledger.LeerFicha("sha-nuevo")
+	if err != nil {
+		t.Fatalf("LeerFicha: %v", err)
+	}
+	if adoptada == nil || len(adoptada.Revisions) != 1 {
+		t.Errorf("ficha tras adoptar dos veces = %+v, esperado 1 revisión (sin duplicar)", adoptada)
+	}
+}
+
 func TestLedgerMarcarCorregidaSinFichaEsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NuevoLedger(dir)

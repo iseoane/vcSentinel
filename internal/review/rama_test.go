@@ -2,11 +2,14 @@ package review
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
 // gitSalida ejecuta git en el cwd y devuelve la salida estándar.
@@ -52,6 +55,35 @@ func fabricaStub(a *auditorStub) FabricaAuditor {
 	return func(dimension string) (AuditorAgente, string, error) {
 		return a, "stub", nil
 	}
+}
+
+// fakeStoreBlobs es un StoreBlobs de prueba que no depende de un
+// store.Store real: permite fijar los SHAs registrados por blob a mano
+// (para forzar mezclas de commits) y forzar el error de RegistrarBlobsCommit
+// sin tocar disco.
+type fakeStoreBlobs struct {
+	shasPorBlob      map[string][]string // blob -> SHAs registrados (SHAsDeBlob)
+	erroRegistrar    error
+	blobsRegistrados map[string]map[string]string // sha -> blobs, para inspección
+}
+
+func (f *fakeStoreBlobs) YaRevisado(blob string) (bool, []Hallazgo, error) {
+	return len(f.shasPorBlob[blob]) > 0, nil, nil
+}
+
+func (f *fakeStoreBlobs) SHAsDeBlob(blob string) ([]string, error) {
+	return f.shasPorBlob[blob], nil
+}
+
+func (f *fakeStoreBlobs) RegistrarBlobsCommit(sha string, blobs map[string]string) error {
+	if f.erroRegistrar != nil {
+		return f.erroRegistrar
+	}
+	if f.blobsRegistrados == nil {
+		f.blobsRegistrados = make(map[string]map[string]string)
+	}
+	f.blobsRegistrados[sha] = blobs
+	return nil
 }
 
 // prepararRepoRama crea un repo temp con la rama actual en "feature" creada
@@ -324,6 +356,85 @@ func TestOverviewSinFabrica(t *testing.T) {
 	_, err := overviewDeRama(OpcionesRama{}, "feature", nil)
 	if !errors.Is(err, ErrSinFabrica) {
 		t.Errorf("overviewDeRama sin fábrica = %v, esperado errors.Is ErrSinFabrica", err)
+	}
+}
+
+// TestCommitCubiertoPorBlobsMezclaDeCommitsNoCubre: un commit cuyos archivos
+// vienen de una MEZCLA de commits previos distintos (simula un squash) no
+// debe considerarse cubierto, aunque cada blob individual sí tenga ALGÚN
+// SHA que lo registró. Antes del fix, commitCubiertoPorBlobs consultaba
+// YaRevisado por blob (solo "algún SHA cubre este blob") y esta mezcla se
+// colaba como si fuera un rebase seguro; ahora exige que la intersección de
+// SHAs entre todos los blobs no esté vacía.
+func TestCommitCubiertoPorBlobsMezclaDeCommitsNoCubre(t *testing.T) {
+	prepararRepoRama(t)
+	// Un único commit con dos archivos simula el resultado de un squash: sus
+	// dos blobs existen, pero se registran (a mano, vía el fake) bajo SHAs
+	// históricos DISTINTOS, como si cada archivo viniera de un commit previo
+	// diferente.
+	if err := os.WriteFile("mix1.txt", []byte("contenido 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("mix2.txt", []byte("contenido 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitEjecutar(t, "add", "mix1.txt", "mix2.txt")
+	gitEjecutar(t, "commit", "-m", "feat(mix): simula un squash de dos commits")
+	shaCombinado := strings.TrimSpace(gitSalida(t, "rev-parse", "HEAD"))
+
+	archivos, err := git.ArchivosDeCommit(shaCombinado)
+	if err != nil {
+		t.Fatalf("ArchivosDeCommit: %v", err)
+	}
+	blobs, err := blobsDeArchivos(shaCombinado, archivos)
+	if err != nil {
+		t.Fatalf("blobsDeArchivos: %v", err)
+	}
+	if len(blobs) != 2 {
+		t.Fatalf("blobs = %v, esperado 2 archivos (mix1.txt + mix2.txt)", blobs)
+	}
+
+	fake := &fakeStoreBlobs{shasPorBlob: map[string][]string{}}
+	i := 0
+	for _, blob := range blobs {
+		fake.shasPorBlob[blob] = []string{fmt.Sprintf("sha-historico-%d", i)}
+		i++
+	}
+
+	cubierto, shaOrigen, err := commitCubiertoPorBlobs(fake, shaCombinado)
+	if err != nil {
+		t.Fatalf("commitCubiertoPorBlobs: %v", err)
+	}
+	if cubierto {
+		t.Errorf("commitCubiertoPorBlobs = (true, %q), esperado false: los archivos vienen de SHAs históricos distintos, ninguno cubre el conjunto completo", shaOrigen)
+	}
+}
+
+// TestAuditarCommitRamaContinuaSiRegistrarBlobsFalla: si RegistrarBlobsCommit
+// falla DESPUÉS de que la auditoría y el guardado en el ledger ya tuvieron
+// éxito, auditarCommitRama no debe propagar el error — abortaría
+// AnalizarRama y perdería un resultado real ya persistido por una simple
+// optimización de reutilización futura.
+func TestAuditarCommitRamaContinuaSiRegistrarBlobsFalla(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	sha := commitEnRama(t, "feat.txt", "1\n2\n3\n")
+	ledger := NuevoLedger(gitDir)
+	stub := &auditorStub{auditSalida: salidaAuditOK}
+	fake := &fakeStoreBlobs{erroRegistrar: errors.New("fallo simulado de registro de blobs")}
+
+	err := auditarCommitRama(ledger, sha, OpcionesRama{
+		Fabrica: fabricaStub(stub), Parallel: 1, Store: fake,
+	})
+	if err != nil {
+		t.Fatalf("auditarCommitRama debería continuar aunque RegistrarBlobsCommit falle, devolvió: %v", err)
+	}
+
+	ficha, err := ledger.LeerFicha(sha)
+	if err != nil {
+		t.Fatalf("LeerFicha: %v", err)
+	}
+	if ficha == nil || len(ficha.Revisions) != 1 {
+		t.Errorf("la ficha debería haberse guardado igual en el ledger: %+v", ficha)
 	}
 }
 
