@@ -205,3 +205,47 @@ tipo del proveedor de contexto no satisface la interfaz de alcance.
 
 **Aceptación**: test de que un cambio en el cuerpo de una función exportada, sin
 tocar su firma, no marca `public_api`; y que cambiar la firma sí lo marca.
+
+---
+
+## Cierre de fase — desviaciones respecto al diseño (hash de cierre `fc9cb82`)
+
+- **T4.6 tuvo dos rondas de corrección tras revisión semántica**: la primera
+  implementación (`627430d`) quedó bloqueada por 3 críticos — el contexto de
+  CodeGraph no estaba ligado al commit auditado (podía filtrar relaciones de
+  otra revisión), se interpolaba texto fuente crudo del repositorio en el
+  prompt del auditor (vector de prompt injection) y `graph.ContextProvider`
+  invertía la dirección de dependencia (`review` dependía de `graph`).
+  Corregido en `fc80f96`: el contexto ahora exige `HEAD == sha` y worktree
+  limpio antes de consultar CodeGraph, solo se envían metadatos JSON
+  estructurados de rutas de test afectadas (nunca texto fuente), y
+  `ContextProvider` pasó a vivir en `internal/review` (lo implementa
+  `graph.ProveedorCodeGraph`, no al revés). Una segunda ronda de revisión dejó
+  una pregunta abierta sobre el timeout de 3s compartido entre las 4 llamadas
+  de subproceso encadenadas; el usuario decidió darle timeout independiente a
+  cada una, resuelto en `5187fb0`.
+- **Los criterios de salida 1 y 4 no tenían evidencia propia al momento de
+  cerrar T4.6**: el criterio "el tiempo de `gate --stage pre-push` baja de
+  forma medible" no tenía ningún benchmark ni test (`grep "func Benchmark"`
+  daba 0 resultados en todo el repo), y "sin `GraphProvider` el sistema
+  funciona igual y valida completo" solo estaba cubierto de forma indirecta
+  por piezas de otros tests, sin un caso dedicado. Cerrados en `fc9cb82`:
+  `BenchmarkResolverComando_AlcanceParcialVsCompleto`
+  (`internal/validation/candidato_bench_test.go`) corre contra el propio
+  repositorio, con el `GraphProvider` nativo real (no un doble), comparando
+  `go vet` acotado a un paquete hoja vs. `go vet ./...`; y
+  `TestEjecutarPerfilSobreCandidato_SinGraphProviderUsaCommandCompleto`
+  (`internal/validation/candidato_test.go`) prueba el caso `ProveedorGraph:
+  nil` de forma explícita y aislada.
+- **Deuda de mantenibilidad abierta en el benchmark** (quedó registrada como
+  `warn`, no bloqueante, en la ficha de `fc9cb82`): depende de que
+  `internal/store/store.go` siga siendo un paquete hoja sin dependientes
+  dentro del módulo — un cambio futuro no relacionado que lo importe rompería
+  el benchmark sin que exista ningún defecto real en `resolverComando` ni en
+  el grafo; y cada iteración de `b.N` ejecuta `go vet` real sin acotar coste,
+  lo que puede ser lento en una corrida amplia de `-bench=.` sobre el repo
+  completo. Pendiente para más adelante: aislar el paquete hoja en un fixture
+  dedicado (p. ej. bajo `testdata/`) y acotar el coste por iteración.
+- **`sentinel pr review --base main` no aplicable al cierre**: todo el trabajo
+  de esta fase se comiteó directo a `main`, sin rama de feature, así que no
+  hay diferencia que auditar contra la propia base.
