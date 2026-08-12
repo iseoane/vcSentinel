@@ -299,3 +299,40 @@ func TestEjecutarPerfilSobreCandidato_AlcanceSoloConGrafoCompleto(t *testing.T) 
 		})
 	}
 }
+
+// TestEjecutarPerfilSobreCandidato_SinGraphProviderUsaCommandCompleto es el
+// criterio de salida de F4 "sin GraphProvider (nil), el sistema funciona
+// igual y valida completo": aunque la capability declare supports_scope y
+// haya un archivo cambiado real, sin ProveedorGraph configurado (nil) nunca
+// se llega a analizar el grafo, así que la autorización de alcance se queda
+// en su valor cero (no autorizada) y el comando ejecutado es el completo
+// exacto, nunca el acotado.
+func TestEjecutarPerfilSobreCandidato_SinGraphProviderUsaCommandCompleto(t *testing.T) {
+	dir := repoDeCandidatoTest(t)
+	cfg := cfgPerfilCandidatoTest(config.ModeWorktree)
+	cfg.Validation.Capabilities["cap1"] = config.CapabilityConfig{
+		Command:       "go test ./...",
+		SupportsScope: true,
+		ScopedCommand: "go test {packages}",
+	}
+
+	var ejecutado string
+	runs, err := EjecutarPerfilSobreCandidato("perfil", []string{"internal/a/a.go"}, OpcionesEjecucion{
+		Worktree:       dir,
+		Cfg:            cfg,
+		ProveedorGraph: nil,
+		Ejecutar: func(comando string) (int, string, error) {
+			ejecutado = comando
+			return 0, "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("EjecutarPerfilSobreCandidato falló: %v", err)
+	}
+	if ejecutado != "go test ./..." || runs[0].Comando != "go test ./..." {
+		t.Fatalf("comando = %q, run = %q; esperado el completo exacto sin GraphProvider", ejecutado, runs[0].Comando)
+	}
+	if runs[0].Alcance != AlcanceCompleto || runs[0].MotivoAlcance == "" {
+		t.Fatalf("decisión de alcance no explicada: %+v", runs[0])
+	}
+}
