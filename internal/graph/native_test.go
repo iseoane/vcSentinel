@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -70,11 +71,28 @@ func TestProveedorNativoCacheaCargaPorTreeOID(t *testing.T) {
 	}
 	analizar(oid, "a/a.go", goos)
 	cargasOtroContexto := cargas
+	analizar(oid, "a/a.go", "")
+	cargasContextoOriginal := cargas
 	os.WriteFile(filepath.Join(dir, "b", "b.go"), []byte("package b\n"), 0644)
 	git(t, dir, "commit", "-qam", "segundo árbol")
 	analizar(treeOID(t, dir), "b/b.go", "")
-	if cargasMismoArbol != 1 || cargasOtroContexto != 2 || cargas != 3 || !reflect.DeepEqual(segundo.Alcance().Paquetes(), []string{"example.test/s/b"}) {
-		t.Fatalf("cargas mismo/contexto/árbol=%d/%d/%d; alcance del hit=%v", cargasMismoArbol, cargasOtroContexto, cargas, segundo.Alcance().Paquetes())
+	if cargasMismoArbol != 1 || cargasOtroContexto != 2 || cargasContextoOriginal != 2 || cargas != 3 || !reflect.DeepEqual(segundo.Alcance().Paquetes(), []string{"example.test/s/b"}) {
+		t.Fatalf("cargas mismo/otro/original/árbol=%d/%d/%d/%d; alcance=%v", cargasMismoArbol, cargasOtroContexto, cargasContextoOriginal, cargas, segundo.Alcance().Paquetes())
+	}
+}
+
+func TestProveedorNativoCargaVendorHermetico(t *testing.T) {
+	dir := crearModulo(t, map[string]string{
+		"go.mod":                         "module example.test/s\n\ngo 1.26\n\nrequire example.test/dep v1.0.0\n",
+		"main.go":                        "package s\nimport _ \"example.test/dep\"\n",
+		"vendor/modules.txt":             "# example.test/dep v1.0.0\n## explicit; go 1.26\nexample.test/dep\n",
+		"vendor/example.test/dep/dep.go": "package dep\n",
+	})
+	p := proveedorDelModulo(t, dir)
+	p.contexto.GOPATH, p.contexto.GOMODCACHE, p.contexto.GOCACHE = t.TempDir(), t.TempDir(), t.TempDir()
+	resultado, _ := p.Analizar([]string{"main.go"})
+	if !resultado.Completo() || !reflect.DeepEqual(p.contexto.BuildFlags, []string{"-mod=vendor", "-tags="}) {
+		t.Fatalf("completo=%v flags=%v motivo=%q", resultado.Completo(), p.contexto.BuildFlags, resultado.MotivoIncompleto())
 	}
 }
 
@@ -95,13 +113,14 @@ func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
 	}{
 		{"malformada", func() { os.WriteFile(ruta, []byte("{"), 0600) }},
 		{"versión distinta", func() {
-			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"version": 2`, `"version": 1`, 1)), 0600)
+			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"version": 3`, `"version": 1`, 1)), 0600)
 		}},
 		{"tree distinto", func() {
 			os.WriteFile(ruta, []byte(strings.Replace(string(valida), oid, strings.Repeat("0", len(oid)), 1)), 0600)
 		}},
 		{"fingerprint distinto", func() {
-			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"fingerprint": "`, `"fingerprint": "distinto-`, 1)), 0600)
+			fingerprint := NuevoProveedorNativo(dir, oid).contexto.fingerprint()
+			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"`+fingerprint+`":`, `"`+strings.Repeat("0", 64)+`":`, 1)), 0600)
 		}},
 		{"sobredimensionada", func() { os.WriteFile(ruta, make([]byte, maxCacheGrafo+1), 0600) }},
 		{"symlink", func() {
@@ -122,8 +141,12 @@ func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
 				return cargar(c, patrones...)
 			}
 			resultado, _ := p.Analizar([]string{"main.go"})
-			if !resultado.Completo() || cargas != 1 {
+			esSymlink := caso.nombre == "symlink"
+			if resultado.Completo() == esSymlink || cargas != 1 {
 				t.Fatalf("completo=%v cargas=%d motivo=%q", resultado.Completo(), cargas, resultado.MotivoIncompleto())
+			}
+			if esSymlink {
+				return
 			}
 			valida, err = os.ReadFile(ruta)
 			if err != nil {
@@ -179,6 +202,24 @@ func TestProveedorNativoCacheConcurrenteEsSegura(t *testing.T) {
 	}
 	if cargas.Load() == 0 {
 		t.Fatal("ningún lector construyó la cache")
+	}
+	p := NuevoProveedorNativo(dir, oid)
+	p.cargar = func(*packages.Config, ...string) ([]*packages.Package, error) {
+		return nil, errors.New("loader no debe ejecutarse")
+	}
+	resultado, _ := p.Analizar([]string{"main.go"})
+	if !resultado.Completo() {
+		t.Fatal(resultado.MotivoIncompleto())
+	}
+	ruta := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	info, err := os.Lstat(ruta)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("entrada cache no regular: %v %v", info, err)
+	}
+	var cache cacheGrafo
+	datos, _ := os.ReadFile(ruta)
+	if json.Unmarshal(datos, &cache) != nil || !cache.valida(oid) || cache.Entries[p.contexto.fingerprint()].TreeOID != oid {
+		t.Fatalf("cache final inválida: %s", datos)
 	}
 }
 

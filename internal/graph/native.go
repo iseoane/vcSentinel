@@ -24,6 +24,7 @@ type contextoCarga struct {
 	GOOS, GOARCH, GoVersion, GOROOT, CGO, GOCACHE, GOPATH, GOMODCACHE string
 	SystemRoot, Temp                                                  string
 	Mode                                                              packages.LoadMode
+	Tests                                                             bool
 	Patterns, BuildFlags                                              []string
 }
 
@@ -35,7 +36,7 @@ func contextoCargaActual() contextoCarga {
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, GoVersion: runtime.Version(), GOROOT: runtime.GOROOT(), CGO: "0",
 		GOCACHE: filepath.Join(cache, "go-build"), GOPATH: gopath, GOMODCACHE: filepath.Join(gopath, "pkg", "mod"),
 		SystemRoot: os.Getenv("SystemRoot"), Temp: os.TempDir(),
-		Mode:     packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedEmbedFiles | packages.NeedForTest | packages.NeedModule,
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedEmbedFiles | packages.NeedForTest | packages.NeedModule, Tests: true,
 		Patterns: []string{"./..."}, BuildFlags: []string{"-mod=readonly", "-tags="},
 	}
 }
@@ -52,8 +53,21 @@ func (c contextoCarga) entorno() []string {
 }
 
 func (c contextoCarga) fingerprint() string {
-	suma := sha256.Sum256([]byte(fmt.Sprintf("%q\n%d\n%t\n%q\n%q", append([]string{c.GoVersion}, c.entorno()...), c.Mode, true, c.Patterns, c.BuildFlags)))
+	suma := sha256.Sum256([]byte(fmt.Sprintf("%q\n%d\n%t\n%q\n%q", append([]string{c.GoVersion}, c.entorno()...), c.Mode, c.Tests, c.Patterns, c.BuildFlags)))
 	return fmt.Sprintf("%x", suma)
+}
+
+func (c contextoCarga) config(dir string) *packages.Config {
+	return &packages.Config{Mode: c.Mode, Dir: dir, Env: c.entorno(), Tests: c.Tests, BuildFlags: clonar(c.BuildFlags)}
+}
+
+func (c *contextoCarga) preparar(dir string) {
+	c.BuildFlags = []string{"-mod=readonly", "-tags="}
+	vendor, err := os.Lstat(filepath.Join(dir, "vendor"))
+	modules, modErr := os.Lstat(filepath.Join(dir, "vendor", "modules.txt"))
+	if err == nil && modErr == nil && vendor.IsDir() && vendor.Mode()&os.ModeSymlink == 0 && modules.Mode().IsRegular() && modules.Mode()&os.ModeSymlink == 0 {
+		c.BuildFlags[0] = "-mod=vendor"
+	}
 }
 
 const (
@@ -108,10 +122,14 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 			razones = append(razones, "snapshot no verificable: "+err.Error())
 		}
 	}
-	config := &packages.Config{Mode: p.contexto.Mode, Dir: p.directorio, Env: p.contexto.entorno(), Tests: true, BuildFlags: clonar(p.contexto.BuildFlags)}
+	p.contexto.preparar(p.directorio)
+	config := p.contexto.config(p.directorio)
 	var paquetes []*packages.Package
 	var err error
-	consumidos, cacheHit := p.cargarCache()
+	consumidos, cacheHit, cacheErr := p.cargarCache()
+	if cacheErr != nil {
+		razones = append(razones, "cache no reemplazable: "+cacheErr.Error())
+	}
 	if p.directorio != "" && !cacheHit {
 		paquetes, err = p.cargar(config, p.contexto.Patterns...)
 	}
@@ -162,7 +180,9 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 		if err := p.verificar(solicitud); err != nil {
 			razones = append(razones, "snapshot no verificable al completar: "+err.Error())
 		} else if cachePendiente {
-			p.guardarCache(consumidos)
+			if err := p.guardarCache(consumidos); err != nil {
+				razones = append(razones, "cache no persistible: "+err.Error())
+			}
 		}
 	}
 	if len(razones) > 0 && len(noCubiertos) == 0 {
