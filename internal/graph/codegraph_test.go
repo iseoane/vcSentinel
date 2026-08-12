@@ -34,6 +34,7 @@ func TestProveedorCodeGraphDegradaAnteEstadoNoVinculado(t *testing.T) {
 		`{"initialized":false,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`,
 		`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":1,"modified":0,"removed":0},"worktreeMismatch":null}`,
 		`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":{}}`,
+		`{"initialized":true,"projectPath":"/otro/proyecto","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`,
 	}
 	for _, estado := range casos {
 		p, _ := proveedorConRespuestas(t, estado)

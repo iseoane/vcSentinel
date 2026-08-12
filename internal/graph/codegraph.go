@@ -58,18 +58,16 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	if sha == "" || len(validas) == 0 || p.ejecutar == nil {
 		return nil, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	env := entornoCodeGraph(p.ejecutable)
-	head, err := p.ejecutar(ctx, p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, p.raiz, env, "", p.limite)
+	head, err := p.ejecutarConTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
 	if err != nil || strings.TrimSpace(string(head)) != sha {
 		return nil, nil
 	}
-	sucio, err := p.ejecutar(ctx, p.git, []string{"status", "--porcelain"}, p.raiz, env, "", p.limite)
+	sucio, err := p.ejecutarConTimeout(p.git, []string{"status", "--porcelain"}, env, "")
 	if err != nil || len(bytes.TrimSpace(sucio)) != 0 {
 		return nil, nil
 	}
-	estadoRaw, err := p.ejecutar(ctx, p.ejecutable, []string{"status", "--json", p.raiz}, p.raiz, env, "", p.limite)
+	estadoRaw, err := p.ejecutarConTimeout(p.ejecutable, []string{"status", "--json", p.raiz}, env, "")
 	var estado struct {
 		Initialized      bool                                    `json:"initialized"`
 		ProjectPath      string                                  `json:"projectPath"`
@@ -79,7 +77,7 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	if err != nil || len(estadoRaw) == 0 || len(estadoRaw) >= p.limite || json.Unmarshal(estadoRaw, &estado) != nil || !estado.Initialized || filepath.Clean(estado.ProjectPath) != p.raiz || estado.Pending == nil || estado.Pending.Added != 0 || estado.Pending.Modified != 0 || estado.Pending.Removed != 0 || string(estado.WorktreeMismatch) != "null" {
 		return nil, nil
 	}
-	salida, err := p.ejecutar(ctx, p.ejecutable, []string{"affected", "-p", p.raiz, "--stdin", "--json"}, p.raiz, env, strings.Join(validas, "\n")+"\n", p.limite)
+	salida, err := p.ejecutarConTimeout(p.ejecutable, []string{"affected", "-p", p.raiz, "--stdin", "--json"}, env, strings.Join(validas, "\n")+"\n")
 	var afectado struct {
 		AffectedTests []string `json:"affectedTests"`
 	}
@@ -96,6 +94,15 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 		}
 	}
 	return refs, nil
+}
+
+// ejecutarConTimeout da a cada subproceso su propio presupuesto de 3s, para
+// que las verificaciones previas (rev-parse, status) no le resten tiempo a
+// 'affected', la única llamada que recorre el grafo de dependientes.
+func (p *ProveedorCodeGraph) ejecutarConTimeout(ejecutable string, args []string, env []string, stdin string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return p.ejecutar(ctx, ejecutable, args, p.raiz, env, stdin, p.limite)
 }
 
 func rutasSeguras(rutas []string, max int) []string {
