@@ -10,6 +10,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
@@ -112,12 +113,14 @@ func ejecutarReview(worktree string, args []string) {
 		}
 
 		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, review.OpcionesAuditoria{
-			SHA:            sha,
-			Mensaje:        mensaje,
-			Diff:           diff,
-			Dims:           dims,
-			Respuestas:     flags.answer,
-			PerfilOverride: flags.profile,
+			SHA:               sha,
+			Mensaje:           mensaje,
+			Diff:              diff,
+			Dims:              dims,
+			Respuestas:        flags.answer,
+			PerfilOverride:    flags.profile,
+			ProveedorContexto: graph.DetectarProveedorCodeGraph(worktree),
+			RutasContexto:     archivos,
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
+
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
@@ -20,13 +22,15 @@ type FabricaAuditor func(dimension string) (AuditorAgente, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
-	SHA            string
-	Mensaje        string
-	Diff           string
-	Dims           []string
-	Respuestas     string           // --answer: aclaraciones del usuario (1 ronda extra)
-	PerfilOverride string           // --profile: fuerza un perfil sobre el mapa
-	OnDimension    func(dim string) // opcional: avisa cuando arranca cada dimensión
+	SHA               string
+	Mensaje           string
+	Diff              string
+	Dims              []string
+	Respuestas        string           // --answer: aclaraciones del usuario (1 ronda extra)
+	PerfilOverride    string           // --profile: fuerza un perfil sobre el mapa
+	OnDimension       func(dim string) // opcional: avisa cuando arranca cada dimensión
+	ProveedorContexto graph.ContextProvider
+	RutasContexto     []string
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -84,6 +88,7 @@ func DimensionesParaArchivos(archivos []string) []string {
 // convierte en veredicto unavailable con razón, nunca en fallo del motor.
 func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria) ResultadoAuditoria {
 	resultado := ResultadoAuditoria{SHA: opts.SHA}
+	contexto := contextoRevisor(opts.ProveedorContexto, opts.RutasContexto)
 	if parallel < 1 {
 		parallel = 1
 	}
@@ -109,7 +114,7 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 				rd.Error = err
 				rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}
 			} else {
-				rd.Resultado, rd.Error = auditarConAgente(agente, dimension, opts)
+				rd.Resultado, rd.Error = auditarConAgente(agente, dimension, opts, contexto)
 			}
 
 			mutex.Lock()
@@ -125,8 +130,8 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 
 // auditarConAgente ejecuta el prompt (con la ronda extra de --answer si el
 // agente pide aclaraciones) y parsea el JSONL del agente.
-func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAuditoria) (*DimensionResult, error) {
-	salida, err := agente.EjecutarPrompt(ConstruirPromptAuditoria(dimension, opts.Mensaje, opts.Diff, ""))
+func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
+	salida, err := agente.EjecutarPrompt(construirPromptConContexto(dimension, opts.Mensaje, opts.Diff, "", contexto))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
 	}
@@ -138,7 +143,7 @@ func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAudit
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, err = agente.EjecutarPrompt(ConstruirPromptAuditoria(dimension, opts.Mensaje, opts.Diff, opts.Respuestas))
+		salida, err = agente.EjecutarPrompt(construirPromptConContexto(dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
 		}
@@ -148,6 +153,21 @@ func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAudit
 		}
 	}
 	return crudo, nil
+}
+
+func contextoRevisor(proveedor graph.ContextProvider, rutas []string) string {
+	if proveedor == nil {
+		return ""
+	}
+	referencias, err := proveedor.Contexto(rutas)
+	if err != nil {
+		return ""
+	}
+	var partes []string
+	for _, ref := range referencias {
+		partes = append(partes, strings.TrimSpace(ref.Ruta+" "+ref.Explicacion))
+	}
+	return strings.Join(partes, "\n")
 }
 
 // veredictoGlobal decide el veredicto del commit: block manda, luego question

@@ -22,6 +22,10 @@ var DefinicionesDimensiones = map[string]string{
 // de la dimensión, los smells de diseño como guía y, si el usuario resolvió
 // preguntas (--answer), esas respuestas como segunda ronda.
 func ConstruirPromptAuditoria(dimension, mensaje, diff, respuestas string) string {
+	return construirPromptConContexto(dimension, mensaje, diff, respuestas, "")
+}
+
+func construirPromptConContexto(dimension, mensaje, diff, respuestas, contexto string) string {
 	definicion := DefinicionesDimensiones[dimension]
 	if definicion == "" {
 		definicion = "No definition available."
@@ -34,6 +38,10 @@ Clarifications from the user (resolve the pending questions with these and finis
 %s
 `, respuestas)
 	}
+	seccionContexto := ""
+	if strings.TrimSpace(contexto) != "" {
+		seccionContexto = "\nOptional reviewer context (heuristic; never validation authority):\n" + contexto + "\n"
+	}
 
 	return fmt.Sprintf(`You are a rigorous technical auditor. Audit ONE commit against the %q dimension.
 
@@ -45,6 +53,7 @@ Commit message:
 
 Diff to audit:
 %s
+%s
 
 Audit rules:
 - Do NOT run any commands, tools or scripts. Do NOT inspect the repository. Answer immediately from the commit message and diff provided above.
@@ -55,5 +64,5 @@ Audit rules:
 - If there is nothing to report, return {"dim": %q, "verdict": "ok"}.
 - Output ONLY one JSONL object between BEGIN_REVIEW and END_REVIEW. No markdown outside the delimiters. No commentary. Keys: dim, verdict, findings (dimension, file, line, severity, description, suggestion), questions (id, text), reason.`+seccionRespuestas+`
 BEGIN_REVIEW
-END_REVIEW`, dimension, definicion, mensaje, diff, dimension)
+END_REVIEW`, dimension, definicion, mensaje, diff, seccionContexto, dimension)
 }

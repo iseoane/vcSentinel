@@ -1,9 +1,12 @@
 package review
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 )
 
 // agenteFake devuelve salidas fijas y cuenta las llamadas.
@@ -41,6 +44,37 @@ func TestAuditarCommitTodoOk(t *testing.T) {
 	}
 	if len(resultado.Dims) != 2 {
 		t.Errorf("dims auditadas = %d, esperado 2", len(resultado.Dims))
+	}
+}
+
+type proveedorContextoFake struct{ err error }
+
+func (proveedorContextoFake) Nombre() string { return "codegraph" }
+func (p proveedorContextoFake) Contexto([]string) ([]graph.ReferenciaContexto, error) {
+	return []graph.ReferenciaContexto{{Ruta: "internal/review/engine.go", Explicacion: "AuditarCommit calls auditarConAgente"}}, p.err
+}
+
+type agentePrompt struct{ prompt string }
+
+func (a *agentePrompt) EjecutarPrompt(prompt string) (string, error) {
+	a.prompt = prompt
+	return `{"dim":"logic","verdict":"ok"}`, nil
+}
+
+func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
+	agente := &agentePrompt{}
+	fabrica := func(string) (AuditorAgente, string, error) { return agente, "normal", nil }
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Dims: []string{DimLogic},
+		RutasContexto: []string{"internal/review/engine.go"}, ProveedorContexto: proveedorContextoFake{}})
+	if resultado.Veredicto != VerdictOK || !strings.Contains(agente.prompt, "AuditarCommit calls") {
+		t.Fatalf("contexto no incluido: veredicto=%s prompt=%q", resultado.Veredicto, agente.prompt)
+	}
+
+	agente.prompt = ""
+	resultado = AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Dims: []string{DimLogic},
+		ProveedorContexto: proveedorContextoFake{err: errors.New("unreachable")}})
+	if resultado.Veredicto != VerdictOK || strings.Contains(agente.prompt, "Reviewer context") {
+		t.Fatalf("fallo de contexto afectó revisión: veredicto=%s prompt=%q", resultado.Veredicto, agente.prompt)
 	}
 }
 

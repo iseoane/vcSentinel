@@ -70,6 +70,15 @@ Casos especiales:
 
 ## Compilación
 
+## Contexto opcional con CodeGraph
+
+Si el proyecto ya contiene `.codegraph/` y el CLI upstream `codegraph` está en
+el `PATH`, Sentinel puede usar su comando read-only `explore` para enriquecer el
+contexto de la revisión semántica. Es una capacidad opcional y nunca decide qué
+validaciones se ejecutan ni puede bloquear el gate; Sentinel tampoco inicializa,
+indexa, sincroniza o administra CodeGraph. Proyecto oficial:
+[CodeGraph](https://github.com/colbymchenry/codegraph).
+
 Los binarios se generan en `bin/<version>/` (nunca se commitean, están en `.gitignore`). La versión se lee de `release.yml` (fuente de verdad del proyecto) y puedes forzarla con la variable `SENTINEL_VERSION`:
 
 ```bash
