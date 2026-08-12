@@ -1,5 +1,5 @@
 version: "2.0"
-active_agent: "opencode"
+active_agent: "auto"
 # Solicita generación semántica externa; no representa consentimiento personal.
 request_external_agent_diff: true
 agents:
@@ -42,7 +42,7 @@ review:
     style: "cheap"
     tests: "normal"
     logic: "deep"
-    design: "deep"
+    design: "normal"
     security: "deep"
 validation:
   capabilities:
