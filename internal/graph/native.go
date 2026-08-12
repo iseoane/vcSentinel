@@ -126,10 +126,7 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 	config := p.contexto.config(p.directorio)
 	var paquetes []*packages.Package
 	var err error
-	consumidos, cacheHit, cacheErr := p.cargarCache()
-	if cacheErr != nil {
-		razones = append(razones, "cache no reemplazable: "+cacheErr.Error())
-	}
+	consumidos, cacheHit, _ := p.cargarCache()
 	if p.directorio != "" && !cacheHit {
 		paquetes, err = p.cargar(config, p.contexto.Patterns...)
 	}
@@ -180,9 +177,7 @@ func (p *proveedorNativo) Analizar(rutas []string) (ResultadoAnalisis, error) {
 		if err := p.verificar(solicitud); err != nil {
 			razones = append(razones, "snapshot no verificable al completar: "+err.Error())
 		} else if cachePendiente {
-			if err := p.guardarCache(consumidos); err != nil {
-				razones = append(razones, "cache no persistible: "+err.Error())
-			}
+			_ = p.guardarCache(consumidos)
 		}
 	}
 	if len(razones) > 0 && len(noCubiertos) == 0 {

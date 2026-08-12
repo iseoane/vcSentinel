@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,36 @@ type entradaCache struct {
 }
 
 var mutexCache sync.Mutex
+
+func bloquearCache(raiz *os.Root) (func(), error) {
+	const nombre = ".write.lock"
+	dueno := []byte(fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().UnixNano()))
+	limite := time.Now().Add(250 * time.Millisecond)
+	for {
+		archivo, err := raiz.OpenFile(nombre, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err == nil {
+			if _, err = archivo.Write(dueno); err == nil {
+				err = archivo.Close()
+			} else {
+				_ = archivo.Close()
+			}
+			if err != nil {
+				_ = raiz.Remove(nombre)
+				return nil, err
+			}
+			return func() {
+				actual, err := fs.ReadFile(raiz.FS(), nombre)
+				if err == nil && bytes.Equal(actual, dueno) {
+					_ = raiz.Remove(nombre)
+				}
+			}, nil
+		}
+		if !errors.Is(err, os.ErrExist) || time.Now().After(limite) {
+			return nil, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func decodificarCache(datos []byte) (cacheGrafo, bool) {
 	var c cacheGrafo
@@ -168,6 +199,10 @@ func (p *proveedorNativo) cargarCache() ([]string, bool, error) {
 func (p *proveedorNativo) guardarCache(consumidos []string) error {
 	mutexCache.Lock()
 	defer mutexCache.Unlock()
+	return p.guardarCacheSinMutex(consumidos)
+}
+
+func (p *proveedorNativo) guardarCacheSinMutex(consumidos []string) error {
 	relativas := make([]string, 0, len(consumidos))
 	for _, archivo := range consumidos {
 		relativa, err := filepath.Rel(p.directorio, archivo)
@@ -177,23 +212,34 @@ func (p *proveedorNativo) guardarCache(consumidos []string) error {
 		relativas = append(relativas, filepath.ToSlash(relativa))
 	}
 	ordenarUnicos(&relativas)
-	c := cacheGrafo{Version: versionCacheGrafo, Entries: map[string]entradaCache{}}
-	if anterior, ok := p.leerCacheValida(); ok {
-		c = anterior
-	}
-	if _, existe := c.Entries[p.contexto.fingerprint()]; !existe && len(c.Entries) >= maxEntradasCache {
-		return fmt.Errorf("límite de contextos alcanzado")
-	}
-	c.Entries[p.contexto.fingerprint()] = entradaCache{p.identidad, clonarImports(p.imports), clonarMapa(p.archivos), clonarMapa(p.tests), relativas}
-	datos, err := json.MarshalIndent(c, "", "  ")
-	if err != nil || len(datos)+1 > maxCacheGrafo {
-		return fmt.Errorf("cache excede el límite")
-	}
 	raiz, err := raizCache(p.directorio)
 	if err != nil {
 		return err
 	}
 	defer raiz.Close()
+	desbloquear, err := bloquearCache(raiz)
+	if err != nil {
+		return err
+	}
+	defer desbloquear()
+	c := cacheGrafo{Version: versionCacheGrafo, Entries: map[string]entradaCache{}}
+	if anterior, ok := p.leerCacheValidaDesde(raiz); ok {
+		c = anterior
+	}
+	fingerprint := p.contexto.fingerprint()
+	if _, existe := c.Entries[fingerprint]; !existe && len(c.Entries) >= maxEntradasCache {
+		claves := make([]string, 0, len(c.Entries))
+		for clave := range c.Entries {
+			claves = append(claves, clave)
+		}
+		sort.Strings(claves)
+		delete(c.Entries, claves[0])
+	}
+	c.Entries[fingerprint] = entradaCache{p.identidad, clonarImports(p.imports), clonarMapa(p.archivos), clonarMapa(p.tests), relativas}
+	datos, err := json.MarshalIndent(c, "", "  ")
+	if err != nil || len(datos)+1 > maxCacheGrafo {
+		return fmt.Errorf("cache excede el límite")
+	}
 	temporal := fmt.Sprintf(".graph-%d.tmp", time.Now().UnixNano())
 	defer raiz.Remove(temporal)
 	archivo, err := raiz.OpenFile(temporal, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -227,6 +273,14 @@ func (p *proveedorNativo) leerCacheValida() (cacheGrafo, bool) {
 		return cacheGrafo{}, false
 	}
 	defer raiz.Close()
+	return p.leerCacheValidaDesde(raiz)
+}
+
+func (p *proveedorNativo) leerCacheValidaDesde(raiz *os.Root) (cacheGrafo, bool) {
+	info, err := raiz.Lstat(p.identidad + ".json")
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return cacheGrafo{}, false
+	}
 	archivo, err := raiz.Open(p.identidad + ".json")
 	if err != nil {
 		return cacheGrafo{}, false

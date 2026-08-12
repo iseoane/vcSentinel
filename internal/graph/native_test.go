@@ -3,10 +3,12 @@ package graph
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,6 +98,85 @@ func TestProveedorNativoCargaVendorHermetico(t *testing.T) {
 	}
 }
 
+func TestProveedorNativoVendorIncompletoUsaReadonly(t *testing.T) {
+	for _, caso := range []string{"ausente", "symlink"} {
+		t.Run(caso, func(t *testing.T) {
+			dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+			if err := os.Mkdir(filepath.Join(dir, "vendor"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if caso == "symlink" {
+				if err := os.Symlink(filepath.Join(dir, "go.mod"), filepath.Join(dir, "vendor", "modules.txt")); err != nil {
+					t.Skipf("symlinks no disponibles: %v", err)
+				}
+			}
+			p := proveedorDelModulo(t, dir)
+			if !reflect.DeepEqual(p.contexto.BuildFlags, []string{"-mod=readonly", "-tags="}) {
+				t.Fatalf("flags=%v", p.contexto.BuildFlags)
+			}
+		})
+	}
+}
+
+func TestProveedorNativoCacheNoAfectaCompletitud(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	graphDir := filepath.Join(dir, ".git", "vas-sentinel", "graph")
+	if err := os.MkdirAll(graphDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(graphDir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(graphDir, 0700) })
+	resultado, err := proveedorDelModulo(t, dir).Analizar([]string{"main.go"})
+	if err != nil || !resultado.Completo() || resultado.MotivoIncompleto() != "" {
+		t.Fatalf("completo=%v error=%v motivo=%q", resultado.Completo(), err, resultado.MotivoIncompleto())
+	}
+}
+
+func TestProveedorNativoCacheEvictaNovenoContexto(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	fingerprints := make([]string, 0, maxEntradasCache+1)
+	for i := range maxEntradasCache + 1 {
+		p := NuevoProveedorNativo(dir, oid)
+		p.contexto.GoVersion = fmt.Sprintf("test-version-%d", i)
+		fingerprints = append(fingerprints, p.contexto.fingerprint())
+		resultado, _ := p.Analizar([]string{"main.go"})
+		if !resultado.Completo() {
+			t.Fatalf("contexto %d incompleto: %s", i, resultado.MotivoIncompleto())
+		}
+	}
+	cache, ok := NuevoProveedorNativo(dir, oid).leerCacheValida()
+	if !ok || len(cache.Entries) != maxEntradasCache {
+		t.Fatalf("cache válida=%v entradas=%d", ok, len(cache.Entries))
+	}
+	sort.Strings(fingerprints[:maxEntradasCache])
+	if _, existe := cache.Entries[fingerprints[0]]; existe || cache.Entries[fingerprints[maxEntradasCache]].TreeOID != oid {
+		t.Fatalf("evicción no determinista: %#v", cache.Entries)
+	}
+}
+
+func TestCacheCombinaEscritoresIndependientes(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	p1, p2 := NuevoProveedorNativo(dir, oid), NuevoProveedorNativo(dir, oid)
+	p1.contexto.Temp, p2.contexto.Temp = "writer-1", "writer-2"
+	for _, p := range []*proveedorNativo{p1, p2} {
+		p.imports, p.archivos, p.tests = map[string][]string{}, map[string]string{"main.go": "example.test/s"}, map[string]string{}
+	}
+	var wg sync.WaitGroup
+	for _, p := range []*proveedorNativo{p1, p2} {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = p.guardarCacheSinMutex([]string{filepath.Join(dir, "main.go")}) }()
+	}
+	wg.Wait()
+	cache, ok := p1.leerCacheValida()
+	if !ok || cache.Entries[p1.contexto.fingerprint()].TreeOID != oid || cache.Entries[p2.contexto.fingerprint()].TreeOID != oid {
+		t.Fatalf("se perdió un escritor: %#v", cache.Entries)
+	}
+}
+
 func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
 	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
@@ -141,11 +222,10 @@ func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
 				return cargar(c, patrones...)
 			}
 			resultado, _ := p.Analizar([]string{"main.go"})
-			esSymlink := caso.nombre == "symlink"
-			if resultado.Completo() == esSymlink || cargas != 1 {
+			if !resultado.Completo() || cargas != 1 {
 				t.Fatalf("completo=%v cargas=%d motivo=%q", resultado.Completo(), cargas, resultado.MotivoIncompleto())
 			}
-			if esSymlink {
+			if caso.nombre == "symlink" {
 				return
 			}
 			valida, err = os.ReadFile(ruta)
