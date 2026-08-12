@@ -73,6 +73,11 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # versionado de 'sentinel consentimiento-diff otorgar'.
 request_external_agent_diff: false
 #
+# Contexto CodeGraph para el revisor: solo metadatos de rutas de tests
+# afectadas. Requiere además el consentimiento local anterior.
+review:
+  codegraph_context: false
+#
 # Ejemplo (descomenta y ajusta):
 # active_agent: "claude"
 # agents:

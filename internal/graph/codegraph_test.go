@@ -1,12 +1,15 @@
 package graph
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
 func TestDetectarCodeGraphRequiereIndiceYCLI(t *testing.T) {
@@ -18,41 +21,92 @@ func TestDetectarCodeGraphRequiereIndiceYCLI(t *testing.T) {
 	if detectarProveedorCodeGraph(raiz, func(string) (string, error) { return "", errors.New("no CLI") }, nil) != nil {
 		t.Fatal("proveedor presente sin CLI")
 	}
+	if detectarProveedorCodeGraph(raiz, func(nombre string) (string, error) { return filepath.Join(raiz, nombre), nil }, nil) == nil {
+		t.Fatal("proveedor ausente con índice y ejecutables")
+	}
 }
 
-func TestProveedorCodeGraphDegradaYLimitaSalida(t *testing.T) {
+func TestProveedorCodeGraphDegradaAnteEstadoNoVinculado(t *testing.T) {
 	if _, autoriza := any(&ProveedorCodeGraph{}).(GraphProvider); autoriza {
 		t.Fatal("ProveedorCodeGraph satisface GraphProvider")
 	}
-	fallo := &ProveedorCodeGraph{ejecutar: func(context.Context, string, []string, string, []string, int) ([]byte, error) {
-		return nil, errors.New("timeout")
-	}}
-	if refs, err := fallo.Contexto([]string{"internal/review/engine.go"}); err != nil || len(refs) != 0 {
-		t.Fatalf("fallo = (%v, %v)", refs, err)
+	casos := []string{
+		`{"initialized":false,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`,
+		`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":1,"modified":0,"removed":0},"worktreeMismatch":null}`,
+		`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":{}}`,
 	}
-	proveedor := &ProveedorCodeGraph{raiz: t.TempDir(), ejecutable: "codegraph", limite: 128,
-		ejecutar: func(_ context.Context, _ string, _ []string, _ string, _ []string, max int) ([]byte, error) {
-			return []byte("**Exploration:** ok\n**Source Code**\n" + strings.Repeat("x", max)), nil
-		}}
-	if refs, err := proveedor.Contexto([]string{"internal/review/engine.go"}); err != nil || len(refs) != 0 {
-		t.Fatalf("salida sobre límite no degradó: (%v, %v)", refs, err)
+	for _, estado := range casos {
+		p, _ := proveedorConRespuestas(t, estado)
+		refs, err := p.Contexto("head", []string{"a.go"})
+		if err != nil || len(refs) != 0 {
+			t.Fatalf("estado inseguro produjo contexto: (%v, %v)", refs, err)
+		}
 	}
 }
 
-func TestProveedorCodeGraphDevuelveContextoSanitizado(t *testing.T) {
+func TestProveedorCodeGraphOmiteSHAAnterior(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{}`)
+	refs, err := p.Contexto("older", []string{"a.go"})
+	if err != nil || len(refs) != 0 || len(fake.llamadas) != 1 {
+		t.Fatalf("SHA anterior no se omitió: refs=%v err=%v llamadas=%d", refs, err, len(fake.llamadas))
+	}
+}
+
+func TestProveedorCodeGraphAffectedEstructuradoYAcotado(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	for _, ruta := range []string{"a_test.go", "z_test.go"} {
+		if err := os.WriteFile(filepath.Join(p.raiz, ruta), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake.respuestas = append(fake.respuestas, []byte(`{"changedFiles":["a.go"],"affectedTests":["z_test.go","../escape_test.go","..\\escape_test.go","C:\\escape_test.go","a_test.go","a_test.go","-x_test.go"],"totalDependentsTraversed":2}`))
+	refs, err := p.Contexto("head", []string{"a.go"})
+	esperado := []review.Reference{{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}, {Path: "z_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}
+	if err != nil || !reflect.DeepEqual(refs, esperado) {
+		t.Fatalf("referencias = (%v, %v), esperado %v", refs, err, esperado)
+	}
+	if !reflect.DeepEqual(fake.llamadas[3].args, []string{"affected", "-p", p.raiz, "--stdin", "--json"}) || fake.llamadas[3].stdin != "a.go\n" || fake.llamadas[3].dir != p.raiz || len(fake.llamadas[3].env) == 0 {
+		t.Fatalf("affected inválido: %+v", fake.llamadas[3])
+	}
+	esperadas := [][]string{{"rev-parse", "--verify", "HEAD^{commit}"}, {"status", "--porcelain"}, {"status", "--json", p.raiz}}
+	for i, args := range esperadas {
+		if !reflect.DeepEqual(fake.llamadas[i].args, args) || fake.llamadas[i].dir != p.raiz || fake.llamadas[i].stdin != "" || len(fake.llamadas[i].env) == 0 {
+			t.Fatalf("llamada %d inválida: %+v", i, fake.llamadas[i])
+		}
+	}
+}
+
+type llamadaCG struct {
+	binario    string
+	args       []string
+	dir, stdin string
+	env        []string
+}
+type fakeCG struct {
+	respuestas [][]byte
+	llamadas   []llamadaCG
+}
+
+func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *fakeCG) {
+	t.Helper()
 	raiz := t.TempDir()
-	proveedor := &ProveedorCodeGraph{raiz: raiz, ejecutable: "codegraph", limite: 1024,
-		ejecutar: func(_ context.Context, _ string, args []string, _ string, _ []string, _ int) ([]byte, error) {
-			if args[0] != "explore" {
-				t.Fatalf("argumentos inesperados: %v", args)
-			}
-			return []byte("**Exploration:** reviewer context\n**Source Code**\n`internal/review/engine.go`"), nil
-		}}
-	refs, err := proveedor.Contexto([]string{"internal/review/engine.go"})
-	if err != nil || len(refs) != 1 || !strings.Contains(refs[0].Explicacion, "engine.go") {
-		t.Fatalf("contexto = (%v, %v)", refs, err)
+	estado = string([]byte(estado))
+	estado = replaceRoot(estado, raiz)
+	p := &ProveedorCodeGraph{raiz: raiz, ejecutable: "codegraph", git: "git", limite: 4096}
+	fake := &fakeCG{respuestas: [][]byte{[]byte("head\n"), nil, []byte(estado)}}
+	p.ejecutar = func(_ context.Context, binario string, args []string, dir string, env []string, stdin string, _ int) ([]byte, error) {
+		fake.llamadas = append(fake.llamadas, llamadaCG{binario, append([]string(nil), args...), dir, stdin, append([]string(nil), env...)})
+		if len(fake.respuestas) == 0 {
+			return nil, errors.New("unexpected command")
+		}
+		salida := fake.respuestas[0]
+		fake.respuestas = fake.respuestas[1:]
+		return salida, nil
 	}
-	if strings.Contains(refs[0].Explicacion, raiz) {
-		t.Fatal("el contexto filtró la ruta absoluta")
-	}
+	return p, fake
+}
+
+func replaceRoot(s, root string) string {
+	b := []byte(s)
+	return string(bytes.ReplaceAll(b, []byte("ROOT"), []byte(filepath.ToSlash(root))))
 }

@@ -72,11 +72,12 @@ Casos especiales:
 
 ## Contexto opcional con CodeGraph
 
-Si el proyecto ya contiene `.codegraph/` y el CLI upstream `codegraph` está en
-el `PATH`, Sentinel puede usar su comando read-only `explore` para enriquecer el
-contexto de la revisión semántica. Es una capacidad opcional y nunca decide qué
-validaciones se ejecutan ni puede bloquear el gate; Sentinel tampoco inicializa,
-indexa, sincroniza o administra CodeGraph. Proyecto oficial:
+Con `review.codegraph_context: true`, consentimiento local para diff externo,
+un índice `.codegraph/` limpio y el CLI upstream en `PATH`, Sentinel puede
+añadir metadatos opcionales de rutas de tests afectadas a la revisión semántica.
+Son datos advisory no confiables: pueden informar la revisión, pero nunca
+autorizan alcance de validación y se omiten ante cualquier incertidumbre. No se
+envía salida fuente de CodeGraph. Sentinel tampoco indexa ni administra CodeGraph:
 [CodeGraph](https://github.com/colbymchenry/codegraph).
 
 Los binarios se generan en `bin/<version>/` (nunca se commitean, están en `.gitignore`). La versión se lee de `release.yml` (fuente de verdad del proyecto) y puedes forzarla con la variable `SENTINEL_VERSION`:

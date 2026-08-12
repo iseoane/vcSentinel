@@ -32,8 +32,9 @@ type ProfileConfig struct {
 
 // ReviewConfig agrupa la configuración del motor de auditoría.
 type ReviewConfig struct {
-	Timeout  time.Duration
-	Parallel int
+	Timeout          time.Duration
+	Parallel         int
+	CodeGraphContext bool
 	// Dims asigna cada dimensión canónica a un perfil de agente.
 	Dims map[string]string
 }
@@ -264,9 +265,10 @@ type agenteYAML struct {
 // valores no numéricos (se ignoran y queda el default), igual que hacía
 // strconv.Atoi en el parser artesanal.
 type reviewYAML struct {
-	Timeout  yaml.Node         `yaml:"timeout"`
-	Parallel yaml.Node         `yaml:"parallel"`
-	Dims     map[string]string `yaml:"dims"`
+	Timeout          yaml.Node         `yaml:"timeout"`
+	Parallel         yaml.Node         `yaml:"parallel"`
+	CodeGraphContext *bool             `yaml:"codegraph_context"`
+	Dims             map[string]string `yaml:"dims"`
 }
 
 // capabilityYAML es una entrada de validation.capabilities.<nombre> (T1.2).
@@ -422,6 +424,9 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		cfg.Profiles[nombre] = perfil
 	}
 	if raw.Review != nil {
+		if raw.Review.CodeGraphContext != nil {
+			cfg.Review.CodeGraphContext = *raw.Review.CodeGraphContext
+		}
 		if n, ok := decodificarEnteroPositivo(&raw.Review.Timeout); ok {
 			cfg.Review.Timeout = time.Duration(n) * time.Second
 		}

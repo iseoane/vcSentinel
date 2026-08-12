@@ -34,6 +34,7 @@ agents:
       commit:
         reasoning_effort: "low"
 review:
+  codegraph_context: true
   timeout: 600
   parallel: 2
   dims:

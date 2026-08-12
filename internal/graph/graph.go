@@ -120,16 +120,3 @@ func validosOpcionales(valores []string) bool {
 func clonar(valores []string) []string {
 	return append([]string(nil), valores...)
 }
-
-// ContextProvider puede enriquecer una revisión, pero no producir análisis
-// nativos ni autorizar alcance.
-type ContextProvider interface {
-	Nombre() string
-	Contexto(rutas []string) ([]ReferenciaContexto, error)
-}
-
-// ReferenciaContexto explica por qué una ruta puede ser relevante al revisor.
-type ReferenciaContexto struct {
-	Ruta        string
-	Explicacion string
-}

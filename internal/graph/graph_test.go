@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
 type proveedorContextoDoble struct{}
 
 func (proveedorContextoDoble) Nombre() string { return "context-test" }
-func (proveedorContextoDoble) Contexto([]string) ([]graph.ReferenciaContexto, error) {
-	return []graph.ReferenciaContexto{{Ruta: "internal/git/diff.go", Explicacion: "importado por review"}}, nil
+func (proveedorContextoDoble) Contexto(string, []string) ([]review.Reference, error) {
+	return []review.Reference{{Path: "internal/git/diff_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}, nil
 }
 
 func TestValorPublicoNoPuedeAutorizarAlcance(t *testing.T) {
@@ -25,9 +26,9 @@ func TestValorPublicoNoPuedeAutorizarAlcance(t *testing.T) {
 }
 
 func TestContextProviderSoloAportaContexto(t *testing.T) {
-	var proveedor graph.ContextProvider = proveedorContextoDoble{}
+	var proveedor review.ContextProvider = proveedorContextoDoble{}
 
-	referencias, err := proveedor.Contexto([]string{"internal/git/diff.go"})
+	referencias, err := proveedor.Contexto("head", []string{"internal/git/diff.go"})
 	if err != nil || len(referencias) != 1 {
 		t.Fatalf("contexto = %+v, error = %v", referencias, err)
 	}

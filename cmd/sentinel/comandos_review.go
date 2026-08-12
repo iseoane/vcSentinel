@@ -119,7 +119,7 @@ func ejecutarReview(worktree string, args []string) {
 			Dims:              dims,
 			Respuestas:        flags.answer,
 			PerfilOverride:    flags.profile,
-			ProveedorContexto: graph.DetectarProveedorCodeGraph(worktree),
+			ProveedorContexto: proveedorContextoReview(cfg, worktree),
 			RutasContexto:     archivos,
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
@@ -163,6 +163,13 @@ func ejecutarReview(worktree string, args []string) {
 		registrarCorrecciones(ledger, gitDir, sha, archivos, mensaje, exit, worktree)
 	}
 	os.Exit(exitFinal)
+}
+
+func proveedorContextoReview(cfg config.Config, worktree string) review.ContextProvider {
+	if !cfg.Review.CodeGraphContext || !permiteDiffAgenteExterno(worktree) {
+		return nil
+	}
+	return graph.DetectarProveedorCodeGraph(worktree)
 }
 
 // registrarCorrecciones asocia un commit fix (mensaje fix(...) que sale sin

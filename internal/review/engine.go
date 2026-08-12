@@ -1,11 +1,10 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
-
-	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
@@ -29,7 +28,7 @@ type OpcionesAuditoria struct {
 	Respuestas        string           // --answer: aclaraciones del usuario (1 ronda extra)
 	PerfilOverride    string           // --profile: fuerza un perfil sobre el mapa
 	OnDimension       func(dim string) // opcional: avisa cuando arranca cada dimensión
-	ProveedorContexto graph.ContextProvider
+	ProveedorContexto ContextProvider
 	RutasContexto     []string
 }
 
@@ -88,7 +87,7 @@ func DimensionesParaArchivos(archivos []string) []string {
 // convierte en veredicto unavailable con razón, nunca en fallo del motor.
 func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria) ResultadoAuditoria {
 	resultado := ResultadoAuditoria{SHA: opts.SHA}
-	contexto := contextoRevisor(opts.ProveedorContexto, opts.RutasContexto)
+	contexto := contextoRevisor(opts.ProveedorContexto, opts.SHA, opts.RutasContexto)
 	if parallel < 1 {
 		parallel = 1
 	}
@@ -155,19 +154,38 @@ func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAudit
 	return crudo, nil
 }
 
-func contextoRevisor(proveedor graph.ContextProvider, rutas []string) string {
+type Relation string
+type Reason string
+
+const (
+	RelationAffectedTest Relation = "affected_test"
+	ReasonCodeGraph      Reason   = "codegraph_dependency"
+)
+
+type Reference struct {
+	Path     string   `json:"path"`
+	Relation Relation `json:"relation"`
+	Reason   Reason   `json:"reason"`
+}
+
+type ContextProvider interface {
+	Nombre() string
+	Contexto(sha string, rutas []string) ([]Reference, error)
+}
+
+func contextoRevisor(proveedor ContextProvider, sha string, rutas []string) string {
 	if proveedor == nil {
 		return ""
 	}
-	referencias, err := proveedor.Contexto(rutas)
+	referencias, err := proveedor.Contexto(sha, rutas)
 	if err != nil {
 		return ""
 	}
-	var partes []string
-	for _, ref := range referencias {
-		partes = append(partes, strings.TrimSpace(ref.Ruta+" "+ref.Explicacion))
+	datos, err := json.Marshal(referencias)
+	if err != nil || len(referencias) == 0 {
+		return ""
 	}
-	return strings.Join(partes, "\n")
+	return string(datos)
 }
 
 // veredictoGlobal decide el veredicto del commit: block manda, luego question

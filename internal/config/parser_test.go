@@ -114,6 +114,17 @@ func TestSolicitudRepositorioDiffAgenteExterno(t *testing.T) {
 	}
 }
 
+func TestCodeGraphReviewerContextEsOptIn(t *testing.T) {
+	worktree := t.TempDir()
+	if CargarConfiguracionLocal(worktree).Review.CodeGraphContext {
+		t.Fatal("CodeGraph reviewer context debe estar desactivado por defecto")
+	}
+	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), "review:\n  codegraph_context: true\n")
+	if !CargarConfiguracionLocal(worktree).Review.CodeGraphContext {
+		t.Fatal("review.codegraph_context no fue aplicado")
+	}
+}
+
 // TestConfigChangeClasses verifica change.classes: sin config de usuario
 // aplican los defaults, y al declararla el usuario la reemplaza preservando
 // el orden textual (la precedencia del clasificador).

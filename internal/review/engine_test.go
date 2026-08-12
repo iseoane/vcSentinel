@@ -5,8 +5,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 )
 
 // agenteFake devuelve salidas fijas y cuenta las llamadas.
@@ -50,8 +48,8 @@ func TestAuditarCommitTodoOk(t *testing.T) {
 type proveedorContextoFake struct{ err error }
 
 func (proveedorContextoFake) Nombre() string { return "codegraph" }
-func (p proveedorContextoFake) Contexto([]string) ([]graph.ReferenciaContexto, error) {
-	return []graph.ReferenciaContexto{{Ruta: "internal/review/engine.go", Explicacion: "AuditarCommit calls auditarConAgente"}}, p.err
+func (p proveedorContextoFake) Contexto(string, []string) ([]Reference, error) {
+	return []Reference{{Path: "internal/review/engine_test.go", Relation: RelationAffectedTest, Reason: ReasonCodeGraph}}, p.err
 }
 
 type agentePrompt struct{ prompt string }
@@ -66,7 +64,7 @@ func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
 	fabrica := func(string) (AuditorAgente, string, error) { return agente, "normal", nil }
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Dims: []string{DimLogic},
 		RutasContexto: []string{"internal/review/engine.go"}, ProveedorContexto: proveedorContextoFake{}})
-	if resultado.Veredicto != VerdictOK || !strings.Contains(agente.prompt, "AuditarCommit calls") {
+	if resultado.Veredicto != VerdictOK || !strings.Contains(agente.prompt, `"path":"internal/review/engine_test.go"`) || !strings.Contains(agente.prompt, "UNTRUSTED_ADVISORY_PATH_METADATA") {
 		t.Fatalf("contexto no incluido: veredicto=%s prompt=%q", resultado.Veredicto, agente.prompt)
 	}
 

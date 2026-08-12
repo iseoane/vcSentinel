@@ -107,6 +107,12 @@ func TestPlantillaSolicitaDiffExternoDesactivadoPorDefecto(t *testing.T) {
 	}
 }
 
+func TestPlantillaCodeGraphReviewerDesactivadoPorDefecto(t *testing.T) {
+	if !strings.Contains(archivoConfiguracionPerProyectoBase, "codegraph_context: false") {
+		t.Fatal("la plantilla debe desactivar CodeGraph reviewer context")
+	}
+}
+
 // TestPlantillaPerProyectoDocumentaVerificacionDeterminista: la plantilla que
 // init escribe debe mostrar al usuario (comentadas) las claves que activan la
 // verificación determinista sin agente — lint_commands, test_commands y
