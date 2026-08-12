@@ -39,29 +39,40 @@ var mutexCache sync.Mutex
 
 func bloquearCache(raiz *os.Root) (func(), error) {
 	const nombre = ".write.lock"
-	dueno := []byte(fmt.Sprintf("%d %d\n", os.Getpid(), time.Now().UnixNano()))
+	if info, err := raiz.Lstat(nombre); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("archivo de bloqueo inseguro")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	archivo, err := abrirArchivoBloqueo(raiz, nombre)
+	if err != nil {
+		return nil, err
+	}
+	infoArchivo, errArchivo := archivo.Stat()
+	infoRuta, errRuta := raiz.Lstat(nombre)
+	if errArchivo != nil || errRuta != nil || !infoArchivo.Mode().IsRegular() ||
+		infoRuta.Mode()&os.ModeSymlink != 0 || !os.SameFile(infoArchivo, infoRuta) {
+		_ = archivo.Close()
+		return nil, fmt.Errorf("archivo de bloqueo inseguro")
+	}
 	limite := time.Now().Add(250 * time.Millisecond)
 	for {
-		archivo, err := raiz.OpenFile(nombre, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err == nil {
-			if _, err = archivo.Write(dueno); err == nil {
-				err = archivo.Close()
-			} else {
-				_ = archivo.Close()
-			}
-			if err != nil {
-				_ = raiz.Remove(nombre)
-				return nil, err
-			}
+		adquirido, err := intentarBloqueoArchivo(archivo)
+		if err != nil {
+			_ = archivo.Close()
+			return nil, err
+		}
+		if adquirido {
 			return func() {
-				actual, err := fs.ReadFile(raiz.FS(), nombre)
-				if err == nil && bytes.Equal(actual, dueno) {
-					_ = raiz.Remove(nombre)
-				}
+				_ = desbloquearArchivo(archivo)
+				_ = archivo.Close()
 			}, nil
 		}
-		if !errors.Is(err, os.ErrExist) || time.Now().After(limite) {
-			return nil, err
+		if time.Now().After(limite) {
+			_ = archivo.Close()
+			return nil, fmt.Errorf("tiempo de espera del bloqueo agotado")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

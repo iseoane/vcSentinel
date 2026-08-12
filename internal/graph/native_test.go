@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -118,19 +119,56 @@ func TestProveedorNativoVendorIncompletoUsaReadonly(t *testing.T) {
 	}
 }
 
-func TestProveedorNativoCacheNoAfectaCompletitud(t *testing.T) {
+func TestProveedorNativoContencionCacheNoAfectaCompletitud(t *testing.T) {
 	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-	graphDir := filepath.Join(dir, ".git", "vas-sentinel", "graph")
-	if err := os.MkdirAll(graphDir, 0700); err != nil {
+	raiz, err := raizCache(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(graphDir, 0500); err != nil {
+	defer raiz.Close()
+	desbloquear, err := bloquearCache(raiz)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(graphDir, 0700) })
-	resultado, err := proveedorDelModulo(t, dir).Analizar([]string{"main.go"})
+	defer desbloquear()
+	inicio := time.Now()
+	p := proveedorDelModulo(t, dir)
+	resultado, err := p.Analizar([]string{"main.go"})
 	if err != nil || !resultado.Completo() || resultado.MotivoIncompleto() != "" {
 		t.Fatalf("completo=%v error=%v motivo=%q", resultado.Completo(), err, resultado.MotivoIncompleto())
+	}
+	if _, ok := p.leerCacheValida(); ok {
+		t.Fatal("la contención no omitió la persistencia")
+	}
+	if time.Since(inicio) > 2*time.Second {
+		t.Fatal("la contención de cache no quedó acotada")
+	}
+}
+
+func TestBloqueoCacheLiberadoPermiteEscritura(t *testing.T) {
+	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	oid := treeOID(t, dir)
+	raiz, err := raizCache(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raiz.Close()
+	desbloquear, err := bloquearCache(raiz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desbloquear()
+	p := NuevoProveedorNativo(dir, oid)
+	p.imports, p.archivos, p.tests = map[string][]string{}, map[string]string{"main.go": "example.test/s"}, map[string]string{}
+	if err := p.guardarCache([]string{filepath.Join(dir, "main.go")}); err != nil {
+		t.Fatalf("el descriptor cerrado no permitió escribir: %v", err)
+	}
+	info, err := raiz.Lstat(".write.lock")
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("archivo de bloqueo inseguro: info=%v error=%v", info, err)
+	}
+	if cache, ok := p.leerCacheValida(); !ok || cache.Entries[p.contexto.fingerprint()].TreeOID != oid {
+		t.Fatalf("escritura posterior inválida: %#v", cache)
 	}
 }
 
