@@ -55,6 +55,12 @@ type ValidationResult struct {
 	Output     string `json:"output,omitempty"`
 }
 
+// TouchedPath identifies a changed path and whether it is absent from the final tree.
+type TouchedPath struct {
+	Path    string `json:"path"`
+	Deleted bool   `json:"deleted,omitempty"`
+}
+
 // Symbol identifies a symbol in a final-state path.
 type Symbol struct {
 	Name string `json:"name"`
@@ -67,7 +73,7 @@ type ContextInput struct {
 	Diff              string             `json:"diff"`
 	CommitMessages    []string           `json:"commit_messages,omitempty"`
 	Validation        []ValidationResult `json:"validation,omitempty"`
-	TouchedPaths      []string           `json:"touched_paths,omitempty"`
+	TouchedPaths      []TouchedPath      `json:"touched_paths,omitempty"`
 	ChangedSymbols    []Symbol           `json:"changed_symbols,omitempty"`
 	DirectCallers     []Symbol           `json:"direct_callers,omitempty"`
 	PackageTests      []string           `json:"package_tests,omitempty"`
@@ -186,8 +192,14 @@ func contextLayerBuilders(input ContextInput, reader TreeReader) []contextLayerB
 	}
 }
 
-func finalTouchedFiles(tree string, touchedPaths []string, reader TreeReader) ([]FileContent, error) {
-	paths := sortedStrings(touchedPaths)
+func finalTouchedFiles(tree string, touchedPaths []TouchedPath, reader TreeReader) ([]FileContent, error) {
+	paths := make([]string, 0, len(touchedPaths))
+	for _, touchedPath := range touchedPaths {
+		if !touchedPath.Deleted {
+			paths = append(paths, touchedPath.Path)
+		}
+	}
+	paths = sortedStrings(paths)
 	if len(paths) > 0 && reader == nil {
 		return nil, fmt.Errorf("context tree reader is required for touched paths")
 	}
@@ -240,6 +252,9 @@ func sortedValidation(results []ValidationResult) []ValidationResult {
 		}
 		if results[i].Command != results[j].Command {
 			return results[i].Command < results[j].Command
+		}
+		if results[i].Exit != results[j].Exit {
+			return results[i].Exit < results[j].Exit
 		}
 		return results[i].Output < results[j].Output
 	})

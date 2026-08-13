@@ -16,7 +16,7 @@ func TestBuildContextPreservesRequiredLayersAndTruncatesLowerPriorities(t *testi
 		Diff:           "diff --git a/internal/example/example.go b/internal/example/example.go\n",
 		CommitMessages: []string{"feat(example): add current behavior"},
 		Validation:     []ValidationResult{{Capability: "test", Exit: 1, Output: "--- FAIL: TestExample\n"}},
-		TouchedPaths:   []string{"internal/example/example.go"},
+		TouchedPaths:   []TouchedPath{{Path: "internal/example/example.go"}},
 		ChangedSymbols: []Symbol{{Name: "Current", Path: "internal/example/example.go"}},
 		DirectCallers:  []Symbol{{Name: "Run", Path: "cmd/sentinel/main.go"}},
 		PackageTests:   []string{"internal/example/example_test.go"},
@@ -66,7 +66,7 @@ func TestBuildContextReadsFinalContentsFromTree(t *testing.T) {
 	context, err := BuildContext(ContextInput{
 		Tree:         "tree-1",
 		Diff:         "diff\n",
-		TouchedPaths: []string{"internal/example/example.go"},
+		TouchedPaths: []TouchedPath{{Path: "internal/example/example.go"}},
 	}, reader, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestBuildContextSkipsUnreadableFinalFilesWhenBudgetEndsAtRequiredLayers(t *
 		Diff:           "diff --git a/internal/example/example.go b/internal/example/example.go\n",
 		CommitMessages: []string{"feat(example): add current behavior"},
 		Validation:     []ValidationResult{{Capability: "test", Exit: 1, Output: "--- FAIL: TestExample\n"}},
-		TouchedPaths:   []string{"internal/example/unavailable.go"},
+		TouchedPaths:   []TouchedPath{{Path: "internal/example/unavailable.go"}},
 	}
 	requiredInput := input
 	requiredInput.TouchedPaths = nil
@@ -107,6 +107,70 @@ func TestBuildContextSkipsUnreadableFinalFilesWhenBudgetEndsAtRequiredLayers(t *
 	}
 	if len(reader.calls) != 0 {
 		t.Fatalf("tree reads = %v, want none", reader.calls)
+	}
+}
+
+func TestBuildContextSkipsDeletedTouchedFiles(t *testing.T) {
+	reader := &recordedTreeReader{contents: map[string]string{
+		"tree-1:internal/example/existing.go": "package example\n",
+	}}
+
+	context, err := BuildContext(ContextInput{
+		Tree: "tree-1",
+		Diff: "diff --git a/internal/example/deleted.go b/internal/example/deleted.go\ndeleted file mode 100644\n",
+		TouchedPaths: []TouchedPath{
+			{Path: "internal/example/deleted.go", Deleted: true},
+			{Path: "internal/example/existing.go"},
+		},
+	}, reader, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := context.Layers[2].Files, []FileContent{{Path: "internal/example/existing.go", Content: "package example\n"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("final touched files = %v, want %v", got, want)
+	}
+	if got, want := reader.calls, []string{"tree-1:internal/example/existing.go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tree reads = %v, want %v", got, want)
+	}
+}
+
+func TestBuildContextPropagatesReaderErrorForFinalTouchedFile(t *testing.T) {
+	reader := &recordedTreeReader{err: errors.New("final file is unavailable")}
+
+	_, err := BuildContext(ContextInput{
+		Tree:         "tree-1",
+		TouchedPaths: []TouchedPath{{Path: "internal/example/unavailable.go"}},
+	}, reader, 0)
+	if !errors.Is(err, reader.err) {
+		t.Fatalf("BuildContext error = %v, want %v", err, reader.err)
+	}
+}
+
+func TestBuildContextSerializesValidationExitDeterministically(t *testing.T) {
+	results := []ValidationResult{
+		{Capability: "test", Command: "go test ./...", Exit: 1, Output: "failed"},
+		{Capability: "test", Command: "go test ./...", Exit: 0, Output: "failed"},
+	}
+	first, err := BuildContext(ContextInput{Tree: "tree-1", Validation: results}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildContext(ContextInput{Tree: "tree-1", Validation: []ValidationResult{results[1], results[0]}}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstJSON, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondJSON, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatalf("serialized contexts differ:\n%s\n%s", firstJSON, secondJSON)
 	}
 }
 
