@@ -135,6 +135,23 @@ func TestBuildContextSkipsDeletedTouchedFiles(t *testing.T) {
 	}
 }
 
+func TestBuildContextAllowsOnlyDeletedTouchedPathsWithoutReader(t *testing.T) {
+	context, err := BuildContext(ContextInput{
+		Tree:         "tree-1",
+		TouchedPaths: []TouchedPath{{Path: "internal/example/deleted.go", Deleted: true}},
+	}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := context.Layers[2].Name, "final_touched_files"; got != want {
+		t.Fatalf("layer name = %q, want %q", got, want)
+	}
+	if len(context.Layers[2].Files) != 0 {
+		t.Fatalf("final touched files = %v, want none", context.Layers[2].Files)
+	}
+}
+
 func TestBuildContextPropagatesReaderErrorForFinalTouchedFile(t *testing.T) {
 	reader := &recordedTreeReader{err: errors.New("final file is unavailable")}
 
