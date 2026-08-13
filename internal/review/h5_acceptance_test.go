@@ -31,7 +31,10 @@ func (r h5Reviewer) resultado() (string, error) {
 	}{Dim: DimLogic, Verdict: VerdictBlock, Findings: r.findings})), nil
 }
 
-type h5Refuter struct{ cases []h5Case }
+type h5Refuter struct {
+	cases  []h5Case
+	reader SnapshotReader
+}
 
 func (r h5Refuter) EjecutarPrompt(string) (string, error) { return "", nil }
 
@@ -44,7 +47,7 @@ func (r h5Refuter) EjecutarRevision(prompt, sha string, paths []string) (string,
 		if finding.Description != caso.claim || finding.File != caso.file || !h5PermitsPath(paths, caso.file) {
 			continue
 		}
-		source, err := leerContenidoSnapshot(trustedSHA, finding.File)
+		source, err := r.reader(trustedSHA, finding.File)
 		if err != nil || !h5ContainsAll(source, caso.requirements) {
 			return h5RefutationFailure(), nil
 		}
@@ -84,19 +87,11 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		{claim: "maxBytes <= 0 has no test coverage", file: "internal/review/renderer_test.go", requirements: []string{"func TestTruncarCuerpoLimiteNulo", "TruncarCuerpo(texto, 0)", "TruncarCuerpo(texto, -5)"}},
 		{claim: "exitCodeDeError does not exist", file: "cmd/sentinel/comandos_estado.go", requirements: []string{"func exitCodeDeError(err error) int", "errors.As(err, &exitErr)"}},
 	}
-
-	previousWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(repo); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(previousWD) })
+	reader := NewSnapshotReader(repo)
 
 	findings := make([]ReviewFinding, 0, len(cases))
 	for _, caso := range cases {
-		source, err := leerContenidoSnapshot(auditedSHA, caso.file)
+		source, err := reader(auditedSHA, caso.file)
 		if err != nil || !h5ContainsAll(source, caso.requirements) {
 			t.Fatalf("immutable fixture snapshot lacks final-state evidence for %q: %v", caso.claim, err)
 		}
@@ -104,7 +99,7 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		if !ok {
 			t.Fatalf("immutable fixture snapshot lacks location for %q", caso.claim)
 		}
-		findings = append(findings, ReviewFinding{Dimension: DimLogic, File: caso.file, Line: Linea(line), Severity: SevCritical, Description: caso.claim})
+		findings = append(findings, ReviewFinding{Dimension: DimLogic, File: caso.file, Line: Linea(line), Severity: SevCritical, Description: caso.claim, Status: StatusConfirmed})
 	}
 
 	// The worktree now contradicts the audited commit; refutation must still use Git objects.
@@ -119,19 +114,22 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		Diff:                  rendererDiff + "\n" + exitCodeDiff,
 		Bundles:               []ReviewBundle{{Name: "h5", Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1}},
 		RutasContexto:         []string{"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"},
-		LeerContenidoSnapshot: leerContenidoSnapshot,
+		LeerContenidoSnapshot: reader,
+		FabricaRefutador: func() (AuditorAgente, string, error) {
+			return h5Refuter{}, "fixture", nil
+		},
 	}
 	factory := func(ReviewBundle, string) (AuditorAgente, string, error) {
 		return h5Reviewer{findings: findings}, "fixture", nil
 	}
 
 	red := AuditarCommit(factory, 1, opts)
-	h5AssertHistoricalFindings(t, red, cases, "")
+	h5AssertHistoricalFindings(t, red, cases, StatusConfirmed)
 	if red.Veredicto != VerdictBlock {
 		t.Fatalf("RED: expected confirmed historical CRITICAL findings to block, got %q", red.Veredicto)
 	}
 
-	opts.FabricaRefutador = func() (AuditorAgente, string, error) { return h5Refuter{cases: cases}, "fixture", nil }
+	opts.FabricaRefutador = func() (AuditorAgente, string, error) { return h5Refuter{cases: cases, reader: reader}, "fixture", nil }
 	green := AuditarCommit(factory, 1, opts)
 	h5AssertHistoricalFindings(t, green, cases, StatusRefuted)
 	if green.Veredicto == VerdictBlock {
@@ -141,6 +139,9 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 
 func h5AssertHistoricalFindings(t *testing.T, resultado ResultadoAuditoria, cases []h5Case, status string) {
 	t.Helper()
+	if status == "" {
+		t.Fatal("expected historical finding status is required")
+	}
 	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
 		t.Fatalf("expected one logic result, got %#v", resultado.Dims)
 	}
@@ -161,7 +162,10 @@ func h5AssertHistoricalFindings(t *testing.T, resultado ResultadoAuditoria, case
 			t.Errorf("injected historical finding %q disappeared", caso.claim)
 			continue
 		}
-		if status != "" && finding.Status != status {
+		if finding.File != caso.file || finding.Severity != SevCritical {
+			t.Errorf("historical finding %q = %+v, want CRITICAL in %q", caso.claim, finding, caso.file)
+		}
+		if finding.Status != status {
 			t.Errorf("historical finding %q has status %q, want %q", caso.claim, finding.Status, status)
 		}
 	}
