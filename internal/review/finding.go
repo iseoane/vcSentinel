@@ -87,16 +87,19 @@ func (l *Linea) UnmarshalJSON(b []byte) error {
 // ReviewFinding es un hallazgo concreto del agente sobre una línea de un
 // archivo del commit auditado.
 type ReviewFinding struct {
-	Dimension          string `json:"dimension"`
-	File               string `json:"file"`
-	Line               Linea  `json:"line"`
-	Severity           string `json:"severity"`
-	Description        string `json:"description"`
-	Suggestion         string `json:"suggestion"`
-	Source             string `json:"source,omitempty"`
-	Status             string `json:"status,omitempty"`
-	RefutationReason   string `json:"refutation_reason,omitempty"`
-	RefutationEvidence string `json:"refutation_evidence,omitempty"`
+	Dimension           string `json:"dimension"`
+	File                string `json:"file"`
+	Line                Linea  `json:"line"`
+	Severity            string `json:"severity"`
+	Description         string `json:"description"`
+	Suggestion          string `json:"suggestion"`
+	Source              string `json:"source,omitempty"`
+	Status              string `json:"status,omitempty"`
+	RefutationReason    string `json:"refutation_reason,omitempty"`
+	RefutationEvidence  string `json:"refutation_evidence,omitempty"`
+	RefutationLineStart int    `json:"refutation_line_start,omitempty"`
+	RefutationLineEnd   int    `json:"refutation_line_end,omitempty"`
+	RefutationRangeHash string `json:"refutation_range_hash,omitempty"`
 }
 
 // Fuentes posibles de un Hallazgo (finding v2): de qué produjo el hallazgo.
@@ -166,24 +169,27 @@ type Ubicacion struct {
 // semántica) y Producer describiendo el comando ejecutado (Binario/Agente)
 // en vez de un modelo LLM (Modelo/Esfuerzo/ModeloVerificado quedarían vacíos).
 type Hallazgo struct {
-	ID                 string    `json:"id"`
-	Source             string    `json:"source"`
-	Producer           Productor `json:"producer"`
-	Dimension          string    `json:"dimension"`
-	Severity           string    `json:"severity"`
-	Confidence         float64   `json:"confidence"`
-	Status             string    `json:"status"`
-	Title              string    `json:"title"`
-	Description        string    `json:"description"`
-	Location           Ubicacion `json:"location"`
-	Evidence           string    `json:"evidence"`
-	Impact             string    `json:"impact,omitempty"`
-	Recommendation     string    `json:"recommendation,omitempty"`
-	Fixable            string    `json:"fixable"`
-	IntroducedBy       string    `json:"introduced_by,omitempty"`
-	Fingerprint        string    `json:"fingerprint"`
-	RefutationReason   string    `json:"refutation_reason,omitempty"`
-	RefutationEvidence string    `json:"refutation_evidence,omitempty"`
+	ID                  string    `json:"id"`
+	Source              string    `json:"source"`
+	Producer            Productor `json:"producer"`
+	Dimension           string    `json:"dimension"`
+	Severity            string    `json:"severity"`
+	Confidence          float64   `json:"confidence"`
+	Status              string    `json:"status"`
+	Title               string    `json:"title"`
+	Description         string    `json:"description"`
+	Location            Ubicacion `json:"location"`
+	Evidence            string    `json:"evidence"`
+	Impact              string    `json:"impact,omitempty"`
+	Recommendation      string    `json:"recommendation,omitempty"`
+	Fixable             string    `json:"fixable"`
+	IntroducedBy        string    `json:"introduced_by,omitempty"`
+	Fingerprint         string    `json:"fingerprint"`
+	RefutationReason    string    `json:"refutation_reason,omitempty"`
+	RefutationEvidence  string    `json:"refutation_evidence,omitempty"`
+	RefutationLineStart int       `json:"refutation_line_start,omitempty"`
+	RefutationLineEnd   int       `json:"refutation_line_end,omitempty"`
+	RefutationRangeHash string    `json:"refutation_range_hash,omitempty"`
 }
 
 // Motivos de descarte de un Hallazgo durante la validación de evidencia.

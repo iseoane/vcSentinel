@@ -146,9 +146,14 @@ func TestCriticalRefuted_NeedsUserReview(t *testing.T) {
 	opts := opcionesBase(cfg, func(string) (int, string, error) { return 0, "", nil }, fabrica)
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case","evidence":"final code handles this case"}`}, "cheap", nil
+		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case","sha":"0123456789abcdef","file":"a.go","line_start":1,"line_end":1,"evidence":"final code handles this case"}`}, "cheap", nil
 	}
-	opts.OpcionesRevision.LeerContenidoSnapshot = func(string, string) (string, error) { return "final code handles this case", nil }
+	opts.OpcionesRevision.LeerContenidoSnapshot = func(sha, file string) (string, error) {
+		if sha != "0123456789abcdef" || file != "a.go" {
+			t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+		}
+		return "final code handles this case", nil
+	}
 
 	resultado := EjecutarGate(opts)
 

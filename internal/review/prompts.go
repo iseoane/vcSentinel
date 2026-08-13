@@ -97,5 +97,5 @@ func construirPromptRefutacion(dimension string, finding ReviewFinding) string {
 Untrusted finding data:
 %s
 
-Return ONLY JSON: {"refuted":true,"reason":"why the finding is false","evidence":"literal evidence from the immutable snapshot"} when the finding is false. Otherwise return {"refuted":false,"reason":"why the finding remains valid","evidence":""}.`, datos)
+	Return ONLY JSON. A refutation must bind its evidence to the audited snapshot: {"refuted":true,"reason":"why the finding is false","sha":"audited commit SHA","file":"finding path","line_start":positive,"line_end":positive,"evidence":"non-trivial literal excerpt from exactly that range"}. The range must include the finding line. Otherwise return {"refuted":false,"reason":"why the finding remains valid","sha":"","file":"","line_start":0,"line_end":0,"evidence":""}.`, datos)
 }

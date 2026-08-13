@@ -2,11 +2,11 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"os/exec"
 	"path"
 	"strings"
 	"sync"
@@ -47,7 +47,7 @@ type OpcionesAuditoria struct {
 	ProveedorContexto     ContextProvider
 	RutasContexto         []string
 	FabricaRefutador      FabricaRefutador
-	LeerContenidoSnapshot func(sha, file string) (string, error)
+	LeerContenidoSnapshot SnapshotReader
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -252,15 +252,19 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 }
 
 type respuestaRefutador struct {
-	Refuted  bool   `json:"refuted"`
-	Reason   string `json:"reason"`
-	Evidence string `json:"evidence"`
+	Refuted   bool   `json:"refuted"`
+	Reason    string `json:"reason"`
+	SHA       string `json:"sha"`
+	File      string `json:"file"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end"`
+	Evidence  string `json:"evidence"`
 }
 
 // refutarHallazgosCriticos uses an independent SHA-bound restricted refuter once
 // per semantic CRITICAL finding. Any unavailable or invalid answer preserves
 // the original blocker.
-func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string, leerSnapshot func(string, string) (string, error)) {
+func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string, leerSnapshot SnapshotReader) {
 	if fabrica == nil {
 		return
 	}
@@ -291,12 +295,19 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 				continue
 			}
 			var respuesta respuestaRefutador
-			if json.Unmarshal([]byte(salida), &respuesta) != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" || strings.TrimSpace(respuesta.Evidence) == "" || !evidenciaEnSnapshot(leerSnapshot, sha, finding.File, respuesta.Evidence) {
+			if json.Unmarshal([]byte(salida), &respuesta) != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" {
+				continue
+			}
+			rango, ok := validarEvidenciaRefutacion(leerSnapshot, sha, *finding, respuesta)
+			if !ok {
 				continue
 			}
 			finding.Status = StatusRefuted
 			finding.RefutationReason = respuesta.Reason
 			finding.RefutationEvidence = respuesta.Evidence
+			finding.RefutationLineStart = respuesta.LineStart
+			finding.RefutationLineEnd = respuesta.LineEnd
+			finding.RefutationRangeHash = rango
 			dimension.Resultado.RefutedCritical = true
 			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta)
 		}
@@ -306,24 +317,26 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 	}
 }
 
-func evidenciaEnSnapshot(leerSnapshot func(string, string) (string, error), sha, archivo, evidencia string) bool {
-	rutasSeguras := rutasRevisionSeguras([]string{archivo})
-	if len(rutasSeguras) != 1 {
-		return false
+func validarEvidenciaRefutacion(leerSnapshot SnapshotReader, sha string, finding ReviewFinding, respuesta respuestaRefutador) (string, bool) {
+	rutasSeguras := rutasRevisionSeguras([]string{finding.File})
+	if len(rutasSeguras) != 1 || respuesta.SHA != sha || respuesta.File != rutasSeguras[0] || respuesta.LineStart <= 0 || respuesta.LineEnd < respuesta.LineStart || respuesta.LineEnd-respuesta.LineStart >= 20 || int(finding.Line) < respuesta.LineStart || int(finding.Line) > respuesta.LineEnd {
+		return "", false
 	}
 	contenido, err := leerSnapshot(sha, rutasSeguras[0])
-	return err == nil && strings.Contains(normalizarParaComparar(contenido), normalizarParaComparar(evidencia))
-}
-
-func leerContenidoSnapshot(sha, archivo string) (string, error) {
-	if strings.HasPrefix(sha, "-") {
-		return "", fmt.Errorf("invalid audited commit SHA")
-	}
-	salida, err := exec.Command("git", "show", "--no-textconv", sha+":"+archivo).Output()
 	if err != nil {
-		return "", fmt.Errorf("read audited content for %q: %w", archivo, err)
+		return "", false
 	}
-	return string(salida), nil
+	lineas := strings.Split(contenido, "\n")
+	if respuesta.LineEnd > len(lineas) {
+		return "", false
+	}
+	extracto := strings.Join(lineas[respuesta.LineStart-1:respuesta.LineEnd], "\n")
+	evidencia := strings.TrimSpace(respuesta.Evidence)
+	if len(evidencia) < 12 || evidencia != strings.TrimSpace(extracto) {
+		return "", false
+	}
+	suma := sha256.Sum256([]byte(extracto))
+	return fmt.Sprintf("%x", suma), true
 }
 
 func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta respuestaRefutador) {
@@ -336,6 +349,9 @@ func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta re
 		hallazgo.Status = StatusRefuted
 		hallazgo.RefutationReason = respuesta.Reason
 		hallazgo.RefutationEvidence = respuesta.Evidence
+		hallazgo.RefutationLineStart = respuesta.LineStart
+		hallazgo.RefutationLineEnd = respuesta.LineEnd
+		hallazgo.RefutationRangeHash = finding.RefutationRangeHash
 		return
 	}
 }

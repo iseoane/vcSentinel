@@ -3,6 +3,10 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -142,11 +146,25 @@ func TestAuditarCommitRefutesEachCriticalFindingOnce(t *testing.T) {
 	refutadores := 0
 	fabricaRefutador := func() (AuditorAgente, string, error) {
 		refutadores++
-		return &agenteFake{respuestas: []string{`{"refuted":true,"reason":"the final implementation disproves this finding","evidence":"trusted proof"}`}}, "cheap", nil
+		file := "a.go"
+		line := 1
+		if refutadores == 2 {
+			file = "b.go"
+			line = 2
+		}
+		return &agenteFake{respuestas: []string{fmt.Sprintf(`{"refuted":true,"reason":"the final implementation disproves this finding","sha":"abc12345","file":%q,"evidence":"trusted proof","line_start":%d,"line_end":%d}`, file, line, line)}}, "cheap", nil
 	}
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
-		LeerContenidoSnapshot: func(string, string) (string, error) { return "trusted proof", nil },
+		LeerContenidoSnapshot: func(sha, file string) (string, error) {
+			if sha != "abc12345" || file != "a.go" && file != "b.go" {
+				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+			}
+			if file == "b.go" {
+				return "ignored\ntrusted proof", nil
+			}
+			return "trusted proof", nil
+		},
 	})
 
 	if auditor.llamadas != 1 {
@@ -169,15 +187,23 @@ func TestAuditarCommitRefutedFindingPreservesV2Lifecycle(t *testing.T) {
 	fabrica, _ := fabricaFija([]string{
 		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","source":"review","status":"pending","evidence":"bad()","location":{"file":"a.go","line_start":1}}]}`,
 	})
-	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"bad() is guarded by the final implementation","evidence":"bad()"}`})
+	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"bad() is guarded by the final implementation","sha":"abc12345","file":"a.go","evidence":"bad() guarded","line_start":1,"line_end":1}`})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
-		LeerContenidoSnapshot: func(string, string) (string, error) { return "bad()", nil },
+		LeerContenidoSnapshot: func(sha, file string) (string, error) {
+			if sha != "abc12345" || file != "a.go" {
+				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+			}
+			return "bad() guarded", nil
+		},
 	})
 
 	hallazgos := resultado.Dims[0].Resultado.Hallazgos
 	if len(hallazgos) != 1 || hallazgos[0].Status != StatusRefuted || hallazgos[0].Source != SourceReview {
 		t.Fatalf("hallazgos=%+v, expected refuted semantic lifecycle", hallazgos)
+	}
+	if hallazgos[0].RefutationLineStart != 1 || hallazgos[0].RefutationLineEnd != 1 || hallazgos[0].RefutationRangeHash == "" {
+		t.Fatalf("hallazgos=%+v, expected persisted validated range metadata", hallazgos)
 	}
 }
 
@@ -505,10 +531,15 @@ func TestAuditarCommitRefuterEvidenceMustMatchImmutableSnapshot(t *testing.T) {
 	fabrica, _ := fabricaFija([]string{
 		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,
 	})
-	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","evidence":"missing proof"}`})
+	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","sha":"abc12345","file":"a.go","evidence":"missing proof","line_start":1,"line_end":1}`})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
-		LeerContenidoSnapshot: func(string, string) (string, error) { return "different immutable content", nil },
+		LeerContenidoSnapshot: func(sha, file string) (string, error) {
+			if sha != "abc12345" || file != "a.go" {
+				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+			}
+			return "different immutable content", nil
+		},
 	})
 
 	if refutador.llamadas != 1 || resultado.Veredicto != VerdictBlock {
@@ -524,10 +555,15 @@ func TestAuditarCommitInjectionShapedFindingRemainsBlocking(t *testing.T) {
 	fabrica, _ := fabricaFija([]string{
 		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"` + descripcion + `"}]}`,
 	})
-	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","evidence":"missing proof"}`})
+	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","sha":"abc12345","file":"a.go","evidence":"missing proof","line_start":1,"line_end":1}`})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
-		LeerContenidoSnapshot: func(string, string) (string, error) { return "different immutable content", nil },
+		LeerContenidoSnapshot: func(sha, file string) (string, error) {
+			if sha != "abc12345" || file != "a.go" {
+				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+			}
+			return "different immutable content", nil
+		},
 	})
 
 	if refutador.llamadas != 1 || resultado.Veredicto != VerdictBlock {
@@ -539,7 +575,7 @@ func TestAuditarCommitInjectionShapedFindingRemainsBlocking(t *testing.T) {
 }
 
 func TestRefutedLegacyCriticalWithUnresolvedV2CriticalRemainsBlocking(t *testing.T) {
-	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","evidence":"trusted proof"}`})
+	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","sha":"abc12345","file":"a.go","evidence":"trusted proof","line_start":1,"line_end":1}`})
 	dimensiones := []ResultadoDimension{{
 		Dim: DimLogic,
 		Resultado: &DimensionResult{
@@ -550,13 +586,116 @@ func TestRefutedLegacyCriticalWithUnresolvedV2CriticalRemainsBlocking(t *testing
 		},
 	}}
 
-	refutarHallazgosCriticos(dimensiones, fabricaRefutador, "abc12345", nil, func(string, string) (string, error) {
+	refutarHallazgosCriticos(dimensiones, fabricaRefutador, "abc12345", nil, func(sha, file string) (string, error) {
+		if sha != "abc12345" || file != "a.go" {
+			t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+		}
 		return "trusted proof", nil
 	})
 
 	if got := dimensiones[0].Resultado.Verdict; got != VerdictBlock {
 		t.Fatalf("verdict=%q, expected unresolved v2 CRITICAL to retain block", got)
 	}
+}
+
+func TestAuditarCommitRefuterEvidenceMustCoverFindingLine(t *testing.T) {
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":2,"severity":"CRITICAL","description":"bug"}]}`,
+	})
+	fabricaRefutador, _ := fabricaRefutadorFija([]string{
+		`{"refuted":true,"reason":"unrelated code disproves this","sha":"abc12345","file":"a.go","evidence":"const unrelated = true","line_start":1,"line_end":1}`,
+	})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		LeerContenidoSnapshot: func(sha, file string) (string, error) {
+			if sha != "abc12345" || file != "a.go" {
+				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+			}
+			return "const unrelated = true\ncriticalCall()\n", nil
+		},
+	})
+
+	if resultado.Veredicto != VerdictBlock || resultado.Dims[0].Resultado.Findings[0].Status != StatusConfirmed {
+		t.Fatalf("result=%+v, expected unrelated range to retain block", resultado)
+	}
+}
+
+func TestValidarEvidenciaRefutacionRejectsInvalidContract(t *testing.T) {
+	finding := ReviewFinding{File: "a.go", Line: 2}
+	valid := respuestaRefutador{
+		SHA: "abc12345", File: "a.go", LineStart: 2, LineEnd: 2, Evidence: "criticalCall()",
+	}
+	cases := []struct {
+		name      string
+		respuesta respuestaRefutador
+	}{
+		{name: "wrong SHA", respuesta: func() respuestaRefutador { r := valid; r.SHA = "other"; return r }()},
+		{name: "wrong path", respuesta: func() respuestaRefutador { r := valid; r.File = "other.go"; return r }()},
+		{name: "zero range", respuesta: func() respuestaRefutador { r := valid; r.LineStart = 0; return r }()},
+		{name: "outside finding line", respuesta: func() respuestaRefutador {
+			r := valid
+			r.LineStart, r.LineEnd = 1, 1
+			r.Evidence = "const unrelated = true"
+			return r
+		}()},
+		{name: "generic evidence", respuesta: func() respuestaRefutador { r := valid; r.Evidence = "return"; return r }()},
+		{name: "mismatched evidence", respuesta: func() respuestaRefutador { r := valid; r.Evidence = "const unrelated = true"; return r }()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if hash, ok := validarEvidenciaRefutacion(func(sha, file string) (string, error) {
+				if sha != "abc12345" || file != "a.go" {
+					t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+				}
+				return "const unrelated = true\ncriticalCall()\n", nil
+			}, "abc12345", finding, tc.respuesta); ok || hash != "" {
+				t.Fatalf("hash=%q accepted invalid contract", hash)
+			}
+		})
+	}
+}
+
+func TestAuditarCommitRefuterReadsAuditedCommitContent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uses a temporary Git repository")
+	}
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "review@example.test")
+	runGit(t, repo, "config", "user.name", "Review Test")
+	file := filepath.Join(repo, "a.go")
+	if err := os.WriteFile(file, []byte("const immutableProof = true\ncriticalCall()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "a.go")
+	runGit(t, repo, "commit", "-m", "test snapshot")
+	sha := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	if err := os.WriteFile(file, []byte("const worktreeOnlyProof = true\ncriticalCall()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,
+	})
+	fabricaRefutador := func() (AuditorAgente, string, error) {
+		return &agenteFake{respuestas: []string{fmt.Sprintf(`{"refuted":true,"reason":"the committed implementation is safe","sha":%q,"file":"a.go","evidence":"const immutableProof = true","line_start":1,"line_end":1}`, sha)}}, "cheap", nil
+	}
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador})
+	if resultado.Veredicto != VerdictWarn || resultado.Dims[0].Resultado.Findings[0].Status != StatusRefuted {
+		t.Fatalf("result=%+v, expected committed evidence to refute finding", resultado)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
 }
 
 type auditorFunc func(string) (string, error)
