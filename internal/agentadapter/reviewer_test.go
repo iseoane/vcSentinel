@@ -162,6 +162,7 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_DIR", "/host/config")
 	t.Setenv("OPENCODE_AUTH_CONTENT", `{"provider":{"token":"existing"}}`)
 	t.Setenv("HOME", "/host/home")
+	t.Setenv("XDG_DATA_HOME", "/host/data")
 
 	env := reviewEnvironment("generated", t.TempDir())
 	values := environmentValues(env)
@@ -175,6 +176,9 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	}
 	if len(values["OPENCODE_CONFIG"]) != 0 || len(values["OPENCODE_CONFIG_DIR"]) != 0 {
 		t.Fatalf("host config was retained: %v", values)
+	}
+	if dataHome := values["XDG_DATA_HOME"]; !reflect.DeepEqual(dataHome, []string{"/host/data"}) {
+		t.Fatalf("XDG_DATA_HOME = %v, expected exactly the inherited authentication directory", dataHome)
 	}
 	if auth := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(auth, []string{`{"provider":{"token":"existing"}}`}) {
 		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected existing authentication source", auth)

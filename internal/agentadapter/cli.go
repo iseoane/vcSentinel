@@ -344,7 +344,7 @@ func reviewEnvironment(configuration, snapshot string) []string {
 	blocked := map[string]bool{
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
 		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true,
-		"HOME": true, "USERPROFILE": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
+		"HOME": true, "USERPROFILE": true, "XDG_CONFIG_HOME": true,
 		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true,
 	}
 	env := make([]string, 0, len(os.Environ())+10)
@@ -361,7 +361,6 @@ func reviewEnvironment(configuration, snapshot string) []string {
 		"OPENCODE_TEST_HOME="+isolationRoot,
 		"HOME="+isolationRoot,
 		"XDG_CONFIG_HOME="+filepath.Join(isolationRoot, ".config"),
-		"XDG_DATA_HOME="+filepath.Join(isolationRoot, ".local", "share"),
 		"XDG_STATE_HOME="+filepath.Join(isolationRoot, ".local", "state"),
 		"XDG_CACHE_HOME="+filepath.Join(isolationRoot, ".cache"),
 	)
