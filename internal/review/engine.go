@@ -6,7 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
 
 // AuditorAgente es la interfaz que el motor usa para hablar con el agente.
@@ -48,34 +49,76 @@ type ResultadoAuditoria struct {
 	Preguntas []AgentQuestion
 }
 
-// dimensionesPorCapa es la matriz saco × dimensión: qué dimensiones se auditan
-// según la capa de los archivos que toca el commit (spec siempre se añade).
-var dimensionesPorCapa = map[string][]string{
-	"config":   {DimSecurity, DimDesign},
-	"backend":  {DimLogic, DimDesign, DimSecurity},
-	"frontend": {DimStyle, DimLogic},
-	"test":     {DimTests},
+const (
+	BundleCorrectness     = "correctness"
+	BundleQuality         = "quality"
+	BundleSecurity        = "security"
+	BundleContracts       = "contracts_compatibility"
+	BundleConcurrencyData = "concurrency_data"
+	EffortLow             = "low"
+)
+
+// ReviewBundle is one planned semantic-review agent and its dimensions.
+type ReviewBundle struct {
+	Name       string
+	Dimensions []string
+	Effort     string
 }
 
-// ordenCanonicoDimensiones fija el orden de salida de las dimensiones.
-var ordenCanonicoDimensiones = []string{DimLogic, DimStyle, DimDesign, DimTests, DimSecurity, DimSpec}
+// BundlesForRisk selects the review agents from the shared risk profile.
+// Style is intentionally absent: deterministic lint owns it.
+func BundlesForRisk(resultado risk.Resultado, caracteristicas []change.Caracteristica) []ReviewBundle {
+	bundles := []ReviewBundle{
+		{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}},
+	}
+	switch resultado.Nivel {
+	case risk.NivelNone:
+		return nil
+	case risk.NivelLow:
+		bundles[0].Effort = EffortLow
+		return bundles
+	case risk.NivelStandard:
+		return append(bundles, ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}})
+	case risk.NivelElevated:
+		return append(bundles,
+			ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}},
+			ReviewBundle{Name: BundleSecurity, Dimensions: []string{DimSecurity}})
+	case risk.NivelHigh:
+		bundles = append(bundles,
+			ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}},
+			ReviewBundle{Name: BundleSecurity, Dimensions: []string{DimSecurity}})
+		if caracteristicaPresente(caracteristicas, "public_api") || caracteristicaPresente(caracteristicas, "cross_module") {
+			bundles = append(bundles, ReviewBundle{Name: BundleContracts, Dimensions: []string{DimSpec}})
+		}
+		if caracteristicaPresente(caracteristicas, "concurrency") || caracteristicaPresente(caracteristicas, "database") {
+			bundles = append(bundles, ReviewBundle{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}})
+		}
+		return bundles
+	default:
+		return BundlesForRisk(risk.Resultado{Nivel: risk.NivelStandard}, caracteristicas)
+	}
+}
 
-// DimensionesParaArchivos deduce las dimensiones de auditoría del conjunto de
-// archivos de un commit: unión de las de su capa más spec (transversal).
-func DimensionesParaArchivos(archivos []string) []string {
-	unidas := map[string]bool{}
-	for _, archivo := range archivos {
-		capa := git.ClasificarCapa(archivo)
-		for _, dim := range dimensionesPorCapa[capa] {
-			unidas[dim] = true
+func caracteristicaPresente(caracteristicas []change.Caracteristica, nombre string) bool {
+	for _, caracteristica := range caracteristicas {
+		if caracteristica.Nombre == nombre && caracteristica.Estado == change.CaracteristicaPresente {
+			return true
 		}
 	}
-	unidas[DimSpec] = true
+	return false
+}
 
+// DimensionesParaArchivos preserves callers that have not yet supplied a risk
+// profile. Their former layer policy is replaced by the standard risk bundle.
+func DimensionesParaArchivos(_ []string) []string {
 	var dims []string
-	for _, dim := range ordenCanonicoDimensiones {
-		if unidas[dim] {
-			dims = append(dims, dim)
+	vistas := map[string]bool{}
+	for _, bundle := range BundlesForRisk(risk.Resultado{Nivel: risk.NivelStandard}, nil) {
+		for _, dim := range bundle.Dimensions {
+			if !vistas[dim] {
+				dims = append(dims, dim)
+				vistas[dim] = true
+			}
 		}
 	}
 	return dims

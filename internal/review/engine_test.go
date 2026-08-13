@@ -2,9 +2,13 @@ package review
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
 
 // agenteFake devuelve salidas fijas y cuenta las llamadas.
@@ -166,21 +170,28 @@ func TestAuditarCommitParaleloUno(t *testing.T) {
 	}
 }
 
-func TestDimensionesParaArchivos(t *testing.T) {
+func TestBundlesForRisk(t *testing.T) {
 	casos := []struct {
-		archivos []string
-		esperado []string
+		nombre          string
+		riesgo          risk.Nivel
+		caracteristicas []change.Caracteristica
+		esperado        []ReviewBundle
 	}{
-		{[]string{"internal/a.go"}, []string{DimLogic, DimDesign, DimSecurity, DimSpec}},
-		{[]string{"config.yml"}, []string{DimDesign, DimSecurity, DimSpec}},
-		{[]string{"web/app.tsx"}, []string{DimLogic, DimStyle, DimSpec}},
-		{[]string{"internal/a_test.go"}, []string{DimTests, DimSpec}},
-		{[]string{"internal/a.go", "web/app.tsx"}, []string{DimLogic, DimStyle, DimDesign, DimSecurity, DimSpec}},
+		{"none", risk.NivelNone, nil, nil},
+		{"low", risk.NivelLow, nil, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}, Effort: EffortLow}}},
+		{"standard", risk.NivelStandard, nil, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}}},
+		{"elevated", risk.NivelElevated, nil, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}}},
+		{"high with characteristics", risk.NivelHigh, []change.Caracteristica{{Nombre: "public_api", Estado: change.CaracteristicaPresente}, {Nombre: "concurrency", Estado: change.CaracteristicaPresente}}, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}, {Name: BundleContracts, Dimensions: []string{DimSpec}}, {Name: BundleConcurrencyData, Dimensions: []string{DimLogic}}}},
 	}
 	for _, caso := range casos {
-		obtenido := DimensionesParaArchivos(caso.archivos)
-		if strings.Join(obtenido, ",") != strings.Join(caso.esperado, ",") {
-			t.Errorf("DimensionesParaArchivos(%v) = %v, esperado %v", caso.archivos, obtenido, caso.esperado)
-		}
+		t.Run(caso.nombre, func(t *testing.T) {
+			obtenido := BundlesForRisk(risk.Resultado{Nivel: caso.riesgo}, caso.caracteristicas)
+			if !reflect.DeepEqual(obtenido, caso.esperado) {
+				t.Errorf("BundlesForRisk(%s) = %#v, expected %#v", caso.riesgo, obtenido, caso.esperado)
+			}
+		})
+	}
+	if got := DimensionesParaArchivos([]string{"internal/a.go"}); !reflect.DeepEqual(got, []string{DimLogic, DimSpec, DimTests, DimDesign}) {
+		t.Errorf("DimensionesParaArchivos fallback = %v", got)
 	}
 }
