@@ -10,6 +10,8 @@ import (
 
 const promptModelo = "What model are you actually using? Reply with only the exact model identifier."
 
+const maxModelIdentifierLength = 128
+
 // Agente is the minimal agent capability needed for a model probe.
 type Agente interface {
 	EjecutarPrompt(prompt string) (string, error)
@@ -45,10 +47,13 @@ func (v *Verificador) Verificar(perfil, esperado string, agente Agente) {
 	}
 	if esperado == "" {
 		if reporta, ok := agente.(ReportaModeloConfigurado); ok {
-			esperado, _ = reporta.ModeloConfigurado()
+			if modelo, ok := reporta.ModeloConfigurado(); ok {
+				esperado = modelo
+			}
 		}
 	}
-	if esperado == "" || strings.TrimSpace(actual) == esperado {
+	actual, ok := modeloReportadoValido(actual)
+	if esperado == "" || !ok || actual == esperado {
 		return
 	}
 	_ = v.store.GuardarPerfil(&store.Profile{
@@ -56,6 +61,20 @@ func (v *Verificador) Verificar(perfil, esperado string, agente Agente) {
 		Status:        store.ProfileUnverified,
 		Event:         "model_mismatch",
 		ExpectedModel: esperado,
-		ActualModel:   strings.TrimSpace(actual),
+		ActualModel:   actual,
 	})
+}
+
+func modeloReportadoValido(modelo string) (string, bool) {
+	modelo = strings.Trim(modelo, " \t")
+	if modelo == "" || len(modelo) > maxModelIdentifierLength {
+		return "", false
+	}
+	for _, r := range modelo {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '/') {
+			return "", false
+		}
+	}
+	return modelo, true
 }
