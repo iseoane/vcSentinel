@@ -67,6 +67,30 @@ func TestPerfilDeCambioKind(t *testing.T) {
 	}
 }
 
+func TestPerfilDeCommitUsaArbolVacioParaCommitRaiz(t *testing.T) {
+	repo := t.TempDir()
+	ejecutarGit(t, repo, "init")
+	escribirArchivo(t, repo, "internal/demo/demo.go", "package demo\nfunc Crear() {}\n")
+	ejecutarGit(t, repo, "add", ".")
+	ejecutarGit(t, repo, "commit", "-m", "feat: initial capability")
+	t.Chdir(repo)
+
+	perfil, err := PerfilDeCommit("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	arbolVacio, err := exec.Command("git", "-C", repo, "hash-object", "-t", "tree", "--stdin").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perfil.Base != strings.TrimSpace(string(arbolVacio)) || perfil.Head != "HEAD" {
+		t.Fatalf("profile base/head = %q/%q, expected empty tree/HEAD", perfil.Base, perfil.Head)
+	}
+	if perfil.Size.Files != 1 || perfil.Size.Added == 0 || perfil.Kind != "feature" {
+		t.Fatalf("incomplete root profile: %#v", perfil)
+	}
+}
+
 func TestPerfilDeCambioDerivaSimbolosExactos(t *testing.T) {
 	casos := []struct {
 		nombre, antes, despues string

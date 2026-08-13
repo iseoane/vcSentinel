@@ -59,6 +59,29 @@ func PerfilDeCambio(base, head string) (ChangeProfile, error) {
 	return perfilDeCambioCon(base, head, salidaGit)
 }
 
+// PerfilDeCommit calcula un perfil completo para un commit. Los commits raíz
+// se comparan contra el árbol vacío de Git porque no tienen padre.
+func PerfilDeCommit(commit string) (ChangeProfile, error) {
+	padres, err := salidaGit("rev-list", "--parents", "-n", "1", commit)
+	if err != nil {
+		return ChangeProfile{}, err
+	}
+	campos := strings.Fields(padres)
+	if len(campos) == 0 {
+		return ChangeProfile{}, fmt.Errorf("no se pudo resolver el commit %s", commit)
+	}
+	base := ""
+	if len(campos) > 1 {
+		base = campos[1]
+	} else {
+		base, err = arbolVacioGit()
+		if err != nil {
+			return ChangeProfile{}, err
+		}
+	}
+	return PerfilDeCambio(base, commit)
+}
+
 // perfilDeCambioCon es PerfilDeCambio con el lector de git inyectado: variante
 // testeable sin invocar git real.
 func perfilDeCambioCon(base, head string, git LectorGit) (ChangeProfile, error) {
@@ -116,6 +139,16 @@ func salidaGit(args ...string) (string, error) {
 		return "", err
 	}
 	return string(salida), nil
+}
+
+func arbolVacioGit() (string, error) {
+	cmd := exec.Command("git", "hash-object", "-t", "tree", "--stdin")
+	cmd.Stdin = strings.NewReader("")
+	salida, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(salida)), nil
 }
 
 // diffGit ejecuta una lectura de git y envuelve el error con la descripción
