@@ -1,110 +1,114 @@
-# VAS Sentinel — Guía de trabajo
+# VAS Sentinel Working Guide
 
-Guardián local determinista en Go que evita la acumulación masiva de cambios en Git worktrees operados por agentes de IA. Módulo: `github.com/ISeoane-Quental/vas.sentinel` (Go 1.26).
+VAS Sentinel is a deterministic local Go guardian that prevents excessive accumulated changes in Git worktrees operated by AI agents. Module: `github.com/ISeoane-Quental/vas.sentinel` (Go 1.26).
 
-## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)
+## Language and model policy
 
-- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: `sentinel check`.
-- Si el estado es "CRÍTICO" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.
-- Debes detenerte de inmediato e invocar: `sentinel slice` para fragmentar el código acumulado antes de continuar.
-- `sentinel slice` trabaja en modo plan: propone los lotes y los mensajes, y NO commitea nada hasta que el usuario apruebe el plan.
-- Los commits de slice omiten la verificación del hook (`--no-verify`): invocar slice ES el desbloqueo del guardián y cada lote ya está validado (≤400 líneas, salvo gigantes con bypass explícito). El hook de volumen mide el total pendiente y rechazaría por error commits legítimos durante la fragmentación.
+- All development artifacts created or changed from now on MUST be in English: source code, identifiers, comments, tests, documentation, user-facing strings, prompts, configuration values, commit messages, PRs, issues, and release notes.
+- Keep the human-agent conversation in standard Spanish from Spain unless the user requests another language.
+- Use GPT-5.6 Terra with high reasoning effort for implementation unless the user explicitly requests a different model or effort.
+- Existing Spanish artifacts are legacy content. Do not translate them opportunistically; translate only as part of a scoped change.
+- Commit messages MUST use Conventional Commits in English, for example `feat(gate): validate the standard profile`.
 
-### Si eres un agente: usa el flujo de dos pasos
+## Agent workflow: use the two-step slice flow
 
-`sentinel slice` sin argumentos es un REPL sobre `stdin` y no puedes conducirlo. Usa en su lugar:
+`sentinel slice` without arguments is an interactive stdin REPL and agents cannot drive it. Use this non-interactive flow instead:
 
-1. `sentinel slice plan --json > plan.json` — propone y **no commitea nada**. Es idempotente: sobre el mismo árbol devuelve el mismo `plan_id`.
-   - Exit `0`: no hay nada que preguntar.
-   - Exit `3`: el plan trae `decisiones_pendientes[]`. **Trasládaselas al usuario tal cual y espera su respuesta.** No respondas por él ni elijas un valor por defecto.
-2. Escribe `respuestas.json` con la respuesta literal del usuario: `{"plan_id": "<plan_id>", "respuestas": {"<id>": "bypass"|"abortar"}}`.
-3. `sentinel slice apply --plan plan.json --answers respuestas.json` — commitea solo si el árbol no cambió, las respuestas son de ese `plan_id` y toda decisión tiene respuesta explícita.
+1. Run `sentinel slice plan --json > plan.json`. It proposes changes and **does not create commits**. It is idempotent: the same tree produces the same `plan_id`.
+   - Exit `0`: no decision is required.
+   - Exit `3`: the plan contains `decisiones_pendientes[]`. Present those decisions to the user verbatim and wait for an answer. Do not answer on their behalf or select a default.
+2. Write `answers.json` with the user's literal response: `{"plan_id":"<plan_id>","respuestas":{"<id>":"bypass"|"abortar"}}`.
+3. Run `sentinel slice apply --plan plan.json --answers answers.json`. It commits only if the worktree has not changed, the answers match that `plan_id`, and every decision has an explicit answer.
 
-La decisión sigue siendo del humano: este flujo cambia el transporte de la pregunta, no quién la contesta.
+The human retains the decision. This flow only changes how the question is transported.
 
-## Build y verificación
+## Build and verification
 
-- **Windows:** `build.bat` → genera `bin\<version>\sentinel.exe`
-- **Debian/Linux:** `./build.sh` → genera `bin\<version>\sentinel` (requiere `chmod +x build.sh`)
-- Ambos scripts ejecutan `gofmt -w .` → `go vet ./...` → `go build -ldflags="-s -w -X main.version=<versión>"`. Úsalos en vez de un `go build` a secas.
-- La versión se lee de `release.yml` (fuente de verdad del proyecto); se puede forzar con la variable `SENTINEL_VERSION`.
-- Los binarios compilados van a `bin/<version>/` (nunca se commitean, están en `.gitignore`).
-- Verificación rápida de un cambio: `go build ./... && go vet ./...`
-- Publicar assets de release: `go run ./tools/release` (genera los binarios multiplataforma en `bin/<version>/`). Publicación completa con `infra/release.bat` o `infra/release.sh` (vet + assets + `gh release create`).
-- Bootstrap de instalación para quien no tiene el binario: `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest` (el paquete se llama `sentinel`; un `go install .../cmd@latest` instalaría un binario llamado `cmd`, que colisiona con el de Windows).
+- **Windows:** `build.bat` creates `bin\\<version>\\sentinel.exe`.
+- **Debian/Linux:** `./build.sh` creates `bin/<version>/sentinel` and may require `chmod +x build.sh`.
+- Both build scripts run `gofmt -w .`, `go vet ./...`, and `go build -ldflags="-s -w -X main.version=<version>"`. Prefer them over a plain `go build`.
+- `release.yml` is the version source of truth. `SENTINEL_VERSION` may override it.
+- Built binaries belong in `bin/<version>/`; they are ignored by Git and must not be committed.
+- For quick verification, run `go build ./...` and `go vet ./...`.
+- Generate cross-platform release assets with `go run ./tools/release`. Publish the complete release with `infra/release.bat` or `infra/release.sh`.
+- Bootstrap installation without an existing binary with `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest`.
 
-## Multiplataforma (obligatorio)
+## Cross-platform requirements
 
-Código y scripts DEBEN funcionar igual en Windows y Debian:
+Code and scripts MUST behave the same on Windows and Debian:
 
-- Usa `filepath.Join` para construir rutas; nunca concatenes `/` a mano.
-- Usa `filepath.ToSlash` al pasar rutas a git.
-- El hook `pre-commit` es `#!/bin/sh` y funciona en ambos: Git para Windows lo ejecuta con `sh.exe`.
-- El hook se escribe directamente en el common-dir del repositorio (`<git-common-dir>/hooks/pre-commit`, vía `git rev-parse --git-common-dir`), no en una carpeta global ni con `core.hooksPath`: solo afecta al repo donde se corrió `init`, y es el mismo para todos sus worktrees enlazados. Ejecuta `sentinel check` con la ruta absoluta del binario.
+- Build paths with `filepath.Join`; never concatenate paths with `/`.
+- Pass paths to Git through `filepath.ToSlash`.
+- The `pre-commit` hook uses `#!/bin/sh`; Git for Windows executes it through `sh.exe`.
+- Write the hook directly to the repository common directory (`<git-common-dir>/hooks/pre-commit`, obtained through `git rev-parse --git-common-dir`). Do not use a global folder or `core.hooksPath`.
+- The hook runs `sentinel check` through the binary's absolute path. It affects only that repository and its linked worktrees.
 
-## Arquitectura
+## Architecture
 
-- `cmd/sentinel` — entrypoint CLI y diálogos interactivos. `main.go` despacha los subcomandos; `comandos_review.go`, `comandos_estado.go` y `comandos_pr.go` implementan `review`, `status` y `pr`.
-- `internal/config` — parsea `vassentinel.yml` (agentes, perfiles anidados, `commit_language`, comandos de lint/test/build), con precedencia defaults → global (`~/.vas_sentinel/vassentinel.yml`) → per-proyecto (`.vas_sentinel/vassentinel.yml`).
-- `internal/agentadapter` — `AgentAdapter` + `CLIAdapter` (claude/opencode) y `CadenaAdaptador`, que prueba los agentes en orden y hace fallback por petición. Reporta el agente efectivo que atendió cada llamada.
-- `internal/git` — umbrales de volumen (`umbrales.go`), medición (`MedirVolumen`), plan de fragmentación (`plan.go`), vía no interactiva `plan`/`apply` (`planagente.go`, `aplicarplan.go`) y clasificación de archivos (`clases.go`).
-- `internal/review` — motor de auditoría por dimensiones, prompts, ledger de fichas por commit y análisis de rama (decisión single/chain).
-- `internal/ops` — registro de eventos en el common-dir: alta, rotación, purga y lectura de los últimos.
-- `internal/setup` — instalación, upgrade y desinstalación del binario, y plantillas de configuración.
+- `cmd/sentinel` is the CLI entry point and dispatches commands. Command handlers cover review, status, PRs, the validation gate, risk explanation, and external-diff consent.
+- `internal/config` parses `vassentinel.yml`: agents, nested profiles, `commit_language`, review profiles, validation profiles, and lint/test/build commands. Precedence is defaults, global (`~/.vas_sentinel/vassentinel.yml`), then project (`.vas_sentinel/vassentinel.yml`).
+- `internal/agentadapter` provides `AgentAdapter`, CLI adapters, and `CadenaAdaptador` fallback. It records the effective binary, model, and reasoning effort for each successful request.
+- `internal/git` owns volume thresholds, measurement, change slicing, non-interactive `plan`/`apply`, and file classification.
+- `internal/review` runs dimension-based audits, builds prompts, persists the legacy append-only review ledger, analyzes branches, and supports content-stable review findings.
+- `internal/store` persists units, runs, findings, commit indexes, decisions, and blob indexes in `<git-common-dir>/vas-sentinel`. Blob indexes preserve review coverage across rebases when file content is unchanged.
+- `internal/gate` runs deterministic validation followed by semantic review of `HEAD`; it reports validation, review, or infrastructure status.
+- `internal/change`, `internal/risk`, and `internal/graph` profile a change, calculate cohesion and risk, and optionally enrich review context from CodeGraph metadata tied to the audited commit.
+- `internal/consent` records local consent for externally supplied diffs.
+- `internal/ops` records, rotates, purges, and reads events from the repository common directory.
+- `internal/setup` installs, upgrades, and removes the binary and manages configuration templates.
 
-Documentos de referencia: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md) (hacia dónde va el producto) y [`docs/reingenieria/`](docs/reingenieria/) (plan por fases y estado de las tareas).
+Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md) and [`docs/reingenieria/`](docs/reingenieria/).
 
-## Subcomandos
+## Commands
 
-| Subcomando | Qué hace |
+| Command | Purpose |
 |---|---|
-| `version` | Versión instalada. |
-| `help` | Ayuda de subcomandos. |
-| `init` | Inyecta la regla de volumen, crea la config per-proyecto e instala el hook `pre-commit`. |
-| `uninit` | Revierte `init` en este repositorio. |
-| `check` | Audita el volumen de líneas añadidas de código del worktree. |
-| `slice` | Fragmenta los cambios en commits de ≤400 líneas (REPL interactivo). |
-| `slice plan` | Propone el plan sin commitear. `--json`; exit 3 si hay decisiones pendientes. |
-| `slice apply` | Ejecuta un plan aprobado. `--plan X --answers Y`. |
-| `review` | Audita un commit contra las dimensiones de su saco y guarda la ficha. |
-| `lint` | Ejecuta los `lint_commands` de la configuración. |
-| `rebase` | `fetch` + `rebase` contra el upstream, con confirmación. |
-| `status` | Volumen, fichas de auditoría y últimos eventos. `--json`, `--prune`. |
-| `pr` | Crea un pull request con `gh` (passthrough). |
-| `pr review` | Analiza la rama sin publicar: matriz y decisión single/chain. |
-| `install` / `upgrade` / `uninstall` | Gestión del binario instalado. |
+| `version` | Print the installed version. |
+| `help` | Print command help. |
+| `init` | Inject the volume rule, create project configuration, and install `pre-commit`. |
+| `uninit` | Revert `init` for this repository. |
+| `check` | Audit added code lines in the worktree. |
+| `slice` | Interactively split changes into commits of at most 400 lines. |
+| `slice plan` | Propose a non-committing plan. `--json` exits `3` when decisions are pending. |
+| `slice apply` | Apply an approved plan with `--plan` and `--answers`. |
+| `review` | Audit a commit by dimension and save its review record. |
+| `gate` | Validate then semantically review `HEAD`; requires `--stage pre-commit|pre-push|pr` and accepts `--profile`. |
+| `lint` | Run configured `lint_commands`. |
+| `rebase` | Fetch and rebase against upstream after confirmation. |
+| `status` | Show volume, audit records, and recent events. Supports `--json` and `--prune`. |
+| `explain` | Explain a commit range's change profile, detected characteristics, risk, and cohesion. Supports `--json`. |
+| `consentimiento-diff` | Grant, revoke, or show local consent for external diffs. |
+| `pr` | Create a pull request through `gh`; `pr review` analyzes the unpublished branch. |
+| `install` / `upgrade` / `uninstall` | Manage the installed binary. |
 
-Los subcomandos sin flags rechazan cualquier argumento extra con salida 1.
+Commands that accept no flags reject extra arguments with exit code `1`.
 
-## Lógica de negocio clave
+## Key business rules
 
-- `check`: 200–400 líneas = `PUNTO_OPTIMO`, >400 = `CRITICO` → exit 1. El string exacto es `"CRITICO"` (sin tilde) y `main.go` lo compara tal cual.
-- `slice`: construye un plan por capas en orden fijo `config → backend → frontend → test`, lotes de ≤400 líneas. Genera los mensajes con el adaptador configurado; si el adaptador automático no responde, ofrece mensajes automáticos deterministas, otro agente disponible o cancelar. Muestra el plan para aprobación (A/R/E/C) antes de commitear, y resume los commits al final.
-  - Archivos gigantes: config >400 líneas se aíslan con `chore(deps): track lock and auto-generated files`; código >500 líneas pide confirmación (`s/N`) y, si se confirma, hace bypass con `chore(slice): bypass IA for massive file <archivo>`; si se rechaza, aborta sin commitear nada.
-  - Todos los commits de slice usan `--no-verify` (ver REGLA CRÍTICA DE VOLUMEN).
-- `review`: audita un commit por dimensiones (`logic`, `style`, `design`, `tests`, `security`, `spec`), cada una con su perfil de agente. Guarda una ficha por commit en `<git-common-dir>/vas-sentinel/<sha>.json`, con `revisions[]` append-only. Cada revisión registra el agente EFECTIVO que respondió (`agent`/`model`/`effort`), no el perfil pedido.
-- `pr review`: analiza la rama contra su base y decide single vs. chain con `review.LimiteDecisionChain` (el mismo 400 del guardián, por decisión). Si hay `lint_commands`/`test_commands`/`build_commands`, la verificación es determinista y NO consulta al agente.
-- `status`: combina volumen, fichas del ledger y últimos eventos (`internal/ops`), que se registran en el common-dir con rotación y purga.
-- `init`: inyecta la regla de volumen en `AGENTS.md`, `CLAUDE.md`, `.claudecode.md`, crea `.vas_sentinel/vassentinel.yml` per-proyecto e instala el hook `pre-commit` directamente en `<git-common-dir>/hooks/` del repositorio (sin carpeta global ni `core.hooksPath`), con la ruta absoluta del binario. Así solo se activa en el repo donde se corrió `init`, sin afectar otros repos del usuario. Solo se ejecuta en la raíz del worktree Git: si se invoca desde un subdirectorio, redirige automáticamente a la raíz (via `git rev-parse --show-toplevel`); si no hay repositorio Git, aborta con error.
+- `check`: 200 to 400 code lines is `PUNTO_OPTIMO`; more than 400 is `CRITICO` and exits with `1`. The exact string is `"CRITICO"` without an accent because `main.go` compares it literally.
+- `slice`: groups files in fixed layer order `config -> backend -> frontend -> test` into batches of at most 400 lines. It generates commit messages through the configured adapter and has deterministic fallback messages if the adapter is unavailable.
+- Oversized files: configuration files over 400 lines are isolated with `chore(deps): track lock and auto-generated files`. Code files over 500 lines require an explicit bypass decision; rejection aborts without creating commits.
+- Slice commits use `--no-verify`. The slice flow is the guardian's controlled exemption: every batch is already limited to 400 lines unless the user explicitly approved a massive-file bypass.
+- `review`: audits `logic`, `style`, `design`, `tests`, `security`, and `spec` independently. Records append-only revisions and the effective responding agent, rather than only the requested profile.
+- Findings v2 use stable fingerprints and content blobs. The store can recognize content already reviewed under a different commit SHA after a rebase.
+- `gate`: loads project configuration strictly, validates the selected `validation.profiles` profile, then audits `HEAD`. `--stage` identifies lifecycle context; `--profile` selects validation, not review, configuration.
+- `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
+- `pr review`: chooses single versus chained review using `review.LimiteDecisionChain`, which equals the guardian limit of 400 lines. Configured lint, test, and build commands run deterministically without consulting an agent.
+- `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook.
 
-## Configuración
+## Configuration
 
-- `vassentinel.yml`: `active_agent` (default `auto`) — agente activo; `agents:` con `model`, `reasoning_effort` y perfiles anidados por agente. `auto` usa el primer agente de `agents:` disponible en el PATH. Precedencia: per-proyecto `.vas_sentinel/vassentinel.yml` > global `~/.vas_sentinel/vassentinel.yml` > defaults.
-- `commit_language` (default `es`): idioma de los mensajes de commit que genera `slice`.
-- `review:` con `timeout`, `parallel` y `dims:` (perfil por dimensión canónica). `lint_commands`, `test_commands` y `build_commands` habilitan la verificación determinista de `pr review` SIN consultar al agente.
-- Umbrales: `internal/git/umbrales.go` es la única fuente. `LimiteLineasRevisables` (400) manda sobre el guardián, el tamaño de lote y `review.LimiteDecisionChain`; `LimiteCodigoGigante` (500) dispara la decisión de archivo masivo.
-- `MY_SUB_AGENT` (env): override opcional — ya no es el mecanismo principal.
-
-## Convenciones
-
-- Mensajes de commit: Conventional Commits (`chore(slice): ...`, etc.).
-- Textos de UI y prompts: castellano estándar, NO voseo — "Puedes", "Analiza", "Devuelve", nunca "Podés", "Analizá", "Devolvé".
-- Los prompts al agente devuelven SOLO la línea del mensaje de commit, sin markdown ni comillas.
-- El idioma de los mensajes de commit lo fija `commit_language` en el yml (por defecto `es`, el del historial). El prompt lo dice explícitamente y con un ejemplo: sin fijarlo, el modelo mezclaba idiomas dentro de la misma ejecución.
+- `active_agent` defaults to `auto`. `agents` defines model, reasoning effort, and nested profiles. `auto` tries configured agents in PATH order.
+- `commit_language` controls messages generated by `slice`. Set it to `en` for new and migrated configurations.
+- `review` sets timeout, parallelism, and dimension profiles. `lint_commands`, `test_commands`, and `build_commands` enable deterministic verification in `pr review`.
+- `validation.profiles` defines gate validation profiles. `gate --profile` defaults to `standard` and fails explicitly if it is absent.
+- `internal/git/umbrales.go` is the sole threshold source: `LimiteLineasRevisables` is 400 and governs the guardian, slicing, and `review.LimiteDecisionChain`; `LimiteCodigoGigante` is 500.
+- `MY_SUB_AGENT` remains an optional override, not the primary configuration path.
 
 <!-- vas-sentinel:begin -->
-## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)
-- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: "sentinel check".
-- Si el estado es "CRÍTICO" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.
-- Debes detenerte de inmediato e invocar: "sentinel slice" para fragmentar el código acumulado antes de continuar.
+## CRITICAL VOLUME RULE (THE GUARDIAN)
+
+- Before making any change or proposing a plan, run `sentinel check`. If it is not installed, use the latest available `bin/<version>/sentinel` binary.
+- If the state is `CRITICO` (more than 400 code lines), you are STRICTLY PROHIBITED from writing further code.
+- Stop immediately and run the non-interactive `sentinel slice plan --json` flow to split accumulated work before continuing.
 <!-- vas-sentinel:end -->
