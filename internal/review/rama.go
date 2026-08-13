@@ -68,10 +68,11 @@ type OpcionesRama struct {
 	// que arranca, porque AnalizarRama audita varios commits en la misma
 	// pasada y el propio motor no conoce el contexto de "rama" (deuda
 	// documentada al cerrar F1).
-	OnCommit    func(idx, total int, sha string)
-	OnDimension func(dim string)
-	Fabrica     FabricaAuditor
-	Parallel    int
+	OnCommit         func(idx, total int, sha string)
+	OnDimension      func(dim string)
+	Fabrica          FabricaAuditor
+	FabricaRefutador FabricaRefutador
+	Parallel         int
 	// Store es opcional (nil-safe): si no es nil, AnalizarRama consulta por
 	// blob antes que por SHA para decidir pendientes (T2.7, criterio de
 	// salida de F2: un rebase que no altera contenido conserva el 100% de
@@ -226,14 +227,15 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		return err
 	}
 	resultado := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
-		SHA:            sha,
-		Mensaje:        mensaje,
-		Diff:           diff,
-		Bundles:        PlanForProfile(profile, archivos).Bundles,
-		Respuestas:     opts.Respuestas,
-		PerfilOverride: opts.PerfilOverride,
-		RutasContexto:  archivos,
-		OnDimension:    opts.OnDimension,
+		SHA:              sha,
+		Mensaje:          mensaje,
+		Diff:             diff,
+		Bundles:          PlanForProfile(profile, archivos).Bundles,
+		Respuestas:       opts.Respuestas,
+		PerfilOverride:   opts.PerfilOverride,
+		RutasContexto:    archivos,
+		OnDimension:      opts.OnDimension,
+		FabricaRefutador: opts.FabricaRefutador,
 	})
 
 	modelo := opts.PerfilOverride

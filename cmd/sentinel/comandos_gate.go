@@ -72,6 +72,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
 	}
 
+	verificador := nuevoVerificadorModelo(worktree)
 	resultado := gate.EjecutarGate(gate.Opciones{
 		Perfil:         perfil,
 		RutasCambiadas: archivos,
@@ -82,8 +83,9 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 				return graph.NuevoProveedorNativo(snapshot, treeOID)
 			},
 		},
-		FabricaAuditor: fabricaAuditorGate(cfg, nuevoVerificadorModelo(worktree)),
-		Parallel:       cfg.Review.Parallel,
+		FabricaAuditor:   fabricaAuditorGate(cfg, verificador),
+		FabricaRefutador: fabricaRefutadorGate(cfg, verificador),
+		Parallel:         cfg.Review.Parallel,
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
@@ -92,6 +94,12 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 
 	fmt.Fprintf(w, "🚦 gate [%s] perfil=%s → %s\n", stage, perfil, resultado.Estado)
 	return finalizarGate(w, worktree, stage, resultado.Estado, resultado.Mensajes)
+}
+
+// fabricaRefutadorGate resolves the explicit cheap profile separately from the
+// per-dimension auditor so each semantic CRITICAL gets an independent refuter.
+func fabricaRefutadorGate(cfg config.Config, verificador *modelprobe.Verificador) review.FabricaRefutador {
+	return fabricaRefutador(cfg, verificador)
 }
 
 // fabricaAuditorGate construye el agente de cada dimensión de la revisión

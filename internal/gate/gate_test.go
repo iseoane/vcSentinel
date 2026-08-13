@@ -82,6 +82,11 @@ func TestValidacionEnRojo_NoLanzaRevision(t *testing.T) {
 		return 1, "salida real del comando fallido", nil
 	}, fabricaContadora(&llamadas, "", nil))
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
+	refutadores := 0
+	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
+		refutadores++
+		return &auditorFalso{}, "cheap", nil
+	}
 
 	resultado := EjecutarGate(opts)
 
@@ -91,16 +96,16 @@ func TestValidacionEnRojo_NoLanzaRevision(t *testing.T) {
 	if llamadas != 0 {
 		t.Fatalf("se esperaban 0 llamadas al motor de revisión, hubo %d", llamadas)
 	}
+	if refutadores != 0 {
+		t.Fatalf("se esperaban 0 refutadores para un CRITICAL de validación, hubo %d", refutadores)
+	}
 	unido := strings.Join(resultado.Mensajes, "\n")
 	if !strings.Contains(unido, "salida real del comando fallido") {
 		t.Fatalf("el mensaje debe mostrar la salida real del comando fallido, obtuve: %q", unido)
 	}
 }
 
-// TestValidacionEnVerdeConCritical_NoBloquea cubre la aceptación #2: modo
-// advisory hasta F5 — un veredicto CRITICAL semántico no bloquea, solo se
-// avisa de forma destacada, y el estado final es PASS.
-func TestValidacionEnVerdeConCritical_NoBloquea(t *testing.T) {
+func TestValidacionEnVerdeConCriticalConfirmado_Bloquea(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
 	llamadas := 0
 	salidaAgente := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`
@@ -111,15 +116,35 @@ func TestValidacionEnVerdeConCritical_NoBloquea(t *testing.T) {
 
 	resultado := EjecutarGate(opts)
 
-	if resultado.Estado != EstadoPass {
-		t.Fatalf("estado esperado %q (advisory, no bloquea), obtuve %q", EstadoPass, resultado.Estado)
+	if resultado.Estado != EstadoCodeReviewFailed {
+		t.Fatalf("estado esperado %q, obtuve %q", EstadoCodeReviewFailed, resultado.Estado)
 	}
 	if llamadas != 1 {
 		t.Fatalf("se esperaba 1 llamada al motor de revisión, hubo %d", llamadas)
 	}
 	unido := strings.Join(resultado.Mensajes, "\n")
-	if !strings.Contains(unido, "AVISO") {
-		t.Fatalf("se esperaba un aviso destacado del CRITICAL, obtuve: %q", unido)
+	if !strings.Contains(unido, "confirmó") {
+		t.Fatalf("se esperaba confirmación del CRITICAL, obtuve: %q", unido)
+	}
+}
+
+func TestCriticalRefuted_NeedsUserReview(t *testing.T) {
+	cfg := cfgConPerfil("lint", "echo ok")
+	llamadas := 0
+	agente := &auditorSecuencial{respuestas: []string{`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"risk"}]}`}, llamadas: &llamadas}
+	fabrica := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+		return agente, "perfil-test", nil
+	}
+	opts := opcionesBase(cfg, func(string) (int, string, error) { return 0, "", nil }, fabrica)
+	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
+	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
+		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case"}`}, "cheap", nil
+	}
+
+	resultado := EjecutarGate(opts)
+
+	if resultado.Estado != EstadoNeedsUserReview || CodigoSalida(resultado.Estado) != 2 {
+		t.Fatalf("estado=%q exit=%d, expected NEEDS_USER_REVIEW and exit 2", resultado.Estado, CodigoSalida(resultado.Estado))
 	}
 }
 
@@ -191,6 +216,7 @@ func TestCodigoSalida(t *testing.T) {
 	casos := map[string]int{
 		EstadoPass:                      0,
 		EstadoValidationFailed:          1,
+		EstadoCodeReviewFailed:          1,
 		EstadoNeedsUserReview:           2,
 		EstadoReviewInfrastructureError: 4,
 		"ESTADO_DESCONOCIDO":            4,
@@ -207,3 +233,18 @@ var errAgenteNoDisponibleTest = &errorFijo{"agente no disponible"}
 type errorFijo struct{ msg string }
 
 func (e *errorFijo) Error() string { return e.msg }
+
+type auditorSecuencial struct {
+	respuestas []string
+	llamadas   *int
+}
+
+func (a *auditorSecuencial) EjecutarPrompt(string) (string, error) {
+	salida := a.respuestas[*a.llamadas]
+	*a.llamadas++
+	return salida, nil
+}
+
+func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}

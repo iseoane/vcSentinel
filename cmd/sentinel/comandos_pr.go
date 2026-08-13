@@ -200,7 +200,7 @@ func ejecutarPrReview(worktree string, args []string) {
 		base = "main"
 	}
 	ledger := review.NuevoLedger(gitDir)
-	res, err := review.AnalizarRama(ledger, review.OpcionesRama{
+	res, err := review.AnalizarRama(ledger, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:           base,
 		SoloPendientes: flags.soloPendientes,
 		Overview:       flags.overview,
@@ -212,7 +212,7 @@ func ejecutarPrReview(worktree string, args []string) {
 		OnDimension: func(dim string) {
 			fmt.Printf("  ⏳ %s …\n", dim)
 		},
-	})
+	}))
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
@@ -647,7 +647,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	if base == "" {
 		base = "main"
 	}
-	res, err := deps.analizarRama(gitDir, review.OpcionesRama{
+	res, err := deps.analizarRama(gitDir, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:           base,
 		SoloPendientes: false,
 		Overview:       true,
@@ -659,7 +659,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		OnDimension: func(dim string) {
 			fmt.Fprintf(w, "  ⏳ %s …\n", dim)
 		},
-	})
+	}))
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
@@ -720,4 +720,9 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		fmt.Fprintf(w, "? Aviso: no se pudo registrar el evento: %v\n", err)
 	}
 	return 0
+}
+
+func opcionesRamaConRefutador(cfg config.Config, verificador *modelprobe.Verificador, opts review.OpcionesRama) review.OpcionesRama {
+	opts.FabricaRefutador = fabricaRefutador(cfg, verificador)
+	return opts
 }

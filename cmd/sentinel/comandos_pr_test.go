@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
@@ -633,6 +634,98 @@ func TestEjecutarPrCreateCon_ComparteElVerificadorModeloConLaPlantilla(t *testin
 	}
 	if construcciones != 1 {
 		t.Fatalf("construcciones de verificador = %d, esperado 1 por invocación de pr create", construcciones)
+	}
+}
+
+func TestFabricaRefutadorResuelvePerfilCheap(t *testing.T) {
+	cfg := configConPerfilCheap()
+	agente, perfil, err := fabricaRefutador(cfg, modelprobe.NuevoVerificador(nil))()
+	if err != nil {
+		t.Fatalf("fabricaRefutador() error = %v", err)
+	}
+	if perfil != "cheap" {
+		t.Fatalf("perfil = %q, want cheap", perfil)
+	}
+	adapter, ok := agente.(*agentadapter.CLIAdapter)
+	if !ok {
+		t.Fatalf("agente = %T, want *agentadapter.CLIAdapter", agente)
+	}
+	if adapter.Config.Model != "cheap-model" || adapter.Config.ReasoningEffort != "low" {
+		t.Fatalf("configuracion del refutador = %+v, want cheap profile", adapter.Config)
+	}
+}
+
+func TestOpcionesAuditoriaConRefutadorLlevaPerfilCheap(t *testing.T) {
+	opciones := opcionesAuditoriaConRefutador(review.OpcionesAuditoria{}, configConPerfilCheap(), modelprobe.NuevoVerificador(nil))
+	if opciones.FabricaRefutador == nil {
+		t.Fatal("OpcionesAuditoria must carry a refuter factory")
+	}
+	_, perfil, err := opciones.FabricaRefutador()
+	if err != nil {
+		t.Fatalf("FabricaRefutador() error = %v", err)
+	}
+	if perfil != "cheap" {
+		t.Fatalf("refuter profile = %q, want cheap", perfil)
+	}
+}
+
+func TestOpcionesRamaConRefutadorLlevaPerfilCheap(t *testing.T) {
+	opciones := opcionesRamaConRefutador(configConPerfilCheap(), modelprobe.NuevoVerificador(nil), review.OpcionesRama{})
+	if opciones.FabricaRefutador == nil {
+		t.Fatal("OpcionesRama must carry a refuter factory")
+	}
+	_, perfil, err := opciones.FabricaRefutador()
+	if err != nil {
+		t.Fatalf("FabricaRefutador() error = %v", err)
+	}
+	if perfil != "cheap" {
+		t.Fatalf("refuter profile = %q, want cheap", perfil)
+	}
+}
+
+func TestEjecutarPrCreateConPasaFabricaRefutadorCheap(t *testing.T) {
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return configConPerfilCheap(), nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(_ string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
+			if opts.FabricaRefutador == nil {
+				t.Fatal("OpcionesRama must carry a refuter factory")
+			}
+			_, perfil, err := opts.FabricaRefutador()
+			if err != nil {
+				t.Fatalf("FabricaRefutador() error = %v", err)
+			}
+			if perfil != "cheap" {
+				t.Fatalf("refuter profile = %q, want cheap", perfil)
+			}
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictOK)}, SHAs: []string{"abc1234"}}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, want 0: %s", codigo, salida.String())
+	}
+}
+
+func configConPerfilCheap() config.Config {
+	return config.Config{
+		ActiveAgent: "stub",
+		Agents: map[string]config.AgentConfig{
+			"stub": {
+				Model: "normal-model",
+				Profiles: map[string]config.ProfileConfig{
+					"cheap": {Model: "cheap-model", ReasoningEffort: "low"},
+				},
+			},
+		},
 	}
 }
 

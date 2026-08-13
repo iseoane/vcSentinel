@@ -123,7 +123,7 @@ func ejecutarReview(worktree string, args []string) {
 			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, perfil.Nombre, nil
 		}
 
-		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, review.OpcionesAuditoria{
+		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(review.OpcionesAuditoria{
 			SHA:               sha,
 			Mensaje:           mensaje,
 			Diff:              diff,
@@ -135,7 +135,7 @@ func ejecutarReview(worktree string, args []string) {
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},
-		})
+		}, cfg, verificadorModelo))
 
 		modelo := flags.profile
 		if modelo == "" {
@@ -189,6 +189,25 @@ func proveedorContextoReview(cfg config.Config, worktree string) review.ContextP
 		return nil
 	}
 	return graph.DetectarProveedorCodeGraph(worktree)
+}
+
+func opcionesAuditoriaConRefutador(opts review.OpcionesAuditoria, cfg config.Config, verificador *modelprobe.Verificador) review.OpcionesAuditoria {
+	opts.FabricaRefutador = fabricaRefutador(cfg, verificador)
+	return opts
+}
+
+// fabricaRefutador resolves the explicit cheap profile for the independent
+// challenge that runs once for each semantic CRITICAL finding.
+func fabricaRefutador(cfg config.Config, verificador *modelprobe.Verificador) review.FabricaRefutador {
+	return func() (review.AuditorAgente, string, error) {
+		perfil := config.ResolverPerfil(cfg, "", "cheap")
+		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+		if err != nil {
+			return nil, perfil.Nombre, err
+		}
+		verificador.Verificar(perfil.Nombre, perfil.Modelo, adapter)
+		return adapter, perfil.Nombre, nil
+	}
 }
 
 // registrarCorrecciones asocia un commit fix (mensaje fix(...) que sale sin

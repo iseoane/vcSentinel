@@ -29,6 +29,10 @@ type auditorConHerramientasRestringidas interface {
 // además el nombre del perfil aplicado. Inyectable en los tests.
 type FabricaAuditor func(bundle ReviewBundle, dimension string) (AuditorAgente, string, error)
 
+// FabricaRefutador constructs the cheap, independent reviewer used to challenge
+// one semantic CRITICAL finding. It is invoked once for each finding.
+type FabricaRefutador func() (AuditorAgente, string, error)
+
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
 	SHA               string
@@ -41,6 +45,7 @@ type OpcionesAuditoria struct {
 	OnDimension       func(dim string) // opcional: avisa cuando arranca cada dimensión
 	ProveedorContexto ContextProvider
 	RutasContexto     []string
+	FabricaRefutador  FabricaRefutador
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -238,9 +243,80 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		run(bundle)
 	}
 	wg.Wait()
+	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision)
 
 	resultado.Veredicto, resultado.Preguntas = veredictoGlobal(resultado.Dims)
 	return resultado
+}
+
+type respuestaRefutador struct {
+	Refuted bool   `json:"refuted"`
+	Reason  string `json:"reason"`
+}
+
+// refutarHallazgosCriticos uses an independent SHA-bound restricted refuter once
+// per semantic CRITICAL finding. Any unavailable or invalid answer preserves
+// the original blocker.
+func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string) {
+	if fabrica == nil {
+		return
+	}
+	for _, dimension := range dimensiones {
+		if dimension.Resultado == nil {
+			continue
+		}
+		for i := range dimension.Resultado.Findings {
+			finding := &dimension.Resultado.Findings[i]
+			if finding.Severity != SevCritical || (finding.Source != "" && finding.Source != SourceReview) {
+				continue
+			}
+			finding.Source = SourceReview
+			finding.Status = StatusConfirmed
+			refutador, _, err := fabrica()
+			if err != nil {
+				continue
+			}
+			revisor, ok := refutador.(auditorConHerramientasRestringidas)
+			if !ok {
+				continue
+			}
+			salida, err := revisor.EjecutarRevision(construirPromptRefutacion(dimension.Dim, *finding), sha, paths)
+			if err != nil {
+				continue
+			}
+			var respuesta respuestaRefutador
+			if json.Unmarshal([]byte(salida), &respuesta) != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" {
+				continue
+			}
+			finding.Status = StatusRefuted
+			dimension.Resultado.RefutedCritical = true
+			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding)
+		}
+		if dimension.Resultado.RefutedCritical && !tieneCriticalConfirmado(dimension.Resultado.Findings) && dimension.Resultado.Verdict == VerdictBlock {
+			dimension.Resultado.Verdict = VerdictWarn
+		}
+	}
+}
+
+func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding) {
+	for i := range hallazgos {
+		hallazgo := &hallazgos[i]
+		if hallazgo.Severity != SevCritical || hallazgo.Location.Archivo != finding.File || hallazgo.Location.LineaInicio != int(finding.Line) || hallazgo.Description != finding.Description {
+			continue
+		}
+		hallazgo.Source = SourceReview
+		hallazgo.Status = StatusRefuted
+		return
+	}
+}
+
+func tieneCriticalConfirmado(findings []ReviewFinding) bool {
+	for _, finding := range findings {
+		if finding.Severity == SevCritical && finding.Status != StatusRefuted {
+			return true
+		}
+	}
+	return false
 }
 
 func rutasRevisionSeguras(rutas []string) []string {

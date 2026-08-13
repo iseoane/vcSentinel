@@ -20,6 +20,7 @@ import (
 const (
 	EstadoPass                      = "PASS"
 	EstadoValidationFailed          = "VALIDATION_FAILED"
+	EstadoCodeReviewFailed          = "CODE_REVIEW_FAILED"
 	EstadoNeedsUserReview           = "NEEDS_USER_REVIEW"
 	EstadoReviewInfrastructureError = "REVIEW_INFRASTRUCTURE_ERROR"
 )
@@ -37,6 +38,8 @@ func CodigoSalida(estado string) int {
 	case EstadoPass:
 		return 0
 	case EstadoValidationFailed:
+		return 1
+	case EstadoCodeReviewFailed:
 		return 1
 	case EstadoNeedsUserReview:
 		return 2
@@ -81,12 +84,13 @@ type Opciones struct {
 	// agentes reales por sí mismo: eso es plumbing de cmd/, igual que hace hoy
 	// ejecutarReview.
 	FabricaAuditor   review.FabricaAuditor
+	FabricaRefutador review.FabricaRefutador
 	Parallel         int
 	OpcionesRevision review.OpcionesAuditoria
 }
 
 // EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la
-// validación pasa, ejecuta la revisión semántica en modo advisory (hasta F5).
+// validación pasa, ejecuta la revisión semántica.
 // Si la validación falla, ni siquiera se llama a FabricaAuditor: la revisión
 // semántica ni se intenta (regla central de la ficha, verificada en los
 // tests con un contador de invocaciones).
@@ -113,7 +117,9 @@ func EjecutarGate(opts Opciones) Resultado {
 		return Resultado{Estado: EstadoValidationFailed, Mensajes: mensajesValidacionFallida(hallazgos)}
 	}
 
-	resultado := review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opts.OpcionesRevision)
+	opcionesRevision := opts.OpcionesRevision
+	opcionesRevision.FabricaRefutador = opts.FabricaRefutador
+	resultado := review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opcionesRevision)
 	return traducirVeredicto(resultado)
 }
 
@@ -129,11 +135,8 @@ func mensajesValidacionFallida(hallazgos []validation.Hallazgo) []string {
 	return mensajes
 }
 
-// traducirVeredicto aplica el modo advisory de esta fase (hasta F5, decisión
-// explícita de la ficha): block (CRITICAL) NO bloquea, solo se avisa de forma
-// destacada y el gate sigue en PASS; question exige atención humana explícita
-// (NEEDS_USER_REVIEW); unavailable es infraestructura (agente no disponible),
-// nunca un hallazgo del código.
+// traducirVeredicto keeps validation and semantic blockers distinct. A refuted
+// semantic critical finding remains visible and requires human review.
 func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 	switch resultado.Veredicto {
 	case review.VerdictUnavailable:
@@ -149,13 +152,25 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 		return Resultado{Estado: EstadoNeedsUserReview, Mensajes: mensajes}
 	case review.VerdictBlock:
 		return Resultado{
-			Estado: EstadoPass,
+			Estado: EstadoCodeReviewFailed,
 			Mensajes: []string{
-				"⚠️  AVISO: la revisión semántica encontró hallazgos CRITICAL (no bloquea en esta fase, advisory hasta F5).",
+				"❌ La revisión semántica confirmó hallazgos CRITICAL.",
 				resultado.String(),
 			},
 		}
 	default:
+		if tieneHallazgoCriticoRefutado(resultado) {
+			return Resultado{Estado: EstadoNeedsUserReview, Mensajes: []string{"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.", resultado.String()}}
+		}
 		return Resultado{Estado: EstadoPass, Mensajes: []string{"✅ Validación y revisión semántica en verde.", resultado.String()}}
 	}
+}
+
+func tieneHallazgoCriticoRefutado(resultado review.ResultadoAuditoria) bool {
+	for _, dimension := range resultado.Dims {
+		if dimension.Resultado != nil && dimension.Resultado.RefutedCritical {
+			return true
+		}
+	}
+	return false
 }

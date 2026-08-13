@@ -42,6 +42,13 @@ func fabricaFija(respuestas []string) (FabricaAuditor, *agenteFake) {
 	}, fake
 }
 
+func fabricaRefutadorFija(respuestas []string) (FabricaRefutador, *agenteFake) {
+	fake := &agenteFake{respuestas: respuestas}
+	return func() (AuditorAgente, string, error) {
+		return fake, "cheap", nil
+	}, fake
+}
+
 func bundlesPrueba(dims ...string) []ReviewBundle {
 	return []ReviewBundle{{Name: "test", Dimensions: dims, Priority: PriorityRequired, Cost: 1}}
 }
@@ -120,6 +127,51 @@ func TestAuditarCommitBlockManda(t *testing.T) {
 	})
 	if resultado.Veredicto != VerdictBlock {
 		t.Errorf("veredicto = %q, esperado block (manda sobre unavailable)", resultado.Veredicto)
+	}
+}
+
+func TestAuditarCommitRefutesEachCriticalFindingOnce(t *testing.T) {
+	auditor := &agenteFake{respuestas: []string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"first"},{"dimension":"logic","file":"b.go","line":2,"severity":"CRITICAL","description":"second"}]}`,
+	}}
+	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return auditor, "normal", nil
+	}
+	refutadores := 0
+	fabricaRefutador := func() (AuditorAgente, string, error) {
+		refutadores++
+		return &agenteFake{respuestas: []string{`{"refuted":true,"reason":"the final implementation disproves this finding"}`}}, "cheap", nil
+	}
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+	})
+
+	if auditor.llamadas != 1 {
+		t.Fatalf("auditor calls=%d, expected one semantic review only", auditor.llamadas)
+	}
+	if refutadores != 2 {
+		t.Fatalf("refuter factory calls=%d, expected one cheap refuter per critical finding", refutadores)
+	}
+	if resultado.Veredicto != VerdictWarn || !resultado.Dims[0].Resultado.RefutedCritical {
+		t.Fatalf("result=%+v, expected refuted critical findings to stop blocking", resultado)
+	}
+	for _, finding := range resultado.Dims[0].Resultado.Findings {
+		if finding.Status != StatusRefuted {
+			t.Fatalf("finding=%+v, expected status %q", finding, StatusRefuted)
+		}
+	}
+}
+
+func TestAuditarCommitRefutedFindingPreservesV2Lifecycle(t *testing.T) {
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","source":"review","status":"pending","evidence":"bad()","location":{"file":"a.go","line_start":1}}]}`,
+	})
+	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"bad() is guarded by the final implementation"}`})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador})
+
+	hallazgos := resultado.Dims[0].Resultado.Hallazgos
+	if len(hallazgos) != 1 || hallazgos[0].Status != StatusRefuted || hallazgos[0].Source != SourceReview {
+		t.Fatalf("hallazgos=%+v, expected refuted semantic lifecycle", hallazgos)
 	}
 }
 
@@ -424,6 +476,22 @@ func TestAuditarCommitUnavailableDoesNotHideBlock(t *testing.T) {
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: []ReviewBundle{{Name: "both", Dimensions: []string{DimLogic, DimSecurity}, Priority: PriorityRequired, Cost: 1}}})
 	if llamadas != 3 || resultado.Veredicto != VerdictBlock {
 		t.Fatalf("calls=%d verdict=%s", llamadas, resultado.Veredicto)
+	}
+}
+
+func TestAuditarCommitInvalidRefuterResponseKeepsCriticalBlocking(t *testing.T) {
+	fabrica, fake := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,
+	})
+	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`not json`})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador})
+
+	if fake.llamadas != 1 || refutador.llamadas != 1 || resultado.Veredicto != VerdictBlock {
+		t.Fatalf("auditor=%d refuter=%d verdict=%s", fake.llamadas, refutador.llamadas, resultado.Veredicto)
+	}
+	finding := resultado.Dims[0].Resultado.Findings[0]
+	if finding.Status != StatusConfirmed {
+		t.Fatalf("finding=%+v, expected invalid refuter response to retain %q", finding, StatusConfirmed)
 	}
 }
 

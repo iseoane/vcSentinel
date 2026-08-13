@@ -83,3 +83,15 @@ Audit rules:
 BEGIN_REVIEW
 		END_REVIEW`, dimension, definicion, proposito, mensaje, diff, seccionContexto, seccionRutas, dimension)
 }
+
+func construirPromptRefutacion(dimension string, finding ReviewFinding) string {
+	return fmt.Sprintf(`Try to disprove this semantic CRITICAL finding against the immutable commit snapshot. Use only permitted read-only tools. Do not use Bash, write files, or use the network.
+
+Finding:
+dimension: %s
+file: %s
+line: %d
+description: %s
+
+Return ONLY JSON: {"refuted":true,"reason":"literal evidence that disproves it"} when the finding is false. Otherwise return {"refuted":false,"reason":"why the finding remains valid"}.`, dimension, finding.File, finding.Line, finding.Description)
+}

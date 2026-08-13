@@ -93,6 +93,8 @@ type ReviewFinding struct {
 	Severity    string `json:"severity"`
 	Description string `json:"description"`
 	Suggestion  string `json:"suggestion"`
+	Source      string `json:"source,omitempty"`
+	Status      string `json:"status,omitempty"`
 }
 
 // Fuentes posibles de un Hallazgo (finding v2): de qué produjo el hallazgo.
@@ -329,14 +331,15 @@ type AgentQuestion struct {
 // trae los campos v1 (el contrato real del agente hasta F5) deja Hallazgos
 // vacío: la capacidad de parsear v2 no depende de que el prompt ya lo emita.
 type DimensionResult struct {
-	Bundle       string          `json:"bundle,omitempty"`
-	Dim          string          `json:"dim"`
-	Verdict      string          `json:"verdict"`
-	Findings     []ReviewFinding `json:"findings,omitempty"`
-	Hallazgos    []Hallazgo      `json:"hallazgos,omitempty"`
-	Questions    []AgentQuestion `json:"questions,omitempty"`
-	Reason       string          `json:"reason,omitempty"`
-	Advertencias []string        `json:"-"`
+	Bundle          string          `json:"bundle,omitempty"`
+	Dim             string          `json:"dim"`
+	Verdict         string          `json:"verdict"`
+	Findings        []ReviewFinding `json:"findings,omitempty"`
+	Hallazgos       []Hallazgo      `json:"hallazgos,omitempty"`
+	Questions       []AgentQuestion `json:"questions,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+	RefutedCritical bool            `json:"refuted_critical,omitempty"`
+	Advertencias    []string        `json:"-"`
 }
 
 // findingCrudo decodifica un elemento del array "findings" de una línea
