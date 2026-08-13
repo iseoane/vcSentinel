@@ -113,6 +113,11 @@ func TestValidacionEnVerdeConCriticalConfirmado_Bloquea(t *testing.T) {
 		return 0, "", nil
 	}, fabricaContadora(&llamadas, salidaAgente, nil))
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
+	refutadores := 0
+	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
+		refutadores++
+		return &auditorFalso{salida: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
+	}
 
 	resultado := EjecutarGate(opts)
 
@@ -121,6 +126,9 @@ func TestValidacionEnVerdeConCriticalConfirmado_Bloquea(t *testing.T) {
 	}
 	if llamadas != 1 {
 		t.Fatalf("se esperaba 1 llamada al motor de revisión, hubo %d", llamadas)
+	}
+	if refutadores != 1 {
+		t.Fatalf("se esperaba 1 llamada al refutador cheap, hubo %d", refutadores)
 	}
 	unido := strings.Join(resultado.Mensajes, "\n")
 	if !strings.Contains(unido, "confirmó") {
@@ -138,8 +146,9 @@ func TestCriticalRefuted_NeedsUserReview(t *testing.T) {
 	opts := opcionesBase(cfg, func(string) (int, string, error) { return 0, "", nil }, fabrica)
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case"}`}, "cheap", nil
+		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case","evidence":"final code handles this case"}`}, "cheap", nil
 	}
+	opts.OpcionesRevision.LeerContenidoSnapshot = func(string, string) (string, error) { return "final code handles this case", nil }
 
 	resultado := EjecutarGate(opts)
 

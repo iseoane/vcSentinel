@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"path"
 	"strings"
 	"sync"
@@ -35,17 +36,18 @@ type FabricaRefutador func() (AuditorAgente, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
-	SHA               string
-	Mensaje           string
-	Diff              string
-	Bundles           []ReviewBundle
-	Budget            ReviewBudget
-	Respuestas        string           // --answer: aclaraciones del usuario (1 ronda extra)
-	PerfilOverride    string           // --profile: fuerza un perfil sobre el mapa
-	OnDimension       func(dim string) // opcional: avisa cuando arranca cada dimensión
-	ProveedorContexto ContextProvider
-	RutasContexto     []string
-	FabricaRefutador  FabricaRefutador
+	SHA                   string
+	Mensaje               string
+	Diff                  string
+	Bundles               []ReviewBundle
+	Budget                ReviewBudget
+	Respuestas            string           // --answer: aclaraciones del usuario (1 ronda extra)
+	PerfilOverride        string           // --profile: fuerza un perfil sobre el mapa
+	OnDimension           func(dim string) // opcional: avisa cuando arranca cada dimensión
+	ProveedorContexto     ContextProvider
+	RutasContexto         []string
+	FabricaRefutador      FabricaRefutador
+	LeerContenidoSnapshot func(sha, file string) (string, error)
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -243,23 +245,27 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		run(bundle)
 	}
 	wg.Wait()
-	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision)
+	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision, opts.LeerContenidoSnapshot)
 
 	resultado.Veredicto, resultado.Preguntas = veredictoGlobal(resultado.Dims)
 	return resultado
 }
 
 type respuestaRefutador struct {
-	Refuted bool   `json:"refuted"`
-	Reason  string `json:"reason"`
+	Refuted  bool   `json:"refuted"`
+	Reason   string `json:"reason"`
+	Evidence string `json:"evidence"`
 }
 
 // refutarHallazgosCriticos uses an independent SHA-bound restricted refuter once
 // per semantic CRITICAL finding. Any unavailable or invalid answer preserves
 // the original blocker.
-func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string) {
+func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string, leerSnapshot func(string, string) (string, error)) {
 	if fabrica == nil {
 		return
+	}
+	if leerSnapshot == nil {
+		leerSnapshot = leerContenidoSnapshot
 	}
 	for _, dimension := range dimensiones {
 		if dimension.Resultado == nil {
@@ -285,20 +291,42 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 				continue
 			}
 			var respuesta respuestaRefutador
-			if json.Unmarshal([]byte(salida), &respuesta) != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" {
+			if json.Unmarshal([]byte(salida), &respuesta) != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" || strings.TrimSpace(respuesta.Evidence) == "" || !evidenciaEnSnapshot(leerSnapshot, sha, finding.File, respuesta.Evidence) {
 				continue
 			}
 			finding.Status = StatusRefuted
+			finding.RefutationReason = respuesta.Reason
+			finding.RefutationEvidence = respuesta.Evidence
 			dimension.Resultado.RefutedCritical = true
-			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding)
+			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta)
 		}
-		if dimension.Resultado.RefutedCritical && !tieneCriticalConfirmado(dimension.Resultado.Findings) && dimension.Resultado.Verdict == VerdictBlock {
+		if puedeDegradarBloque(*dimension.Resultado) {
 			dimension.Resultado.Verdict = VerdictWarn
 		}
 	}
 }
 
-func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding) {
+func evidenciaEnSnapshot(leerSnapshot func(string, string) (string, error), sha, archivo, evidencia string) bool {
+	rutasSeguras := rutasRevisionSeguras([]string{archivo})
+	if len(rutasSeguras) != 1 {
+		return false
+	}
+	contenido, err := leerSnapshot(sha, rutasSeguras[0])
+	return err == nil && strings.Contains(normalizarParaComparar(contenido), normalizarParaComparar(evidencia))
+}
+
+func leerContenidoSnapshot(sha, archivo string) (string, error) {
+	if strings.HasPrefix(sha, "-") {
+		return "", fmt.Errorf("invalid audited commit SHA")
+	}
+	salida, err := exec.Command("git", "show", "--no-textconv", sha+":"+archivo).Output()
+	if err != nil {
+		return "", fmt.Errorf("read audited content for %q: %w", archivo, err)
+	}
+	return string(salida), nil
+}
+
+func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta respuestaRefutador) {
 	for i := range hallazgos {
 		hallazgo := &hallazgos[i]
 		if hallazgo.Severity != SevCritical || hallazgo.Location.Archivo != finding.File || hallazgo.Location.LineaInicio != int(finding.Line) || hallazgo.Description != finding.Description {
@@ -306,6 +334,8 @@ func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding) {
 		}
 		hallazgo.Source = SourceReview
 		hallazgo.Status = StatusRefuted
+		hallazgo.RefutationReason = respuesta.Reason
+		hallazgo.RefutationEvidence = respuesta.Evidence
 		return
 	}
 }
@@ -317,6 +347,23 @@ func tieneCriticalConfirmado(findings []ReviewFinding) bool {
 		}
 	}
 	return false
+}
+
+func tieneHallazgoCriticalConfirmado(hallazgos []Hallazgo) bool {
+	for _, hallazgo := range hallazgos {
+		if hallazgo.Severity == SevCritical && hallazgo.Status != StatusRefuted {
+			return true
+		}
+	}
+	return false
+}
+
+func puedeDegradarBloque(resultado DimensionResult) bool {
+	return resultado.Verdict == VerdictBlock &&
+		resultado.RefutedCritical &&
+		strings.TrimSpace(resultado.Reason) == "" &&
+		!tieneCriticalConfirmado(resultado.Findings) &&
+		!tieneHallazgoCriticalConfirmado(resultado.Hallazgos)
 }
 
 func rutasRevisionSeguras(rutas []string) []string {
