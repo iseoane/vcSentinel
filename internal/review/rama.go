@@ -224,7 +224,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		SHA:            sha,
 		Mensaje:        mensaje,
 		Diff:           diff,
-		Dims:           DimensionesParaArchivos(archivos),
+		Bundles:        PlanForPaths(archivos).Bundles,
 		Respuestas:     opts.Respuestas,
 		PerfilOverride: opts.PerfilOverride,
 		OnDimension:    opts.OnDimension,

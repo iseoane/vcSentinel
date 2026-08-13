@@ -57,8 +57,8 @@ func opcionesBase(cfg config.Config, ejecutar validation.EjecutorComando, fabric
 		FabricaAuditor: fabrica,
 		Parallel:       1,
 		OpcionesRevision: review.OpcionesAuditoria{
-			SHA:  "0123456789abcdef",
-			Dims: []string{review.DimLogic},
+			SHA:     "0123456789abcdef",
+			Bundles: []review.ReviewBundle{{Name: "test", Dimensions: []string{review.DimLogic}, Priority: 1, Cost: 1}},
 		},
 		// EjecutarValidacion inyectado en cada test: no depende de git real.
 	}

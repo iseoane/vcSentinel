@@ -95,9 +95,10 @@ func ejecutarReview(worktree string, args []string) {
 			continue
 		}
 
-		dims := flags.dims
-		if len(dims) == 0 {
-			dims = review.DimensionesParaArchivos(archivos)
+		plan := review.PlanForPaths(archivos)
+		bundles := plan.Bundles
+		if len(flags.dims) > 0 {
+			bundles = []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: 1, Cost: 1}}
 		}
 
 		// El recolector anota qué agente atendió cada dimensión para que la
@@ -116,7 +117,7 @@ func ejecutarReview(worktree string, args []string) {
 			SHA:               sha,
 			Mensaje:           mensaje,
 			Diff:              diff,
-			Dims:              dims,
+			Bundles:           bundles,
 			Respuestas:        flags.answer,
 			PerfilOverride:    flags.profile,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree),

@@ -78,7 +78,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		FabricaAuditor: fabricaAuditorGate(cfg),
 		Parallel:       cfg.Review.Parallel,
 		OpcionesRevision: review.OpcionesAuditoria{
-			SHA: sha, Mensaje: mensaje, Diff: diff, Dims: review.DimensionesParaArchivos(archivos),
+			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForPaths(archivos).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
 		},
 	})
