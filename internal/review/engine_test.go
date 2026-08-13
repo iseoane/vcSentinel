@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
@@ -38,7 +39,7 @@ func fabricaFija(respuestas []string) (FabricaAuditor, *agenteFake) {
 }
 
 func bundlesPrueba(dims ...string) []ReviewBundle {
-	return []ReviewBundle{{Name: "test", Dimensions: dims, Priority: 1, Cost: 1}}
+	return []ReviewBundle{{Name: "test", Dimensions: dims, Priority: PriorityRequired, Cost: 1}}
 }
 
 func TestAuditarCommitTodoOk(t *testing.T) {
@@ -195,14 +196,14 @@ func TestBundlesForRisk(t *testing.T) {
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
 			obtenido := BundlesForRisk(risk.Resultado{Nivel: caso.riesgo}, caso.caracteristicas)
-			if !reflect.DeepEqual(sinPresupuesto(obtenido), caso.esperado) {
+			if !reflect.DeepEqual(bundlesWithoutBudget(obtenido), caso.esperado) {
 				t.Errorf("BundlesForRisk(%s) = %#v, expected %#v", caso.riesgo, obtenido, caso.esperado)
 			}
 		})
 	}
 }
 
-func sinPresupuesto(bundles []ReviewBundle) []ReviewBundle {
+func bundlesWithoutBudget(bundles []ReviewBundle) []ReviewBundle {
 	resultado := append([]ReviewBundle(nil), bundles...)
 	for i := range resultado {
 		resultado[i].Priority, resultado[i].Cost = 0, 0
@@ -210,12 +211,14 @@ func sinPresupuesto(bundles []ReviewBundle) []ReviewBundle {
 	return resultado
 }
 
-func TestPlanForPathsEmptyAndUnknownUseStandardRisk(t *testing.T) {
-	for _, paths := range [][]string{nil, {"unknown.file"}} {
-		plan := PlanForPaths(paths)
-		if plan.Risk.Nivel != risk.NivelStandard || !reflect.DeepEqual(plan.Bundles, BundlesForRisk(plan.Risk, plan.Characteristics)) {
-			t.Fatalf("paths %v produced %+v", paths, plan)
-		}
+func TestPlanForProfileUsesCompleteRiskSignals(t *testing.T) {
+	profile := change.ChangeProfile{
+		Kind:    "dependency",
+		Symbols: change.ChangeSymbols{Complete: true},
+	}
+	plan := PlanForProfile(profile, []string{"internal/backend/auth.go", "vassentinel.yml"})
+	if plan.Risk.Nivel != risk.NivelHigh || !hasBundle(plan.Bundles, BundleSecurity) {
+		t.Fatalf("plan = %+v, expected high risk with security coverage", plan)
 	}
 }
 
@@ -224,13 +227,71 @@ func TestAuditarCommitBudgetExhaustionIsDeclared(t *testing.T) {
 	resultado := AuditarCommit(fabrica, 2, OpcionesAuditoria{
 		SHA: "abc", Budget: ReviewBudget{MaxCost: 1},
 		Bundles: []ReviewBundle{
-			{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: 1, Cost: 1},
-			{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: 2, Cost: 1},
+			{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1},
+			{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: PriorityOptional, Cost: 1},
 		},
 	})
 	if fake.llamadas != 1 || len(resultado.Skipped) != 1 || resultado.Skipped[0].Name != BundleSecurity || resultado.Skipped[0].Reason != "budget_exhausted" {
 		t.Fatalf("calls=%d skipped=%+v", fake.llamadas, resultado.Skipped)
 	}
+}
+
+func TestAuditarCommitRetriesTransportErrorOnce(t *testing.T) {
+	calls := 0
+	fabrica := func(string) (AuditorAgente, string, error) {
+		return auditorFunc(func(string) (string, error) {
+			calls++
+			if calls == 1 {
+				return "", context.DeadlineExceeded
+			}
+			return `{"dim":"logic","verdict":"ok"}`, nil
+		}), "normal", nil
+	}
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+	if calls != 2 || resultado.Veredicto != VerdictOK {
+		t.Fatalf("calls=%d verdict=%s", calls, resultado.Veredicto)
+	}
+}
+
+func TestAuditarCommitDurationBudgetIsDeterministic(t *testing.T) {
+	times := []time.Time{time.Unix(0, 0), time.Unix(0, int64(time.Second))}
+	clock := func() time.Time {
+		now := times[0]
+		times = times[1:]
+		return now
+	}
+	fabrica, fake := fabricaFija(nil)
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: "abc", Budget: ReviewBudget{MaxDuration: time.Second, Clock: clock},
+		Bundles: []ReviewBundle{
+			{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1},
+			{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: PriorityOptional, Cost: 1},
+		},
+	})
+	if fake.llamadas != 1 || len(resultado.Skipped) != 1 || resultado.Skipped[0].Name != BundleSecurity {
+		t.Fatalf("calls=%d skipped=%+v", fake.llamadas, resultado.Skipped)
+	}
+}
+
+func TestAuditarCommitDoesNotDuplicateOptionalDimensions(t *testing.T) {
+	fabrica, fake := fabricaFija(nil)
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: []ReviewBundle{
+		{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec}, Priority: PriorityRequired, Cost: 1},
+		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
+		{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
+	}})
+	if fake.llamadas != 2 || len(resultado.Dims) != 2 {
+		t.Fatalf("calls=%d dims=%+v", fake.llamadas, resultado.Dims)
+	}
+}
+
+func hasBundle(bundles []ReviewBundle, name string) bool {
+	for _, bundle := range bundles {
+		if bundle.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAuditarCommitInvalidOutputIsNotRetried(t *testing.T) {
@@ -252,7 +313,7 @@ func TestAuditarCommitUnavailableDoesNotHideBlock(t *testing.T) {
 			return `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`, nil
 		}), "normal", nil
 	}
-	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: []ReviewBundle{{Name: "both", Dimensions: []string{DimLogic, DimSecurity}, Priority: 1, Cost: 1}}})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: []ReviewBundle{{Name: "both", Dimensions: []string{DimLogic, DimSecurity}, Priority: PriorityRequired, Cost: 1}}})
 	if llamadas != 3 || resultado.Veredicto != VerdictBlock {
 		t.Fatalf("calls=%d verdict=%s", llamadas, resultado.Veredicto)
 	}

@@ -62,6 +62,8 @@ const (
 	BundleContracts       = "contracts_compatibility"
 	BundleConcurrencyData = "concurrency_data"
 	EffortLow             = "low"
+	PriorityRequired      = 1
+	PriorityOptional      = 2
 )
 
 // ReviewBundle is one planned semantic-review agent and its dimensions.
@@ -73,16 +75,20 @@ type ReviewBundle struct {
 	Cost       int
 }
 
+// ReviewBudget limits the optional review bundles scheduled for one audit.
 type ReviewBudget struct {
 	MaxCost     int
 	MaxDuration time.Duration
+	Clock       func() time.Time
 }
 
+// SkippedBundle records a planned bundle that could not run within the budget.
 type SkippedBundle struct {
 	Name   string
 	Reason string
 }
 
+// ReviewPlan is the risk-derived set of review bundles for a complete profile.
 type ReviewPlan struct {
 	Risk            risk.Resultado
 	Characteristics []change.Caracteristica
@@ -93,7 +99,7 @@ type ReviewPlan struct {
 // Style is intentionally absent: deterministic lint owns it.
 func BundlesForRisk(resultado risk.Resultado, caracteristicas []change.Caracteristica) []ReviewBundle {
 	bundles := []ReviewBundle{
-		{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}, Priority: 1, Cost: 1},
+		{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}, Priority: PriorityRequired, Cost: 1},
 	}
 	switch resultado.Nivel {
 	case risk.NivelNone:
@@ -102,20 +108,20 @@ func BundlesForRisk(resultado risk.Resultado, caracteristicas []change.Caracteri
 		bundles[0].Effort = EffortLow
 		return bundles
 	case risk.NivelStandard:
-		return append(bundles, ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}, Priority: 1, Cost: 1})
+		return append(bundles, ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}, Priority: PriorityRequired, Cost: 1})
 	case risk.NivelElevated:
 		return append(bundles,
-			ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}, Priority: 1, Cost: 1},
-			ReviewBundle{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: 1, Cost: 1})
+			ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}, Priority: PriorityRequired, Cost: 1},
+			ReviewBundle{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: PriorityRequired, Cost: 1})
 	case risk.NivelHigh:
 		bundles = append(bundles,
-			ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}, Priority: 1, Cost: 1},
-			ReviewBundle{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: 1, Cost: 1})
+			ReviewBundle{Name: BundleQuality, Dimensions: []string{DimDesign}, Priority: PriorityRequired, Cost: 1},
+			ReviewBundle{Name: BundleSecurity, Dimensions: []string{DimSecurity}, Priority: PriorityRequired, Cost: 1})
 		if caracteristicaPresente(caracteristicas, "public_api") || caracteristicaPresente(caracteristicas, "cross_module") {
-			bundles = append(bundles, ReviewBundle{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: 2, Cost: 1})
+			bundles = append(bundles, ReviewBundle{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1})
 		}
 		if caracteristicaPresente(caracteristicas, "concurrency") || caracteristicaPresente(caracteristicas, "database") {
-			bundles = append(bundles, ReviewBundle{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: 2, Cost: 1})
+			bundles = append(bundles, ReviewBundle{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1})
 		}
 		return bundles
 	default:
@@ -123,17 +129,8 @@ func BundlesForRisk(resultado risk.Resultado, caracteristicas []change.Caracteri
 	}
 }
 
-// PlanForPaths derives explicit risk bundles for every review caller.
-func PlanForPaths(paths []string) ReviewPlan {
-	profile := change.ChangeProfile{Size: change.ChangeSize{Files: len(paths)}, FileClasses: map[string]int{}}
-	for _, path := range paths {
-		profile.FileClasses[change.ClasificarPorRuta(path, change.ReglasPorDefecto())]++
-	}
-	if profile.FileClasses[change.ClaseDocs] == len(paths) && len(paths) > 0 {
-		profile.Kind = "documentation"
-	} else if profile.FileClasses[change.ClaseTest] == len(paths) && len(paths) > 0 {
-		profile.Kind = "test_only"
-	}
+// PlanForProfile derives deterministic risk bundles from a complete change profile.
+func PlanForProfile(profile change.ChangeProfile, paths []string) ReviewPlan {
 	characteristics := change.DetectarCaracteristicas(change.EntradaCaracteristicas{Symbols: profile.Symbols, Rutas: paths})
 	riskProfile := risk.Evaluar(profile, characteristics)
 	return ReviewPlan{Risk: riskProfile, Characteristics: characteristics, Bundles: BundlesForRisk(riskProfile, characteristics)}
@@ -163,11 +160,20 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	var wg sync.WaitGroup
 	mutex := &sync.Mutex{}
 
-	started := time.Now()
+	clock := opts.Budget.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	started := clock()
 	cost := 0
+	scheduled := make(map[string]bool)
 	run := func(bundle ReviewBundle) {
 		cost += bundle.Cost
 		for _, dim := range bundle.Dimensions {
+			if scheduled[dim] {
+				continue
+			}
+			scheduled[dim] = true
 			wg.Add(1)
 			go func(dimension string) {
 				defer wg.Done()
@@ -194,7 +200,7 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		}
 	}
 	for _, bundle := range opts.Bundles {
-		if bundle.Priority == 2 {
+		if bundle.Priority == PriorityOptional {
 			continue
 		}
 		if bundle.Cost <= 0 {
@@ -204,13 +210,13 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	}
 	wg.Wait()
 	for _, bundle := range opts.Bundles {
-		if bundle.Priority != 2 {
+		if bundle.Priority != PriorityOptional {
 			continue
 		}
 		if bundle.Cost <= 0 {
 			bundle.Cost = 1
 		}
-		if (opts.Budget.MaxCost > 0 && cost+bundle.Cost > opts.Budget.MaxCost) || (opts.Budget.MaxDuration > 0 && time.Since(started) >= opts.Budget.MaxDuration) {
+		if (opts.Budget.MaxCost > 0 && cost+bundle.Cost > opts.Budget.MaxCost) || (opts.Budget.MaxDuration > 0 && !clock().Before(started.Add(opts.Budget.MaxDuration))) {
 			resultado.Skipped = append(resultado.Skipped, SkippedBundle{Name: bundle.Name, Reason: "budget_exhausted"})
 			continue
 		}

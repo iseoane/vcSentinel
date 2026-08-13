@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
@@ -220,11 +221,15 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		return err
 	}
 
+	profile, err := change.PerfilDeCambio(sha+"^", sha)
+	if err != nil {
+		return err
+	}
 	resultado := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
 		SHA:            sha,
 		Mensaje:        mensaje,
 		Diff:           diff,
-		Bundles:        PlanForPaths(archivos).Bundles,
+		Bundles:        PlanForProfile(profile, archivos).Bundles,
 		Respuestas:     opts.Respuestas,
 		PerfilOverride: opts.PerfilOverride,
 		OnDimension:    opts.OnDimension,

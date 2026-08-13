@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -64,6 +65,11 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(w, "❌ No se pudo leer HEAD: %v\n", err)
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
 	}
+	profile, err := change.PerfilDeCambio(sha+"^", sha)
+	if err != nil {
+		fmt.Fprintf(w, "❌ No se pudo derivar el perfil de cambio de HEAD: %v\n", err)
+		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
+	}
 
 	resultado := gate.EjecutarGate(gate.Opciones{
 		Perfil:         perfil,
@@ -78,7 +84,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		FabricaAuditor: fabricaAuditorGate(cfg),
 		Parallel:       cfg.Review.Parallel,
 		OpcionesRevision: review.OpcionesAuditoria{
-			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForPaths(archivos).Bundles,
+			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
 		},
 	})

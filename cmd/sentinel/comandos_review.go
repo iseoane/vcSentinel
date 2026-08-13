@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
@@ -95,10 +96,15 @@ func ejecutarReview(worktree string, args []string) {
 			continue
 		}
 
-		plan := review.PlanForPaths(archivos)
+		profile, err := change.PerfilDeCambio(sha+"^", sha)
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudo derivar el perfil de cambio: %v\n", sha[:8], err)
+			continue
+		}
+		plan := review.PlanForProfile(profile, archivos)
 		bundles := plan.Bundles
 		if len(flags.dims) > 0 {
-			bundles = []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: 1, Cost: 1}}
+			bundles = []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: review.PriorityRequired, Cost: 1}}
 		}
 
 		// El recolector anota qué agente atendió cada dimensión para que la
