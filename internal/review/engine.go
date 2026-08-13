@@ -290,7 +290,7 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			if !ok {
 				continue
 			}
-			salida, err := revisor.EjecutarRevision(construirPromptRefutacion(dimension.Dim, *finding), sha, paths)
+			salida, err := revisor.EjecutarRevision(construirPromptRefutacion(sha, dimension.Dim, *finding), sha, paths)
 			if err != nil {
 				continue
 			}

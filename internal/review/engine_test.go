@@ -574,6 +574,41 @@ func TestAuditarCommitInjectionShapedFindingRemainsBlocking(t *testing.T) {
 	}
 }
 
+func TestConstruirPromptRefutacionIncludesAuditedSHA(t *testing.T) {
+	const sha = "abc12345"
+	prompt := construirPromptRefutacion(sha, DimLogic, ReviewFinding{File: "a.go", Line: 1, Description: "bug"})
+
+	if !strings.Contains(prompt, "Audited commit SHA (trusted): "+sha) {
+		t.Fatalf("prompt does not include the trusted audited SHA: %q", prompt)
+	}
+}
+
+func TestAuditarCommitRefuterPromptEnablesSHAEcho(t *testing.T) {
+	const sha = "abc12345"
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,
+	})
+	fabricaRefutador, refutador := fabricaRefutadorFija([]string{
+		`{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":1,"line_end":1}`,
+	})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		LeerContenidoSnapshot: func(gotSHA, file string) (string, error) {
+			if gotSHA != sha || file != "a.go" {
+				t.Fatalf("snapshot read sha=%q file=%q", gotSHA, file)
+			}
+			return "criticalCall()\n", nil
+		},
+	})
+
+	if !strings.Contains(refutador.prompt, "Audited commit SHA (trusted): "+sha) {
+		t.Fatalf("prompt does not include the trusted audited SHA: %q", refutador.prompt)
+	}
+	if resultado.Veredicto != VerdictWarn || resultado.Dims[0].Resultado.Findings[0].Status != StatusRefuted {
+		t.Fatalf("result=%+v, expected SHA-echoing refutation to be accepted", resultado)
+	}
+}
+
 func TestRefutedLegacyCriticalWithUnresolvedV2CriticalRemainsBlocking(t *testing.T) {
 	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","sha":"abc12345","file":"a.go","evidence":"trusted proof","line_start":1,"line_end":1}`})
 	dimensiones := []ResultadoDimension{{
@@ -638,6 +673,16 @@ func TestValidarEvidenciaRefutacionRejectsInvalidContract(t *testing.T) {
 			r.Evidence = "const unrelated = true"
 			return r
 		}()},
+		{name: "reversed range", respuesta: func() respuestaRefutador {
+			r := valid
+			r.LineStart, r.LineEnd = 3, 2
+			return r
+		}()},
+		{name: "oversized range", respuesta: func() respuestaRefutador {
+			r := valid
+			r.LineStart, r.LineEnd = 1, 21
+			return r
+		}()},
 		{name: "generic evidence", respuesta: func() respuestaRefutador { r := valid; r.Evidence = "return"; return r }()},
 		{name: "mismatched evidence", respuesta: func() respuestaRefutador { r := valid; r.Evidence = "const unrelated = true"; return r }()},
 	}
@@ -650,6 +695,94 @@ func TestValidarEvidenciaRefutacionRejectsInvalidContract(t *testing.T) {
 				return "const unrelated = true\ncriticalCall()\n", nil
 			}, "abc12345", finding, tc.respuesta); ok || hash != "" {
 				t.Fatalf("hash=%q accepted invalid contract", hash)
+			}
+		})
+	}
+}
+
+func TestValidarEvidenciaRefutacionAcceptedRangeHash(t *testing.T) {
+	finding := ReviewFinding{File: "a.go", Line: 2}
+	respuesta := respuestaRefutador{
+		SHA: "abc12345", File: "a.go", LineStart: 2, LineEnd: 2, Evidence: "criticalCall()",
+	}
+
+	hash, ok := validarEvidenciaRefutacion(func(sha, file string) (string, error) {
+		if sha != "abc12345" || file != "a.go" {
+			t.Fatalf("snapshot read sha=%q file=%q", sha, file)
+		}
+		return "const unrelated = true\ncriticalCall()\n", nil
+	}, "abc12345", finding, respuesta)
+	if !ok {
+		t.Fatal("expected accepted refutation evidence")
+	}
+	if want := "1f4902c8f5b87a9dc694f279ef8bd2e6d491934eb00169644a05462d7f11b34f"; hash != want {
+		t.Fatalf("hash=%q, want %q", hash, want)
+	}
+}
+
+func TestValidarEvidenciaRefutacionReaderErrorRejects(t *testing.T) {
+	finding := ReviewFinding{File: "a.go", Line: 2}
+	respuesta := respuestaRefutador{
+		SHA: "abc12345", File: "a.go", LineStart: 2, LineEnd: 2, Evidence: "criticalCall()",
+	}
+
+	if hash, ok := validarEvidenciaRefutacion(func(string, string) (string, error) {
+		return "", errors.New("snapshot unavailable")
+	}, "abc12345", finding, respuesta); ok || hash != "" {
+		t.Fatalf("hash=%q accepted reader error", hash)
+	}
+}
+
+func TestAuditarCommitInvalidRefutationEvidenceRetainsBlock(t *testing.T) {
+	const sha = "abc12345"
+	validResponse := `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":2,"line_end":2}`
+	cases := []struct {
+		name     string
+		response string
+		reader   SnapshotReader
+	}{
+		{
+			name:     "reversed range",
+			response: `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":3,"line_end":2}`,
+		},
+		{
+			name:     "oversized range",
+			response: `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":1,"line_end":21}`,
+		},
+		{
+			name:     "out of content range",
+			response: `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":2,"line_end":4}`,
+		},
+		{
+			name:     "reader error",
+			response: validResponse,
+			reader: func(string, string) (string, error) {
+				return "", errors.New("snapshot unavailable")
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fabrica, _ := fabricaFija([]string{
+				`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":2,"severity":"CRITICAL","description":"bug"}]}`,
+			})
+			fabricaRefutador, _ := fabricaRefutadorFija([]string{tc.response})
+			reader := tc.reader
+			if reader == nil {
+				reader = func(gotSHA, file string) (string, error) {
+					if gotSHA != sha || file != "a.go" {
+						t.Fatalf("snapshot read sha=%q file=%q", gotSHA, file)
+					}
+					return "const unrelated = true\ncriticalCall()\n", nil
+				}
+			}
+
+			resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+				SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+				LeerContenidoSnapshot: reader,
+			})
+			if resultado.Veredicto != VerdictBlock || resultado.Dims[0].Resultado.Findings[0].Status != StatusConfirmed {
+				t.Fatalf("result=%+v, expected invalid refutation evidence to retain block", resultado)
 			}
 		})
 	}
