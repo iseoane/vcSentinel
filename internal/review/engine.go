@@ -20,9 +20,9 @@ type AuditorAgente interface {
 	EjecutarPrompt(prompt string) (string, error)
 }
 
-// FabricaAuditor construye el agente para una dimensión y devuelve además el
-// nombre del perfil aplicado. Inyectable en los tests.
-type FabricaAuditor func(dimension string) (AuditorAgente, string, error)
+// FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
+// además el nombre del perfil aplicado. Inyectable en los tests.
+type FabricaAuditor func(bundle ReviewBundle, dimension string) (AuditorAgente, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
@@ -40,6 +40,7 @@ type OpcionesAuditoria struct {
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
 type ResultadoDimension struct {
+	Bundle    string
 	Dim       string
 	Perfil    string
 	Resultado *DimensionResult
@@ -166,16 +167,16 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	}
 	started := clock()
 	cost := 0
-	scheduled := make(map[string]bool)
-	run := func(bundle ReviewBundle) {
+	scheduledBundles := make(map[string]bool)
+	run := func(bundle ReviewBundle) bool {
+		if scheduledBundles[bundle.Name] || len(bundle.Dimensions) == 0 {
+			return false
+		}
+		scheduledBundles[bundle.Name] = true
 		cost += bundle.Cost
 		for _, dim := range bundle.Dimensions {
-			if scheduled[dim] {
-				continue
-			}
-			scheduled[dim] = true
 			wg.Add(1)
-			go func(dimension string) {
+			go func(bundle ReviewBundle, dimension string) {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
@@ -183,21 +184,23 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 					opts.OnDimension(dimension)
 				}
 
-				rd := ResultadoDimension{Dim: dimension}
-				agente, perfil, err := fabrica(dimension)
+				rd := ResultadoDimension{Bundle: bundle.Name, Dim: dimension}
+				agente, perfil, err := fabrica(bundle, dimension)
 				rd.Perfil = perfil
 				if err != nil {
 					rd.Error = err
 					rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}
 				} else {
-					rd.Resultado, rd.Error = auditarConAgente(agente, dimension, opts, contexto)
+					rd.Resultado, rd.Error = auditarConAgente(agente, bundle, dimension, opts, contexto)
 				}
+				rd.Resultado.Bundle = bundle.Name
 
 				mutex.Lock()
 				resultado.Dims = append(resultado.Dims, rd)
 				mutex.Unlock()
-			}(dim)
+			}(bundle, dim)
 		}
+		return true
 	}
 	for _, bundle := range opts.Bundles {
 		if bundle.Priority == PriorityOptional {
@@ -216,6 +219,10 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		if bundle.Cost <= 0 {
 			bundle.Cost = 1
 		}
+		if scheduledBundles[bundle.Name] || len(bundle.Dimensions) == 0 {
+			resultado.Skipped = append(resultado.Skipped, SkippedBundle{Name: bundle.Name, Reason: "duplicate_bundle"})
+			continue
+		}
 		if (opts.Budget.MaxCost > 0 && cost+bundle.Cost > opts.Budget.MaxCost) || (opts.Budget.MaxDuration > 0 && !clock().Before(started.Add(opts.Budget.MaxDuration))) {
 			resultado.Skipped = append(resultado.Skipped, SkippedBundle{Name: bundle.Name, Reason: "budget_exhausted"})
 			continue
@@ -230,8 +237,8 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 
 // auditarConAgente ejecuta el prompt (con la ronda extra de --answer si el
 // agente pide aclaraciones) y parsea el JSONL del agente.
-func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
-	salida, err := ejecutarConReintento(agente, construirPromptConContexto(dimension, opts.Mensaje, opts.Diff, "", contexto))
+func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
+	salida, err := ejecutarConReintento(agente, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
 	}
@@ -243,7 +250,7 @@ func auditarConAgente(agente AuditorAgente, dimension string, opts OpcionesAudit
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, err = ejecutarConReintento(agente, construirPromptConContexto(dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto))
+		salida, err = ejecutarConReintento(agente, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
 		}

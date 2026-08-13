@@ -33,7 +33,7 @@ func (a *agenteFake) EjecutarPrompt(prompt string) (string, error) {
 
 func fabricaFija(respuestas []string) (FabricaAuditor, *agenteFake) {
 	fake := &agenteFake{respuestas: respuestas}
-	return func(dimension string) (AuditorAgente, string, error) {
+	return func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
 		return fake, "normal", nil
 	}, fake
 }
@@ -71,7 +71,7 @@ func (a *agentePrompt) EjecutarPrompt(prompt string) (string, error) {
 
 func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
 	agente := &agentePrompt{}
-	fabrica := func(string) (AuditorAgente, string, error) { return agente, "normal", nil }
+	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) { return agente, "normal", nil }
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic),
 		RutasContexto: []string{"internal/review/engine.go"}, ProveedorContexto: proveedorContextoFake{}})
 	if resultado.Veredicto != VerdictOK || !strings.Contains(agente.prompt, `"path":"internal/review/engine_test.go"`) || !strings.Contains(agente.prompt, "UNTRUSTED_ADVISORY_PATH_METADATA") {
@@ -137,12 +137,12 @@ func TestAuditarCommitPreguntaResueltaConRespuestas(t *testing.T) {
 }
 
 func TestAuditarCommitErrorDeEjecucionEsUnavailable(t *testing.T) {
-	fabrica := func(dimension string) (AuditorAgente, string, error) {
+	fabrica := func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
 		return nil, "normal", nil
 	}
 	_ = fabrica
 	// El caso real: el agente devuelve un error de ejecución (timeout).
-	fabricaErr := func(dimension string) (AuditorAgente, string, error) {
+	fabricaErr := func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
 		return agenteError{}, "normal", nil
 	}
 	resultado := AuditarCommit(fabricaErr, 1, OpcionesAuditoria{SHA: "abc12345", Bundles: bundlesPrueba(DimLogic)})
@@ -238,7 +238,7 @@ func TestAuditarCommitBudgetExhaustionIsDeclared(t *testing.T) {
 
 func TestAuditarCommitRetriesTransportErrorOnce(t *testing.T) {
 	calls := 0
-	fabrica := func(string) (AuditorAgente, string, error) {
+	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
 		return auditorFunc(func(string) (string, error) {
 			calls++
 			if calls == 1 {
@@ -273,21 +273,101 @@ func TestAuditarCommitDurationBudgetIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestAuditarCommitDoesNotDuplicateOptionalDimensions(t *testing.T) {
+func TestAuditarCommitExecutesOptionalBundlesWithOverlappingDimensions(t *testing.T) {
 	fabrica, fake := fabricaFija(nil)
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: []ReviewBundle{
 		{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec}, Priority: PriorityRequired, Cost: 1},
 		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
 		{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
 	}})
+	if fake.llamadas != 4 || len(resultado.Dims) != 4 {
+		t.Fatalf("calls=%d dims=%+v", fake.llamadas, resultado.Dims)
+	}
+}
+
+func TestAuditarCommitPreservesOptionalBundlePurpose(t *testing.T) {
+	var bundles []string
+	var prompts []string
+	fabrica := func(bundle ReviewBundle, dimension string) (AuditorAgente, string, error) {
+		bundles = append(bundles, bundle.Name)
+		return auditorFunc(func(prompt string) (string, error) {
+			prompts = append(prompts, prompt)
+			return `{"dim":"logic","verdict":"ok"}`, nil
+		}), "normal", nil
+	}
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: []ReviewBundle{
+		{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1},
+		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
+		{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
+	}})
+	if len(resultado.Dims) != 3 || !hasStrings(bundles, BundleCorrectness, BundleContracts, BundleConcurrencyData) {
+		t.Fatalf("bundles=%v dims=%+v", bundles, resultado.Dims)
+	}
+	if !hasPrompt(prompts, "Contract compatibility") || !hasPrompt(prompts, "Concurrency and data integrity") {
+		t.Fatalf("optional prompts did not preserve purpose: %q", prompts)
+	}
+	if !hasResultBundle(resultado.Dims, BundleContracts) || !hasResultBundle(resultado.Dims, BundleConcurrencyData) {
+		t.Fatalf("bundle identities = %+v", resultado.Dims)
+	}
+	for _, dimension := range resultado.Dims {
+		if dimension.Resultado.Bundle != dimension.Bundle {
+			t.Fatalf("result bundle=%q, expected %q", dimension.Resultado.Bundle, dimension.Bundle)
+		}
+	}
+}
+
+func TestAuditarCommitDuplicateOptionalBundleDoesNotConsumeBudget(t *testing.T) {
+	fabrica, fake := fabricaFija(nil)
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Budget: ReviewBudget{MaxCost: 2}, Bundles: []ReviewBundle{
+		{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1},
+		{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
+		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
+	}})
 	if fake.llamadas != 2 || len(resultado.Dims) != 2 {
 		t.Fatalf("calls=%d dims=%+v", fake.llamadas, resultado.Dims)
+	}
+	if len(resultado.Skipped) != 1 || resultado.Skipped[0] != (SkippedBundle{Name: BundleCorrectness, Reason: "duplicate_bundle"}) {
+		t.Fatalf("skipped=%+v", resultado.Skipped)
 	}
 }
 
 func hasBundle(bundles []ReviewBundle, name string) bool {
 	for _, bundle := range bundles {
 		if bundle.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStrings(values []string, wanted ...string) bool {
+	for _, want := range wanted {
+		found := false
+		for _, value := range values {
+			if value == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func hasPrompt(prompts []string, purpose string) bool {
+	for _, prompt := range prompts {
+		if strings.Contains(prompt, purpose) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasResultBundle(results []ResultadoDimension, bundle string) bool {
+	for _, result := range results {
+		if result.Bundle == bundle {
 			return true
 		}
 	}
@@ -304,7 +384,7 @@ func TestAuditarCommitInvalidOutputIsNotRetried(t *testing.T) {
 
 func TestAuditarCommitUnavailableDoesNotHideBlock(t *testing.T) {
 	llamadas := 0
-	fabrica := func(dim string) (AuditorAgente, string, error) {
+	fabrica := func(_ ReviewBundle, dim string) (AuditorAgente, string, error) {
 		return auditorFunc(func(string) (string, error) {
 			llamadas++
 			if dim == DimSecurity {

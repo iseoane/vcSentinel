@@ -59,7 +59,7 @@ func fichaTieneHallazgo(f review.Ficha, descripcion string) bool {
 }
 
 func fabricaStubRebase(a *stubAuditorRebase) review.FabricaAuditor {
-	return func(dimension string) (review.AuditorAgente, string, error) {
+	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		return a, "stub", nil
 	}
 }

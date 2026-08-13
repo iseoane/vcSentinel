@@ -96,10 +96,10 @@ func ejecutarReview(worktree string, args []string) {
 			continue
 		}
 
-		profile, err := change.PerfilDeCambio(sha+"^", sha)
+		profile, err := change.PerfilDeCommit(sha)
 		if err != nil {
 			fmt.Printf("⚠️ %s: no se pudo derivar el perfil de cambio: %v\n", sha[:8], err)
-			continue
+			os.Exit(1)
 		}
 		plan := review.PlanForProfile(profile, archivos)
 		bundles := plan.Bundles
@@ -110,7 +110,7 @@ func ejecutarReview(worktree string, args []string) {
 		// El recolector anota qué agente atendió cada dimensión para que la
 		// ficha registre el autor real y no el perfil pedido (H4/T0.2).
 		autoria := &recolectorAutoria{}
-		fabrica := func(dimension string) (review.AuditorAgente, string, error) {
+		fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 			perfil := config.ResolverPerfil(cfg, dimension, flags.profile)
 			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 			if err != nil {

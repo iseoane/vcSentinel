@@ -329,6 +329,7 @@ type AgentQuestion struct {
 // trae los campos v1 (el contrato real del agente hasta F5) deja Hallazgos
 // vacío: la capacidad de parsear v2 no depende de que el prompt ya lo emita.
 type DimensionResult struct {
+	Bundle       string          `json:"bundle,omitempty"`
 	Dim          string          `json:"dim"`
 	Verdict      string          `json:"verdict"`
 	Findings     []ReviewFinding `json:"findings,omitempty"`

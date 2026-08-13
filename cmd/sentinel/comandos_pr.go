@@ -183,7 +183,7 @@ func ejecutarPrReview(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	fabrica := func(dimension string) (review.AuditorAgente, string, error) {
+	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
@@ -622,7 +622,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		fmt.Fprintf(w, "⚠️  Validación en rojo superada con --force (motivo: %s).\n", flags.reason)
 	}
 
-	fabrica := func(dimension string) (review.AuditorAgente, string, error) {
+	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {

@@ -52,7 +52,7 @@ func (a *auditorStub) EjecutarPrompt(prompt string) (string, error) {
 const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
 
 func fabricaStub(a *auditorStub) FabricaAuditor {
-	return func(dimension string) (AuditorAgente, string, error) {
+	return func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
 		return a, "stub", nil
 	}
 }

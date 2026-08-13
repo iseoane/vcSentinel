@@ -221,7 +221,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		return err
 	}
 
-	profile, err := change.PerfilDeCambio(sha+"^", sha)
+	profile, err := change.PerfilDeCommit(sha)
 	if err != nil {
 		return err
 	}
@@ -369,7 +369,7 @@ func overviewDeRama(opts OpcionesRama, rama string, fichas []Ficha) (*ResultadoO
 	if opts.Fabrica == nil {
 		return nil, ErrSinFabrica
 	}
-	agente, _, err := opts.Fabrica(DimSpec)
+	agente, _, err := opts.Fabrica(ReviewBundle{Name: "overview", Dimensions: []string{DimSpec}}, DimSpec)
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo crear el auditor de rama: %w", err)
 	}
@@ -490,7 +490,9 @@ func DimsResultadosParaFicha(dims []ResultadoDimension) []DimensionResult {
 	resultados := make([]DimensionResult, 0, len(dims))
 	for _, rd := range dims {
 		if rd.Resultado != nil {
-			resultados = append(resultados, *rd.Resultado)
+			resultado := *rd.Resultado
+			resultado.Bundle = rd.Bundle
+			resultados = append(resultados, resultado)
 		}
 	}
 	return resultados

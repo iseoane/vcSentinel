@@ -65,7 +65,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(w, "❌ No se pudo leer HEAD: %v\n", err)
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
 	}
-	profile, err := change.PerfilDeCambio(sha+"^", sha)
+	profile, err := change.PerfilDeCommit(sha)
 	if err != nil {
 		fmt.Fprintf(w, "❌ No se pudo derivar el perfil de cambio de HEAD: %v\n", err)
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
@@ -99,7 +99,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 // (validation.profiles), no el perfil de revisión por dimensión, que sigue
 // siendo el de siempre (mismo criterio que ejecutarReview sin --profile).
 func fabricaAuditorGate(cfg config.Config) review.FabricaAuditor {
-	return func(dimension string) (review.AuditorAgente, string, error) {
+	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {

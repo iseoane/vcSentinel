@@ -25,7 +25,7 @@ func (a *auditorFalso) EjecutarPrompt(prompt string) (string, error) {
 // falso: permite comprobar "cero llamadas al motor de revisión semántica"
 // cuando la validación falla (regla central de T1.7).
 func fabricaContadora(llamadas *int, salida string, err error) review.FabricaAuditor {
-	return func(dimension string) (review.AuditorAgente, string, error) {
+	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		*llamadas++
 		return &auditorFalso{salida: salida, err: err}, "perfil-test", nil
 	}
@@ -145,7 +145,7 @@ func TestRevisionSinAgenteDisponible_ErrorInfraestructura(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
 	opts := opcionesBase(cfg, func(string) (int, string, error) {
 		return 0, "", nil
-	}, func(dimension string) (review.AuditorAgente, string, error) {
+	}, func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		return nil, "perfil-test", errAgenteNoDisponibleTest
 	})
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
