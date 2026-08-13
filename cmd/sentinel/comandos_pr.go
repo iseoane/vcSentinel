@@ -12,6 +12,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -183,12 +184,14 @@ func ejecutarPrReview(worktree string, args []string) {
 		os.Exit(1)
 	}
 
+	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
 			return nil, perfil.Nombre, err
 		}
+		verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
 		return adapter, perfil.Nombre, nil
 	}
 
@@ -331,12 +334,13 @@ func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo str
 // verificación NUNCA queda en silencio: se refleja como motivo en la
 // plantilla para que el PR sea transparente sobre lo que se comprobó.
 func verificarParaPlantilla(worktree, gitDir string, cfg config.Config) review.VerificacionPlantilla {
-	return verificarParaPlantillaCon(worktree, gitDir, cfg, ops.Verificar)
+	return verificarParaPlantillaCon(worktree, gitDir, cfg, nuevoVerificadorModelo(worktree), ops.Verificar)
 }
 
 // verificarParaPlantillaCon es la versión inyectable de verificarParaPlantilla:
-// verificar nil se sustituye por ops.Verificar en producción.
-func verificarParaPlantillaCon(worktree, gitDir string, cfg config.Config,
+// verificar nil se sustituye por ops.Verificar en producción. El verificador
+// debe ser el compartido por toda la invocación para no repetir el sondeo.
+func verificarParaPlantillaCon(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador,
 	verificar func(ops.OpcionesVerificar) (ops.ResultadoVerificacion, error)) review.VerificacionPlantilla {
 
 	if verificar == nil {
@@ -351,6 +355,10 @@ func verificarParaPlantillaCon(worktree, gitDir string, cfg config.Config,
 		// la delegación se degrada a "sin_agente", nunca panic.
 		adapter = nil
 	}
+	if verificadorModelo == nil {
+		verificadorModelo = nuevoVerificadorModelo(worktree)
+	}
+	verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
 	verif, err := verificar(ops.OpcionesVerificar{
 		Worktree: worktree,
 		GitDir:   gitDir,
@@ -540,7 +548,7 @@ type depsPrCreate struct {
 	obtenerGitDir      func() (string, error)
 	ejecutarValidacion func(perfil string, alcance []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error)
 	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
-	verificar          func(worktree, gitDir string, cfg config.Config) review.VerificacionPlantilla
+	verificar          func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
 	publicar           func(worktree, rutaPlantilla, base string) (string, bool, error)
 	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error
 }
@@ -561,7 +569,9 @@ func ejecutarPrCreate(worktree string, args []string) {
 		analizarRama: func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
 			return review.AnalizarRama(review.NuevoLedger(gitDir), opts)
 		},
-		verificar:       verificarParaPlantilla,
+		verificar: func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla {
+			return verificarParaPlantillaCon(worktree, gitDir, cfg, verificadorModelo, ops.Verificar)
+		},
 		publicar:        publicarPR,
 		registrarEvento: ops.RegistrarEvento,
 	}))
@@ -622,12 +632,14 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		fmt.Fprintf(w, "⚠️  Validación en rojo superada con --force (motivo: %s).\n", flags.reason)
 	}
 
+	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
 			return nil, perfil.Nombre, err
 		}
+		verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
 		return adapter, perfil.Nombre, nil
 	}
 
@@ -674,7 +686,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		return 1
 	}
 
-	verificacion := deps.verificar(worktree, gitDir, cfg)
+	verificacion := deps.verificar(worktree, gitDir, cfg, verificadorModelo)
 	verificacion.Validacion = comandosDeValidacion(runs)
 
 	cuerpo := review.RenderPlantillaPr(res.Fichas, res.Overview, verificacion, version)

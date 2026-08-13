@@ -28,6 +28,12 @@ type ReportaAgenteEfectivo interface {
 	AgenteEfectivo() (AgenteEfectivo, bool)
 }
 
+// ModeloConfigurado returns the model selected by this adapter. A chain only
+// knows the answer after one child has responded successfully.
+func (c *CLIAdapter) ModeloConfigurado() (string, bool) {
+	return c.Config.Model, c.Config.Model != ""
+}
+
 // AgenteEfectivo de un CLIAdapter es su propio binario con la configuración
 // con la que se construyó: siempre responde él o no responde nadie.
 func (c *CLIAdapter) AgenteEfectivo() (AgenteEfectivo, bool) {
@@ -72,4 +78,9 @@ func (r *registroEfectivo) leer() (AgenteEfectivo, bool) {
 // petición y nunca se cachea, así que el autor sigue a la última llamada.
 func (c *CadenaAdaptador) AgenteEfectivo() (AgenteEfectivo, bool) {
 	return c.registro.leer()
+}
+
+func (c *CadenaAdaptador) ModeloConfigurado() (string, bool) {
+	efectivo, ok := c.AgenteEfectivo()
+	return efectivo.Modelo, ok && efectivo.Modelo != ""
 }

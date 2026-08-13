@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -265,7 +266,7 @@ func TestCopiarPortapapelesFalloSePropaga(t *testing.T) {
 // TestVerificarParaPlantillaErrorNuncaSilencioso: un fallo de la verificación
 // se refleja como motivo en la plantilla (contrato "nunca en silencio").
 func TestVerificarParaPlantillaErrorNuncaSilencioso(t *testing.T) {
-	plantilla := verificarParaPlantillaCon("worktree", "gitdir", config.Config{},
+	plantilla := verificarParaPlantillaCon("worktree", "gitdir", config.Config{}, nil,
 		func(ops.OpcionesVerificar) (ops.ResultadoVerificacion, error) {
 			return ops.ResultadoVerificacion{}, errors.New("build roto")
 		})
@@ -281,7 +282,7 @@ func TestVerificarParaPlantillaErrorNuncaSilencioso(t *testing.T) {
 // TestVerificarParaPlantillaTraduceComandos: un resultado determinista se
 // traduce a ComandoVerificado con su exit code real.
 func TestVerificarParaPlantillaTraduceComandos(t *testing.T) {
-	plantilla := verificarParaPlantillaCon("worktree", "gitdir", config.Config{},
+	plantilla := verificarParaPlantillaCon("worktree", "gitdir", config.Config{}, nil,
 		func(ops.OpcionesVerificar) (ops.ResultadoVerificacion, error) {
 			return ops.ResultadoVerificacion{
 				Modo: ops.ModoDeterminista,
@@ -313,7 +314,7 @@ func TestVerificarParaPlantillaTraduceComandos(t *testing.T) {
 // configurados, la ruta real pasa por el aviso interactivo y, sin respuesta
 // en stdin, degrada a omitido sin panic.
 func TestVerificarParaPlantillaNilUsaLaRutaReal(t *testing.T) {
-	plantilla := verificarParaPlantillaCon("worktree", "", config.Config{}, nil)
+	plantilla := verificarParaPlantillaCon("worktree", "", config.Config{}, nil, nil)
 	if plantilla.Modo != ops.ModoOmitido {
 		t.Errorf("con nil la ruta real debe degradar a omitido, got %q", plantilla.Modo)
 	}
@@ -602,6 +603,39 @@ func TestEjecutarPrCreateCon_ValidacionRojaSinForce_NoPublicaNiAuditaRama(t *tes
 	}
 }
 
+func TestEjecutarPrCreateCon_ComparteElVerificadorModeloConLaPlantilla(t *testing.T) {
+	anterior := nuevoVerificadorModelo
+	t.Cleanup(func() { nuevoVerificadorModelo = anterior })
+	var construcciones int
+	nuevoVerificadorModelo = func(string) *modelprobe.Verificador {
+		construcciones++
+		return modelprobe.NuevoVerificador(nil)
+	}
+
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictOK)}, SHAs: []string{"abc1234"}}, nil
+		},
+		verificar: func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla {
+			return verificarParaPlantillaCon(worktree, gitDir, cfg, verificadorModelo, nil)
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0: %s", codigo, salida.String())
+	}
+	if construcciones != 1 {
+		t.Fatalf("construcciones de verificador = %d, esperado 1 por invocación de pr create", construcciones)
+	}
+}
+
 // TestEjecutarPrCreateCon_ForceSinReason_ErrorSinTocarNada: --force sin
 // --reason falla en el parseo, antes de tocar config/git/validación.
 func TestEjecutarPrCreateCon_ForceSinReason_ErrorSinTocarNada(t *testing.T) {
@@ -637,7 +671,7 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
 			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
 		},
-		verificar: func(string, string, config.Config) review.VerificacionPlantilla {
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/9", false, nil },
@@ -678,7 +712,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcu
 		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
 			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
 		},
-		verificar: func(string, string, config.Config) review.VerificacionPlantilla {
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/11", false, nil },
@@ -759,7 +793,7 @@ func TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestac
 		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
 			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
 		},
-		verificar: func(string, string, config.Config) review.VerificacionPlantilla {
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(worktree, ruta, base string) (string, bool, error) {

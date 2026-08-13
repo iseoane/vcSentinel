@@ -10,6 +10,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -81,7 +82,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 				return graph.NuevoProveedorNativo(snapshot, treeOID)
 			},
 		},
-		FabricaAuditor: fabricaAuditorGate(cfg),
+		FabricaAuditor: fabricaAuditorGate(cfg, nuevoVerificadorModelo(worktree)),
 		Parallel:       cfg.Review.Parallel,
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos).Bundles,
@@ -98,13 +99,14 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 // --profile: --profile de gate elige el perfil de VALIDACIÓN
 // (validation.profiles), no el perfil de revisión por dimensión, que sigue
 // siendo el de siempre (mismo criterio que ejecutarReview sin --profile).
-func fabricaAuditorGate(cfg config.Config) review.FabricaAuditor {
+func fabricaAuditorGate(cfg config.Config, verificador *modelprobe.Verificador) review.FabricaAuditor {
 	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		perfil := config.ResolverPerfil(cfg, dimension, "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
 			return nil, perfil.Nombre, err
 		}
+		verificador.Verificar(perfil.Nombre, perfil.Modelo, adapter)
 		return adapter, perfil.Nombre, nil
 	}
 }

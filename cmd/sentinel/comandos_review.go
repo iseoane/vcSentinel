@@ -12,8 +12,10 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 // ejecutarReview audita uno o más commits contra el motor y guarda la ficha en
@@ -52,6 +54,7 @@ func ejecutarReview(worktree string, args []string) {
 	}
 
 	ledger := review.NuevoLedger(gitDir)
+	verificadorModelo := nuevoVerificadorModelo(worktree)
 	detalle := fmt.Sprintf("flags: all=%v chain=%v gate=%v dims=%q", flags.all, flags.chain, flags.gate, flags.dims)
 	exitFinal := 0
 
@@ -116,6 +119,7 @@ func ejecutarReview(worktree string, args []string) {
 			if err != nil {
 				return nil, perfil.Nombre, err
 			}
+			verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
 			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, perfil.Nombre, nil
 		}
 
@@ -170,6 +174,14 @@ func ejecutarReview(worktree string, args []string) {
 		registrarCorrecciones(ledger, gitDir, sha, archivos, mensaje, exit, worktree)
 	}
 	os.Exit(exitFinal)
+}
+
+var nuevoVerificadorModelo = func(worktree string) *modelprobe.Verificador {
+	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		return modelprobe.NuevoVerificador(nil)
+	}
+	return modelprobe.NuevoVerificador(store.NuevoStore(gitCommonDir))
 }
 
 func proveedorContextoReview(cfg config.Config, worktree string) review.ContextProvider {
