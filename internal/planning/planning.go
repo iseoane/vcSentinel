@@ -80,8 +80,10 @@ func Plan(profile change.ChangeProfile, riskProfile risk.Resultado, model CodeMo
 
 func canonicalChangeProfile(profile change.ChangeProfile) change.ChangeProfile {
 	profile.Modules = sortedCopy(profile.Modules)
-	if profile.FileClasses != nil {
+	if len(profile.FileClasses) > 0 {
 		profile.FileClasses = cloneMap(profile.FileClasses)
+	} else {
+		profile.FileClasses = nil
 	}
 	return profile
 }
@@ -95,8 +97,10 @@ func canonicalCodeModel(model CodeModel) CodeModel {
 
 func canonicalPolicy(policy Policy) Policy {
 	policy.Capabilities = sortedCopy(policy.Capabilities)
-	if policy.Options != nil {
+	if len(policy.Options) > 0 {
 		policy.Options = cloneMap(policy.Options)
+	} else {
+		policy.Options = nil
 	}
 	return policy
 }
