@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -55,6 +56,16 @@ func fabricaStub(a *auditorStub) FabricaAuditor {
 	return func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
 		return a, "stub", nil
 	}
+}
+
+type auditorRutasStub struct {
+	auditorStub
+	rutas [][]string
+}
+
+func (a *auditorRutasStub) EjecutarRevision(prompt string, rutas []string) (string, error) {
+	a.rutas = append(a.rutas, append([]string(nil), rutas...))
+	return a.EjecutarPrompt(prompt)
 }
 
 // fakeStoreBlobs es un StoreBlobs de prueba que no depende de un
@@ -160,6 +171,34 @@ func TestAnalizarRamaAuditaPendientes(t *testing.T) {
 	persistida, err := ledger.LeerFicha(sha)
 	if err != nil || persistida == nil || len(persistida.Revisions) != 1 {
 		t.Errorf("la ficha no quedó guardada en el ledger: %v", err)
+	}
+}
+
+func TestAuditarCommitRamaPassesImmutableCommitPathsToRestrictedReviewer(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	sha := commitEnRama(t, "committed.go", "package committed\n")
+	if err := os.WriteFile("uncommitted.go", []byte("package uncommitted\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ledger := NuevoLedger(gitDir)
+	stub := &auditorRutasStub{auditorStub: auditorStub{auditSalida: salidaAuditOK}}
+
+	err := auditarCommitRama(ledger, sha, OpcionesRama{
+		Fabrica: func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+			return stub, "stub", nil
+		},
+		Parallel: 1,
+	})
+	if err != nil {
+		t.Fatalf("auditarCommitRama() error = %v", err)
+	}
+	if len(stub.rutas) == 0 {
+		t.Fatal("restricted reviewer received no planned paths")
+	}
+	for _, rutas := range stub.rutas {
+		if expected := []string{"committed.go"}; !reflect.DeepEqual(rutas, expected) {
+			t.Errorf("reviewer paths = %v, expected immutable commit paths %v", rutas, expected)
+		}
 	}
 }
 

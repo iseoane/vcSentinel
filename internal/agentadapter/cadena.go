@@ -32,6 +32,18 @@ func (c *CadenaAdaptador) EjecutarPrompt(prompt string) (string, error) {
 	})
 }
 
+// EjecutarRevision preserves per-request fallback while retaining tool limits.
+func (c *CadenaAdaptador) EjecutarRevision(prompt string, paths []string) (string, error) {
+	return c.primeroExitoso(func(a adaptadorCompleto) (string, error) {
+		if reviewer, ok := a.(interface {
+			EjecutarRevision(string, []string) (string, error)
+		}); ok {
+			return reviewer.EjecutarRevision(prompt, paths)
+		}
+		return "", fmt.Errorf("semantic review unavailable: adapter %s does not implement EjecutarRevision", nombreAdaptador(a))
+	})
+}
+
 // ObtenerMensajeCommit genera el mensaje de commit probando cada adaptador en
 // orden hasta obtener una salida sin error.
 func (c *CadenaAdaptador) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {

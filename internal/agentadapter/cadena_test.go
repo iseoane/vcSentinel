@@ -14,9 +14,11 @@ type adaptadorFake struct {
 	salida  string
 	mensaje string
 	err     error
+	prompts int
 }
 
 func (f *adaptadorFake) EjecutarPrompt(prompt string) (string, error) {
+	f.prompts++
 	if f.err != nil {
 		return "", f.err
 	}
@@ -83,6 +85,22 @@ func TestCadenaEjecutarPromptConFallback(t *testing.T) {
 	}
 	if salida != "salida del segundo" {
 		t.Errorf("salida = %q, esperado la del segundo adaptador", salida)
+	}
+}
+
+func TestCadenaEjecutarRevisionRequiereCapacidadRestringida(t *testing.T) {
+	sinRevision := &adaptadorFake{nombre: "sin-revision", salida: "no debe ejecutarse"}
+	cadena := &CadenaAdaptador{adaptadores: []adaptadorCompleto{sinRevision}}
+
+	_, err := cadena.EjecutarRevision("revisar", []string{"a.go"})
+	if err == nil {
+		t.Fatal("EjecutarRevision debería fallar sin capacidad restringida")
+	}
+	if !strings.Contains(err.Error(), "semantic review unavailable") {
+		t.Errorf("error = %q, esperado error de revisión semántica no disponible", err)
+	}
+	if sinRevision.prompts != 0 {
+		t.Errorf("EjecutarPrompt se ejecutó %d veces, esperado 0", sinRevision.prompts)
 	}
 }
 

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,10 +35,28 @@ type CLIAdapter struct {
 	Timeout time.Duration
 }
 
+// ReviewRequest limits an agent review to read-only exploration of planned paths.
+type ReviewRequest struct {
+	Prompt       string
+	Paths        []string
+	MaxToolCalls int
+}
+
+const defaultReviewToolCalls = 8
+
 // EjecutarPrompt ejecuta el binario con un prompt arbitrario y devuelve la
 // salida. Es la vía pública del motor de auditoría hacia el agente.
 func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 	return c.ejecutarComando(prompt)
+}
+
+// EjecutarRevision runs a semantic review with the bounded tool profile.
+func (c *CLIAdapter) EjecutarRevision(prompt string, paths []string) (string, error) {
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = TimeoutComando
+	}
+	return c.ejecutarRevisionConTimeout(ReviewRequest{Prompt: prompt, Paths: paths, MaxToolCalls: defaultReviewToolCalls}, timeout)
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
@@ -221,6 +241,98 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 	}
 
 	return strings.TrimSpace(out.String()), nil
+}
+
+func (c *CLIAdapter) ejecutarRevisionConTimeout(request ReviewRequest, timeout time.Duration) (string, error) {
+	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
+	defer cancelar()
+
+	args, restrictions, err := c.reviewCommand(request)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
+	env := os.Environ()
+	if c.esClaude() {
+		env = append(env,
+			fmt.Sprintf("CLAUDE_CODE_MODEL=%s", c.Config.Model),
+			fmt.Sprintf("CLAUDE_CODE_REASONING=%s", c.Config.ReasoningEffort),
+		)
+	} else if c.esOpenCode() {
+		env = append(env,
+			fmt.Sprintf("OPENCODE_MODEL=%s", c.Config.Model),
+			fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort),
+		)
+	}
+	keys := make([]string, 0, len(restrictions))
+	for key := range restrictions {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		env = append(env, key+"="+restrictions[key])
+	}
+	cmd.Env = env
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stdin = strings.NewReader(request.Prompt)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
+func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]string, error) {
+	maxToolCalls := request.MaxToolCalls
+	if maxToolCalls <= 0 {
+		maxToolCalls = defaultReviewToolCalls
+	}
+	if !c.esOpenCode() {
+		return nil, nil, fmt.Errorf("semantic review is unavailable: path-confined tool permissions are not configured for this provider")
+	}
+	permissions := map[string]map[string]string{
+		"bash":     {"*": "deny"},
+		"edit":     {"*": "deny"},
+		"write":    {"*": "deny"},
+		"webfetch": {"*": "deny"},
+		"read":     {"*": "deny"},
+		"grep":     {"*": "deny"},
+		"glob":     {"*": "deny"},
+	}
+	for _, ruta := range rutasRevisionSeguras(request.Paths) {
+		permissions["read"][ruta] = "allow"
+		permissions["grep"][ruta] = "allow"
+		permissions["glob"][ruta] = "allow"
+	}
+	configuration := struct {
+		Agent map[string]struct {
+			Steps      int                          `json:"steps"`
+			Permission map[string]map[string]string `json:"permission"`
+		} `json:"agent"`
+	}{Agent: map[string]struct {
+		Steps      int                          `json:"steps"`
+		Permission map[string]map[string]string `json:"permission"`
+	}{"reviewer": {Steps: maxToolCalls, Permission: permissions}}}
+	encoded, err := json.Marshal(configuration)
+	if err != nil {
+		panic(fmt.Sprintf("review configuration cannot be serialized: %v", err))
+	}
+	return []string{"run", "--agent", "reviewer"}, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
+}
+
+func rutasRevisionSeguras(rutas []string) []string {
+	seguras := make([]string, 0, len(rutas))
+	for _, ruta := range rutas {
+		normalizada := strings.ReplaceAll(ruta, "\\", "/")
+		limpia := path.Clean(normalizada)
+		drive := len(limpia) >= 2 && limpia[1] == ':'
+		if ruta == "" || path.IsAbs(limpia) || drive || limpia == "." || limpia == ".." || strings.HasPrefix(limpia, "../") || strings.HasPrefix(ruta, "-") || strings.ContainsAny(ruta, "\x00\r\n") {
+			continue
+		}
+		seguras = append(seguras, limpia)
+	}
+	return seguras
 }
 
 // comandoPrompt devuelve los argumentos de invocación según el binario y si el

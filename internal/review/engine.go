@@ -20,6 +20,10 @@ type AuditorAgente interface {
 	EjecutarPrompt(prompt string) (string, error)
 }
 
+type auditorConHerramientasRestringidas interface {
+	EjecutarRevision(prompt string, paths []string) (string, error)
+}
+
 // FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
 // además el nombre del perfil aplicado. Inyectable en los tests.
 type FabricaAuditor func(bundle ReviewBundle, dimension string) (AuditorAgente, string, error)
@@ -238,7 +242,13 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 // auditarConAgente ejecuta el prompt (con la ronda extra de --answer si el
 // agente pide aclaraciones) y parsea el JSONL del agente.
 func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
-	salida, err := ejecutarConReintento(agente, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto))
+	ejecutar := func(prompt string) (string, error) {
+		if restringido, ok := agente.(auditorConHerramientasRestringidas); ok {
+			return restringido.EjecutarRevision(prompt, opts.RutasContexto)
+		}
+		return agente.EjecutarPrompt(prompt)
+	}
+	salida, err := ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
 	}
@@ -250,7 +260,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, err = ejecutarConReintento(agente, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto))
+		salida, err = ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
 		}
@@ -262,10 +272,10 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 	return crudo, nil
 }
 
-func ejecutarConReintento(agente AuditorAgente, prompt string) (string, error) {
-	salida, err := agente.EjecutarPrompt(prompt)
+func ejecutarConReintento(ejecutar func(string) (string, error), prompt string) (string, error) {
+	salida, err := ejecutar(prompt)
 	if err != nil && esErrorTransporte(err) {
-		return agente.EjecutarPrompt(prompt)
+		return ejecutar(prompt)
 	}
 	return salida, err
 }

@@ -23,6 +23,15 @@ func (agenteQueFalla) EjecutarPrompt(string) (string, error) {
 	return "", errors.New("no disponible")
 }
 
+type agenteSoloPrompt struct {
+	prompts int
+}
+
+func (a *agenteSoloPrompt) EjecutarPrompt(string) (string, error) {
+	a.prompts++
+	return "no debe ejecutarse", nil
+}
+
 // TestAgenteObservadoRegistraSoloTrasResponder cierra el eslabón entre el
 // adaptador y el recolector: la autoría se anota DESPUÉS de una respuesta con
 // éxito, nunca antes ni tras un fallo.
@@ -37,6 +46,25 @@ func TestAgenteObservadoRegistraSoloTrasResponder(t *testing.T) {
 	}
 	if !recolector.consolidar().Vacio() {
 		t.Error("atribuyó autoría a un agente que falló")
+	}
+}
+
+func TestAgenteObservadoEjecutarRevisionRequiereCapacidadRestringida(t *testing.T) {
+	soloPrompt := &agenteSoloPrompt{}
+	agente := &agenteObservado{
+		AuditorAgente: soloPrompt,
+		autoria:       &recolectorAutoria{},
+	}
+
+	_, err := agente.EjecutarRevision("revisar", []string{"a.go"})
+	if err == nil {
+		t.Fatal("EjecutarRevision debería fallar sin capacidad restringida")
+	}
+	if err.Error() != "semantic review unavailable" {
+		t.Errorf("error = %q, esperado %q", err, "semantic review unavailable")
+	}
+	if soloPrompt.prompts != 0 {
+		t.Errorf("EjecutarPrompt se ejecutó %d veces, esperado 0", soloPrompt.prompts)
 	}
 }
 

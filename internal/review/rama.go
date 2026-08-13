@@ -232,6 +232,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		Bundles:        PlanForProfile(profile, archivos).Bundles,
 		Respuestas:     opts.Respuestas,
 		PerfilOverride: opts.PerfilOverride,
+		RutasContexto:  archivos,
 		OnDimension:    opts.OnDimension,
 	})
 

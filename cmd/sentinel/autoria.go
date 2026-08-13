@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -38,6 +39,20 @@ type agenteObservado struct {
 
 func (a *agenteObservado) EjecutarPrompt(prompt string) (string, error) {
 	salida, err := a.AuditorAgente.EjecutarPrompt(prompt)
+	if err == nil {
+		a.autoria.registrar(a.AuditorAgente)
+	}
+	return salida, err
+}
+
+func (a *agenteObservado) EjecutarRevision(prompt string, paths []string) (string, error) {
+	reviewer, ok := a.AuditorAgente.(interface {
+		EjecutarRevision(string, []string) (string, error)
+	})
+	if !ok {
+		return "", errors.New("semantic review unavailable")
+	}
+	salida, err := reviewer.EjecutarRevision(prompt, paths)
 	if err == nil {
 		a.autoria.registrar(a.AuditorAgente)
 	}
