@@ -5,10 +5,18 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
 func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
-	adapter := CLIAdapter{BinaryName: "opencode"}
+	adapter := CLIAdapter{
+		BinaryName: "opencode",
+		Config: config.AgentConfig{
+			Model:           "openai/gpt-5.6-terra",
+			ReasoningEffort: "high",
+		},
+	}
 	args, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt:       "audit",
 		Paths:        []string{"internal/review/engine.go", "internal/planning/context.go"},
@@ -19,21 +27,29 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	if expected := []string{"run", "--pure", "--agent", "reviewer", "--dir", "/snapshot"}; !reflect.DeepEqual(args, expected) {
+	if expected := []string{"run", "--pure", "--agent", "reviewer", "--model", "openai/gpt-5.6-terra", "--dir", "/snapshot"}; !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
 
 	configText := env["OPENCODE_CONFIG_CONTENT"]
 	var config struct {
 		Agent map[string]struct {
-			Steps      int            `json:"steps"`
-			Permission map[string]any `json:"permission"`
+			Model           string         `json:"model"`
+			ReasoningEffort string         `json:"reasoningEffort"`
+			Steps           int            `json:"steps"`
+			Permission      map[string]any `json:"permission"`
 		} `json:"agent"`
 	}
 	if err := json.Unmarshal([]byte(configText), &config); err != nil {
 		t.Fatalf("review configuration is invalid JSON: %v", err)
 	}
 	reviewer := config.Agent["reviewer"]
+	if reviewer.Model != "openai/gpt-5.6-terra" {
+		t.Errorf("model = %q, expected configured model", reviewer.Model)
+	}
+	if reviewer.ReasoningEffort != "high" {
+		t.Errorf("reasoningEffort = %q, expected configured effort", reviewer.ReasoningEffort)
+	}
 	if reviewer.Steps != 7 {
 		t.Errorf("steps = %d, expected 7", reviewer.Steps)
 	}
@@ -106,6 +122,7 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"permission":{"bash":"allow"}}`)
 	t.Setenv("OPENCODE_CONFIG", "/host/config.json")
 	t.Setenv("OPENCODE_CONFIG_DIR", "/host/config")
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"provider":{"token":"existing"}}`)
 	t.Setenv("HOME", "/host/home")
 
 	env := reviewEnvironment("generated", t.TempDir())
@@ -120,6 +137,9 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	}
 	if len(values["OPENCODE_CONFIG"]) != 0 || len(values["OPENCODE_CONFIG_DIR"]) != 0 {
 		t.Fatalf("host config was retained: %v", values)
+	}
+	if auth := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(auth, []string{`{"provider":{"token":"existing"}}`}) {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected existing authentication source", auth)
 	}
 	if values["OPENCODE_DISABLE_PROJECT_CONFIG"][0] != "1" || values["OPENCODE_PURE"][0] != "1" {
 		t.Fatalf("review isolation is incomplete: %v", values)

@@ -302,18 +302,27 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	}
 	configuration := struct {
 		Agent map[string]struct {
-			Steps      int            `json:"steps"`
-			Permission map[string]any `json:"permission"`
+			Model           string         `json:"model,omitempty"`
+			ReasoningEffort string         `json:"reasoningEffort,omitempty"`
+			Steps           int            `json:"steps"`
+			Permission      map[string]any `json:"permission"`
 		} `json:"agent"`
 	}{Agent: map[string]struct {
-		Steps      int            `json:"steps"`
-		Permission map[string]any `json:"permission"`
-	}{"reviewer": {Steps: maxToolCalls, Permission: permission}}}
+		Model           string         `json:"model,omitempty"`
+		ReasoningEffort string         `json:"reasoningEffort,omitempty"`
+		Steps           int            `json:"steps"`
+		Permission      map[string]any `json:"permission"`
+	}{"reviewer": {Model: c.Config.Model, ReasoningEffort: c.Config.ReasoningEffort, Steps: maxToolCalls, Permission: permission}}}
 	encoded, err := json.Marshal(configuration)
 	if err != nil {
 		panic(fmt.Sprintf("review configuration cannot be serialized: %v", err))
 	}
-	return []string{"run", "--pure", "--agent", "reviewer", "--dir", request.SnapshotDir}, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
+	args := []string{"run", "--pure", "--agent", "reviewer"}
+	if c.Config.Model != "" {
+		args = append(args, "--model", c.Config.Model)
+	}
+	args = append(args, "--dir", request.SnapshotDir)
+	return args, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
 }
 
 func rutasRevisionSeguras(rutas []string) []string {
@@ -334,7 +343,7 @@ func reviewEnvironment(configuration, snapshot string) []string {
 	isolationRoot := snapshot
 	blocked := map[string]bool{
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
-		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true, "OPENCODE_AUTH_CONTENT": true,
+		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true,
 		"HOME": true, "USERPROFILE": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
 		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true,
 	}
@@ -349,7 +358,6 @@ func reviewEnvironment(configuration, snapshot string) []string {
 		"OPENCODE_CONFIG_CONTENT="+configuration,
 		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
 		"OPENCODE_PURE=1",
-		"OPENCODE_AUTH_CONTENT={}",
 		"OPENCODE_TEST_HOME="+isolationRoot,
 		"HOME="+isolationRoot,
 		"XDG_CONFIG_HOME="+filepath.Join(isolationRoot, ".config"),
