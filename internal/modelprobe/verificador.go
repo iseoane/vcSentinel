@@ -66,7 +66,7 @@ func (v *Verificador) Verificar(perfil, esperado string, agente Agente) {
 }
 
 func modeloReportadoValido(modelo string) (string, bool) {
-	modelo = strings.Trim(modelo, " \t")
+	modelo = strings.TrimSpace(modelo)
 	if modelo == "" || len(modelo) > maxModelIdentifierLength {
 		return "", false
 	}

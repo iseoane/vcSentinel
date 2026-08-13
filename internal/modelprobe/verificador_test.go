@@ -2,7 +2,6 @@ package modelprobe
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
@@ -62,6 +61,32 @@ func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
 			agent:    agenteModeloFalso{modelo: "  openai/gpt-5.6-terra\t"},
 		},
 		{
+			name:     "mismatch with trailing LF is recorded",
+			profile:  "normal",
+			expected: "openai/gpt-5.6-terra",
+			agent:    agenteModeloFalso{modelo: "openai/gpt-5.6-sol\n"},
+			stored: &store.Profile{
+				Name:          "normal",
+				Status:        store.ProfileUnverified,
+				Event:         "model_mismatch",
+				ExpectedModel: "openai/gpt-5.6-terra",
+				ActualModel:   "openai/gpt-5.6-sol",
+			},
+		},
+		{
+			name:     "mismatch with trailing CRLF is recorded",
+			profile:  "normal",
+			expected: "openai/gpt-5.6-terra",
+			agent:    agenteModeloFalso{modelo: "openai/gpt-5.6-sol\r\n"},
+			stored: &store.Profile{
+				Name:          "normal",
+				Status:        store.ProfileUnverified,
+				Event:         "model_mismatch",
+				ExpectedModel: "openai/gpt-5.6-terra",
+				ActualModel:   "openai/gpt-5.6-sol",
+			},
+		},
+		{
 			name:     "agent error is ignored",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
@@ -96,10 +121,10 @@ func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
 			agent:    agenteModeloFalso{modelo: "openai/gpt-5.6-sol\nuntrusted"},
 		},
 		{
-			name:     "oversized response is ignored",
+			name:     "literal 129 character response is ignored",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: strings.Repeat("a", maxModelIdentifierLength+1)},
+			agent:    agenteModeloFalso{modelo: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		},
 	}
 
@@ -127,6 +152,16 @@ func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
 				t.Errorf("profile = %+v, want %+v", profile, tt.stored)
 			}
 		})
+	}
+}
+
+func TestModeloReportadoValidoAceptaLiteralDe128Caracteres(t *testing.T) {
+	modelo, ok := modeloReportadoValido("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if !ok {
+		t.Fatal("modeloReportadoValido rejected a 128 character identifier")
+	}
+	if len(modelo) != 128 {
+		t.Errorf("len(modelo) = %d, want 128", len(modelo))
 	}
 }
 
