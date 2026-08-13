@@ -70,6 +70,44 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	}
 }
 
+func TestReviewCommandOpenCodeOmitsEmptyModelConfiguration(t *testing.T) {
+	adapter := CLIAdapter{BinaryName: "opencode"}
+	args, env, err := adapter.reviewCommand(ReviewRequest{
+		Prompt:       "audit",
+		Paths:        []string{"internal/review/engine.go"},
+		SnapshotDir:  "/snapshot",
+		MaxToolCalls: 7,
+	})
+	if err != nil {
+		t.Fatalf("reviewCommand() error = %v", err)
+	}
+
+	if expected := []string{"run", "--pure", "--agent", "reviewer", "--dir", "/snapshot"}; !reflect.DeepEqual(args, expected) {
+		t.Fatalf("args = %v, expected %v", args, expected)
+	}
+
+	var generated map[string]map[string]map[string]any
+	if err := json.Unmarshal([]byte(env["OPENCODE_CONFIG_CONTENT"]), &generated); err != nil {
+		t.Fatalf("review configuration is invalid JSON: %v", err)
+	}
+	reviewer := generated["agent"]["reviewer"]
+	for _, field := range []string{"model", "reasoningEffort"} {
+		if _, present := reviewer[field]; present {
+			t.Errorf("reviewer configuration contains optional %q field", field)
+		}
+	}
+	permission := reviewer["permission"].(map[string]any)
+	if got := permission["*"]; got != "deny" {
+		t.Errorf("default permission = %v, expected deny", got)
+	}
+	if got := permission["bash"].(map[string]any)["*"]; got != "deny" {
+		t.Errorf("bash permission = %v, expected deny", got)
+	}
+	if got := permission["read"].(map[string]any)["internal/review/engine.go"]; got != "allow" {
+		t.Errorf("read permission = %v, expected allow", got)
+	}
+}
+
 func TestReviewCommandOpenCodeFiltersUnsafePaths(t *testing.T) {
 	adapter := CLIAdapter{BinaryName: "opencode"}
 	_, env, err := adapter.reviewCommand(ReviewRequest{
