@@ -1,5 +1,5 @@
 version: "2.0"
-active_agent: "auto"
+active_agent: "opencode"
 # Solicita generación semántica externa; no representa consentimiento personal.
 request_external_agent_diff: true
 agents:
@@ -27,7 +27,7 @@ agents:
         reasoning_effort: "high"
       normal:
         model: "openai/gpt-5.6-sol"
-        reasoning_effort: "medium"
+        reasoning_effort: "low"
       deep:
         model: "openai/gpt-5.6-sol"
         reasoning_effort: "high"
@@ -42,7 +42,7 @@ review:
     style: "cheap"
     tests: "normal"
     logic: "deep"
-    design: "normal"
+    design: "deep"
     security: "deep"
 validation:
   capabilities:
