@@ -20,6 +20,10 @@ func (a *auditorFalso) EjecutarPrompt(prompt string) (string, error) {
 	return a.salida, a.err
 }
 
+func (a *auditorFalso) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
 // fabricaContadora construye una review.FabricaAuditor que cuenta cuántas
 // veces se invoca (una por dimensión) y devuelve siempre el mismo auditor
 // falso: permite comprobar "cero llamadas al motor de revisión semántica"

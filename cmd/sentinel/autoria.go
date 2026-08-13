@@ -45,14 +45,14 @@ func (a *agenteObservado) EjecutarPrompt(prompt string) (string, error) {
 	return salida, err
 }
 
-func (a *agenteObservado) EjecutarRevision(prompt string, paths []string) (string, error) {
+func (a *agenteObservado) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	reviewer, ok := a.AuditorAgente.(interface {
-		EjecutarRevision(string, []string) (string, error)
+		EjecutarRevision(string, string, []string) (string, error)
 	})
 	if !ok {
 		return "", errors.New("semantic review unavailable")
 	}
-	salida, err := reviewer.EjecutarRevision(prompt, paths)
+	salida, err := reviewer.EjecutarRevision(prompt, sha, paths)
 	if err == nil {
 		a.autoria.registrar(a.AuditorAgente)
 	}

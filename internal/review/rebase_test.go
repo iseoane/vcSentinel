@@ -43,6 +43,10 @@ func (a *stubAuditorRebase) EjecutarPrompt(prompt string) (string, error) {
 		"\nEND_REVIEW\n", nil
 }
 
+func (a *stubAuditorRebase) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
 // fichaTieneHallazgo recorre todas las revisiones/dimensiones de una ficha
 // buscando un ReviewFinding con esa descripción exacta.
 func fichaTieneHallazgo(f review.Ficha, descripcion string) bool {

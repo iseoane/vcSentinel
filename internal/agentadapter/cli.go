@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -38,7 +37,9 @@ type CLIAdapter struct {
 // ReviewRequest limits an agent review to read-only exploration of planned paths.
 type ReviewRequest struct {
 	Prompt       string
+	SHA          string
 	Paths        []string
+	SnapshotDir  string
 	MaxToolCalls int
 }
 
@@ -51,12 +52,17 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 }
 
 // EjecutarRevision runs a semantic review with the bounded tool profile.
-func (c *CLIAdapter) EjecutarRevision(prompt string, paths []string) (string, error) {
+func (c *CLIAdapter) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = TimeoutComando
 	}
-	return c.ejecutarRevisionConTimeout(ReviewRequest{Prompt: prompt, Paths: paths, MaxToolCalls: defaultReviewToolCalls}, timeout)
+	snapshot, safePaths, cleanup, err := createReviewSnapshot("", sha, paths)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	return c.ejecutarRevisionConTimeout(ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls}, timeout)
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
@@ -252,27 +258,7 @@ func (c *CLIAdapter) ejecutarRevisionConTimeout(request ReviewRequest, timeout t
 		return "", err
 	}
 	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
-	env := os.Environ()
-	if c.esClaude() {
-		env = append(env,
-			fmt.Sprintf("CLAUDE_CODE_MODEL=%s", c.Config.Model),
-			fmt.Sprintf("CLAUDE_CODE_REASONING=%s", c.Config.ReasoningEffort),
-		)
-	} else if c.esOpenCode() {
-		env = append(env,
-			fmt.Sprintf("OPENCODE_MODEL=%s", c.Config.Model),
-			fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort),
-		)
-	}
-	keys := make([]string, 0, len(restrictions))
-	for key := range restrictions {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		env = append(env, key+"="+restrictions[key])
-	}
-	cmd.Env = env
+	cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir)
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -291,6 +277,10 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	if !c.esOpenCode() {
 		return nil, nil, fmt.Errorf("semantic review is unavailable: path-confined tool permissions are not configured for this provider")
 	}
+	if request.SnapshotDir == "" {
+		return nil, nil, fmt.Errorf("semantic review requires an immutable snapshot directory")
+	}
+	safePaths := rutasRevisionSeguras(request.Paths)
 	permissions := map[string]map[string]string{
 		"bash":     {"*": "deny"},
 		"edit":     {"*": "deny"},
@@ -300,25 +290,30 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		"grep":     {"*": "deny"},
 		"glob":     {"*": "deny"},
 	}
-	for _, ruta := range rutasRevisionSeguras(request.Paths) {
+	for _, ruta := range safePaths {
 		permissions["read"][ruta] = "allow"
 		permissions["grep"][ruta] = "allow"
 		permissions["glob"][ruta] = "allow"
 	}
+	permission := make(map[string]any, len(permissions)+1)
+	permission["*"] = "deny"
+	for tool, rules := range permissions {
+		permission[tool] = rules
+	}
 	configuration := struct {
 		Agent map[string]struct {
-			Steps      int                          `json:"steps"`
-			Permission map[string]map[string]string `json:"permission"`
+			Steps      int            `json:"steps"`
+			Permission map[string]any `json:"permission"`
 		} `json:"agent"`
 	}{Agent: map[string]struct {
-		Steps      int                          `json:"steps"`
-		Permission map[string]map[string]string `json:"permission"`
-	}{"reviewer": {Steps: maxToolCalls, Permission: permissions}}}
+		Steps      int            `json:"steps"`
+		Permission map[string]any `json:"permission"`
+	}{"reviewer": {Steps: maxToolCalls, Permission: permission}}}
 	encoded, err := json.Marshal(configuration)
 	if err != nil {
 		panic(fmt.Sprintf("review configuration cannot be serialized: %v", err))
 	}
-	return []string{"run", "--agent", "reviewer"}, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
+	return []string{"run", "--pure", "--agent", "reviewer", "--dir", request.SnapshotDir}, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
 }
 
 func rutasRevisionSeguras(rutas []string) []string {
@@ -327,12 +322,43 @@ func rutasRevisionSeguras(rutas []string) []string {
 		normalizada := strings.ReplaceAll(ruta, "\\", "/")
 		limpia := path.Clean(normalizada)
 		drive := len(limpia) >= 2 && limpia[1] == ':'
-		if ruta == "" || path.IsAbs(limpia) || drive || limpia == "." || limpia == ".." || strings.HasPrefix(limpia, "../") || strings.HasPrefix(ruta, "-") || strings.ContainsAny(ruta, "\x00\r\n") {
+		if ruta == "" || path.IsAbs(limpia) || drive || limpia == "." || limpia == ".." || strings.HasPrefix(limpia, "../") || strings.HasPrefix(ruta, "-") || strings.ContainsAny(ruta, "\x00\r\n*?[]{}!") {
 			continue
 		}
 		seguras = append(seguras, limpia)
 	}
 	return seguras
+}
+
+func reviewEnvironment(configuration, snapshot string) []string {
+	isolationRoot := snapshot
+	blocked := map[string]bool{
+		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
+		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true, "OPENCODE_AUTH_CONTENT": true,
+		"HOME": true, "USERPROFILE": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
+		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true,
+	}
+	env := make([]string, 0, len(os.Environ())+10)
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && !blocked[key] {
+			env = append(env, entry)
+		}
+	}
+	env = append(env,
+		"OPENCODE_CONFIG_CONTENT="+configuration,
+		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+		"OPENCODE_PURE=1",
+		"OPENCODE_AUTH_CONTENT={}",
+		"OPENCODE_TEST_HOME="+isolationRoot,
+		"HOME="+isolationRoot,
+		"XDG_CONFIG_HOME="+filepath.Join(isolationRoot, ".config"),
+		"XDG_DATA_HOME="+filepath.Join(isolationRoot, ".local", "share"),
+		"XDG_STATE_HOME="+filepath.Join(isolationRoot, ".local", "state"),
+		"XDG_CACHE_HOME="+filepath.Join(isolationRoot, ".cache"),
+	)
+	env = append(env, "USERPROFILE="+isolationRoot)
+	return env
 }
 
 // comandoPrompt devuelve los argumentos de invocación según el binario y si el

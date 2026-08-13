@@ -56,7 +56,7 @@ func TestAgenteObservadoEjecutarRevisionRequiereCapacidadRestringida(t *testing.
 		autoria:       &recolectorAutoria{},
 	}
 
-	_, err := agente.EjecutarRevision("revisar", []string{"a.go"})
+	_, err := agente.EjecutarRevision("revisar", "abc", []string{"a.go"})
 	if err == nil {
 		t.Fatal("EjecutarRevision debería fallar sin capacidad restringida")
 	}

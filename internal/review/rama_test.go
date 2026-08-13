@@ -48,6 +48,10 @@ func (a *auditorStub) EjecutarPrompt(prompt string) (string, error) {
 	return a.auditSalida, nil
 }
 
+func (a *auditorStub) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
 // salidaAuditOK es un JSONL de auditoría válido para cualquier dimensión
 // (ParsearDimensionResult acepta la primera línea con dimensión conocida).
 const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
@@ -63,7 +67,7 @@ type auditorRutasStub struct {
 	rutas [][]string
 }
 
-func (a *auditorRutasStub) EjecutarRevision(prompt string, rutas []string) (string, error) {
+func (a *auditorRutasStub) EjecutarRevision(prompt, _ string, rutas []string) (string, error) {
 	a.rutas = append(a.rutas, append([]string(nil), rutas...))
 	return a.EjecutarPrompt(prompt)
 }

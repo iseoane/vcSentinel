@@ -33,12 +33,12 @@ func (c *CadenaAdaptador) EjecutarPrompt(prompt string) (string, error) {
 }
 
 // EjecutarRevision preserves per-request fallback while retaining tool limits.
-func (c *CadenaAdaptador) EjecutarRevision(prompt string, paths []string) (string, error) {
+func (c *CadenaAdaptador) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	return c.primeroExitoso(func(a adaptadorCompleto) (string, error) {
 		if reviewer, ok := a.(interface {
-			EjecutarRevision(string, []string) (string, error)
+			EjecutarRevision(string, string, []string) (string, error)
 		}); ok {
-			return reviewer.EjecutarRevision(prompt, paths)
+			return reviewer.EjecutarRevision(prompt, sha, paths)
 		}
 		return "", fmt.Errorf("semantic review unavailable: adapter %s does not implement EjecutarRevision", nombreAdaptador(a))
 	})

@@ -31,6 +31,10 @@ func (a *agenteFake) EjecutarPrompt(prompt string) (string, error) {
 	return salida, nil
 }
 
+func (a *agenteFake) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
 func fabricaFija(respuestas []string) (FabricaAuditor, *agenteFake) {
 	fake := &agenteFake{respuestas: respuestas}
 	return func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
@@ -69,6 +73,10 @@ func (a *agentePrompt) EjecutarPrompt(prompt string) (string, error) {
 	return `{"dim":"logic","verdict":"ok"}`, nil
 }
 
+func (a *agentePrompt) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
 func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
 	agente := &agentePrompt{}
 	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) { return agente, "normal", nil }
@@ -83,6 +91,22 @@ func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
 		ProveedorContexto: proveedorContextoFake{err: errors.New("unreachable")}})
 	if resultado.Veredicto != VerdictOK || strings.Contains(agente.prompt, "Reviewer context") {
 		t.Fatalf("fallo de contexto afectó revisión: veredicto=%s prompt=%q", resultado.Veredicto, agente.prompt)
+	}
+}
+
+func TestAuditarCommitDisplaysOnlyValidatedPaths(t *testing.T) {
+	agente := &agentePrompt{}
+	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) { return agente, "normal", nil }
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: "abc", Bundles: bundlesPrueba(DimLogic), RutasContexto: []string{"safe.go", "bad\ninjection", "*.go", "../outside.go"},
+	})
+	if resultado.Veredicto != VerdictOK || !strings.Contains(agente.prompt, "Permitted paths:\n- safe.go") {
+		t.Fatalf("prompt did not retain validated path: %q", agente.prompt)
+	}
+	for _, rejected := range []string{"bad\ninjection", "*.go", "../outside.go"} {
+		if strings.Contains(agente.prompt, rejected) {
+			t.Fatalf("prompt contains rejected path %q: %q", rejected, agente.prompt)
+		}
 	}
 }
 
@@ -155,6 +179,10 @@ type agenteError struct{}
 
 func (agenteError) EjecutarPrompt(prompt string) (string, error) {
 	return "", errTimeoutSimulado
+}
+
+func (agenteError) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return agenteError{}.EjecutarPrompt(prompt)
 }
 
 var errTimeoutSimulado = &errorSimulado{}
@@ -402,3 +430,23 @@ func TestAuditarCommitUnavailableDoesNotHideBlock(t *testing.T) {
 type auditorFunc func(string) (string, error)
 
 func (f auditorFunc) EjecutarPrompt(prompt string) (string, error) { return f(prompt) }
+
+func (f auditorFunc) EjecutarRevision(prompt, _ string, _ []string) (string, error) { return f(prompt) }
+
+func TestAuditarCommitRejectsUnrestrictedPromptAdapter(t *testing.T) {
+	called := false
+	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return promptOnlyAuditor{called: &called}, "normal", nil
+	}
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+	if resultado.Veredicto != VerdictUnavailable || called {
+		t.Fatalf("verdict=%q prompt-called=%t", resultado.Veredicto, called)
+	}
+}
+
+type promptOnlyAuditor struct{ called *bool }
+
+func (a promptOnlyAuditor) EjecutarPrompt(string) (string, error) {
+	*a.called = true
+	return `{"dim":"logic","verdict":"ok"}`, nil
+}

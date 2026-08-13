@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ type AuditorAgente interface {
 }
 
 type auditorConHerramientasRestringidas interface {
-	EjecutarRevision(prompt string, paths []string) (string, error)
+	EjecutarRevision(prompt, sha string, paths []string) (string, error)
 }
 
 // FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
@@ -156,7 +157,8 @@ func caracteristicaPresente(caracteristicas []change.Caracteristica, nombre stri
 // convierte en veredicto unavailable con razón, nunca en fallo del motor.
 func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria) ResultadoAuditoria {
 	resultado := ResultadoAuditoria{SHA: opts.SHA}
-	contexto := contextoRevisor(opts.ProveedorContexto, opts.SHA, opts.RutasContexto)
+	rutasRevision := rutasRevisionSeguras(opts.RutasContexto)
+	contexto := contextoRevisor(opts.ProveedorContexto, opts.SHA, rutasRevision)
 	if parallel < 1 {
 		parallel = 1
 	}
@@ -195,7 +197,9 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 					rd.Error = err
 					rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}
 				} else {
-					rd.Resultado, rd.Error = auditarConAgente(agente, bundle, dimension, opts, contexto)
+					opciones := opts
+					opciones.RutasContexto = rutasRevision
+					rd.Resultado, rd.Error = auditarConAgente(agente, bundle, dimension, opciones, contexto)
 				}
 				rd.Resultado.Bundle = bundle.Name
 
@@ -239,14 +243,28 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	return resultado
 }
 
+func rutasRevisionSeguras(rutas []string) []string {
+	seguras := make([]string, 0, len(rutas))
+	for _, ruta := range rutas {
+		normalizada := strings.ReplaceAll(ruta, "\\", "/")
+		limpia := path.Clean(normalizada)
+		drive := len(limpia) >= 2 && limpia[1] == ':'
+		if ruta == "" || path.IsAbs(limpia) || drive || limpia == "." || limpia == ".." || strings.HasPrefix(limpia, "../") || strings.HasPrefix(ruta, "-") || strings.ContainsAny(ruta, "\x00\r\n*?[]{}!") {
+			continue
+		}
+		seguras = append(seguras, limpia)
+	}
+	return seguras
+}
+
 // auditarConAgente ejecuta el prompt (con la ronda extra de --answer si el
 // agente pide aclaraciones) y parsea el JSONL del agente.
 func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
 	ejecutar := func(prompt string) (string, error) {
 		if restringido, ok := agente.(auditorConHerramientasRestringidas); ok {
-			return restringido.EjecutarRevision(prompt, opts.RutasContexto)
+			return restringido.EjecutarRevision(prompt, opts.SHA, opts.RutasContexto)
 		}
-		return agente.EjecutarPrompt(prompt)
+		return "", errors.New("semantic review unavailable: restricted reviewer capability is required")
 	}
 	salida, err := ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {

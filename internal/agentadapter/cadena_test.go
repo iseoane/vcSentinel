@@ -41,6 +41,20 @@ type adaptadorFakeDiff struct {
 	diffErr    error
 }
 
+type adaptadorRevisionFake struct {
+	adaptadorFake
+	prompt string
+	sha    string
+	rutas  []string
+}
+
+func (f *adaptadorRevisionFake) EjecutarRevision(prompt, sha string, rutas []string) (string, error) {
+	f.prompt = prompt
+	f.sha = sha
+	f.rutas = append([]string(nil), rutas...)
+	return f.salida, f.err
+}
+
 func (f *adaptadorFakeDiff) ObtenerMensajeCommitConDiff(rutasArchivos []string, capa string, batchNum int, diff string) (string, error) {
 	if f.diffErr != nil {
 		return "", f.diffErr
@@ -92,7 +106,7 @@ func TestCadenaEjecutarRevisionRequiereCapacidadRestringida(t *testing.T) {
 	sinRevision := &adaptadorFake{nombre: "sin-revision", salida: "no debe ejecutarse"}
 	cadena := &CadenaAdaptador{adaptadores: []adaptadorCompleto{sinRevision}}
 
-	_, err := cadena.EjecutarRevision("revisar", []string{"a.go"})
+	_, err := cadena.EjecutarRevision("revisar", "abc", []string{"a.go"})
 	if err == nil {
 		t.Fatal("EjecutarRevision debería fallar sin capacidad restringida")
 	}
@@ -101,6 +115,20 @@ func TestCadenaEjecutarRevisionRequiereCapacidadRestringida(t *testing.T) {
 	}
 	if sinRevision.prompts != 0 {
 		t.Errorf("EjecutarPrompt se ejecutó %d veces, esperado 0", sinRevision.prompts)
+	}
+}
+
+func TestCadenaEjecutarRevisionUsesLaterRestrictedAdapter(t *testing.T) {
+	sinRevision := &adaptadorFake{nombre: "sin-revision", salida: "no debe ejecutarse"}
+	conRevision := &adaptadorRevisionFake{adaptadorFake: adaptadorFake{nombre: "con-revision", salida: "ok"}}
+	cadena := &CadenaAdaptador{adaptadores: []adaptadorCompleto{sinRevision, conRevision}}
+
+	salida, err := cadena.EjecutarRevision("revisar", "abc123", []string{"safe.go"})
+	if err != nil || salida != "ok" {
+		t.Fatalf("EjecutarRevision() = %q, %v", salida, err)
+	}
+	if sinRevision.prompts != 0 || conRevision.prompt != "revisar" || conRevision.sha != "abc123" || strings.Join(conRevision.rutas, ",") != "safe.go" {
+		t.Fatalf("unrestricted=%d prompt=%q sha=%q paths=%v", sinRevision.prompts, conRevision.prompt, conRevision.sha, conRevision.rutas)
 	}
 }
 
