@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
 
@@ -95,7 +96,7 @@ func BundlesForRisk(resultado risk.Resultado, caracteristicas []change.Caracteri
 		}
 		return bundles
 	default:
-		return BundlesForRisk(risk.Resultado{Nivel: risk.NivelStandard}, caracteristicas)
+		return BundlesForRisk(risk.Resultado{Nivel: risk.NivelHigh}, caracteristicas)
 	}
 }
 
@@ -108,17 +109,29 @@ func caracteristicaPresente(caracteristicas []change.Caracteristica, nombre stri
 	return false
 }
 
-// DimensionesParaArchivos preserves callers that have not yet supplied a risk
-// profile. Their former layer policy is replaced by the standard risk bundle.
-func DimensionesParaArchivos(_ []string) []string {
+var dimensionesPorCapa = map[string][]string{
+	"config":   {DimSecurity, DimDesign},
+	"backend":  {DimLogic, DimDesign, DimSecurity},
+	"frontend": {DimStyle, DimLogic},
+	"test":     {DimTests},
+}
+
+var ordenCanonicoDimensiones = []string{DimLogic, DimStyle, DimDesign, DimTests, DimSecurity, DimSpec}
+
+// DimensionesParaArchivos preserves the legacy layer-aware selection for
+// callers that have not yet supplied an explicit risk profile.
+func DimensionesParaArchivos(archivos []string) []string {
+	unidas := map[string]bool{DimSpec: true}
+	for _, archivo := range archivos {
+		for _, dim := range dimensionesPorCapa[git.ClasificarCapa(archivo)] {
+			unidas[dim] = true
+		}
+	}
+
 	var dims []string
-	vistas := map[string]bool{}
-	for _, bundle := range BundlesForRisk(risk.Resultado{Nivel: risk.NivelStandard}, nil) {
-		for _, dim := range bundle.Dimensions {
-			if !vistas[dim] {
-				dims = append(dims, dim)
-				vistas[dim] = true
-			}
+	for _, dim := range ordenCanonicoDimensiones {
+		if unidas[dim] {
+			dims = append(dims, dim)
 		}
 	}
 	return dims

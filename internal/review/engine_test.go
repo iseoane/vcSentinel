@@ -182,6 +182,10 @@ func TestBundlesForRisk(t *testing.T) {
 		{"standard", risk.NivelStandard, nil, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}}},
 		{"elevated", risk.NivelElevated, nil, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}}},
 		{"high with characteristics", risk.NivelHigh, []change.Caracteristica{{Nombre: "public_api", Estado: change.CaracteristicaPresente}, {Nombre: "concurrency", Estado: change.CaracteristicaPresente}}, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}, {Name: BundleContracts, Dimensions: []string{DimSpec}}, {Name: BundleConcurrencyData, Dimensions: []string{DimLogic}}}},
+		{"unknown is conservative high", risk.Nivel("unknown"), nil, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}}},
+		{"high cross module", risk.NivelHigh, []change.Caracteristica{{Nombre: "cross_module", Estado: change.CaracteristicaPresente}}, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}, {Name: BundleContracts, Dimensions: []string{DimSpec}}}},
+		{"high database", risk.NivelHigh, []change.Caracteristica{{Nombre: "database", Estado: change.CaracteristicaPresente}}, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}, {Name: BundleConcurrencyData, Dimensions: []string{DimLogic}}}},
+		{"high absent characteristics add no bundles", risk.NivelHigh, []change.Caracteristica{{Nombre: "public_api", Estado: change.CaracteristicaAusente}, {Nombre: "cross_module", Estado: change.CaracteristicaAusente}, {Nombre: "concurrency", Estado: change.CaracteristicaAusente}, {Nombre: "database", Estado: change.CaracteristicaAusente}}, []ReviewBundle{{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec, DimTests}}, {Name: BundleQuality, Dimensions: []string{DimDesign}}, {Name: BundleSecurity, Dimensions: []string{DimSecurity}}}},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -191,7 +195,20 @@ func TestBundlesForRisk(t *testing.T) {
 			}
 		})
 	}
-	if got := DimensionesParaArchivos([]string{"internal/a.go"}); !reflect.DeepEqual(got, []string{DimLogic, DimSpec, DimTests, DimDesign}) {
-		t.Errorf("DimensionesParaArchivos fallback = %v", got)
+	for _, caso := range []struct {
+		nombre   string
+		archivos []string
+		esperado []string
+	}{
+		{"config", []string{"vassentinel.yml"}, []string{DimDesign, DimSecurity, DimSpec}},
+		{"backend", []string{"internal/review/engine.go"}, []string{DimLogic, DimDesign, DimSecurity, DimSpec}},
+		{"frontend", []string{"web/src/App.tsx"}, []string{DimLogic, DimStyle, DimSpec}},
+		{"all layers", []string{"vassentinel.yml", "internal/review/engine.go", "web/src/App.tsx", "internal/review/engine_test.go"}, []string{DimLogic, DimStyle, DimDesign, DimTests, DimSecurity, DimSpec}},
+	} {
+		t.Run("legacy layers "+caso.nombre, func(t *testing.T) {
+			if got := DimensionesParaArchivos(caso.archivos); !reflect.DeepEqual(got, caso.esperado) {
+				t.Errorf("DimensionesParaArchivos(%v) = %v, expected %v", caso.archivos, got, caso.esperado)
+			}
+		})
 	}
 }
