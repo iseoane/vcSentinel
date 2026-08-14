@@ -376,16 +376,16 @@ func reviewEnvironment(configuration, snapshot, model string) []string {
 		"XDG_CACHE_HOME="+filepath.Join(isolationRoot, ".cache"),
 	)
 	// Isolating HOME strands OpenCode's real auth.json (it lives under the
-	// host's data dir). Inject only the entry for the provider this review
-	// actually uses, never the whole multi-provider credential store: the
-	// sandboxed reviewer has no business seeing unrelated providers' secrets.
+	// host's data dir). Whatever the credential source — an inherited
+	// OPENCODE_AUTH_CONTENT or the host's auth.json — scopeCredentialToProvider
+	// is applied uniformly below, so the sandboxed reviewer only ever sees the
+	// one provider entry this review actually uses, never a whole
+	// multi-provider credential store.
 	if authContent == "" {
-		if content, err := providerAuthContent(hostAuthContentPath(), model); err == nil {
-			authContent = content
-		}
+		authContent = hostAuthContent()
 	}
-	if authContent != "" {
-		env = append(env, "OPENCODE_AUTH_CONTENT="+authContent)
+	if scoped := scopeCredentialToProvider(authContent, model); scoped != "" {
+		env = append(env, "OPENCODE_AUTH_CONTENT="+scoped)
 	}
 	env = append(env, "USERPROFILE="+isolationRoot)
 	return env
@@ -411,35 +411,48 @@ func hostAuthContentPath() string {
 	return filepath.Join(dataHome, "opencode", "auth.json")
 }
 
-// providerAuthContent reads the host's auth.json and returns a JSON object
-// containing only the entry for model's provider (the segment before "/"),
-// so the sandboxed reviewer never sees credentials for providers it isn't
-// configured to use.
-func providerAuthContent(path, model string) (string, error) {
+// hostAuthContent reads the host's auth.json, or "" if it cannot be resolved
+// or read.
+func hostAuthContent() string {
+	path := hostAuthContentPath()
 	if path == "" {
-		return "", nil
-	}
-	provider, _, ok := strings.Cut(model, "/")
-	if !ok || provider == "" {
-		return "", nil
+		return ""
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return ""
+	}
+	return string(raw)
+}
+
+// scopeCredentialToProvider parses a multi-provider credential payload
+// (auth.json's layout, keyed by provider name) and returns a JSON object
+// containing only the entry for model's provider (the segment before "/").
+// Applied the same way regardless of where the credential came from —
+// inherited OPENCODE_AUTH_CONTENT or the host's auth.json — so neither source
+// can bypass provider scoping. Any parse failure or missing entry returns "":
+// fail closed rather than let an unscoped credential reach the sandbox.
+func scopeCredentialToProvider(raw, model string) string {
+	if raw == "" {
+		return ""
+	}
+	provider, _, ok := strings.Cut(model, "/")
+	if !ok || provider == "" {
+		return ""
 	}
 	var all map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &all); err != nil {
-		return "", err
+	if err := json.Unmarshal([]byte(raw), &all); err != nil {
+		return ""
 	}
 	entry, ok := all[provider]
 	if !ok {
-		return "", nil
+		return ""
 	}
 	scoped, err := json.Marshal(map[string]json.RawMessage{provider: entry})
 	if err != nil {
-		return "", err
+		return ""
 	}
-	return string(scoped), nil
+	return string(scoped)
 }
 
 // comandoPrompt devuelve los argumentos de invocación según el binario y si el

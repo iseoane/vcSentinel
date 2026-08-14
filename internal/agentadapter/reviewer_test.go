@@ -165,7 +165,7 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"permission":{"bash":"allow"}}`)
 	t.Setenv("OPENCODE_CONFIG", "/host/config.json")
 	t.Setenv("OPENCODE_CONFIG_DIR", "/host/config")
-	t.Setenv("OPENCODE_AUTH_CONTENT", `{"provider":{"token":"existing"}}`)
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"token":"existing"}}`)
 	t.Setenv("HOME", "/host/home")
 	t.Setenv("XDG_DATA_HOME", "/host/data")
 
@@ -185,7 +185,7 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	if dataHome := values["XDG_DATA_HOME"]; !reflect.DeepEqual(dataHome, []string{"/host/data"}) {
 		t.Fatalf("XDG_DATA_HOME = %v, expected exactly the inherited authentication directory", dataHome)
 	}
-	if auth := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(auth, []string{`{"provider":{"token":"existing"}}`}) {
+	if auth := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(auth, []string{`{"openai":{"token":"existing"}}`}) {
 		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected existing authentication source", auth)
 	}
 	if values["OPENCODE_DISABLE_PROJECT_CONFIG"][0] != "1" || values["OPENCODE_PURE"][0] != "1" {
@@ -250,13 +250,16 @@ func TestReviewEnvironmentPrefersInheritedAuthContentOverHostFile(t *testing.T) 
 	dataHome := t.TempDir()
 	writeHostAuthFixture(t, dataHome)
 	t.Setenv("XDG_DATA_HOME", dataHome)
-	inherited := `{"openai":{"type":"api","key":"caller-provided"}}`
-	t.Setenv("OPENCODE_AUTH_CONTENT", inherited)
+	// Multi-provider on purpose: an inherited credential store must be scoped
+	// to the configured provider exactly like the host's auth.json is, so it
+	// takes precedence over the file but still can't leak unrelated secrets.
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"type":"api","key":"caller-provided"},"groq":{"type":"api","key":"caller-unrelated"}}`)
 
 	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
 	values := environmentValues(env)
-	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{inherited}) {
-		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected the inherited value to take precedence over the host file", got)
+	want := `{"openai":{"type":"api","key":"caller-provided"}}`
+	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{want}) {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected the inherited value scoped to the configured provider %q", got, want)
 	}
 }
 
