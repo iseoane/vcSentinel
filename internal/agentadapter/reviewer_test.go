@@ -169,7 +169,8 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	t.Setenv("HOME", "/host/home")
 	t.Setenv("XDG_DATA_HOME", "/host/data")
 
-	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
+	snapshot := t.TempDir()
+	env := reviewEnvironment("generated", snapshot, "openai/gpt-5.6-terra")
 	values := environmentValues(env)
 	for _, key := range []string{"OPENCODE_CONFIG_CONTENT", "HOME"} {
 		if len(values[key]) != 1 {
@@ -182,8 +183,12 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	if len(values["OPENCODE_CONFIG"]) != 0 || len(values["OPENCODE_CONFIG_DIR"]) != 0 {
 		t.Fatalf("host config was retained: %v", values)
 	}
-	if dataHome := values["XDG_DATA_HOME"]; !reflect.DeepEqual(dataHome, []string{"/host/data"}) {
-		t.Fatalf("XDG_DATA_HOME = %v, expected exactly the inherited authentication directory", dataHome)
+	// XDG_DATA_HOME must NOT keep pointing at the host's real data dir: that
+	// would give OpenCode an unscoped fallback to the full auth.json whenever
+	// scopeCredentialToProvider yields nothing.
+	wantDataHome := filepath.Join(snapshot, ".local", "share")
+	if dataHome := values["XDG_DATA_HOME"]; !reflect.DeepEqual(dataHome, []string{wantDataHome}) {
+		t.Fatalf("XDG_DATA_HOME = %v, expected the isolated snapshot path %q", dataHome, wantDataHome)
 	}
 	if auth := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(auth, []string{`{"openai":{"token":"existing"}}`}) {
 		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected existing authentication source", auth)
@@ -260,6 +265,32 @@ func TestReviewEnvironmentPrefersInheritedAuthContentOverHostFile(t *testing.T) 
 	want := `{"openai":{"type":"api","key":"caller-provided"}}`
 	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{want}) {
 		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected the inherited value scoped to the configured provider %q", got, want)
+	}
+}
+
+// TestReviewEnvironmentDoesNotFallBackToHostDataDirWhenScopingFails is a
+// regression test: when inherited OPENCODE_AUTH_CONTENT is malformed or lacks
+// the configured provider, scopeCredentialToProvider yields "" and no
+// OPENCODE_AUTH_CONTENT is emitted. If XDG_DATA_HOME still pointed at the
+// host's real data dir at that point, OpenCode itself could fall back to
+// reading the unscoped host auth.json directly — bypassing this file's
+// scoping entirely. XDG_DATA_HOME must always end up isolated to the
+// snapshot, regardless of what the inherited credential looked like.
+func TestReviewEnvironmentDoesNotFallBackToHostDataDirWhenScopingFails(t *testing.T) {
+	hostDataHome := t.TempDir()
+	writeHostAuthFixture(t, hostDataHome)
+	t.Setenv("XDG_DATA_HOME", hostDataHome)
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"anthropic":{"key":"not-the-configured-provider"}}`)
+
+	snapshot := t.TempDir()
+	env := reviewEnvironment("generated", snapshot, "openai/gpt-5.6-terra")
+	values := environmentValues(env)
+	if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry when the inherited credential doesn't match the provider", got)
+	}
+	wantDataHome := filepath.Join(snapshot, ".local", "share")
+	if got := values["XDG_DATA_HOME"]; !reflect.DeepEqual(got, []string{wantDataHome}) {
+		t.Fatalf("XDG_DATA_HOME = %v, expected the isolated snapshot path %q, not the host's real data dir", got, wantDataHome)
 	}
 }
 

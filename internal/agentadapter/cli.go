@@ -349,7 +349,8 @@ func reviewEnvironment(configuration, snapshot, model string) []string {
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
 		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true,
 		"HOME": true, "USERPROFILE": true, "XDG_CONFIG_HOME": true,
-		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true, "OPENCODE_AUTH_CONTENT": true,
+		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true, "XDG_DATA_HOME": true,
+		"OPENCODE_AUTH_CONTENT": true,
 	}
 	env := make([]string, 0, len(os.Environ())+10)
 	authContent := ""
@@ -374,6 +375,13 @@ func reviewEnvironment(configuration, snapshot, model string) []string {
 		"XDG_CONFIG_HOME="+filepath.Join(isolationRoot, ".config"),
 		"XDG_STATE_HOME="+filepath.Join(isolationRoot, ".local", "state"),
 		"XDG_CACHE_HOME="+filepath.Join(isolationRoot, ".cache"),
+		// XDG_DATA_HOME is isolated too, not just left blocked: if it were
+		// inherited unblocked (or simply absent) it would still resolve to
+		// the host's real auth.json directory, giving OpenCode an unscoped
+		// fallback whenever scopeCredentialToProvider below yields nothing
+		// (malformed or non-matching credentials). Pointing it at the empty
+		// snapshot closes that fallback path.
+		"XDG_DATA_HOME="+filepath.Join(isolationRoot, ".local", "share"),
 	)
 	// Isolating HOME strands OpenCode's real auth.json (it lives under the
 	// host's data dir). Whatever the credential source — an inherited
