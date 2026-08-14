@@ -494,6 +494,19 @@ func TestAuditarCommitInvalidOutputIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestAuditarConAgenteRetainsProviderFailureReason(t *testing.T) {
+	want := errors.New("reviewer exited: provider request failed")
+	resultado, err := auditarConAgente(auditorFunc(func(string) (string, error) {
+		return "", want
+	}), ReviewBundle{}, DimLogic, OpcionesAuditoria{SHA: "abc"}, "")
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, expected %v", err, want)
+	}
+	if resultado.Verdict != VerdictUnavailable || resultado.Reason != want.Error() {
+		t.Fatalf("result = %+v, expected unavailable with %q", resultado, want)
+	}
+}
+
 func TestAuditarCommitUnavailableDoesNotHideBlock(t *testing.T) {
 	llamadas := 0
 	fabrica := func(_ ReviewBundle, dim string) (AuditorAgente, string, error) {

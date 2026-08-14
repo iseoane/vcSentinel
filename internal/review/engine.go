@@ -407,7 +407,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 	}
 	salida, err := ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {
-		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
+		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
 
 	crudo, err := ParsearDimensionResult(salida)
@@ -419,7 +419,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
 		salida, err = ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
 		if err != nil {
-			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: "provider_unavailable"}, err
+			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
 		crudo, err = ParsearDimensionResult(salida)
 		if err != nil {
