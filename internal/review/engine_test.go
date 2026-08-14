@@ -158,6 +158,7 @@ func TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions(t *te
 type agenteEfectivoFake struct {
 	respuesta string
 	efectivo  agentadapter.AgenteEfectivo
+	definido  bool
 }
 
 func (a agenteEfectivoFake) EjecutarPrompt(string) (string, error) { return a.respuesta, nil }
@@ -167,13 +168,14 @@ func (a agenteEfectivoFake) EjecutarRevision(string, string, []string) (string, 
 }
 
 func (a agenteEfectivoFake) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
-	return a.efectivo, true
+	return a.efectivo, a.definido
 }
 
 func TestAuditarConAgenteStampsTrustedEffectiveProducer(t *testing.T) {
 	agente := agenteEfectivoFake{
 		respuesta: `{"dim":"logic","verdict":"warn","findings":[{"file":"config.go","line":12,"severity":"WARNING","description":"ignored error","producer":{"agent":"spoofed","binary":"spoofed","model":"spoofed","reasoning_effort":"low","model_verified":true},"confidence":0.6}]}`,
 		efectivo:  agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"},
+		definido:  true,
 	}
 
 	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
@@ -185,6 +187,65 @@ func TestAuditarConAgenteStampsTrustedEffectiveProducer(t *testing.T) {
 	}
 	if got, want := resultado.Hallazgos[0].Producer, (Productor{Agente: "opencode", Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"}); got != want {
 		t.Errorf("producer = %#v, expected %#v", got, want)
+	}
+}
+
+func TestStamparProductorEfectivoPreservesOriginalProducerWhenUnavailable(t *testing.T) {
+	original := Productor{Agente: "reported", Binario: "reported", Modelo: "reported-model", Esfuerzo: "low", ModeloVerificado: true}
+	for _, tt := range []struct {
+		name   string
+		agente AuditorAgente
+	}{
+		{name: "does not report", agente: &agenteFake{}},
+		{name: "reports unavailable", agente: agenteEfectivoFake{efectivo: agentadapter.AgenteEfectivo{Binario: "opencode"}}},
+		{name: "reports empty", agente: agenteEfectivoFake{definido: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hallazgos := []Hallazgo{{
+				Producer: original,
+				EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{{
+					Producer: original, Evidence: "reported evidence", Confidence: 0.6,
+				}}},
+			}}
+
+			stamparProductorEfectivo(hallazgos, tt.agente)
+
+			if got := hallazgos[0].Producer; got != original {
+				t.Errorf("producer = %#v, expected original %#v", got, original)
+			}
+			if got := hallazgos[0].EvidenceSet.Values[0].Producer; got != original {
+				t.Errorf("evidence producer = %#v, expected original %#v", got, original)
+			}
+		})
+	}
+}
+
+func TestStamparProductorEfectivoNormalizesEvidenceSetProducers(t *testing.T) {
+	trusted := Productor{Agente: "opencode", Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"}
+	hallazgos := []Hallazgo{{
+		Producer: Productor{Agente: "spoofed"},
+		EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
+			{Producer: Productor{Agente: "spoofed-one"}, Evidence: "first evidence", Confidence: 0.6},
+			{Producer: Productor{Agente: "spoofed-two"}, Evidence: "second evidence", Confidence: 0.8},
+		}},
+	}}
+
+	stamparProductorEfectivo(hallazgos, agenteEfectivoFake{
+		efectivo: agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"},
+		definido: true,
+	})
+
+	if got := hallazgos[0].Producer; got != trusted {
+		t.Errorf("producer = %#v, expected %#v", got, trusted)
+	}
+	if got, want := hallazgos[0].EvidenceSet.Values, []FindingEvidence{
+		{Producer: trusted, Evidence: "first evidence", Confidence: 0.6},
+		{Producer: trusted, Evidence: "second evidence", Confidence: 0.8},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("evidences = %#v, expected %#v", got, want)
+	}
+	if got, want := corroboratedConfidence(hallazgos[0]), 0.8; got != want {
+		t.Errorf("corroborated confidence = %v, expected %v", got, want)
 	}
 }
 

@@ -449,13 +449,23 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 	if !ok || efectivo.Vacio() {
 		return
 	}
+	productor := Productor{
+		Agente:   efectivo.Binario,
+		Binario:  efectivo.Binario,
+		Modelo:   efectivo.Modelo,
+		Esfuerzo: efectivo.Esfuerzo,
+	}
 	for i := range hallazgos {
-		hallazgos[i].Producer = Productor{
-			Agente:   efectivo.Binario,
-			Binario:  efectivo.Binario,
-			Modelo:   efectivo.Modelo,
-			Esfuerzo: efectivo.Esfuerzo,
+		hallazgos[i].Producer = productor
+		if hallazgos[i].EvidenceSet == nil {
+			continue
 		}
+		evidencias := make([]FindingEvidence, len(hallazgos[i].EvidenceSet.Values))
+		for j, evidencia := range hallazgos[i].EvidenceSet.Values {
+			evidencia.Producer = productor
+			evidencias[j] = evidencia
+		}
+		hallazgos[i].EvidenceSet = &FindingEvidenceSet{Values: evidencias}
 	}
 }
 
