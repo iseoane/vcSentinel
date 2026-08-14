@@ -349,12 +349,19 @@ func reviewEnvironment(configuration, snapshot string) []string {
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
 		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true,
 		"HOME": true, "USERPROFILE": true, "XDG_CONFIG_HOME": true,
-		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true,
+		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true, "OPENCODE_AUTH_CONTENT": true,
 	}
 	env := make([]string, 0, len(os.Environ())+10)
+	authContent := ""
 	for _, entry := range os.Environ() {
-		key, _, ok := strings.Cut(entry, "=")
-		if ok && !blocked[key] {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if key == "OPENCODE_AUTH_CONTENT" {
+			authContent = value
+		}
+		if !blocked[key] {
 			env = append(env, entry)
 		}
 	}
@@ -368,8 +375,33 @@ func reviewEnvironment(configuration, snapshot string) []string {
 		"XDG_STATE_HOME="+filepath.Join(isolationRoot, ".local", "state"),
 		"XDG_CACHE_HOME="+filepath.Join(isolationRoot, ".cache"),
 	)
+	// Isolating HOME strands OpenCode's real auth.json (it lives under the
+	// host's data dir). Inject its content directly so the sandboxed reviewer
+	// can still authenticate, without exposing the rest of the host state.
+	if authContent == "" {
+		if content, err := os.ReadFile(hostAuthContentPath()); err == nil {
+			authContent = string(content)
+		}
+	}
+	if authContent != "" {
+		env = append(env, "OPENCODE_AUTH_CONTENT="+authContent)
+	}
 	env = append(env, "USERPROFILE="+isolationRoot)
 	return env
+}
+
+// hostAuthContentPath resolves the real OpenCode auth.json path outside the
+// isolated sandbox, following the same XDG data dir convention OpenCode uses.
+func hostAuthContentPath() string {
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		home := os.Getenv("HOME")
+		if home == "" {
+			home = os.Getenv("USERPROFILE")
+		}
+		dataHome = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(dataHome, "opencode", "auth.json")
 }
 
 // comandoPrompt devuelve los argumentos de invocación según el binario y si el

@@ -373,18 +373,59 @@ type findingCrudo struct {
 	Description string `json:"description"`
 	Suggestion  string `json:"suggestion"`
 
-	ID             *string    `json:"id"`
-	Source         *string    `json:"source"`
-	Producer       *Productor `json:"producer"`
-	Confidence     *float64   `json:"confidence"`
-	Status         *string    `json:"status"`
-	Title          *string    `json:"title"`
-	Evidence       *string    `json:"evidence"`
-	Location       *Ubicacion `json:"location"`
-	Impact         *string    `json:"impact"`
-	Recommendation *string    `json:"recommendation"`
-	Fixable        *string    `json:"fixable"`
-	IntroducedBy   *string    `json:"introduced_by"`
+	ID             *string          `json:"id"`
+	Source         *string          `json:"source"`
+	Producer       *Productor       `json:"producer"`
+	Confidence     *confidenceScore `json:"confidence"`
+	Status         *string          `json:"status"`
+	Title          *string          `json:"title"`
+	Evidence       *string          `json:"evidence"`
+	Location       *Ubicacion       `json:"location"`
+	Impact         *string          `json:"impact"`
+	Recommendation *string          `json:"recommendation"`
+	Fixable        *string          `json:"fixable"`
+	IntroducedBy   *string          `json:"introduced_by"`
+}
+
+// confidenceScore parses a finding's "confidence" field. The review prompt
+// (T5.6) asks the model for a category ("high", "medium", "low") rather than
+// a raw float, since an LLM has no reliable basis for a precise numeric
+// estimate; this maps that category onto the float64 scale the rest of the
+// v2 contract already uses (F2: Confidence 1.0 == full certainty). A bare
+// number is still accepted as-is for callers that already emit one (e.g. the
+// validation-sourced findings from F2, which use 1.0 directly).
+type confidenceScore float64
+
+const (
+	confidenceHigh   confidenceScore = 0.9
+	confidenceMedium confidenceScore = 0.6
+	confidenceLow    confidenceScore = 0.3
+)
+
+func (c *confidenceScore) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "high":
+			*c = confidenceHigh
+		case "medium":
+			*c = confidenceMedium
+		case "low":
+			*c = confidenceLow
+		default:
+			return fmt.Errorf("unknown confidence level %q", s)
+		}
+		return nil
+	}
+	var n float64
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*c = confidenceScore(n)
+	return nil
 }
 
 // esV2 indica si el finding crudo trae al menos un campo exclusivo de v2.
@@ -439,7 +480,7 @@ func (f findingCrudo) aHallazgo(dimensionLinea string) Hallazgo {
 		h.Producer = *f.Producer
 	}
 	if f.Confidence != nil {
-		h.Confidence = *f.Confidence
+		h.Confidence = float64(*f.Confidence)
 	}
 	if f.Status != nil {
 		h.Status = *f.Status

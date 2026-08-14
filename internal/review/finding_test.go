@@ -525,6 +525,44 @@ func TestParsearDimensionResultFindingV1YV2GeneraAmbos(t *testing.T) {
 	}
 }
 
+// TestParsearDimensionResultAcceptsCategoricalConfidence is a regression test
+// for a real gate failure: the review prompt (T5.6) instructs the model to
+// report confidence as "high"/"medium"/"low", but the parser only accepted a
+// raw float. Any finding with a categorical confidence made the whole JSONL
+// line fail json.Unmarshal, which made every line look invalid and produced
+// ErrJSONLInvalido even though the model's output was well-formed.
+func TestParsearDimensionResultAcceptsCategoricalConfidence(t *testing.T) {
+	casos := []struct {
+		nivel    string
+		esperado float64
+	}{
+		{"high", 0.9},
+		{"medium", 0.6},
+		{"low", 0.3},
+	}
+	for _, caso := range casos {
+		salida := `{"dim":"tests","verdict":"fail","findings":[{"dimension":"tests","file":"a_test.go","line":1,"severity":"WARNING","description":"d","evidence":"e","confidence":"` + caso.nivel + `"}]}`
+		resultado, err := ParsearDimensionResult(salida)
+		if err != nil {
+			t.Fatalf("nivel %q: ParsearDimensionResult devolvió error: %v", caso.nivel, err)
+		}
+		if len(resultado.Hallazgos) != 1 {
+			t.Fatalf("nivel %q: Hallazgos = %d, esperado 1", caso.nivel, len(resultado.Hallazgos))
+		}
+		if resultado.Hallazgos[0].Confidence != caso.esperado {
+			t.Errorf("nivel %q: Confidence = %v, esperado %v", caso.nivel, resultado.Hallazgos[0].Confidence, caso.esperado)
+		}
+	}
+}
+
+func TestParsearDimensionResultRejectsUnknownConfidenceLevel(t *testing.T) {
+	salida := `{"dim":"tests","verdict":"fail","findings":[{"dimension":"tests","file":"a_test.go","line":1,"severity":"WARNING","description":"d","evidence":"e","confidence":"certain"}]}`
+	_, err := ParsearDimensionResult(salida)
+	if err == nil {
+		t.Fatal("ParsearDimensionResult() error = nil, expected an explicit error for an unknown confidence level")
+	}
+}
+
 func TestParsearDimensionResultSeveridadV2DesconocidaSeNormaliza(t *testing.T) {
 	// Misma regla de normalización de severidad que v1 (T2.4: un solo
 	// criterio), aplicada también al Hallazgo v2 derivado del mismo finding.

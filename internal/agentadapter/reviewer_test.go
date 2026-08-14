@@ -2,6 +2,8 @@ package agentadapter
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -188,6 +190,35 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	}
 	if values["OPENCODE_DISABLE_PROJECT_CONFIG"][0] != "1" || values["OPENCODE_PURE"][0] != "1" {
 		t.Fatalf("review isolation is incomplete: %v", values)
+	}
+}
+
+func TestReviewEnvironmentInjectsHostAuthContentWhenMissing(t *testing.T) {
+	dataHome := t.TempDir()
+	authDir := filepath.Join(dataHome, "opencode")
+	if err := os.MkdirAll(authDir, 0o700); err != nil {
+		t.Fatalf("create host auth directory: %v", err)
+	}
+	authContent := `{"provider":{"token":"host-secret"}}`
+	if err := os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(authContent), 0o600); err != nil {
+		t.Fatalf("write host auth.json: %v", err)
+	}
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	env := reviewEnvironment("generated", t.TempDir())
+	values := environmentValues(env)
+	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{authContent}) {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected host auth.json content %q", got, authContent)
+	}
+}
+
+func TestReviewEnvironmentOmitsAuthContentWhenHostFileIsAbsent(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	env := reviewEnvironment("generated", t.TempDir())
+	values := environmentValues(env)
+	if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry when the host has no auth.json", got)
 	}
 }
 
