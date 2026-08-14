@@ -247,3 +247,68 @@ contexto nuevo ninguno produce un `CRITICAL` confirmado.
 **Si algún caso sigue reproduciéndose**: no se maquilla el test. Se informa, y la
 fase no cierra hasta entenderlo. Este test es el criterio de salida de la fase
 entera.
+
+---
+
+## Cierre de fase — desviaciones respecto al diseño (hash de cierre `91dc65f`)
+
+- **T5.1–T5.8 estaban implementadas antes de esta ronda de cierre** (fragmentadas
+  en commits previos, incluido `TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence`
+  para T5.8). Lo que quedaba abierto no era implementar ninguna tarea, sino
+  destrabar el `sentinel gate --stage pre-push` final: la revisión semántica con
+  OpenCode fallaba con `REVIEW_INFRASTRUCTURE_ERROR` en todo intento.
+- **El diagnóstico previo de esa infraestructura tenía un error real**: se había
+  concluido que, tras corregir la configuración inválida del revisor (permiso
+  `webfetch` que OpenCode rechazaba, `fa89e58`) y empezar a conservar el stderr
+  real en vez de la cadena fija `provider_unavailable` (`bd058de`, `a09aceb`), el
+  fallo restante (`UnknownError: Unexpected server error` de OpenCode) apuntaba
+  "al servicio/proveedor... no a credenciales ni al aislamiento básico ya
+  verificado". Verificado empíricamente reproduciendo la llamada aislada exacta
+  con un prompt trivial: el fallo desaparecía por completo si no se sobrescribía
+  `HOME`. La causa real era que `reviewEnvironment()` (`internal/agentadapter/cli.go`)
+  aísla `HOME` para separar al revisor de la configuración del proyecto real,
+  pero eso también corta el acceso a `auth.json` de OpenCode (vive bajo el
+  `HOME` real), así que el proceso aislado intentaba autenticarse sin
+  credenciales. Corregido en `1c24f47`.
+- **Bug independiente descubierto en el mismo commit**: el prompt de T5.6 pide
+  al modelo `confidence: high, medium, or low` (categórico), pero el parser
+  (`internal/review/finding.go`) solo aceptaba un `float64`. Cualquier finding
+  con confianza categórica rompía el `json.Unmarshal` de la línea JSONL
+  completa, y si era la única línea, degradaba toda la dimensión a
+  `ErrJSONLInvalido` — indistinguible en los logs de un fallo real del
+  proveedor. Corregido con un tipo `confidenceScore` que acepta ambas formas,
+  también en `1c24f47`.
+- **La revisión semántica real, ya funcionando, encontró y bloqueó 3 `CRITICAL`
+  de seguridad reales en las siguientes tres rondas de corrección del propio
+  fix de autenticación** — exactamente el comportamiento que T5.6/T5.7 estaban
+  diseñados para producir:
+  - `bf14f4b`: el fix de `1c24f47` inyectaba el `auth.json` completo del host
+    (multi-proveedor: `openrouter`/`groq`/`openai`) al sandbox, exponiendo
+    credenciales no relacionadas con el proveedor configurado. Corregido
+    acotando la inyección a la entrada del proveedor de `c.Config.Model`.
+  - `9fbaea0`: el acotado de `bf14f4b` solo se aplicaba a la credencial leída
+    del archivo del host, no a un `OPENCODE_AUTH_CONTENT` heredado del
+    entorno del proceso llamador — que seguía pasando sin filtrar. Unificado
+    para aplicar el mismo filtro a ambas fuentes.
+  - `0953311`: `XDG_DATA_HOME` nunca se bloqueaba de la herencia pasiva del
+    entorno; si el proceso llamador la tenía seteada apuntando al directorio
+    de datos real, un fallo del filtrado (JSON heredado corrupto o sin el
+    proveedor buscado) dejaba a OpenCode caer directamente al `auth.json` real
+    sin pasar por ningún filtro. Corregido aislando también esa variable al
+    snapshot, igual que el resto de `XDG_*`.
+- **Follow-up de cobertura de test cerrado en `91dc65f`**: la re-revisión de
+  `a09aceb` había señalado (severidad `WARNING`, no bloqueante) que su test
+  solo cubría el fallo del proveedor en la primera llamada de
+  `auditarConAgente`, no la segunda ronda (verdicto `question` respondido con
+  `OpcionesAuditoria.Respuestas` no vacío, que también falla). Se añadió
+  `TestAuditarConAgenteRetainsProviderFailureReasonOnAnsweredRetry` cubriendo
+  esa rama.
+- **Verificación de T5.1–T5.7 en esta ronda fue por evidencia de artefacto, no
+  auditoría exhaustiva de sus criterios de aceptación**: se confirmó presencia
+  real de código para cada una (`internal/planning/` para T5.1, `BundlesForRisk`
+  en `engine.go` para T5.2, `AuditarCommit` con semáforo/presupuesto para T5.3,
+  `internal/modelprobe/` para T5.4, `contextoRevisor`/`ContextProvider` para
+  T5.5, `refutarHallazgosCriticos` para T5.7), pero no se re-verificó cada
+  criterio de aceptación individual línea por línea.
+- **`sentinel pr review --base main` no aplicable al cierre**: todo el trabajo
+  de esta ronda se comiteó directo a `main`, sin rama de feature.
