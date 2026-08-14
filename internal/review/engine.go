@@ -36,18 +36,19 @@ type FabricaRefutador func() (AuditorAgente, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
-	SHA                   string
-	Mensaje               string
-	Diff                  string
-	Bundles               []ReviewBundle
-	Budget                ReviewBudget
-	Respuestas            string           // --answer: aclaraciones del usuario (1 ronda extra)
-	PerfilOverride        string           // --profile: fuerza un perfil sobre el mapa
-	OnDimension           func(dim string) // opcional: avisa cuando arranca cada dimensión
-	ProveedorContexto     ContextProvider
-	RutasContexto         []string
-	FabricaRefutador      FabricaRefutador
-	LeerContenidoSnapshot SnapshotReader
+	SHA                            string
+	Mensaje                        string
+	Diff                           string
+	Bundles                        []ReviewBundle
+	Budget                         ReviewBudget
+	Respuestas                     string           // --answer: aclaraciones del usuario (1 ronda extra)
+	PerfilOverride                 string           // --profile: fuerza un perfil sobre el mapa
+	OnDimension                    func(dim string) // opcional: avisa cuando arranca cada dimensión
+	ProveedorContexto              ContextProvider
+	RutasContexto                  []string
+	FabricaRefutador               FabricaRefutador
+	LeerContenidoSnapshot          SnapshotReader
+	DescriptionSimilarityThreshold float64
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -66,6 +67,7 @@ type ResultadoAuditoria struct {
 	Veredicto string // ok | warn | block | question | unavailable
 	Preguntas []AgentQuestion
 	Skipped   []SkippedBundle
+	Findings  []Hallazgo
 }
 
 const (
@@ -246,6 +248,13 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	}
 	wg.Wait()
 	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision, opts.LeerContenidoSnapshot)
+	var findings []Hallazgo
+	for _, dimension := range resultado.Dims {
+		if dimension.Resultado != nil {
+			findings = append(findings, dimension.Resultado.Hallazgos...)
+		}
+	}
+	resultado.Findings = aggregateFindings(findings, opts.DescriptionSimilarityThreshold)
 
 	resultado.Veredicto, resultado.Preguntas = veredictoGlobal(resultado.Dims)
 	return resultado

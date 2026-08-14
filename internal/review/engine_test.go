@@ -123,6 +123,37 @@ func TestAuditarCommitDisplaysOnlyValidatedPaths(t *testing.T) {
 	}
 }
 
+func TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions(t *testing.T) {
+	respuestas := map[string]string{
+		DimLogic:    `{"dim":"logic","verdict":"warn","findings":[{"file":"config.go","line":12,"severity":"WARNING","description":"ignored error permits invalid configuration","source":"review","producer":{"agent":"logic-reviewer"},"confidence":0.6,"title":"unchecked error","evidence":"if err != nil { return }","location":{"file":"config.go","line_start":12,"line_end":16,"symbol":"parseConfig"}}]}`,
+		DimDesign:   `{"dim":"design","verdict":"warn","findings":[{"file":"config.go","line":14,"severity":"CRITICAL","description":"invalid configuration is permitted after ignored error","source":"review","producer":{"agent":"design-reviewer"},"confidence":0.6,"title":"unchecked error","evidence":"return without handling the error","location":{"file":"config.go","line_start":14,"line_end":18,"symbol":"parseConfig"}}]}`,
+		DimSecurity: `{"dim":"security","verdict":"warn","findings":[{"file":"config.go","line":15,"severity":"WARNING","description":"ignored error lets invalid configuration proceed","source":"review","producer":{"agent":"security-reviewer"},"confidence":0.6,"title":"unchecked error","evidence":"the parse error is discarded","location":{"file":"config.go","line_start":15,"line_end":15,"symbol":"parseConfig"}}]}`,
+	}
+	fabrica := func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
+		return &agenteFake{respuestas: []string{respuestas[dimension]}}, "normal", nil
+	}
+
+	resultado := AuditarCommit(fabrica, 3, OpcionesAuditoria{
+		SHA:                            "abc12345",
+		Bundles:                        bundlesPrueba(DimLogic, DimDesign, DimSecurity),
+		DescriptionSimilarityThreshold: 0.3,
+	})
+
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("aggregated findings = %d, expected 1: %#v", len(resultado.Findings), resultado.Findings)
+	}
+	agregado := resultado.Findings[0]
+	if agregado.Severity != SevCritical {
+		t.Errorf("aggregated severity = %q, expected %q", agregado.Severity, SevCritical)
+	}
+	if agregado.EvidenceSet == nil || len(agregado.EvidenceSet.Values) != 3 {
+		t.Errorf("aggregated evidences = %#v, expected 3", agregado.EvidenceSet)
+	}
+	if agregado.Confidence <= 0.6 {
+		t.Errorf("aggregated confidence = %v, must exceed each individual confidence", agregado.Confidence)
+	}
+}
+
 func TestAuditarCommitBlockManda(t *testing.T) {
 	fabrica, _ := fabricaFija([]string{
 		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,

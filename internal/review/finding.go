@@ -169,27 +169,42 @@ type Ubicacion struct {
 // semántica) y Producer describiendo el comando ejecutado (Binario/Agente)
 // en vez de un modelo LLM (Modelo/Esfuerzo/ModeloVerificado quedarían vacíos).
 type Hallazgo struct {
-	ID                  string    `json:"id"`
-	Source              string    `json:"source"`
-	Producer            Productor `json:"producer"`
-	Dimension           string    `json:"dimension"`
-	Severity            string    `json:"severity"`
-	Confidence          float64   `json:"confidence"`
-	Status              string    `json:"status"`
-	Title               string    `json:"title"`
-	Description         string    `json:"description"`
-	Location            Ubicacion `json:"location"`
-	Evidence            string    `json:"evidence"`
-	Impact              string    `json:"impact,omitempty"`
-	Recommendation      string    `json:"recommendation,omitempty"`
-	Fixable             string    `json:"fixable"`
-	IntroducedBy        string    `json:"introduced_by,omitempty"`
-	Fingerprint         string    `json:"fingerprint"`
-	RefutationReason    string    `json:"refutation_reason,omitempty"`
-	RefutationEvidence  string    `json:"refutation_evidence,omitempty"`
-	RefutationLineStart int       `json:"refutation_line_start,omitempty"`
-	RefutationLineEnd   int       `json:"refutation_line_end,omitempty"`
-	RefutationRangeHash string    `json:"refutation_range_hash,omitempty"`
+	ID                  string              `json:"id"`
+	Source              string              `json:"source"`
+	Producer            Productor           `json:"producer"`
+	Dimension           string              `json:"dimension"`
+	Severity            string              `json:"severity"`
+	Confidence          float64             `json:"confidence"`
+	Status              string              `json:"status"`
+	Title               string              `json:"title"`
+	Description         string              `json:"description"`
+	Location            Ubicacion           `json:"location"`
+	Evidence            string              `json:"evidence"`
+	EvidenceSet         *FindingEvidenceSet `json:"evidence_set,omitempty"`
+	Impact              string              `json:"impact,omitempty"`
+	Recommendation      string              `json:"recommendation,omitempty"`
+	Fixable             string              `json:"fixable"`
+	IntroducedBy        string              `json:"introduced_by,omitempty"`
+	Fingerprint         string              `json:"fingerprint"`
+	RefutationReason    string              `json:"refutation_reason,omitempty"`
+	RefutationEvidence  string              `json:"refutation_evidence,omitempty"`
+	RefutationLineStart int                 `json:"refutation_line_start,omitempty"`
+	RefutationLineEnd   int                 `json:"refutation_line_end,omitempty"`
+	RefutationRangeHash string              `json:"refutation_range_hash,omitempty"`
+}
+
+// FindingEvidence records the source evidence preserved during aggregation.
+type FindingEvidence struct {
+	Dimension  string    `json:"dimension"`
+	Producer   Productor `json:"producer"`
+	Evidence   string    `json:"evidence"`
+	Confidence float64   `json:"confidence"`
+}
+
+// FindingEvidenceSet holds the evidence retained by an aggregated finding.
+// A pointer keeps Hallazgo comparable for existing consumers.
+type FindingEvidenceSet struct {
+	Values []FindingEvidence `json:"values"`
 }
 
 // Motivos de descarte de un Hallazgo durante la validación de evidencia.
