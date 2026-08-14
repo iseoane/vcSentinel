@@ -258,7 +258,7 @@ func (c *CLIAdapter) ejecutarRevisionConTimeout(request ReviewRequest, timeout t
 		return "", err
 	}
 	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
-	cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir)
+	cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
@@ -343,7 +343,7 @@ func rutasRevisionSeguras(rutas []string) []string {
 	return seguras
 }
 
-func reviewEnvironment(configuration, snapshot string) []string {
+func reviewEnvironment(configuration, snapshot, model string) []string {
 	isolationRoot := snapshot
 	blocked := map[string]bool{
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
@@ -376,11 +376,12 @@ func reviewEnvironment(configuration, snapshot string) []string {
 		"XDG_CACHE_HOME="+filepath.Join(isolationRoot, ".cache"),
 	)
 	// Isolating HOME strands OpenCode's real auth.json (it lives under the
-	// host's data dir). Inject its content directly so the sandboxed reviewer
-	// can still authenticate, without exposing the rest of the host state.
+	// host's data dir). Inject only the entry for the provider this review
+	// actually uses, never the whole multi-provider credential store: the
+	// sandboxed reviewer has no business seeing unrelated providers' secrets.
 	if authContent == "" {
-		if content, err := os.ReadFile(hostAuthContentPath()); err == nil {
-			authContent = string(content)
+		if content, err := providerAuthContent(hostAuthContentPath(), model); err == nil {
+			authContent = content
 		}
 	}
 	if authContent != "" {
@@ -392,6 +393,9 @@ func reviewEnvironment(configuration, snapshot string) []string {
 
 // hostAuthContentPath resolves the real OpenCode auth.json path outside the
 // isolated sandbox, following the same XDG data dir convention OpenCode uses.
+// Returns "" if no host home directory can be resolved: a relative fallback
+// would read auth.json from whatever the process's cwd happens to be, which
+// under review may be the audited project itself.
 func hostAuthContentPath() string {
 	dataHome := os.Getenv("XDG_DATA_HOME")
 	if dataHome == "" {
@@ -399,9 +403,43 @@ func hostAuthContentPath() string {
 		if home == "" {
 			home = os.Getenv("USERPROFILE")
 		}
+		if home == "" {
+			return ""
+		}
 		dataHome = filepath.Join(home, ".local", "share")
 	}
 	return filepath.Join(dataHome, "opencode", "auth.json")
+}
+
+// providerAuthContent reads the host's auth.json and returns a JSON object
+// containing only the entry for model's provider (the segment before "/"),
+// so the sandboxed reviewer never sees credentials for providers it isn't
+// configured to use.
+func providerAuthContent(path, model string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	provider, _, ok := strings.Cut(model, "/")
+	if !ok || provider == "" {
+		return "", nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return "", err
+	}
+	entry, ok := all[provider]
+	if !ok {
+		return "", nil
+	}
+	scoped, err := json.Marshal(map[string]json.RawMessage{provider: entry})
+	if err != nil {
+		return "", err
+	}
+	return string(scoped), nil
 }
 
 // comandoPrompt devuelve los argumentos de invocación según el binario y si el

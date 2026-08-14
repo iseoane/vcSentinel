@@ -169,7 +169,7 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	t.Setenv("HOME", "/host/home")
 	t.Setenv("XDG_DATA_HOME", "/host/data")
 
-	env := reviewEnvironment("generated", t.TempDir())
+	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
 	values := environmentValues(env)
 	for _, key := range []string{"OPENCODE_CONFIG_CONTENT", "HOME"} {
 		if len(values[key]) != 1 {
@@ -193,32 +193,83 @@ func TestReviewEnvironmentOverridesInheritedConfiguration(t *testing.T) {
 	}
 }
 
-func TestReviewEnvironmentInjectsHostAuthContentWhenMissing(t *testing.T) {
-	dataHome := t.TempDir()
+// writeHostAuthFixture writes a multi-provider auth.json (mirroring OpenCode's
+// real layout, which stores one entry per configured provider) so tests can
+// verify only the requested provider's entry crosses into the sandbox.
+func writeHostAuthFixture(t *testing.T, dataHome string) {
+	t.Helper()
 	authDir := filepath.Join(dataHome, "opencode")
 	if err := os.MkdirAll(authDir, 0o700); err != nil {
 		t.Fatalf("create host auth directory: %v", err)
 	}
-	authContent := `{"provider":{"token":"host-secret"}}`
-	if err := os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(authContent), 0o600); err != nil {
+	fixture := `{"openai":{"type":"oauth","key":"openai-secret"},"groq":{"type":"api","key":"unrelated-secret"}}`
+	if err := os.WriteFile(filepath.Join(authDir, "auth.json"), []byte(fixture), 0o600); err != nil {
 		t.Fatalf("write host auth.json: %v", err)
 	}
+}
+
+func TestReviewEnvironmentInjectsHostAuthContentWhenMissing(t *testing.T) {
+	t.Setenv("OPENCODE_AUTH_CONTENT", "")
+	dataHome := t.TempDir()
+	writeHostAuthFixture(t, dataHome)
 	t.Setenv("XDG_DATA_HOME", dataHome)
 
-	env := reviewEnvironment("generated", t.TempDir())
+	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
 	values := environmentValues(env)
-	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{authContent}) {
-		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected host auth.json content %q", got, authContent)
+	want := `{"openai":{"type":"oauth","key":"openai-secret"}}`
+	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{want}) {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected only the configured provider's entry %q", got, want)
 	}
 }
 
 func TestReviewEnvironmentOmitsAuthContentWhenHostFileIsAbsent(t *testing.T) {
+	t.Setenv("OPENCODE_AUTH_CONTENT", "")
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
-	env := reviewEnvironment("generated", t.TempDir())
+	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
 	values := environmentValues(env)
 	if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
 		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry when the host has no auth.json", got)
+	}
+}
+
+func TestReviewEnvironmentOmitsAuthContentForUnconfiguredProvider(t *testing.T) {
+	t.Setenv("OPENCODE_AUTH_CONTENT", "")
+	dataHome := t.TempDir()
+	writeHostAuthFixture(t, dataHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	env := reviewEnvironment("generated", t.TempDir(), "anthropic/claude")
+	values := environmentValues(env)
+	if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry for a provider absent from the host auth store", got)
+	}
+}
+
+func TestReviewEnvironmentPrefersInheritedAuthContentOverHostFile(t *testing.T) {
+	dataHome := t.TempDir()
+	writeHostAuthFixture(t, dataHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	inherited := `{"openai":{"type":"api","key":"caller-provided"}}`
+	t.Setenv("OPENCODE_AUTH_CONTENT", inherited)
+
+	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
+	values := environmentValues(env)
+	if got := values["OPENCODE_AUTH_CONTENT"]; !reflect.DeepEqual(got, []string{inherited}) {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected the inherited value to take precedence over the host file", got)
+	}
+}
+
+func TestReviewEnvironmentSkipsRelativeAuthPathWhenNoHomeIsResolvable(t *testing.T) {
+	t.Setenv("OPENCODE_AUTH_CONTENT", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	env := reviewEnvironment("generated", t.TempDir(), "openai/gpt-5.6-terra")
+	values := environmentValues(env)
+	if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry when no host home directory can be resolved", got)
 	}
 }
 
