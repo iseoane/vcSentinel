@@ -90,56 +90,81 @@ cada evidencia individual).
 
 ---
 
-## T6.2 — Supersede de determinista sobre semántico
+## T6.2 — Supersede de determinista sobre semántico ✅ (hash de cierre `b8496e2`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 220 líneas |
 | Depende de | T6.1 |
-| Commit | `feat(aggregation): el hallazgo determinista sustituye al semantico equivalente` |
+| Commits | `d795584` (implementación: puente + supersede), `1c900e5` (corrección tras revisión: exigir misma `Dimension` para no descartar hallazgos no relacionados, aplicar el determinista solo al commit HEAD, normalizar rutas, estampar `Source: SourceReview` con autoridad del motor), `cf347a5` (SHA validado explícito en vez de inferido por posición), `be44742` (avisar en vez de descartar en silencio si `HEAD` es irresoluble), `b53cdf4`/`b8496e2` (refuerzo de tests) |
 
-**Prerrequisito que la ficha original no mencionaba**: `internal/validation.Hallazgo`
-(F1, `internal/validation/validacion.go`) no tiene `Location` ni archivo/línea
-— solo `Capability`, `Comando`, `Evidencia` — así que hoy no se puede comparar
-posicionalmente contra la `Location` de un `review.Hallazgo` para decidir "misma
-ubicación". `SourceValidation` ya está declarado en
-`internal/review/finding.go` con el puente pensado desde F2 (comentario en esa
-misma sección: "Un Hallazgo con `Source=SourceValidation` se rellenaría con
-`Confidence: 1.0`... y `Producer` describiendo el comando ejecutado"), pero
-**ese puente no está construido**: ningún código produce hoy un
-`review.Hallazgo{Source: SourceValidation}` a partir de un
-`validation.Hallazgo`. Esta tarea depende de construir ese puente primero
-(darle `Location` real a `validation.Hallazgo`, o proyectar sus hallazgos como
-`review.Hallazgo` en el punto de agregación) antes de poder implementar el
-supersede en sí.
+**Decisión de alcance, confirmada con el usuario antes de implementar**: el
+`gate` automático (pre-commit/pre-push) NO se toca — corta en corto a
+propósito ("cero tokens gastados" si la validación ya falló, decisión de
+costo ya documentada en `comandos_pr.go`). El supersede se cablea solo en
+`pr create --force`, el único flujo real donde validación determinista y
+revisión semántica ya coexisten en el mismo reporte sin coste adicional de
+tokens (con `--force`, `AnalizarRama` ya se invoca pese a la validación en
+rojo).
 
-**También revisar el caso de ejemplo original**: en el `gate` actual
-(`internal/gate/gate.go`, T1.7), si `validation.Hallazgos(runs, ...)` no está
-vacío, `EjecutarGate` devuelve `VALIDATION_FAILED` de inmediato y **nunca
-llega a invocar** `review.AuditarCommit` — la revisión semántica no se
-ejecuta si la validación determinista ya falló. El ejemplo "un finding de
-`gofmt` y uno semántico de estilo en la misma línea" no ocurre literalmente
-en el flujo de `gate` tal como está cableado hoy (más aún: F5 T5.2 ya
-convirtió `style` en capability determinista con la semántica residual
-desactivada por defecto, evitando el choque de raíz en ese caso concreto). El
-supersede sigue siendo relevante para otros puntos donde ambas fuentes sí
-puedan coexistir en un mismo reporte (p. ej. `pr review` agregando varios
-commits, o un futuro flujo que no corte en corto ante un fallo de
-validación) — hay que decidir al abrir la tarea si ese escenario combinado ya
-existe en algún flujo real o si esta tarea también debe crearlo para tener
-algo que probar.
+**Puente construido**: `cmd/sentinel/proyeccion_validacion.go`
+(`proyectarHallazgosValidacion`) convierte cada `validation.Hallazgo` en uno o
+más `review.Hallazgo{Source: SourceValidation}`, parseando `Evidencia` línea a
+línea: el prefijo `archivo:línea[:columna]:` que ya usan `go vet`/`go
+build`/el compilador produce una ubicación exacta; una línea que es solo una
+ruta (`gofmt -l`) cubre el archivo entero; si nada es reconocible, se conserva
+un hallazgo sin ubicación en vez de perder la evidencia. `Dimension` se asigna
+por un mapa conservador `capability → dimensión` (`format`/`lint` → `style`
+únicamente); cualquier capability ausente del mapa (`unit_test`, `build`,
+cualquiera desconocida) deja `Dimension` vacía a propósito.
 
-**Hacer**: un hallazgo con `source: validation` invalida los `source: review` que
-describen el mismo problema en la misma ubicación. Si el linter ya lo dijo, el
-LLM no lo repite.
+**Núcleo de supersede**: `internal/review/supersede.go`
+(`SupersedeDeterministicFindings`) exige **ambas** condiciones para descartar
+un hallazgo semántico: misma `Dimension` (nunca solo ubicación — la primera
+implementación lo hacía y la revisión semántica real lo bloqueó como
+`CRITICAL` de seguridad: un `gofmt` de archivo completo podía borrar
+hallazgos de seguridad no relacionados en el mismo archivo) y ubicación
+solapada (o archivo completo si el determinista no trae línea). Un
+determinista con `Dimension` vacía nunca suplanta nada. Rutas se comparan
+normalizadas (`path.Clean`) para que `./a.go` y `a.go` coincidan. `Source:
+SourceReview` ahora lo estampa el motor con autoridad
+(`stamparSourceReview` en `engine.go`, junto a `stamparProductorEfectivo` de
+T6.1) en vez de confiar en que el LLM lo declare en su JSON — el prompt nunca
+se lo pide, así que dependía de un campo que en la práctica siempre llegaba
+vacío.
 
-**Aceptación**: test con un `review.Hallazgo{Source: SourceValidation}` y uno
-`{Source: SourceReview}` sobre la misma `Location` → sobrevive el
-determinista. (El ejemplo "`gofmt` + semántico de estilo" de la ficha
-original ya no es reproducible tal cual dentro de `gate` por el corte en
-corto descrito arriba; usar el puente construido en esta misma tarea para
-generar el caso de prueba.)
+**Alcance de rama, no solo de commit**: los hallazgos deterministas de
+`pr create --force` provienen de validar el worktree actual (el tip), no cada
+commit histórico de la rama. `OpcionesRama.HallazgosDeterministasSHA`
+(resuelto explícitamente vía `git.SHAHead()`, nunca inferido por posición en
+la lista de SHAs) le dice a `AnalizarRama` a qué commit exacto aplicarlos;
+cualquier otro commit de la rama recibe `nil`. Si `HEAD` no se puede
+resolver, se avisa explícitamente en la terminal y el supersede
+simplemente no se aplica en esa ejecución (nunca en silencio, y nunca
+aborta la publicación por esto).
+
+**Hacer**: un hallazgo con `source: validation` invalida los `source: review`
+que describen el mismo problema (misma dimensión) en la misma ubicación. Si
+el linter ya lo dijo, el LLM no lo repite.
+
+**Aceptación**: cumplida — `TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne`
+(`engine_test.go`) prueba exactamente el caso de la ficha original: un
+`review.Hallazgo{Source: SourceValidation}` y uno `{Source: SourceReview}`
+sobre la misma `Location` y `Dimension` → sobrevive el determinista. `sentinel
+gate --stage pre-push` sobre el HEAD final → `PASS`.
+
+**Limitación de testabilidad, aceptada y documentada (no bloqueante)**:
+`ResultadoAuditoria.Findings` (el resultado consolidado de T6.1+T6.2, con
+dedup y supersede ya aplicados) hoy no tiene NINGÚN consumidor en producción
+— ni el veredicto (`veredictoGlobal` opera sobre `resultado.Dims`, previo al
+supersede), ni la ficha persistida en el ledger, ni ningún renderer. Por
+eso no existe un test de integración de `AnalizarRama` con 2+ commits que
+observe el efecto del supersede de punta a punta (la revisión semántica lo
+señaló dos veces): el mecanismo está probado exhaustivamente a nivel unitario
+(la función de selección de commit, el wiring de `auditarCommitRama`, el
+supersede puro) pero su efecto real solo será observable cuando exista un
+consumidor — tarea de T6.5 (renderer adaptado), no de esta.
 
 ---
 
