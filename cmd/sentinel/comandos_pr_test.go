@@ -844,6 +844,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
 		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
 	var opcionesRecibidas review.OpcionesRama
+	var sePublico bool
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
 		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
@@ -859,7 +860,10 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
-		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/14", false, nil },
+		publicar: func(string, string, string) (string, bool, error) {
+			sePublico = true
+			return "https://github.com/x/pr/14", false, nil
+		},
 		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
 			return nil
 		},
@@ -867,11 +871,17 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (el fallo de HEAD no bloquea --force)", codigo)
 	}
+	if !sePublico {
+		t.Error("se esperaba que la PR se publicara pese al fallo de HEAD")
+	}
 	if !strings.Contains(salida.String(), "no se pudo resolver el commit validado") {
 		t.Errorf("se esperaba un aviso explícito del fallo de HEAD, got: %s", salida.String())
 	}
 	if opcionesRecibidas.HallazgosDeterministasSHA != "" {
 		t.Errorf("HallazgosDeterministasSHA = %q, expected empty when HEAD couldn't be resolved", opcionesRecibidas.HallazgosDeterministasSHA)
+	}
+	if len(opcionesRecibidas.HallazgosDeterministas) != 1 {
+		t.Errorf("HallazgosDeterministas = %#v, expected the projected finding to be preserved even without a bound SHA", opcionesRecibidas.HallazgosDeterministas)
 	}
 }
 
