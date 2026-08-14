@@ -282,13 +282,12 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	}
 	safePaths := rutasRevisionSeguras(request.Paths)
 	permissions := map[string]map[string]string{
-		"bash":     {"*": "deny"},
-		"edit":     {"*": "deny"},
-		"write":    {"*": "deny"},
-		"webfetch": {"*": "deny"},
-		"read":     {"*": "deny"},
-		"grep":     {"*": "deny"},
-		"glob":     {"*": "deny"},
+		"bash":  {"*": "deny"},
+		"edit":  {"*": "deny"},
+		"write": {"*": "deny"},
+		"read":  {"*": "deny"},
+		"grep":  {"*": "deny"},
+		"glob":  {"*": "deny"},
 	}
 	for _, ruta := range safePaths {
 		permissions["read"][ruta] = "allow"

@@ -56,10 +56,13 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	if got := reviewer.Permission["*"]; got != "deny" {
 		t.Errorf("default permission = %v, expected deny", got)
 	}
-	for _, tool := range []string{"bash", "edit", "write", "webfetch"} {
+	for _, tool := range []string{"bash", "edit", "write"} {
 		if got := reviewer.Permission[tool].(map[string]any)["*"]; got != "deny" {
 			t.Errorf("%s permission = %v, expected deny", tool, got)
 		}
+	}
+	if got := reviewer.Permission["webfetch"]; got != nil {
+		t.Errorf("webfetch permission = %v, expected absent", got)
 	}
 	for _, path := range []string{"internal/review/engine.go", "internal/planning/context.go"} {
 		for _, tool := range []string{"read", "grep", "glob"} {
