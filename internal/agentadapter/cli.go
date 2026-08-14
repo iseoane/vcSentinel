@@ -261,9 +261,14 @@ func (c *CLIAdapter) ejecutarRevisionConTimeout(request ReviewRequest, timeout t
 	cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir)
 
 	var out bytes.Buffer
+	var stderr bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 	cmd.Stdin = strings.NewReader(request.Prompt)
 	if err := cmd.Run(); err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return "", fmt.Errorf("run restricted reviewer: %w: %s", err, detail)
+		}
 		return "", err
 	}
 	return strings.TrimSpace(out.String()), nil
