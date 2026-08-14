@@ -269,28 +269,37 @@ func TestReviewEnvironmentPrefersInheritedAuthContentOverHostFile(t *testing.T) 
 }
 
 // TestReviewEnvironmentDoesNotFallBackToHostDataDirWhenScopingFails is a
-// regression test: when inherited OPENCODE_AUTH_CONTENT is malformed or lacks
-// the configured provider, scopeCredentialToProvider yields "" and no
+// regression test: whenever scopeCredentialToProvider yields "" (malformed
+// inherited JSON, or valid JSON lacking the configured provider), no
 // OPENCODE_AUTH_CONTENT is emitted. If XDG_DATA_HOME still pointed at the
 // host's real data dir at that point, OpenCode itself could fall back to
 // reading the unscoped host auth.json directly — bypassing this file's
 // scoping entirely. XDG_DATA_HOME must always end up isolated to the
-// snapshot, regardless of what the inherited credential looked like.
+// snapshot in both cases; this only asserts the environment produced, not
+// that a real OpenCode process is unable to reach the fixture file.
 func TestReviewEnvironmentDoesNotFallBackToHostDataDirWhenScopingFails(t *testing.T) {
-	hostDataHome := t.TempDir()
-	writeHostAuthFixture(t, hostDataHome)
-	t.Setenv("XDG_DATA_HOME", hostDataHome)
-	t.Setenv("OPENCODE_AUTH_CONTENT", `{"anthropic":{"key":"not-the-configured-provider"}}`)
-
-	snapshot := t.TempDir()
-	env := reviewEnvironment("generated", snapshot, "openai/gpt-5.6-terra")
-	values := environmentValues(env)
-	if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
-		t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry when the inherited credential doesn't match the provider", got)
+	casos := map[string]string{
+		"non-matching provider": `{"anthropic":{"key":"not-the-configured-provider"}}`,
+		"malformed JSON":        `{"anthropic":`,
 	}
-	wantDataHome := filepath.Join(snapshot, ".local", "share")
-	if got := values["XDG_DATA_HOME"]; !reflect.DeepEqual(got, []string{wantDataHome}) {
-		t.Fatalf("XDG_DATA_HOME = %v, expected the isolated snapshot path %q, not the host's real data dir", got, wantDataHome)
+	for nombre, inherited := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			hostDataHome := t.TempDir()
+			writeHostAuthFixture(t, hostDataHome)
+			t.Setenv("XDG_DATA_HOME", hostDataHome)
+			t.Setenv("OPENCODE_AUTH_CONTENT", inherited)
+
+			snapshot := t.TempDir()
+			env := reviewEnvironment("generated", snapshot, "openai/gpt-5.6-terra")
+			values := environmentValues(env)
+			if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
+				t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry for %s", got, nombre)
+			}
+			wantDataHome := filepath.Join(snapshot, ".local", "share")
+			if got := values["XDG_DATA_HOME"]; !reflect.DeepEqual(got, []string{wantDataHome}) {
+				t.Fatalf("XDG_DATA_HOME = %v, expected the isolated snapshot path %q for %s, not the host's real data dir", got, wantDataHome, nombre)
+			}
+		})
 	}
 }
 
