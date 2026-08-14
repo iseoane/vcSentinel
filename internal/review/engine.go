@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
@@ -435,7 +436,27 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
 	}
+	stamparProductorEfectivo(crudo.Hallazgos, agente)
 	return crudo, nil
+}
+
+func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
+	reporta, ok := agente.(agentadapter.ReportaAgenteEfectivo)
+	if !ok {
+		return
+	}
+	efectivo, ok := reporta.AgenteEfectivo()
+	if !ok || efectivo.Vacio() {
+		return
+	}
+	for i := range hallazgos {
+		hallazgos[i].Producer = Productor{
+			Agente:   efectivo.Binario,
+			Binario:  efectivo.Binario,
+			Modelo:   efectivo.Modelo,
+			Esfuerzo: efectivo.Esfuerzo,
+		}
+	}
 }
 
 func ejecutarConReintento(ejecutar func(string) (string, error), prompt string) (string, error) {

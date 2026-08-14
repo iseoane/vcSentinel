@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
@@ -151,6 +152,39 @@ func TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions(t *te
 	}
 	if agregado.Confidence <= 0.6 {
 		t.Errorf("aggregated confidence = %v, must exceed each individual confidence", agregado.Confidence)
+	}
+}
+
+type agenteEfectivoFake struct {
+	respuesta string
+	efectivo  agentadapter.AgenteEfectivo
+}
+
+func (a agenteEfectivoFake) EjecutarPrompt(string) (string, error) { return a.respuesta, nil }
+
+func (a agenteEfectivoFake) EjecutarRevision(string, string, []string) (string, error) {
+	return a.respuesta, nil
+}
+
+func (a agenteEfectivoFake) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
+	return a.efectivo, true
+}
+
+func TestAuditarConAgenteStampsTrustedEffectiveProducer(t *testing.T) {
+	agente := agenteEfectivoFake{
+		respuesta: `{"dim":"logic","verdict":"warn","findings":[{"file":"config.go","line":12,"severity":"WARNING","description":"ignored error","producer":{"agent":"spoofed","binary":"spoofed","model":"spoofed","reasoning_effort":"low","model_verified":true},"confidence":0.6}]}`,
+		efectivo:  agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"},
+	}
+
+	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
+	if err != nil {
+		t.Fatalf("auditarConAgente() error = %v", err)
+	}
+	if len(resultado.Hallazgos) != 1 {
+		t.Fatalf("hallazgos = %#v, expected one", resultado.Hallazgos)
+	}
+	if got, want := resultado.Hallazgos[0].Producer, (Productor{Agente: "opencode", Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"}); got != want {
+		t.Errorf("producer = %#v, expected %#v", got, want)
 	}
 }
 

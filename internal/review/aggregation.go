@@ -21,9 +21,10 @@ func aggregateFindings(findings []Hallazgo, threshold float64) []Hallazgo {
 	aggregated := make([]Hallazgo, 0, len(findings))
 	exact := make(map[string]int, len(findings))
 	for _, finding := range findings {
-		if finding.Fingerprint == "" {
-			finding.Fingerprint = Fingerprint(finding)
+		if finding.Status == StatusRefuted {
+			continue
 		}
+		finding.Fingerprint = Fingerprint(finding)
 		fingerprint := finding.Fingerprint
 		if index, ok := exact[fingerprint]; ok {
 			aggregated[index] = mergeFindings(aggregated[index], finding)
@@ -54,10 +55,12 @@ func aggregateFindings(findings []Hallazgo, threshold float64) []Hallazgo {
 }
 
 func mergeFindings(merged, finding Hallazgo) Hallazgo {
+	evidences := append(findingEvidences(merged), findingEvidences(finding)...)
 	if severityRank(finding.Severity) > severityRank(merged.Severity) {
-		merged.Severity = finding.Severity
+		finding.EvidenceSet = &FindingEvidenceSet{Values: evidences}
+		return finding
 	}
-	merged.EvidenceSet = &FindingEvidenceSet{Values: append(findingEvidences(merged), findingEvidences(finding)...)}
+	merged.EvidenceSet = &FindingEvidenceSet{Values: evidences}
 	return merged
 }
 
@@ -133,8 +136,13 @@ func corroboratedConfidence(finding Hallazgo) float64 {
 			byProducer[evidence.Producer] = evidence.Confidence
 		}
 	}
-	if len(byProducer) < 2 {
+	if len(byProducer) == 0 {
 		return finding.Confidence
+	}
+	if len(byProducer) == 1 {
+		for _, confidence := range byProducer {
+			return confidence
+		}
 	}
 	confidence := 1.0
 	for _, producerConfidence := range byProducer {
