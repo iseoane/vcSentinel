@@ -881,7 +881,10 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 		t.Errorf("HallazgosDeterministasSHA = %q, expected empty when HEAD couldn't be resolved", opcionesRecibidas.HallazgosDeterministasSHA)
 	}
 	if len(opcionesRecibidas.HallazgosDeterministas) != 1 {
-		t.Errorf("HallazgosDeterministas = %#v, expected the projected finding to be preserved even without a bound SHA", opcionesRecibidas.HallazgosDeterministas)
+		t.Fatalf("HallazgosDeterministas = %#v, expected the projected finding to be preserved even without a bound SHA", opcionesRecibidas.HallazgosDeterministas)
+	}
+	if got := opcionesRecibidas.HallazgosDeterministas[0]; got.Source != review.SourceValidation || got.Dimension != review.DimStyle {
+		t.Errorf("hallazgo preservado = %#v, expected Source=%q Dimension=%q (proyectado desde la capability 'lint')", got, review.SourceValidation, review.DimStyle)
 	}
 }
 
