@@ -546,6 +546,7 @@ func comandosDeValidacion(runs []validation.ValidationRun) []review.ComandoVerif
 type depsPrCreate struct {
 	cargarConfig       func(worktree string) (config.Config, error)
 	obtenerGitDir      func() (string, error)
+	obtenerSHAHead     func() (string, error)
 	ejecutarValidacion func(perfil string, alcance []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error)
 	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
 	verificar          func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
@@ -565,6 +566,7 @@ func ejecutarPrCreate(worktree string, args []string) {
 		// nunca seguir en silencio con la config por defecto.
 		cargarConfig:       config.CargarConfiguracionLocalEstricta,
 		obtenerGitDir:      git.ObtenerGitDir,
+		obtenerSHAHead:     git.SHAHead,
 		ejecutarValidacion: validation.EjecutarPerfilSobreCandidato,
 		analizarRama: func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
 			return review.AnalizarRama(review.NuevoLedger(gitDir), opts)
@@ -635,10 +637,16 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	// rojo (a diferencia de sentinel gate, que corta en corto para no gastar
 	// tokens): ambas fuentes conviven en el mismo reporte, así que el
 	// hallazgo determinista debe poder suplantar al semántico equivalente
-	// (T6.2) en vez de duplicar la misma señal dos veces.
+	// (T6.2) en vez de duplicar la misma señal dos veces. El SHA validado se
+	// resuelve explícitamente (nunca inferido por posición en la rama): sin
+	// él, AnalizarRama no aplica los hallazgos a ningún commit (fail-safe).
 	var hallazgosDeterministas []review.Hallazgo
+	var shaValidado string
 	if forzoValidacionEnRojo {
 		hallazgosDeterministas = proyectarHallazgosValidacion(hallazgos)
+		if sha, err := deps.obtenerSHAHead(); err == nil {
+			shaValidado = sha
+		}
 	}
 
 	verificadorModelo := nuevoVerificadorModelo(worktree)
@@ -657,12 +665,13 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		base = "main"
 	}
 	res, err := deps.analizarRama(gitDir, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
-		Base:                   base,
-		SoloPendientes:         false,
-		Overview:               true,
-		HallazgosDeterministas: hallazgosDeterministas,
-		Fabrica:                fabrica,
-		Parallel:               cfg.Review.Parallel,
+		Base:                      base,
+		SoloPendientes:            false,
+		Overview:                  true,
+		HallazgosDeterministas:    hallazgosDeterministas,
+		HallazgosDeterministasSHA: shaValidado,
+		Fabrica:                   fabrica,
+		Parallel:                  cfg.Review.Parallel,
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		},

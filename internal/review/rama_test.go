@@ -178,14 +178,17 @@ func TestAnalizarRamaAuditaPendientes(t *testing.T) {
 	}
 }
 
-func TestHallazgosDeterministasParaCommitOnlyAppliesToHead(t *testing.T) {
+func TestHallazgosDeterministasParaCommitOnlyAppliesToExplicitSHA(t *testing.T) {
 	deterministas := []Hallazgo{{Source: SourceValidation}}
 
 	if got := hallazgosDeterministasParaCommit("head-sha", "head-sha", deterministas); len(got) != 1 {
-		t.Errorf("commit = head: hallazgos = %#v, expected them to apply", got)
+		t.Errorf("commit == shaValidado: hallazgos = %#v, expected them to apply", got)
 	}
 	if got := hallazgosDeterministasParaCommit("older-sha", "head-sha", deterministas); got != nil {
-		t.Errorf("commit != head: hallazgos = %#v, expected nil", got)
+		t.Errorf("commit != shaValidado: hallazgos = %#v, expected nil", got)
+	}
+	if got := hallazgosDeterministasParaCommit("head-sha", "", deterministas); got != nil {
+		t.Errorf("shaValidado vacío: hallazgos = %#v, expected nil (never infer by position)", got)
 	}
 }
 

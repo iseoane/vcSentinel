@@ -756,8 +756,9 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 	var detalleRegistrado string
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
-		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir:  func() (string, error) { return "gitdir", nil },
+		obtenerSHAHead: func() (string, error) { return "abc1234", nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1}}, nil
 		},
@@ -796,8 +797,9 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 	var opcionesRecibidas review.OpcionesRama
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
-		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir:  func() (string, error) { return "gitdir", nil },
+		obtenerSHAHead: func() (string, error) { return "abc1234", nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return []validation.ValidationRun{{Capability: "lint", Comando: "go vet ./...", Exit: 1}}, nil
 		},
@@ -816,11 +818,18 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
 	}
+	if opcionesRecibidas.HallazgosDeterministasSHA != "abc1234" {
+		t.Errorf("HallazgosDeterministasSHA = %q, expected the validated HEAD sha", opcionesRecibidas.HallazgosDeterministasSHA)
+	}
 	if len(opcionesRecibidas.HallazgosDeterministas) != 1 {
 		t.Fatalf("HallazgosDeterministas = %#v, expected 1 projected finding", opcionesRecibidas.HallazgosDeterministas)
 	}
-	if got := opcionesRecibidas.HallazgosDeterministas[0].Source; got != review.SourceValidation {
-		t.Errorf("Source = %q, expected %q", got, review.SourceValidation)
+	got := opcionesRecibidas.HallazgosDeterministas[0]
+	if got.Source != review.SourceValidation {
+		t.Errorf("Source = %q, expected %q", got.Source, review.SourceValidation)
+	}
+	if got.Dimension != review.DimStyle {
+		t.Errorf("Dimension = %q, expected %q for capability 'lint'", got.Dimension, review.DimStyle)
 	}
 }
 

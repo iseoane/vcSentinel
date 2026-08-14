@@ -79,12 +79,18 @@ type OpcionesRama struct {
 	// los findings) y registra los blobs de cada commit que audite. Sin
 	// Store, el comportamiento es el de antes de T2.7: solo el ledger v1.
 	Store StoreBlobs
-	// HallazgosDeterministas (T6.2) refleja el resultado de validar el
-	// worktree ACTUAL (el tip de la rama), no cada commit histórico:
+	// HallazgosDeterministas (T6.2) refleja el resultado de validar un
+	// snapshot concreto, identificado explícitamente por
+	// HallazgosDeterministasSHA (nunca inferido por posición en shas):
 	// AnalizarRama solo se los pasa como OpcionesAuditoria.HallazgosDeterministas
-	// al commit que corresponde a ese HEAD, nunca a los demás — un fallo
-	// determinista de hoy no demuestra que existiera en un commit anterior.
+	// al commit cuyo SHA coincide exactamente, nunca a los demás — un fallo
+	// determinista de un snapshot no demuestra que existiera en otro commit.
 	HallazgosDeterministas []Hallazgo
+	// HallazgosDeterministasSHA es el SHA exacto del commit validado para
+	// producir HallazgosDeterministas. Vacío (o sin coincidencia en la rama)
+	// significa que no se aplican a ningún commit: fail-safe explícito en vez
+	// de asumir que siempre es el último elemento de shas.
+	HallazgosDeterministasSHA string
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -161,23 +167,13 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 		}
 	}
 
-	// headSHA identifica el commit cuyo snapshot es el que realmente se validó
-	// (opts.HallazgosDeterministas viene del worktree actual, no de cada
-	// commit histórico): sin esto, un fallo determinista del tip se
-	// atribuiría por igual a todos los commits pendientes, duplicando la
-	// señal y pudiendo suplantar hallazgos semánticos de commits donde ese
-	// fallo ni siquiera existía (T6.2).
-	var headSHA string
-	if len(shas) > 0 {
-		headSHA = shas[len(shas)-1]
-	}
 	if !opts.SoloPendientes {
 		for idx, sha := range pendientes {
 			if opts.OnCommit != nil {
 				opts.OnCommit(idx, len(pendientes), sha)
 			}
 			opcionesCommit := opts
-			opcionesCommit.HallazgosDeterministas = hallazgosDeterministasParaCommit(sha, headSHA, opts.HallazgosDeterministas)
+			opcionesCommit.HallazgosDeterministas = hallazgosDeterministasParaCommit(sha, opts.HallazgosDeterministasSHA, opts.HallazgosDeterministas)
 			if err := auditarCommitRama(ledger, sha, opcionesCommit); err != nil {
 				return nil, fmt.Errorf("no se pudo auditar %s: %v", sha, err)
 			}
@@ -225,12 +221,14 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 }
 
 // hallazgosDeterministasParaCommit devuelve hallazgos tal cual solo cuando
-// sha es headSHA (el commit cuyo snapshot fue realmente validado); para
-// cualquier otro commit de la rama devuelve nil, para no atribuir un fallo
-// determinista del tip a un commit histórico donde puede no haber existido
-// (T6.2).
-func hallazgosDeterministasParaCommit(sha, headSHA string, hallazgos []Hallazgo) []Hallazgo {
-	if sha != headSHA {
+// sha coincide exactamente con shaValidado (el commit cuyo snapshot produjo
+// esos hallazgos); para cualquier otro commit de la rama, incluido el caso
+// shaValidado == "" (sin SHA explícito), devuelve nil — nunca infiere el
+// commit validado por su posición en la rama, para no atribuir un fallo
+// determinista de un snapshot a un commit histórico donde puede no haber
+// existido (T6.2).
+func hallazgosDeterministasParaCommit(sha, shaValidado string, hallazgos []Hallazgo) []Hallazgo {
+	if shaValidado == "" || sha != shaValidado {
 		return nil
 	}
 	return hallazgos
