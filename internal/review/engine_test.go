@@ -507,6 +507,34 @@ func TestAuditarConAgenteRetainsProviderFailureReason(t *testing.T) {
 	}
 }
 
+// TestAuditarConAgenteRetainsProviderFailureReasonOnAnsweredRetry covers the
+// second call auditarConAgente makes (opts.Respuestas set after a question
+// verdict), which the first regression test above never reaches: it always
+// fails on the first call, so it could not tell whether the answered retry
+// still discarded err.Error() in favor of the old fixed "provider_unavailable"
+// string.
+func TestAuditarConAgenteRetainsProviderFailureReasonOnAnsweredRetry(t *testing.T) {
+	want := errors.New("reviewer exited: provider request failed on retry")
+	llamadas := 0
+	agente := auditorFunc(func(string) (string, error) {
+		llamadas++
+		if llamadas == 1 {
+			return `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"¿abortar?"}]}`, nil
+		}
+		return "", want
+	})
+	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{SHA: "abc", Respuestas: "sí, continuar"}, "")
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, expected %v", err, want)
+	}
+	if resultado.Verdict != VerdictUnavailable || resultado.Reason != want.Error() {
+		t.Fatalf("result = %+v, expected unavailable with %q", resultado, want)
+	}
+	if llamadas != 2 {
+		t.Fatalf("llamadas = %d, expected exactly 2 (question round + answered retry)", llamadas)
+	}
+}
+
 func TestAuditarCommitUnavailableDoesNotHideBlock(t *testing.T) {
 	llamadas := 0
 	fabrica := func(_ ReviewBundle, dim string) (AuditorAgente, string, error) {
