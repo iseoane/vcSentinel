@@ -30,6 +30,29 @@ func TestProyectarHallazgosValidacionParsesCompilerStyleLocations(t *testing.T) 
 		if p.Source != review.SourceValidation || p.Confidence != 1.0 {
 			t.Errorf("hallazgo = %#v, expected Source=validation Confidence=1.0", p)
 		}
+		if p.Dimension != review.DimStyle {
+			t.Errorf("hallazgo.Dimension = %q, expected %q for capability 'lint'", p.Dimension, review.DimStyle)
+		}
+	}
+}
+
+func TestProyectarHallazgosValidacionLeavesDimensionEmptyForUnknownCapability(t *testing.T) {
+	// A capability outside the conservative map (e.g. a test run, which
+	// executes branch-controlled code and could print an arbitrary file
+	// path to try to fake supersession) must never get a Dimension, so
+	// review.SupersedeDeterministicFindings can never use it to discard an
+	// unrelated semantic finding.
+	hallazgos := []validation.Hallazgo{{
+		Capability: "unit_test", Comando: "go test ./...", Severity: "CRITICAL",
+		Evidencia: "auth.go:10: assertion failed",
+	}}
+
+	proyectados := proyectarHallazgosValidacion(hallazgos)
+	if len(proyectados) != 1 {
+		t.Fatalf("proyectados = %d, expected 1: %#v", len(proyectados), proyectados)
+	}
+	if proyectados[0].Dimension != "" {
+		t.Errorf("hallazgo.Dimension = %q, expected empty for an unmapped capability", proyectados[0].Dimension)
 	}
 }
 

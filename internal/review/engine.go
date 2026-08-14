@@ -443,8 +443,21 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
 	}
+	stamparSourceReview(crudo.Hallazgos)
 	stamparProductorEfectivo(crudo.Hallazgos, agente)
 	return crudo, nil
+}
+
+// stamparSourceReview marca todo Hallazgo que sale de la revisión semántica
+// con Source: SourceReview, con la misma autoridad de origen que
+// stamparProductorEfectivo ya aplica al Producer: el prompt no le pide al
+// modelo declarar su propia procedencia (T6.2 la necesita para distinguir
+// qué hallazgo puede ser suplantado por uno determinista), así que
+// depender de que el JSON la incluya dejaría el campo vacío en la práctica.
+func stamparSourceReview(hallazgos []Hallazgo) {
+	for i := range hallazgos {
+		hallazgos[i].Source = SourceReview
+	}
 }
 
 func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {

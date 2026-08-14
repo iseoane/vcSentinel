@@ -19,6 +19,19 @@ var patronUbicacionSalida = regexp.MustCompile(`^(\S+\.\w+):(\d+)(?::\d+)?:`)
 // indicar línea.
 var patronArchivoSuelto = regexp.MustCompile(`^(\S+\.\w+)$`)
 
+// dimensionPorCapability mapea las capabilities de validación conocidas a la
+// dimensión semántica equivalente que pueden suplantar (T6.2). Deliberadamente
+// conservador: una capability ausente de este mapa (cualquiera desconocida,
+// o "unit_test"/"build", cuya evidencia sale de ejecutar código de la propia
+// rama y por tanto es más manipulable que la salida estática de gofmt/go vet)
+// nunca genera un hallazgo con Dimension asignada, y
+// review.SupersedeDeterministicFindings nunca suplanta con un determinista
+// sin Dimension: mejor no suplantar que suplantar hallazgos no relacionados.
+var dimensionPorCapability = map[string]string{
+	"format": review.DimStyle,
+	"lint":   review.DimStyle,
+}
+
 // proyectarHallazgosValidacion convierte hallazgos deterministas de
 // validación (lint/build/test fallido) en review.Hallazgo{Source:
 // SourceValidation}, para que AuditarCommit pueda aplicar el supersede de
@@ -74,6 +87,7 @@ func ubicacionesDeEvidencia(evidencia string) []ubicacionEvidencia {
 func nuevoHallazgoDeterminista(h validation.Hallazgo, archivo string, linea int, evidencia string) review.Hallazgo {
 	hallazgo := review.Hallazgo{
 		Source:      review.SourceValidation,
+		Dimension:   dimensionPorCapability[h.Capability],
 		Severity:    h.Severity,
 		Title:       h.Capability,
 		Description: fmt.Sprintf("%s: %s", h.Capability, h.Comando),

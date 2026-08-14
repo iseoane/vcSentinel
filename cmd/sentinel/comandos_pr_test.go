@@ -785,6 +785,80 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 	}
 }
 
+// TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterministas
+// covers the wiring that activates T6.2 in production: with --force and a
+// red validation, the deterministic findings projected from that validation
+// must reach review.AnalizarRama via OpcionesRama.HallazgosDeterministas, so
+// AuditarCommit can supersede the equivalent semantic finding.
+func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterministas(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var opcionesRecibidas review.OpcionesRama
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "lint", Comando: "go vet ./...", Exit: 1}}, nil
+		},
+		analizarRama: func(_ string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
+			opcionesRecibidas = opts
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/12", false, nil },
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+			return nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
+	}
+	if len(opcionesRecibidas.HallazgosDeterministas) != 1 {
+		t.Fatalf("HallazgosDeterministas = %#v, expected 1 projected finding", opcionesRecibidas.HallazgosDeterministas)
+	}
+	if got := opcionesRecibidas.HallazgosDeterministas[0].Source; got != review.SourceValidation {
+		t.Errorf("Source = %q, expected %q", got, review.SourceValidation)
+	}
+}
+
+// TestEjecutarPrCreateCon_ForceConValidacionVerde_NoPropagaHallazgosDeterministas
+// is the complement: with no red validation to force through, there is
+// nothing deterministic to supersede with, so the collection must stay
+// empty rather than accidentally leaking stale state.
+func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoPropagaHallazgosDeterministas(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var opcionesRecibidas review.OpcionesRama
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil // validación en verde: sin runs, sin hallazgos
+		},
+		analizarRama: func(_ string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
+			opcionesRecibidas = opts
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/13", false, nil },
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+			return nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0", codigo)
+	}
+	if len(opcionesRecibidas.HallazgosDeterministas) != 0 {
+		t.Errorf("HallazgosDeterministas = %#v, expected empty without a forced red validation", opcionesRecibidas.HallazgosDeterministas)
+	}
+}
+
 // TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcurrio
 // cubre el Fix 2 (hallazgo del orquestador): --force --reason con la
 // validación YA en verde (sin hallazgos) no tiene ningún efecto real que

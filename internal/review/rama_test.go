@@ -178,6 +178,17 @@ func TestAnalizarRamaAuditaPendientes(t *testing.T) {
 	}
 }
 
+func TestHallazgosDeterministasParaCommitOnlyAppliesToHead(t *testing.T) {
+	deterministas := []Hallazgo{{Source: SourceValidation}}
+
+	if got := hallazgosDeterministasParaCommit("head-sha", "head-sha", deterministas); len(got) != 1 {
+		t.Errorf("commit = head: hallazgos = %#v, expected them to apply", got)
+	}
+	if got := hallazgosDeterministasParaCommit("older-sha", "head-sha", deterministas); got != nil {
+		t.Errorf("commit != head: hallazgos = %#v, expected nil", got)
+	}
+}
+
 func TestAuditarCommitRamaPassesImmutableCommitPathsToRestrictedReviewer(t *testing.T) {
 	gitDir := prepararRepoRama(t)
 	sha := commitEnRama(t, "committed.go", "package committed\n")

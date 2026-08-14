@@ -161,6 +161,7 @@ func TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne(t *testing.T
 	})
 	determinista := []Hallazgo{{
 		Source:      SourceValidation,
+		Dimension:   DimStyle,
 		Severity:    SevCritical,
 		Description: "format: gofmt -l .",
 		Evidence:    "config.go",
@@ -214,6 +215,27 @@ func TestAuditarConAgenteStampsTrustedEffectiveProducer(t *testing.T) {
 	}
 	if got, want := resultado.Hallazgos[0].Producer, (Productor{Agente: "opencode", Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"}); got != want {
 		t.Errorf("producer = %#v, expected %#v", got, want)
+	}
+}
+
+func TestAuditarConAgenteStampsSourceReviewEvenIfModelClaimsOtherwise(t *testing.T) {
+	// T6.2 needs Source == SourceReview to reliably identify a semantic
+	// finding as supersedable; the prompt never asks the model for its own
+	// provenance, so the engine must stamp it with authority rather than
+	// trust (or require) a "source" field in the model's JSON.
+	agente := auditorFunc(func(string) (string, error) {
+		return `{"dim":"logic","verdict":"warn","findings":[{"file":"config.go","line":12,"severity":"WARNING","description":"d","source":"validation"}]}`, nil
+	})
+
+	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
+	if err != nil {
+		t.Fatalf("auditarConAgente() error = %v", err)
+	}
+	if len(resultado.Hallazgos) != 1 {
+		t.Fatalf("hallazgos = %#v, expected one", resultado.Hallazgos)
+	}
+	if got := resultado.Hallazgos[0].Source; got != SourceReview {
+		t.Errorf("Source = %q, expected %q regardless of what the model claimed", got, SourceReview)
 	}
 }
 
