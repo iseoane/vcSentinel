@@ -155,6 +155,33 @@ func TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions(t *te
 	}
 }
 
+func TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne(t *testing.T) {
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"style","verdict":"warn","findings":[{"dimension":"style","file":"config.go","line":12,"severity":"WARNING","description":"inconsistent formatting","evidence":"tabs and spaces mixed","location":{"file":"config.go","line_start":12}}]}`,
+	})
+	determinista := []Hallazgo{{
+		Source:      SourceValidation,
+		Severity:    SevCritical,
+		Description: "format: gofmt -l .",
+		Evidence:    "config.go",
+		Confidence:  1.0,
+		Location:    Ubicacion{Archivo: "config.go"},
+	}}
+
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA:                    "abc12345",
+		Bundles:                bundlesPrueba(DimStyle),
+		HallazgosDeterministas: determinista,
+	})
+
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("findings = %d, expected 1 (only the deterministic one): %#v", len(resultado.Findings), resultado.Findings)
+	}
+	if resultado.Findings[0].Source != SourceValidation {
+		t.Errorf("findings[0].Source = %q, expected the deterministic finding to survive", resultado.Findings[0].Source)
+	}
+}
+
 type agenteEfectivoFake struct {
 	respuesta string
 	efectivo  agentadapter.AgenteEfectivo

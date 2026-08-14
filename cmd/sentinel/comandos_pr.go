@@ -631,6 +631,15 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		forzoValidacionEnRojo = true
 		fmt.Fprintf(w, "⚠️  Validación en rojo superada con --force (motivo: %s).\n", flags.reason)
 	}
+	// Con --force, la revisión semántica SÍ se ejecuta pese a la validación en
+	// rojo (a diferencia de sentinel gate, que corta en corto para no gastar
+	// tokens): ambas fuentes conviven en el mismo reporte, así que el
+	// hallazgo determinista debe poder suplantar al semántico equivalente
+	// (T6.2) en vez de duplicar la misma señal dos veces.
+	var hallazgosDeterministas []review.Hallazgo
+	if forzoValidacionEnRojo {
+		hallazgosDeterministas = proyectarHallazgosValidacion(hallazgos)
+	}
 
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
@@ -648,11 +657,12 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		base = "main"
 	}
 	res, err := deps.analizarRama(gitDir, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
-		Base:           base,
-		SoloPendientes: false,
-		Overview:       true,
-		Fabrica:        fabrica,
-		Parallel:       cfg.Review.Parallel,
+		Base:                   base,
+		SoloPendientes:         false,
+		Overview:               true,
+		HallazgosDeterministas: hallazgosDeterministas,
+		Fabrica:                fabrica,
+		Parallel:               cfg.Review.Parallel,
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		},

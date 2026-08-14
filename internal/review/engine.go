@@ -50,6 +50,12 @@ type OpcionesAuditoria struct {
 	FabricaRefutador               FabricaRefutador
 	LeerContenidoSnapshot          SnapshotReader
 	DescriptionSimilarityThreshold float64
+	// HallazgosDeterministas are already-projected review.Hallazgo{Source:
+	// SourceValidation} findings (e.g. from a failed lint/build/test command)
+	// that supersede an equivalent semantic finding in the same location
+	// (T6.2). Empty by default: the caller decides when both sources should
+	// coexist in the same report.
+	HallazgosDeterministas []Hallazgo
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -255,7 +261,8 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 			findings = append(findings, dimension.Resultado.Hallazgos...)
 		}
 	}
-	resultado.Findings = aggregateFindings(findings, opts.DescriptionSimilarityThreshold)
+	findings = SupersedeDeterministicFindings(findings, opts.HallazgosDeterministas)
+	resultado.Findings = append(aggregateFindings(findings, opts.DescriptionSimilarityThreshold), opts.HallazgosDeterministas...)
 
 	resultado.Veredicto, resultado.Preguntas = veredictoGlobal(resultado.Dims)
 	return resultado

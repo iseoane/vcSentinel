@@ -79,6 +79,11 @@ type OpcionesRama struct {
 	// los findings) y registra los blobs de cada commit que audite. Sin
 	// Store, el comportamiento es el de antes de T2.7: solo el ledger v1.
 	Store StoreBlobs
+	// HallazgosDeterministas (T6.2) se pasan tal cual a cada commit auditado
+	// como OpcionesAuditoria.HallazgosDeterministas: un fallo determinista de
+	// validación (lint/build/test) que atañe a toda la rama supersede el
+	// hallazgo semántico equivalente en cualquier commit de esa rama.
+	HallazgosDeterministas []Hallazgo
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -227,15 +232,16 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		return err
 	}
 	resultado := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
-		SHA:              sha,
-		Mensaje:          mensaje,
-		Diff:             diff,
-		Bundles:          PlanForProfile(profile, archivos).Bundles,
-		Respuestas:       opts.Respuestas,
-		PerfilOverride:   opts.PerfilOverride,
-		RutasContexto:    archivos,
-		OnDimension:      opts.OnDimension,
-		FabricaRefutador: opts.FabricaRefutador,
+		SHA:                    sha,
+		Mensaje:                mensaje,
+		Diff:                   diff,
+		Bundles:                PlanForProfile(profile, archivos).Bundles,
+		Respuestas:             opts.Respuestas,
+		PerfilOverride:         opts.PerfilOverride,
+		RutasContexto:          archivos,
+		OnDimension:            opts.OnDimension,
+		FabricaRefutador:       opts.FabricaRefutador,
+		HallazgosDeterministas: opts.HallazgosDeterministas,
 	})
 
 	modelo := opts.PerfilOverride
