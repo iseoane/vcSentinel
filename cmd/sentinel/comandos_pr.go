@@ -644,7 +644,15 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	var shaValidado string
 	if forzoValidacionEnRojo {
 		hallazgosDeterministas = proyectarHallazgosValidacion(hallazgos)
-		if sha, err := deps.obtenerSHAHead(); err == nil {
+		sha, err := deps.obtenerSHAHead()
+		if err != nil {
+			// No aborta la publicación (--force ya decidió seguir pese a la
+			// validación en rojo): pero sin el SHA no hay a qué commit
+			// asociar los hallazgos deterministas, así que el supersede de
+			// T6.2 no se aplica en esta ejecución. Se avisa explícitamente
+			// en vez de descartarlo en silencio.
+			fmt.Fprintf(w, "⚠️  Aviso: no se pudo resolver el commit validado (%v); los hallazgos deterministas no suplantarán al hallazgo semántico equivalente en este reporte.\n", err)
+		} else {
 			shaValidado = sha
 		}
 	}

@@ -833,6 +833,48 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 	}
 }
 
+// TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue
+// is a regression test: when obtenerSHAHead fails, the command must not
+// silently drop the deterministic findings without a trace. It still
+// publishes (this failure is unrelated to --force's own decision to
+// continue), but PublicaCon must print an explicit warning and must not
+// bind the projected findings to any commit (HallazgosDeterministasSHA
+// stays empty, so AnalizarRama can never mismatch them to the wrong SHA).
+func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var opcionesRecibidas review.OpcionesRama
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
+		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir:  func() (string, error) { return "gitdir", nil },
+		obtenerSHAHead: func() (string, error) { return "", errors.New("HEAD irresoluble") },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "lint", Comando: "go vet ./...", Exit: 1}}, nil
+		},
+		analizarRama: func(_ string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
+			opcionesRecibidas = opts
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/14", false, nil },
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+			return nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el fallo de HEAD no bloquea --force)", codigo)
+	}
+	if !strings.Contains(salida.String(), "no se pudo resolver el commit validado") {
+		t.Errorf("se esperaba un aviso explícito del fallo de HEAD, got: %s", salida.String())
+	}
+	if opcionesRecibidas.HallazgosDeterministasSHA != "" {
+		t.Errorf("HallazgosDeterministasSHA = %q, expected empty when HEAD couldn't be resolved", opcionesRecibidas.HallazgosDeterministasSHA)
+	}
+}
+
 // TestEjecutarPrCreateCon_ForceConValidacionVerde_NoPropagaHallazgosDeterministas
 // is the complement: with no red validation to force through, there is
 // nothing deterministic to supersede with, so the collection must stay
