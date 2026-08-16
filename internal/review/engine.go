@@ -75,6 +75,10 @@ type ResultadoAuditoria struct {
 	Preguntas []AgentQuestion
 	Skipped   []SkippedBundle
 	Findings  []Hallazgo
+	// CauseGroups groups distinct Findings that share a common root cause
+	// (T6.3). It is a non-destructive view: it never merges or drops the
+	// individual findings in Findings, it only groups references to them.
+	CauseGroups []CauseGroup
 }
 
 const (
@@ -263,6 +267,7 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	}
 	findings = SupersedeDeterministicFindings(findings, opts.HallazgosDeterministas)
 	resultado.Findings = append(aggregateFindings(findings, opts.DescriptionSimilarityThreshold), opts.HallazgosDeterministas...)
+	resultado.CauseGroups = correlateFindingsByCause(resultado.Findings, opts.DescriptionSimilarityThreshold)
 
 	resultado.Veredicto, resultado.Preguntas = veredictoGlobal(resultado.Dims)
 	return resultado

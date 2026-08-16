@@ -155,6 +155,35 @@ func TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions(t *te
 	}
 }
 
+func TestAuditarCommitCorrelatesFindingsByCauseAcrossDimensions(t *testing.T) {
+	respuestas := map[string]string{
+		DimLogic:    `{"dim":"logic","verdict":"warn","findings":[{"file":"session.go","line":10,"severity":"WARNING","description":"session cache race condition breaks TestUserLogin","source":"review","producer":{"agent":"logic-reviewer"},"confidence":0.5,"title":"race condition","evidence":"session mutex not held","location":{"file":"session.go","line_start":10,"line_end":14,"symbol":"acquireSession"}}]}`,
+		DimDesign:   `{"dim":"design","verdict":"warn","findings":[{"file":"cache.go","line":20,"severity":"WARNING","description":"TestUserLogin breaks because of session cache race condition","source":"review","producer":{"agent":"design-reviewer"},"confidence":0.9,"title":"race condition","evidence":"cache read without lock","location":{"file":"cache.go","line_start":20,"line_end":24,"symbol":"cacheGet"}}]}`,
+		DimSecurity: `{"dim":"security","verdict":"warn","findings":[{"file":"runner.go","line":30,"severity":"WARNING","description":"TestUserLogin intermittently fails from session cache race condition","source":"review","producer":{"agent":"security-reviewer"},"confidence":0.6,"title":"race condition","evidence":"concurrent access to the cache map","location":{"file":"runner.go","line_start":30,"line_end":34,"symbol":"runSuite"}}]}`,
+		DimStyle:    `{"dim":"style","verdict":"warn","findings":[{"file":"harness.go","line":40,"severity":"ADVISORY","description":"the session cache race condition is why TestUserLogin breaks","source":"review","producer":{"agent":"style-reviewer"},"confidence":0.3,"title":"race condition","evidence":"flaky retry masks the race","location":{"file":"harness.go","line_start":40,"line_end":44,"symbol":"setupHarness"}}]}`,
+	}
+	fabrica := func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
+		return &agenteFake{respuestas: []string{respuestas[dimension]}}, "normal", nil
+	}
+
+	resultado := AuditarCommit(fabrica, 4, OpcionesAuditoria{
+		SHA:                            "abc12345",
+		Bundles:                        bundlesPrueba(DimLogic, DimDesign, DimSecurity, DimStyle),
+		DescriptionSimilarityThreshold: 0.4,
+	})
+
+	if len(resultado.Findings) != 4 {
+		t.Fatalf("findings = %d, expected 4 independent, non-proximate findings: %#v", len(resultado.Findings), resultado.Findings)
+	}
+	if len(resultado.CauseGroups) != 1 {
+		t.Fatalf("cause groups = %d, expected 1: %#v", len(resultado.CauseGroups), resultado.CauseGroups)
+	}
+	group := resultado.CauseGroups[0]
+	if len(group.Effects) != 4 {
+		t.Errorf("effects = %d, expected 4: %#v", len(group.Effects), group.Effects)
+	}
+}
+
 func TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne(t *testing.T) {
 	fabrica, _ := fabricaFija([]string{
 		`{"dim":"style","verdict":"warn","findings":[{"dimension":"style","file":"config.go","line":12,"severity":"WARNING","description":"inconsistent formatting","evidence":"tabs and spaces mixed","location":{"file":"config.go","line_start":12}}]}`,

@@ -103,6 +103,60 @@ func TestAreProximateFindingsRejectsDistinctLocationsAndBoundarySimilarity(t *te
 	}
 }
 
+func TestCorrelateFindingsByCauseGroupsDistinctLocationsSharingRootCause(t *testing.T) {
+	findings := []Hallazgo{
+		{Description: "session cache race condition breaks TestUserLogin", Confidence: 0.5, Location: Ubicacion{Archivo: "session.go", Simbolo: "acquireSession"}},
+		{Description: "TestUserLogin breaks because of session cache race condition", Confidence: 0.9, Location: Ubicacion{Archivo: "cache.go", Simbolo: "cacheGet"}},
+		{Description: "race condition in session cache breaks TestUserLogin intermittently", Confidence: 0.4, Location: Ubicacion{Archivo: "login_test.go", Simbolo: "TestUserLogin"}},
+		{Description: "TestUserLogin intermittently fails from session cache race condition", Confidence: 0.6, Location: Ubicacion{Archivo: "runner.go", Simbolo: "runSuite"}},
+		{Description: "the session cache race condition is why TestUserLogin breaks", Confidence: 0.3, Location: Ubicacion{Archivo: "harness.go", Simbolo: "setupHarness"}},
+	}
+
+	groups := correlateFindingsByCause(findings, 0.4)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, expected 1: %#v", len(groups), groups)
+	}
+	group := groups[0]
+	if len(group.Effects) != 5 {
+		t.Fatalf("effects = %d, expected 5: %#v", len(group.Effects), group.Effects)
+	}
+	if group.Cause != findings[1].Description {
+		t.Errorf("cause = %q, expected highest-confidence description %q", group.Cause, findings[1].Description)
+	}
+}
+
+func TestCorrelateFindingsByCauseDropsUnrelatedFindings(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		findings  []Hallazgo
+		threshold float64
+	}{
+		{
+			name: "unrelated descriptions",
+			findings: []Hallazgo{
+				{Description: "unchecked error permits invalid configuration", Confidence: 0.5, Location: Ubicacion{Archivo: "config.go", Simbolo: "parseConfig"}},
+				{Description: "SQL injection via unsanitized user input in login handler", Confidence: 0.6, Location: Ubicacion{Archivo: "auth.go", Simbolo: "handleLogin"}},
+				{Description: "goroutine leak in background worker pool", Confidence: 0.7, Location: Ubicacion{Archivo: "worker.go", Simbolo: "startPool"}},
+			},
+			threshold: 0.3,
+		},
+		{
+			name: "similarity at threshold",
+			findings: []Hallazgo{
+				{Description: "ignored parse error", Confidence: 0.5, Location: Ubicacion{Archivo: "config.go", Simbolo: "parseConfig"}},
+				{Description: "ignored validation error", Confidence: 0.6, Location: Ubicacion{Archivo: "validate.go", Simbolo: "validate"}},
+			},
+			threshold: 0.5,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if groups := correlateFindingsByCause(tc.findings, tc.threshold); len(groups) != 0 {
+				t.Errorf("groups = %#v, expected no correlated causes", groups)
+			}
+		})
+	}
+}
+
 func TestCorroboratedConfidenceUsesIndependentProducersAndRepeatedMaximum(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

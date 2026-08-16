@@ -151,6 +151,67 @@ func corroboratedConfidence(finding Hallazgo) float64 {
 	return 1 - confidence
 }
 
+// CauseGroup groups distinct findings that share a common root cause, without
+// merging or discarding any of them. Unlike aggregateFindings/mergeFindings,
+// this is a non-destructive view: every finding in Effects survives intact in
+// resultado.Findings, this only groups references to them.
+type CauseGroup struct {
+	Cause   string
+	Effects []Hallazgo
+}
+
+// correlateFindingsByCause groups findings whose descriptions describe the
+// same underlying symptom (e.g. the same broken test) regardless of where
+// each one was reported. It is deliberately location-agnostic, unlike
+// areProximateFindings: that is what lets it catch correlated effects across
+// different files and symbols that aggregateFindings's proximity check can
+// never merge. Groups with a single member are dropped.
+func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGroup {
+	if len(findings) == 0 {
+		return nil
+	}
+	if threshold <= 0 || threshold > 1 {
+		threshold = defaultDescriptionSimilarityThreshold
+	}
+
+	assigned := make([]bool, len(findings))
+	var groups []CauseGroup
+	for i := range findings {
+		if assigned[i] {
+			continue
+		}
+		group := []Hallazgo{findings[i]}
+		assigned[i] = true
+		for j := i + 1; j < len(findings); j++ {
+			if assigned[j] {
+				continue
+			}
+			if descriptionSimilarity(findings[i].Description, findings[j].Description) > threshold {
+				group = append(group, findings[j])
+				assigned[j] = true
+			}
+		}
+		if len(group) > 1 {
+			groups = append(groups, CauseGroup{Cause: dominantCause(group), Effects: group})
+		}
+	}
+	return groups
+}
+
+// dominantCause returns the Description of the highest-Confidence finding in
+// the group; ties keep the first one encountered.
+func dominantCause(group []Hallazgo) string {
+	cause := group[0].Description
+	best := group[0].Confidence
+	for _, finding := range group[1:] {
+		if finding.Confidence > best {
+			best = finding.Confidence
+			cause = finding.Description
+		}
+	}
+	return cause
+}
+
 func severityRank(severity string) int {
 	switch severity {
 	case SevCritical:
