@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+// nthULPAfter steps x forward by exactly n ULPs, for constructing
+// deterministic floating-point tie/boundary test cases.
+func nthULPAfter(x float64, n int) float64 {
+	for i := 0; i < n; i++ {
+		x = math.Nextafter(x, math.Inf(1))
+	}
+	return x
+}
+
 func TestAggregateFindingsCollapsesExactFingerprints(t *testing.T) {
 	first := Hallazgo{
 		Dimension:  DimLogic,
@@ -263,34 +272,42 @@ func TestDominantCauseBreaksTwoMemberTieByConfidence(t *testing.T) {
 }
 
 // TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain reproduces,
-// with exact synthetic ULP offsets, the bug fixed by updating bestScore in
-// the tie branch: A is the initial anchor; B ties with A (within tolerance)
-// and has higher confidence, so B wins the tie-break; C is far enough from A
-// to look like a strict improvement over the STALE anchor, but is actually
-// within tolerance of B's real score and has lower confidence than B. If
-// bestScore is not kept at the true running maximum through the tie-break
-// (the bug), C wins outright via the strict branch, ignoring confidence.
-// With the fix, C is correctly recognized as tied with B and loses on
-// confidence.
+// with exact synthetic ULP offsets, two bugs a correct implementation must
+// avoid: (1) not raising bestScore at all in the tie branch, and (2) raising
+// it unconditionally there instead of only when the tied candidate's score
+// is actually higher.
+//
+// A is the initial anchor. B ties with A (within tolerance) and has higher
+// confidence, so B wins the tie-break; without bug (1) fixed, bestScore
+// would stay at A's stale score. C is far enough from A to look like a
+// strict improvement over that stale anchor, but is actually within
+// tolerance of B's real score and has lower confidence than B — this is
+// what catches bug (1): C must not win outright.
+//
+// D ties with the running max (now C's score) but is itself lower than it
+// and has the highest confidence of all — this is what catches bug (2): if
+// bestScore were unconditionally overwritten with D's lower score instead of
+// only raised when higher, the anchor would incorrectly drop. E is placed
+// just outside tolerance of the true max (C's score) but would fall inside
+// tolerance of that wrongly-dropped anchor, with the lowest confidence of
+// all: it must not win.
 func TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain(t *testing.T) {
-	nthULPAfter := func(x float64, n int) float64 {
-		for i := 0; i < n; i++ {
-			x = math.Nextafter(x, math.Inf(1))
-		}
-		return x
-	}
-
 	const terms = 3 // tolerance = terms * ulpsPerTerm(4) = 12 ULPs
 	a := 1.0
 	b := nthULPAfter(a, 6)  // 6 ULPs from A: within the 12-ULP tolerance of A
 	c := nthULPAfter(a, 13) // 13 ULPs from A (looks like a strict win over the
 	// stale anchor A), but only 7 ULPs from B: within tolerance of B's real
 	// score, not a genuine improvement over it.
-	scores := []float64{a, b, c}
-	confidences := []float64{0.1, 0.9, 0.5} // B is highest, C is not
+	d := nthULPAfter(a, 8) // 8 ULPs from A: within tolerance of C (13), but
+	// lower than it — must not drag the anchor down.
+	e := nthULPAfter(a, 25) // exactly 12 ULPs above C (25-13=12): tied with
+	// the true max C, but would look like a strict win (25-8=17 > 12) if the
+	// anchor had wrongly dropped to D's score.
+	scores := []float64{a, b, c, d, e}
+	confidences := []float64{0.1, 0.9, 0.5, 0.95, 0.05} // D is highest, E is lowest
 
-	if got := selectDominant(scores, confidences, terms); got != 1 {
-		t.Fatalf("selectDominant = %d, want 1 (B: wins the tie-break with A on confidence, and C never becomes a genuine improvement over B's real score)", got)
+	if got := selectDominant(scores, confidences, terms); got != 3 {
+		t.Fatalf("selectDominant = %d, want 3 (D: ties with the true max (C) and has the highest confidence; E must not win outright on a wrongly-dropped anchor)", got)
 	}
 }
 
@@ -304,13 +321,6 @@ func TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain(t *testing
 // authored by hand, only discovered by search — the formula itself is what
 // is being fixed here, directly and deterministically.
 func TestScoresTie(t *testing.T) {
-	nthULPAfter := func(x float64, n int) float64 {
-		for i := 0; i < n; i++ {
-			x = math.Nextafter(x, math.Inf(1))
-		}
-		return x
-	}
-
 	for _, tc := range []struct {
 		name  string
 		a, b  float64

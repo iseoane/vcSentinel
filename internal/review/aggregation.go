@@ -254,7 +254,7 @@ func dominantCause(group []Hallazgo) string {
 // tie branch also raises it whenever the tied candidate's own score is
 // higher (never lower), keeping later comparisons anchored to the real
 // maximum instead of drifting toward whichever member the tie-break last
-// picked.
+// picked. Requires len(scores) >= 1 and len(confidences) >= len(scores).
 func selectDominant(scores, confidences []float64, terms int) int {
 	best := 0
 	bestScore := scores[0]
