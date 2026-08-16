@@ -234,40 +234,45 @@ func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGro
 // endpoint. Ties are broken by highest Confidence, then by first
 // encountered. Requires a non-empty group.
 func dominantCause(group []Hallazgo) string {
-	scoreOf := func(i int) float64 {
-		score := 0.0
+	scores := make([]float64, len(group))
+	confidences := make([]float64, len(group))
+	for i := range group {
+		confidences[i] = group[i].Confidence
 		for j := range group {
 			if i != j {
-				score += descriptionSimilarity(group[i].Description, group[j].Description)
+				scores[i] += descriptionSimilarity(group[i].Description, group[j].Description)
 			}
 		}
-		return score
 	}
+	return group[selectDominant(scores, confidences, len(group)-1)].Description
+}
 
+// selectDominant returns the index of the highest-scoring member, breaking
+// ties by highest confidence, then by first encountered. terms is the
+// number of values each score sums (see scoresTie). bestScore always holds
+// the true maximum score seen so far, even across a tie-break switch: the
+// tie branch also raises it whenever the tied candidate's own score is
+// higher (never lower), keeping later comparisons anchored to the real
+// maximum instead of drifting toward whichever member the tie-break last
+// picked.
+func selectDominant(scores, confidences []float64, terms int) int {
 	best := 0
-	bestScore := scoreOf(0)
-	terms := len(group) - 1
-	for i := 1; i < len(group); i++ {
-		score := scoreOf(i)
-		// bestScore always holds the true maximum score seen so far, even
-		// across a tie-break switch: raising it unconditionally on a tie (not
-		// just in the strict branch) keeps later comparisons anchored to the
-		// real maximum instead of to whichever member the tie-break last
-		// picked. See scoresTie for why terms is passed through.
-		tied := scoresTie(score, bestScore, terms)
-		if score > bestScore && !tied {
-			bestScore = score
+	bestScore := scores[0]
+	for i := 1; i < len(scores); i++ {
+		tied := scoresTie(scores[i], bestScore, terms)
+		if scores[i] > bestScore && !tied {
+			bestScore = scores[i]
 			best = i
 		} else if tied {
-			if score > bestScore {
-				bestScore = score
+			if scores[i] > bestScore {
+				bestScore = scores[i]
 			}
-			if group[i].Confidence > group[best].Confidence {
+			if confidences[i] > confidences[best] {
 				best = i
 			}
 		}
 	}
-	return group[best].Description
+	return best
 }
 
 // scoresTie reports whether a and b, each the sum of terms values, are

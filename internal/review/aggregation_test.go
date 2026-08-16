@@ -262,6 +262,38 @@ func TestDominantCauseBreaksTwoMemberTieByConfidence(t *testing.T) {
 	}
 }
 
+// TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain reproduces,
+// with exact synthetic ULP offsets, the bug fixed by updating bestScore in
+// the tie branch: A is the initial anchor; B ties with A (within tolerance)
+// and has higher confidence, so B wins the tie-break; C is far enough from A
+// to look like a strict improvement over the STALE anchor, but is actually
+// within tolerance of B's real score and has lower confidence than B. If
+// bestScore is not kept at the true running maximum through the tie-break
+// (the bug), C wins outright via the strict branch, ignoring confidence.
+// With the fix, C is correctly recognized as tied with B and loses on
+// confidence.
+func TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain(t *testing.T) {
+	nthULPAfter := func(x float64, n int) float64 {
+		for i := 0; i < n; i++ {
+			x = math.Nextafter(x, math.Inf(1))
+		}
+		return x
+	}
+
+	const terms = 3 // tolerance = terms * ulpsPerTerm(4) = 12 ULPs
+	a := 1.0
+	b := nthULPAfter(a, 6)  // 6 ULPs from A: within the 12-ULP tolerance of A
+	c := nthULPAfter(a, 13) // 13 ULPs from A (looks like a strict win over the
+	// stale anchor A), but only 7 ULPs from B: within tolerance of B's real
+	// score, not a genuine improvement over it.
+	scores := []float64{a, b, c}
+	confidences := []float64{0.1, 0.9, 0.5} // B is highest, C is not
+
+	if got := selectDominant(scores, confidences, terms); got != 1 {
+		t.Fatalf("selectDominant = %d, want 1 (B: wins the tie-break with A on confidence, and C never becomes a genuine improvement over B's real score)", got)
+	}
+}
+
 // TestScoresTie fixes scoresTie's exact scaling formula with deterministic,
 // synthetic values. It intentionally does not attempt an end-to-end test
 // through dominantCause with a real 4+ member group whose per-member
