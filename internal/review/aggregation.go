@@ -249,16 +249,22 @@ func dominantCause(group []Hallazgo) string {
 	terms := len(group) - 1
 	for i := 1; i < len(group); i++ {
 		score := scoreOf(i)
-		// Only the strict branch ever raises bestScore, so it always holds
-		// the true running maximum: also raising it from the tie branch
-		// would let it drift toward whichever member the tie-break last
-		// picked instead. See scoresTie for why terms is passed through.
+		// bestScore always holds the true maximum score seen so far, even
+		// across a tie-break switch: raising it unconditionally on a tie (not
+		// just in the strict branch) keeps later comparisons anchored to the
+		// real maximum instead of to whichever member the tie-break last
+		// picked. See scoresTie for why terms is passed through.
 		tied := scoresTie(score, bestScore, terms)
 		if score > bestScore && !tied {
 			bestScore = score
 			best = i
-		} else if tied && group[i].Confidence > group[best].Confidence {
-			best = i
+		} else if tied {
+			if score > bestScore {
+				bestScore = score
+			}
+			if group[i].Confidence > group[best].Confidence {
+				best = i
+			}
 		}
 	}
 	return group[best].Description
