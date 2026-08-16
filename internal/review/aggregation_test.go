@@ -2,6 +2,7 @@ package review
 
 import (
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -122,6 +123,55 @@ func TestCorrelateFindingsByCauseGroupsDistinctLocationsSharingRootCause(t *test
 	}
 	if group.Cause != findings[1].Description {
 		t.Errorf("cause = %q, expected highest-confidence description %q", group.Cause, findings[1].Description)
+	}
+	// Prove no finding was dropped, duplicated, or corrupted: every input
+	// finding must survive intact in Effects, in original scan order (the
+	// union-find implementation groups by first-encountered root, and here
+	// findings[0] is directly similar to every other member, so all 5 share
+	// one root discovered at i=0).
+	for i, want := range findings {
+		if !reflect.DeepEqual(group.Effects[i], want) {
+			t.Errorf("effects[%d] = %#v, expected %#v", i, group.Effects[i], want)
+		}
+	}
+}
+
+// TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding
+// reproduces the non-transitive, order-dependent bug fixed by the
+// union-find rewrite: A is similar to B, B is similar to C, but A is not
+// directly similar enough to C. The old anchor-only comparison split C into
+// its own group (or dropped it) depending on iteration order, even though
+// A, B, and C all share the same cause transitively through B.
+func TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding(t *testing.T) {
+	a := Hallazgo{Description: "buffer overflow corrupts memory adjacent allocator", Confidence: 0.5, Location: Ubicacion{Archivo: "alloc.go", Simbolo: "allocate"}}
+	b := Hallazgo{Description: "adjacent allocator exhausts pool", Confidence: 0.9, Location: Ubicacion{Archivo: "pool.go", Simbolo: "acquire"}}
+	c := Hallazgo{Description: "exhausts pool timeout expired session handle", Confidence: 0.4, Location: Ubicacion{Archivo: "session.go", Simbolo: "release"}}
+
+	const threshold = 0.2
+	// Sanity-check the crafted descriptions actually exhibit the intended
+	// non-transitive pairwise relationship before trusting the assertion
+	// below: A~B and B~C exceed the threshold, but A~C does not.
+	if got := descriptionSimilarity(a.Description, b.Description); got <= threshold {
+		t.Fatalf("similarity(A,B) = %v, want > %v (test setup invalid)", got, threshold)
+	}
+	if got := descriptionSimilarity(b.Description, c.Description); got <= threshold {
+		t.Fatalf("similarity(B,C) = %v, want > %v (test setup invalid)", got, threshold)
+	}
+	if got := descriptionSimilarity(a.Description, c.Description); got > threshold {
+		t.Fatalf("similarity(A,C) = %v, want <= %v (test setup invalid)", got, threshold)
+	}
+
+	groups := correlateFindingsByCause([]Hallazgo{a, b, c}, threshold)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, expected 1 transitive group joining A, B, C via B: %#v", len(groups), groups)
+	}
+	if len(groups[0].Effects) != 3 {
+		t.Fatalf("effects = %d, expected 3 (A and C must join transitively through B, not split or drop C): %#v", len(groups[0].Effects), groups[0].Effects)
+	}
+	for i, want := range []Hallazgo{a, b, c} {
+		if !reflect.DeepEqual(groups[0].Effects[i], want) {
+			t.Errorf("effects[%d] = %#v, expected %#v", i, groups[0].Effects[i], want)
+		}
 	}
 }
 

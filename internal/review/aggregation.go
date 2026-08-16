@@ -151,9 +151,11 @@ func corroboratedConfidence(finding Hallazgo) float64 {
 	return 1 - confidence
 }
 
-// CauseGroup groups distinct findings that share a common root cause, without
-// merging or discarding any of them. Unlike aggregateFindings/mergeFindings,
-// this is a non-destructive view: every finding in Effects survives intact in
+// CauseGroup groups distinct findings whose descriptions point to the same
+// underlying symptom, without merging or discarding any of them. Cause is a
+// representative description for the group (see dominantCause), not a
+// verified root cause. Unlike aggregateFindings/mergeFindings, this is a
+// non-destructive view: every finding in Effects survives intact in
 // resultado.Findings, this only groups references to them.
 type CauseGroup struct {
 	Cause   string
@@ -165,7 +167,11 @@ type CauseGroup struct {
 // each one was reported. It is deliberately location-agnostic, unlike
 // areProximateFindings: that is what lets it catch correlated effects across
 // different files and symbols that aggregateFindings's proximity check can
-// never merge. Groups with a single member are dropped.
+// never merge. Grouping is transitive: findings form a group whenever they
+// are connected through a chain of pairwise-similar descriptions (connected
+// components over descriptionSimilarity, computed with union-find), not only
+// when each one is directly similar to a single anchor finding. Groups with a
+// single member are dropped.
 func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGroup {
 	if len(findings) == 0 {
 		return nil
@@ -174,23 +180,46 @@ func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGro
 		threshold = defaultDescriptionSimilarityThreshold
 	}
 
-	assigned := make([]bool, len(findings))
-	var groups []CauseGroup
+	parent := make([]int, len(findings))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(i int) int {
+		for parent[i] != i {
+			parent[i] = parent[parent[i]]
+			i = parent[i]
+		}
+		return i
+	}
+	union := func(i, j int) {
+		ri, rj := find(i), find(j)
+		if ri != rj {
+			parent[rj] = ri
+		}
+	}
+
 	for i := range findings {
-		if assigned[i] {
-			continue
-		}
-		group := []Hallazgo{findings[i]}
-		assigned[i] = true
 		for j := i + 1; j < len(findings); j++ {
-			if assigned[j] {
-				continue
-			}
 			if descriptionSimilarity(findings[i].Description, findings[j].Description) > threshold {
-				group = append(group, findings[j])
-				assigned[j] = true
+				union(i, j)
 			}
 		}
+	}
+
+	var rootOrder []int
+	membersByRoot := make(map[int][]Hallazgo, len(findings))
+	for i := range findings {
+		root := find(i)
+		if _, seen := membersByRoot[root]; !seen {
+			rootOrder = append(rootOrder, root)
+		}
+		membersByRoot[root] = append(membersByRoot[root], findings[i])
+	}
+
+	var groups []CauseGroup
+	for _, root := range rootOrder {
+		group := membersByRoot[root]
 		if len(group) > 1 {
 			groups = append(groups, CauseGroup{Cause: dominantCause(group), Effects: group})
 		}

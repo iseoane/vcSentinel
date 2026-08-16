@@ -180,7 +180,27 @@ func TestAuditarCommitCorrelatesFindingsByCauseAcrossDimensions(t *testing.T) {
 	}
 	group := resultado.CauseGroups[0]
 	if len(group.Effects) != 4 {
-		t.Errorf("effects = %d, expected 4: %#v", len(group.Effects), group.Effects)
+		t.Fatalf("effects = %d, expected 4: %#v", len(group.Effects), group.Effects)
+	}
+	// Bundle dimensions run concurrently, so the order findings land in
+	// resultado.Findings (and thus in group.Effects) is not deterministic.
+	// Assert containment by content instead of position or count alone, so a
+	// buggy implementation that drops one finding and duplicates another
+	// cannot pass.
+	expectedDescriptions := []string{
+		"session cache race condition breaks TestUserLogin",
+		"TestUserLogin breaks because of session cache race condition",
+		"TestUserLogin intermittently fails from session cache race condition",
+		"the session cache race condition is why TestUserLogin breaks",
+	}
+	seen := make(map[string]bool, len(group.Effects))
+	for _, effect := range group.Effects {
+		seen[effect.Description] = true
+	}
+	for _, want := range expectedDescriptions {
+		if !seen[want] {
+			t.Errorf("effects missing finding with description %q: %#v", want, group.Effects)
+		}
 	}
 }
 
