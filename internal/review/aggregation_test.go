@@ -271,43 +271,61 @@ func TestDominantCauseBreaksTwoMemberTieByConfidence(t *testing.T) {
 	}
 }
 
-// TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain reproduces,
-// with exact synthetic ULP offsets, two bugs a correct implementation must
-// avoid: (1) not raising bestScore at all in the tie branch, and (2) raising
-// it unconditionally there instead of only when the tied candidate's score
-// is actually higher.
-//
-// A is the initial anchor. B ties with A (within tolerance) and has higher
-// confidence, so B wins the tie-break; without bug (1) fixed, bestScore
-// would stay at A's stale score. C is far enough from A to look like a
-// strict improvement over that stale anchor, but is actually within
-// tolerance of B's real score and has lower confidence than B — this is
-// what catches bug (1): C must not win outright.
-//
-// D ties with the running max (now C's score) but is itself lower than it
-// and has the highest confidence of all — this is what catches bug (2): if
-// bestScore were unconditionally overwritten with D's lower score instead of
-// only raised when higher, the anchor would incorrectly drop. E is placed
-// just outside tolerance of the true max (C's score) but would fall inside
-// tolerance of that wrongly-dropped anchor, with the lowest confidence of
-// all: it must not win.
-func TestSelectDominantKeepsBestScoreAnchoredToTrueMaxAcrossATieChain(t *testing.T) {
+// TestSelectDominantRaisesBestScoreOnTie reproduces, with exact synthetic
+// ULP offsets, the bug fixed by raising bestScore at all in the tie branch
+// (not just in the strict branch). A is the initial anchor. B ties with A
+// (within tolerance) and has higher confidence, so B wins the tie-break; if
+// bestScore stayed at A's stale score instead of following B's real score,
+// it would still be A's low value here. C is far enough from A to look like
+// a strict improvement over that stale anchor, but is actually within
+// tolerance of B's real score and has lower confidence than B: with the
+// bug, C wins outright via the strict branch against the stale anchor;
+// fixed, C is correctly recognized as tied with B and loses on confidence.
+func TestSelectDominantRaisesBestScoreOnTie(t *testing.T) {
 	const terms = 3 // tolerance = terms * ulpsPerTerm(4) = 12 ULPs
 	a := 1.0
 	b := nthULPAfter(a, 6)  // 6 ULPs from A: within the 12-ULP tolerance of A
 	c := nthULPAfter(a, 13) // 13 ULPs from A (looks like a strict win over the
 	// stale anchor A), but only 7 ULPs from B: within tolerance of B's real
 	// score, not a genuine improvement over it.
-	d := nthULPAfter(a, 8) // 8 ULPs from A: within tolerance of C (13), but
-	// lower than it — must not drag the anchor down.
-	e := nthULPAfter(a, 25) // exactly 12 ULPs above C (25-13=12): tied with
-	// the true max C, but would look like a strict win (25-8=17 > 12) if the
-	// anchor had wrongly dropped to D's score.
-	scores := []float64{a, b, c, d, e}
-	confidences := []float64{0.1, 0.9, 0.5, 0.95, 0.05} // D is highest, E is lowest
+	scores := []float64{a, b, c}
+	confidences := []float64{0.1, 0.9, 0.5} // B is highest, C is not
 
-	if got := selectDominant(scores, confidences, terms); got != 3 {
-		t.Fatalf("selectDominant = %d, want 3 (D: ties with the true max (C) and has the highest confidence; E must not win outright on a wrongly-dropped anchor)", got)
+	if got := selectDominant(scores, confidences, terms); got != 1 {
+		t.Fatalf("selectDominant = %d, want 1 (B: wins the tie-break with A on confidence, and C never becomes a genuine improvement over B's real score)", got)
+	}
+}
+
+// TestSelectDominantNeverLowersBestScoreOnTie reproduces, with exact
+// synthetic ULP offsets, the bug of raising bestScore unconditionally in the
+// tie branch instead of only when the tied candidate's own score is higher.
+// P0 is the initial anchor. P1 ties with P0, has the highest confidence of
+// all, and a higher score, so it correctly wins the tie-break and raises
+// bestScore to its own value. P2 ties with P1's real score but is itself
+// lower than it and has middling confidence: with the bug, bestScore would
+// be overwritten down to P2's lower value regardless of the comparison
+// result. P3 sits far enough from P1's real score to not be tied with it,
+// but close enough to a wrongly-lowered anchor (P2's score) to look like a
+// strict win there, and has the lowest confidence of all: with the bug, P3
+// wins outright via the strict branch against that wrongly-lowered anchor;
+// fixed, P3 is correctly recognized as untied from the true max and loses.
+func TestSelectDominantNeverLowersBestScoreOnTie(t *testing.T) {
+	const terms = 3 // tolerance = terms * ulpsPerTerm(4) = 12 ULPs
+	p0 := 1.0
+	p1 := nthULPAfter(p0, 6) // 6 ULPs from P0: tied with P0 (<=12).
+	p2 := nthULPAfter(p0, 2) // 2 ULPs from P0: tied with P1's real score
+	// (|2-6|=4<=12) but lower than it.
+	p3 := nthULPAfter(p0, 15) // 15 ULPs from P0: tied with P1's real score
+	// (|15-6|=9<=12), so it must lose to P1 on confidence when the anchor is
+	// correct. But 15 ULPs from the wrongly-lowered anchor P2 is 13 ULPs
+	// (|15-2|=13>12): out of tolerance, so with the bug this looks like a
+	// strict win over that stale, too-low anchor instead of a tie against
+	// the true max.
+	scores := []float64{p0, p1, p2, p3}
+	confidences := []float64{0.1, 0.9, 0.5, 0.05} // P1 is highest, P3 is lowest
+
+	if got := selectDominant(scores, confidences, terms); got != 1 {
+		t.Fatalf("selectDominant = %d, want 1 (P1: the true max never drops to P2's lower tied score, so P3 stays tied with it and loses on confidence)", got)
 	}
 }
 
