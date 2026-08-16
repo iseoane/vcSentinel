@@ -227,18 +227,69 @@ func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGro
 	return groups
 }
 
-// dominantCause returns the Description of the highest-Confidence finding in
-// the group; ties keep the first one encountered.
+// dominantCause returns the Description of the group's medoid: the member
+// with the highest total description similarity to the rest of the group.
+// Picking by raw Confidence instead would let a transitive-chain endpoint
+// label the whole group even when it shares nothing with the opposite
+// endpoint. Ties are broken by highest Confidence, then by first
+// encountered. Requires a non-empty group.
 func dominantCause(group []Hallazgo) string {
-	cause := group[0].Description
-	best := group[0].Confidence
-	for _, finding := range group[1:] {
-		if finding.Confidence > best {
-			best = finding.Confidence
-			cause = finding.Description
+	scoreOf := func(i int) float64 {
+		score := 0.0
+		for j := range group {
+			if i != j {
+				score += descriptionSimilarity(group[i].Description, group[j].Description)
+			}
+		}
+		return score
+	}
+
+	best := 0
+	bestScore := scoreOf(0)
+	terms := len(group) - 1
+	for i := 1; i < len(group); i++ {
+		score := scoreOf(i)
+		// Only the strict branch ever raises bestScore, so it always holds
+		// the true running maximum: also raising it from the tie branch
+		// would let it drift toward whichever member the tie-break last
+		// picked instead. See scoresTie for why terms is passed through.
+		tied := scoresTie(score, bestScore, terms)
+		if score > bestScore && !tied {
+			bestScore = score
+			best = i
+		} else if tied && group[i].Confidence > group[best].Confidence {
+			best = i
 		}
 	}
-	return cause
+	return group[best].Description
+}
+
+// scoresTie reports whether a and b, each the sum of terms values, are
+// within floating-point summation noise of each other. Different members
+// sum the same underlying similarities in a different order (each skips its
+// own index), and float addition is not associative, so a mathematically
+// equal total can come out a few ULPs apart; naive summation error grows
+// roughly linearly with terms, so the tolerance scales with it too — a fixed
+// tolerance would either be too tight for large groups (masking a real tie
+// as a difference) or too loose for long descriptions (masking a real
+// difference as a tie). descriptionSimilarity sums are rational numbers
+// whose denominators are bounded by description word-set sizes, so for the
+// group sizes and description lengths real findings actually produce, two
+// mathematically distinct sums stay separated by far more than this noise
+// floor. terms is clamped to at least 1 so a caller passing 0 or a negative
+// value (which should not happen, but this stays correct either way) never
+// collapses or inverts the tolerance.
+func scoresTie(a, b float64, terms int) bool {
+	if a == b {
+		return true
+	}
+	if terms < 1 {
+		terms = 1
+	}
+	const ulpsPerTerm = 4
+	scale := math.Max(math.Abs(a), math.Abs(b))
+	ulp := math.Nextafter(scale, math.Inf(1)) - scale
+	return math.Abs(a-b) <= ulp*float64(terms)*ulpsPerTerm
 }
 
 func severityRank(severity string) int {

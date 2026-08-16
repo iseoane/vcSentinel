@@ -121,20 +121,40 @@ func TestCorrelateFindingsByCauseGroupsDistinctLocationsSharingRootCause(t *test
 	if len(group.Effects) != 5 {
 		t.Fatalf("effects = %d, expected 5: %#v", len(group.Effects), group.Effects)
 	}
-	if group.Cause != findings[1].Description {
-		t.Errorf("cause = %q, expected highest-confidence description %q", group.Cause, findings[1].Description)
+	// Cause is the medoid (highest total description similarity to the rest
+	// of the group), not simply the highest-Confidence member: findings[0]'s
+	// wording overlaps most with the other four collectively, even though
+	// findings[1] has the highest individual Confidence (0.9).
+	if group.Cause != findings[0].Description {
+		t.Errorf("cause = %q, expected medoid description %q", group.Cause, findings[0].Description)
 	}
 	// Prove no finding was dropped, duplicated, or corrupted: every input
-	// finding must survive intact in Effects, in original scan order (the
-	// union-find implementation groups by first-encountered root, and here
-	// findings[0] is directly similar to every other member, so all 5 share
-	// one root discovered at i=0).
+	// finding must survive intact in Effects, in original scan order. Order
+	// is deterministic because correlateFindingsByCause accumulates members
+	// by scanning findings in ascending index order and records each group
+	// at the index where its root is first encountered — not by which index
+	// ends up as the union-find root itself (union has no rank/size
+	// heuristic, so the root is not guaranteed to be the component's
+	// minimum index).
 	for i, want := range findings {
 		if !reflect.DeepEqual(group.Effects[i], want) {
 			t.Errorf("effects[%d] = %#v, expected %#v", i, group.Effects[i], want)
 		}
 	}
 }
+
+// Shared fixture for the two chain tests below (transitivity and
+// medoid-vs-confidence-outlier): A is similar to B, B is similar to C, but A
+// and C share no words. Both vary only Confidence (and, for the
+// transitivity test, Location) on top of these descriptions. The dominant-
+// cause tie-break test below uses its own independent fixture instead, since
+// it is not a chain scenario.
+const (
+	chainDescriptionA        = "buffer overflow corrupts memory adjacent allocator"
+	chainDescriptionB        = "adjacent allocator exhausts pool"
+	chainDescriptionC        = "exhausts pool timeout expired session handle"
+	chainSimilarityThreshold = 0.2
+)
 
 // TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding
 // reproduces the non-transitive, order-dependent bug fixed by the
@@ -143,11 +163,11 @@ func TestCorrelateFindingsByCauseGroupsDistinctLocationsSharingRootCause(t *test
 // its own group (or dropped it) depending on iteration order, even though
 // A, B, and C all share the same cause transitively through B.
 func TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding(t *testing.T) {
-	a := Hallazgo{Description: "buffer overflow corrupts memory adjacent allocator", Confidence: 0.5, Location: Ubicacion{Archivo: "alloc.go", Simbolo: "allocate"}}
-	b := Hallazgo{Description: "adjacent allocator exhausts pool", Confidence: 0.9, Location: Ubicacion{Archivo: "pool.go", Simbolo: "acquire"}}
-	c := Hallazgo{Description: "exhausts pool timeout expired session handle", Confidence: 0.4, Location: Ubicacion{Archivo: "session.go", Simbolo: "release"}}
+	a := Hallazgo{Description: chainDescriptionA, Confidence: 0.5, Location: Ubicacion{Archivo: "alloc.go", Simbolo: "allocate"}}
+	b := Hallazgo{Description: chainDescriptionB, Confidence: 0.9, Location: Ubicacion{Archivo: "pool.go", Simbolo: "acquire"}}
+	c := Hallazgo{Description: chainDescriptionC, Confidence: 0.4, Location: Ubicacion{Archivo: "session.go", Simbolo: "release"}}
 
-	const threshold = 0.2
+	const threshold = chainSimilarityThreshold
 	// Sanity-check the crafted descriptions actually exhibit the intended
 	// non-transitive pairwise relationship before trusting the assertion
 	// below: A~B and B~C exceed the threshold, but A~C does not.
@@ -172,6 +192,125 @@ func TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding(t *testi
 		if !reflect.DeepEqual(groups[0].Effects[i], want) {
 			t.Errorf("effects[%d] = %#v, expected %#v", i, groups[0].Effects[i], want)
 		}
+	}
+}
+
+// TestCorrelateFindingsByCauseLabelsChainWithMedoidNotConfidenceOutlier
+// reproduces the mislabeling bug a semantic review found in the union-find
+// rewrite: under transitive chaining, picking Cause by raw highest
+// Confidence can select a chain endpoint that shares zero words with the
+// opposite endpoint, even though a middle member (the bridge) is similar to
+// both. Here c has the highest Confidence but zero similarity to a; b is the
+// bridge with positive similarity to both a and c, so b must win regardless
+// of confidence ordering.
+func TestCorrelateFindingsByCauseLabelsChainWithMedoidNotConfidenceOutlier(t *testing.T) {
+	a := Hallazgo{Description: chainDescriptionA, Confidence: 0.5}
+	b := Hallazgo{Description: chainDescriptionB, Confidence: 0.3}
+	c := Hallazgo{Description: chainDescriptionC, Confidence: 0.9}
+
+	const threshold = chainSimilarityThreshold
+	// Same sanity checks as the sibling transitivity test above: this test
+	// shares its fixture, so it must not silently rely on that test's setup
+	// remaining valid.
+	if got := descriptionSimilarity(a.Description, b.Description); got <= threshold {
+		t.Fatalf("similarity(A,B) = %v, want > %v (test setup invalid)", got, threshold)
+	}
+	if got := descriptionSimilarity(b.Description, c.Description); got <= threshold {
+		t.Fatalf("similarity(B,C) = %v, want > %v (test setup invalid)", got, threshold)
+	}
+	if got := descriptionSimilarity(a.Description, c.Description); got != 0 {
+		t.Fatalf("similarity(A,C) = %v, want 0 (test setup invalid)", got)
+	}
+
+	groups := correlateFindingsByCause([]Hallazgo{a, b, c}, threshold)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, expected 1: %#v", len(groups), groups)
+	}
+	if groups[0].Cause != b.Description {
+		t.Errorf("cause = %q, expected the bridge %q (medoid), not the highest-confidence chain endpoint %q", groups[0].Cause, b.Description, c.Description)
+	}
+}
+
+// TestDominantCauseBreaksTwoMemberTieByConfidence covers the 2-member tie
+// both at the module's public boundary (correlateFindingsByCause ->
+// CauseGroup.Cause) and via direct calls to dominantCause for both input
+// orders, so a buggy "last one iterated wins" implementation cannot pass by
+// coincidence. In a 2-member group, descriptionSimilarity is symmetric
+// (sim(x,y) == sim(y,x)), so both members always score bit-identically and
+// Confidence alone decides the winner.
+func TestDominantCauseBreaksTwoMemberTieByConfidence(t *testing.T) {
+	low := Hallazgo{Description: "reused buffer without reinitializing state", Confidence: 0.2}
+	high := Hallazgo{Description: "state reinitializing without reused buffer", Confidence: 0.8}
+
+	const threshold = 0.5
+	if got := descriptionSimilarity(low.Description, high.Description); got <= threshold {
+		t.Fatalf("similarity(low,high) = %v, want > %v (test setup invalid)", got, threshold)
+	}
+
+	groups := correlateFindingsByCause([]Hallazgo{low, high}, threshold)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, expected 1: %#v", len(groups), groups)
+	}
+	if groups[0].Cause != high.Description {
+		t.Errorf("cause = %q, expected the higher-confidence member %q on a symmetric tie", groups[0].Cause, high.Description)
+	}
+
+	for _, order := range [][]Hallazgo{{low, high}, {high, low}} {
+		if got := dominantCause(order); got != high.Description {
+			t.Errorf("dominantCause(%v) = %q, expected the higher-confidence member %q on a symmetric tie", order, got, high.Description)
+		}
+	}
+}
+
+// TestScoresTie fixes scoresTie's exact scaling formula with deterministic,
+// synthetic values. It intentionally does not attempt an end-to-end test
+// through dominantCause with a real 4+ member group whose per-member
+// summation order produces a genuine, non-contrived floating-point-noise
+// tie: constructing real descriptionSimilarity values that differ by an
+// exact, predictable number of ULPs (rather than by a realistically large,
+// easily distinguishable margin) is not something that can be reliably
+// authored by hand, only discovered by search — the formula itself is what
+// is being fixed here, directly and deterministically.
+func TestScoresTie(t *testing.T) {
+	nthULPAfter := func(x float64, n int) float64 {
+		for i := 0; i < n; i++ {
+			x = math.Nextafter(x, math.Inf(1))
+		}
+		return x
+	}
+
+	for _, tc := range []struct {
+		name  string
+		a, b  float64
+		terms int
+		want  bool
+	}{
+		{name: "bit identical", a: 1.5, b: 1.5, terms: 3, want: true},
+		{name: "within a few ULPs for 3 terms", a: 1.0, b: nthULPAfter(1.0, 2), terms: 3, want: true},
+		// terms=3 allows 3*ulpsPerTerm(4) = 12 ULPs of tolerance: exactly at
+		// that boundary must still tie, one ULP past it must not.
+		{name: "exactly at the scaled boundary", a: 1.0, b: nthULPAfter(1.0, 12), terms: 3, want: true},
+		{name: "one ULP past the scaled boundary", a: 1.0, b: nthULPAfter(1.0, 13), terms: 3, want: false},
+		// Same 10-ULP gap, but terms=2 (tolerance 8) rejects it while
+		// terms=3 (tolerance 12) accepts it: this is what actually pins the
+		// scaling behavior, unlike a gap both tolerances would reject alike.
+		{name: "same gap ties for more terms but not fewer", a: 1.0, b: nthULPAfter(1.0, 10), terms: 2, want: false},
+		{name: "same gap ties for more terms but not fewer (accepted at terms=3)", a: 1.0, b: nthULPAfter(1.0, 10), terms: 3, want: true},
+		{name: "far apart at the same magnitude", a: 1.0, b: 1.0001, terms: 3, want: false},
+		{name: "far apart near zero", a: 0.0, b: 1e-6, terms: 3, want: false},
+		// terms=0 clamps to 1 (tolerance 4 ULPs), not 0 (which would demand
+		// bit-identical values): this 4-ULP gap only ties because of that
+		// clamp.
+		{name: "terms clamped to 1 when non-positive", a: 1.0, b: nthULPAfter(1.0, 4), terms: 0, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := scoresTie(tc.a, tc.b, tc.terms); got != tc.want {
+				t.Errorf("scoresTie(%v, %v, %d) = %v, want %v", tc.a, tc.b, tc.terms, got, tc.want)
+			}
+			if got := scoresTie(tc.b, tc.a, tc.terms); got != tc.want {
+				t.Errorf("scoresTie(%v, %v, %d) = %v, want %v (should be symmetric)", tc.b, tc.a, tc.terms, got, tc.want)
+			}
+		})
 	}
 }
 
