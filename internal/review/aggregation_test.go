@@ -304,11 +304,11 @@ func TestSelectDominantRaisesBestScoreOnTie(t *testing.T) {
 // bestScore to its own value. P2 ties with P1's real score but is itself
 // lower than it and has middling confidence: with the bug, bestScore would
 // be overwritten down to P2's lower value regardless of the comparison
-// result. P3 sits far enough from P1's real score to not be tied with it,
-// but close enough to a wrongly-lowered anchor (P2's score) to look like a
-// strict win there, and has the lowest confidence of all: with the bug, P3
-// wins outright via the strict branch against that wrongly-lowered anchor;
-// fixed, P3 is correctly recognized as untied from the true max and loses.
+// result. P3 also ties with P1's real score, so with the correct anchor it
+// must lose to P1 on confidence — but it falls outside tolerance of the
+// wrongly-lowered anchor P2, and has the lowest confidence of all: with the
+// bug, P3 wins outright via the strict branch against that stale, too-low
+// anchor instead of losing a tie against the true max.
 func TestSelectDominantNeverLowersBestScoreOnTie(t *testing.T) {
 	const terms = 3 // tolerance = terms * ulpsPerTerm(4) = 12 ULPs
 	p0 := 1.0
@@ -326,6 +326,26 @@ func TestSelectDominantNeverLowersBestScoreOnTie(t *testing.T) {
 
 	if got := selectDominant(scores, confidences, terms); got != 1 {
 		t.Fatalf("selectDominant = %d, want 1 (P1: the true max never drops to P2's lower tied score, so P3 stays tied with it and loses on confidence)", got)
+	}
+}
+
+// TestSelectDominantLetsLowerScoredTiedCandidateWinOnConfidence fixes the
+// core tie-break policy itself: X is processed first and becomes the
+// anchor; Y ties with X (within tolerance) but has a strictly LOWER raw
+// score and the higher confidence. Y must still win, because within a tie
+// the score's exact value stops mattering — only confidence (then order)
+// decides. A mutant that only lets the tie branch run when the candidate's
+// score is also higher than the anchor (conflating "tied" with "improved")
+// would incorrectly keep X here.
+func TestSelectDominantLetsLowerScoredTiedCandidateWinOnConfidence(t *testing.T) {
+	const terms = 3          // tolerance = terms * ulpsPerTerm(4) = 12 ULPs
+	x := nthULPAfter(1.0, 6) // processed first: becomes the initial anchor.
+	y := 1.0                 // 6 ULPs below X, tied with it (<=12), higher confidence.
+	scores := []float64{x, y}
+	confidences := []float64{0.1, 0.9} // Y is highest despite the lower score
+
+	if got := selectDominant(scores, confidences, terms); got != 1 {
+		t.Fatalf("selectDominant = %d, want 1 (Y: ties with X and wins on confidence despite a strictly lower raw score)", got)
 	}
 }
 
