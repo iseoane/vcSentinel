@@ -10,16 +10,20 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
-// fakeEditor is a double that records every Edit call so a rejected write
-// can be asserted as never having reached the underlying editor, not just
-// inferred from the returned error.
+// fakeEditor is a double that records every Read and Edit call so a
+// rejected write can be asserted as never having reached the underlying
+// editor at all — not just inferred from the returned error, and not just
+// for Edit: an early rejection (an unsafe path) must never even trigger the
+// existence-check Read, which readCalls lets tests verify directly.
 type fakeEditor struct {
 	files      map[string]string
 	readErrors map[string]error // arbitrary non-not-exist errors keyed by path
+	readCalls  []string
 	editCalls  []string
 }
 
 func (f *fakeEditor) Read(path string) (string, error) {
+	f.readCalls = append(f.readCalls, path)
 	if err, ok := f.readErrors[path]; ok {
 		return "", err
 	}
@@ -172,5 +176,42 @@ func TestScopedEditorEditSurfacesNonNotExistReadErrors(t *testing.T) {
 	}
 	if len(editor.editCalls) != 0 {
 		t.Fatalf("Edit(%q) errored but underlying editor was called: %v", path, editor.editCalls)
+	}
+}
+
+// TestScopedEditorEditRejectsUnsafePathsBeforeAnyRead verifies the ordering
+// guarantee ScopedEditor.Edit documents: an unsafe path (absolute,
+// traversal, or empty) is rejected by the early isPathSafe check before the
+// existence-check Read is ever attempted, not merely before Edit. Asserting
+// only editCalls (as the other cases in this file do) cannot distinguish
+// "rejected after calling Read" from "rejected before ever calling Read";
+// asserting readCalls is what proves the underlying Editor was never
+// reached at all.
+func TestScopedEditorEditRejectsUnsafePathsBeforeAnyRead(t *testing.T) {
+	cases := []struct {
+		name     string
+		editPath string
+	}{
+		{name: "absolute path", editPath: "/etc/x_test.go"},
+		{name: "path traversal", editPath: "../../../etc/cron.d/evil_test.go"},
+		{name: "empty path", editPath: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			editor := &fakeEditor{files: map[string]string{}}
+			scoped := NewScopedEditor(editor, NewScope(nil))
+
+			err := scoped.Edit(tc.editPath, "new content")
+			if err == nil {
+				t.Fatalf("Edit(%q) expected an unsafe-path error, got nil", tc.editPath)
+			}
+			if len(editor.readCalls) != 0 {
+				t.Fatalf("Edit(%q) rejected as unsafe but underlying Read was called: %v", tc.editPath, editor.readCalls)
+			}
+			if len(editor.editCalls) != 0 {
+				t.Fatalf("Edit(%q) rejected as unsafe but underlying Edit was called: %v", tc.editPath, editor.editCalls)
+			}
+		})
 	}
 }
