@@ -184,6 +184,14 @@ func estaPendiente(ficha Ficha) bool {
 // riesgos reúne los hallazgos CRITICAL y WARNING de la última revisión de
 // cada ficha pendiente (los ADVISORY son información, no riesgos). Las fichas
 // corregidas (FixedIn) no aportan riesgos pendientes.
+//
+// T6.5: when the last revision carries AggregatedFindings (the T6.1/T6.2
+// merged result, review.ResultadoAuditoria.Findings), it takes over the
+// whole ficha and renders through renderMergedFinding instead of the raw
+// per-dimension Dims below — it already is the deduplicated, cross-dimension
+// view, so iterating Dims on top would double-report the same defect. A
+// ficha without AggregatedFindings (saved before T6.5, or by a caller that
+// never propagated it) keeps the legacy Dims-based rendering unchanged.
 func riesgos(fichas []Ficha) []string {
 	var lineas []string
 	for _, ficha := range fichas {
@@ -198,6 +206,15 @@ func riesgos(fichas []Ficha) []string {
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
+		if len(ultima.AggregatedFindings) > 0 {
+			for _, h := range ultima.AggregatedFindings {
+				if h.Severity != SevCritical && h.Severity != SevWarning {
+					continue
+				}
+				lineas = append(lineas, renderMergedFinding(sha, h))
+			}
+			continue
+		}
 		for _, dr := range ultima.Dims {
 			for _, h := range dr.Findings {
 				if h.Severity != SevCritical && h.Severity != SevWarning {
@@ -209,6 +226,57 @@ func riesgos(fichas []Ficha) []string {
 		}
 	}
 	return lineas
+}
+
+// mergedFindingSourceLabel distinguishes a merged Hallazgo's origin for
+// rendering (T6.5): SourceReview is a semantic LLM inference, SourceValidation
+// a deterministic command. Any other value (or none) is labeled "unknown"
+// rather than guessed, since a Hallazgo can only be trusted to say what it
+// actually declares.
+func mergedFindingSourceLabel(source string) string {
+	switch source {
+	case SourceReview:
+		return "review"
+	case SourceValidation:
+		return "validation"
+	default:
+		return "unknown"
+	}
+}
+
+// mergedFindingEvidenceLines renders every corroborating evidence T6.1's
+// aggregation retained in EvidenceSet, one line per source. A Hallazgo that
+// never went through aggregation (EvidenceSet nil) falls back to its single
+// legacy Evidence string, so a merged-but-unique finding still shows its one
+// piece of evidence instead of nothing.
+func mergedFindingEvidenceLines(h Hallazgo) []string {
+	if h.EvidenceSet == nil {
+		if strings.TrimSpace(h.Evidence) == "" {
+			return nil
+		}
+		return []string{fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", h.Dimension, h.Evidence, h.Confidence)}
+	}
+	lineas := make([]string, 0, len(h.EvidenceSet.Values))
+	for _, v := range h.EvidenceSet.Values {
+		lineas = append(lineas, fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", v.Dimension, v.Evidence, v.Confidence))
+	}
+	return lineas
+}
+
+// renderMergedFinding renders one aggregated Hallazgo — the T6.1 merge +
+// T6.2 supersede result carried in ResultadoAuditoria.Findings — showing its
+// distinguished Source and every accumulated evidence plus the combined
+// confidence, instead of the single Evidence string a raw per-dimension
+// ReviewFinding line shows.
+func renderMergedFinding(sha string, h Hallazgo) string {
+	linea := fmt.Sprintf("- %s `%s` [%s] %s (%s, confidence %.2f) — %s (%s:%d)",
+		severidadEmoji(h.Severity), sha, h.Dimension, h.Severity,
+		mergedFindingSourceLabel(h.Source), h.Confidence, h.Description,
+		h.Location.Archivo, h.Location.LineaInicio)
+	for _, evidencia := range mergedFindingEvidenceLines(h) {
+		linea += "\n" + evidencia
+	}
+	return linea
 }
 
 // RenderResumen construye el resumen de veredictos y riesgos de la rama:

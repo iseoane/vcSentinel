@@ -30,6 +30,14 @@ type Revision struct {
 	Model  string            `json:"model,omitempty"`
 	Effort string            `json:"effort,omitempty"`
 	Dims   []DimensionResult `json:"dims"`
+	// AggregatedFindings is the deduplicated, cross-dimension merged, and
+	// supersede-applied result review.AuditarCommit already computes
+	// (ResultadoAuditoria.Findings, T6.1+T6.2). It is persisted here, separate
+	// from Dims, so the renderer (T6.5) can show fused evidence and Source
+	// per finding instead of only the raw per-dimension findings in Dims.
+	// Empty for a Revision saved before this field existed, or when the
+	// caller never propagated it: consumers must fall back to Dims.
+	AggregatedFindings []Hallazgo `json:"aggregated_findings,omitempty"`
 }
 
 // Ficha es el registro completo de auditoría de un commit, guardado como

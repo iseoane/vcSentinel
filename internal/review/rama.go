@@ -272,10 +272,11 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		modelo = "default"
 	}
 	revision := Revision{
-		At:     time.Now(),
-		Result: resultado.Veredicto,
-		Fixed:  RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto),
-		Dims:   DimsResultadosParaFicha(resultado.Dims),
+		At:                 time.Now(),
+		Result:             resultado.Veredicto,
+		Fixed:              RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto),
+		Dims:               DimsResultadosParaFicha(resultado.Dims),
+		AggregatedFindings: resultado.Findings,
 	}
 	if err := ledger.GuardarRevision(sha, mensaje, "pr", modelo, revision); err != nil {
 		return err

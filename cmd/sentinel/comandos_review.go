@@ -144,13 +144,14 @@ func ejecutarReview(worktree string, args []string) {
 		fixed := review.RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto)
 		efectivo := autoria.consolidar()
 		revision := review.Revision{
-			At:     time.Now(),
-			Result: resultado.Veredicto,
-			Fixed:  fixed,
-			Agent:  efectivo.Binario,
-			Model:  efectivo.Modelo,
-			Effort: efectivo.Esfuerzo,
-			Dims:   review.DimsResultadosParaFicha(resultado.Dims),
+			At:                 time.Now(),
+			Result:             resultado.Veredicto,
+			Fixed:              fixed,
+			Agent:              efectivo.Binario,
+			Model:              efectivo.Modelo,
+			Effort:             efectivo.Esfuerzo,
+			Dims:               review.DimsResultadosParaFicha(resultado.Dims),
+			AggregatedFindings: resultado.Findings,
 		}
 		if err := ledger.GuardarRevision(sha, mensaje, "", modelo, revision); err != nil {
 			fmt.Printf("⚠️ %s: no se pudo guardar la ficha: %v\n", sha[:8], err)

@@ -487,6 +487,95 @@ func TestBloqueantesDeRamaFiltraCriticos(t *testing.T) {
 	}
 }
 
+// TestRiesgosRendersMergedFindingWithSourceAndEvidence: a merged Hallazgo
+// (T6.1 aggregation + T6.2 supersede result, ResultadoAuditoria.Findings
+// persisted on Revision.AggregatedFindings by T6.5) renders its distinguished
+// Source (review vs validation) and every accumulated evidence from
+// EvidenceSet instead of only the single legacy Evidence string.
+func TestRiesgosRendersMergedFindingWithSourceAndEvidence(t *testing.T) {
+	ficha := fichaAyuda("6b127cd", "fix(auth): tighten token check", "m", Revision{
+		At:     time.Now().UTC(),
+		Result: "block",
+		AggregatedFindings: []Hallazgo{
+			{
+				Dimension:   DimSecurity,
+				Severity:    SevCritical,
+				Source:      SourceReview,
+				Confidence:  0.9,
+				Description: "token comparison is not constant-time",
+				Location:    Ubicacion{Archivo: "auth.go", LineaInicio: 42},
+				EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
+					{Dimension: DimSecurity, Evidence: "token == expected", Confidence: 0.8},
+					{Dimension: DimLogic, Evidence: "no hmac.Equal usage found", Confidence: 0.95},
+				}},
+			},
+		},
+	})
+
+	salida := RenderPlantillaPr([]Ficha{ficha}, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
+
+	if !strings.Contains(salida, "review") {
+		t.Errorf("merged finding must show its distinguished Source (review): %s", salida)
+	}
+	if !strings.Contains(salida, "token == expected") || !strings.Contains(salida, "no hmac.Equal usage found") {
+		t.Errorf("merged finding must show every accumulated evidence from EvidenceSet: %s", salida)
+	}
+	if !strings.Contains(salida, "0.90") {
+		t.Errorf("merged finding must show the combined confidence: %s", salida)
+	}
+}
+
+// TestRiesgosMergedValidationSourceLabel: a merged Hallazgo sourced from
+// deterministic validation (SourceValidation) is labeled distinctly from one
+// sourced from semantic review (SourceReview).
+func TestRiesgosMergedValidationSourceLabel(t *testing.T) {
+	ficha := fichaAyuda("945b5b5", "fix(build): repair lint failure", "m", Revision{
+		At:     time.Now().UTC(),
+		Result: "block",
+		AggregatedFindings: []Hallazgo{
+			{
+				Dimension:   DimStyle,
+				Severity:    SevWarning,
+				Source:      SourceValidation,
+				Confidence:  1,
+				Description: "gofmt reported an unformatted file",
+				Location:    Ubicacion{Archivo: "main.go", LineaInicio: 1},
+				Evidence:    "gofmt -l main.go",
+			},
+		},
+	})
+
+	salida := riesgos([]Ficha{ficha})
+	if len(salida) != 1 {
+		t.Fatalf("riesgos() = %d lines, expected 1: %v", len(salida), salida)
+	}
+	if !strings.Contains(salida[0], "validation") {
+		t.Errorf("merged finding sourced from validation must be labeled distinctly: %s", salida[0])
+	}
+	if strings.Contains(salida[0], "review") {
+		t.Errorf("a validation-sourced finding must not be mislabeled review: %s", salida[0])
+	}
+	if !strings.Contains(salida[0], "gofmt -l main.go") {
+		t.Errorf("a non-merged Hallazgo (EvidenceSet nil) must fall back to its legacy Evidence string: %s", salida[0])
+	}
+}
+
+// TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings: a Revision saved
+// before T6.5 (or by a caller that never propagated AggregatedFindings) keeps
+// rendering from the raw per-dimension ReviewFinding in Dims, unchanged.
+func TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
+	ficha := fichaAyuda("aaaaaaa", "feat(a): legacy", "m",
+		revisionAyuda("block",
+			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
+				Findings: []ReviewFinding{{Dimension: DimSecurity, File: "a.go", Line: 1, Severity: SevCritical, Description: "legacy finding"}}},
+		))
+
+	salida := riesgos([]Ficha{ficha})
+	if len(salida) != 1 || !strings.Contains(salida[0], "legacy finding") {
+		t.Errorf("legacy Dims-based rendering must still work when AggregatedFindings is empty: %v", salida)
+	}
+}
+
 // TestRenderPlantillaSeccionRiesgos: la sección "## Riesgos" aparece con el
 // placeholder cuando no hay riesgos y con las líneas renderizadas cuando hay
 // hallazgos CRITICAL/WARNING pendientes (los ADVISORY no se listan).

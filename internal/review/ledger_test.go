@@ -58,6 +58,39 @@ func TestLedgerRevisionesAppend(t *testing.T) {
 	}
 }
 
+// TestLedgerPersistsAggregatedFindings verifies that Revision.AggregatedFindings
+// (T6.5) round-trips through the JSON ledger file: it is the aggregated
+// review.AuditarCommit result (ResultadoAuditoria.Findings), not the raw
+// per-dimension DimensionResult.Findings already covered by Dims, and the
+// renderer needs it to survive persistence to render it later.
+func TestLedgerPersistsAggregatedFindings(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+
+	rev := Revision{
+		At:     time.Now().UTC(),
+		Result: VerdictBlock,
+		AggregatedFindings: []Hallazgo{
+			{Dimension: DimSecurity, Severity: SevCritical, Source: SourceReview, Confidence: 0.9, Description: "exposed secret"},
+		},
+	}
+	if err := ledger.GuardarRevision("aggfind1", "feat(x): thing", "", "", rev); err != nil {
+		t.Fatalf("GuardarRevision returned error: %v", err)
+	}
+
+	ficha, err := ledger.LeerFicha("aggfind1")
+	if err != nil {
+		t.Fatalf("LeerFicha returned error: %v", err)
+	}
+	if len(ficha.Revisions) != 1 || len(ficha.Revisions[0].AggregatedFindings) != 1 {
+		t.Fatalf("AggregatedFindings did not round-trip: %+v", ficha.Revisions)
+	}
+	got := ficha.Revisions[0].AggregatedFindings[0]
+	if got.Source != SourceReview || got.Confidence != 0.9 || got.Description != "exposed secret" {
+		t.Errorf("AggregatedFindings[0] = %+v, values changed across persistence", got)
+	}
+}
+
 func TestLedgerFichaInexistente(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NuevoLedger(dir)
