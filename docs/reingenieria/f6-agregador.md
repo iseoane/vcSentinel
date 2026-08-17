@@ -168,25 +168,50 @@ consumidor — tarea de T6.5 (renderer adaptado), no de esta.
 
 ---
 
-## T6.3 — Correlación por causa
+## T6.3 — Correlación por causa ✅ (hash de cierre `17e8970`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 240 líneas |
 | Depende de | T6.1 |
-| Commit | `feat(aggregation): agrupar hallazgos por causa comun` |
+| Commits | `c47ecc1` (implementación: `CauseGroup`, `correlateFindingsByCause`), `439513f` (corrección tras revisión: agrupamiento por componentes conexas vía union-find en vez de solo-ancla, para que sea transitivo), `3e05565` (selección de `Cause` por medoide en vez de por Confidence bruta, para no etiquetar mal un grupo encadenado transitivamente), `9310aa8`/`6e05456`/`6a12df2`/`6a2d24f`/`17e8970` (correcciones sucesivas de la revisión semántica al desempate de `dominantCause`/`selectDominant`: ancla de máximo real estable frente a ruido de suma en punto flotante, tolerancia escalada al número real de sumandos en vez de un épsilon fijo, y separación en tests aislados y verificados uno a uno contra su propio mutante) |
 
-Sin cambios: no existe hoy ningún mecanismo de agrupación por causa común en
-el repositorio (`internal/review`, `internal/gate`) — confirmado por
-búsqueda de "agregad"/"dedup"/"aggreg" en todo el módulo, sin resultados
-salvo referencias a esta misma ficha.
+Sin cambios en el diseño original: no existía ningún mecanismo de agrupación
+por causa común en el repositorio antes de esta tarea.
 
 **Hacer**: agrupar por síntoma compartido —mismo test fallando, misma frontera de
 confianza— para reportar una causa en lugar de diez efectos.
 
-**Aceptación**: test con cinco hallazgos derivados de un mismo test roto → un
-grupo con cinco efectos.
+**Aceptación**: cumplida — `TestCorrelateFindingsByCauseGroupsDistinctLocationsSharingRootCause`
+(`aggregation_test.go`) prueba exactamente el caso de la ficha: cinco
+hallazgos en cinco ubicaciones distintas describiendo el mismo síntoma → un
+grupo con cinco efectos, sin pérdida ni duplicación de ninguno.
+
+Implementación real: `internal/review/aggregation.go`
+(`correlateFindingsByCause` agrupa por componentes conexas de similitud de
+descripción, deliberadamente sin restricción de ubicación —a diferencia de
+`areProximateFindings` de T6.1—, así que captura efectos correlacionados en
+archivos y símbolos distintos que la deduplicación por proximidad nunca
+fusiona) y `dominantCause`/`selectDominant` (selecciona la etiqueta `Cause`
+por medoide —mayor similitud total al resto del grupo— con desempate por
+Confidence, comparando puntuaciones con una tolerancia en ULPs escalada al
+número de sumandos para no confundir ruido de suma en punto flotante con una
+diferencia real de puntuación).
+
+**Aceptado sin corregir, con motivo documentado** (todos de severidad
+ADVISORY o WARNING no bloqueante, revisados y verificados uno a uno):
+recálculo O(n²) de similitudes en `dominantCause` que `correlateFindingsByCause`
+ya había computado (mantiene `dominantCause` como función pura,
+independientemente testeable, igual que el propio `aggregateFindings` de T6.1
+ya paga el mismo coste sin límite de tamaño de entrada); `Cause` es un símbolo
+representativo por similitud léxica, no una identidad de causa raíz verificada
+—coherente con el propio alcance de la ficha ("síntoma compartido"), no una
+promesa de diagnóstico causal—; y el hallazgo original de seguridad sobre
+coste cuadrático sin cota de tamaño en `correlateFindingsByCause`, ya
+compartido sin cota por `aggregateFindings` desde T6.1 y no introducido por
+esta tarea. Ninguno tiene consumidor que dependa hoy de un límite de tamaño o
+de una identidad causal verificada.
 
 ---
 
