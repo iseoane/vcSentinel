@@ -69,13 +69,14 @@ func (r Revision) HallazgosEfectivos() []Hallazgo {
 // (dr.Dim), not the finding itself, matching findingCrudo.aHallazgo's own
 // convention (finding.go) for the same v1-to-v2 projection.
 //
-// Source is deliberately dropped, never copied from h.Source: a v1
-// ReviewFinding can have it populated (e.g. SourceReview, stamped by the
-// T5.7 critical-refutation path at engine.go:305) without ever having had a
-// real Confidence — v1 has no such field. Copying it through would make the
-// converted Hallazgo pass renderMergedFinding's "Source != \"\"" gate and
-// render a fabricated "(review, confidence 0.00)", exactly the datum that
-// gate exists to avoid (T6.5bis review finding: logic WARNING).
+// Source is deliberately dropped, never copied from h.Source: v1 has no
+// Confidence field, and Hallazgo treats Source and Confidence as a pair
+// that must co-occur — a Source without its matching real Confidence is a
+// fabricated datum, not an absent one. This makes the round-trip with
+// reviewFindingDesdeHallazgo intentionally asymmetric for Source: it is
+// dropped going v1-to-v2 here, but reviewFindingDesdeHallazgo still copies
+// it going v2-to-v1, because a v2 Hallazgo built any other way always pairs
+// Source with a real Confidence.
 func hallazgoDesdeReviewFinding(dimension string, h ReviewFinding) Hallazgo {
 	return Hallazgo{
 		Dimension:   dimension,
@@ -87,11 +88,13 @@ func hallazgoDesdeReviewFinding(dimension string, h ReviewFinding) Hallazgo {
 
 // reviewFindingDesdeHallazgo proyecta un Hallazgo v2 de vuelta a la forma v1
 // ReviewFinding que BloqueantesDeRama (renderer.go) sigue devolviendo
-// públicamente. Vive junto a hallazgoDesdeReviewFinding (su inversa) en vez
-// de en el renderer: ambas direcciones de la pareja v1↔v2 son una regla de
-// mapeo del dominio, no del renderizado, y mantenerlas juntas evita que un
-// campo nuevo en Hallazgo/ReviewFinding obligue a tocar dos archivos con
-// riesgo de divergencia silenciosa (T6.5bis review finding: design WARNING).
+// públicamente. Vive junto a hallazgoDesdeReviewFinding en vez de en el
+// renderer: ambas direcciones de la pareja v1↔v2 son una regla de mapeo del
+// dominio, no del renderizado, y mantenerlas juntas evita que un campo nuevo
+// en Hallazgo/ReviewFinding obligue a tocar dos archivos con riesgo de
+// divergencia silenciosa. No es la inversa exacta de hallazgoDesdeReviewFinding
+// para Source: ver el comentario de esa función sobre por qué la asimetría
+// es intencional, no un descuido.
 func reviewFindingDesdeHallazgo(h Hallazgo) ReviewFinding {
 	return ReviewFinding{
 		Dimension:   h.Dimension,
