@@ -66,8 +66,8 @@ func (c *CLIAdapter) EjecutarRevision(prompt, sha string, paths []string) (strin
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	if c.esOpenCode() {
-		return "", fmt.Errorf("opencode requiere la via consentida con micro-diff para generar mensajes de commit")
+	if c.esOpenCode() || c.esClaude() {
+		return "", fmt.Errorf("%s requiere la via consentida con micro-diff para generar mensajes de commit", c.nombreBase())
 	}
 	salida, err := c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
 	if err != nil {
@@ -115,7 +115,7 @@ func (c *CLIAdapter) ejecutarMensajeCommit(prompt string) (string, error) {
 	if timeout <= 0 {
 		timeout = TimeoutComando
 	}
-	if !c.esOpenCode() {
+	if !c.esOpenCode() && !c.esClaude() {
 		salida, err := c.ejecutarComandoConTimeout(prompt, timeout)
 		if err != nil {
 			return "", err
@@ -125,15 +125,42 @@ func (c *CLIAdapter) ejecutarMensajeCommit(prompt string) (string, error) {
 
 	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
 	defer cancelar()
+
+	if c.esClaude() {
+		cmd, limpiar, err := c.prepararComandoCommitClaude(ctx, prompt)
+		if err != nil {
+			return "", err
+		}
+		defer limpiar()
+
+		var out, stderr bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if detail := strings.TrimSpace(stderr.String()); detail != "" {
+				return "", fmt.Errorf("generar mensaje de commit con claude: %w: %s", err, detail)
+			}
+			return "", err
+		}
+		// Claude Code's plain-text "-p" output already IS the final message
+		// (unlike OpenCode's "--format json" NDJSON stream), so it goes
+		// straight through the same format check as the unrestricted path.
+		return validarMensajeCommit(out.String())
+	}
+
 	cmd, limpiar, err := c.prepararComandoCommit(ctx, prompt)
 	if err != nil {
 		return "", err
 	}
 	defer limpiar()
 
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return "", fmt.Errorf("generar mensaje de commit con opencode: %w: %s", err, detail)
+		}
 		return "", err
 	}
 	return extraerMensajeCommitOpenCode(out.String())
@@ -161,6 +188,33 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 		fmt.Sprintf("OPENCODE_MODEL=%s", c.Config.Model),
 		fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort),
 	)
+	cmd.Stdin = strings.NewReader(prompt)
+	return cmd, limpiar, nil
+}
+
+// prepararComandoCommitClaude runs Claude Code fully isolated (an empty
+// neutral directory, --safe-mode, and every built-in tool disabled via
+// "--tools \"\"") so it cannot explore the repository while generating a
+// commit message: the micro-diff already travels complete in the prompt.
+// Claude Code has no CLAUDE_CONFIG_DIR-style variable and no confirmed
+// per-session tool-call limit (unlike OpenCode's Steps), so this relies only
+// on --safe-mode plus cmd.Dir for isolation; do not add an unverified flag or
+// env var here.
+func (c *CLIAdapter) prepararComandoCommitClaude(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
+	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create neutral directory for claude: %w", err)
+	}
+	limpiar := func() { _ = os.RemoveAll(dir) }
+	args := []string{"-p", "--safe-mode", "--tools", ""}
+	if c.Config.Model != "" {
+		args = append(args, "--model", c.Config.Model)
+	}
+	if c.Config.ReasoningEffort != "" {
+		args = append(args, "--effort", c.Config.ReasoningEffort)
+	}
+	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
+	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(prompt)
 	return cmd, limpiar, nil
 }
@@ -258,7 +312,18 @@ func (c *CLIAdapter) ejecutarRevisionConTimeout(request ReviewRequest, timeout t
 		return "", err
 	}
 	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
-	cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)
+	if c.esClaude() {
+		// Claude Code has no "--dir"-style flag (unlike OpenCode's --pure +
+		// --dir), so confinement to the read-only snapshot happens through
+		// cmd.Dir. --safe-mode already disables CLAUDE.md, skills, plugins,
+		// hooks, MCP servers, and custom agents, so unlike OpenCode's
+		// reviewEnvironment (which redirects HOME/XDG because opencode has no
+		// equivalent flag) no HOME/XDG redirection is needed here.
+		cmd.Dir = request.SnapshotDir
+		cmd.Env = os.Environ()
+	} else {
+		cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)
+	}
 
 	var out bytes.Buffer
 	var stderr bytes.Buffer
@@ -278,6 +343,25 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	maxToolCalls := request.MaxToolCalls
 	if maxToolCalls <= 0 {
 		maxToolCalls = defaultReviewToolCalls
+	}
+	if c.esClaude() {
+		if request.SnapshotDir == "" {
+			return nil, nil, fmt.Errorf("semantic review requires an immutable snapshot directory")
+		}
+		// "--tools Read,Grep,Glob" replaces the whole built-in tool set (not
+		// an incremental allow/deny), so the reviewer can only read/search;
+		// cmd.Dir confines it to the snapshot (see ejecutarRevisionConTimeout).
+		// There is no confirmed Claude Code flag/env var to cap tool-call
+		// count (OpenCode's "Steps"), so maxToolCalls is intentionally unused
+		// here; do not invent one.
+		args := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob"}
+		if c.Config.Model != "" {
+			args = append(args, "--model", c.Config.Model)
+		}
+		if c.Config.ReasoningEffort != "" {
+			args = append(args, "--effort", c.Config.ReasoningEffort)
+		}
+		return args, nil, nil
 	}
 	if !c.esOpenCode() {
 		return nil, nil, fmt.Errorf("semantic review is unavailable: path-confined tool permissions are not configured for this provider")

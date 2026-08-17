@@ -55,6 +55,48 @@ func TestPrepararComandoCommitOpenCodeAislaLaEjecucion(t *testing.T) {
 	}
 }
 
+// TestPrepararComandoCommitClaudeAislaLaEjecucion mirrors
+// TestPrepararComandoCommitOpenCodeAislaLaEjecucion: claude must run outside
+// the repository, with every tool disabled and --safe-mode set.
+func TestPrepararComandoCommitClaudeAislaLaEjecucion(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+	}
+	adapter := CLIAdapter{
+		BinaryName: "claude",
+		Config:     config.AgentConfig{Model: "claude-sonnet-5", ReasoningEffort: "high"},
+	}
+
+	cmd, limpiar, err := adapter.prepararComandoCommitClaude(context.Background(), "feat(test): mensaje")
+	if err != nil {
+		t.Fatalf("prepararComandoCommitClaude devolvió error: %v", err)
+	}
+
+	esperados := []string{"claude", "-p", "--safe-mode", "--tools", "", "--model", "claude-sonnet-5", "--effort", "high"}
+	if !reflect.DeepEqual(cmd.Args, esperados) {
+		t.Fatalf("argumentos = %v, esperados %v", cmd.Args, esperados)
+	}
+	if cmd.Dir == "" {
+		t.Fatal("claude debe ejecutarse en un directorio neutral")
+	}
+	if mismaRuta(cmd.Dir, cwd) {
+		t.Fatalf("cmd.Dir = %q, debe ser distinto del cwd del repositorio %q", cmd.Dir, cwd)
+	}
+	datos, err := io.ReadAll(cmd.Stdin)
+	if err != nil {
+		t.Fatalf("no se pudo leer stdin: %v", err)
+	}
+	if string(datos) != "feat(test): mensaje" {
+		t.Fatalf("stdin = %q, esperado el prompt completo", datos)
+	}
+
+	limpiar()
+	if _, err := os.Stat(cmd.Dir); !os.IsNotExist(err) {
+		t.Fatalf("el directorio aislado sigue existiendo tras limpiar: %v", err)
+	}
+}
+
 type capturaAgente struct {
 	Args  []string `json:"args"`
 	Dir   string   `json:"dir"`
@@ -91,6 +133,65 @@ func TestObtenerMensajeCommitOpenCodeSinDiffFallaSinInvocarProceso(t *testing.T)
 	}
 	if _, err := os.Stat(capturaRuta); !os.IsNotExist(err) {
 		t.Fatalf("OpenCode fue invocado sin micro-diff consentido: %v", err)
+	}
+}
+
+// TestObtenerMensajeCommitClaudeSinDiffFallaSinInvocarProceso mirrors
+// TestObtenerMensajeCommitOpenCodeSinDiffFallaSinInvocarProceso: claude must
+// also be blocked from generating a commit message without a micro-diff.
+func TestObtenerMensajeCommitClaudeSinDiffFallaSinInvocarProceso(t *testing.T) {
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
+	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 10 * time.Second}
+
+	if _, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
+		t.Fatal("claude sin micro-diff consentido debe fallar cerrado")
+	}
+	if _, err := os.Stat(capturaRuta); !os.IsNotExist(err) {
+		t.Fatalf("claude fue invocado sin micro-diff consentido: %v", err)
+	}
+}
+
+// TestObtenerMensajeCommitConDiffClaudeEjecutaAislado mirrors
+// TestObtenerMensajeCommitConDiffOpenCodeEjecutaAislado: claude runs isolated
+// outside the repository and its plain-text output goes straight through
+// validarMensajeCommit, without any NDJSON parsing.
+func TestObtenerMensajeCommitConDiffClaudeEjecutaAislado(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+	}
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "fix(adapter): usar el micro diff aislado")
+	adapter := CLIAdapter{
+		BinaryName: compilarAgenteConNombre(t, "claude"),
+		Config:     config.AgentConfig{Model: "claude-sonnet-5", ReasoningEffort: "high"},
+		Timeout:    10 * time.Second,
+	}
+	microDiff := "diff --git a/x.go b/x.go\n+func corregida() {}"
+
+	mensaje, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, microDiff)
+	if err != nil {
+		t.Fatalf("ObtenerMensajeCommitConDiff devolvió error: %v", err)
+	}
+	if mensaje != "fix(adapter): usar el micro diff aislado" {
+		t.Fatalf("mensaje = %q", mensaje)
+	}
+	captura := leerCapturaAgente(t, capturaRuta)
+	if mismaRuta(captura.Dir, cwd) {
+		t.Fatalf("cwd aislado = %q, no debe ser el repositorio", captura.Dir)
+	}
+	esperados := []string{"-p", "--safe-mode", "--tools", "", "--model", "claude-sonnet-5", "--effort", "high"}
+	if !reflect.DeepEqual(captura.Args, esperados) {
+		t.Fatalf("argumentos = %v, esperados %v", captura.Args, esperados)
+	}
+	if !strings.Contains(captura.Stdin, microDiff) {
+		t.Fatalf("stdin no contiene el micro-diff real: %q", captura.Stdin)
+	}
+	if _, err := os.Stat(captura.Dir); !os.IsNotExist(err) {
+		t.Fatalf("el cwd aislado sigue existiendo tras la ejecución: %v", err)
 	}
 }
 

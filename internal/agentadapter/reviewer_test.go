@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
@@ -335,12 +336,89 @@ func TestReviewCommandRequiresSnapshotDirectory(t *testing.T) {
 	}
 }
 
-func TestReviewCommandClaudeFailsWithoutPathConfinedToolPermissions(t *testing.T) {
+// TestReviewCommandClaudeBuildsPathConfinedArgs verifies that claude gets a
+// working, path-confined review invocation (--safe-mode plus a tool set
+// replaced with read-only tools) instead of the provider-agnostic
+// "unavailable" error: unlike opencode, cmd.Dir (not a permission map)
+// confines it to the snapshot, see ejecutarRevisionConTimeout.
+func TestReviewCommandClaudeBuildsPathConfinedArgs(t *testing.T) {
+	adapter := CLIAdapter{
+		BinaryName: "claude",
+		Config: config.AgentConfig{
+			Model:           "claude-sonnet-5",
+			ReasoningEffort: "high",
+		},
+	}
+	args, env, err := adapter.reviewCommand(ReviewRequest{
+		Prompt:      "audit",
+		Paths:       []string{"internal/review/engine.go"},
+		SnapshotDir: "/snapshot",
+	})
+	if err != nil {
+		t.Fatalf("reviewCommand() error = %v", err)
+	}
+
+	expected := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob", "--model", "claude-sonnet-5", "--effort", "high"}
+	if !reflect.DeepEqual(args, expected) {
+		t.Fatalf("args = %v, expected %v", args, expected)
+	}
+	if env != nil {
+		t.Fatalf("env = %v, expected nil (claude has no OpenCode-style OPENCODE_CONFIG_CONTENT injection)", env)
+	}
+}
+
+// TestReviewCommandClaudeExeIsDetected mirrors the opencode.exe coverage:
+// nombreBase must strip the platform suffix so Windows binaries are detected.
+func TestReviewCommandClaudeExeIsDetected(t *testing.T) {
+	adapter := CLIAdapter{BinaryName: "claude.exe"}
+	args, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: "/snapshot"})
+	if err != nil {
+		t.Fatalf("reviewCommand() error = %v", err)
+	}
+	expected := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob"}
+	if !reflect.DeepEqual(args, expected) {
+		t.Fatalf("args = %v, expected %v", args, expected)
+	}
+}
+
+func TestReviewCommandClaudeOmitsEmptyModelConfiguration(t *testing.T) {
+	adapter := CLIAdapter{BinaryName: "claude"}
+	args, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: "/snapshot"})
+	if err != nil {
+		t.Fatalf("reviewCommand() error = %v", err)
+	}
+	expected := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob"}
+	if !reflect.DeepEqual(args, expected) {
+		t.Fatalf("args = %v, expected %v", args, expected)
+	}
+}
+
+func TestReviewCommandClaudeRequiresSnapshotDirectory(t *testing.T) {
 	adapter := CLIAdapter{BinaryName: "claude"}
 	_, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", MaxToolCalls: 7})
+	if err == nil || !strings.Contains(err.Error(), "snapshot") {
+		t.Fatalf("reviewCommand() error = %v, expected missing snapshot error", err)
+	}
+}
 
-	if err == nil {
-		t.Fatal("reviewCommand() error = nil, expected unavailable path confinement error")
+// TestEjecutarRevisionConTimeoutClaudeUsesSnapshotDirAsCwd verifies the actual
+// os/exec wiring: claude has no "--dir" flag, so confinement to the snapshot
+// must happen through cmd.Dir (see ejecutarRevisionConTimeout).
+func TestEjecutarRevisionConTimeoutClaudeUsesSnapshotDirAsCwd(t *testing.T) {
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	snapshotDir := t.TempDir()
+	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 10 * time.Second}
+
+	if _, err := adapter.ejecutarRevisionConTimeout(ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 10*time.Second); err != nil {
+		t.Fatalf("ejecutarRevisionConTimeout() error = %v", err)
+	}
+	captura := leerCapturaAgente(t, capturaRuta)
+	if !mismaRuta(captura.Dir, snapshotDir) {
+		t.Fatalf("cmd.Dir = %q, expected the snapshot directory %q", captura.Dir, snapshotDir)
+	}
+	if captura.Stdin != "audit" {
+		t.Fatalf("stdin = %q, expected the review prompt", captura.Stdin)
 	}
 }
 
