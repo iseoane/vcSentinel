@@ -47,7 +47,11 @@ func NewScope(findings []review.Hallazgo) Scope {
 // match an existing finding or be a brand-new file that looks like a Go
 // test. exists reflects whether the underlying Editor already has content
 // at path — the caller (ScopedEditor.Edit) is the one that talked to the
-// Editor to learn this, since Scope itself has no I/O access.
+// Editor to learn this, since Scope itself has no I/O access. The safety
+// check here is deliberately repeated even though ScopedEditor.Edit already
+// performs it before calling in: Allows must stay correct as a
+// self-contained policy for any future caller, not just the one that exists
+// today.
 func (s Scope) Allows(path string, exists bool) bool {
 	if !isSafeRelativePath(path) {
 		return false
@@ -105,17 +109,23 @@ func (a *ScopedEditor) Read(path string) (string, error) {
 }
 
 // Edit applies content to path if and only if Scope.Allows it. The path is
-// normalized once and that single form is used for every downstream call —
-// the existence check, the authorization decision, and the actual write —
-// so a file can never be authorized under one spelling and written under
-// another. Existence is determined by attempting a Read first rather than
-// adding a dedicated Exists method to Editor: the interface stays minimal to
-// exactly Read+Edit, itself part of the "no Bash, no network" guarantee. A
-// Read failure other than "does not exist" is surfaced as-is, not folded
-// into "out of scope": a permission or I/O error is a different problem
-// than a scope violation.
+// normalized once and that normalized form is checked for safety BEFORE any
+// I/O is attempted, so an absolute or path-traversal path never reaches the
+// underlying Editor at all — not even for the existence-check Read below.
+// The same form is then used for every downstream call — the existence
+// check, the authorization decision, and the actual write — so a file can
+// never be authorized under one spelling and written under another.
+// Existence is determined by attempting a Read first rather than adding a
+// dedicated Exists method to Editor: the interface stays minimal to exactly
+// Read+Edit, itself part of the "no Bash, no network" guarantee. A Read
+// failure other than "does not exist" is surfaced as-is, not folded into
+// "out of scope": a permission or I/O error is a different problem than a
+// scope violation.
 func (a *ScopedEditor) Edit(path, content string) error {
 	normalized := normalizePath(path)
+	if !isSafeRelativePath(normalized) {
+		return fmt.Errorf("remediation: write to %q is out of scope", path)
+	}
 	_, err := a.editor.Read(normalized)
 	var exists bool
 	switch {
