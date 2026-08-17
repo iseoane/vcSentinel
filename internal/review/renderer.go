@@ -185,13 +185,13 @@ func estaPendiente(ficha Ficha) bool {
 // cada ficha pendiente (los ADVISORY son información, no riesgos). Las fichas
 // corregidas (FixedIn) no aportan riesgos pendientes.
 //
-// T6.5: when the last revision carries AggregatedFindings (the T6.1/T6.2
-// merged result, review.ResultadoAuditoria.Findings), it takes over the
-// whole ficha and renders through renderMergedFinding instead of the raw
-// per-dimension Dims below — it already is the deduplicated, cross-dimension
-// view, so iterating Dims on top would double-report the same defect. A
-// ficha without AggregatedFindings (saved before T6.5, or by a caller that
-// never propagated it) keeps the legacy Dims-based rendering unchanged.
+// T6.5: lee ultima.HallazgosEfectivos() (ledger.go) — el único punto de
+// selección que también consume BloqueantesDeRama más abajo — en vez de
+// bifurcar entre AggregatedFindings y Dims aquí mismo. Eso evita el bug de
+// diseño de T6.5 (un hallazgo semántico ya superseded por T6.2 solo
+// desaparecía de riesgos(), nunca de BloqueantesDeRama) y el continue
+// incondicional que podía tomar control de la ficha sin haber comprobado
+// severidad primero.
 func riesgos(fichas []Ficha) []string {
 	var lineas []string
 	for _, ficha := range fichas {
@@ -206,23 +206,11 @@ func riesgos(fichas []Ficha) []string {
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		if len(ultima.AggregatedFindings) > 0 {
-			for _, h := range ultima.AggregatedFindings {
-				if h.Severity != SevCritical && h.Severity != SevWarning {
-					continue
-				}
-				lineas = append(lineas, renderMergedFinding(sha, h))
+		for _, h := range ultima.HallazgosEfectivos() {
+			if h.Severity != SevCritical && h.Severity != SevWarning {
+				continue
 			}
-			continue
-		}
-		for _, dr := range ultima.Dims {
-			for _, h := range dr.Findings {
-				if h.Severity != SevCritical && h.Severity != SevWarning {
-					continue
-				}
-				lineas = append(lineas, fmt.Sprintf("- %s `%s` [%s] %s — %s (%s:%d)",
-					severidadEmoji(h.Severity), sha, h.Dimension, h.Severity, h.Description, h.File, h.Line))
-			}
+			lineas = append(lineas, renderMergedFinding(sha, h))
 		}
 	}
 	return lineas
@@ -244,21 +232,46 @@ func mergedFindingSourceLabel(source string) string {
 	}
 }
 
+// evidenceEmbedMaxBytes bounds how much of a finding's raw evidence text is
+// embedded in the PR body Markdown (T6.5 review finding: security WARNING).
+// Evidence/FindingEvidence.Evidence can be the incriminating code fragment
+// itself — for a security finding, possibly an embedded secret — and the PR
+// body is an external, indexable, cached surface. recortarRunas (already
+// used by TruncarCuerpo for the whole body) bounds it the same way, never
+// splitting a UTF-8 rune.
+const evidenceEmbedMaxBytes = 300
+
+// sanitizeEvidence prepares a finding's raw evidence text before it is
+// embedded in a Markdown list item published to the PR body (T6.5 review
+// findings: security WARNING x2). Evidence/FindingEvidence.Evidence is
+// untrusted output (an LLM inference or a command's literal stdout/stderr),
+// so it is: bounded in size with recortarRunas; collapsed to a single line
+// so an embedded newline cannot break or forge the surrounding Markdown list
+// structure; and wrapped in inline code, replacing any literal backtick it
+// already contains so it can never terminate the code span early.
+func sanitizeEvidence(evidencia string) string {
+	acotada := recortarRunas(evidencia, evidenceEmbedMaxBytes)
+	sinSaltos := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(acotada)
+	sinBackticks := strings.ReplaceAll(sinSaltos, "`", "'")
+	return "`" + sinBackticks + "`"
+}
+
 // mergedFindingEvidenceLines renders every corroborating evidence T6.1's
 // aggregation retained in EvidenceSet, one line per source. A Hallazgo that
-// never went through aggregation (EvidenceSet nil) falls back to its single
-// legacy Evidence string, so a merged-but-unique finding still shows its one
-// piece of evidence instead of nothing.
+// never went through aggregation (EvidenceSet nil, or non-nil but with no
+// Values — e.g. deserialized from {"evidence_set":{"values":[]}}) falls back
+// to its single legacy Evidence string, so a merged-but-unique finding still
+// shows its one piece of evidence instead of nothing.
 func mergedFindingEvidenceLines(h Hallazgo) []string {
-	if h.EvidenceSet == nil {
+	if h.EvidenceSet == nil || len(h.EvidenceSet.Values) == 0 {
 		if strings.TrimSpace(h.Evidence) == "" {
 			return nil
 		}
-		return []string{fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", h.Dimension, h.Evidence, h.Confidence)}
+		return []string{fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", h.Dimension, sanitizeEvidence(h.Evidence), h.Confidence)}
 	}
 	lineas := make([]string, 0, len(h.EvidenceSet.Values))
 	for _, v := range h.EvidenceSet.Values {
-		lineas = append(lineas, fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", v.Dimension, v.Evidence, v.Confidence))
+		lineas = append(lineas, fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", v.Dimension, sanitizeEvidence(v.Evidence), v.Confidence))
 	}
 	return lineas
 }
@@ -267,12 +280,17 @@ func mergedFindingEvidenceLines(h Hallazgo) []string {
 // T6.2 supersede result carried in ResultadoAuditoria.Findings — showing its
 // distinguished Source and every accumulated evidence plus the combined
 // confidence, instead of the single Evidence string a raw per-dimension
-// ReviewFinding line shows.
+// ReviewFinding line shows. The location suffix is omitted entirely when no
+// location was resolved, instead of rendering the empty placeholder "(:0)"
+// (T6.5 review finding: logic ADVISORY).
 func renderMergedFinding(sha string, h Hallazgo) string {
-	linea := fmt.Sprintf("- %s `%s` [%s] %s (%s, confidence %.2f) — %s (%s:%d)",
+	ubicacion := ""
+	if h.Location.Archivo != "" {
+		ubicacion = fmt.Sprintf(" (%s:%d)", h.Location.Archivo, h.Location.LineaInicio)
+	}
+	linea := fmt.Sprintf("- %s `%s` [%s] %s (%s, confidence %.2f) — %s%s",
 		severidadEmoji(h.Severity), sha, h.Dimension, h.Severity,
-		mergedFindingSourceLabel(h.Source), h.Confidence, h.Description,
-		h.Location.Archivo, h.Location.LineaInicio)
+		mergedFindingSourceLabel(h.Source), h.Confidence, h.Description, ubicacion)
 	for _, evidencia := range mergedFindingEvidenceLines(h) {
 		linea += "\n" + evidencia
 	}
@@ -489,6 +507,16 @@ func seccionValidacion(cmds []ComandoVerificado) string {
 // cada ficha: son los bloqueos del gate de pr create (guía §12.4). Las fichas
 // corregidas (FixedIn) no aportan bloqueantes: su block ya fue resuelto en un
 // commit posterior.
+//
+// T6.5 review finding (design, el más importante): antes leía solo Dims, sin
+// el supersede de T6.2 — un hallazgo semántico ya descartado por estar
+// superado por uno determinista seguía bloqueando aquí aunque riesgos() ya
+// no lo mostrara. Ahora consume ultima.HallazgosEfectivos() (ledger.go), el
+// mismo punto de selección que riesgos(), y proyecta el resultado de vuelta a
+// []ReviewFinding para no romper el contrato público: el único llamador real
+// (avisoSemantico en cmd/sentinel/comandos_pr.go) solo usa Severity/File/
+// Line/Description, así que cambiar la firma pública era más invasivo de lo
+// necesario para arreglar el bug real.
 func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 	var bloqueantes []ReviewFinding
 	for _, ficha := range fichas {
@@ -499,15 +527,26 @@ func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 		if !ok {
 			continue
 		}
-		for _, dr := range ultima.Dims {
-			for _, h := range dr.Findings {
-				if h.Severity == SevCritical {
-					bloqueantes = append(bloqueantes, h)
-				}
+		for _, h := range ultima.HallazgosEfectivos() {
+			if h.Severity == SevCritical {
+				bloqueantes = append(bloqueantes, reviewFindingDesdeHallazgo(h))
 			}
 		}
 	}
 	return bloqueantes
+}
+
+// reviewFindingDesdeHallazgo proyecta un Hallazgo v2 de vuelta a la forma v1
+// ReviewFinding que BloqueantesDeRama sigue devolviendo públicamente.
+func reviewFindingDesdeHallazgo(h Hallazgo) ReviewFinding {
+	return ReviewFinding{
+		Dimension:   h.Dimension,
+		File:        h.Location.Archivo,
+		Line:        Linea(h.Location.LineaInicio),
+		Severity:    h.Severity,
+		Description: h.Description,
+		Source:      h.Source,
+	}
 }
 
 // RenderPlantillaPr construye el cuerpo del PR (sentinel_pr.md, guía §12.4):

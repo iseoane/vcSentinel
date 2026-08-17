@@ -62,16 +62,32 @@ func TestLedgerRevisionesAppend(t *testing.T) {
 // (T6.5) round-trips through the JSON ledger file: it is the aggregated
 // review.AuditarCommit result (ResultadoAuditoria.Findings), not the raw
 // per-dimension DimensionResult.Findings already covered by Dims, and the
-// renderer needs it to survive persistence to render it later.
+// renderer needs it to survive persistence to render it later. Location and
+// EvidenceSet (with several FindingEvidence) round-trip too: they are the
+// "fused evidence" the commit this test guards is actually named after, and
+// renderMergedFinding consumes both directly (T6.5 review finding: tests).
 func TestLedgerPersistsAggregatedFindings(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NuevoLedger(dir)
 
+	ubicacion := Ubicacion{Archivo: "auth.go", LineaInicio: 42, LineaFin: 44, Simbolo: "checkToken"}
+	evidencias := []FindingEvidence{
+		{Dimension: DimSecurity, Evidence: "token == expected", Confidence: 0.8},
+		{Dimension: DimLogic, Evidence: "no hmac.Equal usage found", Confidence: 0.95},
+	}
 	rev := Revision{
 		At:     time.Now().UTC(),
 		Result: VerdictBlock,
 		AggregatedFindings: []Hallazgo{
-			{Dimension: DimSecurity, Severity: SevCritical, Source: SourceReview, Confidence: 0.9, Description: "exposed secret"},
+			{
+				Dimension:   DimSecurity,
+				Severity:    SevCritical,
+				Source:      SourceReview,
+				Confidence:  0.9,
+				Description: "exposed secret",
+				Location:    ubicacion,
+				EvidenceSet: &FindingEvidenceSet{Values: evidencias},
+			},
 		},
 	}
 	if err := ledger.GuardarRevision("aggfind1", "feat(x): thing", "", "", rev); err != nil {
@@ -88,6 +104,60 @@ func TestLedgerPersistsAggregatedFindings(t *testing.T) {
 	got := ficha.Revisions[0].AggregatedFindings[0]
 	if got.Source != SourceReview || got.Confidence != 0.9 || got.Description != "exposed secret" {
 		t.Errorf("AggregatedFindings[0] = %+v, values changed across persistence", got)
+	}
+	if got.Location != ubicacion {
+		t.Errorf("Location did not round-trip: got %+v, want %+v", got.Location, ubicacion)
+	}
+	if got.EvidenceSet == nil || len(got.EvidenceSet.Values) != len(evidencias) {
+		t.Fatalf("EvidenceSet did not round-trip: %+v", got.EvidenceSet)
+	}
+	for i, esperada := range evidencias {
+		if got.EvidenceSet.Values[i] != esperada {
+			t.Errorf("EvidenceSet.Values[%d] = %+v, want %+v", i, got.EvidenceSet.Values[i], esperada)
+		}
+	}
+}
+
+// TestRevisionHallazgosEfectivosPrefersAggregated: when AggregatedFindings is
+// non-empty, HallazgosEfectivos returns it as-is and ignores Dims entirely.
+// It is the single selection point riesgos() and BloqueantesDeRama must both
+// consume (T6.5 review finding: design — before this method existed,
+// BloqueantesDeRama read only Dims and could still block on a semantic
+// finding T6.2 had already superseded by a deterministic one).
+func TestRevisionHallazgosEfectivosPrefersAggregated(t *testing.T) {
+	rev := Revision{
+		AggregatedFindings: []Hallazgo{{Dimension: DimSecurity, Severity: SevCritical, Description: "aggregated"}},
+		Dims: []DimensionResult{{Dim: DimSpec, Findings: []ReviewFinding{
+			{Dimension: DimSpec, Severity: SevWarning, Description: "must be ignored"},
+		}}},
+	}
+	got := rev.HallazgosEfectivos()
+	if len(got) != 1 || got[0].Description != "aggregated" {
+		t.Errorf("HallazgosEfectivos() = %+v, expected only AggregatedFindings", got)
+	}
+}
+
+// TestRevisionHallazgosEfectivosConvertsDimsWithoutAggregated: with no
+// AggregatedFindings, HallazgosEfectivos converts every raw v1 ReviewFinding
+// from Dims to the v2 Hallazgo shape, so callers get one uniform type
+// regardless of a Revision's origin (a Revision saved before T6.5, or by a
+// caller that never propagated AggregatedFindings).
+func TestRevisionHallazgosEfectivosConvertsDimsWithoutAggregated(t *testing.T) {
+	rev := Revision{
+		Dims: []DimensionResult{{
+			Dim: DimSpec,
+			Findings: []ReviewFinding{
+				{Dimension: DimSpec, File: "a.go", Line: 7, Severity: SevWarning, Description: "converted"},
+			},
+		}},
+	}
+	got := rev.HallazgosEfectivos()
+	if len(got) != 1 {
+		t.Fatalf("HallazgosEfectivos() = %d hallazgos, expected 1", len(got))
+	}
+	if got[0].Dimension != DimSpec || got[0].Severity != SevWarning || got[0].Description != "converted" ||
+		got[0].Location.Archivo != "a.go" || got[0].Location.LineaInicio != 7 {
+		t.Errorf("HallazgosEfectivos() converted = %+v, values lost in conversion", got[0])
 	}
 }
 

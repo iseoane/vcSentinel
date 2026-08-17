@@ -40,6 +40,44 @@ type Revision struct {
 	AggregatedFindings []Hallazgo `json:"aggregated_findings,omitempty"`
 }
 
+// HallazgosEfectivos returns the effective findings for this revision: the
+// deduplicated, cross-dimension merged and supersede-applied result
+// (AggregatedFindings, T6.1+T6.2) when the caller propagated it, or every
+// raw per-dimension v1 ReviewFinding from Dims converted to the v2 Hallazgo
+// shape otherwise. It is the single selection point riesgos() and
+// BloqueantesDeRama (internal/review/renderer.go) both consume (T6.5 review
+// finding: before this method existed, BloqueantesDeRama read only Dims and
+// could still block on a semantic finding T6.2 had already superseded by a
+// deterministic one, defeating the point of supersede in the one flow where
+// it gates pr create --force).
+func (r Revision) HallazgosEfectivos() []Hallazgo {
+	if len(r.AggregatedFindings) > 0 {
+		return r.AggregatedFindings
+	}
+	var hallazgos []Hallazgo
+	for _, dr := range r.Dims {
+		for _, h := range dr.Findings {
+			hallazgos = append(hallazgos, hallazgoDesdeReviewFinding(dr.Dim, h))
+		}
+	}
+	return hallazgos
+}
+
+// hallazgoDesdeReviewFinding projects a legacy v1 ReviewFinding onto the v2
+// Hallazgo shape so HallazgosEfectivos can return one uniform type
+// regardless of origin. dimension comes from the containing DimensionResult
+// (dr.Dim), not the finding itself, matching findingCrudo.aHallazgo's own
+// convention (finding.go) for the same v1-to-v2 projection.
+func hallazgoDesdeReviewFinding(dimension string, h ReviewFinding) Hallazgo {
+	return Hallazgo{
+		Source:      h.Source,
+		Dimension:   dimension,
+		Severity:    h.Severity,
+		Description: h.Description,
+		Location:    Ubicacion{Archivo: h.File, LineaInicio: int(h.Line)},
+	}
+}
+
 // Ficha es el registro completo de auditoría de un commit, guardado como
 // <git-dir>/vas-sentinel/<sha>.json. FixedIn es el SHA del commit que
 // corrigió los hallazgos (se rellena cuando un fix re-audita los archivos).

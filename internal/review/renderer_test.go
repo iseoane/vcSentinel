@@ -98,11 +98,14 @@ func TestRenderResumenRiesgos(t *testing.T) {
 	if !strings.Contains(salida, "🟢 ok: 0 · 🟡 warn: 1 · 🚨 block: 1") {
 		t.Errorf("conteo global incorrecto:\n%s", salida)
 	}
-	// Riesgos: CRITICAL y WARNING sí; ADVISORY no.
-	if !strings.Contains(salida, "🚨 `6b127cd` [security] CRITICAL — dato expuesto (a.go:42)") {
+	// Riesgos: CRITICAL y WARNING sí; ADVISORY no. Desde T6.5 riesgos() lee
+	// HallazgosEfectivos() y renderiza siempre con renderMergedFinding, por
+	// eso el formato incluye el label de Source (unknown: fixture v1 sin
+	// Source) y la confidence, aunque venga de Dims convertido.
+	if !strings.Contains(salida, "🚨 `6b127cd` [security] CRITICAL (unknown, confidence 0.00) — dato expuesto (a.go:42)") {
 		t.Errorf("falta el riesgo CRITICAL:\n%s", salida)
 	}
-	if !strings.Contains(salida, "⚠️ `945b5b5` [tests] WARNING — test frágil (z.go:10)") {
+	if !strings.Contains(salida, "⚠️ `945b5b5` [tests] WARNING (unknown, confidence 0.00) — test frágil (z.go:10)") {
 		t.Errorf("falta el riesgo WARNING:\n%s", salida)
 	}
 	if strings.Contains(salida, "sugerencia menor") {
@@ -561,8 +564,10 @@ func TestRiesgosMergedValidationSourceLabel(t *testing.T) {
 }
 
 // TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings: a Revision saved
-// before T6.5 (or by a caller that never propagated AggregatedFindings) keeps
-// rendering from the raw per-dimension ReviewFinding in Dims, unchanged.
+// before T6.5 (or by a caller that never propagated AggregatedFindings)
+// still surfaces its Dims-based findings — HallazgosEfectivos (T6.5 review
+// finding: design) converts them to Hallazgo so riesgos() keeps working
+// unchanged from the caller's point of view.
 func TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
 	ficha := fichaAyuda("aaaaaaa", "feat(a): legacy", "m",
 		revisionAyuda("block",
@@ -573,6 +578,94 @@ func TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
 	salida := riesgos([]Ficha{ficha})
 	if len(salida) != 1 || !strings.Contains(salida[0], "legacy finding") {
 		t.Errorf("legacy Dims-based rendering must still work when AggregatedFindings is empty: %v", salida)
+	}
+}
+
+// TestRiesgosFiltersAdvisoryFromAggregatedFindings: the AggregatedFindings
+// path must exclude ADVISORY the same way the legacy path always did — this
+// path had no coverage of its own severity filter before (T6.5 review
+// finding: tests WARNING).
+func TestRiesgosFiltersAdvisoryFromAggregatedFindings(t *testing.T) {
+	ficha := fichaAyuda("6b127cd", "fix(x): thing", "m", Revision{
+		At:     time.Now().UTC(),
+		Result: "block",
+		AggregatedFindings: []Hallazgo{
+			{Dimension: DimSecurity, Severity: SevCritical, Description: "critical one"},
+			{Dimension: DimSpec, Severity: SevAdvisory, Description: "advisory one"},
+		},
+	})
+
+	salida := riesgos([]Ficha{ficha})
+	if len(salida) != 1 {
+		t.Fatalf("riesgos() = %d lines, expected 1 (ADVISORY excluded): %v", len(salida), salida)
+	}
+	if !strings.Contains(salida[0], "critical one") {
+		t.Errorf("missing the CRITICAL finding: %v", salida)
+	}
+	if strings.Contains(salida[0], "advisory one") {
+		t.Errorf("ADVISORY must not appear in riesgos(): %v", salida)
+	}
+}
+
+// TestRenderMergedFindingOmitsEmptyLocation: a Hallazgo without a resolved
+// location must not render the placeholder "(:0)" — the location suffix is
+// omitted entirely instead (T6.5 review finding: logic ADVISORY).
+func TestRenderMergedFindingOmitsEmptyLocation(t *testing.T) {
+	h := Hallazgo{Dimension: DimLogic, Severity: SevWarning, Description: "no location resolved"}
+	got := renderMergedFinding("abc1234", h)
+	esperado := "- ⚠️ `abc1234` [logic] WARNING (unknown, confidence 0.00) — no location resolved"
+	if got != esperado {
+		t.Errorf("renderMergedFinding() = %q, want %q", got, esperado)
+	}
+}
+
+// TestMergedFindingEvidenceLinesFallsBackWhenEvidenceSetEmpty: an
+// EvidenceSet that is non-nil but carries no Values (e.g. deserialized from
+// {"evidence_set":{"values":[]}}) must still fall back to the legacy
+// Evidence string instead of silently dropping it (T6.5 review finding:
+// logic WARNING).
+func TestMergedFindingEvidenceLinesFallsBackWhenEvidenceSetEmpty(t *testing.T) {
+	h := Hallazgo{
+		Dimension:   DimLogic,
+		Evidence:    "legacy evidence text",
+		Confidence:  0.5,
+		EvidenceSet: &FindingEvidenceSet{},
+	}
+	lineas := mergedFindingEvidenceLines(h)
+	if len(lineas) != 1 || !strings.Contains(lineas[0], "legacy evidence text") {
+		t.Errorf("mergedFindingEvidenceLines() = %v, expected fallback to Evidence", lineas)
+	}
+}
+
+// TestSanitizeEvidenceTruncatesLongEvidence: evidence text is bounded before
+// it reaches the PR body — an oversized fragment (possibly an embedded
+// secret in a security finding) must not be published in full on an
+// external, indexable, cached surface (T6.5 review finding: security
+// WARNING).
+func TestSanitizeEvidenceTruncatesLongEvidence(t *testing.T) {
+	larga := strings.Repeat("x", evidenceEmbedMaxBytes+100)
+	got := sanitizeEvidence(larga)
+	if len(got) > evidenceEmbedMaxBytes+2 { // +2: the wrapping backticks.
+		t.Errorf("sanitizeEvidence did not bound the evidence length: %d bytes", len(got))
+	}
+}
+
+// TestSanitizeEvidenceCollapsesNewlinesAndEscapesBackticks: evidence text is
+// untrusted (an LLM inference or a command's literal output); an embedded
+// newline or backtick must not be able to break or forge the surrounding
+// Markdown list structure sent to GitHub (T6.5 review finding: security
+// WARNING).
+func TestSanitizeEvidenceCollapsesNewlinesAndEscapesBackticks(t *testing.T) {
+	got := sanitizeEvidence("line one\nline two\r\nwith a ` backtick")
+	if strings.Contains(got, "\n") || strings.Contains(got, "\r") {
+		t.Errorf("sanitizeEvidence must collapse internal line breaks: %q", got)
+	}
+	if !strings.HasPrefix(got, "`") || !strings.HasSuffix(got, "`") {
+		t.Fatalf("sanitized evidence must be wrapped in inline code: %q", got)
+	}
+	interior := got[1 : len(got)-1]
+	if strings.Contains(interior, "`") {
+		t.Errorf("a literal backtick inside the evidence must not terminate the code span early: %q", got)
 	}
 }
 
