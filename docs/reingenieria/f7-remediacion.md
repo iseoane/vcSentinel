@@ -41,14 +41,14 @@ decisión del agente en el momento.
 
 ---
 
-## T7.2 — Agente de remediación con permisos acotados
+## T7.2 — Agente de remediación con permisos acotados ✅ (hash de cierre `1999213`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 280 líneas |
 | Depende de | T7.1 |
-| Commit | `feat(remediation): agente con edicion restringida a los archivos con hallazgos` |
+| Commits | `79b81aa` (implementación: `internal/remediation/scope.go` — interfaz `Editor` con solo `Read`+`Edit`, sin método de shell/red posible por construcción del tipo; `Scope`/`NewScope` a partir de `[]review.Hallazgo`; `ScopedEditor` que envuelve un `Editor` y aplica la política antes de delegar), `ceb4a99` (fix tras revisión: normaliza rutas y rechaza traversal en la excepción de archivo de test nuevo), `bc49d2f` (fix: la política completa —incluida la seguridad de ruta— vive en `Scope.Allows`; se delega la ruta ya normalizada al `Editor` subyacente), `339b989` (fix: la ruta insegura se rechaza **antes** de cualquier E/S, ni siquiera llega al `Read` de comprobación de existencia), `f12ce4e` (fix: rechaza también la ruta vacía/`"."` que produce `normalizePath("")`), `a8acf94` y `1999213` (tests: verifican que los dos mensajes de rechazo son distinguibles y que el `Read` subyacente nunca se invoca en un rechazo temprano) |
 
 **Contexto**: `internal/agentadapter/*`, informe §16
 
@@ -64,7 +64,47 @@ decisión del agente en el momento.
 tests pasen». La segunda es exactamente cómo aparecen tests debilitados y
 `//nolint`. La validación la ejecuta Go, no el agente.
 
-**Aceptación**: test con doble que intenta escribir fuera del alcance → rechazado.
+**Aceptación**: cumplida. `TestScopedEditorEdit` (`scope_test.go`) usa un doble
+(`fakeEditor`) que registra cada llamada real a `Read`/`Edit`: un archivo con
+hallazgo o un archivo de test nuevo se escribe; un archivo sin hallazgo, una
+ruta absoluta, un `..`/traversal o una ruta vacía se rechazan **sin que el
+doble reciba ninguna llamada** (ni `Edit` ni, desde `339b989`, tampoco `Read`) —
+no solo se verifica el error devuelto.
+
+Puntos 1 y 2 de "Hacer" quedan implementados en `internal/remediation/scope.go`
+como propiedad estructural del tipo (`Editor` no tiene método de shell/red
+posible; `ScopedEditor.Edit` no delega la escritura si `Scope.Allows` la
+rechaza). El punto 3 (prompt del agente real) **no** se implementa aquí:
+esta tarea no conecta ningún binario `claude`/`opencode` real — eso queda para
+cuando exista un `Editor` concreto respaldado por CLI (T7.3 ya necesita un
+diff real que solo existe una vez que algo escribe de verdad en el árbol de
+trabajo, así que es el candidato natural, o una tarea de wiring dedicada).
+
+Hallazgos de `sentinel review` aceptados sin fix adicional (código sin
+consumidor de producción todavía, revisión ya en `warn` sin bloqueantes):
+
+- `isPathSafe` es puramente textual: no resuelve symlinks ni reconoce
+  separadores de Windows en un host POSIX. **Follow-up**: cuando exista un
+  `Editor` concreto respaldado por sistema de archivos, debe resolver la ruta
+  real (`filepath.EvalSymlinks` o equivalente) y verificar que sigue dentro
+  de la raíz del repositorio antes de escribir.
+- La excepción de "archivo de test nuevo" no es idempotente: una segunda
+  llamada `Edit` sobre el mismo archivo recién creado en la misma ronda se
+  rechaza (ya no es "nuevo"). **Follow-up para T7.4**: si el flujo de
+  re-validación de una sola ronda necesita que el agente retoque un archivo
+  de test que él mismo acaba de crear, `Scope` necesitará rastrear también
+  los archivos creados por la propia ronda, no solo los que tienen hallazgo.
+- `NewScope` depende del tipo completo `review.Hallazgo` cuando solo usa
+  `Location.Archivo` (acoplamiento a `internal/review` por un único string).
+  Aceptado: es el punto de integración natural con `remediation.Route` (T7.1),
+  que ya trabaja sobre `review.Hallazgo`.
+- El TOCTOU entre el `Read` de existencia y el `Edit` real, y la duplicación
+  intencional de `isPathSafe` en dos sitios (`Edit` y `Allows`, defensa en
+  profundidad) quedan documentados en el propio código como decisiones, no
+  como descuidos.
+
+`go build ./...`, `go vet ./...` y `go test ./...` en verde para todo el
+módulo. `sentinel gate --stage pre-push` sobre `1999213` → `PASS`.
 
 ---
 
