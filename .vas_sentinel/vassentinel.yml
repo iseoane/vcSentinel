@@ -1,5 +1,6 @@
 version: "2.0"
 active_agent: "claude"
+commit_language: "en"
 # Solicita generación semántica externa; no representa consentimiento personal.
 request_external_agent_diff: true
 agents:
