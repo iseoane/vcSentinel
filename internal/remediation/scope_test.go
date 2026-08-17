@@ -1,8 +1,10 @@
 package remediation
 
 import (
+	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -12,11 +14,15 @@ import (
 // can be asserted as never having reached the underlying editor, not just
 // inferred from the returned error.
 type fakeEditor struct {
-	files     map[string]string
-	editCalls []string
+	files      map[string]string
+	readErrors map[string]error // arbitrary non-not-exist errors keyed by path
+	editCalls  []string
 }
 
 func (f *fakeEditor) Read(path string) (string, error) {
+	if err, ok := f.readErrors[path]; ok {
+		return "", err
+	}
 	if content, ok := f.files[path]; ok {
 		return content, nil
 	}
@@ -56,6 +62,16 @@ func TestScopedEditorEdit(t *testing.T) {
 			name:       "existing test file without a finding is rejected",
 			presetFile: "internal/remediation/existing_test.go",
 			editPath:   "internal/remediation/existing_test.go",
+			wantReject: true,
+		},
+		{
+			name:       "path traversal disguised as a new test file is rejected",
+			editPath:   "../../../etc/cron.d/evil_test.go",
+			wantReject: true,
+		},
+		{
+			name:       "absolute path disguised as a new test file is rejected",
+			editPath:   "/etc/x_test.go",
 			wantReject: true,
 		},
 	}
@@ -104,5 +120,50 @@ func TestScopedEditorReadIsUnrestricted(t *testing.T) {
 
 	if _, err := scoped.Read("missing/path.go"); !os.IsNotExist(err) {
 		t.Fatalf("Read(missing) error = %v, want a not-exist error", err)
+	}
+}
+
+// TestScopedEditorEditNormalizesPaths verifies that a finding's location and
+// the path passed to Edit are compared after normalization, so different
+// textual spellings of the same file ("internal/x.go" vs "./internal/x.go")
+// resolve to the same scope entry.
+func TestScopedEditorEditNormalizesPaths(t *testing.T) {
+	editor := &fakeEditor{files: map[string]string{
+		"internal/remediation/scope.go": "original content",
+	}}
+	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: "internal/remediation/scope.go"}}}
+	scoped := NewScopedEditor(editor, NewScope(findings))
+
+	editPath := "./internal/remediation/scope.go"
+	if err := scoped.Edit(editPath, "new content"); err != nil {
+		t.Fatalf("Edit(%q) unexpected error: %v", editPath, err)
+	}
+	if len(editor.editCalls) != 1 || editor.editCalls[0] != editPath {
+		t.Fatalf("Edit(%q) expected exactly one underlying call to %q, got %v", editPath, editPath, editor.editCalls)
+	}
+}
+
+// TestScopedEditorEditSurfacesNonNotExistReadErrors verifies that a Read
+// failure other than "does not exist" (permissions, I/O errors, and the
+// like) is returned as-is rather than being folded into the generic
+// out-of-scope error, so the real cause is not hidden.
+func TestScopedEditorEditSurfacesNonNotExistReadErrors(t *testing.T) {
+	const path = "internal/remediation/locked.go"
+	readErr := errors.New("permission denied")
+	editor := &fakeEditor{
+		files:      map[string]string{},
+		readErrors: map[string]error{path: readErr},
+	}
+	scoped := NewScopedEditor(editor, NewScope(nil))
+
+	err := scoped.Edit(path, "new content")
+	if err == nil {
+		t.Fatalf("Edit(%q) expected an error, got nil", path)
+	}
+	if !strings.Contains(err.Error(), "permission denied") || !strings.Contains(err.Error(), "check") {
+		t.Fatalf("Edit(%q) error = %q, want it to identify a check/read failure and contain the underlying cause", path, err.Error())
+	}
+	if len(editor.editCalls) != 0 {
+		t.Fatalf("Edit(%q) errored but underlying editor was called: %v", path, editor.editCalls)
 	}
 }
