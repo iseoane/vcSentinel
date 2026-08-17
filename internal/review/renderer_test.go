@@ -99,13 +99,15 @@ func TestRenderResumenRiesgos(t *testing.T) {
 		t.Errorf("conteo global incorrecto:\n%s", salida)
 	}
 	// Riesgos: CRITICAL y WARNING sí; ADVISORY no. Desde T6.5 riesgos() lee
-	// HallazgosEfectivos() y renderiza siempre con renderMergedFinding, por
-	// eso el formato incluye el label de Source (unknown: fixture v1 sin
-	// Source) y la confidence, aunque venga de Dims convertido.
-	if !strings.Contains(salida, "🚨 `6b127cd` [security] CRITICAL (unknown, confidence 0.00) — dato expuesto (a.go:42)") {
+	// HallazgosEfectivos() y renderiza siempre con renderMergedFinding; un
+	// hallazgo v1 convertido desde Dims nunca tuvo Source real, así que el
+	// segmento "(source, confidence)" se omite entero en vez de fabricar un
+	// "(unknown, confidence 0.00)" que no es un dato real (T6.5bis review
+	// finding: logic WARNING).
+	if !strings.Contains(salida, "🚨 `6b127cd` [security] CRITICAL — dato expuesto (a.go:42)") {
 		t.Errorf("falta el riesgo CRITICAL:\n%s", salida)
 	}
-	if !strings.Contains(salida, "⚠️ `945b5b5` [tests] WARNING (unknown, confidence 0.00) — test frágil (z.go:10)") {
+	if !strings.Contains(salida, "⚠️ `945b5b5` [tests] WARNING — test frágil (z.go:10)") {
 		t.Errorf("falta el riesgo WARNING:\n%s", salida)
 	}
 	if strings.Contains(salida, "sugerencia menor") {
@@ -490,6 +492,48 @@ func TestBloqueantesDeRamaFiltraCriticos(t *testing.T) {
 	}
 }
 
+// TestBloqueantesDeRamaMapsAggregatedFindingsFields: an integration test that
+// exercises BloqueantesDeRama through a real AggregatedFindings CRITICAL
+// Hallazgo (T6.1 merge + T6.2 supersede result) and asserts the actual
+// content of the returned ReviewFinding — every field
+// reviewFindingDesdeHallazgo maps — not only len(got). Without this,
+// reverting the T6.5 hunk that switched BloqueantesDeRama from iterating
+// Dims to ultima.HallazgosEfectivos() would not fail any test today, because
+// TestBloqueantesDeRamaFiltraCriticos only ever builds Dims-based fixtures
+// (T6.5 review finding: tests WARNING).
+func TestBloqueantesDeRamaMapsAggregatedFindingsFields(t *testing.T) {
+	ficha := fichaAyuda("6b127cd", "fix(auth): tighten token check", "m", Revision{
+		At:     time.Now().UTC(),
+		Result: "block",
+		AggregatedFindings: []Hallazgo{
+			{
+				Dimension:   DimSecurity,
+				Severity:    SevCritical,
+				Source:      SourceReview,
+				Confidence:  0.9,
+				Description: "token comparison is not constant-time",
+				Location:    Ubicacion{Archivo: "auth.go", LineaInicio: 42},
+			},
+		},
+	})
+
+	got := BloqueantesDeRama([]Ficha{ficha})
+	if len(got) != 1 {
+		t.Fatalf("BloqueantesDeRama() = %d hallazgos, esperado 1: %+v", len(got), got)
+	}
+	esperado := ReviewFinding{
+		Dimension:   DimSecurity,
+		File:        "auth.go",
+		Line:        42,
+		Severity:    SevCritical,
+		Description: "token comparison is not constant-time",
+		Source:      SourceReview,
+	}
+	if got[0] != esperado {
+		t.Errorf("BloqueantesDeRama()[0] = %+v, want %+v", got[0], esperado)
+	}
+}
+
 // TestRiesgosRendersMergedFindingWithSourceAndEvidence: a merged Hallazgo
 // (T6.1 aggregation + T6.2 supersede result, ResultadoAuditoria.Findings
 // persisted on Revision.AggregatedFindings by T6.5) renders its distinguished
@@ -609,13 +653,63 @@ func TestRiesgosFiltersAdvisoryFromAggregatedFindings(t *testing.T) {
 
 // TestRenderMergedFindingOmitsEmptyLocation: a Hallazgo without a resolved
 // location must not render the placeholder "(:0)" — the location suffix is
-// omitted entirely instead (T6.5 review finding: logic ADVISORY).
+// omitted entirely instead (T6.5 review finding: logic ADVISORY). This same
+// Hallazgo also never carries a real Source (empty), so the
+// "(source, confidence)" segment is omitted too instead of fabricating
+// "(unknown, confidence 0.00)" (T6.5bis review finding: logic WARNING).
 func TestRenderMergedFindingOmitsEmptyLocation(t *testing.T) {
 	h := Hallazgo{Dimension: DimLogic, Severity: SevWarning, Description: "no location resolved"}
 	got := renderMergedFinding("abc1234", h)
-	esperado := "- ⚠️ `abc1234` [logic] WARNING (unknown, confidence 0.00) — no location resolved"
+	esperado := "- ⚠️ `abc1234` [logic] WARNING — no location resolved"
 	if got != esperado {
 		t.Errorf("renderMergedFinding() = %q, want %q", got, esperado)
+	}
+}
+
+// TestRenderMergedFindingOmitsSourceSegmentOnlyWhenEmpty: a Hallazgo with a
+// real, non-empty Source (even one HallazgosEfectivos never produces itself,
+// e.g. a future/unknown value) still renders the "(source, confidence)"
+// segment through mergedFindingSourceLabel's own "unknown" fallback — only
+// Source == "" (the legacy-conversion signal) omits the segment entirely.
+func TestRenderMergedFindingOmitsSourceSegmentOnlyWhenEmpty(t *testing.T) {
+	h := Hallazgo{Dimension: DimLogic, Severity: SevWarning, Source: "future-source", Confidence: 0.42, Description: "d"}
+	got := renderMergedFinding("abc1234", h)
+	esperado := "- ⚠️ `abc1234` [logic] WARNING (unknown, confidence 0.42) — d"
+	if got != esperado {
+		t.Errorf("renderMergedFinding() = %q, want %q", got, esperado)
+	}
+}
+
+// TestRenderMergedFindingSanitizesDescriptionAndLocation: Hallazgo.Description
+// and Location.Archivo share Evidence's untrusted origin — both are decoded
+// straight from the LLM's findingCrudo JSON (finding.go), same as Evidence —
+// yet renderMergedFinding interpolated them raw into the same Markdown list
+// item that already sanitizes Evidence. An embedded newline or backtick in
+// either could otherwise break or forge a Markdown list line, exactly the
+// injection sanitizeEvidence exists to prevent (T6.5bis review finding:
+// security WARNING). Description is prose, not evidence/code, so it is
+// sanitized without being wrapped in inline code (unlike Evidence).
+func TestRenderMergedFindingSanitizesDescriptionAndLocation(t *testing.T) {
+	h := Hallazgo{
+		Dimension:   DimSecurity,
+		Severity:    SevWarning,
+		Source:      SourceReview,
+		Confidence:  0.5,
+		Description: "line one\nline two with a ` backtick",
+		Location:    Ubicacion{Archivo: "a\nb`.go", LineaInicio: 1},
+	}
+	got := renderMergedFinding("abc1234", h)
+	if strings.Count(got, "\n") != 0 {
+		t.Fatalf("no evidence lines expected here, result must be a single line: %q", got)
+	}
+	if strings.Contains(got, "line one\nline two") {
+		t.Errorf("Description newline must be collapsed, not embedded raw: %q", got)
+	}
+	if strings.Contains(got, "with a ` backtick") {
+		t.Errorf("a literal backtick in Description must be escaped: %q", got)
+	}
+	if strings.Contains(got, "a\nb") || strings.Contains(got, "b`.go") {
+		t.Errorf("Location.Archivo newline/backtick must be sanitized: %q", got)
 	}
 }
 

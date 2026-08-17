@@ -78,6 +78,24 @@ func hallazgoDesdeReviewFinding(dimension string, h ReviewFinding) Hallazgo {
 	}
 }
 
+// reviewFindingDesdeHallazgo proyecta un Hallazgo v2 de vuelta a la forma v1
+// ReviewFinding que BloqueantesDeRama (renderer.go) sigue devolviendo
+// públicamente. Vive junto a hallazgoDesdeReviewFinding (su inversa) en vez
+// de en el renderer: ambas direcciones de la pareja v1↔v2 son una regla de
+// mapeo del dominio, no del renderizado, y mantenerlas juntas evita que un
+// campo nuevo en Hallazgo/ReviewFinding obligue a tocar dos archivos con
+// riesgo de divergencia silenciosa (T6.5bis review finding: design WARNING).
+func reviewFindingDesdeHallazgo(h Hallazgo) ReviewFinding {
+	return ReviewFinding{
+		Dimension:   h.Dimension,
+		File:        h.Location.Archivo,
+		Line:        Linea(h.Location.LineaInicio),
+		Severity:    h.Severity,
+		Description: h.Description,
+		Source:      h.Source,
+	}
+}
+
 // Ficha es el registro completo de auditoría de un commit, guardado como
 // <git-dir>/vas-sentinel/<sha>.json. FixedIn es el SHA del commit que
 // corrigió los hallazgos (se rellena cuando un fix re-audita los archivos).

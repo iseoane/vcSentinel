@@ -251,9 +251,23 @@ const evidenceEmbedMaxBytes = 300
 // already contains so it can never terminate the code span early.
 func sanitizeEvidence(evidencia string) string {
 	acotada := recortarRunas(evidencia, evidenceEmbedMaxBytes)
-	sinSaltos := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(acotada)
-	sinBackticks := strings.ReplaceAll(sinSaltos, "`", "'")
-	return "`" + sinBackticks + "`"
+	return "`" + sanitizeText(acotada) + "`"
+}
+
+// sanitizeText neutralizes free-form untrusted text before it is
+// interpolated into the same Markdown list item sanitizeEvidence already
+// guards. Hallazgo.Description and Location.Archivo share Evidence's
+// untrusted origin — both are decoded straight from the LLM's findingCrudo
+// JSON output (finding.go), not from a value the guardian resolves itself —
+// so an embedded newline or backtick in either could otherwise break or
+// forge the surrounding Markdown list structure (T6.5bis review finding:
+// security WARNING). Unlike sanitizeEvidence, it does not wrap the result
+// in inline code or bound its size: a description/path is prose, not an
+// evidence code fragment, and wrapping it in a code span would change its
+// visual meaning.
+func sanitizeText(texto string) string {
+	sinSaltos := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(texto)
+	return strings.ReplaceAll(sinSaltos, "`", "'")
 }
 
 // mergedFindingEvidenceLines renders every corroborating evidence T6.1's
@@ -282,15 +296,30 @@ func mergedFindingEvidenceLines(h Hallazgo) []string {
 // confidence, instead of the single Evidence string a raw per-dimension
 // ReviewFinding line shows. The location suffix is omitted entirely when no
 // location was resolved, instead of rendering the empty placeholder "(:0)"
-// (T6.5 review finding: logic ADVISORY).
+// (T6.5 review finding: logic ADVISORY). The "(source, confidence)" segment
+// is likewise omitted entirely when h.Source == "": that only happens for a
+// legacy v1 ReviewFinding converted by hallazgoDesdeReviewFinding, which
+// never had a real Source to report — stamparProductorEfectivo/
+// stamparSourceReview always stamp one on a real Hallazgo — so showing
+// "(unknown, confidence 0.00)" would fabricate a datum that does not exist
+// instead of reporting its absence (T6.5bis review finding: logic WARNING).
+// Description and Location.Archivo are sanitized with sanitizeText before
+// interpolation: they share Evidence's untrusted LLM origin, so an embedded
+// newline or backtick in either must not be able to forge a Markdown list
+// line the same way an unsanitized Evidence could (T6.5bis review finding:
+// security WARNING).
 func renderMergedFinding(sha string, h Hallazgo) string {
 	ubicacion := ""
 	if h.Location.Archivo != "" {
-		ubicacion = fmt.Sprintf(" (%s:%d)", h.Location.Archivo, h.Location.LineaInicio)
+		ubicacion = fmt.Sprintf(" (%s:%d)", sanitizeText(h.Location.Archivo), h.Location.LineaInicio)
 	}
-	linea := fmt.Sprintf("- %s `%s` [%s] %s (%s, confidence %.2f) — %s%s",
+	origen := ""
+	if h.Source != "" {
+		origen = fmt.Sprintf(" (%s, confidence %.2f)", mergedFindingSourceLabel(h.Source), h.Confidence)
+	}
+	linea := fmt.Sprintf("- %s `%s` [%s] %s%s — %s%s",
 		severidadEmoji(h.Severity), sha, h.Dimension, h.Severity,
-		mergedFindingSourceLabel(h.Source), h.Confidence, h.Description, ubicacion)
+		origen, sanitizeText(h.Description), ubicacion)
 	for _, evidencia := range mergedFindingEvidenceLines(h) {
 		linea += "\n" + evidencia
 	}
@@ -534,19 +563,6 @@ func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 		}
 	}
 	return bloqueantes
-}
-
-// reviewFindingDesdeHallazgo proyecta un Hallazgo v2 de vuelta a la forma v1
-// ReviewFinding que BloqueantesDeRama sigue devolviendo públicamente.
-func reviewFindingDesdeHallazgo(h Hallazgo) ReviewFinding {
-	return ReviewFinding{
-		Dimension:   h.Dimension,
-		File:        h.Location.Archivo,
-		Line:        Linea(h.Location.LineaInicio),
-		Severity:    h.Severity,
-		Description: h.Description,
-		Source:      h.Source,
-	}
 }
 
 // RenderPlantillaPr construye el cuerpo del PR (sentinel_pr.md, guía §12.4):
