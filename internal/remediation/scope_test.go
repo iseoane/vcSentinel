@@ -72,19 +72,22 @@ func TestScopedEditorEdit(t *testing.T) {
 			wantErrContains: "out of scope",
 		},
 		{
-			name:       "path traversal disguised as a new test file is rejected",
-			editPath:   "../../../etc/cron.d/evil_test.go",
-			wantReject: true,
+			name:            "path traversal disguised as a new test file is rejected",
+			editPath:        "../../../etc/cron.d/evil_test.go",
+			wantReject:      true,
+			wantErrContains: "unsafe",
 		},
 		{
-			name:       "absolute path disguised as a new test file is rejected",
-			editPath:   "/etc/x_test.go",
-			wantReject: true,
+			name:            "absolute path disguised as a new test file is rejected",
+			editPath:        "/etc/x_test.go",
+			wantReject:      true,
+			wantErrContains: "unsafe",
 		},
 		{
-			name:       "bare parent-directory reference is rejected",
-			editPath:   "..",
-			wantReject: true,
+			name:            "bare parent-directory reference is rejected",
+			editPath:        "..",
+			wantReject:      true,
+			wantErrContains: "unsafe",
 		},
 	}
 
