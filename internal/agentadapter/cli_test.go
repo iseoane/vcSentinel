@@ -233,6 +233,43 @@ func TestObtenerMensajeCommitConDiffOpenCodeEjecutaAislado(t *testing.T) {
 	}
 }
 
+// TestObtenerMensajeCommitConDiffClaudePropagaDetalleDeStderr comprueba que
+// un fallo del proceso claude conserva el detalle de stderr en el error
+// devuelto, en vez de descartarlo silenciosamente.
+func TestObtenerMensajeCommitConDiffClaudePropagaDetalleDeStderr(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_FAIL", "authentication expired")
+	adapter := CLIAdapter{
+		BinaryName: compilarAgenteConNombre(t, "claude"),
+		Timeout:    10 * time.Second,
+	}
+
+	_, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, "diff")
+	if err == nil {
+		t.Fatal("se esperaba un error del proceso claude")
+	}
+	if !strings.Contains(err.Error(), "authentication expired") {
+		t.Fatalf("error = %q, esperado que incluya el detalle de stderr", err)
+	}
+}
+
+// TestObtenerMensajeCommitConDiffOpenCodePropagaDetalleDeStderr mirrors
+// TestObtenerMensajeCommitConDiffClaudePropagaDetalleDeStderr for opencode.
+func TestObtenerMensajeCommitConDiffOpenCodePropagaDetalleDeStderr(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_FAIL", "rate limit exceeded")
+	adapter := CLIAdapter{
+		BinaryName: compilarAgenteConNombre(t, "opencode"),
+		Timeout:    10 * time.Second,
+	}
+
+	_, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, "diff")
+	if err == nil {
+		t.Fatal("se esperaba un error del proceso opencode")
+	}
+	if !strings.Contains(err.Error(), "rate limit exceeded") {
+		t.Fatalf("error = %q, esperado que incluya el detalle de stderr", err)
+	}
+}
+
 func TestValidarMensajeCommit(t *testing.T) {
 	casos := []struct {
 		nombre string

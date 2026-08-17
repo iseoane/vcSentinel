@@ -200,6 +200,17 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 // per-session tool-call limit (unlike OpenCode's Steps), so this relies only
 // on --safe-mode plus cmd.Dir for isolation; do not add an unverified flag or
 // env var here.
+//
+// Verified empirically (two live invocations against a scratch directory
+// containing a sensitive file): the model's own narration text can still
+// describe an intent to call a tool with "--tools \"\"" set, but no actual
+// tool result — file contents or command output — ever reached the final
+// answer in either test; one attempt was explicitly denied for requiring
+// interactive permission the non-interactive "-p" mode cannot grant. Isolate
+// this call to an always-empty temp directory regardless (never the real
+// repository), since that phantom tool-call narration means the flag's
+// documented "disables all tools" behavior is not fully trustworthy as the
+// only line of defense.
 func (c *CLIAdapter) prepararComandoCommitClaude(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
 	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
 	if err != nil {

@@ -12,10 +12,10 @@ agents:
         reasoning_effort: "medium"
       normal:
         model: "claude-sonnet-5"
-        reasoning_effort: "xhigh"
+        reasoning_effort: "high"
       deep:
         model: "claude-opus-5"
-        reasoning_effort: "high"
+        reasoning_effort: "low"
       commit:
         reasoning_effort: "low"
   opencode:

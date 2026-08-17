@@ -58,6 +58,13 @@ func main() {
 		}{Args: os.Args[1:], Dir: dir, Stdin: prompt})
 		_ = os.WriteFile(ruta, datos, 0600)
 	}
+	// VAS_SENTINEL_TEST_FAIL simula un agente que falla con un mensaje de
+	// error en stderr, para probar que el adaptador captura y propaga ese
+	// detalle en vez de descartarlo.
+	if fallo := os.Getenv("VAS_SENTINEL_TEST_FAIL"); fallo != "" {
+		fmt.Fprint(os.Stderr, fallo)
+		os.Exit(1)
+	}
 	if salida := os.Getenv("VAS_SENTINEL_TEST_OUTPUT"); salida != "" {
 		fmt.Print(salida)
 		return
