@@ -257,14 +257,14 @@ ficha original, y nada aquí bloquea empezar T6.1 primero.
 
 ---
 
-## T6.5 — Renderer adaptado
+## T6.5 — Renderer adaptado ✅ (hash de cierre `a883cac`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 280 líneas |
 | Depende de | T6.1 |
-| Commit | `feat(review): plantilla con hallazgos agrupados y fuente diferenciada` |
+| Commits | `d78b3b6` (implementación: `Revision.AggregatedFindings` persiste el resultado agregado de T6.1+T6.2, `HallazgosEfectivos()` lo consume con fallback a `Dims` legacy, `riesgos()`/`renderMergedFinding` lo renderizan con fuente y evidencia), `5344e08` (corrección tras revisión: unifica la selección de hallazgos entre `riesgos()` y `RevisionCorrigeBlockPrevio` — evitaba que `pr create --force` bloqueara sobre un hallazgo semántico que T6.2 ya había resuelto por supersede), `031b59e` (sanitiza `Description` y `Location.Archivo` para evitar inyección de Markdown en el PR body), `048662f` (evita propagar `Source` sin `Confidence` real en el proyector v1→v2), `a883cac` (documenta la asimetría intencional del mapeo v1↔v2 de `Source`) |
 
 **Contexto**: `internal/review/renderer.go`, `internal/review/renderer_test.go`
 
@@ -290,8 +290,35 @@ la ficha original — sigue probado y correcto, sin cambios necesarios.
 3. Conservar el truncamiento marcado y el recorte por runas (`recortarRunas`,
    `renderer.go:271`) — están probados y son correctos.
 
-**Aceptación**: los tests de renderer existentes que sigan aplicando pasan;
-los que cambien de forma se adaptan **explicando por qué** en el informe.
+**Aceptación**: cumplida. `HallazgosEfectivos()` (`ledger.go`) resuelve el
+hueco de testabilidad que T6.2 había dejado documentado: cuando
+`AggregatedFindings` está presente (el resultado dedup+supersede de T6.1/T6.2)
+lo usa; si no, cae a la proyección legacy de `Dims`. `riesgos()`/
+`renderMergedFinding()` (`renderer.go`) pintan cada hallazgo fusionado con su
+fuente (`review` vs. `validation`) y confianza corroborada. `5344e08` unificó
+`RevisionCorrigeBlockPrevio` sobre la misma selección de hallazgos para que
+`pr create --force` no bloquee sobre un hallazgo semántico que el supersede de
+T6.2 ya había resuelto. Verificado con `sentinel gate --stage pre-push` sobre
+`a883cac` → `PASS` (validación y las cuatro dimensiones — `design`, `spec`,
+`tests`, `logic` — en `ok`).
+
+---
+
+## Cierre de fase
+
+Los tres criterios de salida se cumplen sobre el código real:
+
+1. Un defecto que dispara tres dimensiones se reporta como un hallazgo con
+   tres evidencias — `TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions`
+   (T6.1), visible en el PR body vía `renderMergedFinding` (T6.5).
+2. Un hallazgo semántico que repite lo que ya dijo el linter no aparece —
+   `TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne` (T6.2),
+   cableado solo en `pr create --force`.
+3. Los cinco estados se distinguen en la salida y el exit code — ya resuelto
+   por F1 (T6.4).
+
+`go build ./...`, `go vet ./...` y `go test ./...` en verde para todo el
+módulo. `sentinel gate --stage pre-push` sobre `a883cac` → `PASS`. F6 cerrada.
 
 ---
 
