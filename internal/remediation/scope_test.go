@@ -41,10 +41,11 @@ func (f *fakeEditor) Edit(path, content string) error {
 
 func TestScopedEditorEdit(t *testing.T) {
 	cases := []struct {
-		name       string
-		presetFile string // pre-existing path in the fake, if any
-		editPath   string
-		wantReject bool
+		name            string
+		presetFile      string // pre-existing path in the fake, if any
+		editPath        string
+		wantReject      bool
+		wantErrContains string // when set, err.Error() must contain this substring
 	}{
 		{
 			name:       "file with a finding is writable",
@@ -58,15 +59,17 @@ func TestScopedEditorEdit(t *testing.T) {
 			wantReject: false,
 		},
 		{
-			name:       "new non-test file without a finding is rejected",
-			editPath:   "internal/remediation/helper.go",
-			wantReject: true,
+			name:            "new non-test file without a finding is rejected",
+			editPath:        "internal/remediation/helper.go",
+			wantReject:      true,
+			wantErrContains: "out of scope",
 		},
 		{
-			name:       "existing test file without a finding is rejected",
-			presetFile: "internal/remediation/existing_test.go",
-			editPath:   "internal/remediation/existing_test.go",
-			wantReject: true,
+			name:            "existing test file without a finding is rejected",
+			presetFile:      "internal/remediation/existing_test.go",
+			editPath:        "internal/remediation/existing_test.go",
+			wantReject:      true,
+			wantErrContains: "out of scope",
 		},
 		{
 			name:       "path traversal disguised as a new test file is rejected",
@@ -100,6 +103,9 @@ func TestScopedEditorEdit(t *testing.T) {
 			if tc.wantReject {
 				if err == nil {
 					t.Fatalf("Edit(%q) expected an out-of-scope error, got nil", tc.editPath)
+				}
+				if tc.wantErrContains != "" && !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Fatalf("Edit(%q) error = %q, want it to contain %q", tc.editPath, err.Error(), tc.wantErrContains)
 				}
 				if len(editor.editCalls) != 0 {
 					t.Fatalf("Edit(%q) rejected but underlying editor was called: %v", tc.editPath, editor.editCalls)
@@ -205,6 +211,9 @@ func TestScopedEditorEditRejectsUnsafePathsBeforeAnyRead(t *testing.T) {
 			err := scoped.Edit(tc.editPath, "new content")
 			if err == nil {
 				t.Fatalf("Edit(%q) expected an unsafe-path error, got nil", tc.editPath)
+			}
+			if !strings.Contains(err.Error(), "unsafe") {
+				t.Fatalf("Edit(%q) error = %q, want it to contain %q", tc.editPath, err.Error(), "unsafe")
 			}
 			if len(editor.readCalls) != 0 {
 				t.Fatalf("Edit(%q) rejected as unsafe but underlying Read was called: %v", tc.editPath, editor.readCalls)
