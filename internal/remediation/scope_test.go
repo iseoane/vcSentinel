@@ -74,6 +74,11 @@ func TestScopedEditorEdit(t *testing.T) {
 			editPath:   "/etc/x_test.go",
 			wantReject: true,
 		},
+		{
+			name:       "bare parent-directory reference is rejected",
+			editPath:   "..",
+			wantReject: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -126,7 +131,8 @@ func TestScopedEditorReadIsUnrestricted(t *testing.T) {
 // TestScopedEditorEditNormalizesPaths verifies that a finding's location and
 // the path passed to Edit are compared after normalization, so different
 // textual spellings of the same file ("internal/x.go" vs "./internal/x.go")
-// resolve to the same scope entry.
+// resolve to the same scope entry, and that the underlying Editor receives
+// that same normalized spelling rather than the caller's original one.
 func TestScopedEditorEditNormalizesPaths(t *testing.T) {
 	editor := &fakeEditor{files: map[string]string{
 		"internal/remediation/scope.go": "original content",
@@ -135,11 +141,12 @@ func TestScopedEditorEditNormalizesPaths(t *testing.T) {
 	scoped := NewScopedEditor(editor, NewScope(findings))
 
 	editPath := "./internal/remediation/scope.go"
+	wantNormalized := "internal/remediation/scope.go"
 	if err := scoped.Edit(editPath, "new content"); err != nil {
 		t.Fatalf("Edit(%q) unexpected error: %v", editPath, err)
 	}
-	if len(editor.editCalls) != 1 || editor.editCalls[0] != editPath {
-		t.Fatalf("Edit(%q) expected exactly one underlying call to %q, got %v", editPath, editPath, editor.editCalls)
+	if len(editor.editCalls) != 1 || editor.editCalls[0] != wantNormalized {
+		t.Fatalf("Edit(%q) expected exactly one underlying call to %q, got %v", editPath, wantNormalized, editor.editCalls)
 	}
 }
 
