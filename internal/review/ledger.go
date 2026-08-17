@@ -68,9 +68,16 @@ func (r Revision) HallazgosEfectivos() []Hallazgo {
 // regardless of origin. dimension comes from the containing DimensionResult
 // (dr.Dim), not the finding itself, matching findingCrudo.aHallazgo's own
 // convention (finding.go) for the same v1-to-v2 projection.
+//
+// Source is deliberately dropped, never copied from h.Source: a v1
+// ReviewFinding can have it populated (e.g. SourceReview, stamped by the
+// T5.7 critical-refutation path at engine.go:305) without ever having had a
+// real Confidence — v1 has no such field. Copying it through would make the
+// converted Hallazgo pass renderMergedFinding's "Source != \"\"" gate and
+// render a fabricated "(review, confidence 0.00)", exactly the datum that
+// gate exists to avoid (T6.5bis review finding: logic WARNING).
 func hallazgoDesdeReviewFinding(dimension string, h ReviewFinding) Hallazgo {
 	return Hallazgo{
-		Source:      h.Source,
 		Dimension:   dimension,
 		Severity:    h.Severity,
 		Description: h.Description,

@@ -161,6 +161,35 @@ func TestRevisionHallazgosEfectivosConvertsDimsWithoutAggregated(t *testing.T) {
 	}
 }
 
+// TestRevisionHallazgosEfectivosNeverCarriesLegacySourceWithoutConfidence:
+// a v1 ReviewFinding can have Source populated (e.g. SourceReview, stamped
+// by the T5.7 critical-refutation path at engine.go:305) without ever
+// having had a real Confidence — v1 has no such field. If
+// hallazgoDesdeReviewFinding copied that Source as-is, the converted
+// Hallazgo would pass renderMergedFinding's "h.Source != \"\"" gate and
+// render a fabricated "(review, confidence 0.00)" — exactly the datum T6.5
+// omits the whole segment to avoid (T6.5bis review finding: logic WARNING).
+// So the conversion must never carry a Source without its matching real
+// Confidence: HallazgosEfectivos leaves Source empty for every Dims-derived
+// Hallazgo, regardless of what the underlying ReviewFinding.Source held.
+func TestRevisionHallazgosEfectivosNeverCarriesLegacySourceWithoutConfidence(t *testing.T) {
+	rev := Revision{
+		Dims: []DimensionResult{{
+			Dim: DimSecurity,
+			Findings: []ReviewFinding{
+				{Dimension: DimSecurity, File: "a.go", Line: 7, Severity: SevCritical, Description: "refuted", Source: SourceReview},
+			},
+		}},
+	}
+	got := rev.HallazgosEfectivos()
+	if len(got) != 1 {
+		t.Fatalf("HallazgosEfectivos() = %d hallazgos, expected 1", len(got))
+	}
+	if got[0].Source != "" {
+		t.Errorf("HallazgosEfectivos()[0].Source = %q, want \"\" (no real Confidence backs it)", got[0].Source)
+	}
+}
+
 func TestLedgerFichaInexistente(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NuevoLedger(dir)
