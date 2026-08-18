@@ -108,14 +108,14 @@ módulo. `sentinel gate --stage pre-push` sobre `1999213` → `PASS`.
 
 ---
 
-## T7.3 — Diff Guard
+## T7.3 — Diff Guard ✅ (hash de cierre `cebfdba`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 260 líneas |
 | Depende de | T7.2 |
-| Commit | `feat(remediation): descartar correcciones que salen del alcance` |
+| Commits | `545b3c9` (`internal/git/hunks.go`: `LineRange` y `TouchedRanges(before, after string) ([]LineRange, error)`, diff de dos contenidos en memoria vía `ejecutarGitDiffNoIndex --unified=0` sobre archivos temporales, parseando cabeceras `@@ -a,b +c,d @@` a rangos en la numeración del contenido "después"), `d6a9d8d` (`internal/remediation/diffguard.go`: `DiffGuard`/`NewDiffGuard`, `DiffGuard.Check` compara antes/después contra las ventanas ±margin de los hallazgos localizados en ese archivo; `GuardedEditor` decora un `Editor` aplicando el guard), `2d08d13` (fix: `GuardedEditor.Edit` pasa de aplicar-y-revertir a comprobar-y-aplicar — el fix nunca toca el `Editor` subyacente si el guard lo rechaza, eliminando el caso en que un archivo nuevo fuera de alcance quedaba creado sin revertir; y fusión de ventanas contiguas/solapadas de distintos hallazgos del mismo archivo para no rechazar un hunk legítimo que las cruza), `a6cb500` (fix: un hallazgo sin ubicación ya no anula la ventana de otro hallazgo sí localizado en el mismo archivo — solo autoriza el archivo completo cuando *ningún* hallazgo del archivo tiene ubicación), `fee026f`+`18223b7`+`1699f3f`+`d4af2a9` (fix: saturación de `start`/`end` en `allowedWindows` antes de sumar/restar el margen, y guarda de `End == math.MaxInt` en `mergeWindows`, para que un `LineaFin`/`LineaInicio` extremo en el hallazgo —dato no validado por este paquete— no desborde a un rango inválido; `margin` se normaliza a no-negativo dentro de `allowedWindows`), `cebfdba` (test: corrige el comentario y una aserción no discriminante en el test de margen negativo) |
 
 **Contexto**: `internal/git/*`, informe §16
 
@@ -126,8 +126,71 @@ y se reporta `remediation out of scope`.
 Es la pieza que hace la remediación aceptable. Sin ella, el resto de la fase es
 un riesgo neto.
 
-**Aceptación**: test con un fix correcto y otro que además renombra una variable
-en otra función → el segundo se descarta completo, no parcialmente.
+**Aceptación**: cumplida. `TestDiffGuardOutOfScopeDiscardsWholeFix` (`diffguard_test.go`)
+usa un fix que corrige la línea del hallazgo y además renombra algo en una línea
+claramente fuera de su ventana: se rechaza con `"remediation out of scope"` y
+`editor.editCalls` queda en 0 — el `Editor` subyacente nunca llega a aplicar nada,
+ni parcial ni con revert posterior. `TestDiffGuardMergedAdjacentWindowsCoverGapBetweenFindings`
+y `TestDiffGuardLocatedFindingIsNotSwallowedByUnlocatedFinding` cubren los dos
+defectos reales que aparecieron al iterar sobre el diseño inicial (fusión de
+ventanas contiguas y protección de un hallazgo localizado frente a uno sin
+ubicación en el mismo archivo). `TestAllowedWindowsClampsExtremeLineaFinWithoutWrapping`,
+`TestAllowedWindowsNegativeMarginDoesNotOverflowEndClamp` y
+`TestAllowedWindowsMergesSaturatedMaxIntWindowWithAdjacentFiniteWindow` cubren la
+saturación de enteros. `go build ./...`, `go vet ./...` y `go test ./internal/git/...
+./internal/remediation/...` en verde. `sentinel gate --stage pre-push` sobre
+`cebfdba` → `PASS`.
+
+Hallazgos de `sentinel review` aceptados sin fix adicional:
+
+- **Falsos positivos por alcance de contexto de revisión aislada** (`545b3c9`,
+  dimensión `logic`, 2× `CRITICAL`): el revisor solo ve los archivos tocados por
+  ese commit concreto (`hunks.go`, `hunks_test.go`) y concluyó que
+  `ejecutarGitDiffNoIndex` no existe y que el paquete no compila, porque esa
+  función vive en `internal/git/slice.go` (mismo paquete, no tocado por este
+  commit). Verificado directamente contra el árbol real: `func
+  ejecutarGitDiffNoIndex` existe en `slice.go:370` y tolera el exit code 1 de
+  `git diff --no-index` (`slice.go:377-379`). `go build ./...` y `go test
+  ./internal/git/...` en verde lo confirman de forma independiente. No es un
+  defecto del código, es una limitación del alcance de archivos que ve la
+  revisión de un commit aislado cuando depende de un símbolo del mismo paquete
+  no tocado por ese commit — no accionable dentro de T7.3.
+- **Diagnosticabilidad del rechazo por hallazgo sin ubicación ignorado**
+  (`a6cb500`, dimensión `logic`, `ADVISORY`): cuando un hallazgo sin ubicación
+  coexiste con uno localizado en el mismo archivo, un fix legítimo para el
+  hallazgo sin ubicación (que puede necesitar tocar cualquier línea) se
+  rechaza como `"remediation out of scope"` sin ninguna señal que lo distinga
+  de un fix realmente fuera de alcance. **Follow-up para T7.4**: al reportar
+  hallazgos no resueltos tras la re-validación, distinguir este caso
+  (hallazgo sin ubicación ignorado por la presencia de otro localizado) del
+  rechazo real por alcance.
+- **Diseño — acoplamientos aceptados sin consumidor de producción todavía**
+  (varias rondas, `ADVISORY`): `git.LineRange` como vocabulario de dominio en
+  `internal/remediation` en vez de un tipo propio del paquete; `GuardedEditor`
+  depende del struct concreto `DiffGuard` en vez de una interfaz mínima;
+  `GuardedEditor.Edit` asume que la ausencia de archivo se señaliza vía
+  `errors.Is(err, os.ErrNotExist)` (mismo contrato implícito que `ScopedEditor`
+  ya asume desde T7.2); el invariante `margin >= 0` se normaliza dentro de
+  `allowedWindows` en vez de en el borde público (`NewDiffGuard`/
+  `DiffGuard.Margin`). Aceptados: son decisiones de diseño válidas mientras no
+  exista una segunda implementación de `Editor` o un llamador real que
+  construya un `margin` negativo o necesite otra política de alcance — YAGNI,
+  no descuido.
+- **`parseHunkField`/`parseHunkRanges` no validan los enteros que parsean**
+  (`545b3c9`, dimensión `security`, `WARNING`): aceptan cualquier entero que
+  `strconv.Atoi` logre parsear. El único consumidor real hoy,
+  `DiffGuard.allowedWindows`/`mergeWindows`, ya satura `start`/`end` antes de
+  operar con ellos (`fee026f`…`d4af2a9`), así que el riesgo de índice fuera de
+  rango que motivó el hallazgo no se materializa en el único camino que existe.
+  Sigue siendo una validación ausente en el borde de `internal/git` si aparece
+  un segundo consumidor; no accionable dentro del alcance de T7.3.
+
+**Hallazgo no relacionado, fuera de alcance**: `TestCrearSnapshotConcurrenteNoDuplicaNiFalla`
+(`internal/git/snapshot_test.go`) es intermitente — falla aproximadamente 1 de
+cada 3 ejecuciones con `"no se pudo reparar los metadatos del worktree del
+snapshot ...: exit status 128"`, una condición de carrera preexistente en la
+creación concurrente de snapshots que no toca ningún archivo de esta tarea.
+No se investiga ni se corrige aquí.
 
 ---
 
