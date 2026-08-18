@@ -130,7 +130,23 @@ un riesgo neto.
 usa un fix que corrige la línea del hallazgo y además renombra algo en una línea
 claramente fuera de su ventana: se rechaza con `"remediation out of scope"` y
 `editor.editCalls` queda en 0 — el `Editor` subyacente nunca llega a aplicar nada,
-ni parcial ni con revert posterior. `TestDiffGuardMergedAdjacentWindowsCoverGapBetweenFindings`
+ni parcial ni con revert posterior.
+
+El descarte íntegro es **por archivo**, no todavía por fix multiarchivo:
+`GuardedEditor.Edit` es una función pura por llamada, sin estado entre invocaciones
+que registre qué rutas ya se aplicaron. Un fix que edita los archivos A y B, donde
+A pasa el guard y B se rechaza, deja A aplicado — la ficha de fase habla de
+"se descarta el fix entero" a nivel de la unidad de cambio completa, y esa
+atomicidad cruzando archivos no existe todavía en `GuardedEditor` tal cual está.
+Es aceptable ahora porque no hay ningún `Editor` real (CLI-backed) que produzca
+fixes multiarchivo — todo lo escrito hasta T7.2/T7.3 pasa por `fakeEditor` en
+tests, de un archivo por caso. **Follow-up para T7.4**: cuando exista wiring real
+con un agente que pueda tocar varios archivos en una misma ronda, `GuardedEditor`
+(o quien orqueste la ronda) necesita rastrear y revertir todas las rutas ya
+aplicadas si cualquier archivo posterior de la misma unidad de cambio sale de
+alcance.
+
+`TestDiffGuardMergedAdjacentWindowsCoverGapBetweenFindings`
 y `TestDiffGuardLocatedFindingIsNotSwallowedByUnlocatedFinding` cubren los dos
 defectos reales que aparecieron al iterar sobre el diseño inicial (fusión de
 ventanas contiguas y protección de un hallazgo localizado frente a uno sin
@@ -184,6 +200,16 @@ Hallazgos de `sentinel review` aceptados sin fix adicional:
   rango que motivó el hallazgo no se materializa en el único camino que existe.
   Sigue siendo una validación ausente en el borde de `internal/git` si aparece
   un segundo consumidor; no accionable dentro del alcance de T7.3.
+- **`Location.Blob` no se usa para detectar contenido desplazado**: `DiffGuard.Check`
+  acota por `LineaInicio`/`LineaFin` contra lo que `Editor.Read` devuelva en ese
+  momento, sin comparar con `Location.Blob` (el hash de contenido del hallazgo,
+  pensado exactamente para detectar cuándo las líneas ya no significan lo mismo
+  que cuando se generó el hallazgo — ver `internal/review/finding.go` y el índice
+  de blobs de `internal/store`). Si el archivo cambió en el worktree desde que se
+  registró el hallazgo, el guard autoriza una ventana que ya no corresponde al
+  contenido real. Aceptado: no hay todavía ningún `Editor` real ni flujo que
+  invoque `DiffGuard` con hallazgos potencialmente desactualizados; queda como
+  candidato a revisar cuando exista ese wiring.
 
 **Hallazgo no relacionado, fuera de alcance**: `TestCrearSnapshotConcurrenteNoDuplicaNiFalla`
 (`internal/git/snapshot_test.go`) es intermitente — falla aproximadamente 1 de
