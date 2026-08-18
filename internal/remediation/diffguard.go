@@ -3,7 +3,9 @@ package remediation
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
+	"sort"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -52,10 +54,19 @@ func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo)
 
 // allowedWindows computes, for one file, the line ranges a fix may touch:
 // each finding located in that file, expanded by margin lines on each side.
+// A finding with no precise location (LineaInicio <= 0) has nothing real to
+// bound against, so it authorizes the whole file instead of a narrow,
+// misleading window. Overlapping or adjacent windows are merged so a fix
+// spanning two findings that sit close together is not wrongly rejected for
+// not fitting inside either window alone.
 func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.LineRange {
 	var windows []git.LineRange
 	for _, f := range findings {
 		if normalizePath(f.Location.Archivo) != normalizePath(file) {
+			continue
+		}
+		if f.Location.LineaInicio <= 0 {
+			windows = append(windows, git.LineRange{Start: 1, End: math.MaxInt})
 			continue
 		}
 		start := f.Location.LineaInicio - margin
@@ -68,7 +79,35 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 		}
 		windows = append(windows, git.LineRange{Start: start, End: end + margin})
 	}
-	return windows
+	return mergeWindows(windows)
+}
+
+// mergeWindows sorts windows by Start and merges any that overlap or are
+// adjacent (the next window starts at or before one past the current end)
+// into a single window, so withinAny can check a touched range against the
+// union of authorized lines rather than requiring it to fit inside a single
+// finding's window.
+func mergeWindows(windows []git.LineRange) []git.LineRange {
+	if len(windows) < 2 {
+		return windows
+	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].Start < windows[j].Start })
+
+	merged := []git.LineRange{windows[0]}
+	for _, w := range windows[1:] {
+		last := &merged[len(merged)-1]
+		// last.End == math.MaxInt is checked separately to avoid overflowing
+		// last.End+1 when a whole-file window (see allowedWindows) is already
+		// open; such a window overlaps every subsequent window by definition.
+		if last.End == math.MaxInt || w.Start <= last.End+1 {
+			if w.End > last.End {
+				last.End = w.End
+			}
+			continue
+		}
+		merged = append(merged, w)
+	}
+	return merged
 }
 
 // withinAny reports whether r fits entirely inside at least one window.
@@ -82,10 +121,10 @@ func withinAny(r git.LineRange, windows []git.LineRange) bool {
 }
 
 // GuardedEditor decorates an Editor so every Edit call is checked by a
-// DiffGuard against the fix's own findings before it is allowed to stand.
-// When the check fails, the whole fix is discarded: the file is reverted to
-// its pre-edit content (when it existed) and the caller gets the guard's
-// "remediation out of scope" error, never a partially applied fix.
+// DiffGuard against the fix's own findings before it is ever applied. When
+// the check fails, the underlying editor is never called at all: the caller
+// gets the guard's "remediation out of scope" error, never a partially
+// applied fix.
 type GuardedEditor struct {
 	editor   Editor
 	guard    DiffGuard
@@ -103,35 +142,26 @@ func (g *GuardedEditor) Read(path string) (string, error) {
 	return g.editor.Read(path)
 }
 
-// Edit applies content to path through the underlying editor, then checks
-// the resulting diff against g.guard. A failing check reverts the file (when
-// it previously existed) and returns the guard's error, so a fix that goes
-// out of scope never stands even partially.
+// Edit checks content against g.guard before ever applying it: it reads the
+// file's current content (treating a missing file as empty), runs the guard
+// check against the would-be before/after pair, and only calls the
+// underlying editor's Edit when that check passes. A fix that goes out of
+// scope is rejected before it ever reaches the underlying editor, so it
+// never stands even partially — there is nothing to revert because nothing
+// was ever written.
 func (g *GuardedEditor) Edit(path, content string) error {
 	before, err := g.editor.Read(path)
-	existed := true
 	switch {
 	case err == nil:
 	case errors.Is(err, os.ErrNotExist):
 		before = ""
-		existed = false
 	default:
 		return fmt.Errorf("remediation: could not read %q before editing: %w", path, err)
 	}
 
-	if err := g.editor.Edit(path, content); err != nil {
+	if err := g.guard.Check(path, before, content, g.findings); err != nil {
 		return err
 	}
 
-	checkErr := g.guard.Check(path, before, content, g.findings)
-	if checkErr == nil {
-		return nil
-	}
-	if !existed {
-		return checkErr
-	}
-	if revertErr := g.editor.Edit(path, before); revertErr != nil {
-		return fmt.Errorf("%w (also failed to revert: %v)", checkErr, revertErr)
-	}
-	return checkErr
+	return g.editor.Edit(path, content)
 }
