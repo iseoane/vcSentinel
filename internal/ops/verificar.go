@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -65,7 +66,11 @@ type OpcionesVerificar struct {
 // Con GitDir, registra el evento pr-verify (§13) tras el cálculo.
 func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
 	verif, err := verificarInterno(opts)
-	if err != nil || opts.GitDir == "" {
+	// GitDir debe ser absoluto (git.ObtenerGitDir lo garantiza vía
+	// --absolute-git-dir): una ruta relativa aquí solo puede venir de un
+	// caller equivocado (p. ej. un doble de test), y escribiría el evento
+	// bajo el cwd del proceso en vez de dentro del repositorio.
+	if err != nil || opts.GitDir == "" || !filepath.IsAbs(opts.GitDir) {
 		return verif, err
 	}
 	if err := registrarEventoPrVerify(opts.GitDir, opts.Worktree, verif); err != nil {
