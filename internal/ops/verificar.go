@@ -27,6 +27,11 @@ const (
 // no responde: aviso, nunca bloqueo (riesgo declarado de la guía).
 var errSinAgente = errors.New("el agente de verificación no respondió")
 
+// errGitDirRelativo señala un GitDir no vacío pero relativo: un error de
+// cableado del caller, distinguible con errors.Is de un fallo de dominio
+// (comando que no se pudo ejecutar, evento que no se pudo escribir).
+var errGitDirRelativo = errors.New("GitDir no es una ruta absoluta")
+
 // ResultadoComando es el exit code real de un comando configurado.
 type ResultadoComando struct {
 	Comando string
@@ -70,16 +75,19 @@ type OpcionesVerificar struct {
 // con GitDir relativo no vacío, devuelve error (nunca en silencio: la propia
 // guía de este paquete es que un fallo de verificación se vea, no se pierda).
 func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
-	verif, err := verificarInterno(opts)
-	if err != nil || opts.GitDir == "" {
-		return verif, err
-	}
 	// GitDir absoluto es una precondición del caller (git.ObtenerGitDir lo
 	// garantiza vía --absolute-git-dir), no una validación de seguridad: una
 	// ruta relativa aquí solo indica un caller mal cableado (p. ej. un doble
-	// de test), y tratarla igual que GitDir=="" la dejaría sin traza.
-	if !filepath.IsAbs(opts.GitDir) {
-		return verif, fmt.Errorf("ops: GitDir %q no es una ruta absoluta", opts.GitDir)
+	// de test). Se comprueba ANTES de verificarInterno (que sí tiene efectos:
+	// comandos de shell reales, aviso interactivo, agente) para que un caller
+	// mal cableado falle rápido, sin pagar esa verificación completa antes de
+	// enterarse de su propio error de cableado.
+	if opts.GitDir != "" && !filepath.IsAbs(opts.GitDir) {
+		return ResultadoVerificacion{}, fmt.Errorf("%q: %w", opts.GitDir, errGitDirRelativo)
+	}
+	verif, err := verificarInterno(opts)
+	if err != nil || opts.GitDir == "" {
+		return verif, err
 	}
 	if err := registrarEventoPrVerify(opts.GitDir, opts.Worktree, verif); err != nil {
 		return verif, fmt.Errorf("verificación en modo %s, pero no se pudo registrar el evento pr-verify: %w", verif.Modo, err)
