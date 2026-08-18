@@ -305,10 +305,16 @@ func TestAllowedWindowsNegativeMarginDoesNotOverflowEndClamp(t *testing.T) {
 	// is an exported int field nothing stops a caller from setting negative.
 	// Without normalizing margin to non-negative first, the end clamp's own
 	// comparison (end > math.MaxInt-margin) would itself overflow for a
-	// negative margin, wrapping math.MaxInt-margin around to a large
-	// negative number and forcing a normal, in-range end to be clamped down
-	// to a huge negative value — producing exactly the End-below-Start
-	// corruption the clamp exists to prevent, just via a different route.
+	// negative margin: math.MaxInt-margin wraps to a large negative number,
+	// so a normal end (5) is clamped down to that value, then end+margin
+	// wraps a second time back up to exactly math.MaxInt — and the
+	// equivalent wraparound on start's side lands below 1, where the
+	// existing "if start < 1" clamp forces it back to 1. The net result on
+	// the pre-fix code is not End below Start: it is a silently degenerate
+	// whole-file window, {Start:1, End:math.MaxInt}, instead of the exact
+	// {Start:5, End:5} a margin of 0 should produce. Only the exact-value
+	// assertion below distinguishes the two; there is no End<Start case to
+	// check for this specific input.
 	findings := []review.Hallazgo{
 		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}},
 	}
@@ -318,9 +324,6 @@ func TestAllowedWindowsNegativeMarginDoesNotOverflowEndClamp(t *testing.T) {
 		t.Fatalf("allowedWindows: got %d windows, want 1: %v", len(windows), windows)
 	}
 	w := windows[0]
-	if w.End < w.Start {
-		t.Fatalf("allowedWindows: End (%d) < Start (%d) with a negative margin", w.End, w.Start)
-	}
 	if w.Start != 5 || w.End != 5 {
 		t.Fatalf("allowedWindows: got {Start:%d End:%d}, want {Start:5 End:5} (negative margin normalized to 0)", w.Start, w.End)
 	}
