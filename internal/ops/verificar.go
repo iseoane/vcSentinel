@@ -49,7 +49,10 @@ type ResultadoVerificacion struct {
 type OpcionesVerificar struct {
 	Worktree string
 	// GitDir, si no está vacío, registra el evento pr-verify (§13) al
-	// terminar: detalle {cmd, exit} por comando, tested o motivo.
+	// terminar: detalle {cmd, exit} por comando, tested o motivo. Debe ser
+	// una ruta absoluta (git.ObtenerGitDir la garantiza así); una ruta
+	// relativa no vacía hace que Verificar devuelva error en vez de omitir
+	// el registro en silencio.
 	GitDir string
 	Cfg    config.Config
 	// Ejecutar (nil = shell real) devuelve el exit code de un comando.
@@ -63,15 +66,20 @@ type OpcionesVerificar struct {
 // Verificar implementa la verificación dual: vía 1 determinista si hay
 // comandos lint/test/build configurados; si no, aviso con elección
 // (configurar | omitir | delegar) y delegación con shell libre si se elige.
-// Con GitDir, registra el evento pr-verify (§13) tras el cálculo.
+// Con GitDir absoluto, registra el evento pr-verify (§13) tras el cálculo;
+// con GitDir relativo no vacío, devuelve error (nunca en silencio: la propia
+// guía de este paquete es que un fallo de verificación se vea, no se pierda).
 func Verificar(opts OpcionesVerificar) (ResultadoVerificacion, error) {
 	verif, err := verificarInterno(opts)
-	// GitDir debe ser absoluto (git.ObtenerGitDir lo garantiza vía
-	// --absolute-git-dir): una ruta relativa aquí solo puede venir de un
-	// caller equivocado (p. ej. un doble de test), y escribiría el evento
-	// bajo el cwd del proceso en vez de dentro del repositorio.
-	if err != nil || opts.GitDir == "" || !filepath.IsAbs(opts.GitDir) {
+	if err != nil || opts.GitDir == "" {
 		return verif, err
+	}
+	// GitDir absoluto es una precondición del caller (git.ObtenerGitDir lo
+	// garantiza vía --absolute-git-dir), no una validación de seguridad: una
+	// ruta relativa aquí solo indica un caller mal cableado (p. ej. un doble
+	// de test), y tratarla igual que GitDir=="" la dejaría sin traza.
+	if !filepath.IsAbs(opts.GitDir) {
+		return verif, fmt.Errorf("ops: GitDir %q no es una ruta absoluta", opts.GitDir)
 	}
 	if err := registrarEventoPrVerify(opts.GitDir, opts.Worktree, verif); err != nil {
 		return verif, fmt.Errorf("verificación en modo %s, pero no se pudo registrar el evento pr-verify: %w", verif.Modo, err)

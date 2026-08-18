@@ -193,6 +193,31 @@ func TestVerificarSinConfigOmitir(t *testing.T) {
 	}
 }
 
+// TestVerificarGitDirRelativoDevuelveError: un GitDir no vacío pero relativo
+// es un caller mal cableado (contrato: git.ObtenerGitDir siempre devuelve una
+// ruta absoluta), y debe fallar de forma ruidosa en vez de omitir el registro
+// del evento pr-verify en silencio. t.Chdir aísla el cwd en un directorio
+// descartable: si el guard alguna vez regresa a escribir antes de comprobar
+// filepath.IsAbs, la escritura cae ahí y no en el árbol del repositorio.
+func TestVerificarGitDirRelativoDevuelveError(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_, err := Verificar(OpcionesVerificar{
+		GitDir: "gitdir-relativo",
+		Preguntar: func(aviso string) (string, error) {
+			return "omitir", nil
+		},
+	})
+	if err == nil {
+		t.Fatal("Verificar con GitDir relativo debe devolver error, no omitir en silencio")
+	}
+	if !strings.Contains(err.Error(), "absoluta") {
+		t.Errorf("el error debe explicar que GitDir debe ser absoluto, got: %v", err)
+	}
+	if eventos, _ := UltimosEventos("gitdir-relativo", 1); len(eventos) != 0 {
+		t.Errorf("no debe registrarse ningún evento con GitDir relativo: %+v", eventos)
+	}
+}
+
 // TestVerificarSinConfigConfigurar: la elección configurar devuelve el modo
 // para que el caller pare y edite el yml.
 func TestVerificarSinConfigConfigurar(t *testing.T) {
