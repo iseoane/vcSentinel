@@ -299,29 +299,30 @@ func TestAllowedWindowsClampsExtremeLineaFinWithoutWrapping(t *testing.T) {
 	}
 }
 
-func TestAllowedWindowsHandlesExtremeLineaInicioWithoutWrapping(t *testing.T) {
-	// An extreme negative LineaInicio (math.MinInt) is <= 0, so
-	// allowedWindows treats the finding as unlocated (nothing real to bound
-	// against) and falls back to authorizing the whole file (Start=1,
-	// End=math.MaxInt) rather than ever subtracting margin from it. The
-	// start clamp guards the same underflow symmetrically for any future
-	// path that does reach the subtraction; this test proves the observable
-	// outcome stays safe either way: Start is a small positive number, never
-	// a huge value wrapped around from underflow.
+func TestAllowedWindowsNegativeMarginDoesNotOverflowEndClamp(t *testing.T) {
+	// A negative margin is not something any caller constructs today
+	// (DefaultDiffGuardMargin is a positive constant), but DiffGuard.Margin
+	// is an exported int field nothing stops a caller from setting negative.
+	// Without normalizing margin to non-negative first, the end clamp's own
+	// comparison (end > math.MaxInt-margin) would itself overflow for a
+	// negative margin, wrapping math.MaxInt-margin around to a large
+	// negative number and forcing a normal, in-range end to be clamped down
+	// to a huge negative value — producing exactly the End-below-Start
+	// corruption the clamp exists to prevent, just via a different route.
 	findings := []review.Hallazgo{
-		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: math.MinInt, LineaFin: math.MinInt}},
+		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}},
 	}
 
-	windows := allowedWindows(tenLineFile, findings, 3)
+	windows := allowedWindows(tenLineFile, findings, -3)
 	if len(windows) != 1 {
 		t.Fatalf("allowedWindows: got %d windows, want 1: %v", len(windows), windows)
 	}
 	w := windows[0]
-	if w.Start <= 0 || w.Start > 100 {
-		t.Fatalf("allowedWindows: Start = %d, want a small positive number, not a huge wrapped value", w.Start)
-	}
 	if w.End < w.Start {
-		t.Fatalf("allowedWindows: End (%d) < Start (%d): the window wrapped around", w.End, w.Start)
+		t.Fatalf("allowedWindows: End (%d) < Start (%d) with a negative margin", w.End, w.Start)
+	}
+	if w.Start != 5 || w.End != 5 {
+		t.Fatalf("allowedWindows: got {Start:%d End:%d}, want {Start:5 End:5} (negative margin normalized to 0)", w.Start, w.End)
 	}
 }
 

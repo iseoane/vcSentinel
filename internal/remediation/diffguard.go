@@ -63,18 +63,21 @@ func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo)
 // authorizing the whole file, since there is then nothing real to bound
 // against at all.
 //
-// LineaInicio and LineaFin come from finding data this package does not
-// otherwise validate, so both start and end are clamped before the
-// arithmetic that could push them past the int range's edges: start is
-// clamped before subtracting margin (an extreme negative LineaInicio could
-// otherwise underflow past math.MinInt and wrap around to a large positive
-// number), and end is clamped before adding margin (an extreme LineaFin,
-// e.g. math.MaxInt, could otherwise overflow past math.MaxInt and wrap
-// around to a large negative number). The resulting windows this function
-// returns never have an End below Start from wraparound; End may still
-// legitimately equal math.MaxInt exactly when the clamp saturates it, which
-// mergeWindows handles explicitly.
+// LineaFin comes from finding data this package does not otherwise
+// validate, so end is clamped before adding margin: an extreme LineaFin
+// (e.g. math.MaxInt) could otherwise overflow past math.MaxInt and wrap
+// around to a large negative number, producing a window with End below
+// Start. End may still legitimately equal math.MaxInt exactly when the
+// clamp saturates it, which mergeWindows handles explicitly. A negative
+// margin would make that same clamp comparison overflow instead of
+// prevent it, so margin is normalized to non-negative first; start needs
+// no equivalent clamp, since LineaInicio is already known to be positive
+// at the point start is computed (see the LineaInicio <= 0 check below),
+// so LineaInicio-margin cannot underflow past math.MinInt.
 func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.LineRange {
+	if margin < 0 {
+		margin = 0
+	}
 	var located []git.LineRange
 	matched := false
 	for _, f := range findings {
@@ -85,11 +88,7 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 		if f.Location.LineaInicio <= 0 {
 			continue
 		}
-		start := f.Location.LineaInicio
-		if start < math.MinInt+margin {
-			start = math.MinInt + margin
-		}
-		start -= margin
+		start := f.Location.LineaInicio - margin
 		if start < 1 {
 			start = 1
 		}
