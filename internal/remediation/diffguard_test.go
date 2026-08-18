@@ -224,6 +224,54 @@ func TestDiffGuardUnlocatedFindingAuthorizesWholeFile(t *testing.T) {
 	}
 }
 
+func TestDiffGuardLocatedFindingIsNotSwallowedByUnlocatedFinding(t *testing.T) {
+	// An unlocated finding (f1) and a located finding at line 5, margin 3
+	// (f2, window [2,8]) both point at the same file. Regression: the
+	// unlocated finding used to authorize the whole file, silently disabling
+	// the located finding's own narrow window too.
+	findings := []review.Hallazgo{
+		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 0, LineaFin: 0}},
+		{ID: "f2", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}},
+	}
+
+	t.Run("a fix outside the located finding's window is still rejected", func(t *testing.T) {
+		before := twentyFiveLines()
+		after := changeLine(before, 20, "L20-renamed") // well outside [2,8]
+
+		editor := &fakeEditor{files: map[string]string{tenLineFile: before}}
+		ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
+
+		err := ge.Edit(tenLineFile, after)
+		if err == nil {
+			t.Fatalf("Edit: expected an out-of-scope error, got nil")
+		}
+		if !strings.Contains(err.Error(), "out of scope") {
+			t.Fatalf("Edit: error = %q, want it to contain %q", err.Error(), "out of scope")
+		}
+		if editor.files[tenLineFile] != before {
+			t.Fatalf("Edit: file content = %q, want it untouched at %q", editor.files[tenLineFile], before)
+		}
+		if len(editor.editCalls) != 0 {
+			t.Fatalf("Edit: expected 0 underlying edit calls on rejection, got %v", editor.editCalls)
+		}
+	})
+
+	t.Run("a fix within the located finding's window is still accepted", func(t *testing.T) {
+		before := twentyFiveLines()
+		after := changeLine(before, 6, "L6-fixed") // inside [2,8]
+
+		editor := &fakeEditor{files: map[string]string{tenLineFile: before}}
+		ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
+
+		if err := ge.Edit(tenLineFile, after); err != nil {
+			t.Fatalf("Edit: unexpected error: %v", err)
+		}
+		if editor.files[tenLineFile] != after {
+			t.Fatalf("Edit: file content = %q, want %q", editor.files[tenLineFile], after)
+		}
+	})
+}
+
 func TestDiffGuardEditPropagatesNonNotExistReadError(t *testing.T) {
 	readErr := errors.New("permission denied reading the file")
 

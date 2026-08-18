@@ -52,21 +52,25 @@ func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo)
 	return nil
 }
 
-// allowedWindows computes, for one file, the line ranges a fix may touch:
-// each finding located in that file, expanded by margin lines on each side.
-// A finding with no precise location (LineaInicio <= 0) has nothing real to
-// bound against, so it authorizes the whole file instead of a narrow,
-// misleading window. Overlapping or adjacent windows are merged so a fix
-// spanning two findings that sit close together is not wrongly rejected for
-// not fitting inside either window alone.
+// allowedWindows computes, for one file, the line ranges a fix may touch.
+// Findings matching file are first partitioned into located (LineaInicio >
+// 0) and unlocated (LineaInicio <= 0). An unlocated finding has nothing real
+// to bound against, but it must never widen or swallow a located finding's
+// narrow window: as long as at least one located finding exists, every
+// unlocated finding for that file is ignored entirely, and the result is
+// built only from the located findings' (margin-expanded, merged) windows.
+// Only when every matching finding is unlocated does this fall back to
+// authorizing the whole file, since there is then nothing real to bound
+// against at all.
 func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.LineRange {
-	var windows []git.LineRange
+	var located []git.LineRange
+	matched := false
 	for _, f := range findings {
 		if normalizePath(f.Location.Archivo) != normalizePath(file) {
 			continue
 		}
+		matched = true
 		if f.Location.LineaInicio <= 0 {
-			windows = append(windows, git.LineRange{Start: 1, End: math.MaxInt})
 			continue
 		}
 		start := f.Location.LineaInicio - margin
@@ -77,24 +81,32 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 		if end < f.Location.LineaInicio {
 			end = f.Location.LineaInicio
 		}
-		windows = append(windows, git.LineRange{Start: start, End: end + margin})
+		located = append(located, git.LineRange{Start: start, End: end + margin})
 	}
-	return mergeWindows(windows)
+	if len(located) == 0 {
+		if matched {
+			return []git.LineRange{{Start: 1, End: math.MaxInt}}
+		}
+		return nil
+	}
+	return mergeWindows(located)
 }
 
 // mergeWindows sorts windows by Start and merges any that overlap or are
 // adjacent (the next window starts at or before one past the current end)
 // into a single window, so withinAny can check a touched range against the
 // union of authorized lines rather than requiring it to fit inside a single
-// finding's window.
+// finding's window. It never mutates the windows slice passed in by the
+// caller: sorting happens on a private copy.
 func mergeWindows(windows []git.LineRange) []git.LineRange {
 	if len(windows) < 2 {
 		return windows
 	}
-	sort.Slice(windows, func(i, j int) bool { return windows[i].Start < windows[j].Start })
+	sorted := append([]git.LineRange(nil), windows...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start < sorted[j].Start })
 
-	merged := []git.LineRange{windows[0]}
-	for _, w := range windows[1:] {
+	merged := []git.LineRange{sorted[0]}
+	for _, w := range sorted[1:] {
 		last := &merged[len(merged)-1]
 		// last.End == math.MaxInt is checked separately to avoid overflowing
 		// last.End+1 when a whole-file window (see allowedWindows) is already
@@ -110,7 +122,9 @@ func mergeWindows(windows []git.LineRange) []git.LineRange {
 	return merged
 }
 
-// withinAny reports whether r fits entirely inside at least one window.
+// withinAny reports whether r fits entirely inside at least one window;
+// windows must already be merged via mergeWindows — an unmerged, overlapping
+// set of windows would make this check unreliable.
 func withinAny(r git.LineRange, windows []git.LineRange) bool {
 	for _, w := range windows {
 		if r.Start >= w.Start && r.End <= w.End {
