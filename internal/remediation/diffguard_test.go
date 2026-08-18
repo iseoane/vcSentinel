@@ -2,6 +2,7 @@ package remediation
 
 import (
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -270,6 +271,84 @@ func TestDiffGuardLocatedFindingIsNotSwallowedByUnlocatedFinding(t *testing.T) {
 			t.Fatalf("Edit: file content = %q, want %q", editor.files[tenLineFile], after)
 		}
 	})
+}
+
+func TestAllowedWindowsClampsExtremeLineaFinWithoutWrapping(t *testing.T) {
+	// Without the end clamp in allowedWindows, end+margin (math.MaxInt + 3)
+	// would silently wrap around to a large negative number (math.MinInt +
+	// 2), producing a window whose End is far below its Start. The clamp
+	// saturates end at math.MaxInt-margin first, so End lands on math.MaxInt
+	// exactly instead of wrapping.
+	findings := []review.Hallazgo{
+		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 10, LineaFin: math.MaxInt}},
+	}
+
+	windows := allowedWindows(tenLineFile, findings, 3)
+	if len(windows) != 1 {
+		t.Fatalf("allowedWindows: got %d windows, want 1: %v", len(windows), windows)
+	}
+	w := windows[0]
+	if w.End != math.MaxInt {
+		t.Fatalf("allowedWindows: End = %d, want math.MaxInt (saturated, not wrapped)", w.End)
+	}
+	if w.Start <= 0 || w.Start > 100 {
+		t.Fatalf("allowedWindows: Start = %d, want a small positive number, not garbage", w.Start)
+	}
+	if w.End < w.Start {
+		t.Fatalf("allowedWindows: End (%d) < Start (%d): the window wrapped around", w.End, w.Start)
+	}
+}
+
+func TestAllowedWindowsHandlesExtremeLineaInicioWithoutWrapping(t *testing.T) {
+	// An extreme negative LineaInicio (math.MinInt) is <= 0, so
+	// allowedWindows treats the finding as unlocated (nothing real to bound
+	// against) and falls back to authorizing the whole file (Start=1,
+	// End=math.MaxInt) rather than ever subtracting margin from it. The
+	// start clamp guards the same underflow symmetrically for any future
+	// path that does reach the subtraction; this test proves the observable
+	// outcome stays safe either way: Start is a small positive number, never
+	// a huge value wrapped around from underflow.
+	findings := []review.Hallazgo{
+		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: math.MinInt, LineaFin: math.MinInt}},
+	}
+
+	windows := allowedWindows(tenLineFile, findings, 3)
+	if len(windows) != 1 {
+		t.Fatalf("allowedWindows: got %d windows, want 1: %v", len(windows), windows)
+	}
+	w := windows[0]
+	if w.Start <= 0 || w.Start > 100 {
+		t.Fatalf("allowedWindows: Start = %d, want a small positive number, not a huge wrapped value", w.Start)
+	}
+	if w.End < w.Start {
+		t.Fatalf("allowedWindows: End (%d) < Start (%d): the window wrapped around", w.End, w.Start)
+	}
+}
+
+func TestAllowedWindowsMergesSaturatedMaxIntWindowWithAdjacentFiniteWindow(t *testing.T) {
+	// f1's LineaFin (math.MaxInt) saturates to a window ending exactly at
+	// math.MaxInt: [997, math.MaxInt]. f2 is a separate, non-adjacent finite
+	// window: [4997, 5003]. Without mergeWindows's dedicated
+	// "last.End == math.MaxInt" check, merging these two would compute
+	// last.End+1 (math.MaxInt+1), which overflows and wraps to math.MinInt,
+	// making "w.Start <= last.End+1" false and wrongly leaving the two
+	// windows split apart. With the check, they merge into one window whose
+	// End is still math.MaxInt.
+	findings := []review.Hallazgo{
+		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 1000, LineaFin: math.MaxInt}},
+		{ID: "f2", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5000, LineaFin: 5000}},
+	}
+
+	windows := allowedWindows(tenLineFile, findings, 3)
+	if len(windows) != 1 {
+		t.Fatalf("allowedWindows: got %d windows, want exactly 1 merged window, got %v", len(windows), windows)
+	}
+	if windows[0].Start != 997 {
+		t.Fatalf("allowedWindows: Start = %d, want 997", windows[0].Start)
+	}
+	if windows[0].End != math.MaxInt {
+		t.Fatalf("allowedWindows: End = %d, want math.MaxInt", windows[0].End)
+	}
 }
 
 func TestDiffGuardEditPropagatesNonNotExistReadError(t *testing.T) {

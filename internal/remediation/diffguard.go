@@ -62,6 +62,18 @@ func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo)
 // Only when every matching finding is unlocated does this fall back to
 // authorizing the whole file, since there is then nothing real to bound
 // against at all.
+//
+// LineaInicio and LineaFin come from finding data this package does not
+// otherwise validate, so both start and end are clamped before the
+// arithmetic that could push them past the int range's edges: start is
+// clamped before subtracting margin (an extreme negative LineaInicio could
+// otherwise underflow past math.MinInt and wrap around to a large positive
+// number), and end is clamped before adding margin (an extreme LineaFin,
+// e.g. math.MaxInt, could otherwise overflow past math.MaxInt and wrap
+// around to a large negative number). The resulting windows this function
+// returns never have an End below Start from wraparound; End may still
+// legitimately equal math.MaxInt exactly when the clamp saturates it, which
+// mergeWindows handles explicitly.
 func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.LineRange {
 	var located []git.LineRange
 	matched := false
@@ -73,13 +85,20 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 		if f.Location.LineaInicio <= 0 {
 			continue
 		}
-		start := f.Location.LineaInicio - margin
+		start := f.Location.LineaInicio
+		if start < math.MinInt+margin {
+			start = math.MinInt + margin
+		}
+		start -= margin
 		if start < 1 {
 			start = 1
 		}
 		end := f.Location.LineaFin
 		if end < f.Location.LineaInicio {
 			end = f.Location.LineaInicio
+		}
+		if end > math.MaxInt-margin {
+			end = math.MaxInt - margin
 		}
 		located = append(located, git.LineRange{Start: start, End: end + margin})
 	}
@@ -101,6 +120,13 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 // input slice itself rather than a copy, but that is harmless because that
 // path returns before this function writes to any element; the len>=2 path
 // below does mutate merged[i].End, but only within the private copy.
+//
+// allowedWindows clamps every window it builds so End never exceeds
+// math.MaxInt and never wraps around from overflow. A clamped window can
+// still legitimately equal math.MaxInt exactly (an extreme LineaFin
+// saturated by that clamp, or the whole-file fallback window), and the
+// last.End == math.MaxInt check below exists precisely to merge that window
+// safely without ever computing last.End+1 itself.
 func mergeWindows(windows []git.LineRange) []git.LineRange {
 	if len(windows) < 2 {
 		return windows
@@ -112,10 +138,10 @@ func mergeWindows(windows []git.LineRange) []git.LineRange {
 	for _, w := range sorted[1:] {
 		last := &merged[len(merged)-1]
 		// last.End == math.MaxInt is checked separately to avoid overflowing
-		// last.End+1: Location.LineaFin comes from finding data this package
-		// does not otherwise validate, so end+margin in allowedWindows could
-		// in principle reach math.MaxInt even outside the whole-file window
-		// case, and this guard keeps that path from wrapping around silently.
+		// last.End+1: allowedWindows clamps its windows so End never exceeds
+		// math.MaxInt and never wraps around, but a clamped window can still
+		// legitimately equal math.MaxInt exactly, which is precisely what
+		// this check exists to handle safely during the merge.
 		if last.End == math.MaxInt || w.Start <= last.End+1 {
 			if w.End > last.End {
 				last.End = w.End
