@@ -96,12 +96,11 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 // adjacent (the next window starts at or before one past the current end)
 // into a single window, so withinAny can check a touched range against the
 // union of authorized lines rather than requiring it to fit inside a single
-// finding's window. It does not reorder the caller's slice in place: sort.Slice
-// runs on a private copy (the len<2 shortcut below returns the input slice
-// itself, but nothing in this function mutates element values, so that
-// aliasing is harmless). Callers only ever pass windows with a finite End
-// here — allowedWindows returns its whole-file window directly, without
-// going through mergeWindows.
+// finding's window. It does not reorder the caller's slice in place:
+// sort.Slice runs on a private copy. The len<2 shortcut below returns the
+// input slice itself rather than a copy, but that is harmless because that
+// path returns before this function writes to any element; the len>=2 path
+// below does mutate merged[i].End, but only within the private copy.
 func mergeWindows(windows []git.LineRange) []git.LineRange {
 	if len(windows) < 2 {
 		return windows
@@ -112,7 +111,12 @@ func mergeWindows(windows []git.LineRange) []git.LineRange {
 	merged := []git.LineRange{sorted[0]}
 	for _, w := range sorted[1:] {
 		last := &merged[len(merged)-1]
-		if w.Start <= last.End+1 {
+		// last.End == math.MaxInt is checked separately to avoid overflowing
+		// last.End+1: Location.LineaFin comes from finding data this package
+		// does not otherwise validate, so end+margin in allowedWindows could
+		// in principle reach math.MaxInt even outside the whole-file window
+		// case, and this guard keeps that path from wrapping around silently.
+		if last.End == math.MaxInt || w.Start <= last.End+1 {
 			if w.End > last.End {
 				last.End = w.End
 			}
