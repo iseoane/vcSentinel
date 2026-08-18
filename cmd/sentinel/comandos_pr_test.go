@@ -614,9 +614,17 @@ func TestEjecutarPrCreateCon_ComparteElVerificadorModeloConLaPlantilla(t *testin
 	}
 
 	var salida bytes.Buffer
+	// verificar delega en verificarParaPlantillaCon con verificar=nil, que a su
+	// vez cae en la ruta real ops.Verificar: ese camino llama de verdad a
+	// ops.RegistrarEvento(gitDir, "pr-verify", ...). Un "gitdir" literal aquí
+	// escribiría fuera de un directorio temporal, en <cwd>/gitdir/vas-sentinel
+	// (cwd = el paquete durante `go test`), contaminando el árbol del
+	// repositorio en cada ejecución. t.TempDir() mantiene la escritura real
+	// que este test necesita para cubrir la ruta, sin tocar el repositorio.
+	gitDir := t.TempDir()
 	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
 		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		obtenerGitDir: func() (string, error) { return gitDir, nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return nil, nil
 		},
