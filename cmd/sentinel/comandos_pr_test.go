@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -784,7 +786,7 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
 		registrarDecision:   func(string, *store.Decision) error { return nil },
-		resolverActor:       func() string { return "actor-de-prueba" },
+		resolverActor:       func(string) string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
@@ -828,7 +830,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
 		registrarDecision:   func(string, *store.Decision) error { return nil },
-		resolverActor:       func() string { return "actor-de-prueba" },
+		resolverActor:       func(string) string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
@@ -884,7 +886,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
 		registrarDecision:   func(string, *store.Decision) error { return nil },
-		resolverActor:       func() string { return "actor-de-prueba" },
+		resolverActor:       func(string) string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (el fallo de HEAD no bloquea --force)", codigo)
@@ -1027,7 +1029,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistraDecisionForceBypass(
 			decisionRegistrada = d
 			return nil
 		},
-		resolverActor: func() string { return "actor-de-prueba" },
+		resolverActor: func(string) string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
@@ -1087,6 +1089,139 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraDecision(t *testi
 	if registrarDecisionLlamado {
 		t.Error("registrarDecision no debe llamarse: la validación ya estaba en verde, --force no ejerció ningún efecto")
 	}
+}
+
+// TestEjecutarPrCreateCon_ForceConValidacionRoja_GitCommonDirFallaAvisaYSigue
+// cubre el aviso-y-continúa cuando obtenerGitCommonDir falla: --force ya
+// decidió seguir pese a la validación en rojo, así que un fallo al resolver
+// dónde registrar la decisión no debe abortar la publicación, solo avisar.
+func TestEjecutarPrCreateCon_ForceConValidacionRoja_GitCommonDirFallaAvisaYSigue(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir:  func() (string, error) { return "gitdir", nil },
+		obtenerSHAHead: func() (string, error) { return "abc1234", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1}}, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/22", false, nil },
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		obtenerGitCommonDir: func(string) (string, error) {
+			return "", errors.New("boom")
+		},
+		registrarDecision: func(string, *store.Decision) error {
+			t.Fatal("registrarDecision no debe llamarse: no se pudo resolver el commonDir")
+			return nil
+		},
+		resolverActor: func(string) string { return "actor-de-prueba" },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el fallo al resolver commonDir no bloquea --force)", codigo)
+	}
+	if !strings.Contains(salida.String(), "no se pudo resolver el git-common-dir") {
+		t.Errorf("la salida debe avisar del fallo al resolver commonDir, got: %s", salida.String())
+	}
+}
+
+// TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistrarDecisionFallaAvisaYSigue
+// cubre el aviso-y-continúa cuando registrarDecision falla (p.ej. no se pudo
+// escribir en decisions.jsonl): mismo criterio, no aborta la publicación.
+func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistrarDecisionFallaAvisaYSigue(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir:  func() (string, error) { return "gitdir", nil },
+		obtenerSHAHead: func() (string, error) { return "abc1234", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1}}, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:            func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/23", false, nil },
+		registrarEvento:     func(string, string, int, []string, string, string) error { return nil },
+		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
+		registrarDecision: func(string, *store.Decision) error {
+			return errors.New("boom")
+		},
+		resolverActor: func(string) string { return "actor-de-prueba" },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el fallo al escribir la decisión no bloquea --force)", codigo)
+	}
+	if !strings.Contains(salida.String(), "no se pudo escribir la decisión de --force") {
+		t.Errorf("la salida debe avisar del fallo al escribir la decisión, got: %s", salida.String())
+	}
+}
+
+// TestResolverActor_UsaGitConfigLocalDelWorktree confirma que resolverActor
+// usa cmd.Dir=worktree (no el cwd del proceso que ejecuta el test): un
+// user.name local del worktree debe ganar, aunque el proceso de test corra
+// en otro directorio (este mismo repositorio).
+func TestResolverActor_UsaGitConfigLocalDelWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("aislar HOME/GIT_CONFIG_NOSYSTEM de forma determinista en Windows requiere más que este helper")
+	}
+	worktree := t.TempDir()
+	if out, err := exec.Command("git", "-C", worktree, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", worktree, "config", "user.name", "actor-local-del-worktree").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v\n%s", err, out)
+	}
+	if got := resolverActor(worktree); got != "actor-local-del-worktree" {
+		t.Errorf("resolverActor(worktree) = %q, esperado el user.name LOCAL del worktree, no el del cwd del proceso", got)
+	}
+}
+
+// TestResolverActor_SinGitCaeAUserYLuegoAUsername confirma la cadena de
+// fallback completa cuando git config no puede resolver ningún nombre (ni
+// local ni global ni de sistema): $USER primero, $USERNAME si $USER está
+// vacío, y "desconocido" si ambas lo están. HOME se redirige a un directorio
+// vacío y GIT_CONFIG_NOSYSTEM=1 para que el resultado no dependa de la
+// configuración git real de la máquina que ejecuta el test.
+func TestResolverActor_SinGitCaeAUserYLuegoAUsername(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("aislar HOME/GIT_CONFIG_NOSYSTEM de forma determinista en Windows requiere más que este helper")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	worktreeSinGit := t.TempDir() // no es un repo git: sin config local posible
+
+	t.Run("cae a USER", func(t *testing.T) {
+		t.Setenv("USER", "usuario-env")
+		t.Setenv("USERNAME", "")
+		if got := resolverActor(worktreeSinGit); got != "usuario-env" {
+			t.Errorf("resolverActor = %q, esperado %q ($USER)", got, "usuario-env")
+		}
+	})
+	t.Run("sin USER cae a USERNAME", func(t *testing.T) {
+		t.Setenv("USER", "")
+		t.Setenv("USERNAME", "usuario-windows-env")
+		if got := resolverActor(worktreeSinGit); got != "usuario-windows-env" {
+			t.Errorf("resolverActor = %q, esperado %q ($USERNAME)", got, "usuario-windows-env")
+		}
+	})
+	t.Run("sin ninguna variable usa el placeholder", func(t *testing.T) {
+		t.Setenv("USER", "")
+		t.Setenv("USERNAME", "")
+		if got := resolverActor(worktreeSinGit); got != "desconocido" {
+			t.Errorf("resolverActor = %q, esperado %q", got, "desconocido")
+		}
+	})
 }
 
 // TestEjecutarPrCreateCon_CargaConfigConError_Exit1SinValidarNiPublicar cubre

@@ -1,7 +1,8 @@
 package store
 
 import (
-	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,14 +21,34 @@ const alcanceRespuestaPregunta = "question"
 // respuesta: combina blob + questionID para que la misma pregunta sobre el
 // mismo contenido se reconozca como ya respondida incluso si el SHA del
 // commit cambia (p.ej. tras un rebase), igual que hacen los índices de blob
-// de F2 para los findings.
+// de F2 para los findings. Cada componente va prefijado por su longitud
+// decimal (mismo patrón que review.empaquetarConLongitud): un separador
+// simple como "#" sería ambiguo si blob o questionID lo contuvieran
+// literalmente — p.ej. claveRespuesta("X#question:q1", "q2") colisionaría
+// con claveRespuesta("X", "q1#question:q2") sin este prefijo, suprimiendo una
+// pregunta distinta de la que realmente se respondió.
 func claveRespuesta(blob, questionID string) string {
-	return fmt.Sprintf("blob:%s#question:%s", blob, questionID)
+	var b strings.Builder
+	for _, c := range []string{blob, questionID} {
+		b.WriteString(strconv.Itoa(len(c)))
+		b.WriteByte(':')
+		b.WriteString(c)
+	}
+	return b.String()
 }
 
 // RegistrarRespuesta persiste que questionID sobre blob fue respondida por
-// actor con respuesta, como una Decision con Fingerprint
-// "blob:<blob>#question:<questionID>" y Decision = "question_answered".
+// actor con respuesta, como una Decision con Fingerprint = claveRespuesta(blob,
+// questionID) y Decision = "question_answered".
+//
+// decisions.jsonl es un registro LOCAL sin autenticar (mismo modo 0644 que el
+// resto del store) y Actor es atribución autodeclarada (ver resolverActor en
+// cmd/sentinel): cualquiera con permiso de escritura en el repositorio puede
+// sembrar una línea question_answered por adelantado y suprimir una pregunta
+// real. Aceptable hoy porque nada la lee todavía (ver el párrafo siguiente);
+// antes de conectar esto a un flujo interactivo real, revisar si esa
+// propiedad basta o si la respuesta necesita algo más fuerte que "está en el
+// archivo".
 //
 // Deliberadamente NO está conectada todavía a cmd/sentinel/review, gate ni
 // pr review: hoy no existe ningún bucle interactivo de preguntas en la CLI

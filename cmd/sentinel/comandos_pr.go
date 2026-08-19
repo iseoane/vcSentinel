@@ -333,11 +333,15 @@ func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo str
 // resolverActor identifica quién ejecuta el proceso, para la trazabilidad de
 // decisiones de T7.5 (informe M3: --force sin traza de quién ni por qué).
 // No existía ningún helper de identidad en el codebase (verificado): prueba
-// `git config user.name` primero, cae a $USER (POSIX) / $USERNAME (Windows)
-// si está vacío o falla, y usa un placeholder explícito como último recurso
-// en vez de dejar el campo vacío.
-func resolverActor() string {
-	if salida, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+// `git config user.name` primero (con cmd.Dir=worktree, NUNCA el cwd del
+// proceso: si worktree difiere del repositorio actual y ese otro repo define
+// un user.name local propio, la decisión se atribuiría al actor equivocado),
+// cae a $USER (POSIX) / $USERNAME (Windows) si está vacío o falla, y usa un
+// placeholder explícito como último recurso en vez de dejar el campo vacío.
+func resolverActor(worktree string) string {
+	cmd := exec.Command("git", "config", "user.name")
+	cmd.Dir = worktree
+	if salida, err := cmd.Output(); err == nil {
 		if nombre := strings.TrimSpace(string(salida)); nombre != "" {
 			return nombre
 		}
@@ -584,11 +588,11 @@ type depsPrCreate struct {
 	obtenerGitCommonDir func(worktree string) (string, error)
 	registrarDecision   func(commonDir string, d *store.Decision) error
 	// resolverActor es una costura más de este mismo esfuerzo: sin ella,
-	// ejecutarPrCreateCon llamaría a resolverActor() directamente, que
-	// shellea a `git config user.name` de verdad, rompiendo la promesa de
-	// depsPrCreate de testear "sin git, agentes ni gh reales" (comentario
+	// ejecutarPrCreateCon llamaría a resolverActor(worktree) directamente,
+	// que shellea a `git config user.name` de verdad, rompiendo la promesa
+	// de depsPrCreate de testear "sin git, agentes ni gh reales" (comentario
 	// de arriba).
-	resolverActor func() string
+	resolverActor func(worktree string) string
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -679,15 +683,15 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		// validación en rojo, igual que el aviso de obtenerSHAHead más
 		// abajo): se avisa y se continúa.
 		if commonDir, err := deps.obtenerGitCommonDir(worktree); err != nil {
-			fmt.Fprintf(w, "⚠️  Aviso: no se pudo registrar la decisión de --force (%v).\n", err)
+			fmt.Fprintf(w, "⚠️  Aviso: no se pudo resolver el git-common-dir, la decisión de --force no queda registrada (%v).\n", err)
 		} else if err := deps.registrarDecision(commonDir, &store.Decision{
-			Decision: "force_bypass",
-			Actor:    deps.resolverActor(),
+			Decision: store.DecisionForceBypass,
+			Actor:    deps.resolverActor(worktree),
 			At:       time.Now().UTC(),
 			Motivo:   flags.reason,
-			Alcance:  "pr-create",
+			Alcance:  store.AlcancePrCreate,
 		}); err != nil {
-			fmt.Fprintf(w, "⚠️  Aviso: no se pudo registrar la decisión de --force (%v).\n", err)
+			fmt.Fprintf(w, "⚠️  Aviso: no se pudo escribir la decisión de --force en decisions.jsonl (%v).\n", err)
 		}
 	}
 	// Con --force, la revisión semántica SÍ se ejecuta pese a la validación en

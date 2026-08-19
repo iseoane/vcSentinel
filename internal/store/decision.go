@@ -29,6 +29,16 @@ type Decision struct {
 	Alcance     string    `json:"alcance,omitempty"`
 }
 
+// DecisionForceBypass y AlcancePrCreate son el vocabulario exportado del
+// bypass de --force (informe M3), para que un caller fuera de este paquete
+// (cmd/sentinel) no componga los literales a mano: un typo en un literal
+// suelto produciría una fila que ningún lector de decisions.jsonl reconoce,
+// sin ningún error de compilación que lo delate.
+const (
+	DecisionForceBypass = "force_bypass"
+	AlcancePrCreate     = "pr-create"
+)
+
 // RegistrarDecision añade una línea a decisions.jsonl. A diferencia de
 // units/runs/findings/commits, este archivo es append-only por naturaleza:
 // cada línea es un hecho inmutable del pasado, nunca se relee para sustituir

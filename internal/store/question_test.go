@@ -76,6 +76,31 @@ func TestRespuestaRegistrada_QuestionIDDistinta_NoEncuentraLaDeOtraPregunta(t *t
 	}
 }
 
+// TestRespuestaRegistrada_DosRespuestas_DevuelveLaMasReciente confirma el
+// comentario de RespuestaRegistrada: si la misma (blob, questionID) se
+// respondió más de una vez (decisions.jsonl es append-only y no lo impide),
+// se devuelve la respuesta más reciente, no la primera.
+func TestRespuestaRegistrada_DosRespuestas_DevuelveLaMasReciente(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	if err := s.RegistrarRespuesta("blob123", "q1", "primera respuesta", "iseoane"); err != nil {
+		t.Fatalf("RegistrarRespuesta (primera): %v", err)
+	}
+	if err := s.RegistrarRespuesta("blob123", "q1", "segunda respuesta", "iseoane"); err != nil {
+		t.Fatalf("RegistrarRespuesta (segunda): %v", err)
+	}
+
+	respuesta, ok, err := s.RespuestaRegistrada("blob123", "q1")
+	if err != nil {
+		t.Fatalf("RespuestaRegistrada: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, esperado true")
+	}
+	if respuesta != "segunda respuesta" {
+		t.Errorf("respuesta = %q, esperado la más reciente %q", respuesta, "segunda respuesta")
+	}
+}
+
 // TestRespuestaRegistrada_SinRegistroPrevio_OkFalseSinError confirma el
 // caso de arranque: ninguna respuesta registrada todavía no es un error.
 func TestRespuestaRegistrada_SinRegistroPrevio_OkFalseSinError(t *testing.T) {
