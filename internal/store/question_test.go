@@ -76,6 +76,40 @@ func TestRespuestaRegistrada_QuestionIDDistinta_NoEncuentraLaDeOtraPregunta(t *t
 	}
 }
 
+// TestClaveRespuesta_SinColisionConSeparadorEmbebido fija el fix real de esta
+// ronda: antes de él, claveRespuesta concatenaba "blob:%s#question:%s" sin
+// escapar, así que un blob y un questionID que ya contuvieran el separador
+// podían colisionar entre pares distintos. Si este test se revierte junto
+// con claveRespuesta a esa concatenación simple, debe fallar: ambos pares
+// producían literalmente el mismo string "blob:X#question:q1#question:q2".
+func TestClaveRespuesta_SinColisionConSeparadorEmbebido(t *testing.T) {
+	a := claveRespuesta("X#question:q1", "q2")
+	b := claveRespuesta("X", "q1#question:q2")
+	if a == b {
+		t.Fatalf("claveRespuesta colisiona: (%q,%q) y (%q,%q) producen la misma clave %q",
+			"X#question:q1", "q2", "X", "q1#question:q2", a)
+	}
+}
+
+// TestRespuestaRegistrada_ComponentesConSeparadorEmbebido_NoColisionan es la
+// misma colisión pero a través de la API pública: registrar una respuesta
+// para un par (blob, questionID) no debe hacerse visible para un par
+// DISTINTO cuya concatenación naive coincidiría con la del primero.
+func TestRespuestaRegistrada_ComponentesConSeparadorEmbebido_NoColisionan(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	if err := s.RegistrarRespuesta("X#question:q1", "q2", "respuesta del primer par", "iseoane"); err != nil {
+		t.Fatalf("RegistrarRespuesta: %v", err)
+	}
+
+	_, ok, err := s.RespuestaRegistrada("X", "q1#question:q2")
+	if err != nil {
+		t.Fatalf("RespuestaRegistrada: %v", err)
+	}
+	if ok {
+		t.Error("ok = true, esperado false: es un par (blob, questionID) distinto, no debe encontrar la respuesta del otro par")
+	}
+}
+
 // TestRespuestaRegistrada_DosRespuestas_DevuelveLaMasReciente confirma el
 // comentario de RespuestaRegistrada: si la misma (blob, questionID) se
 // respondió más de una vez (decisions.jsonl es append-only y no lo impide),

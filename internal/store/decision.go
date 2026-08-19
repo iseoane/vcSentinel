@@ -17,9 +17,10 @@ import (
 //     único que se esté superando, sino la validación de todo un run),
 //     Decision = "force_bypass", Motivo = el --reason del usuario,
 //     Alcance = dónde ocurrió el bypass (p.ej. "pr-create").
-//   - Respuesta a una pregunta del agente: Fingerprint = clave determinista
-//     "blob:<blob>#question:<questionID>" (ver RegistrarRespuesta),
-//     Decision = "question_answered", Motivo = el texto de la respuesta.
+//   - Respuesta a una pregunta del agente: Fingerprint = claveRespuesta(blob,
+//     questionID) (ver RegistrarRespuesta en question.go para el formato
+//     exacto, con prefijo de longitud por componente), Decision =
+//     "question_answered", Motivo = el texto de la respuesta.
 type Decision struct {
 	Fingerprint string    `json:"fingerprint"`
 	Decision    string    `json:"decision"`
