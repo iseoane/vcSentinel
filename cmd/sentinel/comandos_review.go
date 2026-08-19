@@ -210,10 +210,21 @@ func opcionesAuditoriaConRefutador(opts review.OpcionesAuditoria, cfg config.Con
 // this pass was already answered for the same content blob, it is folded
 // back into a retry round exactly as if the user had repeated it via
 // --answer in this same invocation. It also persists any fresh "id=text"
-// answer the user supplies now (parsearRespuestasAuditoria), so a future run
-// over the same blob does not ask again. It never aborts the command: a
+// answer the user supplies now (parsearRespuestasAuditoria, filtered to
+// real question IDs by filtrarRespuestasPorIDsReales), so a future run over
+// the same blob does not ask again. It never aborts the command: a
 // missing/unavailable store, or any error while resolving blobs or looking
 // up answers, degrades to reporting the raw (non-deduplicated) questions.
+//
+// Before returning, it always writes the final pending list back into
+// resultado.Preguntas so every other consumer of resultado (the ledger, the
+// human-readable text output, the exit code) sees the same deduplicated
+// state. It also reconciles resultado.Veredicto: a model is not guaranteed
+// to stop asking just because it received the clarification in the retry
+// round, so if it re-emits "question" with only questions this run already
+// has a registered answer for, that must not be a permanent block (exit 3
+// forever on every future run over identical content) — it is downgraded to
+// warn instead.
 func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAuditor, cfg config.Config, verificador *modelprobe.Verificador, opciones review.OpcionesAuditoria, resultado review.ResultadoAuditoria) (review.ResultadoAuditoria, []review.AgentQuestion) {
 	if resultado.Veredicto != review.VerdictQuestion {
 		return resultado, resultado.Preguntas
@@ -226,20 +237,30 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 	resolveBlob := func(file string) (string, error) { return git.BlobDeArchivoEnCommit(sha, file) }
 
 	originales := resultado.Preguntas
-	pendientes, conocidas, err := review.SplitPendingQuestions(originales, resolveBlob, st.RespuestaRegistrada)
+	pendientes, contestadas, err := review.SplitPendingQuestions(originales, resolveBlob, st.RespuestaRegistrada)
 	if err != nil {
 		return resultado, originales
 	}
 
-	porID, resto := parsearRespuestasAuditoria(opciones.Respuestas)
-	if len(conocidas) > 0 {
+	porIDCrudo, restoCrudo := parsearRespuestasAuditoria(opciones.Respuestas)
+	// porIDCrudo puede contener "ids" que en realidad son prosa libre con un
+	// "=" literal (p. ej. --answer "the flag --gate=true is set"): se
+	// filtran aquí, antes de construir el prompt de reintento y antes del
+	// bucle de persistencia, para que un id inexistente nunca llegue a
+	// ninguno de los dos.
+	porID, resto := filtrarRespuestasPorIDsReales(porIDCrudo, restoCrudo, originales)
+
+	if len(contestadas) > 0 || len(porID) > 0 {
 		// Unión de lo ya conocido por el store y lo que el usuario responde
 		// ahora mismo (porID): una respuesta fresca sobre el mismo id
 		// prevalece sobre la ya registrada, porque el usuario está
-		// respondiendo activamente en esta invocación.
-		combinadas := make(map[string]string, len(conocidas)+len(porID))
-		for id, texto := range conocidas {
-			combinadas[id] = texto
+		// respondiendo activamente en esta invocación. Disparar el
+		// reintento también cuando solo hay porID (sin contestadas del
+		// store) evita que una respuesta recién dada por el usuario en esta
+		// misma invocación se reporte como pendiente en su propio --json.
+		combinadas := make(map[string]string, len(contestadas)+len(porID))
+		for _, aq := range contestadas {
+			combinadas[aq.Question.ID] = aq.Answer
 		}
 		for id, texto := range porID {
 			combinadas[id] = texto
@@ -280,7 +301,63 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 			fmt.Printf("⚠️ %s: no se pudo persistir la respuesta a %q: %v\n", shaCorto(sha), id, err)
 		}
 	}
+
+	resultado.Preguntas = pendientes
+	if resultado.Veredicto == review.VerdictQuestion && len(pendientes) == 0 {
+		// El agente siguió preguntando aunque ya tenía respuesta registrada
+		// para cada una de sus preguntas actuales (un modelo no está
+		// garantizado a dejar de preguntar solo porque recibió la
+		// aclaración). El sistema ya tiene respuesta para todo lo pendiente,
+		// así que esto no debe bloquear para siempre: se rebaja a warn en
+		// vez de dejar un deadlock permanente en "question" (exit 3 en cada
+		// ejecución futura sobre el mismo contenido).
+		resultado.Veredicto = review.VerdictWarn
+	}
 	return resultado, pendientes
+}
+
+// filtrarRespuestasPorIDsReales separates porID (from parsearRespuestasAuditoria)
+// into the entries whose id actually matches one of preguntas' real
+// question IDs from this pass, and the entries that don't. An "id=text"
+// token whose id was never asked in this pass is not a targeted answer: it
+// is ordinary free text that happened to contain a literal "=" (e.g.
+// --answer "the flag --gate=true is set" must not be parsed as an answer to
+// a nonexistent question "the flag --gate"). Non-matching entries are folded
+// back into resto, reconstructed as "id=text", so they keep behaving as
+// plain prose instead of being silently dropped or persisted as garbage.
+// parsearRespuestasAuditoria itself stays pure/context-free — it doesn't
+// know about real question IDs — which is why this filtering lives here,
+// where that context (preguntas) is available.
+func filtrarRespuestasPorIDsReales(porID map[string]string, resto string, preguntas []review.AgentQuestion) (map[string]string, string) {
+	reales := make(map[string]bool, len(preguntas))
+	for _, q := range preguntas {
+		reales[q.ID] = true
+	}
+
+	// Orden determinista al recorrer porID: un map no lo es, y la prosa
+	// reconstruida no debe depender del orden de iteración entre corridas.
+	ids := make([]string, 0, len(porID))
+	for id := range porID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	validado := make(map[string]string, len(porID))
+	var prosaAjena []string
+	for _, id := range ids {
+		if reales[id] {
+			validado[id] = porID[id]
+			continue
+		}
+		prosaAjena = append(prosaAjena, id+"="+porID[id])
+	}
+	if len(prosaAjena) == 0 {
+		return validado, resto
+	}
+	if resto != "" {
+		prosaAjena = append(prosaAjena, resto)
+	}
+	return validado, strings.Join(prosaAjena, ",")
 }
 
 // archivoDePregunta devuelve el File de la pregunta id dentro de preguntas, o

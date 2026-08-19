@@ -80,7 +80,7 @@ Audit rules:
 - Use code smells as a guide: primitive obsession, duplicated code, feature envy, switch/if chains, long parameter lists, etc.
 - If you cannot audit without clarification, return a "question" verdict with at most 3 concise questions (answerable yes/no or a concrete choice).
 - If there is nothing to report, return {"dim": %q, "verdict": "ok"}.
-	- Output ONLY one JSONL object between BEGIN_REVIEW and END_REVIEW. No markdown outside the delimiters. No commentary. Keys: dim, verdict, findings (dimension, file, line, severity, description, suggestion, evidence, confidence), questions (id, text, file — optional, the path the question is about), reason.`+seccionRespuestas+`
+	- Output ONLY one JSONL object between BEGIN_REVIEW and END_REVIEW. No markdown outside the delimiters. No commentary. Keys: dim, verdict, findings (dimension, file, line, severity, description, suggestion, evidence, confidence), questions (id, text, file), reason.`+seccionRespuestas+`
 BEGIN_REVIEW
 		END_REVIEW`, dimension, definicion, proposito, mensaje, diff, seccionContexto, seccionRutas, dimension)
 }
