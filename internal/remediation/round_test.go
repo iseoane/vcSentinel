@@ -68,6 +68,13 @@ func TestRunSingleRoundFingerprintArithmetic(t *testing.T) {
 	if len(result.New) != 1 || result.New[0].Fingerprint != "fp-new" {
 		t.Fatalf("RunSingleRound: New = %+v, want exactly one finding with fingerprint fp-new", result.New)
 	}
+	// introduced is SevWarning, not SevCritical: a mutation that scoped
+	// hasCriticalNew to "any new finding" instead of "any new CRITICAL
+	// finding" would still pass every other assertion in this test, so pin
+	// the verdict too.
+	if result.Verdict != ResultOK {
+		t.Fatalf("RunSingleRound: Verdict = %q, want %q (the new finding is only SevWarning)", result.Verdict, ResultOK)
+	}
 }
 
 func TestRunSingleRoundSwallowedByLocatedDistinction(t *testing.T) {
@@ -114,10 +121,10 @@ func TestRunSingleRoundSwallowedByLocatedDistinction(t *testing.T) {
 
 func TestRunSingleRoundOK(t *testing.T) {
 	// An unresolved WARNING-severity finding alone must NOT force
-	// NEEDS_USER_REVIEW: only a CRITICAL unresolved finding or a blocked
-	// revalidation does, matching how the rest of this codebase (e.g.
-	// internal/gate) gates on severity — WARNING degrades, it does not
-	// block.
+	// NEEDS_USER_REVIEW: only a blocked revalidation, an unresolved CRITICAL
+	// finding, or a newly introduced CRITICAL finding does, matching how the
+	// rest of this codebase (e.g. internal/gate) gates on severity — WARNING
+	// degrades, it does not block.
 	warning := review.Hallazgo{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
 	before := []review.Hallazgo{warning}
 
@@ -168,7 +175,10 @@ func TestRunSingleRoundPropagatesRevalidateError(t *testing.T) {
 
 func TestRunSingleRoundPropagatesReReviewError(t *testing.T) {
 	wantErr := errors.New("infra failure: review agent crashed")
-	revalidate := func(string, []string) (bool, error) { return false, nil }
+	// revalidate succeeds and reports a real blocked=true before reReview
+	// fails: the error path must still carry that real value through, not
+	// silently reset it to false.
+	revalidate := func(string, []string) (bool, error) { return true, nil }
 	reReview := func([]string) ([]review.Hallazgo, error) { return nil, wantErr }
 
 	result, err := RunSingleRound("standard", nil, []string{"a.go"}, revalidate, reReview)
@@ -181,6 +191,9 @@ func TestRunSingleRoundPropagatesReReviewError(t *testing.T) {
 	// Same safe-default guarantee as the revalidate error path above.
 	if result.Verdict != ResultNeedsUserReview {
 		t.Fatalf("RunSingleRound: on reReview error, Verdict = %q, want %q (safe default)", result.Verdict, ResultNeedsUserReview)
+	}
+	if !result.Blocked {
+		t.Fatalf("RunSingleRound: on reReview error, Blocked = false, want true (revalidate already reported it before reReview failed)")
 	}
 }
 

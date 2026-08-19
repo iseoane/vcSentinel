@@ -29,9 +29,11 @@ type UnresolvedFinding struct {
 // RoundResult is what one remediation round produced against the findings it
 // was remediating (`before`): Unresolved are `before` findings still present
 // afterward; New are findings the fix introduced that were not in `before`.
-// Blocked reports revalidate's own blocked/not-blocked result (false on the
-// error paths, since revalidation never got to report a real state there —
-// the returned error, not Blocked, is what signals an infra failure).
+// Blocked reports revalidate's own blocked/not-blocked result: real whenever
+// revalidate itself ran successfully (including the reReview error path,
+// where revalidate already returned before reReview failed), and false only
+// when revalidate itself errored, since it never got to report a real state
+// there — the returned error, not Blocked, is what signals that case.
 // Combined with Unresolved/New (whose Severity a caller can inspect
 // directly), Blocked exposes the one piece of "why NeedsUserReview" that
 // isn't otherwise recoverable from the result alone.
@@ -63,11 +65,14 @@ type ReReview func(touchedFiles []string) ([]review.Hallazgo, error)
 // dependency (an infra failure, not a validation/review verdict) is
 // propagated as this function's own error rather than swallowed; on a
 // revalidate error, reReview is never called at all, since there is nothing
-// meaningful left to compare against. On either error, the returned
-// RoundResult still carries Verdict = ResultNeedsUserReview (its other
-// fields left zero-valued): the zero value is the safe, blocking one, so a
-// caller that inspects only Verdict — forgetting to check the error first —
-// still fails closed instead of silently proceeding.
+// meaningful left to compare against. On either error, Verdict is set
+// explicitly to ResultNeedsUserReview — its zero value, "", would not be
+// blocking — so a caller that inspects only Verdict, forgetting to check the
+// error first, still fails closed instead of silently proceeding. The
+// reReview error path also carries the real Blocked value revalidate already
+// reported (it ran and returned successfully before reReview failed); the
+// revalidate error path leaves Blocked at its zero value (false) because
+// revalidate itself never got to report a real state there.
 func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []string, revalidate Revalidate, reReview ReReview) (RoundResult, error) {
 	blocked, err := revalidate(profile, touchedFiles)
 	if err != nil {
@@ -76,7 +81,7 @@ func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []str
 
 	after, err := reReview(touchedFiles)
 	if err != nil {
-		return RoundResult{Verdict: ResultNeedsUserReview}, fmt.Errorf("remediation: re-review failed: %w", err)
+		return RoundResult{Verdict: ResultNeedsUserReview, Blocked: blocked}, fmt.Errorf("remediation: re-review failed: %w", err)
 	}
 
 	beforeFingerprints := make(map[string]bool, len(before))
