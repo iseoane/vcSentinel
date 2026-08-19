@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -123,7 +124,7 @@ func ejecutarReview(worktree string, args []string) {
 			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, perfil.Nombre, nil
 		}
 
-		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(review.OpcionesAuditoria{
+		opciones := review.OpcionesAuditoria{
 			SHA:               sha,
 			Mensaje:           mensaje,
 			Diff:              diff,
@@ -135,7 +136,13 @@ func ejecutarReview(worktree string, args []string) {
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},
-		}, cfg, verificadorModelo))
+		}
+		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificadorModelo))
+
+		resultado, pendientes := aplicarPreguntasPendientes(worktree, sha, fabrica, cfg, verificadorModelo, opciones, resultado)
+		if flags.jsonOut && resultado.Veredicto == review.VerdictQuestion {
+			imprimirPreguntasPendientesJSON(sha, pendientes)
+		}
 
 		modelo := flags.profile
 		if modelo == "" {
@@ -195,6 +202,136 @@ func proveedorContextoReview(cfg config.Config, worktree string) review.ContextP
 func opcionesAuditoriaConRefutador(opts review.OpcionesAuditoria, cfg config.Config, verificador *modelprobe.Verificador) review.OpcionesAuditoria {
 	opts.FabricaRefutador = fabricaRefutador(cfg, verificador)
 	return opts
+}
+
+// aplicarPreguntasPendientes deduplicates resultado.Preguntas against
+// answers already persisted in the store (T7.5/T7.6): if a question from
+// this pass was already answered for the same content blob, it is folded
+// back into a retry round exactly as if the user had repeated it via
+// --answer in this same invocation. It also persists any fresh "id=text"
+// answer the user supplies now (parsearRespuestasAuditoria), so a future run
+// over the same blob does not ask again. It never aborts the command: a
+// missing/unavailable store, or any error while resolving blobs or looking
+// up answers, degrades to reporting the raw (non-deduplicated) questions.
+func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAuditor, cfg config.Config, verificador *modelprobe.Verificador, opciones review.OpcionesAuditoria, resultado review.ResultadoAuditoria) (review.ResultadoAuditoria, []review.AgentQuestion) {
+	if resultado.Veredicto != review.VerdictQuestion {
+		return resultado, resultado.Preguntas
+	}
+	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		return resultado, resultado.Preguntas
+	}
+	st := store.NuevoStore(gitCommonDir)
+	resolveBlob := func(file string) (string, error) { return git.BlobDeArchivoEnCommit(sha, file) }
+
+	originales := resultado.Preguntas
+	pendientes, conocidas, err := review.SplitPendingQuestions(originales, resolveBlob, st.RespuestaRegistrada)
+	if err != nil {
+		return resultado, originales
+	}
+
+	porID, resto := parsearRespuestasAuditoria(opciones.Respuestas)
+	if len(conocidas) > 0 {
+		// Unión de lo ya conocido por el store y lo que el usuario responde
+		// ahora mismo (porID): una respuesta fresca sobre el mismo id
+		// prevalece sobre la ya registrada, porque el usuario está
+		// respondiendo activamente en esta invocación.
+		combinadas := make(map[string]string, len(conocidas)+len(porID))
+		for id, texto := range conocidas {
+			combinadas[id] = texto
+		}
+		for id, texto := range porID {
+			combinadas[id] = texto
+		}
+		var lineas []string
+		if resto != "" {
+			lineas = append(lineas, resto)
+		}
+		for id, texto := range combinadas {
+			lineas = append(lineas, id+": "+texto)
+		}
+		opciones.Respuestas = strings.Join(lineas, "\n")
+		resultado = review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificador))
+		if pendientes, _, err = review.SplitPendingQuestions(resultado.Preguntas, resolveBlob, st.RespuestaRegistrada); err != nil {
+			pendientes = resultado.Preguntas
+		}
+	}
+
+	for id, texto := range porID {
+		archivo := archivoDePregunta(originales, id)
+		if archivo == "" {
+			continue // pregunta sin File: no se puede resolver un blob, no es un caso de error
+		}
+		blob, err := resolveBlob(archivo)
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudo resolver el blob de %q para persistir la respuesta a %q: %v\n", shaCorto(sha), archivo, id, err)
+			continue
+		}
+		if err := st.RegistrarRespuesta(blob, id, texto, resolverActor(worktree)); err != nil {
+			fmt.Printf("⚠️ %s: no se pudo persistir la respuesta a %q: %v\n", shaCorto(sha), id, err)
+		}
+	}
+	return resultado, pendientes
+}
+
+// archivoDePregunta devuelve el File de la pregunta id dentro de preguntas, o
+// "" si no aparece (id no preguntado en este pase, o preguntado sin File).
+func archivoDePregunta(preguntas []review.AgentQuestion, id string) string {
+	for _, q := range preguntas {
+		if q.ID == id {
+			return q.File
+		}
+	}
+	return ""
+}
+
+// parsearRespuestasAuditoria separates --answer into "id=text" targeted
+// answers and the leftover free-text prose, so a targeted answer can be
+// deduplicated/persisted (T7.6) while every other shape of --answer keeps
+// behaving exactly as before. Tokens are comma-separated; this is
+// deliberately simple, not a CSV/quoting parser, so free-text prose
+// containing a literal comma is split into several prose tokens — an
+// accepted limitation of this simple transport.
+func parsearRespuestasAuditoria(respuesta string) (porID map[string]string, resto string) {
+	porID = make(map[string]string)
+	if respuesta == "" {
+		return porID, ""
+	}
+	var prosa []string
+	for _, token := range strings.Split(respuesta, ",") {
+		id, texto, tieneIgual := strings.Cut(token, "=")
+		id = strings.TrimSpace(id)
+		if !tieneIgual || id == "" {
+			prosa = append(prosa, token)
+			continue
+		}
+		porID[id] = strings.TrimSpace(texto)
+	}
+	return porID, strings.Join(prosa, ",")
+}
+
+// imprimirPreguntasPendientesJSON imprime, en una sola línea, las preguntas
+// que siguen pendientes tras la deduplicación (T7.6). El shape es una
+// preocupación de presentación de cmd/sentinel, no de internal/review.
+func imprimirPreguntasPendientesJSON(sha string, pendientes []review.AgentQuestion) {
+	type preguntaPendiente struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+		File string `json:"file,omitempty"`
+	}
+	payload := struct {
+		SHA              string              `json:"sha"`
+		PendingQuestions []preguntaPendiente `json:"pending_questions"`
+	}{SHA: sha, PendingQuestions: []preguntaPendiente{}}
+	for _, q := range pendientes {
+		payload.PendingQuestions = append(payload.PendingQuestions, preguntaPendiente{ID: q.ID, Text: q.Text, File: q.File})
+	}
+	datos, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Printf("⚠️ %s: no se pudo serializar las preguntas pendientes: %v\n", shaCorto(sha), err)
+		return
+	}
+	fmt.Println(string(datos))
 }
 
 // fabricaRefutador resolves the explicit cheap profile for the independent

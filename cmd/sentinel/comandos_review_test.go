@@ -30,6 +30,45 @@ func TestEjecutarReview_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
 	}
 }
 
+// TestParsearRespuestasAuditoria cubre T7.6: extraer respuestas dirigidas
+// "id=texto" de --answer sin romper el uso existente (prosa libre, incluso
+// con comas literales, debe reconstruirse byte a byte cuando no hay ningún
+// token con "=").
+func TestParsearRespuestasAuditoria(t *testing.T) {
+	pruebas := []struct {
+		nombre      string
+		respuesta   string
+		porIDEspera map[string]string
+		restoEspera string
+	}{
+		{"vacío", "", map[string]string{}, ""},
+		{"prosa libre sin coma (uso previo a T7.6)", "no aplica aqui", map[string]string{}, "no aplica aqui"},
+		{"prosa libre con coma se reconstruye igual", "some prose, with a comma", map[string]string{}, "some prose, with a comma"},
+		{"una respuesta dirigida sola", "q1=usa camelCase", map[string]string{"q1": "usa camelCase"}, ""},
+		{"mezcla de dirigidas y prosa, en orden", "id1=texto uno,algo de prosa,id2=texto dos",
+			map[string]string{"id1": "texto uno", "id2": "texto dos"}, "algo de prosa"},
+		{"espacios se recortan en ambos lados", " q1 = texto con espacios ",
+			map[string]string{"q1": "texto con espacios"}, ""},
+		{"= sin id antes no es una respuesta dirigida", "=algo", map[string]string{}, "=algo"},
+	}
+	for _, prueba := range pruebas {
+		t.Run(prueba.nombre, func(t *testing.T) {
+			porID, resto := parsearRespuestasAuditoria(prueba.respuesta)
+			if len(porID) != len(prueba.porIDEspera) {
+				t.Fatalf("porID = %+v, esperado %+v", porID, prueba.porIDEspera)
+			}
+			for id, texto := range prueba.porIDEspera {
+				if porID[id] != texto {
+					t.Errorf("porID[%q] = %q, esperado %q", id, porID[id], texto)
+				}
+			}
+			if resto != prueba.restoEspera {
+				t.Errorf("resto = %q, esperado %q", resto, prueba.restoEspera)
+			}
+		})
+	}
+}
+
 func TestCodigoSalidaVeredicto(t *testing.T) {
 	pruebas := []struct {
 		veredicto string
