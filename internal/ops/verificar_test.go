@@ -197,15 +197,28 @@ func TestVerificarSinConfigOmitir(t *testing.T) {
 // es un caller mal cableado (contrato: git.ObtenerGitDir siempre devuelve una
 // ruta absoluta), y debe fallar de forma ruidosa y rápida (antes de pagar
 // verificarInterno, que sí tiene efectos reales) en vez de omitir el registro
-// del evento pr-verify en silencio. t.Chdir aísla el cwd en un directorio
-// descartable: si el guard alguna vez regresa a escribir antes de comprobar
-// filepath.IsAbs, la escritura cae ahí y no en el árbol del repositorio.
+// del evento pr-verify en silencio.
 func TestVerificarGitDirRelativoDevuelveError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	// Sin Preguntar/Ejecutar/Agente: verificarInterno degradaría en silencio a
 	// ModoOmitido si llegara a ejecutarse. El guard debe rechazar antes de
 	// llegar ahí, así que el único resultado válido es el error de cableado.
 	_, err := Verificar(OpcionesVerificar{GitDir: "gitdir-relativo"})
+
+	// Guarda de regresión incondicional, ANTES del t.Fatal de más abajo: si
+	// el guard fail-fast alguna vez dejara de comprobar filepath.IsAbs, err
+	// sería nil y el t.Fatal cortaría el test antes de llegar aquí, dejando
+	// esta comprobación sin ejecutar justo en el escenario que debe vigilar.
+	// t.Chdir aísla el cwd en un directorio descartable: si la regresión
+	// llegara a escribir el evento, cae ahí y no en el árbol del repositorio.
+	eventos, eventosErr := UltimosEventos("gitdir-relativo", 1)
+	if eventosErr != nil {
+		t.Fatalf("UltimosEventos falló: %v", eventosErr)
+	}
+	if len(eventos) != 0 {
+		t.Errorf("no debe registrarse ningún evento con GitDir relativo: %+v", eventos)
+	}
+
 	if err == nil {
 		t.Fatal("Verificar con GitDir relativo debe devolver error, no omitir en silencio")
 	}
@@ -214,16 +227,6 @@ func TestVerificarGitDirRelativoDevuelveError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gitdir-relativo") {
 		t.Errorf("el error debe citar la ruta recibida, got: %v", err)
-	}
-	// Guarda de regresión que da su sentido a t.Chdir: si el guard alguna vez
-	// deja de ser fail-fast, esta llamada leería (o crearía) el evento bajo
-	// el tempdir aislado en vez de bajo el árbol real del repositorio.
-	eventos, err := UltimosEventos("gitdir-relativo", 1)
-	if err != nil {
-		t.Fatalf("UltimosEventos falló: %v", err)
-	}
-	if len(eventos) != 0 {
-		t.Errorf("no debe registrarse ningún evento con GitDir relativo: %+v", eventos)
 	}
 }
 
