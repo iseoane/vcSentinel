@@ -328,14 +328,14 @@ sin segundo consumidor todavía, mismo criterio que T7.2/T7.3):
 
 ---
 
-## T7.5 — Persistencia de decisiones humanas
+## T7.5 — Persistencia de decisiones humanas ✅ (hash de cierre `b381336`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 200 líneas |
 | Depende de | T7.4 |
-| Commit | `feat(store): persistir decisiones del usuario sobre hallazgos` |
+| Commits | `96add80` (implementación: `internal/store/decision.go` — `Decision` extendido con `Motivo`/`Alcance` (antes solo `Fingerprint`/`Decision`/`Actor`/`At`, de T2.5); `internal/store/question.go` — `RegistrarRespuesta`/`RespuestaRegistrada` con clave `claveRespuesta(blob, questionID)`; `cmd/sentinel/comandos_pr.go` — `resolverActor()`, y `--force` cableado a `RegistrarDecision` vía `git.ObtenerGitCommonDir` (no `ObtenerGitDir`, contrato de `store.NuevoStore`)), `90829b3` (fix tras revisión: `claveRespuesta` colisionaba por concatenación sin escapar — pasa a prefijo de longitud por componente, mismo patrón que `review.empaquetarConLongitud`; `resolverActor` leía `git config user.name` del cwd del proceso en vez de `worktree`, y por eso tampoco era testeable; `"force_bypass"`/`"pr-create"` eran literales sueltos en `cmd` en vez de las constantes exportadas `store.DecisionForceBypass`/`store.AlcancePrCreate`; los dos avisos de aviso-y-sigue de `--force` eran byte a byte idénticos), `b381336` (test: fija el fix de la colisión de clave con un caso que antes producía la misma clave para dos pares `(blob, questionID)` distintos; sincroniza un comentario de `Decision` que seguía describiendo el formato de clave anterior) |
 
 **Contexto**: `internal/store/*` (F2), `internal/review/engine.go:141`
 (`question` + `--answer`), informe §22
@@ -348,5 +348,110 @@ sin segundo consumidor todavía, mismo criterio que T7.2/T7.3):
 3. `--force` deja de ser una excepción sin traza (informe **M3**): registra quién
    y por qué.
 
-**Aceptación**: test de que la misma pregunta sobre el mismo blob no se repite en
-una segunda ejecución.
+**Aceptación**: cumplida. `TestRespuestaRegistrada_MismoBlobMismaPregunta_NoSeRepite`
+(`question_test.go`) es el criterio literal: registra una respuesta, la lee con
+un `*Store` recién construido sobre el mismo `git-common-dir` (simulando una
+segunda invocación separada del proceso) y confirma que se reconoce como ya
+respondida sin volver a registrarla. El esquema del punto 1 mapea así: `quien`
+→ `Actor`, `cuando` → `At`, `finding_id` → `Fingerprint` (reutilizado como
+clave genérica, no solo de hallazgo — ver más abajo), `motivo` → `Motivo`
+(campo nuevo), `alcance` → `Alcance` (campo nuevo); no se añadió un sexto
+campo "tipo": el propio valor de `Decision` distingue los tres usos
+("accept"/"reject" sobre un hallazgo, `force_bypass`, `question_answered`),
+tal como pedía la ficha con exactamente cinco campos.
+
+El punto 3 (M3) se resuelve en `cmd/sentinel/comandos_pr.go`: justo donde
+`--force` supera una validación en rojo, se registra una `store.Decision`
+(`Decision: store.DecisionForceBypass`, `Motivo: flags.reason`, `Actor` vía
+`resolverActor(worktree)`) usando **el git-common-dir**, no el gitDir
+por-worktree que ya usa `registrarEvento` — son dos directorios con dos
+contratos distintos (`store.NuevoStore` exige el común para compartir entre
+worktrees enlazados). La distinción "presencia de `--force` vs. efecto real"
+ya existente en el código (`forzoValidacionEnRojo`) se reutiliza tal cual:
+`TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraDecision` confirma
+que no se registra nada cuando `--force` no tuvo nada que superar. Un fallo al
+resolver el common-dir o al escribir la decisión avisa y continúa (mismo
+criterio que el aviso de `obtenerSHAHead` unas líneas más arriba: `--force` ya
+decidió publicar pese a la validación en rojo), cubierto por
+`TestEjecutarPrCreateCon_ForceConValidacionRoja_GitCommonDirFallaAvisaYSigue`
+y su equivalente para el fallo de escritura, cada uno con su mensaje de aviso
+distinto (antes de `90829b3` eran idénticos).
+
+El punto 2 se resuelve como **primitiva de persistencia lista para
+conectarse, deliberadamente sin conectar todavía**: `RegistrarRespuesta`/
+`RespuestaRegistrada` (`internal/store/question.go`) existen, están probadas
+(incluida la resistencia a colisión de clave) y cumplen el criterio de
+aceptación literal — pero no se cablean a `cmd/sentinel/review`, `gate` ni
+`pr review` en esta tarea. Verificado directamente antes de implementar:
+`internal/review/engine.go` calcula `ResultadoAuditoria.Preguntas`
+(`AgentQuestion`), pero **ningún comando de la CLI la lee ni la imprime**
+(`ResultadoAuditoria.String()` no la incluye); `--answer` es solo una ronda
+extra de aclaración dentro de la misma invocación del proceso, no algo que la
+CLI dispare al detectar una pregunta pendiente entre invocaciones distintas.
+No existe hoy ningún bucle interactivo de preguntas al que conectar el dedup.
+**Follow-up real, mayor que "conectar dos funciones"**: construir esa
+superficie interactiva (mostrar la pregunta, leer la respuesta, y ahí sí
+llamar a `RegistrarRespuesta`/consultar `RespuestaRegistrada`) es trabajo de
+una tarea futura, no de T7.5.
+
+`go build ./...`, `go vet ./...` y `go test ./...` en verde para todo el
+módulo, verificados de forma independiente en cada ronda (incluida la
+recuperación de una implementación interrumpida a mitad de ronda por límite
+de sesión del subagente: se retomó verificando build/vet/test y leyendo el
+diff real antes de continuar, en vez de asumir el autoinforme). `sentinel
+gate --stage pre-push` sobre `b381336` → `PASS` (dos intentos previos
+devolvieron `REVIEW_INFRASTRUCTURE_ERROR` transitorio, sin relación con el
+código; el tercero, tras confirmar que el CLI subyacente respondía con una
+llamada directa, completó normalmente).
+
+Hallazgos de `sentinel review` aceptados sin fix adicional (deuda de diseño
+sin segundo consumidor todavía, o falsos positivos verificados — mismo
+criterio que T7.1-T7.4):
+
+- **`decisions.jsonl` es un registro local sin autenticar y `Actor` es
+  atribución autodeclarada** (`WARNING`, seguridad): `resolverActor` lee
+  `git config user.name` (configurable por cualquiera con acceso de escritura
+  al repositorio) con fallback a `$USER`/`$USERNAME`, ninguno de los cuales es
+  una identidad no falsificable. Aceptado: es una propiedad heredada de todo
+  el paquete `store` desde T2.5 (el mismo modo 0644/0755 sin firma que
+  `units`/`runs`/`findings`), no algo que T7.5 introduzca de nuevo; documentado
+  explícitamente en el comentario de `RegistrarRespuesta` como condición a
+  revisar antes de conectar esto a un flujo interactivo real.
+- **`resolverActor`/el vocabulario `"pr-create"` viven en `cmd/sentinel` en vez
+  de en el dominio (`internal/git`/`internal/store`)** (`WARNING`, feature
+  envy): aceptado mientras no exista un segundo comando que necesite resolver
+  actor o registrar un bypass, igual que el resto de piezas "sin segundo
+  consumidor" de T7.1-T7.4.
+- **`Decision` es una unión discriminada por strings planos, sin
+  constructores que impidan una combinación inválida** (`WARNING`/`ADVISORY`,
+  primitive obsession): aceptado; `DecisionForceBypass`/`AlcancePrCreate` ya
+  cierran el caso concreto de typo silencioso en el bypass de `--force`, que
+  era la parte accionable barata de este hallazgo.
+- **`LeerDecisiones` devuelve los tres tipos de registro (hallazgo,
+  `force_bypass`, `question_answered`) sin ningún filtro** (`WARNING`):
+  aceptado — no existe todavía ningún consumidor real de `LeerDecisiones` que
+  pueda verse afectado por la mezcla.
+- **La `Decision` de `force_bypass` se registra en el momento del bypass, pero
+  el evento correlativo de `ops.RegistrarEvento` solo se escribe en la ruta de
+  éxito de `pr create`** (`WARNING`, lógica): en un retorno temprano posterior
+  al bypass (p.ej. fallo de `analizarRama` o de `publicar`), queda una decisión
+  registrada sin evento ni PR publicada. Aceptado con razonamiento explícito,
+  no por defecto: el bypass de la validación en rojo **sí ocurrió** en ese
+  instante, independientemente de si la publicación falla después por una
+  causa no relacionada; registrarlo de inmediato es más fiel al objetivo de
+  M3 ("quién y por qué") que diferirlo a un éxito que quizá nunca llega.
+- **El cambio de codificación de `claveRespuesta` (T7.5→fix) invalidaría
+  filas `question_answered` ya persistidas con el formato anterior, sin
+  aviso ni versión en el formato** (`WARNING`/`ADVISORY`): verificado
+  directamente que **no existe ningún `decisions.jsonl` en este repositorio**
+  (`RegistrarRespuesta` nunca se ha invocado en producción: la función nació y
+  se corrigió dentro de esta misma tarea, sin desplegarse entre medias), así
+  que no hay ningún dato real que romper. Documentado por si se retoma la
+  pregunta cuando exista wiring real y datos persistidos de verdad.
+- **Comentarios que citan el mensaje del commit o el comportamiento de
+  `internal/review`/`internal/gate` no verificables desde el diff de un
+  commit aislado** (`WARNING`/`ADVISORY`, varias rondas): mismo punto ciego de
+  alcance de archivos por commit ya documentado en T7.3/T7.4 — el commit
+  `feat(store): persistir decisiones del usuario sobre hallazgos` es
+  exactamente el título que la ficha prescribe para el alcance completo de
+  T7.5 (esquema + `--force` + primitiva de preguntas), no una desviación.
