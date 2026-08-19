@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -247,8 +248,16 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 		if resto != "" {
 			lineas = append(lineas, resto)
 		}
-		for id, texto := range combinadas {
-			lineas = append(lineas, id+": "+texto)
+		// Orden determinista: el mapa no lo es, y este texto se manda
+		// literalmente al agente — dos ejecuciones idénticas deben producir
+		// el mismo prompt.
+		ids := make([]string, 0, len(combinadas))
+		for id := range combinadas {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			lineas = append(lineas, id+": "+combinadas[id])
 		}
 		opciones.Respuestas = strings.Join(lineas, "\n")
 		resultado = review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificador))

@@ -2,12 +2,48 @@ package main
 
 import (
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
+
+// capturarStdout redirige os.Stdout durante f y devuelve lo que escribió.
+func capturarStdout(t *testing.T, f func()) string {
+	t.Helper()
+	original := os.Stdout
+	lector, escritor, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = escritor
+	f()
+	escritor.Close()
+	os.Stdout = original
+	salida, err := io.ReadAll(lector)
+	if err != nil {
+		t.Fatalf("leer el pipe: %v", err)
+	}
+	return string(salida)
+}
+
+// TestImprimirPreguntasPendientesJSON cubre el contrato machine-readable del
+// --json de T7.6: una pregunta con File emite "file", una sin File lo omite
+// (json:"file,omitempty"), y el objeto expone exactamente sha/pending_questions.
+func TestImprimirPreguntasPendientesJSON(t *testing.T) {
+	pendientes := []review.AgentQuestion{
+		{ID: "q1", Text: "¿usa camelCase?", File: "a.go"},
+		{ID: "q2", Text: "sin archivo asociado"},
+	}
+	salida := capturarStdout(t, func() { imprimirPreguntasPendientesJSON("abc123", pendientes) })
+	esperada := `{"sha":"abc123","pending_questions":[{"id":"q1","text":"¿usa camelCase?","file":"a.go"},{"id":"q2","text":"sin archivo asociado"}]}` + "\n"
+	if salida != esperada {
+		t.Errorf("salida = %q, esperada %q", salida, esperada)
+	}
+}
 
 // TestEjecutarReview_ClaveDesconocidaEnYml_Exit1ConLinea cubre el Fix 1 (F1,
 // hallazgo del orquestador): ejecutarReview usaba CargarConfiguracionLocal
