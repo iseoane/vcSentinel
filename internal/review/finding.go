@@ -343,6 +343,10 @@ func empaquetarConLongitud(componentes ...string) string {
 type AgentQuestion struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// File is the path the question refers to, when the agent can attribute
+	// it to one file. Empty means the question cannot be deduplicated by
+	// content blob (it always stays pending).
+	File string `json:"file,omitempty"`
 }
 
 // DimensionResult es el veredicto del agente para una dimensión concreta.
