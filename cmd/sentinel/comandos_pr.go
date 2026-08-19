@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
@@ -15,6 +16,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -328,6 +330,27 @@ func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo str
 	return string(datos), nil
 }
 
+// resolverActor identifica quién ejecuta el proceso, para la trazabilidad de
+// decisiones de T7.5 (informe M3: --force sin traza de quién ni por qué).
+// No existía ningún helper de identidad en el codebase (verificado): prueba
+// `git config user.name` primero, cae a $USER (POSIX) / $USERNAME (Windows)
+// si está vacío o falla, y usa un placeholder explícito como último recurso
+// en vez de dejar el campo vacío.
+func resolverActor() string {
+	if salida, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+		if nombre := strings.TrimSpace(string(salida)); nombre != "" {
+			return nombre
+		}
+	}
+	if u := strings.TrimSpace(os.Getenv("USER")); u != "" {
+		return u
+	}
+	if u := strings.TrimSpace(os.Getenv("USERNAME")); u != "" {
+		return u
+	}
+	return "desconocido"
+}
+
 // verificarParaPlantilla ejecuta la verificación honesta (guía §12.3) y la
 // traduce a la sección de la plantilla: exit codes reales por comando
 // configurado, contrato tested del agente o motivo de omisión. Un fallo de la
@@ -552,6 +575,20 @@ type depsPrCreate struct {
 	verificar          func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
 	publicar           func(worktree, rutaPlantilla, base string) (string, bool, error)
 	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error
+	// obtenerGitCommonDir y registrarDecision cubren T7.5 (informe M3): el
+	// --force que supera una validación en rojo deja de ser una excepción
+	// sin traza. store.NuevoStore exige el git-common-dir (compartido entre
+	// worktrees enlazados), NUNCA el gitDir por-worktree que ya usa
+	// registrarEvento arriba: son dos directorios con dos contratos
+	// distintos (ver el doc comment de store.NuevoStore).
+	obtenerGitCommonDir func(worktree string) (string, error)
+	registrarDecision   func(commonDir string, d *store.Decision) error
+	// resolverActor es una costura más de este mismo esfuerzo: sin ella,
+	// ejecutarPrCreateCon llamaría a resolverActor() directamente, que
+	// shellea a `git config user.name` de verdad, rompiendo la promesa de
+	// depsPrCreate de testear "sin git, agentes ni gh reales" (comentario
+	// de arriba).
+	resolverActor func() string
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -574,8 +611,13 @@ func ejecutarPrCreate(worktree string, args []string) {
 		verificar: func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla {
 			return verificarParaPlantillaCon(worktree, gitDir, cfg, verificadorModelo, ops.Verificar)
 		},
-		publicar:        publicarPR,
-		registrarEvento: ops.RegistrarEvento,
+		publicar:            publicarPR,
+		registrarEvento:     ops.RegistrarEvento,
+		obtenerGitCommonDir: git.ObtenerGitCommonDir,
+		registrarDecision: func(commonDir string, d *store.Decision) error {
+			return store.NuevoStore(commonDir).RegistrarDecision(d)
+		},
+		resolverActor: resolverActor,
 	}))
 }
 
@@ -632,6 +674,21 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		}
 		forzoValidacionEnRojo = true
 		fmt.Fprintf(w, "⚠️  Validación en rojo superada con --force (motivo: %s).\n", flags.reason)
+		// T7.5 (informe M3): --force deja de ser una excepción sin traza.
+		// No aborta si falla (--force ya decidió seguir pese a la
+		// validación en rojo, igual que el aviso de obtenerSHAHead más
+		// abajo): se avisa y se continúa.
+		if commonDir, err := deps.obtenerGitCommonDir(worktree); err != nil {
+			fmt.Fprintf(w, "⚠️  Aviso: no se pudo registrar la decisión de --force (%v).\n", err)
+		} else if err := deps.registrarDecision(commonDir, &store.Decision{
+			Decision: "force_bypass",
+			Actor:    deps.resolverActor(),
+			At:       time.Now().UTC(),
+			Motivo:   flags.reason,
+			Alcance:  "pr-create",
+		}); err != nil {
+			fmt.Fprintf(w, "⚠️  Aviso: no se pudo registrar la decisión de --force (%v).\n", err)
+		}
 	}
 	// Con --force, la revisión semántica SÍ se ejecuta pese a la validación en
 	// rojo (a diferencia de sentinel gate, que corta en corto para no gastar

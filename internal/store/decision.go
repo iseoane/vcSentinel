@@ -8,13 +8,25 @@ import (
 	"time"
 )
 
-// Decision es una decisión humana sobre un hallazgo (aceptar, descartar,
-// etc.), registrada en decisions.jsonl.
+// Decision es una decisión humana registrada en decisions.jsonl. El mismo
+// esquema de cinco campos cubre tres usos distintos (T7.5), distinguidos por
+// el valor de Decision en vez de un campo "tipo" separado:
+//   - Decisión sobre un hallazgo concreto: Fingerprint = fingerprint del
+//     hallazgo, Decision = p.ej. "accept"/"reject".
+//   - Bypass de --force (informe M3): Fingerprint vacío (no hay un hallazgo
+//     único que se esté superando, sino la validación de todo un run),
+//     Decision = "force_bypass", Motivo = el --reason del usuario,
+//     Alcance = dónde ocurrió el bypass (p.ej. "pr-create").
+//   - Respuesta a una pregunta del agente: Fingerprint = clave determinista
+//     "blob:<blob>#question:<questionID>" (ver RegistrarRespuesta),
+//     Decision = "question_answered", Motivo = el texto de la respuesta.
 type Decision struct {
 	Fingerprint string    `json:"fingerprint"`
 	Decision    string    `json:"decision"`
 	Actor       string    `json:"actor"`
 	At          time.Time `json:"at"`
+	Motivo      string    `json:"motivo,omitempty"`
+	Alcance     string    `json:"alcance,omitempty"`
 }
 
 // RegistrarDecision añade una línea a decisions.jsonl. A diferencia de

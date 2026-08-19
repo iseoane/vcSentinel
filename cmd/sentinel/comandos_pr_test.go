@@ -16,6 +16,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -781,6 +782,9 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 			detalleRegistrado = detalle
 			return nil
 		},
+		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
+		registrarDecision:   func(string, *store.Decision) error { return nil },
+		resolverActor:       func() string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
@@ -822,6 +826,9 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
 			return nil
 		},
+		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
+		registrarDecision:   func(string, *store.Decision) error { return nil },
+		resolverActor:       func() string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
@@ -875,6 +882,9 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
 			return nil
 		},
+		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
+		registrarDecision:   func(string, *store.Decision) error { return nil },
+		resolverActor:       func() string { return "actor-de-prueba" },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (el fallo de HEAD no bloquea --force)", codigo)
@@ -975,6 +985,107 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcu
 	}
 	if _, hay := crudo["motivo"]; hay {
 		t.Errorf("sin efecto real de --force no debe quedar motivo en el evento: %v", crudo)
+	}
+}
+
+// TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistraDecisionForceBypass
+// cubre T7.5 (informe M3): --force que de verdad supera una validación en
+// rojo debe registrar una store.Decision con Decision="force_bypass" y
+// Motivo=el --reason, exactamente una vez.
+func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistraDecisionForceBypass(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var llamadas int
+	var decisionRegistrada *store.Decision
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir:  func() (string, error) { return "gitdir", nil },
+		obtenerSHAHead: func() (string, error) { return "abc1234", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return []validation.ValidationRun{{Capability: "test", Comando: "go test ./...", Exit: 1}}, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/20", false, nil },
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		obtenerGitCommonDir: func(worktree string) (string, error) {
+			if worktree != "worktree" {
+				t.Errorf("obtenerGitCommonDir worktree = %q, esperado %q", worktree, "worktree")
+			}
+			return "commondir", nil
+		},
+		registrarDecision: func(commonDir string, d *store.Decision) error {
+			llamadas++
+			if commonDir != "commondir" {
+				t.Errorf("commonDir = %q, esperado %q", commonDir, "commondir")
+			}
+			decisionRegistrada = d
+			return nil
+		},
+		resolverActor: func() string { return "actor-de-prueba" },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
+	}
+	if llamadas != 1 {
+		t.Fatalf("registrarDecision se llamó %d veces, esperado exactamente 1", llamadas)
+	}
+	if decisionRegistrada == nil {
+		t.Fatal("no se registró ninguna decisión")
+	}
+	if decisionRegistrada.Decision != "force_bypass" {
+		t.Errorf("Decision = %q, esperado %q", decisionRegistrada.Decision, "force_bypass")
+	}
+	if decisionRegistrada.Motivo != "x" {
+		t.Errorf("Motivo = %q, esperado %q", decisionRegistrada.Motivo, "x")
+	}
+	if decisionRegistrada.Actor != "actor-de-prueba" {
+		t.Errorf("Actor = %q, esperado %q (debe venir de deps.resolverActor, no de un git real)", decisionRegistrada.Actor, "actor-de-prueba")
+	}
+}
+
+// TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraDecision cubre el
+// complemento: --force presente pero SIN efecto real (validación ya en
+// verde, igual que forzoValidacionEnRojo distingue arriba) no debe registrar
+// ninguna decisión de bypass, porque no hubo ningún bypass que registrar.
+func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraDecision(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var registrarDecisionLlamado bool
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil // validación en verde: --force no tiene nada que superar
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		obtenerGitCommonDir: func(string) (string, error) {
+			t.Fatal("obtenerGitCommonDir no debe llamarse: --force no tuvo ningún efecto real que registrar")
+			return "", nil
+		},
+		registrarDecision: func(string, *store.Decision) error {
+			registrarDecisionLlamado = true
+			return nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0", codigo)
+	}
+	if registrarDecisionLlamado {
+		t.Error("registrarDecision no debe llamarse: la validación ya estaba en verde, --force no ejerció ningún efecto")
 	}
 }
 
