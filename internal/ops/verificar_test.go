@@ -215,6 +215,16 @@ func TestVerificarGitDirRelativoDevuelveError(t *testing.T) {
 	if !strings.Contains(err.Error(), "gitdir-relativo") {
 		t.Errorf("el error debe citar la ruta recibida, got: %v", err)
 	}
+	// Guarda de regresión que da su sentido a t.Chdir: si el guard alguna vez
+	// deja de ser fail-fast, esta llamada leería (o crearía) el evento bajo
+	// el tempdir aislado en vez de bajo el árbol real del repositorio.
+	eventos, err := UltimosEventos("gitdir-relativo", 1)
+	if err != nil {
+		t.Fatalf("UltimosEventos falló: %v", err)
+	}
+	if len(eventos) != 0 {
+		t.Errorf("no debe registrarse ningún evento con GitDir relativo: %+v", eventos)
+	}
 }
 
 // TestVerificarSinConfigConfigurar: la elección configurar devuelve el modo
