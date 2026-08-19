@@ -250,43 +250,11 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 	// ninguno de los dos.
 	porID, resto := filtrarRespuestasPorIDsReales(porIDCrudo, restoCrudo, originales)
 
-	if len(contestadas) > 0 || len(porID) > 0 {
-		// Unión de lo ya conocido por el store y lo que el usuario responde
-		// ahora mismo (porID): una respuesta fresca sobre el mismo id
-		// prevalece sobre la ya registrada, porque el usuario está
-		// respondiendo activamente en esta invocación. Disparar el
-		// reintento también cuando solo hay porID (sin contestadas del
-		// store) evita que una respuesta recién dada por el usuario en esta
-		// misma invocación se reporte como pendiente en su propio --json.
-		combinadas := make(map[string]string, len(contestadas)+len(porID))
-		for _, aq := range contestadas {
-			combinadas[aq.Question.ID] = aq.Answer
-		}
-		for id, texto := range porID {
-			combinadas[id] = texto
-		}
-		var lineas []string
-		if resto != "" {
-			lineas = append(lineas, resto)
-		}
-		// Orden determinista: el mapa no lo es, y este texto se manda
-		// literalmente al agente — dos ejecuciones idénticas deben producir
-		// el mismo prompt.
-		ids := make([]string, 0, len(combinadas))
-		for id := range combinadas {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		for _, id := range ids {
-			lineas = append(lineas, id+": "+combinadas[id])
-		}
-		opciones.Respuestas = strings.Join(lineas, "\n")
-		resultado = review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificador))
-		if pendientes, _, err = review.SplitPendingQuestions(resultado.Preguntas, resolveBlob, st.RespuestaRegistrada); err != nil {
-			pendientes = resultado.Preguntas
-		}
-	}
-
+	// Persistir las respuestas frescas ANTES del reintento (no después): el
+	// SplitPendingQuestions posterior al reintento consulta el store, así
+	// que si una pregunta recién contestada por el usuario vuelve a
+	// aparecer en esa segunda pasada, debe reconocerse como ya respondida en
+	// esta misma invocación, no solo en una ejecución futura.
 	for id, texto := range porID {
 		archivo := archivoDePregunta(originales, id)
 		if archivo == "" {
@@ -302,15 +270,71 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 		}
 	}
 
+	// reintentado distingue "se relanzó AuditarCommit con respuestas reales"
+	// de "pendientes llegó vacío porque originales ya estaba vacío" (un
+	// veredicto "question" con lista de preguntas vacía es una salida
+	// malformada del modelo, no un deadlock resuelto): sin esta bandera, la
+	// rebaja de veredicto de más abajo enmascararía ese caso como warn sin
+	// haber pasado por ninguna respuesta conocida.
+	reintentado := false
+	if len(contestadas) > 0 || len(porID) > 0 {
+		// Unión de lo ya conocido por el store y lo que el usuario responde
+		// ahora mismo (porID): una respuesta fresca sobre el mismo id
+		// prevalece sobre la ya registrada, porque el usuario está
+		// respondiendo activamente en esta invocación. Disparar el
+		// reintento también cuando solo hay porID (sin contestadas del
+		// store) evita que una respuesta recién dada por el usuario en esta
+		// misma invocación se reporte como pendiente en su propio --json.
+		var lineas []string
+		if resto != "" {
+			lineas = append(lineas, resto)
+		}
+		// contestadas conserva su propio (File, Answer): no se colapsa por
+		// ID en un map[string]string, porque AgentQuestion.ID lo elige el
+		// modelo por dimensión sin garantía de unicidad entre dimensiones —
+		// dos preguntas distintas (archivos distintos) pueden compartir "q1"
+		// legítimamente, y cada una debe llegar con su propia respuesta al
+		// prompt de reintento. Se ordena por (ID, File) para que el prompt
+		// sea determinista.
+		ordenadas := append([]review.AnsweredQuestion(nil), contestadas...)
+		sort.Slice(ordenadas, func(i, j int) bool {
+			if ordenadas[i].Question.ID != ordenadas[j].Question.ID {
+				return ordenadas[i].Question.ID < ordenadas[j].Question.ID
+			}
+			return ordenadas[i].Question.File < ordenadas[j].Question.File
+		})
+		for _, aq := range ordenadas {
+			lineas = append(lineas, aq.Question.ID+": "+aq.Answer)
+		}
+		// porID (respuestas frescas de --answer) no lleva File: es solo el
+		// id que el usuario escribió. Si ese id coincide con más de una
+		// pregunta de originales, es una ambigüedad inherente al transporte
+		// plano "id=texto" (no hay forma de saber a cuál de las dos se
+		// refiere sin extender ese transporte); se aplica igual a todas las
+		// que comparten ese id, en vez de descartar alguna en silencio.
+		for _, id := range clavesOrdenadas(porID) {
+			lineas = append(lineas, id+": "+porID[id])
+		}
+		opciones.Respuestas = strings.Join(lineas, "\n")
+		resultado = review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificador))
+		reintentado = true
+		if pendientes, _, err = review.SplitPendingQuestions(resultado.Preguntas, resolveBlob, st.RespuestaRegistrada); err != nil {
+			pendientes = resultado.Preguntas
+		}
+	}
+
 	resultado.Preguntas = pendientes
-	if resultado.Veredicto == review.VerdictQuestion && len(pendientes) == 0 {
+	if reintentado && resultado.Veredicto == review.VerdictQuestion && len(pendientes) == 0 {
 		// El agente siguió preguntando aunque ya tenía respuesta registrada
 		// para cada una de sus preguntas actuales (un modelo no está
 		// garantizado a dejar de preguntar solo porque recibió la
 		// aclaración). El sistema ya tiene respuesta para todo lo pendiente,
 		// así que esto no debe bloquear para siempre: se rebaja a warn en
 		// vez de dejar un deadlock permanente en "question" (exit 3 en cada
-		// ejecución futura sobre el mismo contenido).
+		// ejecución futura sobre el mismo contenido). Solo se aplica cuando
+		// realmente hubo un reintento con respuestas: un "question" con
+		// preguntas vacías desde el primer pase (sin conocidas ni frescas)
+		// nunca entra en esta rama.
 		resultado.Veredicto = review.VerdictWarn
 	}
 	return resultado, pendientes
@@ -334,17 +358,11 @@ func filtrarRespuestasPorIDsReales(porID map[string]string, resto string, pregun
 		reales[q.ID] = true
 	}
 
-	// Orden determinista al recorrer porID: un map no lo es, y la prosa
-	// reconstruida no debe depender del orden de iteración entre corridas.
-	ids := make([]string, 0, len(porID))
-	for id := range porID {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
 	validado := make(map[string]string, len(porID))
 	var prosaAjena []string
-	for _, id := range ids {
+	// clavesOrdenadas: un map no es determinista, y la prosa reconstruida no
+	// debe depender del orden de iteración entre corridas.
+	for _, id := range clavesOrdenadas(porID) {
 		if reales[id] {
 			validado[id] = porID[id]
 			continue
@@ -358,6 +376,19 @@ func filtrarRespuestasPorIDsReales(porID map[string]string, resto string, pregun
 		prosaAjena = append(prosaAjena, resto)
 	}
 	return validado, strings.Join(prosaAjena, ",")
+}
+
+// clavesOrdenadas devuelve las claves de m ordenadas: un map no itera en
+// orden determinista y este texto se manda literalmente a un agente o se
+// reconstruye como salida — dos ejecuciones idénticas deben producir el
+// mismo resultado.
+func clavesOrdenadas(m map[string]string) []string {
+	claves := make([]string, 0, len(m))
+	for clave := range m {
+		claves = append(claves, clave)
+	}
+	sort.Strings(claves)
+	return claves
 }
 
 // archivoDePregunta devuelve el File de la pregunta id dentro de preguntas, o

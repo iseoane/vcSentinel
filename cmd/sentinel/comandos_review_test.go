@@ -381,9 +381,16 @@ func repoDePruebaConUnCommit(t *testing.T, nombreArchivo, contenido string) (rep
 type agenteFakeSecuencialReview struct {
 	respuestas []string
 	llamadas   int
+	// prompts registra, en orden, el texto exacto de cada prompt recibido —
+	// usado para verificar que el texto de Respuestas (opts.Respuestas)
+	// realmente llega al agente en la segunda sub-ronda interna de
+	// auditarConAgente (internal/review/engine.go:442), no solo que el
+	// veredicto final sea el esperado.
+	prompts []string
 }
 
 func (a *agenteFakeSecuencialReview) EjecutarPrompt(prompt string) (string, error) {
+	a.prompts = append(a.prompts, prompt)
 	defer func() { a.llamadas++ }()
 	if len(a.respuestas) == 0 {
 		return `{"dim":"logic","verdict":"ok"}`, nil
@@ -405,10 +412,19 @@ func (a *agenteFakeSecuencialReview) EjecutarRevision(prompt, _ string, _ []stri
 }
 
 func fabricaFakeSecuencialReview(respuestas []string) review.FabricaAuditor {
+	fabrica, _ := fabricaFakeSecuencialReviewCapturando(respuestas)
+	return fabrica
+}
+
+// fabricaFakeSecuencialReviewCapturando es fabricaFakeSecuencialReview pero
+// devuelve también el *agenteFakeSecuencialReview subyacente, para que el
+// test pueda inspeccionar los prompts que realmente recibió (p. ej.
+// confirmar qué texto de Respuestas llegó en la segunda sub-ronda interna).
+func fabricaFakeSecuencialReviewCapturando(respuestas []string) (review.FabricaAuditor, *agenteFakeSecuencialReview) {
 	fake := &agenteFakeSecuencialReview{respuestas: respuestas}
 	return func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
 		return fake, "test", nil
-	}
+	}, fake
 }
 
 func bundlesDePruebaReview() []review.ReviewBundle {
@@ -515,5 +531,100 @@ func TestAplicarPreguntasPendientes_AgenteVuelveAPreguntar_NoSeQuedaEnDeadlock(t
 	if resultadoFinal.Veredicto != review.VerdictWarn {
 		t.Fatalf("Veredicto = %q, esperado %q (nunca %q: eso sería el deadlock permanente)",
 			resultadoFinal.Veredicto, review.VerdictWarn, review.VerdictQuestion)
+	}
+}
+
+// TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeNinguna
+// es la regresión literal del CRITICAL detectado en la ronda de fix
+// anterior: SplitPendingQuestions dejó de colapsar por ID (T7.6 fix #1),
+// pero el único llamador seguía volviendo a colapsar el resultado en un
+// map[string]string indexado solo por ID antes de construir el prompt de
+// reintento — el defecto no cambiaba de comportamiento observable, solo de
+// ubicación. Aquí dos preguntas de "dimensiones" distintas comparten el ID
+// "q1" pero tienen archivos y respuestas ya registradas distintas: ambas
+// deben llegar como líneas separadas al agente, no colapsarse en una sola.
+func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeNinguna(t *testing.T) {
+	repo := t.TempDir()
+	t.Chdir(repo)
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@vas.sentinel"},
+		{"config", "user.name", "VAS Sentinel Test"},
+		{"config", "core.hooksPath", ""},
+	} {
+		gitEjecutarPruebaReview(t, args...)
+	}
+	if err := os.WriteFile("a.go", []byte("package a\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("b.go", []byte("package b\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitEjecutarPruebaReview(t, "add", "a.go", "b.go")
+	gitEjecutarPruebaReview(t, "commit", "-m", "feat(test): dos archivos")
+	salida, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+	sha := strings.TrimSpace(string(salida))
+
+	blobA, err := git.BlobDeArchivoEnCommit(sha, "a.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit a.go: %v", err)
+	}
+	blobB, err := git.BlobDeArchivoEnCommit(sha, "b.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit b.go: %v", err)
+	}
+
+	gitCommonDir, err := git.ObtenerGitCommonDir(repo)
+	if err != nil {
+		t.Fatalf("ObtenerGitCommonDir: %v", err)
+	}
+	st := store.NuevoStore(gitCommonDir)
+	if err := st.RegistrarRespuesta(blobA, "q1", "respuesta para a.go", "test-actor"); err != nil {
+		t.Fatalf("RegistrarRespuesta a.go: %v", err)
+	}
+	if err := st.RegistrarRespuesta(blobB, "q1", "respuesta para b.go", "test-actor"); err != nil {
+		t.Fatalf("RegistrarRespuesta b.go: %v", err)
+	}
+
+	resultado := review.ResultadoAuditoria{
+		Veredicto: review.VerdictQuestion,
+		Preguntas: []review.AgentQuestion{
+			{ID: "q1", Text: "¿procede en a.go?", File: "a.go"},
+			{ID: "q1", Text: "¿procede en b.go?", File: "b.go"},
+		},
+	}
+	// La primera sub-ronda interna de auditarConAgente siempre pregunta SIN
+	// Respuestas (engine.go:430); solo si esa primera respuesta es
+	// "question" hace una segunda sub-ronda CON Respuestas embebido
+	// (engine.go:441-442). El primer elemento fuerza esa segunda sub-ronda;
+	// el segundo es lo que de verdad se comprueba (el prompt recibido en
+	// esa segunda llamada).
+	fabrica, fake := fabricaFakeSecuencialReviewCapturando([]string{
+		`{"dim":"logic","verdict":"question"}`,
+		`{"dim":"logic","verdict":"ok"}`,
+	})
+	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview()}
+
+	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+
+	if len(pendientes) != 0 {
+		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
+	}
+	if resultadoFinal.Veredicto != review.VerdictOK {
+		t.Fatalf("Veredicto = %q, esperado %q", resultadoFinal.Veredicto, review.VerdictOK)
+	}
+	if len(fake.prompts) < 2 {
+		t.Fatalf("el agente fake recibió %d prompts, esperados al menos 2 (primera sub-ronda sin Respuestas + segunda con Respuestas)", len(fake.prompts))
+	}
+	promptConRespuestas := fake.prompts[1]
+	if !strings.Contains(promptConRespuestas, "q1: respuesta para a.go") {
+		t.Errorf("el prompt de reintento no contiene la respuesta de a.go:\n%s", promptConRespuestas)
+	}
+	if !strings.Contains(promptConRespuestas, "q1: respuesta para b.go") {
+		t.Errorf("el prompt de reintento no contiene la respuesta de b.go (se habría descartado si contestadas se colapsara por ID en un map[string]string):\n%s", promptConRespuestas)
 	}
 }

@@ -45,7 +45,7 @@ func SplitPendingQuestions(questions []AgentQuestion, resolveBlob ResolveBlob, k
 			pending = append(pending, q)
 			continue
 		}
-		respuesta, ok, lookupErr := knownAnswer(blob, q.ID)
+		answer, ok, lookupErr := knownAnswer(blob, q.ID)
 		if lookupErr != nil {
 			return nil, nil, lookupErr
 		}
@@ -53,7 +53,7 @@ func SplitPendingQuestions(questions []AgentQuestion, resolveBlob ResolveBlob, k
 			pending = append(pending, q)
 			continue
 		}
-		answered = append(answered, AnsweredQuestion{Question: q, Answer: respuesta})
+		answered = append(answered, AnsweredQuestion{Question: q, Answer: answer})
 	}
 	return pending, answered, nil
 }
