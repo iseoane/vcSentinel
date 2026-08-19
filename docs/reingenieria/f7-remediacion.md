@@ -220,14 +220,14 @@ No se investiga ni se corrige aquí.
 
 ---
 
-## T7.4 — Re-validación y ronda única
+## T7.4 — Re-validación y ronda única ✅ (hash de cierre `33e3227`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 240 líneas |
 | Depende de | T7.3 |
-| Commit | `feat(remediation): revalidacion acotada con una sola ronda` |
+| Commits | `36b9e6f` (implementación: `internal/remediation/round.go` — `RunSingleRound(profile, before, touchedFiles, revalidate Revalidate, reReview ReReview) (RoundResult, error)`, con `Revalidate`/`ReReview` inyectados en vez de llamar a `internal/validation`/`internal/graph` directamente; `RoundResult{Verdict, Unresolved []UnresolvedFinding, New []review.Hallazgo, Blocked bool}`; `UnresolvedFinding{Finding, SwallowedByLocated bool}`), `ceb2158` (fix tras revisión: un hallazgo CRITICAL introducido por el propio fix —presente en `New`, no en `before`— no forzaba `ResultNeedsUserReview`, solo los CRITICAL ya presentes en `Unresolved` lo hacían; además las rutas de error dejaban `Verdict` en su valor cero `""` en vez de en el lado bloqueante, y `swallowedByLocated` producía un falso positivo cuando dos hallazgos distintos compartían `Archivo == ""`), `33e3227` (fix: la ruta de error de `reReview` descartaba el valor real de `Blocked` que `revalidate` ya había devuelto con éxito antes de que `reReview` fallara) |
 
 **Contexto**: `internal/validation/*` (F1), `internal/graph/*` (F4)
 
@@ -242,7 +242,89 @@ No se investiga ni se corrige aquí.
 **Por qué el límite**: los bucles fix→review→fix son donde el coste se descontrola
 y donde el sistema deja de ser reproducible.
 
-**Aceptación**: test de que tras una ronda fallida no se lanza una segunda.
+**Aceptación**: cumplida. `TestRunSingleRoundNeverLaunchesASecondRound` (`round_test.go`)
+es el criterio literal de la ficha: con un bloqueante real tras la ronda
+(`revalidate` devuelve `blocked=true` y el hallazgo CRITICAL sigue en `after`),
+`RunSingleRound` devuelve `ResultNeedsUserReview` habiendo llamado a `revalidate`
+y a `reReview` exactamente una vez cada uno — no hay ningún bucle en la función
+que pueda relanzarlos; un segundo intento solo puede venir de que el propio
+llamador invoque `RunSingleRound` otra vez. `TestRunSingleRoundBlockedAloneForcesReview`
+y `TestRunSingleRoundCriticalUnresolvedAloneForcesReview` aíslan cada rama del
+`OR` del veredicto por separado (antes solo existía un test con ambas
+condiciones a la vez, que no discriminaba si alguna se rompía). El punto 1
+("acotado a lo tocado por el fix") se resuelve pasando `touchedFiles` como
+parámetro explícito de `RunSingleRound`, verificado con
+`TestRunSingleRoundPassesThroughProfileAndTouchedFiles` (reenvío exacto a
+`revalidate`/`reReview`, con un valor centinela distinto del resto de tests
+para que un intercambio de argumentos no pase por coincidencia); el punto 4
+se resuelve con `RoundResult.Unresolved`/`.New` (aritmética de conjuntos por
+`Fingerprint` entre `before` y `after`, con `TestRunSingleRoundFingerprintArithmetic`
+fijando también que un `New` no-CRITICAL no fuerza el veredicto).
+
+El follow-up de T7.3 sobre distinguir un hallazgo sin ubicación "tragado" por
+uno localizado del mismo archivo, de un rechazo genuino por alcance, **queda
+resuelto aquí** (no es condicional): `UnresolvedFinding.SwallowedByLocated`
+marca exactamente ese caso, reimplementando la regla de `DiffGuard.allowedWindows`
+(T7.3) sobre `before` — `TestRunSingleRoundSwallowedByLocatedDistinction` cubre
+el hallazgo sin ubicación que comparte archivo con uno localizado (marcado),
+el que está solo en su archivo (no marcado) y el propio hallazgo localizado
+(nunca marcado); `TestSwallowedByLocatedNoFalsePositiveOnEmptyArchivo` cierra
+el caso borde de dos hallazgos con `Archivo == ""` coincidiendo por el valor
+cero, no por compartir archivo real.
+
+`go build ./...`, `go vet ./...` y `go test ./...` en verde para todo el
+módulo, verificados de forma independiente en cada ronda (no solo el
+autoinforme del subagente implementador). `sentinel gate --stage pre-push`
+sobre `33e3227` → `PASS` (`logic` y `design` en `ok`; `spec`/`tests` quedan en
+`warn` superficial sin hallazgos nuevos).
+
+Hallazgos de `sentinel review` aceptados sin fix adicional (deuda de diseño
+sin segundo consumidor todavía, mismo criterio que T7.2/T7.3):
+
+- **`SwallowedByLocated` duplica la regla de `DiffGuard.allowedWindows` por
+  copia en vez de que `DiffGuard` la exponga como predicado** (`WARNING`):
+  cualquier cambio futuro en la ventana located/unlocated de T7.3 deja esta
+  heurística en deriva silenciosa. Aceptado: no existe todavía un segundo
+  consumidor de esa regla que justifique extraer un predicado compartido
+  entre `internal/remediation` y `internal/git`/`internal/remediation`
+  (`diffguard.go`) — YAGNI, no descuido.
+- **`RoundResult.Verdict` es un `string` desnudo** (`ADVISORY`, primitive
+  obsession) y **`RunSingleRound` mezcla orquestación, diferencia de
+  conjuntos y la heurística de swallowing en un solo cuerpo** (`ADVISORY`,
+  cohesión): aceptados mientras no haya un segundo llamador real que fuerce
+  tipar el veredicto o extraer `diffFindings` como función pura.
+- **La comprobación de "ubicación válida" (archivo + línea) vive en
+  `remediation` en vez de como predicado de `review.Ubicacion`** (`ADVISORY`,
+  feature envy): aceptado por el mismo motivo — es el único consumidor hoy.
+- **Comentarios que citan "la ficha" o el comportamiento de `internal/gate`
+  no verificables desde el diff de un commit aislado** (`ADVISORY`): mismo
+  punto ciego de alcance de archivos por commit ya documentado en el cierre
+  de T7.3 — verificado directamente contra `docs/reingenieria/f7-remediacion.md`
+  y el código real de `internal/gate`; las afirmaciones son correctas, la
+  revisión simplemente no tenía visibilidad de esos archivos.
+- **Los tests usan los mismos valores en `before` y `after` (mismo
+  `Fingerprint`), sin ejercitar un hallazgo cuya `Location` se desplace tras
+  el fix** (`ADVISORY`): `swallowedByLocated` lee `Location` del lado
+  `after`, así que un desplazamiento de línea con el mismo fingerprint es un
+  caso real no cubierto. **Follow-up**: añadir un caso con `Location`
+  divergente entre `before`/`after` cuando exista un consumidor real que
+  pueda producir esa divergencia (hoy todo el árbol pasa por dobles de test).
+
+**Follow-up para cuando exista un `Editor` real (CLI-backed)**, no antes:
+
+- El punto 1 de "Hacer" ("acotado ... más su cierre inverso") solo se resuelve
+  aquí como "pasar `touchedFiles` al callback inyectado"; convertir eso en una
+  autorización real de `internal/graph` (`AutorizarAlcanceParcial` →
+  `validation.OpcionesEjecucion`) es responsabilidad de quien construya el
+  `Revalidate` real, no de este paquete — `internal/validation`'s campo
+  `autorizacion` es privado del paquete a propósito (T1.x), y replicar aquí el
+  pipeline completo de `internal/gate` habría duplicado esa fase entera muy
+  por encima del presupuesto de esta tarea.
+- Los follow-ups de T7.2 (`Scope` rastreando archivos creados por la propia
+  ronda) y T7.3 (atomicidad multiarchivo al revertir un fix que sale de
+  alcance) siguen sin aplicar aquí: `RunSingleRound` no aplica ningún cambio
+  por sí mismo, solo revalida/re-revisa lo que el llamador ya aplicó — ambos
+  siguen condicionados a que exista wiring real con un `Editor` CLI.
 
 ---
 
