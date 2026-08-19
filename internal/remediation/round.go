@@ -9,7 +9,8 @@ import (
 // Verdicts RunSingleRound can return.
 const (
 	// ResultOK means the round resolved everything it needed to: no
-	// blocking revalidation result and no unresolved CRITICAL finding.
+	// blocking revalidation result, no unresolved CRITICAL finding, and no
+	// newly introduced CRITICAL finding.
 	ResultOK = "ok"
 	// ResultNeedsUserReview means a blocking condition remains after the
 	// single allowed round: the caller must stop and hand this off to a
@@ -28,10 +29,17 @@ type UnresolvedFinding struct {
 // RoundResult is what one remediation round produced against the findings it
 // was remediating (`before`): Unresolved are `before` findings still present
 // afterward; New are findings the fix introduced that were not in `before`.
+// Blocked reports revalidate's own blocked/not-blocked result (false on the
+// error paths, since revalidation never got to report a real state there —
+// the returned error, not Blocked, is what signals an infra failure).
+// Combined with Unresolved/New (whose Severity a caller can inspect
+// directly), Blocked exposes the one piece of "why NeedsUserReview" that
+// isn't otherwise recoverable from the result alone.
 type RoundResult struct {
 	Verdict    string
 	Unresolved []UnresolvedFinding
 	New        []review.Hallazgo
+	Blocked    bool
 }
 
 // Revalidate re-runs the validation profile that originally failed, scoped
@@ -55,16 +63,20 @@ type ReReview func(touchedFiles []string) ([]review.Hallazgo, error)
 // dependency (an infra failure, not a validation/review verdict) is
 // propagated as this function's own error rather than swallowed; on a
 // revalidate error, reReview is never called at all, since there is nothing
-// meaningful left to compare against.
+// meaningful left to compare against. On either error, the returned
+// RoundResult still carries Verdict = ResultNeedsUserReview (its other
+// fields left zero-valued): the zero value is the safe, blocking one, so a
+// caller that inspects only Verdict — forgetting to check the error first —
+// still fails closed instead of silently proceeding.
 func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []string, revalidate Revalidate, reReview ReReview) (RoundResult, error) {
 	blocked, err := revalidate(profile, touchedFiles)
 	if err != nil {
-		return RoundResult{}, fmt.Errorf("remediation: revalidation failed: %w", err)
+		return RoundResult{Verdict: ResultNeedsUserReview}, fmt.Errorf("remediation: revalidation failed: %w", err)
 	}
 
 	after, err := reReview(touchedFiles)
 	if err != nil {
-		return RoundResult{}, fmt.Errorf("remediation: re-review failed: %w", err)
+		return RoundResult{Verdict: ResultNeedsUserReview}, fmt.Errorf("remediation: re-review failed: %w", err)
 	}
 
 	beforeFingerprints := make(map[string]bool, len(before))
@@ -75,9 +87,13 @@ func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []str
 	var unresolved []UnresolvedFinding
 	var newFindings []review.Hallazgo
 	hasCriticalUnresolved := false
+	hasCriticalNew := false
 	for _, f := range after {
 		if !beforeFingerprints[f.Fingerprint] {
 			newFindings = append(newFindings, f)
+			if f.Severity == review.SevCritical {
+				hasCriticalNew = true
+			}
 			continue
 		}
 		unresolved = append(unresolved, UnresolvedFinding{
@@ -90,22 +106,27 @@ func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []str
 	}
 
 	verdict := ResultOK
-	if blocked || hasCriticalUnresolved {
+	if blocked || hasCriticalUnresolved || hasCriticalNew {
 		verdict = ResultNeedsUserReview
 	}
 
-	return RoundResult{Verdict: verdict, Unresolved: unresolved, New: newFindings}, nil
+	return RoundResult{Verdict: verdict, Unresolved: unresolved, New: newFindings, Blocked: blocked}, nil
 }
 
 // swallowedByLocated reports whether finding might have been silently
 // rejected by DiffGuard's located/unlocated window logic (T7.3) rather than
-// genuinely failing to resolve: finding itself has no location, and another
-// finding in before, for the SAME file, IS located — so allowedWindows would
-// have authorized only that other finding's narrow window in the file,
-// silently swallowing any real fix scoped to finding. See diffguard.go's
-// allowedWindows doc comment for the swallowing behavior this flags.
+// genuinely failing to resolve: finding names a file but has no line within
+// it, and another finding in before, for the SAME file, IS located — so
+// allowedWindows would have authorized only that other finding's narrow
+// window in the file, silently swallowing any real fix scoped to finding.
+// A finding with no file at all (empty Archivo) can never be "swallowed" by
+// a same-file sibling, since there is no real file for any DiffGuard window
+// to have narrowed in the first place — matching an unrelated finding that
+// also happens to have an empty Archivo would be a coincidence of the zero
+// value, not a shared file. See diffguard.go's allowedWindows doc comment
+// for the swallowing behavior this flags.
 func swallowedByLocated(finding review.Hallazgo, before []review.Hallazgo) bool {
-	if finding.Location.LineaInicio > 0 {
+	if finding.Location.Archivo == "" || finding.Location.LineaInicio > 0 {
 		return false
 	}
 	for _, other := range before {

@@ -2,6 +2,7 @@ package remediation
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -147,7 +148,7 @@ func TestRunSingleRoundPropagatesRevalidateError(t *testing.T) {
 		return nil, nil
 	}
 
-	_, err := RunSingleRound("standard", nil, []string{"a.go"}, revalidate, reReview)
+	result, err := RunSingleRound("standard", nil, []string{"a.go"}, revalidate, reReview)
 	if err == nil {
 		t.Fatalf("RunSingleRound: expected an error, got nil")
 	}
@@ -157,6 +158,12 @@ func TestRunSingleRoundPropagatesRevalidateError(t *testing.T) {
 	if reReviewCalls != 0 {
 		t.Fatalf("RunSingleRound: reReview called %d times after a revalidate error, want 0", reReviewCalls)
 	}
+	// The zero-value-on-error case must be the safe/blocking one: a caller
+	// that only checks result.Verdict != ResultNeedsUserReview (forgetting to
+	// check err) must not be silently allowed to proceed on an infra failure.
+	if result.Verdict != ResultNeedsUserReview {
+		t.Fatalf("RunSingleRound: on revalidate error, Verdict = %q, want %q (safe default)", result.Verdict, ResultNeedsUserReview)
+	}
 }
 
 func TestRunSingleRoundPropagatesReReviewError(t *testing.T) {
@@ -164,11 +171,144 @@ func TestRunSingleRoundPropagatesReReviewError(t *testing.T) {
 	revalidate := func(string, []string) (bool, error) { return false, nil }
 	reReview := func([]string) ([]review.Hallazgo, error) { return nil, wantErr }
 
-	_, err := RunSingleRound("standard", nil, []string{"a.go"}, revalidate, reReview)
+	result, err := RunSingleRound("standard", nil, []string{"a.go"}, revalidate, reReview)
 	if err == nil {
 		t.Fatalf("RunSingleRound: expected an error, got nil")
 	}
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("RunSingleRound: error = %v, want it to wrap %v", err, wantErr)
+	}
+	// Same safe-default guarantee as the revalidate error path above.
+	if result.Verdict != ResultNeedsUserReview {
+		t.Fatalf("RunSingleRound: on reReview error, Verdict = %q, want %q (safe default)", result.Verdict, ResultNeedsUserReview)
+	}
+}
+
+func TestRunSingleRoundNewCriticalForcesReview(t *testing.T) {
+	// A CRITICAL finding that appears only in `after` (never in `before`, so
+	// it lands in result.New, not result.Unresolved) must still force
+	// NeedsUserReview: the fix itself introduced a new critical defect, even
+	// though revalidate is not blocked and nothing critical was left
+	// unresolved from before. This locks in Bug 1's fix.
+	warning := review.Hallazgo{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
+	newCritical := review.Hallazgo{Fingerprint: "fp-new-critical", Severity: review.SevCritical, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 40}}
+
+	before := []review.Hallazgo{warning}
+
+	revalidate := func(string, []string) (bool, error) { return false, nil }
+	reReview := func([]string) ([]review.Hallazgo, error) {
+		return []review.Hallazgo{warning, newCritical}, nil
+	}
+
+	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
+	if err != nil {
+		t.Fatalf("RunSingleRound: unexpected error: %v", err)
+	}
+	if result.Verdict != ResultNeedsUserReview {
+		t.Fatalf("RunSingleRound: Verdict = %q, want %q (a new CRITICAL finding must force review)", result.Verdict, ResultNeedsUserReview)
+	}
+	if len(result.New) != 1 || result.New[0].Fingerprint != "fp-new-critical" {
+		t.Fatalf("RunSingleRound: New = %+v, want exactly the new critical finding", result.New)
+	}
+	if result.Blocked {
+		t.Fatalf("RunSingleRound: Blocked = true, want false (revalidate was not blocked)")
+	}
+}
+
+func TestRunSingleRoundBlockedAloneForcesReview(t *testing.T) {
+	// revalidate reports blocked=true with no unresolved or new CRITICAL
+	// finding at all (only a WARNING survives): NeedsUserReview must still
+	// follow from the blocked branch alone, independent of severity.
+	warning := review.Hallazgo{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
+	before := []review.Hallazgo{warning}
+
+	revalidate := func(string, []string) (bool, error) { return true, nil } // blocked, no critical involved
+	reReview := func([]string) ([]review.Hallazgo, error) { return []review.Hallazgo{warning}, nil }
+
+	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
+	if err != nil {
+		t.Fatalf("RunSingleRound: unexpected error: %v", err)
+	}
+	if result.Verdict != ResultNeedsUserReview {
+		t.Fatalf("RunSingleRound: Verdict = %q, want %q (blocked alone must force review)", result.Verdict, ResultNeedsUserReview)
+	}
+	if !result.Blocked {
+		t.Fatalf("RunSingleRound: Blocked = false, want true")
+	}
+}
+
+func TestRunSingleRoundCriticalUnresolvedAloneForcesReview(t *testing.T) {
+	// revalidate reports blocked=false, but a CRITICAL finding from `before`
+	// is still present in `after` (unresolved): NeedsUserReview must follow
+	// from the CRITICAL-unresolved branch alone, isolated from `blocked`.
+	critical := review.Hallazgo{Fingerprint: "fp-critical", Severity: review.SevCritical, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 10}}
+	before := []review.Hallazgo{critical}
+
+	revalidate := func(string, []string) (bool, error) { return false, nil } // not blocked
+	reReview := func([]string) ([]review.Hallazgo, error) { return []review.Hallazgo{critical}, nil }
+
+	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
+	if err != nil {
+		t.Fatalf("RunSingleRound: unexpected error: %v", err)
+	}
+	if result.Verdict != ResultNeedsUserReview {
+		t.Fatalf("RunSingleRound: Verdict = %q, want %q (unresolved CRITICAL alone must force review)", result.Verdict, ResultNeedsUserReview)
+	}
+	if result.Blocked {
+		t.Fatalf("RunSingleRound: Blocked = true, want false")
+	}
+}
+
+func TestRunSingleRoundPassesThroughProfileAndTouchedFiles(t *testing.T) {
+	// profile and touchedFiles must reach revalidate and reReview exactly as
+	// passed to RunSingleRound, so a future accidental argument swap or
+	// dropped parameter is caught.
+	// A distinctive value, not the "standard" default every other test uses:
+	// if RunSingleRound ever dropped the profile parameter and hardcoded
+	// "standard" instead, this test must catch it, not pass by coincidence.
+	wantProfile := "sentinel-passthrough-profile"
+	wantTouched := []string{"a.go", "b.go"}
+
+	var gotRevalidateProfile string
+	var gotRevalidateTouched []string
+	var gotReReviewTouched []string
+
+	revalidate := func(profile string, touched []string) (bool, error) {
+		gotRevalidateProfile = profile
+		gotRevalidateTouched = touched
+		return false, nil
+	}
+	reReview := func(touched []string) ([]review.Hallazgo, error) {
+		gotReReviewTouched = touched
+		return nil, nil
+	}
+
+	_, err := RunSingleRound(wantProfile, nil, wantTouched, revalidate, reReview)
+	if err != nil {
+		t.Fatalf("RunSingleRound: unexpected error: %v", err)
+	}
+	if gotRevalidateProfile != wantProfile {
+		t.Fatalf("revalidate received profile = %q, want %q", gotRevalidateProfile, wantProfile)
+	}
+	if !slices.Equal(gotRevalidateTouched, wantTouched) {
+		t.Fatalf("revalidate received touchedFiles = %v, want %v", gotRevalidateTouched, wantTouched)
+	}
+	if !slices.Equal(gotReReviewTouched, wantTouched) {
+		t.Fatalf("reReview received touchedFiles = %v, want %v", gotReReviewTouched, wantTouched)
+	}
+}
+
+func TestSwallowedByLocatedNoFalsePositiveOnEmptyArchivo(t *testing.T) {
+	// finding has no file at all (fully unlocated); other also has an empty
+	// Archivo but a positive LineaInicio (a malformed/inconsistent finding:
+	// a line number without a file). Before the fix, the string comparison
+	// other.Location.Archivo == finding.Location.Archivo was true (both
+	// empty), producing a false "swallowed" verdict even though no real file
+	// exists for any DiffGuard window to have swallowed anything against.
+	finding := review.Hallazgo{Fingerprint: "fp-no-file", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: ""}}
+	other := review.Hallazgo{Fingerprint: "fp-malformed", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "", LineaInicio: 5}}
+
+	if swallowedByLocated(finding, []review.Hallazgo{other}) {
+		t.Fatalf("swallowedByLocated: got true, want false (no real file to be swallowed against)")
 	}
 }
