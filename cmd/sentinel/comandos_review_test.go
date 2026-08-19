@@ -384,8 +384,9 @@ type agenteFakeSecuencialReview struct {
 	// prompts registra, en orden, el texto exacto de cada prompt recibido —
 	// usado para verificar que el texto de Respuestas (opts.Respuestas)
 	// realmente llega al agente en la segunda sub-ronda interna de
-	// auditarConAgente (internal/review/engine.go:442), no solo que el
-	// veredicto final sea el esperado.
+	// auditarConAgente (internal/review/engine.go), la que se dispara solo
+	// cuando la primera respuesta es "question" y opts.Respuestas no está
+	// vacío, no solo que el veredicto final sea el esperado.
 	prompts []string
 }
 
@@ -597,11 +598,10 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 		},
 	}
 	// La primera sub-ronda interna de auditarConAgente siempre pregunta SIN
-	// Respuestas (engine.go:430); solo si esa primera respuesta es
-	// "question" hace una segunda sub-ronda CON Respuestas embebido
-	// (engine.go:441-442). El primer elemento fuerza esa segunda sub-ronda;
-	// el segundo es lo que de verdad se comprueba (el prompt recibido en
-	// esa segunda llamada).
+	// Respuestas; solo si esa primera respuesta es "question" hace una
+	// segunda sub-ronda CON Respuestas embebido. El primer elemento fuerza
+	// esa segunda sub-ronda; el segundo es lo que de verdad se comprueba (el
+	// prompt recibido en esa segunda llamada).
 	fabrica, fake := fabricaFakeSecuencialReviewCapturando([]string{
 		`{"dim":"logic","verdict":"question"}`,
 		`{"dim":"logic","verdict":"ok"}`,
@@ -617,14 +617,115 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 	if resultadoFinal.Veredicto != review.VerdictOK {
 		t.Fatalf("Veredicto = %q, esperado %q", resultadoFinal.Veredicto, review.VerdictOK)
 	}
-	if len(fake.prompts) < 2 {
-		t.Fatalf("el agente fake recibió %d prompts, esperados al menos 2 (primera sub-ronda sin Respuestas + segunda con Respuestas)", len(fake.prompts))
+	promptConRespuestas, ok := promptConClarificaciones(fake.prompts)
+	if !ok {
+		t.Fatalf("ningún prompt recibido contiene la sección de aclaraciones del usuario: %+v", fake.prompts)
 	}
-	promptConRespuestas := fake.prompts[1]
 	if !strings.Contains(promptConRespuestas, "q1: respuesta para a.go") {
 		t.Errorf("el prompt de reintento no contiene la respuesta de a.go:\n%s", promptConRespuestas)
 	}
 	if !strings.Contains(promptConRespuestas, "q1: respuesta para b.go") {
 		t.Errorf("el prompt de reintento no contiene la respuesta de b.go (se habría descartado si contestadas se colapsara por ID en un map[string]string):\n%s", promptConRespuestas)
+	}
+}
+
+// promptConClarificaciones busca, entre los prompts capturados, el primero
+// que lleva la sección de aclaraciones del usuario (marcador literal de
+// internal/review/prompts.go: seccionRespuestas). Buscar por contenido en
+// vez de indexar por posición fija evita que el test rompa en silencio si el
+// motor añade una ronda adicional (p. ej. de refutación) que desplace los
+// índices.
+func promptConClarificaciones(prompts []string) (string, bool) {
+	for _, p := range prompts {
+		if strings.Contains(p, "Clarifications from the user") {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// TestAplicarPreguntasPendientes_RespuestaFrescaPrevaleceSobreLaDelStore
+// cubre la regresión detectada tras el fix del CRITICAL de colisión de ID:
+// al construir el prompt de reintento directamente desde `contestadas` (sin
+// colapsar por ID), un id presente TANTO en el store (contestadas) COMO en
+// una respuesta fresca de --answer (porID) para ese mismo id debía seguir
+// resolviéndose con una sola línea, con la fresca ganando — no con dos
+// líneas contradictorias "q1: ..." en el mismo prompt.
+func TestAplicarPreguntasPendientes_RespuestaFrescaPrevaleceSobreLaDelStore(t *testing.T) {
+	repo, sha := repoDePruebaConUnCommit(t, "a.go", "package a\n")
+	blob, err := git.BlobDeArchivoEnCommit(sha, "a.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit: %v", err)
+	}
+	gitCommonDir, err := git.ObtenerGitCommonDir(repo)
+	if err != nil {
+		t.Fatalf("ObtenerGitCommonDir: %v", err)
+	}
+	st := store.NuevoStore(gitCommonDir)
+	if err := st.RegistrarRespuesta(blob, "q1", "respuesta vieja del store", "otro-actor"); err != nil {
+		t.Fatalf("RegistrarRespuesta: %v", err)
+	}
+
+	resultado := review.ResultadoAuditoria{
+		Veredicto: review.VerdictQuestion,
+		Preguntas: []review.AgentQuestion{{ID: "q1", Text: "¿procede el cambio?", File: "a.go"}},
+	}
+	fabrica, fake := fabricaFakeSecuencialReviewCapturando([]string{
+		`{"dim":"logic","verdict":"question"}`,
+		`{"dim":"logic","verdict":"ok"}`,
+	})
+	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview(), Respuestas: "q1=respuesta fresca de esta invocación"}
+
+	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+
+	if len(pendientes) != 0 {
+		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
+	}
+	if resultadoFinal.Veredicto != review.VerdictOK {
+		t.Fatalf("Veredicto = %q, esperado %q", resultadoFinal.Veredicto, review.VerdictOK)
+	}
+	prompt, ok := promptConClarificaciones(fake.prompts)
+	if !ok {
+		t.Fatalf("ningún prompt recibido contiene la sección de aclaraciones del usuario: %+v", fake.prompts)
+	}
+	if strings.Contains(prompt, "respuesta vieja del store") {
+		t.Errorf("el prompt de reintento incluye la respuesta vieja del store; debía ceder ante la fresca de esta invocación:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "q1: respuesta fresca de esta invocación") {
+		t.Errorf("el prompt de reintento no contiene la respuesta fresca:\n%s", prompt)
+	}
+	if strings.Count(prompt, "q1:") != 1 {
+		t.Errorf("el prompt de reintento tiene %d líneas \"q1:\", esperada exactamente 1 (sin líneas contradictorias): %s",
+			strings.Count(prompt, "q1:"), prompt)
+	}
+}
+
+// TestAplicarPreguntasPendientes_QuestionVacioSinReintento_NoSeRebajaAWarn
+// cubre la rama reintentado==false: un veredicto "question" con Preguntas
+// vacío desde el primer pase (sin ninguna respuesta conocida ni fresca) no
+// debe rebajarse a warn — sería enmascarar una salida malformada del modelo
+// como si fuera un deadlock ya resuelto. Esta rama nunca se había ejercitado:
+// los demás tests de aplicarPreguntasPendientes siempre entran al bloque de
+// reintento.
+func TestAplicarPreguntasPendientes_QuestionVacioSinReintento_NoSeRebajaAWarn(t *testing.T) {
+	repo, sha := repoDePruebaConUnCommit(t, "a.go", "package a\n")
+
+	resultado := review.ResultadoAuditoria{
+		Veredicto: review.VerdictQuestion,
+		Preguntas: nil,
+	}
+	fabrica := fabricaFakeSecuencialReview(nil)
+	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview()}
+
+	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+
+	if len(pendientes) != 0 {
+		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
+	}
+	if resultadoFinal.Veredicto != review.VerdictQuestion {
+		t.Fatalf("Veredicto = %q, esperado %q (no debe rebajarse a warn sin haber reintentado)",
+			resultadoFinal.Veredicto, review.VerdictQuestion)
 	}
 }

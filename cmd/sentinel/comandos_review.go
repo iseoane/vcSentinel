@@ -224,7 +224,10 @@ func opcionesAuditoriaConRefutador(opts review.OpcionesAuditoria, cfg config.Con
 // round, so if it re-emits "question" with only questions this run already
 // has a registered answer for, that must not be a permanent block (exit 3
 // forever on every future run over identical content) — it is downgraded to
-// warn instead.
+// warn instead. That downgrade only fires when a retry actually happened
+// with real answers (known or fresh): a "question" verdict with an empty
+// questions list from the very first pass (malformed model output, no
+// answer involved at all) is left as-is, not silently masked as warn.
 func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAuditor, cfg config.Config, verificador *modelprobe.Verificador, opciones review.OpcionesAuditoria, resultado review.ResultadoAuditoria) (review.ResultadoAuditoria, []review.AgentQuestion) {
 	if resultado.Veredicto != review.VerdictQuestion {
 		return resultado, resultado.Preguntas
@@ -295,7 +298,11 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 		// dos preguntas distintas (archivos distintos) pueden compartir "q1"
 		// legítimamente, y cada una debe llegar con su propia respuesta al
 		// prompt de reintento. Se ordena por (ID, File) para que el prompt
-		// sea determinista.
+		// sea determinista. Una entrada cuyo ID también está en porID se
+		// omite aquí: la respuesta fresca de esta misma invocación prevalece
+		// sobre la ya registrada para ESE id (el bucle de porID de abajo la
+		// emite); sin este filtro, un id presente en ambos conjuntos
+		// generaría dos líneas "id: ..." contradictorias en el mismo prompt.
 		ordenadas := append([]review.AnsweredQuestion(nil), contestadas...)
 		sort.Slice(ordenadas, func(i, j int) bool {
 			if ordenadas[i].Question.ID != ordenadas[j].Question.ID {
@@ -304,6 +311,9 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 			return ordenadas[i].Question.File < ordenadas[j].Question.File
 		})
 		for _, aq := range ordenadas {
+			if _, fresca := porID[aq.Question.ID]; fresca {
+				continue
+			}
 			lineas = append(lineas, aq.Question.ID+": "+aq.Answer)
 		}
 		// porID (respuestas frescas de --answer) no lleva File: es solo el
@@ -360,8 +370,6 @@ func filtrarRespuestasPorIDsReales(porID map[string]string, resto string, pregun
 
 	validado := make(map[string]string, len(porID))
 	var prosaAjena []string
-	// clavesOrdenadas: un map no es determinista, y la prosa reconstruida no
-	// debe depender del orden de iteración entre corridas.
 	for _, id := range clavesOrdenadas(porID) {
 		if reales[id] {
 			validado[id] = porID[id]
