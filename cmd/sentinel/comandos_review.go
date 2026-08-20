@@ -140,7 +140,11 @@ func ejecutarReview(worktree string, args []string) {
 		}
 		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificadorModelo))
 
-		resultado, pendientes := aplicarPreguntasPendientes(worktree, sha, fabrica, cfg, verificadorModelo, opciones, resultado)
+		resultado, pendientes, err := aplicarPreguntasPendientes(worktree, sha, fabrica, cfg, verificadorModelo, opciones, resultado)
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
 		if flags.jsonOut && resultado.Veredicto == review.VerdictQuestion {
 			imprimirPreguntasPendientesJSON(sha, pendientes)
 		}
@@ -228,13 +232,13 @@ func opcionesAuditoriaConRefutador(opts review.OpcionesAuditoria, cfg config.Con
 // with real answers (known or fresh): a "question" verdict with an empty
 // questions list from the very first pass (malformed model output, no
 // answer involved at all) is left as-is, not silently masked as warn.
-func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAuditor, cfg config.Config, verificador *modelprobe.Verificador, opciones review.OpcionesAuditoria, resultado review.ResultadoAuditoria) (review.ResultadoAuditoria, []review.AgentQuestion) {
+func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAuditor, cfg config.Config, verificador *modelprobe.Verificador, opciones review.OpcionesAuditoria, resultado review.ResultadoAuditoria) (review.ResultadoAuditoria, []review.AgentQuestion, error) {
 	if resultado.Veredicto != review.VerdictQuestion {
-		return resultado, resultado.Preguntas
+		return resultado, resultado.Preguntas, nil
 	}
 	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {
-		return resultado, resultado.Preguntas
+		return resultado, resultado.Preguntas, nil
 	}
 	st := store.NuevoStore(gitCommonDir)
 	resolveBlob := func(file string) (string, error) { return git.BlobDeArchivoEnCommit(sha, file) }
@@ -242,7 +246,7 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 	originales := resultado.Preguntas
 	pendientes, contestadas, err := review.SplitPendingQuestions(originales, resolveBlob, st.RespuestaRegistrada)
 	if err != nil {
-		return resultado, originales
+		return resultado, originales, nil
 	}
 
 	porIDCrudo, restoCrudo := parsearRespuestasAuditoria(opciones.Respuestas)
@@ -251,25 +255,27 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 	// filtran aquí, antes de construir el prompt de reintento y antes del
 	// bucle de persistencia, para que un id inexistente nunca llegue a
 	// ninguno de los dos.
-	porID, resto := filtrarRespuestasPorIDsReales(porIDCrudo, restoCrudo, originales)
+	porPregunta, resto, err := resolveQuestionAnswers(porIDCrudo, restoCrudo, originales)
+	if err != nil {
+		return resultado, originales, err
+	}
 
 	// Persistir las respuestas frescas ANTES del reintento (no después): el
 	// SplitPendingQuestions posterior al reintento consulta el store, así
 	// que si una pregunta recién contestada por el usuario vuelve a
 	// aparecer en esa segunda pasada, debe reconocerse como ya respondida en
 	// esta misma invocación, no solo en una ejecución futura.
-	for id, texto := range porID {
-		archivo := archivoDePregunta(originales, id)
-		if archivo == "" {
+	for pregunta, texto := range porPregunta {
+		if pregunta.File == "" {
 			continue // pregunta sin File: no se puede resolver un blob, no es un caso de error
 		}
-		blob, err := resolveBlob(archivo)
+		blob, err := resolveBlob(pregunta.File)
 		if err != nil {
-			fmt.Printf("⚠️ %s: no se pudo resolver el blob de %q para persistir la respuesta a %q: %v\n", shaCorto(sha), archivo, id, err)
+			fmt.Printf("⚠️ %s: no se pudo resolver el blob de %q para persistir la respuesta a %q: %v\n", shaCorto(sha), pregunta.File, pregunta.ID, err)
 			continue
 		}
-		if err := st.RegistrarRespuesta(blob, id, texto, resolverActor(worktree)); err != nil {
-			fmt.Printf("⚠️ %s: no se pudo persistir la respuesta a %q: %v\n", shaCorto(sha), id, err)
+		if err := st.RegistrarRespuesta(blob, pregunta.ID, texto, resolverActor(worktree)); err != nil {
+			fmt.Printf("⚠️ %s: no se pudo persistir la respuesta a %q: %v\n", shaCorto(sha), pregunta.ID, err)
 		}
 	}
 
@@ -280,7 +286,7 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 	// rebaja de veredicto de más abajo enmascararía ese caso como warn sin
 	// haber pasado por ninguna respuesta conocida.
 	reintentado := false
-	if len(contestadas) > 0 || len(porID) > 0 {
+	if len(contestadas) > 0 || len(porPregunta) > 0 {
 		// Unión de lo ya conocido por el store y lo que el usuario responde
 		// ahora mismo (porID): una respuesta fresca sobre el mismo id
 		// prevalece sobre la ya registrada, porque el usuario está
@@ -311,19 +317,14 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 			return ordenadas[i].Question.File < ordenadas[j].Question.File
 		})
 		for _, aq := range ordenadas {
-			if _, fresca := porID[aq.Question.ID]; fresca {
+			key := questionKey{ID: aq.Question.ID, File: aq.Question.File}
+			if _, fresca := porPregunta[key]; fresca {
 				continue
 			}
-			lineas = append(lineas, aq.Question.ID+": "+aq.Answer)
+			lineas = append(lineas, questionSelector(key, originales)+": "+aq.Answer)
 		}
-		// porID (respuestas frescas de --answer) no lleva File: es solo el
-		// id que el usuario escribió. Si ese id coincide con más de una
-		// pregunta de originales, es una ambigüedad inherente al transporte
-		// plano "id=texto" (no hay forma de saber a cuál de las dos se
-		// refiere sin extender ese transporte); se aplica igual a todas las
-		// que comparten ese id, en vez de descartar alguna en silencio.
-		for _, id := range clavesOrdenadas(porID) {
-			lineas = append(lineas, id+": "+porID[id])
+		for _, key := range sortedQuestionKeys(porPregunta) {
+			lineas = append(lineas, questionSelector(key, originales)+": "+porPregunta[key])
 		}
 		opciones.Respuestas = strings.Join(lineas, "\n")
 		resultado = review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificador))
@@ -347,7 +348,87 @@ func aplicarPreguntasPendientes(worktree, sha string, fabrica review.FabricaAudi
 		// nunca entra en esta rama.
 		resultado.Veredicto = review.VerdictWarn
 	}
-	return resultado, pendientes
+	return resultado, pendientes, nil
+}
+
+type questionKey struct {
+	ID   string
+	File string
+}
+
+// resolveQuestionAnswers binds bare selectors to one unique question and
+// qualified selectors to the exact (ID, File) pair. Unknown selectors retain
+// the existing free-text behavior; ambiguous bare IDs fail explicitly.
+func resolveQuestionAnswers(raw map[string]string, prose string, questions []review.AgentQuestion) (map[questionKey]string, string, error) {
+	byID := make(map[string]map[string]questionKey)
+	for _, q := range questions {
+		if byID[q.ID] == nil {
+			byID[q.ID] = make(map[string]questionKey)
+		}
+		byID[q.ID][q.File] = questionKey{ID: q.ID, File: q.File}
+	}
+
+	resolved := make(map[questionKey]string)
+	var unknown []string
+	for _, selector := range clavesOrdenadas(raw) {
+		id, file, qualified := strings.Cut(selector, "@")
+		candidates := byID[id]
+		if qualified {
+			key, ok := candidates[file]
+			if ok {
+				resolved[key] = raw[selector]
+				continue
+			}
+			unknown = append(unknown, selector+"="+raw[selector])
+			continue
+		}
+		if len(candidates) == 1 {
+			for _, key := range candidates {
+				resolved[key] = raw[selector]
+			}
+			continue
+		}
+		if len(candidates) > 1 {
+			candidateNames := make([]string, 0, len(candidates))
+			for _, key := range candidates {
+				candidateNames = append(candidateNames, key.ID+"@"+key.File)
+			}
+			sort.Strings(candidateNames)
+			return nil, prose, fmt.Errorf("answer %q is ambiguous; qualify one of: %s", selector, strings.Join(candidateNames, ", "))
+		}
+		unknown = append(unknown, selector+"="+raw[selector])
+	}
+	if prose != "" {
+		unknown = append(unknown, prose)
+	}
+	return resolved, strings.Join(unknown, ","), nil
+}
+
+func sortedQuestionKeys(answers map[questionKey]string) []questionKey {
+	keys := make([]questionKey, 0, len(answers))
+	for key := range answers {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].ID != keys[j].ID {
+			return keys[i].ID < keys[j].ID
+		}
+		return keys[i].File < keys[j].File
+	})
+	return keys
+}
+
+func questionSelector(key questionKey, questions []review.AgentQuestion) string {
+	files := make(map[string]struct{})
+	for _, q := range questions {
+		if q.ID == key.ID {
+			files[q.File] = struct{}{}
+		}
+	}
+	if len(files) > 1 {
+		return key.ID + "@" + key.File
+	}
+	return key.ID
 }
 
 // filtrarRespuestasPorIDsReales separates porID (from parsearRespuestasAuditoria)

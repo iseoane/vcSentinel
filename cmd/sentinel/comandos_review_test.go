@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -469,8 +470,11 @@ func TestAplicarPreguntasPendientes_RespuestaYaRegistrada_DesbloqueaSinPreguntar
 	fabrica := fabricaFakeSecuencialReview([]string{`{"dim":"logic","verdict":"ok"}`})
 	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview()}
 
-	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+	resultadoFinal, pendientes, applyErr := aplicarPreguntasPendientes(
 		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+	if applyErr != nil {
+		t.Fatalf("aplicarPreguntasPendientes: %v", applyErr)
+	}
 
 	if len(pendientes) != 0 {
 		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
@@ -523,8 +527,11 @@ func TestAplicarPreguntasPendientes_AgenteVuelveAPreguntar_NoSeQuedaEnDeadlock(t
 	})
 	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview()}
 
-	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+	resultadoFinal, pendientes, applyErr := aplicarPreguntasPendientes(
 		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+	if applyErr != nil {
+		t.Fatalf("aplicarPreguntasPendientes: %v", applyErr)
+	}
 
 	if len(pendientes) != 0 {
 		t.Fatalf("pendientes = %+v, esperado vacío (ya hay respuesta registrada para q1)", pendientes)
@@ -606,10 +613,16 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 		`{"dim":"logic","verdict":"question"}`,
 		`{"dim":"logic","verdict":"ok"}`,
 	})
-	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview()}
+	opciones := review.OpcionesAuditoria{
+		SHA: sha, Bundles: bundlesDePruebaReview(),
+		Respuestas: "q1@a.go=fresh answer for a.go",
+	}
 
-	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+	resultadoFinal, pendientes, applyErr := aplicarPreguntasPendientes(
 		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+	if applyErr != nil {
+		t.Fatalf("aplicarPreguntasPendientes: %v", applyErr)
+	}
 
 	if len(pendientes) != 0 {
 		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
@@ -621,11 +634,20 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 	if !ok {
 		t.Fatalf("ningún prompt recibido contiene la sección de aclaraciones del usuario: %+v", fake.prompts)
 	}
-	if !strings.Contains(promptConRespuestas, "q1: respuesta para a.go") {
-		t.Errorf("el prompt de reintento no contiene la respuesta de a.go:\n%s", promptConRespuestas)
+	if strings.Contains(promptConRespuestas, "respuesta para a.go") {
+		t.Errorf("the retry prompt kept the stored answer overridden for a.go:\n%s", promptConRespuestas)
 	}
-	if !strings.Contains(promptConRespuestas, "q1: respuesta para b.go") {
-		t.Errorf("el prompt de reintento no contiene la respuesta de b.go (se habría descartado si contestadas se colapsara por ID en un map[string]string):\n%s", promptConRespuestas)
+	if !strings.Contains(promptConRespuestas, "q1@a.go: fresh answer for a.go") {
+		t.Errorf("the retry prompt does not contain the fresh qualified answer for a.go:\n%s", promptConRespuestas)
+	}
+	if !strings.Contains(promptConRespuestas, "q1@b.go: respuesta para b.go") {
+		t.Errorf("the retry prompt lost the stored answer for b.go:\n%s", promptConRespuestas)
+	}
+	if got, ok, err := st.RespuestaRegistrada(blobA, "q1"); err != nil || !ok || got != "fresh answer for a.go" {
+		t.Errorf("stored answer for a.go = %q, %v, %v; want fresh qualified answer", got, ok, err)
+	}
+	if got, ok, err := st.RespuestaRegistrada(blobB, "q1"); err != nil || !ok || got != "respuesta para b.go" {
+		t.Errorf("stored answer for b.go = %q, %v, %v; want original stored answer", got, ok, err)
 	}
 }
 
@@ -676,8 +698,11 @@ func TestAplicarPreguntasPendientes_RespuestaFrescaPrevaleceSobreLaDelStore(t *t
 	})
 	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview(), Respuestas: "q1=respuesta fresca de esta invocación"}
 
-	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+	resultadoFinal, pendientes, applyErr := aplicarPreguntasPendientes(
 		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+	if applyErr != nil {
+		t.Fatalf("aplicarPreguntasPendientes: %v", applyErr)
+	}
 
 	if len(pendientes) != 0 {
 		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
@@ -718,8 +743,11 @@ func TestAplicarPreguntasPendientes_QuestionVacioSinReintento_NoSeRebajaAWarn(t 
 	fabrica := fabricaFakeSecuencialReview(nil)
 	opciones := review.OpcionesAuditoria{SHA: sha, Bundles: bundlesDePruebaReview()}
 
-	resultadoFinal, pendientes := aplicarPreguntasPendientes(
+	resultadoFinal, pendientes, applyErr := aplicarPreguntasPendientes(
 		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+	if applyErr != nil {
+		t.Fatalf("aplicarPreguntasPendientes: %v", applyErr)
+	}
 
 	if len(pendientes) != 0 {
 		t.Fatalf("pendientes = %+v, esperado vacío", pendientes)
@@ -727,5 +755,68 @@ func TestAplicarPreguntasPendientes_QuestionVacioSinReintento_NoSeRebajaAWarn(t 
 	if resultadoFinal.Veredicto != review.VerdictQuestion {
 		t.Fatalf("Veredicto = %q, esperado %q (no debe rebajarse a warn sin haber reintentado)",
 			resultadoFinal.Veredicto, review.VerdictQuestion)
+	}
+}
+
+func TestResolveQuestionAnswers(t *testing.T) {
+	questions := []review.AgentQuestion{
+		{ID: "q1", File: "a.go"},
+		{ID: "q1", File: "b.go"},
+		{ID: "q2", File: "c.go"},
+	}
+	tests := []struct {
+		name         string
+		raw          map[string]string
+		want         map[questionKey]string
+		wantProse    string
+		wantErrParts []string
+	}{
+		{
+			name: "bare unique remains compatible",
+			raw:  map[string]string{"q2": "unique"},
+			want: map[questionKey]string{{ID: "q2", File: "c.go"}: "unique"},
+		},
+		{
+			name: "qualified selector chooses one duplicate",
+			raw:  map[string]string{"q1@b.go": "only b"},
+			want: map[questionKey]string{{ID: "q1", File: "b.go"}: "only b"},
+		},
+		{
+			name:         "ambiguous bare selector reports deterministic candidates",
+			raw:          map[string]string{"q1": "ambiguous"},
+			wantErrParts: []string{"q1@a.go", "q1@b.go"},
+		},
+		{
+			name:      "unknown qualified selector remains prose",
+			raw:       map[string]string{"q1@missing.go": "unknown"},
+			want:      map[questionKey]string{},
+			wantProse: "q1@missing.go=unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, prose, err := resolveQuestionAnswers(tt.raw, "", questions)
+			if len(tt.wantErrParts) > 0 {
+				if err == nil {
+					t.Fatal("expected an ambiguity error")
+				}
+				for _, part := range tt.wantErrParts {
+					if !strings.Contains(err.Error(), part) {
+						t.Errorf("error %q does not name candidate %q", err, part)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveQuestionAnswers: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("answers = %#v, want %#v", got, tt.want)
+			}
+			if prose != tt.wantProse {
+				t.Errorf("prose = %q, want %q", prose, tt.wantProse)
+			}
+		})
 	}
 }
