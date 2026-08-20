@@ -351,6 +351,43 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 			},
 		},
 		{
+			name: "block precedence retains unavailable dimension reasons",
+			auditResult: review.ResultadoAuditoria{
+				SHA:       "0123456789abcdef",
+				Veredicto: review.VerdictBlock,
+				Findings:  []review.Hallazgo{confirmed},
+				Dims: []review.ResultadoDimension{
+					{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictBlock}},
+					{Dim: review.DimSecurity, Resultado: &review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictUnavailable, Reason: "security reviewer timed out"}},
+				},
+			},
+			expectedState: EstadoCodeReviewFailed,
+			expectedExit:  1,
+			findingCount:  1,
+			contains: []string{
+				"finding-1",
+				`dimension="security" reason="security reviewer timed out"`,
+			},
+		},
+		{
+			name: "question precedence retains unavailable dimension reasons",
+			auditResult: review.ResultadoAuditoria{
+				SHA:       "0123456789abcdef",
+				Veredicto: review.VerdictQuestion,
+				Preguntas: []review.AgentQuestion{{ID: "q1", Text: "which behavior is expected?"}},
+				Dims: []review.ResultadoDimension{
+					{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictQuestion}},
+					{Dim: review.DimSecurity, Resultado: &review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictUnavailable, Reason: "security reviewer timed out"}},
+				},
+			},
+			expectedState: EstadoNeedsUserReview,
+			expectedExit:  2,
+			contains: []string{
+				"which behavior is expected?",
+				`dimension="security" reason="security reviewer timed out"`,
+			},
+		},
+		{
 			name: "refuted critical remains human review",
 			auditResult: review.ResultadoAuditoria{
 				SHA:       "0123456789abcdef",

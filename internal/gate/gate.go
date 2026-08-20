@@ -149,6 +149,7 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 		for _, pregunta := range resultado.Preguntas {
 			mensajes = append(mensajes, fmt.Sprintf("  ? %s", pregunta.Text))
 		}
+		mensajes = append(mensajes, unavailableDimensionMessages(resultado)...)
 		return Resultado{Estado: EstadoNeedsUserReview, Mensajes: mensajes}
 	case review.VerdictBlock:
 		messages := []string{
@@ -156,6 +157,7 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 			resultado.String(),
 		}
 		messages = append(messages, criticalFindingMessages(resultado)...)
+		messages = append(messages, unavailableDimensionMessages(resultado)...)
 		return Resultado{Estado: EstadoCodeReviewFailed, Mensajes: messages}
 	default:
 		if tieneHallazgoCriticoRefutado(resultado) {
@@ -176,12 +178,20 @@ func tieneHallazgoCriticoRefutado(resultado review.ResultadoAuditoria) bool {
 
 func unavailableReviewMessages(auditResult review.ResultadoAuditoria) []string {
 	messages := []string{"❌ La revisión semántica no pudo ejecutarse (agente no disponible o error de infraestructura)."}
-	dimensions := unavailableDimensions(auditResult)
-	if len(dimensions) == 0 {
+	dimensionMessages := unavailableDimensionMessages(auditResult)
+	if len(dimensionMessages) == 0 {
 		return append(messages, "  No unavailable dimension evidence was retained.")
 	}
+	return append(messages, dimensionMessages...)
+}
 
-	messages = append(messages, "Unavailable dimensions:")
+func unavailableDimensionMessages(auditResult review.ResultadoAuditoria) []string {
+	dimensions := unavailableDimensions(auditResult)
+	if len(dimensions) == 0 {
+		return nil
+	}
+
+	messages := []string{"Unavailable dimensions:"}
 	for _, dimension := range dimensions {
 		dimensionName := dimension.Dim
 		reason := ""
