@@ -1,0 +1,294 @@
+// Package agentrun defines provider-neutral durable execution contracts.
+package agentrun
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"maps"
+	"sort"
+	"time"
+)
+
+type Identity string
+
+func (i Identity) String() string { return string(i) }
+
+type Candidate string
+
+func (c Candidate) Canonical() string  { return canonical(string(c)) }
+func (c Candidate) Identity() Identity { return CandidateIdentity(c) }
+func CandidateIdentity(c Candidate) Identity {
+	return hashIdentity("candidate", c.Canonical())
+}
+
+type Prompt string
+
+func (p Prompt) Canonical() string  { return canonical(string(p)) }
+func (p Prompt) Identity() Identity { return PromptIdentity(p) }
+func PromptIdentity(p Prompt) Identity {
+	return hashIdentity("prompt", p.Canonical())
+}
+
+type Capability struct {
+	name       string
+	attributes map[string]string
+}
+
+type capabilityValue struct {
+	Name       string            `json:"name"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+func NewCapability(name string, attributes map[string]string) Capability {
+	return Capability{name: name, attributes: maps.Clone(attributes)}
+}
+func (c Capability) Name() string                  { return c.name }
+func (c Capability) Attributes() map[string]string { return maps.Clone(c.attributes) }
+func (c Capability) Canonical() string {
+	return canonical(capabilityValue{c.name, maps.Clone(c.attributes)})
+}
+func (c Capability) Identity() Identity { return hashIdentity("capability", c.Canonical()) }
+
+type RunRequest struct {
+	candidate    Candidate
+	prompt       Prompt
+	capabilities []Capability
+}
+
+func NewRunRequest(candidate Candidate, prompt Prompt, capabilities []Capability) RunRequest {
+	return RunRequest{candidate: candidate, prompt: prompt, capabilities: copyCapabilities(capabilities)}
+}
+func (r RunRequest) Candidate() Candidate       { return r.candidate }
+func (r RunRequest) Prompt() Prompt             { return r.prompt }
+func (r RunRequest) Capabilities() []Capability { return copyCapabilities(r.capabilities) }
+func (r RunRequest) Canonical() string {
+	capabilities := make([]Identity, len(r.capabilities))
+	for i, capability := range r.capabilities {
+		capabilities[i] = capability.Identity()
+	}
+	return canonical(struct {
+		Candidate    Identity   `json:"candidate"`
+		Prompt       Identity   `json:"prompt"`
+		Capabilities []Identity `json:"capabilities,omitempty"`
+	}{CandidateIdentity(r.candidate), PromptIdentity(r.prompt), capabilities})
+}
+func (r RunRequest) Identity() Identity { return hashIdentity("request", r.Canonical()) }
+
+type LogicalJob struct {
+	id      Identity
+	runID   Identity
+	request RunRequest
+}
+
+func NewLogicalJob(request RunRequest) LogicalJob {
+	requestID := request.Identity()
+	return LogicalJob{hashIdentity("job", requestID), hashIdentity("run", requestID), request}
+}
+func (j LogicalJob) ID() Identity        { return j.id }
+func (j LogicalJob) RunID() Identity     { return j.runID }
+func (j LogicalJob) Request() RunRequest { return j.request }
+
+// Decision controls execution; semantic review verdicts remain in internal/review.
+type Decision string
+
+const (
+	DecisionNone     Decision = ""
+	DecisionStart    Decision = "start"
+	DecisionRetry    Decision = "retry"
+	DecisionRespond  Decision = "respond"
+	DecisionAbort    Decision = "abort"
+	DecisionComplete Decision = "complete"
+)
+
+type InvocationEnvelope struct {
+	job          LogicalJob
+	parentID     Identity
+	ancestors    []Identity
+	lineageID    Identity
+	invocationID Identity
+	attempt      uint32
+	decision     Decision
+}
+
+type lineageValue struct {
+	Run       Identity   `json:"run"`
+	Job       Identity   `json:"job"`
+	Root      Identity   `json:"root"`
+	Parent    Identity   `json:"parent,omitempty"`
+	Ancestors []Identity `json:"ancestors"`
+}
+
+type InvalidLineageError struct{ Reason string }
+
+func (e InvalidLineageError) Error() string {
+	return "agentrun: invalid invocation lineage: " + e.Reason
+}
+func lineageError(reason string) (InvocationEnvelope, error) {
+	return InvocationEnvelope{}, InvalidLineageError{Reason: reason}
+}
+
+func NewInvocationEnvelope(job LogicalJob, parent Identity, ancestors []Identity, attempt uint32, decision Decision) (InvocationEnvelope, error) {
+	if job.ID() == "" {
+		return lineageError("logical job identity is empty")
+	}
+	if attempt == 0 {
+		return lineageError("attempt must be positive")
+	}
+	if len(ancestors) == 0 {
+		if parent != "" {
+			return lineageError("a child invocation requires its parent in the ancestor list")
+		}
+		ancestors = []Identity{job.ID()}
+	}
+	if ancestors[0] != job.ID() {
+		return lineageError("ancestor root does not identify the logical job")
+	}
+	if parent == "" && len(ancestors) != 1 {
+		return lineageError("a root invocation cannot have physical ancestors")
+	}
+	if parent != "" && ancestors[len(ancestors)-1] != parent {
+		return lineageError("parent identity must be the last physical ancestor")
+	}
+	lineage := lineageValue{job.RunID(), job.ID(), ancestors[0], parent, append([]Identity(nil), ancestors...)}
+	lineageID := hashIdentity("invocation-lineage", lineage)
+	invocationID := hashIdentity("invocation", struct {
+		Lineage  Identity `json:"lineage"`
+		Attempt  uint32   `json:"attempt"`
+		Decision Decision `json:"decision"`
+	}{lineageID, attempt, decision})
+	return InvocationEnvelope{job, parent, append([]Identity(nil), ancestors...), lineageID, invocationID, attempt, decision}, nil
+}
+
+func NewRootInvocation(job LogicalJob, attempt uint32, decision Decision) (InvocationEnvelope, error) {
+	return NewInvocationEnvelope(job, "", nil, attempt, decision)
+}
+func NewChildInvocation(parent InvocationEnvelope, attempt uint32, decision Decision) (InvocationEnvelope, error) {
+	ancestors := append(parent.AncestorIDs(), parent.InvocationID())
+	return NewInvocationEnvelope(parent.job, parent.invocationID, ancestors, attempt, decision)
+}
+func (i InvocationEnvelope) RunID() Identity              { return i.job.RunID() }
+func (i InvocationEnvelope) JobID() Identity              { return i.job.ID() }
+func (i InvocationEnvelope) ParentInvocationID() Identity { return i.parentID }
+func (i InvocationEnvelope) RootIdentity() Identity {
+	if len(i.ancestors) == 0 {
+		return ""
+	}
+	return i.ancestors[0]
+}
+func (i InvocationEnvelope) AncestorIDs() []Identity {
+	return append([]Identity(nil), i.ancestors...)
+}
+func (i InvocationEnvelope) LineageCanonical() string  { return canonical(i.lineageValue()) }
+func (i InvocationEnvelope) LineageIdentity() Identity { return i.lineageID }
+func (i InvocationEnvelope) InvocationID() Identity    { return i.invocationID }
+func (i InvocationEnvelope) Attempt() uint32           { return i.attempt }
+func (i InvocationEnvelope) Decision() Decision        { return i.decision }
+func (i InvocationEnvelope) BelongsTo(job LogicalJob) bool {
+	return i.RunID() == job.RunID() && i.JobID() == job.ID() && i.RootIdentity() == job.ID()
+}
+func (i InvocationEnvelope) lineageValue() lineageValue {
+	return lineageValue{i.RunID(), i.JobID(), i.RootIdentity(), i.parentID, i.AncestorIDs()}
+}
+
+type LifecycleState string
+
+const (
+	StateCreated          LifecycleState = "created"
+	StateQueued           LifecycleState = "queued"
+	StateAdmitted         LifecycleState = "admitted"
+	StateRunning          LifecycleState = "running"
+	StateAwaitingDecision LifecycleState = "awaiting_decision"
+	StateSucceeded        LifecycleState = "succeeded"
+	StateFailed           LifecycleState = "failed"
+	StateCanceled         LifecycleState = "canceled"
+	StateTimedOut         LifecycleState = "timed_out"
+	StateUnavailable      LifecycleState = "unavailable"
+)
+
+var validTransitions = map[LifecycleState]map[LifecycleState]bool{
+	StateCreated:          {StateQueued: true, StateCanceled: true},
+	StateQueued:           {StateAdmitted: true, StateCanceled: true},
+	StateAdmitted:         {StateRunning: true, StateCanceled: true},
+	StateRunning:          {StateAwaitingDecision: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true},
+	StateAwaitingDecision: {StateRunning: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true},
+}
+
+type InvalidTransitionError struct{ From, To LifecycleState }
+
+func (e InvalidTransitionError) Error() string {
+	return "agentrun: invalid lifecycle transition " + string(e.From) + " -> " + string(e.To)
+}
+func (s LifecycleState) CanTransition(to LifecycleState) bool { return validTransitions[s][to] }
+func Transition(from, to LifecycleState) error {
+	if !from.CanTransition(to) {
+		return InvalidTransitionError{from, to}
+	}
+	return nil
+}
+
+type TerminalClass string
+
+const (
+	TerminalNone         TerminalClass = ""
+	TerminalSuccess      TerminalClass = "success"
+	TerminalFailure      TerminalClass = "failure"
+	TerminalCancellation TerminalClass = "cancellation"
+	TerminalTimeout      TerminalClass = "timeout"
+	TerminalUnavailable  TerminalClass = "unavailable"
+)
+
+var terminalClasses = map[LifecycleState]TerminalClass{
+	StateSucceeded: TerminalSuccess, StateFailed: TerminalFailure,
+	StateCanceled: TerminalCancellation, StateTimedOut: TerminalTimeout,
+	StateUnavailable: TerminalUnavailable,
+}
+
+func (s LifecycleState) TerminalClass() TerminalClass { return terminalClasses[s] }
+
+type NormalizedEvent struct {
+	at           time.Time
+	runID        Identity
+	jobID        Identity
+	invocationID Identity
+	lineageID    Identity
+	from, to     LifecycleState
+	decision     Decision
+	terminal     TerminalClass
+}
+
+func NewNormalizedEvent(invocation InvocationEnvelope, from, to LifecycleState, decision Decision, at time.Time) (NormalizedEvent, error) {
+	if err := Transition(from, to); err != nil {
+		return NormalizedEvent{}, err
+	}
+	return NormalizedEvent{at.UTC(), invocation.RunID(), invocation.JobID(), invocation.InvocationID(), invocation.LineageIdentity(), from, to, decision, to.TerminalClass()}, nil
+}
+func (e NormalizedEvent) At() time.Time                { return e.at }
+func (e NormalizedEvent) RunID() Identity              { return e.runID }
+func (e NormalizedEvent) JobID() Identity              { return e.jobID }
+func (e NormalizedEvent) InvocationID() Identity       { return e.invocationID }
+func (e NormalizedEvent) LineageIdentity() Identity    { return e.lineageID }
+func (e NormalizedEvent) From() LifecycleState         { return e.from }
+func (e NormalizedEvent) To() LifecycleState           { return e.to }
+func (e NormalizedEvent) Decision() Decision           { return e.decision }
+func (e NormalizedEvent) TerminalClass() TerminalClass { return e.terminal }
+
+func copyCapabilities(values []Capability) []Capability {
+	copyOfValues := make([]Capability, len(values))
+	for i, value := range values {
+		copyOfValues[i] = NewCapability(value.name, value.attributes)
+	}
+	sort.Slice(copyOfValues, func(i, j int) bool { return copyOfValues[i].Canonical() < copyOfValues[j].Canonical() })
+	return copyOfValues
+}
+func canonical(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+func hashIdentity(domain string, value any) Identity {
+	digest := sha256.Sum256([]byte(domain + "\x00" + canonical(value)))
+	return Identity(hex.EncodeToString(digest[:]))
+}
