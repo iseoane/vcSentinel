@@ -142,7 +142,7 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 	case review.VerdictUnavailable:
 		return Resultado{
 			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: []string{"❌ La revisión semántica no pudo ejecutarse (agente no disponible o error de infraestructura)."},
+			Mensajes: mensajesRevisionNoDisponible(resultado),
 		}
 	case review.VerdictQuestion:
 		mensajes := []string{"❓ La revisión semántica requiere atención humana explícita:"}
@@ -151,13 +151,12 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 		}
 		return Resultado{Estado: EstadoNeedsUserReview, Mensajes: mensajes}
 	case review.VerdictBlock:
-		return Resultado{
-			Estado: EstadoCodeReviewFailed,
-			Mensajes: []string{
-				"❌ La revisión semántica confirmó hallazgos CRITICAL.",
-				resultado.String(),
-			},
+		mensajes := []string{
+			"❌ La revisión semántica confirmó hallazgos CRITICAL.",
+			resultado.String(),
 		}
+		mensajes = append(mensajes, mensajesHallazgosCriticos(resultado)...)
+		return Resultado{Estado: EstadoCodeReviewFailed, Mensajes: mensajes}
 	default:
 		if tieneHallazgoCriticoRefutado(resultado) {
 			return Resultado{Estado: EstadoNeedsUserReview, Mensajes: []string{"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.", resultado.String()}}
@@ -173,4 +172,145 @@ func tieneHallazgoCriticoRefutado(resultado review.ResultadoAuditoria) bool {
 		}
 	}
 	return false
+}
+
+func mensajesRevisionNoDisponible(resultado review.ResultadoAuditoria) []string {
+	mensajes := []string{"❌ La revisión semántica no pudo ejecutarse (agente no disponible o error de infraestructura)."}
+	dimensiones := dimensionesNoDisponibles(resultado)
+	if len(dimensiones) == 0 {
+		return append(mensajes, "  No unavailable dimension evidence was retained.")
+	}
+
+	mensajes = append(mensajes, "Unavailable dimensions:")
+	for _, dimension := range dimensiones {
+		nombre := dimension.Dim
+		razon := ""
+		if dimension.Resultado != nil {
+			if nombre == "" {
+				nombre = dimension.Resultado.Dim
+			}
+			razon = dimension.Resultado.Reason
+		}
+		if razon == "" && dimension.Error != nil {
+			razon = dimension.Error.Error()
+		}
+		mensajes = append(mensajes, fmt.Sprintf("  - dimension=%q reason=%q", nombre, razon))
+	}
+	return mensajes
+}
+
+func dimensionesNoDisponibles(resultado review.ResultadoAuditoria) []review.ResultadoDimension {
+	var dimensiones []review.ResultadoDimension
+	for _, dimension := range resultado.Dims {
+		if dimension.Resultado != nil && dimension.Resultado.Verdict == review.VerdictUnavailable {
+			dimensiones = append(dimensiones, dimension)
+			continue
+		}
+		if dimension.Resultado == nil && dimension.Error != nil {
+			dimensiones = append(dimensiones, dimension)
+		}
+	}
+	return dimensiones
+}
+
+func mensajesHallazgosCriticos(resultado review.ResultadoAuditoria) []string {
+	mensajes := []string{"Confirmed CRITICAL finding evidence:"}
+	hallazgos := hallazgosCriticosEfectivos(resultado)
+	if len(hallazgos) == 0 {
+		return append(mensajes, "  No structured finding evidence was retained.")
+	}
+
+	for _, hallazgo := range hallazgos {
+		fingerprint := hallazgo.Fingerprint
+		if fingerprint == "" {
+			fingerprint = review.Fingerprint(hallazgo)
+		}
+		identity := hallazgo.ID
+		if identity == "" {
+			identity = fingerprint
+		}
+		productor := hallazgo.Producer
+		evidencia := hallazgo.Evidence
+		if hallazgo.EvidenceSet != nil && len(hallazgo.EvidenceSet.Values) > 0 {
+			if evidencia == "" {
+				evidencia = hallazgo.EvidenceSet.Values[0].Evidence
+			}
+			if productor == (review.Productor{}) {
+				productor = hallazgo.EvidenceSet.Values[0].Producer
+			}
+		}
+
+		mensajes = append(mensajes,
+			fmt.Sprintf("  finding identity=%q", identity),
+			fmt.Sprintf("    id: %q", hallazgo.ID),
+			fmt.Sprintf("    fingerprint: %q", fingerprint),
+			fmt.Sprintf("    dimension: %q", hallazgo.Dimension),
+			fmt.Sprintf("    location: file=%q line_start=%d line_end=%d symbol=%q blob=%q", hallazgo.Location.Archivo, hallazgo.Location.LineaInicio, hallazgo.Location.LineaFin, hallazgo.Location.Simbolo, hallazgo.Location.Blob),
+			fmt.Sprintf("    description: %q", hallazgo.Description),
+			fmt.Sprintf("    evidence: %q", evidencia),
+			fmt.Sprintf("    confidence: %g", hallazgo.Confidence),
+			fmt.Sprintf("    producer: %s", formatoProductor(productor)),
+		)
+		if hallazgo.EvidenceSet == nil {
+			continue
+		}
+		for index, evidence := range hallazgo.EvidenceSet.Values {
+			if index == 0 && evidence.Evidence == evidencia {
+				continue
+			}
+			mensajes = append(mensajes, fmt.Sprintf("    corroborating evidence[%d]: dimension=%q confidence=%g producer=%s value=%q", index+1, evidence.Dimension, evidence.Confidence, formatoProductor(evidence.Producer), evidence.Evidence))
+		}
+	}
+	return mensajes
+}
+
+func hallazgosCriticosEfectivos(resultado review.ResultadoAuditoria) []review.Hallazgo {
+	candidatos := resultado.Findings
+	if len(candidatos) == 0 {
+		for _, dimension := range resultado.Dims {
+			if dimension.Resultado == nil {
+				continue
+			}
+			if len(dimension.Resultado.Hallazgos) > 0 {
+				candidatos = append(candidatos, dimension.Resultado.Hallazgos...)
+				continue
+			}
+			for _, legacy := range dimension.Resultado.Findings {
+				candidatos = append(candidatos, hallazgoDesdeLegacy(dimension.Dim, legacy))
+			}
+		}
+	}
+
+	var efectivos []review.Hallazgo
+	for _, hallazgo := range candidatos {
+		// Empty status is the legacy default for parsed v2 findings; every status
+		// other than refuted is still effective under the existing gate rules.
+		if hallazgo.Severity == review.SevCritical && hallazgo.Status != review.StatusRefuted {
+			efectivos = append(efectivos, hallazgo)
+		}
+	}
+	return efectivos
+}
+
+func hallazgoDesdeLegacy(dimension string, finding review.ReviewFinding) review.Hallazgo {
+	status := finding.Status
+	if status == "" {
+		status = review.StatusConfirmed
+	}
+	hallazgo := review.Hallazgo{
+		Dimension:   dimension,
+		Severity:    finding.Severity,
+		Status:      status,
+		Description: finding.Description,
+		Location: review.Ubicacion{
+			Archivo:     finding.File,
+			LineaInicio: int(finding.Line),
+		},
+	}
+	hallazgo.Fingerprint = review.Fingerprint(hallazgo)
+	return hallazgo
+}
+
+func formatoProductor(productor review.Productor) string {
+	return fmt.Sprintf("agent=%q binary=%q model=%q reasoning_effort=%q model_verified=%t", productor.Agente, productor.Binario, productor.Modelo, productor.Esfuerzo, productor.ModeloVerificado)
 }

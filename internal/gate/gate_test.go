@@ -262,3 +262,127 @@ func (a *auditorSecuencial) EjecutarPrompt(string) (string, error) {
 func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
 }
+
+func TestTraducirVeredictoRendersCurrentEvidence(t *testing.T) {
+	confirmed := review.Hallazgo{
+		ID:          "finding-1",
+		Fingerprint: "fingerprint-1",
+		Dimension:   review.DimLogic,
+		Severity:    review.SevCritical,
+		Status:      review.StatusConfirmed,
+		Description: "unsafe fallback is reachable",
+		Evidence:    "return fallbackValue",
+		Confidence:  0.92,
+		Location: review.Ubicacion{
+			Archivo:     "internal/service.go",
+			LineaInicio: 17,
+			LineaFin:    19,
+			Simbolo:     "loadValue",
+		},
+		Producer: review.Productor{
+			Agente:           "reviewer-cli",
+			Binario:          "reviewer-cli",
+			Modelo:           "model-a",
+			Esfuerzo:         "high",
+			ModeloVerificado: true,
+		},
+	}
+
+	cases := []struct {
+		name      string
+		resultado review.ResultadoAuditoria
+		estado    string
+		exit      int
+		contains  []string
+		excludes  []string
+	}{
+		{
+			name: "blocked findings include all identifying evidence",
+			resultado: review.ResultadoAuditoria{
+				SHA:       "0123456789abcdef",
+				Veredicto: review.VerdictBlock,
+				Findings:  []review.Hallazgo{confirmed},
+			},
+			estado: EstadoCodeReviewFailed,
+			exit:   1,
+			contains: []string{
+				"finding-1",
+				"fingerprint-1",
+				"logic",
+				"internal/service.go",
+				"unsafe fallback is reachable",
+				"return fallbackValue",
+				"0.92",
+				"reviewer-cli",
+				"model-a",
+			},
+		},
+		{
+			name: "unavailable dimensions retain their reasons",
+			resultado: review.ResultadoAuditoria{
+				SHA:       "0123456789abcdef",
+				Veredicto: review.VerdictUnavailable,
+				Dims: []review.ResultadoDimension{
+					{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictUnavailable, Reason: "provider rate limit"}},
+					{Dim: review.DimSecurity, Error: errAgenteNoDisponibleTest},
+				},
+			},
+			estado: EstadoReviewInfrastructureError,
+			exit:   4,
+			contains: []string{
+				"Unavailable dimensions:",
+				`dimension="logic" reason="provider rate limit"`,
+				`dimension="security" reason="agente no disponible"`,
+			},
+		},
+		{
+			name: "refuted critical remains human review",
+			resultado: review.ResultadoAuditoria{
+				SHA:       "0123456789abcdef",
+				Veredicto: review.VerdictWarn,
+				Dims:      []review.ResultadoDimension{{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictWarn, RefutedCritical: true}}},
+			},
+			estado:   EstadoNeedsUserReview,
+			exit:     2,
+			contains: []string{"refutó un hallazgo CRITICAL"},
+		},
+		{
+			name: "mixed dimensions render only effective blockers",
+			resultado: review.ResultadoAuditoria{
+				SHA:       "0123456789abcdef",
+				Veredicto: review.VerdictBlock,
+				Findings: []review.Hallazgo{
+					confirmed,
+					{ID: "refuted-1", Fingerprint: "refuted-fingerprint", Dimension: review.DimSecurity, Severity: review.SevCritical, Status: review.StatusRefuted, Description: "already disproved", Evidence: "safe path"},
+				},
+			},
+			estado:   EstadoCodeReviewFailed,
+			exit:     1,
+			contains: []string{"finding-1", "fingerprint-1"},
+			excludes: []string{"refuted-1", "refuted-fingerprint", "safe path"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resultado := traducirVeredicto(tc.resultado)
+			if resultado.Estado != tc.estado {
+				t.Fatalf("state = %q, expected %q", resultado.Estado, tc.estado)
+			}
+			if got := CodigoSalida(resultado.Estado); got != tc.exit {
+				t.Fatalf("exit = %d, expected %d", got, tc.exit)
+			}
+			output := strings.Join(resultado.Mensajes, "\n")
+			for _, value := range tc.contains {
+				if !strings.Contains(output, value) {
+					t.Errorf("output does not contain %q: %s", value, output)
+				}
+			}
+			for _, value := range tc.excludes {
+				if strings.Contains(output, value) {
+					t.Errorf("output unexpectedly contains %q: %s", value, output)
+				}
+			}
+		})
+	}
+}
