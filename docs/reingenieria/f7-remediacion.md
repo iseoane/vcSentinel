@@ -458,52 +458,84 @@ criterio que T7.1-T7.4):
 
 ---
 
-## T7.6 — Preguntas pendientes vía `--json` y dedup real
+## T7.6 — Pending questions via `review --json` and real deduplication ✅ (closing hash `802e7e1`)
 
 | | |
 |---|---|
-| Agente | sonnet / high |
-| Presupuesto | ≤ 240 líneas |
-| Depende de | T7.5 |
-| Commit | `feat(review): exponer preguntas pendientes en --json y no repetirlas sobre el mismo blob` |
+| Agent | sonnet / high |
+| Budget | ≤ 240 lines |
+| Depends on | T7.5 |
+| Commits | `05825ad`, `a210531`, `2245dc4`, `9a8b33c`, `2f8541d`, `523e98b`, `c9d7a84`, `9792bb4`, `802e7e1` |
 
-**Contexto**: `internal/review/engine.go` (`AgentQuestion`,
-`ResultadoAuditoria.Preguntas`; el exit code `3` para `question` ya existe,
-ver el doc comment de `ejecutarReview` — "0 ok/warn, 1 block, 3 questions, 4
-provider_unavailable"), `internal/store/question.go` (T7.5:
-`RegistrarRespuesta`/`RespuestaRegistrada`, construidos y probados pero sin
-ningún caller), `README.md` §4.2 (patrón ya establecido en T0.10 para este
-mismo problema: `sentinel slice plan --json` → `exit 0` sin nada que decidir
-o `exit 3` con `decisiones_pendientes[]` → el orquestador traslada las
-preguntas al usuario → `sentinel slice apply --answers respuestas.json`).
+**Outcome**: completed. T7.6 connects T7.5's content-stable answer persistence to
+the `review` command. Pending questions are emitted through `review --json`,
+and an answer already stored for `(blob, questionID)` is applied during the
+same audit retry instead of being reported again. A fresh answer is persisted
+before the retry and participates in that same invocation, so it is not
+reduced to a future-run-only cache.
 
-**Por qué existe esta tarea**: T7.5 cerró la mitad de "las respuestas a
-`question` dejan de perderse" — la persistencia. La otra mitad —que algo
-fuera de una sesión interactiva pueda LEER qué se pregunta y TRANSPORTAR la
-respuesta— no existe: `ResultadoAuditoria.Preguntas` se calcula en
-`veredictoGlobal` pero ningún comando de `cmd/sentinel` lo imprime, ni en
-texto ni en JSON (verificado al cerrar T7.5). Sin esto, T7.5 dejó un
-primitivo sin ningún consumidor real posible, no solo "todavía no conectado".
+The final answer transport is:
 
-**Hacer**
+- `id=text` when the ID identifies one question;
+- `id@file=text` when the ID is shared by duplicate questions; and
+- an ambiguous bare `id=text` fails explicitly and reports deterministic
+  candidate files rather than selecting the first match.
 
-1. `sentinel review`/`gate --json` (el flag que ya exponen para su salida
-   estructurada) debe incluir, cuando el veredicto es `question`, una lista de
-   preguntas pendientes con la misma forma que `decisiones_pendientes[]` de
-   `slice plan --json`: id, texto de la pregunta, y la ubicación/blob al que
-   se refiere. El exit code `3` ya existe y no cambia; esta tarea es sobre el
-   *payload*, no sobre el código de salida.
-2. Antes de reportar una pregunta como pendiente, consultar
-   `store.RespuestaRegistrada(blob, questionID)` (T7.5). Si ya se respondió en
-   una ejecución anterior sobre el mismo blob, no incluirla en el `--json` de
-   pendientes: aplicar la respuesta ya registrada como si el usuario la
-   hubiera repetido vía `--answer` en esta misma ejecución.
-3. Cuando el usuario responde una pregunta nueva (mismo transporte que hoy:
-   `--answer`, análogo a `slice apply --answers`), persistirla con
-   `store.RegistrarRespuesta` para que una ejecución futura sobre el mismo
-   blob no vuelva a preguntarla.
+The implementation chain records the following outcomes:
 
-**Aceptación**: test de que, con una respuesta ya registrada para
-`(blob, questionID)`, una segunda auditoría del mismo blob (mismo SHA o tras
-un rebase que no cambie el contenido) no incluye esa pregunta en el `--json`
-de pendientes y aplica la respuesta registrada sin bloquear la ejecución.
+- `05825ad` and `a210531` added file-aware questions, the store-agnostic
+  pending-question split, JSON exposure, and stored-answer deduplication.
+- `2245dc4` made retry prompt construction deterministic.
+- `9a8b33c` and `2f8541d` fixed ID-collision data loss and the permanent
+  exit-3 pending-question deadlock, with regression coverage.
+- `523e98b` and `c9d7a84` preserved question identity at the caller and
+  restored fresh-over-stored answer precedence.
+- `9792bb4` added qualified answer resolution for duplicate IDs and closed
+  the root transport ambiguity.
+- `802e7e1` added caller-level ambiguity and deterministic-order regression
+  coverage; its risk-profile review returned `ok`.
+
+The original ficha premise that `gate --json` already exists is false. The
+gate parser accepts only `--stage` and `--profile`; T7.6 added no gate JSON
+output. Structured pending-question output is therefore completed for
+`review --json` only. Adding a separate `gate --json` contract is an explicit
+out-of-scope follow-up, not completed behavior.
+
+**Acceptance**: fulfilled. Focused tests cover pending-question JSON,
+content-stable `(blob, questionID)` deduplication, persistence of fresh
+answers, same-invocation retry, duplicate-ID qualification, explicit
+ambiguity errors, and deterministic candidate/order handling. Independent
+verification passed: focused tests, `go build ./...`, `go vet ./...`,
+`go test ./...`, and all guardian checks. The final `sentinel gate
+--stage pre-push` on `802e7e1` returned `PASS`; its risk-profile review
+reported `spec`, `logic`, and `tests` as `ok`. The review used the configured
+risk profile and did not force the canonical six dimensions.
+
+**Verification notes**: a temporary configuration with `active_agent: claude`
+produced opaque `exit status 1` results. After switching to OpenCode, valid
+results used `openai/gpt-5.6-luna` with effort `max`. One malformed tests
+JSONL retry was isolated and the transport subsequently passed. These
+`unavailable`/transport events were treated as infrastructure or input
+problems, not as code failures.
+
+**Review findings accepted with reason**:
+
+- Store identity remains `(blob, questionID)` without binding the question
+  text. A genuinely new question that reuses an ID on the same blob can
+  inherit an old answer. This is inherited from T7.5 and is now reachable in
+  one invocation; redesigning persistence is outside T7.6.
+- Retry orchestration remains in `cmd/sentinel`; `review.OpcionesAuditoria.Respuestas`
+  remains an untyped string with textual input/output grammars, and
+  `aplicarPreguntasPendientes` has low cohesion with no explicit store/Git
+  seams. Moving it would affect `review`, `gate`, and `pr review` beyond this
+  task, so it is deferred.
+- Raw newlines in answers can forge additional retry-prompt lines. This is a
+  pre-existing transport pattern and was not widened in kind by T7.6.
+- Distinct files with identical Git blobs and the same question ID still share
+  one persisted `(blob, ID)` record. Qualified transport resolves distinct-file
+  ambiguity only while those files have distinct blobs. This is an explicit
+  consequence of T7.5 content-stable identity, accepted instead of redesigning
+  persistence in T7.6.
+- The `prompts.go` finding that the revert was unexplained was disproven:
+  paragraph 2 of the `c9d7a84` commit message explains the revert explicitly.
+  No code change was made for that finding.
