@@ -263,7 +263,7 @@ func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string)
 	return a.EjecutarPrompt(prompt)
 }
 
-func TestTraducirVeredictoRendersCurrentEvidence(t *testing.T) {
+func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 	confirmed := review.Hallazgo{
 		ID:          "finding-1",
 		Fingerprint: "fingerprint-1",
@@ -287,24 +287,39 @@ func TestTraducirVeredictoRendersCurrentEvidence(t *testing.T) {
 			ModeloVerificado: true,
 		},
 	}
+	refuted := review.Hallazgo{
+		ID:          "refuted-1",
+		Fingerprint: "refuted-fingerprint",
+		Dimension:   review.DimLogic,
+		Severity:    review.SevCritical,
+		Status:      review.StatusRefuted,
+		Description: "already disproved",
+		Evidence:    "safe path",
+		Location: review.Ubicacion{
+			Archivo:     "internal/service.go",
+			LineaInicio: 23,
+		},
+	}
 
 	cases := []struct {
-		name      string
-		resultado review.ResultadoAuditoria
-		estado    string
-		exit      int
-		contains  []string
-		excludes  []string
+		name          string
+		auditResult   review.ResultadoAuditoria
+		expectedState string
+		expectedExit  int
+		findingCount  int
+		contains      []string
+		excludes      []string
 	}{
 		{
 			name: "blocked findings include all identifying evidence",
-			resultado: review.ResultadoAuditoria{
+			auditResult: review.ResultadoAuditoria{
 				SHA:       "0123456789abcdef",
 				Veredicto: review.VerdictBlock,
 				Findings:  []review.Hallazgo{confirmed},
 			},
-			estado: EstadoCodeReviewFailed,
-			exit:   1,
+			expectedState: EstadoCodeReviewFailed,
+			expectedExit:  1,
+			findingCount:  1,
 			contains: []string{
 				"finding-1",
 				"fingerprint-1",
@@ -319,7 +334,7 @@ func TestTraducirVeredictoRendersCurrentEvidence(t *testing.T) {
 		},
 		{
 			name: "unavailable dimensions retain their reasons",
-			resultado: review.ResultadoAuditoria{
+			auditResult: review.ResultadoAuditoria{
 				SHA:       "0123456789abcdef",
 				Veredicto: review.VerdictUnavailable,
 				Dims: []review.ResultadoDimension{
@@ -327,8 +342,8 @@ func TestTraducirVeredictoRendersCurrentEvidence(t *testing.T) {
 					{Dim: review.DimSecurity, Error: errAgenteNoDisponibleTest},
 				},
 			},
-			estado: EstadoReviewInfrastructureError,
-			exit:   4,
+			expectedState: EstadoReviewInfrastructureError,
+			expectedExit:  4,
 			contains: []string{
 				"Unavailable dimensions:",
 				`dimension="logic" reason="provider rate limit"`,
@@ -337,48 +352,77 @@ func TestTraducirVeredictoRendersCurrentEvidence(t *testing.T) {
 		},
 		{
 			name: "refuted critical remains human review",
-			resultado: review.ResultadoAuditoria{
+			auditResult: review.ResultadoAuditoria{
 				SHA:       "0123456789abcdef",
 				Veredicto: review.VerdictWarn,
 				Dims:      []review.ResultadoDimension{{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictWarn, RefutedCritical: true}}},
 			},
-			estado:   EstadoNeedsUserReview,
-			exit:     2,
-			contains: []string{"refutó un hallazgo CRITICAL"},
+			expectedState: EstadoNeedsUserReview,
+			expectedExit:  2,
+			contains:      []string{"refutó un hallazgo CRITICAL"},
 		},
 		{
-			name: "mixed dimensions render only effective blockers",
-			resultado: review.ResultadoAuditoria{
+			name: "mixed v1 and v2 dimensions render distinct effective blockers",
+			auditResult: review.ResultadoAuditoria{
 				SHA:       "0123456789abcdef",
 				Veredicto: review.VerdictBlock,
 				Findings: []review.Hallazgo{
 					confirmed,
-					{ID: "refuted-1", Fingerprint: "refuted-fingerprint", Dimension: review.DimSecurity, Severity: review.SevCritical, Status: review.StatusRefuted, Description: "already disproved", Evidence: "safe path"},
+					refuted,
+				},
+				Dims: []review.ResultadoDimension{
+					{
+						Dim: review.DimLogic,
+						Resultado: &review.DimensionResult{
+							Dim:       review.DimLogic,
+							Verdict:   review.VerdictBlock,
+							Hallazgos: []review.Hallazgo{confirmed, refuted},
+							Findings: []review.ReviewFinding{
+								{Dimension: review.DimLogic, File: confirmed.Location.Archivo, Line: 17, Severity: confirmed.Severity, Description: confirmed.Description, Status: review.StatusConfirmed},
+								{Dimension: review.DimLogic, File: refuted.Location.Archivo, Line: 23, Severity: refuted.Severity, Description: refuted.Description, Status: review.StatusRefuted},
+							},
+						},
+					},
+					{
+						Dim: review.DimSecurity,
+						Resultado: &review.DimensionResult{
+							Dim:     review.DimSecurity,
+							Verdict: review.VerdictBlock,
+							Findings: []review.ReviewFinding{
+								{Dimension: review.DimSecurity, File: "internal/legacy.go", Line: 42, Severity: review.SevCritical, Description: "legacy blocker remains effective", Status: review.StatusConfirmed},
+								{Dimension: review.DimSecurity, File: "internal/refuted.go", Line: 8, Severity: review.SevCritical, Description: "legacy blocker was refuted", Status: review.StatusRefuted},
+							},
+						},
+					},
 				},
 			},
-			estado:   EstadoCodeReviewFailed,
-			exit:     1,
-			contains: []string{"finding-1", "fingerprint-1"},
-			excludes: []string{"refuted-1", "refuted-fingerprint", "safe path"},
+			expectedState: EstadoCodeReviewFailed,
+			expectedExit:  1,
+			findingCount:  2,
+			contains:      []string{"finding-1", "fingerprint-1", "legacy blocker remains effective", "internal/legacy.go"},
+			excludes:      []string{"refuted-1", "refuted-fingerprint", "safe path", "legacy blocker was refuted", "internal/refuted.go"},
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			resultado := traducirVeredicto(tc.resultado)
-			if resultado.Estado != tc.estado {
-				t.Fatalf("state = %q, expected %q", resultado.Estado, tc.estado)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			translated := traducirVeredicto(testCase.auditResult)
+			if translated.Estado != testCase.expectedState {
+				t.Fatalf("state = %q, expected %q", translated.Estado, testCase.expectedState)
 			}
-			if got := CodigoSalida(resultado.Estado); got != tc.exit {
-				t.Fatalf("exit = %d, expected %d", got, tc.exit)
+			if got := CodigoSalida(translated.Estado); got != testCase.expectedExit {
+				t.Fatalf("exit = %d, expected %d", got, testCase.expectedExit)
 			}
-			output := strings.Join(resultado.Mensajes, "\n")
-			for _, value := range tc.contains {
+			output := strings.Join(translated.Mensajes, "\n")
+			if got := strings.Count(output, "finding identity="); got != testCase.findingCount {
+				t.Errorf("finding count = %d, expected %d: %s", got, testCase.findingCount, output)
+			}
+			for _, value := range testCase.contains {
 				if !strings.Contains(output, value) {
 					t.Errorf("output does not contain %q: %s", value, output)
 				}
 			}
-			for _, value := range tc.excludes {
+			for _, value := range testCase.excludes {
 				if strings.Contains(output, value) {
 					t.Errorf("output unexpectedly contains %q: %s", value, output)
 				}

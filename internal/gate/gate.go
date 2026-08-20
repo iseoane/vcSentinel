@@ -142,7 +142,7 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 	case review.VerdictUnavailable:
 		return Resultado{
 			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: mensajesRevisionNoDisponible(resultado),
+			Mensajes: unavailableReviewMessages(resultado),
 		}
 	case review.VerdictQuestion:
 		mensajes := []string{"❓ La revisión semántica requiere atención humana explícita:"}
@@ -151,12 +151,12 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 		}
 		return Resultado{Estado: EstadoNeedsUserReview, Mensajes: mensajes}
 	case review.VerdictBlock:
-		mensajes := []string{
+		messages := []string{
 			"❌ La revisión semántica confirmó hallazgos CRITICAL.",
 			resultado.String(),
 		}
-		mensajes = append(mensajes, mensajesHallazgosCriticos(resultado)...)
-		return Resultado{Estado: EstadoCodeReviewFailed, Mensajes: mensajes}
+		messages = append(messages, criticalFindingMessages(resultado)...)
+		return Resultado{Estado: EstadoCodeReviewFailed, Mensajes: messages}
 	default:
 		if tieneHallazgoCriticoRefutado(resultado) {
 			return Resultado{Estado: EstadoNeedsUserReview, Mensajes: []string{"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.", resultado.String()}}
@@ -174,130 +174,145 @@ func tieneHallazgoCriticoRefutado(resultado review.ResultadoAuditoria) bool {
 	return false
 }
 
-func mensajesRevisionNoDisponible(resultado review.ResultadoAuditoria) []string {
-	mensajes := []string{"❌ La revisión semántica no pudo ejecutarse (agente no disponible o error de infraestructura)."}
-	dimensiones := dimensionesNoDisponibles(resultado)
-	if len(dimensiones) == 0 {
-		return append(mensajes, "  No unavailable dimension evidence was retained.")
+func unavailableReviewMessages(auditResult review.ResultadoAuditoria) []string {
+	messages := []string{"❌ La revisión semántica no pudo ejecutarse (agente no disponible o error de infraestructura)."}
+	dimensions := unavailableDimensions(auditResult)
+	if len(dimensions) == 0 {
+		return append(messages, "  No unavailable dimension evidence was retained.")
 	}
 
-	mensajes = append(mensajes, "Unavailable dimensions:")
-	for _, dimension := range dimensiones {
-		nombre := dimension.Dim
-		razon := ""
+	messages = append(messages, "Unavailable dimensions:")
+	for _, dimension := range dimensions {
+		dimensionName := dimension.Dim
+		reason := ""
 		if dimension.Resultado != nil {
-			if nombre == "" {
-				nombre = dimension.Resultado.Dim
+			if dimensionName == "" {
+				dimensionName = dimension.Resultado.Dim
 			}
-			razon = dimension.Resultado.Reason
+			reason = dimension.Resultado.Reason
 		}
-		if razon == "" && dimension.Error != nil {
-			razon = dimension.Error.Error()
+		if reason == "" && dimension.Error != nil {
+			reason = dimension.Error.Error()
 		}
-		mensajes = append(mensajes, fmt.Sprintf("  - dimension=%q reason=%q", nombre, razon))
+		messages = append(messages, fmt.Sprintf("  - dimension=%q reason=%q", dimensionName, reason))
 	}
-	return mensajes
+	return messages
 }
 
-func dimensionesNoDisponibles(resultado review.ResultadoAuditoria) []review.ResultadoDimension {
-	var dimensiones []review.ResultadoDimension
-	for _, dimension := range resultado.Dims {
+func unavailableDimensions(auditResult review.ResultadoAuditoria) []review.ResultadoDimension {
+	var dimensions []review.ResultadoDimension
+	for _, dimension := range auditResult.Dims {
 		if dimension.Resultado != nil && dimension.Resultado.Verdict == review.VerdictUnavailable {
-			dimensiones = append(dimensiones, dimension)
+			dimensions = append(dimensions, dimension)
 			continue
 		}
 		if dimension.Resultado == nil && dimension.Error != nil {
-			dimensiones = append(dimensiones, dimension)
+			dimensions = append(dimensions, dimension)
 		}
 	}
-	return dimensiones
+	return dimensions
 }
 
-func mensajesHallazgosCriticos(resultado review.ResultadoAuditoria) []string {
-	mensajes := []string{"Confirmed CRITICAL finding evidence:"}
-	hallazgos := hallazgosCriticosEfectivos(resultado)
-	if len(hallazgos) == 0 {
-		return append(mensajes, "  No structured finding evidence was retained.")
+func criticalFindingMessages(auditResult review.ResultadoAuditoria) []string {
+	messages := []string{"Confirmed CRITICAL finding evidence:"}
+	findings := effectiveCriticalFindings(auditResult)
+	if len(findings) == 0 {
+		return append(messages, "  No structured finding evidence was retained.")
 	}
 
-	for _, hallazgo := range hallazgos {
-		fingerprint := hallazgo.Fingerprint
+	for _, finding := range findings {
+		fingerprint := finding.Fingerprint
 		if fingerprint == "" {
-			fingerprint = review.Fingerprint(hallazgo)
+			fingerprint = review.Fingerprint(finding)
 		}
-		identity := hallazgo.ID
+		identity := finding.ID
 		if identity == "" {
 			identity = fingerprint
 		}
-		productor := hallazgo.Producer
-		evidencia := hallazgo.Evidence
-		if hallazgo.EvidenceSet != nil && len(hallazgo.EvidenceSet.Values) > 0 {
-			if evidencia == "" {
-				evidencia = hallazgo.EvidenceSet.Values[0].Evidence
+		producer := finding.Producer
+		primaryEvidence := finding.Evidence
+		if finding.EvidenceSet != nil && len(finding.EvidenceSet.Values) > 0 {
+			if primaryEvidence == "" {
+				primaryEvidence = finding.EvidenceSet.Values[0].Evidence
 			}
-			if productor == (review.Productor{}) {
-				productor = hallazgo.EvidenceSet.Values[0].Producer
+			if producer == (review.Productor{}) {
+				producer = finding.EvidenceSet.Values[0].Producer
 			}
 		}
 
-		mensajes = append(mensajes,
+		messages = append(messages,
 			fmt.Sprintf("  finding identity=%q", identity),
-			fmt.Sprintf("    id: %q", hallazgo.ID),
+			fmt.Sprintf("    id: %q", finding.ID),
 			fmt.Sprintf("    fingerprint: %q", fingerprint),
-			fmt.Sprintf("    dimension: %q", hallazgo.Dimension),
-			fmt.Sprintf("    location: file=%q line_start=%d line_end=%d symbol=%q blob=%q", hallazgo.Location.Archivo, hallazgo.Location.LineaInicio, hallazgo.Location.LineaFin, hallazgo.Location.Simbolo, hallazgo.Location.Blob),
-			fmt.Sprintf("    description: %q", hallazgo.Description),
-			fmt.Sprintf("    evidence: %q", evidencia),
-			fmt.Sprintf("    confidence: %g", hallazgo.Confidence),
-			fmt.Sprintf("    producer: %s", formatoProductor(productor)),
+			fmt.Sprintf("    dimension: %q", finding.Dimension),
+			fmt.Sprintf("    location: file=%q line_start=%d line_end=%d symbol=%q blob=%q", finding.Location.Archivo, finding.Location.LineaInicio, finding.Location.LineaFin, finding.Location.Simbolo, finding.Location.Blob),
+			fmt.Sprintf("    description: %q", finding.Description),
+			fmt.Sprintf("    evidence: %q", primaryEvidence),
+			fmt.Sprintf("    confidence: %g", finding.Confidence),
+			fmt.Sprintf("    producer: %s", formatProducer(producer)),
 		)
-		if hallazgo.EvidenceSet == nil {
+		if finding.EvidenceSet == nil {
 			continue
 		}
-		for index, evidence := range hallazgo.EvidenceSet.Values {
-			if index == 0 && evidence.Evidence == evidencia {
+		for index, corroboratingEvidence := range finding.EvidenceSet.Values {
+			if index == 0 && corroboratingEvidence.Evidence == primaryEvidence {
 				continue
 			}
-			mensajes = append(mensajes, fmt.Sprintf("    corroborating evidence[%d]: dimension=%q confidence=%g producer=%s value=%q", index+1, evidence.Dimension, evidence.Confidence, formatoProductor(evidence.Producer), evidence.Evidence))
+			messages = append(messages, fmt.Sprintf("    corroborating evidence[%d]: dimension=%q confidence=%g producer=%s value=%q", index+1, corroboratingEvidence.Dimension, corroboratingEvidence.Confidence, formatProducer(corroboratingEvidence.Producer), corroboratingEvidence.Evidence))
 		}
 	}
-	return mensajes
+	return messages
 }
 
-func hallazgosCriticosEfectivos(resultado review.ResultadoAuditoria) []review.Hallazgo {
-	candidatos := resultado.Findings
-	if len(candidatos) == 0 {
-		for _, dimension := range resultado.Dims {
-			if dimension.Resultado == nil {
+func effectiveCriticalFindings(auditResult review.ResultadoAuditoria) []review.Hallazgo {
+	findings := append([]review.Hallazgo(nil), auditResult.Findings...)
+	hasAggregatedFindings := len(auditResult.Findings) > 0
+	for _, dimension := range auditResult.Dims {
+		if dimension.Resultado == nil {
+			continue
+		}
+		dimensionResult := dimension.Resultado
+		if !hasAggregatedFindings {
+			findings = append(findings, dimensionResult.Hallazgos...)
+		}
+		for _, legacyFinding := range dimensionResult.Findings {
+			if isLegacyFindingRepresented(legacyFinding, dimension.Dim, dimensionResult.Hallazgos) {
 				continue
 			}
-			if len(dimension.Resultado.Hallazgos) > 0 {
-				candidatos = append(candidatos, dimension.Resultado.Hallazgos...)
-				continue
-			}
-			for _, legacy := range dimension.Resultado.Findings {
-				candidatos = append(candidatos, hallazgoDesdeLegacy(dimension.Dim, legacy))
-			}
+			findings = append(findings, findingFromLegacy(dimension.Dim, legacyFinding))
 		}
 	}
 
-	var efectivos []review.Hallazgo
-	for _, hallazgo := range candidatos {
+	var effective []review.Hallazgo
+	for _, finding := range findings {
 		// Empty status is the legacy default for parsed v2 findings; every status
 		// other than refuted is still effective under the existing gate rules.
-		if hallazgo.Severity == review.SevCritical && hallazgo.Status != review.StatusRefuted {
-			efectivos = append(efectivos, hallazgo)
+		if finding.Severity == review.SevCritical && finding.Status != review.StatusRefuted {
+			effective = append(effective, finding)
 		}
 	}
-	return efectivos
+	return effective
 }
 
-func hallazgoDesdeLegacy(dimension string, finding review.ReviewFinding) review.Hallazgo {
+func isLegacyFindingRepresented(legacy review.ReviewFinding, dimension string, v2Findings []review.Hallazgo) bool {
+	for _, v2Finding := range v2Findings {
+		if v2Finding.Dimension == dimension &&
+			v2Finding.Severity == legacy.Severity &&
+			v2Finding.Description == legacy.Description &&
+			v2Finding.Location.Archivo == legacy.File &&
+			v2Finding.Location.LineaInicio == int(legacy.Line) {
+			return true
+		}
+	}
+	return false
+}
+
+func findingFromLegacy(dimension string, finding review.ReviewFinding) review.Hallazgo {
 	status := finding.Status
 	if status == "" {
 		status = review.StatusConfirmed
 	}
-	hallazgo := review.Hallazgo{
+	convertedFinding := review.Hallazgo{
 		Dimension:   dimension,
 		Severity:    finding.Severity,
 		Status:      status,
@@ -307,10 +322,10 @@ func hallazgoDesdeLegacy(dimension string, finding review.ReviewFinding) review.
 			LineaInicio: int(finding.Line),
 		},
 	}
-	hallazgo.Fingerprint = review.Fingerprint(hallazgo)
-	return hallazgo
+	convertedFinding.Fingerprint = review.Fingerprint(convertedFinding)
+	return convertedFinding
 }
 
-func formatoProductor(productor review.Productor) string {
-	return fmt.Sprintf("agent=%q binary=%q model=%q reasoning_effort=%q model_verified=%t", productor.Agente, productor.Binario, productor.Modelo, productor.Esfuerzo, productor.ModeloVerificado)
+func formatProducer(producer review.Productor) string {
+	return fmt.Sprintf("agent=%q binary=%q model=%q reasoning_effort=%q model_verified=%t", producer.Agente, producer.Binario, producer.Modelo, producer.Esfuerzo, producer.ModeloVerificado)
 }
