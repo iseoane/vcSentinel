@@ -615,7 +615,7 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 	})
 	opciones := review.OpcionesAuditoria{
 		SHA: sha, Bundles: bundlesDePruebaReview(),
-		Respuestas: "q1@a.go=fresh answer for a.go",
+		Respuestas: "q1@b.go=fresh answer for b.go",
 	}
 
 	resultadoFinal, pendientes, applyErr := aplicarPreguntasPendientes(
@@ -634,20 +634,121 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 	if !ok {
 		t.Fatalf("ningún prompt recibido contiene la sección de aclaraciones del usuario: %+v", fake.prompts)
 	}
-	if strings.Contains(promptConRespuestas, "respuesta para a.go") {
-		t.Errorf("the retry prompt kept the stored answer overridden for a.go:\n%s", promptConRespuestas)
+	if strings.Contains(promptConRespuestas, "respuesta para b.go") {
+		t.Errorf("the retry prompt kept the stored answer overridden for b.go:\n%s", promptConRespuestas)
 	}
-	if !strings.Contains(promptConRespuestas, "q1@a.go: fresh answer for a.go") {
-		t.Errorf("the retry prompt does not contain the fresh qualified answer for a.go:\n%s", promptConRespuestas)
+	if !strings.Contains(promptConRespuestas, "q1@a.go: respuesta para a.go") {
+		t.Errorf("the retry prompt lost the stored answer for a.go:\n%s", promptConRespuestas)
 	}
-	if !strings.Contains(promptConRespuestas, "q1@b.go: respuesta para b.go") {
-		t.Errorf("the retry prompt lost the stored answer for b.go:\n%s", promptConRespuestas)
+	if !strings.Contains(promptConRespuestas, "q1@b.go: fresh answer for b.go") {
+		t.Errorf("the retry prompt does not contain the fresh qualified answer for b.go:\n%s", promptConRespuestas)
 	}
-	if got, ok, err := st.RespuestaRegistrada(blobA, "q1"); err != nil || !ok || got != "fresh answer for a.go" {
-		t.Errorf("stored answer for a.go = %q, %v, %v; want fresh qualified answer", got, ok, err)
+	storedLine := strings.Index(promptConRespuestas, "q1@a.go: respuesta para a.go")
+	freshLine := strings.Index(promptConRespuestas, "q1@b.go: fresh answer for b.go")
+	if storedLine == -1 || freshLine == -1 {
+		t.Fatalf("qualified answer lines are missing from the retry prompt:\n%s", promptConRespuestas)
 	}
-	if got, ok, err := st.RespuestaRegistrada(blobB, "q1"); err != nil || !ok || got != "respuesta para b.go" {
-		t.Errorf("stored answer for b.go = %q, %v, %v; want original stored answer", got, ok, err)
+	if storedLine > freshLine {
+		t.Errorf("qualified answer lines are not ordered by (ID, File):\n%s", promptConRespuestas)
+	}
+	if got, ok, err := st.RespuestaRegistrada(blobA, "q1"); err != nil || !ok || got != "respuesta para a.go" {
+		t.Errorf("stored answer for a.go = %q, %v, %v; want original stored answer", got, ok, err)
+	}
+	if got, ok, err := st.RespuestaRegistrada(blobB, "q1"); err != nil || !ok || got != "fresh answer for b.go" {
+		t.Errorf("stored answer for b.go = %q, %v, %v; want fresh qualified answer", got, ok, err)
+	}
+}
+
+// TestAplicarPreguntasPendientes_AmbiguousBareAnswerPropagatesWithoutRetryOrPersistence
+// proves that a bare answer cannot select one of several questions sharing an
+// ID: the caller returns the deterministic ambiguity error before retrying the
+// audit or persisting an answer for either file.
+func TestAplicarPreguntasPendientes_AmbiguousBareAnswerPropagatesWithoutRetryOrPersistence(t *testing.T) {
+	repo := t.TempDir()
+	t.Chdir(repo)
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@vas.sentinel"},
+		{"config", "user.name", "VAS Sentinel Test"},
+		{"config", "core.hooksPath", ""},
+	} {
+		gitEjecutarPruebaReview(t, args...)
+	}
+	if err := os.WriteFile("a.go", []byte("package a\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("b.go", []byte("package b\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitEjecutarPruebaReview(t, "add", "a.go", "b.go")
+	gitEjecutarPruebaReview(t, "commit", "-m", "feat(test): ambiguous question fixtures")
+	shaOutput, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+	sha := strings.TrimSpace(string(shaOutput))
+
+	blobA, err := git.BlobDeArchivoEnCommit(sha, "a.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit a.go: %v", err)
+	}
+	blobB, err := git.BlobDeArchivoEnCommit(sha, "b.go")
+	if err != nil {
+		t.Fatalf("BlobDeArchivoEnCommit b.go: %v", err)
+	}
+	gitCommonDir, err := git.ObtenerGitCommonDir(repo)
+	if err != nil {
+		t.Fatalf("ObtenerGitCommonDir: %v", err)
+	}
+	st := store.NuevoStore(gitCommonDir)
+
+	resultado := review.ResultadoAuditoria{
+		Veredicto: review.VerdictQuestion,
+		Preguntas: []review.AgentQuestion{
+			{ID: "q1", Text: "question for b.go", File: "b.go"},
+			{ID: "q1", Text: "question for a.go", File: "a.go"},
+		},
+	}
+	fake := &agenteFakeSecuencialReview{respuestas: []string{`{"dim":"logic","verdict":"ok"}`}}
+	factoryCalls := 0
+	fabrica := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+		factoryCalls++
+		return fake, "test", nil
+	}
+	opciones := review.OpcionesAuditoria{
+		SHA: sha, Bundles: bundlesDePruebaReview(), Respuestas: "q1=bare answer",
+	}
+
+	_, pendientes, applyErr := aplicarPreguntasPendientes(
+		repo, sha, fabrica, config.Config{}, modelprobe.NuevoVerificador(nil), opciones, resultado)
+	const wantErr = `answer "q1" is ambiguous; qualify one of: q1@a.go, q1@b.go`
+	if applyErr == nil {
+		t.Fatal("expected the ambiguous bare answer error")
+	}
+	if applyErr.Error() != wantErr {
+		t.Fatalf("aplicarPreguntasPendientes error = %q, want %q", applyErr, wantErr)
+	}
+	if len(pendientes) != 2 {
+		t.Fatalf("pendientes = %+v, want both original questions", pendientes)
+	}
+	if factoryCalls != 0 || fake.llamadas != 0 || len(fake.prompts) != 0 {
+		t.Fatalf("ambiguous answer triggered an audit retry: factory calls=%d, agent calls=%d, prompts=%d", factoryCalls, fake.llamadas, len(fake.prompts))
+	}
+
+	for _, fixture := range []struct {
+		file string
+		blob string
+	}{
+		{file: "a.go", blob: blobA},
+		{file: "b.go", blob: blobB},
+	} {
+		answer, ok, lookupErr := st.RespuestaRegistrada(fixture.blob, "q1")
+		if lookupErr != nil {
+			t.Fatalf("RespuestaRegistrada %s: %v", fixture.file, lookupErr)
+		}
+		if ok {
+			t.Errorf("ambiguous answer persisted for %s: %q", fixture.file, answer)
+		}
 	}
 }
 
@@ -760,16 +861,16 @@ func TestAplicarPreguntasPendientes_QuestionVacioSinReintento_NoSeRebajaAWarn(t 
 
 func TestResolveQuestionAnswers(t *testing.T) {
 	questions := []review.AgentQuestion{
-		{ID: "q1", File: "a.go"},
 		{ID: "q1", File: "b.go"},
+		{ID: "q1", File: "a.go"},
 		{ID: "q2", File: "c.go"},
 	}
 	tests := []struct {
-		name         string
-		raw          map[string]string
-		want         map[questionKey]string
-		wantProse    string
-		wantErrParts []string
+		name      string
+		raw       map[string]string
+		want      map[questionKey]string
+		wantProse string
+		wantErr   string
 	}{
 		{
 			name: "bare unique remains compatible",
@@ -782,9 +883,9 @@ func TestResolveQuestionAnswers(t *testing.T) {
 			want: map[questionKey]string{{ID: "q1", File: "b.go"}: "only b"},
 		},
 		{
-			name:         "ambiguous bare selector reports deterministic candidates",
-			raw:          map[string]string{"q1": "ambiguous"},
-			wantErrParts: []string{"q1@a.go", "q1@b.go"},
+			name:    "ambiguous bare selector reports deterministic candidates",
+			raw:     map[string]string{"q1": "ambiguous"},
+			wantErr: `answer "q1" is ambiguous; qualify one of: q1@a.go, q1@b.go`,
 		},
 		{
 			name:      "unknown qualified selector remains prose",
@@ -797,14 +898,12 @@ func TestResolveQuestionAnswers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, prose, err := resolveQuestionAnswers(tt.raw, "", questions)
-			if len(tt.wantErrParts) > 0 {
+			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatal("expected an ambiguity error")
 				}
-				for _, part := range tt.wantErrParts {
-					if !strings.Contains(err.Error(), part) {
-						t.Errorf("error %q does not name candidate %q", err, part)
-					}
+				if err.Error() != tt.wantErr {
+					t.Errorf("error = %q, want %q", err, tt.wantErr)
 				}
 				return
 			}
