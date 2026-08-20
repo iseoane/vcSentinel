@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -143,8 +141,7 @@ func trackingParent(worktree, branch string, run parentCommandRunner) (string, s
 }
 
 type localParentCandidate struct {
-	ref, base string
-	when      int64
+	ref, tip string
 }
 
 func localMergeBaseParent(worktree, branch string, run parentCommandRunner) (string, string, error) {
@@ -162,40 +159,35 @@ func localMergeBaseParent(worktree, branch string, run parentCommandRunner) (str
 		if ref == "" || ref == branch || ref == "main" || ref == "master" {
 			continue
 		}
+		tip, tipErr := gitText(run, worktree, "rev-parse", "--verify", ref+"^{commit}")
+		if tipErr != nil || tip == head {
+			continue
+		}
 		base, baseErr := gitText(run, worktree, "merge-base", ref, "HEAD")
-		if baseErr != nil || base == head {
-			continue
-		}
-		stamp, stampErr := gitText(run, worktree, "show", "-s", "--format=%ct", base)
-		if stampErr != nil {
-			continue
-		}
-		when, parseErr := strconv.ParseInt(stamp, 10, 64)
-		if parseErr == nil {
-			candidates = append(candidates, localParentCandidate{ref: ref, base: base, when: when})
+		if baseErr == nil && base == tip {
+			candidates = append(candidates, localParentCandidate{ref: ref, tip: tip})
 		}
 	}
 	if len(candidates) == 0 {
 		return "", "local branches: no non-default branch has a reliable merge-base", nil
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].when > candidates[j].when })
-	best := candidates[0].when
-	var top []localParentCandidate
+	var winners []localParentCandidate
 	for _, candidate := range candidates {
-		if candidate.when == best {
-			top = append(top, candidate)
-		}
-	}
-	for i := range top {
-		for j := range top {
-			if i != j && top[i].base != top[j].base && strings.TrimSpace(run(worktree, "git", "merge-base", top[i].base, top[j].base).stdout) == top[i].base {
-				top[i].ref = ""
+		isAncestorOfAnother := false
+		for _, other := range candidates {
+			if candidate.tip == other.tip {
+				continue
+			}
+			base, err := gitText(run, worktree, "merge-base", candidate.tip, other.tip)
+			if err != nil {
+				return "", "local branches: topology unavailable", err
+			}
+			if base == candidate.tip {
+				isAncestorOfAnother = true
+				break
 			}
 		}
-	}
-	var winners []localParentCandidate
-	for _, candidate := range top {
-		if candidate.ref != "" {
+		if !isAncestorOfAnother {
 			winners = append(winners, candidate)
 		}
 	}
@@ -209,7 +201,7 @@ func localMergeBaseParent(worktree, branch string, run parentCommandRunner) (str
 func localCandidateEvidence(candidates, winners []localParentCandidate) string {
 	parts := make([]string, len(candidates))
 	for i, candidate := range candidates {
-		parts[i] = fmt.Sprintf("%s(base=%s,time=%d)", candidate.ref, candidate.base, candidate.when)
+		parts[i] = fmt.Sprintf("%s(tip=%s)", candidate.ref, candidate.tip)
 	}
 	if len(winners) == 1 {
 		return fmt.Sprintf("local merge-base candidates: %s; winner=%s", strings.Join(parts, ", "), winners[0].ref)

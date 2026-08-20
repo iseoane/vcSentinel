@@ -16,7 +16,7 @@ func TestResolveParentBranchPrecedence(t *testing.T) {
 		wantSource                                ParentSource
 	}{
 		{"explicit parent wins", "B", `{"baseRefName":"A"}`, "B", "explicit parent", false, ParentSourceExplicit},
-		{"pull request base wins", "", `{"baseRefName":"A"}`, "A", "gh pr view", false, ParentSourcePullRequest},
+		{"pull request base wins over tracking upstream", "", `{"baseRefName":"A"}`, "A", "gh pr view", true, ParentSourcePullRequest},
 		{"tracking upstream wins", "", "", "B", "tracking upstream", true, ParentSourceTracking},
 	}
 
@@ -49,7 +49,7 @@ func TestResolveParentBranchPrecedence(t *testing.T) {
 		})
 	}
 }
-func TestResolveParentBranchUsesLatestUnambiguousLocalMergeBase(t *testing.T) {
+func TestResolveParentBranchUsesTopologicallyClosestLocalAncestor(t *testing.T) {
 	dir := parentStackRepository(t)
 	got, err := resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(noPullRequestResult()))
 	if err != nil {
@@ -57,6 +57,33 @@ func TestResolveParentBranchUsesLatestUnambiguousLocalMergeBase(t *testing.T) {
 	}
 	if got.Reference != "B" || got.Source != ParentSourceLocalMergeBase {
 		t.Fatalf("resolution = %+v, want local branch B", got)
+	}
+}
+
+func TestResolveParentBranchRejectsMissingExplicitParent(t *testing.T) {
+	dir := parentStackRepository(t)
+	parentGit(t, dir, "branch", "--set-upstream-to=B")
+	_, err := resolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: "missing"}, fakeParentRunner(noPullRequestResult()))
+	if err == nil || !strings.Contains(err.Error(), `parent reference "missing" is not a commit`) {
+		t.Fatalf("error = %v, want missing explicit parent error without fallback", err)
+	}
+}
+
+func TestResolveParentBranchRejectsMissingPullRequestBase(t *testing.T) {
+	dir := parentStackRepository(t)
+	parentGit(t, dir, "branch", "--set-upstream-to=B")
+	gh := parentCommandResult{stdout: `{"baseRefName":"missing"}`}
+	_, err := resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(gh))
+	if err == nil || !strings.Contains(err.Error(), `parent reference "missing" is not a commit`) {
+		t.Fatalf("error = %v, want missing pull request base error without fallback", err)
+	}
+}
+
+func TestResolveParentBranchRejectsUnrelatedSiblingLocalBranch(t *testing.T) {
+	dir := siblingParentRepository(t)
+	_, err := resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(noPullRequestResult()))
+	if err == nil || !strings.Contains(err.Error(), "no reliable") {
+		t.Fatalf("error = %v, want no reliable parent signal", err)
 	}
 }
 
@@ -98,6 +125,17 @@ func parentStackRepository(t *testing.T) string {
 	return dir
 }
 
+func siblingParentRepository(t *testing.T) string {
+	t.Helper()
+	dir := prepararRepositorioPrueba(t, map[string]string{"root.txt": "root\n"})
+	parentGit(t, dir, "branch", "-M", "main")
+	parentCommit(t, dir, "current")
+	parentGit(t, dir, "checkout", "-q", "main")
+	parentCommit(t, dir, "sibling")
+	parentGit(t, dir, "checkout", "-q", "current")
+	return dir
+}
+
 func ambiguousParentRepository(t *testing.T) string {
 	t.Helper()
 	dir := prepararRepositorioPrueba(t, map[string]string{"root.txt": "root\n"})
@@ -105,8 +143,8 @@ func ambiguousParentRepository(t *testing.T) string {
 	parentCommit(t, dir, "A")
 	parentGit(t, dir, "checkout", "-q", "main")
 	parentCommit(t, dir, "B")
-	parentGit(t, dir, "checkout", "-q", "main")
-	parentCommit(t, dir, "C")
+	parentGit(t, dir, "checkout", "-q", "-b", "C", "A")
+	parentGit(t, dir, "merge", "--no-ff", "-q", "B", "-m", "merge A and B")
 	return dir
 }
 
