@@ -37,13 +37,13 @@ Load when implementing or verifying a task from `docs/reingenieria/f{N}-*.md` (i
 
 1. Compile sentinel and use bin/&lt;version&gt;/sentinel
 2. Read the task's ficha in `docs/reingenieria/f{N}-*.md,`and create a execution plan.
-3. Delegate (per Hard Rules) to subagent in GTP-5.6 Terra High in opencode or Sonnet High in claude code.
-4. Independently confirm the implementer's process finished in GPT-5.6 luna medium in opencode or Sonnet Medium in claude code.
+3. Delegate (per Hard Rules) to subagent in GTP-5.6 Luna Max in opencode or Sonnet xHigh in claude code.
+4. Independently confirm the implementer's process finished in GPT-5.6 luna medium in opencode or Sonnet low in claude code.
 5. Verify: `go build ./... && go vet ./... && go test ./...`, `sentinel check`.
 6. Read the real diff before slicing.
 7. Stash unrelated pending files -&gt; `sentinel slice plan --json` -&gt; `sentinel slice apply` (empty `answers.json` unless `decisiones_pendientes` is non-empty) -&gt; restore the stash.
-8. `sentinel review <backend-sha>` with full dimensions — the backend/logic commit, never just `HEAD`.
-9. Per finding: verify the premise, apply fix with subagent GTP-5.6 Terra High in opencode or Sonnet High in claude code, slice it as its own commit if needed, re-review until clean or accepted with a documented reason.
+8. `sentinel review <backend-sha>` — the backend/logic commit, never just `HEAD`.
+9. Per finding: verify the premise, apply fix with subagent GTP-5.6 Luna Max in opencode or Sonnet xHigh in claude code, slice it as its own commit if needed, re-review until clean or accepted with a documented reason.
 10. `sentinel gate --stage pre-push` for the final PASS evidence.
 11. After the final gate, review any remaining warnings, accepted findings, or deferred points. Check the later phase fichas to determine whether each is already planned; otherwise, assess whether it must be recorded as a follow-up with its target task and reason.
 12. Mark the task complete; report commits, findings, follow-ups, and the gate result.
