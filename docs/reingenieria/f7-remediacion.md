@@ -15,7 +15,7 @@ refactor oportunista imposible de revisar.
 
 ---
 
-## T7.1 — Remediation Planner
+## T7.1 — Remediation Planner ✅ (closing hash `c10357f`)
 
 | | |
 |---|---|
@@ -38,6 +38,12 @@ La clasificación es determinista y proviene del contrato del finding, no de una
 decisión del agente en el momento.
 
 **Aceptación**: test por tabla de los tres destinos.
+
+**Implementation**: `internal/remediation/planner.go` and `planner_test.go` provide
+deterministic `Route` mapping by `Fixable` to `remediation_agent`, `user_review`,
+or `manual_report`. Unknown and empty values fail closed; table-driven tests cover
+the destinations and both failure cases. `sentinel review` returned `warn` with
+ADVISORY findings only, and the gate passed.
 
 ---
 
@@ -539,3 +545,25 @@ problems, not as code failures.
 - The `prompts.go` finding that the revert was unexplained was disproven:
   paragraph 2 of the `c9d7a84` commit message explains the revert explicitly.
   No code change was made for that finding.
+
+## Phase closure
+
+T7.1–T7.6 are complete.
+
+The three phase exit criteria are evidenced in this ficha:
+
+1. **Out-of-scope fixes are rejected and reported**: T7.3's
+   `TestDiffGuardOutOfScopeDiscardsWholeFix` verifies the
+   `remediation out of scope` rejection before the underlying editor is called;
+   the accepted multi-file atomicity limitation and its follow-up remain
+   documented under T7.3 and T7.4.
+2. **The remediation agent has no shell**: T7.2 documents the structural
+   `Editor` contract with only `Read` and `Edit`, with no shell or network method
+   possible by construction.
+3. **Only one re-validation round is allowed**: T7.4's
+   `TestRunSingleRoundNeverLaunchesASecondRound` verifies one call each to
+   re-validation and re-review, with remaining blockers producing
+   `NEEDS_USER_REVIEW`.
+
+The final `sentinel gate --stage pre-push` passed on final task evidence
+`802e7e1`.
