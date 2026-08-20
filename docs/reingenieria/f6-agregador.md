@@ -19,7 +19,9 @@ que lo detectó.
 1. Un defecto que dispara tres dimensiones se reporta como **un** hallazgo con
    tres evidencias.
 2. Un hallazgo semántico que repite lo que ya dijo el linter **no aparece**.
-3. Los cinco estados se distinguen en la salida y en el exit code.
+3. The five states are distinguishable in output and map deterministically to
+   exit codes, but they do not have five unique numeric codes
+   (`VALIDATION_FAILED` and `CODE_REVIEW_FAILED` both use `1`).
 
 > Revalidada al abrir la fase (ver nota de cierre al final). El alcance y los
 > criterios de salida siguen siendo correctos; T6.4 resultó estar ya resuelta
@@ -74,8 +76,10 @@ severidad `CRITICAL` (la máxima de las tres), 3 evidencias, confianza > 0.6
 completas): `logic`/`tests` = `ok`, `spec` = `warn` no bloqueante (el mensaje
 `chore(slice): auto-fragmented cohesion batch #1` no menciona que ese commit
 también normaliza el `Producer` de cada evidencia — aceptado como está, no se
-reescribe historia sin decisión explícita del usuario). `sentinel gate
---stage pre-push` → `PASS`.
+reescribe historia sin decisión explícita del usuario). The historical gate
+PASS statement is not retained as evidence here because no persisted event
+proves that invocation; current integrated verification is recorded in the
+phase closure below.
 
 Implementación real: `internal/review/aggregation.go` (`aggregateFindings`,
 `mergeFindings`, `areProximateFindings`, `corroboratedConfidence` con una
@@ -90,14 +94,14 @@ cada evidencia individual).
 
 ---
 
-## T6.2 — Supersede de determinista sobre semántico ✅ (hash de cierre `b8496e2`)
+## T6.2 — Deterministic supersede over semantic findings ✅ (technical close `b8496e2`; documentation close `97588b6`)
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | ≤ 220 líneas |
 | Depende de | T6.1 |
-| Commits | `d795584` (implementación: puente + supersede), `1c900e5` (corrección tras revisión: exigir misma `Dimension` para no descartar hallazgos no relacionados, aplicar el determinista solo al commit HEAD, normalizar rutas, estampar `Source: SourceReview` con autoridad del motor), `cf347a5` (SHA validado explícito en vez de inferido por posición), `be44742` (avisar en vez de descartar en silencio si `HEAD` es irresoluble), `b53cdf4`/`b8496e2` (refuerzo de tests) |
+| Commits | `d795584` (implementation: bridge + supersede), `1c900e5` (review correction: require the same `Dimension`, apply the deterministic result only to `HEAD`, normalize paths, and stamp `Source: SourceReview` with engine authority), `cf347a5` (explicitly validate the SHA instead of inferring it from position), `be44742` (warn instead of silently discarding when `HEAD` cannot be resolved), `b53cdf4`/`b8496e2` (test reinforcement; `b8496e2` is the final technical code/test commit), followed by documentation close `97588b6` |
 
 **Decisión de alcance, confirmada con el usuario antes de implementar**: el
 `gate` automático (pre-commit/pre-push) NO se toca — corta en corto a
@@ -148,11 +152,13 @@ aborta la publicación por esto).
 que describen el mismo problema (misma dimensión) en la misma ubicación. Si
 el linter ya lo dijo, el LLM no lo repite.
 
-**Aceptación**: cumplida — `TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne`
-(`engine_test.go`) prueba exactamente el caso de la ficha original: un
-`review.Hallazgo{Source: SourceValidation}` y uno `{Source: SourceReview}`
-sobre la misma `Location` y `Dimension` → sobrevive el determinista. `sentinel
-gate --stage pre-push` sobre el HEAD final → `PASS`.
+**Acceptance**: fulfilled — `TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne`
+(`engine_test.go`) tests the original ficha case exactly: a
+`review.Hallazgo{Source: SourceValidation}` and a `{Source: SourceReview}`
+with the same `Location` and `Dimension` leave the deterministic finding in
+place. The historical gate PASS statement is not retained as evidence here
+because no persisted event proves that invocation; current integrated
+verification is recorded in the phase closure below.
 
 **Limitación de testabilidad, aceptada y documentada (no bloqueante)**:
 `ResultadoAuditoria.Findings` (el resultado consolidado de T6.1+T6.2, con
@@ -215,16 +221,16 @@ de una identidad causal verificada.
 
 ---
 
-## T6.4 — Estados y exit codes
+## T6.4 — States and exit codes
 
 | | |
 |---|---|
 | Agente | sonnet / high |
 | Presupuesto | — |
 | Depende de | — |
-| Commit | ya cerrada en F1 (T1.7) |
+| Commit | Delivered by F1/T1.7 |
 
-**Ya resuelta por F1, no por esta fase.** `internal/gate/gate.go` (paquete
+**Delivered by F1/T1.7, not by this phase.** `internal/gate/gate.go` (paquete
 `gate`, comentario propio: "el subcomando gate (T1.7)") ya define exactamente
 los cinco estados y sus exit codes que esta tarea pedía:
 
@@ -235,6 +241,10 @@ los cinco estados y sus exit codes que esta tarea pedía:
 | `EstadoCodeReviewFailed` (`CODE_REVIEW_FAILED`) | `review.VerdictBlock` (CRITICAL semántico confirmado) | 1 |
 | `EstadoNeedsUserReview` (`NEEDS_USER_REVIEW`) | `review.VerdictQuestion`, o veredicto final con `RefutedCritical` (T5.7) | 2 |
 | `EstadoReviewInfrastructureError` (`REVIEW_INFRASTRUCTURE_ERROR`) | fallo al orquestar validación, `review.VerdictUnavailable`, o cualquier estado no reconocido por `CodigoSalida` (fail-closed explícito) | 4 |
+
+**The five states are distinguishable in output and map deterministically to
+exit codes, but they do not have five unique numeric codes: `VALIDATION_FAILED`
+and `CODE_REVIEW_FAILED` both use `1`.**
 
 `traducirVeredicto` en el mismo archivo ya mantiene `VALIDATION_FAILED` y
 `CODE_REVIEW_FAILED` reportados por separado con mensajes propios
@@ -264,7 +274,7 @@ ficha original, y nada aquí bloquea empezar T6.1 primero.
 | Agente | sonnet / high |
 | Presupuesto | ≤ 280 líneas |
 | Depende de | T6.1 |
-| Commits | `d78b3b6` (implementación: `Revision.AggregatedFindings` persiste el resultado agregado de T6.1+T6.2, `HallazgosEfectivos()` lo consume con fallback a `Dims` legacy, `riesgos()`/`renderMergedFinding` lo renderizan con fuente y evidencia), `5344e08` (corrección tras revisión: unifica la selección de hallazgos entre `riesgos()` y `RevisionCorrigeBlockPrevio` — evitaba que `pr create --force` bloqueara sobre un hallazgo semántico que T6.2 ya había resuelto por supersede), `031b59e` (sanitiza `Description` y `Location.Archivo` para evitar inyección de Markdown en el PR body), `048662f` (evita propagar `Source` sin `Confidence` real en el proyector v1→v2), `a883cac` (documenta la asimetría intencional del mapeo v1↔v2 de `Source`) |
+| Commits | `d78b3b6` (implementation: `Revision.AggregatedFindings` persists the aggregated result of T6.1+T6.2, `HallazgosEfectivos()` consumes it with a legacy `Dims` fallback, and `riesgos()`/`renderMergedFinding` render source and evidence), `5344e08` (review correction: aligned the effective-finding selection consumed by `riesgos()` and `BloqueantesDeRama` through `Revision.HallazgosEfectivos()`; `RevisionCorrigeBlockPrevio` only checks the prior revision result), `031b59e` (sanitize `Description` and `Location.Archivo` to prevent Markdown injection in the PR body), `048662f` (avoid propagating `Source` without real `Confidence` in the v1→v2 projector), `a883cac` (document the intentional asymmetry of the v1↔v2 `Source` mapping) |
 
 **Contexto**: `internal/review/renderer.go`, `internal/review/renderer_test.go`
 
@@ -295,30 +305,54 @@ hueco de testabilidad que T6.2 había dejado documentado: cuando
 `AggregatedFindings` está presente (el resultado dedup+supersede de T6.1/T6.2)
 lo usa; si no, cae a la proyección legacy de `Dims`. `riesgos()`/
 `renderMergedFinding()` (`renderer.go`) pintan cada hallazgo fusionado con su
-fuente (`review` vs. `validation`) y confianza corroborada. `5344e08` unificó
-`RevisionCorrigeBlockPrevio` sobre la misma selección de hallazgos para que
-`pr create --force` no bloquee sobre un hallazgo semántico que el supersede de
-T6.2 ya había resuelto. Verificado con `sentinel gate --stage pre-push` sobre
-`a883cac` → `PASS` (validación y las cuatro dimensiones — `design`, `spec`,
-`tests`, `logic` — en `ok`).
+fuente (`review` vs. `validation`) y confianza corroborada. `5344e08` aligned
+the effective-finding selection consumed by `riesgos()` and
+`BloqueantesDeRama` through `Revision.HallazgosEfectivos()`.
+`RevisionCorrigeBlockPrevio` only checks the prior revision result; it does not
+select effective findings. This prevents `pr create --force` from blocking on a
+semantic finding that T6.2 already superseded. The persisted ledger proves
+that `sentinel review a883cac` returned `ok` for `design`, `spec`, `tests`, and
+`logic`. No persisted event proves the historical `sentinel gate --stage
+pre-push` invocation previously claimed for `a883cac`; current integrated
+verification is recorded below.
 
 ---
 
-## Cierre de fase
+## Phase closure
 
-Los tres criterios de salida se cumplen sobre el código real:
+**Outcome: F6 is implemented and closed at `a883cac`.** T6.1–T6.5 are
+complete:
 
-1. Un defecto que dispara tres dimensiones se reporta como un hallazgo con
-   tres evidencias — `TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions`
-   (T6.1), visible en el PR body vía `renderMergedFinding` (T6.5).
-2. Un hallazgo semántico que repite lo que ya dijo el linter no aparece —
-   `TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne` (T6.2),
-   cableado solo en `pr create --force`.
-3. Los cinco estados se distinguen en la salida y el exit code — ya resuelto
-   por F1 (T6.4).
+- T6.1 closes at `a9a661e`.
+- T6.2 has a final technical code/test close at `b8496e2`; its subsequent
+  documentation close is `97588b6`.
+- T6.3 closes at `17e8970`.
+- T6.4 was delivered by F1/T1.7.
+- T6.5 closes at `a883cac`.
 
-`go build ./...`, `go vet ./...` y `go test ./...` en verde para todo el
-módulo. `sentinel gate --stage pre-push` sobre `a883cac` → `PASS`. F6 cerrada.
+The three phase exit criteria are satisfied on the real code:
+
+1. A defect reported by three dimensions becomes one finding with three
+   evidence items — `TestAuditarCommitAggregatesProximateFindingsFromIndependentDimensions`
+   (T6.1), rendered in the PR body through `renderMergedFinding` (T6.5).
+2. A semantic finding that repeats what the linter already reported is
+   superseded — `TestAuditarCommitSupersedesSemanticFindingWithDeterministicOne`
+   (T6.2), wired only into `pr create --force`.
+3. The five states are distinguishable in output and map deterministically to
+   exit codes, but there are not five unique numeric codes:
+   `VALIDATION_FAILED` and `CODE_REVIEW_FAILED` both use `1` (T6.4, delivered
+   by F1/T1.7).
+
+The persisted ledger proves that `sentinel review a883cac` returned `ok` in
+`design`, `spec`, `tests`, and `logic`. No persisted event proves the
+historical `sentinel gate --stage pre-push` invocation previously claimed for
+`a883cac`.
+
+**Current reproducible verification (2026-08-20, integrated tree `aaf21f4`)**:
+`go build ./...`, `go vet ./...`, `go test ./...`, the guardian
+(`sentinel check`), and `sentinel gate --stage pre-push` all passed. This
+validates the current integrated code, not a fabricated historical gate event
+on `a883cac`.
 
 ---
 
@@ -333,8 +367,9 @@ block si security está caído" (F5 T5.3 ya lo arregló). Hallazgo nuevo, no
 anticipado por la ficha original: **T6.4 ya está completamente resuelta por
 F1** (T1.7, `internal/gate/gate.go`) — los cinco estados y sus exit codes
 existen tal cual se pedían, y su referencia de contexto apuntaba a un archivo
-equivocado. También nuevo: T6.1 tiene una trampa de diseño (`Fingerprint`
-incluye `Dimension`, así que el dedup exacto no resuelve el caso cruzado que
-motiva la fase) y T6.2 tiene un prerrequisito no construido (el puente
-`validation.Hallazgo` → `review.Hallazgo{Source: SourceValidation}` que F2
-dejó explícitamente pendiente para esta fase, y que hoy no existe en absoluto).
+equivocado. Another discovery was T6.1's design trap: `Fingerprint` includes
+`Dimension`, so exact deduplication does not solve the cross-dimension case
+that motivates the phase. At revalidation time, T6.2 also had one missing
+prerequisite: the `validation.Hallazgo` →
+`review.Hallazgo{Source: SourceValidation}` bridge left by F2 and subsequently
+implemented by T6.2.
