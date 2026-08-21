@@ -17,6 +17,9 @@ type VolumenPendiente struct {
 	// disparan el freno.
 	Informativo int
 	Estado      string
+	// Paths contains the measured candidate paths for scoped follow-up analysis.
+	// It is intentionally omitted from serialized reports.
+	Paths []string `json:"-"`
 }
 
 // MedirVolumen mide el volumen pendiente del worktree reutilizando

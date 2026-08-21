@@ -187,6 +187,24 @@ func TestCheckDiffLimitsCoincideConObtenerArchivosModificados(t *testing.T) {
 	}
 }
 
+func TestMedirVolumenFallaFueraDeRepositorio(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real Git measurement in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available in PATH")
+	}
+
+	t.Chdir(t.TempDir())
+	volumen, err := MedirVolumen()
+	if err == nil {
+		t.Fatal("MedirVolumen should fail outside a Git repository")
+	}
+	if volumen.Estado != "ERROR" {
+		t.Errorf("failure state = %q, want ERROR", volumen.Estado)
+	}
+}
+
 func prepararRepositorioPrueba(t *testing.T, archivos map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()

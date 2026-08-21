@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -29,12 +28,13 @@ type DecisionPendiente struct {
 // LoteSerializado es la proyección estable de un LotePlanificado en el plan
 // emitido: solo lo que un consumidor externo necesita para revisarlo.
 type LoteSerializado struct {
-	Numero    int      `json:"numero"`
-	Capa      string   `json:"capa"`
-	Rutas     []string `json:"rutas"`
-	Lineas    int      `json:"lineas"`
-	Mensaje   string   `json:"mensaje"`
-	EsGigante bool     `json:"es_gigante"`
+	Numero    int              `json:"numero"`
+	Capa      string           `json:"capa"`
+	Rutas     []string         `json:"rutas"`
+	Selectors []ChangeSelector `json:"selectors,omitempty"`
+	Lineas    int              `json:"lineas"`
+	Mensaje   string           `json:"mensaje"`
+	EsGigante bool             `json:"es_gigante"`
 }
 
 // PlanSerializado es el plan completo emitido por `sentinel slice plan`. No
@@ -44,7 +44,9 @@ type PlanSerializado struct {
 	PlanID               string              `json:"plan_id"`
 	EstadoWorktree       string              `json:"estado_worktree"`
 	Lotes                []LoteSerializado   `json:"lotes"`
+	Changes              []PlannedChange     `json:"changes,omitempty"`
 	DecisionesPendientes []DecisionPendiente `json:"decisiones_pendientes"`
+	Explanation          string              `json:"explanation,omitempty"`
 }
 
 // registradorDecisiones implementa la segunda vía del callback de decisión de
@@ -54,6 +56,19 @@ type PlanSerializado struct {
 // apply` se negará mientras la decisión no tenga respuesta explícita.
 type registradorDecisiones struct {
 	pendientes []DecisionPendiente
+}
+
+func (r *registradorDecisiones) semanticCallback(unit SemanticOversizedUnit) (bool, error) {
+	r.pendientes = append(r.pendientes, DecisionPendiente{
+		ID:      unit.ID,
+		Archivo: strings.Join(unit.Paths, ", "),
+		Lineas:  unit.AddedLines,
+		Pregunta: fmt.Sprintf(
+			"The semantic unit %s has %d authored additions and cannot be safely subdivided by exact diff atoms. Bypass it as one reviewable slice or abort?",
+			strings.Join(unit.Paths, ", "), unit.AddedLines),
+		Opciones: []string{RespuestaBypass, RespuestaAbortar},
+	})
+	return true, nil
 }
 
 func (r *registradorDecisiones) callback(f ArchivoModificado) (bool, error) {
@@ -83,35 +98,84 @@ type generadorMensajesCommit interface {
 }
 
 func ConstruirPlanParaAgenteConAdapter(adapter generadorMensajesCommit) (*PlanSerializado, error) {
-	archivos, err := ObtenerArchivosModificados()
+	return ConstruirPlanParaAgenteConOpciones(adapter, SemanticSliceOptions{})
+}
+
+// ConstruirPlanParaAgenteConOpciones exposes validated ticket boundaries and
+// optional proposal input without changing the non-committing contract.
+func ConstruirPlanParaAgenteConOpciones(adapter generadorMensajesCommit, options SemanticSliceOptions) (*PlanSerializado, error) {
+	changes, err := CaptureDraftChanges()
 	if err != nil {
 		return nil, err
 	}
 	registrador := &registradorDecisiones{}
-	plan, err := ConstruirPlanFragmentacionConLector(archivos, registrador.callback, ejecutarGitSalida)
+	if options.ConfirmOversized == nil {
+		options.ConfirmOversized = registrador.semanticCallback
+	}
+	plan, err := BuildSemanticSlicePlan(changes, options)
 	if err != nil {
 		return nil, err
 	}
 	if adapter != nil {
 		GenerarMensajesLotes(plan, adapter)
 	}
+	plan.Changes = changes
 	serializado := SerializarPlan(plan, registrador.pendientes, "")
-	estado, err := HashEstadoWorktree(RutasDelPlan(serializado))
-	if err != nil {
+	serializado.EstadoWorktree = hashPlannedChangesState(changes)
+	if err := RecalculatePlanID(serializado); err != nil {
 		return nil, err
 	}
-	serializado.EstadoWorktree = estado
 	return serializado, nil
+}
+
+func archivosParaPlan(changes []PlannedChange) []ArchivoModificado {
+	archivos := make([]ArchivoModificado, 0, len(changes))
+	for _, change := range changes {
+		archivos = append(archivos, ArchivoModificado{
+			Ruta:   change.Path,
+			Lineas: change.AddedLines,
+			Capa:   ClasificarCapa(change.Path),
+		})
+	}
+	return archivos
+}
+
+func asignarSelectoresDeArchivo(plan *PlanFragmentacion) {
+	for i := range plan.Lotes {
+		lote := &plan.Lotes[i]
+		if len(lote.Selectors) > 0 {
+			continue
+		}
+		for _, ruta := range lote.Rutas {
+			selector := ChangeSelector{Path: ruta, Mode: SelectorWholeFile}
+			for _, change := range plan.Changes {
+				if change.Path == ruta {
+					selector.Path = change.Path
+					selector.OldPath = change.OldPath
+					break
+				}
+			}
+			lote.Selectors = append(lote.Selectors, selector)
+		}
+	}
 }
 
 // RutasDelPlan devuelve, ordenadas, todas las rutas que el plan commitearía.
 func RutasDelPlan(plan *PlanSerializado) []string {
 	var rutas []string
 	for _, lote := range plan.Lotes {
-		rutas = append(rutas, lote.Rutas...)
+		if len(lote.Selectors) == 0 {
+			rutas = append(rutas, lote.Rutas...)
+			continue
+		}
+		for _, selector := range lote.Selectors {
+			rutas = append(rutas, selector.Path)
+			if selector.OldPath != "" {
+				rutas = append(rutas, selector.OldPath)
+			}
+		}
 	}
-	sort.Strings(rutas)
-	return rutas
+	return sortedUnique(rutas)
 }
 
 // SerializarPlan proyecta el plan y calcula su PlanID a partir de los lotes.
@@ -125,35 +189,60 @@ func SerializarPlan(plan *PlanFragmentacion, pendientes []DecisionPendiente, est
 		lotes = append(lotes, LoteSerializado{
 			Numero:    lote.Numero,
 			Capa:      lote.Capa,
-			Rutas:     lote.Rutas,
+			Rutas:     append([]string(nil), lote.Rutas...),
+			Selectors: cloneSelectors(lote.Selectors),
 			Lineas:    lote.LineasTotales,
 			Mensaje:   mensaje,
 			EsGigante: lote.EsGigante,
 		})
 	}
-	if pendientes == nil {
-		pendientes = []DecisionPendiente{}
-	}
-	return &PlanSerializado{
-		PlanID:               calcularPlanID(lotes),
+	serializado := &PlanSerializado{
 		EstadoWorktree:       estado,
 		Lotes:                lotes,
-		DecisionesPendientes: pendientes,
+		Changes:              cloneChanges(plan.Changes),
+		DecisionesPendientes: append([]DecisionPendiente(nil), pendientes...),
+		Explanation:          plan.Explanation,
+	}
+	asignarSelectoresSerializados(serializado)
+	if pendientes == nil {
+		serializado.DecisionesPendientes = []DecisionPendiente{}
+	}
+	serializado.PlanID = calcularPlanIDPlan(serializado)
+	return serializado
+}
+
+func asignarSelectoresSerializados(plan *PlanSerializado) {
+	changes := make(map[string]PlannedChange, len(plan.Changes))
+	for _, change := range plan.Changes {
+		changes[changeKey(change.Path, change.OldPath)] = change
+	}
+	for i := range plan.Lotes {
+		lote := &plan.Lotes[i]
+		if len(lote.Selectors) > 0 {
+			continue
+		}
+		for _, ruta := range lote.Rutas {
+			selector := ChangeSelector{Path: ruta, Mode: SelectorWholeFile}
+			if change, ok := changes[changeKey(ruta, "")]; ok {
+				selector.Path = change.Path
+				selector.OldPath = change.OldPath
+			} else {
+				for _, change := range plan.Changes {
+					if change.Path == ruta {
+						selector.OldPath = change.OldPath
+						break
+					}
+				}
+			}
+			lote.Selectors = append(lote.Selectors, selector)
+		}
 	}
 }
 
 // calcularPlanID resume la estructura de los lotes: capa, rutas y tamaño. No
 // incluye el mensaje, que puede regenerarse sin cambiar qué se commitea.
 func calcularPlanID(lotes []LoteSerializado) string {
-	h := sha256.New()
-	for _, lote := range lotes {
-		fmt.Fprintf(h, "%d|%s|%d|%t|", lote.Numero, lote.Capa, lote.Lineas, lote.EsGigante)
-		for _, ruta := range lote.Rutas {
-			fmt.Fprintf(h, "%s,", ruta)
-		}
-		fmt.Fprint(h, "\n")
-	}
-	return hex.EncodeToString(h.Sum(nil))
+	return calcularPlanIDPlan(&PlanSerializado{Lotes: lotes})
 }
 
 // IDDecision identifica una decisión pendiente por el archivo que la provoca,
@@ -173,21 +262,33 @@ func IDDecision(ruta string) string {
 // mantiene, porque apply solo commitea rutas del plan y cada una se verifica;
 // un archivo nuevo ajeno al plan no se commitea y por eso no lo invalida.
 func HashEstadoWorktree(rutas []string) (string, error) {
-	h := sha256.New()
-	for _, ruta := range rutas {
-		estado, err := ejecutarGitSalida("status", "--porcelain", "--", ruta)
+	identity := make([]map[string]string, 0, len(rutas))
+	for _, ruta := range sortedUnique(rutas) {
+		estado, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall", "--", literalPathspec(ruta))
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(h, "%s|%s|", ruta, strings.TrimSpace(estado))
-		contenido, err := ejecutarGitSalida("hash-object", "--", ruta)
+		head, err := hashHeadPath(ruta)
 		if err != nil {
-			// El archivo ya no existe: cuenta como ausente, que es un estado
-			// distinto de cualquier contenido y por tanto invalida el plan.
-			fmt.Fprint(h, "ausente\n")
-			continue
+			return "", err
 		}
-		fmt.Fprintf(h, "%s\n", strings.TrimSpace(contenido))
+		index, err := hashIndexPath(ruta)
+		if err != nil {
+			return "", err
+		}
+		worktree, err := hashWorktreePath(ruta)
+		if err != nil {
+			return "", err
+		}
+		identity = append(identity, map[string]string{
+			"path":     ruta,
+			"status":   strings.TrimSpace(estado),
+			"head":     head,
+			"index":    index,
+			"worktree": worktree,
+		})
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	encoded := mustMarshal(identity)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }

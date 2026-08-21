@@ -78,3 +78,15 @@ func TestMensajeDeRechazoRemiteAlaAyuda(t *testing.T) {
 		t.Errorf("el mensaje no remite a la ayuda: %s", mensaje)
 	}
 }
+
+func TestCheckAcceptsSupportedModes(t *testing.T) {
+	if mensaje := validarArgumentos("check", []string{"--json"}); mensaje != "" {
+		t.Fatalf("check debería aceptar --json: %s", mensaje)
+	}
+	if mensaje := validarArgumentos("check", []string{"--staged"}); mensaje != "" {
+		t.Fatalf("check should accept --staged: %s", mensaje)
+	}
+	if mensaje := validarArgumentos("check", []string{"--unknown"}); mensaje == "" {
+		t.Fatal("check aceptó una opción desconocida")
+	}
+}

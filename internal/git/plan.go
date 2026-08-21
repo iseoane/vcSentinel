@@ -18,6 +18,7 @@ type LotePlanificado struct {
 	Capa                string
 	Numero              int
 	Rutas               []string
+	Selectors           []ChangeSelector
 	LineasTotales       int
 	Mensaje             string
 	MensajeAutomatico   string
@@ -28,7 +29,9 @@ type LotePlanificado struct {
 // PlanFragmentacion es la propuesta completa de fragmentación, construida sin
 // crear ningún commit: los lotes y sus mensajes se aprueban antes de ejecutar.
 type PlanFragmentacion struct {
-	Lotes []LotePlanificado
+	Lotes       []LotePlanificado
+	Changes     []PlannedChange
+	Explanation string
 }
 
 // ResultadoCommit resume un commit creado durante la ejecución del plan.

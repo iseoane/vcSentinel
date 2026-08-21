@@ -46,7 +46,16 @@ func AplicarPlanAprobado(plan *PlanSerializado, respuestas RespuestasPlan) ([]Re
 // allá de releer el estado del árbol. Separarla de la ejecución permite
 // verificar una aprobación sin arriesgar ningún commit.
 func ValidarAplicacion(plan *PlanSerializado, respuestas RespuestasPlan) error {
-	estadoActual, err := HashEstadoWorktree(RutasDelPlan(plan))
+	if err := ValidateSerializedPlan(plan); err != nil {
+		return err
+	}
+	var estadoActual string
+	var err error
+	if len(plan.Changes) > 0 {
+		estadoActual, err = hashDraftStateForChanges(plan.Changes)
+	} else {
+		estadoActual, err = HashEstadoWorktree(RutasDelPlan(plan))
+	}
 	if err != nil {
 		return err
 	}
@@ -67,6 +76,9 @@ func ValidarAplicacion(plan *PlanSerializado, respuestas RespuestasPlan) error {
 			return fmt.Errorf("%w: respuesta %q no admitida para la decisión %s", ErrDecisionSinRespuesta, respuesta, decision.ID)
 		}
 	}
+	if hasHunkSelectors(plan) {
+		return ErrSelectionApplyUnsupported
+	}
 	return nil
 }
 
@@ -79,6 +91,7 @@ func deserializarPlan(plan *PlanSerializado) *PlanFragmentacion {
 			Capa:              lote.Capa,
 			Numero:            lote.Numero,
 			Rutas:             lote.Rutas,
+			Selectors:         lote.Selectors,
 			LineasTotales:     lote.Lineas,
 			Mensaje:           lote.Mensaje,
 			MensajeAutomatico: lote.Mensaje,

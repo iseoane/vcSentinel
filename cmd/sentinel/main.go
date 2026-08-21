@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,7 +80,7 @@ func main() {
 		ejecutarUninit(worktreeActual)
 	case "check":
 		requireInicializado(worktreeActual)
-		ejecutarCheck(worktreeActual)
+		os.Exit(ejecutarCheck(worktreeActual, os.Args[2:]))
 	case "slice":
 		requireInicializado(worktreeActual)
 		if len(os.Args) > 2 {
@@ -174,7 +176,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
 	imprimirItemAyuda(&b, "init", "Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook pre-commit del repositorio. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
 	imprimirItemAyuda(&b, "uninit", "Reverte 'init' en este repositorio: retira las reglas de volumen, borra la config per-proyecto y elimina el hook pre-commit (solo si sigue siendo el que instaló VAS Sentinel).")
-	imprimirItemAyuda(&b, "check", "Audita el volumen de líneas modificadas del worktree activo.")
+	imprimirItemAyuda(&b, "check", "Audits the active worktree volume. Use --staged for the pending commit candidate; --json emits a machine-readable report.")
 	imprimirItemAyuda(&b, "slice", "Fragmenta las modificaciones en commits de máximo 400 líneas.")
 	imprimirItemAyuda(&b, "", "slice plan [--json] propone sin commitear (exit 3 si hay decisiones).")
 	imprimirItemAyuda(&b, "", "slice apply --plan X --answers Y ejecuta un plan ya aprobado.")
@@ -455,38 +457,95 @@ func generarScriptHook() string {
 	if err != nil {
 		exe = "sentinel"
 	}
-	exeAbs := filepath.ToSlash(exe)
+	return generarScriptHookPara(exe)
+}
 
+func generarScriptHookPara(exe string) string {
+	exeAbs := filepath.ToSlash(exe)
 	switch runtime.GOOS {
 	case "windows":
 		// Git for Windows ejecuta los hooks con su sh.exe: usa comillas
 		// dobles para tolerar espacios en la ruta (p. ej. "C:/Program Files").
-		return "#!/bin/sh\n\"" + exeAbs + "\" check\n"
+		return "#!/bin/sh\n\"" + exeAbs + "\" check --staged\n"
 	default:
 		// Linux/macOS: sh estándar con la ruta absoluta del binario.
-		return "#!/bin/sh\n\"" + exeAbs + "\" check\n"
+		return "#!/bin/sh\n\"" + exeAbs + "\" check --staged\n"
 	}
 }
 
-func ejecutarCheck(path string) {
-	volumen, err := git.MedirVolumen()
-	if err != nil {
-		fmt.Printf("❌ Error en Git: %v\n", err)
-		os.Exit(1)
-	}
-	status := volumen.Estado
+type checkReport struct {
+	Worktree           string `json:"worktree"`
+	AuthoredLines      int    `json:"authored_lines"`
+	InformationalLines int    `json:"informational_lines"`
+	State              string `json:"state"`
+	Advisory           bool   `json:"advisory"`
+	Recommendation     string `json:"recommendation,omitempty"`
+	Error              string `json:"error,omitempty"`
+}
 
-	fmt.Printf("📊 Líneas añadidas de código en este Worktree: %d [%s]\n", volumen.Bloqueante, status)
+func ejecutarCheck(path string, args []string) int {
+	flags, err := parsearFlagsCheck(args)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		return 1
+	}
+	if flags.staged {
+		return ejecutarStagedCheck(path, flags.jsonOut)
+	}
+	return ejecutarCheckCon(os.Stdout, path, flags.jsonOut, git.MedirVolumen)
+}
+
+func ejecutarCheckCon(w io.Writer, path string, jsonOut bool, measure func() (git.VolumenPendiente, error)) int {
+	volumen, err := measure()
+	if err != nil {
+		report := checkReport{Worktree: path, State: "ERROR", Error: err.Error()}
+		if jsonOut {
+			_ = escribirCheckJSON(w, report)
+			return 1
+		}
+		fmt.Fprintf(w, "❌ Error en Git: %v\n", err)
+		return 1
+	}
+
+	report := checkReport{
+		Worktree:           path,
+		AuthoredLines:      volumen.Bloqueante,
+		InformationalLines: volumen.Informativo,
+		State:              volumen.Estado,
+		Advisory:           true,
+	}
+	if volumen.Estado == "CRITICO" {
+		report.Recommendation = "sentinel slice plan --json"
+	}
+	if jsonOut {
+		return escribirCheckJSON(w, report)
+	}
+
+	fmt.Fprintf(w, "📊 Líneas añadidas de código en este Worktree: %d [%s]\n", volumen.Bloqueante, volumen.Estado)
 	if volumen.Informativo > 0 {
 		// La documentación y lo generado se informan pero no frenan: el
 		// guardián mide revisabilidad de código, no bytes.
-		fmt.Printf("📄 Además, %d líneas de documentación y archivos generados (no cuentan para el límite).\n", volumen.Informativo)
+		fmt.Fprintf(w, "📄 Además, %d líneas de documentación y archivos generados (no cuentan para el límite).\n", volumen.Informativo)
 	}
-	if status == "CRITICO" {
-		fmt.Println("⛔ ¡Peligro! El volumen supera las 400 líneas. Debes fragmentar con: sentinel slice")
-		os.Exit(1)
+	if volumen.Estado == "CRITICO" {
+		fmt.Fprintln(w, "⚠️ Advisory: the worktree exceeds 400 authored lines. Run `sentinel slice plan --json` to plan a reviewable split.")
+		fmt.Fprintln(w, "✅ Measurement succeeded. You can continue implementation.")
+		return 0
 	}
-	fmt.Println("✅ Volumen bajo control. Puedes continuar.")
+	fmt.Fprintln(w, "✅ Volumen bajo control. Puedes continuar.")
+	return 0
+}
+
+func escribirCheckJSON(w io.Writer, report checkReport) int {
+	datos, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		fmt.Fprintf(w, "❌ Could not serialize check report: %v\n", err)
+		return 1
+	}
+	if _, err := fmt.Fprintln(w, string(datos)); err != nil {
+		return 1
+	}
+	return 0
 }
 
 // errRefactorAplicado señala que un agente ya aplicó el plan de refactorización

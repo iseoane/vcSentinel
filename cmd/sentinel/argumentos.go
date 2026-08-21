@@ -14,7 +14,6 @@ import (
 var subcomandosSinArgumentos = map[string]bool{
 	"init":      true,
 	"uninit":    true,
-	"check":     true,
 	"lint":      true,
 	"rebase":    true,
 	"install":   true,
@@ -26,12 +25,40 @@ var subcomandosSinArgumentos = map[string]bool{
 // flags propios y los validan ellas mismas.
 var subcomandosDeSlice = map[string]bool{"plan": true, "apply": true}
 
+type flagsCheck struct {
+	jsonOut bool
+	staged  bool
+}
+
+func parsearFlagsCheck(args []string) (flagsCheck, error) {
+	flags := flagsCheck{}
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			flags.jsonOut = true
+		case "--staged":
+			flags.staged = true
+		default:
+			return flags, fmt.Errorf("sentinel check accepts --json and --staged, received %q", arg)
+		}
+	}
+	return flags, nil
+}
+
 // validarArgumentos devuelve el mensaje de error si el subcomando recibió
 // argumentos que no admite, o "" si son válidos. Los subcomandos con parser
 // propio (review, status, pr) no se tocan aquí: validan sus flags ellos.
 func validarArgumentos(subcomando string, extras []string) string {
 	if len(extras) == 0 {
 		return ""
+	}
+	if subcomando == "check" {
+		if _, err := parsearFlagsCheck(extras); err == nil {
+			return ""
+		}
+		return fmt.Sprintf(
+			"❌ 'sentinel check' accepts '--json' and '--staged' and received: %s. Run 'sentinel help' to see the correct usage.",
+			strings.Join(extras, " "))
 	}
 	if subcomando == "slice" {
 		if subcomandosDeSlice[extras[0]] {

@@ -133,6 +133,9 @@ func leerJSON(ruta string, destino any) error {
 
 func imprimirPlanSerializado(salida io.Writer, plan *git.PlanSerializado) {
 	fmt.Fprintf(salida, "🧭 Plan %s (árbol %s)\n", plan.PlanID[:12], plan.EstadoWorktree[:12])
+	if plan.Explanation != "" {
+		fmt.Fprintf(salida, "ℹ️ %s\n", plan.Explanation)
+	}
 	if len(plan.Lotes) == 0 {
 		fmt.Fprintln(salida, "📭 No hay modificaciones pendientes para procesar.")
 	}
