@@ -133,3 +133,36 @@ ledger, store, and controller packages stay intact.
   contract ("keeps... refuter pass... unchanged"); stderr warning on missing
   git common dir is the documented degradation signal; remaining ticket
   checklist items (migration/parity suite) form the next slice before closure.
+
+## Evidence — slice 4 (migration and parity suite)
+
+- Commit: 2ccf038 test(reviewexec): prove migration parity between legacy and
+  durable review paths.
+- Scope delivered: `internal/reviewexec/migration_integration_test.go` (362
+  lines) covering every open checklist bullet:
+  - Migration equality on identical fake adapters through a REAL
+    store+controller+adapter chain: equal verdicts, per-identity-key dimension
+    results (verdict+reason), finding counts, and budget skips.
+  - Findings content parity with a v2-marker fixture: description, severity,
+    dimension, location, title, and content-stable fingerprint all equal.
+  - Provider failure text end-to-end into VerdictUnavailable reasons in both
+    modes; attribution fires post-success through the durable path AND stays
+    silent on provider failure.
+  - Parallelism parity proven deterministically with a barrier agent (peak ==
+    configured parallel=2 in both modes; serialization fails loudly via
+    timeout); budget admit branch (affordable optional bundle runs through the
+    transport) plus skip branch parity.
+- Tests live in reviewexec because internal/store already imports
+  internal/review — review-side tests cannot open a store without an import
+  cycle.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  focused suite stable at -count=2; guardian 362 authored lines
+  [PUNTO_OPTIMO]; pre-commit hook passed.
+- Independent review (code-review skill): Spec APPROVE-WITH-FINDINGS (1 major
+  vacuous-findings-parity + 3 minors); Standards APPROVE-WITH-FINDINGS. All
+  findings fixed (content-bearing v2 fixture, budget-admit branch, negative
+  attribution case, English renames); re-review verdict SATISFIED.
+- Accepted follow-ups: clarification-round parity has no dedicated comparison
+  test (round routing itself is engine-tested; full parity lands with R5
+  question semantics); barrier timeout of 2s is generous but theoretically
+  flake-prone on saturated CI.
