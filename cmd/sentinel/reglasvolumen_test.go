@@ -55,7 +55,7 @@ func TestInjectMigratesOlderManagedRule(t *testing.T) {
 
 	written, err := inyectarReglasDeArchivo(path)
 	if err != nil {
-		t.Fatalf("inyectarReglasDeArchivo devolvió error: %v", err)
+		t.Fatalf("injecting managed rules returned an error: %v", err)
 	}
 	if !written {
 		t.Fatal("init did not migrate the old marked rule")
