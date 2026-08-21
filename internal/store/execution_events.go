@@ -151,7 +151,7 @@ type eventTail struct {
 }
 
 // AppendEvent appends one normalized R1 event if expectedRevision still names
-// the current stream head. The lock is a cross-process atomic directory lock.
+// the current stream head. The lock is a cross-process file lock.
 func (s *Store) AppendEvent(runID string, event agentrun.NormalizedEvent, expectedRevision uint64) (EventReceipt, error) {
 	directory, err := s.executionDir(runID)
 	if err != nil {
