@@ -39,11 +39,8 @@ func AplicarPlanAprobado(plan *PlanSerializado, respuestas RespuestasPlan) ([]Re
 	if err := ValidarAplicacion(plan, respuestas); err != nil {
 		return nil, err
 	}
-	ejecutable := deserializarPlan(plan)
-	if len(ejecutable.Changes) > 0 {
-		return ejecutarPlanConSelecciones(ejecutable)
-	}
-	return EjecutarPlanFragmentacion(ejecutable)
+	executable := deserializarPlan(plan)
+	return executeSelectionPlan(executable)
 }
 
 // ValidarAplicacion comprueba las tres ligaduras sin tocar el repositorio más
@@ -86,19 +83,31 @@ func ValidarAplicacion(plan *PlanSerializado, respuestas RespuestasPlan) error {
 // deserializarPlan reconstruye el plan ejecutable desde su proyección. El
 // mensaje ya viene aprobado, así que se fija como definitivo.
 func deserializarPlan(plan *PlanSerializado) *PlanFragmentacion {
-	ejecutable := &PlanFragmentacion{Lotes: make([]LotePlanificado, 0, len(plan.Lotes))}
-	for _, lote := range plan.Lotes {
-		ejecutable.Lotes = append(ejecutable.Lotes, LotePlanificado{
-			Capa:              lote.Capa,
-			Numero:            lote.Numero,
-			Rutas:             lote.Rutas,
-			Selectors:         lote.Selectors,
-			LineasTotales:     lote.Lineas,
-			Mensaje:           lote.Mensaje,
-			MensajeAutomatico: lote.Mensaje,
-			EsGigante:         lote.EsGigante,
+	executable := &PlanFragmentacion{Lotes: make([]LotePlanificado, 0, len(plan.Lotes))}
+	for _, batch := range plan.Lotes {
+		selectors := cloneSelectors(batch.Selectors)
+		if len(selectors) == 0 {
+			selectors = wholeFileSelectors(batch.Rutas)
+		}
+		executable.Lotes = append(executable.Lotes, LotePlanificado{
+			Capa:              batch.Capa,
+			Numero:            batch.Numero,
+			Rutas:             batch.Rutas,
+			Selectors:         selectors,
+			LineasTotales:     batch.Lineas,
+			Mensaje:           batch.Mensaje,
+			MensajeAutomatico: batch.Mensaje,
+			EsGigante:         batch.EsGigante,
 		})
 	}
-	ejecutable.Changes = cloneChanges(plan.Changes)
-	return ejecutable
+	executable.Changes = cloneChanges(plan.Changes)
+	return executable
+}
+
+func wholeFileSelectors(routes []string) []ChangeSelector {
+	selectors := make([]ChangeSelector, 0, len(routes))
+	for _, route := range routes {
+		selectors = append(selectors, ChangeSelector{Path: route, Mode: SelectorWholeFile})
+	}
+	return selectors
 }

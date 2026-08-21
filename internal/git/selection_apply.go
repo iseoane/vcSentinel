@@ -3,6 +3,7 @@ package git
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,10 +23,14 @@ type selectionIndexEntry struct {
 	object string
 }
 
-func ejecutarPlanConSelecciones(plan *PlanFragmentacion) ([]ResultadoCommit, error) {
+func executeSelectionPlan(plan *PlanFragmentacion) ([]ResultadoCommit, error) {
+	return executeSelectionPlanWithCommit(plan, commitWithSelectionIndex)
+}
+
+func executeSelectionPlanWithCommit(plan *PlanFragmentacion, commit func(string, string) (string, error)) (results []ResultadoCommit, applyErr error) {
 	originalHead := currentHeadFingerprint()
 	changes := selectionChangeIndex(plan.Changes)
-	patches, err := prepararParchesSeleccion(plan, changes)
+	patches, err := prepareSelectionPatches(plan, changes)
 	if err != nil {
 		return nil, err
 	}
@@ -33,9 +38,17 @@ func ejecutarPlanConSelecciones(plan *PlanFragmentacion) ([]ResultadoCommit, err
 		return nil, err
 	}
 
+	defer func() {
+		if applyErr == nil {
+			return
+		}
+		if cleanupErr := resetRealIndexForPlan(plan); cleanupErr != nil {
+			applyErr = errors.Join(applyErr, fmt.Errorf("could not restore the real index after selection apply: %w", cleanupErr))
+		}
+	}()
+
 	cumulativeHunks := make(map[string][]ChangeSelector)
-	var results []ResultadoCommit
-	for _, lote := range plan.Lotes {
+	for _, batch := range plan.Lotes {
 		index, err := newSelectionIndex()
 		if err != nil {
 			return results, err
@@ -47,7 +60,7 @@ func ejecutarPlanConSelecciones(plan *PlanFragmentacion) ([]ResultadoCommit, err
 		}
 
 		var whole []ChangeSelector
-		for _, selector := range lote.Selectors {
+		for _, selector := range batch.Selectors {
 			if selector.Mode == SelectorHunk {
 				key := changeKey(selector.Path, selector.OldPath)
 				cumulativeHunks[key] = append(cumulativeHunks[key], selector)
@@ -60,16 +73,16 @@ func ejecutarPlanConSelecciones(plan *PlanFragmentacion) ([]ResultadoCommit, err
 			return results, err
 		}
 
-		message := lote.Mensaje
+		message := batch.Mensaje
 		if strings.TrimSpace(message) == "" {
-			message = lote.MensajeAutomatico
+			message = batch.MensajeAutomatico
 		}
-		hash, err := commitWithSelectionIndex(index, message)
+		hash, err := commit(index, message)
 		cleanupSelectionIndex(index)
 		if err != nil {
 			return results, err
 		}
-		results = append(results, ResultadoCommit{Hash: hash, Mensaje: message, Capa: lote.Capa, Archivos: len(lote.Rutas)})
+		results = append(results, ResultadoCommit{Hash: hash, Mensaje: message, Capa: batch.Capa, Archivos: len(batch.Rutas)})
 	}
 	if err := resetRealIndexForPlan(plan); err != nil {
 		return results, err
@@ -85,10 +98,10 @@ func selectionChangeIndex(changes []PlannedChange) map[string]PlannedChange {
 	return result
 }
 
-func prepararParchesSeleccion(plan *PlanFragmentacion, changes map[string]PlannedChange) (map[string]selectionPatch, error) {
+func prepareSelectionPatches(plan *PlanFragmentacion, changes map[string]PlannedChange) (map[string]selectionPatch, error) {
 	needed := make(map[string]struct{})
-	for _, lote := range plan.Lotes {
-		for _, selector := range lote.Selectors {
+	for _, batch := range plan.Lotes {
+		for _, selector := range batch.Selectors {
 			if selector.Mode == SelectorHunk {
 				needed[changeKey(selector.Path, selector.OldPath)] = struct{}{}
 			}
@@ -181,8 +194,8 @@ func (patch selectionPatch) forSelectors(selectors []ChangeSelector) (string, er
 func preflightSelectionPlan(plan *PlanFragmentacion, originalHead string, changes map[string]PlannedChange, patches map[string]selectionPatch) error {
 	hunks := make(map[string][]ChangeSelector)
 	var whole []ChangeSelector
-	for _, lote := range plan.Lotes {
-		for _, selector := range lote.Selectors {
+	for _, batch := range plan.Lotes {
+		for _, selector := range batch.Selectors {
 			if selector.Mode == SelectorHunk {
 				key := changeKey(selector.Path, selector.OldPath)
 				hunks[key] = append(hunks[key], selector)
@@ -193,7 +206,7 @@ func preflightSelectionPlan(plan *PlanFragmentacion, originalHead string, change
 		if err := withSelectionIndex(originalHead, func(index string) error {
 			return stageSelectionSet(index, originalHead, changes, patches, whole, hunks)
 		}); err != nil {
-			return fmt.Errorf("could not preflight batch %d: %w", lote.Numero, err)
+			return fmt.Errorf("could not preflight batch %d: %w", batch.Numero, err)
 		}
 	}
 	return nil
@@ -246,7 +259,7 @@ func stageWholeSelectors(index string, selectors []ChangeSelector) error {
 			args = append(args, literalPathspec(path))
 		}
 	}
-	return ejecutarGitConIndice(index, nil, args...)
+	return runGitWithIndex(index, nil, args...)
 }
 
 func materializeHunkEntry(originalHead string, change PlannedChange, selectors []ChangeSelector, patch selectionPatch) (selectionIndexEntry, bool, error) {
@@ -262,7 +275,7 @@ func materializeHunkEntry(originalHead string, change PlannedChange, selectors [
 	if err != nil {
 		return selectionIndexEntry{}, false, err
 	}
-	if err := ejecutarGitConIndice(index, strings.NewReader(selectedPatch), "apply", "--cached", "--unidiff-zero", "--whitespace=nowarn"); err != nil {
+	if err := runGitWithIndex(index, strings.NewReader(selectedPatch), "apply", "--cached", "--unidiff-zero", "--whitespace=nowarn"); err != nil {
 		return selectionIndexEntry{}, false, fmt.Errorf("could not apply selected hunk from %s: %w", change.Path, err)
 	}
 	return readSelectionIndexEntry(index, change.Path)
@@ -278,14 +291,14 @@ func setSelectionIndexEntry(index, path string, entry selectionIndexEntry, exist
 		if !currentExists {
 			return nil
 		}
-		return ejecutarGitConIndice(index, nil, "update-index", "--force-remove", "--", literalPathspec(path))
+		return runGitWithIndex(index, nil, "update-index", "--force-remove", "--", literalPathspec(path))
 	}
 	cacheInfo := entry.mode + "," + entry.object + "," + filepath.ToSlash(path)
-	return ejecutarGitConIndice(index, nil, "update-index", "--add", "--cacheinfo", cacheInfo)
+	return runGitWithIndex(index, nil, "update-index", "--add", "--cacheinfo", cacheInfo)
 }
 
 func commitWithSelectionIndex(index, message string) (string, error) {
-	if err := ejecutarGitConIndice(index, nil, "commit", "-m", message, "--no-verify"); err != nil {
+	if err := runGitWithIndex(index, nil, "commit", "-m", message, "--no-verify"); err != nil {
 		return "", err
 	}
 	hash, err := ejecutarGitSalida("rev-parse", "--short", "HEAD")
@@ -293,27 +306,45 @@ func commitWithSelectionIndex(index, message string) (string, error) {
 }
 
 func resetRealIndexForPlan(plan *PlanFragmentacion) error {
-	paths := make([]string, 0, len(plan.Changes)*2)
-	for _, change := range plan.Changes {
-		paths = append(paths, change.Path)
-		if change.OldPath != "" {
-			paths = append(paths, change.OldPath)
-		}
-	}
+	paths := plannedSelectionPaths(plan)
 	if len(paths) == 0 {
 		return nil
 	}
-	sort.Strings(paths)
 	args := []string{"reset", "HEAD", "--"}
 	for _, path := range paths {
-		if len(args) == 3 || args[len(args)-1] != literalPathspec(path) {
-			args = append(args, literalPathspec(path))
-		}
+		args = append(args, literalPathspec(path))
 	}
 	if _, err := ejecutarGitSalida(args...); err != nil {
 		return fmt.Errorf("could not clean the real index after selection apply: %w", err)
 	}
 	return nil
+}
+
+func plannedSelectionPaths(plan *PlanFragmentacion) []string {
+	paths := make([]string, 0, len(plan.Changes)*2)
+	if len(plan.Changes) > 0 {
+		for _, change := range plan.Changes {
+			paths = append(paths, change.Path)
+			if change.OldPath != "" {
+				paths = append(paths, change.OldPath)
+			}
+		}
+		return sortedUnique(paths)
+	}
+
+	for _, batch := range plan.Lotes {
+		if len(batch.Selectors) == 0 {
+			paths = append(paths, batch.Rutas...)
+			continue
+		}
+		for _, selector := range batch.Selectors {
+			paths = append(paths, selector.Path)
+			if selector.OldPath != "" {
+				paths = append(paths, selector.OldPath)
+			}
+		}
+	}
+	return sortedUnique(paths)
 }
 
 func withSelectionIndex(head string, action func(string) error) error {
@@ -351,17 +382,17 @@ func cleanupSelectionIndex(path string) {
 
 func readSelectionTree(index, head string) error {
 	if head == "unborn-head" {
-		return ejecutarGitConIndice(index, nil, "read-tree", "--empty")
+		return runGitWithIndex(index, nil, "read-tree", "--empty")
 	}
-	return ejecutarGitConIndice(index, nil, "read-tree", head)
+	return runGitWithIndex(index, nil, "read-tree", head)
 }
 
-func ejecutarGitConIndice(index string, stdin io.Reader, args ...string) error {
-	_, err := salidaGitConIndice(index, stdin, args...)
+func runGitWithIndex(index string, stdin io.Reader, args ...string) error {
+	_, err := runGitWithIndexOutput(index, stdin, args...)
 	return err
 }
 
-func salidaGitConIndice(index string, stdin io.Reader, args ...string) (string, error) {
+func runGitWithIndexOutput(index string, stdin io.Reader, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Env = selectionIndexEnvironment(index)
 	cmd.Stdin = stdin
@@ -384,7 +415,7 @@ func selectionIndexEnvironment(index string) []string {
 }
 
 func readSelectionIndexEntry(index, path string) (selectionIndexEntry, bool, error) {
-	output, err := salidaGitConIndice(index, nil, "ls-files", "--stage", "-z", "--", literalPathspec(path))
+	output, err := runGitWithIndexOutput(index, nil, "ls-files", "--stage", "-z", "--", literalPathspec(path))
 	if err != nil {
 		return selectionIndexEntry{}, false, err
 	}
