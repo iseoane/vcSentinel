@@ -56,6 +56,11 @@ type OpcionesAuditoria struct {
 	// (T6.2). Empty by default: the caller decides when both sources should
 	// coexist in the same report.
 	HallazgosDeterministas []Hallazgo
+	// ReviewTransport, when set, routes each dimension's reviewer call through
+	// an alternative execution path such as the durable run controller. It
+	// receives the bundle name, the dimension, and the fully built prompt.
+	// Nil keeps the legacy direct call with its in-process transport retry.
+	ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error)
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -427,7 +432,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 		}
 		return "", errors.New("semantic review unavailable: restricted reviewer capability is required")
 	}
-	salida, err := ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
+	salida, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
@@ -439,7 +444,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, err = ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
+		salida, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
@@ -492,6 +497,16 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 		}
 		hallazgos[i].EvidenceSet = &FindingEvidenceSet{Values: evidencias}
 	}
+}
+
+// invokeReview routes one reviewer call through the configured durable
+// transport when present; nil keeps the legacy direct call with its transport
+// retry. Both paths receive the identical prompt so parsing stays shared.
+func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, error) {
+	if opts.ReviewTransport != nil {
+		return opts.ReviewTransport(bundle.Name, dimension, prompt, agente)
+	}
+	return ejecutarConReintento(ejecutar, prompt)
 }
 
 func ejecutarConReintento(ejecutar func(string) (string, error), prompt string) (string, error) {
