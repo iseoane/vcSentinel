@@ -4,6 +4,10 @@ This matrix routes each roadmap family to the smallest useful supporting skill.
 The project skill remains the workflow source of truth; this file only selects
 specialist context and the stronger audit points.
 
+Every family also requires the `code-review` skill for independent diff review
+while the durable-runs roadmap is active through R11. A `judgment-day` entry in
+the Strong audit column adds an adversarial gate; it never replaces `code-review`.
+
 | Unit family | Scope | Supporting skills | Strong audit |
 | --- | --- | --- | --- |
 | R0 | Gate evidence | `go-testing`, `code-review` | No |
