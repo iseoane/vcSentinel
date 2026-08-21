@@ -316,63 +316,93 @@ func TestApplyLegacyRouteOnlyPlanUsesIsolatedIndex(t *testing.T) {
 	}
 }
 
-func TestApplyLegacyRouteOnlyPlanRejectsDetectedRename(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "old.go", "rename me\n")
-	ejecutar(t, "mv", "old.go", "new.go")
+func TestApplyLegacyRouteOnlyPlanRejectsDetectedRenameOrCopy(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{
+			name: "rename",
+			setup: func(t *testing.T) {
+				t.Helper()
+				ejecutar(t, "mv", "old.go", "new.go")
+			},
+		},
+		{
+			name: "copy",
+			setup: func(t *testing.T) {
+				t.Helper()
+				if err := writeSelectionTestFile("old.go", "rename me\nupdated\n"); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeSelectionTestFile("new.go", "rename me\n"); err != nil {
+					t.Fatal(err)
+				}
+				ejecutar(t, "add", "--", "new.go")
+			},
+		},
+	}
 
-	plan := &PlanSerializado{
-		Lotes: []LoteSerializado{{
-			Numero:  1,
-			Capa:    "backend",
-			Rutas:   []string{"new.go"},
-			Lineas:  0,
-			Mensaje: "chore(slice): apply a legacy route-only rename",
-		}},
-	}
-	state, err := HashEstadoWorktree([]string{"new.go"})
-	if err != nil {
-		t.Fatalf("HashEstadoWorktree: %v", err)
-	}
-	plan.EstadoWorktree = state
-	if err := RecalculatePlanID(plan); err != nil {
-		t.Fatalf("RecalculatePlanID: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prepararRepoTemp(t)
+			commitEnRepo(t, "old.go", "rename me\n")
+			tt.setup(t)
 
-	if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
-		t.Fatal(err)
-	}
-	ejecutar(t, "add", "--", "unrelated.txt")
-	statusBefore, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
-	if err != nil {
-		t.Fatalf("git status before apply: %v", err)
-	}
-	stagedBefore, err := ejecutarGitSalida("diff", "--cached", "--name-only")
-	if err != nil {
-		t.Fatalf("git diff --cached before apply: %v", err)
-	}
-	commitsBefore := contarCommits(t)
+			plan := &PlanSerializado{
+				Lotes: []LoteSerializado{{
+					Numero:  1,
+					Capa:    "backend",
+					Rutas:   []string{"new.go"},
+					Lineas:  0,
+					Mensaje: "chore(slice): apply a legacy route-only rename or copy",
+				}},
+			}
+			state, err := HashEstadoWorktree([]string{"new.go"})
+			if err != nil {
+				t.Fatalf("HashEstadoWorktree: %v", err)
+			}
+			plan.EstadoWorktree = state
+			if err := RecalculatePlanID(plan); err != nil {
+				t.Fatalf("RecalculatePlanID: %v", err)
+			}
 
-	_, err = AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
-	if !errors.Is(err, ErrLegacyRouteOnlyRename) {
-		t.Fatalf("apply error = %v, want ErrLegacyRouteOnlyRename", err)
-	}
-	if contarCommits(t) != commitsBefore {
-		t.Fatal("rejected legacy rename created history")
-	}
-	statusAfter, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
-	if err != nil {
-		t.Fatalf("git status after apply: %v", err)
-	}
-	if statusAfter != statusBefore {
-		t.Fatalf("rejected apply changed worktree status: before %q, after %q", statusBefore, statusAfter)
-	}
-	stagedAfter, err := ejecutarGitSalida("diff", "--cached", "--name-only")
-	if err != nil {
-		t.Fatalf("git diff --cached after apply: %v", err)
-	}
-	if stagedAfter != stagedBefore {
-		t.Fatalf("rejected apply changed staged paths: before %q, after %q", stagedBefore, stagedAfter)
+			if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
+				t.Fatal(err)
+			}
+			ejecutar(t, "add", "--", "unrelated.txt")
+			statusBefore, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+			if err != nil {
+				t.Fatalf("git status before apply: %v", err)
+			}
+			stagedBefore, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+			if err != nil {
+				t.Fatalf("git diff --cached before apply: %v", err)
+			}
+			commitsBefore := contarCommits(t)
+
+			_, err = AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+			if !errors.Is(err, ErrLegacyRouteOnlyRename) {
+				t.Fatalf("apply error = %v, want ErrLegacyRouteOnlyRename", err)
+			}
+			if contarCommits(t) != commitsBefore {
+				t.Fatal("rejected legacy rename or copy created history")
+			}
+			statusAfter, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+			if err != nil {
+				t.Fatalf("git status after apply: %v", err)
+			}
+			if statusAfter != statusBefore {
+				t.Fatalf("rejected apply changed worktree status: before %q, after %q", statusBefore, statusAfter)
+			}
+			stagedAfter, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+			if err != nil {
+				t.Fatalf("git diff --cached after apply: %v", err)
+			}
+			if stagedAfter != stagedBefore {
+				t.Fatalf("rejected apply changed staged paths: before %q, after %q", stagedBefore, stagedAfter)
+			}
+		})
 	}
 }
 
