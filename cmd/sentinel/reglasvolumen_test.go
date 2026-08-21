@@ -51,7 +51,7 @@ func TestInyectarNoDuplicaConCRLF(t *testing.T) {
 func TestInjectMigratesOlderManagedRule(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "AGENTS.md")
 	oldRule := "\n" + marcadorInicio + "\n## Old guardian rule\n- Block all worktree changes.\n" + marcadorFin + "\n"
-	escribirArchivo(t, path, aCRLF("# Guide\n"+oldRule))
+	escribirArchivo(t, path, aCRLF(oldRule))
 
 	written, err := inyectarReglasDeArchivo(path)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestInyectarMigraBloqueLegadoDuplicado(t *testing.T) {
 func TestInyectarMigraBloqueLegadoSinContenidoPrevio(t *testing.T) {
 	ruta := filepath.Join(t.TempDir(), ".claudecode.md")
 	sinLeadingNewline := strings.TrimPrefix(reglasVolumenLegado, "\n")
-	escribirArchivo(t, ruta, sinLeadingNewline+sinLeadingNewline)
+	escribirArchivo(t, ruta, aCRLF(sinLeadingNewline+sinLeadingNewline))
 
 	escribio, err := inyectarReglasDeArchivo(ruta)
 	if err != nil {
@@ -226,6 +226,9 @@ func TestInyectarMigraBloqueLegadoSinContenidoPrevio(t *testing.T) {
 	}
 	if strings.Count(contenido, "CRITICAL VOLUME RULE") != 1 {
 		t.Errorf("se esperaba exactamente 1 aparición de la regla, contenido: %q", contenido)
+	}
+	if strings.Contains(strings.ReplaceAll(contenido, "\r\n", ""), "\n") {
+		t.Errorf("migration changed a CRLF legacy-only file to LF: %q", contenido)
 	}
 }
 

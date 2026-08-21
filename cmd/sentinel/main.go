@@ -373,7 +373,7 @@ func inyectarReglasDeArchivo(ruta string) (bool, error) {
 
 	if patronReglasVolumenMarcado.MatchString(contenido) {
 		withoutRules := quitarReglasVolumen(contenido)
-		updated := withoutRules + reglasVolumenPara(withoutRules)
+		updated := withoutRules + reglasVolumenPara(contenido)
 		if updated == contenido {
 			return false, nil
 		}
@@ -386,7 +386,7 @@ func inyectarReglasDeArchivo(ruta string) (bool, error) {
 		// pegadas con un único salto de línea de separación, ver
 		// quitarTodasLasCoincidencias en reglasvolumen.go.
 		sinLegado := quitarReglasVolumen(contenido)
-		nuevo := sinLegado + reglasVolumenPara(sinLegado)
+		nuevo := sinLegado + reglasVolumenPara(contenido)
 		return true, os.WriteFile(ruta, []byte(nuevo), 0644)
 	}
 
