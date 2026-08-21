@@ -48,6 +48,39 @@ func TestInyectarNoDuplicaConCRLF(t *testing.T) {
 	}
 }
 
+func TestInyectarMigraBloqueMarcadoAntiguo(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "AGENTS.md")
+	antiguo := "\n" + marcadorInicio + "\n## Old guardian rule\n- Block all worktree changes.\n" + marcadorFin + "\n"
+	escribirArchivo(t, ruta, aCRLF("# Guide\n"+antiguo))
+
+	escribio, err := inyectarReglasDeArchivo(ruta)
+	if err != nil {
+		t.Fatalf("inyectarReglasDeArchivo devolvió error: %v", err)
+	}
+	if !escribio {
+		t.Fatal("init did not migrate the old marked rule")
+	}
+
+	contenido := leerArchivo(t, ruta)
+	if strings.Contains(contenido, "Block all worktree changes") {
+		t.Errorf("the old marked rule remained after migration: %q", contenido)
+	}
+	if !strings.Contains(contenido, "sentinel check --staged") {
+		t.Errorf("the current staged enforcement rule was not injected: %q", contenido)
+	}
+	if strings.Contains(strings.ReplaceAll(contenido, "\r\n", ""), "\n") {
+		t.Errorf("migration changed a CRLF file to LF: %q", contenido)
+	}
+
+	escribio, err = inyectarReglasDeArchivo(ruta)
+	if err != nil {
+		t.Fatalf("second inyectarReglasDeArchivo returned an error: %v", err)
+	}
+	if escribio {
+		t.Error("init was not idempotent after migrating the marked rule")
+	}
+}
+
 // TestQuitarConCRLF: uninit debe poder retirar un bloque en CRLF. Si no
 // puede, uninit no revierte lo que init hizo, que es su contrato.
 func TestQuitarConCRLF(t *testing.T) {
@@ -62,7 +95,7 @@ func TestQuitarConCRLF(t *testing.T) {
 		t.Fatal("uninit no reconoció el bloque en CRLF")
 	}
 	restante := leerArchivo(t, ruta)
-	if strings.Contains(restante, "REGLA CRÍTICA DE VOLUMEN") {
+	if strings.Contains(restante, "CRITICAL VOLUME RULE") {
 		t.Errorf("el bloque sigue presente: %q", restante)
 	}
 	if !strings.Contains(restante, "# Guía") {
@@ -85,7 +118,7 @@ func TestQuitarBloquesDuplicadosMixtos(t *testing.T) {
 		t.Fatal("uninit no retiró nada")
 	}
 	restante := leerArchivo(t, ruta)
-	if strings.Contains(restante, "REGLA CRÍTICA DE VOLUMEN") {
+	if strings.Contains(restante, "CRITICAL VOLUME RULE") {
 		t.Errorf("quedaron bloques sin retirar: %q", restante)
 	}
 }
@@ -151,7 +184,7 @@ func TestInyectarMigraBloqueLegadoDuplicado(t *testing.T) {
 	if strings.Count(contenido, marcadorFin) != 1 {
 		t.Errorf("se esperaba exactamente 1 marcadorFin, contenido: %q", contenido)
 	}
-	if strings.Count(contenido, "REGLA CRÍTICA DE VOLUMEN") != 1 {
+	if strings.Count(contenido, "CRITICAL VOLUME RULE") != 1 {
 		t.Errorf("se esperaba exactamente 1 aparición de la regla, contenido: %q", contenido)
 	}
 	if !strings.Contains(contenido, "# Guía") {
@@ -191,7 +224,7 @@ func TestInyectarMigraBloqueLegadoSinContenidoPrevio(t *testing.T) {
 	if strings.Count(contenido, marcadorInicio) != 1 {
 		t.Errorf("se esperaba exactamente 1 marcadorInicio, contenido: %q", contenido)
 	}
-	if strings.Count(contenido, "REGLA CRÍTICA DE VOLUMEN") != 1 {
+	if strings.Count(contenido, "CRITICAL VOLUME RULE") != 1 {
 		t.Errorf("se esperaba exactamente 1 aparición de la regla, contenido: %q", contenido)
 	}
 }
@@ -231,10 +264,30 @@ func TestQuitarRetiraMezclaDeLegadoYMarcado(t *testing.T) {
 	contenido := "# Guía\n" + reglasVolumenLegado + reglasVolumen
 
 	restante := quitarReglasVolumen(contenido)
-	if strings.Contains(restante, "REGLA CRÍTICA DE VOLUMEN") {
+	if strings.Contains(restante, "CRITICAL VOLUME RULE") {
 		t.Errorf("quedó texto de la regla sin retirar: %q", restante)
 	}
 	if strings.Contains(restante, marcadorInicio) || strings.Contains(restante, marcadorFin) {
 		t.Errorf("quedaron marcadores sin retirar: %q", restante)
+	}
+}
+
+func TestInjectedRuleDescribesAdvisoryWorktreeAndStagedEnforcement(t *testing.T) {
+	required := []string{
+		"sentinel check",
+		"whole worktree",
+		"is advisory",
+		"sentinel check --staged",
+		"staged authored code",
+		"sentinel slice plan --json",
+		"sentinel slice apply --plan plan.json --answers answers.json",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(cuerpoReglasVolumen, fragment) {
+			t.Errorf("injected rule does not contain %q: %q", fragment, cuerpoReglasVolumen)
+		}
+	}
+	if strings.Contains(cuerpoReglasVolumen, "STRICTLY PROHIBITED") {
+		t.Error("injected rule still blocks implementation because of advisory worktree volume")
 	}
 }

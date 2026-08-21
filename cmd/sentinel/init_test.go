@@ -29,7 +29,7 @@ func TestInyectarReglasIdempotente(t *testing.T) {
 	}
 
 	datos, _ := os.ReadFile(ruta)
-	if n := strings.Count(string(datos), "## REGLA"); n != 1 {
+	if n := strings.Count(string(datos), "## CRITICAL VOLUME RULE"); n != 1 {
 		t.Fatalf("tras la primera inyección hay %d bloques, esperado 1", n)
 	}
 
@@ -43,7 +43,7 @@ func TestInyectarReglasIdempotente(t *testing.T) {
 	}
 
 	datos, _ = os.ReadFile(ruta)
-	if n := strings.Count(string(datos), "## REGLA"); n != 1 {
+	if n := strings.Count(string(datos), "## CRITICAL VOLUME RULE"); n != 1 {
 		t.Fatalf("tras la segunda inyección hay %d bloques, esperado 1 (idempotencia rota)", n)
 	}
 	// El contenido original se conserva íntegro.
@@ -92,7 +92,7 @@ func TestQuitarReglasReparaDuplicados(t *testing.T) {
 		t.Fatal("debería haberse retirado algo (había duplicados)")
 	}
 	datos, _ := os.ReadFile(ruta)
-	if strings.Contains(string(datos), "## REGLA") {
+	if strings.Contains(string(datos), "## CRITICAL VOLUME RULE") {
 		t.Errorf("quedan bloques de reglas tras uninit: %q", datos)
 	}
 	if !strings.Contains(string(datos), "# previo") || !strings.Contains(string(datos), "fin\n") {

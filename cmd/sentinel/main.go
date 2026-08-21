@@ -29,7 +29,7 @@ const marcadorFin = "<!-- vas-sentinel:end -->"
 
 // cuerpoReglasVolumen es el texto visible de la regla, libre de cambiar de
 // redacción entre versiones: la detección no depende de él.
-const cuerpoReglasVolumen = "## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
+const cuerpoReglasVolumen = "## CRITICAL VOLUME RULE (THE GUARDIAN)\n- Before making changes or proposing a plan, run `sentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICO`.\n- The repository's `pre-commit` hook runs `sentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.\n- When the worktree check is `CRITICO`, run `sentinel slice plan --json` to produce reviewable selections without committing.\n- After the user answers every pending decision, apply the approved selections with `sentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.\n"
 
 // reglasVolumen es el bloque que 'init' inyecta hoy en AGENTS.md, CLAUDE.md y
 // .claudecode.md, envuelto en marcadorInicio/marcadorFin.
@@ -360,14 +360,10 @@ func ejecutarUninit(path string) {
 	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
 }
 
-// inyectarReglasDeArchivo añade el bloque de reglas al final del archivo SOLO
-// si todavía no está presente en formato marcado (init idempotente): ejecutar
-// init dos veces no duplica la inserción, sea cual sea la versión que la
-// escribió. Si el archivo trae el bloque legado (sin marcadores, de una
-// versión anterior a esta), lo migra: retira TODAS sus apariciones —repara
-// también los duplicados que dejaron versiones anteriores no idempotentes— y
-// escribe un único bloque marcado. El archivo inexistente se crea con el
-// bloque. Devuelve si escribió algo.
+// inyectarReglasDeArchivo appends the managed rule when it is absent and
+// replaces it when an earlier managed version is present. Re-running init with
+// the current rule is byte-for-byte idempotent, while old marked and legacy
+// blocks are migrated to one current marked block.
 func inyectarReglasDeArchivo(ruta string) (bool, error) {
 	datos, err := os.ReadFile(ruta)
 	if err != nil && !os.IsNotExist(err) {
@@ -376,9 +372,12 @@ func inyectarReglasDeArchivo(ruta string) (bool, error) {
 	contenido := string(datos)
 
 	if patronReglasVolumenMarcado.MatchString(contenido) {
-		// Ya tiene el bloque marcado, sea de esta versión o de una futura que
-		// comparta los mismos marcadores: nada que hacer.
-		return false, nil
+		sinReglas := quitarReglasVolumen(contenido)
+		nuevo := sinReglas + reglasVolumenPara(sinReglas)
+		if nuevo == contenido {
+			return false, nil
+		}
+		return true, os.WriteFile(ruta, []byte(nuevo), 0644)
 	}
 
 	if patronReglasVolumenLegado.MatchString(contenido) {
