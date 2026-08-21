@@ -89,9 +89,6 @@ var (
 	// ErrInvalidPlan identifies malformed, incomplete, overlapping, or corrupt
 	// selection data before any history mutation is attempted.
 	ErrInvalidPlan = errors.New("invalid slice plan")
-	// ErrSelectionApplyUnsupported prevents the legacy whole-file executor from
-	// silently applying a hunk-aware plan as if it selected the whole file.
-	ErrSelectionApplyUnsupported = errors.New("selection-aware slice apply is not implemented")
 )
 
 type planIdentity struct {
@@ -589,15 +586,4 @@ func cloneChanges(input []PlannedChange) []PlannedChange {
 		}
 	}
 	return result
-}
-
-func hasHunkSelectors(plan *PlanSerializado) bool {
-	for _, lote := range plan.Lotes {
-		for _, selector := range lote.Selectors {
-			if selector.Mode == SelectorHunk {
-				return true
-			}
-		}
-	}
-	return false
 }

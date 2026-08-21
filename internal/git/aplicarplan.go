@@ -39,7 +39,11 @@ func AplicarPlanAprobado(plan *PlanSerializado, respuestas RespuestasPlan) ([]Re
 	if err := ValidarAplicacion(plan, respuestas); err != nil {
 		return nil, err
 	}
-	return EjecutarPlanFragmentacion(deserializarPlan(plan))
+	ejecutable := deserializarPlan(plan)
+	if len(ejecutable.Changes) > 0 {
+		return ejecutarPlanConSelecciones(ejecutable)
+	}
+	return EjecutarPlanFragmentacion(ejecutable)
 }
 
 // ValidarAplicacion comprueba las tres ligaduras sin tocar el repositorio más
@@ -76,9 +80,6 @@ func ValidarAplicacion(plan *PlanSerializado, respuestas RespuestasPlan) error {
 			return fmt.Errorf("%w: respuesta %q no admitida para la decisión %s", ErrDecisionSinRespuesta, respuesta, decision.ID)
 		}
 	}
-	if hasHunkSelectors(plan) {
-		return ErrSelectionApplyUnsupported
-	}
 	return nil
 }
 
@@ -98,5 +99,6 @@ func deserializarPlan(plan *PlanSerializado) *PlanFragmentacion {
 			EsGigante:         lote.EsGigante,
 		})
 	}
+	ejecutable.Changes = cloneChanges(plan.Changes)
 	return ejecutable
 }

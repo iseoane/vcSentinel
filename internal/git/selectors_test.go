@@ -220,36 +220,6 @@ func TestSlicePlanRejectsStaleWorktreeAndIndexState(t *testing.T) {
 	}
 }
 
-func TestSliceApplyRejectsHunkPlanBeforeHistoryMutation(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
-	if err := os.WriteFile("app.go", []byte("ONE\ntwo\nthree\nFOUR\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := ConstruirPlanParaAgente()
-	if err != nil {
-		t.Fatal(err)
-	}
-	change := plan.Changes[0]
-	plan.Lotes[0].Selectors = []ChangeSelector{
-		selectorForHunk(change, 0),
-		selectorForHunk(change, 1),
-	}
-	plan.Lotes[0].Lineas = change.AddedLines
-	if err := RecalculatePlanID(plan); err != nil {
-		t.Fatal(err)
-	}
-	commitsBefore := contarCommits(t)
-
-	_, err = AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
-	if !errors.Is(err, ErrSelectionApplyUnsupported) {
-		t.Fatalf("apply error = %v, want ErrSelectionApplyUnsupported", err)
-	}
-	if commitsBefore != contarCommits(t) {
-		t.Fatal("rejecting a hunk-aware plan must not create history")
-	}
-}
-
 func TestSlicePlanRepresentsRequestedGitChangeKinds(t *testing.T) {
 	tests := []struct {
 		name string
