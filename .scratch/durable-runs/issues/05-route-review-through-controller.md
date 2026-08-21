@@ -76,3 +76,33 @@ ledger, store, and controller packages stay intact.
   placeholder until engine-level question-round wiring; retries/fallbacks as
   separate physical invocations deferred to the engine-wiring slices;
   Judgment Day pending at milestone closure per the unit-skill matrix.
+
+## Evidence — slice 2 (engine routing seam)
+
+- Scope delivered: `DurableTransport` in reviewexec (one physical invocation
+  per Run call over a shared store; TerminalError preserving concrete provider
+  text and outcome class; nanosecond salt against candidate collision across
+  repeated audits) plus the optional `ReviewTransport` field on
+  OpcionesAuditoria routing both the first reviewer call and the clarification
+  round through it. Nil field keeps the legacy path byte-equivalent; parsing
+  stays shared after either path.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  guardian 201 authored lines [PUNTO_OPTIMO].
+- Independent review (code-review skill, parallel axes): Spec
+  APPROVE-WITH-FINDINGS (0 blockers); Standards APPROVE-WITH-FINDINGS.
+  Applied fixes: new Spanish identifiers renamed to English (invokeReview,
+  transport, calls).
+- MAJOR accepted finding — staged durability model: the roadmap phrase "one
+  logical job per review dimension with retries recorded within that job" is
+  temporarily implemented as one durable RUN per invocation keyed by
+  bundle/dimension/salt, because R3 offers no multi-invocation primitive short
+  of awaiting_decision/respond, which is semantic question lineage and must
+  not be abused for retries. Grouping invocations under one logical job
+  requires an R3 contract extension (attempt-level events or retry decision
+  support) and lands before R5 exposes operator commands. Recorded here as
+  the binding follow-up.
+- Accepted minor follow-ups: configured timeouts still ride inside
+  CLIAdapter's per-call timeout (terminal classes already correct); engine-
+  level migration-comparison, parallelism-parity, and durable-path attribution
+  tests land with production wiring; identityKey becomes a typed key when
+  cmd-side composition defines its final shape.
