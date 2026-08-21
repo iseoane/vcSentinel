@@ -16,6 +16,9 @@ var (
 	ErrDecisionSinRespuesta = errors.New("hay decisiones pendientes sin respuesta explícita")
 	// ErrDecisionAbortada: el usuario respondió abortar.
 	ErrDecisionAbortada = errors.New("el usuario abortó la fragmentación")
+	// ErrLegacyRouteOnlyRename rejects a route-only plan that cannot bind both
+	// sides of a detected rename or copy.
+	ErrLegacyRouteOnlyRename = errors.New("legacy route-only plans cannot safely apply detected renames or copies")
 )
 
 // RespuestasPlan es el artefacto de aprobación: respuestas explícitas ligadas
@@ -50,6 +53,9 @@ func ValidarAplicacion(plan *PlanSerializado, respuestas RespuestasPlan) error {
 	if err := ValidateSerializedPlan(plan); err != nil {
 		return err
 	}
+	if err := rejectLegacyRouteOnlyRenames(plan); err != nil {
+		return err
+	}
 	var estadoActual string
 	var err error
 	if len(plan.Changes) > 0 {
@@ -75,6 +81,40 @@ func ValidarAplicacion(plan *PlanSerializado, respuestas RespuestasPlan) error {
 			return fmt.Errorf("%w: %s", ErrDecisionAbortada, decision.Archivo)
 		case respuesta != RespuestaBypass:
 			return fmt.Errorf("%w: respuesta %q no admitida para la decisión %s", ErrDecisionSinRespuesta, respuesta, decision.ID)
+		}
+	}
+	return nil
+}
+
+func rejectLegacyRouteOnlyRenames(plan *PlanSerializado) error {
+	if len(plan.Changes) > 0 {
+		return nil
+	}
+
+	routes := make(map[string]struct{})
+	for _, batch := range plan.Lotes {
+		for _, route := range batch.Rutas {
+			routes[route] = struct{}{}
+		}
+	}
+	if len(routes) == 0 {
+		return nil
+	}
+
+	changes, err := captureGitChangeRecords()
+	if err != nil {
+		return fmt.Errorf("could not inspect legacy route-only draft: %w", err)
+	}
+	for _, change := range changes {
+		if change.Status != "R" && change.Status != "C" {
+			continue
+		}
+		if _, approved := routes[change.Path]; approved {
+			kind := "rename"
+			if change.Status == "C" {
+				kind = "copy"
+			}
+			return fmt.Errorf("%w: approved route %q is the destination of a detected %s", ErrLegacyRouteOnlyRename, change.Path, kind)
 		}
 	}
 	return nil

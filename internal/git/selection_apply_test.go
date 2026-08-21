@@ -316,6 +316,120 @@ func TestApplyLegacyRouteOnlyPlanUsesIsolatedIndex(t *testing.T) {
 	}
 }
 
+func TestApplyLegacyRouteOnlyPlanRejectsDetectedRename(t *testing.T) {
+	prepararRepoTemp(t)
+	commitEnRepo(t, "old.go", "rename me\n")
+	ejecutar(t, "mv", "old.go", "new.go")
+
+	plan := &PlanSerializado{
+		Lotes: []LoteSerializado{{
+			Numero:  1,
+			Capa:    "backend",
+			Rutas:   []string{"new.go"},
+			Lineas:  0,
+			Mensaje: "chore(slice): apply a legacy route-only rename",
+		}},
+	}
+	state, err := HashEstadoWorktree([]string{"new.go"})
+	if err != nil {
+		t.Fatalf("HashEstadoWorktree: %v", err)
+	}
+	plan.EstadoWorktree = state
+	if err := RecalculatePlanID(plan); err != nil {
+		t.Fatalf("RecalculatePlanID: %v", err)
+	}
+
+	if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
+		t.Fatal(err)
+	}
+	ejecutar(t, "add", "--", "unrelated.txt")
+	statusBefore, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+	if err != nil {
+		t.Fatalf("git status before apply: %v", err)
+	}
+	stagedBefore, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+	if err != nil {
+		t.Fatalf("git diff --cached before apply: %v", err)
+	}
+	commitsBefore := contarCommits(t)
+
+	_, err = AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+	if !errors.Is(err, ErrLegacyRouteOnlyRename) {
+		t.Fatalf("apply error = %v, want ErrLegacyRouteOnlyRename", err)
+	}
+	if contarCommits(t) != commitsBefore {
+		t.Fatal("rejected legacy rename created history")
+	}
+	statusAfter, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+	if err != nil {
+		t.Fatalf("git status after apply: %v", err)
+	}
+	if statusAfter != statusBefore {
+		t.Fatalf("rejected apply changed worktree status: before %q, after %q", statusBefore, statusAfter)
+	}
+	stagedAfter, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+	if err != nil {
+		t.Fatalf("git diff --cached after apply: %v", err)
+	}
+	if stagedAfter != stagedBefore {
+		t.Fatalf("rejected apply changed staged paths: before %q, after %q", stagedBefore, stagedAfter)
+	}
+}
+
+func TestApplySelectionSupportsUnbornHead(t *testing.T) {
+	tests := []struct {
+		name  string
+		stage bool
+	}{
+		{name: "untracked file"},
+		{name: "staged file", stage: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prepararRepoTemp(t)
+			if err := writeSelectionTestFile("root.go", "package root\n"); err != nil {
+				t.Fatal(err)
+			}
+			if tt.stage {
+				ejecutar(t, "add", "--", "root.go")
+			}
+
+			plan, err := ConstruirPlanParaAgente()
+			if err != nil {
+				t.Fatalf("ConstruirPlanParaAgente: %v", err)
+			}
+			makeWholeFilePlan(t, plan)
+			if err := ValidarAplicacion(plan, RespuestasPlan{PlanID: plan.PlanID}); err != nil {
+				t.Fatalf("ValidarAplicacion: %v", err)
+			}
+
+			results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+			if err != nil {
+				t.Fatalf("AplicarPlanAprobado: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("commits = %d, want 1", len(results))
+			}
+			parents, err := ejecutarGitSalida("rev-list", "--parents", "-n", "1", "HEAD")
+			if err != nil {
+				t.Fatalf("git rev-list root commit: %v", err)
+			}
+			if len(strings.Fields(parents)) != 1 {
+				t.Fatalf("HEAD is not a root commit: %q", parents)
+			}
+			content, err := ejecutarGitSalida("show", "HEAD:root.go")
+			if err != nil {
+				t.Fatalf("git show root.go: %v", err)
+			}
+			if content != "package root\n" {
+				t.Fatalf("root.go content = %q, want %q", content, "package root\n")
+			}
+			assertSelectionApplyClean(t)
+		})
+	}
+}
+
 func TestApplySelectionNormalizesIndexAfterMidApplyFailure(t *testing.T) {
 	prepararRepoTemp(t)
 	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")

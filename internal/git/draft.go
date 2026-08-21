@@ -101,13 +101,27 @@ func currentHeadFingerprint() string {
 }
 
 func captureGitChangeRecords() ([]gitChangeRecord, error) {
-	diff, err := ejecutarGitSalida("diff", "--name-status", "-z", "-M", "HEAD", "--")
-	if err != nil {
-		return nil, fmt.Errorf("could not list draft changes: %w", err)
-	}
-	records, err := parseGitNameStatus(diff)
-	if err != nil {
-		return nil, err
+	var records []gitChangeRecord
+	if currentHeadFingerprint() == "unborn-head" {
+		staged, err := ejecutarGitSalida("ls-files", "--cached", "-z", "--")
+		if err != nil {
+			return nil, fmt.Errorf("could not list staged changes on unborn HEAD: %w", err)
+		}
+		for _, path := range strings.Split(strings.TrimSuffix(staged, "\x00"), "\x00") {
+			if path == "" {
+				continue
+			}
+			records = append(records, gitChangeRecord{Status: "A", Path: normalizeGitPath(path)})
+		}
+	} else {
+		diff, err := ejecutarGitSalida("diff", "--name-status", "-z", "-M", "-C", "HEAD", "--")
+		if err != nil {
+			return nil, fmt.Errorf("could not list draft changes: %w", err)
+		}
+		records, err = parseGitNameStatus(diff)
+		if err != nil {
+			return nil, err
+		}
 	}
 	status, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall", "--")
 	if err != nil {
@@ -381,6 +395,9 @@ func parseUnifiedHunkHeader(header string) (DiffHunk, error) {
 
 func hashHeadPath(path string) (string, error) {
 	if path == "" {
+		return absentFingerprint, nil
+	}
+	if currentHeadFingerprint() == "unborn-head" {
 		return absentFingerprint, nil
 	}
 	output, err := ejecutarGitSalida("ls-tree", "-z", "HEAD", "--", literalPathspec(path))
