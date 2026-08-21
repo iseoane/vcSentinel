@@ -57,3 +57,22 @@ finding fingerprints, or the ledger format.
 adapter and its tests; selection falls back to the legacy scheduler at
 construction time. Durable runs already written remain readable, and the
 ledger, store, and controller packages stay intact.
+
+## Evidence — slice 1 (adapter seam)
+
+- Commit: be4855f feat(reviewexec): route restricted reviewers through the execution controller.
+- Scope delivered: `internal/reviewexec` package only — ReviewAdapter over a
+  locally declared RestrictedReviewer (no import of internal/review),
+  DefaultClassifier mapping context errors, concrete provider failure text
+  preserved end-to-end through Completion and durable outcomes, effective-agent
+  observation proven with answerer identity attribution.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  guardian 279 authored lines [PUNTO_OPTIMO]; pre-commit hook passed.
+- Independent review (code-review skill, parallel Standards+Spec axes): both
+  APPROVE-WITH-FINDINGS. Applied fixes: durable Inspect evidence for the
+  unavailable path; answerer identity attribution in the observation test;
+  extracted startAndWait scaffold; naming waiver comment for EjecutarRevision.
+- Accepted follow-ups: continuation-response append kept as documented
+  placeholder until engine-level question-round wiring; retries/fallbacks as
+  separate physical invocations deferred to the engine-wiring slices;
+  Judgment Day pending at milestone closure per the unit-skill matrix.
