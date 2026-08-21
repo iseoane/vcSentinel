@@ -60,7 +60,9 @@ func (s *Store) SaveAttemptOutcome(outcome AttemptOutcome) error {
 		return err
 	}
 	path := filepath.Join(directory, "outcomes", outcome.InvocationID+".json")
-	return writeImmutableRecord(path, data)
+	return withExecutionLock(directory, func() error {
+		return writeImmutableRecord(path, data)
+	})
 }
 
 // ReadAttemptOutcomes returns every admitted invocation outcome in completion
@@ -74,7 +76,31 @@ func (s *Store) ReadAttemptOutcomes(runID string) ([]AttemptOutcome, error) {
 	if err := ensureExecutionExists(directory); err != nil {
 		return nil, err
 	}
-	return readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
+	log, err := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	if log.tail != nil {
+		return nil, IncompleteEventTailError{RunID: runID}
+	}
+	legacy, legacyErr := readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
+	terminalFrames := terminalEventFrames(log.frames)
+	if len(log.frames) == 0 {
+		return legacy, legacyErr
+	}
+	if legacyErr != nil {
+		if len(terminalFrames) > 0 {
+			return nil, terminalPersistenceError(runID, terminalFrames[0].InvocationID, "outcome", legacyErr)
+		}
+		return nil, legacyErr
+	}
+	if len(terminalFrames) == 0 {
+		if len(legacy) > 0 {
+			return nil, terminalPersistenceError(runID, legacy[0].InvocationID, "outcome", errors.New("outcome has no terminal event"))
+		}
+		return []AttemptOutcome{}, nil
+	}
+	return outcomesFromFrames(terminalFrames, legacy), nil
 }
 
 // SaveInvocationResponse durably binds a response to a child invocation
@@ -95,7 +121,9 @@ func (s *Store) SaveInvocationResponse(response InvocationResponse) error {
 		return err
 	}
 	path := filepath.Join(directory, "responses", response.InvocationID+".json")
-	return writeImmutableRecord(path, data)
+	return withExecutionLock(directory, func() error {
+		return writeImmutableRecord(path, data)
+	})
 }
 
 // ReadInvocationResponses returns the durable control-response lineage for a
@@ -146,6 +174,42 @@ func knownOutcomeClass(class agentrun.OutcomeClass) bool {
 	}
 }
 
+func terminalEventFrames(frames []EventFrame) []EventFrame {
+	terminal := make([]EventFrame, 0)
+	for _, frame := range frames {
+		if frame.To.TerminalClass() != agentrun.TerminalNone {
+			terminal = append(terminal, frame)
+		}
+	}
+	return terminal
+}
+
+func outcomesFromFrames(frames []EventFrame, legacy []AttemptOutcome) []AttemptOutcome {
+	legacyByInvocation := make(map[string]AttemptOutcome, len(legacy))
+	for _, outcome := range legacy {
+		legacyByInvocation[outcome.InvocationID] = outcome
+	}
+	outcomes := make([]AttemptOutcome, 0, len(frames))
+	for _, frame := range frames {
+		class := frame.OutcomeClass
+		if class == "" {
+			class = outcomeClassForLifecycle(frame.To)
+		}
+		outcome := AttemptOutcome{
+			RunID: frame.RunID, JobID: frame.JobID, InvocationID: frame.InvocationID,
+			LineageID: frame.LineageID, Class: class, Error: frame.OutcomeError,
+			OutputHash: frame.OutputHash, At: frame.At,
+		}
+		if frame.OutcomeClass == "" {
+			if legacyOutcome, ok := legacyByInvocation[frame.InvocationID]; ok {
+				outcome = legacyOutcome
+			}
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes
+}
+
 func readAttemptOutcomes(directory, runID string) ([]AttemptOutcome, error) {
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
@@ -156,6 +220,9 @@ func readAttemptOutcomes(directory, runID string) ([]AttemptOutcome, error) {
 	}
 	outcomes := make([]AttemptOutcome, 0, len(entries))
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			continue
+		}
 		path := filepath.Join(directory, entry.Name())
 		info, err := os.Lstat(path)
 		if err != nil {
@@ -199,6 +266,9 @@ func readInvocationResponses(directory, runID string) ([]InvocationResponse, err
 	}
 	responses := make([]InvocationResponse, 0, len(entries))
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			continue
+		}
 		path := filepath.Join(directory, entry.Name())
 		info, err := os.Lstat(path)
 		if err != nil {

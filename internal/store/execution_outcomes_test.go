@@ -72,3 +72,32 @@ func TestAttemptOutcomeAndResponseRecordsAreImmutableAndInspectable(t *testing.T
 		t.Fatalf("response record leaked raw answer: %s", responseData)
 	}
 }
+
+func TestReadDerivedProjectionUsesValidatedEventsWhenStateFileIsStale(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	runID := string(job.RunID())
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(runID, testEvent(t, job, agentrun.StateCreated, agentrun.StateQueued), 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(runID, testEvent(t, job, agentrun.StateQueued, agentrun.StateAdmitted), 1); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := store.executionDir(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "state.json"), []byte(`{"run_id":"`+runID+`","state":"created"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := store.ReadDerivedProjection(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.State != agentrun.StateAdmitted || projection.Revision != 2 {
+		t.Fatalf("derived projection = %+v, want admitted revision 2", projection)
+	}
+}

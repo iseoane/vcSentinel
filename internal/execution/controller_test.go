@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -171,6 +172,55 @@ func TestApplyResponseCreatesDurableChildInvocation(t *testing.T) {
 	}
 	if len(adapter.responses) != 2 || adapter.responses[1] != "continue" {
 		t.Fatalf("adapter responses = %q, want explicit control response", adapter.responses)
+	}
+}
+
+func TestApplyAbortReconstructsAwaitingDecisionAfterControllerRestart(t *testing.T) {
+	backingStore := store.NuevoStore(t.TempDir())
+	firstController := NewControllerWithClock(backingStore, &responseAdapter{}, fixedClock())
+	handle, err := firstController.Start(context.Background(), testRequest("restart-abort"), testPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, firstController, handle.RunID, agentrun.StateAwaitingDecision)
+
+	restartedController := NewControllerWithClock(backingStore, nil, fixedClock())
+	result, err := restartedController.Apply(context.Background(), handle.RunID, ControlAction{Kind: ActionAbort})
+	if err != nil || !result.Accepted {
+		t.Fatalf("restarted Apply(abort) = %+v, %v, want accepted persisted control action", result, err)
+	}
+	inspection, err := restartedController.Inspect(context.Background(), handle.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Projection.State != agentrun.StateCanceled || len(inspection.Outcomes) != 1 || inspection.Outcomes[0].Class != agentrun.OutcomeCancellation {
+		t.Fatalf("restarted inspection = %+v, want durable cancellation", inspection)
+	}
+}
+
+func TestInspectionDerivesTerminalOutcomeWhenLegacyOutcomeSurfaceIsMissing(t *testing.T) {
+	storeRoot := t.TempDir()
+	backingStore := store.NuevoStore(storeRoot)
+	controller := NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "durable output"}}, fixedClock())
+	handle, err := controller.Start(context.Background(), testRequest("missing-outcome-surface"), testPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := handle.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(storeRoot, "vas-sentinel", "executions", "v1", string(handle.RunID))
+	if err := os.Remove(filepath.Join(directory, "outcomes", string(handle.InvocationID)+".json")); err != nil {
+		t.Fatal(err)
+	}
+
+	inspection, err := NewController(backingStore, nil).Inspect(context.Background(), handle.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Projection.State != agentrun.StateSucceeded || len(inspection.Outcomes) != 1 || inspection.Outcomes[0].Class != agentrun.OutcomeSuccess || inspection.Outcomes[0].OutputHash != completion.OutputHash {
+		t.Fatalf("inspection = %+v, want event-authoritative terminal evidence", inspection)
 	}
 }
 

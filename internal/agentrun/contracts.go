@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"sort"
 	"time"
@@ -85,6 +86,16 @@ func NewLogicalJob(request RunRequest) LogicalJob {
 	requestID := request.Identity()
 	return LogicalJob{hashIdentity("job", requestID), hashIdentity("run", requestID), request}
 }
+
+// NewRecoveredLogicalJob recreates the identity portion needed for durable
+// control actions. Its request payload is intentionally empty.
+func NewRecoveredLogicalJob(runID, jobID Identity) (LogicalJob, error) {
+	if runID == "" || jobID == "" {
+		return LogicalJob{}, errors.New("agentrun: recovered job identity is incomplete")
+	}
+	return LogicalJob{id: jobID, runID: runID}, nil
+}
+
 func (j LogicalJob) ID() Identity        { return j.id }
 func (j LogicalJob) RunID() Identity     { return j.runID }
 func (j LogicalJob) Request() RunRequest { return j.request }
@@ -167,6 +178,21 @@ func NewChildInvocation(parent InvocationEnvelope, attempt uint32, decision Deci
 	ancestors := append(parent.AncestorIDs(), parent.InvocationID())
 	return NewInvocationEnvelope(parent.job, parent.invocationID, ancestors, attempt, decision)
 }
+
+// NewRecoveredInvocation restores only the identity needed for a durable
+// control action. Its request payload and complete ancestor list are absent,
+// so the result must never be passed to an adapter.
+func NewRecoveredInvocation(runID, jobID, invocationID, lineageID, parentID Identity) (InvocationEnvelope, error) {
+	if runID == "" || jobID == "" || invocationID == "" || lineageID == "" {
+		return InvocationEnvelope{}, errors.New("agentrun: recovered invocation identity is incomplete")
+	}
+	job := LogicalJob{id: jobID, runID: runID}
+	return InvocationEnvelope{
+		job: job, parentID: parentID, ancestors: []Identity{jobID},
+		lineageID: lineageID, invocationID: invocationID, attempt: 1,
+	}, nil
+}
+
 func (i InvocationEnvelope) RunID() Identity              { return i.job.RunID() }
 func (i InvocationEnvelope) JobID() Identity              { return i.job.ID() }
 func (i InvocationEnvelope) ParentInvocationID() Identity { return i.parentID }
@@ -272,27 +298,54 @@ func (c OutcomeClass) IsTerminal() bool {
 }
 
 type NormalizedEvent struct {
-	at           time.Time
-	runID        Identity
-	jobID        Identity
-	invocationID Identity
-	lineageID    Identity
-	from, to     LifecycleState
-	decision     Decision
-	terminal     TerminalClass
+	at                 time.Time
+	runID              Identity
+	jobID              Identity
+	invocationID       Identity
+	lineageID          Identity
+	parentInvocationID Identity
+	responseHash       string
+	from, to           LifecycleState
+	decision           Decision
+	terminal           TerminalClass
 }
 
 func NewNormalizedEvent(invocation InvocationEnvelope, from, to LifecycleState, decision Decision, at time.Time) (NormalizedEvent, error) {
 	if err := Transition(from, to); err != nil {
 		return NormalizedEvent{}, err
 	}
-	return NormalizedEvent{at.UTC(), invocation.RunID(), invocation.JobID(), invocation.InvocationID(), invocation.LineageIdentity(), from, to, decision, to.TerminalClass()}, nil
+	return NormalizedEvent{
+		at:                 at.UTC(),
+		runID:              invocation.RunID(),
+		jobID:              invocation.JobID(),
+		invocationID:       invocation.InvocationID(),
+		lineageID:          invocation.LineageIdentity(),
+		parentInvocationID: invocation.ParentInvocationID(),
+		from:               from,
+		to:                 to,
+		decision:           decision,
+		terminal:           to.TerminalClass(),
+	}, nil
+}
+
+// NewResponseEvent creates the durable continuation event for an explicit
+// response. The response hash travels with the event so control admission and
+// lifecycle transition share one hash-linked append.
+func NewResponseEvent(invocation InvocationEnvelope, from, to LifecycleState, responseHash string, at time.Time) (NormalizedEvent, error) {
+	event, err := NewNormalizedEvent(invocation, from, to, DecisionRespond, at)
+	if err != nil {
+		return NormalizedEvent{}, err
+	}
+	event.responseHash = responseHash
+	return event, nil
 }
 func (e NormalizedEvent) At() time.Time                { return e.at }
 func (e NormalizedEvent) RunID() Identity              { return e.runID }
 func (e NormalizedEvent) JobID() Identity              { return e.jobID }
 func (e NormalizedEvent) InvocationID() Identity       { return e.invocationID }
 func (e NormalizedEvent) LineageIdentity() Identity    { return e.lineageID }
+func (e NormalizedEvent) ParentInvocationID() Identity { return e.parentInvocationID }
+func (e NormalizedEvent) ResponseHash() string         { return e.responseHash }
 func (e NormalizedEvent) From() LifecycleState         { return e.from }
 func (e NormalizedEvent) To() LifecycleState           { return e.to }
 func (e NormalizedEvent) Decision() Decision           { return e.decision }

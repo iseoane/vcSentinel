@@ -19,6 +19,7 @@ var (
 	ErrRunNotActive       = errors.New("execution: run is not active in this controller")
 	ErrUnsupportedAction  = errors.New("execution: unsupported control action")
 	ErrDecisionNotPending = errors.New("execution: run is not awaiting a response")
+	ErrRecoveredResponse  = errors.New("execution: persisted response requires a live invocation context")
 )
 
 // Adapter is the provider-neutral execution seam. The controller supplies the
@@ -140,6 +141,7 @@ type runState struct {
 	state         agentrun.LifecycleState
 	cancel        context.CancelFunc
 	running       bool
+	recovered     bool
 	done          chan struct{}
 	completion    Completion
 	completionErr error
@@ -235,10 +237,6 @@ func (c *Controller) Inspect(ctx context.Context, runID agentrun.Identity) (Insp
 	if err != nil {
 		return Inspection{}, err
 	}
-	responses, err := c.store.ReadInvocationResponses(string(runID))
-	if err != nil {
-		return Inspection{}, err
-	}
 	events := make([]store.EventFrame, 0)
 	var cursor uint64
 	for {
@@ -255,11 +253,11 @@ func (c *Controller) Inspect(ctx context.Context, runID agentrun.Identity) (Insp
 		}
 		cursor = page.NextRevision
 	}
-	projection, err := c.store.ReadProjection(string(runID))
+	projection, err := c.store.ReadDerivedProjection(string(runID))
 	if err != nil {
 		return Inspection{}, err
 	}
-	return Inspection{Projection: *projection, Events: events, Outcomes: outcomes, Responses: responses}, nil
+	return Inspection{Projection: *projection, Events: events, Outcomes: outcomes, Responses: responsesFromEvents(events)}, nil
 }
 
 // Apply accepts the initial control actions. Abort is cooperative and
@@ -271,11 +269,31 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 	if err := ctx.Err(); err != nil {
 		return ApplyResult{}, err
 	}
+	if c.store == nil {
+		return ApplyResult{}, ErrControllerNotReady
+	}
+	if action.Kind != ActionAbort && action.Kind != ActionRespond {
+		return ApplyResult{}, fmt.Errorf("%w: %q", ErrUnsupportedAction, action.Kind)
+	}
 	c.mu.Lock()
 	state := c.runs[string(runID)]
 	c.mu.Unlock()
 	if state == nil {
-		return ApplyResult{}, ErrRunNotActive
+		var err error
+		state, err = c.reconstructAwaitingState(ctx, runID)
+		if err != nil {
+			return ApplyResult{}, err
+		}
+		if state == nil {
+			return ApplyResult{}, ErrRunNotActive
+		}
+		c.mu.Lock()
+		if existing := c.runs[string(runID)]; existing != nil {
+			state = existing
+		} else {
+			c.runs[string(runID)] = state
+		}
+		c.mu.Unlock()
 	}
 
 	state.mu.Lock()
@@ -294,10 +312,12 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 		state.cancel()
 		return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
 	case ActionRespond:
+		if state.recovered {
+			return ApplyResult{}, ErrRecoveredResponse
+		}
 		return c.respond(state, runID, action.Response)
-	default:
-		return ApplyResult{}, fmt.Errorf("%w: %q", ErrUnsupportedAction, action.Kind)
 	}
+	return ApplyResult{}, fmt.Errorf("%w: %q", ErrUnsupportedAction, action.Kind)
 }
 
 func (c *Controller) execute(state *runState, ctx context.Context, invocation agentrun.InvocationEnvelope, response string) {
@@ -319,7 +339,7 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	if adapterErr == nil && result.AwaitingDecision {
 		receipt, eventErr := c.appendTransitionLocked(state, invocation, agentrun.StateRunning, agentrun.StateAwaitingDecision, agentrun.DecisionNone)
 		if eventErr != nil {
-			c.completeLocked(state, invocation, agentrun.StateRunning, class, result, eventErr.Error(), eventErr)
+			c.completeLocked(state, invocation, agentrun.StateRunning, class, result, eventErr.Error(), eventErr, true)
 			return
 		}
 		state.revision = receipt.Revision
@@ -332,21 +352,31 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	outcome := store.AttemptOutcome{
 		RunID: string(invocation.RunID()), JobID: string(invocation.JobID()),
 		InvocationID: string(invocation.InvocationID()), LineageID: string(invocation.LineageIdentity()),
-		Class: class, Error: errorText(adapterErr), OutputHash: outputHash, At: c.now().UTC(),
+		Class: class, Error: errorText(adapterErr), OutputHash: outputHash,
 	}
-	outcomeErr := c.store.SaveAttemptOutcome(outcome)
 	target := terminalState(class)
 	decision := terminalDecision(class)
-	receipt, eventErr := c.appendTransitionLocked(state, invocation, state.state, target, decision)
+	at := c.now().UTC()
+	outcome.At = at
+	event, eventErr := agentrun.NewNormalizedEvent(invocation, state.state, target, decision, at)
 	if eventErr != nil {
-		c.completeLocked(state, invocation, state.state, class, result, joinText(adapterErr, outcomeErr, eventErr), errors.Join(outcomeErr, eventErr))
+		c.completeLocked(state, invocation, state.state, class, result, joinText(adapterErr, eventErr), eventErr, true)
+		return
+	}
+	receipt, persistenceErr := c.store.AppendTerminalEvent(string(invocation.RunID()), event, state.revision, outcome)
+	if persistenceErr != nil {
+		if receipt.Revision > state.revision {
+			state.revision = receipt.Revision
+			state.state = receipt.State
+		}
+		c.completeLocked(state, invocation, state.state, class, result, joinText(adapterErr, persistenceErr), persistenceErr, true)
 		return
 	}
 	state.revision = receipt.Revision
-	state.state = target
+	state.state = receipt.State
 	state.running = false
 	state.cancel = nil
-	c.completeLocked(state, invocation, target, class, result, joinText(adapterErr, outcomeErr), errors.Join(outcomeErr, eventErr))
+	c.completeLocked(state, invocation, target, class, result, errorText(adapterErr), nil, false)
 }
 
 func (c *Controller) respond(state *runState, runID agentrun.Identity, response string) (ApplyResult, error) {
@@ -360,15 +390,11 @@ func (c *Controller) respond(state *runState, runID agentrun.Identity, response 
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	record := store.InvocationResponse{
-		RunID: string(runID), ParentInvocationID: string(state.invocation.InvocationID()),
-		InvocationID: string(child.InvocationID()), LineageID: string(child.LineageIdentity()),
-		ResponseHash: hashText(response), At: c.now().UTC(),
-	}
-	if err := c.store.SaveInvocationResponse(record); err != nil {
+	event, err := agentrun.NewResponseEvent(child, agentrun.StateAwaitingDecision, agentrun.StateRunning, hashText(response), c.now())
+	if err != nil {
 		return ApplyResult{}, err
 	}
-	receipt, err := c.appendTransitionLocked(state, child, agentrun.StateAwaitingDecision, agentrun.StateRunning, agentrun.DecisionRespond)
+	receipt, err := c.appendEventLocked(state, event)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -383,22 +409,31 @@ func (c *Controller) respond(state *runState, runID agentrun.Identity, response 
 }
 
 func (c *Controller) abortWaiting(state *runState, runID agentrun.Identity) (ApplyResult, error) {
+	at := c.now().UTC()
 	outcome := store.AttemptOutcome{
 		RunID: string(runID), JobID: string(state.job.ID()), InvocationID: string(state.invocation.InvocationID()),
 		LineageID: string(state.invocation.LineageIdentity()), Class: agentrun.OutcomeCancellation,
-		Error: "aborted while awaiting a response", At: c.now().UTC(),
+		Error: "aborted while awaiting a response", At: at,
 	}
-	outcomeErr := c.store.SaveAttemptOutcome(outcome)
-	receipt, eventErr := c.appendTransitionLocked(state, state.invocation, agentrun.StateAwaitingDecision, agentrun.StateCanceled, agentrun.DecisionAbort)
+	event, eventErr := agentrun.NewNormalizedEvent(state.invocation, agentrun.StateAwaitingDecision, agentrun.StateCanceled, agentrun.DecisionAbort, at)
 	if eventErr != nil {
-		c.completeLocked(state, state.invocation, agentrun.StateAwaitingDecision, agentrun.OutcomeCancellation, AdapterResult{}, joinText(outcomeErr, eventErr), errors.Join(outcomeErr, eventErr))
-		return ApplyResult{}, errors.Join(outcomeErr, eventErr)
+		c.completeLocked(state, state.invocation, agentrun.StateAwaitingDecision, agentrun.OutcomeCancellation, AdapterResult{}, eventErr.Error(), eventErr, true)
+		return ApplyResult{}, eventErr
+	}
+	receipt, persistenceErr := c.store.AppendTerminalEvent(string(runID), event, state.revision, outcome)
+	if persistenceErr != nil {
+		if receipt.Revision > state.revision {
+			state.revision = receipt.Revision
+			state.state = receipt.State
+		}
+		c.completeLocked(state, state.invocation, state.state, agentrun.OutcomeCancellation, AdapterResult{}, persistenceErr.Error(), persistenceErr, true)
+		return ApplyResult{}, persistenceErr
 	}
 	state.revision = receipt.Revision
-	state.state = agentrun.StateCanceled
+	state.state = receipt.State
 	state.running = false
-	c.completeLocked(state, state.invocation, agentrun.StateCanceled, agentrun.OutcomeCancellation, AdapterResult{}, joinText(outcomeErr), outcomeErr)
-	return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, outcomeErr
+	c.completeLocked(state, state.invocation, agentrun.StateCanceled, agentrun.OutcomeCancellation, AdapterResult{}, outcome.Error, nil, false)
+	return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
 }
 
 func (c *Controller) appendTransition(state *runState, invocation agentrun.InvocationEnvelope, from, to agentrun.LifecycleState, decision agentrun.Decision) error {
@@ -420,10 +455,14 @@ func (c *Controller) appendTransitionLocked(state *runState, invocation agentrun
 	if err != nil {
 		return store.EventReceipt{}, err
 	}
-	return c.store.AppendEvent(string(invocation.RunID()), event, state.revision)
+	return c.appendEventLocked(state, event)
 }
 
-func (c *Controller) completeLocked(state *runState, invocation agentrun.InvocationEnvelope, lifecycle agentrun.LifecycleState, class agentrun.OutcomeClass, result AdapterResult, detail string, completionErr error) {
+func (c *Controller) appendEventLocked(state *runState, event agentrun.NormalizedEvent) (store.EventReceipt, error) {
+	return c.store.AppendEvent(string(event.RunID()), event, state.revision)
+}
+
+func (c *Controller) completeLocked(state *runState, invocation agentrun.InvocationEnvelope, lifecycle agentrun.LifecycleState, class agentrun.OutcomeClass, result AdapterResult, detail string, completionErr error, retain bool) {
 	state.completion = Completion{
 		RunID: invocation.RunID(), JobID: invocation.JobID(), InvocationID: invocation.InvocationID(),
 		State: lifecycle, Outcome: class, Output: result.Output, OutputHash: hashIfPresent(result.Output), Error: detail,
@@ -435,9 +474,11 @@ func (c *Controller) completeLocked(state *runState, invocation agentrun.Invocat
 		state.cancel = nil
 	}
 	close(state.done)
-	c.mu.Lock()
-	if c.runs[string(invocation.RunID())] == state {
-		delete(c.runs, string(invocation.RunID()))
+	if !retain {
+		c.mu.Lock()
+		if c.runs[string(invocation.RunID())] == state {
+			delete(c.runs, string(invocation.RunID()))
+		}
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 }

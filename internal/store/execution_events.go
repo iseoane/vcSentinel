@@ -22,8 +22,9 @@ var (
 	// ErrEventCorrupt means that an event log failed an integrity invariant.
 	ErrEventCorrupt = errors.New("store: corrupt execution event log")
 	// ErrIncompleteEventTail means that the final JSONL record is incomplete.
-	ErrIncompleteEventTail = errors.New("store: incomplete final execution event")
-	ErrProjectionCorrupt   = errors.New("store: corrupt execution projection")
+	ErrIncompleteEventTail           = errors.New("store: incomplete final execution event")
+	ErrProjectionCorrupt             = errors.New("store: corrupt execution projection")
+	ErrTerminalPersistenceIncomplete = errors.New("store: incomplete terminal persistence")
 
 	// Compatibility names keep the error vocabulary explicit at call sites.
 	ErrExecutionRevisionConflict = ErrRevisionConflict
@@ -66,23 +67,49 @@ func (e IncompleteEventTailError) Error() string {
 
 func (e IncompleteEventTailError) Unwrap() error { return ErrIncompleteEventTail }
 
+// TerminalPersistenceError reports a terminal event that may already be in
+// the authoritative event log while a derived compatibility record failed.
+// Callers must not treat the operation as a successful completion; the event
+// log remains sufficient to inspect and reconcile the terminal evidence.
+type TerminalPersistenceError struct {
+	RunID        string
+	InvocationID string
+	Stage        string
+	Err          error
+}
+
+func (e TerminalPersistenceError) Error() string {
+	return fmt.Sprintf("store: incomplete terminal persistence for %s/%s at %s: %v", e.RunID, e.InvocationID, e.Stage, e.Err)
+}
+
+func (e TerminalPersistenceError) Is(target error) bool {
+	return target == ErrTerminalPersistenceIncomplete || errors.Is(e.Err, target)
+}
+
+func (e TerminalPersistenceError) Unwrap() error { return e.Err }
+
 // EventFrame is the durable representation of an agentrun.NormalizedEvent.
 // Sequence and revision advance together; hashes make the append-only stream
 // self-validating without depending on a database.
 type EventFrame struct {
-	Sequence        uint64                  `json:"sequence"`
-	Revision        uint64                  `json:"revision"`
-	At              time.Time               `json:"at"`
-	RunID           string                  `json:"run_id"`
-	JobID           string                  `json:"job_id"`
-	InvocationID    string                  `json:"invocation_id"`
-	LineageID       string                  `json:"lineage_id"`
-	From            agentrun.LifecycleState `json:"from"`
-	To              agentrun.LifecycleState `json:"to"`
-	Decision        agentrun.Decision       `json:"decision"`
-	Terminal        agentrun.TerminalClass  `json:"terminal"`
-	PredecessorHash string                  `json:"predecessor_hash,omitempty"`
-	ContentHash     string                  `json:"content_hash"`
+	Sequence           uint64                  `json:"sequence"`
+	Revision           uint64                  `json:"revision"`
+	At                 time.Time               `json:"at"`
+	RunID              string                  `json:"run_id"`
+	JobID              string                  `json:"job_id"`
+	InvocationID       string                  `json:"invocation_id"`
+	LineageID          string                  `json:"lineage_id"`
+	ParentInvocationID string                  `json:"parent_invocation_id,omitempty"`
+	ResponseHash       string                  `json:"response_hash,omitempty"`
+	OutcomeClass       agentrun.OutcomeClass   `json:"outcome_class,omitempty"`
+	OutcomeError       string                  `json:"outcome_error,omitempty"`
+	OutputHash         string                  `json:"output_hash,omitempty"`
+	From               agentrun.LifecycleState `json:"from"`
+	To                 agentrun.LifecycleState `json:"to"`
+	Decision           agentrun.Decision       `json:"decision"`
+	Terminal           agentrun.TerminalClass  `json:"terminal"`
+	PredecessorHash    string                  `json:"predecessor_hash,omitempty"`
+	ContentHash        string                  `json:"content_hash"`
 }
 
 // RunEvent is an expressive alias for callers that prefer the domain name.
@@ -129,15 +156,20 @@ type RunProjection struct {
 type StateProjection = RunProjection
 
 type eventContent struct {
-	At           time.Time               `json:"at"`
-	RunID        string                  `json:"run_id"`
-	JobID        string                  `json:"job_id"`
-	InvocationID string                  `json:"invocation_id"`
-	LineageID    string                  `json:"lineage_id"`
-	From         agentrun.LifecycleState `json:"from"`
-	To           agentrun.LifecycleState `json:"to"`
-	Decision     agentrun.Decision       `json:"decision"`
-	Terminal     agentrun.TerminalClass  `json:"terminal"`
+	At                 time.Time               `json:"at"`
+	RunID              string                  `json:"run_id"`
+	JobID              string                  `json:"job_id"`
+	InvocationID       string                  `json:"invocation_id"`
+	LineageID          string                  `json:"lineage_id"`
+	ParentInvocationID string                  `json:"parent_invocation_id,omitempty"`
+	ResponseHash       string                  `json:"response_hash,omitempty"`
+	OutcomeClass       agentrun.OutcomeClass   `json:"outcome_class,omitempty"`
+	OutcomeError       string                  `json:"outcome_error,omitempty"`
+	OutputHash         string                  `json:"output_hash,omitempty"`
+	From               agentrun.LifecycleState `json:"from"`
+	To                 agentrun.LifecycleState `json:"to"`
+	Decision           agentrun.Decision       `json:"decision"`
+	Terminal           agentrun.TerminalClass  `json:"terminal"`
 }
 
 type scannedEvents struct {
@@ -164,46 +196,127 @@ func (s *Store) AppendEvent(runID string, event agentrun.NormalizedEvent, expect
 		return EventReceipt{}, fmt.Errorf("store: event belongs to run %q, not %q", event.RunID(), runID)
 	}
 
-	var receipt EventReceipt
+	var result eventAppendResult
 	err = withExecutionLock(directory, func() error {
-		log, err := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
-		if err != nil {
-			return err
-		}
-		if log.tail != nil {
-			return IncompleteEventTailError{RunID: runID}
-		}
-		actual := uint64(len(log.frames))
-		if actual != expectedRevision {
-			return RevisionConflictError{Expected: expectedRevision, Actual: actual}
-		}
-
-		previousHash := ""
-		if len(log.frames) > 0 {
-			previousHash = log.frames[len(log.frames)-1].ContentHash
-			if event.From() != log.frames[len(log.frames)-1].To {
-				return EventCorruptionError{RunID: runID, Sequence: actual + 1, Reason: "event source state does not match the stream head"}
-			}
-		}
-		frame := frameForEvent(event, actual+1, actual+1, previousHash)
-		path := filepath.Join(directory, "events.jsonl")
-		if err := appendEventFrame(path, frame); err != nil {
-			return err
-		}
-
-		frames := append(append([]EventFrame(nil), log.frames...), frame)
-		projection := projectionFor(runID, frames)
-		if err := writeProjection(filepath.Join(directory, "state.json"), projection); err != nil {
-			return err
-		}
-		receipt = EventReceipt{
-			RunID: runID, Sequence: frame.Sequence, Revision: frame.Revision,
-			PredecessorHash: frame.PredecessorHash, ContentHash: frame.ContentHash,
-			State: projection.State, At: frame.At,
-		}
-		return writeReceipt(filepath.Join(directory, "receipts"), receipt)
+		result, err = s.appendEventLocked(directory, runID, event, expectedRevision, nil)
+		return err
 	})
-	return receipt, err
+	if err != nil {
+		return EventReceipt{}, err
+	}
+	return result.receipt, nil
+}
+
+// AppendTerminalEvent appends a terminal lifecycle event and writes its
+// legacy attempt outcome while holding one execution lock. The event includes
+// the same immutable evidence, so a failure after the event append is explicit
+// and recoverable instead of looking like a successful completion with a
+// missing outcome record.
+func (s *Store) AppendTerminalEvent(runID string, event agentrun.NormalizedEvent, expectedRevision uint64, outcome AttemptOutcome) (EventReceipt, error) {
+	if err := validateAttemptOutcome(outcome); err != nil {
+		return EventReceipt{}, err
+	}
+	if event.RunID().String() != runID || string(event.JobID()) != outcome.JobID ||
+		string(event.InvocationID()) != outcome.InvocationID || string(event.LineageIdentity()) != outcome.LineageID {
+		return EventReceipt{}, fmt.Errorf("%w: terminal event and outcome identities differ", ErrAttemptOutcomeCorrupt)
+	}
+	if event.TerminalClass() == agentrun.TerminalNone || !outcome.Class.IsTerminal() {
+		return EventReceipt{}, fmt.Errorf("%w: terminal event evidence is incomplete", ErrAttemptOutcomeCorrupt)
+	}
+	if !outcomeMatchesLifecycle(outcome.Class, event.To()) || !event.At().Equal(outcome.At) {
+		return EventReceipt{}, fmt.Errorf("%w: terminal event and outcome evidence differ", ErrAttemptOutcomeCorrupt)
+	}
+
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return EventReceipt{}, err
+	}
+	if err := ensureExecutionExists(directory); err != nil {
+		return EventReceipt{}, err
+	}
+	var result eventAppendResult
+	err = withExecutionLock(directory, func() error {
+		result, err = s.appendEventLocked(directory, runID, event, expectedRevision, &outcome)
+		if err != nil {
+			if result.attempted {
+				return terminalPersistenceError(runID, outcome.InvocationID, "event", err)
+			}
+			return err
+		}
+		path := filepath.Join(directory, "outcomes", outcome.InvocationID+".json")
+		data, marshalErr := marshalRecord(outcome)
+		if marshalErr != nil {
+			return terminalPersistenceError(runID, outcome.InvocationID, "outcome", marshalErr)
+		}
+		if writeErr := writeImmutableRecord(path, data); writeErr != nil {
+			return terminalPersistenceError(runID, outcome.InvocationID, "outcome", writeErr)
+		}
+		return nil
+	})
+	return result.receipt, err
+}
+
+type eventAppendResult struct {
+	receipt   EventReceipt
+	attempted bool
+}
+
+func (s *Store) appendEventLocked(directory, runID string, event agentrun.NormalizedEvent, expectedRevision uint64, outcome *AttemptOutcome) (eventAppendResult, error) {
+	log, err := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
+	if err != nil {
+		return eventAppendResult{}, err
+	}
+	if log.tail != nil {
+		return eventAppendResult{}, IncompleteEventTailError{RunID: runID}
+	}
+	actual := uint64(len(log.frames))
+	if actual != expectedRevision {
+		return eventAppendResult{}, RevisionConflictError{Expected: expectedRevision, Actual: actual}
+	}
+
+	previousHash := ""
+	if len(log.frames) > 0 {
+		previousHash = log.frames[len(log.frames)-1].ContentHash
+		if event.From() != log.frames[len(log.frames)-1].To {
+			return eventAppendResult{}, EventCorruptionError{RunID: runID, Sequence: actual + 1, Reason: "event source state does not match the stream head"}
+		}
+	}
+	frame := frameForEvent(event, actual+1, actual+1, previousHash)
+	if outcome != nil {
+		frame.OutcomeClass = outcome.Class
+		frame.OutcomeError = outcome.Error
+		frame.OutputHash = outcome.OutputHash
+		frame.ContentHash = hashEventContent(frame.content())
+	}
+	result := eventAppendResult{attempted: true}
+	path := filepath.Join(directory, "events.jsonl")
+	if err := appendEventFrame(path, frame); err != nil {
+		return result, err
+	}
+
+	frames := append(append([]EventFrame(nil), log.frames...), frame)
+	projection := projectionFor(runID, frames)
+	if err := writeProjection(filepath.Join(directory, "state.json"), projection); err != nil {
+		result.receipt = receiptForFrame(frame, projection)
+		return result, err
+	}
+	result.receipt = receiptForFrame(frame, projection)
+	if err := writeReceipt(filepath.Join(directory, "receipts"), result.receipt); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func receiptForFrame(frame EventFrame, projection RunProjection) EventReceipt {
+	return EventReceipt{
+		RunID: frame.RunID, Sequence: frame.Sequence, Revision: frame.Revision,
+		PredecessorHash: frame.PredecessorHash, ContentHash: frame.ContentHash,
+		State: projection.State, At: frame.At,
+	}
+}
+
+func terminalPersistenceError(runID, invocationID, stage string, err error) error {
+	return TerminalPersistenceError{RunID: runID, InvocationID: invocationID, Stage: stage, Err: err}
 }
 
 // AppendRunEvent is a named synonym for integrations that distinguish run
@@ -274,6 +387,28 @@ func (s *Store) ReadProjection(runID string) (*RunProjection, error) {
 	if projection.RunID != runID || !knownLifecycleState(projection.State) {
 		return nil, fmt.Errorf("%w: projection identity or state is invalid", ErrProjectionCorrupt)
 	}
+	return &projection, nil
+}
+
+// ReadDerivedProjection rebuilds the current state in memory from the
+// validated event stream. Readers use it when a writer may have committed an
+// event before a projection replacement completed.
+func (s *Store) ReadDerivedProjection(runID string) (*RunProjection, error) {
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureExecutionExists(directory); err != nil {
+		return nil, err
+	}
+	log, err := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	if log.tail != nil {
+		return nil, IncompleteEventTailError{RunID: runID}
+	}
+	projection := projectionFor(runID, log.frames)
 	return &projection, nil
 }
 
@@ -365,6 +500,7 @@ func frameForEvent(event agentrun.NormalizedEvent, sequence, revision uint64, pr
 		Sequence: sequence, Revision: revision, At: event.At().UTC(),
 		RunID: string(event.RunID()), JobID: string(event.JobID()),
 		InvocationID: string(event.InvocationID()), LineageID: string(event.LineageIdentity()),
+		ParentInvocationID: string(event.ParentInvocationID()), ResponseHash: event.ResponseHash(),
 		From: event.From(), To: event.To(), Decision: event.Decision(),
 		Terminal: event.TerminalClass(), PredecessorHash: predecessorHash,
 	}
@@ -376,6 +512,8 @@ func (e EventFrame) content() eventContent {
 	return eventContent{
 		At: e.At.UTC(), RunID: e.RunID, JobID: e.JobID,
 		InvocationID: e.InvocationID, LineageID: e.LineageID,
+		ParentInvocationID: e.ParentInvocationID, ResponseHash: e.ResponseHash,
+		OutcomeClass: e.OutcomeClass, OutcomeError: e.OutcomeError, OutputHash: e.OutputHash,
 		From: e.From, To: e.To, Decision: e.Decision, Terminal: e.Terminal,
 	}
 }
@@ -458,14 +596,30 @@ func validateFrame(runID string, frame EventFrame, previous []EventFrame) error 
 	if frame.JobID == "" || frame.InvocationID == "" || frame.LineageID == "" {
 		return corruption(runID, expected, "frame identity is incomplete")
 	}
+	if frame.ResponseHash != "" && (frame.ParentInvocationID == "" || frame.Decision != agentrun.DecisionRespond) {
+		return corruption(runID, expected, "response hash is not bound to a response continuation")
+	}
 	if err := agentrun.Transition(frame.From, frame.To); err != nil {
 		return corruption(runID, expected, "invalid lifecycle transition")
 	}
 	if frame.Terminal != frame.To.TerminalClass() {
 		return corruption(runID, expected, "terminal class does not match lifecycle state")
 	}
+	if frame.To.TerminalClass() == agentrun.TerminalNone {
+		if frame.OutcomeClass != "" || frame.OutcomeError != "" || frame.OutputHash != "" {
+			return corruption(runID, expected, "terminal evidence is attached to a non-terminal event")
+		}
+	} else {
+		class := frame.OutcomeClass
+		if class == "" {
+			class = outcomeClassForLifecycle(frame.To)
+		}
+		if !class.IsTerminal() || !outcomeMatchesLifecycle(class, frame.To) {
+			return corruption(runID, expected, "outcome class does not match lifecycle state")
+		}
+	}
 	if expected == 1 {
-		if frame.PredecessorHash != "" || frame.From != agentrun.StateCreated {
+		if frame.PredecessorHash != "" || frame.From != agentrun.StateCreated || frame.ParentInvocationID != "" {
 			return corruption(runID, expected, "first frame has an invalid predecessor or source state")
 		}
 	} else {
@@ -475,6 +629,9 @@ func validateFrame(runID string, frame EventFrame, previous []EventFrame) error 
 		}
 		if frame.From != previousFrame.To {
 			return corruption(runID, expected, "lifecycle source does not match the stream head")
+		}
+		if frame.ParentInvocationID != "" && frame.InvocationID != previousFrame.InvocationID && frame.ParentInvocationID != previousFrame.InvocationID {
+			return corruption(runID, expected, "parent invocation does not match the stream head")
 		}
 	}
 	if frame.ContentHash == "" || frame.ContentHash != hashEventContent(frame.content()) {
@@ -489,6 +646,40 @@ func corruption(runID string, sequence uint64, reason string) error {
 
 func incompleteJSON(err error) bool {
 	return errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "unexpected end of JSON input")
+}
+
+func outcomeClassForLifecycle(state agentrun.LifecycleState) agentrun.OutcomeClass {
+	switch state {
+	case agentrun.StateSucceeded:
+		return agentrun.OutcomeSuccess
+	case agentrun.StateFailed:
+		return agentrun.OutcomeFailure
+	case agentrun.StateCanceled:
+		return agentrun.OutcomeCancellation
+	case agentrun.StateTimedOut:
+		return agentrun.OutcomeTimeout
+	case agentrun.StateUnavailable:
+		return agentrun.OutcomeUnavailable
+	default:
+		return ""
+	}
+}
+
+func outcomeMatchesLifecycle(class agentrun.OutcomeClass, state agentrun.LifecycleState) bool {
+	switch class {
+	case agentrun.OutcomeSuccess:
+		return state == agentrun.StateSucceeded
+	case agentrun.OutcomeFailure, agentrun.OutcomeProcessError:
+		return state == agentrun.StateFailed
+	case agentrun.OutcomeUnavailable:
+		return state == agentrun.StateUnavailable
+	case agentrun.OutcomeTimeout:
+		return state == agentrun.StateTimedOut
+	case agentrun.OutcomeCancellation:
+		return state == agentrun.StateCanceled
+	default:
+		return false
+	}
 }
 
 func projectionFor(runID string, frames []EventFrame) RunProjection {
