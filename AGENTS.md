@@ -1,6 +1,6 @@
 # VAS Sentinel Working Guide
 
-VAS Sentinel is a deterministic local Go guardian that prevents excessive accumulated changes in Git worktrees operated by AI agents. Module: `github.com/ISeoane-Quental/vas.sentinel` (Go 1.26).
+VAS Sentinel is a deterministic local Go guardian that reports accumulated worktree volume and enforces reviewable staged commits operated by AI agents. Module: `github.com/ISeoane-Quental/vas.sentinel` (Go 1.26).
 
 ## Language and model policy
 
@@ -14,7 +14,9 @@ VAS Sentinel is a deterministic local Go guardian that prevents excessive accumu
 
 `sentinel slice` without arguments is an interactive stdin REPL and agents cannot drive it. Use this non-interactive flow instead:
 
-1. Run `sentinel slice plan --json > plan.json`. It proposes changes and **does not create commits**. It is idempotent: the same tree produces the same `plan_id`.
+`sentinel check` measures the whole worktree and is advisory, including at `CRITICO`. The repository pre-commit hook invokes `sentinel check --staged`; that staged candidate is the enforcement boundary for the 400-line review budget.
+
+1. Run `sentinel slice plan --json > plan.json`. It proposes reviewable selections and **does not create commits**. It is idempotent: the same tree produces the same `plan_id`.
    - Exit `0`: no decision is required.
    - Exit `3`: the plan contains `decisiones_pendientes[]`. Present those decisions to the user verbatim and wait for an answer. Do not answer on their behalf or select a default.
 2. Write `answers.json` with the user's literal response: `{"plan_id":"<plan_id>","respuestas":{"<id>":"bypass"|"abortar"}}`.
@@ -41,7 +43,7 @@ Code and scripts MUST behave the same on Windows and Debian:
 - Pass paths to Git through `filepath.ToSlash`.
 - The `pre-commit` hook uses `#!/bin/sh`; Git for Windows executes it through `sh.exe`.
 - Write the hook directly to the repository common directory (`<git-common-dir>/hooks/pre-commit`, obtained through `git rev-parse --git-common-dir`). Do not use a global folder or `core.hooksPath`.
-- The hook runs `sentinel check` through the binary's absolute path. It affects only that repository and its linked worktrees.
+- The hook runs `sentinel check --staged` through the binary's absolute path. It rejects staged authored code over the 400-line review budget and affects only that repository and its linked worktrees.
 
 ## Architecture
 
@@ -67,10 +69,11 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `help` | Print command help. |
 | `init` | Inject the volume rule, create project configuration, and install `pre-commit`. |
 | `uninit` | Revert `init` for this repository. |
-| `check` | Audit added code lines in the worktree. |
-| `slice` | Interactively split changes into commits of at most 400 lines. |
-| `slice plan` | Propose a non-committing plan. `--json` exits `3` when decisions are pending. |
-| `slice apply` | Apply an approved plan with `--plan` and `--answers`. |
+| `check` | Measure added authored code lines in the whole worktree. The result is advisory, including at `CRITICO`. |
+| `check --staged` | Enforce the 400-line review budget for the staged commit candidate. |
+| `slice` | Interactively split changes into reviewable commits. |
+| `slice plan` | Propose reviewable selections without committing. `--json` exits `3` when decisions are pending. |
+| `slice apply` | Apply approved selections with `--plan` and `--answers`. |
 | `review` | Audit a commit by dimension and save its review record. |
 | `gate` | Validate then semantically review `HEAD`; requires `--stage pre-commit|pre-push|pr` and accepts `--profile`. |
 | `lint` | Run configured `lint_commands`. |
@@ -85,16 +88,17 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 
 ## Key business rules
 
-- `check`: 200 to 400 code lines is `PUNTO_OPTIMO`; more than 400 is `CRITICO` and exits with `1`. The exact string is `"CRITICO"` without an accent because `main.go` compares it literally.
-- `slice`: groups files in fixed layer order `config -> backend -> frontend -> test` into batches of at most 400 lines. It generates commit messages through the configured adapter and has deterministic fallback messages if the adapter is unavailable.
+- `check`: measures the whole worktree. 200 to 400 authored code lines is `PUNTO_OPTIMO`; more than 400 is `CRITICO`, but a successful measurement remains advisory and exits with `0`. Measurement failures exit with `1`. The exact state string is `"CRITICO"` without an accent because `main.go` compares it literally.
+- `check --staged`: measures only the staged commit candidate and rejects authored code over 400 lines with exit `1`; cohesion warnings are read-only.
+- `slice`: produces reviewable selections and commits them only through the explicit plan/apply flow. It generates commit messages through the configured adapter and has deterministic fallback messages if the adapter is unavailable.
 - Oversized files: configuration files over 400 lines are isolated with `chore(deps): track lock and auto-generated files`. Code files over 500 lines require an explicit bypass decision; rejection aborts without creating commits.
-- Slice commits use `--no-verify`. The slice flow is the guardian's controlled exemption: every batch is already limited to 400 lines unless the user explicitly approved a massive-file bypass.
+- Slice commits use `--no-verify`. The slice flow is the guardian's controlled exemption: approved selections are limited to 400 authored lines unless the user explicitly approves a massive-file bypass.
 - `review`: audits `logic`, `style`, `design`, `tests`, `security`, and `spec` independently. Records append-only revisions and the effective responding agent, rather than only the requested profile.
 - Findings v2 use stable fingerprints and content blobs. The store can recognize content already reviewed under a different commit SHA after a rebase.
 - `gate`: loads project configuration strictly, validates the selected `validation.profiles` profile, then audits `HEAD`. `--stage` identifies lifecycle context; `--profile` selects validation, not review, configuration.
 - `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
 - `pr review`: chooses single versus chained review using `review.LimiteDecisionChain`, which equals the guardian limit of 400 lines. Configured lint, test, and build commands run deterministically without consulting an agent.
-- `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook.
+- `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook that enforces staged volume.
 
 ## Configuration
 
@@ -107,8 +111,8 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 
 <!-- vas-sentinel:begin -->
 ## CRITICAL VOLUME RULE (THE GUARDIAN)
-
-- Before making any change or proposing a plan, run `sentinel check`. If it is not installed, use the latest available `bin/<version>/sentinel` binary.
-- If the state is `CRITICO` (more than 400 code lines), you are STRICTLY PROHIBITED from writing further code.
-- Stop immediately and run the non-interactive `sentinel slice plan --json` flow to split accumulated work before continuing.
+- Before making changes or proposing a plan, run `sentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICO`.
+- The repository's `pre-commit` hook runs `sentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.
+- When the worktree check is `CRITICO`, run `sentinel slice plan --json` to produce reviewable selections without committing.
+- After the user answers every pending decision, apply the approved selections with `sentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.
 <!-- vas-sentinel:end -->
