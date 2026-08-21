@@ -246,6 +246,31 @@ var terminalClasses = map[LifecycleState]TerminalClass{
 
 func (s LifecycleState) TerminalClass() TerminalClass { return terminalClasses[s] }
 
+// OutcomeClass describes the adapter observation that the controller admitted
+// for one physical invocation. It is operational evidence, not a semantic
+// review verdict.
+type OutcomeClass string
+
+const (
+	OutcomeSuccess          OutcomeClass = "success"
+	OutcomeFailure          OutcomeClass = "failure"
+	OutcomeUnavailable      OutcomeClass = "unavailable"
+	OutcomeTimeout          OutcomeClass = "timeout"
+	OutcomeCancellation     OutcomeClass = "cancellation"
+	OutcomeProcessError     OutcomeClass = "process_error"
+	OutcomeAwaitingDecision OutcomeClass = "awaiting_decision"
+)
+
+func (c OutcomeClass) IsTerminal() bool {
+	switch c {
+	case OutcomeSuccess, OutcomeFailure, OutcomeUnavailable, OutcomeTimeout,
+		OutcomeCancellation, OutcomeProcessError:
+		return true
+	default:
+		return false
+	}
+}
+
 type NormalizedEvent struct {
 	at           time.Time
 	runID        Identity
