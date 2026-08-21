@@ -59,6 +59,8 @@ Code and scripts MUST behave the same on Windows and Debian:
 - `internal/ops` records, rotates, purges, and reads events from the repository common directory.
 - `internal/setup` installs, upgrades, and removes the binary and manages configuration templates.
 
+Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification.
+
 Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md) and [`docs/reingenieria/`](docs/reingenieria/).
 
 ## Commands
