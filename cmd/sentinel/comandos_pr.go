@@ -203,11 +203,12 @@ func ejecutarPrReview(worktree string, args []string) {
 	}
 	ledger := review.NuevoLedger(gitDir)
 	res, err := review.AnalizarRama(ledger, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
-		Base:           base,
-		SoloPendientes: flags.soloPendientes,
-		Overview:       flags.overview,
-		Fabrica:        fabrica,
-		Parallel:       cfg.Review.Parallel,
+		Base:                   base,
+		SoloPendientes:         flags.soloPendientes,
+		Overview:               flags.overview,
+		Fabrica:                fabrica,
+		Parallel:               cfg.Review.Parallel,
+		ReviewTransportFactory: reviewTransportFactory(cfg, worktree),
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		},
@@ -741,6 +742,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		HallazgosDeterministasSHA: shaValidado,
 		Fabrica:                   fabrica,
 		Parallel:                  cfg.Review.Parallel,
+		ReviewTransportFactory:    reviewTransportFactory(cfg, worktree),
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		},

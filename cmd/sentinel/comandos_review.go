@@ -134,6 +134,7 @@ func ejecutarReview(worktree string, args []string) {
 			PerfilOverride:    flags.profile,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree),
 			RutasContexto:     archivos,
+			ReviewTransport:   durableReviewTransport(cfg, worktree, sha, archivos),
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},

@@ -35,6 +35,17 @@ type FabricaAuditor func(bundle ReviewBundle, dimension string) (AuditorAgente, 
 // one semantic CRITICAL finding. It is invoked once for each finding.
 type FabricaRefutador func() (AuditorAgente, string, error)
 
+// ErrRestrictedRequired is returned when a dimension's agent lacks the
+// tool-restricted reviewer capability. Engine and durable transport share one
+// exported wording so evidence can never drift between the two paths.
+var ErrRestrictedRequired = errors.New("semantic review unavailable: restricted reviewer capability is required")
+
+// ReviewTransport routes one dimension reviewer call through an alternative
+// execution path such as the durable run controller. bundleName plus dimension
+// identify the logical job; prompt is fully built by the engine so parsing
+// stays shared after either path.
+type ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error)
+
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
 	SHA                            string
@@ -57,10 +68,9 @@ type OpcionesAuditoria struct {
 	// coexist in the same report.
 	HallazgosDeterministas []Hallazgo
 	// ReviewTransport, when set, routes each dimension's reviewer call through
-	// an alternative execution path such as the durable run controller. It
-	// receives the bundle name, the dimension, and the fully built prompt.
-	// Nil keeps the legacy direct call with its in-process transport retry.
-	ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error)
+	// an alternative execution path such as the durable run controller. Nil
+	// keeps the legacy direct call with its in-process transport retry.
+	ReviewTransport ReviewTransport
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -430,7 +440,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 		if restringido, ok := agente.(auditorConHerramientasRestringidas); ok {
 			return restringido.EjecutarRevision(prompt, opts.SHA, opts.RutasContexto)
 		}
-		return "", errors.New("semantic review unavailable: restricted reviewer capability is required")
+		return "", ErrRestrictedRequired
 	}
 	salida, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {

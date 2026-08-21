@@ -35,6 +35,10 @@ type ReviewConfig struct {
 	Timeout          time.Duration
 	Parallel         int
 	CodeGraphContext bool
+	// DurableRuns enables routing every dimension reviewer call through the
+	// durable run controller (R4). False keeps the legacy scheduler; this
+	// flag is the construction-time rollback seam of ticket 05.
+	DurableRuns bool
 	// Dims asigna cada dimensión canónica a un perfil de agente.
 	Dims map[string]string
 }
@@ -268,6 +272,7 @@ type reviewYAML struct {
 	Timeout          yaml.Node         `yaml:"timeout"`
 	Parallel         yaml.Node         `yaml:"parallel"`
 	CodeGraphContext *bool             `yaml:"codegraph_context"`
+	DurableRuns      *bool             `yaml:"durable_runs"`
 	Dims             map[string]string `yaml:"dims"`
 }
 
@@ -435,6 +440,9 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		}
 		for dim, perfilDim := range raw.Review.Dims {
 			cfg.Review.Dims[dim] = perfilDim
+		}
+		if raw.Review.DurableRuns != nil {
+			cfg.Review.DurableRuns = *raw.Review.DurableRuns
 		}
 	}
 	cfg.LintCommands = append(cfg.LintCommands, raw.LintCommands...)

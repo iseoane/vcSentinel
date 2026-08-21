@@ -508,3 +508,37 @@ func TestConstruirPromptOverview(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditarCommitRamaRoutesThroughPerCommitTransport(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	sha := commitEnRama(t, "transport.go", "package transport\n")
+	ledger := NuevoLedger(gitDir)
+	stub := &auditorStub{auditSalida: salidaAuditOK}
+
+	var factorySHA string
+	var factoryPaths []string
+	transportCalled := false
+	err := auditarCommitRama(ledger, sha, OpcionesRama{
+		Fabrica: func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+			return stub, "stub", nil
+		},
+		Parallel: 1,
+		ReviewTransportFactory: func(commitSHA string, paths []string) ReviewTransport {
+			factorySHA = commitSHA
+			factoryPaths = paths
+			return func(_, _, _ string, _ AuditorAgente) (string, error) {
+				transportCalled = true
+				return salidaAuditOK, nil
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("auditarCommitRama() error = %v", err)
+	}
+	if !transportCalled || factorySHA != sha {
+		t.Fatalf("per-commit transport invoked=%v boundSHA=%q, want routed for %q", transportCalled, factorySHA, sha)
+	}
+	if len(factoryPaths) != 1 || factoryPaths[0] != "transport.go" {
+		t.Fatalf("factory paths = %v, want the audited commit's immutable paths", factoryPaths)
+	}
+}
