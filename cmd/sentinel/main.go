@@ -372,12 +372,12 @@ func inyectarReglasDeArchivo(ruta string) (bool, error) {
 	contenido := string(datos)
 
 	if patronReglasVolumenMarcado.MatchString(contenido) {
-		sinReglas := quitarReglasVolumen(contenido)
-		nuevo := sinReglas + reglasVolumenPara(sinReglas)
-		if nuevo == contenido {
+		withoutRules := quitarReglasVolumen(contenido)
+		updated := withoutRules + reglasVolumenPara(withoutRules)
+		if updated == contenido {
 			return false, nil
 		}
-		return true, os.WriteFile(ruta, []byte(nuevo), 0644)
+		return true, os.WriteFile(ruta, []byte(updated), 0644)
 	}
 
 	if patronReglasVolumenLegado.MatchString(contenido) {

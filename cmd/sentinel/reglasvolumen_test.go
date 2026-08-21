@@ -48,35 +48,35 @@ func TestInyectarNoDuplicaConCRLF(t *testing.T) {
 	}
 }
 
-func TestInyectarMigraBloqueMarcadoAntiguo(t *testing.T) {
-	ruta := filepath.Join(t.TempDir(), "AGENTS.md")
-	antiguo := "\n" + marcadorInicio + "\n## Old guardian rule\n- Block all worktree changes.\n" + marcadorFin + "\n"
-	escribirArchivo(t, ruta, aCRLF("# Guide\n"+antiguo))
+func TestInjectMigratesOlderManagedRule(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "AGENTS.md")
+	oldRule := "\n" + marcadorInicio + "\n## Old guardian rule\n- Block all worktree changes.\n" + marcadorFin + "\n"
+	escribirArchivo(t, path, aCRLF("# Guide\n"+oldRule))
 
-	escribio, err := inyectarReglasDeArchivo(ruta)
+	written, err := inyectarReglasDeArchivo(path)
 	if err != nil {
 		t.Fatalf("inyectarReglasDeArchivo devolvió error: %v", err)
 	}
-	if !escribio {
+	if !written {
 		t.Fatal("init did not migrate the old marked rule")
 	}
 
-	contenido := leerArchivo(t, ruta)
-	if strings.Contains(contenido, "Block all worktree changes") {
-		t.Errorf("the old marked rule remained after migration: %q", contenido)
+	content := leerArchivo(t, path)
+	if strings.Contains(content, "Block all worktree changes") {
+		t.Errorf("the old marked rule remained after migration: %q", content)
 	}
-	if !strings.Contains(contenido, "sentinel check --staged") {
-		t.Errorf("the current staged enforcement rule was not injected: %q", contenido)
+	if !strings.Contains(content, "sentinel check --staged") {
+		t.Errorf("the current staged enforcement rule was not injected: %q", content)
 	}
-	if strings.Contains(strings.ReplaceAll(contenido, "\r\n", ""), "\n") {
-		t.Errorf("migration changed a CRLF file to LF: %q", contenido)
+	if strings.Contains(strings.ReplaceAll(content, "\r\n", ""), "\n") {
+		t.Errorf("migration changed a CRLF file to LF: %q", content)
 	}
 
-	escribio, err = inyectarReglasDeArchivo(ruta)
+	written, err = inyectarReglasDeArchivo(path)
 	if err != nil {
 		t.Fatalf("second inyectarReglasDeArchivo returned an error: %v", err)
 	}
-	if escribio {
+	if written {
 		t.Error("init was not idempotent after migrating the marked rule")
 	}
 }
