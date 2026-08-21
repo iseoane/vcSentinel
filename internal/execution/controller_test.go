@@ -198,7 +198,7 @@ func TestApplyAbortReconstructsAwaitingDecisionAfterControllerRestart(t *testing
 	}
 }
 
-func TestInspectionDerivesTerminalOutcomeWhenLegacyOutcomeSurfaceIsMissing(t *testing.T) {
+func TestInspectionUsesEmbeddedTerminalOutcomeWhenLegacyOutcomeSurfaceIsCorrupt(t *testing.T) {
 	storeRoot := t.TempDir()
 	backingStore := store.NuevoStore(storeRoot)
 	controller := NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "durable output"}}, fixedClock())
@@ -211,7 +211,7 @@ func TestInspectionDerivesTerminalOutcomeWhenLegacyOutcomeSurfaceIsMissing(t *te
 		t.Fatal(err)
 	}
 	directory := filepath.Join(storeRoot, "vas-sentinel", "executions", "v1", string(handle.RunID))
-	if err := os.Remove(filepath.Join(directory, "outcomes", string(handle.InvocationID)+".json")); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "outcomes", string(handle.InvocationID)+".json"), []byte("not-json"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
