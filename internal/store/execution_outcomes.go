@@ -83,11 +83,14 @@ func (s *Store) ReadAttemptOutcomes(runID string) ([]AttemptOutcome, error) {
 	if log.tail != nil {
 		return nil, IncompleteEventTailError{RunID: runID}
 	}
-	legacy, legacyErr := readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
 	terminalFrames := terminalEventFrames(log.frames)
 	if len(log.frames) == 0 {
-		return legacy, legacyErr
+		return readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
 	}
+	if terminalFramesHaveEmbeddedEvidence(terminalFrames) {
+		return outcomesFromFrames(terminalFrames, nil), nil
+	}
+	legacy, legacyErr := readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
 	if legacyErr != nil {
 		if len(terminalFrames) > 0 {
 			return nil, terminalPersistenceError(runID, terminalFrames[0].InvocationID, "outcome", legacyErr)
@@ -182,6 +185,18 @@ func terminalEventFrames(frames []EventFrame) []EventFrame {
 		}
 	}
 	return terminal
+}
+
+func terminalFramesHaveEmbeddedEvidence(frames []EventFrame) bool {
+	if len(frames) == 0 {
+		return false
+	}
+	for _, frame := range frames {
+		if frame.OutcomeClass == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func outcomesFromFrames(frames []EventFrame, legacy []AttemptOutcome) []AttemptOutcome {

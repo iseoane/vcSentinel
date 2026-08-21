@@ -73,6 +73,67 @@ func TestAttemptOutcomeAndResponseRecordsAreImmutableAndInspectable(t *testing.T
 	}
 }
 
+func TestReadAttemptOutcomesRetainsLegacyCompatibilityForUnembeddedTerminalEvent(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	runID := string(job.RunID())
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transitions := []struct {
+		from, to agentrun.LifecycleState
+	}{
+		{agentrun.StateCreated, agentrun.StateQueued},
+		{agentrun.StateQueued, agentrun.StateAdmitted},
+		{agentrun.StateAdmitted, agentrun.StateRunning},
+	}
+	for revision, transition := range transitions {
+		event, err := agentrun.NewNormalizedEvent(invocation, transition.from, transition.to, agentrun.DecisionStart, time.Unix(int64(revision), 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.AppendEvent(runID, event, uint64(revision)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Unix(300, 0).UTC()
+	event, err := agentrun.NewNormalizedEvent(invocation, agentrun.StateRunning, agentrun.StateFailed, agentrun.DecisionNone, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(runID, event, uint64(len(transitions))); err != nil {
+		t.Fatal(err)
+	}
+	outcome := AttemptOutcome{
+		RunID: string(job.RunID()), JobID: string(job.ID()), InvocationID: string(invocation.InvocationID()),
+		LineageID: string(invocation.LineageIdentity()), Class: agentrun.OutcomeFailure,
+		Error: "legacy failure", OutputHash: "legacy-output", At: at,
+	}
+	if err := store.SaveAttemptOutcome(outcome); err != nil {
+		t.Fatal(err)
+	}
+
+	outcomes, err := store.ReadAttemptOutcomes(runID)
+	if err != nil || len(outcomes) != 1 || outcomes[0] != outcome {
+		t.Fatalf("outcomes = %+v, error = %v, want legacy outcome", outcomes, err)
+	}
+
+	directory, err := store.executionDir(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "outcomes", string(invocation.InvocationID())+".json"), []byte("not-json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadAttemptOutcomes(runID); !errors.Is(err, ErrAttemptOutcomeCorrupt) {
+		t.Fatalf("corrupt legacy outcome error = %v, want corrupt outcome", err)
+	}
+}
+
 func TestReadDerivedProjectionUsesValidatedEventsWhenStateFileIsStale(t *testing.T) {
 	store := NuevoStore(t.TempDir())
 	job := testJob()
