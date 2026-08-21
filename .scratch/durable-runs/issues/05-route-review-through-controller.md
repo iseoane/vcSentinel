@@ -106,3 +106,30 @@ ledger, store, and controller packages stay intact.
   level migration-comparison, parallelism-parity, and durable-path attribution
   tests land with production wiring; identityKey becomes a typed key when
   cmd-side composition defines its final shape.
+
+## Evidence — slice 3 (production wiring)
+
+- Commit: fffaa0f feat(review): wire durable run transport into production
+  review paths.
+- Scope delivered: config `review.durable_runs` (default false = legacy; this
+  flag is the construction-time rollback selection); `durableReviewTransport`
+  builder resolving the git common dir and binding store+policy+SHA+paths;
+  wired into `sentinel review` (transport survives the question-round retry),
+  `sentinel gate` (via OpcionesRevision passthrough — zero internal/gate
+  changes), and both pr-analysis sites through a per-commit
+  `OpcionesRama.ReviewTransportFactory`; shared exported
+  `review.ErrRestrictedRequired` so engine and transport wording cannot drift;
+  named type `review.ReviewTransport`.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  guardian 230 authored lines [PUNTO_OPTIMO]; pre-commit hook passed.
+- Independent review (code-review skill, parallel axes + fix re-review):
+  Spec APPROVE-WITH-FINDINGS (coverage complete across every AuditarCommit
+  caller; disabled path byte-equivalent); Standards initially FAIL on five
+  Spanish identifiers in new files plus a duplicated error/assert pair — all
+  fixed (renames to English, shared sentinel error, durableRunPolicyID const,
+  per-commit paths assertion), re-review residual `restringido` also fixed.
+  Final state satisfied.
+- Accepted follow-ups: refuter pass stays outside the controller per ticket
+  contract ("keeps... refuter pass... unchanged"); stderr warning on missing
+  git common dir is the documented degradation signal; remaining ticket
+  checklist items (migration/parity suite) form the next slice before closure.
