@@ -550,33 +550,17 @@ func knownLifecycleState(state agentrun.LifecycleState) bool {
 }
 
 const (
-	eventLockWait  = 15 * time.Second
-	eventLockStale = 5 * time.Second
+	eventLockWait = 15 * time.Second
 )
 
 func withExecutionLock(directory string, action func() error) error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
-	lockPath := filepath.Join(directory, ".events.lock")
-	deadline := time.Now().Add(eventLockWait)
-	for {
-		err := os.Mkdir(lockPath, 0700)
-		if err == nil {
-			defer os.Remove(lockPath)
-			return action()
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > eventLockStale {
-			if removeErr := os.Remove(lockPath); removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
-				continue
-			}
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("store: timeout acquiring execution event lock")
-		}
-		time.Sleep(10 * time.Millisecond)
+	lock, err := acquireExecutionLock(filepath.Join(directory, ".events.lock"), eventLockWait)
+	if err != nil {
+		return err
 	}
+	defer lock.Close()
+	return action()
 }

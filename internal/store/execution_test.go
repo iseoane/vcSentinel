@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -514,6 +515,105 @@ func TestWriterTerminationLeavesRecoverableTail(t *testing.T) {
 	page, err := store.ReadEvents(runID, 0, 10)
 	if err != nil || len(page.Events) != 1 {
 		t.Fatalf("readback after writer termination = %+v, error = %v", page, err)
+	}
+}
+
+func TestExecutionLockDoesNotExpireWhileOwnerIsAlive(t *testing.T) {
+	if os.Getenv("STORE_LOCK_HOLDER") == "1" {
+		runLockHolder()
+	}
+
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	command := startLockHolder(t, filepath.Join(directory, ".events.lock"), ready, false)
+	defer command.Process.Kill()
+	waitForFile(t, ready)
+
+	acquired := make(chan error, 1)
+	go func() {
+		acquired <- withExecutionLock(directory, func() error { return nil })
+	}()
+
+	select {
+	case err := <-acquired:
+		t.Fatalf("lock acquired while its owner was alive: %v", err)
+	case <-time.After(5500 * time.Millisecond):
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatalf("lock holder failed: %v", err)
+	}
+	if err := <-acquired; err != nil {
+		t.Fatalf("lock was not acquired after its owner exited: %v", err)
+	}
+}
+
+func TestExecutionLockIsReleasedWhenOwnerTerminates(t *testing.T) {
+	if os.Getenv("STORE_LOCK_HOLDER") == "1" {
+		runLockHolder()
+	}
+
+	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
+	command := startLockHolder(t, filepath.Join(directory, ".events.lock"), ready, true)
+	waitForFile(t, ready)
+	if err := command.Wait(); err != nil {
+		t.Fatalf("lock holder failed: %v", err)
+	}
+
+	started := time.Now()
+	if err := withExecutionLock(directory, func() error { return nil }); err != nil {
+		t.Fatalf("lock was not released after owner termination: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("lock release took %s, want less than two seconds", elapsed)
+	}
+}
+
+func startLockHolder(t *testing.T, lockPath, ready string, exitImmediately bool) *exec.Cmd {
+	t.Helper()
+	command := exec.Command(os.Args[0], "-test.run", "^TestExecutionLockDoesNotExpireWhileOwnerIsAlive$")
+	command.Env = append(
+		os.Environ(),
+		"STORE_LOCK_HOLDER=1",
+		"STORE_LOCK_PATH="+lockPath,
+		"STORE_LOCK_READY="+ready,
+		fmt.Sprintf("STORE_LOCK_EXIT=%t", exitImmediately),
+	)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
+func runLockHolder() {
+	lock, err := acquireExecutionLock(os.Getenv("STORE_LOCK_PATH"), time.Second)
+	if err != nil {
+		os.Exit(18)
+	}
+	if err := os.WriteFile(os.Getenv("STORE_LOCK_READY"), []byte("ready"), 0600); err != nil {
+		os.Exit(19)
+	}
+	if os.Getenv("STORE_LOCK_EXIT") == "true" {
+		os.Exit(0)
+	}
+	time.Sleep(6 * time.Second)
+	if err := lock.Close(); err != nil {
+		os.Exit(20)
+	}
+	os.Exit(0)
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
