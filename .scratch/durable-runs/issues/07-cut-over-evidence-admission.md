@@ -105,3 +105,34 @@ rewriting historical ledger rows.
   the outcomes directory, making on-disk byte tampering inert.
 - Verification: gofmt clean, build/vet OK, full suite green across 22
   packages.
+
+## Evidence — slice 2a (snapshot/prompt binding + surfacing)
+
+- Commits: feat(store) expose durable request records (+140 incl. focused
+  execution_request_test.go split), feat(reviewexec) validate snapshot and
+  prompt binding (+77), test(reviewexec) binding rejection and engine
+  surfacing (+316). Every staged candidate under budget.
+- Surface: store.ExecutionRequest exported rename (json tags byte-identical),
+  ErrRequestCorrupt, Store.ReadExecutionRequest strict reader;
+  DurableTransport.validateSnapshotBinding fail-fast after Start verifies
+  lineage ownership, single audited-sha segment in the admitted candidate,
+  candidate identity tie-back against the durable record, and prompt identity
+  equality via the same PromptIdentity derivation the store persists.
+- Review-driven fixes: misleading "candidate sha segment" reason text now
+  names the identity tie-back honestly; throwaway request rebuild replaced by
+  direct agentrun.PromptIdentity comparison; bindSnapshot renamed to
+  validateSnapshotBinding (it mutates nothing); oversized execution_test.go
+  no longer worsened — new reader tests live in their own file; mutex-copying
+  silentReviewer double rewritten mutex-free.
+- Deficiency surfaced by the binding-rejection test and fixed: a rejected
+  binding used to leave the detached worker executing an untrusted provider
+  call. Run now aborts the admitted run cooperatively on binding rejection so
+  the durable record settles canceled with the rejection on record; the
+  TempDir cleanup race disappeared with it (3x repeat green).
+- Honest limits recorded: intra-call staleness is structurally unreachable
+  because Run authors its own record microseconds earlier; the load-bearing
+  checks target external tampering, damage, and transport misconfiguration.
+  End-to-end sha-A-vs-sha-B divergence is unit-level only (Run mints fresh
+  records); integration uses a malformed transport sha.
+- Verification: gofmt clean, build/vet OK, full suite green across 22
+  packages including 3x repeat of the previously racy rejection test.
