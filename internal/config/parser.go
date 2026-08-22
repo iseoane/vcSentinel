@@ -46,6 +46,12 @@ type ReviewConfig struct {
 	// default-on); setting it false restores the pre-R6 observe-but-admit
 	// lenient behavior while runs stay inspectable via `sentinel runs`.
 	EvidenceAdmission bool
+	// CancellationEscalation enables bounded whole-tree escalation after the
+	// cooperative grace budget expires when a routed review owns its provider
+	// process tree (ticket 08). It defaults to true; setting it false keeps
+	// cooperative cancellation and orphan detection while never issuing a
+	// kill signal beyond the direct child.
+	CancellationEscalation bool
 	// Dims asigna cada dimensión canónica a un perfil de agente.
 	Dims map[string]string
 }
@@ -160,6 +166,10 @@ func configuracionPorDefecto() Config {
 			// Evidence admission is default-on at cutover (ticket 07): the
 			// rollback seam is setting it to false, never leaving it unset.
 			EvidenceAdmission: true,
+			// Bounded cancellation escalation is default-on (ticket 08): the
+			// rollback seam is setting it to false, which restricts every
+			// kill to the direct child.
+			CancellationEscalation: true,
 			Dims: map[string]string{
 				"spec":     "cheap",
 				"style":    "cheap",
@@ -279,12 +289,13 @@ type agenteYAML struct {
 // valores no numéricos (se ignoran y queda el default), igual que hacía
 // strconv.Atoi en el parser artesanal.
 type reviewYAML struct {
-	Timeout           yaml.Node         `yaml:"timeout"`
-	Parallel          yaml.Node         `yaml:"parallel"`
-	CodeGraphContext  *bool             `yaml:"codegraph_context"`
-	DurableRuns       *bool             `yaml:"durable_runs"`
-	EvidenceAdmission *bool             `yaml:"evidence_admission"`
-	Dims              map[string]string `yaml:"dims"`
+	Timeout                yaml.Node         `yaml:"timeout"`
+	Parallel               yaml.Node         `yaml:"parallel"`
+	CodeGraphContext       *bool             `yaml:"codegraph_context"`
+	DurableRuns            *bool             `yaml:"durable_runs"`
+	EvidenceAdmission      *bool             `yaml:"evidence_admission"`
+	CancellationEscalation *bool             `yaml:"cancellation_escalation"`
+	Dims                   map[string]string `yaml:"dims"`
 }
 
 // capabilityYAML es una entrada de validation.capabilities.<nombre> (T1.2).
@@ -457,6 +468,9 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		}
 		if raw.Review.EvidenceAdmission != nil {
 			cfg.Review.EvidenceAdmission = *raw.Review.EvidenceAdmission
+		}
+		if raw.Review.CancellationEscalation != nil {
+			cfg.Review.CancellationEscalation = *raw.Review.CancellationEscalation
 		}
 	}
 	cfg.LintCommands = append(cfg.LintCommands, raw.LintCommands...)

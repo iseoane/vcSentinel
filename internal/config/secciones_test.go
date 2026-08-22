@@ -241,3 +241,30 @@ func TestReviewEvidenceAdmissionFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewCancellationEscalationFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		// Default-on (ticket 08): an absent key keeps bounded whole-tree
+		// escalation; only an explicit false restricts every kill to the
+		// direct child.
+		{name: "default true when absent", yaml: "", want: true},
+		{name: "explicit true keeps escalation", yaml: "review:\n  cancellation_escalation: true\n", want: true},
+		{name: "explicit false disables escalation", yaml: "review:\n  cancellation_escalation: false\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			worktree := t.TempDir()
+			setHome(t, home)
+			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			cfg := CargarConfiguracionLocal(worktree)
+			if cfg.Review.CancellationEscalation != tt.want {
+				t.Fatalf("CancellationEscalation = %v, want %v", cfg.Review.CancellationEscalation, tt.want)
+			}
+		})
+	}
+}
