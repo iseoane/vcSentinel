@@ -72,3 +72,36 @@ interactive REPL integration, remote/daemon surfaces (D units).
 1. Attempt-grouping contract extension plus controller `Retry`.
 2. Controller `Recover` and `Verify` primitives with focused tests.
 3. `sentinel runs` dispatch, JSON output, cursors, exit-code documentation.
+
+## Evidence — slice 1 (attempt grouping + controller Retry)
+
+- Commits: e4a8ed3 contracts (+121), 3610a0a controller retry (+179/-21),
+  b737005 integration tests (+302). Each staged candidate under the 400-line
+  budget; pre-commit hook passed on every commit.
+- Contract surface added: DecisionRetry transition rules (failed/canceled/
+  timed_out -> Running XOR DecisionRetry via InvalidDecisionError),
+  LifecycleState.Retryable(), NewRetryInvocation(parent), extended
+  NewRecoveredInvocation(..., parentID, attempt).
+- Controller surface: Retry(ctx, runID, expectedRevision uint64) with
+  ErrStaleRevision/ErrRunNotRetryable sentinels, cross-process reconstruction,
+  idempotent-safe double application.
+- Independent code review (dual axis, explore subagents over frozen bundle):
+  Standards found oversized controller.go (>500), speculative-generality
+  options machinery, Inspect/durableEvidence duplication, string-keyed test
+  adapters, redundant cast. Spec found awaiting-reconstruction attempt
+  hardcoded to 1 (attempt duplication after fail->retry->awaiting->die->
+  recover) and missing map-insert existence recheck.
+- All findings fixed: retry machinery split into controller_retry.go
+  (controller.go now 474 lines), plain expectedRevision parameter replaced
+  the options API, Inspect reuses durableEvidence, both reconstruction paths
+  derive attempts through shared countInvocationAttempts, Retry rechecks the
+  live-run map under the second lock and cancels the worker context when it
+  loses the race, test table carries adapter constructors directly.
+- Deferred follow-ups: recovered-invocation six-primitive identity clump
+  (pre-existing shape; a recovered-identity type is contract churn better
+  landed with slice 2 Recover work); NewNormalizedEvent awaiting->running
+  remains Respond-only by design — slice 2 Recover must route resumption
+  through respond/abort semantics.
+- Verification after fixes: gofmt clean, build/vet OK, full suite green,
+  go test -race on execution/agentrun/store/reviewexec green, guardian
+  advisory CRITICO only at whole-worktree level before commits.
