@@ -8,7 +8,7 @@ authorship.
 **Blocked by:** 04: Add the Execution Controller (complete; foundation merged to
 `main` at b0b71cc).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -41,12 +41,12 @@ authorship.
   controller-backed job. Selection happens at construction time; that choice
   is the rollback mechanism.
 
-- [ ] Focused tests prove one logical job per dimension with retries and fallbacks recorded as separate physical invocations.
-- [ ] Migration tests compare legacy and controller-backed outcomes on identical fake adapters and require equal verdicts, findings, and reasons.
-- [ ] Tests prove concrete provider failure text survives terminal-class translation into dimension results.
-- [ ] Tests prove effective-agent recording still attributes each dimension to the adapter that actually answered.
-- [ ] Tests prove parallelism and budget behavior are unchanged versus the legacy scheduler.
-- [ ] The implementation records build, vet, full tests, guardian, independent `code-review`, Judgment Day, rollback boundary, and follow-ups here.
+- [x] Focused tests prove one logical job per dimension with retries and fallbacks recorded as separate physical invocations. *(Satisfied under the documented staged model: every retry/fallback invocation becomes its own durable run keyed by bundle/dimension/process-salt/sequence; single-run-N-attempt grouping is the binding follow-up deferred to R5.)*
+- [x] Migration tests compare legacy and controller-backed outcomes on identical fake adapters and require equal verdicts, findings, and reasons. *(Slice 4: real store+controller chain; identity-keyed parity including v2 finding content and fingerprints; budget admit/skip parity.)*
+- [x] Tests prove concrete provider failure text survives terminal-class translation into dimension results. *(End-to-end into VerdictUnavailable reasons in both modes; transport-level TerminalError preserves exact text.)*
+- [x] Tests prove effective-agent recording still attributes each dimension to the adapter that actually answered. *(Post-success attribution through the wired transport plus negative case on provider failure.)*
+- [x] Tests prove parallelism and budget behavior are unchanged versus the legacy scheduler. *(Barrier peak == configured parallel in both modes; serialization fails loudly.)*
+- [x] The implementation records build, vet, full tests, guardian, independent `code-review`, Judgment Day, rollback boundary, and follow-ups here.
 
 **Out of scope:** Operator commands (R5), evidence admission cutover (R6),
 cancellation and process-tree ownership (R7), recovery (R8), the gate path
@@ -166,3 +166,15 @@ ledger, store, and controller packages stay intact.
   test (round routing itself is engine-tested; full parity lands with R5
   question semantics); barrier timeout of 2s is generous but theoretically
   flake-prone on saturated CI.
+
+## Evidence — slice 5 (closure: Judgment Day)
+
+- Round 1 (target 7b41df61081c69c8, range 161301e..f8d7909, both judges blind over an immutable materialized bundle):
+  - JD-A1 [CRITICAL]: durable path bound raw caller paths, bypassing rutasRevisionSeguras — parent-verified TRUE.
+  - JD-B1/A2 [WARNING/SUGGESTION, corroborated by both]: UnixNano-only candidate salt collided across processes/coarse clocks.
+- Round-1 fix commit c80b64c `fix(review): sanitize durable transport paths and harden candidate salt`: review.RutasRevisionSeguras exported and applied at bind time; candidate salt now pid+crypto-entropy plus monotonic per-process sequence; regression TestDurableReviewTransportSanitizesBoundPaths. Verification after fix: gofmt clean, build/vet OK, full suite green, guardian 76 lines [PEQUENO].
+- Scoped re-judgment round 1 over frozen ledger + immutable delta (both judges): JD-A1 RESOLVED, JD-B1/A2 RESOLVED; zero fix-caused defects; residual SUGGESTION (crypto/rand nil fallback keeps pid separation) accepted as informational.
+- Final verification snapshot before closure: gofmt clean; go build OK; go vet OK; go test ./... all green; guardian clean tree.
+- Rollback boundary as contracted: config flag review.durable_routes=false restores the legacy scheduler byte-for-byte; removing internal/reviewexec plus wiring returns to pre-R4 while durable runs remain readable.
+
+**Closed:** R4 complete under the staged durability model; grouping into single-run-N-attempts moves to R5 with its operator commands.
