@@ -125,3 +125,39 @@ R6 also merged at 9202f28.
   concept exists); follow-up candidate.
 - Verification snapshot: gofmt empty, build+vet clean, full suite green,
   -race clean on execution/agentadapter/reviewexec.
+
+### Slice 2 — platform ownership and bounded escalation
+- Commits: 1297139 (groups+jobs seam), e563953 (escalation machine),
+  dc6b735 (owned restricted-review spawn), 00c16ca (controller escalation +
+  additive transient states), 3e76cb4 + 412b804 (exactly-once pins, real-tree
+  integration proofs), plus late-caught 130-line windows implementation commit.
+- internal/process: Linux assigns children to their own process group
+  (SIGTERM then SIGKILL to -pgid); Windows uses a kill-on-close job object via
+  suspended start; both are real implementations behind one tiny Owner seam;
+  the restricted-review spawn owns every child from birth and publishes the
+  tree for controller-driven escalation.
+- Escalation: cooperative grace first (constructor-configurable, default 5s),
+  then whole-tree terminate; evidence rides existing frame machinery as
+  additive transient states running→terminating→terminated→canceled appended
+  before the authoritative slice-1 settlement; reaped confirmed once exit is
+  observed; unconfirmable reap settles canceled with orphan detail + pid
+  visible in runs inspection. Exactly-once proven at unit and integration
+  level, including double abort during escalation.
+- Review loop caught a CRITICAL contract break: the Disabled rollback seam
+  removed only the evidence while an unconditional watchdog still whole-tree
+  killed with zero frames — precisely what acceptance forbids. Fixed by
+  threading WholeTreeTermination through ctx: Disabled restores direct-child
+  CommandContext kill, disarms the watchdog, and settles honestly with a
+  descendant-accounting caveat naming the pid. New Linux-gated test proves a
+  TERM-ignoring grandchild SURVIVES Disabled-mode abort while the direct child
+  dies, with zero terminating/terminated frames.
+- Also fixed from review: Windows job-handle release on failed Start;
+  documented pgid-reuse window (zombie leader reserves the group until Wait).
+- Accepted notes for follow-ups: watchdog/timeout kills on enabled paths carry
+  no dedicated durable evidence yet; Tree.Alive() not consulted when a
+  cooperative child exits leaving descendants; parent-death leak reconciliation
+  belongs to R8 restart work but the honest-record criterion of THIS ticket is
+  handled in slice 3.
+- Verification snapshot: gofmt empty; build+vet clean on linux AND
+  GOOS=windows; full suite green; -race clean on execution/agentadapter/
+  process; escalation tests repeated ×10 deterministic.
