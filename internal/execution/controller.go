@@ -249,7 +249,11 @@ func (c *Controller) Inspect(ctx context.Context, runID agentrun.Identity) (Insp
 }
 
 // Apply accepts the initial control actions. Abort is cooperative and
-// response creates a child invocation linked to the waiting invocation.
+// controller-authored: applying it to a running attempt cancels the worker
+// context and appends the terminal canceled settlement itself, so a late
+// adapter result can no longer author a different outcome for that attempt.
+// Repeated aborts against an already canceled settlement are idempotent.
+// Response creates a child invocation linked to the waiting invocation.
 func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action ControlAction) (ApplyResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -287,6 +291,12 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.doneClosed() {
+		// A settled canceled run answers a repeated abort idempotently: the
+		// evidence event was already appended exactly once, so re-asking
+		// neither duplicates it nor fails.
+		if action.Kind == ActionAbort && state.settledCanceled() {
+			return ApplyResult{RunID: runID, InvocationID: state.completion.InvocationID, Accepted: true}, nil
+		}
 		return ApplyResult{}, ErrRunNotActive
 	}
 	switch action.Kind {
@@ -297,8 +307,7 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 		if !state.running {
 			return ApplyResult{}, ErrRunNotActive
 		}
-		state.cancel()
-		return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
+		return c.abortRunning(state, runID)
 	case ActionRespond:
 		return c.respond(state, runID, action.Response)
 	}
@@ -394,34 +403,6 @@ func (c *Controller) respond(state *runState, runID agentrun.Identity, response 
 	state.running = true
 	go c.execute(state, workerContext, child, response)
 	return ApplyResult{RunID: runID, InvocationID: child.InvocationID(), Accepted: true}, nil
-}
-
-func (c *Controller) abortWaiting(state *runState, runID agentrun.Identity) (ApplyResult, error) {
-	at := c.now().UTC()
-	outcome := store.AttemptOutcome{
-		RunID: string(runID), JobID: string(state.job.ID()), InvocationID: string(state.invocation.InvocationID()),
-		LineageID: string(state.invocation.LineageIdentity()), Class: agentrun.OutcomeCancellation,
-		Error: "aborted while awaiting a response", At: at,
-	}
-	event, eventErr := agentrun.NewNormalizedEvent(state.invocation, agentrun.StateAwaitingDecision, agentrun.StateCanceled, agentrun.DecisionAbort, at)
-	if eventErr != nil {
-		c.completeLocked(state, state.invocation, agentrun.StateAwaitingDecision, agentrun.OutcomeCancellation, AdapterResult{}, eventErr.Error(), eventErr, true)
-		return ApplyResult{}, eventErr
-	}
-	receipt, persistenceErr := c.store.AppendTerminalEvent(string(runID), event, state.revision, outcome)
-	if persistenceErr != nil {
-		if receipt.Revision > state.revision {
-			state.revision = receipt.Revision
-			state.state = receipt.State
-		}
-		c.completeLocked(state, state.invocation, state.state, agentrun.OutcomeCancellation, AdapterResult{}, persistenceErr.Error(), persistenceErr, true)
-		return ApplyResult{}, persistenceErr
-	}
-	state.revision = receipt.Revision
-	state.state = receipt.State
-	state.running = false
-	c.completeLocked(state, state.invocation, agentrun.StateCanceled, agentrun.OutcomeCancellation, AdapterResult{}, outcome.Error, nil, false)
-	return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
 }
 
 func (c *Controller) appendTransition(state *runState, invocation agentrun.InvocationEnvelope, from, to agentrun.LifecycleState, decision agentrun.Decision) error {
