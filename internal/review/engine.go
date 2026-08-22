@@ -43,8 +43,11 @@ var ErrRestrictedRequired = errors.New("semantic review unavailable: restricted 
 // ReviewTransport routes one dimension reviewer call through an alternative
 // execution path such as the durable run controller. bundleName plus dimension
 // identify the logical job; prompt is fully built by the engine so parsing
-// stays shared after either path.
-type ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error)
+// stays shared after either path. The first result is the raw reviewer output;
+// the second is the producing invocation identity reported by the transport
+// (ticket 07 slice 2b): empty when the transport cannot attribute the call,
+// and always empty on the legacy direct path, which has no durable invocation.
+type ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
@@ -441,7 +444,10 @@ func rutasRevisionSeguras(rutas []string) []string {
 }
 
 // auditarConAgente ejecuta el prompt (con la ronda extra de --answer si el
-// agente pide aclaraciones) y parsea el JSONL del agente.
+// agente pide aclaraciones) y parsea el JSONL del agente. Cuando la llamada
+// pasó por un transporte que reporta su identidad de invocación, esa identidad
+// viaja al resultado de la dimensión y a cada hallazgo (ticket 07 slice 2b):
+// es metadato aditivo de procedencia, nunca entrada del fingerprint.
 func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
 	ejecutar := func(prompt string) (string, error) {
 		if restringido, ok := agente.(auditorConHerramientasRestringidas); ok {
@@ -449,7 +455,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 		}
 		return "", ErrRestrictedRequired
 	}
-	salida, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
+	salida, invocacion, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
@@ -458,10 +464,11 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
+	crudo.InvocationID = invocacion
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
+		salida, invocacion, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
@@ -469,8 +476,10 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
+		crudo.InvocationID = invocacion
 	}
 	stamparSourceReview(crudo.Hallazgos)
+	stamparInvocacion(crudo.Hallazgos, invocacion)
 	stamparProductorEfectivo(crudo.Hallazgos, agente)
 	return crudo, nil
 }
@@ -516,14 +525,30 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 	}
 }
 
+// stamparInvocacion records the producing durable invocation on every finding
+// of a dimension result, only when the transport reported one (ticket 07
+// slice 2b). The legacy direct path passes an empty identity and findings
+// stay untouched, so pre-existing serialized findings keep their shape.
+func stamparInvocacion(hallazgos []Hallazgo, invocacion string) {
+	if invocacion == "" {
+		return
+	}
+	for i := range hallazgos {
+		hallazgos[i].InvocationID = invocacion
+	}
+}
+
 // invokeReview routes one reviewer call through the configured durable
 // transport when present; nil keeps the legacy direct call with its transport
 // retry. Both paths receive the identical prompt so parsing stays shared.
-func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, error) {
+// The middle result is the producing invocation identity: whatever the
+// transport reports, or empty on the legacy path.
+func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, string, error) {
 	if opts.ReviewTransport != nil {
 		return opts.ReviewTransport(bundle.Name, dimension, prompt, agente)
 	}
-	return ejecutarConReintento(ejecutar, prompt)
+	salida, err := ejecutarConReintento(ejecutar, prompt)
+	return salida, "", err
 }
 
 func ejecutarConReintento(ejecutar func(string) (string, error), prompt string) (string, error) {

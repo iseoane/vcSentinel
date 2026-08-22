@@ -39,6 +39,13 @@ type ReviewConfig struct {
 	// durable run controller (R4). False keeps the legacy scheduler; this
 	// flag is the construction-time rollback seam of ticket 05.
 	DurableRuns bool
+	// EvidenceAdmission enables evidence admission over durable transport
+	// output (ticket 07): snapshot binding and output-hash verification run
+	// before a completion may influence verdicts, and admission failures are
+	// surfaced as first-class evidence. It defaults to true (cutover
+	// default-on); setting it false restores the pre-R6 observe-but-admit
+	// lenient behavior while runs stay inspectable via `sentinel runs`.
+	EvidenceAdmission bool
 	// Dims asigna cada dimensión canónica a un perfil de agente.
 	Dims map[string]string
 }
@@ -150,6 +157,9 @@ func configuracionPorDefecto() Config {
 		Review: ReviewConfig{
 			Timeout:  300 * time.Second,
 			Parallel: 2,
+			// Evidence admission is default-on at cutover (ticket 07): the
+			// rollback seam is setting it to false, never leaving it unset.
+			EvidenceAdmission: true,
 			Dims: map[string]string{
 				"spec":     "cheap",
 				"style":    "cheap",
@@ -269,11 +279,12 @@ type agenteYAML struct {
 // valores no numéricos (se ignoran y queda el default), igual que hacía
 // strconv.Atoi en el parser artesanal.
 type reviewYAML struct {
-	Timeout          yaml.Node         `yaml:"timeout"`
-	Parallel         yaml.Node         `yaml:"parallel"`
-	CodeGraphContext *bool             `yaml:"codegraph_context"`
-	DurableRuns      *bool             `yaml:"durable_runs"`
-	Dims             map[string]string `yaml:"dims"`
+	Timeout           yaml.Node         `yaml:"timeout"`
+	Parallel          yaml.Node         `yaml:"parallel"`
+	CodeGraphContext  *bool             `yaml:"codegraph_context"`
+	DurableRuns       *bool             `yaml:"durable_runs"`
+	EvidenceAdmission *bool             `yaml:"evidence_admission"`
+	Dims              map[string]string `yaml:"dims"`
 }
 
 // capabilityYAML es una entrada de validation.capabilities.<nombre> (T1.2).
@@ -443,6 +454,9 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		}
 		if raw.Review.DurableRuns != nil {
 			cfg.Review.DurableRuns = *raw.Review.DurableRuns
+		}
+		if raw.Review.EvidenceAdmission != nil {
+			cfg.Review.EvidenceAdmission = *raw.Review.EvidenceAdmission
 		}
 	}
 	cfg.LintCommands = append(cfg.LintCommands, raw.LintCommands...)

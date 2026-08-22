@@ -16,6 +16,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
@@ -230,19 +231,7 @@ func ejecutarPrReview(worktree string, args []string) {
 	}
 
 	if flags.jsonOut {
-		salida := map[string]any{
-			"rama":       res.Rama,
-			"base":       base,
-			"shas":       res.SHAs,
-			"pendientes": res.Pendientes,
-			"fichas":     res.Fichas,
-			"volumen":    res.Volumen,
-			"decision":   res.Decision,
-			"overview":   res.Overview,
-		}
-		if res.OverviewError != "" {
-			salida["overview_error"] = res.OverviewError
-		}
+		salida := salidaJSONPrReview(base, res)
 		datos, err := json.MarshalIndent(salida, "", "  ")
 		if err != nil {
 			fmt.Printf("? %v\n", err)
@@ -261,9 +250,62 @@ func ejecutarPrReview(worktree string, args []string) {
 	fmt.Println(review.RenderResumen(res.Fichas))
 	fmt.Println()
 	fmt.Println(textoDecision(res.Decision, res.Volumen))
+	// Ticket 07: admission failures are first-class evidence, so the terminal
+	// report never lets them pass as generic infrastructure unavailability.
+	if admission, _ := conteoNoDisponibles(res.Fichas); admission > 0 {
+		fmt.Printf("? %d unavailable dimension record(s) are ADMISSION failures (evidence rejected before verdicts), not infrastructure outages.\n", admission)
+	}
 	if res.OverviewError != "" {
 		fmt.Printf("? Aviso: el overview no se pudo obtener (%s); se decidió por volumen.\n", res.OverviewError)
 	}
+}
+
+// salidaJSONPrReview builds the public --json result shape of pr review,
+// including the ticket-07 classification of unavailable dimension records:
+// review_admission_failures and review_infrastructure_failures are counted
+// separately so consumers can distinguish rejected evidence from outages.
+func salidaJSONPrReview(base string, res *review.ResultadoRama) map[string]any {
+	admission, infrastructure := conteoNoDisponibles(res.Fichas)
+	salida := map[string]any{
+		"rama":       res.Rama,
+		"base":       base,
+		"shas":       res.SHAs,
+		"pendientes": res.Pendientes,
+		"fichas":     res.Fichas,
+		"volumen":    res.Volumen,
+		"decision":   res.Decision,
+		"overview":   res.Overview,
+		// Ticket 07: admission vs infrastructure split over the append-only
+		// revision history of every audited commit on the branch.
+		"review_admission_failures":      admission,
+		"review_infrastructure_failures": infrastructure,
+	}
+	if res.OverviewError != "" {
+		salida["overview_error"] = res.OverviewError
+	}
+	return salida
+}
+
+// conteoNoDisponibles classifies every unavailable DimensionResult recorded
+// in the branch's revisions: reasons carrying the literal admission prefix
+// are admission failures; everything else stays infrastructure. It reads the
+// persisted ledger shape, where the typed transport error no longer exists.
+func conteoNoDisponibles(fichas []review.Ficha) (admission, infrastructure int) {
+	for _, ficha := range fichas {
+		for _, revision := range ficha.Revisions {
+			for _, dim := range revision.Dims {
+				if dim.Verdict != review.VerdictUnavailable {
+					continue
+				}
+				if reviewexec.IsAdmissionReason(dim.Reason) {
+					admission++
+				} else {
+					infrastructure++
+				}
+			}
+		}
+	}
+	return admission, infrastructure
 }
 
 // flagsPrCreate son las opciones de pr create.

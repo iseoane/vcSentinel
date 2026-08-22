@@ -526,9 +526,9 @@ func TestAuditarCommitRamaRoutesThroughPerCommitTransport(t *testing.T) {
 		ReviewTransportFactory: func(commitSHA string, paths []string) ReviewTransport {
 			factorySHA = commitSHA
 			factoryPaths = paths
-			return func(_, _, _ string, _ AuditorAgente) (string, error) {
+			return func(_, _, _ string, _ AuditorAgente) (string, string, error) {
 				transportCalled = true
-				return salidaAuditOK, nil
+				return salidaAuditOK, "", nil
 			}
 		},
 	})

@@ -14,13 +14,34 @@ func TestDurableTransportReturnsOutputOnSuccess(t *testing.T) {
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha123", []string{"x.go"})
 	reviewer := &scriptedReviewer{name: "dimension-logic", output: "raw verdict"}
 
-	output, err := transport.Run(reviewer, "quality/logic", "the prompt")
+	output, evidence, err := transport.Run(reviewer, "quality/logic", "the prompt")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := "the prompt|sha123|x.go|raw verdict"
 	if output != want {
 		t.Fatalf("output = %q, want %q", output, want)
+	}
+	outcomes, err := backing.ReadAttemptOutcomes(evidence.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var durable *store.AttemptOutcome
+	for i := range outcomes {
+		if outcomes[i].InvocationID == evidence.InvocationID {
+			durable = &outcomes[i]
+			break
+		}
+	}
+	if durable == nil {
+		t.Fatalf("durable outcomes = %+v, want one record matching evidence invocation %s", outcomes, evidence.InvocationID)
+	}
+	wantEvidence := evidenceFromOutcome(durable)
+	if evidence != wantEvidence {
+		t.Fatalf("evidence = %+v, want %+v copied from the durable outcome", evidence, wantEvidence)
+	}
+	if durable.Class != agentrun.OutcomeSuccess || durable.OutputHash == "" {
+		t.Fatalf("durable outcome = %+v, want recorded success with an output hash", durable)
 	}
 }
 
@@ -29,9 +50,9 @@ func TestDurableTransportPreservesFailureEvidenceAsTerminalError(t *testing.T) {
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha456", nil)
 	failing := &scriptedReviewer{name: "dimension-style", err: errors.New("provider exploded")}
 
-	output, err := transport.Run(failing, "style/design", "prompt A")
-	if output != "" || err == nil {
-		t.Fatalf("Run() = %q, %v, want empty output with terminal error", output, err)
+	output, evidence, err := transport.Run(failing, "style/design", "prompt A")
+	if output != "" || evidence != (Evidence{}) || err == nil {
+		t.Fatalf("Run() = %q, %+v, %v, want empty output and evidence with terminal error", output, evidence, err)
 	}
 	var terminal *TerminalError
 	if !errors.As(err, &terminal) {
@@ -42,7 +63,7 @@ func TestDurableTransportPreservesFailureEvidenceAsTerminalError(t *testing.T) {
 	}
 
 	succeeding := &scriptedReviewer{name: "dimension-style", output: "ok"}
-	if _, err := transport.Run(succeeding, "style/design", "prompt B"); err != nil {
+	if _, _, err := transport.Run(succeeding, "style/design", "prompt B"); err != nil {
 		t.Fatalf("second Run with same identity key failed = %v, want nanosecond salt to prevent candidate collision", err)
 	}
 	if !strings.Contains(terminal.Error(), "provider exploded") {

@@ -215,3 +215,29 @@ func TestReviewDurableRunsFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewEvidenceAdmissionFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		// Cutover default-on (ticket 07): an absent key keeps admission
+		// strict; only an explicit false restores lenient acceptance.
+		{name: "default true when absent", yaml: "", want: true},
+		{name: "explicit true keeps admission", yaml: "review:\n  evidence_admission: true\n", want: true},
+		{name: "explicit false restores lenient mode", yaml: "review:\n  evidence_admission: false\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			worktree := t.TempDir()
+			setHome(t, home)
+			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			cfg := CargarConfiguracionLocal(worktree)
+			if cfg.Review.EvidenceAdmission != tt.want {
+				t.Fatalf("EvidenceAdmission = %v, want %v", cfg.Review.EvidenceAdmission, tt.want)
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -204,9 +205,26 @@ func unavailableDimensionMessages(auditResult review.ResultadoAuditoria) []strin
 		if reason == "" && dimension.Error != nil {
 			reason = dimension.Error.Error()
 		}
-		messages = append(messages, fmt.Sprintf("  - dimension=%q reason=%q", dimensionName, reason))
+		// Ticket 07: admission failures surface with their own class label
+		// instead of wearing generic infrastructure unavailability. Exit-code
+		// contracts are untouched: this marker only classifies evidence.
+		messages = append(messages, fmt.Sprintf("  - dimension=%q reason=%q class=%s", dimensionName, reason, failureClass(dimension)))
 	}
 	return messages
+}
+
+// failureClass labels an unavailable dimension as an admission failure or an
+// infrastructure failure (ticket 07). The typed transport error wins when the
+// engine retained it; once only the persisted reason survives, classification
+// goes through the literal admission prefix both share.
+func failureClass(dimension review.ResultadoDimension) string {
+	if reviewexec.IsAdmissionError(dimension.Error) {
+		return "admission"
+	}
+	if dimension.Resultado != nil && reviewexec.IsAdmissionReason(dimension.Resultado.Reason) {
+		return "admission"
+	}
+	return "infrastructure"
 }
 
 func unavailableDimensions(auditResult review.ResultadoAuditoria) []review.ResultadoDimension {

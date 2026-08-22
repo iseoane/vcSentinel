@@ -51,6 +51,10 @@ func TestDurableReviewTransportDisabledReturnsNil(t *testing.T) {
 func TestDurableReviewTransportRoutesThroughRealStore(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Review.DurableRuns = true
+	// Ticket 07: production defaults admission on (config default), so the
+	// strict wiring test pins it explicitly instead of relying on the zero
+	// value of a hand-built Config.
+	cfg.Review.EvidenceAdmission = true
 	worktree := t.TempDir()
 	initGitRepo(t, worktree)
 	transport := durableReviewTransport(cfg, worktree, "sha-abc", []string{"x.go"})
@@ -59,7 +63,7 @@ func TestDurableReviewTransportRoutesThroughRealStore(t *testing.T) {
 	}
 	agent := &fakeRestrictedAgent{response: `{"dim":"logic","verdict":"ok"}`}
 
-	output, err := transport("quality", "logic", "the prompt", agent)
+	output, invocation, err := transport("quality", "logic", "the prompt", agent)
 	if err != nil {
 		t.Fatalf("transport() error = %v", err)
 	}
@@ -67,7 +71,10 @@ func TestDurableReviewTransportRoutesThroughRealStore(t *testing.T) {
 	if output != want {
 		t.Fatalf("output = %q, want %q", output, want)
 	}
-	if _, err := transport("quality", "logic", "the prompt again", agent); err != nil {
+	if invocation == "" {
+		t.Fatal("invocation = empty, want the durable evidence identity of the admitted run")
+	}
+	if _, _, err := transport("quality", "logic", "the prompt again", agent); err != nil {
 		t.Fatalf("second routed call error = %v, want salted candidate to prevent collision", err)
 	}
 }
@@ -83,15 +90,45 @@ func TestDurableReviewTransportRejectsNonRestrictedAgent(t *testing.T) {
 	}
 	soloPrompt := agentWithoutRevision{}
 
-	_, err := transport("quality", "logic", "prompt", soloPrompt)
+	_, _, err := transport("quality", "logic", "prompt", soloPrompt)
 	if err == nil || !strings.Contains(err.Error(), "restricted reviewer capability") {
 		t.Fatalf("err = %v, want restricted-capability requirement preserved", err)
+	}
+}
+
+// TestDurableReviewTransportLenientWhenAdmissionDisabled proves the ticket 07
+// cutover wiring: with review.evidence_admission=false the durable transport
+// still routes (durable_runs stays on) but admits output unverified with an
+// empty invocation identity, exactly like the pre-R6 closure.
+func TestDurableReviewTransportLenientWhenAdmissionDisabled(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Review.DurableRuns = true
+	cfg.Review.EvidenceAdmission = false
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	transport := durableReviewTransport(cfg, worktree, "sha-lenient", []string{"x.go"})
+	if transport == nil {
+		t.Fatal("transport = nil, want wired when durable runs stays enabled")
+	}
+	agent := &fakeRestrictedAgent{response: `{"dim":"logic","verdict":"ok"}`}
+
+	output, invocation, err := transport("quality", "logic", "the prompt", agent)
+	if err != nil {
+		t.Fatalf("transport() error = %v, want lenient routing to succeed", err)
+	}
+	want := "the prompt|{\"dim\":\"logic\",\"verdict\":\"ok\"}"
+	if output != want {
+		t.Fatalf("output = %q, want %q", output, want)
+	}
+	if invocation != "" {
+		t.Fatalf("invocation = %q, want empty identity in lenient mode (zero Evidence)", invocation)
 	}
 }
 
 func TestDurableReviewTransportSanitizesBoundPaths(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Review.DurableRuns = true
+	cfg.Review.EvidenceAdmission = true
 	worktree := t.TempDir()
 	initGitRepo(t, worktree)
 	transport := durableReviewTransport(cfg, worktree, "sha-jda1", []string{
@@ -102,7 +139,7 @@ func TestDurableReviewTransportSanitizesBoundPaths(t *testing.T) {
 	}
 	agent := &fakeRestrictedAgent{response: `{"dim":"logic","verdict":"ok"}`}
 
-	if _, err := transport("quality", "logic", "prompt", agent); err != nil {
+	if _, _, err := transport("quality", "logic", "prompt", agent); err != nil {
 		t.Fatalf("transport() error = %v", err)
 	}
 	agent.mu.Lock()

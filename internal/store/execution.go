@@ -17,13 +17,21 @@ import (
 // identity record.
 var ErrImmutableConflict = errors.New("store: immutable execution record conflict")
 
+// ErrRequestCorrupt means that a persisted execution request record failed
+// to decode into its recorded shape, so its admission identities cannot be
+// trusted.
+var ErrRequestCorrupt = errors.New("store: corrupt execution request")
+
 // RunPolicy identifies the policy used to create a durable execution.
 // Policy contents are resolved elsewhere; only this stable identity is stored.
 type RunPolicy struct {
 	ID string `json:"id"`
 }
 
-type executionRequest struct {
+// ExecutionRequest is the immutable admission request persisted at CreateRun.
+// Every field is a derived agentrun identity; raw prompts, candidates, and
+// capabilities never reach durable storage.
+type ExecutionRequest struct {
 	RunID         string   `json:"run_id"`
 	JobID         string   `json:"job_id"`
 	RequestID     string   `json:"request_id"`
@@ -112,14 +120,44 @@ func validRunID(runID string) bool {
 	return filepath.Base(runID) == runID
 }
 
-func requestFor(job agentrun.LogicalJob) executionRequest {
+// ReadExecutionRequest reads the immutable admission request persisted for
+// one durable run. A missing record reports a not-found error wrapping
+// ErrExecutionNotFound; bytes that fail to decode into the recorded shape —
+// or decode with empty admission identities — report an error wrapping
+// ErrRequestCorrupt, so callers can separate store damage from absent
+// history and never mistake either for an admission verdict.
+func (s *Store) ReadExecutionRequest(runID string) (ExecutionRequest, error) {
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return ExecutionRequest{}, err
+	}
+	path := filepath.Join(directory, "request.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return ExecutionRequest{}, fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
+	}
+	if err != nil {
+		return ExecutionRequest{}, err
+	}
+	var request ExecutionRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return ExecutionRequest{}, fmt.Errorf("%w: %s", ErrRequestCorrupt, path)
+	}
+	if request.RunID == "" || request.JobID == "" || request.RequestID == "" ||
+		request.CandidateID == "" || request.PromptID == "" {
+		return ExecutionRequest{}, fmt.Errorf("%w: %s", ErrRequestCorrupt, path)
+	}
+	return request, nil
+}
+
+func requestFor(job agentrun.LogicalJob) ExecutionRequest {
 	request := job.Request()
 	capabilityIDs := make([]string, 0, len(request.Capabilities()))
 	for _, capability := range request.Capabilities() {
 		capabilityIDs = append(capabilityIDs, string(capability.Identity()))
 	}
 	sort.Strings(capabilityIDs)
-	return executionRequest{
+	return ExecutionRequest{
 		RunID:         string(job.RunID()),
 		JobID:         string(job.ID()),
 		RequestID:     string(request.Identity()),

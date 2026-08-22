@@ -31,12 +31,36 @@ func durableTestTransport(t *testing.T, sha string) review.ReviewTransport {
 	t.Helper()
 	backing := store.NuevoStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:migration"}, sha, []string{"a.go"})
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, error) {
+	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
 		restricted, ok := agent.(RestrictedReviewer)
 		if !ok {
-			return "", review.ErrRestrictedRequired
+			return "", "", review.ErrRestrictedRequired
 		}
-		return transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		output, evidence, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		if err != nil {
+			return "", "", err
+		}
+		return output, evidence.InvocationID, nil
+	}
+}
+
+// lenientTestTransport is the same wiring with review.evidence_admission=false:
+// construction-time rollback to the pre-R6 observe-but-admit behavior.
+func lenientTestTransport(t *testing.T, sha string) review.ReviewTransport {
+	t.Helper()
+	backing := store.NuevoStore(t.TempDir())
+	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:migration-lenient"}, sha, []string{"a.go"},
+		WithEvidenceAdmission(false))
+	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
+		restricted, ok := agent.(RestrictedReviewer)
+		if !ok {
+			return "", "", review.ErrRestrictedRequired
+		}
+		output, evidence, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		if err != nil {
+			return "", "", err
+		}
+		return output, evidence.InvocationID, nil
 	}
 }
 
@@ -335,6 +359,75 @@ func hasDimension(result review.ResultadoAuditoria, bundleName, dimension string
 		}
 	}
 	return false
+}
+
+// TestMigrationInvocationIdentityStrictVersusLenient extends migration parity
+// to the ticket 07 cutover: under strict admission a successful durable
+// dimension produces the SAME verdict and findings as legacy PLUS a non-empty
+// producing invocation identity; under lenient mode (evidence_admission=false)
+// the result is identical to legacy with EMPTY invocation identities,
+// proving lenient equals pre-R6 byte behavior.
+func TestMigrationInvocationIdentityStrictVersusLenient(t *testing.T) {
+	factory := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+		return &cannedAgent{responses: []string{findingBearingResponse}}, "normal", nil
+	}
+	bundles := []review.ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: review.PriorityRequired}}
+	buildOpts := func(transport review.ReviewTransport) review.OpcionesAuditoria {
+		return review.OpcionesAuditoria{
+			SHA:             "migration-invocation",
+			Mensaje:         "m",
+			Diff:            "d",
+			Bundles:         bundles,
+			ReviewTransport: transport,
+		}
+	}
+
+	legacy := review.AuditarCommit(factory, 1, buildOpts(nil))
+	strict := review.AuditarCommit(factory, 1, buildOpts(durableTestTransport(t, "migration-invocation")))
+	lenient := review.AuditarCommit(factory, 1, buildOpts(lenientTestTransport(t, "migration-invocation")))
+
+	if strict.Veredicto != legacy.Veredicto || lenient.Veredicto != legacy.Veredicto {
+		t.Fatalf("verdicts differ: legacy=%q strict=%q lenient=%q, want identical outcomes in every mode",
+			legacy.Veredicto, strict.Veredicto, lenient.Veredicto)
+	}
+	if legacy.Veredicto == review.VerdictUnavailable {
+		t.Fatalf("verdict = %q, want a successful (non-unavailable) audit", legacy.Veredicto)
+	}
+	if legacy.Findings[0].Fingerprint != strict.Findings[0].Fingerprint ||
+		legacy.Findings[0].Description != strict.Findings[0].Description ||
+		lenient.Findings[0].Fingerprint != legacy.Findings[0].Fingerprint ||
+		lenient.Findings[0].Description != legacy.Findings[0].Description {
+		t.Fatalf("finding content differs across modes:\nlegacy %+v\nstrict %+v\nlenient %+v",
+			legacy.Findings[0], strict.Findings[0], lenient.Findings[0])
+	}
+
+	if len(strict.Dims) != 1 || strict.Dims[0].Resultado == nil {
+		t.Fatalf("strict dims = %+v, want one routed dimension", strict.Dims)
+	}
+	if strict.Dims[0].Resultado.InvocationID == "" {
+		t.Fatal("strict InvocationID = empty, want the producing durable invocation bound to the dimension")
+	}
+	if strict.Findings[0].InvocationID != strict.Dims[0].Resultado.InvocationID {
+		t.Fatalf("finding invocation %q differs from its producing dimension invocation %q",
+			strict.Findings[0].InvocationID, strict.Dims[0].Resultado.InvocationID)
+	}
+
+	// Lenient mode must reproduce legacy exactly: same verdict and finding
+	// content, and NO provenance metadata anywhere.
+	if len(lenient.Dims) != 1 || lenient.Dims[0].Resultado == nil {
+		t.Fatalf("lenient dims = %+v, want one routed dimension", lenient.Dims)
+	}
+	if got := lenient.Dims[0].Resultado.InvocationID; got != "" {
+		t.Fatalf("lenient InvocationID = %q, want empty (pre-R6 byte behavior)", got)
+	}
+	if got := lenient.Findings[0].InvocationID; got != "" {
+		t.Fatalf("lenient finding InvocationID = %q, want empty like the legacy record", got)
+	}
+	if lenient.Dims[0].Resultado.Verdict != legacy.Dims[0].Resultado.Verdict ||
+		lenient.Dims[0].Resultado.Reason != legacy.Dims[0].Resultado.Reason {
+		t.Fatalf("lenient dimension outcome differs from legacy: %+v vs %+v",
+			lenient.Dims[0].Resultado, legacy.Dims[0].Resultado)
+	}
 }
 
 func TestAttributionDoesNotFireOnProviderFailure(t *testing.T) {
