@@ -2,10 +2,12 @@ package reviewexec
 
 import (
 	"context"
+	crand "crypto/rand"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
-	"time"
+	"sync/atomic"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
@@ -45,16 +47,36 @@ func NewDurableTransport(backing *store.Store, policy store.RunPolicy, sha strin
 	return &DurableTransport{backing: backing, policy: policy, sha: sha, paths: paths}
 }
 
+// candidateSalt is process-random (pid plus crypto entropy) so two processes
+// auditing the same commit never derive identical candidates, even within one
+// wall-clock tick. JD-B1: a wall-clock-only salt collided across processes
+// and degraded a healthy dimension to unavailable.
+var candidateSalt = fmt.Sprintf("%d-%x", os.Getpid(), mustRandomBytes())
+
+func mustRandomBytes() []byte {
+	var rnd [4]byte
+	if _, err := crand.Read(rnd[:]); err != nil {
+		// Entropy failure is effectively impossible on supported platforms;
+		// the pid component alone still separates concurrent processes.
+		return nil
+	}
+	return rnd[:]
+}
+
+// invocationSequence guarantees intra-process uniqueness even when several
+// transports fire within the same nanosecond.
+var invocationSequence atomic.Uint64
+
 // Run executes exactly one physical invocation of reviewer for the identity
-// key (bundle and dimension). A nanosecond salt keeps repeated audits of the
-// same commit from colliding on candidate identity: durability of distinct
-// runs wins over content-stable reuse here. Success returns raw output; any
-// other terminal class returns TerminalError preserving the original text.
+// key (bundle and dimension). The candidate combines the key, the audited
+// SHA, a process-random salt, and a monotonic sequence so repeated audits —
+// in this process or any other — can never collide on candidate identity.
 func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, error) {
 	if t.backing == nil {
 		return "", errors.New("reviewexec: durable transport requires a store")
 	}
-	candidate := agentrun.Candidate(fmt.Sprintf("review:%s:%s:%d", identityKey, t.sha, time.Now().UnixNano()))
+	sequence := invocationSequence.Add(1)
+	candidate := agentrun.Candidate(fmt.Sprintf("review:%s:%s:%s:%06d", identityKey, t.sha, candidateSalt, sequence))
 	request := agentrun.NewRunRequest(candidate, agentrun.Prompt(prompt), nil)
 	adapter := NewReviewAdapter(reviewer, t.sha, t.paths, nil)
 	controller := execution.NewController(t.backing, adapter)

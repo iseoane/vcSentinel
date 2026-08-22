@@ -33,13 +33,17 @@ func durableReviewTransport(cfg config.Config, worktree, sha string, paths []str
 	if !cfg.Review.DurableRuns {
 		return nil
 	}
+	// JD-A1 fix: the engine sanitizes its own copy per audit, so a transport
+	// bound before dispatch must apply the identical safe-list rule or the
+	// durable path would forward raw caller paths to reviewers.
+	safePaths := review.RutasRevisionSeguras(paths)
 	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vas-sentinel: durable runs disabled for this audit, no git common dir: %v\n", err)
 		return nil
 	}
 	st := store.NuevoStore(gitCommonDir)
-	transport := reviewexec.NewDurableTransport(st, store.RunPolicy{ID: durableRunPolicyID}, sha, paths)
+	transport := reviewexec.NewDurableTransport(st, store.RunPolicy{ID: durableRunPolicyID}, sha, safePaths)
 	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, error) {
 		restricted, ok := agent.(reviewexec.RestrictedReviewer)
 		if !ok {

@@ -419,6 +419,13 @@ func puedeDegradarBloque(resultado DimensionResult) bool {
 		!tieneHallazgoCriticalConfirmado(resultado.Hallazgos)
 }
 
+// RutasRevisionSeguras exposes the engine's reviewer-path sanitizer so
+// out-of-engine transports bind the exact same safe list the legacy path
+// uses. Ticket 05 Judgment Day JD-A1: binding raw caller lists would let
+// dash-prefixed, control-character, absolute, and parent-relative names
+// reach reviewers unfiltered on the durable path.
+func RutasRevisionSeguras(rutas []string) []string { return rutasRevisionSeguras(rutas) }
+
 func rutasRevisionSeguras(rutas []string) []string {
 	seguras := make([]string, 0, len(rutas))
 	for _, ruta := range rutas {
