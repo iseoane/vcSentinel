@@ -115,15 +115,20 @@ type runsVerificationOutput struct {
 	Reason string `json:"reason"`
 }
 
-// runsListEntry is one row of `runs status` without --run.
+// runsListEntry is one row of `runs status` without --run. OrphanedCancellation
+// appears only when restart reconciliation (ticket 08 slice 3) classified the
+// run as canceled-orphaned; it is additive and omitted otherwise.
 type runsListEntry struct {
-	RunID        string                  `json:"run_id"`
-	State        agentrun.LifecycleState `json:"state"`
-	OutcomeClass agentrun.TerminalClass  `json:"outcome_class"`
-	Revision     uint64                  `json:"revision"`
+	RunID                string                  `json:"run_id"`
+	State                agentrun.LifecycleState `json:"state"`
+	OutcomeClass         agentrun.TerminalClass  `json:"outcome_class"`
+	Revision             uint64                  `json:"revision"`
+	OrphanedCancellation bool                    `json:"orphaned_cancellation,omitempty"`
 }
 
 // runsStatusSummary is the stable JSON shape of `runs status --run <id>`.
+// OrphanedCancellation marks the read-time reconciliation verdict of ticket 08
+// slice 3 and stays absent for every honestly settled or still-recoverable run.
 type runsStatusSummary struct {
 	RunID      string                     `json:"run_id"`
 	JobID      string                     `json:"job_id,omitempty"`
@@ -133,6 +138,9 @@ type runsStatusSummary struct {
 	EventCount int                        `json:"event_count"`
 	Outcomes   []store.AttemptOutcome     `json:"outcomes"`
 	Responses  []store.InvocationResponse `json:"responses"`
+	// OrphanedCancellation is additive (ticket 08 slice 3) and omitempty so
+	// existing consumers keep parsing the shape unchanged.
+	OrphanedCancellation bool `json:"orphaned_cancellation,omitempty"`
 }
 
 // runsLogsOutput is the stable JSON shape of `runs logs`; NextCursor is nil
