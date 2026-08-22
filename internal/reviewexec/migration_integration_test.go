@@ -36,7 +36,8 @@ func durableTestTransport(t *testing.T, sha string) review.ReviewTransport {
 		if !ok {
 			return "", review.ErrRestrictedRequired
 		}
-		return transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		output, _, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		return output, err
 	}
 }
 
