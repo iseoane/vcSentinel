@@ -161,3 +161,33 @@ R6 also merged at 9202f28.
 - Verification snapshot: gofmt empty; build+vet clean on linux AND
   GOOS=windows; full suite green; -race clean on execution/agentadapter/
   process; escalation tests repeated ×10 deterministic.
+
+### Slice 3 — rollback flag and restart reconciliation
+- Commits: config flag (47), transport wiring + option/config proofs (261),
+  store read-time reconciliation (368), runs CLI surfacing (222), docs (21).
+- review.cancellation_escalation default true parsed exactly like
+  evidence_admission; wired at the single production transport site; documented
+  in README and docs/runs-cli.md where review flags already lived.
+- Restart reconciliation is READ-TIME ONLY: non-terminal stream with
+  terminating/terminated transitions but no terminal frame derives an honest
+  canceled-orphaned view; plain running heads stay untouched for R8; terminal
+  settlements always win; zero byte rewrites — writers keep validating against
+  the real head, so fabricated resume is structurally impossible. Truncated
+  but hash-valid escalation tails classify orphaned-canceled; partial-JSON or
+  truncated terminal tails still fail closed via IncompleteEventTailError.
+- Runs CLI surfaces orphaned_cancellation as additive omitempty JSON on both
+  shapes; status --run shows state/sequence/revision coherently from ONE
+  derivation basis; reconcile failure in inspection is a commented deliberate
+  best-effort downgrade to the raw honest head.
+- Dual-axis loop: spec axis PASS 6/6 (adversarial hunts: transient mid-
+  escalation mislabel converges and stays honest; all non-terminal surfaces
+  reconciled; single construction site wired; byte stability proven from code).
+  Standards axis: commit-completeness reminder honored (all five new files
+  staged together), four NOTEs fixed (best-effort comment, coherent display
+  basis, orphaned_cancellation in stable-shape field lists, immediate
+  grandchild containment defers). No standards violations in changed lines.
+- Verification snapshot: gofmt empty; build+vet clean linux AND windows;
+  full suite green ×3 consecutive runs; -race clean on process/execution/
+  agentadapter/store; reconciliation + escalation tests repeated ×10.
+
+**Unit complete pending Judgment Day.**
