@@ -45,7 +45,7 @@ func TestCreateRunCreatesIdentityRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var request executionRequest
+	var request ExecutionRequest
 	if err := json.Unmarshal(requestData, &request); err != nil {
 		t.Fatalf("request.json is not valid JSON: %v", err)
 	}
