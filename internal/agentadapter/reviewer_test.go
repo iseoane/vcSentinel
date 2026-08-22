@@ -1,6 +1,7 @@
 package agentadapter
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -340,7 +341,7 @@ func TestReviewCommandRequiresSnapshotDirectory(t *testing.T) {
 // working, path-confined review invocation (--safe-mode plus a tool set
 // replaced with read-only tools) instead of the provider-agnostic
 // "unavailable" error: unlike opencode, cmd.Dir (not a permission map)
-// confines it to the snapshot, see ejecutarRevisionConTimeout.
+// confines it to the snapshot, see ejecutarRevision.
 func TestReviewCommandClaudeBuildsPathConfinedArgs(t *testing.T) {
 	adapter := CLIAdapter{
 		BinaryName: "claude",
@@ -401,17 +402,17 @@ func TestReviewCommandClaudeRequiresSnapshotDirectory(t *testing.T) {
 	}
 }
 
-// TestEjecutarRevisionConTimeoutClaudeUsesSnapshotDirAsCwd verifies the actual
+// TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd verifies the actual
 // os/exec wiring: claude has no "--dir" flag, so confinement to the snapshot
-// must happen through cmd.Dir (see ejecutarRevisionConTimeout).
-func TestEjecutarRevisionConTimeoutClaudeUsesSnapshotDirAsCwd(t *testing.T) {
+// must happen through cmd.Dir (see ejecutarRevision).
+func TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
 	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
 	snapshotDir := t.TempDir()
 	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 10 * time.Second}
 
-	if _, err := adapter.ejecutarRevisionConTimeout(ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 10*time.Second); err != nil {
-		t.Fatalf("ejecutarRevisionConTimeout() error = %v", err)
+	if _, err := adapter.ejecutarRevision(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 10*time.Second); err != nil {
+		t.Fatalf("ejecutarRevision() error = %v", err)
 	}
 	captura := leerCapturaAgente(t, capturaRuta)
 	if !mismaRuta(captura.Dir, snapshotDir) {

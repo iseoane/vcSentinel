@@ -1,6 +1,7 @@
 package agentadapter
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -35,6 +36,26 @@ func (c *CadenaAdaptador) EjecutarPrompt(prompt string) (string, error) {
 // EjecutarRevision preserves per-request fallback while retaining tool limits.
 func (c *CadenaAdaptador) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	return c.primeroExitoso(func(a adaptadorCompleto) (string, error) {
+		if reviewer, ok := a.(interface {
+			EjecutarRevision(string, string, []string) (string, error)
+		}); ok {
+			return reviewer.EjecutarRevision(prompt, sha, paths)
+		}
+		return "", fmt.Errorf("semantic review unavailable: adapter %s does not implement EjecutarRevision", nombreAdaptador(a))
+	})
+}
+
+// ReviewWithContext preserves per-request fallback while forwarding the
+// cancellation context: children that accept a context receive it so aborts
+// reach their spawned provider processes; children that only implement the
+// legacy contract keep answering exactly as before.
+func (c *CadenaAdaptador) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
+	return c.primeroExitoso(func(a adaptadorCompleto) (string, error) {
+		if contextual, ok := a.(interface {
+			ReviewWithContext(context.Context, string, string, []string) (string, error)
+		}); ok {
+			return contextual.ReviewWithContext(ctx, prompt, sha, paths)
+		}
 		if reviewer, ok := a.(interface {
 			EjecutarRevision(string, string, []string) (string, error)
 		}); ok {
