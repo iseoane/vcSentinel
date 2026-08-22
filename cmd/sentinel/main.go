@@ -119,6 +119,9 @@ func main() {
 	case "pr":
 		requireInicializado(worktreeActual)
 		ejecutarPr(worktreeActual, os.Args[2:])
+	case "runs":
+		requireInicializado(worktreeActual)
+		os.Exit(executeRuns(os.Stdout, worktreeActual, os.Args[2:]))
 	case "install":
 		if err := setup.EjecutarInstalacionCompleta(); err != nil {
 			fmt.Printf("❌ Error en la instalación: %v\n", err)
@@ -135,7 +138,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'runs', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
