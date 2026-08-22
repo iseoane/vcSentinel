@@ -9,7 +9,7 @@ formats output.
 
 | Command | Flags | Behavior |
 | --- | --- | --- |
-| `runs start` | `--prompt <text>` (required), `--policy-id <id>` (default `operator`), `--json` | Admits a run through the configured agent chain (same `MY_SUB_AGENT`/`auto` selection as everywhere else) and waits until the run reaches a settled state (`awaiting_decision` or terminal). The admission candidate is salted per invocation, so two identical prompts never collide on run identity. |
+| `runs start` | `--prompt <text>` (required), `--policy-id <id>` (default `operator`), `--json` | Admits a run through the configured agent chain (same profile resolution as the review, gate, and pr commands) and waits until the run reaches a settled state (`awaiting_decision` or terminal). The admission candidate is salted per invocation, so two identical prompts never collide on run identity. |
 | `runs status` | `[--run <id>]`, `--json` | Without `--run`: list every run under the executions directory with lifecycle state, outcome class, and revision from derived projections. With `--run`: full inspection summary. Read-only; works without any agent configured. |
 | `runs logs` | `--run <id>` (required), `[--after <cursor>]`, `[--limit N]` (default 100), `--json` | Pages the validated event stream. `--after` is an exclusive revision cursor; resume automation with the returned `next_cursor`. |
 | `runs respond` | `--run <id>`, `--text <answer>`, `--json` | Applies a response to an awaiting decision and waits for the resulting attempt to settle. |
@@ -23,7 +23,7 @@ prints usage and exits `1`.
 
 ## Exit codes and terminal-state mapping
 
-Documented next to the dispatch in `cmd/sentinel/comandos_runs.go`
+Documented next to the dispatch in `cmd/sentinel/comandos_runs_decls.go`
 (`runExitCode`) and mirrored here:
 
 | Code | Meaning | Mapped errors |
@@ -113,6 +113,13 @@ Machine output never changes shape without a major note. Field names:
 
 ## Notes
 
+- Idempotency is per action and honest about durable state: repeating
+  `abort` on a run that already reached any terminal state exits `0` with
+  the settled state ("already satisfied"); `retry` and `recover` exit `0`
+  when the run already has a live attempt (`state=running`). Every other
+  refusal stays explicit — notably a repeated `respond` always fails with
+  exit `4`, because each response extends the decision lineage and can
+  never be a no-op.
 - State-changing commands pin nothing by default; pass
   `--expected-revision N` to fail explicitly (exit `3`) when another writer
   advanced the stream past your observation.

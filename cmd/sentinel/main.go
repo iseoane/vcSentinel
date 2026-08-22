@@ -157,7 +157,7 @@ func requireInicializado(worktreeActual string) {
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | consentimiento-diff | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | runs | consentimiento-diff | install | upgrade | uninstall]")
 }
 
 // imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
@@ -173,7 +173,8 @@ func construirAyuda() string {
 	var b strings.Builder
 	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
 	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             lint | rebase | status | explain | pr | consentimiento-diff | install | upgrade | uninstall]\n\n")
+	b.WriteString("             lint | rebase | status | explain | pr | runs | consentimiento-diff |\n")
+	b.WriteString("             install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcomandos:\n")
 	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
 	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
@@ -193,6 +194,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "pr", "Crea un pull request con gh (passthrough).")
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
 	imprimirItemAyuda(&b, "", "Flags de pr review: --base X --only-unaudited --overview --json.")
+	imprimirItemAyuda(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/runs-cli.md for flags, JSON shapes, and exit codes.")
 	imprimirItemAyuda(&b, "consentimiento-diff", "Gestiona el grant local por usuario y repositorio: otorgar, revocar o estado.")
 	imprimirItemAyuda(&b, "install", "Descarga e instala la última release publicada desde GitHub.")
 	imprimirItemAyuda(&b, "upgrade", "Reemplaza el binario actual por la última release publicada.")
