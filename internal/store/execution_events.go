@@ -736,7 +736,10 @@ func knownLifecycleState(state agentrun.LifecycleState) bool {
 	case agentrun.StateCreated, agentrun.StateQueued, agentrun.StateAdmitted,
 		agentrun.StateRunning, agentrun.StateAwaitingDecision, agentrun.StateSucceeded,
 		agentrun.StateFailed, agentrun.StateCanceled, agentrun.StateTimedOut,
-		agentrun.StateUnavailable:
+		agentrun.StateUnavailable,
+		// Ticket 08 slice 2: transient escalation evidence states between
+		// the running head and the canceled settlement.
+		agentrun.StateTerminating, agentrun.StateTerminated:
 		return true
 	default:
 		return false
