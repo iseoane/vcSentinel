@@ -77,3 +77,31 @@ rewriting historical ledger rows.
    failures surfaced through engine reasons; additive finding binding.
 3. Cutover wiring behind `review.evidence_admission`, migration parity
    extension, documentation, then Judgment Day over the whole unit.
+
+## Evidence — slice 1 (evidence-bound completions)
+
+- Commits: feat(reviewexec) verify durable evidence (+104), test(reviewexec)
+  admission branches and parity (+206). Both staged candidates passed the
+  pre-commit budget.
+- Surface: execution.HashAdapterOutput exported as the single output-hashing
+  authority (wraps the unchanged controller hash); reviewexec.Evidence
+  {RunID, JobID, InvocationID, LineageID, Class, OutputHash} built from the
+  verified durable record via shared evidenceFromOutcome; AdmissionError with
+  literal "admission: " prefix; DurableTransport.Run now returns
+  (output, Evidence, error) and refuses success unless ReadAttemptOutcomes
+  yields a matching-invocation, success-class outcome whose OutputHash equals
+  HashAdapterOutput(returned bytes).
+- Independent code review (dual axis): spec PASS on all seven binding
+  requirements; standards found triplicated Evidence-copy literals and a
+  duplicated invocation lookup (fixed via evidenceFromOutcome + reuse in
+  tests), a misleading variable name (fixed). Spec design notes applied:
+  unreadable-outcomes branch demoted from AdmissionError to a wrapped
+  infrastructure error so store outages cannot wear the admission label
+  slice 2 will surface distinctly; empty-output admission pinned by an
+  explicit test using a silent reviewer double.
+- Deliberate omissions: snapshot/prompt binding, engine-reason surfacing,
+  config flag, CLI (slices 2-3); divergence forced at the verifier boundary
+  because ReadAttemptOutcomes prefers embedded terminal-frame evidence over
+  the outcomes directory, making on-disk byte tampering inert.
+- Verification: gofmt clean, build/vet OK, full suite green across 22
+  packages.
