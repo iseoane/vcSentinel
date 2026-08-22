@@ -100,3 +100,127 @@ func TestInvocationLineageBindsPhysicalAttemptsToLogicalJob(t *testing.T) {
 		t.Fatal("normalized event must retain execution and lineage identity")
 	}
 }
+
+func TestRetryableTerminalStatesRelaunchThroughRetryDecision(t *testing.T) {
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest("tree:retry", "prompt", nil))
+	root, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name      string
+		from, to  agentrun.LifecycleState
+		decision  agentrun.Decision
+		allowed   bool
+		wantError bool
+	}{
+		{"failed relaunches with retry", agentrun.StateFailed, agentrun.StateRunning, agentrun.DecisionRetry, true, false},
+		{"canceled relaunches with retry", agentrun.StateCanceled, agentrun.StateRunning, agentrun.DecisionRetry, true, false},
+		{"timed out relaunches with retry", agentrun.StateTimedOut, agentrun.StateRunning, agentrun.DecisionRetry, true, false},
+		{"failed relaunch needs the retry decision", agentrun.StateFailed, agentrun.StateRunning, agentrun.DecisionNone, true, true},
+		{"failed relaunch rejects a respond decision", agentrun.StateFailed, agentrun.StateRunning, agentrun.DecisionRespond, true, true},
+		{"retry cannot drive a running continuation", agentrun.StateRunning, agentrun.StateAwaitingDecision, agentrun.DecisionRetry, true, true},
+		{"success stays final", agentrun.StateSucceeded, agentrun.StateRunning, agentrun.DecisionRetry, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := agentrun.Transition(tc.from, tc.to); (got == nil) != tc.allowed {
+				t.Fatalf("transition error = %v, allowed = %t", got, tc.allowed)
+			}
+			_, err := agentrun.NewNormalizedEvent(root, tc.from, tc.to, tc.decision, time.Unix(10, 0))
+			if (err == nil) == tc.wantError {
+				t.Fatalf("NewNormalizedEvent() error = %v, wantError = %t", err, tc.wantError)
+			}
+			if tc.wantError && tc.allowed {
+				var invalid agentrun.InvalidDecisionError
+				if !errors.As(err, &invalid) || invalid.From != tc.from || invalid.To != tc.to || invalid.Decision != tc.decision {
+					t.Fatalf("error = %#v, want decision binding evidence", err)
+				}
+			}
+			if !tc.wantError {
+				if got := agentrun.LifecycleState(tc.from); !got.Retryable() {
+					t.Fatalf("%q must report retryable", got)
+				}
+			}
+		})
+	}
+}
+
+func TestNewRetryInvocationExtendsAttemptLineageInsideSameRun(t *testing.T) {
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest("tree:retry-lineage", "prompt", nil))
+	root, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := agentrun.NewRetryInvocation(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.RunID() != job.RunID() || retry.JobID() != job.ID() || !retry.BelongsTo(job) {
+		t.Fatal("a retry invocation must stay inside its original run and job")
+	}
+	if retry.Attempt() != 2 || retry.Decision() != agentrun.DecisionRetry || retry.ParentInvocationID() != root.InvocationID() {
+		t.Fatalf("retry = attempt %d decision %q parent %q, want attempt 2, retry, and root parent", retry.Attempt(), retry.Decision(), retry.ParentInvocationID())
+	}
+	chained, err := agentrun.NewRetryInvocation(retry)
+	if err != nil || chained.Attempt() != 3 {
+		t.Fatalf("chained retry attempt = %d, %v; want 3", chained.Attempt(), err)
+	}
+	recovered, err := agentrun.NewRecoveredInvocation(job.RunID(), job.ID(), root.InvocationID(), root.LineageIdentity(), "", []agentrun.Identity{job.ID()}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerecovered, err := agentrun.NewRetryInvocation(recovered)
+	if err != nil || rerecovered.Attempt() != 5 || rerecovered.RunID() != job.RunID() {
+		t.Fatalf("recovered retry attempt = %d, %v; want 5 inside run", rerecovered.Attempt(), err)
+	}
+	if _, err := agentrun.NewRecoveredInvocation(job.RunID(), job.ID(), root.InvocationID(), root.LineageIdentity(), "", []agentrun.Identity{job.ID()}, 0); err == nil {
+		t.Fatal("a recovered invocation without an attempt number must be rejected")
+	}
+}
+
+func TestNewRecoveredInvocationPreservesContinuationLineage(t *testing.T) {
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest("tree:recovered-lineage", "prompt", nil))
+	root, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := agentrun.NewChildInvocation(root, 2, agentrun.DecisionRespond)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ancestry := []agentrun.Identity{job.ID(), root.InvocationID()}
+	recovered, err := agentrun.NewRecoveredInvocation(
+		job.RunID(), job.ID(), head.InvocationID(), head.LineageIdentity(),
+		root.InvocationID(), ancestry, head.Attempt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := agentrun.NewChildInvocation(head, 3, agentrun.DecisionRespond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := agentrun.NewChildInvocation(recovered, 3, agentrun.DecisionRespond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.LineageIdentity() != live.LineageIdentity() || resumed.InvocationID() != live.InvocationID() {
+		t.Fatalf("recovered continuation = lineage %s invocation %s; want the live identities %s/%s",
+			resumed.LineageIdentity(), resumed.InvocationID(), live.LineageIdentity(), live.InvocationID())
+	}
+
+	broken := [][]agentrun.Identity{
+		nil,
+		{root.InvocationID()},
+		{job.ID()},
+		{job.ID(), root.InvocationID(), job.ID()},
+	}
+	for _, ancestors := range broken {
+		if _, err := agentrun.NewRecoveredInvocation(
+			job.RunID(), job.ID(), head.InvocationID(), head.LineageIdentity(),
+			root.InvocationID(), ancestors, head.Attempt()); err == nil {
+			t.Fatalf("ancestors %v must be rejected as an inconsistent recovered chain", ancestors)
+		}
+	}
+}

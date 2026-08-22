@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"sort"
 	"time"
@@ -139,6 +140,30 @@ func lineageError(reason string) (InvocationEnvelope, error) {
 	return InvocationEnvelope{}, InvalidLineageError{Reason: reason}
 }
 
+// brokenAncestryRule reports which physical-ancestor rule a candidate chain
+// violates, so live and recovered envelope constructors share one validation
+// while keeping their own error texts.
+type ancestryRule int
+
+const (
+	ancestryRootMissing ancestryRule = iota
+	ancestryRootHasPhysical
+	ancestryParentNotChainEnd
+)
+
+func brokenAncestryRule(jobID Identity, parent Identity, ancestors []Identity) (ancestryRule, bool) {
+	if len(ancestors) == 0 || ancestors[0] != jobID {
+		return ancestryRootMissing, true
+	}
+	if parent == "" && len(ancestors) != 1 {
+		return ancestryRootHasPhysical, true
+	}
+	if parent != "" && ancestors[len(ancestors)-1] != parent {
+		return ancestryParentNotChainEnd, true
+	}
+	return 0, false
+}
+
 func NewInvocationEnvelope(job LogicalJob, parent Identity, ancestors []Identity, attempt uint32, decision Decision) (InvocationEnvelope, error) {
 	if job.ID() == "" {
 		return lineageError("logical job identity is empty")
@@ -152,14 +177,15 @@ func NewInvocationEnvelope(job LogicalJob, parent Identity, ancestors []Identity
 		}
 		ancestors = []Identity{job.ID()}
 	}
-	if ancestors[0] != job.ID() {
-		return lineageError("ancestor root does not identify the logical job")
-	}
-	if parent == "" && len(ancestors) != 1 {
-		return lineageError("a root invocation cannot have physical ancestors")
-	}
-	if parent != "" && ancestors[len(ancestors)-1] != parent {
-		return lineageError("parent identity must be the last physical ancestor")
+	if rule, broken := brokenAncestryRule(job.ID(), parent, ancestors); broken {
+		switch rule {
+		case ancestryRootMissing:
+			return lineageError("ancestor root does not identify the logical job")
+		case ancestryRootHasPhysical:
+			return lineageError("a root invocation cannot have physical ancestors")
+		default:
+			return lineageError("parent identity must be the last physical ancestor")
+		}
 	}
 	lineage := lineageValue{job.RunID(), job.ID(), ancestors[0], parent, append([]Identity(nil), ancestors...)}
 	lineageID := hashIdentity("invocation-lineage", lineage)
@@ -179,17 +205,39 @@ func NewChildInvocation(parent InvocationEnvelope, attempt uint32, decision Deci
 	return NewInvocationEnvelope(parent.job, parent.invocationID, ancestors, attempt, decision)
 }
 
+// NewRetryInvocation derives the next attempt from a terminal invocation so a
+// retried execution stays inside the original run, job, and lineage instead of
+// becoming a sibling run.
+func NewRetryInvocation(parent InvocationEnvelope) (InvocationEnvelope, error) {
+	return NewChildInvocation(parent, parent.Attempt()+1, DecisionRetry)
+}
+
 // NewRecoveredInvocation restores only the identity needed for a durable
-// control action. Its request payload and complete ancestor list are absent,
-// so the result must never be passed to an adapter.
-func NewRecoveredInvocation(runID, jobID, invocationID, lineageID, parentID Identity) (InvocationEnvelope, error) {
-	if runID == "" || jobID == "" || invocationID == "" || lineageID == "" {
+// control action. Its request payload is absent, so the result must never be
+// passed to an adapter that needs it; attempt must carry the recovered
+// invocation's durable attempt number. ancestors must be the complete
+// physical chain derived from durable evidence — the logical job identity
+// followed by every prior physical invocation in event order — so a
+// continuation built on top of this envelope keeps its original lineage
+// identity instead of fabricating a divergent one.
+func NewRecoveredInvocation(runID, jobID, invocationID, lineageID, parentID Identity, ancestors []Identity, attempt uint32) (InvocationEnvelope, error) {
+	if runID == "" || jobID == "" || invocationID == "" || lineageID == "" || attempt == 0 {
 		return InvocationEnvelope{}, errors.New("agentrun: recovered invocation identity is incomplete")
+	}
+	if rule, broken := brokenAncestryRule(jobID, parentID, ancestors); broken {
+		switch rule {
+		case ancestryRootMissing:
+			return InvocationEnvelope{}, InvalidLineageError{Reason: "recovered ancestor chain does not identify the logical job"}
+		case ancestryRootHasPhysical:
+			return InvocationEnvelope{}, InvalidLineageError{Reason: "a recovered root invocation cannot have physical ancestors"}
+		default:
+			return InvocationEnvelope{}, InvalidLineageError{Reason: "recovered parent identity must end the ancestor chain"}
+		}
 	}
 	job := LogicalJob{id: jobID, runID: runID}
 	return InvocationEnvelope{
-		job: job, parentID: parentID, ancestors: []Identity{jobID},
-		lineageID: lineageID, invocationID: invocationID, attempt: 1,
+		job: job, parentID: parentID, ancestors: append([]Identity(nil), ancestors...),
+		lineageID: lineageID, invocationID: invocationID, attempt: attempt,
 	}, nil
 }
 
@@ -238,6 +286,23 @@ var validTransitions = map[LifecycleState]map[LifecycleState]bool{
 	StateAdmitted:         {StateRunning: true, StateCanceled: true},
 	StateRunning:          {StateAwaitingDecision: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true},
 	StateAwaitingDecision: {StateRunning: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true},
+	StateFailed:           {StateRunning: true},
+	StateCanceled:         {StateRunning: true},
+	StateTimedOut:         {StateRunning: true},
+}
+
+// retryableStates lists the terminal outcomes an explicit retry decision may
+// relaunch. Success and unavailable evidence stay final.
+var retryableStates = map[LifecycleState]bool{
+	StateFailed: true, StateCanceled: true, StateTimedOut: true,
+}
+
+// Retryable reports whether this terminal lifecycle state may relaunch
+// execution through an explicit retry decision.
+func (s LifecycleState) Retryable() bool { return retryableStates[s] }
+
+func canRetryRelaunch(from, to LifecycleState) bool {
+	return from.Retryable() && to == StateRunning
 }
 
 type InvalidTransitionError struct{ From, To LifecycleState }
@@ -251,6 +316,16 @@ func Transition(from, to LifecycleState) error {
 		return InvalidTransitionError{from, to}
 	}
 	return nil
+}
+
+type InvalidDecisionError struct {
+	From     LifecycleState
+	To       LifecycleState
+	Decision Decision
+}
+
+func (e InvalidDecisionError) Error() string {
+	return fmt.Sprintf("agentrun: decision %q cannot drive %s -> %s", string(e.Decision), e.From, e.To)
 }
 
 type TerminalClass string
@@ -313,6 +388,9 @@ type NormalizedEvent struct {
 func NewNormalizedEvent(invocation InvocationEnvelope, from, to LifecycleState, decision Decision, at time.Time) (NormalizedEvent, error) {
 	if err := Transition(from, to); err != nil {
 		return NormalizedEvent{}, err
+	}
+	if canRetryRelaunch(from, to) != (decision == DecisionRetry) {
+		return NormalizedEvent{}, InvalidDecisionError{From: from, To: to, Decision: decision}
 	}
 	return NormalizedEvent{
 		at:                 at.UTC(),

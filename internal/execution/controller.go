@@ -19,7 +19,12 @@ var (
 	ErrRunNotActive       = errors.New("execution: run is not active in this controller")
 	ErrUnsupportedAction  = errors.New("execution: unsupported control action")
 	ErrDecisionNotPending = errors.New("execution: run is not awaiting a response")
-	ErrRecoveredResponse  = errors.New("execution: persisted response requires a live invocation context")
+	// ErrRunNotRetryable reports a terminal outcome that stays final: success
+	// and unavailable evidence cannot be relaunched by a retry decision.
+	ErrRunNotRetryable = errors.New("execution: terminal run outcome cannot be retried")
+	// ErrStaleRevision reports that the durable stream head moved past the
+	// revision the caller expected when applying a state-changing action.
+	ErrStaleRevision = errors.New("execution: stale execution revision")
 )
 
 // Adapter is the provider-neutral execution seam. The controller supplies the
@@ -141,7 +146,6 @@ type runState struct {
 	state         agentrun.LifecycleState
 	cancel        context.CancelFunc
 	running       bool
-	recovered     bool
 	done          chan struct{}
 	completion    Completion
 	completionErr error
@@ -237,23 +241,7 @@ func (c *Controller) Inspect(ctx context.Context, runID agentrun.Identity) (Insp
 	if err != nil {
 		return Inspection{}, err
 	}
-	events := make([]store.EventFrame, 0)
-	var cursor uint64
-	for {
-		if err := ctx.Err(); err != nil {
-			return Inspection{}, err
-		}
-		page, err := c.store.ReadEvents(string(runID), cursor, 128)
-		if err != nil {
-			return Inspection{}, err
-		}
-		events = append(events, page.Events...)
-		if !page.HasMore {
-			break
-		}
-		cursor = page.NextRevision
-	}
-	projection, err := c.store.ReadDerivedProjection(string(runID))
+	events, projection, err := c.durableEvidence(ctx, runID)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -312,9 +300,6 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 		state.cancel()
 		return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
 	case ActionRespond:
-		if state.recovered {
-			return ApplyResult{}, ErrRecoveredResponse
-		}
 		return c.respond(state, runID, action.Response)
 	}
 	return ApplyResult{}, fmt.Errorf("%w: %q", ErrUnsupportedAction, action.Kind)
@@ -382,6 +367,9 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 func (c *Controller) respond(state *runState, runID agentrun.Identity, response string) (ApplyResult, error) {
 	if state.state != agentrun.StateAwaitingDecision {
 		return ApplyResult{}, ErrDecisionNotPending
+	}
+	if c.adapter == nil {
+		return ApplyResult{}, ErrControllerNotReady
 	}
 	if strings.TrimSpace(response) == "" {
 		return ApplyResult{}, errors.New("execution: response is empty")

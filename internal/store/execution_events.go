@@ -22,7 +22,10 @@ var (
 	// ErrEventCorrupt means that an event log failed an integrity invariant.
 	ErrEventCorrupt = errors.New("store: corrupt execution event log")
 	// ErrIncompleteEventTail means that the final JSONL record is incomplete.
-	ErrIncompleteEventTail           = errors.New("store: incomplete final execution event")
+	ErrIncompleteEventTail = errors.New("store: incomplete final execution event")
+	// ErrExecutionNotFound means that no execution record exists under the
+	// requested run identity. Callers map it to their not-found surface.
+	ErrExecutionNotFound             = errors.New("store: execution does not exist")
 	ErrProjectionCorrupt             = errors.New("store: corrupt execution projection")
 	ErrTerminalPersistenceIncomplete = errors.New("store: incomplete terminal persistence")
 
@@ -717,7 +720,7 @@ func writeReceipt(directory string, receipt EventReceipt) error {
 func ensureExecutionExists(directory string) error {
 	info, err := os.Stat(filepath.Join(directory, "request.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("store: execution does not exist: %s", filepath.Base(directory))
+		return fmt.Errorf("%w: %s", ErrExecutionNotFound, filepath.Base(directory))
 	}
 	if err != nil {
 		return err
