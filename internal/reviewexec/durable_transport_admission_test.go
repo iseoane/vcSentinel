@@ -151,14 +151,17 @@ func TestRunReturnsTerminalErrorWithoutAdmissionWrapping(t *testing.T) {
 }
 
 // silentReviewer answers successfully with literally empty output, which the
-// scripted echo reviewer cannot express.
-type silentReviewer struct{ scriptedReviewer }
+// scripted echo reviewer cannot express. It stays mutex-free so passing it by
+// value never trips copylocks.
+type silentReviewer struct{ name string }
+
+func (r silentReviewer) ReviewerName() string { return r.name }
 
 func (silentReviewer) EjecutarRevision(string, string, []string) (string, error) { return "", nil }
 
 func TestVerifyEvidenceAdmitsEmptyOutputAgainstEmptyDurableHash(t *testing.T) {
 	transport, _ := admissionTransport(t)
-	reviewer := silentReviewer{scriptedReviewer{name: "dimension-logic"}}
+	reviewer := silentReviewer{name: "dimension-logic"}
 
 	output, completion, err := transport.Run(reviewer, "quality/logic", "the prompt")
 	if err != nil {
