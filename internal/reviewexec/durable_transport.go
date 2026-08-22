@@ -25,6 +25,28 @@ type TerminalError struct {
 
 func (e *TerminalError) Error() string { return e.Text }
 
+// Evidence is the durable provenance bound to an admitted completion. Every
+// field is copied from the AttemptOutcome record persisted by the execution
+// controller, so accepted output always travels with verifiable provenance.
+type Evidence struct {
+	RunID        string
+	JobID        string
+	InvocationID string
+	LineageID    string
+	Class        agentrun.OutcomeClass
+	OutputHash   string
+}
+
+// AdmissionError rejects a completion whose durable evidence failed
+// admission. The raw provider output is discarded with it: a mismatched
+// completion never reaches verdict computation.
+type AdmissionError struct {
+	Identity string
+	Reason   string
+}
+
+func (e *AdmissionError) Error() string { return "admission: " + e.Reason }
+
 // DurableTransport routes single review invocations through the execution
 // controller over a shared durable store, so every call becomes an inspectable
 // durable run. Output parsing and semantic verdicts stay on the caller side;
@@ -71,9 +93,14 @@ var invocationSequence atomic.Uint64
 // key (bundle and dimension). The candidate combines the key, the audited
 // SHA, a process-random salt, and a monotonic sequence so repeated audits —
 // in this process or any other — can never collide on candidate identity.
-func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, error) {
+//
+// A succeeded completion is admitted only after its durable evidence passes
+// verification: an AttemptOutcome must exist for the completing invocation,
+// record success, and bind the returned output through OutputHash. Any
+// divergence discards the raw output and returns an AdmissionError instead.
+func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, Evidence, error) {
 	if t.backing == nil {
-		return "", errors.New("reviewexec: durable transport requires a store")
+		return "", Evidence{}, errors.New("reviewexec: durable transport requires a store")
 	}
 	sequence := invocationSequence.Add(1)
 	candidate := agentrun.Candidate(fmt.Sprintf("review:%s:%s:%s:%06d", identityKey, t.sha, candidateSalt, sequence))
@@ -83,18 +110,77 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 
 	handle, err := controller.Start(context.Background(), request, t.policy)
 	if err != nil {
-		return "", fmt.Errorf("review run %s not admitted: %w", identityKey, err)
+		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
 	}
 	completion, err := handle.Wait(context.Background())
 	if err != nil {
-		return "", fmt.Errorf("review run %s observation failed: %w", identityKey, err)
+		return "", Evidence{}, fmt.Errorf("review run %s observation failed: %w", identityKey, err)
 	}
 	if completion.State == agentrun.StateSucceeded {
-		return completion.Output, nil
+		evidence, evidenceErr := t.verifyEvidence(identityKey, handle.RunID, string(completion.InvocationID), completion.Output)
+		if evidenceErr != nil {
+			return "", Evidence{}, evidenceErr
+		}
+		return completion.Output, evidence, nil
 	}
 	text := strings.TrimSpace(completion.Error)
 	if text == "" {
 		text = fmt.Sprintf("review run %s ended %s/%s without evidence", identityKey, completion.State, completion.Outcome)
 	}
-	return "", &TerminalError{Identity: identityKey, Class: completion.Outcome, Text: text}
+	return "", Evidence{}, &TerminalError{Identity: identityKey, Class: completion.Outcome, Text: text}
+}
+
+// verifyEvidence admits a returned output only when the durable attempt
+// outcome of that exact invocation records success and binds the output
+// through the shared hashing authority. The three refusal branches — missing
+// outcome, class divergence, and hash mismatch — are admission failures, so
+// each returns an AdmissionError naming the failed check. Unreadable durable
+// evidence refuses too, because absence of proof is never silent acceptance,
+// but as a wrapped infrastructure error: a store outage must not wear the
+// admission label that slice 2 surfaces as evidence-class reasons.
+func (t *DurableTransport) verifyEvidence(identityKey string, runID agentrun.Identity, invocationID, output string) (Evidence, error) {
+	outcomes, err := t.backing.ReadAttemptOutcomes(string(runID))
+	if err != nil {
+		return Evidence{}, fmt.Errorf("reviewexec: attempt outcomes for run %s could not be read: %w", runID, err)
+	}
+	var outcome *store.AttemptOutcome
+	for i := range outcomes {
+		if outcomes[i].InvocationID == invocationID {
+			outcome = &outcomes[i]
+			break
+		}
+	}
+	if outcome == nil {
+		return Evidence{}, &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("no durable attempt outcome for invocation %s", invocationID),
+		}
+	}
+	if outcome.Class != agentrun.OutcomeSuccess {
+		return Evidence{}, &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("attempt outcome class %q does not record success for invocation %s", outcome.Class, invocationID),
+		}
+	}
+	outputHash := execution.HashAdapterOutput(output)
+	if outputHash != outcome.OutputHash {
+		return Evidence{}, &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("output hash mismatch for invocation %s: returned %q, durable %q", invocationID, outputHash, outcome.OutputHash),
+		}
+	}
+	return evidenceFromOutcome(outcome), nil
+}
+
+// evidenceFromOutcome copies the verified durable record into the transport's
+// public evidence shape in one place, so new fields cannot drift per call site.
+func evidenceFromOutcome(outcome *store.AttemptOutcome) Evidence {
+	return Evidence{
+		RunID:        outcome.RunID,
+		JobID:        outcome.JobID,
+		InvocationID: outcome.InvocationID,
+		LineageID:    outcome.LineageID,
+		Class:        outcome.Class,
+		OutputHash:   outcome.OutputHash,
+	}
 }

@@ -49,6 +49,8 @@ func durableReviewTransport(cfg config.Config, worktree, sha string, paths []str
 		if !ok {
 			return "", review.ErrRestrictedRequired
 		}
-		return transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		// slice 2 threads evidence into engine reasons.
+		output, _, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		return output, err
 	}
 }

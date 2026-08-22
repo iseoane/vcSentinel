@@ -90,6 +90,15 @@ func joinText(values ...error) string {
 	return strings.Join(parts, "; ")
 }
 
+// HashAdapterOutput is the single hashing authority for AdapterResult
+// outputs: it derives the exact digest the controller persists into
+// AttemptOutcome.OutputHash. Evidence admission and every future consumer
+// must call this helper instead of reimplementing the algorithm, so the
+// returned-output binding can never drift from the durable record.
+func HashAdapterOutput(output string) string {
+	return hashIfPresent(output)
+}
+
 func hashIfPresent(value string) string {
 	if value == "" {
 		return ""
