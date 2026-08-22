@@ -136,3 +136,38 @@ rewriting historical ledger rows.
   records); integration uses a malformed transport sha.
 - Verification: gofmt clean, build/vet OK, full suite green across 22
   packages including 3x repeat of the previously racy rejection test.
+
+## Evidence — slice 2b (additive finding binding + rebase reuse)
+
+- Commits: feat(review) bind findings to invocation identity (+180 incl.
+  focused invocation_binding_test.go), test(review) rebase reuse proof
+  (+213, English-only after review fixes). Both staged candidates under
+  budget.
+- Surface: ReviewTransport contract now returns the producing invocation
+  identity (legacy nil path returns empty); DimensionResult.InvocationID and
+  Hallazgo.InvocationID are additive omitempty fields; stamparInvocacion
+  stamps findings only when an identity exists, so legacy records keep their
+  exact shape. Fingerprint(h) does not read the new field — pinned by
+  TestFingerprintIgnoresInvocationID proving byte-identical fingerprints for
+  findings differing only in provenance.
+- Rebase-reuse proof is genuine: real git rebase rewriting three SHAs with
+  unchanged content; second AnalizarRama pass reports zero pending commits,
+  zero transport calls, zero direct reviewer calls (blob identity rules admit
+  the reuse), and the adopted record still carries the ORIGINAL InvocationID.
+  Persistence mechanism: ledger adoption copies the full record verbatim and
+  fingerprint lookup ignores provenance metadata.
+- Independent code review (dual axis): spec PASS on all five requirements
+  with no leak paths into aggregation/supersede/refutation/renderer; JSON
+  impact additive-only via omitempty. Standards found two hard violations in
+  the new rebase test file — Spanish artifacts and a "/" path concatenation —
+  both fixed (full English translation preserving legacy helper reuse;
+  filepath.Join). Judgement calls recorded as follow-ups: transport closure
+  body duplicated between production and migration-test double (hand-synced),
+  ReviewTransport's adjacent unnamed string returns invite a named result
+  struct at the next signature evolution.
+- Deliberate omissions: aggregated findings do not merge invocation identities
+  across dimensions (per-dimension binding is what persists per ticket scope);
+  engine.go/finding.go remain pre-existing >500-line files with proportional
+  growth only (+28/+11).
+- Verification: gofmt clean, build/vet OK, full suite green across 22
+  packages.
