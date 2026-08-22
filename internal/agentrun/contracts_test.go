@@ -166,7 +166,7 @@ func TestNewRetryInvocationExtendsAttemptLineageInsideSameRun(t *testing.T) {
 	if err != nil || chained.Attempt() != 3 {
 		t.Fatalf("chained retry attempt = %d, %v; want 3", chained.Attempt(), err)
 	}
-	recovered, err := agentrun.NewRecoveredInvocation(job.RunID(), job.ID(), root.InvocationID(), root.LineageIdentity(), "", 4)
+	recovered, err := agentrun.NewRecoveredInvocation(job.RunID(), job.ID(), root.InvocationID(), root.LineageIdentity(), "", []agentrun.Identity{job.ID()}, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,53 @@ func TestNewRetryInvocationExtendsAttemptLineageInsideSameRun(t *testing.T) {
 	if err != nil || rerecovered.Attempt() != 5 || rerecovered.RunID() != job.RunID() {
 		t.Fatalf("recovered retry attempt = %d, %v; want 5 inside run", rerecovered.Attempt(), err)
 	}
-	if _, err := agentrun.NewRecoveredInvocation(job.RunID(), job.ID(), root.InvocationID(), root.LineageIdentity(), "", 0); err == nil {
+	if _, err := agentrun.NewRecoveredInvocation(job.RunID(), job.ID(), root.InvocationID(), root.LineageIdentity(), "", []agentrun.Identity{job.ID()}, 0); err == nil {
 		t.Fatal("a recovered invocation without an attempt number must be rejected")
+	}
+}
+
+func TestNewRecoveredInvocationPreservesContinuationLineage(t *testing.T) {
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest("tree:recovered-lineage", "prompt", nil))
+	root, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := agentrun.NewChildInvocation(root, 2, agentrun.DecisionRespond)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ancestry := []agentrun.Identity{job.ID(), root.InvocationID()}
+	recovered, err := agentrun.NewRecoveredInvocation(
+		job.RunID(), job.ID(), head.InvocationID(), head.LineageIdentity(),
+		root.InvocationID(), ancestry, head.Attempt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := agentrun.NewChildInvocation(head, 3, agentrun.DecisionRespond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := agentrun.NewChildInvocation(recovered, 3, agentrun.DecisionRespond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.LineageIdentity() != live.LineageIdentity() || resumed.InvocationID() != live.InvocationID() {
+		t.Fatalf("recovered continuation = lineage %s invocation %s; want the live identities %s/%s",
+			resumed.LineageIdentity(), resumed.InvocationID(), live.LineageIdentity(), live.InvocationID())
+	}
+
+	broken := [][]agentrun.Identity{
+		nil,
+		{root.InvocationID()},
+		{job.ID()},
+		{job.ID(), root.InvocationID(), job.ID()},
+	}
+	for _, ancestors := range broken {
+		if _, err := agentrun.NewRecoveredInvocation(
+			job.RunID(), job.ID(), head.InvocationID(), head.LineageIdentity(),
+			root.InvocationID(), ancestors, head.Attempt()); err == nil {
+			t.Fatalf("ancestors %v must be rejected as an inconsistent recovered chain", ancestors)
+		}
 	}
 }

@@ -140,6 +140,30 @@ func lineageError(reason string) (InvocationEnvelope, error) {
 	return InvocationEnvelope{}, InvalidLineageError{Reason: reason}
 }
 
+// brokenAncestryRule reports which physical-ancestor rule a candidate chain
+// violates, so live and recovered envelope constructors share one validation
+// while keeping their own error texts.
+type ancestryRule int
+
+const (
+	ancestryRootMissing ancestryRule = iota
+	ancestryRootHasPhysical
+	ancestryParentNotChainEnd
+)
+
+func brokenAncestryRule(jobID Identity, parent Identity, ancestors []Identity) (ancestryRule, bool) {
+	if len(ancestors) == 0 || ancestors[0] != jobID {
+		return ancestryRootMissing, true
+	}
+	if parent == "" && len(ancestors) != 1 {
+		return ancestryRootHasPhysical, true
+	}
+	if parent != "" && ancestors[len(ancestors)-1] != parent {
+		return ancestryParentNotChainEnd, true
+	}
+	return 0, false
+}
+
 func NewInvocationEnvelope(job LogicalJob, parent Identity, ancestors []Identity, attempt uint32, decision Decision) (InvocationEnvelope, error) {
 	if job.ID() == "" {
 		return lineageError("logical job identity is empty")
@@ -153,14 +177,15 @@ func NewInvocationEnvelope(job LogicalJob, parent Identity, ancestors []Identity
 		}
 		ancestors = []Identity{job.ID()}
 	}
-	if ancestors[0] != job.ID() {
-		return lineageError("ancestor root does not identify the logical job")
-	}
-	if parent == "" && len(ancestors) != 1 {
-		return lineageError("a root invocation cannot have physical ancestors")
-	}
-	if parent != "" && ancestors[len(ancestors)-1] != parent {
-		return lineageError("parent identity must be the last physical ancestor")
+	if rule, broken := brokenAncestryRule(job.ID(), parent, ancestors); broken {
+		switch rule {
+		case ancestryRootMissing:
+			return lineageError("ancestor root does not identify the logical job")
+		case ancestryRootHasPhysical:
+			return lineageError("a root invocation cannot have physical ancestors")
+		default:
+			return lineageError("parent identity must be the last physical ancestor")
+		}
 	}
 	lineage := lineageValue{job.RunID(), job.ID(), ancestors[0], parent, append([]Identity(nil), ancestors...)}
 	lineageID := hashIdentity("invocation-lineage", lineage)
@@ -188,16 +213,30 @@ func NewRetryInvocation(parent InvocationEnvelope) (InvocationEnvelope, error) {
 }
 
 // NewRecoveredInvocation restores only the identity needed for a durable
-// control action. Its request payload and complete ancestor list are absent,
-// so the result must never be passed to an adapter that needs them; attempt
-// must carry the recovered invocation's durable attempt number.
-func NewRecoveredInvocation(runID, jobID, invocationID, lineageID, parentID Identity, attempt uint32) (InvocationEnvelope, error) {
+// control action. Its request payload is absent, so the result must never be
+// passed to an adapter that needs it; attempt must carry the recovered
+// invocation's durable attempt number. ancestors must be the complete
+// physical chain derived from durable evidence — the logical job identity
+// followed by every prior physical invocation in event order — so a
+// continuation built on top of this envelope keeps its original lineage
+// identity instead of fabricating a divergent one.
+func NewRecoveredInvocation(runID, jobID, invocationID, lineageID, parentID Identity, ancestors []Identity, attempt uint32) (InvocationEnvelope, error) {
 	if runID == "" || jobID == "" || invocationID == "" || lineageID == "" || attempt == 0 {
 		return InvocationEnvelope{}, errors.New("agentrun: recovered invocation identity is incomplete")
 	}
+	if rule, broken := brokenAncestryRule(jobID, parentID, ancestors); broken {
+		switch rule {
+		case ancestryRootMissing:
+			return InvocationEnvelope{}, InvalidLineageError{Reason: "recovered ancestor chain does not identify the logical job"}
+		case ancestryRootHasPhysical:
+			return InvocationEnvelope{}, InvalidLineageError{Reason: "a recovered root invocation cannot have physical ancestors"}
+		default:
+			return InvocationEnvelope{}, InvalidLineageError{Reason: "recovered parent identity must end the ancestor chain"}
+		}
+	}
 	job := LogicalJob{id: jobID, runID: runID}
 	return InvocationEnvelope{
-		job: job, parentID: parentID, ancestors: []Identity{jobID},
+		job: job, parentID: parentID, ancestors: append([]Identity(nil), ancestors...),
 		lineageID: lineageID, invocationID: invocationID, attempt: attempt,
 	}, nil
 }
