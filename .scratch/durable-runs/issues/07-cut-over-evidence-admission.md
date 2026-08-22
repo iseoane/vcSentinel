@@ -171,3 +171,31 @@ rewriting historical ledger rows.
   growth only (+28/+11).
 - Verification: gofmt clean, build/vet OK, full suite green across 22
   packages.
+
+## Evidence — slice 3 (cutover wiring + surfacing)
+
+- Commits: feat(config) evidence_admission default-on (+45/-5), feat(reviewexec)
+  lenient seam behind WithEvidenceAdmission (+285 incl. cutover tests and
+  parity extension), feat(gate) admission-vs-infrastructure surfacing
+  (+92/-15 across gate/pr/docs), test(gate) surfacing contracts (+203).
+  Every staged candidate under budget.
+- Surface: ReviewConfig.EvidenceAdmission yaml `evidence_admission` defaulting
+  true; WithEvidenceAdmission construction-time option (zero value strict, so
+  accidental non-wiring fails closed); lenient mode skips binding+evidence
+  verification and returns zero Evidence — byte-identical to pre-R6 behavior,
+  verified line-by-line by the spec axis against HEAD. Gate unavailable
+  dimensions gain `class=admission|infrastructure` labels via typed-error-first
+  failureClass; pr review gains review_admission_failures /
+  review_infrastructure_failures JSON keys plus a text notice. Documented
+  exit-code contracts untouched and pinned.
+- Independent code review (dual axis): spec PASS on all six requirements with
+  byte-parity confirmed against the pre-R6 baseline; standards zero hard
+  violations. Judgement calls recorded as follow-ups: third hand-synced copy
+  of the transport closure in migration tests (extract a shared builder next
+  time the signature evolves), IsAdmissionReason stays a documented stringly
+  seam because append-only ledger rows carry no typed errors, comandos_pr.go
+  keeps accreting (pre-existing oversize). Drive-by acknowledged: the
+  retry-live CLI test now drains the relaunched attempt before TempDir removal,
+  fixing a cleanup race the new parity run exposed.
+- Verification: gofmt clean, build/vet OK, full suite green across 22
+  packages including 3x repeat of the drained race test.
