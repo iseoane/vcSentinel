@@ -9,7 +9,7 @@ documented terminal states.
 **Blocked by:** 05: Route Review Execution Through The Controller (complete;
 merged to `main` at 52b3e86).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -141,3 +141,45 @@ interactive REPL integration, remote/daemon surfaces (D units).
   a dedicated type once the CLI surface freezes at slice 3.
 - Verification after fixes: gofmt clean, build/vet OK, full suite green,
   race clean on execution/agentrun/store/reviewexec.
+
+## Evidence — slice 3 (CLI dispatch) and closure
+
+- Commits: e02f6d4 store listing + not-found sentinel (+27), 9c891c5 shared
+  declarations and read-only inspection (+354), ea2c308 dispatch with
+  documented exit codes (+398 incl. docs/runs-cli.md), ae08995 mapping/
+  pagination/json-stability tests (+316), 94a64e6 respond/retry/verify
+  end-to-end tests (+178), then fix round: idempotent repeats + help +
+  stable arrays (+139/-80) and English locals refactor (+132/-28).
+- Surface: eight subcommands dispatched from main.go; exit codes 0-5 mapped
+  next to runExitCode and mirrored in docs/runs-cli.md; --json shapes stable;
+  logs cursor resume gap-free; start resolves the same profile factory as
+  review/gate/pr.
+- Independent code review (dual axis) round: spec flagged the promised
+  idempotent-success as unimplemented (real contract contradiction),
+  shape-stability proven only for status, help/usage omitting runs, false
+  MY_SUB_AGENT doc wording, events:null on exhausted pages. Standards flagged
+  Spanish identifiers in brand-new files, a one-line middle man, duplicated
+  encode-error blocks, oversized pre-existing main.go (1093 lines, +6 here).
+- All spec findings fixed: narrow honest idempotency implemented at CLI
+  layer (abort on settled run, retry/recover on live attempt emit the SAME
+  JSON shape as first application; repeated respond stays exit 4 by design
+  because responses extend lineage — documented in docs and below), logs and
+  verify stability tests added, runs added to usage/help (width test kept
+  green), doc wording corrected, exhausted pages emit [].
+  Standards fixes: salida/comoJSON renamed to out/asJSON, start indirection
+  merged. Accepted judgement calls recorded as follow-ups: consolidated
+  encode-error helper and per-action handler skeleton refactor (mechanical,
+  lands with R6 cutover which rewrites these paths), buildReadonlyController
+  dual return (deliberate: read-only commands must not require configured
+  agents), observeUntilSettled unbounded poll (R7 owns cancellation and
+  process ownership), N+1 projections in status listing (operator scale),
+  AdaptadorPrompt fat-interface stub noise in one test double,
+  parseRunOptions accepting irrelevant known flags per subcommand.
+- Decision recorded for veto: idempotency semantics defined as
+  goal-satisfaction (abort=run settled; retry/recover=a live attempt
+  exists); respond excluded because lineage growth is never a no-op.
+- Final verification snapshot: gofmt clean, build/vet OK, full suite green
+  across 22 packages, race clean on touched packages, guardian clean tree.
+
+**Closed:** R5 complete — operators manage durable runs without the REPL;
+attempt-grouping follow-up from ticket 05 landed as slice 1.
