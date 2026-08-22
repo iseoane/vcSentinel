@@ -94,10 +94,13 @@ var invocationSequence atomic.Uint64
 // SHA, a process-random salt, and a monotonic sequence so repeated audits —
 // in this process or any other — can never collide on candidate identity.
 //
-// A succeeded completion is admitted only after its durable evidence passes
-// verification: an AttemptOutcome must exist for the completing invocation,
-// record success, and bind the returned output through OutputHash. Any
-// divergence discards the raw output and returns an AdmissionError instead.
+// Immediately after a successful Start the admitted snapshot is bound against
+// the live audit context (validateSnapshotBinding), failing fast before any provider
+// answer can be waited on. A succeeded completion is then admitted only after
+// its durable evidence passes verification: an AttemptOutcome must exist for
+// the completing invocation, record success, and bind the returned output
+// through OutputHash. Any divergence discards the raw output and returns an
+// AdmissionError instead.
 func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, Evidence, error) {
 	if t.backing == nil {
 		return "", Evidence{}, errors.New("reviewexec: durable transport requires a store")
@@ -111,6 +114,17 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	handle, err := controller.Start(context.Background(), request, t.policy)
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
+	}
+	if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {
+		// A binding rejection must not leave the admitted run executing a
+		// provider call whose output can never be trusted. Abort cooperatively
+		// so the durable record settles canceled with the rejection on record;
+		// the original admission error stays the caller-facing result.
+		if _, abortErr := controller.Apply(context.Background(), handle.RunID,
+			execution.ControlAction{Kind: execution.ActionAbort}); abortErr != nil {
+			fmt.Fprintf(os.Stderr, "reviewexec: abort after rejected binding for run %s failed: %v\n", handle.RunID, abortErr)
+		}
+		return "", Evidence{}, err
 	}
 	completion, err := handle.Wait(context.Background())
 	if err != nil {
@@ -128,6 +142,65 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 		text = fmt.Sprintf("review run %s ended %s/%s without evidence", identityKey, completion.State, completion.Outcome)
 	}
 	return "", Evidence{}, &TerminalError{Identity: identityKey, Class: completion.Outcome, Text: text}
+}
+
+// validateSnapshotBinding validates, fail-fast before waiting, that the just-admitted
+// durable request still binds the live audit context. Three identities must
+// hold: the readable admitted candidate carries exactly one segment equal to
+// the transport-bound SHA (snapshot freshness — the audited SHA embedded at
+// admission is the SHA this transport audits for), the durable record stores
+// exactly that candidate identity, and the live prompt reproduces the
+// recorded prompt identity through the same agentrun derivation the store
+// used at admission. Any divergence returns an AdmissionError naming the
+// diverging identity verbatim; read failures from the durable record are
+// wrapped infrastructure errors, because a store outage must not wear the
+// admission label.
+//
+// The record stores candidate and prompt IDENTITIES (hex hashes, never raw
+// strings — durable request records carry no non-identity content), so the
+// colon-segment freshness rule applies to the readable candidate this
+// transport admitted, and storage coherence is proven by identity comparison
+// rather than by parsing stored bytes.
+func (t *DurableTransport) validateSnapshotBinding(identityKey string, runID agentrun.Identity, prompt string, admitted agentrun.Candidate) error {
+	stored, err := t.backing.ReadExecutionRequest(string(runID))
+	if err != nil {
+		return fmt.Errorf("reviewexec: admitted request for run %s could not be read: %w", runID, err)
+	}
+	if stored.RunID != string(runID) {
+		return &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("request lineage %q does not belong to run %q", stored.RunID, string(runID)),
+		}
+	}
+	if t.sha == "" {
+		return &AdmissionError{Identity: identityKey, Reason: "transport-bound audited sha is empty"}
+	}
+	shaSegments := 0
+	for _, segment := range strings.Split(string(admitted), ":") {
+		if segment == t.sha {
+			shaSegments++
+		}
+	}
+	if shaSegments != 1 {
+		return &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("candidate %q does not carry exactly one segment matching audited sha %q", string(admitted), t.sha),
+		}
+	}
+	if stored.CandidateID != string(admitted.Identity()) {
+		return &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("durable request candidate identity %q does not match admitted candidate %q", stored.CandidateID, admitted.Identity()),
+		}
+	}
+	livePromptIdentity := agentrun.PromptIdentity(agentrun.Prompt(prompt))
+	if livePromptIdentity != agentrun.Identity(stored.PromptID) {
+		return &AdmissionError{
+			Identity: identityKey,
+			Reason:   fmt.Sprintf("prompt identity %q does not match admitted request %q", livePromptIdentity, stored.PromptID),
+		}
+	}
+	return nil
 }
 
 // verifyEvidence admits a returned output only when the durable attempt
