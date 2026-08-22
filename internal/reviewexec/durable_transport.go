@@ -37,6 +37,12 @@ type Evidence struct {
 	OutputHash   string
 }
 
+// AdmissionReasonPrefix is the literal prefix every admission failure carries
+// in its public text (ticket 07): failures are first-class evidence with
+// provenance, never generic unavailability. Surfacing layers that only see
+// persisted reason strings classify through this single source of truth.
+const AdmissionReasonPrefix = "admission: "
+
 // AdmissionError rejects a completion whose durable evidence failed
 // admission. The raw provider output is discarded with it: a mismatched
 // completion never reaches verdict computation.
@@ -45,7 +51,23 @@ type AdmissionError struct {
 	Reason   string
 }
 
-func (e *AdmissionError) Error() string { return "admission: " + e.Reason }
+func (e *AdmissionError) Error() string { return AdmissionReasonPrefix + e.Reason }
+
+// IsAdmissionError reports whether err is (or wraps) an AdmissionError, so
+// callers holding the typed error can distinguish admission failures from
+// infrastructure failures without parsing text.
+func IsAdmissionError(err error) bool {
+	var admission *AdmissionError
+	return errors.As(err, &admission)
+}
+
+// IsAdmissionReason reports whether a persisted unavailable-reason string was
+// produced by an admission failure. It is the string-level counterpart of
+// IsAdmissionError for surfaces that aggregate reasons after the typed error
+// is gone (ledger revisions, rendered summaries).
+func IsAdmissionReason(reason string) bool {
+	return strings.HasPrefix(reason, AdmissionReasonPrefix)
+}
 
 // DurableTransport routes single review invocations through the execution
 // controller over a shared durable store, so every call becomes an inspectable
@@ -61,12 +83,38 @@ type DurableTransport struct {
 	policy  store.RunPolicy
 	sha     string
 	paths   []string
+	// admissionEnabled gates evidence admission (ticket 07): when false, Run
+	// restores the pre-R6 observe-but-admit lenient behavior. The constructor
+	// always initializes it to true, so accidental non-wiring stays strict;
+	// the rollback seam is an explicit WithEvidenceAdmission(false).
+	admissionEnabled bool
+}
+
+// DurableTransportOption configures construction-time behavior of a
+// DurableTransport. Options are the rollback seam of ticket 07: flags only,
+// no behavioral forks anywhere else.
+type DurableTransportOption func(*DurableTransport)
+
+// WithEvidenceAdmission sets whether Run verifies snapshot binding and durable
+// output evidence before admitting a completion. Enabled by default; passing
+// false restores the pre-R6 lenient mode where output is returned with zero
+// Evidence exactly as before admission existed, while every run stays
+// inspectable through `sentinel runs`.
+func WithEvidenceAdmission(enabled bool) DurableTransportOption {
+	return func(t *DurableTransport) { t.admissionEnabled = enabled }
 }
 
 // NewDurableTransport binds the shared store, admission policy, and audited
-// commit context used by every routed invocation.
-func NewDurableTransport(backing *store.Store, policy store.RunPolicy, sha string, paths []string) *DurableTransport {
-	return &DurableTransport{backing: backing, policy: policy, sha: sha, paths: paths}
+// commit context used by every routed invocation. Admission is strict unless
+// an option explicitly relaxes it.
+func NewDurableTransport(backing *store.Store, policy store.RunPolicy, sha string, paths []string, opts ...DurableTransportOption) *DurableTransport {
+	t := &DurableTransport{backing: backing, policy: policy, sha: sha, paths: paths, admissionEnabled: true}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(t)
+		}
+	}
+	return t
 }
 
 // candidateSalt is process-random (pid plus crypto entropy) so two processes
@@ -94,13 +142,19 @@ var invocationSequence atomic.Uint64
 // SHA, a process-random salt, and a monotonic sequence so repeated audits —
 // in this process or any other — can never collide on candidate identity.
 //
-// Immediately after a successful Start the admitted snapshot is bound against
-// the live audit context (validateSnapshotBinding), failing fast before any provider
-// answer can be waited on. A succeeded completion is then admitted only after
-// its durable evidence passes verification: an AttemptOutcome must exist for
-// the completing invocation, record success, and bind the returned output
-// through OutputHash. Any divergence discards the raw output and returns an
+// Immediately after a successful Start, and only in strict admission mode,
+// the admitted snapshot is bound against the live audit context
+// (validateSnapshotBinding), failing fast before any provider answer can be
+// waited on. A succeeded completion is then admitted only after its durable
+// evidence passes verification: an AttemptOutcome must exist for the
+// completing invocation, record success, and bind the returned output through
+// OutputHash. Any divergence discards the raw output and returns an
 // AdmissionError instead.
+//
+// With WithEvidenceAdmission(false) both verifications are skipped entirely:
+// Run restores the pre-R6 observe-but-admit lenient behavior and returns the
+// output with zero Evidence, byte-compatible with the transport as it existed
+// before ticket 07. Every run stays inspectable through `sentinel runs`.
 func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, Evidence, error) {
 	if t.backing == nil {
 		return "", Evidence{}, errors.New("reviewexec: durable transport requires a store")
@@ -115,22 +169,29 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
 	}
-	if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {
-		// A binding rejection must not leave the admitted run executing a
-		// provider call whose output can never be trusted. Abort cooperatively
-		// so the durable record settles canceled with the rejection on record;
-		// the original admission error stays the caller-facing result.
-		if _, abortErr := controller.Apply(context.Background(), handle.RunID,
-			execution.ControlAction{Kind: execution.ActionAbort}); abortErr != nil {
-			fmt.Fprintf(os.Stderr, "reviewexec: abort after rejected binding for run %s failed: %v\n", handle.RunID, abortErr)
+	if t.admissionEnabled {
+		if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {
+			// A binding rejection must not leave the admitted run executing a
+			// provider call whose output can never be trusted. Abort cooperatively
+			// so the durable record settles canceled with the rejection on record;
+			// the original admission error stays the caller-facing result.
+			if _, abortErr := controller.Apply(context.Background(), handle.RunID,
+				execution.ControlAction{Kind: execution.ActionAbort}); abortErr != nil {
+				fmt.Fprintf(os.Stderr, "reviewexec: abort after rejected binding for run %s failed: %v\n", handle.RunID, abortErr)
+			}
+			return "", Evidence{}, err
 		}
-		return "", Evidence{}, err
 	}
 	completion, err := handle.Wait(context.Background())
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s observation failed: %w", identityKey, err)
 	}
 	if completion.State == agentrun.StateSucceeded {
+		if !t.admissionEnabled {
+			// Lenient mode (review.evidence_admission=false): pre-R6 behavior —
+			// output admitted unverified, zero Evidence, nothing else changes.
+			return completion.Output, Evidence{}, nil
+		}
 		evidence, evidenceErr := t.verifyEvidence(identityKey, handle.RunID, string(completion.InvocationID), completion.Output)
 		if evidenceErr != nil {
 			return "", Evidence{}, evidenceErr
