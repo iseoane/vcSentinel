@@ -203,6 +203,10 @@ agents:
 review:
   timeout: 600
   parallel: 2
+  # Evidence admission over durable runs (default true). Set false only to
+  # roll back to unverified acceptance; runs stay inspectable via
+  # `sentinel runs`.
+  evidence_admission: true
   dims:
     spec: "opencode.cheap"
     style: "opencode.cheap"

@@ -43,7 +43,12 @@ func durableReviewTransport(cfg config.Config, worktree, sha string, paths []str
 		return nil
 	}
 	st := store.NuevoStore(gitCommonDir)
-	transport := reviewexec.NewDurableTransport(st, store.RunPolicy{ID: durableRunPolicyID}, sha, safePaths)
+	// Ticket 07 slice 3: evidence admission is threaded construction-time from
+	// review.evidence_admission (default true). The flag is the only rollback
+	// seam; when DurableRuns is false the legacy path runs untouched no matter
+	// what this flag says.
+	transport := reviewexec.NewDurableTransport(st, store.RunPolicy{ID: durableRunPolicyID}, sha, safePaths,
+		reviewexec.WithEvidenceAdmission(cfg.Review.EvidenceAdmission))
 	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
 		restricted, ok := agent.(reviewexec.RestrictedReviewer)
 		if !ok {

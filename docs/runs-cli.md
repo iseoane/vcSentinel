@@ -128,3 +128,11 @@ Machine output never changes shape without a major note. Field names:
 - `start`, `respond`, `retry`, and `recover` block until the run reaches
   `awaiting_decision` or a terminal state because the CLI process must outlive
   its detached worker; exiting earlier would strand the attempt mid-flight.
+- Evidence admission (ticket 07) is default-on: when `review.durable_runs`
+  routes dimension reviews through the controller, their output only reaches
+  verdicts after snapshot binding and output-hash verification pass, and a
+  rejected completion surfaces as first-class evidence with the literal
+  `admission:` reason prefix — distinct from infrastructure failures in gate,
+  review, and pr reporting. Setting `review.evidence_admission: false` in
+  `vassentinel.yml` restores lenient acceptance while every run stays fully
+  inspectable through these `runs` commands.
