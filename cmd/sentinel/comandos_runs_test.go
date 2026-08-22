@@ -81,9 +81,9 @@ func seedDurableRun(t *testing.T, worktree, name string, adapter execution.Adapt
 
 func captureRunsOutput(t *testing.T, command func(io.Writer) int) (string, int) {
 	t.Helper()
-	var salida bytes.Buffer
-	code := command(&salida)
-	return salida.String(), code
+	var out bytes.Buffer
+	code := command(&out)
+	return out.String(), code
 }
 
 func decodeRunsJSON(t *testing.T, payload string) map[string]any {

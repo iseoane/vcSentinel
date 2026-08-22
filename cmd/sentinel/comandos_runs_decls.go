@@ -164,38 +164,38 @@ func observeUntilSettled(ctx context.Context, c *execution.Controller, runID age
 	}
 }
 
-func printRunActionResult(salida io.Writer, comoJSON bool, handle execution.Handle, state agentrun.LifecycleState) int {
+func printRunActionResult(out io.Writer, asJSON bool, handle execution.Handle, state agentrun.LifecycleState) int {
 	result := runActionResult{
 		RunID: string(handle.RunID), JobID: string(handle.JobID),
 		InvocationID: string(handle.InvocationID), State: state,
 	}
-	if comoJSON {
-		if err := encodeStableJSON(salida, result); err != nil {
-			fmt.Fprintf(salida, "❌ Could not serialize the result: %v\n", err)
+	if asJSON {
+		if err := encodeStableJSON(out, result); err != nil {
+			fmt.Fprintf(out, "❌ Could not serialize the result: %v\n", err)
 			return runExitInfrastructure
 		}
 		return runExitSuccess
 	}
-	fmt.Fprintf(salida, "✅ run %s\n   job %s\n   invocation %s\n   state %s\n",
+	fmt.Fprintf(out, "✅ run %s\n   job %s\n   invocation %s\n   state %s\n",
 		result.RunID, result.JobID, result.InvocationID, result.State)
 	return runExitSuccess
 }
 
-func printApplyResult(salida io.Writer, comoJSON bool, result execution.ApplyResult, state *agentrun.LifecycleState) int {
+func printApplyResult(out io.Writer, asJSON bool, result execution.ApplyResult, state *agentrun.LifecycleState) int {
 	output := applyResultOutput{
 		RunID: string(result.RunID), InvocationID: string(result.InvocationID), Accepted: result.Accepted, State: state,
 	}
-	if comoJSON {
-		if err := encodeStableJSON(salida, output); err != nil {
-			fmt.Fprintf(salida, "❌ Could not serialize the result: %v\n", err)
+	if asJSON {
+		if err := encodeStableJSON(out, output); err != nil {
+			fmt.Fprintf(out, "❌ Could not serialize the result: %v\n", err)
 			return runExitInfrastructure
 		}
 		return runExitSuccess
 	}
-	fmt.Fprintf(salida, "✅ run %s accepted=%t (invocation %s)", output.RunID, output.Accepted, output.InvocationID)
+	fmt.Fprintf(out, "✅ run %s accepted=%t (invocation %s)", output.RunID, output.Accepted, output.InvocationID)
 	if state != nil {
-		fmt.Fprintf(salida, "\n   resulting state %s", *state)
+		fmt.Fprintf(out, "\n   resulting state %s", *state)
 	}
-	fmt.Fprintln(salida)
+	fmt.Fprintln(out)
 	return runExitSuccess
 }

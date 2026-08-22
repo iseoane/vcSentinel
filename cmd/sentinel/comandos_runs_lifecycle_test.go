@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -174,5 +175,108 @@ func TestRunsVerifyDetectsTamperedEventLog(t *testing.T) {
 	tamperedVerdict := decodeRunsJSON(t, tamperedOutput)
 	if tamperedVerdict["valid"] != false || tamperedVerdict["reason"] == "" {
 		t.Fatalf("tampered verdict = %v, want valid=false with a concrete reason", tamperedVerdict)
+	}
+}
+
+func TestRunsRepeatActionsReportIdempotentSuccess(t *testing.T) {
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	replaceRunsAgent(t, &fakeRunsAgent{output: "unused"})
+
+	// Abort twice: the second abort finds a settled run and reports
+	// idempotent success instead of invalid state.
+	runID := seedDurableRun(t, worktree, "abort-twice",
+		runsSeedAdapter{result: execution.AdapterResult{AwaitingDecision: true}})
+	out, code := captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"abort", "--run", string(runID)})
+	})
+	if code != 0 {
+		t.Fatalf("first abort exit = %d, out %s", code, out)
+	}
+	out, code = captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"abort", "--run", string(runID), "--json"})
+	})
+	if code != 0 || !strings.Contains(out, `"accepted": true`) || !strings.Contains(out, "canceled") {
+		t.Fatalf("repeat abort = (%d) %s, want idempotent success with canceled state", code, out)
+	}
+
+	// Retry while the relaunched attempt is still live: the goal already
+	// holds, so the repeat is idempotent success.
+	blocking := &runsBlockAfterCrash{started: make(chan struct{}), release: make(chan struct{})}
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := execution.NewController(store.NuevoStore(commonDir), blocking)
+	request := agentrun.NewRunRequest(
+		agentrun.Candidate("seed:retry-live"), agentrun.Prompt("retry-live seed"), nil)
+	handle, err := controller.Start(context.Background(), request, store.RunPolicy{ID: "policy:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion, err := handle.Wait(context.Background()); err != nil || completion.State != agentrun.StateFailed {
+		t.Fatalf("seed attempt = %+v, %v; want failure", completion, err)
+	}
+	if _, err := controller.Retry(context.Background(), handle.RunID, 0); err != nil {
+		t.Fatal(err)
+	}
+	<-blocking.started
+	t.Cleanup(func() {
+		close(blocking.release)
+	})
+
+	out, code = captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"retry", "--run", string(handle.RunID), "--json"})
+	})
+	if code != 0 || !strings.Contains(out, "running") {
+		t.Fatalf("repeat retry while live = (%d) %s, want idempotent success with running state", code, out)
+	}
+}
+
+// runsBlockAfterCrash fails its first invocation and then blocks the retry
+// mid-flight so a second operator retry observes a live run.
+type runsBlockAfterCrash struct {
+	started chan struct{}
+	release chan struct{}
+	blocked bool
+}
+
+func (a *runsBlockAfterCrash) Execute(_ context.Context, _ agentrun.LogicalJob, _ agentrun.InvocationEnvelope, _ string) (execution.AdapterResult, error) {
+	if !a.blocked {
+		a.blocked = true
+		return execution.AdapterResult{}, errors.New("crash")
+	}
+	close(a.started)
+	<-a.release
+	return execution.AdapterResult{Output: "late"}, nil
+}
+
+func TestRunsLogsAndVerifyJsonShapesAreStable(t *testing.T) {
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	runID := seedDurableRun(t, worktree, "stable-shapes",
+		runsSeedAdapter{result: execution.AdapterResult{Output: "done"}})
+
+	firstLogs, code1 := captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"logs", "--run", string(runID), "--json"})
+	})
+	secondLogs, code2 := captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"logs", "--run", string(runID), "--json"})
+	})
+	if code1 != 0 || code2 != 0 || firstLogs != secondLogs {
+		t.Fatalf("logs --json not byte-stable across repeats (%d/%d)", code1, code2)
+	}
+	if strings.Contains(firstLogs, `"events": null`) {
+		t.Fatal("exhausted logs must emit an empty array, never null")
+	}
+
+	firstVerify, code1 := captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"verify", "--run", string(runID), "--json"})
+	})
+	secondVerify, code2 := captureRunsOutput(t, func(out io.Writer) int {
+		return executeRuns(out, worktree, []string{"verify", "--run", string(runID), "--json"})
+	})
+	if code1 != 0 || code2 != 0 || firstVerify != secondVerify {
+		t.Fatalf("verify --json not byte-stable across repeats (%d/%d)", code1, code2)
 	}
 }

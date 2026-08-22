@@ -37,31 +37,31 @@ func runExitCode(err error) int {
 	}
 }
 
-func executeRuns(salida io.Writer, worktree string, args []string) int {
+func executeRuns(out io.Writer, worktree string, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprint(salida, runsUsage)
+		fmt.Fprint(out, runsUsage)
 		return runExitUsage
 	}
 	subcommand, flags := args[0], args[1:]
 	switch subcommand {
 	case "start":
-		return executeRunsStart(salida, worktree, flags)
+		return executeRunsStart(out, worktree, flags)
 	case "status":
-		return executeRunsStatus(salida, worktree, flags)
+		return executeRunsStatus(out, worktree, flags)
 	case "logs":
-		return executeRunsLogs(salida, worktree, flags)
+		return executeRunsLogs(out, worktree, flags)
 	case "respond":
-		return executeRunsRespond(salida, worktree, flags)
+		return executeRunsRespond(out, worktree, flags)
 	case "abort":
-		return executeRunsAbort(salida, worktree, flags)
+		return executeRunsAbort(out, worktree, flags)
 	case "retry":
-		return executeRunsRetry(salida, worktree, flags)
+		return executeRunsRetry(out, worktree, flags)
 	case "recover":
-		return executeRunsRecover(salida, worktree, flags)
+		return executeRunsRecover(out, worktree, flags)
 	case "verify":
-		return executeRunsVerify(salida, worktree, flags)
+		return executeRunsVerify(out, worktree, flags)
 	default:
-		fmt.Fprintf(salida, "❌ Unknown subcommand for 'sentinel runs': %q\n%s", subcommand, runsUsage)
+		fmt.Fprintf(out, "❌ Unknown subcommand for 'sentinel runs': %q\n%s", subcommand, runsUsage)
 		return runExitUsage
 	}
 }
@@ -179,8 +179,8 @@ func classifyOperationalError(err error) agentrun.OutcomeClass {
 	}
 }
 
-func encodeStableJSON(salida io.Writer, value any) error {
-	encoder := json.NewEncoder(salida)
+func encodeStableJSON(out io.Writer, value any) error {
+	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
 }
