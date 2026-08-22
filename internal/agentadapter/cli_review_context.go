@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // ReviewWithContext runs the same restricted review as EjecutarRevision but
@@ -39,8 +41,10 @@ func (c *CLIAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, 
 
 // ejecutarRevision spawns the restricted reviewer under a combined budget:
 // the parent context governs cooperative cancellation and the timeout bounds
-// a provider that never answers. Whichever limit fires first kills the direct
-// child through runCapturedCommand's context-bound exec.
+// a provider that never answers. The child is born into an owned process
+// tree, and the containment watchdog guarantees that even without the
+// controller's escalation the tree never outlives its context by more than
+// the shared grace budget plus a fixed margin.
 func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequest, timeout time.Duration) (string, error) {
 	ctx, cancelar := context.WithTimeout(parent, timeout)
 	defer cancelar()
@@ -64,32 +68,93 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 		env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)
 	}
 
-	out, stderr, err := runCapturedCommand(ctx, c.BinaryName, args, env, dir, request.Prompt)
+	spawn, err := startOwnedCommand(ctx, c.BinaryName, args, env, dir, request.Prompt)
 	if err != nil {
-		if detail := strings.TrimSpace(stderr); detail != "" {
-			return "", fmt.Errorf("run restricted reviewer: %w: %s", err, detail)
-		}
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	c.activeTree.Store(spawn.tree)
+	defer c.activeTree.Store(nil)
+	waitErr := spawn.cmd.Wait()
+	spawn.tree.MarkExited()
+	spawn.tree.Release()
+	if waitErr != nil {
+		detail := strings.TrimSpace(spawn.stderr.String())
+		if detail != "" {
+			return "", fmt.Errorf("run restricted reviewer: %w: %s", waitErr, detail)
+		}
+		return "", waitErr
+	}
+	return strings.TrimSpace(spawn.stdout.String()), nil
 }
 
-// runCapturedCommand is the single spawn point of the restricted reviewer:
-// one context-bound exec.CommandContext whose direct child dies whenever ctx
-// is canceled, feeding stdin and capturing stdout and stderr. Keeping it as a
-// plain function gives tests a real-subprocess seam without adding any
-// interface indirection to production callers.
-func runCapturedCommand(ctx context.Context, name string, args []string, env []string, dir, stdin string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = env
-	cmd.Dir = dir
+// ownedCommand carries one started child with its ownership handle and
+// capture buffers until the spawner has waited for it.
+type ownedCommand struct {
+	cmd    *exec.Cmd
+	tree   *process.Tree
+	stdout *bytes.Buffer
+	stderr *bytes.Buffer
+}
+
+// startOwnedCommand is the single spawn point of the restricted reviewer: one
+// context-bound, process-group/job-owned exec whose whole tree is accounted
+// for from birth, feeding stdin and capturing stdout and stderr. A
+// containment watchdog kills the tree if the context stays canceled past the
+// shared grace budget plus margin; controller-authored escalation normally
+// wins that race and appends the durable evidence instead.
+func startOwnedCommand(ctx context.Context, name string, args []string, env []string, dir, stdin string) (*ownedCommand, error) {
 	var out bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	cmd.Stdin = strings.NewReader(stdin)
-	if err := cmd.Run(); err != nil {
-		return out.String(), stderr.String(), err
+	cmd, tree, err := process.Spawn(ctx, name, args, func(c *exec.Cmd) {
+		c.Env = env
+		c.Dir = dir
+		c.Stdout = &out
+		c.Stderr = &stderr
+		c.Stdin = strings.NewReader(stdin)
+	})
+	if err != nil {
+		return nil, err
 	}
-	return out.String(), "", nil
+	go containAfterCancellation(ctx, tree)
+	return &ownedCommand{cmd: cmd, tree: tree, stdout: &out, stderr: &stderr}, nil
+}
+
+// containAfterCancellation is the adapter-side safety net for enabled
+// policies: when the context fires, give the tree the shared grace budget
+// plus margin to die through the controller's escalation path first, then
+// hard-terminate whatever remains so no descendant can outlive its budget
+// silently. When the stamped policy restricts kills to the direct child,
+// this watchdog must never fire: the exec kill switch already terminates the
+// direct child and nothing may signal the tree.
+func containAfterCancellation(ctx context.Context, tree *process.Tree) {
+	if ctx == nil {
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-tree.Exited():
+		return
+	}
+	if !process.WholeTreeTermination(ctx) {
+		return
+	}
+	select {
+	case <-tree.Exited():
+	case <-time.After(process.ContainmentDeadline(ctx)):
+		_ = process.Terminate(tree)
+	}
+}
+
+// runCapturedCommand is the direct capture seam kept for callers and tests
+// that spawn without the adapter's tree tracking: same owned birth, same
+// containment watchdog, plain stdout/stderr/stdin wiring.
+func runCapturedCommand(ctx context.Context, name string, args []string, env []string, dir, stdin string) (string, string, error) {
+	spawn, err := startOwnedCommand(ctx, name, args, env, dir, stdin)
+	if err != nil {
+		return "", "", err
+	}
+	defer spawn.tree.Release()
+	err = spawn.cmd.Wait()
+	spawn.tree.MarkExited()
+	return spawn.stdout.String(), spawn.stderr.String(), err
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // adaptadorCompleto es la interfaz interna que CadenaAdaptador exige a sus
@@ -104,6 +106,23 @@ func (c *CadenaAdaptador) AplicarPlanRefactor(rutaArchivo string, plan string) (
 		}
 		return "", fmt.Errorf("el adaptador %s no implementa AdapterRefactor", nombreAdaptador(a))
 	})
+}
+
+// OwnedTree reports the live owned review tree of whichever chain child is
+// currently executing a restricted review. At most one child runs at a time
+// (fallback is per request, never concurrent), so the first non-nil child
+// tree is the active one.
+func (c *CadenaAdaptador) OwnedTree() *process.Tree {
+	for _, adaptador := range c.adaptadores {
+		if provider, ok := adaptador.(interface {
+			OwnedTree() *process.Tree
+		}); ok {
+			if tree := provider.OwnedTree(); tree != nil {
+				return tree
+			}
+		}
+	}
+	return nil
 }
 
 // primeroExitoso recorre los adaptadores en orden ejecutando intentar con cada

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // TestRunCapturedCommandHelperChild is the child side of the real-subprocess
@@ -55,13 +57,16 @@ func waitForChildReady(t *testing.T, path string) {
 
 // TestRunCapturedCommandKillsChildOnContextCancellation proves with a real
 // spawned process that the review execution spawn point is bound to its
-// context: canceling the parent context kills the direct child instead of
-// waiting for it to finish.
+// context: canceling the parent context ends the owned child promptly through
+// the containment watchdog instead of waiting for it to finish. The test
+// stamps a short containment grace so the proof stays fast; production uses
+// the controller's escalation budget.
 func TestRunCapturedCommandKillsChildOnContextCancellation(t *testing.T) {
 	name, args := reviewChildCommand()
 	readyFile := filepath.Join(t.TempDir(), "review-child-ready")
 
 	parent, cancel := context.WithCancel(context.Background())
+	parent = process.WithContainmentGrace(parent, 200*time.Millisecond)
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {

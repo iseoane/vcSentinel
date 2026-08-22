@@ -9,6 +9,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // RestrictedReviewer is the structural contract of the review engine's
@@ -54,6 +55,14 @@ func DefaultClassifier(err error) agentrun.OutcomeClass {
 	}
 }
 
+// TreeProvider is the structural contract of reviewers that own a live
+// provider process tree while executing. It is discovered exactly like the
+// other optional reviewer contracts so ownership and bounded escalation reach
+// the controller without coupling this package to any adapter type.
+type TreeProvider interface {
+	OwnedTree() *process.Tree
+}
+
 // ReviewAdapter performs exactly one restricted review call per physical
 // invocation routed by the controller. The audited commit identity is bound at
 // construction; the dimension prompt travels inside the admitted RunRequest.
@@ -69,7 +78,9 @@ func DefaultClassifier(err error) agentrun.OutcomeClass {
 // spawned provider process immediately (R7 slice 1). Reviewers that only
 // implement the legacy contract keep working unchanged: cancellation then
 // surfaces once the current provider call returns. Process-tree ownership and
-// bounded escalation arrive with later R7 slices.
+// bounded escalation are live since R7 slice 2: the controller discovers the
+// adapter's owned tree through TreeProvider and escalates against it after the
+// cooperative grace budget expires.
 type ReviewAdapter struct {
 	reviewer RestrictedReviewer
 	sha      string
@@ -84,6 +95,16 @@ func NewReviewAdapter(reviewer RestrictedReviewer, sha string, paths []string, c
 		classify = DefaultClassifier
 	}
 	return &ReviewAdapter{reviewer: reviewer, sha: sha, paths: paths, classify: classify}
+}
+
+// OwnedTree forwards tree discovery to the wrapped reviewer, mirroring how
+// ContextualReviewer is forwarded, so controller-authored escalation sees the
+// same live child the adapter spawned.
+func (a *ReviewAdapter) OwnedTree() *process.Tree {
+	if provider, ok := a.reviewer.(TreeProvider); ok {
+		return provider.OwnedTree()
+	}
+	return nil
 }
 
 // Execute runs exactly one reviewer call. Success returns the raw untrusted

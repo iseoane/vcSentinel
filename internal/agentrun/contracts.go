@@ -273,19 +273,31 @@ const (
 	StateAdmitted         LifecycleState = "admitted"
 	StateRunning          LifecycleState = "running"
 	StateAwaitingDecision LifecycleState = "awaiting_decision"
-	StateSucceeded        LifecycleState = "succeeded"
-	StateFailed           LifecycleState = "failed"
-	StateCanceled         LifecycleState = "canceled"
-	StateTimedOut         LifecycleState = "timed_out"
-	StateUnavailable      LifecycleState = "unavailable"
+	// StateTerminating marks the bounded escalation window of ticket 08
+	// slice 2: the controller requested whole-tree termination after the
+	// cooperative grace budget expired. It is transient evidence between the
+	// running head and the canceled settlement and never persists beyond the
+	// same controller goroutine that authored it.
+	StateTerminating LifecycleState = "terminating"
+	// StateTerminated records confirmed reaping of an escalated process tree.
+	// Like terminating it is transient, non-retryable, and non-terminal: the
+	// canceled settlement remains the authoritative terminal frame.
+	StateTerminated  LifecycleState = "terminated"
+	StateSucceeded   LifecycleState = "succeeded"
+	StateFailed      LifecycleState = "failed"
+	StateCanceled    LifecycleState = "canceled"
+	StateTimedOut    LifecycleState = "timed_out"
+	StateUnavailable LifecycleState = "unavailable"
 )
 
 var validTransitions = map[LifecycleState]map[LifecycleState]bool{
 	StateCreated:          {StateQueued: true, StateCanceled: true},
 	StateQueued:           {StateAdmitted: true, StateCanceled: true},
 	StateAdmitted:         {StateRunning: true, StateCanceled: true},
-	StateRunning:          {StateAwaitingDecision: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true},
+	StateRunning:          {StateAwaitingDecision: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true, StateTerminating: true},
 	StateAwaitingDecision: {StateRunning: true, StateSucceeded: true, StateFailed: true, StateCanceled: true, StateTimedOut: true, StateUnavailable: true},
+	StateTerminating:      {StateTerminated: true, StateCanceled: true},
+	StateTerminated:       {StateCanceled: true},
 	StateFailed:           {StateRunning: true},
 	StateCanceled:         {StateRunning: true},
 	StateTimedOut:         {StateRunning: true},

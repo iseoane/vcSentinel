@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // TimeoutComando es el límite de una llamada al agente (300 s). La fase 1 lo
@@ -32,6 +34,16 @@ type CLIAdapter struct {
 	CommitLanguage string
 	// Timeout es el límite por llamada; si es 0 se usa TimeoutComando.
 	Timeout time.Duration
+
+	// activeTree holds the restricted reviewer's currently owned process
+	// tree, or nil when no review child is running. The execution controller
+	// reads it at abort time to escalate against the whole tree.
+	activeTree atomic.Pointer[process.Tree]
+}
+
+// OwnedTree reports the live owned review process tree, or nil.
+func (c *CLIAdapter) OwnedTree() *process.Tree {
+	return c.activeTree.Load()
 }
 
 // ReviewRequest limits an agent review to read-only exploration of planned paths.
