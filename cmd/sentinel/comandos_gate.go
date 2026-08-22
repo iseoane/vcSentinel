@@ -89,6 +89,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
+			ReviewTransport: durableReviewTransport(cfg, worktree, sha, archivos),
 		},
 	})
 

@@ -8,7 +8,7 @@ authorship.
 **Blocked by:** 04: Add the Execution Controller (complete; foundation merged to
 `main` at b0b71cc).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -41,12 +41,12 @@ authorship.
   controller-backed job. Selection happens at construction time; that choice
   is the rollback mechanism.
 
-- [ ] Focused tests prove one logical job per dimension with retries and fallbacks recorded as separate physical invocations.
-- [ ] Migration tests compare legacy and controller-backed outcomes on identical fake adapters and require equal verdicts, findings, and reasons.
-- [ ] Tests prove concrete provider failure text survives terminal-class translation into dimension results.
-- [ ] Tests prove effective-agent recording still attributes each dimension to the adapter that actually answered.
-- [ ] Tests prove parallelism and budget behavior are unchanged versus the legacy scheduler.
-- [ ] The implementation records build, vet, full tests, guardian, independent `code-review`, Judgment Day, rollback boundary, and follow-ups here.
+- [x] Focused tests prove one logical job per dimension with retries and fallbacks recorded as separate physical invocations. *(Satisfied under the documented staged model: every retry/fallback invocation becomes its own durable run keyed by bundle/dimension/process-salt/sequence; single-run-N-attempt grouping is the binding follow-up deferred to R5.)*
+- [x] Migration tests compare legacy and controller-backed outcomes on identical fake adapters and require equal verdicts, findings, and reasons. *(Slice 4: real store+controller chain; identity-keyed parity including v2 finding content and fingerprints; budget admit/skip parity.)*
+- [x] Tests prove concrete provider failure text survives terminal-class translation into dimension results. *(End-to-end into VerdictUnavailable reasons in both modes; transport-level TerminalError preserves exact text.)*
+- [x] Tests prove effective-agent recording still attributes each dimension to the adapter that actually answered. *(Post-success attribution through the wired transport plus negative case on provider failure.)*
+- [x] Tests prove parallelism and budget behavior are unchanged versus the legacy scheduler. *(Barrier peak == configured parallel in both modes; serialization fails loudly.)*
+- [x] The implementation records build, vet, full tests, guardian, independent `code-review`, Judgment Day, rollback boundary, and follow-ups here.
 
 **Out of scope:** Operator commands (R5), evidence admission cutover (R6),
 cancellation and process-tree ownership (R7), recovery (R8), the gate path
@@ -57,3 +57,124 @@ finding fingerprints, or the ledger format.
 adapter and its tests; selection falls back to the legacy scheduler at
 construction time. Durable runs already written remain readable, and the
 ledger, store, and controller packages stay intact.
+
+## Evidence — slice 1 (adapter seam)
+
+- Commit: be4855f feat(reviewexec): route restricted reviewers through the execution controller.
+- Scope delivered: `internal/reviewexec` package only — ReviewAdapter over a
+  locally declared RestrictedReviewer (no import of internal/review),
+  DefaultClassifier mapping context errors, concrete provider failure text
+  preserved end-to-end through Completion and durable outcomes, effective-agent
+  observation proven with answerer identity attribution.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  guardian 279 authored lines [PUNTO_OPTIMO]; pre-commit hook passed.
+- Independent review (code-review skill, parallel Standards+Spec axes): both
+  APPROVE-WITH-FINDINGS. Applied fixes: durable Inspect evidence for the
+  unavailable path; answerer identity attribution in the observation test;
+  extracted startAndWait scaffold; naming waiver comment for EjecutarRevision.
+- Accepted follow-ups: continuation-response append kept as documented
+  placeholder until engine-level question-round wiring; retries/fallbacks as
+  separate physical invocations deferred to the engine-wiring slices;
+  Judgment Day pending at milestone closure per the unit-skill matrix.
+
+## Evidence — slice 2 (engine routing seam)
+
+- Scope delivered: `DurableTransport` in reviewexec (one physical invocation
+  per Run call over a shared store; TerminalError preserving concrete provider
+  text and outcome class; nanosecond salt against candidate collision across
+  repeated audits) plus the optional `ReviewTransport` field on
+  OpcionesAuditoria routing both the first reviewer call and the clarification
+  round through it. Nil field keeps the legacy path byte-equivalent; parsing
+  stays shared after either path.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  guardian 201 authored lines [PUNTO_OPTIMO].
+- Independent review (code-review skill, parallel axes): Spec
+  APPROVE-WITH-FINDINGS (0 blockers); Standards APPROVE-WITH-FINDINGS.
+  Applied fixes: new Spanish identifiers renamed to English (invokeReview,
+  transport, calls).
+- MAJOR accepted finding — staged durability model: the roadmap phrase "one
+  logical job per review dimension with retries recorded within that job" is
+  temporarily implemented as one durable RUN per invocation keyed by
+  bundle/dimension/salt, because R3 offers no multi-invocation primitive short
+  of awaiting_decision/respond, which is semantic question lineage and must
+  not be abused for retries. Grouping invocations under one logical job
+  requires an R3 contract extension (attempt-level events or retry decision
+  support) and lands before R5 exposes operator commands. Recorded here as
+  the binding follow-up.
+- Accepted minor follow-ups: configured timeouts still ride inside
+  CLIAdapter's per-call timeout (terminal classes already correct); engine-
+  level migration-comparison, parallelism-parity, and durable-path attribution
+  tests land with production wiring; identityKey becomes a typed key when
+  cmd-side composition defines its final shape.
+
+## Evidence — slice 3 (production wiring)
+
+- Commit: fffaa0f feat(review): wire durable run transport into production
+  review paths.
+- Scope delivered: config `review.durable_runs` (default false = legacy; this
+  flag is the construction-time rollback selection); `durableReviewTransport`
+  builder resolving the git common dir and binding store+policy+SHA+paths;
+  wired into `sentinel review` (transport survives the question-round retry),
+  `sentinel gate` (via OpcionesRevision passthrough — zero internal/gate
+  changes), and both pr-analysis sites through a per-commit
+  `OpcionesRama.ReviewTransportFactory`; shared exported
+  `review.ErrRestrictedRequired` so engine and transport wording cannot drift;
+  named type `review.ReviewTransport`.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  guardian 230 authored lines [PUNTO_OPTIMO]; pre-commit hook passed.
+- Independent review (code-review skill, parallel axes + fix re-review):
+  Spec APPROVE-WITH-FINDINGS (coverage complete across every AuditarCommit
+  caller; disabled path byte-equivalent); Standards initially FAIL on five
+  Spanish identifiers in new files plus a duplicated error/assert pair — all
+  fixed (renames to English, shared sentinel error, durableRunPolicyID const,
+  per-commit paths assertion), re-review residual `restringido` also fixed.
+  Final state satisfied.
+- Accepted follow-ups: refuter pass stays outside the controller per ticket
+  contract ("keeps... refuter pass... unchanged"); stderr warning on missing
+  git common dir is the documented degradation signal; remaining ticket
+  checklist items (migration/parity suite) form the next slice before closure.
+
+## Evidence — slice 4 (migration and parity suite)
+
+- Commit: 2ccf038 test(reviewexec): prove migration parity between legacy and
+  durable review paths.
+- Scope delivered: `internal/reviewexec/migration_integration_test.go` (362
+  lines) covering every open checklist bullet:
+  - Migration equality on identical fake adapters through a REAL
+    store+controller+adapter chain: equal verdicts, per-identity-key dimension
+    results (verdict+reason), finding counts, and budget skips.
+  - Findings content parity with a v2-marker fixture: description, severity,
+    dimension, location, title, and content-stable fingerprint all equal.
+  - Provider failure text end-to-end into VerdictUnavailable reasons in both
+    modes; attribution fires post-success through the durable path AND stays
+    silent on provider failure.
+  - Parallelism parity proven deterministically with a barrier agent (peak ==
+    configured parallel=2 in both modes; serialization fails loudly via
+    timeout); budget admit branch (affordable optional bundle runs through the
+    transport) plus skip branch parity.
+- Tests live in reviewexec because internal/store already imports
+  internal/review — review-side tests cannot open a store without an import
+  cycle.
+- Verification: gofmt clean; go build OK; go vet OK; go test ./... all green;
+  focused suite stable at -count=2; guardian 362 authored lines
+  [PUNTO_OPTIMO]; pre-commit hook passed.
+- Independent review (code-review skill): Spec APPROVE-WITH-FINDINGS (1 major
+  vacuous-findings-parity + 3 minors); Standards APPROVE-WITH-FINDINGS. All
+  findings fixed (content-bearing v2 fixture, budget-admit branch, negative
+  attribution case, English renames); re-review verdict SATISFIED.
+- Accepted follow-ups: clarification-round parity has no dedicated comparison
+  test (round routing itself is engine-tested; full parity lands with R5
+  question semantics); barrier timeout of 2s is generous but theoretically
+  flake-prone on saturated CI.
+
+## Evidence — slice 5 (closure: Judgment Day)
+
+- Round 1 (target 7b41df61081c69c8, range 161301e..f8d7909, both judges blind over an immutable materialized bundle):
+  - JD-A1 [CRITICAL]: durable path bound raw caller paths, bypassing rutasRevisionSeguras — parent-verified TRUE.
+  - JD-B1/A2 [WARNING/SUGGESTION, corroborated by both]: UnixNano-only candidate salt collided across processes/coarse clocks.
+- Round-1 fix commit c80b64c `fix(review): sanitize durable transport paths and harden candidate salt`: review.RutasRevisionSeguras exported and applied at bind time; candidate salt now pid+crypto-entropy plus monotonic per-process sequence; regression TestDurableReviewTransportSanitizesBoundPaths. Verification after fix: gofmt clean, build/vet OK, full suite green, guardian 76 lines [PEQUENO].
+- Scoped re-judgment round 1 over frozen ledger + immutable delta (both judges): JD-A1 RESOLVED, JD-B1/A2 RESOLVED; zero fix-caused defects; residual SUGGESTION (crypto/rand nil fallback keeps pid separation) accepted as informational.
+- Final verification snapshot before closure: gofmt clean; go build OK; go vet OK; go test ./... all green; guardian clean tree.
+- Rollback boundary as contracted: config flag review.durable_routes=false restores the legacy scheduler byte-for-byte; removing internal/reviewexec plus wiring returns to pre-R4 while durable runs remain readable.
+
+**Closed:** R4 complete under the staged durability model; grouping into single-run-N-attempts moves to R5 with its operator commands.

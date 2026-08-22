@@ -73,6 +73,10 @@ type OpcionesRama struct {
 	Fabrica          FabricaAuditor
 	FabricaRefutador FabricaRefutador
 	Parallel         int
+	// ReviewTransportFactory, when set, builds a per-commit durable transport
+	// so every audited commit routes its dimension calls through the run
+	// controller bound to its own SHA and paths. Nil keeps the legacy path.
+	ReviewTransportFactory func(sha string, rutas []string) ReviewTransport
 	// Store es opcional (nil-safe): si no es nil, AnalizarRama consulta por
 	// blob antes que por SHA para decidir pendientes (T2.7, criterio de
 	// salida de F2: un rebase que no altera contenido conserva el 100% de
@@ -254,6 +258,10 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 	if err != nil {
 		return err
 	}
+	var transporte ReviewTransport
+	if opts.ReviewTransportFactory != nil {
+		transporte = opts.ReviewTransportFactory(sha, archivos)
+	}
 	resultado := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
 		SHA:                    sha,
 		Mensaje:                mensaje,
@@ -265,6 +273,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		OnDimension:            opts.OnDimension,
 		FabricaRefutador:       opts.FabricaRefutador,
 		HallazgosDeterministas: opts.HallazgosDeterministas,
+		ReviewTransport:        transporte,
 	})
 
 	modelo := opts.PerfilOverride

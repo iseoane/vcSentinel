@@ -191,3 +191,27 @@ func TestTimeoutInvalidoSeIgnora(t *testing.T) {
 		t.Errorf("Parallel = %d, esperado default 2", cfg.Review.Parallel)
 	}
 }
+
+func TestReviewDurableRunsFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{name: "default false when absent", yaml: "", want: false},
+		{name: "explicit true enables durable runs", yaml: "review:\n  durable_runs: true\n", want: true},
+		{name: "explicit false keeps legacy", yaml: "review:\n  durable_runs: false\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			worktree := t.TempDir()
+			setHome(t, home)
+			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			cfg := CargarConfiguracionLocal(worktree)
+			if cfg.Review.DurableRuns != tt.want {
+				t.Fatalf("DurableRuns = %v, want %v", cfg.Review.DurableRuns, tt.want)
+			}
+		})
+	}
+}

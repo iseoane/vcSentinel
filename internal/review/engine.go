@@ -35,6 +35,17 @@ type FabricaAuditor func(bundle ReviewBundle, dimension string) (AuditorAgente, 
 // one semantic CRITICAL finding. It is invoked once for each finding.
 type FabricaRefutador func() (AuditorAgente, string, error)
 
+// ErrRestrictedRequired is returned when a dimension's agent lacks the
+// tool-restricted reviewer capability. Engine and durable transport share one
+// exported wording so evidence can never drift between the two paths.
+var ErrRestrictedRequired = errors.New("semantic review unavailable: restricted reviewer capability is required")
+
+// ReviewTransport routes one dimension reviewer call through an alternative
+// execution path such as the durable run controller. bundleName plus dimension
+// identify the logical job; prompt is fully built by the engine so parsing
+// stays shared after either path.
+type ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error)
+
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
 	SHA                            string
@@ -56,6 +67,10 @@ type OpcionesAuditoria struct {
 	// (T6.2). Empty by default: the caller decides when both sources should
 	// coexist in the same report.
 	HallazgosDeterministas []Hallazgo
+	// ReviewTransport, when set, routes each dimension's reviewer call through
+	// an alternative execution path such as the durable run controller. Nil
+	// keeps the legacy direct call with its in-process transport retry.
+	ReviewTransport ReviewTransport
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -404,6 +419,13 @@ func puedeDegradarBloque(resultado DimensionResult) bool {
 		!tieneHallazgoCriticalConfirmado(resultado.Hallazgos)
 }
 
+// RutasRevisionSeguras exposes the engine's reviewer-path sanitizer so
+// out-of-engine transports bind the exact same safe list the legacy path
+// uses. Ticket 05 Judgment Day JD-A1: binding raw caller lists would let
+// dash-prefixed, control-character, absolute, and parent-relative names
+// reach reviewers unfiltered on the durable path.
+func RutasRevisionSeguras(rutas []string) []string { return rutasRevisionSeguras(rutas) }
+
 func rutasRevisionSeguras(rutas []string) []string {
 	seguras := make([]string, 0, len(rutas))
 	for _, ruta := range rutas {
@@ -425,9 +447,9 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 		if restringido, ok := agente.(auditorConHerramientasRestringidas); ok {
 			return restringido.EjecutarRevision(prompt, opts.SHA, opts.RutasContexto)
 		}
-		return "", errors.New("semantic review unavailable: restricted reviewer capability is required")
+		return "", ErrRestrictedRequired
 	}
-	salida, err := ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
+	salida, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
@@ -439,7 +461,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, err = ejecutarConReintento(ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
+		salida, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}
@@ -492,6 +514,16 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 		}
 		hallazgos[i].EvidenceSet = &FindingEvidenceSet{Values: evidencias}
 	}
+}
+
+// invokeReview routes one reviewer call through the configured durable
+// transport when present; nil keeps the legacy direct call with its transport
+// retry. Both paths receive the identical prompt so parsing stays shared.
+func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, error) {
+	if opts.ReviewTransport != nil {
+		return opts.ReviewTransport(bundle.Name, dimension, prompt, agente)
+	}
+	return ejecutarConReintento(ejecutar, prompt)
 }
 
 func ejecutarConReintento(ejecutar func(string) (string, error), prompt string) (string, error) {

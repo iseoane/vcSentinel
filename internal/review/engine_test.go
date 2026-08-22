@@ -1119,3 +1119,58 @@ func (a promptOnlyAuditor) EjecutarPrompt(string) (string, error) {
 	*a.called = true
 	return `{"dim":"logic","verdict":"ok"}`, nil
 }
+
+func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
+	fake := &agenteFake{}
+	var gotBundle, gotDim, gotPrompt string
+	var gotAgent AuditorAgente
+	transport := func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error) {
+		gotBundle, gotDim, gotPrompt, gotAgent = bundleName, dimension, prompt, agente
+		return `{"dim":"logic","verdict":"ok"}`, nil
+	}
+	bundles := []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}
+	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return fake, "normal", nil
+	}, 1, OpcionesAuditoria{
+		SHA:             "sha-transport",
+		Bundles:         bundles,
+		ReviewTransport: transport,
+	})
+	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil || resultado.Dims[0].Resultado.Verdict != "ok" {
+		t.Fatalf("resultado = %+v, want transport-parsed verdict ok", resultado)
+	}
+	if gotBundle != "quality" || gotDim != "logic" || strings.TrimSpace(gotPrompt) == "" {
+		t.Fatalf("transport args = %q/%q/%q, want bundle, dimension, and built prompt", gotBundle, gotDim, gotPrompt)
+	}
+	if gotAgent != AuditorAgente(fake) {
+		t.Fatal("transport received a different agent than the fabric produced")
+	}
+	fake.mu.Lock()
+	calls := fake.llamadas
+	fake.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("legacy direct calls = %d, want zero when transport is configured", calls)
+	}
+}
+
+func TestReviewTransportErrorBecomesUnavailableWithConcreteReason(t *testing.T) {
+	fake := &agenteFake{}
+	transport := func(_, _, _ string, _ AuditorAgente) (string, error) {
+		return "", errors.New("durable: provider quota exceeded")
+	}
+	bundles := []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}
+	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return fake, "normal", nil
+	}, 1, OpcionesAuditoria{
+		SHA:             "sha-transport-error",
+		Bundles:         bundles,
+		ReviewTransport: transport,
+	})
+	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
+		t.Fatalf("resultado = %+v, want one dimension result", resultado)
+	}
+	dim := resultado.Dims[0].Resultado
+	if dim.Verdict != VerdictUnavailable || !strings.Contains(dim.Reason, "provider quota exceeded") {
+		t.Fatalf("dimension = %+v, want unavailable verdict preserving concrete reason", dim)
+	}
+}
