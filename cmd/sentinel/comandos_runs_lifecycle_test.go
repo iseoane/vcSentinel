@@ -217,12 +217,16 @@ func TestRunsRepeatActionsReportIdempotentSuccess(t *testing.T) {
 	if completion, err := handle.Wait(context.Background()); err != nil || completion.State != agentrun.StateFailed {
 		t.Fatalf("seed attempt = %+v, %v; want failure", completion, err)
 	}
-	if _, err := controller.Retry(context.Background(), handle.RunID, 0); err != nil {
+	retried, err := controller.Retry(context.Background(), handle.RunID, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	<-blocking.started
 	t.Cleanup(func() {
 		close(blocking.release)
+		// Drain the relaunched attempt so its terminal writes land before
+		// TempDir removal races with them.
+		_, _ = retried.Wait(context.Background())
 	})
 
 	out, code = captureRunsOutput(t, func(out io.Writer) int {
