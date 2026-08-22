@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -35,16 +36,21 @@ func gitEjecutar(t *testing.T, args ...string) {
 type auditorStub struct {
 	auditSalida    string
 	overviewSalida string
+	mu             sync.Mutex
 	llamadasAudit  int
 	llamadasOv     int
 }
 
 func (a *auditorStub) EjecutarPrompt(prompt string) (string, error) {
 	if strings.Contains(prompt, "coherente") {
+		a.mu.Lock()
 		a.llamadasOv++
+		a.mu.Unlock()
 		return a.overviewSalida, nil
 	}
+	a.mu.Lock()
 	a.llamadasAudit++
+	a.mu.Unlock()
 	return a.auditSalida, nil
 }
 
@@ -64,11 +70,14 @@ func fabricaStub(a *auditorStub) FabricaAuditor {
 
 type auditorRutasStub struct {
 	auditorStub
+	mu    sync.Mutex
 	rutas [][]string
 }
 
 func (a *auditorRutasStub) EjecutarRevision(prompt, _ string, rutas []string) (string, error) {
+	a.mu.Lock()
 	a.rutas = append(a.rutas, append([]string(nil), rutas...))
+	a.mu.Unlock()
 	return a.EjecutarPrompt(prompt)
 }
 
