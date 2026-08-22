@@ -89,8 +89,9 @@ type DurableTransport struct {
 	// the rollback seam is an explicit WithEvidenceAdmission(false).
 	admissionEnabled bool
 	// escalationPolicy configures bounded cancellation escalation (ticket 08
-	// slice 2). The zero value is enabled with default budgets; yaml wiring
-	// of review.cancellation_escalation arrives with slice 3.
+	// slice 2). The zero value is enabled with default budgets; slice 3 wires
+	// review.cancellation_escalation into it through
+	// WithCancellationEscalation at construction time.
 	escalationPolicy execution.EscalationPolicy
 }
 

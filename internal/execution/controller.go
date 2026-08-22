@@ -145,8 +145,8 @@ type Controller struct {
 
 // EscalationPolicy configures bounded escalation after cooperative
 // cancellation. Zero durations select the defaults; Disabled is the only way
-// to turn escalation off and stays a construction-time rollback seam until
-// slice 3 wires review.cancellation_escalation from yaml.
+// to turn escalation off and stays a construction-time rollback seam wired
+// from review.cancellation_escalation (ticket 08 slice 3).
 type EscalationPolicy struct {
 	// Disabled restricts every kill to the DIRECT CHILD: cancellation and
 	// deadlines reach it through the exec kill switch (CommandContext's
