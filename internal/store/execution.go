@@ -80,6 +80,28 @@ func (s *Store) executionDir(runID string) (string, error) {
 	return filepath.Join(s.dir, "executions", "v1", runID), nil
 }
 
+// ListExecutionIDs returns every persisted run identifier under the
+// executions directory, sorted lexicographically. A missing directory is the
+// valid empty state before the first admitted run; stray non-directory or
+// invalidly named entries are ignored so a partial write never breaks listing.
+func (s *Store) ListExecutionIDs() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(s.dir, "executions", "v1"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && validRunID(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
 func validRunID(runID string) bool {
 	if runID == "" || runID == "." || runID == ".." {
 		return false
