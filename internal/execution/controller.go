@@ -20,6 +20,12 @@ var (
 	ErrUnsupportedAction  = errors.New("execution: unsupported control action")
 	ErrDecisionNotPending = errors.New("execution: run is not awaiting a response")
 	ErrRecoveredResponse  = errors.New("execution: persisted response requires a live invocation context")
+	// ErrRunNotRetryable reports a terminal outcome that stays final: success
+	// and unavailable evidence cannot be relaunched by a retry decision.
+	ErrRunNotRetryable = errors.New("execution: terminal run outcome cannot be retried")
+	// ErrStaleRevision reports that the durable stream head moved past the
+	// revision the caller expected when applying a state-changing action.
+	ErrStaleRevision = errors.New("execution: stale execution revision")
 )
 
 // Adapter is the provider-neutral execution seam. The controller supplies the
@@ -237,23 +243,7 @@ func (c *Controller) Inspect(ctx context.Context, runID agentrun.Identity) (Insp
 	if err != nil {
 		return Inspection{}, err
 	}
-	events := make([]store.EventFrame, 0)
-	var cursor uint64
-	for {
-		if err := ctx.Err(); err != nil {
-			return Inspection{}, err
-		}
-		page, err := c.store.ReadEvents(string(runID), cursor, 128)
-		if err != nil {
-			return Inspection{}, err
-		}
-		events = append(events, page.Events...)
-		if !page.HasMore {
-			break
-		}
-		cursor = page.NextRevision
-	}
-	projection, err := c.store.ReadDerivedProjection(string(runID))
+	events, projection, err := c.durableEvidence(ctx, runID)
 	if err != nil {
 		return Inspection{}, err
 	}

@@ -128,14 +128,14 @@ func (c *Controller) reconstructAwaitingState(ctx context.Context, runID agentru
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	page, err := c.store.ReadEvents(string(runID), projection.Revision-1, 1)
+	events, err := c.readAllEvents(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	if len(page.Events) != 1 || page.Events[0].To != agentrun.StateAwaitingDecision {
+	if len(events) == 0 || events[len(events)-1].To != agentrun.StateAwaitingDecision {
 		return nil, nil
 	}
-	frame := page.Events[0]
+	frame := events[len(events)-1]
 	job, err := agentrun.NewRecoveredLogicalJob(agentrun.Identity(frame.RunID), agentrun.Identity(frame.JobID))
 	if err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func (c *Controller) reconstructAwaitingState(ctx context.Context, runID agentru
 	invocation, err := agentrun.NewRecoveredInvocation(
 		agentrun.Identity(frame.RunID), agentrun.Identity(frame.JobID),
 		agentrun.Identity(frame.InvocationID), agentrun.Identity(frame.LineageID),
-		agentrun.Identity(frame.ParentInvocationID),
+		agentrun.Identity(frame.ParentInvocationID), countInvocationAttempts(events),
 	)
 	if err != nil {
 		return nil, err
@@ -152,4 +152,78 @@ func (c *Controller) reconstructAwaitingState(ctx context.Context, runID agentru
 		job: job, invocation: invocation, revision: projection.Revision,
 		state: projection.State, done: make(chan struct{}), recovered: true,
 	}, nil
+}
+
+const eventPageSize = 128
+
+func (c *Controller) readAllEvents(ctx context.Context, runID agentrun.Identity) ([]store.EventFrame, error) {
+	events := make([]store.EventFrame, 0)
+	var cursor uint64
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		page, err := c.store.ReadEvents(string(runID), cursor, eventPageSize)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, page.Events...)
+		if !page.HasMore {
+			return events, nil
+		}
+		cursor = page.NextRevision
+	}
+}
+
+// durableEvidence gathers the validated event stream and the projection
+// derived from it. Both come from durable state, so control decisions never
+// depend on this process having started the run.
+func (c *Controller) durableEvidence(ctx context.Context, runID agentrun.Identity) ([]store.EventFrame, *store.RunProjection, error) {
+	projection, err := c.store.ReadDerivedProjection(string(runID))
+	if err != nil {
+		return nil, nil, err
+	}
+	events, err := c.readAllEvents(ctx, runID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return events, projection, nil
+}
+
+// countInvocationAttempts derives the attempt number of a stream head by
+// counting invocation-identity boundaries across the durable event order.
+func countInvocationAttempts(events []store.EventFrame) uint32 {
+	var attempt uint32
+	previous := agentrun.Identity("")
+	for _, frame := range events {
+		if id := agentrun.Identity(frame.InvocationID); id != previous {
+			attempt++
+			previous = id
+		}
+	}
+	return attempt
+}
+
+// reconstructTerminalInvocation rebuilds the terminal head invocation from
+// durable evidence. The recovered ancestor list stays intentionally
+// incomplete like awaiting-decision recovery; the attempt number is derived
+// from the invocation boundaries recorded in the stream.
+func reconstructTerminalInvocation(events []store.EventFrame) (agentrun.LogicalJob, agentrun.InvocationEnvelope, error) {
+	if len(events) == 0 {
+		return agentrun.LogicalJob{}, agentrun.InvocationEnvelope{}, ErrRunNotActive
+	}
+	head := events[len(events)-1]
+	job, err := agentrun.NewRecoveredLogicalJob(agentrun.Identity(head.RunID), agentrun.Identity(head.JobID))
+	if err != nil {
+		return agentrun.LogicalJob{}, agentrun.InvocationEnvelope{}, err
+	}
+	parent, err := agentrun.NewRecoveredInvocation(
+		agentrun.Identity(head.RunID), agentrun.Identity(head.JobID),
+		agentrun.Identity(head.InvocationID), agentrun.Identity(head.LineageID),
+		agentrun.Identity(head.ParentInvocationID), countInvocationAttempts(events),
+	)
+	if err != nil {
+		return agentrun.LogicalJob{}, agentrun.InvocationEnvelope{}, err
+	}
+	return job, parent, nil
 }
