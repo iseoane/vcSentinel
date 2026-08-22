@@ -207,6 +207,10 @@ review:
   # roll back to unverified acceptance; runs stay inspectable via
   # `sentinel runs`.
   evidence_admission: true
+  # Bounded cancellation escalation for owned provider trees (default true).
+  # Set false to keep cooperative cancellation while never signaling beyond
+  # the direct child.
+  cancellation_escalation: true
   dims:
     spec: "opencode.cheap"
     style: "opencode.cheap"
