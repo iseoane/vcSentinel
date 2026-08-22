@@ -31,13 +31,16 @@ func durableTestTransport(t *testing.T, sha string) review.ReviewTransport {
 	t.Helper()
 	backing := store.NuevoStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:migration"}, sha, []string{"a.go"})
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, error) {
+	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
 		restricted, ok := agent.(RestrictedReviewer)
 		if !ok {
-			return "", review.ErrRestrictedRequired
+			return "", "", review.ErrRestrictedRequired
 		}
-		output, _, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
-		return output, err
+		output, evidence, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		if err != nil {
+			return "", "", err
+		}
+		return output, evidence.InvocationID, nil
 	}
 }
 

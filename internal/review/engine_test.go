@@ -1124,9 +1124,9 @@ func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
 	fake := &agenteFake{}
 	var gotBundle, gotDim, gotPrompt string
 	var gotAgent AuditorAgente
-	transport := func(bundleName, dimension, prompt string, agente AuditorAgente) (string, error) {
+	transport := func(bundleName, dimension, prompt string, agente AuditorAgente) (string, string, error) {
 		gotBundle, gotDim, gotPrompt, gotAgent = bundleName, dimension, prompt, agente
-		return `{"dim":"logic","verdict":"ok"}`, nil
+		return `{"dim":"logic","verdict":"ok"}`, "inv-routes-1", nil
 	}
 	bundles := []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}
 	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
@@ -1138,6 +1138,9 @@ func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
 	})
 	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil || resultado.Dims[0].Resultado.Verdict != "ok" {
 		t.Fatalf("resultado = %+v, want transport-parsed verdict ok", resultado)
+	}
+	if resultado.Dims[0].Resultado.InvocationID != "inv-routes-1" {
+		t.Fatalf("dimension invocation id = %q, want the identity the transport reported", resultado.Dims[0].Resultado.InvocationID)
 	}
 	if gotBundle != "quality" || gotDim != "logic" || strings.TrimSpace(gotPrompt) == "" {
 		t.Fatalf("transport args = %q/%q/%q, want bundle, dimension, and built prompt", gotBundle, gotDim, gotPrompt)
@@ -1155,8 +1158,8 @@ func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
 
 func TestReviewTransportErrorBecomesUnavailableWithConcreteReason(t *testing.T) {
 	fake := &agenteFake{}
-	transport := func(_, _, _ string, _ AuditorAgente) (string, error) {
-		return "", errors.New("durable: provider quota exceeded")
+	transport := func(_, _, _ string, _ AuditorAgente) (string, string, error) {
+		return "", "", errors.New("durable: provider quota exceeded")
 	}
 	bundles := []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}
 	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {

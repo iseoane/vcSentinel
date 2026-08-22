@@ -59,7 +59,7 @@ func TestDurableReviewTransportRoutesThroughRealStore(t *testing.T) {
 	}
 	agent := &fakeRestrictedAgent{response: `{"dim":"logic","verdict":"ok"}`}
 
-	output, err := transport("quality", "logic", "the prompt", agent)
+	output, invocation, err := transport("quality", "logic", "the prompt", agent)
 	if err != nil {
 		t.Fatalf("transport() error = %v", err)
 	}
@@ -67,7 +67,10 @@ func TestDurableReviewTransportRoutesThroughRealStore(t *testing.T) {
 	if output != want {
 		t.Fatalf("output = %q, want %q", output, want)
 	}
-	if _, err := transport("quality", "logic", "the prompt again", agent); err != nil {
+	if invocation == "" {
+		t.Fatal("invocation = empty, want the durable evidence identity of the admitted run")
+	}
+	if _, _, err := transport("quality", "logic", "the prompt again", agent); err != nil {
 		t.Fatalf("second routed call error = %v, want salted candidate to prevent collision", err)
 	}
 }
@@ -83,7 +86,7 @@ func TestDurableReviewTransportRejectsNonRestrictedAgent(t *testing.T) {
 	}
 	soloPrompt := agentWithoutRevision{}
 
-	_, err := transport("quality", "logic", "prompt", soloPrompt)
+	_, _, err := transport("quality", "logic", "prompt", soloPrompt)
 	if err == nil || !strings.Contains(err.Error(), "restricted reviewer capability") {
 		t.Fatalf("err = %v, want restricted-capability requirement preserved", err)
 	}
@@ -102,7 +105,7 @@ func TestDurableReviewTransportSanitizesBoundPaths(t *testing.T) {
 	}
 	agent := &fakeRestrictedAgent{response: `{"dim":"logic","verdict":"ok"}`}
 
-	if _, err := transport("quality", "logic", "prompt", agent); err != nil {
+	if _, _, err := transport("quality", "logic", "prompt", agent); err != nil {
 		t.Fatalf("transport() error = %v", err)
 	}
 	agent.mu.Lock()

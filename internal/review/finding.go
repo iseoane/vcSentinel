@@ -191,6 +191,12 @@ type Hallazgo struct {
 	RefutationLineStart int                 `json:"refutation_line_start,omitempty"`
 	RefutationLineEnd   int                 `json:"refutation_line_end,omitempty"`
 	RefutationRangeHash string              `json:"refutation_range_hash,omitempty"`
+	// InvocationID is the durable invocation provenance bound at finalization
+	// when the producing transport reports one (ticket 07 slice 2b). Empty on
+	// the legacy direct path. Deliberately excluded from Fingerprint: two
+	// findings identical in content must keep byte-identical fingerprints no
+	// matter which invocation produced them.
+	InvocationID string `json:"invocation_id,omitempty"`
 }
 
 // FindingEvidence records the source evidence preserved during aggregation.
@@ -368,6 +374,11 @@ type DimensionResult struct {
 	Reason          string          `json:"reason,omitempty"`
 	RefutedCritical bool            `json:"refuted_critical,omitempty"`
 	Advertencias    []string        `json:"-"`
+	// InvocationID identifies the durable invocation that produced this
+	// result, when the audit routed through a transport that reports one
+	// (ticket 07 slice 2b). Empty for legacy direct audits; additive
+	// provenance metadata only, never a fingerprint input.
+	InvocationID string `json:"invocation_id,omitempty"`
 }
 
 // findingCrudo decodifica un elemento del array "findings" de una línea

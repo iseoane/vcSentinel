@@ -44,13 +44,17 @@ func durableReviewTransport(cfg config.Config, worktree, sha string, paths []str
 	}
 	st := store.NuevoStore(gitCommonDir)
 	transport := reviewexec.NewDurableTransport(st, store.RunPolicy{ID: durableRunPolicyID}, sha, safePaths)
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, error) {
+	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
 		restricted, ok := agent.(reviewexec.RestrictedReviewer)
 		if !ok {
-			return "", review.ErrRestrictedRequired
+			return "", "", review.ErrRestrictedRequired
 		}
-		// slice 2 threads evidence into engine reasons.
-		output, _, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
-		return output, err
+		// Ticket 07 slice 2b: the verified durable evidence travels with the
+		// output so the engine can bind findings to their producing invocation.
+		output, evidence, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		if err != nil {
+			return "", "", err
+		}
+		return output, evidence.InvocationID, nil
 	}
 }
