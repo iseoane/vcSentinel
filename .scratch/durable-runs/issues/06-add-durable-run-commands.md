@@ -105,3 +105,39 @@ interactive REPL integration, remote/daemon surfaces (D units).
 - Verification after fixes: gofmt clean, build/vet OK, full suite green,
   go test -race on execution/agentrun/store/reviewexec green, guardian
   advisory CRITICO only at whole-worktree level before commits.
+
+## Evidence — slice 2 (Recover + Verify)
+
+- Commits: c0d0558 shared ancestry validation (+100/-15), 54baf4e recover and
+  verify primitives, b3df8b5 recover resumption tests (+368), c82845b verify
+  integrity tests (+104). Every staged candidate passed the pre-commit
+  budget; one combined test commit was correctly rejected by the hook and
+  split by concern.
+- Contract surface: brokenAncestryRule now centralizes the three physical-
+  ancestor checks shared by NewInvocationEnvelope and NewRecoveredInvocation;
+  each constructor keeps its own error texts. Recovered envelopes carry the
+  complete faithful ancestor chain (slice 1 follow-up closed here).
+- Controller surface: Recover(ctx, runID, expectedRevision) maps durable
+  shapes to exactly one action — awaiting heads reconstruct without adapter
+  calls (respond AND abort both proven on fresh controllers), retryable
+  terminals (failed/canceled/timed_out all tested) delegate to Retry with
+  the revision pin travelling through, succeeded/unavailable/running-head/
+  empty evidence refuse with ErrRunNotRecoverable or explicit store errors,
+  corrupt logs propagate untouched. Verify(ctx, runID) returns
+  {Valid, Events, Reason}: chain continuity plus derived-projection-equals-
+  replay equality; corruption yields concrete reasons without panics.
+- Independent code review (dual axis): spec confirmed awaiting-resume,
+  refusal matrix, corruption detection, double-recover rejection; flagged
+  missing revision pin on Recover (fixed), untested abort-after-recovery
+  (fixed), untested canceled/timed_out classes (fixed), Verify doc hash
+  claim (verified TRUE against store scanEventLog/validateFrame which check
+  content and predecessor hashes). Standards flagged first-appearance loop
+  duplication (fixed via physicalInvocationChain; attempt = len(chain)),
+  duplicated ancestry checks in contracts (fixed via brokenAncestryRule),
+  deliberate TOCTOU double-read (documented at the switch), recovered-
+  identity seven-parameter clump (deferred with slice 1's note as one
+  contracts-hygiene item before R6 opens).
+- Deferred follow-ups: bundle recovered-invocation identity parameters into
+  a dedicated type once the CLI surface freezes at slice 3.
+- Verification after fixes: gofmt clean, build/vet OK, full suite green,
+  race clean on execution/agentrun/store/reviewexec.
