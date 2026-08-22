@@ -9,7 +9,7 @@ rebase reuse keeps working only through existing blob identity rules.
 **Blocked by:** 05 (complete, merged at d0f9a3f via R4) and 06 (complete,
 merged at d0f9a3f).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -46,23 +46,34 @@ merged at d0f9a3f).
 
 **Acceptance criteria:**
 
-- [ ] Focused tests prove output whose returned bytes do not match the
+- [x] Focused tests prove output whose returned bytes do not match the
       recorded OutputHash is rejected with an `admission:` reason before any
-      verdict computation sees it.
-- [ ] Focused tests prove stale snapshot rejection: a run whose stored
+      verdict computation sees it. *(Slice 1 verifier table: missing outcome,
+      class divergence, hash mismatch; engine surface test pins the literal
+      prefix into DimensionResult.Reason.)*
+- [x] Focused tests prove stale snapshot rejection: a run whose stored
       candidate/SHA or prompt differs from the live audit context is refused
-      with the diverging identity named.
-- [ ] Focused tests prove findings carry the producing invocation identity
+      with the diverging identity named. *(Slice 2a bindSnapshot table;
+      end-to-end sha-A-vs-sha-B divergence is unit-level because Run authors
+      its own record — disclosed in slice 2a evidence.)*
+- [x] Focused tests prove findings carry the producing invocation identity
       additively while fingerprints stay identical for identical content.
-- [ ] Tests prove rebase reuse: content already reviewed under another SHA is
+      *(TestFingerprintIgnoresInvocationID; goldens untouched.)*
+- [x] Tests prove rebase reuse: content already reviewed under another SHA is
       admitted through existing blob identity rules without provider calls.
-- [ ] Tests prove `review.evidence_admission=false` restores lenient
+      *(Real git rebase, zero transport and zero reviewer calls, original
+      InvocationID preserved through ledger adoption.)*
+- [x] Tests prove `review.evidence_admission=false` restores lenient
       acceptance byte-for-byte while every run stays inspectable via
-      `sentinel runs`.
-- [ ] Tests prove non-admission failure text preservation is unchanged.
-- [ ] Exit-code/error mapping in gate, review, and pr paths surfaces
+      `sentinel runs`. *(Parity extension: lenient == legacy output with empty
+      identities; runs records unchanged.)*
+- [x] Tests prove non-admission failure text preservation is unchanged.
+      *(Pinned TerminalError assertions untouched since slice 1.)*
+- [x] Exit-code/error mapping in gate, review, and pr paths surfaces
       admission failures distinctly from infrastructure failures.
-- [ ] The implementation records build, vet, tests, guardian, independent
+      *(Gate class=admission|infrastructure labels; pr JSON counters; exit-code
+      contracts pinned unchanged.)*
+- [x] The implementation records build, vet, tests, guardian, independent
       `code-review`, Judgment Day, rollback boundary, and follow-ups here.
 
 **Out of scope:** Process-tree cancellation ownership (R7), startup scanning
@@ -199,3 +210,52 @@ rewriting historical ledger rows.
   fixing a cleanup race the new parity run exposed.
 - Verification: gofmt clean, build/vet OK, full suite green across 22
   packages including 3x repeat of the drained race test.
+
+## Evidence — Judgment Day (unit closure)
+
+- Target frozen: range d0f9a3f..HEAD, patch identity f0e6ebcf91d765eb,
+  manifest 1807b9cf07acee76, bundle at
+  tool-output/jd-r6-target (full.patch + tree + spec + manifest).
+- Both blind judges inspected the identical immutable bundle in parallel.
+- Round 1 merged ledger: CRITICAL confirmed 0; one-judge suspects 0;
+  contradictions 0; cross-corroboration not required (no severe findings).
+- WARNING rows accepted as info and recorded as follow-ups:
+  - JD-A1 (introduced): the cooperative abort after a rejected binding does
+    NOT durably settle the run canceled — Apply(ActionAbort) cancels a worker
+    context the review adapter ignores, so a late provider result appends its
+    own terminal event (possibly success carrying the untrusted output hash)
+    and the rejection itself is never persisted. Caller-facing admission is
+    unaffected. The slice-2a evidence note and the code comment overclaimed;
+    this act corrects the record. Real settlement semantics belong to R7
+    process-tree ownership.
+  - JD-B1 (introduced): IsAdmissionReason classifies persisted reasons by the
+    literal "admission: " prefix, which provider-authored failure text can
+    spoof into gate labels and pr counters. Hardening follow-up (source-
+    authenticated classification) without changing the documented prefix
+    contract.
+- SUGGESTION corroborated by both judges: pr admission/infrastructure counters
+  aggregate every append-only revision rather than the latest per dimension
+  (deliberate, documented in helper comment).
+- Fix rounds used: 0 of 2. Scoped re-judgment: not required.
+
+## Discovered outside the judgment target
+
+- go test -race on internal/review fails in TestAnalizarRamaAuditaPendientes:
+  the legacy auditorStub test double is raced by parallel dimension audits.
+  REPRODUCED on main at d0f9a3f (the unit's merge base), so it predates R6 and
+  is outside this ticket's judged delta. Follow-up for the next unit's
+  housekeeping: guard the stub with a mutex.
+
+## Final verification snapshot before closure
+
+- gofmt clean; go build OK; go vet OK; full suite green across 22 packages
+  (-count=1); race clean on reviewexec/execution; the only -race failure in
+  the tree is the pre-existing legacy stub documented above, reproduced on
+  main.
+- Rollback boundary as contracted: review.evidence_admission=false restores
+  pre-R6 lenient acceptance while durable runs remain fully inspectable;
+  DurableRuns=false still returns to the legacy scheduler byte-for-byte.
+
+**Closed:** R6 complete — agent output now influences review/gate results only
+through verified durable provenance, with reversible strictness and additive
+provenance metadata.
