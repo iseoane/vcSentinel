@@ -135,22 +135,13 @@ func (c *Controller) reconstructAwaitingState(ctx context.Context, runID agentru
 	if len(events) == 0 || events[len(events)-1].To != agentrun.StateAwaitingDecision {
 		return nil, nil
 	}
-	frame := events[len(events)-1]
-	job, err := agentrun.NewRecoveredLogicalJob(agentrun.Identity(frame.RunID), agentrun.Identity(frame.JobID))
-	if err != nil {
-		return nil, err
-	}
-	invocation, err := agentrun.NewRecoveredInvocation(
-		agentrun.Identity(frame.RunID), agentrun.Identity(frame.JobID),
-		agentrun.Identity(frame.InvocationID), agentrun.Identity(frame.LineageID),
-		agentrun.Identity(frame.ParentInvocationID), countInvocationAttempts(events),
-	)
+	job, invocation, err := recoverHeadEnvelope(events)
 	if err != nil {
 		return nil, err
 	}
 	return &runState{
 		job: job, invocation: invocation, revision: projection.Revision,
-		state: projection.State, done: make(chan struct{}), recovered: true,
+		state: projection.State, done: make(chan struct{}),
 	}, nil
 }
 
@@ -190,25 +181,48 @@ func (c *Controller) durableEvidence(ctx context.Context, runID agentrun.Identit
 	return events, projection, nil
 }
 
-// countInvocationAttempts derives the attempt number of a stream head by
-// counting invocation-identity boundaries across the durable event order.
-func countInvocationAttempts(events []store.EventFrame) uint32 {
-	var attempt uint32
-	previous := agentrun.Identity("")
+// physicalInvocationChain lists each distinct invocation identity in durable
+// event order; consecutive frames of one invocation collapse to one entry.
+// Events of one physical invocation occupy a contiguous block and each child
+// block directly follows its parent, so first-appearance order is the
+// physical chain.
+func physicalInvocationChain(events []store.EventFrame) []agentrun.Identity {
+	chain := make([]agentrun.Identity, 0, len(events))
+	var previous agentrun.Identity
 	for _, frame := range events {
 		if id := agentrun.Identity(frame.InvocationID); id != previous {
-			attempt++
+			chain = append(chain, id)
 			previous = id
 		}
 	}
-	return attempt
+	return chain
 }
 
-// reconstructTerminalInvocation rebuilds the terminal head invocation from
-// durable evidence. The recovered ancestor list stays intentionally
-// incomplete like awaiting-decision recovery; the attempt number is derived
-// from the invocation boundaries recorded in the stream.
-func reconstructTerminalInvocation(events []store.EventFrame) (agentrun.LogicalJob, agentrun.InvocationEnvelope, error) {
+// countInvocationAttempts derives the attempt number of a stream head from
+// the invocation boundaries recorded in the durable event order.
+func countInvocationAttempts(events []store.EventFrame) uint32 {
+	return uint32(len(physicalInvocationChain(events)))
+}
+
+// invocationAncestry derives the complete physical ancestor chain of the
+// stream-head invocation. The result starts at the logical job identity and
+// stops at the head's parent, matching the ancestor list a live process
+// would hold; the chain itself includes the stream head.
+func invocationAncestry(events []store.EventFrame) []agentrun.Identity {
+	if len(events) == 0 {
+		return nil
+	}
+	chain := physicalInvocationChain(events)
+	ancestors := make([]agentrun.Identity, 0, len(chain))
+	ancestors = append(ancestors, agentrun.Identity(events[0].JobID))
+	return append(ancestors, chain[:len(chain)-1]...)
+}
+
+// recoverHeadEnvelope rebuilds the terminal or awaiting stream-head job and
+// invocation from durable evidence alone. NewRecoveredInvocation validates
+// that the derived ancestry terminates at the recorded parent, so divergent
+// durable evidence is refused instead of silently fabricating lineage.
+func recoverHeadEnvelope(events []store.EventFrame) (agentrun.LogicalJob, agentrun.InvocationEnvelope, error) {
 	if len(events) == 0 {
 		return agentrun.LogicalJob{}, agentrun.InvocationEnvelope{}, ErrRunNotActive
 	}
@@ -220,7 +234,8 @@ func reconstructTerminalInvocation(events []store.EventFrame) (agentrun.LogicalJ
 	parent, err := agentrun.NewRecoveredInvocation(
 		agentrun.Identity(head.RunID), agentrun.Identity(head.JobID),
 		agentrun.Identity(head.InvocationID), agentrun.Identity(head.LineageID),
-		agentrun.Identity(head.ParentInvocationID), countInvocationAttempts(events),
+		agentrun.Identity(head.ParentInvocationID), invocationAncestry(events),
+		countInvocationAttempts(events),
 	)
 	if err != nil {
 		return agentrun.LogicalJob{}, agentrun.InvocationEnvelope{}, err

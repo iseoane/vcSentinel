@@ -19,7 +19,6 @@ var (
 	ErrRunNotActive       = errors.New("execution: run is not active in this controller")
 	ErrUnsupportedAction  = errors.New("execution: unsupported control action")
 	ErrDecisionNotPending = errors.New("execution: run is not awaiting a response")
-	ErrRecoveredResponse  = errors.New("execution: persisted response requires a live invocation context")
 	// ErrRunNotRetryable reports a terminal outcome that stays final: success
 	// and unavailable evidence cannot be relaunched by a retry decision.
 	ErrRunNotRetryable = errors.New("execution: terminal run outcome cannot be retried")
@@ -147,7 +146,6 @@ type runState struct {
 	state         agentrun.LifecycleState
 	cancel        context.CancelFunc
 	running       bool
-	recovered     bool
 	done          chan struct{}
 	completion    Completion
 	completionErr error
@@ -302,9 +300,6 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 		state.cancel()
 		return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
 	case ActionRespond:
-		if state.recovered {
-			return ApplyResult{}, ErrRecoveredResponse
-		}
 		return c.respond(state, runID, action.Response)
 	}
 	return ApplyResult{}, fmt.Errorf("%w: %q", ErrUnsupportedAction, action.Kind)
@@ -372,6 +367,9 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 func (c *Controller) respond(state *runState, runID agentrun.Identity, response string) (ApplyResult, error) {
 	if state.state != agentrun.StateAwaitingDecision {
 		return ApplyResult{}, ErrDecisionNotPending
+	}
+	if c.adapter == nil {
+		return ApplyResult{}, ErrControllerNotReady
 	}
 	if strings.TrimSpace(response) == "" {
 		return ApplyResult{}, errors.New("execution: response is empty")

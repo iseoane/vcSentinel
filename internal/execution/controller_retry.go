@@ -56,7 +56,7 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 		parent = state.invocation
 		job = state.job
 	} else {
-		job, parent, err = reconstructTerminalInvocation(events)
+		job, parent, err = recoverHeadEnvelope(events)
 		if err != nil {
 			return Handle{}, err
 		}
