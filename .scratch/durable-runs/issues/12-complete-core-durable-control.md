@@ -107,3 +107,31 @@ fallback/recovery behavior, and linked worktrees observe the same run state.
   fallback fixture (N2). Cosmetic worktree-prune note left as-is (temp dirs).
 - Verification snapshot: gofmt empty; build+vet linux+windows; -race clean;
   ×5 deterministic.
+
+### Slice 3 — operator completeness: retention, schemas, migration policy
+- Commits: prune guards (341), pins+reasons (377), removal flow (320), CLI
+  contract pins (202), docs (156 net) — hook-enforced; clean. Note:
+  comandos_runs_prune.go rode along in the guards-pin commit (label
+  imperfection, content coherent).
+- PruneExecutions: explicit-only operator action with full guard chain —
+  non-terminal, corrupt/incomplete-tail, provenance-referenced (finding blobs
+  + ledger fichas, fail-closed on unreadable), parent-of-survivor protected,
+  orphaned-canceled deliberately kept (documented conservative rule);
+  Windows-safe two-phase removal under the cross-process lock; in-lock tail
+  re-verification closes the live-controller race.
+- M1 fixed: crash-interrupted removals (lock-only dirs) complete on next
+  prune as prunable-remnant; dirs missing request.json WITH events bytes
+  still refused. L1 done: exported prune reasons + doc-pin test.
+- Docs: consolidated stable-JSON schema table with keep-in-sync pointer;
+  retention/purge policy matching implementation 1:1 (verified by reviewer
+  against projectionFor UpdatedAt semantics and ops independence);
+  compatibility/migration policy covering R1→R10 additive shapes,
+  never-rewritten guarantee, release-bounded switch deprecation.
+- Dual-axis review: GO — all five adversarial hunts resolved (crash
+  atomicity now self-healing via remnant completion; reference completeness
+  verified against blob indexes/decisions.jsonl/ops which carry no run IDs;
+  writer-side last-event At decides cutoff with fail-safe skew asymmetry).
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green across 25 packages; -race clean on touched packages; ×5 deterministic.
+
+**Unit complete pending Judgment Day.**
