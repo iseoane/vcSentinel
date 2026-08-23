@@ -76,3 +76,33 @@ window (user authorization for this unit).
 ## Follow-ups
 
 *(recorded at closure)*
+
+### Slice 1 — hardening pool from R8-R10 judgment days
+- Commits: prune window + refutation identity (265), strict flag contracts
+  (151), matrix/canary/provenance pins (216) — hook-enforced.
+- Prune in-lock window closed: locked section re-verifies provenance
+  references AND late-appearing children (exact ParentRunID filter, undecodable
+  siblings skipped justified); typed refusal mapped to stable report reasons;
+  race-window test seam proves kept-not-deleted for both halves. Residual
+  post-rescan admission window recorded as follow-up (F-2, consistent with
+  remnant-repair design).
+- Strict per-subcommand flags: single-source runsSubcommandFlags table;
+  undeclared flags → usage exit 1 with named message; recover special-case
+  intact; full hardcoded 9×10 accept/reject matrix + dispatcher e2e; existing
+  call sites all conform (verified by independent review).
+- Refutation InvocationID stamped on the refuted Hallazgo v2 BEFORE ledger
+  persistence (legacy nil branch byte-identical). Review round caught F-1
+  CRITICAL: the provenance collector never read Dims[].Hallazgos — the only
+  home of refutation identity — so prune could delete cited streams. Fixed:
+  collector scans Hallazgos, end-to-end collector test over a REAL GuardarRevision
+  ficha proves producer AND refuter identities both protected; masking
+  hand-seeded case reverted to plain reference seeding with pointer comment.
+- Store-primitive canaries (CreateRun/AppendTerminalEvent/SaveAttemptOutcome)
+  declared for the six legitimate durable files; undeclared-file detection
+  tested; live sweep confirms zero unclassified carriers.
+- Deviations accepted: SaveAttemptOutcome is the real primitive name (ticket
+  text corrected here); ReviewFinding has no InvocationID field — Hallazgo v2
+  is the persisted carrier, which is what prune reads; engine.go 682 lines is
+  pre-existing debt (+13 net this slice).
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green; -race clean on store/review; ×5 deterministic.
