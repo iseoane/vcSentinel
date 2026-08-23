@@ -300,4 +300,45 @@ repository binding; changing durable persistence formats.
 
 ## Evidence — slice 3 (lifecycle, reconciliation, closure)
 
-*(pending)*
+- Base: branch state after slice-3a evidence. Delegator-applied closure
+  polish after the dual-axis PASS (disclosed here): usage-text alignment for
+  the verify/daemon rows (three spaces back to the two-space sibling
+  column), a Windows console-signal caveat added to daemon.Run's doc comment,
+  and this follow-up record.
+- Commits: feat(daemon) boot reconciliation + foreground Run lifecycle,
+  feat(sentinel) runs daemon start|status|stop CLI with documented exit
+  contracts, feat(execution) expose Backing accessor keeping reconcile/
+  serving store structurally paired, plus focused test commits — exact
+  hashes in the closure snapshot below.
+- Surface: ReconcileOnBoot reuses store.RepairTerminalUnprojected (the very
+  primitive `runs recover --repair` calls) — terminal_unprojected is the
+  only auto class; recoverable/orphaned_canceled/corrupt stay informational;
+  operator_required logged untouched with its exact missing-evidence reason;
+  idempotence proven byte-for-byte on second boot. daemon.Run(gitCommonDir,
+  controller, grace, out) is the injected-controller foreground lifecycle:
+  Claim -> reconcile -> DefaultEndpoint bind + endpoint.json persist ->
+  SIGINT/SIGTERM-or-wire-Shutdown -> defer removes endpoint artifacts and
+  releases the claim on EVERY exit path (residue asserted by test). CLI:
+  start (exit 0 clean stop / 4 rival owner naming pid / 5 infrastructure),
+  status (2 absent via runExitRunNotFound, 5 corrupt explicit), stop
+  (idempotent not-running = 2 mirroring abort-on-settled semantics); all
+  three documented literally in runsUsage.
+- Nil-adapter gap caught pre-review and fixed: production Run originally
+  built a nil-adapter controller so wire starts failed ErrControllerNotReady
+  while commands preferred the endpoint — dependency injection moved
+  controller construction to cmd/sentinel (reusing buildRunsController) and
+  TestRunServesWireStartThroughInjectedController proves a real transported
+  prompt executes through the adapter and lands verified durable evidence.
+- Follow-ups recorded at closure: (1) Controller.Inspect composes Outcomes
+  and Projection from two separate durable scans — one inspection during a
+  concurrent terminal append can pair an empty outcome page with a terminal
+  projection; each field is consistent, the pair is not an atomic snapshot
+  (discovered by the injection test, handled there by settling on both
+  signals; Inspect doc should stop implying snapshot atomicity). (2)
+  status/stop share ~10 lines of load-endpoint scaffolding — extract if a
+  fourth consumer appears. (3) ReconcileOnBoot keeps an unread controller
+  parameter as a deliberate lifecycle anchor.
+- Verification: gofmt clean; build/vet OK; focused -race green across
+  daemon/cmd/store; GOOS=windows build+vet OK; full suite green.
+
+*(Judgment Day closure pending)*
