@@ -115,7 +115,7 @@ func TestRunsObservationSurfacesReconcileOwnerDeathDuringCancellation(t *testing
 
 	out.Reset()
 	controller := execution.NewController(backing, nil)
-	if code := inspectExecution(&out, controller, backing, orphaned, false); code != runExitSuccess {
+	if code := inspectExecution(&out, controller, backing, orphaned, "test-harness", false); code != runExitSuccess {
 		t.Fatalf("inspectExecution exit = %d, output:\n%s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "canceled-orphaned") || !strings.Contains(out.String(), "state canceled") {
@@ -124,7 +124,7 @@ func TestRunsObservationSurfacesReconcileOwnerDeathDuringCancellation(t *testing
 
 	// The settled control stays byte-for-byte honest in inspection too.
 	out.Reset()
-	if code := inspectExecution(&out, controller, backing, settled, false); code != runExitSuccess {
+	if code := inspectExecution(&out, controller, backing, settled, "test-harness", false); code != runExitSuccess {
 		t.Fatalf("inspectExecution(settled) exit = %d", code)
 	}
 	if strings.Contains(out.String(), "canceled-orphaned") {
@@ -135,7 +135,7 @@ func TestRunsObservationSurfacesReconcileOwnerDeathDuringCancellation(t *testing
 	// displayed projection field comes from the reconciled view — never a mix
 	// of raw and derived values.
 	out.Reset()
-	if code := inspectExecution(&out, controller, backing, orphaned, true); code != runExitSuccess {
+	if code := inspectExecution(&out, controller, backing, orphaned, "test-harness", true); code != runExitSuccess {
 		t.Fatalf("JSON inspectExecution exit = %d", code)
 	}
 	var summary runsStatusSummary
@@ -153,7 +153,7 @@ func TestRunsObservationSurfacesReconcileOwnerDeathDuringCancellation(t *testing
 
 	// The settled control displays exactly its raw projection fields.
 	out.Reset()
-	if code := inspectExecution(&out, controller, backing, settled, true); code != runExitSuccess {
+	if code := inspectExecution(&out, controller, backing, settled, "test-harness", true); code != runExitSuccess {
 		t.Fatalf("JSON inspectExecution(settled) exit = %d", code)
 	}
 	var settledSummary runsStatusSummary
