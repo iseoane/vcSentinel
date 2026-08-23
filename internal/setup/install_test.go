@@ -263,3 +263,62 @@ func TestObtenerPathUsuarioWindows(t *testing.T) {
 		t.Fatalf("obtenerPathUsuarioWindows devolvió error: %v", err)
 	}
 }
+
+// TestInstalacionColocaBinarioEjecutableYReportaVersion verifies the placement
+// half of the install flow on a temporary destination: moverYReemplazar puts
+// the downloaded artifact in place and the installer's chmod 0755 step makes
+// it executable; verificarBinario then proves the installed binary answers
+// --version with its real version string.
+//
+// instalarLinux itself targets /usr/local/bin and falls back to sudo, so it is
+// deliberately NOT invoked from tests; this test exercises its exact placement
+// primitives over an injected temporary destination. instalarWindows is
+// HOME-based but shells out to PowerShell for the user PATH update, so its
+// logic stays covered by path-building unit tests (TestRutasBinario,
+// TestNecesitaAnadirPathWindows) plus GOOS=windows build+vet as the
+// compile-time half.
+func TestInstalacionColocaBinarioEjecutableYReportaVersion(t *testing.T) {
+	dir := t.TempDir()
+	descarga := filepath.Join(dir, "downloaded-sentinel")
+	destino := filepath.Join(dir, "installed", nombreBinarioGo())
+	if err := os.MkdirAll(filepath.Dir(destino), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(descarga, []byte("@echo off\r\necho sentinel v3.2.1\r\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.WriteFile(descarga, []byte("#!/bin/sh\necho sentinel v3.2.1\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := moverYReemplazar(descarga, destino); err != nil {
+		t.Fatalf("placement failed: %v", err)
+	}
+	if err := os.Chmod(destino, 0755); err != nil {
+		t.Fatalf("chmod of the installed binary failed: %v", err)
+	}
+
+	info, err := os.Stat(destino)
+	if err != nil {
+		t.Fatalf("the installed binary is missing: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0100 == 0 {
+		t.Errorf("the installed binary is not executable: %o", perm)
+	}
+	if _, err := os.Stat(descarga); !os.IsNotExist(err) {
+		t.Errorf("the downloaded artifact was not consumed by placement: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := verificarBinario(destino); err != nil {
+			t.Fatalf("verificarBinario failed on the installed binary: %v", err)
+		}
+	})
+	if !strings.Contains(output, "v3.2.1") {
+		t.Errorf("the installed version was not reported: %q", output)
+	}
+}
