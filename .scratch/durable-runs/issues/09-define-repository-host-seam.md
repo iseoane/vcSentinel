@@ -12,7 +12,7 @@ are contract-tested without starting any background daemon.
 
 **Blocked by:** 05 (complete).
 
-**Status:** in_progress
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -20,8 +20,10 @@ are contract-tested without starting any background daemon.
   `RepositoryHost` with exactly `Start`, `Inspect`, `Subscribe`, `Apply`.
   Existing controller error identity (`ErrRunNotActive`,
   `ErrUnsupportedAction`, `ErrStaleRevision`, `ErrDecisionNotPending`,
-  `ErrRunAlreadyExists`) flows through unchanged; the port never invents new
-  error classes at D1.
+  `ErrRunAlreadyExists`) flows through unchanged; the port never reclassifies
+  controller outcomes. Seam-level validation introduces exactly two new
+  exported sentinels: one for a missing authentication principal, one for an
+  `Apply` replay carrying an already-consumed idempotency identity.
 - `InProcessHost` delegates one-to-one to `Controller` and is the default
   implementation wired into `sentinel runs` commands. Behavior-neutral:
   outputs and exit codes stay byte-identical, pinned by untouched CLI tests.
@@ -41,19 +43,30 @@ are contract-tested without starting any background daemon.
 
 **Acceptance criteria:**
 
-- [ ] `RepositoryHost` exposes exactly start, inspect, subscribe, apply;
-      controller internals stay behind it.
-- [ ] Routed `sentinel runs` commands execute through the in-process host
-      with byte-identical output and unchanged exit-code mapping.
-- [ ] Envelopes round-trip JSON stably; an empty authentication context is
+- [x] `RepositoryHost` exposes exactly start, inspect, subscribe, apply;
+      controller internals stay behind it. *(Slice 1; the adapter reaches the
+      store only through Controller.ReadEventPage after slice-1 review.)*
+- [x] Routed `sentinel runs` commands execute through the in-process host
+      with byte-identical output and unchanged exit-code mapping. *(start,
+      respond, abort since slice 1; status, verify pre-check, and logs
+      paging since slice 2 — existing CLI tests untouched and green.)*
+- [x] Envelopes round-trip JSON stably; an empty authentication context is
       rejected on every operation with a deterministic error.
-- [ ] An `Apply` replay reusing the same idempotency identity within one
+      *(Slice 2: ErrMissingPrincipal on all four ops before any store contact;
+      key-name snapshot pins tag drift. Caveat recorded in slice 2 evidence:
+      StartRequest.Request marshals as {} because agentrun.RunRequest fields
+      are unexported by design.)*
+- [x] An `Apply` replay reusing the same idempotency identity within one
       process lifetime is rejected; a fresh identity proceeds normally.
-- [ ] Stale-revision and invalid-state errors keep their identity through the
-      port (`errors.Is` parity).
-- [ ] No daemon, socket, autostart, or background process appears anywhere;
+      *(Slice 2: ErrDuplicateAction, identity scoped per run, at-most-once on
+      admission attempt — documented in Apply.)*
+- [x] Stale-revision and invalid-state errors keep their identity through the
+      port (`errors.Is` parity). *(Slice 1 table; ErrStaleRevision itself has
+      no port path until envelopes carry expected revisions — recorded as a
+      future envelope evolution, not this ticket.)*
+- [x] No daemon, socket, autostart, or background process appears anywhere;
       contract tests run entirely in-process.
-- [ ] The implementation records build, vet, tests, guardian, independent
+- [x] The implementation records build, vet, tests, guardian, independent
       `code-review`, rollback boundary, and follow-ups here.
 
 **Out of scope:** Daemon lifecycle, endpoint discovery, real authentication
@@ -113,8 +126,63 @@ transport shape).
 - Housekeeping: unrelated untracked sess-show*.txt files at the repository
   root were preserved untouched and never staged.
 
-*(slice 2 pending)*
-
 ## Evidence — slice 2 (envelopes, auth presence, idempotency, subscribe)
 
-*(pending)*
+- Base: main at 936b7b8 (slice-1 evidence commit).
+- Commits: feat(execution) carry principal and action identities in host
+  envelopes (+194/-30 across host.go, actions, decls, read),
+  test(execution) pin envelope auth presence and replay rejection
+  (+237/-31 across host_test.go, reconciliation_test.go signature updates).
+  Both staged candidates passed the pre-commit budget (194 / 237).
+- Surface: AuthContext{Principal} embedded in all four request envelopes;
+  InspectRequest{RunID, AuthContext} makes the interface uniform;
+  ApplyRequest.ActionID with process-lifetime replay rejection via
+  ErrDuplicateAction (scoped per run); ErrMissingPrincipal returned before
+  any controller/store contact on every operation; stable json tags pinned by
+  key-name snapshot round-trip tests; CLI resolves the principal through
+  USERNAME -> USER -> os/user.Current() and generates ActionIDs mirroring the
+  candidate pattern; logs paging routes through host.Subscribe byte-neutrally
+  (limit normalization unreachable: parseRunOptions defaults 100 and rejects
+  --limit 0).
+- Independent code review (dual axis): spec PASS — zero-value-Controller
+  tests prove pre-contact rejection; dedup keyed (runID, ActionID) verified
+  mutex-correct; executeRunsLogs proven byte-identical; retry/recover keep
+  direct controller calls; Controller untouched. Accepted polish fixes:
+  fmt.Errorf-without-args replaced by errors.New matching controller style;
+  at-most-once consumption documented explicitly in Apply ("a rejected action
+  still burns its identity"); over-promising test renamed to
+  TestStaleRevisionSentinelRemainsOutsidePortUntilEnvelopesCarryExpectedRevisions.
+- Race found during full-suite verification and fixed: the dedup test's first
+  accepted Apply spawned a child worker that outlived the test, racing
+  TempDir RemoveAll (`unlinkat ... directory not empty`, 2/5 rounds under
+  concurrent package load). Fixed by draining run B to awaiting-decision with
+  the file's existing waitForStateViaHost idiom; paired-package stress then
+  reported exe=0 cmd=0 in 10/10 rounds. Two transient cmd/sentinel failures
+  under whole-suite load (incomplete-terminal-persistence windows) vanished
+  after the drain fix and never reproduced again: two consecutive full-suite
+  runs green, confirming they were second-order contention from the leak, not
+  independent defects.
+- Honest limits recorded: StartRequest.Request marshals as {} because
+  agentrun.RunRequest keeps its fields unexported (identity-canonical), so
+  wire transport of a start payload remains an explicit D2 decision;
+  ErrStaleRevision has no port path until envelopes evolve an expected-
+  revision field; replay detection is process-lifetime only by contract.
+- Follow-ups accepted without code change: the four-fold principal guard in
+  the adapter could share one helper if it grows; resolveRunsPrincipal plus
+  error-print boilerplate repeats across six command sites (candidate for one
+  command-level helper); principal-resolution failure exits via runExitCode
+  in action commands but runExitInfrastructure in status/logs/verify — same
+  class, two policies, worth unifying at the next exit-code contract touch.
+- Verification: gofmt clean; build/vet OK; focused execution + cmd suites
+  green; FULL suite green twice consecutively (-count=1) after the drain fix;
+  paired-load stress 10/10 clean.
+- Rollback boundary as contracted: the seam is additive internal refactoring
+  with no configuration surface; reverting this ticket's five commits
+  restores pre-D1 behavior exactly, and commands remain bound to the
+  in-process host.
+
+**Closed:** D1 complete — the controller now runs behind a RepositoryHost
+seam whose envelopes carry an authenticated principal and per-run
+idempotency identities, with the in-process host as default implementation
+and both sides of the seam contract-tested in-process. D2 can define endpoint
+discovery and daemon lifecycle against this exact port.
