@@ -73,3 +73,26 @@ reconstructed from admitted durable state alone.
 ## Follow-ups
 
 *(recorded at closure)*
+
+### Slice 1 — gate run model and reversible seam (machinery only)
+- Commits: plan+evidence production (337), pins (314) — hook-enforced.
+- BuildGateRunPlan: one root request (stage/profile via canonical NUL-joined
+  prompt through PromptIdentity; HEAD sha as Candidate; command-list hash via
+  NewCapability identity authority — zero ad-hoc hashing), one validation job
+  per profile command in order, exactly one review job; typed GatePlanError
+  per field. Map-order safe: profiles are ordered slices, capabilities sorted.
+- RecordValidationEvidence: deterministic scalar entries + 64-hex digest of
+  the whole tuple through execution.HashAdapterOutput (command/capability/
+  exit/duration/trimmed output); hash-only persistence model respected; no
+  agent anywhere.
+- Switch DurableRuns default false: legacy path byte-green with nil Resultado.
+  Err (only ejecutarGateDurable sets it; sole CLI consumer reads Estado/
+  Mensajes only); true → plan builds first, then typed not-wired error; plan
+  failures never masked. Flag unreachable from CLI this slice by design.
+- Dual-axis review: spec 8/8 PASS (collision-safe embedding proven injective
+  for reachable inputs; digest tuple binding verified both axes; map iteration
+  nondeterminism ruled out); standards CLEAN after error-prefix alignment
+  ("gate: " house style on all three new errors). Test-only surface noted as
+  cutover follow-up so staged symbols don't orphan.
+- Verification snapshot: gofmt empty; build+vet linux+windows; gate and
+  cmd/sentinel suites green; plan/evidence tests ×5 deterministic.
