@@ -25,7 +25,14 @@ func reconcileProjection(runID string, frames []EventFrame) RunProjection {
 	if projection.Terminal != agentrun.TerminalNone {
 		return projection
 	}
-	for _, frame := range frames {
+	lastTerminalIdx := -1
+	for i, frame := range frames {
+		if frame.Terminal != agentrun.TerminalNone {
+			lastTerminalIdx = i
+		}
+	}
+	start := lastTerminalIdx + 1
+	for _, frame := range frames[start:] {
 		if frame.To == agentrun.StateTerminating || frame.To == agentrun.StateTerminated {
 			projection.State = agentrun.StateCanceled
 			projection.Terminal = agentrun.TerminalCancellation

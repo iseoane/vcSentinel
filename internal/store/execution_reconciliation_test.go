@@ -275,3 +275,121 @@ func TestReconcileProjectionLeavesPersistedSerializationUnchanged(t *testing.T) 
 		t.Fatal("writer-derived projections must never carry the reconciliation verdict")
 	}
 }
+
+// TestReconciledProjectionDoesNotFabricateTerminalAfterRetry verifies the
+// R7 fix for finder 2: a live retried run (canceled->running, head
+// non-terminal running) must NOT be reconciled to orphaned-canceled even
+// though its history contains escalation frames before the terminal settlement.
+func TestReconciledProjectionDoesNotFabricateTerminalAfterRetry(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	runID := string(job.RunID())
+	root, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Build: created->queued->admitted->running->terminating->terminated->canceled->running(retry)
+	sequence := []struct {
+		invocation agentrun.InvocationEnvelope
+		from       agentrun.LifecycleState
+		to         agentrun.LifecycleState
+		decision   agentrun.Decision
+	}{
+		{root, agentrun.StateCreated, agentrun.StateQueued, agentrun.DecisionStart},
+		{root, agentrun.StateQueued, agentrun.StateAdmitted, agentrun.DecisionStart},
+		{root, agentrun.StateAdmitted, agentrun.StateRunning, agentrun.DecisionStart},
+		{root, agentrun.StateRunning, agentrun.StateTerminating, agentrun.DecisionNone},
+		{root, agentrun.StateTerminating, agentrun.StateTerminated, agentrun.DecisionNone},
+		{root, agentrun.StateTerminated, agentrun.StateCanceled, agentrun.DecisionAbort},
+	}
+	for i, step := range sequence {
+		event, err := agentrun.NewNormalizedEvent(step.invocation, step.from, step.to, step.decision, time.Unix(1700000000+int64(i), 0).UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AppendEvent(runID, event, uint64(i)); err != nil {
+			t.Fatalf("AppendEvent(%s->%s) error = %v", step.from, step.to, err)
+		}
+	}
+	retryInvocation, err := agentrun.NewRetryInvocation(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryEvent, err := agentrun.NewNormalizedEvent(retryInvocation, agentrun.StateCanceled, agentrun.StateRunning, agentrun.DecisionRetry, time.Unix(1700000010, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendEvent(runID, retryEvent, uint64(len(sequence))); err != nil {
+		t.Fatalf("AppendEvent(canceled->running retry) error = %v", err)
+	}
+	projection, err := s.ReadReconciledProjection(runID)
+	if err != nil {
+		t.Fatalf("ReadReconciledProjection() error = %v", err)
+	}
+	if projection.State != agentrun.StateRunning || projection.Terminal != agentrun.TerminalNone {
+		t.Fatalf("reconciled projection = %s/%s, want running/none for live retry", projection.State, projection.Terminal)
+	}
+	if projection.OrphanedCancellation {
+		t.Fatalf("OrphanedCancellation = true, want false for live retry after canceled settlement")
+	}
+	// Also verify pure reconcileProjection path with synthetic frames.
+	frames := []EventFrame{
+		{To: agentrun.StateQueued, Terminal: agentrun.TerminalNone},
+		{To: agentrun.StateRunning, Terminal: agentrun.TerminalNone},
+		{To: agentrun.StateTerminating, Terminal: agentrun.TerminalNone},
+		{To: agentrun.StateTerminated, Terminal: agentrun.TerminalNone},
+		{To: agentrun.StateCanceled, Terminal: agentrun.TerminalCancellation},
+		{To: agentrun.StateRunning, Terminal: agentrun.TerminalNone},
+	}
+	derived := reconcileProjection(runID, frames)
+	if derived.State != agentrun.StateRunning || derived.Terminal != agentrun.TerminalNone || derived.OrphanedCancellation {
+		t.Fatalf("synthetic reconcileProjection = %+v, want running/none without orphaned", derived)
+	}
+}
+
+// TestReconciledProjectionStillOrphansGenuineMidCancellation ensures the
+// retry-scoped fix does not hide a true orphaned case: a stream with
+// escalation frames and NO terminal settlement after them must still derive
+// canceled-orphaned.
+func TestReconciledProjectionStillOrphansGenuineMidCancellation(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	runID := string(job.RunID())
+	root, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence := []struct {
+		from     agentrun.LifecycleState
+		to       agentrun.LifecycleState
+		decision agentrun.Decision
+	}{
+		{agentrun.StateCreated, agentrun.StateQueued, agentrun.DecisionStart},
+		{agentrun.StateQueued, agentrun.StateAdmitted, agentrun.DecisionStart},
+		{agentrun.StateAdmitted, agentrun.StateRunning, agentrun.DecisionStart},
+		{agentrun.StateRunning, agentrun.StateTerminating, agentrun.DecisionNone},
+		{agentrun.StateTerminating, agentrun.StateTerminated, agentrun.DecisionNone},
+	}
+	for i, step := range sequence {
+		event, err := agentrun.NewNormalizedEvent(root, step.from, step.to, step.decision, time.Unix(1700000000+int64(i), 0).UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AppendEvent(runID, event, uint64(i)); err != nil {
+			t.Fatalf("AppendEvent(%s->%s) error = %v", step.from, step.to, err)
+		}
+	}
+	projection, err := s.ReadReconciledProjection(runID)
+	if err != nil {
+		t.Fatalf("ReadReconciledProjection() error = %v", err)
+	}
+	if projection.State != agentrun.StateCanceled || projection.Terminal != agentrun.TerminalCancellation || !projection.OrphanedCancellation {
+		t.Fatalf("projection = %+v, want canceled/cancellation orphaned for genuine mid-cancellation", projection)
+	}
+}
