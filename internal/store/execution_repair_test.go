@@ -123,6 +123,87 @@ func TestRepairRecoversCrashWindowBeforeSnapshot(t *testing.T) {
 	}
 }
 
+// TestRepairRecoversStaleSnapshotCrashWindow covers the second shape of the
+// same crash window: every append succeeded, but the persisted state.json is
+// an older valid copy taken before the terminal frame, so the stream head is
+// terminal while the snapshot lags. The stale snapshot is built through real
+// appends only — captured after the running head, then restored over the
+// post-terminal snapshot. Repair must classify the run as
+// terminal_unprojected, rewrite it, and produce bytes equal to a normal full
+// append sequence in a twin store.
+func TestRepairRecoversStaleSnapshotCrashWindow(t *testing.T) {
+	startOnly := append([]streamTransition{}, startSequence...)
+	full := append(append([]streamTransition{}, startSequence...), successTransition())
+	s := NuevoStore(t.TempDir())
+	job, directory := buildScanRun(t, s, "candidate:stale-snapshot", startOnly)
+	runID := string(job.RunID())
+
+	staleSnapshot, err := os.ReadFile(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// appendStream pins revisions to its own loop index, so the crash-window
+	// tail appends its single terminal frame at the live head explicitly.
+	tail := successTransition()
+	invocation, invocationErr := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if invocationErr != nil {
+		t.Fatal(invocationErr)
+	}
+	tailEvent, tailErr := agentrun.NewNormalizedEvent(invocation, tail.from, tail.to,
+		tail.decision, time.Unix(1700000000, 0).UTC())
+	if tailErr != nil {
+		t.Fatal(tailErr)
+	}
+	if _, err := s.AppendEvent(runID, tailEvent, uint64(len(startSequence))); err != nil {
+		t.Fatalf("AppendEvent(%s->%s) error = %v", tail.from, tail.to, err)
+	}
+	eventsBefore := readEventsBytes(t, directory)
+	if err := os.WriteFile(filepath.Join(directory, "state.json"), staleSnapshot, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ScanRecoveries(s)
+	if err != nil || len(entries) != 1 || entries[0].Class != RecoveryTerminalUnprojected {
+		t.Fatalf("pre-repair scan = %+v, error = %v; want one terminal-unprojected entry", entries, err)
+	}
+
+	result, err := RepairTerminalUnprojected(s, runID)
+	if err != nil {
+		t.Fatalf("RepairTerminalUnprojected() error = %v", err)
+	}
+	if result.ClassBefore != RecoveryTerminalUnprojected || result.ClassAfter != RecoverySettled {
+		t.Fatalf("class transition = %s → %s, want terminal_unprojected → settled", result.ClassBefore, result.ClassAfter)
+	}
+	if !result.Rewritten {
+		t.Fatal("repair claimed no rewrite for a stale snapshot")
+	}
+
+	healthy := NuevoStore(t.TempDir())
+	healthyJob, healthyDir := buildScanRun(t, healthy, "candidate:stale-snapshot", full)
+	if healthyJob.RunID() != job.RunID() {
+		t.Fatalf("identity derivation is not deterministic: %s vs %s", healthyJob.RunID(), job.RunID())
+	}
+	want, err := os.ReadFile(filepath.Join(healthyDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("repaired snapshot differs from a normal append's bytes:\ngot  %s\nwant %s", got, want)
+	}
+	if !bytes.Equal(readEventsBytes(t, directory), eventsBefore) {
+		t.Fatal("repair modified the append-only event log")
+	}
+
+	afterEntries, err := ScanRecoveries(s)
+	if err != nil || len(afterEntries) != 0 {
+		t.Fatalf("post-repair scan = %+v, error = %v; want nothing left to recover", afterEntries, err)
+	}
+}
+
 // TestReplayMatchesHealthySnapshotByteForByte is the determinism proof hook:
 // for a fully projected healthy stream, ReplayProjection over the validated
 // events must reproduce the on-disk state.json exactly, and running the
@@ -275,13 +356,12 @@ func TestRepairUnderHeldLockFailsCleanlyWithoutPartialWrites(t *testing.T) {
 
 	oldWait := eventLockWait
 	eventLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { eventLockWait = oldWait })
 	lock, err := acquireExecutionLock(filepath.Join(directory, ".events.lock"), time.Second)
 	if err != nil {
-		eventLockWait = oldWait
 		t.Fatal(err)
 	}
 	_, repairErr := RepairTerminalUnprojected(s, runID)
-	eventLockWait = oldWait
 	closeErr := lock.Close()
 	if closeErr != nil {
 		t.Fatal(closeErr)
