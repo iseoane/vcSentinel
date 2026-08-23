@@ -197,7 +197,63 @@ repository binding; changing durable persistence formats.
   including -count=5 stress during development; GOOS=windows build+vet OK;
   FULL suite green across 24 packages (-count=1).
 
-*(slice 2b pending)*
+## Evidence — slice 2b (prompt transport + remote client + runs preference)
+
+- Base: branch state after slice-2a evidence commit 36b9602. Still zero
+  contact with main per joint decision.
+- Commits: feat(execution) carry explicit candidate and prompt in start
+  envelopes (+58/-2), feat(daemon) add remote repository host client over
+  the framed wire (+247/-9), feat(sentinel) prefer a healthy daemon endpoint
+  with in-process fallback (+86/-15), feat(daemon) expose Dir helper (+8),
+  test(execution) pin start-envelope validation and wire keys (+97/-4),
+  test(daemon) pin client round-trips and deterministic closed errors
+  (+322), test(sentinel) pin daemon endpoint preference and silent fallback
+  (+261/-13). One staged candidate was rejected by the guardian at 419 lines
+  and split into two; every landed candidate passed.
+- Surface: StartRequest dual form — canonical Request XOR explicit
+  Candidate+Prompt — enforced by shared exported ValidateStartRequest and
+  resolved via ResolveAdmissionRequest (agentrun.NewRunRequest server-side;
+  domain types untouched); RemoteHost client implementing all four
+  RepositoryHost operations over one persistent conn with strict
+  write/read-affinity mutex, handshake (revision+fingerprint+token on tcp),
+  and *RemoteError decode so errors.Is parity holds through the client
+  layer; resolver daemonEndpointForRuns prefers a live endpoint for the
+  already-routed handlers (start/respond/abort/status/logs/verify-pre-check)
+  and degrades silently to InProcessHost; retry/recover/verify cores keep
+  direct controller access with the residual documented at the resolver.
+- Review-driven fixes: HARD self-deadlock — call() invoked Close() while
+  holding its mutex on cancellation (non-reentrant wedge); replaced by an
+  unlocked markConnDead() so every mid-exchange failure marks the host dead
+  deterministically ("daemon: connection is closed", errors.Is-matchable),
+  with a new anti-vacuous test killing the server between frames. Also:
+  writeFileAtomic-style honesty kept intact, constant-time token compare
+  preserved, duplicated reflect-zero check extracted to one helper,
+  always-nil error return dropped from the resolver signature, immediate
+  recorded()==1 assertion replaced by a bounded poll (adapter execution is
+  asynchronous).
+- Identity-preservation proof: wire-started run's durable CandidateID/
+  PromptID equal a local NewRunRequest twin's identities at daemon level,
+  and the CLI-level marker prompt's PromptIdentity survives transport into
+  the server-written durable record — the operator prompt demonstrably
+  crosses the socket as identity, not prose.
+- Pre-existing environmental flake class investigated and bounded: under
+  full-suite load this sandbox intermittently fails UNRELATED legacy
+  concurrency tests (internal/git snapshot worktree repair exit status 128;
+  R8-era TestRunsRecoverOwnerLossCreatesFreshInvocationEndToEnd; the D1-era
+  TestRunsVerifyDetectsTamperedEventLog window). Interleaved base-versus-
+  branch experiment: clean base e1b9433 failed 2 of 8 full suites while this
+  branch failed 0 of its interleaved rounds — flake rate is environmental
+  (12-core sandbox, real git subprocesses), predates all D2 work, and is
+  recorded as a follow-up rather than absorbed silently.
+- Follow-ups accepted: ResolveAdmissionRequest relies on prose precondition
+  (validate-before-resolve); candidate/prompt stay plain strings on the wire
+  (typed agentrun identities are deliberately not JSON-shaped); a
+  live-but-handshake-rejecting daemon degrades invisibly by design.
+- Verification: gofmt clean; build/vet OK; focused -race green across
+  daemon/execution/cmd; GOOS=windows build OK; full suite green in every
+  branch-side interleaved round.
+
+*(slice 3 pending)*
 
 ## Evidence — slice 3 (lifecycle, reconciliation, closure)
 
