@@ -78,3 +78,26 @@ a2700f4).
 ## Follow-ups
 
 *(recorded at closure)*
+
+### Slice 1 — classification machine and read-only scan
+- Commits: classifier (212), classification pins (400), scan CLI (77), CLI
+  contract pins (117) — all hook-enforced.
+- Total classifier in internal/store: recoverable / terminal-unprojected /
+  corrupt (exact error text) / orphaned-canceled (reuses R7 windowed
+  reconciliation) / operator-required / settled (totality value, excluded
+  from scan). Fixed precedence: corrupt beats all; orphaned beats awaiting;
+  terminal head + broken tail stays corrupt (no dishonest "verified" claims).
+- ScanRecoveries is pure read path: no locks, no writes, byte-stability proven
+  via SHA-256 tree digests before/after every scan test; stray dirs skipped
+  like ListExecutionIDs.
+- `runs recover` without --run lists the table; exit 0 empty, exit 4 iff any
+  operator-required row; --run path byte-identical; JSON via existing stable
+  convention with [] never null.
+- Dual-axis loop: spec PASS 5/5 (adversarial totality hunts clean; write-order
+  analysis proves crash-between-append-and-snapshot lands unprojected not
+  corrupt; status vs recover share the same reconciliation windowing);
+  standards CLEAN with 3 accepted notes folded into slice 3: docs/runs-cli.md
+  must document the new shape + scan mode + corrupt-exit-0 rationale;
+  --expected-revision without --run should be rejected explicitly.
+- Verification snapshot: gofmt empty; build+vet linux+windows; focused suites
+  green; -race store clean; scan/recovery tests ×10 deterministic.
