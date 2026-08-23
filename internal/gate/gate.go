@@ -9,12 +9,13 @@
 package gate
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -104,10 +105,31 @@ type Opciones struct {
 	CandidateSHA string
 	// DurableRuns is the reversible R9 construction-time switch. FALSE is
 	// the default everywhere in this slice and keeps the legacy orchestration
-	// as THE active path with byte-identical behavior. TRUE currently builds
-	// and validates the GateRunPlan (so plan bugs surface now) and then
-	// returns ErrDurableRoutingNotWired until the routing cutover lands.
+	// as THE active path with byte-identical behavior. TRUE routes the whole
+	// gate execution through ONE root durable run (see gate_durable.go):
+	// validation jobs settle deterministically without any agent, and the
+	// review phase reuses the same transport path `sentinel review` wires —
+	// never a parallel execution path.
 	DurableRuns bool
+	// DurableStore backs the root gate run and every validation-job
+	// settlement when DurableRuns is true. A nil store with DurableRuns=true
+	// fails honestly as infrastructure before any phase executes; cmd/sentinel
+	// still does not pass it in this slice, so the flag stays unreachable
+	// from the CLI until the cutover slice wires it.
+	DurableStore *store.Store
+	// DurableReviewTransportFactory constructs the review-side transport used
+	// by the durable orchestration's review phase. It receives the gate's
+	// ROOT run ID so production wiring can thread the parent linkage into the
+	// review-side durable runs (review runs are constructed at a different
+	// site — inside the factory — and cannot be stamped by the gate
+	// orchestrator itself). Production wiring must be the same construction
+	// path `sentinel review` uses today (durableReviewTransport in
+	// cmd/sentinel), so reviewer invocations keep inheriting admission, owned
+	// process trees, and cancellation; tests inject substitutes and
+	// invocation counters here. When nil, the review phase falls back to
+	// OpcionesRevision.ReviewTransport exactly as the legacy tail does: there
+	// is no second review execution path.
+	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
 }
 
 // EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la
@@ -133,7 +155,7 @@ func EjecutarGate(opts Opciones) Resultado {
 		// VALIDATION_FAILED para algo que ni llegó a ejecutarse.
 		return Resultado{
 			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: []string{fmt.Sprintf("No se pudo ejecutar la validación: %v", err)},
+			Mensajes: []string{mensajeValidacionNoEjecutada(err)},
 		}
 	}
 
@@ -148,44 +170,12 @@ func EjecutarGate(opts Opciones) Resultado {
 	return traducirVeredicto(resultado)
 }
 
-// ErrDurableRoutingNotWired is the explicit typed marker returned while the
-// durable gate path is machinery-only (R9 slice 1): the GateRunPlan has been
-// built and validated, but no run is admitted yet. The routing cutover in a
-// later slice replaces this failure with real durable orchestration.
-var ErrDurableRoutingNotWired = errors.New("gate: durable routing not wired yet")
-
-// ejecutarGateDurable is the reversible R9 seam. It ALWAYS builds and
-// validates the GateRunPlan first so plan-construction bugs surface now,
-// then fails explicitly with ErrDurableRoutingNotWired: nothing routes
-// through durable runs until the cutover slice wires it.
-func ejecutarGateDurable(opts Opciones) Resultado {
-	if err := buildDurableGatePlan(opts); err != nil {
-		return Resultado{
-			Estado: EstadoReviewInfrastructureError,
-			// A plan that cannot be built is infrastructure, not a code
-			// finding: same classification rule as legacy validation
-			// orchestration failures.
-			Mensajes: []string{fmt.Sprintf("gate durable run plan failed before wiring: %v", err)},
-			Err:      err,
-		}
-	}
-	return Resultado{
-		Estado:   EstadoReviewInfrastructureError,
-		Mensajes: []string{ErrDurableRoutingNotWired.Error()},
-		Err:      ErrDurableRoutingNotWired,
-	}
-}
-
-// buildDurableGatePlan derives the deterministic command list for the
-// resolved profile and validates the full plan construction path without
-// executing anything.
-func buildDurableGatePlan(opts Opciones) error {
-	commands, err := durableGateCommands(opts.OpcionesValidacion.Cfg, opts.Perfil)
-	if err != nil {
-		return err
-	}
-	_, err = BuildGateRunPlan(opts.Stage, opts.Perfil, opts.CandidateSHA, commands)
-	return err
+// mensajeValidacionNoEjecutada is the single facade text for a validation
+// ORCHESTRATION failure (infrastructure, never a code finding). The legacy
+// path and the durable path share this one helper so equivalent inputs render
+// byte-identical facade text.
+func mensajeValidacionNoEjecutada(err error) string {
+	return fmt.Sprintf("No se pudo ejecutar la validación: %v", err)
 }
 
 // mensajesValidacionFallida redacta el detalle de qué comandos fallaron y su
