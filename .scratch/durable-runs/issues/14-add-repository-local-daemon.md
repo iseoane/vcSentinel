@@ -255,6 +255,49 @@ repository binding; changing durable persistence formats.
 
 *(slice 3 pending)*
 
+## Evidence — slice 3a (authenticated shutdown + drain + orphaning)
+
+- Base: branch state after slice-2b evidence commit 1c0a104. Ticket
+  renumbered from 12 to 14 before this slice: main had independently
+  assigned 12 to R10 while this branch was isolated; 13 is left for the
+  in-flight R11 branch.
+- Commits: feat(execution) settle orphaned runs through shared R8 primitive
+  (+226/-6), feat(daemon) graceful shutdown with bounded drain and orphan
+  settlement (+333/-21), test(execution) pin orphan settlement across
+  residue and escalation (+259), test(daemon) pin shutdown sequence and
+  grace budget behavior (+362), test(daemon) observe shutting-down sentinel
+  through remote host (+57). One staged candidate was guardian-rejected at
+  419 lines and split; every landed candidate passed.
+- Surface: OpShutdown wire op (handshake-gated, deliberately additive
+  without protocol_revision bump — old peers get a deterministic
+  unknown-operation error, decision documented in code); Server.Shutdown()
+  programmatic path plus wire handler answering ok only after the graceful
+  sequence completes; one-shot beginShutdown CAS with ErrDaemonShuttingDown
+  registry entry surviving the wire; grace budget (DefaultGracePeriod 30s,
+  NewServerWithGrace) covering in-flight dispatches AND still-executing
+  detached runs; explicit settlement of survivors through the SHARED R8
+  primitive — appendOrphanedCancellationSettlement parametrized with a
+  detail reason and reused verbatim by both R8's retry path and D2's
+  Controller.OrphanActiveRuns (the len(events)==0 fail-closed guard kept);
+  Close() redefined as immediate release only.
+- Review-driven fixes: HARD panic risk removed (orphanDurableHead had
+  duplicated R8's settlement minus its empty-events guard over a non-atomic
+  two-read window — replaced by direct reuse); HARD doc/behavior mismatch
+  fixed (runs inside bounded escalation are now explicitly skipped instead
+  of racing escalateAndSettle, and the loop is per-run error tolerant via
+  errors.Join so one stale loser no longer strands later actives);
+  cross-process residue enumeration added (store.ListExecutionIDs union)
+  making the branch's own documented promise reachable; wire-level test
+  proves ErrDaemonShuttingDown through RemoteHost; sequenceDone rename,
+  settled-count in the failure wrap, named pollInterval constant.
+- Honest limits recorded: killed-mid-write scenarios settle on next boot via
+  3b reconciliation (Close doc routes there explicitly); a single shared
+  budget means dispatch drain can consume the whole grace window;
+  live-but-handshake-rejecting daemons degrade invisibly per 2b contract.
+- Verification: gofmt clean; build/vet OK; focused -race green across
+  daemon/execution/store including -count=5 stress during development;
+  GOOS=windows build OK; full suite green.
+
 ## Evidence — slice 3 (lifecycle, reconciliation, closure)
 
 *(pending)*
