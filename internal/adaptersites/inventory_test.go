@@ -263,16 +263,16 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	}
 }
 
-// TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries proves the two
-// configuration rollback switches are the ONLY permitted non-controller
-// lifecycle paths, and that both switches really exist in the parser.
-func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
+// TestNoCompatibilityGatedSitesRemain proves the ticket 13 (R11) cutover
+// completion: the two release-bounded switches were removed, so ZERO
+// compatibility-gated entries are permitted in the inventory and the config
+// parser no longer declares any durable_runs yaml key.
+func TestNoCompatibilityGatedSitesRemain(t *testing.T) {
 	root, err := ModuleRoot()
 	if err != nil {
 		t.Fatalf("module root not found: %v", err)
 	}
 
-	var gated []Site
 	lifecycleMarkers := map[string]bool{"NewController(": true, "AppendEvent(": true}
 	controllerCore := map[string]bool{
 		"internal/execution/controller.go":       true,
@@ -282,7 +282,7 @@ func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
 	}
 	for _, site := range Sites() {
 		if site.Class == ClassGated {
-			gated = append(gated, site)
+			t.Errorf("compatibility-gated entry %s survived the R11 switch removal; every site must now be durably admitted or explicitly out-of-scope", site.Path)
 		}
 		if site.Marker != "" && lifecycleMarkers[site.Marker] && !controllerCore[site.Path] {
 			if site.Class != ClassDurable {
@@ -290,18 +290,9 @@ func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
 			}
 		}
 	}
-	if len(gated) != 2 {
-		t.Fatalf("exactly two compatibility-gated rollback entries are permitted, found %d: %v", len(gated), gated)
-	}
-	wantGated := map[string]bool{"internal/review/engine.go": true, "internal/gate/gate.go": true}
-	for _, site := range gated {
-		if !wantGated[site.Path] {
-			t.Errorf("unexpected compatibility-gated entry %s; only the two documented rollback switches qualify", site.Path)
-		}
-	}
 
 	parser := readFile(t, root, "internal/config/parser.go")
-	if got := strings.Count(parser, `yaml:"durable_runs"`); got != 2 {
-		t.Errorf("both review.durable_runs and gate.durable_runs must exist in the config parser, found %d tags", got)
+	if got := strings.Count(parser, `yaml:"durable_runs"`); got != 0 {
+		t.Errorf("review.durable_runs and gate.durable_runs were removed in R11, found %d remaining yaml tags", got)
 	}
 }

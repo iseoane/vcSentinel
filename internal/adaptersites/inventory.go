@@ -17,9 +17,11 @@
 //   - envelope totality: every in-scope (durable-controller) site is
 //     asserted to route its provider call through an admitted
 //     agentrun.InvocationEnvelope via the execution controller;
-//   - rollback boundary: exactly two compatibility-gated sites exist (the
-//     review.durable_runs and gate.durable_runs switches) and they are the
-//     ONLY permitted non-controller lifecycle mutation entries.
+//   - rollback boundary: since ticket 13 (R11) removed the two release-
+//     bounded switches (review.durable_runs / gate.durable_runs), ZERO
+//     compatibility-gated sites are permitted; every lifecycle-mutating or
+//     provider-executing site must be durably admitted or explicitly
+//     out-of-scope.
 //
 // This package deliberately avoids AST magic: the value is the documented
 // enumeration plus cheap textual canaries that fail loudly on drift. Entries
@@ -41,9 +43,10 @@ const (
 	// controller; every attempt carries an admitted InvocationEnvelope and
 	// settles only through controller-authored lifecycle events.
 	ClassDurable Class = "durable-controller"
-	// ClassGated sites are the release-bounded rollback paths behind the two
-	// explicit switches (review.durable_runs / gate.durable_runs). These are
-	// the ONLY permitted non-controller lifecycle entries.
+	// ClassGated sites are the release-bounded rollback paths that used to
+	// sit behind the review.durable_runs / gate.durable_runs switches.
+	// Ticket 13 (R11) removed both switches and every gated site: the class
+	// is kept only so the companion test can pin that it stays EMPTY.
 	ClassGated Class = "compatibility-gated"
 	// ClassHelper sites execute provider prompts but produce text that can
 	// never influence a review verdict or gate outcome (commit messages,
@@ -118,7 +121,7 @@ func Sites() []Site {
 		{Path: "cmd/sentinel/main.go", Symbol: "elegirAdaptadorYGenerarMensajes -> git.GenerarMensajesLotes", Line: 0, Marker: "",
 			Class: ClassHelper, Reason: "Commit-message generation asks the agent for batch message TEXT consumed by the interactive slice flow. It produces no verdict and cannot flip any gate outcome; adapter unavailability degrades to deterministic fallback messages."},
 		{Path: "cmd/sentinel/review_transport.go", Symbol: "nuevoDurableReviewTransport/applyDurableCutover", Line: 0, Marker: "",
-			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate cutover; both review.durable_runs and gate.durable_runs decisions concentrate here before any run exists."},
+			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
 		// --- internal/agentadapter ----------------------------------------
 		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Line: 32, Marker: "EjecutarPrompt(",
@@ -157,18 +160,16 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Executes exactly one admitted physical invocation per controller dispatch; receives the InvocationEnvelope and forwards cancellation/tree ownership to the controller."},
 
 		// --- internal/gate --------------------------------------------------
-		{Path: "internal/gate/gate.go", Symbol: "EjecutarGate durable-vs-legacy dispatch", Line: 0, Marker: "",
-			Class: ClassGated, Reason: "gate.durable_runs=false rollback switch (config.Gate.DurableRuns): false restores the legacy validation-before-review orchestration byte-for-byte. Its provider work is the same gated review engine below; validation commands stay deterministic shells."},
-		{Path: "internal/gate/gate_durable.go", Symbol: "ejecutarGateDurable/asentarTrabajosValidacion", Line: 85, Marker: "NewController(",
-			Class: ClassDurable, Reason: "Gate orchestrator: admits ONE root run plus one settled child job per validation command, all through controller.Start with persisted parent linkage."},
+		{Path: "internal/gate/gate_durable.go", Symbol: "EjecutarGate/asentarTrabajosValidacion", Line: 88, Marker: "NewController(",
+			Class: ClassDurable, Reason: "Gate orchestrator and sole execution path (ticket 13 R11 merged the removed legacy orchestration into it): admits ONE root run plus one settled child job per validation command, all through controller.Start with persisted parent linkage."},
 		{Path: "internal/gate/gate_durable_adapters.go", Symbol: "rootRunAdapter/settledValidationAdapter", Line: 98, Marker: "agentrun.NewCapability",
 			Class: ClassDurable, Reason: "Gate execution adapters receive the admitted InvocationEnvelope on every controller dispatch; neither spawns anything nor mutates state outside controller APIs."},
 		{Path: "internal/gate/gate_run_plan.go", Symbol: "BuildGateRunPlan", Line: 135, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Deterministic plan construction: builds the admission requests (candidate/prompt/capabilities) later admitted verbatim by the controller."},
 
 		// --- internal/review -------------------------------------------------
-		{Path: "internal/review/engine.go", Symbol: "invokeReview/ejecutarConReintento/refutarHallazgosCriticos", Line: 352, Marker: "EjecutarRevision(",
-			Class: ClassGated, Reason: "review.durable_runs=false rollback switch (config.Review.DurableRuns): nil ReviewTransport keeps the pre-R5 direct restricted-reviewer calls with their transport retry. With durable runs enabled the ONLY direct reviewer call left is the nil-transport branch of the CRITICAL refuter, which since ticket 12 slice 1 routes through the admitted transport whenever one is present because a refutation CAN flip a verdict."},
+		{Path: "internal/review/engine.go", Symbol: "invokeReview/ejecutarConReintento/refutarHallazgosCriticos", Line: 477, Marker: "EjecutarRevision(",
+			Class: ClassShared, Reason: "Engine-level injection seam behind OpcionesAuditoria.ReviewTransport. Since ticket 13 (R11) removed the review.durable_runs switch, production wiring always supplies the admitted durable transport (the CRITICAL refuter routes through it unconditionally); the direct restricted call with its transport retry survives only as a defensive fallback for direct-call fixtures."},
 		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 418, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
 		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Line: 31, Marker: "exec.Command",
