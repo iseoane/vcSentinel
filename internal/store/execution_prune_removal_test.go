@@ -191,7 +191,7 @@ func TestRemoveExecutionDirectoryRefusesNonTerminalUnderLock(t *testing.T) {
 	}
 	file.Close()
 
-	if err := s.removeExecutionDirectory(runID); err == nil {
+	if err := s.removeExecutionDirectory(runID, nil); err == nil {
 		t.Fatal("removal of a non-terminal record must be refused")
 	}
 	if !executionDirectoryExists(t, s, runID) {
