@@ -3,12 +3,24 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net"
+	"sync"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
+
+// settleBlockedRun releases a blockingAdapter run and waits until its worker
+// finished every durable write, so teardown cannot race an unsettled run.
+// safeClose makes an early test failure through t.Fatal still close exactly
+// once via the deferred call.
+func settleBlockedRun(t *testing.T, conn net.Conn, release chan struct{}, runID agentrun.Identity, safeClose *sync.Once) {
+	t.Helper()
+	safeClose.Do(func() { close(release) })
+	waitForStateViaWire(t, conn, runID, agentrun.StateSucceeded)
+}
 
 // assertRemoteSentinel proves remote identity equals local identity: the
 // decoded wire error must satisfy errors.Is against the very sentinel the
@@ -50,7 +62,8 @@ func TestServerErrorVocabularyParityOverWire(t *testing.T) {
 
 	t.Run("unsupported action", func(t *testing.T) {
 		release := make(chan struct{})
-		defer close(release)
+		var safeClose sync.Once
+		defer safeClose.Do(func() { close(release) })
 		controller := newTestController(t, blockingAdapter(release))
 		ep := startTestServer(t, controller)
 		conn := connectClient(t, ep, fingerprint, "")
@@ -69,6 +82,7 @@ func TestServerErrorVocabularyParityOverWire(t *testing.T) {
 		if !errors.Is(localErr, execution.ErrUnsupportedAction) {
 			t.Fatalf("local error = %v, want ErrUnsupportedAction", localErr)
 		}
+		settleBlockedRun(t, conn, release, handle.RunID, &safeClose)
 	})
 
 	t.Run("duplicate action replay", func(t *testing.T) {
@@ -117,7 +131,8 @@ func TestServerErrorVocabularyParityOverWire(t *testing.T) {
 
 	t.Run("decision not pending while running", func(t *testing.T) {
 		release := make(chan struct{})
-		defer close(release)
+		var safeClose sync.Once
+		defer safeClose.Do(func() { close(release) })
 		controller := newTestController(t, blockingAdapter(release))
 		ep := startTestServer(t, controller)
 		conn := connectClient(t, ep, fingerprint, "")
@@ -138,6 +153,7 @@ func TestServerErrorVocabularyParityOverWire(t *testing.T) {
 		if !errors.Is(localErr, execution.ErrDecisionNotPending) {
 			t.Fatalf("local error = %v, want ErrDecisionNotPending", localErr)
 		}
+		settleBlockedRun(t, conn, release, handle.RunID, &safeClose)
 	})
 
 	t.Run("execution not found for unknown run", func(t *testing.T) {

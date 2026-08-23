@@ -14,16 +14,18 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
-// The wire cannot carry a richer agentrun.RunRequest: its fields are
-// unexported because raw prompts never travel as JSON (pinned by the
-// execution package's envelope round-trip test). Every wire-started run
-// therefore admits the zero request, whose identity is deterministic, which
-// is why each scenario below gets its own server/store and why two wire
-// starts on one store collide with ErrRunAlreadyExists by construction.
+// testStartEnvelope carries the explicit Candidate/Prompt admission form
+// (slice 2b): raw prompts travel as the transport-safe string pair and the
+// server reconstructs the canonical agentrun.RunRequest via
+// execution.ResolveAdmissionRequest. The payload is constant on purpose, so
+// replaying the envelope on one store deterministically collides with
+// ErrRunAlreadyExists by construction.
 func testStartEnvelope() execution.StartRequest {
 	return execution.StartRequest{
+		Candidate:   "candidate:wire-test",
+		Prompt:      "prompt:wire-test",
 		Policy:      store.RunPolicy{ID: "wire-test-policy"},
-		AuthContext: execution.AuthContext{Principal: "test-principal"},
+		AuthContext: execution.AuthContext{Principal: testPrincipal},
 	}
 }
 
