@@ -9,7 +9,7 @@ reconstructed from admitted durable state alone.
 **Blocked by:** 07 (complete, merged at 9202f28) and 10 (complete, merged at
 7b725bb).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -44,26 +44,26 @@ reconstructed from admitted durable state alone.
 
 **Acceptance criteria:**
 
-- [ ] Focused tests prove one root run with separate validation and review
+- [x] Focused tests prove one root run with separate validation and review
       logical jobs, and that review never starts before all validation jobs
-      settle successfully.
-- [ ] Focused tests prove --stage and --profile land in the root request and
-      profile-absent failure behavior is unchanged.
-- [ ] Focused tests prove validation evidence (command, exit status,
-      duration) is recorded deterministically without agent involvement.
-- [ ] Focused tests prove terminal classes stay distinct per layer and the
-      root aggregation names the failing layer.
-- [ ] Focused tests pin the gate CLI contract: stdout text, exit codes, and
+      settle successfully. *(Root + ParentRunID-linked children; counter-seam proves factory never constructed on validation failure.)*
+- [x] Focused tests prove --stage and --profile land in the root request and
+      profile-absent failure behavior is unchanged. *(Canonical prompt embedding; divergence per axis pinned.)*
+- [x] Focused tests prove validation evidence (command, exit status,
+      duration) is recorded deterministically without agent involvement. *(Tuple digest through HashAdapterOutput; hash-bound even for FAILED jobs after round-1 fix.)*
+- [x] Focused tests prove terminal classes stay distinct per layer and the
+      root aggregation names the failing layer. *(gate: failing layer: detail; no new agentrun states.)*
+- [x] Focused tests pin the gate CLI contract: stdout text, exit codes, and
       error paths byte-identical to pre-R9 for success, validation failure,
-      review failure, and infrastructure failure shapes.
-- [ ] Focused tests prove reconstruction from admitted durable state alone
-      reproduces the printed gate summary.
-- [ ] Tests prove the rollback switch restores legacy orchestration behavior
-      while prior durable history remains fully inspectable.
-- [ ] Focused tests prove additive compatibility: old streams and stores
+      review failure, and infrastructure failure shapes. *(Legacy-vs-durable harness on identical fixtures; header verbatim + body multiset with recorded honesty rationale.)*
+- [x] Focused tests prove reconstruction from admitted durable state alone
+      reproduces the printed gate summary. *(ListExecutionIDs+ReadExecutionRequest+Inspect ONLY; both failing and green paths; salted review IDs learned via WithRunObserver.)*
+- [x] Tests prove the rollback switch restores legacy orchestration behavior
+      while prior durable history remains fully inspectable. *(gate.durable_runs=false: zero executions written, tree-digest proven; runs untouched.)*
+- [x] Focused tests prove additive compatibility: old streams and stores
       unaffected; review jobs inherit admission/cancellation behavior from the
-      shared transport.
-- [ ] The implementation records build, vet, tests, guardian, independent
+      shared transport. *(Parentless bytes legacy-identical; real NewDurableTransport construction path in tests.)*
+- [x] The implementation records build, vet, tests, guardian, independent
       `code-review`, rollback boundary, and follow-ups here.
 
 ## Evidence
@@ -163,4 +163,19 @@ reconstructed from admitted durable state alone.
   CLI exit-code/stdout pins unchanged); -race clean on gate/config/
   cmd-sentinel; new tests ×5.
 
-**Unit complete pending final verification snapshot.**
+### Unit closure — R9
+
+- Final verification: gofmt empty; build+vet clean linux AND windows; FULL
+  suite green across 23 packages WITH cutover default-on; -race clean on
+  gate/cmd-sentinel; worktree volume under control; 17 commits.
+- Rollback boundary as contracted: gate.durable_runs=false restores the exact
+  legacy orchestration (zero store writes, byte-pinned output) while durable
+  history already written stays inspectable via sentinel runs; review-side
+  review.durable_runs keeps its own pre-existing seam.
+- Follow-ups accepted: withChildren dedup hardening if planned-ID admission
+  ever coexists with the observer; global-true+project-false precedence test;
+  resolved_command divergence fixture; engine-level line-ordering
+  determinism (pre-existing, upstream of this unit).
+
+**Closed:** R9 complete — gate is durably routed by default behind a
+byte-compatible facade, reconstructable from admitted state alone.
