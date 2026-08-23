@@ -24,13 +24,20 @@ var ErrRequestCorrupt = errors.New("store: corrupt execution request")
 
 // RunPolicy identifies the policy used to create a durable execution.
 // Policy contents are resolved elsewhere; only this stable identity is stored.
+// ParentRunID optionally records the orchestrating parent run so child runs
+// admit with a persisted linkage back to their root; empty means the run has
+// no durable parent (a root run).
 type RunPolicy struct {
-	ID string `json:"id"`
+	ID          string `json:"id"`
+	ParentRunID string `json:"parent_run_id,omitempty"`
 }
 
 // ExecutionRequest is the immutable admission request persisted at CreateRun.
-// Every field is a derived agentrun identity; raw prompts, candidates, and
-// capabilities never reach durable storage.
+// Every field except ParentRunID is a derived agentrun identity; raw prompts,
+// candidates, and capabilities never reach durable storage. ParentRunID is an
+// additive, optional linkage to the orchestrating parent run: old records
+// never carry it, old readers ignore unknown keys, and omitempty keeps the
+// persisted bytes of parentless runs identical to the legacy shape.
 type ExecutionRequest struct {
 	RunID         string   `json:"run_id"`
 	JobID         string   `json:"job_id"`
@@ -38,6 +45,7 @@ type ExecutionRequest struct {
 	CandidateID   string   `json:"candidate_id"`
 	PromptID      string   `json:"prompt_id"`
 	CapabilityIDs []string `json:"capability_ids,omitempty"`
+	ParentRunID   string   `json:"parent_run_id,omitempty"`
 }
 
 // CreateRun creates the immutable execution records and an empty event log.
@@ -51,8 +59,13 @@ func (s *Store) CreateRun(job agentrun.LogicalJob, policy RunPolicy) error {
 	if policy.ID == "" {
 		return errors.New("store: run policy identity is empty")
 	}
+	if policy.ParentRunID != "" && !validRunID(policy.ParentRunID) {
+		return fmt.Errorf("store: invalid parent run id %q", policy.ParentRunID)
+	}
 
-	requestData, err := marshalRecord(requestFor(job))
+	request := requestFor(job)
+	request.ParentRunID = policy.ParentRunID
+	requestData, err := marshalRecord(request)
 	if err != nil {
 		return err
 	}
