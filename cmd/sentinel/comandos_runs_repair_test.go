@@ -10,7 +10,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
-) // Ticket 09 slice 2: `sentinel runs recover --repair <id>` rebuilds the
+) // Ticket 10 slice 2: `sentinel runs recover --repair <id>` rebuilds the
 // lagging state snapshot of one terminal-unprojected run from its verified
 // stream. These tests drive the CLI surface over synthetic stores built with
 // the real append machinery and pin the exit-code contract: 0 repaired,

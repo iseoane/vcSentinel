@@ -191,7 +191,7 @@ type runsLogsOutput struct {
 }
 
 // runsRecoveryRow is one row of the additive `runs recover` scan listing
-// (ticket 09 slice 1). It mirrors store.RecoveryEntry for the CLI surface;
+// (ticket 10 slice 1). It mirrors store.RecoveryEntry for the CLI surface;
 // Reconciled appears only when the verdict derives from the R7 restart
 // reconciliation rather than the raw stream head.
 type runsRecoveryRow struct {

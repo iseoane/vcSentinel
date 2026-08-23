@@ -10,7 +10,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
-// Ticket 09 slice 1: `sentinel runs recover` without --run is an explicit
+// Ticket 10 slice 1: `sentinel runs recover` without --run is an explicit
 // read-only scan listing every non-terminal run with its evidence-based
 // class. These tests drive the CLI surface over synthetic stores built with
 // the real append machinery and pin the exit-code contract: 0 when nothing

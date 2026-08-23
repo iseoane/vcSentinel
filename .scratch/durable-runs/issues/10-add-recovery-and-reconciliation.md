@@ -1,4 +1,4 @@
-# 09: Add Recovery And Reconciliation
+# 10: Add Recovery And Reconciliation
 
 **What to build:** Interrupted durable runs are found, classified, and recovered
 without fabricating completion or discarding failed invocations. One command

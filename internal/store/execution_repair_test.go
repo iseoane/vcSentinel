@@ -12,7 +12,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 )
 
-// Ticket 09 slice 2: deterministic projection rebuild and repair of
+// Ticket 10 slice 2: deterministic projection rebuild and repair of
 // terminal-but-unprojected runs. Every test builds real streams through the
 // append machinery, simulates or refuses the exact crash window, and proves
 // byte-level guarantees: repair writes only state.json, only through the

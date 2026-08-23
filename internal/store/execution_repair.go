@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-// Recovery repair for terminal-but-unprojected runs (ticket 09 slice 2).
+// Recovery repair for terminal-but-unprojected runs (ticket 10 slice 2).
 // The slice-1 classifier proved that one crash window — appending a verified
 // terminal frame and dying before replacing state.json — leaves an honest,
 // append-only stream with a lagging snapshot. Repair closes exactly that

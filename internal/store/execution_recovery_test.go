@@ -14,7 +14,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 )
 
-// Ticket 09 slice 1: recovery classification over synthetic but fully valid
+// Ticket 10 slice 1: recovery classification over synthetic but fully valid
 // streams built with the real AppendEvent machinery, plus deliberately
 // tampered bytes for the corrupt classes. Every scan asserted here must be a
 // pure read: the store's bytes are hashed before and after to prove it.

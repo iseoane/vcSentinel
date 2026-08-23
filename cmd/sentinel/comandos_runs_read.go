@@ -145,7 +145,7 @@ func outcomeDetailSuffix(errorText string) string {
 	return fmt.Sprintf(" (%s)", errorText)
 }
 
-// listRecoveries renders the ticket 09 slice 1 recovery scan: one entry per
+// listRecoveries renders the ticket 10 slice 1 recovery scan: one entry per
 // non-terminal run with its evidence-based class. The scan itself is
 // read-only; this surface only formats its entries. Exit codes follow the
 // runs contract: 0 when nothing requires attention, 4 when at least one run

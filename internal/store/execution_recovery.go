@@ -10,7 +10,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 )
 
-// Recovery classification for interrupted durable runs (ticket 09 slice 1).
+// Recovery classification for interrupted durable runs (ticket 10 slice 1).
 // The classifier is a pure derivation over verified event streams plus the
 // persisted projection snapshot: it never writes, never repairs bytes, and
 // maps every stream to exactly one class. Scanning extends the R7 read-time

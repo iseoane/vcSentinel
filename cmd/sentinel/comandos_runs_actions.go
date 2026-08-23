@@ -222,7 +222,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitUsage
 	}
-	// Ticket 09 slice 2: --repair <id> is the bounded operator action that
+	// Ticket 10 slice 2: --repair <id> is the bounded operator action that
 	// rebuilds the lagging state snapshot of one classified
 	// terminal-unprojected run from its verified stream. It never appends,
 	// invents, or rewrites event bytes.
@@ -242,7 +242,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		}
 		return repairRunProjection(out, backing, strings.TrimSpace(options.repairID), options.jsonOut)
 	}
-	// Ticket 09 slice 1: without --run the command is an explicit READ-ONLY
+	// Ticket 10 slice 1: without --run the command is an explicit READ-ONLY
 	// scan that lists every non-terminal run with its evidence-based class.
 	// It never writes and never resumes anything; recovery of one specific
 	// run stays an operator action through Controller.Recover below.
@@ -283,7 +283,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 	return printRunActionResult(out, options.jsonOut, handle, projection.State)
 }
 
-// repairRunProjection renders the ticket 09 slice 2 repair action: rebuild
+// repairRunProjection renders the ticket 10 slice 2 repair action: rebuild
 // the lagging state snapshot of one terminal-unprojected run. Exit codes
 // follow the runs contract: 0 when repaired (or proven already byte-identical),
 // 2 for an unknown run, 4 when the refusing class makes repair an invalid
