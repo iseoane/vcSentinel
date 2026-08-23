@@ -130,6 +130,18 @@ type Opciones struct {
 	// OpcionesRevision.ReviewTransport exactly as the legacy tail does: there
 	// is no second review execution path.
 	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
+	// DurableReviewChildren reports the review-side child run identities that
+	// were ACTUALLY admitted during the review phase (ticket 11 slice 3).
+	// Review candidate identities are process-salted inside the shared
+	// durable transport, so the orchestrator cannot derive them from the
+	// plan: production wiring records every admission through a
+	// concurrency-safe observer sink and hands the drain function here. The
+	// orchestrator consumes it when composing the root settlement's
+	// "|children=" enumeration so the enumerated set equals the persisted
+	// ParentRunID scan even though neither side derives the IDs
+	// deterministically. When nil, only planned validation jobs (and any
+	// resolvable planned review job) are enumerated.
+	DurableReviewChildren func() []agentrun.Identity
 }
 
 // EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la

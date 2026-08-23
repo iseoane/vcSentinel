@@ -186,6 +186,15 @@ func fasesGateDurables(plan GateRunPlan, opts Opciones, rootRunID agentrun.Ident
 		if reviewChild, resolvable := resolvableReviewChild(opts.DurableStore, plan); resolvable {
 			children = append(children, reviewChild)
 		}
+		// Cutover follow-up resolved (ticket 11 slice 3): review candidate
+		// identities are process-salted inside the shared durable transport,
+		// so the orchestrator learns the actually-admitted review runs from
+		// the wiring-time observer sink instead of the plan. Consuming it
+		// here keeps the machine-parseable enumeration equal to the
+		// persisted ParentRunID scan on every failing layer.
+		if opts.DurableReviewChildren != nil {
+			children = append(children, opts.DurableReviewChildren()...)
+		}
 		settlement.detail = withChildren(settlement.detail, children)
 	}
 	return resultado, settlement
