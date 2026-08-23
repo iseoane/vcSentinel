@@ -61,6 +61,8 @@ func executeRuns(out io.Writer, worktree string, args []string) int {
 		return executeRunsRecover(out, worktree, flags)
 	case "verify":
 		return executeRunsVerify(out, worktree, flags)
+	case "daemon":
+		return executeRunsDaemon(out, worktree, flags)
 	default:
 		fmt.Fprintf(out, "❌ Unknown subcommand for 'sentinel runs': %q\n%s", subcommand, runsUsage)
 		return runExitUsage

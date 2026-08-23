@@ -55,6 +55,20 @@ Subcommands:
            any entry requires an operator decision; --expected-revision is
            rejected on the scan and with --repair
   verify   --run <id> [--json]
+  daemon   start|status|stop
+           manage the repository-local foreground daemon (no flags accepted)
+           start claims the repository, settles auto-recoverable interrupted
+            runs, serves the local transport, and blocks until SIGINT/SIGTERM
+            or a remote stop; exits 0 on a clean stop, 4 when another live
+            daemon already owns the repository (its pid is named), 5 otherwise
+            status prints the live owner pid/started-at/host/transport/address;
+            exits 2 with a deterministic message when no live daemon is running
+            for this repository (the runs not-found vocabulary: the addressed
+            thing does not exist), and 5 when endpoint.json exists but is
+            unreadable or incomplete — corruption is never silent
+            stop asks the running daemon to shut down gracefully and prints its
+            orphaned-runs summary; a missing or unreachable endpoint follows
+            the same not-running contract as status (exit 2)
 
 Exit codes:
   0 success (including idempotent repeats)   3 stale revision
