@@ -55,6 +55,12 @@ Subcommands:
            any entry requires an operator decision; --expected-revision is
            rejected on the scan and with --repair
   verify   --run <id> [--json]
+  prune    --older-than <duration> [--json]
+           explicit operator maintenance: removes ONLY terminal execution
+           records whose last event predates the cutoff and that no review
+           provenance references; non-terminal, corrupt, orphaned-canceled,
+           provenance-referenced, and parent-of-surviving records are kept
+           with an explicit reason. Nothing purges automatically.
 
 Exit codes:
   0 success (including idempotent repeats)   3 stale revision
@@ -110,6 +116,11 @@ type runOptions struct {
 	// instead of letting value zero pass silently.
 	expectedRevisionSet bool
 	limit               int
+	// olderThan records the raw --older-than value of `runs prune`;
+	// olderThanSet keeps an empty value an explicit usage error instead of
+	// degrading into a silent default.
+	olderThan    string
+	olderThanSet bool
 }
 
 // promptRunAdapter executes arbitrary operator prompts through the configured

@@ -276,7 +276,7 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		run(bundle)
 	}
 	wg.Wait()
-	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision, opts.LeerContenidoSnapshot)
+	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision, opts.LeerContenidoSnapshot, opts.ReviewTransport)
 	var findings []Hallazgo
 	for _, dimension := range resultado.Dims {
 		if dimension.Resultado != nil {
@@ -304,7 +304,16 @@ type respuestaRefutador struct {
 // refutarHallazgosCriticos uses an independent SHA-bound restricted refuter once
 // per semantic CRITICAL finding. Any unavailable or invalid answer preserves
 // the original blocker.
-func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string, leerSnapshot SnapshotReader) {
+//
+// Ticket 12 slice 1 (envelope totality): a refutation CAN flip a verdict —
+// it downgrades a confirmed semantic CRITICAL blocker to refuted — so on the
+// durable path it must flow through the same admitted invocation envelopes as
+// dimension reviews. When transport is non-nil every refuter call is admitted
+// through it; nil keeps the legacy direct call byte-identical (the
+// review.durable_runs=false rollback path). A transport rejection surfaces as
+// an error, which preserves the original blocker exactly like any other
+// unavailable refuter answer.
+func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string, leerSnapshot SnapshotReader, transport ReviewTransport) {
 	if fabrica == nil {
 		return
 	}
@@ -330,7 +339,17 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			if !ok {
 				continue
 			}
-			salida, err := revisor.EjecutarRevision(construirPromptRefutacion(sha, dimension.Dim, *finding), sha, paths)
+			prompt := construirPromptRefutacion(sha, dimension.Dim, *finding)
+			var salida string
+			if transport != nil {
+				// Durable path: admitted envelope flow. The refuter answer
+				// influences verdicts, so it may never bypass admission.
+				salida, _, err = transport("refutation", dimension.Dim, prompt, refutador)
+			} else {
+				// Legacy rollback path (review.durable_runs=false): direct
+				// call, byte-identical to pre-R10 behavior.
+				salida, err = revisor.EjecutarRevision(prompt, sha, paths)
+			}
 			if err != nil {
 				continue
 			}

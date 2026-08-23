@@ -60,6 +60,8 @@ func executeRuns(out io.Writer, worktree string, args []string) int {
 		return executeRunsRecover(out, worktree, flags)
 	case "verify":
 		return executeRunsVerify(out, worktree, flags)
+	case "prune":
+		return executeRunsPrune(out, worktree, flags)
 	default:
 		fmt.Fprintf(out, "❌ Unknown subcommand for 'sentinel runs': %q\n%s", subcommand, runsUsage)
 		return runExitUsage
@@ -110,6 +112,9 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 			}
 			options.expectedRevision = parsed
 			options.expectedRevisionSet = true
+		case "--older-than":
+			options.olderThan = value
+			options.olderThanSet = true
 		default:
 			err = fmt.Errorf("unknown flag for 'sentinel runs %s': %s", subcommand, flag)
 		}

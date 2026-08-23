@@ -891,7 +891,7 @@ func TestRefutedLegacyCriticalWithUnresolvedV2CriticalRemainsBlocking(t *testing
 			t.Fatalf("snapshot read sha=%q file=%q", sha, file)
 		}
 		return "trusted proof", nil
-	})
+	}, nil)
 
 	if got := dimensiones[0].Resultado.Verdict; got != VerdictBlock {
 		t.Fatalf("verdict=%q, expected unresolved v2 CRITICAL to retain block", got)
