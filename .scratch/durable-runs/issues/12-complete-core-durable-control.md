@@ -83,3 +83,27 @@ fallback/recovery behavior, and linked worktrees observe the same run state.
   engine.go — bypass recorded per guardian rule.
 - Verification snapshot: gofmt empty; build+vet linux+windows; full suite
   green 24 packages.
+
+### Slice 2 — end-to-end harness suite and linked-worktree proof
+- Commits: shared harness (314), crash/timeout/abort (295),
+  retry/respond/fallback (229), recovery/worktree (193) — hook-enforced;
+  test-only package internal/durableruns_e2e, zero production changes
+  (verified, not trusted: every referenced symbol checked against HEAD).
+- Seven scenarios on REAL store+controller(+transport): honest dual crash
+  classification; subprocess timeout kill proven via /proc pid polling;
+  controller-authored abort with late-result drop pinned; retry fresh
+  identity + Verify across lineage; host-envelope response hash binding;
+  REAL CadenaAdaptador over fake PATH binaries with effective-agent =
+  secondary; orphaned-canceled two-step relaunch with ContentHash-untouched
+  prefix. Linked-worktree: real git worktree add, identical common-dir
+  resolution, DeepEqual inspections from both worktrees — portable.
+- runs-inspection consistency assertion applied per scenario (8 direct +
+  justified manual trio for reconciled non-terminal expectations + stronger
+  cross-worktree DeepEqual).
+- Orphaned streams seeded through REAL AppendEvent machinery (validator-
+  coherent, cannot drift from format reality).
+- Dual-axis review: GO. Applied opportunistically: bounded waitStarted helper
+  replacing two unbounded channel receives (N1); MY_SUB_AGENT neutralized in
+  fallback fixture (N2). Cosmetic worktree-prune note left as-is (temp dirs).
+- Verification snapshot: gofmt empty; build+vet linux+windows; -race clean;
+  ×5 deterministic.
