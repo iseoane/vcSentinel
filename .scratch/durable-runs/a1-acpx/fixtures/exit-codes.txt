@@ -1,0 +1,5 @@
+# exit codes captured per probe (sandbox originals: bgexit*.txt)
+missing_session_prompt_exit=4
+timeout_exit=3
+cancelled_turn_exit=0
+completed_turn_exit=0

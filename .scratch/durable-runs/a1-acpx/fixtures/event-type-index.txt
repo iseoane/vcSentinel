@@ -1,0 +1,16 @@
+# Observed session/update event types per original (unredacted) stream
+== exec-stream.jsonl
+     10 "sessionUpdate":"agent_thought_chunk"
+      1 "sessionUpdate":"usage_update"
+      1 "sessionUpdate":"available_commands_update"
+      1 "sessionUpdate":"agent_message_chunk"
+== cancel2-stream.jsonl
+    200 "sessionUpdate":"agent_thought_chunk"
+      1 "sessionUpdate":"usage_update"
+== deny-probe.jsonl
+     19 "sessionUpdate":"agent_thought_chunk"
+     17 "sessionUpdate":"agent_message_chunk"
+      2 "sessionUpdate":"tool_call_update"
+      1 "sessionUpdate":"usage_update"
+      1 "sessionUpdate":"tool_call"
+      1 "sessionUpdate":"available_commands_update"
