@@ -82,6 +82,9 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		switch flag {
 		case "--run":
 			options.runID = value
+		case "--repair":
+			options.repairID = value
+			options.repairSet = true
 		case "--text":
 			options.text = value
 		case "--prompt":
@@ -106,6 +109,7 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 				err = fmt.Errorf("flag --expected-revision requires a non-negative integer, received %q", value)
 			}
 			options.expectedRevision = parsed
+			options.expectedRevisionSet = true
 		default:
 			err = fmt.Errorf("unknown flag for 'sentinel runs %s': %s", subcommand, flag)
 		}

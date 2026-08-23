@@ -15,7 +15,7 @@ formats output.
 | `runs respond` | `--run <id>`, `--text <answer>`, `--json` | Applies a response to an awaiting decision and waits for the resulting attempt to settle. |
 | `runs abort` | `--run <id>`, `--json` | Applies abort. Cancellation is cooperative, so this command does **not** wait for the worker to settle. |
 | `runs retry` | `--run <id>`, `[--expected-revision N]`, `--json` | Relaunches a retryable terminal (`failed`, `canceled`, `timed_out`) as the next attempt inside the same run identity; waits for the new attempt to settle. |
-| `runs recover` | `--run <id>`, `[--expected-revision N]`, `--json` | Explicit operator resume of reconstructable durable evidence: awaiting heads are reconstructed without adapter calls; retryable terminals delegate to retry. Prints the resulting state after settling. |
+| `runs recover` | `--run <id>`, `[--expected-revision N]`, `--json`; or `--repair <id>`; or neither (scan) | Three modes. With `--run`: explicit operator resume of reconstructable durable evidence — awaiting heads are reconstructed without adapter calls; retryable terminals delegate to retry; an orphaned-canceled stream (owner died mid-cancellation) materializes its reconciled canceled settlement and relaunches under a fresh invocation identity; every other shape is refused with its reason. Prints the resulting state after settling. With `--repair`: deterministic snapshot rebuild of one classified terminal-unprojected run from its verified stream; events bytes are never touched and every other class is refused with its reason. Without `--run` or `--repair`: read-only recovery scan listing every non-terminal run with its evidence-based class and reason; writes nothing and exits `4` when any entry requires an operator decision. `--expected-revision` is rejected as a usage error on the scan and with `--repair`. |
 | `runs verify` | `--run <id>`, `--json` | Deterministic integrity check: event-log hashes, chain continuity, lineage boundaries, and derived-projection-versus-replay equality. |
 
 Unknown subcommands and unknown/incomplete flags exit `1`; bare `sentinel runs`
@@ -37,6 +37,43 @@ Documented next to the dispatch in `cmd/sentinel/comandos_runs_decls.go`
 
 `verify` folds every read failure except not-found into its integrity verdict:
 an invalid verdict prints a concrete reason and exits `5`.
+
+### Recovery scan classes and exit codes
+
+The read-only `runs recover` scan classifies every non-terminal run from
+verified evidence only:
+
+| Class | Meaning |
+| --- | --- |
+| `recoverable` | Awaiting-decision head with intact decision evidence; resume reconstructs the pending decision without an adapter call. |
+| `terminal_unprojected` | A verified terminal frame exists but the persisted snapshot lags it; `--repair` rebuilds the snapshot from the stream. |
+| `corrupt` | Hash-chain break, invalid transition, or unreadable tail; the reason carries the exact underlying error text. Never silently repaired. |
+| `orphaned_canceled` | Owner death during cancellation (R7 reconciled view); final unless the operator retries explicitly. |
+| `operator_required` | Evidence cannot decide between outcomes; the reason names the exact missing evidence. |
+
+Exit semantics are deliberate: a corrupt-only scan still exits `0` because
+the scan is informational — repairing bytes is a separate operator decision,
+and `runs verify` remains the integrity verdict that owns exit `5`. Only an
+`operator_required` row escalates the scan to exit `4`, so automation notices
+when a human decision is actually required.
+
+For resume specifically, `orphaned_canceled` splits by tail integrity: an
+intact escalation tail materializes its reconciled settlement and resumes,
+while a torn escalation tail (crashed before its final newline) fails closed
+as corruption on resume and surfaces the exit `5` verdict `runs verify`
+owns. This scan-versus-resume asymmetry for `orphaned_canceled` rows follows
+from the exit semantics above: the scan only reports what it sees, but a
+resume attempt must never rewrite unreadable evidence.
+
+## Resume-creates-new-invocation guarantee
+
+Recovering or retrying after owner loss never reuses an interrupted attempt's
+identity: every relaunch derives its attempt through `NewRetryInvocation`, so
+the resumed work carries a fresh invocation identity inside the original run,
+job, and lineage. The interrupted attempt keeps its durable record — for an
+orphaned-canceled run, its reconciled cancellation outcome stays inspectable
+while the new attempt runs — and nothing ever claims the old attempt
+completed.
 
 ## Stable JSON shapes
 
@@ -118,6 +155,23 @@ Machine output never changes shape without a major note. Field names:
   {"valid": true, "events": 4, "reason": ""}
   ```
 
+- `recover` (scan mode, no `--run`/`--repair`)
+
+  ```json
+  {"recoveries": [{"run_id": "...", "class": "orphaned_canceled", "reason": "owner death during cancellation: escalation transitions are recorded without any canceled settlement frame", "head_sequence": 4, "reconciled": true}]}
+  ```
+
+  `reason` names the exact evidence or missing evidence behind the verdict;
+  for the corrupt class it is the underlying error's own text. `reconciled`
+  appears only when the verdict derives from the R7 restart reconciliation.
+  `recoveries` is an empty array, never null.
+
+- `recover --repair <id>`
+
+  ```json
+  {"run_id": "...", "class_before": "terminal_unprojected", "class_after": "settled", "rewritten": true}
+  ```
+
 ## Notes
 
 - Idempotency is per action and honest about durable state: repeating
@@ -131,7 +185,9 @@ Machine output never changes shape without a major note. Field names:
   `--expected-revision N` to fail explicitly (exit `3`) when another writer
   advanced the stream past your observation.
 - The controller's `Apply` actions (`respond`, `abort`) do not take a revision
-  pin in this slice; only `retry` and `recover` accept `--expected-revision`.
+  pin in this slice; only `retry` and `recover --run` accept
+  `--expected-revision`. Using it with the read-only recovery scan or with
+  `--repair` is a usage error (exit `1`) instead of a silently ignored flag.
 - `start`, `respond`, `retry`, and `recover` block until the run reaches
   `awaiting_decision` or a terminal state because the CLI process must outlive
   its detached worker; exiting earlier would strand the attempt mid-flight.

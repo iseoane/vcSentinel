@@ -753,9 +753,10 @@ func knownLifecycleState(state agentrun.LifecycleState) bool {
 	}
 }
 
-const (
-	eventLockWait = 15 * time.Second
-)
+// eventLockWait bounds how long writers wait for the cross-process
+// execution lock. It is a variable only so tests can shrink the contention
+// window deterministically; production always observes the 15s default.
+var eventLockWait = 15 * time.Second
 
 func withExecutionLock(directory string, action func() error) error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
