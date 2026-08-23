@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -318,5 +319,61 @@ func TestRemoteClientHandshakeRejectionSurfacesTypedError(t *testing.T) {
 	}
 	if host != nil {
 		_ = host.Close()
+	}
+}
+
+// TestRemoteClientApplyObservesErrDaemonShuttingDownDuringDrain proves the
+// graceful-shutdown refusal survives the wire through the CLIENT adapter:
+// once the graceful sequence began, an Apply issued over an established
+// RemoteHost connection fails with a *RemoteError whose Unwrap resolves
+// errors.Is against ErrDaemonShuttingDown remotely — the same sentinel
+// identity a local caller would observe.
+func TestRemoteClientApplyObservesErrDaemonShuttingDownDuringDrain(t *testing.T) {
+	release := make(chan struct{})
+	var safeClose sync.Once
+	defer safeClose.Do(func() { close(release) })
+	server, _, _, ep, serveErr := startGracedServer(t, blockingAdapter(release), 5*time.Second)
+	host := dialRemoteHostForTest(t, ep)
+
+	handle, err := host.Start(context.Background(), execution.StartRequest{
+		Candidate:   "candidate:shutdown-refusal",
+		Prompt:      "prompt:shutdown-refusal",
+		Policy:      store.RunPolicy{ID: "wire-shutdown-policy"},
+		AuthContext: testAuth(),
+	})
+	if err != nil {
+		t.Fatalf("remote start: %v", err)
+	}
+
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- server.Shutdown() }()
+
+	// Poll with a side-effect-free probe until the refusal carries the
+	// classified sentinel: respond on a running run fails without mutating
+	// durable state, so pre-flip attempts cannot settle anything and the
+	// observation never depends on winning the beginShutdown race.
+	deadline := time.Now().Add(2 * time.Second)
+	for attempt := 0; ; attempt++ {
+		_, applyErr := host.Apply(context.Background(), execution.ApplyRequest{
+			RunID:       handle.RunID,
+			Action:      execution.ControlAction{Kind: execution.ActionRespond, Response: "probe"},
+			ActionID:    fmt.Sprintf("action:shutdown-probe-%d", attempt),
+			AuthContext: testAuth(),
+		})
+		if errors.Is(applyErr, ErrDaemonShuttingDown) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Apply during drain never surfaced ErrDaemonShuttingDown; last error = %v", applyErr)
+		}
+		time.Sleep(pollInterval)
+	}
+
+	safeClose.Do(func() { close(release) })
+	if err := await(t, shutdownDone, 10*time.Second); err != nil {
+		t.Fatalf("Shutdown error = %v", err)
+	}
+	if err := await(t, serveErr, 5*time.Second); err != nil {
+		t.Fatalf("Serve returned %v, want nil", err)
 	}
 }
