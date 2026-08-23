@@ -1,9 +1,12 @@
-// Package daemon implements the repository-local daemon ownership protocol
-// for D2 slice 1: an exclusive owner claim stored under
-// <git-common-dir>/vas-sentinel/daemon/, stale detection through pid
-// liveness behind a platform seam, deterministic reclaim, inspection, and
-// self-release. Transport (endpoint.json, listeners, sockets) arrives in a
-// later slice and intentionally does not exist here yet.
+// Package daemon implements the repository-local daemon for D2: an
+// exclusive owner claim stored under <git-common-dir>/vas-sentinel/daemon/,
+// stale detection through pid liveness behind a platform seam,
+// deterministic reclaim, inspection, and self-release (slice 1), plus the
+// repository-local transport of slice 2a — framed JSON connections over a
+// unix socket or loopback TCP with bearer token, endpoint discovery through
+// endpoint.json, and server-side dispatch of the four repository-host
+// operations against one execution.Controller. The client adapter, runs-
+// command wiring, and graceful lifecycle semantics arrive in later slices.
 //
 // Like store.NuevoStore, every entry point takes the git common directory
 // (not the per-worktree git dir) so the daemon slot is shared across linked
