@@ -1,0 +1,241 @@
+package adaptersites
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// siteByPath indexes the curated inventory for cross-checks.
+func siteByPath(t *testing.T) map[string]Site {
+	t.Helper()
+	byPath := make(map[string]Site)
+	for _, site := range Sites() {
+		if _, dup := byPath[site.Path]; dup {
+			t.Fatalf("duplicate inventory entry for %s", site.Path)
+		}
+		byPath[site.Path] = site
+	}
+	return byPath
+}
+
+// readFile returns the repository file as text.
+func readFile(t *testing.T, root, rel string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatalf("inventory entry %s is unreadable: %v", rel, err)
+	}
+	return string(content)
+}
+
+// lineText returns the 1-indexed line of the given text.
+func lineText(text string, line int) string {
+	lines := strings.Split(text, "\n")
+	if line < 1 || line > len(lines) {
+		return ""
+	}
+	return lines[line-1]
+}
+
+// functionBody extracts the source of the first function whose declaration
+// contains needle, from that declaration line through its matching closing
+// brace. It is deliberately textual: brace counting over gofmt-clean files
+// (no braces inside raw comments at declaration level) is deterministic and
+// keeps this audit free of AST dependencies.
+func functionBody(t *testing.T, text, needle string) string {
+	t.Helper()
+	lines := strings.Split(text, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "func ") && strings.Contains(line, needle) {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		t.Fatalf("function declaration containing %q not found", needle)
+	}
+	depth := 0
+	opened := false
+	for i := start; i < len(lines); i++ {
+		for _, r := range lines[i] {
+			switch r {
+			case '{':
+				depth++
+				opened = true
+			case '}':
+				depth--
+			}
+		}
+		if opened && depth == 0 {
+			return strings.Join(lines[start:i+1], "\n")
+		}
+	}
+	t.Fatalf("unbalanced braces in function containing %q", needle)
+	return ""
+}
+
+// TestAdapterExecutionSitesInventory proves the curated enumeration matches
+// reality: every declared entry exists and still pins its marker line, and
+// every scanned canary-bearing file is classified. A new execution or
+// lifecycle-mutation site appearing anywhere in the module fails here until
+// it is added to the inventory with an explicit class and reason.
+func TestAdapterExecutionSitesInventory(t *testing.T) {
+	root, err := ModuleRoot()
+	if err != nil {
+		t.Fatalf("module root not found: %v", err)
+	}
+	sites := Sites()
+	if len(sites) < 40 {
+		t.Fatalf("curated inventory shrank unexpectedly: %d entries", len(sites))
+	}
+	byPath := siteByPath(t)
+
+	scanned, err := ScanMarkerFiles(root)
+	if err != nil {
+		t.Fatalf("canary scan failed: %v", err)
+	}
+
+	// Every scanned marker-bearing file must be declared.
+	for path := range scanned {
+		site, ok := byPath[path]
+		if !ok {
+			t.Errorf("UNCLASSIFIED execution/lifecycle site: %s carries markers %v; add it to Sites() with a class and reason", path, scanned[path])
+			continue
+		}
+		declared := map[string]bool{}
+		if site.Marker != "" {
+			declared[site.Marker] = true
+		}
+		matchedAny := false
+		for _, marker := range scanned[path] {
+			if marker == site.Marker || declared[marker] || site.Marker == "" {
+				matchedAny = true
+			}
+		}
+		if !matchedAny && len(scanned[path]) > 0 {
+			t.Errorf("stale inventory entry %s: pins marker %q but the file now only carries %v", path, site.Marker, scanned[path])
+		}
+	}
+
+	// Every declared entry must exist on disk and pin a real line.
+	for _, site := range sites {
+		text := readFile(t, root, site.Path)
+		if site.Marker == "" {
+			continue // documentation-only row
+		}
+		current := lineText(text, site.Line)
+		if !strings.Contains(current, site.Marker) {
+			t.Errorf("inventory entry %s (%s): line %d no longer contains marker %q; refresh the recorded line. Current: %q",
+				site.Path, site.Symbol, site.Line, site.Marker, strings.TrimSpace(current))
+		}
+	}
+}
+
+// TestInScopeAdapterSitesCarryAdmittedEnvelope asserts envelope totality for
+// every durable-controller provider-execution site: each one routes its
+// provider call through the execution controller with an admitted
+// agentrun.InvocationEnvelope present in the dispatch signature or admission
+// flow.
+func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
+	root, err := ModuleRoot()
+	if err != nil {
+		t.Fatalf("module root not found: %v", err)
+	}
+
+	transport := readFile(t, root, "internal/reviewexec/durable_transport.go")
+	runBody := functionBody(t, transport, ") Run(reviewer RestrictedReviewer")
+	for _, seam := range []string{
+		"agentrun.NewRunRequest(", // request admitted...
+		"controller.Start(",       // ...through the controller lifecycle authority
+		"validateSnapshotBinding", // fail-fast binding before waiting
+		"t.verifyEvidence(",       // output admitted only against durable evidence
+	} {
+		if !strings.Contains(runBody, seam) {
+			t.Errorf("DurableTransport.Run lost its admission seam %q", seam)
+		}
+	}
+
+	reviewAdapter := readFile(t, root, "internal/reviewexec/reviewexec.go")
+	execBody := functionBody(t, reviewAdapter, ") Execute(ctx context.Context, job agentrun.LogicalJob")
+	if !strings.Contains(execBody, "InvocationEnvelope") {
+		t.Errorf("ReviewAdapter.Execute must receive the admitted InvocationEnvelope in its dispatch signature")
+	}
+
+	runsCLI := readFile(t, root, "cmd/sentinel/comandos_runs.go")
+	promptBody := functionBody(t, runsCLI, "(a promptRunAdapter) Execute(")
+	if !strings.Contains(promptBody, "InvocationEnvelope") {
+		t.Errorf("promptRunAdapter.Execute must receive the admitted InvocationEnvelope in its dispatch signature")
+	}
+	builderBody := functionBody(t, runsCLI, "func buildRunsController(")
+	if !strings.Contains(builderBody, "execution.NewController(backing, promptAdapter)") {
+		t.Errorf("buildRunsController must route promptRunAdapter exclusively through execution.NewController")
+	}
+
+	adapters := readFile(t, root, "internal/gate/gate_durable_adapters.go")
+	for _, adapterFn := range []string{"(a rootRunAdapter) Execute(", "(a settledValidationAdapter) Execute("} {
+		body := functionBody(t, adapters, adapterFn)
+		if !strings.Contains(body, "InvocationEnvelope") {
+			t.Errorf("%s must receive the admitted InvocationEnvelope in its dispatch signature", adapterFn)
+		}
+	}
+
+	gateDurable := readFile(t, root, "internal/gate/gate_durable.go")
+	if admissions := strings.Count(gateDurable, "controller.Start("); admissions != 2 {
+		t.Errorf("gate durable orchestration must admit exactly through controller.Start (root + validation jobs), found %d call sites", admissions)
+	}
+
+	// The refuter influences verdicts (it can downgrade a confirmed CRITICAL
+	// blocker), so with a transport present it must never call the reviewer
+	// directly.
+	engine := readFile(t, root, "internal/review/engine.go")
+	refuteBody := functionBody(t, engine, "func refutarHallazgosCriticos(")
+	if !strings.Contains(refuteBody, `transport("refutation"`) {
+		t.Errorf("refutarHallazgosCriticos must route refutations through the admitted ReviewTransport when one is present")
+	}
+}
+
+// TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries proves the two
+// configuration rollback switches are the ONLY permitted non-controller
+// lifecycle paths, and that both switches really exist in the parser.
+func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
+	root, err := ModuleRoot()
+	if err != nil {
+		t.Fatalf("module root not found: %v", err)
+	}
+
+	var gated []Site
+	lifecycleMarkers := map[string]bool{"NewController(": true, "AppendEvent(": true}
+	controllerCore := map[string]bool{
+		"internal/execution/controller.go":       true,
+		"internal/execution/controller_retry.go": true,
+		"internal/store/execution_events.go":     true,
+		"internal/agentrun/contracts.go":         true,
+	}
+	for _, site := range Sites() {
+		if site.Class == ClassGated {
+			gated = append(gated, site)
+		}
+		if site.Marker != "" && lifecycleMarkers[site.Marker] && !controllerCore[site.Path] {
+			if site.Class != ClassDurable {
+				t.Errorf("lifecycle-mutating site %s must be class %q, got %q", site.Path, ClassDurable, site.Class)
+			}
+		}
+	}
+	if len(gated) != 2 {
+		t.Fatalf("exactly two compatibility-gated rollback entries are permitted, found %d: %v", len(gated), gated)
+	}
+	wantGated := map[string]bool{"internal/review/engine.go": true, "internal/gate/gate.go": true}
+	for _, site := range gated {
+		if !wantGated[site.Path] {
+			t.Errorf("unexpected compatibility-gated entry %s; only the two documented rollback switches qualify", site.Path)
+		}
+	}
+
+	parser := readFile(t, root, "internal/config/parser.go")
+	if got := strings.Count(parser, `yaml:"durable_runs"`); got != 2 {
+		t.Errorf("both review.durable_runs and gate.durable_runs must exist in the config parser, found %d tags", got)
+	}
+}
