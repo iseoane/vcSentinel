@@ -9,7 +9,7 @@ fallback/recovery behavior, and linked worktrees observe the same run state.
 
 **Blocked by:** 11 (complete, merged at bccb76e).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
