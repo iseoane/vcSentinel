@@ -14,6 +14,7 @@
 package gate
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -56,4 +57,13 @@ func RecordValidationEvidence(runs []validation.ValidationRun) []ValidationEvide
 		})
 	}
 	return evidence
+}
+
+// String serializes the deterministic tuple for durable binding: a settled
+// validation job's adapter output carries exactly this text, so the
+// execution controller persists its hash as the AttemptOutcome.OutputHash.
+// Raw output bytes never appear here — only scalars plus the digest.
+func (e ValidationEvidence) String() string {
+	return fmt.Sprintf("command=%s capability=%s exit=%d duration_ms=%d digest=%s",
+		e.Command, e.Capability, e.Exit, e.DurationMs, e.Digest)
 }
