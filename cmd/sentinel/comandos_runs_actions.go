@@ -222,6 +222,18 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitUsage
 	}
+	// Ticket 10 slice 3 strictness: --expected-revision pins a competing
+	// writer on the resume path only. The read-only scan pins nothing, and
+	// --repair replays the whole verified stream under one lock, so both
+	// reject the flag as a usage error instead of ignoring it silently.
+	if options.expectedRevisionSet && options.repairSet {
+		fmt.Fprintln(out, "❌ Usage: sentinel runs recover rejects --expected-revision with --repair; the rebuild replays the whole verified stream under one lock")
+		return runExitUsage
+	}
+	if options.expectedRevisionSet && options.runID == "" {
+		fmt.Fprintln(out, "❌ Usage: sentinel runs recover accepts --expected-revision only together with --run <id>; the read-only scan pins nothing")
+		return runExitUsage
+	}
 	// Ticket 10 slice 2: --repair <id> is the bounded operator action that
 	// rebuilds the lagging state snapshot of one classified
 	// terminal-unprojected run from its verified stream. It never appends,

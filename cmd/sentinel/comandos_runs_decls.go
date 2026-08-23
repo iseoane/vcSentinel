@@ -52,7 +52,8 @@ Subcommands:
            refused with its reason
            without --run or --repair: list the read-only recovery scan of
            every non-terminal run with its evidence-based class; exits 4 when
-           any entry requires an operator decision
+           any entry requires an operator decision; --expected-revision is
+           rejected on the scan and with --repair
   verify   --run <id> [--json]
 
 Exit codes:
@@ -104,7 +105,11 @@ type runOptions struct {
 	policyID         string
 	afterCursor      uint64
 	expectedRevision uint64
-	limit            int
+	// expectedRevisionSet records that --expected-revision was seen at all,
+	// so subcommands where the pin does not apply reject it explicitly
+	// instead of letting value zero pass silently.
+	expectedRevisionSet bool
+	limit               int
 }
 
 // promptRunAdapter executes arbitrary operator prompts through the configured
