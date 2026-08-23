@@ -225,14 +225,38 @@ place; append-only event logs keep validating against their original hash
 chain. New capabilities must arrive as additive fields or new files, never
 as reshaped existing ones.
 
-Rollback switches: `review.durable_runs: false` and
-`gate.durable_runs: false` remain the release-bounded compatibility facade —
-the ONLY two sanctioned lifecycle entries outside the controller. Both
-default to the durable path; flipping one routes NEW work back to the legacy
-orchestration byte-for-byte while every run already written stays fully
-inspectable through these `runs` commands. Both switches are release-bounded:
-their removal requires a major note in this file, consistent with the
-machine-output stability rule above.
+## Minimum supported schema
+
+R11 removed the two release-bounded switches (`review.durable_runs` and
+`gate.durable_runs`) together with their legacy execution paths, but the
+removal was a cutover completion, not a format change. The oldest shapes
+still fully readable after R11:
+
+- **Durable run streams (pre-R1 through current):** the on-disk stream shape —
+  `executions/v1/<run-id>/` with `request.json`, `policy.json`, a hash-chained
+  `events.jsonl`, and `outcomes/<invocation>.json` records — is unchanged
+  since the first release that wrote it. Streams written before the transient
+  `terminating` / `terminated` states existed simply never contain those
+  states; every reader validates them unchanged. Focused tests hand-seed a
+  minimal settled pre-R9-shaped stream (admission records plus a complete
+  created→…→terminal chain with no transient tail) and prove listing,
+  request reads, event pages, attempt outcomes, and reconciled projections
+  all resolve from store contents alone.
+- **Review ledger revisions (pre-R1 through current):** ficha JSON keeps its
+  append-only `revisions[]` shape; revisions written before agent/model/effort
+  attribution (T0.2) or aggregated findings (T6.1) decode with those keys
+  absent, and their per-dimension v1 findings still project into the uniform
+  v2 finding shape for reporting and branch analysis.
+- **Pre-R1 repositories:** there is no conversion step. A repository created
+  before R1 has no `vas-sentinel` directory yet; it simply gains the ledger
+  and execution files on demand the first time a review, gate, or `runs`
+  command writes them. Nothing is rewritten or migrated.
+
+Upgrade note: configuration yamls that still declare the removed keys
+(`review.durable_runs`, or the whole `gate:` section) now FAIL to load with an
+explicit unknown-key error naming file and line. Delete those keys when
+migrating; durable history already written stays fully inspectable via these
+`runs` commands.
 
 ## Notes
 
@@ -253,8 +277,8 @@ machine-output stability rule above.
 - `start`, `respond`, `retry`, and `recover` block until the run reaches
   `awaiting_decision` or a terminal state because the CLI process must outlive
   its detached worker; exiting earlier would strand the attempt mid-flight.
-- Evidence admission (ticket 07) is default-on: when `review.durable_runs`
-  routes dimension reviews through the controller, their output only reaches
+- Evidence admission (ticket 07) is default-on: dimension reviews route
+  through the controller, so their output only reaches
   verdicts after snapshot binding and output-hash verification pass, and a
   rejected completion surfaces as first-class evidence with the literal
   `admission:` reason prefix — distinct from infrastructure failures in gate,
@@ -270,11 +294,10 @@ machine-output stability rule above.
   owner died mid-cancellation is classified canceled-orphaned on next
   observation through restart reconciliation — no fabricated completion, no
   silent resume, and the append-only stream is never rewritten.
-- Gate durable runs (ticket 11) are the cutover default: `sentinel gate`
+- Gate durable runs (ticket 11, unconditional since R11): `sentinel gate`
   executes as ONE root durable run with deterministic validation jobs and the
   routed review invocations as children linked through their persisted parent
   linkage, so the gate summary reconstructs from store contents alone. The
-  root and every review child share the repository common-dir store. Setting
-  `gate.durable_runs: false` in `vassentinel.yml` routes gate back to the
-  legacy orchestration byte-for-byte while every run already written stays
-  fully inspectable through these `runs` commands.
+  root and every review child share the repository common-dir store. The old
+  `gate.durable_runs: false` rollback switch was removed in R11; a yaml still
+  carrying it fails strict config load (see "Minimum supported schema" above).
