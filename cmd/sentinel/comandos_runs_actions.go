@@ -33,10 +33,12 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	host := execution.NewInProcessHost(controller)
 	candidate := fmt.Sprintf("operator:%s:%d-%d-%06d",
 		options.policyID, time.Now().UnixNano(), os.Getpid(), runsStartSequence.Add(1))
 	request := agentrun.NewRunRequest(agentrun.Candidate(candidate), agentrun.Prompt(options.prompt), nil)
-	handle, err := controller.Start(context.Background(), request, store.RunPolicy{ID: options.policyID})
+	handle, err := host.Start(context.Background(),
+		execution.StartRequest{Request: request, Policy: store.RunPolicy{ID: options.policyID}})
 	if err != nil {
 		fmt.Fprintf(out, "❌ The run could not be admitted: %v\n", err)
 		return runExitCode(err)
@@ -64,8 +66,11 @@ func executeRunsRespond(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	result, applyErr := controller.Apply(context.Background(), agentrun.Identity(options.runID),
-		execution.ControlAction{Kind: execution.ActionRespond, Response: options.text})
+	host := execution.NewInProcessHost(controller)
+	result, applyErr := host.Apply(context.Background(), execution.ApplyRequest{
+		RunID:  agentrun.Identity(options.runID),
+		Action: execution.ControlAction{Kind: execution.ActionRespond, Response: options.text},
+	})
 	if applyErr != nil {
 		fmt.Fprintf(out, "❌ respond rejected: %v\n", applyErr)
 		return runExitCode(applyErr)
@@ -92,7 +97,7 @@ func idempotentHeadOf(controller *execution.Controller, runID agentrun.Identity,
 	if !errors.Is(err, execution.ErrRunNotActive) {
 		return idempotentHead{}, false
 	}
-	inspection, inspectErr := controller.Inspect(context.Background(), runID)
+	inspection, inspectErr := execution.NewInProcessHost(controller).Inspect(context.Background(), runID)
 	if inspectErr != nil || len(inspection.Events) == 0 {
 		return idempotentHead{}, false
 	}
@@ -121,8 +126,11 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	result, applyErr := controller.Apply(context.Background(), agentrun.Identity(options.runID),
-		execution.ControlAction{Kind: execution.ActionAbort})
+	host := execution.NewInProcessHost(controller)
+	result, applyErr := host.Apply(context.Background(), execution.ApplyRequest{
+		RunID:  agentrun.Identity(options.runID),
+		Action: execution.ControlAction{Kind: execution.ActionAbort},
+	})
 	if applyErr != nil {
 		if head, ok := idempotentHeadOf(controller, agentrun.Identity(options.runID), applyErr); ok {
 			settled := execution.ApplyResult{
