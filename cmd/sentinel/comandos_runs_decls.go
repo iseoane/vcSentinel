@@ -67,6 +67,9 @@ Exit codes:
   1 usage error                              4 invalid state for the action
   2 run not found                            5 infrastructure or corruption
 
+Each subcommand accepts ONLY the flags listed above; any other flag is
+rejected with a usage error (exit 1) instead of being ignored silently.
+
 See docs/runs-cli.md for JSON shapes and terminal-state mapping.
 `
 

@@ -78,9 +78,13 @@ func executeRunsPrune(out io.Writer, worktree string, args []string) int {
 
 // collectProvenanceReferences merges every invocation identity that review
 // evidence still cites: persisted finding blobs and the append-only review
-// ledger fichas (per-dimension results and aggregated findings). Any read
-// failure fails closed — a prune must never run while provenance is
-// unreadable, because that is exactly how referenced streams get destroyed.
+// ledger fichas (per-dimension results, their raw v2 hallazgos — including
+// refutation-downgraded ones, whose admitted refuter invocation travels in
+// Hallazgo.InvocationID — and aggregated findings). Aggregation drops
+// refuted findings, so scanning AggregatedFindings alone would miss the
+// refuter stream; the raw Dims hallazgos close that gap. Any read failure
+// fails closed — a prune must never run while provenance is unreadable,
+// because that is exactly how referenced streams get destroyed.
 func collectProvenanceReferences(worktree string, backing *store.Store) (map[string]bool, error) {
 	references, err := backing.ReferencedInvocationIDs()
 	if err != nil {
@@ -107,6 +111,11 @@ func collectProvenanceReferences(worktree string, backing *store.Store) (map[str
 			for _, dim := range rev.Dims {
 				if dim.InvocationID != "" {
 					references[dim.InvocationID] = true
+				}
+				for _, hallazgo := range dim.Hallazgos {
+					if hallazgo.InvocationID != "" {
+						references[hallazgo.InvocationID] = true
+					}
 				}
 			}
 			for _, hallazgo := range rev.AggregatedFindings {

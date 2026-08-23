@@ -133,8 +133,12 @@ func TestPruneExecutionsKeepsOrphanedCanceled(t *testing.T) {
 }
 
 // TestPruneExecutionsKeepsProvenanceReferencedStreams proves the reference
-// guard: a terminal-old run whose invocation produced review findings is
-// retained even though it would otherwise be prunable.
+// guard: a terminal-old run whose invocation is cited by any caller-supplied
+// reference set is retained even though it would otherwise be prunable.
+// Where those references come from (dimension producers, persisted finding
+// blobs, ledger hallazgos including admitted refutations) is proven against
+// the real collectors in their own packages; this test pins only that
+// PruneExecutions honors whatever set it receives.
 func TestPruneExecutionsKeepsProvenanceReferencedStreams(t *testing.T) {
 	s := NuevoStore(t.TempDir())
 	referencedRun, frames := seedPruneRun(t, s, "referenced", "", pruneTerminalSuccess(), pruneAncientTime)

@@ -68,11 +68,56 @@ func executeRuns(out io.Writer, worktree string, args []string) int {
 	}
 }
 
+// runsFlag identifies one declared flag of the `sentinel runs` CLI surface.
+// Every flag except --json consumes exactly one value.
+type runsFlag string
+
+const (
+	flagJSON             runsFlag = "--json"
+	flagRun              runsFlag = "--run"
+	flagRepair           runsFlag = "--repair"
+	flagText             runsFlag = "--text"
+	flagPrompt           runsFlag = "--prompt"
+	flagPolicyID         runsFlag = "--policy-id"
+	flagAfter            runsFlag = "--after"
+	flagLimit            runsFlag = "--limit"
+	flagExpectedRevision runsFlag = "--expected-revision"
+	flagOlderThan        runsFlag = "--older-than"
+)
+
+// runsSubcommandFlags is the single source of truth for which flags each
+// `runs` subcommand accepts (ticket 13 hardening pool, JD-R10 W2). The
+// parser rejects anything not declared here with a usage error instead of
+// silently ignoring it, so a stray --older-than outside prune can never
+// degrade into a misread operator intent.
+var runsSubcommandFlags = map[string][]runsFlag{
+	"start":   {flagPrompt, flagPolicyID, flagJSON},
+	"status":  {flagRun, flagJSON},
+	"logs":    {flagRun, flagAfter, flagLimit, flagJSON},
+	"respond": {flagRun, flagText, flagJSON},
+	"abort":   {flagRun, flagJSON},
+	"retry":   {flagRun, flagExpectedRevision, flagJSON},
+	"recover": {flagRun, flagExpectedRevision, flagRepair, flagJSON},
+	"verify":  {flagRun, flagJSON},
+	"prune":   {flagOlderThan, flagJSON},
+}
+
 func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 	options := runOptions{policyID: runsDefaultPolicyID, limit: runsLogsDefaultLimit}
+	declared, ok := runsSubcommandFlags[subcommand]
+	if !ok {
+		return options, fmt.Errorf("unknown subcommand for 'sentinel runs': %s", subcommand)
+	}
+	accepted := make(map[runsFlag]bool, len(declared))
+	for _, flag := range declared {
+		accepted[flag] = true
+	}
 	for i := 0; i < len(args); i++ {
 		flag := args[i]
-		if flag == "--json" {
+		if !accepted[runsFlag(flag)] {
+			return options, fmt.Errorf("flag %s is not accepted by 'sentinel runs %s'", flag, subcommand)
+		}
+		if runsFlag(flag) == flagJSON {
 			options.jsonOut = true
 			continue
 		}
@@ -81,38 +126,38 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		}
 		value := args[i+1]
 		var err error
-		switch flag {
-		case "--run":
+		switch runsFlag(flag) {
+		case flagRun:
 			options.runID = value
-		case "--repair":
+		case flagRepair:
 			options.repairID = value
 			options.repairSet = true
-		case "--text":
+		case flagText:
 			options.text = value
-		case "--prompt":
+		case flagPrompt:
 			options.prompt = value
-		case "--policy-id":
+		case flagPolicyID:
 			options.policyID = value
-		case "--after":
+		case flagAfter:
 			var parsed uint64
 			if parsed, err = strconv.ParseUint(value, 10, 64); err != nil {
 				err = fmt.Errorf("flag --after requires a non-negative integer, received %q", value)
 			}
 			options.afterCursor = parsed
-		case "--limit":
+		case flagLimit:
 			var parsed uint64
 			if parsed, err = strconv.ParseUint(value, 10, 64); err == nil && (parsed == 0 || parsed > math.MaxInt32) {
 				err = fmt.Errorf("flag --limit requires a positive integer, received %q", value)
 			}
 			options.limit = int(parsed)
-		case "--expected-revision":
+		case flagExpectedRevision:
 			var parsed uint64
 			if parsed, err = strconv.ParseUint(value, 10, 64); err != nil {
 				err = fmt.Errorf("flag --expected-revision requires a non-negative integer, received %q", value)
 			}
 			options.expectedRevision = parsed
 			options.expectedRevisionSet = true
-		case "--older-than":
+		case flagOlderThan:
 			options.olderThan = value
 			options.olderThanSet = true
 		default:

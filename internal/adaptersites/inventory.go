@@ -9,9 +9,11 @@
 //
 //   - completeness: any file that starts carrying a canary marker
 //     (exec.Command, EjecutarPrompt/EjecutarRevision calls, controller
-//     construction, AppendEvent, capability/request construction) without a
-//     declared entry FAILS TestAdapterExecutionSitesInventory, so new
-//     execution sites cannot appear unclassified;
+//     construction, AppendEvent, capability/request construction, or a
+//     store-primitive mutation call: CreateRun/AppendTerminalEvent/
+//     SaveAttemptOutcome) without a declared entry FAILS
+//     TestAdapterExecutionSitesInventory, so new execution sites cannot
+//     appear unclassified;
 //   - envelope totality: every in-scope (durable-controller) site is
 //     asserted to route its provider call through an admitted
 //     agentrun.InvocationEnvelope via the execution controller;
@@ -77,7 +79,10 @@ type Site struct {
 }
 
 // canaryMarkers are the textual tokens whose presence in any non-test Go file
-// marks it as an execution or lifecycle-mutation site candidate.
+// marks it as an execution or lifecycle-mutation site candidate. The three
+// store-primitive tokens (ticket 13 hardening pool, R10 M2) audit direct
+// mutation of durable run state: CreateRun admits, AppendTerminalEvent
+// settles, and SaveAttemptOutcome records attempt outcomes.
 var canaryMarkers = []string{
 	"exec.Command",           // process spawn (matches exec.CommandContext too)
 	"EjecutarPrompt(",        // arbitrary-prompt adapter invocation
@@ -86,6 +91,9 @@ var canaryMarkers = []string{
 	"AppendEvent(",           // durable lifecycle event append
 	"agentrun.NewCapability", // admission capability construction
 	"NewRunRequest(",         // admission request construction
+	"CreateRun(",             // durable run admission primitive (store)
+	"AppendTerminalEvent(",   // durable terminal settlement primitive (store)
+	"SaveAttemptOutcome(",    // durable attempt-outcome record primitive (store)
 }
 
 // Sites returns the complete curated inventory. Order follows the module tree
@@ -103,7 +111,7 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "gh CLI calls, git config reads, and clipboard helpers; no provider agent."},
 		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs respond/abort/retry/recover", Line: 44, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.Host/controller APIs over the common-dir store; start builds the admission request that the controller turns into the admitted envelope."},
-		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 158, Marker: "NewController(",
+		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 203, Marker: "NewController(",
 			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
 		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Line: 126, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the staged-commit volume measurement."},
@@ -127,12 +135,20 @@ func Sites() []Site {
 		// --- internal/agentrun / internal/execution / internal/store ------
 		{Path: "internal/agentrun/contracts.go", Symbol: "InvocationEnvelope/NewRunRequest/NewCapability", Line: 61, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Contract definitions: envelopes, requests, capabilities, lifecycle states, and the transition table. The authority itself, not a caller."},
-		{Path: "internal/execution/controller.go", Symbol: "Controller Start/Apply/append", Line: 501, Marker: "AppendEvent(",
-			Class: ClassDurable, Reason: "The single lifecycle authority: every start/respond/abort/retry/settle transition is appended here through store.AppendEvent under revision guards."},
+		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Line: 236, Marker: "CreateRun(",
+			Class: ClassDurable, Reason: "The single lifecycle authority admits every run through store.CreateRun and settles attempts through store.AppendTerminalEvent; no feature package may call either primitive directly."},
+		{Path: "internal/execution/controller_abort.go", Symbol: "Controller abort settlement", Line: 161, Marker: "AppendTerminalEvent(",
+			Class: ClassDurable, Reason: "Abort settles through the guarded store terminal-event primitive under the controller's revision checks; nothing mutates state outside controller APIs."},
+		{Path: "internal/execution/controller_recover.go", Symbol: "Controller recover settlement", Line: 156, Marker: "AppendTerminalEvent(",
+			Class: ClassDurable, Reason: "Recovery settlement appends its terminal event through the same guarded store primitive; the honest reconciled verdict is the only source."},
 		{Path: "internal/execution/controller_retry.go", Symbol: "Controller retry append", Line: 94, Marker: "AppendEvent(",
 			Class: ClassDurable, Reason: "Retry relaunch events append through the same guarded store primitive."},
-		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent", Line: 197, Marker: "AppendEvent(",
-			Class: ClassDurable, Reason: "Append-only event log primitive; called only by the execution controller internals, never by feature packages."},
+		{Path: "internal/store/execution.go", Symbol: "Store.CreateRun", Line: 53, Marker: "CreateRun(",
+			Class: ClassDurable, Reason: "Admission record primitive: writes the immutable request.json for a new durable run. Called only by the execution controller, never by feature packages."},
+		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Line: 197, Marker: "AppendEvent(",
+			Class: ClassDurable, Reason: "Append-only event log primitives (plain and terminal-with-outcome); called only by the execution controller internals, never by feature packages."},
+		{Path: "internal/store/execution_outcomes.go", Symbol: "Store.SaveAttemptOutcome", Line: 47, Marker: "SaveAttemptOutcome(",
+			Class: ClassDurable, Reason: "Immutable attempt-outcome record primitive: durably persists one admitted invocation result before the caller continues. Written only beside controller-authored terminal events."},
 
 		// --- internal/reviewexec (admitted review transport) ---------------
 		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.Run", Line: 199, Marker: "NewRunRequest(",
@@ -151,7 +167,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Deterministic plan construction: builds the admission requests (candidate/prompt/capabilities) later admitted verbatim by the controller."},
 
 		// --- internal/review -------------------------------------------------
-		{Path: "internal/review/engine.go", Symbol: "invokeReview/ejecutarConReintento/refutarHallazgosCriticos", Line: 473, Marker: "EjecutarRevision(",
+		{Path: "internal/review/engine.go", Symbol: "invokeReview/ejecutarConReintento/refutarHallazgosCriticos", Line: 352, Marker: "EjecutarRevision(",
 			Class: ClassGated, Reason: "review.durable_runs=false rollback switch (config.Review.DurableRuns): nil ReviewTransport keeps the pre-R5 direct restricted-reviewer calls with their transport retry. With durable runs enabled the ONLY direct reviewer call left is the nil-transport branch of the CRITICAL refuter, which since ticket 12 slice 1 routes through the admitted transport whenever one is present because a refutation CAN flip a verdict."},
 		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 418, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},

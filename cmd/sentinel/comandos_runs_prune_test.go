@@ -175,6 +175,54 @@ func TestRunsPruneKeepsLedgerReferencedStreams(t *testing.T) {
 	}
 }
 
+// TestCollectProvenanceReferencesIncludesRefutedFindingInvocations drives
+// the real collector over a real seeded ledger ficha (ticket 13 acceptance
+// criterion 3): a dimension result carries its producer invocation while one
+// of its raw v2 hallazgos carries the DIFFERENT admitted refuter invocation
+// stamped at finalization. Aggregation drops refuted findings, so only the
+// raw Dims scan can protect the refuter stream — both identities must land
+// in the reference set.
+func TestCollectProvenanceReferencesIncludesRefutedFindingInvocations(t *testing.T) {
+	worktree := newPruneTestRepo(t)
+	backing := pruneRepoStore(t, worktree)
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	producerInvocation := "inv-producer-dim-1"
+	refuterInvocation := "inv-refuter-finding-2"
+	ledger := review.NuevoLedger(commonDir)
+	err = ledger.GuardarRevision("fixtursha00000000000000000000000000000001", "fixture", "bucket", "model", review.Revision{
+		At:     time.Now(),
+		Result: "warn",
+		Dims: []review.DimensionResult{{
+			Dim:          "logic",
+			Verdict:      "warn",
+			InvocationID: producerInvocation,
+			Hallazgos: []review.Hallazgo{{
+				Fingerprint:  "prune-refutation-fixture-fingerprint",
+				Dimension:    "logic",
+				Status:       review.StatusRefuted,
+				Description:  "fixture refuted finding",
+				InvocationID: refuterInvocation,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	references, refsErr := collectProvenanceReferences(worktree, backing)
+	if refsErr != nil {
+		t.Fatalf("collectProvenanceReferences() error = %v", refsErr)
+	}
+	for _, invocation := range []string{producerInvocation, refuterInvocation} {
+		if !references[invocation] {
+			t.Fatalf("collectProvenanceReferences() = %v, missing cited identity %q", references, invocation)
+		}
+	}
+}
+
 // TestRunsPruneHumanOutputListsEveryDecision proves the plain-text surface
 // reports one line per examined record, removals and refusals alike.
 func TestRunsPruneHumanOutputListsEveryDecision(t *testing.T) {
