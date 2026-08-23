@@ -208,3 +208,11 @@ Machine output never changes shape without a major note. Field names:
   owner died mid-cancellation is classified canceled-orphaned on next
   observation through restart reconciliation — no fabricated completion, no
   silent resume, and the append-only stream is never rewritten.
+- Gate durable runs (ticket 11) are the cutover default: `sentinel gate`
+  executes as ONE root durable run with deterministic validation jobs and the
+  routed review invocations as children linked through their persisted parent
+  linkage, so the gate summary reconstructs from store contents alone. The
+  root and every review child share the repository common-dir store. Setting
+  `gate.durable_runs: false` in `vassentinel.yml` routes gate back to the
+  legacy orchestration byte-for-byte while every run already written stays
+  fully inspectable through these `runs` commands.

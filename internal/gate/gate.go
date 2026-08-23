@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -57,6 +59,10 @@ func CodigoSalida(estado string) int {
 type Resultado struct {
 	Estado   string
 	Mensajes []string
+	// Err carries a typed error produced by the durable-runs seam when
+	// Opciones.DurableRuns is true (R9 slice 1). The legacy orchestration,
+	// the default everywhere today, always leaves it nil.
+	Err error
 }
 
 // Opciones configura una ejecución de gate. Las costuras EjecutarValidacion y
@@ -88,6 +94,54 @@ type Opciones struct {
 	FabricaRefutador review.FabricaRefutador
 	Parallel         int
 	OpcionesRevision review.OpcionesAuditoria
+
+	// Stage is the --stage lifecycle context embedded in the durable root
+	// run request when DurableRuns is true. The legacy orchestration ignores
+	// it: today only cmd/sentinel's messages use the stage value.
+	Stage string
+	// CandidateSHA is the candidate HEAD commit SHA embedded in the durable
+	// root run request when DurableRuns is true. The legacy orchestration
+	// ignores it.
+	CandidateSHA string
+	// DurableRuns is the reversible R9 construction-time switch. FALSE is
+	// the default everywhere in this slice and keeps the legacy orchestration
+	// as THE active path with byte-identical behavior. TRUE routes the whole
+	// gate execution through ONE root durable run (see gate_durable.go):
+	// validation jobs settle deterministically without any agent, and the
+	// review phase reuses the same transport path `sentinel review` wires —
+	// never a parallel execution path.
+	DurableRuns bool
+	// DurableStore backs the root gate run and every validation-job
+	// settlement when DurableRuns is true. A nil store with DurableRuns=true
+	// fails honestly as infrastructure before any phase executes; cmd/sentinel
+	// still does not pass it in this slice, so the flag stays unreachable
+	// from the CLI until the cutover slice wires it.
+	DurableStore *store.Store
+	// DurableReviewTransportFactory constructs the review-side transport used
+	// by the durable orchestration's review phase. It receives the gate's
+	// ROOT run ID so production wiring can thread the parent linkage into the
+	// review-side durable runs (review runs are constructed at a different
+	// site — inside the factory — and cannot be stamped by the gate
+	// orchestrator itself). Production wiring must be the same construction
+	// path `sentinel review` uses today (durableReviewTransport in
+	// cmd/sentinel), so reviewer invocations keep inheriting admission, owned
+	// process trees, and cancellation; tests inject substitutes and
+	// invocation counters here. When nil, the review phase falls back to
+	// OpcionesRevision.ReviewTransport exactly as the legacy tail does: there
+	// is no second review execution path.
+	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
+	// DurableReviewChildren reports the review-side child run identities that
+	// were ACTUALLY admitted during the review phase (ticket 11 slice 3).
+	// Review candidate identities are process-salted inside the shared
+	// durable transport, so the orchestrator cannot derive them from the
+	// plan: production wiring records every admission through a
+	// concurrency-safe observer sink and hands the drain function here. The
+	// orchestrator consumes it when composing the root settlement's
+	// "|children=" enumeration so the enumerated set equals the persisted
+	// ParentRunID scan even though neither side derives the IDs
+	// deterministically. When nil, only planned validation jobs (and any
+	// resolvable planned review job) are enumerated.
+	DurableReviewChildren func() []agentrun.Identity
 }
 
 // EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la
@@ -96,6 +150,10 @@ type Opciones struct {
 // semántica ni se intenta (regla central de la ficha, verificada en los
 // tests con un contador de invocaciones).
 func EjecutarGate(opts Opciones) Resultado {
+	if opts.DurableRuns {
+		return ejecutarGateDurable(opts)
+	}
+
 	ejecutarValidacion := opts.EjecutarValidacion
 	if ejecutarValidacion == nil {
 		ejecutarValidacion = validation.EjecutarPerfilSobreCandidato
@@ -109,7 +167,7 @@ func EjecutarGate(opts Opciones) Resultado {
 		// VALIDATION_FAILED para algo que ni llegó a ejecutarse.
 		return Resultado{
 			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: []string{fmt.Sprintf("No se pudo ejecutar la validación: %v", err)},
+			Mensajes: []string{mensajeValidacionNoEjecutada(err)},
 		}
 	}
 
@@ -122,6 +180,14 @@ func EjecutarGate(opts Opciones) Resultado {
 	opcionesRevision.FabricaRefutador = opts.FabricaRefutador
 	resultado := review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opcionesRevision)
 	return traducirVeredicto(resultado)
+}
+
+// mensajeValidacionNoEjecutada is the single facade text for a validation
+// ORCHESTRATION failure (infrastructure, never a code finding). The legacy
+// path and the durable path share this one helper so equivalent inputs render
+// byte-identical facade text.
+func mensajeValidacionNoEjecutada(err error) string {
+	return fmt.Sprintf("No se pudo ejecutar la validación: %v", err)
 }
 
 // mensajesValidacionFallida redacta el detalle de qué comandos fallaron y su
