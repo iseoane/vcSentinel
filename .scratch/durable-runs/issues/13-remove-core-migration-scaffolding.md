@@ -134,3 +134,31 @@ window (user authorization for this unit).
   nil-sink composition).
 - Verification snapshot: gofmt empty; build+vet linux+windows; full suite
   green across 25 packages; -race clean on gate/review/cmd-sentinel; ×5.
+
+### Slice 3 — install, upgrade and hook verification
+- Commits: disclaimer const + pin refresh (8), setup contracts (331), hook
+  enforcement through real git commits (304) — hook-enforced; clean.
+- Linux-executed: install placement (exec bit, artifact consumption, version
+  report via real binary subprocess); upgrade preserves global+repo config
+  byte-identically on both platform variants; uninstall removes binary with
+  full repo-tree content-diff proof of non-interference; hook written to
+  <git-common-dir>/hooks/pre-commit matching the production generator exactly,
+  exec bit + idempotency; uninit reverts own artifacts preserving foreign
+  hooks byte-for-byte; REAL `git commit` blocked over budget (HEAD unmoved,
+  fake sentinel's reason surfaced) and allowed within.
+- Compile-only/path-units on Windows declared explicitly (PowerShell PATH out
+  of scope with rationale); .cmd fixtures genuinely execute for placement/
+  version.
+- Fixture bug caught during implementation: core.hooksPath pointed at the
+  hook FILE not directory — test-side only; production writes the hook file
+  into the default hooks dir (Git picks it up without hooksPath).
+- Dual-axis loop: conditional GO on translating 50 Spanish literals across
+  the two new test files (done; production-pinned substrings like the
+  uninstall disclaimer stay Spanish until production translates — documented).
+  Hunts: fake-sentinel realism proven composite (shared generator + argv pin
+  sibling + exit-code propagation both directions); isolation clean;
+  uninstall const extraction byte-identical; pre-existing flakes untouched.
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green 25 packages; -race clean on setup/cmd-sentinel; ×5 deterministic.
+
+**Unit complete — R11 closes the core R-roadmap.**
