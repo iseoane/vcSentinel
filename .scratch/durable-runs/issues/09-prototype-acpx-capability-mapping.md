@@ -11,7 +11,7 @@ fixtures, a recorded protocol-gap list, and a suitability decision:
 merge, but A1 deliberately targets the stable controller port from R3 and does
 not depend on cancellation ownership contracts.
 
-**Status:** in-review
+**Status:** closed
 
 **Scope (from roadmap):**
 
@@ -47,11 +47,11 @@ run against real agents with cheap prompts.
 - [x] No production path touched: diff limited to `.scratch/durable-runs/`,
       docs, and throwaway probe code.
 - [x] Decision record states suitable / suitable-with-constraints / unsuitable.
-- [ ] Independent `code-review` runs against the fixed base before closure.
-- [ ] Judgment Day validates the decision record. User-directed override of
+- [x] Independent `code-review` runs against the fixed base before closure.
+- [x] Judgment Day validates the decision record. User-directed override of
       matrix "No": this verdict gates A2 architecture, so it is treated as
       decision-grade even though A1 is not a critical implementation milestone.
-- [ ] Rollback executed at closure: probe code deleted; decision record and
+- [x] Rollback executed at closure: probe code deleted; decision record and
       fixtures retained.
 
 **Out of scope:** production adapter (A2); any change under `internal/**` or
@@ -97,9 +97,10 @@ Environment: acpx@0.13.1 via npx, node v25.9.0, Linux; adapter
 - Session scoping `(agentCommand, cwd[, name])` confirmed twice: scoped
   lookup failed from a different cwd, then succeeded in scope; missing
   session prompt exits 4 (`fixtures/no-sess-err.txt`).
-- Post-review evidence repairs: `fixtures/initialize-model-option.json`
-  extracts the initialize response's model config option verbatim (the raw
-  line exceeds the redaction threshold inside both stream captures);
+- Post-review evidence repairs: `fixtures/initialize-model-option.json` is a
+  synthesized digest of the initialize response's model option (currentValue
+  independently corroborated by status-running.txt / status2-running.txt;
+  the raw line exceeds the redaction threshold inside both stream captures);
   `fixtures/event-type-index.txt` censuses observed session/update types per
   unredacted original; `fixtures/exit-codes.txt` records captured exit codes
   (4 missing session, 3 timeout, 0 cancelled, 0 completed).
@@ -111,8 +112,10 @@ Environment: acpx@0.13.1 via npx, node v25.9.0, Linux; adapter
   `stopReason:"cancelled"`, zero usage, after 204 streamed lines; prompt
   process still exited 0 → outcomes must classify by stopReason.
 - Timeout: exit 3 with actionable stderr (`fixtures/timeout-err.txt`).
-- Deny-all enforcement without hang, tool lifecycle events visible
-  (`fixtures/deny-probe.jsonl`).
+- Deny-all probe: the turn completed without hang and tool lifecycle events
+  are visible, but the filesystem read executed UNGATED — planted content
+  disclosed with zero permission-request events; write denial was never
+  probed (`fixtures/deny-probe.jsonl`, lines 16-45).
 - Upstream stdout framing violation observed live (opencode adapter emitted a
   non-JSON `[skill-registry]` line); acpx logged parse failures to stderr even
   under `--json-strict`, skipped the line, exited 0.
@@ -120,7 +123,7 @@ Environment: acpx@0.13.1 via npx, node v25.9.0, Linux; adapter
   historical sentinel-generated sessions appeared in the global list.
 - Decision record committed as
   `docs/arquitectura/acpx-capability-mapping.md`: **suitable-with-constraints**
-  with constraints C1-C6 mapped to A2 design obligations.
+  with constraints C1-C6 and C8 mapped to A2 design obligations.
 - Independent code-review (two-axis, base a2700f4): Standards 0 hard
   violations / 4 judgement calls; Spec found the initialize-citation defect
   (fixed via `initialize-model-option.json`), event-type misattributions
@@ -129,6 +132,20 @@ Environment: acpx@0.13.1 via npx, node v25.9.0, Linux; adapter
   numeric fixture suffixes kept because prose pairs them; identical oversized
   redacted lines across captures are the same initialize response recorded
   twice, not duplication of distinct evidence.
-- Judgment Day on the decision record (user-directed): pending.
+- Judgment Day on the decision record (user-directed): EXECUTED. Round 1
+  (both judges, exported snapshot of be92ccc): CRITICAL JD-1 corroborated by
+  BOTH judges — the deny-all probe showed a filesystem read executing
+  UNGATED with content disclosure and zero permission-request events while
+  the record cited it as positive enforcement evidence; plus warnings on
+  synthesized-digest wording, H4/T0.2 full-parity overclaim, and
+  narrative-only observations behind C2. Round-1 fix: FilesystemRead/Write
+  GAP-classed, C6 extended to four restriction fields with grant-by-design /
+  external-sandbox admissibility, new C8 effort-honesty constraint,
+  narrative-evidence boundary declared, honest EMPTY/TTL capture markers.
+  Round-2 scoped re-judgment: BOTH judges clean, zero findings, no
+  fix-caused defects. JUDGMENT: APPROVED.
 - Rollback at closure: probe scripts were never committed (sandbox only);
   fixtures redacted of oversized lines to avoid leaking global skill lists.
+  Accepted follow-ups for A2 planning: Windows spawn-chain validation
+  obligation (judge suggestion, info severity); framing recapture attempt
+  recorded honestly as non-reproducible post-mortem.

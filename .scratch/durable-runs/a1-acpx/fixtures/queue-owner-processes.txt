@@ -1,0 +1,5 @@
+# Live process listing (pgrep -af 'acp|opencode', pgrep rows filtered) showing the surviving ACP/opencode process population; no __queue-owner process survived at capture time (default TTL 300 s had elapsed), so the opencode ACP agent sessions still alive are shown instead.
+784019 opencode --dangerously-skip-permissions -s ses_fdb1ed2eaffey0qWQMvUUZRVQ4
+870701 opencode --dangerously-skip-permissions -s ses_fd29c5105ffewxVZ4PB7zoZeWG
+871480 opencode --dangerously-skip-permissions -s ses_fd2907894ffe8pyEQSvadZ6hL0
+1007316 /usr/bin/zsh -c go test ./... -count=1 > /tmp/opencode/final.log 2>&1; echo "FULL EXIT=$?"; git diff --stat | tail -3; grep -n "consumed when admission\|errors.New(\"execution: control action identity" internal/execution/host.go
