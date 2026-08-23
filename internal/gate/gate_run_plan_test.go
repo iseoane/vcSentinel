@@ -151,8 +151,9 @@ func TestGateRunPlanBuilder(t *testing.T) {
 }
 
 // TestGateDurableRunsSwitch proves the reversible seam: default FALSE keeps
-// legacy behavior untouched, TRUE builds+validates the plan and then fails
-// explicitly with ErrDurableRoutingNotWired.
+// legacy behavior untouched, TRUE routes through the real durable
+// orchestration and fails honestly as infrastructure before any phase runs
+// when its required seams are absent.
 func TestGateDurableRunsSwitch(t *testing.T) {
 	cfgWithBrokenProfile := cfgConPerfil("lint", "echo ok")
 	cfgWithBrokenProfile.Validation.Profiles["roto"] = []string{"missing-capability"}
@@ -179,26 +180,27 @@ func TestGateDurableRunsSwitch(t *testing.T) {
 		}
 	})
 
-	t.Run("true surfaces the not-wired typed error after a successful plan build", func(t *testing.T) {
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, nil)
+	t.Run("true without an injected store fails as infrastructure before any phase", func(t *testing.T) {
+		llamadas := 0
+		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, "", nil))
 		opts.DurableRuns = true
 		opts.Stage = "pre-push"
 		opts.CandidateSHA = "abc123def456"
 
 		resultado := EjecutarGate(opts)
 
-		if !errors.Is(resultado.Err, ErrDurableRoutingNotWired) {
-			t.Fatalf("expected ErrDurableRoutingNotWired after successful plan build, got %v", resultado.Err)
+		if resultado.Estado != EstadoReviewInfrastructureError || CodigoSalida(resultado.Estado) != 4 {
+			t.Fatalf("missing durable store is infrastructure-class, got %q exit %d", resultado.Estado, CodigoSalida(resultado.Estado))
 		}
-		if resultado.Estado != EstadoReviewInfrastructureError {
-			t.Fatalf("not-yet-wired routing is infrastructure-class, got %q", resultado.Estado)
+		if resultado.Err == nil || !strings.Contains(resultado.Err.Error(), "injected store") {
+			t.Fatalf("expected an explicit missing-store failure, got %v", resultado.Err)
 		}
-		if CodigoSalida(resultado.Estado) != 4 {
-			t.Fatalf("exit code = %d, expected 4", CodigoSalida(resultado.Estado))
+		if llamadas != 0 {
+			t.Fatalf("review must never start without a durable store, got %d calls", llamadas)
 		}
 	})
 
-	t.Run("true validates the plan before surfacing not-wired", func(t *testing.T) {
+	t.Run("true still validates the plan before admitting anything", func(t *testing.T) {
 		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, nil)
 		opts.DurableRuns = true
 		opts.Stage = ""
@@ -208,10 +210,10 @@ func TestGateDurableRunsSwitch(t *testing.T) {
 
 		var planErr GatePlanError
 		if !errors.As(resultado.Err, &planErr) {
-			t.Fatalf("expected the plan-build failure to surface before not-wired, got %v", resultado.Err)
+			t.Fatalf("expected the plan-build failure to surface before execution, got %v", resultado.Err)
 		}
-		if errors.Is(resultado.Err, ErrDurableRoutingNotWired) {
-			t.Fatalf("a broken plan must never be masked by the not-wired marker")
+		if resultado.Estado != EstadoReviewInfrastructureError {
+			t.Fatalf("a broken plan is infrastructure-class, got %q", resultado.Estado)
 		}
 	})
 
@@ -224,7 +226,7 @@ func TestGateDurableRunsSwitch(t *testing.T) {
 
 		resultado := EjecutarGate(opts)
 
-		if resultado.Err == nil || strings.Contains(errorMessage(resultado.Err), "not wired yet") {
+		if resultado.Err == nil || !strings.Contains(errorMessage(resultado.Err), "not configured") {
 			t.Fatalf("broken capability reference must fail planning, got %v", resultado.Err)
 		}
 	})
