@@ -97,6 +97,14 @@ func daemonDir(gitCommonDir string) string {
 	return filepath.Join(gitCommonDir, "vas-sentinel", "daemon")
 }
 
+// Dir is the exported spelling of the repository daemon directory:
+// <git-common-dir>/vas-sentinel/daemon. CLI discovery (endpoint.json
+// resolution) and the package itself must agree on this single location, so
+// callers join through this helper instead of re-deriving the layout.
+func Dir(gitCommonDir string) string {
+	return daemonDir(gitCommonDir)
+}
+
 func claimPath(gitCommonDir string) string {
 	return filepath.Join(daemonDir(gitCommonDir), claimFileName)
 }
