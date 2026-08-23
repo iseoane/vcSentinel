@@ -1,4 +1,4 @@
-# 12: Add The Repository-Local Daemon
+# 14: Add The Repository-Local Daemon
 
 **What to build:** One authenticated local daemon per repository owns durable
 run admission, supervision, and command serialization. Commands prefer a
