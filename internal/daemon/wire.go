@@ -61,13 +61,22 @@ func ReadFrame(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-// The four repository-host operations. The set is closed on purpose: adding
-// an op is a protocol change and must keep the server dispatch exhaustive.
+// The four repository-host operations plus the lifecycle operation. The set
+// is closed on purpose: adding an op is a protocol change and must keep the
+// server dispatch exhaustive.
 const (
 	OpStart     = "start"
 	OpInspect   = "inspect"
 	OpSubscribe = "subscribe"
 	OpApply     = "apply"
+	// OpShutdown triggers the graceful server shutdown: bounded drain of
+	// in-flight dispatch operations, explicit orphan settlement for
+	// still-active runs, then an ok answer only after that sequence
+	// completed. It is handshake-gated like every other op. This op was
+	// added WITHOUT bumping protocol_revision deliberately: old peers that
+	// do not know it receive a deterministic unknown-operation wire error
+	// instead of a handshake rejection, which is accepted additive evolution.
+	OpShutdown = "shutdown"
 )
 
 // handshakeRequest opens every connection. ProtocolRevision must equal
@@ -145,6 +154,7 @@ var wireSentinels = []struct {
 	{"execution.run_not_recoverable", execution.ErrRunNotRecoverable},
 	{"store.execution_not_found", store.ErrExecutionNotFound},
 	{"daemon.daemon_owned", ErrDaemonOwned},
+	{"daemon.shutting_down", ErrDaemonShuttingDown},
 }
 
 // errorCodeFor resolves err against the registry through errors.Is, so

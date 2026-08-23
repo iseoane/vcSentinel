@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
@@ -38,6 +39,24 @@ type Server struct {
 	cancel    context.CancelFunc
 	closeOnce sync.Once
 
+	// grace bounds how long the graceful shutdown drain waits for in-flight
+	// dispatch operations before proceeding to explicit orphan settlement.
+	// Zero normalizes to DefaultGracePeriod (see NewServerWithGrace).
+	grace time.Duration
+
+	// Lifecycle coordination for the graceful shutdown path. shuttingDown
+	// flips at most once under mu and refuses newly admitted work; inflight
+	// counts running dispatch operations and is mutated only while holding
+	// mu (beginDispatch/endDispatch), so the bounded drain observes a
+	// consistent counter; sequenceDone closes when the graceful sequence
+	// finishes, regardless of whether orphan settlement itself succeeded;
+	// and finalizeOnce releases the listener and every connection exactly
+	// once, strictly after the shutdown answer left this process.
+	shuttingDown  bool
+	inflightCount int
+	sequenceDone  chan struct{}
+	finalizeOnce  sync.Once
+
 	mu       sync.Mutex
 	closed   bool
 	listener net.Listener
@@ -56,25 +75,32 @@ type appliedKey struct {
 func NewServer(controller *execution.Controller, repositoryFingerprint string) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		controller: controller,
-		repository: repositoryFingerprint,
-		actionIDs:  make(map[appliedKey]struct{}),
-		ctx:        ctx,
-		cancel:     cancel,
-		conns:      make(map[net.Conn]struct{}),
+		controller:   controller,
+		repository:   repositoryFingerprint,
+		actionIDs:    make(map[appliedKey]struct{}),
+		grace:        DefaultGracePeriod,
+		sequenceDone: make(chan struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
+		conns:        make(map[net.Conn]struct{}),
 	}
 }
 
-// Serve accepts connections on l until Close is called or l fails. Every
-// accepted connection is served on its own goroutine: it performs one
-// handshake and then a request loop until the peer disconnects or an error
-// frame aborts it. A tcp listener's bearer token, when present, becomes
-// mandatory in every handshake on that listener.
+// Serve accepts connections on l until Close is called, a graceful shutdown
+// completes, or l fails. Every accepted connection is served on its own
+// goroutine: it performs one handshake and then a request loop until the
+// peer disconnects or an error frame aborts it. A tcp listener's bearer
+// token, when present, becomes mandatory in every handshake on that
+// listener.
+//
+// Once the graceful sequence finishes, the listener is closed and Serve
+// returns nil; connections accepted after the sequence began are rejected
+// before their handshake.
 func (s *Server) Serve(l net.Listener) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return errors.New("daemon: server is closed")
+		return errServerClosed
 	}
 	s.listener = l
 	s.mu.Unlock()
@@ -100,13 +126,20 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-// Close stops accepting and closes all open connections best-effort, which
-// cancels every per-request dispatch context derived from the server base
-// context. It does NOT cancel detached run workers: Controller.Start spawns
-// them from context.Background() by design so an admitted run survives a
-// server stop and settles independently against durable state. Graceful
-// draining of connections and reconciliation of such orphaned workers arrive
-// with the daemon lifecycle slice; this is the honest minimal stop.
+// Close is the immediate resource-release path: it stops accepting, cancels
+// the server base context (which cancels every per-request dispatch context),
+// and force-closes every open connection. It performs NO drain of in-flight
+// dispatch operations and persists NO orphan settlements, so runs still
+// active at this point remain exactly as they are — detached run workers
+// survive by design (Controller.Start spawns them from context.Background())
+// and their classification belongs to the R8 recovery machinery on restart.
+//
+// Relationship to the graceful path: Shutdown — reachable programmatically or
+// through the authenticated OpShutdown wire operation — runs the bounded
+// drain plus explicit orphan settlement and then releases the same resources
+// exactly once via tryFinalize. Close stays safe to call before, during, or
+// after that sequence: it never resurrects anything, and a later finalize is
+// reduced to idempotent best-effort closes on already-released resources.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
@@ -142,12 +175,25 @@ func (s *Server) untrackConn(conn net.Conn) {
 // serveConn runs the full lifecycle of one connection. The connection
 // context derives from the server base context, so Close reaches in-flight
 // controller operations immediately.
+//
+// Dispatch accounting: every request except OpShutdown is counted in the
+// in-flight WaitGroup so the graceful drain can wait for it; the shutdown op
+// is exempt because it must never wait for itself. Once the graceful
+// sequence began, newly counted work is refused and new connections are
+// rejected before their handshake.
 func (s *Server) serveConn(conn net.Conn, requiredToken string) {
 	defer s.untrackConn(conn)
 	defer func() { _ = conn.Close() }()
 
 	connCtx, cancelConn := context.WithCancel(s.ctx)
 	defer cancelConn()
+
+	s.mu.Lock()
+	refused := s.shuttingDown || s.closed
+	s.mu.Unlock()
+	if refused {
+		return
+	}
 
 	if !s.handshake(conn, requiredToken) {
 		return
@@ -157,7 +203,23 @@ func (s *Server) serveConn(conn net.Conn, requiredToken string) {
 		if err != nil {
 			return
 		}
+		if op, ok := probeOp(frame); ok && op == OpShutdown {
+			response, fatal := s.dispatch(connCtx, frame)
+			writeErr := WriteFrame(conn, response)
+			// The answer — success or classified failure — has left this
+			// process at this point (or the peer is gone); only now may the
+			// listener and connections be released.
+			s.tryFinalize()
+			if writeErr != nil || fatal {
+				return
+			}
+			continue
+		}
+		tracked := s.beginDispatch()
 		response, fatal := s.dispatch(connCtx, frame)
+		if tracked {
+			s.endDispatch()
+		}
 		if err := WriteFrame(conn, response); err != nil {
 			return
 		}
@@ -165,6 +227,40 @@ func (s *Server) serveConn(conn net.Conn, requiredToken string) {
 			return
 		}
 	}
+}
+
+// probeOp cheaply decodes only the operation name of a framed request. A
+// frame that cannot be decoded at all is not exempted from dispatch
+// accounting: dispatch still answers it with the connection-fatal malformed
+// error.
+func probeOp(frame []byte) (string, bool) {
+	var probe struct {
+		Op string `json:"op"`
+	}
+	if err := json.Unmarshal(frame, &probe); err != nil {
+		return "", false
+	}
+	return probe.Op, true
+}
+
+// beginDispatch counts one incoming request as in-flight. It returns false
+// — without counting anything — when the server already stopped admitting
+// work, so the caller skips the paired endDispatch.
+func (s *Server) beginDispatch() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shuttingDown || s.closed {
+		return false
+	}
+	s.inflightCount++
+	return true
+}
+
+// endDispatch releases one counted dispatch operation.
+func (s *Server) endDispatch() {
+	s.mu.Lock()
+	s.inflightCount--
+	s.mu.Unlock()
 }
 
 // handshake reads and validates the opening frame. On any failure it sends
@@ -212,6 +308,12 @@ func (s *Server) dispatch(ctx context.Context, frame []byte) (encoded []byte, fa
 	if err := json.Unmarshal(frame, &request); err != nil {
 		return errorResponse(fmt.Errorf("daemon: malformed request: %w", err)), true
 	}
+	// Once the graceful sequence began, only the lifecycle op itself is
+	// still answered; everything else fails deterministically so callers
+	// observe the shutdown instead of hanging on a draining server.
+	if request.Op != OpShutdown && s.isStopping() {
+		return errorResponse(ErrDaemonShuttingDown), false
+	}
 	var (
 		result any
 		err    error
@@ -225,6 +327,8 @@ func (s *Server) dispatch(ctx context.Context, frame []byte) (encoded []byte, fa
 		result, err = s.handleSubscribe(ctx, request.Body)
 	case OpApply:
 		result, err = s.handleApply(ctx, request.Body)
+	case OpShutdown:
+		result, err = s.handleShutdown(ctx, request.Body)
 	default:
 		err = fmt.Errorf("daemon: unknown operation %q", request.Op)
 	}
