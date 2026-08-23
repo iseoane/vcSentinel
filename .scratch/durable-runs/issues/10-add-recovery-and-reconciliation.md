@@ -101,3 +101,33 @@ a2700f4).
   --expected-revision without --run should be rejected explicitly.
 - Verification snapshot: gofmt empty; build+vet linux+windows; focused suites
   green; -race store clean; scan/recovery tests ×10 deterministic.
+
+### Slice 2 — deterministic rebuild and repair of terminal-unprojected
+- Commits: repair primitive (131), refusal+determinism pins (310), CLI
+  --repair (289), stale-snapshot crash-window polish (85) — hook-enforced.
+- RepairTerminalUnprojected: full re-verification inside ONE lock hold
+  (classify→verify→write→re-classify, TOCTOU closed), atomic write via the
+  production temp+fsync+rename path, events bytes untouched (pinned), typed
+  RecoveryNotRepairableError for every other class.
+- ReplayProjection = single serialization source; byte-equality proven against
+  twin stores with fixed timestamps (deterministic marshalRecord: declaration-
+  order keys, scalar-only projection, UTC RFC3339Nano round-trip).
+- CLI `runs recover --repair <id>`: prints class transition, exit 0 repaired /
+  1 usage / 2 unknown / 4 refusals / 5 corruption; mutually exclusive with
+  --run; repaired runs vanish from subsequent scans.
+- eventLockWait const→var documented test seam; restore now t.Cleanup-based;
+  no t.Parallel in repo so race-safe today.
+- Integration: main gained D1 (repository host seam) and A1 mid-unit. Merged
+  main cleanly (27f5e7a), renumbered ticket to 10 (2344d35). Semantic audit of
+  the new API: lifecycle actions go through InProcessHost envelopes with
+  resolveRunsPrincipal; pure store reads/maintenance stay direct — the scan
+  and --repair paths follow exactly that split, so no envelope adaptation was
+  required. Post-merge build/vet/windows/tests all green.
+- Dual-axis loop: spec PASS (TOCTOU closed by single-lock-hold re-verification;
+  byte determinism triple-proven; per-execution-dir locks isolate cross-run
+  interference); standards CLEAN after fixes (stale-snapshot variant F1 added,
+  fused comment N-2 moved, leak-proof N-4 cleanup).
+- Accepted follow-ups: --expected-revision silently inert on scan/repair paths
+  (reject explicitly in slice 3 docs pass); Rewritten=false branch defensive.
+- Verification snapshot: gofmt empty; build+vet linux+windows; focused green;
+  -race store clean; repair tests ×5 deterministic.
