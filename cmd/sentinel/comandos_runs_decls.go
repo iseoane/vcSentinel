@@ -44,6 +44,9 @@ Subcommands:
   abort    --run <id> [--json]
   retry    --run <id> [--expected-revision N] [--json]
   recover  --run <id> [--expected-revision N] [--json]
+           without --run: list the read-only recovery scan of every
+           non-terminal run with its evidence-based class; exits 4 when any
+           entry requires an operator decision
   verify   --run <id> [--json]
 
 Exit codes:
@@ -152,6 +155,24 @@ type runsLogsOutput struct {
 	Events      []store.EventFrame `json:"events"`
 	HasMore     bool               `json:"has_more"`
 	NextCursor  *uint64            `json:"next_cursor"`
+}
+
+// runsRecoveryRow is one row of the additive `runs recover` scan listing
+// (ticket 09 slice 1). It mirrors store.RecoveryEntry for the CLI surface;
+// Reconciled appears only when the verdict derives from the R7 restart
+// reconciliation rather than the raw stream head.
+type runsRecoveryRow struct {
+	RunID        string `json:"run_id"`
+	Class        string `json:"class"`
+	Reason       string `json:"reason"`
+	HeadSequence uint64 `json:"head_sequence"`
+	Reconciled   bool   `json:"reconciled,omitempty"`
+}
+
+// runsRecoveryOutput is the stable JSON shape of `runs recover` without
+// --run. Recoveries is empty when every run is settled or the store is new.
+type runsRecoveryOutput struct {
+	Recoveries []runsRecoveryRow `json:"recoveries"`
 }
 
 func observeUntilSettled(ctx context.Context, c *execution.Controller, runID agentrun.Identity) (store.RunProjection, error) {

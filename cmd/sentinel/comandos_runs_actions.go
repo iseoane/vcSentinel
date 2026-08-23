@@ -179,9 +179,17 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitUsage
 	}
+	// Ticket 09 slice 1: without --run the command is an explicit READ-ONLY
+	// scan that lists every non-terminal run with its evidence-based class.
+	// It never writes and never resumes anything; recovery of one specific
+	// run stays an operator action through Controller.Recover below.
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs recover --run <id> [--expected-revision N]")
-		return runExitUsage
+		backing, _, buildErr := buildReadonlyController(worktree)
+		if buildErr != nil {
+			fmt.Fprintf(out, "❌ %v\n", buildErr)
+			return runExitInfrastructure
+		}
+		return listRecoveries(out, backing, options.jsonOut)
 	}
 	controller, err := buildRunsController(worktree)
 	if err != nil {

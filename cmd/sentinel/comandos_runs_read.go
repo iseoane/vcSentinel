@@ -137,6 +137,52 @@ func outcomeDetailSuffix(errorText string) string {
 	return fmt.Sprintf(" (%s)", errorText)
 }
 
+// listRecoveries renders the ticket 09 slice 1 recovery scan: one entry per
+// non-terminal run with its evidence-based class. The scan itself is
+// read-only; this surface only formats its entries. Exit codes follow the
+// runs contract: 0 when nothing requires attention, 4 when at least one run
+// needs an explicit operator decision (class operator_required). Corruption
+// is reported in the table but stays informational here: repairing bytes is
+// a deliberate operator action, and `runs verify` remains the integrity
+// verdict that exits 5.
+func listRecoveries(out io.Writer, backing *store.Store, asJSON bool) int {
+	entries, err := store.ScanRecoveries(backing)
+	if err != nil {
+		fmt.Fprintf(out, "❌ Could not scan recoveries: %v\n", err)
+		return runExitCode(err)
+	}
+	rows := make([]runsRecoveryRow, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, runsRecoveryRow{
+			RunID: entry.RunID, Class: string(entry.Class), Reason: entry.Reason,
+			HeadSequence: entry.HeadSequence, Reconciled: entry.Reconciled,
+		})
+	}
+	if asJSON {
+		output := runsRecoveryOutput{Recoveries: rows}
+		if encodeErr := encodeStableJSON(out, output); encodeErr != nil {
+			fmt.Fprintf(out, "❌ Could not serialize the recovery scan: %v\n", encodeErr)
+			return runExitInfrastructure
+		}
+	} else if len(rows) == 0 {
+		fmt.Fprintln(out, "📭 No non-terminal durable runs require recovery attention.")
+	} else {
+		for _, row := range rows {
+			line := fmt.Sprintf("• %s  class=%s head=#%d  %s", row.RunID, row.Class, row.HeadSequence, row.Reason)
+			if row.Reconciled {
+				line += " (reconciled)"
+			}
+			fmt.Fprintln(out, line)
+		}
+	}
+	for _, row := range rows {
+		if row.Class == string(store.RecoveryOperatorRequired) {
+			return runExitInvalidState
+		}
+	}
+	return runExitSuccess
+}
+
 func executeRunsLogs(out io.Writer, worktree string, args []string) int {
 	options, err := parseRunOptions("logs", args)
 	if err != nil {
