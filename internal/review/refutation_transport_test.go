@@ -9,7 +9,7 @@ import (
 
 const (
 	refutationSHA        = "abc12345"
-	hallazgoCriticoJSON  = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`
+	hallazgoCriticoJSON  = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","evidence":"criticalCall()"}]}`
 	refutacionValidaJSON = `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":1,"line_end":1}`
 )
 
@@ -98,6 +98,23 @@ func TestRefutationRoutesThroughReviewTransport(t *testing.T) {
 	if dim.Verdict != VerdictWarn || finding.Status != StatusRefuted || finding.RefutationReason == "" {
 		t.Fatalf("result=%+v, expected accepted refutation through the transport to downgrade the blocker", resultado)
 	}
+	// Ticket 13 hardening pool (R10 L1): the admitted refutation is its own
+	// durable invocation, so the downgraded persisted finding records exactly
+	// the identity this fake transport returned — the same stamping parity
+	// the dimension transports already provide for their findings.
+	stamped := 0
+	for _, hallazgo := range dim.Hallazgos {
+		if hallazgo.Status != StatusRefuted {
+			continue
+		}
+		stamped++
+		if hallazgo.InvocationID != "inv-refutation-1" {
+			t.Fatalf("refuted v2 hallazgo InvocationID = %q, want the transport-returned identity \"inv-refutation-1\"", hallazgo.InvocationID)
+		}
+	}
+	if stamped == 0 {
+		t.Fatal("no refuted v2 hallazgo found to carry the refutation invocation")
+	}
 }
 
 // TestRefutationTransportRejectionPreservesBlocker proves a transport rejection
@@ -167,5 +184,22 @@ func TestRefutationLegacyNilTransportParity(t *testing.T) {
 	if !reflect.DeepEqual(legado.Dims[0].Resultado.Findings[0], porTransporte.Dims[0].Resultado.Findings[0]) {
 		t.Fatalf("finding legacy=%+v transported=%+v, want identical refuted findings",
 			legado.Dims[0].Resultado.Findings[0], porTransporte.Dims[0].Resultado.Findings[0])
+	}
+	// Ticket 13 (R10 L1): the persisted v2 finding now differs in exactly
+	// one additive metadata field — the transported refutation records its
+	// admitted invocation identity, the legacy rollback path keeps it empty.
+	refutedInvocation := func(r ResultadoAuditoria) string {
+		for _, hallazgo := range r.Dims[0].Resultado.Hallazgos {
+			if hallazgo.Status == StatusRefuted {
+				return hallazgo.InvocationID
+			}
+		}
+		return "<no refuted hallazgo>"
+	}
+	if got := refutedInvocation(porTransporte); got != "inv-refutation-1" {
+		t.Fatalf("transported refutation InvocationID = %q, want the admitted identity", got)
+	}
+	if got := refutedInvocation(legado); got != "" {
+		t.Fatalf("legacy refutation InvocationID = %q, want empty on the nil-transport path", got)
 	}
 }

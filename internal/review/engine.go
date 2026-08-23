@@ -341,10 +341,11 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			}
 			prompt := construirPromptRefutacion(sha, dimension.Dim, *finding)
 			var salida string
+			var invocacion string
 			if transport != nil {
 				// Durable path: admitted envelope flow. The refuter answer
 				// influences verdicts, so it may never bypass admission.
-				salida, _, err = transport("refutation", dimension.Dim, prompt, refutador)
+				salida, invocacion, err = transport("refutation", dimension.Dim, prompt, refutador)
 			} else {
 				// Legacy rollback path (review.durable_runs=false): direct
 				// call, byte-identical to pre-R10 behavior.
@@ -368,7 +369,14 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			finding.RefutationLineEnd = respuesta.LineEnd
 			finding.RefutationRangeHash = rango
 			dimension.Resultado.RefutedCritical = true
-			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta)
+			// Ticket 13 hardening pool (R10 L1): the admitted refutation is a
+			// distinct durable invocation that flipped a verdict, so its
+			// identity travels into the downgraded persisted finding exactly
+			// like the dimension transports stamp theirs (ticket 07 slice
+			// 2b). Prune provenance scanning then naturally protects the
+			// refutation stream. The legacy nil-transport path passes an
+			// empty identity and findings stay untouched.
+			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta, invocacion)
 		}
 		if puedeDegradarBloque(*dimension.Resultado) {
 			dimension.Resultado.Verdict = VerdictWarn
@@ -398,7 +406,7 @@ func validarEvidenciaRefutacion(leerSnapshot SnapshotReader, sha string, finding
 	return fmt.Sprintf("%x", suma), true
 }
 
-func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta respuestaRefutador) {
+func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta respuestaRefutador, invocacion string) {
 	for i := range hallazgos {
 		hallazgo := &hallazgos[i]
 		if hallazgo.Severity != SevCritical || hallazgo.Location.Archivo != finding.File || hallazgo.Location.LineaInicio != int(finding.Line) || hallazgo.Description != finding.Description {
@@ -411,6 +419,12 @@ func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta re
 		hallazgo.RefutationLineStart = respuesta.LineStart
 		hallazgo.RefutationLineEnd = respuesta.LineEnd
 		hallazgo.RefutationRangeHash = finding.RefutationRangeHash
+		// Parity with the dimension transports: the admitted refutation
+		// invocation becomes the finding's recorded provenance (ticket 13,
+		// R10 L1). Empty on the legacy path keeps serialized shapes stable.
+		if invocacion != "" {
+			hallazgo.InvocationID = invocacion
+		}
 		return
 	}
 }

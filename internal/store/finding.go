@@ -32,10 +32,14 @@ func (s *Store) LeerHallazgo(fingerprint string) (*review.Hallazgo, error) {
 }
 
 // ReferencedInvocationIDs returns every durable invocation identity recorded
-// as review provenance across the persisted findings. Retention callers feed
-// this set into PruneExecutions so a stream cited by any finding is kept.
-// A findings file that fails to decode fails closed: retention decisions
-// must never run while evidence is unreadable.
+// as review provenance across the persisted findings. Each blob is a full
+// review.Hallazgo, so the top-level invocation_id it decodes IS
+// Hallazgo.InvocationID — including the admitted refuter identity stamped on
+// refutation-downgraded findings — which keeps this surface symmetric with
+// the ledger ficha scan in cmd/sentinel's collectProvenanceReferences.
+// Retention callers feed this set into PruneExecutions so a stream cited by
+// any finding is kept. A findings file that fails to decode fails closed:
+// retention decisions must never run while evidence is unreadable.
 func (s *Store) ReferencedInvocationIDs() (map[string]bool, error) {
 	references := map[string]bool{}
 	entries, err := os.ReadDir(filepath.Join(s.dir, subdirFindings))
