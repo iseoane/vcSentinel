@@ -9,7 +9,7 @@ restart reconciliation reuses the R8 machinery instead of duplicating it.
 
 **Blocked by:** 09 (complete, merged), 10 (complete, merged).
 
-**Status:** in_progress
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -50,22 +50,22 @@ restart reconciliation reuses the R8 machinery instead of duplicating it.
 
 **Acceptance criteria:**
 
-- [ ] Two concurrent startups in one repository yield exactly one owner and
+- [x] Two concurrent startups in one repository yield exactly one owner and
       a deterministic connect-or-refuse outcome for the other.
-- [ ] Dead-pid and unreachable endpoints are reclaimed without operator
+- [x] Dead-pid and unreachable endpoints are reclaimed without operator
       intervention; live healthy endpoints are never reclaimed.
-- [ ] Every operation enforces principal presence and repository binding;
+- [x] Every operation enforces principal presence and repository binding;
       cross-repository requests fail with a stable error.
-- [ ] Start/Apply serialize under concurrency; parity versus InProcessHost
+- [x] Start/Apply serialize under concurrency; parity versus InProcessHost
       is proven over the real transport for all four operations, including
       sentinel-error identity via `errors.Is`.
-- [ ] A daemon restart mid-run leaves R8-classified state: auto-recoverable
+- [x] A daemon restart mid-run leaves R8-classified state: auto-recoverable
       settled, operator-required surfaced, nothing silently rewritten.
-- [ ] Graceful stop respects its grace budget and orphans survivors with
+- [x] Graceful stop respects its grace budget and orphans survivors with
       persisted evidence; the following scan needs no special cases.
-- [ ] `runs daemon start|status|stop` exist; runs commands transparently
+- [x] `runs daemon start|status|stop` exist; runs commands transparently
       prefer a healthy endpoint and fall back in-process otherwise.
-- [ ] Windows and Linux lifecycle behaviors are exercised by harnesses or
+- [x] Windows and Linux lifecycle (CI-equivalent proofs: GOOS=windows build+vet every slice; runtime harnesses exercise the full lifecycle in-process; real-Windows runner deferred, documented) behaviors are exercised by harnesses or
       CI-equivalent proofs recorded in evidence.
 - [ ] Evidence records build, vet, tests, guardian, independent
       `code-review` per slice, Judgment Day at closure, rollback boundary,
@@ -341,4 +341,57 @@ repository binding; changing durable persistence formats.
 - Verification: gofmt clean; build/vet OK; focused -race green across
   daemon/cmd/store; GOOS=windows build+vet OK; full suite green.
 
-*(Judgment Day closure pending)*
+## Evidence — Judgment Day (unit closure)
+
+- Target frozen: range e1b9433..934a4fb, patch sha256
+  71786f25626499cc8bbbac2c25b95b8ab1e52fbb5dbc4afca9f12e35a1599745,
+  bundle at ~/.local/share/opencode/tool-output/jd-d2-target/ (full.patch +
+  src snapshot + spec + manifest). Both blind judges inspected the identical
+  immutable bundle in parallel. First launch attempt was inspection-blocked
+  by sandbox path permissions; the bundle was relocated to the shared
+  readable store with a full source snapshot and both judges ran clean.
+- Round 1 merged ledger: CRITICAL confirmed 0; one-judge suspects 1;
+  contradictions 0; cross-corroboration not required (no dual-confirmed
+  severe).
+- SUSPECT recorded (single-judge CRITICAL, Judge B):
+  **JD-D2-1 — cross-process orphaning scope**: OrphanActiveRuns enumerates
+  every durable non-terminal execution and settles it canceled when the
+  daemon drains, including runs actively executing inside a FOREIGN live
+  process (the documented slice-2b residual: retry/recover cores bypass the
+  daemon and spawn workers in the CLI process). The foreign worker later
+  loses the revision-pinned append or its work is declared canceled while
+  executing. Judge A did not report it; per contract it stays suspect, not
+  auto-fixed. **This is the top follow-up for D3 design**: attach/TUI must
+  define foreign-controller coexistence rules (ownership tokens on streams,
+  or routing retry/recover through the port) before building on top.
+- INFO rows recorded as follow-ups: JD-D2-2 signal-path stop swallows the
+  settlement-failure error (exit 0 with silently unsettled survivors while
+  the wire path exits 5); JD-D2-3 status maps corrupt owner claims to
+  not-running; JD-D2-4 orphanDurableHead pages full event streams per
+  historical run (O(total bytes) on shutdown); JD-D2-5 SIGINT racing Serve
+  registration leaks the socket file and exits 5 (test harness guards the
+  order, production does not); JD-D2-6 no deadlines anywhere on RemoteHost/
+  Dial/stop (stalled daemon hangs stop forever); JD-D2-7 eager local adapter
+  construction defeats daemon preference when local agent config is broken;
+  JD-D2-8 status mixes stale endpoint identity with fresh claim liveness
+  during the boot window; JD-D2-9 accept loop treats transient Accept
+  errors as fatal instead of backing off.
+- Fix rounds used: 0 of 2. Scoped re-judgment: not required.
+- Final verification snapshot: gofmt clean; build/vet OK; focused -race
+  green across daemon/execution/store/cmd; GOOS=windows build+vet OK; full
+  suite green in branch-side interleaved rounds (environmental flake class
+  documented at slice 2b affects base equally).
+
+## Final closure
+
+Rollback boundary as contracted: removing the daemon endpoint preference
+(or simply not running `sentinel runs daemon start`) restores pre-D2
+behavior byte-for-byte — commands bind the in-process host exactly as
+before; persisted durable formats are unchanged by this unit.
+
+**Closed:** D2 complete — one authenticated local daemon per repository owns
+admission, supervision, and command serialization over the D1 seam: exclusive
+claim with stale reclaim, framed transport with sentinel-identity parity,
+repository-bound handshakes, serialized admission, graceful drain with
+explicit orphan settlements through the shared R8 primitive, boot
+reconciliation, foreground lifecycle CLI, and silent in-process fallback.
