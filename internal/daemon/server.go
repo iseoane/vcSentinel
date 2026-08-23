@@ -256,14 +256,13 @@ func mustMarshal(value any) []byte {
 }
 
 // handleStart admits a run. AuthContext presence is enforced again here even
-// though the future client adapter also checks: defense in depth at the
-// trust boundary, since any local process that can reach the transport may
-// bypass our own CLI.
-//
-// Wire limitation by design: wire starts admit only the zero agentrun.RunRequest
-// until prompt transport is defined in slice 2b, because RunRequest fields are
-// deliberately unexported identity-canonical data that this package cannot
-// reconstruct from arbitrary JSON.
+// though the client adapter also checks: defense in depth at the trust
+// boundary, since any local process that can reach the transport may bypass
+// our own CLI. The admission payload invariant is validated through the same
+// shared execution.ValidateStartRequest helper InProcessHost.Start uses, so
+// the two admission paths cannot drift, and the explicit Candidate/Prompt
+// form resolves into the canonical agentrun.RunRequest server-side via
+// execution.ResolveAdmissionRequest before delegation.
 func (s *Server) handleStart(ctx context.Context, body []byte) (any, error) {
 	var request execution.StartRequest
 	if err := decodeBody(body, &request); err != nil {
@@ -272,9 +271,12 @@ func (s *Server) handleStart(ctx context.Context, body []byte) (any, error) {
 	if request.AuthContext.Principal == "" {
 		return nil, execution.ErrMissingPrincipal
 	}
+	if err := execution.ValidateStartRequest(request); err != nil {
+		return nil, err
+	}
 	s.admission.Lock()
 	defer s.admission.Unlock()
-	handle, err := s.controller.Start(ctx, request.Request, request.Policy)
+	handle, err := s.controller.Start(ctx, execution.ResolveAdmissionRequest(request), request.Policy)
 	if err != nil {
 		return nil, err
 	}
