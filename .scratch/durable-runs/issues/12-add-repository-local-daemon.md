@@ -140,9 +140,64 @@ repository binding; changing durable persistence formats.
 
 *(slice 2 pending)*
 
-## Evidence — slice 2 (transport, dispatch, client wiring)
+## Evidence — slice 2a (transport framing + server dispatch)
 
-*(pending)*
+- Base: branch state after slice-1 evidence commit a0fa45f. No main contact:
+  this worktree stays isolated per joint decision until integration is
+  agreed.
+- Commits: feat(daemon) add framed wire protocol with sentinel registry
+  (+203), feat(daemon) add platform endpoint listeners and discovery (+357),
+  feat(daemon) dispatch host operations over the local transport
+  (+354/-6), test(daemon) pin framing, codec registry, and endpoint
+  persistence (+291), test(daemon) cover wire op flows over real transports
+  (+383), test(daemon) prove sentinel identity parity across the wire
+  (+241), test(daemon) pin handshake guards and admission exactly-once
+  (+229). All seven staged candidates passed the pre-commit budget; the two
+  original oversized test files (406/415 lines) were split by cohesion into
+  five files under 350 with an identical 32-test-function count before and
+  after.
+- Surface: 4-byte big-endian length-prefixed JSON frames (MaxFrameSize
+  enforced both directions); wireRequest/wireResponse/handshake types with
+  stable tags; sentinel code registry (canonical codes like
+  "execution.stale_revision", "store.execution_not_found",
+  "daemon.daemon_owned") so *RemoteError.Unwrap resolves errors.Is across
+  the wire; Endpoint listen/dial seam — unix domain socket inside the 0700
+  daemon dir with stale-probe dial (250 ms) refusing binds under live
+  owners, Windows loopback TCP 127.0.0.1 + bearer token file justified in
+  evidence (stdlib-only; named-pipe upgrade deferred); endpoint.json
+  persisted atomically rename-first (POSIX) with remove-rename fallback
+  (Windows), carrying {network, address, pid, started_at, host,
+  protocol_revision} plus omitempty TokenFile; Server dispatch enforcing
+  handshake protocol revision and repository fingerprint (sha256 of cleaned
+  absolute git common dir), re-checking principal presence server-side,
+  serializing Start/Apply behind one admission mutex while Inspect/Subscribe
+  run concurrently.
+- Independent code review (dual axis): spec PASS on binding, serialization,
+  and parity scope; standards found three hard issues all fixed —
+  writeFileAtomic forfeited POSIX atomicity (now rename-first mirroring
+  store's atomicWrite), endpointRecord silently dropped Owner.Host (persisted
+  and round-trip asserted now), Close doc overclaimed cancellation of run
+  workers (reworded: detached workers survive by design; drain/orphan is
+  slice 3). Cheap hardening applied: registry completed with
+  ErrRunNotRetryable/ErrRunNotRecoverable codes, constant-time token compare,
+  LoadEndpoint network validation, zero-RunRequest limitation promoted into
+  production docs at handleStart, fingerprint caveat documented (no symlink
+  resolution or case normalization; both sides derive from git output).
+- Honest limits recorded: ErrStaleRevision and ErrDaemonOwned are pinned at
+  codec level only (no wired op raises them yet; future retry/recover ops
+  inherit identity from the registry); Apply against a never-existing run
+  surfaces store.ErrExecutionNotFound through reconstructAwaitingState, and
+  both wire and local parity cases assert that real behavior; wire starts
+  admit only the zero agentrun.RunRequest because its fields are deliberately
+  unexported identity-canonical data — prompt transport is the headline
+  design decision for slice 2b; a momentarily overloaded live daemon could be
+  misjudged stale by the 250 ms probe until slice 3 couples the probe to the
+  ownership claim.
+- Verification: gofmt clean; build/vet OK; internal/daemon -race green
+  including -count=5 stress during development; GOOS=windows build+vet OK;
+  FULL suite green across 24 packages (-count=1).
+
+*(slice 2b pending)*
 
 ## Evidence — slice 3 (lifecycle, reconciliation, closure)
 
