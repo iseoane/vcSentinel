@@ -218,4 +218,10 @@ review:
     logic: "opencode.normal"
     design: "deep"
     security: "deep"
+# Gate durable-runs cutover (default true): `sentinel gate` executes as ONE
+# root durable run with validation and review logical jobs under it. Set false
+# only to roll back to the legacy orchestration; durable history already
+# written stays inspectable via `sentinel runs`.
+gate:
+  durable_runs: true
 ```
