@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -37,10 +38,58 @@ type RepositoryHost interface {
 }
 
 // StartRequest names the run to admit and the durable policy governing it.
+// It carries exactly one of two mutually exclusive payload forms: either the
+// canonical Request, or the explicit Candidate plus Prompt pair that a
+// transport reconstructs into the canonical request on the receiving side.
+// Raw prompts never travel as JSON inside Request because its fields are
+// deliberately unexported identity-canonical data; the explicit pair is the
+// transport-safe spelling. ValidateStartRequest enforces the invariant.
 type StartRequest struct {
 	Request     agentrun.RunRequest `json:"request"`
+	Candidate   string              `json:"candidate,omitempty"`
+	Prompt      string              `json:"prompt,omitempty"`
 	Policy      store.RunPolicy     `json:"policy"`
 	AuthContext AuthContext         `json:"auth_context"`
+}
+
+// startRequestIsZero reports whether an admission envelope's canonical
+// Request payload carries its zero value, i.e. the envelope uses the explicit
+// Candidate/Prompt transport form. It is the single source of that test so
+// validation and resolution can never drift.
+func startRequestIsZero(request StartRequest) bool {
+	return reflect.ValueOf(request.Request).IsZero()
+}
+
+// ValidateStartRequest enforces the admission payload invariant of
+// StartRequest: either Request is the zero value with a non-empty Candidate
+// AND a non-empty Prompt (the explicit transport form), or Request is
+// non-zero with both strings empty (the canonical form). Mixing the forms or
+// carrying no payload at all is rejected with a deterministic inline error.
+// Every admission path — InProcessHost.Start and the daemon dispatch alike —
+// shares this single helper so the two can never drift.
+func ValidateStartRequest(request StartRequest) error {
+	candidateSet := request.Candidate != ""
+	promptSet := request.Prompt != ""
+	zeroRequest := startRequestIsZero(request)
+	explicitForm := zeroRequest && candidateSet && promptSet
+	canonicalForm := !zeroRequest && !candidateSet && !promptSet
+	if !explicitForm && !canonicalForm {
+		return errors.New("execution: start request carries conflicting payloads")
+	}
+	return nil
+}
+
+// ResolveAdmissionRequest returns the canonical agentrun.RunRequest an
+// admission delegates to the controller. For the explicit Candidate/Prompt
+// form it constructs the real request via agentrun.NewRunRequest; for the
+// canonical form it returns Request untouched. Callers must validate the
+// envelope with ValidateStartRequest first; the resolution itself is total
+// and never fails.
+func ResolveAdmissionRequest(request StartRequest) agentrun.RunRequest {
+	if startRequestIsZero(request) {
+		return agentrun.NewRunRequest(agentrun.Candidate(request.Candidate), agentrun.Prompt(request.Prompt), nil)
+	}
+	return request.Request
 }
 
 // InspectRequest names the run whose durable evidence is reconstructed.
@@ -90,12 +139,19 @@ func NewInProcessHost(controller *Controller) *InProcessHost {
 	return &InProcessHost{controller: controller, actionIDs: make(map[appliedAction]struct{})}
 }
 
-// Start admits a run and returns its live handle.
+// Start admits a run and returns its live handle. The envelope is validated
+// before any controller contact: principal presence first, then the
+// admission payload invariant. The explicit Candidate/Prompt form resolves
+// into the canonical request here, so the controller only ever sees
+// identity-canonical data.
 func (h *InProcessHost) Start(ctx context.Context, request StartRequest) (Handle, error) {
 	if request.AuthContext.Principal == "" {
 		return Handle{}, ErrMissingPrincipal
 	}
-	return h.controller.Start(ctx, request.Request, request.Policy)
+	if err := ValidateStartRequest(request); err != nil {
+		return Handle{}, err
+	}
+	return h.controller.Start(ctx, ResolveAdmissionRequest(request), request.Policy)
 }
 
 // Inspect returns the durable projection, events, outcomes, and responses of a run.
