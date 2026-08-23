@@ -44,9 +44,12 @@ Subcommands:
   abort    --run <id> [--json]
   retry    --run <id> [--expected-revision N] [--json]
   recover  --run <id> [--expected-revision N] [--json]
-           without --run: list the read-only recovery scan of every
-           non-terminal run with its evidence-based class; exits 4 when any
-           entry requires an operator decision
+           --repair <id> rebuilds the lagging state snapshot of one run the
+           classifier proved terminal-but-unprojected; every other class is
+           refused with its reason
+           without --run or --repair: list the read-only recovery scan of
+           every non-terminal run with its evidence-based class; exits 4 when
+           any entry requires an operator decision
   verify   --run <id> [--json]
 
 Exit codes:
@@ -64,8 +67,13 @@ var runsStartSequence atomic.Uint64
 // runOptions carries every flag value a `runs` subcommand may accept;
 // irrelevant fields stay zero for each subcommand.
 type runOptions struct {
-	jsonOut          bool
-	runID            string
+	jsonOut  bool
+	runID    string
+	repairID string
+	// repairSet records that the --repair flag was seen at all, so an empty
+	// identity stays an explicit usage error instead of degrading into the
+	// read-only scan.
+	repairSet        bool
 	text             string
 	prompt           string
 	policyID         string
@@ -173,6 +181,16 @@ type runsRecoveryRow struct {
 // --run. Recoveries is empty when every run is settled or the store is new.
 type runsRecoveryOutput struct {
 	Recoveries []runsRecoveryRow `json:"recoveries"`
+}
+
+// runsRepairOutput is the stable JSON shape of `runs recover --repair`.
+// Rewritten stays false when the replay already matched the persisted
+// snapshot byte for byte (the deterministic no-op proof).
+type runsRepairOutput struct {
+	RunID       string `json:"run_id"`
+	ClassBefore string `json:"class_before"`
+	ClassAfter  string `json:"class_after"`
+	Rewritten   bool   `json:"rewritten"`
 }
 
 func observeUntilSettled(ctx context.Context, c *execution.Controller, runID agentrun.Identity) (store.RunProjection, error) {

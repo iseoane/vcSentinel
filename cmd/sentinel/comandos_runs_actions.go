@@ -179,6 +179,26 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitUsage
 	}
+	// Ticket 09 slice 2: --repair <id> is the bounded operator action that
+	// rebuilds the lagging state snapshot of one classified
+	// terminal-unprojected run from its verified stream. It never appends,
+	// invents, or rewrites event bytes.
+	if options.repairSet {
+		if strings.TrimSpace(options.repairID) == "" {
+			fmt.Fprintln(out, "❌ Usage: sentinel runs recover --repair <id>")
+			return runExitUsage
+		}
+		if options.runID != "" {
+			fmt.Fprintln(out, "❌ Usage: sentinel runs recover accepts either --repair <id> or --run <id>, not both")
+			return runExitUsage
+		}
+		backing, _, buildErr := buildReadonlyController(worktree)
+		if buildErr != nil {
+			fmt.Fprintf(out, "❌ %v\n", buildErr)
+			return runExitInfrastructure
+		}
+		return repairRunProjection(out, backing, strings.TrimSpace(options.repairID), options.jsonOut)
+	}
 	// Ticket 09 slice 1: without --run the command is an explicit READ-ONLY
 	// scan that lists every non-terminal run with its evidence-based class.
 	// It never writes and never resumes anything; recovery of one specific
@@ -213,6 +233,52 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		return runExitCode(waitErr)
 	}
 	return printRunActionResult(out, options.jsonOut, handle, projection.State)
+}
+
+// repairRunProjection renders the ticket 09 slice 2 repair action: rebuild
+// the lagging state snapshot of one terminal-unprojected run. Exit codes
+// follow the runs contract: 0 when repaired (or proven already byte-identical),
+// 2 for an unknown run, 4 when the refusing class makes repair an invalid
+// action right now (recoverable, orphaned-canceled, operator-required,
+// settled), and 5 for corruption or any other infrastructure failure.
+func repairRunProjection(out io.Writer, backing *store.Store, runID string, asJSON bool) int {
+	result, err := store.RepairTerminalUnprojected(backing, runID)
+	if err != nil {
+		var refusal store.RecoveryNotRepairableError
+		switch {
+		case errors.As(err, &refusal):
+			fmt.Fprintf(out, "❌ repair refused for %s (class %s): %s\n", refusal.RunID, refusal.Class, refusal.Reason)
+			if refusal.Class == store.RecoveryCorrupt {
+				return runExitInfrastructure
+			}
+			return runExitInvalidState
+		case errors.Is(err, store.ErrExecutionNotFound):
+			fmt.Fprintf(out, "❌ Run %s does not exist\n", runID)
+			return runExitRunNotFound
+		default:
+			fmt.Fprintf(out, "❌ Could not repair %s: %v\n", runID, err)
+			return runExitCode(err)
+		}
+	}
+	output := runsRepairOutput{
+		RunID: result.RunID, ClassBefore: string(result.ClassBefore),
+		ClassAfter: string(result.ClassAfter), Rewritten: result.Rewritten,
+	}
+	if asJSON {
+		if encodeErr := encodeStableJSON(out, output); encodeErr != nil {
+			fmt.Fprintf(out, "❌ Could not serialize the repair result: %v\n", encodeErr)
+			return runExitInfrastructure
+		}
+		return runExitSuccess
+	}
+	fmt.Fprintf(out, "✅ repaired projection for run %s: %s → %s\n",
+		output.RunID, output.ClassBefore, output.ClassAfter)
+	if output.Rewritten {
+		fmt.Fprintln(out, "   state.json rebuilt from the verified stream; event bytes untouched")
+	} else {
+		fmt.Fprintln(out, "   replay already matched state.json byte for byte; nothing was rewritten")
+	}
+	return runExitSuccess
 }
 
 func executeRunsVerify(out io.Writer, worktree string, args []string) int {

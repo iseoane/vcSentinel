@@ -82,6 +82,9 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		switch flag {
 		case "--run":
 			options.runID = value
+		case "--repair":
+			options.repairID = value
+			options.repairSet = true
 		case "--text":
 			options.text = value
 		case "--prompt":
