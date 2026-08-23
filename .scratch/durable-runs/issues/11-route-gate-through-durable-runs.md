@@ -134,3 +134,33 @@ reconstructed from admitted durable state alone.
   message bodies complete at production wiring.
 - Verification snapshot: gofmt empty; build+vet linux+windows; full suite
   green; -race clean gate/store; new tests ×5.
+
+### Slice 3 — cutover wiring, rollback seam, learned review children
+- Commits: config switch (95), run-observer children (151), production cutover
+  (134), cutover+rollback pins (362), docs (14) — hook-enforced; clean.
+- gate.durable_runs *bool default TRUE (evidence_admission parser pattern,
+  full precedence table tested); false returns before any git/store touch —
+  tree-digest proof of zero executions written with a real verdict computed;
+  prior durable history stays inspectable via runs.
+- Salted-review-children follow-up RESOLVED: additive WithRunObserver reports
+  each admitted review run ID synchronously at admission (failures and
+  aborts included; admission-rejected correctly silent); cmd-level sink drains
+  after AuditarCommit joins workers (race-clean); |children= enumeration now
+  set-equal to the ParentRunID scan including salted review IDs.
+- Production wiring: one store directory backs root + validation jobs + every
+  routed review transport (stateless handles); factory threads ParentRunID.
+- Dual-axis loop: GO conditional on translating three new Spanish comment
+  blocks in parser.go (done) plus two precision wording fixes (same store
+  DIRECTORY not instance; goroutine-completion order not map order). Honest-
+  sort judgment recorded: legacy output is itself order-nondeterministic
+  (mutex-guarded per-dimension appends), so header verbatim + body multiset
+  is the truthful comparison. Accepted follow-ups: dedup hardening in
+  withChildren if planned-ID admission ever coexists with the observer;
+  global-true+project-false precedence case (mechanism trivially correct);
+  resolved_command divergence fixture from slice 2.
+- Verification snapshot: gofmt empty; build+vet linux+windows; FULL suite
+  green across 23 packages with cutover ON by default (all pre-existing gate
+  CLI exit-code/stdout pins unchanged); -race clean on gate/config/
+  cmd-sentinel; new tests ×5.
+
+**Unit complete pending final verification snapshot.**
