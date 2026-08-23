@@ -126,9 +126,19 @@ func classifyRecovery(runID string, evidence recoveryEvidence) RecoveryEntry {
 			"awaiting-decision head with intact decision evidence: resume reconstructs the pending decision without launching an adapter call",
 			head.Sequence, false)
 	}
-	return recoveryEntry(runID, RecoveryOperatorRequired,
-		fmt.Sprintf("non-terminal %s head cannot decide recovery: missing a terminal frame, an awaiting-decision head, or cancellation escalation transitions",
-			head.To), head.Sequence, false)
+	// Operator-required fallback: the reason names the exact evidence whose
+	// absence blocks every automatic verdict, per stream shape, instead of a
+	// generic refusal an operator would have to decode.
+	var reason string
+	switch head.To {
+	case agentrun.StateRunning:
+		reason = "head running without a terminal frame, an awaiting-decision head, or cancellation escalation transitions: outcome unknown"
+	case agentrun.StateCreated, agentrun.StateQueued, agentrun.StateAdmitted:
+		reason = fmt.Sprintf("head %s never reached running: outcome unknown because no execution progress, terminal frame, or cancellation transition is recorded", head.To)
+	default:
+		reason = fmt.Sprintf("non-terminal %s head cannot decide recovery: missing a terminal frame, an awaiting-decision head, or cancellation escalation transitions", head.To)
+	}
+	return recoveryEntry(runID, RecoveryOperatorRequired, reason, head.Sequence, false)
 }
 
 // readRecoveryEvidence gathers the scan inputs for one run. It only reads:

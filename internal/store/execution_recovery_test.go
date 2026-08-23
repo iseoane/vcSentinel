@@ -179,7 +179,9 @@ func TestScanRecoveriesClassifiesEveryNonTerminalRun(t *testing.T) {
 			transitions: running,
 			wantClass:   RecoveryOperatorRequired,
 			wantHead:    3,
-			wantReason:  "non-terminal running head cannot decide recovery",
+			// Slice 3 hardening: the reason names the exact missing
+			// evidence for a running head instead of a generic refusal.
+			wantReason: "head running without a terminal frame, an awaiting-decision head, or cancellation escalation transitions: outcome unknown",
 		},
 		{
 			name:       "admitted run without events requires an operator decision",

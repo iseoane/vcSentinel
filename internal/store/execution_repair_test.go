@@ -312,7 +312,7 @@ func TestRepairRefusesNonUnprojectedClassesWithExactReasons(t *testing.T) {
 			name:        "running head requires an operator decision",
 			transitions: startSequence,
 			wantClass:   RecoveryOperatorRequired,
-			wantReason:  "cannot decide recovery",
+			wantReason:  "outcome unknown",
 		},
 		{
 			name: "already settled terminal stream needs no repair",
