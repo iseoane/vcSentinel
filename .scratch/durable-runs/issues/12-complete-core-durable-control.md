@@ -61,3 +61,25 @@ fallback/recovery behavior, and linked worktrees observe the same run state.
 ## Follow-ups
 
 *(recorded at closure)*
+
+### Slice 1 — lifecycle audit, envelope totality, refutation closure
+- Commits: inventory package (276), refutation conversion + behavioral tests
+  (194), inventory canaries (241) — hook-enforced; worktree clean.
+- AUDIT RESULT: one REAL verdict-influencing parallel path found and closed —
+  critical-finding refutations called the refutador directly even under
+  durable transport. Converted: non-nil transport routes through admission
+  (distinct bundleName "refutation", per-attempt sequence identity); nil keeps
+  legacy byte-identical (rollback switch); transport rejection preserves the
+  original blocker. Behavioral tests prove all three branches ×5 deterministic.
+- Inventory: ~45 sites across five classes in internal/adaptersites with
+  canary drift alarm; 12 spot-checked correct by independent review; exactly
+  two compatibility-gated lifecycle entries (the two durable_runs switches);
+  promptRunAdapter verified already-durable; prompt helpers documented
+  out-of-scope (text production, never verdicts).
+- Dual-axis review: GO; carried M1 (behavioral refutation tests — done), L1
+  (refutation InvocationID provenance parity → follow-ups), M2 canary gap for
+  store-primitive mutations (→ follow-ups). Oversized-file note: engine.go
+  ~668 and engine_test.go ~1179 pre-existing debt, this slice adds ~19 net to
+  engine.go — bypass recorded per guardian rule.
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green 24 packages.
