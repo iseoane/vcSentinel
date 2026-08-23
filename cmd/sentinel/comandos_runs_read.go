@@ -24,7 +24,12 @@ func executeRunsStatus(out io.Writer, worktree string, args []string) int {
 	if options.runID == "" {
 		return listExecutions(out, backing, options.jsonOut)
 	}
-	return inspectExecution(out, controller, backing, agentrun.Identity(options.runID), options.jsonOut)
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitInfrastructure
+	}
+	return inspectExecution(out, controller, backing, agentrun.Identity(options.runID), principal, options.jsonOut)
 }
 
 func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
@@ -77,8 +82,11 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 	return runExitSuccess
 }
 
-func inspectExecution(out io.Writer, controller *execution.Controller, backing *store.Store, runID agentrun.Identity, asJSON bool) int {
-	inspection, err := controller.Inspect(context.Background(), runID)
+func inspectExecution(out io.Writer, controller *execution.Controller, backing *store.Store, runID agentrun.Identity, principal string, asJSON bool) int {
+	inspection, err := execution.NewInProcessHost(controller).Inspect(context.Background(), execution.InspectRequest{
+		RunID:       runID,
+		AuthContext: execution.AuthContext{Principal: principal},
+	})
 	if err != nil {
 		fmt.Fprintf(out, "❌ Could not inspect %s: %v\n", runID, err)
 		return runExitCode(err)
@@ -193,12 +201,22 @@ func executeRunsLogs(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintln(out, "❌ Usage: sentinel runs logs --run <id> [--after <cursor>] [--limit N]")
 		return runExitUsage
 	}
-	backing, _, err := buildReadonlyController(worktree)
+	_, controller, err := buildReadonlyController(worktree)
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
 	}
-	page, err := backing.ReadEvents(options.runID, options.afterCursor, options.limit)
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitInfrastructure
+	}
+	page, err := execution.NewInProcessHost(controller).Subscribe(context.Background(), execution.SubscribeRequest{
+		RunID:       agentrun.Identity(options.runID),
+		AfterCursor: options.afterCursor,
+		Limit:       options.limit,
+		AuthContext: execution.AuthContext{Principal: principal},
+	})
 	if err != nil {
 		fmt.Fprintf(out, "❌ Could not read the event log of %s: %v\n", options.runID, err)
 		return runExitCode(err)

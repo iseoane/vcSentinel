@@ -373,6 +373,25 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 	return ApplyResult{}, fmt.Errorf("%w: %q", ErrUnsupportedAction, action.Kind)
 }
 
+// ReadEventPage returns durably recorded events of a run strictly after
+// afterCursor, honoring limit; limit <= 0 falls back to the standard page
+// size.
+func (c *Controller) ReadEventPage(ctx context.Context, runID agentrun.Identity, afterCursor uint64, limit int) (store.EventPage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return store.EventPage{}, err
+	}
+	if c.store == nil {
+		return store.EventPage{}, ErrControllerNotReady
+	}
+	if limit <= 0 {
+		limit = eventPageSize
+	}
+	return c.store.ReadEvents(string(runID), afterCursor, limit)
+}
+
 func (c *Controller) execute(state *runState, ctx context.Context, invocation agentrun.InvocationEnvelope, response string) {
 	// Stamp the escalation policy onto the worker context so the adapter-side
 	// containment watchdog shares one budget AND one kill scope with

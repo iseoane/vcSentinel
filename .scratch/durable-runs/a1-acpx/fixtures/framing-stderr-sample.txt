@@ -1,0 +1,1 @@
+# EMPTY-AT-CAPTURE-TIME — acpx stderr sample from `npx -y acpx@latest opencode status` (probe sandbox): command exited 0 with empty stderr against a dead session; the original [skill-registry] framing diagnostics occurred mid-turn during a live streaming turn and did not reproduce at capture time.

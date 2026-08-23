@@ -1,0 +1,18 @@
+id: ses_fd283b44affeF30gO4Xw291Pt8
+sessionId: ses_fd283b44affeF30gO4Xw291Pt8
+agentSessionId: -
+agent: npx -y opencode-ai acp
+cwd: /tmp/opencode/a1-probe-sandbox
+name: a1probe
+created: 2026-08-23T07:18:35.775Z
+lastActivity: 2026-08-23T07:18:35.775Z
+lastPrompt: -
+closed: no
+closedAt: -
+pid: -
+agentStartedAt: 2026-08-23T07:18:09.425Z
+lastExitCode: -
+lastExitSignal: SIGTERM
+lastExitAt: 2026-08-23T07:18:35.996Z
+disconnectReason: process_exit
+historyEntries: 0
