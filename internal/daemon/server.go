@@ -57,6 +57,13 @@ type Server struct {
 	sequenceDone  chan struct{}
 	finalizeOnce  sync.Once
 
+	// orphanedRuns records how many active runs the completed graceful
+	// sequence settled as orphaned. It is written exactly once under mu at
+	// sequence end so the lifecycle runner can report the count after Serve
+	// returns, regardless of whether the shutdown arrived programmatically
+	// or over the wire (where the count also travels inside ShutdownResult).
+	orphanedRuns int
+
 	mu       sync.Mutex
 	closed   bool
 	listener net.Listener

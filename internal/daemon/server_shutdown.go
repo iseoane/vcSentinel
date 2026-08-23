@@ -139,6 +139,9 @@ func (s *Server) runGracefulSequence() (int, error) {
 		s.controller.WaitForActiveRuns(remaining)
 	}
 	orphaned, err := s.controller.OrphanActiveRuns(OrphanedByShutdown)
+	s.mu.Lock()
+	s.orphanedRuns = len(orphaned)
+	s.mu.Unlock()
 	if err != nil {
 		return len(orphaned), fmt.Errorf("daemon: orphaning active runs failed after settling %d: %w", len(orphaned), err)
 	}
@@ -166,6 +169,16 @@ func (s *Server) isStopping() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.shuttingDown || s.closed
+}
+
+// orphanedAtStop reports how many active runs the completed graceful sequence
+// settled as orphaned. It reads zero until a sequence has actually run, so
+// callers that observe it after Serve returned always see the final count of
+// the shutdown that ended the serve loop.
+func (s *Server) orphanedAtStop() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.orphanedRuns
 }
 
 // tryFinalize performs the ordered resource release exactly once, but only

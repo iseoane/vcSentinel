@@ -144,6 +144,16 @@ func (h *RemoteHost) Apply(ctx context.Context, request execution.ApplyRequest) 
 	return result, h.call(ctx, OpApply, request, &result)
 }
 
+// Shutdown requests the graceful lifecycle operation remotely and returns the
+// orphaned-runs summary the server produced after its bounded drain. The ok
+// answer is produced only after the graceful sequence completed, so a nil
+// error is proof that the daemon finished draining and orphaning before this
+// call returned.
+func (h *RemoteHost) Shutdown(ctx context.Context, request ShutdownRequest) (ShutdownResult, error) {
+	var result ShutdownResult
+	return result, h.call(ctx, OpShutdown, request, &result)
+}
+
 // Close closes the underlying connection. It is idempotent: closing twice is
 // a no-op, and Close on a host whose connection already died mid-exchange
 // also reports success, because markConnDead already tore the dead socket
