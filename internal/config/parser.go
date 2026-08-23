@@ -35,10 +35,6 @@ type ReviewConfig struct {
 	Timeout          time.Duration
 	Parallel         int
 	CodeGraphContext bool
-	// DurableRuns enables routing every dimension reviewer call through the
-	// durable run controller (R4). False keeps the legacy scheduler; this
-	// flag is the construction-time rollback seam of ticket 05.
-	DurableRuns bool
 	// EvidenceAdmission enables evidence admission over durable transport
 	// output (ticket 07): snapshot binding and output-hash verification run
 	// before a completion may influence verdicts, and admission failures are
@@ -54,17 +50,6 @@ type ReviewConfig struct {
 	CancellationEscalation bool
 	// Dims asigna cada dimensión canónica a un perfil de agente.
 	Dims map[string]string
-}
-
-// GateConfig groups the gate subcommand configuration (R9, ticket 11).
-type GateConfig struct {
-	// DurableRuns routes `sentinel gate` through ONE root durable run with
-	// validation and review logical jobs under it (ticket 11). TRUE is the
-	// cutover default: this unit IS the switch-over. Setting it false is the
-	// rollback seam — gate returns to the legacy orchestration byte-for-byte
-	// while durable history already written stays fully inspectable via
-	// `sentinel runs`.
-	DurableRuns bool
 }
 
 // Valores posibles de CapabilityConfig.FailsWhen: cuándo se considera que una
@@ -123,8 +108,6 @@ type Config struct {
 	Profiles   map[string]ProfileConfig
 	Review     ReviewConfig
 	Validation ValidationConfig
-	// Gate groups the gate subcommand configuration (ticket 11).
-	Gate GateConfig
 	// Change son las reglas de change.classes (T3.1) que consume
 	// change.ClasificarPorRuta: el orden ES la precedencia. Sin struct
 	// envoltorio porque no agrupa nada más que esto (revisión de T3.1).
@@ -197,9 +180,6 @@ func configuracionPorDefecto() Config {
 			Profiles:     map[string][]string{},
 			Mode:         ModeWorktree,
 		},
-		// Gate durable runs are default-on at cutover (ticket 11): the
-		// rollback seam is an explicit false, never leaving it unset.
-		Gate:          GateConfig{DurableRuns: true},
 		LintCommands:  []string{},
 		TestCommands:  []string{},
 		BuildCommands: []string{},
@@ -308,7 +288,6 @@ type reviewYAML struct {
 	Timeout                yaml.Node         `yaml:"timeout"`
 	Parallel               yaml.Node         `yaml:"parallel"`
 	CodeGraphContext       *bool             `yaml:"codegraph_context"`
-	DurableRuns            *bool             `yaml:"durable_runs"`
 	EvidenceAdmission      *bool             `yaml:"evidence_admission"`
 	CancellationEscalation *bool             `yaml:"cancellation_escalation"`
 	Dims                   map[string]string `yaml:"dims"`
@@ -338,13 +317,6 @@ type validationYAML struct {
 	Mode         *string                   `yaml:"mode"`
 }
 
-// gateYAML is the gate section (ticket 11): today only the durable switch,
-// shaped with the same *bool pattern as evidence_admission (absent = the
-// default is untouched; an explicit false is always honored).
-type gateYAML struct {
-	DurableRuns *bool `yaml:"durable_runs"`
-}
-
 // changeYAML es la sección change.classes: cada clase a su lista de globs.
 // El mapa no preserva el orden textual; aplicarOrdenClases lo recupera.
 type changeYAML struct {
@@ -361,6 +333,11 @@ type changeYAML struct {
 // .vas_sentinel/vassentinel.yml), así que debe aceptarse para no romper la
 // decodificación estricta de configuración existente. Añadir esa sección a
 // Config es otra tarea.
+//
+// Ticket 13 (R11): review.durable_runs and the whole gate section were
+// removed together with their legacy execution paths. A yaml still declaring
+// them is not ignored: KnownFields(true) rejects it right here with file and
+// line, naming the unknown key ("durable_runs" / "gate").
 type configYAML struct {
 	Version                  *string                     `yaml:"version"`
 	ActiveAgent              *string                     `yaml:"active_agent"`
@@ -368,7 +345,6 @@ type configYAML struct {
 	Profiles                 map[string]perfilGlobalYAML `yaml:"profiles"`
 	Review                   *reviewYAML                 `yaml:"review"`
 	Validation               *validationYAML             `yaml:"validation"`
-	Gate                     *gateYAML                   `yaml:"gate"`
 	CommitLanguage           *string                     `yaml:"commit_language"`
 	RequestExternalAgentDiff *bool                       `yaml:"request_external_agent_diff"`
 	LintCommands             []string                    `yaml:"lint_commands"`
@@ -487,9 +463,6 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		for dim, perfilDim := range raw.Review.Dims {
 			cfg.Review.Dims[dim] = perfilDim
 		}
-		if raw.Review.DurableRuns != nil {
-			cfg.Review.DurableRuns = *raw.Review.DurableRuns
-		}
 		if raw.Review.EvidenceAdmission != nil {
 			cfg.Review.EvidenceAdmission = *raw.Review.EvidenceAdmission
 		}
@@ -505,9 +478,6 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		if err := aplicarValidacion(cfg, raw.Validation); err != nil {
 			return err
 		}
-	}
-	if raw.Gate != nil && raw.Gate.DurableRuns != nil {
-		cfg.Gate.DurableRuns = *raw.Gate.DurableRuns
 	}
 	return nil
 }

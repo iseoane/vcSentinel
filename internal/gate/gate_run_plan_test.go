@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
 // TestGateRunPlanBuilder proves the pure decomposition of one gate execution
@@ -150,42 +149,18 @@ func TestGateRunPlanBuilder(t *testing.T) {
 	})
 }
 
-// TestGateDurableRunsSwitch proves the reversible seam: default FALSE keeps
-// legacy behavior untouched, TRUE routes through the real durable
-// orchestration and fails honestly as infrastructure before any phase runs
-// when its required seams are absent.
-func TestGateDurableRunsSwitch(t *testing.T) {
+// TestGateDurableOrchestrationSeams pins the honest infrastructure failures
+// of the single (durable) execution path: a missing durable store refuses to
+// run anything, plan construction is validated before any admission, and an
+// unresolved capability reference fails during planning.
+func TestGateDurableOrchestrationSeams(t *testing.T) {
 	cfgWithBrokenProfile := cfgConPerfil("lint", "echo ok")
 	cfgWithBrokenProfile.Validation.Profiles["roto"] = []string{"missing-capability"}
 
-	t.Run("default false keeps the legacy path and never sets Err", func(t *testing.T) {
+	t.Run("without an injected store fails as infrastructure before any phase", func(t *testing.T) {
 		llamadas := 0
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-		// Injected validation seam: the assertion must stay independent of
-		// the real git state of whichever tree runs the tests.
-		opts.EjecutarValidacion = func(perfil string, _ []string, _ validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			return nil, nil
-		}
-
-		resultado := EjecutarGate(opts)
-
-		if resultado.Estado != EstadoPass {
-			t.Fatalf("legacy default must stay byte-green: estado = %q", resultado.Estado)
-		}
-		if resultado.Err != nil {
-			t.Fatalf("legacy default must leave Err nil, got %v", resultado.Err)
-		}
-		if llamadas != 1 {
-			t.Fatalf("expected exactly one review invocation, got %d", llamadas)
-		}
-	})
-
-	t.Run("true without an injected store fails as infrastructure before any phase", func(t *testing.T) {
-		llamadas := 0
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, "", nil))
-		opts.DurableRuns = true
-		opts.Stage = "pre-push"
-		opts.CandidateSHA = "abc123def456"
+		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, "", nil))
+		opts.DurableStore = nil
 
 		resultado := EjecutarGate(opts)
 
@@ -200,11 +175,9 @@ func TestGateDurableRunsSwitch(t *testing.T) {
 		}
 	})
 
-	t.Run("true still validates the plan before admitting anything", func(t *testing.T) {
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, nil)
-		opts.DurableRuns = true
+	t.Run("still validates the plan before admitting anything", func(t *testing.T) {
+		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, nil)
 		opts.Stage = ""
-		opts.CandidateSHA = "abc123def456"
 
 		resultado := EjecutarGate(opts)
 
@@ -217,12 +190,9 @@ func TestGateDurableRunsSwitch(t *testing.T) {
 		}
 	})
 
-	t.Run("true rejects an unresolved capability reference during planning", func(t *testing.T) {
-		opts := opcionesBase(cfgWithBrokenProfile, nil, nil)
+	t.Run("rejects an unresolved capability reference during planning", func(t *testing.T) {
+		opts := opcionesBase(t, cfgWithBrokenProfile, nil, nil)
 		opts.Perfil = "roto"
-		opts.DurableRuns = true
-		opts.Stage = "pr"
-		opts.CandidateSHA = "abc123def456"
 
 		resultado := EjecutarGate(opts)
 

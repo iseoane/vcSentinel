@@ -23,7 +23,7 @@ func TestGateDurableLearnedReviewChildrenEnumerateScanned(t *testing.T) {
 	transportes := 0
 	var aprendidos []string
 
-	base := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
 		fabricaContadora(new(int), bloqueoJSON, nil))
 	base.EjecutarValidacion = ejecutarPerfilSinCandidato
 	base.FabricaRefutador = func() (review.AuditorAgente, string, error) {
@@ -31,7 +31,6 @@ func TestGateDurableLearnedReviewChildrenEnumerateScanned(t *testing.T) {
 	}
 
 	durable := base
-	durable.DurableRuns = true
 	durable.Stage = "pre-push"
 	durable.CandidateSHA = base.OpcionesRevision.SHA
 	// ONE store for the root run, the validation-job settlements, and every

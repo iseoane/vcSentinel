@@ -1,11 +1,13 @@
 package gate
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -50,8 +52,8 @@ func cfgConPerfil(nombreCapability string, comando string) config.Config {
 	return cfg
 }
 
-func opcionesBase(cfg config.Config, ejecutar validation.EjecutorComando, fabrica review.FabricaAuditor) Opciones {
-	return Opciones{
+func opcionesBase(t *testing.T, cfg config.Config, ejecutar validation.EjecutorComando, fabrica review.FabricaAuditor) Opciones {
+	opts := Opciones{
 		Perfil: "testperfil",
 		OpcionesValidacion: validation.OpcionesEjecucion{
 			Worktree: "/no-usado",
@@ -66,6 +68,16 @@ func opcionesBase(cfg config.Config, ejecutar validation.EjecutorComando, fabric
 		},
 		// EjecutarValidacion inyectado en cada test: no depende de git real.
 	}
+	// Ticket 13 (R11): EjecutarGate IS the durable orchestration, so every
+	// fixture exercises the only execution path with its full seam set:
+	// stage/candidate identity, a temp-dir backed durable store, and a REAL
+	// transport factory mirroring cmd/sentinel's construction. Tests that
+	// need their own counter or transport override these fields afterwards.
+	opts.Stage = "pre-push"
+	opts.CandidateSHA = opts.OpcionesRevision.SHA
+	opts.DurableStore = store.NuevoStore(filepath.Join(t.TempDir(), "gate-common"))
+	opts.DurableReviewTransportFactory = countedTransportFactory(t, opts.OpcionesRevision.SHA, new(int))
+	return opts
 }
 
 func ejecutarPerfilSinCandidato(perfil string, _ []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
@@ -78,7 +90,7 @@ func ejecutarPerfilSinCandidato(perfil string, _ []string, opts validation.Opcio
 func TestValidacionEnRojo_NoLanzaRevision(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo boom")
 	llamadas := 0
-	opts := opcionesBase(cfg, func(string) (int, string, error) {
+	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
 		return 1, "salida real del comando fallido", nil
 	}, fabricaContadora(&llamadas, "", nil))
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
@@ -109,7 +121,7 @@ func TestValidacionEnVerdeConCriticalConfirmado_Bloquea(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
 	llamadas := 0
 	salidaAgente := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`
-	opts := opcionesBase(cfg, func(string) (int, string, error) {
+	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
 		return 0, "", nil
 	}, fabricaContadora(&llamadas, salidaAgente, nil))
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
@@ -143,7 +155,7 @@ func TestCriticalRefuted_NeedsUserReview(t *testing.T) {
 	fabrica := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
 		return agente, "perfil-test", nil
 	}
-	opts := opcionesBase(cfg, func(string) (int, string, error) { return 0, "", nil }, fabrica)
+	opts := opcionesBase(t, cfg, func(string) (int, string, error) { return 0, "", nil }, fabrica)
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
 		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case","sha":"0123456789abcdef","file":"a.go","line_start":1,"line_end":1,"evidence":"final code handles this case"}`}, "cheap", nil
@@ -169,7 +181,7 @@ func TestRevisionConPreguntas_NecesitaRevisionHumana(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
 	llamadas := 0
 	salidaAgente := `{"dim":"logic","verdict":"question","questions":[{"id":"q1","text":"¿por qué este cambio?"}]}`
-	opts := opcionesBase(cfg, func(string) (int, string, error) {
+	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
 		return 0, "", nil
 	}, fabricaContadora(&llamadas, salidaAgente, nil))
 	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
@@ -186,7 +198,7 @@ func TestRevisionConPreguntas_NecesitaRevisionHumana(t *testing.T) {
 // un hallazgo del código, es infraestructura.
 func TestRevisionSinAgenteDisponible_ErrorInfraestructura(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
-	opts := opcionesBase(cfg, func(string) (int, string, error) {
+	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
 		return 0, "", nil
 	}, func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		return nil, "perfil-test", errAgenteNoDisponibleTest
@@ -206,7 +218,7 @@ func TestRevisionSinAgenteDisponible_ErrorInfraestructura(t *testing.T) {
 func TestEjecutarValidacionFalla_ErrorInfraestructura(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
 	llamadas := 0
-	opts := opcionesBase(cfg, nil, fabricaContadora(&llamadas, "", nil))
+	opts := opcionesBase(t, cfg, nil, fabricaContadora(&llamadas, "", nil))
 	opts.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 		return nil, errAgenteNoDisponibleTest
 	}

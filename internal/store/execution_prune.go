@@ -95,6 +95,23 @@ type PruneReport struct {
 	Decisions []PruneDecision `json:"decisions"`
 }
 
+// pruneInLockRefusal marks a removal refused by the re-verification inside
+// the cross-process event lock (the classify→delete TOCTOU window): the
+// record changed provenance between classification and deletion. Reason
+// carries the final stable keep reason for the operator report, so the
+// refusal surfaces exactly like any classification-time retention guard.
+type pruneInLockRefusal struct {
+	reason string
+}
+
+func (e pruneInLockRefusal) Error() string { return e.reason }
+
+// pruneRaceWindowHook, when non-nil, runs inside PruneExecutions after
+// classification and before any removal. Production code never sets it;
+// tests use it to persist new provenance state inside the classify→delete
+// window and prove the locked section refuses what classification missed.
+var pruneRaceWindowHook func(s *Store)
+
 // prunableRun is the intermediate classification of one examined run.
 type prunableRun struct {
 	runID       string
@@ -143,6 +160,11 @@ func (s *Store) PruneExecutions(cutoff time.Time, referencedInvocations map[stri
 		}
 	}
 
+	// Test seam: persist state inside the classify→delete window.
+	if pruneRaceWindowHook != nil {
+		pruneRaceWindowHook(s)
+	}
+
 	for _, run := range classified {
 		if !run.prunable {
 			report.Kept++
@@ -155,13 +177,17 @@ func (s *Store) PruneExecutions(cutoff time.Time, referencedInvocations map[stri
 		if run.remnant {
 			removalErr = s.removeExecutionRemnant(run.runID)
 		} else {
-			removalErr = s.removeExecutionDirectory(run.runID)
+			removalErr = s.removeExecutionDirectory(run.runID, referencedInvocations)
 		}
 		if removalErr != nil {
 			report.Kept++
+			reason := fmt.Sprintf(PruneReasonRemovalFailedFmt, removalErr)
+			var refusal pruneInLockRefusal
+			if errors.As(removalErr, &refusal) {
+				reason = refusal.reason
+			}
 			report.Decisions = append(report.Decisions, PruneDecision{
-				RunID: run.runID, Action: PruneActionKept,
-				Reason: fmt.Sprintf(PruneReasonRemovalFailedFmt, removalErr),
+				RunID: run.runID, Action: PruneActionKept, Reason: reason,
 			})
 			continue
 		}
@@ -290,12 +316,16 @@ func (s *Store) removeExecutionRemnant(runID string) error {
 }
 
 // removeExecutionDirectory deletes one whole execution record under its
-// cross-process event lock. The locked section re-verifies the stream and
-// removes every child except the lock file itself; the lock file and the
-// directory are removed after releasing the lock, because Windows refuses
-// to rename or delete paths under an open handle. A failure anywhere leaves
-// whatever was not yet deleted in place and reports the error.
-func (s *Store) removeExecutionDirectory(runID string) error {
+// cross-process event lock. The locked section re-verifies the stream AND
+// the provenance guards (ticket 13 hardening pool, JD-R10 W1): a reference
+// persisted between classification and lock, or a child run that appeared
+// naming this record as parent, refuses the deletion with a typed refusal
+// instead of destroying evidence. It then removes every child except the
+// lock file itself; the lock file and the directory are removed after
+// releasing the lock, because Windows refuses to rename or delete paths
+// under an open handle. A failure anywhere leaves whatever was not yet
+// deleted in place and reports the error.
+func (s *Store) removeExecutionDirectory(runID string, referencedInvocations map[string]bool) error {
 	directory, err := s.executionDir(runID)
 	if err != nil {
 		return err
@@ -316,6 +346,18 @@ func (s *Store) removeExecutionDirectory(runID string) error {
 		projection := reconcileProjection(runID, log.frames)
 		if projection.Terminal == agentrun.TerminalNone {
 			return fmt.Errorf("store: run %s left its terminal state before pruning", runID)
+		}
+		for _, frame := range log.frames {
+			if referencedInvocations[frame.InvocationID] {
+				return pruneInLockRefusal{
+					reason: fmt.Sprintf(PruneReasonProvenanceFmt, frame.InvocationID),
+				}
+			}
+		}
+		if child := s.findLateChildUnderLock(runID); child != "" {
+			return pruneInLockRefusal{
+				reason: fmt.Sprintf(PruneReasonParentOfSurvivorFmt, child),
+			}
 		}
 		entries, readErr := os.ReadDir(directory)
 		if readErr != nil {
@@ -338,4 +380,31 @@ func (s *Store) removeExecutionDirectory(runID string) error {
 		return err
 	}
 	return os.Remove(directory)
+}
+
+// findLateChildUnderLock re-scans the execution listing under the event lock
+// and returns the identity of a run whose persisted request names runID as
+// ParentRunID, or "" when none does. This closes the second half of the
+// classify→delete window: a gate child admitted after classification must
+// keep its root alive even though the classification pass never saw it.
+// Sibling requests that fail to decode are skipped: an unreadable request
+// cannot name a parent (classification keeps such records on its own
+// incomplete-admission guard), and failing the scan here would deadlock
+// pruning behind an unrelated remnant.
+func (s *Store) findLateChildUnderLock(runID string) string {
+	ids, err := s.ListExecutionIDs()
+	if err != nil {
+		return ""
+	}
+	for _, id := range ids {
+		if id == runID {
+			continue
+		}
+		request, readErr := s.ReadExecutionRequest(id)
+		if readErr != nil || request.ParentRunID != runID {
+			continue
+		}
+		return id
+	}
+	return ""
 }

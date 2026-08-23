@@ -74,7 +74,7 @@ func inspeccionarRaiz(t *testing.T, st *store.Store, opts Opciones) execution.In
 // evidence OutputHash.
 func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
 	transportes := 0
-	base := opcionesBase(cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
+	base := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
 		"echo test": {Exit: 3, Salida: "fallo determinista del comando test"},
 	}), fabricaContadora(new(int), "", nil))
 	var capturados []validation.ValidationRun
@@ -145,7 +145,7 @@ func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
 func TestGateDurableRootLayerDistinction(t *testing.T) {
 	t.Run("review blocker names the review layer", func(t *testing.T) {
 		transportes := 0
-		base := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+		base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
 			fabricaContadora(new(int), `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`, nil))
 		base.EjecutarValidacion = ejecutarPerfilSinCandidato
 		base.FabricaRefutador = func() (review.AuditorAgente, string, error) {
@@ -169,7 +169,7 @@ func TestGateDurableRootLayerDistinction(t *testing.T) {
 
 	t.Run("infrastructure failure settles the root unavailable", func(t *testing.T) {
 		transportes := 0
-		base := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(new(int), "", nil))
+		base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(new(int), "", nil))
 		base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return nil, errAgenteNoDisponibleTest
 		}
@@ -197,8 +197,7 @@ func TestGateDurableRootLayerDistinction(t *testing.T) {
 func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 	t.Run("settlement failure is honest infrastructure with a pinned prefix", func(t *testing.T) {
 		llamadas := 0
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, "", nil))
-		opts.DurableRuns = true
+		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, "", nil))
 		opts.Stage = "pre-push"
 		opts.CandidateSHA = opts.OpcionesRevision.SHA
 		commonDir := filepath.Join(t.TempDir(), "gate-common")
@@ -241,7 +240,7 @@ func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 // RecordValidationEvidence serialization of that command's tuple.
 func TestGateDurableEvidenceDigestBinding(t *testing.T) {
 	transportes := 0
-	base := opcionesBase(cfgDosCapabilities(), ejecutorSeleccionado(nil), fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(nil), fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
 	var capturados []validation.ValidationRun
 	base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 		runs, err := ejecutarPerfilSinCandidato(perfil, alcance, o)

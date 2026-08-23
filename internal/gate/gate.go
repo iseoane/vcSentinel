@@ -59,9 +59,10 @@ func CodigoSalida(estado string) int {
 type Resultado struct {
 	Estado   string
 	Mensajes []string
-	// Err carries a typed error produced by the durable-runs seam when
-	// Opciones.DurableRuns is true (R9 slice 1). The legacy orchestration,
-	// the default everywhere today, always leaves it nil.
+	// Err carries a typed error produced by the durable orchestration when a
+	// plan, admission, or settlement seam fails (R9 slice 1). Facade text
+	// travels in Estado/Mensajes; Err exists for callers that need the typed
+	// cause.
 	Err error
 }
 
@@ -96,26 +97,15 @@ type Opciones struct {
 	OpcionesRevision review.OpcionesAuditoria
 
 	// Stage is the --stage lifecycle context embedded in the durable root
-	// run request when DurableRuns is true. The legacy orchestration ignores
-	// it: today only cmd/sentinel's messages use the stage value.
+	// run request. cmd/sentinel's facade messages also read the stage value.
 	Stage string
 	// CandidateSHA is the candidate HEAD commit SHA embedded in the durable
-	// root run request when DurableRuns is true. The legacy orchestration
-	// ignores it.
+	// root run request.
 	CandidateSHA string
-	// DurableRuns is the reversible R9 construction-time switch. FALSE is
-	// the default everywhere in this slice and keeps the legacy orchestration
-	// as THE active path with byte-identical behavior. TRUE routes the whole
-	// gate execution through ONE root durable run (see gate_durable.go):
-	// validation jobs settle deterministically without any agent, and the
-	// review phase reuses the same transport path `sentinel review` wires —
-	// never a parallel execution path.
-	DurableRuns bool
 	// DurableStore backs the root gate run and every validation-job
-	// settlement when DurableRuns is true. A nil store with DurableRuns=true
-	// fails honestly as infrastructure before any phase executes; cmd/sentinel
-	// still does not pass it in this slice, so the flag stays unreachable
-	// from the CLI until the cutover slice wires it.
+	// settlement. A nil store fails honestly as infrastructure before any
+	// phase executes; cmd/sentinel wires it through applyDurableCutover over
+	// the repository common-dir store.
 	DurableStore *store.Store
 	// DurableReviewTransportFactory constructs the review-side transport used
 	// by the durable orchestration's review phase. It receives the gate's
@@ -127,7 +117,7 @@ type Opciones struct {
 	// cmd/sentinel), so reviewer invocations keep inheriting admission, owned
 	// process trees, and cancellation; tests inject substitutes and
 	// invocation counters here. When nil, the review phase falls back to
-	// OpcionesRevision.ReviewTransport exactly as the legacy tail does: there
+	// OpcionesRevision.ReviewTransport (engine-level injection seam): there
 	// is no second review execution path.
 	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
 	// DurableReviewChildren reports the review-side child run identities that
@@ -144,48 +134,10 @@ type Opciones struct {
 	DurableReviewChildren func() []agentrun.Identity
 }
 
-// EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la
-// validación pasa, ejecuta la revisión semántica.
-// Si la validación falla, ni siquiera se llama a FabricaAuditor: la revisión
-// semántica ni se intenta (regla central de la ficha, verificada en los
-// tests con un contador de invocaciones).
-func EjecutarGate(opts Opciones) Resultado {
-	if opts.DurableRuns {
-		return ejecutarGateDurable(opts)
-	}
-
-	ejecutarValidacion := opts.EjecutarValidacion
-	if ejecutarValidacion == nil {
-		ejecutarValidacion = validation.EjecutarPerfilSobreCandidato
-	}
-
-	runs, err := ejecutarValidacion(opts.Perfil, opts.RutasCambiadas, opts.OpcionesValidacion)
-	if err != nil {
-		// Un fallo al ORQUESTAR la validación (candidato obsoleto, snapshot no
-		// creado, capability mal referenciada en el perfil...) es
-		// infraestructura, no un hallazgo del código: nunca se inventa un
-		// VALIDATION_FAILED para algo que ni llegó a ejecutarse.
-		return Resultado{
-			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: []string{mensajeValidacionNoEjecutada(err)},
-		}
-	}
-
-	hallazgos := validation.Hallazgos(runs, opts.OpcionesValidacion.Cfg.Validation.Capabilities)
-	if len(hallazgos) > 0 {
-		return Resultado{Estado: EstadoValidationFailed, Mensajes: mensajesValidacionFallida(hallazgos)}
-	}
-
-	opcionesRevision := opts.OpcionesRevision
-	opcionesRevision.FabricaRefutador = opts.FabricaRefutador
-	resultado := review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opcionesRevision)
-	return traducirVeredicto(resultado)
-}
-
 // mensajeValidacionNoEjecutada is the single facade text for a validation
-// ORCHESTRATION failure (infrastructure, never a code finding). The legacy
-// path and the durable path share this one helper so equivalent inputs render
-// byte-identical facade text.
+// ORCHESTRATION failure (infrastructure, never a code finding). The durable
+// orchestration renders it so equivalent inputs keep the historical facade
+// text byte-identical.
 func mensajeValidacionNoEjecutada(err error) string {
 	return fmt.Sprintf("No se pudo ejecutar la validación: %v", err)
 }

@@ -134,6 +134,72 @@ func TestAdapterExecutionSitesInventory(t *testing.T) {
 	}
 }
 
+// TestStorePrimitiveCanariesCatchUndeclaredMutations proves the ticket 13
+// hardening pool canary set (R10 M2): the store-primitive mutation tokens
+// are part of the scan, a synthetic undeclared file carrying one of them is
+// detected by ScanMarkerFiles (and therefore fails the completeness
+// invariant of TestAdapterExecutionSitesInventory), and every real module
+// file carrying those tokens today is declared as durable-controller.
+func TestStorePrimitiveCanariesCatchUndeclaredMutations(t *testing.T) {
+	primitives := []string{"CreateRun(", "AppendTerminalEvent(", "SaveAttemptOutcome("}
+	for _, token := range primitives {
+		found := false
+		for _, marker := range canaryMarkers {
+			if marker == token {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("store-primitive token %q is not a canary marker; direct durable-state mutations could appear unclassified", token)
+		}
+	}
+
+	root := t.TempDir()
+	undeclared := filepath.Join(root, "stray.go")
+	if err := os.WriteFile(undeclared, []byte("package main\n\nfunc f(s interface{ CreateRun() error }) { s.CreateRun() }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	scanned, err := ScanMarkerFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markers := scanned["stray.go"]; len(markers) != 1 || markers[0] != "CreateRun(" {
+		t.Fatalf("ScanMarkerFiles on an undeclared file = %v, want exactly [CreateRun(]", markers)
+	}
+
+	moduleRoot, err := ModuleRoot()
+	if err != nil {
+		t.Fatalf("module root not found: %v", err)
+	}
+	byPath := siteByPath(t)
+	moduleScan, err := ScanMarkerFiles(moduleRoot)
+	if err != nil {
+		t.Fatalf("canary scan failed: %v", err)
+	}
+	for path, markers := range moduleScan {
+		carriesPrimitive := false
+		for _, marker := range markers {
+			for _, primitive := range primitives {
+				if marker == primitive {
+					carriesPrimitive = true
+				}
+			}
+		}
+		if !carriesPrimitive {
+			continue
+		}
+		site, ok := byPath[path]
+		if !ok {
+			t.Errorf("UNDECLARED store-primitive site: %s carries %v; add it to Sites()", path, markers)
+			continue
+		}
+		if site.Class != ClassDurable {
+			t.Errorf("store-primitive site %s classified %q; mutating durable run state is exclusively durable-controller", path, site.Class)
+		}
+	}
+}
+
 // TestInScopeAdapterSitesCarryAdmittedEnvelope asserts envelope totality for
 // every durable-controller provider-execution site: each one routes its
 // provider call through the execution controller with an admitted
@@ -197,16 +263,16 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	}
 }
 
-// TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries proves the two
-// configuration rollback switches are the ONLY permitted non-controller
-// lifecycle paths, and that both switches really exist in the parser.
-func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
+// TestNoCompatibilityGatedSitesRemain proves the ticket 13 (R11) cutover
+// completion: the two release-bounded switches were removed, so ZERO
+// compatibility-gated entries are permitted in the inventory and the config
+// parser no longer declares any durable_runs yaml key.
+func TestNoCompatibilityGatedSitesRemain(t *testing.T) {
 	root, err := ModuleRoot()
 	if err != nil {
 		t.Fatalf("module root not found: %v", err)
 	}
 
-	var gated []Site
 	lifecycleMarkers := map[string]bool{"NewController(": true, "AppendEvent(": true}
 	controllerCore := map[string]bool{
 		"internal/execution/controller.go":       true,
@@ -216,7 +282,7 @@ func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
 	}
 	for _, site := range Sites() {
 		if site.Class == ClassGated {
-			gated = append(gated, site)
+			t.Errorf("compatibility-gated entry %s survived the R11 switch removal; every site must now be durably admitted or explicitly out-of-scope", site.Path)
 		}
 		if site.Marker != "" && lifecycleMarkers[site.Marker] && !controllerCore[site.Path] {
 			if site.Class != ClassDurable {
@@ -224,18 +290,9 @@ func TestRollbackSwitchesAreOnlyNonControllerLifecycleEntries(t *testing.T) {
 			}
 		}
 	}
-	if len(gated) != 2 {
-		t.Fatalf("exactly two compatibility-gated rollback entries are permitted, found %d: %v", len(gated), gated)
-	}
-	wantGated := map[string]bool{"internal/review/engine.go": true, "internal/gate/gate.go": true}
-	for _, site := range gated {
-		if !wantGated[site.Path] {
-			t.Errorf("unexpected compatibility-gated entry %s; only the two documented rollback switches qualify", site.Path)
-		}
-	}
 
 	parser := readFile(t, root, "internal/config/parser.go")
-	if got := strings.Count(parser, `yaml:"durable_runs"`); got != 2 {
-		t.Errorf("both review.durable_runs and gate.durable_runs must exist in the config parser, found %d tags", got)
+	if got := strings.Count(parser, `yaml:"durable_runs"`); got != 0 {
+		t.Errorf("review.durable_runs and gate.durable_runs were removed in R11, found %d remaining yaml tags", got)
 	}
 }

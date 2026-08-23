@@ -2,14 +2,13 @@ package review
 
 import (
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 )
 
 const (
 	refutationSHA        = "abc12345"
-	hallazgoCriticoJSON  = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`
+	hallazgoCriticoJSON  = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","evidence":"criticalCall()"}]}`
 	refutacionValidaJSON = `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":1,"line_end":1}`
 )
 
@@ -98,6 +97,23 @@ func TestRefutationRoutesThroughReviewTransport(t *testing.T) {
 	if dim.Verdict != VerdictWarn || finding.Status != StatusRefuted || finding.RefutationReason == "" {
 		t.Fatalf("result=%+v, expected accepted refutation through the transport to downgrade the blocker", resultado)
 	}
+	// Ticket 13 hardening pool (R10 L1): the admitted refutation is its own
+	// durable invocation, so the downgraded persisted finding records exactly
+	// the identity this fake transport returned — the same stamping parity
+	// the dimension transports already provide for their findings.
+	stamped := 0
+	for _, hallazgo := range dim.Hallazgos {
+		if hallazgo.Status != StatusRefuted {
+			continue
+		}
+		stamped++
+		if hallazgo.InvocationID != "inv-refutation-1" {
+			t.Fatalf("refuted v2 hallazgo InvocationID = %q, want the transport-returned identity \"inv-refutation-1\"", hallazgo.InvocationID)
+		}
+	}
+	if stamped == 0 {
+		t.Fatal("no refuted v2 hallazgo found to carry the refutation invocation")
+	}
 }
 
 // TestRefutationTransportRejectionPreservesBlocker proves a transport rejection
@@ -134,38 +150,29 @@ func TestRefutationTransportRejectionPreservesBlocker(t *testing.T) {
 	}
 }
 
-// TestRefutationLegacyNilTransportParity guards the rollback branch: with a
-// nil transport the refuter answers through its restricted EjecutarRevision
-// capability and the outcome must be identical to the admitted-transport run.
-func TestRefutationLegacyNilTransportParity(t *testing.T) {
-	porTransporte, _, _ := ejecutarEscenarioConTransporte(t, func() (string, string, error) {
+// TestRefutationTransportIdentityStampsPersistedFinding pins the additive
+// provenance contract: the identity the transport reports for the admitted
+// refutation envelope is the one stamped on the downgraded persisted v2
+// finding (ticket 13 hardening pool, R10 L1).
+func TestRefutationTransportIdentityStampsPersistedFinding(t *testing.T) {
+	resultado, _, _ := ejecutarEscenarioConTransporte(t, func() (string, string, error) {
 		return refutacionValidaJSON, "inv-refutation-1", nil
 	})
 
-	fabrica, _ := fabricaFija([]string{hallazgoCriticoJSON})
-	fabricaRefutador, refutador := fabricaRefutadorFija([]string{refutacionValidaJSON})
-	legado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
-		SHA:                   refutationSHA,
-		Bundles:               bundlesPrueba(DimLogic),
-		FabricaRefutador:      fabricaRefutador,
-		LeerContenidoSnapshot: snapshotReaderRefutacion(t),
-	})
-
-	refutador.mu.Lock()
-	llamadasDirectas := refutador.llamadas
-	refutador.mu.Unlock()
-	if llamadasDirectas != 1 {
-		t.Fatalf("direct refuter calls = %d, want the single legacy EjecutarRevision call", llamadasDirectas)
+	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
+		t.Fatalf("resultado = %+v, want one dimension result", resultado)
 	}
-	if legado.Veredicto != porTransporte.Veredicto {
-		t.Fatalf("verdict legacy=%q transported=%q, want parity", legado.Veredicto, porTransporte.Veredicto)
+	stamped := 0
+	for _, hallazgo := range resultado.Dims[0].Resultado.Hallazgos {
+		if hallazgo.Status != StatusRefuted {
+			continue
+		}
+		stamped++
+		if hallazgo.InvocationID != "inv-refutation-1" {
+			t.Fatalf("refuted v2 hallazgo InvocationID = %q, want the transport-returned identity \"inv-refutation-1\"", hallazgo.InvocationID)
+		}
 	}
-	if len(legado.Dims) != 1 || len(porTransporte.Dims) != 1 ||
-		legado.Dims[0].Resultado == nil || porTransporte.Dims[0].Resultado == nil {
-		t.Fatalf("dims legacy=%d transported=%d, want one each", len(legado.Dims), len(porTransporte.Dims))
-	}
-	if !reflect.DeepEqual(legado.Dims[0].Resultado.Findings[0], porTransporte.Dims[0].Resultado.Findings[0]) {
-		t.Fatalf("finding legacy=%+v transported=%+v, want identical refuted findings",
-			legado.Dims[0].Resultado.Findings[0], porTransporte.Dims[0].Resultado.Findings[0])
+	if stamped == 0 {
+		t.Fatal("no refuted v2 hallazgo found to carry the refutation invocation")
 	}
 }

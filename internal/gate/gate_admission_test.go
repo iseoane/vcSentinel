@@ -18,8 +18,11 @@ import (
 
 func TestGateSurfacesAdmissionDistinctFromInfrastructure(t *testing.T) {
 	cfg := cfgConPerfil("lint", "echo ok")
-	opts := opcionesBase(cfg, func(string) (int, string, error) { return 0, "ok", nil },
+	opts := opcionesBase(t, cfg, func(string) (int, string, error) { return 0, "ok", nil },
 		fabricaContadora(new(int), "", nil))
+	// This test injects its own transport at the engine seam, so clear the
+	// default production-style factory wired by opcionesBase.
+	opts.DurableReviewTransportFactory = nil
 	opts.EjecutarValidacion = func(_ string, _ []string, _ validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 		return nil, nil // validation green: the review stage is what this test exercises
 	}

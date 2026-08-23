@@ -1,25 +1,17 @@
-// Production-cutover integration tests for the gate durable-runs wiring
-// (ticket 11 slice 3). These tests drive the EXACT cmd-level construction
+// Production-cutover integration test for the gate durable-runs wiring
+// (ticket 11 slice 3, unconditional since ticket 13 R11 removed the
+// gate.durable_runs switch). It drives the EXACT cmd-level construction
 // path — buildGateOptions plus applyDurableCutover over a strictly loaded
-// project configuration — and then prove both sides of the seam:
-//
-//   - With gate.durable_runs at its default (true), one gate execution
-//     produces root+children linkage in ONE store (the same instance backs
-//     the root run and every routed review invocation), the settlement
-//     suffix enumerates validation jobs plus every learned review child,
-//     and the persisted ParentRunID scan reproduces exactly that set.
-//   - With gate.durable_runs: false, the legacy orchestration renders
-//     byte-identical facade output to the cutover path on equivalent
-//     fixtures and writes ZERO new executions into the store.
+// project configuration — and proves that one gate execution produces
+// root+children linkage in ONE store (the same instance backs the root run
+// and every routed review invocation), that the settlement suffix enumerates
+// validation jobs plus every learned review child, and that the persisted
+// ParentRunID scan reproduces exactly that set.
 package main
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,65 +116,17 @@ func construirOpcionesCutover(t *testing.T, worktree, stage, ymlExtra string, au
 	return opciones, cfg, sink
 }
 
-// renderSalidaGate reproduces byte-for-byte what ejecutarGate prints for a
-// result (header line plus verbatim messages).
-func renderSalidaGate(stage, perfil string, resultado gate.Resultado) (string, int) {
-	var salida bytes.Buffer
-	fmt.Fprintf(&salida, "🚦 gate [%s] perfil=%s → %s\n", stage, perfil, resultado.Estado)
-	for _, m := range resultado.Mensajes {
-		fmt.Fprintln(&salida, m)
-	}
-	return salida.String(), gate.CodigoSalida(resultado.Estado)
-}
-
-// digestArbolEjecuciones hashes the whole executions subtree of the store
-// rooted at commonDir ("absent" when nothing has been written yet), so a test
-// can prove an execution wrote zero new runs.
-func digestArbolEjecuciones(t *testing.T, commonDir string) string {
-	t.Helper()
-	raiz := filepath.Join(commonDir, "vas-sentinel", "executions")
-	if _, err := os.Stat(raiz); err != nil {
-		if os.IsNotExist(err) {
-			return "absent"
-		}
-		t.Fatalf("stat executions tree: %v", err)
-	}
-	h := sha256.New()
-	err := filepath.WalkDir(raiz, func(ruta string, entrada fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(raiz, ruta)
-		if err != nil {
-			return err
-		}
-		h.Write([]byte(rel))
-		if !entrada.IsDir() {
-			datos, err := os.ReadFile(ruta)
-			if err != nil {
-				return err
-			}
-			h.Write(datos)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk executions tree: %v", err)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
 func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	worktree := repositorioCutover(t)
 	bloqueoJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo confirmable"}]}`
 	opciones, _, sink := construirOpcionesCutover(t, worktree, "pre-push", "", bloqueoJSON)
 
 	if sink == nil {
-		t.Fatal("applyDurableCutover returned no sink, expected the cutover ON by default")
+		t.Fatal("applyDurableCutover returned no sink, expected the durable wiring always on")
 	}
-	if !opciones.DurableRuns || opciones.DurableStore == nil || opciones.DurableReviewTransportFactory == nil {
-		t.Fatalf("cutover left the durable seams unwired: runs=%v store=%v factory=%v",
-			opciones.DurableRuns, opciones.DurableStore != nil, opciones.DurableReviewTransportFactory != nil)
+	if opciones.DurableStore == nil || opciones.DurableReviewTransportFactory == nil {
+		t.Fatalf("cutover left the durable seams unwired: store=%v factory=%v",
+			opciones.DurableStore != nil, opciones.DurableReviewTransportFactory != nil)
 	}
 
 	resultado := gate.EjecutarGate(opciones)
@@ -289,74 +233,25 @@ func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	}
 }
 
-// sortedNonEmpty returns the non-empty lines sorted, so set-equality of
-// message bodies can ignore the engine's process-random dimension ordering.
-func sortedNonEmpty(lineas []string) []string {
-	filtradas := make([]string, 0, len(lineas))
-	for _, linea := range lineas {
-		if linea != "" {
-			filtradas = append(filtradas, linea)
-		}
+// TestGateStrictConfigRejectsRemovedDurableRunsKey proves at cmd level that a
+// project yaml still carrying gate.durable_runs (removed in ticket 13 R11)
+// fails fast as configuration infrastructure instead of being ignored.
+func TestGateStrictConfigRejectsRemovedDurableRunsKey(t *testing.T) {
+	worktree := repositorioCutover(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Chdir(worktree)
+	escribirYmlGateTest(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		ymlValidacionCutover+"gate:\n  durable_runs: false\n")
+
+	var salida bytes.Buffer
+	exitCode := ejecutarGate(&salida, worktree, []string{"--stage", "pre-push"})
+
+	if exitCode != 4 {
+		t.Fatalf("exit = %d (%q), want 4 for a strict configuration failure", exitCode, salida.String())
 	}
-	slices.Sort(filtradas)
-	return filtradas
-}
-
-func TestGateRollbackFlagWritesZeroExecutionsAndLegacyBytes(t *testing.T) {
-	bloqueoJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo confirmable"}]}`
-
-	ejecutarModo := func(t *testing.T, worktree string, ymlExtra string) (salida string, exitCode int, commonDir string, digest string) {
-		opciones, _, _ := construirOpcionesCutover(t, worktree, "pre-push", ymlExtra, bloqueoJSON)
-		commonDir, err := git.ObtenerGitCommonDir(worktree)
-		if err != nil {
-			t.Fatalf("git common dir: %v", err)
-		}
-		digest = digestArbolEjecuciones(t, commonDir)
-		resultado := gate.EjecutarGate(opciones)
-		salida, exitCode = renderSalidaGate("pre-push", perfilGatePorDefecto, resultado)
-		return salida, exitCode, commonDir, digest
+	if !strings.Contains(salida.String(), "gate") || !strings.Contains(salida.String(), "not found") {
+		t.Fatalf("output = %q, want the unknown-key error to name the removed gate section", salida.String())
 	}
-
-	t.Run("explicit false restores the legacy orchestration byte-for-byte", func(t *testing.T) {
-		// ONE repository for both runs so even HEAD-derived text (the audit
-		// summary embeds the commit SHA) is identical input.
-		worktree := repositorioCutover(t)
-		salidaLegado, exitLegado, _, _ := ejecutarModo(t, worktree, "gate:\n  durable_runs: false\n")
-		salidaDurable, exitDurable, _, _ := ejecutarModo(t, worktree, "")
-
-		if exitDurable != exitLegado {
-			t.Fatalf("exit codes diverged: legacy=%d durable=%d", exitLegado, exitDurable)
-		}
-		lineasLegado := strings.Split(salidaLegado, "\n")
-		lineasDurable := strings.Split(salidaDurable, "\n")
-		// The header line (estado + stage + perfil) must match verbatim; the
-		// message body must be set-equal. Line ORDER inside the body is not
-		// part of the seam under test: per-dimension workers append results
-		// under a mutex, so the shared engine emits the summary lines in
-		// goroutine completion order on BOTH paths — a pre-existing property
-		// this comparison must not mistake for cutover drift.
-		if lineasLegado[0] != lineasDurable[0] {
-			t.Fatalf("header diverged:\nlegacy:  %q\ndurable: %q", lineasLegado[0], lineasDurable[0])
-		}
-		cuerpoLegado := sortedNonEmpty(lineasLegado[1:])
-		cuerpoDurable := sortedNonEmpty(lineasDurable[1:])
-		if !slices.Equal(cuerpoLegado, cuerpoDurable) {
-			t.Fatalf("facade messages diverged from the legacy pin:\nlegacy:  %q\ndurable: %q", cuerpoLegado, cuerpoDurable)
-		}
-	})
-
-	t.Run("flag false writes zero new executions", func(t *testing.T) {
-		worktree := repositorioCutover(t)
-		salida, exit, commonDir, antes := ejecutarModo(t, worktree, "gate:\n  durable_runs: false\n")
-		despues := digestArbolEjecuciones(t, commonDir)
-		if antes != despues {
-			t.Fatalf("rollback mode wrote executions: digest before=%q after=%q", antes, despues)
-		}
-		if antes != "absent" {
-			t.Fatalf("rollback mode found pre-existing executions (digest %q), expected a clean fixture", antes)
-		}
-		if exit != 1 { // CODE_REVIEW_FAILED contract
-			t.Fatalf("exit = %d, want 1 (salida %q)", exit, salida)
-		}
-	})
 }

@@ -1,6 +1,10 @@
-// Real durable orchestration for the gate command (R9 slice 2): with
-// Opciones.DurableRuns true, EjecutarGate routes through ONE root durable run
-// whose phases mirror today's fixed validation-before-review ordering.
+// Real durable orchestration for the gate command (R9 slice 2): EjecutarGate
+// routes through ONE root durable run whose phases mirror the historical
+// fixed validation-before-review ordering.
+//
+// Ticket 13 (R11): with the gate.durable_runs switch removed, this flow IS
+// EjecutarGate — the non-durable legacy orchestration was deleted and there
+// is exactly one execution path.
 //
 // This file owns the ORCHESTRATION FLOW: plan construction and validation,
 // root-run admission, the two phases (validation then review), root
@@ -24,23 +28,22 @@
 //     job run IDs ("|children=<id,id,...>"), so post-settlement
 //     reconstruction from the root record alone is possible.
 //   - Validation commands execute DIRECTLY through the exact injected seam
-//     the legacy path uses (validation.EjecutarPerfilSobreCandidato or the
-//     test substitute) — no agent anywhere on this path. Each validation
-//     logical job is then settled deterministically per exit status through
-//     controller APIs only, carrying its RecordValidationEvidence
-//     serialization as the adapter output so the evidence digest is
-//     hash-bound to that job's durable AttemptOutcome — INCLUDING failed
-//     commands, whose AttemptOutcome keeps both class=failure AND the
-//     non-empty evidence OutputHash.
+//     validation.EjecutarPerfilSobreCandidato (or the test substitute) — no
+//     agent anywhere on this path. Each validation logical job is then
+//     settled deterministically per exit status through controller APIs only,
+//     carrying its RecordValidationEvidence serialization as the adapter
+//     output so the evidence digest is hash-bound to that job's durable
+//     AttemptOutcome — INCLUDING failed commands, whose AttemptOutcome keeps
+//     both class=failure AND the non-empty evidence OutputHash.
 //   - If ANY validation job fails, the review transport factory is NEVER
-//     invoked: review does not start, mirroring the legacy rule.
-//   - The review phase reuses the legacy tail verbatim — review.AuditarCommit
-//     plus traducirVeredicto — with reviewer invocations routed through the
-//     injected DurableReviewTransportFactory, i.e. the same construction path
-//     `sentinel review` wires today. Review runs are constructed at that
-//     different site, so the gate hands its root run ID to the factory for
-//     production wiring to thread the parent linkage; there is no second
-//     execution path.
+//     invoked: review does not start.
+//   - The review phase reuses the historical tail verbatim —
+//     review.AuditarCommit plus traducirVeredicto — with reviewer invocations
+//     routed through the injected DurableReviewTransportFactory, i.e. the
+//     same construction path `sentinel review` wires today. Review runs are
+//     constructed at that different site, so the gate hands its root run ID
+//     to the factory for production wiring to thread the parent linkage;
+//     there is no second execution path.
 package gate
 
 import (
@@ -60,12 +63,12 @@ import (
 // settlement run per validation logical job under it.
 const DurableGateRunPolicyID = "policy:gate"
 
-// ejecutarGateDurable executes one gate run durably. It always builds and
-// validates the GateRunPlan first so plan-construction bugs surface before
-// anything is admitted, then admits ONE root run, runs the validation phase,
-// and only on a fully green validation starts the review phase through the
-// shared durable transport path.
-func ejecutarGateDurable(opts Opciones) Resultado {
+// EjecutarGate executes one gate run durably — the only execution path since
+// ticket 13 (R11). It always builds and validates the GateRunPlan first so
+// plan-construction bugs surface before anything is admitted, then admits ONE
+// root run, runs the validation phase, and only on a fully green validation
+// starts the review phase through the shared durable transport path.
+func EjecutarGate(opts Opciones) Resultado {
 	plan, err := buildDurableGatePlan(opts)
 	if err != nil {
 		return Resultado{
@@ -150,8 +153,8 @@ func fasesGateDurables(plan GateRunPlan, opts Opciones, rootRunID agentrun.Ident
 	runs, err := ejecutarValidacion(opts.Perfil, opts.RutasCambiadas, opts.OpcionesValidacion)
 	if err != nil {
 		// Un fallo al ORQUESTAR la validación es infraestructura, no un
-		// hallazgo del código: same rule and same message as the legacy
-		// path, so equivalent inputs render byte-identical facade text.
+		// hallazgo del código: never invent a VALIDATION_FAILED for
+		// something that never executed.
 		return Resultado{
 			Estado:   EstadoReviewInfrastructureError,
 			Mensajes: []string{mensajeValidacionNoEjecutada(err)},

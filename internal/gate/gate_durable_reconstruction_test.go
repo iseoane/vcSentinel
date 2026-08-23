@@ -170,7 +170,7 @@ func afirmarEvidenciaLigada(t *testing.T, evidencia []ValidationEvidence, got []
 func TestGateDurableReconstructionFromStore(t *testing.T) {
 	t.Run("validation failure reconstructs layer outcome, children, and evidence", func(t *testing.T) {
 		transportes := 0
-		base := opcionesBase(cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
+		base := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
 			"echo test": {Exit: 1, Salida: "salida real del comando fallido"},
 		}), fabricaContadora(new(int), "", nil))
 		var capturados []validation.ValidationRun
@@ -213,7 +213,7 @@ func TestGateDurableReconstructionFromStore(t *testing.T) {
 
 	t.Run("green gate reconstructs success from the root record alone", func(t *testing.T) {
 		transportes := 0
-		base := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+		base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
 			fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
 		var capturados []validation.ValidationRun
 		base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
