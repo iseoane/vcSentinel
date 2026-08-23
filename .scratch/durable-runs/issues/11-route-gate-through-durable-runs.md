@@ -96,3 +96,41 @@ reconstructed from admitted durable state alone.
   cutover follow-up so staged symbols don't orphan.
 - Verification snapshot: gofmt empty; build+vet linux+windows; gate and
   cmd/sentinel suites green; plan/evidence tests ×5 deterministic.
+
+### Slice 2 — durable orchestration with persisted linkage
+- Commits: parent linkage (66), root orchestration (334), evidence adapters
+  (158), facade pins (202), ordering+layer pins (294), reconstruction proof
+  (274) — hook-enforced; worktree clean.
+- REAL durable routing behind DurableRuns=true (still default false, CLI-
+  unreachable): one root controller run; validation jobs are child runs
+  stamped ParentRunID=root (additive omitempty field on RunPolicy and
+  ExecutionRequest; parentless bytes proven legacy-identical); review phase
+  reuses AuditarCommit + traducirVeredicto with only a transport-factory
+  override that receives the root ID.
+- Review loop round 1 found a CRITICAL structural breach: the first cut was
+  N+1 sibling runs with no persisted linkage — reconstruction from store
+  contents impossible and failed jobs losing evidence. Fixed: ParentRunID
+  linkage (scan-enumerable children), "|children=<ids>" suffix on failing/
+  unavailable settlement details (root-record-alone reconstruction after
+  settlement), settledValidationAdapter now returns Output alongside failure
+  so AttemptOutcome.OutputHash binds the evidence serialization even for
+  failures, shared infrastructure-literal helper, panic-guarded settlement
+  channel, resolved_command attribute stamped only on divergence.
+- Scoped re-review verdict GO: all five findings FIXED with file:line-proven
+  mechanisms resting on verified merged controller/store behavior; legacy
+  byte-parity for parentless executions pinned; no facade drift.
+- Facade equivalence harness runs BOTH paths on identical fixtures across
+  PASS / multi-command VALIDATION_FAILED / CODE_REVIEW_FAILED / NEEDS_USER_
+  REVIEW / infrastructure shapes asserting byte-equal Estado+Mensajes;
+  ordering counter-seam proves the review factory is never constructed when
+  validation fails.
+- Contract reconstruction test rebuilds {terminal state, failed layer,
+  children enumeration vs scan, class multiset, OutputHash multiset} from
+  ListExecutionIDs + ReadExecutionRequest + Inspect ALONE, equality vs live
+  output on both failing and green paths.
+- Cutover follow-ups registered: salted review-candidate IDs must be learned
+  by the orchestrator at wiring time (enumerated vs scanned divergence);
+  resolved_command stamping lacks a direct divergence fixture; printed review
+  message bodies complete at production wiring.
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green; -race clean gate/store; new tests ×5.
