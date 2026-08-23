@@ -428,8 +428,98 @@ func TestRepositoryHostApplyRequiresAnActionIdentity(t *testing.T) {
 	}
 }
 
+// TestValidateStartRequestRejectsConflictingPayloads pins the admission
+// payload invariant of StartRequest: exactly one of the canonical Request or
+// the explicit Candidate/Prompt pair may be carried, never a mix and never
+// nothing. Every rejection carries one deterministic inline message so both
+// admission paths report byte-identical failures.
+func TestValidateStartRequestRejectsConflictingPayloads(t *testing.T) {
+	const want = "execution: start request carries conflicting payloads"
+	canonical := testRequest("canonical")
+	tests := []struct {
+		name    string
+		request StartRequest
+		wantErr bool
+	}{
+		{name: "canonical request alone", request: StartRequest{Request: canonical}, wantErr: false},
+		{name: "explicit candidate and prompt alone", request: StartRequest{Candidate: "c", Prompt: "p"}, wantErr: false},
+		{name: "request mixed with candidate", request: StartRequest{Request: canonical, Candidate: "c"}, wantErr: true},
+		{name: "request mixed with prompt", request: StartRequest{Request: canonical, Prompt: "p"}, wantErr: true},
+		{name: "request mixed with both strings", request: StartRequest{Request: canonical, Candidate: "c", Prompt: "p"}, wantErr: true},
+		{name: "candidate without prompt", request: StartRequest{Candidate: "c"}, wantErr: true},
+		{name: "prompt without candidate", request: StartRequest{Prompt: "p"}, wantErr: true},
+		{name: "empty everything", request: StartRequest{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStartRequest(tt.request)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("ValidateStartRequest = %v, want acceptance", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != want {
+				t.Fatalf("ValidateStartRequest = %v, want the deterministic inline error %q", err, want)
+			}
+			host := NewInProcessHost(&Controller{})
+			envelope := tt.request
+			envelope.AuthContext = AuthContext{Principal: testPrincipal}
+			if _, startErr := host.Start(context.Background(), envelope); startErr == nil || startErr.Error() != want {
+				t.Fatalf("Start via host = %v, want the same deterministic inline error %q", startErr, want)
+			}
+		})
+	}
+}
+
+// TestRepositoryHostExplicitStartPayloadMatchesTheCanonicalTwin proves the
+// explicit Candidate/Prompt admission form resolves into exactly the request
+// a local twin constructs via agentrun.NewRunRequest with identical inputs:
+// job and run identities are content-derived, so equality here proves the
+// host built the canonical request rather than tolerating an empty one.
+func TestRepositoryHostExplicitStartPayloadMatchesTheCanonicalTwin(t *testing.T) {
+	backingStore := store.NuevoStore(t.TempDir())
+	host := NewInProcessHost(NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "explicit"}}, fixedClock()))
+	handle, err := host.Start(context.Background(), StartRequest{
+		Candidate:   "candidate:explicit-twin",
+		Prompt:      "prompt:explicit-twin",
+		Policy:      testPolicy(),
+		AuthContext: AuthContext{Principal: testPrincipal},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := handle.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+
+	twin := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "twin"}}, fixedClock())
+	twinHandle, err := twin.Start(context.Background(),
+		testRequest("explicit-twin"), testPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := twinHandle.Wait(context.Background()); err != nil {
+		t.Fatalf("twin wait: %v", err)
+	}
+	if handle.JobID != twinHandle.JobID || handle.RunID != twinHandle.RunID {
+		t.Fatalf("explicit-form identities = {job:%s run:%s}, want the NewRunRequest twin identities {job:%s run:%s}",
+			handle.JobID, handle.RunID, twinHandle.JobID, twinHandle.RunID)
+	}
+	if completion.Output != "explicit" {
+		t.Fatalf("completion output = %q, want the admitted explicit-form run", completion.Output)
+	}
+}
+
 func TestRepositoryHostRequestEnvelopesRoundTripJSON(t *testing.T) {
 	start := StartRequest{Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}}
+	explicitStart := StartRequest{
+		Candidate:   "candidate:wire",
+		Prompt:      "prompt:wire",
+		Policy:      testPolicy(),
+		AuthContext: AuthContext{Principal: testPrincipal},
+	}
 	inspect := InspectRequest{RunID: "run-123", AuthContext: AuthContext{Principal: testPrincipal}}
 	apply := ApplyRequest{
 		RunID:       "run-123",
@@ -445,7 +535,8 @@ func TestRepositoryHostRequestEnvelopesRoundTripJSON(t *testing.T) {
 		fresh    func() any
 		wantKeys []string
 	}{
-		{name: "start request", value: start, fresh: func() any { return &StartRequest{} }, wantKeys: []string{"auth_context", "policy", "request"}},
+		{name: "start request canonical form", value: start, fresh: func() any { return &StartRequest{} }, wantKeys: []string{"auth_context", "policy", "request"}},
+		{name: "start request explicit payload form", value: explicitStart, fresh: func() any { return &StartRequest{} }, wantKeys: []string{"auth_context", "candidate", "policy", "prompt", "request"}},
 		{name: "inspect request", value: inspect, fresh: func() any { return &InspectRequest{} }, wantKeys: []string{"auth_context", "run_id"}},
 		{name: "apply request", value: apply, fresh: func() any { return &ApplyRequest{} }, wantKeys: []string{"action", "action_id", "auth_context", "run_id"}},
 		{name: "subscribe request", value: subscribe, fresh: func() any { return &SubscribeRequest{} }, wantKeys: []string{"after_cursor", "auth_context", "limit", "run_id"}},
@@ -478,9 +569,11 @@ func TestRepositoryHostRequestEnvelopesRoundTripJSON(t *testing.T) {
 			}
 		})
 	}
-	// Request stays the zero agentrun.RunRequest on purpose: its fields are
-	// unexported by design because raw prompts never travel as JSON — they
-	// reach durable storage as derived canonical identities.
+	// Request stays the zero agentrun.RunRequest in the canonical case on
+	// purpose: its fields are unexported by design because raw prompts never
+	// travel as JSON inside it — the explicit Candidate/Prompt pair is the
+	// transport-safe spelling, and the receiving host reconstructs the
+	// canonical request via ResolveAdmissionRequest.
 }
 
 func waitForStateViaHost(t *testing.T, host *InProcessHost, runID agentrun.Identity, want agentrun.LifecycleState) {
