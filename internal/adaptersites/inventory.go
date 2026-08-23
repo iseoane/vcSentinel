@@ -164,7 +164,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Gate orchestrator and sole execution path (ticket 13 R11 merged the removed legacy orchestration into it): admits ONE root run plus one settled child job per validation command, all through controller.Start with persisted parent linkage."},
 		{Path: "internal/gate/gate_durable_adapters.go", Symbol: "rootRunAdapter/settledValidationAdapter", Line: 98, Marker: "agentrun.NewCapability",
 			Class: ClassDurable, Reason: "Gate execution adapters receive the admitted InvocationEnvelope on every controller dispatch; neither spawns anything nor mutates state outside controller APIs."},
-		{Path: "internal/gate/gate_run_plan.go", Symbol: "BuildGateRunPlan", Line: 135, Marker: "NewRunRequest(",
+		{Path: "internal/gate/gate_run_plan.go", Symbol: "BuildGateRunPlan", Line: 134, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Deterministic plan construction: builds the admission requests (candidate/prompt/capabilities) later admitted verbatim by the controller."},
 
 		// --- internal/review -------------------------------------------------
@@ -212,7 +212,7 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Installer credential probe."},
 		{Path: "internal/setup/install.go", Symbol: "installer", Line: 198, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "go install/GOPATH/PATH installer plumbing."},
-		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Line: 102, Marker: "exec.Command",
+		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Line: 107, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "PATH cleanup plumbing."},
 		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Line: 163, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Binary version probe for upgrades."},
