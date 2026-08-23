@@ -10,7 +10,7 @@ identity, and never by guessing an outcome the stream does not contain.
 **Blocked by:** 06 (complete, merged at d0f9a3f) and 08 (complete, merged at
 a2700f4).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -51,24 +51,24 @@ a2700f4).
 
 **Acceptance criteria:**
 
-- [ ] Focused tests prove the scan lists every non-terminal run with the right
-      class and writes nothing (byte-stable store during scan).
-- [ ] Focused tests prove each class: recoverable awaiting-decision;
+- [x] Focused tests prove the scan lists every non-terminal run with the right
+      class and writes nothing (byte-stable store during scan). *(SHA-256 tree digests before/after every scan; stray dirs skipped.)*
+- [x] Focused tests prove each class: recoverable awaiting-decision;
       terminal-but-unprojected repaired by verified rebuild; corrupt reported
       with exact cause (bad hash, invalid transition, truncated tail);
-      orphaned-canceled carried from reconciliation.
-- [ ] Focused tests prove projection rebuild reproduces byte-identical state
+      orphaned-canceled carried from reconciliation. *(Table-driven over real AppendEvent streams + tampered bytes.)*
+- [x] Focused tests prove projection rebuild reproduces byte-identical state
       for healthy streams and repairs only the lagging snapshot after a
-      verified terminal frame.
-- [ ] Focused tests prove resume-after-owner-loss uses a fresh invocation
-      identity and preserves the interrupted attempt's record.
-- [ ] Focused tests prove operator-required surfacing names the exact missing
-      evidence and performs no write.
-- [ ] Tests prove `runs recover --json` exposes the classification machine-
-      readably with stable shapes.
-- [ ] Tests prove additive compatibility: stores from previous units scan and
-      operate unchanged; legacy `recover --run` behavior intact.
-- [ ] The implementation records build, vet, tests, guardian, independent
+      verified terminal frame. *(Twin-store byte equality both missing- and stale-snapshot crash windows.)*
+- [x] Focused tests prove resume-after-owner-loss uses a fresh invocation
+      identity and preserves the interrupted attempt's record. *(E2E through real store+controller+host AND CLI; ContentHash preservation + Verify.)*
+- [x] Focused tests prove operator-required surfacing names the exact missing
+      evidence and performs no write. *(Per-shape reasons pinned verbatim; tree-digest zero-write at CLI level.)*
+- [x] Tests prove `runs recover --json` exposes the classification machine-
+      readably with stable shapes. *(Stable JSON convention, [] never null, tag-for-tag docs match.)*
+- [x] Tests prove additive compatibility: stores from previous units scan and
+      operate unchanged; legacy `recover --run` behavior intact. *(Pre-scan lifecycle test byte-identical; D1 merge clean.)*
+- [x] The implementation records build, vet, tests, guardian, independent
       `code-review`, rollback boundary, and follow-ups here.
 
 ## Evidence
@@ -161,4 +161,19 @@ a2700f4).
 - Verification snapshot: gofmt empty; build+vet linux+windows; full suite green
   across 23 packages; -race clean on store/execution/cmd-sentinel; new tests ×5.
 
-**Unit complete pending final verification snapshot.**
+### Unit closure — R8
+
+- Final verification: gofmt empty; build+vet clean linux AND windows; full
+  suite green across 23 packages; -race clean on store/execution;
+  worktree volume under control; 18 commits on the unit branch including the
+  mid-unit D1+A1 integration merge and ticket renumbering to 10.
+- Rollback boundary as contracted: recovery stays explicit — the scan is
+  read-only, repair touches only terminal-unprojected snapshots, relaunch is
+  an operator action per run; no automatic recovery exists to disable.
+- Follow-ups accepted: retry/recover bypass principal-envelope validation that
+  start/respond enforce (pre-existing asymmetry, candidate for a host-seam
+  follow-up unit); RevisionConflictError on unpinned recovery races surfaces
+  exit 5 not 3 (documented staging); Rewritten=false defensive branch.
+
+**Closed:** R8 complete — interrupted runs are classified honestly, repaired
+only from verified evidence, and resumed only under fresh identities.
