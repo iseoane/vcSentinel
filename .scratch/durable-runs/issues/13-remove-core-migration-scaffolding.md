@@ -11,7 +11,7 @@ the accumulated hardening pool from R8-R10 judgment days.
 **Blocked by:** 12 (complete, merged at 17ab39c) and the agreed stability
 window (user authorization for this unit).
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -50,23 +50,23 @@ window (user authorization for this unit).
 
 **Acceptance criteria:**
 
-- [ ] Focused tests prove the prune in-lock window closed: a reference
-      persisted between classification and lock refuses deletion.
-- [ ] Focused tests prove every `runs` subcommand rejects undeclared flags
-      with usage exit 1, including `--older-than` outside prune.
-- [ ] Focused tests prove refutation findings carry invocation identity and
-      are protected by prune provenance scanning.
-- [ ] Tests prove inventory canaries catch store-primitive mutations outside
-      declared files.
-- [ ] Focused tests prove gate/review operate identically with the switches
+- [x] Focused tests prove the prune in-lock window closed: a reference
+      persisted between classification and lock refuses deletion. *(Race-window seam; late-child refusal too.)*
+- [x] Focused tests prove every `runs` subcommand rejects undeclared flags
+      with usage exit 1, including `--older-than` outside prune. *(Hardcoded 9×10 matrix + dispatcher e2e.)*
+- [x] Focused tests prove refutation findings carry invocation identity and
+      are protected by prune provenance scanning. *(F-1 fix: collector scans Dims[].Hallazgos; e2e over real GuardarRevision ficha covers producer AND refuter ids.)*
+- [x] Tests prove inventory canaries catch store-primitive mutations outside
+      declared files. *(CreateRun/AppendTerminalEvent/SaveAttemptOutcome tokens; live sweep = six declared durable files.)*
+- [x] Focused tests prove gate/review operate identically with the switches
       gone (config without those keys loads strictly; old yamls containing
-      them fail fast with an explicit unknown-key error).
-- [ ] Tests/readers prove historical records from pre-R11 binaries remain
-      fully inspectable after removal (ledger + runs streams).
-- [ ] Docs state the minimum supported schema and the upgrade path for
-      pre-R1 repositories.
-- [ ] Evidence records install/upgrade/hook verification outcomes.
-- [ ] The implementation records build, vet, tests, guardian, independent
+      them fail fast with an explicit unknown-key error). *(Project+global strict-rejection tests; cmd e2e exit 4; facade pins unchanged.)*
+- [x] Tests/readers prove historical records from pre-R11 binaries remain
+      fully inspectable after removal (ledger + runs streams). *(Pre-R9 stream fixture + legacy ledger revision tests with meaningful assertions.)*
+- [x] Docs state the minimum supported schema and the upgrade path for
+      pre-R1 repositories. *(docs/runs-cli.md minimum-schema subsection; files gained on demand, never converted.)*
+- [x] Evidence records install/upgrade/hook verification outcomes. *(Slice 3: real git commit blocked/allowed proof; Windows coverage honestly classified.)*
+- [x] The implementation records build, vet, tests, guardian, independent
       `code-review`, rollback boundary, and follow-ups here.
 
 ## Evidence
@@ -162,3 +162,22 @@ window (user authorization for this unit).
   green 25 packages; -race clean on setup/cmd-sentinel; ×5 deterministic.
 
 **Unit complete — R11 closes the core R-roadmap.**
+
+### Unit closure — R11
+
+- Final verification: gofmt empty; build+vet linux AND windows; full suite
+  green across 25 packages; -race clean on store/review/setup/cmd-sentinel.
+- Rollback boundary as contracted: cleanup reverts within the same schema
+  generation by reverting the removal commits; durable records were never
+  rewritten or downgraded — readers kept forever.
+- Follow-ups pool carried forward: residual post-rescan admission window in
+  prune (F-2, remnant-repair consistent); lenient-loader commands silently
+  ignore removed yaml keys (docs sentence candidate); invokeReview nil-seam
+  compile-time enforcement; engine line-ordering determinism; two pre-existing
+  flaky tests (TestRunsRetryRelaunches..., TestCrearSnapshotConcurrente);
+  production Spanish user-facing strings translation sweep (uninstall
+  disclaimer etc.).
+
+**Closed:** R11 complete — the core R-roadmap (R0-R11) is done: durable runs
+are the single execution authority with no silent bypass, audited envelope
+totality, operator-complete tooling, and preserved historical readability.
