@@ -131,3 +131,34 @@ a2700f4).
   (reject explicitly in slice 3 docs pass); Rewritten=false branch defensive.
 - Verification snapshot: gofmt empty; build+vet linux+windows; focused green;
   -race store clean; repair tests ×5 deterministic.
+
+### Slice 3 — resume after owner loss and operator-required hardening
+- Commits: relaunch machinery (97), evidence-naming reasons (17), e2e pins
+  (221), CLI strictness + docs (241) — hook-enforced; worktree clean.
+- Gap found and fixed: Controller.Recover/Retry refused the R7
+  orphaned-canceled shape, contradicting "final unless the operator retries
+  explicitly". Recovery now materializes ONLY the settlement the verified
+  escalation transitions prove (never guessed; timestamp is recovery time;
+  Error discloses reconciliation provenance) then relaunches through the
+  existing NewRetryInvocation path — fresh invocation identity guaranteed by
+  hash(lineage, attempt+1, retry); interrupted attempt's frames byte-preserved.
+- Two-step append atomicity audited: crash windows land in honest states
+  (settled-canceled re-recoverable via ordinary retry; unprojected repaired
+  via --repair); CAS revision guards make duplicate settlements impossible;
+  zero-frame race guarded fail-closed with typed error + focused subtest.
+- Operator-required reasons name exact missing evidence per stream shape;
+  CLI-level tree-digest zero-write pin.
+- Strictness: --expected-revision rejected exit 1 on scan and --repair paths.
+- Docs: runs-cli.md gains scan mode, classes table, exit-code rationale,
+  --repair, JSON shapes, resume guarantee, torn-tail limitation cross-reference.
+- Dual-axis loop: spec PASS 5/5 (crash-window honesty, no-fabrication gate tied
+  to R7 windowing, identity collision impossible, revision travel correct);
+  standards flagged B1 terminatingExtra — REFUTED by direct verification
+  (symbol lives in slice-2's same-package test file; reviewer checkout stale),
+  N1 guard added, two doc sentences added. Post-D1 envelope pattern respected:
+  lifecycle writes stay inside Controller where all mutations live; host used
+  for principal-stamped verification reads.
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite green
+  across 23 packages; -race clean on store/execution/cmd-sentinel; new tests ×5.
+
+**Unit complete pending final verification snapshot.**
