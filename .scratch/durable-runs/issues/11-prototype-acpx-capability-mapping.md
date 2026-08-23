@@ -1,4 +1,4 @@
-# 09: Prototype ACP/acpx Capability Mapping (A1)
+# 11: Prototype ACP/acpx Capability Mapping (A1)
 
 **What to build:** A throwaway experiment that determines whether ACP/acpx
 (headless CLI client for the Agent Client Protocol) can satisfy the invocation,
