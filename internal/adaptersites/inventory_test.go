@@ -134,6 +134,72 @@ func TestAdapterExecutionSitesInventory(t *testing.T) {
 	}
 }
 
+// TestStorePrimitiveCanariesCatchUndeclaredMutations proves the ticket 13
+// hardening pool canary set (R10 M2): the store-primitive mutation tokens
+// are part of the scan, a synthetic undeclared file carrying one of them is
+// detected by ScanMarkerFiles (and therefore fails the completeness
+// invariant of TestAdapterExecutionSitesInventory), and every real module
+// file carrying those tokens today is declared as durable-controller.
+func TestStorePrimitiveCanariesCatchUndeclaredMutations(t *testing.T) {
+	primitives := []string{"CreateRun(", "AppendTerminalEvent(", "SaveAttemptOutcome("}
+	for _, token := range primitives {
+		found := false
+		for _, marker := range canaryMarkers {
+			if marker == token {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("store-primitive token %q is not a canary marker; direct durable-state mutations could appear unclassified", token)
+		}
+	}
+
+	root := t.TempDir()
+	undeclared := filepath.Join(root, "stray.go")
+	if err := os.WriteFile(undeclared, []byte("package main\n\nfunc f(s interface{ CreateRun() error }) { s.CreateRun() }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	scanned, err := ScanMarkerFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markers := scanned["stray.go"]; len(markers) != 1 || markers[0] != "CreateRun(" {
+		t.Fatalf("ScanMarkerFiles on an undeclared file = %v, want exactly [CreateRun(]", markers)
+	}
+
+	moduleRoot, err := ModuleRoot()
+	if err != nil {
+		t.Fatalf("module root not found: %v", err)
+	}
+	byPath := siteByPath(t)
+	moduleScan, err := ScanMarkerFiles(moduleRoot)
+	if err != nil {
+		t.Fatalf("canary scan failed: %v", err)
+	}
+	for path, markers := range moduleScan {
+		carriesPrimitive := false
+		for _, marker := range markers {
+			for _, primitive := range primitives {
+				if marker == primitive {
+					carriesPrimitive = true
+				}
+			}
+		}
+		if !carriesPrimitive {
+			continue
+		}
+		site, ok := byPath[path]
+		if !ok {
+			t.Errorf("UNDECLARED store-primitive site: %s carries %v; add it to Sites()", path, markers)
+			continue
+		}
+		if site.Class != ClassDurable {
+			t.Errorf("store-primitive site %s classified %q; mutating durable run state is exclusively durable-controller", path, site.Class)
+		}
+	}
+}
+
 // TestInScopeAdapterSitesCarryAdmittedEnvelope asserts envelope totality for
 // every durable-controller provider-execution site: each one routes its
 // provider call through the execution controller with an admitted
