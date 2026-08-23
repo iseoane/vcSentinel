@@ -117,18 +117,25 @@ func (c *Controller) orphanedCancellationRelaunch(runID agentrun.Identity, proje
 	return err == nil && reconciled.OrphanedCancellation
 }
 
+// reconciledOwnerDeathReason is the outcome reason the R8 recovery machinery
+// persists when it materializes the reconciled canceled settlement for an
+// owner-death-during-cancellation stream.
+const reconciledOwnerDeathReason = "owner death during cancellation was reconciled at explicit operator recovery"
+
 // appendOrphanedCancellationSettlement records the durable canceled
 // settlement whose absence defines an orphaned-canceled stream: the verified
 // escalation transitions already prove the cancellation, so this materializes
 // the R7 reconciled verdict instead of guessing an outcome. It must be called
 // only after orphanedCancellationRelaunch accepted the shape, and it guards
 // its append with the caller-validated read revision so a competing recovery
-// fails explicitly instead of double-appending.
+// fails explicitly instead of double-appending. detail is persisted verbatim
+// as the outcome reason; the daemon-shutdown orphaning path shares this one
+// implementation with its own honesty text.
 //
 // Streams whose escalation tail crashed before its newline never reach this
 // point: their unreadable tail fails closed as corruption and remains an
 // operator repair decision, not a silent rewrite.
-func (c *Controller) appendOrphanedCancellationSettlement(events []store.EventFrame, projection *store.RunProjection) (store.EventReceipt, error) {
+func (c *Controller) appendOrphanedCancellationSettlement(events []store.EventFrame, projection *store.RunProjection, detail string) (store.EventReceipt, error) {
 	if len(events) == 0 {
 		// Fail closed on the cross-process race where the reconciled
 		// verdict was read but the evidence frames vanished before this
@@ -146,8 +153,7 @@ func (c *Controller) appendOrphanedCancellationSettlement(events []store.EventFr
 		RunID: string(head.RunID), JobID: string(job.ID()),
 		InvocationID: string(parent.InvocationID()), LineageID: string(parent.LineageIdentity()),
 		Class: agentrun.OutcomeCancellation,
-		Error: "owner death during cancellation was reconciled at explicit operator recovery",
-		At:    at,
+		Error: detail, At: at,
 	}
 	event, eventErr := agentrun.NewNormalizedEvent(parent, head.To, agentrun.StateCanceled, agentrun.DecisionAbort, at)
 	if eventErr != nil {

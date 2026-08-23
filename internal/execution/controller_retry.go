@@ -59,7 +59,7 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 			}
 			return Handle{}, ErrRunNotRetryable
 		}
-		settlementReceipt, settleErr := c.appendOrphanedCancellationSettlement(events, projection)
+		settlementReceipt, settleErr := c.appendOrphanedCancellationSettlement(events, projection, reconciledOwnerDeathReason)
 		if settleErr != nil {
 			return Handle{}, settleErr
 		}

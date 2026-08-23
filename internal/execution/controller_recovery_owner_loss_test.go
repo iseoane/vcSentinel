@@ -138,7 +138,7 @@ func TestOrphanedCancellationSettlementRefusesZeroFrameEvidence(t *testing.T) {
 	backingStore := store.NuevoStore(t.TempDir())
 	controller := NewControllerWithClock(backingStore, &scriptedAdapter{}, fixedClock())
 
-	receipt, err := controller.appendOrphanedCancellationSettlement(nil, &store.RunProjection{Revision: 1})
+	receipt, err := controller.appendOrphanedCancellationSettlement(nil, &store.RunProjection{Revision: 1}, reconciledOwnerDeathReason)
 	if !errors.Is(err, ErrRunNotRecoverable) {
 		t.Fatalf("settlement(zero frames) error = %v, want ErrRunNotRecoverable", err)
 	}
