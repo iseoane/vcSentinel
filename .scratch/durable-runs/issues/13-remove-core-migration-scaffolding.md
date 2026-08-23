@@ -106,3 +106,31 @@ window (user authorization for this unit).
   pre-existing debt (+13 net this slice).
 - Verification snapshot: gofmt empty; build+vet linux+windows; full suite
   green; -race clean on store/review; ×5 deterministic.
+
+### Slice 2 — switch removal and dead legacy path deletion
+- Commits: config schema (27/−113), review unconditional routing (86/−92),
+  gate single-path merge (180/−210), cmd wiring cleanup (98/−208),
+  historical readability pins + docs (270 net) — hook-enforced; clean.
+- Both durable_runs keys removed from the config schema; old yamls fail fast
+  via existing KnownFields(true) strict-load with file+line, tested at
+  project and global levels plus cmd-level e2e (exit 4 naming the section).
+- Review: refutation routes through transport unconditionally; invokeReview's
+  nil fallback retained as documented engine-level injection seam — all five
+  production sites verified non-nil post-wiring (review/gate/pr).
+- Gate: EjecutarGate IS the durable orchestration now; legacy body deleted;
+  facade helpers shared so the four pinned terminal shapes render unchanged;
+  missing git common dir fails honestly per call instead of silently
+  degrading (behavior change tested per half).
+- Readers preserved forever: pre-R9 stream fixture and legacy ledger revision
+  both proven readable after removal (meaningful assertions, not smoke).
+- Inventory pins ZERO gated entries and zero durable_runs yaml tags.
+- Dual-axis loop: GO conditional on stale gate_run_plan.go header (fixed) and
+  Spanish comment block in parser.go (translated). Hunt conclusions: no
+  hidden survivors; reader compatibility safe (config never serialized);
+  facade drift none for pinned shapes (one honest delta: store-write failure
+  during validation settlement now infrastructure instead of VALIDATION_
+  FAILED); lenient-loader commands ignore removed keys silently — docs note
+  candidate. F3 coverage gaps → follow-ups (global gate key case; cmd-level
+  nil-sink composition).
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green across 25 packages; -race clean on gate/review/cmd-sentinel; ×5.
