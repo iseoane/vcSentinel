@@ -1,0 +1,2 @@
+⚠ No acpx session found (searched up to /tmp/opencode/a1-empty).
+Create one: acpx opencode sessions new

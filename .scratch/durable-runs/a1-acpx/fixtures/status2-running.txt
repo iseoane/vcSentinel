@@ -1,0 +1,8 @@
+session: ses_fd27e20dfffeCWe7Eikq0JTQ2c
+agent: npx -y opencode-ai acp
+pid: 911344
+status: running
+model: opencode/big-pickle
+mode: -
+uptime: 00:02:23
+lastPromptTime: 2026-08-23T07:26:49.045Z

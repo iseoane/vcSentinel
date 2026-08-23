@@ -1,0 +1,2 @@
+Timed out after 3000ms
+hint: increase `--timeout <seconds>` for long-running prompts, or check whether the agent/provider is stalled.
