@@ -268,3 +268,71 @@ func TestReviewCancellationEscalationFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestGateDurableRunsFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		// Cutover default-on (ticket 11): this unit IS the switch-over, so an
+		// absent key keeps the durable path; only an explicit false rolls
+		// gate back to the legacy orchestration.
+		{name: "default true when absent", yaml: "", want: true},
+		{name: "explicit true keeps the cutover", yaml: "gate:\n  durable_runs: true\n", want: true},
+		{name: "explicit false restores legacy orchestration", yaml: "gate:\n  durable_runs: false\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			worktree := t.TempDir()
+			setHome(t, home)
+			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			cfg := CargarConfiguracionLocal(worktree)
+			if cfg.Gate.DurableRuns != tt.want {
+				t.Fatalf("Gate.DurableRuns = %v, want %v", cfg.Gate.DurableRuns, tt.want)
+			}
+		})
+	}
+}
+
+func TestGateDurableRunsPrecedenciaGlobalProyecto(t *testing.T) {
+	tests := []struct {
+		name     string
+		global   string
+		proyecto string
+		want     bool
+	}{
+		{
+			name:     "global false applies when project is silent",
+			global:   "gate:\n  durable_runs: false\n",
+			proyecto: "",
+			want:     false,
+		},
+		{
+			name:     "project true overrides global false",
+			global:   "gate:\n  durable_runs: false\n",
+			proyecto: "gate:\n  durable_runs: true\n",
+			want:     true,
+		},
+		{
+			name:     "project false overrides global default",
+			global:   "",
+			proyecto: "gate:\n  durable_runs: false\n",
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			worktree := t.TempDir()
+			setHome(t, home)
+			escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), tt.global)
+			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.proyecto)
+			cfg := CargarConfiguracionLocal(worktree)
+			if cfg.Gate.DurableRuns != tt.want {
+				t.Fatalf("Gate.DurableRuns = %v, want %v (global=%q proyecto=%q)", cfg.Gate.DurableRuns, tt.want, tt.global, tt.proyecto)
+			}
+		})
+	}
+}
