@@ -118,6 +118,11 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		FabricaRefutador: func() (AuditorAgente, string, error) {
 			return h5Refuter{}, "fixture", nil
 		},
+		// Post-cutover engine contract: refutations route through a
+		// transport; this fixture uses the direct-call double with the same
+		// reviewer path allowlist the audit options declare.
+		ReviewTransport: transporteDirecto(auditedSHA,
+			"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"),
 	}
 	factory := func(ReviewBundle, string) (AuditorAgente, string, error) {
 		return h5Reviewer{findings: findings}, "fixture", nil

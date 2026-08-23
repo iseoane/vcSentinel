@@ -45,8 +45,7 @@ var ErrRestrictedRequired = errors.New("semantic review unavailable: restricted 
 // identify the logical job; prompt is fully built by the engine so parsing
 // stays shared after either path. The first result is the raw reviewer output;
 // the second is the producing invocation identity reported by the transport
-// (ticket 07 slice 2b): empty when the transport cannot attribute the call,
-// and always empty on the legacy direct path, which has no durable invocation.
+// (ticket 07 slice 2b): empty when the transport cannot attribute the call.
 type ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, string, error)
 
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
@@ -71,8 +70,11 @@ type OpcionesAuditoria struct {
 	// coexist in the same report.
 	HallazgosDeterministas []Hallazgo
 	// ReviewTransport, when set, routes each dimension's reviewer call through
-	// an alternative execution path such as the durable run controller. Nil
-	// keeps the legacy direct call with its in-process transport retry.
+	// an alternative execution path such as the durable run controller.
+	// Production wiring always supplies the admitted durable transport
+	// (ticket 13, R11); nil remains only as the engine-level injection seam
+	// for direct-call fixtures and falls back to the restricted direct call
+	// with its transport retry.
 	ReviewTransport ReviewTransport
 }
 
@@ -276,7 +278,7 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		run(bundle)
 	}
 	wg.Wait()
-	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, rutasRevision, opts.LeerContenidoSnapshot, opts.ReviewTransport)
+	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, opts.LeerContenidoSnapshot, opts.ReviewTransport)
 	var findings []Hallazgo
 	for _, dimension := range resultado.Dims {
 		if dimension.Resultado != nil {
@@ -306,14 +308,14 @@ type respuestaRefutador struct {
 // the original blocker.
 //
 // Ticket 12 slice 1 (envelope totality): a refutation CAN flip a verdict —
-// it downgrades a confirmed semantic CRITICAL blocker to refuted — so on the
-// durable path it must flow through the same admitted invocation envelopes as
-// dimension reviews. When transport is non-nil every refuter call is admitted
-// through it; nil keeps the legacy direct call byte-identical (the
-// review.durable_runs=false rollback path). A transport rejection surfaces as
-// an error, which preserves the original blocker exactly like any other
-// unavailable refuter answer.
-func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, paths []string, leerSnapshot SnapshotReader, transport ReviewTransport) {
+// it downgrades a confirmed semantic CRITICAL blocker to refuted — so it must
+// flow through the same admitted invocation envelopes as dimension reviews:
+// every refuter call is admitted through the transport, which production
+// wiring always supplies (ticket 13, R11: the nil-transport rollback branch
+// was removed with the review.durable_runs switch). A transport rejection
+// surfaces as an error, which preserves the original blocker exactly like any
+// other unavailable refuter answer.
+func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, leerSnapshot SnapshotReader, transport ReviewTransport) {
 	if fabrica == nil {
 		return
 	}
@@ -335,22 +337,10 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			if err != nil {
 				continue
 			}
-			revisor, ok := refutador.(auditorConHerramientasRestringidas)
-			if !ok {
-				continue
-			}
 			prompt := construirPromptRefutacion(sha, dimension.Dim, *finding)
-			var salida string
-			var invocacion string
-			if transport != nil {
-				// Durable path: admitted envelope flow. The refuter answer
-				// influences verdicts, so it may never bypass admission.
-				salida, invocacion, err = transport("refutation", dimension.Dim, prompt, refutador)
-			} else {
-				// Legacy rollback path (review.durable_runs=false): direct
-				// call, byte-identical to pre-R10 behavior.
-				salida, err = revisor.EjecutarRevision(prompt, sha, paths)
-			}
+			// Admitted envelope flow: the refuter answer influences verdicts,
+			// so it may never bypass admission.
+			salida, invocacion, err := transport("refutation", dimension.Dim, prompt, refutador)
 			if err != nil {
 				continue
 			}
@@ -374,8 +364,7 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			// identity travels into the downgraded persisted finding exactly
 			// like the dimension transports stamp theirs (ticket 07 slice
 			// 2b). Prune provenance scanning then naturally protects the
-			// refutation stream. The legacy nil-transport path passes an
-			// empty identity and findings stay untouched.
+			// refutation stream.
 			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta, invocacion)
 		}
 		if puedeDegradarBloque(*dimension.Resultado) {
@@ -421,7 +410,8 @@ func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta re
 		hallazgo.RefutationRangeHash = finding.RefutationRangeHash
 		// Parity with the dimension transports: the admitted refutation
 		// invocation becomes the finding's recorded provenance (ticket 13,
-		// R10 L1). Empty on the legacy path keeps serialized shapes stable.
+		// R10 L1). An empty identity keeps serialized shapes stable for
+		// transports that cannot attribute the call.
 		if invocacion != "" {
 			hallazgo.InvocationID = invocacion
 		}
@@ -560,8 +550,8 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 
 // stamparInvocacion records the producing durable invocation on every finding
 // of a dimension result, only when the transport reported one (ticket 07
-// slice 2b). The legacy direct path passes an empty identity and findings
-// stay untouched, so pre-existing serialized findings keep their shape.
+// slice 2b). An empty identity leaves findings untouched, so pre-existing
+// serialized findings keep their shape.
 func stamparInvocacion(hallazgos []Hallazgo, invocacion string) {
 	if invocacion == "" {
 		return
@@ -572,10 +562,12 @@ func stamparInvocacion(hallazgos []Hallazgo, invocacion string) {
 }
 
 // invokeReview routes one reviewer call through the configured durable
-// transport when present; nil keeps the legacy direct call with its transport
-// retry. Both paths receive the identical prompt so parsing stays shared.
-// The middle result is the producing invocation identity: whatever the
-// transport reports, or empty on the legacy path.
+// transport when present; nil keeps the direct restricted call with its
+// transport retry (engine-level injection seam only: production wiring always
+// supplies the admitted transport since ticket 13, R11). Both paths receive
+// the identical prompt so parsing stays shared. The middle result is the
+// producing invocation identity: whatever the transport reports, or empty on
+// the direct path.
 func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, string, error) {
 	if opts.ReviewTransport != nil {
 		return opts.ReviewTransport(bundle.Name, dimension, prompt, agente)

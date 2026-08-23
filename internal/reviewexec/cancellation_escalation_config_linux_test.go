@@ -135,15 +135,15 @@ func TestCancellationEscalationFalseFromYamlKeepsDirectChildOnlyKill(t *testing.
 	worktree := t.TempDir()
 	backingDir := t.TempDir()
 	t.Setenv("HOME", home)
-	writeProjectConfig(t, worktree, "version: \"2.0\"\nreview:\n  durable_runs: true\n  cancellation_escalation: false\n")
+	writeProjectConfig(t, worktree, "version: \"2.0\"\nreview:\n  cancellation_escalation: false\n")
 
 	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
 	if err != nil {
 		t.Fatalf("strict config load = %v", err)
 	}
-	if !cfg.Review.DurableRuns || cfg.Review.CancellationEscalation {
-		t.Fatalf("config = {DurableRuns:%t CancellationEscalation:%t}, want {true false} honored from project yaml",
-			cfg.Review.DurableRuns, cfg.Review.CancellationEscalation)
+	if cfg.Review.CancellationEscalation {
+		t.Fatalf("config = {CancellationEscalation:%t}, want false honored from project yaml",
+			cfg.Review.CancellationEscalation)
 	}
 
 	reviewer := &treeProbeReviewer{t: t, gpidFile: filepath.Join(backingDir, "grandchild-pid")}
@@ -193,7 +193,7 @@ func TestCancellationEscalationDefaultStaysArmed(t *testing.T) {
 	worktree := t.TempDir()
 	backingDir := t.TempDir()
 	t.Setenv("HOME", home)
-	writeProjectConfig(t, worktree, "version: \"2.0\"\nreview:\n  durable_runs: true\n")
+	writeProjectConfig(t, worktree, "version: \"2.0\"\n")
 
 	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
 	if err != nil {
