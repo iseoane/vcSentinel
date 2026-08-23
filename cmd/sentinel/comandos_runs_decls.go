@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/user"
 	"sync/atomic"
 	"time"
 
@@ -57,6 +60,28 @@ See docs/runs-cli.md for JSON shapes and terminal-state mapping.
 // runsStartSequence keeps operator-started admission candidates unique within
 // this process; the nanosecond timestamp and pid separate concurrent ones.
 var runsStartSequence atomic.Uint64
+
+// runsActionSequence keeps respond/abort control-action identities unique
+// within this process, mirroring the admission candidate pattern: a kind
+// prefix, nanosecond timestamp, pid, and process-local counter.
+var runsActionSequence atomic.Uint64
+
+// resolveRunsPrincipal resolves the local operating principal stamped into
+// every repository-host envelope: USERNAME (Windows standard) first, then
+// USER, then the os/user fallback. It fails only when no principal can be
+// established at all.
+func resolveRunsPrincipal() (string, error) {
+	for _, key := range []string{"USERNAME", "USER"} {
+		if principal := os.Getenv(key); principal != "" {
+			return principal, nil
+		}
+	}
+	current, err := user.Current()
+	if err != nil || current.Username == "" {
+		return "", errors.New("could not resolve the operating principal for this run request")
+	}
+	return current.Username, nil
+}
 
 // runOptions carries every flag value a `runs` subcommand may accept;
 // irrelevant fields stay zero for each subcommand.

@@ -34,11 +34,20 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 		return runExitCode(err)
 	}
 	host := execution.NewInProcessHost(controller)
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
 	candidate := fmt.Sprintf("operator:%s:%d-%d-%06d",
 		options.policyID, time.Now().UnixNano(), os.Getpid(), runsStartSequence.Add(1))
 	request := agentrun.NewRunRequest(agentrun.Candidate(candidate), agentrun.Prompt(options.prompt), nil)
 	handle, err := host.Start(context.Background(),
-		execution.StartRequest{Request: request, Policy: store.RunPolicy{ID: options.policyID}})
+		execution.StartRequest{
+			Request:     request,
+			Policy:      store.RunPolicy{ID: options.policyID},
+			AuthContext: execution.AuthContext{Principal: principal},
+		})
 	if err != nil {
 		fmt.Fprintf(out, "❌ The run could not be admitted: %v\n", err)
 		return runExitCode(err)
@@ -67,9 +76,18 @@ func executeRunsRespond(out io.Writer, worktree string, args []string) int {
 		return runExitCode(err)
 	}
 	host := execution.NewInProcessHost(controller)
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
+	actionID := fmt.Sprintf("action:%s:%d-%d-%06d",
+		execution.ActionRespond, time.Now().UnixNano(), os.Getpid(), runsActionSequence.Add(1))
 	result, applyErr := host.Apply(context.Background(), execution.ApplyRequest{
-		RunID:  agentrun.Identity(options.runID),
-		Action: execution.ControlAction{Kind: execution.ActionRespond, Response: options.text},
+		RunID:       agentrun.Identity(options.runID),
+		Action:      execution.ControlAction{Kind: execution.ActionRespond, Response: options.text},
+		ActionID:    actionID,
+		AuthContext: execution.AuthContext{Principal: principal},
 	})
 	if applyErr != nil {
 		fmt.Fprintf(out, "❌ respond rejected: %v\n", applyErr)
@@ -93,11 +111,14 @@ type idempotentHead struct {
 	State        agentrun.LifecycleState
 }
 
-func idempotentHeadOf(controller *execution.Controller, runID agentrun.Identity, err error) (idempotentHead, bool) {
+func idempotentHeadOf(controller *execution.Controller, principal string, runID agentrun.Identity, err error) (idempotentHead, bool) {
 	if !errors.Is(err, execution.ErrRunNotActive) {
 		return idempotentHead{}, false
 	}
-	inspection, inspectErr := execution.NewInProcessHost(controller).Inspect(context.Background(), runID)
+	inspection, inspectErr := execution.NewInProcessHost(controller).Inspect(context.Background(), execution.InspectRequest{
+		RunID:       runID,
+		AuthContext: execution.AuthContext{Principal: principal},
+	})
 	if inspectErr != nil || len(inspection.Events) == 0 {
 		return idempotentHead{}, false
 	}
@@ -127,12 +148,21 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		return runExitCode(err)
 	}
 	host := execution.NewInProcessHost(controller)
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
+	actionID := fmt.Sprintf("action:%s:%d-%d-%06d",
+		execution.ActionAbort, time.Now().UnixNano(), os.Getpid(), runsActionSequence.Add(1))
 	result, applyErr := host.Apply(context.Background(), execution.ApplyRequest{
-		RunID:  agentrun.Identity(options.runID),
-		Action: execution.ControlAction{Kind: execution.ActionAbort},
+		RunID:       agentrun.Identity(options.runID),
+		Action:      execution.ControlAction{Kind: execution.ActionAbort},
+		ActionID:    actionID,
+		AuthContext: execution.AuthContext{Principal: principal},
 	})
 	if applyErr != nil {
-		if head, ok := idempotentHeadOf(controller, agentrun.Identity(options.runID), applyErr); ok {
+		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), applyErr); ok {
 			settled := execution.ApplyResult{
 				RunID: agentrun.Identity(options.runID), InvocationID: agentrun.Identity(head.InvocationID),
 				Accepted: true,
@@ -162,9 +192,14 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
 	handle, retryErr := controller.Retry(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
 	if retryErr != nil {
-		if head, ok := idempotentHeadOf(controller, agentrun.Identity(options.runID), retryErr); ok {
+		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), retryErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
 				RunID: agentrun.Identity(options.runID), JobID: agentrun.Identity(head.JobID),
 				InvocationID: agentrun.Identity(head.InvocationID),
@@ -196,9 +231,14 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
 	handle, recoverErr := controller.Recover(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
 	if recoverErr != nil {
-		if head, ok := idempotentHeadOf(controller, agentrun.Identity(options.runID), recoverErr); ok {
+		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), recoverErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
 				RunID: agentrun.Identity(options.runID), JobID: agentrun.Identity(head.JobID),
 				InvocationID: agentrun.Identity(head.InvocationID),
@@ -230,9 +270,18 @@ func executeRunsVerify(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
 	}
+	principal, err := resolveRunsPrincipal()
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitInfrastructure
+	}
 	// A missing execution reports exit 2; every other read failure stays
 	// inside Verify's integrity verdict so automation gets a concrete reason.
-	if _, inspectErr := controller.Inspect(context.Background(), agentrun.Identity(options.runID)); errors.Is(inspectErr, store.ErrExecutionNotFound) {
+	_, inspectErr := execution.NewInProcessHost(controller).Inspect(context.Background(), execution.InspectRequest{
+		RunID:       agentrun.Identity(options.runID),
+		AuthContext: execution.AuthContext{Principal: principal},
+	})
+	if errors.Is(inspectErr, store.ErrExecutionNotFound) {
 		fmt.Fprintf(out, "❌ Run %s does not exist\n", options.runID)
 		return runExitRunNotFound
 	}
