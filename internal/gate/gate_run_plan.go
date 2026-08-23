@@ -1,10 +1,9 @@
 // Gate run-plan machinery for the durable-runs roadmap (R9 slice 1): it
 // decomposes ONE gate execution into ONE root run request plus logical job
 // descriptors, without executing anything. This file is pure construction
-// logic, fully unit-testable without processes or agents, and it routes
-// nothing by itself: activation stays behind the construction-time switch in
-// EjecutarGate (see gate.go), whose default keeps the legacy orchestration as
-// the only active path.
+// logic, fully unit-testable without processes or agents. Since R11 removed
+// the compatibility switch, this plan is the only gate orchestration path and
+// EjecutarGate consumes it unconditionally.
 //
 // Identity derivation deliberately reuses the agentrun helpers exclusively
 // (Candidate, Prompt, NewCapability identities, NewRunRequest, NewLogicalJob):
@@ -185,7 +184,7 @@ func ValidationCommandsIdentity(commands []string) agentrun.Identity {
 
 // durableGateCommands resolves the configured base command of every
 // capability referenced by the profile, in exact profile order. Scoped
-// resolution stays a runtime concern of the legacy executor; planning pins
+// resolution stays a runtime concern of the validation executor; planning pins
 // the deterministic configured command so plan identity never depends on
 // graph authorization state.
 func durableGateCommands(cfg config.Config, profile string) ([]string, error) {

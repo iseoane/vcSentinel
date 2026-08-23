@@ -1,12 +1,12 @@
-// Facade equivalence harness and compatibility pins for the real durable
-// gate orchestration (R9 slice 2). This file owns the byte-level facade
-// contract: an equivalence harness runs BOTH orchestration paths on
-// identical fixtures, the facade table pins Estado/Mensajes equality per
-// terminal class (including the refuted-CRITICAL NEEDS_USER_REVIEW case),
-// and the infrastructure text pins fix the exact strings that have no
-// legacy equivalent to harness against. The CLI contract (stdout text,
-// exit codes) is produced from Resultado.Estado/Mensajes by cmd/sentinel,
-// so these tests pin the facade at its source.
+// Facade harness and compatibility pins for the real durable gate
+// orchestration (R9 slice 2, sole execution path since ticket 13 R11). This
+// file owns the byte-level facade contract: the facade table pins the exact
+// Estado/Mensajes shapes per terminal class (including the refuted-CRITICAL
+// NEEDS_USER_REVIEW case), and the infrastructure text pins fix the exact
+// strings that have no pre-cutover equivalent to compare against. The CLI
+// contract (stdout text, exit codes) is produced from Resultado
+// Estado/Mensajes by cmd/sentinel, so these tests pin the facade at its
+// source.
 package gate
 
 import (
@@ -47,12 +47,12 @@ func countedTransportFactory(t *testing.T, sha string, invocaciones *int) func(a
 	}
 }
 
-// opcionesDurable clones a base Opciones set into a fully wired durable one:
-// same fixtures, plus stage/candidate/store/transport-factory seams.
+// opcionesDurable overrides an already-wired base Opciones set with a fresh
+// temp-dir store and a counted transport factory, so tests can assert on
+// factory invocations against fixtures built by opcionesBase.
 func opcionesDurable(t *testing.T, base Opciones, transportes *int) Opciones {
 	t.Helper()
 	durable := base
-	durable.DurableRuns = true
 	durable.Stage = "pre-push"
 	durable.CandidateSHA = base.OpcionesRevision.SHA
 	durable.DurableStore = store.NuevoStore(filepath.Join(t.TempDir(), "gate-common"))
@@ -60,80 +60,89 @@ func opcionesDurable(t *testing.T, base Opciones, transportes *int) Opciones {
 	return durable
 }
 
-// ejecutarEquivalencia runs BOTH orchestration paths on identical fixtures
-// and returns their results for byte-level facade comparison.
-func ejecutarEquivalencia(t *testing.T, base Opciones) (legado, durable Resultado, transportes int) {
-	t.Helper()
-	durableOpts := opcionesDurable(t, base, &transportes)
-	return EjecutarGate(base), EjecutarGate(durableOpts), transportes
-}
-
-func afirmarFachadaIgual(t *testing.T, legado, durable Resultado) {
-	t.Helper()
-	if legado.Estado != durable.Estado {
-		t.Fatalf("estado divergió: legacy=%q durable=%q", legado.Estado, durable.Estado)
-	}
-	if strings.Join(legado.Mensajes, "\n") != strings.Join(durable.Mensajes, "\n") {
-		t.Fatalf("mensajes divergieron:\nlegacy: %q\ndurable: %q", legado.Mensajes, durable.Mensajes)
-	}
-}
-
-// TestGateDurableFacadeEquivalence pins the compatibility facade table:
-// success, multi-command validation failure, review block, and infrastructure
-// shapes. Estado must match what the LEGACY path produces for equivalent
-// inputs, and Mensajes must match byte-for-byte through the harness.
-func TestGateDurableFacadeEquivalence(t *testing.T) {
+// TestGateFacadePinsTerminalClasses pins the compatibility facade table:
+// success, multi-command validation failure, review block (confirmed and
+// refuted CRITICAL), and infrastructure shapes. These literals are what the
+// removed legacy orchestration produced for equivalent inputs; the durable
+// orchestration must keep rendering them byte-for-byte through the shared
+// helpers (mensajeValidacionNoEjecutada, mensajesValidacionFallida,
+// traducirVeredicto).
+func TestGateFacadePinsTerminalClasses(t *testing.T) {
 	bloqueoJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo confirmable"}]}`
 	refutacionNegativa := `{"refuted":false,"reason":"the risk remains"}`
 
 	casos := []struct {
 		name string
 		base func(t *testing.T) Opciones
+		// estado is the expected terminal state. When exacto is true the
+		// joined mensajes must equal the pin byte-for-byte; otherwise each
+		// entry must be contained (used when the facade embeds generated
+		// finding identities). Every fixture audits exactly one dimension,
+		// so the summary line is deterministic.
+		estado   string
+		exacto   bool
+		mensajes []string
 	}{
 		{
-			name: "success renders the legacy PASS facade",
+			name: "success renders the PASS facade",
 			base: func(t *testing.T) Opciones {
 				llamadas := 0
-				opts := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+				opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
 				opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 				return opts
 			},
+			estado: EstadoPass,
+			exacto: true,
+			mensajes: []string{
+				"✅ Validación y revisión semántica en verde.",
+				"\n🔎 Revisión de 01234567: ok\n  logic     ok          perfil-test",
+			},
 		},
 		{
-			name: "multi-command validation failure renders the legacy VALIDATION_FAILED facade",
+			name: "multi-command validation failure renders the VALIDATION_FAILED facade",
 			base: func(t *testing.T) Opciones {
 				llamadas := 0
-				opts := opcionesBase(cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
+				opts := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
 					"echo test": {Exit: 1, Salida: "salida real del comando fallido"},
 				}), fabricaContadora(&llamadas, "", nil))
 				opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 				return opts
 			},
+			estado: EstadoValidationFailed,
+			exacto: true,
+			mensajes: []string{
+				"❌ Validación FALLIDA: no se ejecuta la revisión semántica.",
+				"  ✖ test (echo test):\nsalida real del comando fallido",
+			},
 		},
 		{
-			name: "confirmed CRITICAL review renders the legacy CODE_REVIEW_FAILED facade",
+			name: "confirmed CRITICAL review renders the CODE_REVIEW_FAILED facade",
 			base: func(t *testing.T) Opciones {
 				llamadas := 0
-				opts := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, bloqueoJSON, nil))
+				opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, bloqueoJSON, nil))
 				opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 				opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
 					return &auditorFalso{salida: refutacionNegativa}, "cheap", nil
 				}
 				return opts
 			},
+			estado: EstadoCodeReviewFailed,
+			mensajes: []string{
+				"❌ La revisión semántica confirmó hallazgos CRITICAL.",
+				"🔎 Revisión de 01234567: block",
+				"Confirmed CRITICAL finding evidence:",
+				`    description: "riesgo confirmable"`,
+			},
 		},
 		{
-			name: "refuted CRITICAL renders the legacy NEEDS_USER_REVIEW facade",
+			name: "refuted CRITICAL renders the NEEDS_USER_REVIEW facade",
 			base: func(t *testing.T) Opciones {
 				llamadas := 0
-				// One block response per orchestration path: the equivalence
-				// harness runs BOTH the legacy and the durable gate against
-				// this shared sequential auditor.
-				agente := &auditorSecuencial{respuestas: []string{bloqueoJSON, bloqueoJSON}, llamadas: &llamadas}
+				agente := &auditorSecuencial{respuestas: []string{bloqueoJSON}, llamadas: &llamadas}
 				fabrica := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
 					return agente, "perfil-test", nil
 				}
-				opts := opcionesBase(cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabrica)
+				opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabrica)
 				opts.EjecutarValidacion = ejecutarPerfilSinCandidato
 				opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
 					return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case","sha":"0123456789abcdef","file":"a.go","line_start":1,"line_end":1,"evidence":"final code handles this case"}`}, "cheap", nil
@@ -146,34 +155,58 @@ func TestGateDurableFacadeEquivalence(t *testing.T) {
 				}
 				return opts
 			},
+			estado: EstadoNeedsUserReview,
+			exacto: true,
+			mensajes: []string{
+				"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.",
+				"\n🔎 Revisión de 01234567: warn\n  logic     warn        perfil-test",
+			},
 		},
 		{
-			name: "validation orchestration failure renders the legacy infrastructure facade",
+			name: "validation orchestration failure renders the infrastructure facade",
 			base: func(t *testing.T) Opciones {
 				llamadas := 0
-				opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, "", nil))
+				opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, "", nil))
 				opts.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 					return nil, errAgenteNoDisponibleTest
 				}
 				return opts
+			},
+			estado: EstadoReviewInfrastructureError,
+			exacto: true,
+			mensajes: []string{
+				"No se pudo ejecutar la validación: agente no disponible",
 			},
 		},
 	}
 
 	for _, caso := range casos {
 		t.Run(caso.name, func(t *testing.T) {
-			legado, durable, _ := ejecutarEquivalencia(t, caso.base(t))
-			afirmarFachadaIgual(t, legado, durable)
+			resultado := EjecutarGate(caso.base(t))
+			if resultado.Estado != caso.estado {
+				t.Fatalf("estado = %q, expected %q (%v)", resultado.Estado, caso.estado, resultado.Mensajes)
+			}
+			unido := strings.Join(resultado.Mensajes, "\n")
+			if caso.exacto {
+				if want := strings.Join(caso.mensajes, "\n"); unido != want {
+					t.Fatalf("facade drifted:\n got  %q\n want %q", unido, want)
+				}
+				return
+			}
+			for _, fragmento := range caso.mensajes {
+				if !strings.Contains(unido, fragmento) {
+					t.Fatalf("facade lost %q:\n got %q", fragmento, unido)
+				}
+			}
 		})
 	}
 }
 
 // TestGateDurableInfrastructurePinsTexts fixes the exact infrastructure-only
-// facade strings that have no legacy equivalent to harness against.
+// facade strings that have no green-path equivalent to pin elsewhere.
 func TestGateDurableInfrastructurePinsTexts(t *testing.T) {
 	t.Run("plan failure keeps the slice-1 prefix verbatim", func(t *testing.T) {
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, nil)
-		opts.DurableRuns = true
+		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, nil)
 		opts.Stage = ""
 		opts.CandidateSHA = "abc123def456"
 		opts.DurableStore = store.NuevoStore(filepath.Join(t.TempDir(), "gate-common"))
@@ -187,10 +220,10 @@ func TestGateDurableInfrastructurePinsTexts(t *testing.T) {
 	})
 
 	t.Run("missing store names the seam explicitly", func(t *testing.T) {
-		opts := opcionesBase(cfgConPerfil("lint", "echo ok"), nil, nil)
-		opts.DurableRuns = true
+		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, nil)
 		opts.Stage = "pr"
 		opts.CandidateSHA = "abc123def456"
+		opts.DurableStore = nil
 
 		resultado := EjecutarGate(opts)
 
