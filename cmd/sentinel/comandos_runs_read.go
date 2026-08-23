@@ -29,7 +29,9 @@ func executeRunsStatus(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
 	}
-	return inspectExecution(out, controller, backing, agentrun.Identity(options.runID), principal, options.jsonOut)
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
+	return inspectExecution(out, host, backing, agentrun.Identity(options.runID), principal, options.jsonOut)
 }
 
 func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
@@ -82,8 +84,8 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 	return runExitSuccess
 }
 
-func inspectExecution(out io.Writer, controller *execution.Controller, backing *store.Store, runID agentrun.Identity, principal string, asJSON bool) int {
-	inspection, err := execution.NewInProcessHost(controller).Inspect(context.Background(), execution.InspectRequest{
+func inspectExecution(out io.Writer, host execution.RepositoryHost, backing *store.Store, runID agentrun.Identity, principal string, asJSON bool) int {
+	inspection, err := host.Inspect(context.Background(), execution.InspectRequest{
 		RunID:       runID,
 		AuthContext: execution.AuthContext{Principal: principal},
 	})
@@ -211,7 +213,9 @@ func executeRunsLogs(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
 	}
-	page, err := execution.NewInProcessHost(controller).Subscribe(context.Background(), execution.SubscribeRequest{
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
+	page, err := host.Subscribe(context.Background(), execution.SubscribeRequest{
 		RunID:       agentrun.Identity(options.runID),
 		AfterCursor: options.afterCursor,
 		Limit:       options.limit,

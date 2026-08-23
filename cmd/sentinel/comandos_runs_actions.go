@@ -33,7 +33,8 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	host := execution.NewInProcessHost(controller)
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -41,10 +42,14 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 	}
 	candidate := fmt.Sprintf("operator:%s:%d-%d-%06d",
 		options.policyID, time.Now().UnixNano(), os.Getpid(), runsStartSequence.Add(1))
-	request := agentrun.NewRunRequest(agentrun.Candidate(candidate), agentrun.Prompt(options.prompt), nil)
+	// The admission travels as the explicit Candidate/Prompt form: it is the
+	// transport-safe spelling both hosts resolve into the canonical
+	// agentrun.RunRequest, so the same envelope works in-process and across
+	// the daemon wire.
 	handle, err := host.Start(context.Background(),
 		execution.StartRequest{
-			Request:     request,
+			Candidate:   candidate,
+			Prompt:      options.prompt,
 			Policy:      store.RunPolicy{ID: options.policyID},
 			AuthContext: execution.AuthContext{Principal: principal},
 		})
@@ -75,7 +80,8 @@ func executeRunsRespond(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	host := execution.NewInProcessHost(controller)
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -111,11 +117,11 @@ type idempotentHead struct {
 	State        agentrun.LifecycleState
 }
 
-func idempotentHeadOf(controller *execution.Controller, principal string, runID agentrun.Identity, err error) (idempotentHead, bool) {
+func idempotentHeadOf(host execution.RepositoryHost, principal string, runID agentrun.Identity, err error) (idempotentHead, bool) {
 	if !errors.Is(err, execution.ErrRunNotActive) {
 		return idempotentHead{}, false
 	}
-	inspection, inspectErr := execution.NewInProcessHost(controller).Inspect(context.Background(), execution.InspectRequest{
+	inspection, inspectErr := host.Inspect(context.Background(), execution.InspectRequest{
 		RunID:       runID,
 		AuthContext: execution.AuthContext{Principal: principal},
 	})
@@ -147,7 +153,8 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	host := execution.NewInProcessHost(controller)
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -162,7 +169,7 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		AuthContext: execution.AuthContext{Principal: principal},
 	})
 	if applyErr != nil {
-		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), applyErr); ok {
+		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), applyErr); ok {
 			settled := execution.ApplyResult{
 				RunID: agentrun.Identity(options.runID), InvocationID: agentrun.Identity(head.InvocationID),
 				Accepted: true,
@@ -192,6 +199,11 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	// The retry core stays a direct controller action this slice (the wire
+	// port does not carry retry yet); only the idempotent-head inspection
+	// routes through the daemon-preferred host.
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -199,7 +211,7 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 	}
 	handle, retryErr := controller.Retry(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
 	if retryErr != nil {
-		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), retryErr); ok {
+		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), retryErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
 				RunID: agentrun.Identity(options.runID), JobID: agentrun.Identity(head.JobID),
 				InvocationID: agentrun.Identity(head.InvocationID),
@@ -271,6 +283,11 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	// The recover core stays a direct controller action this slice (the wire
+	// port does not carry recover yet); only the idempotent-head inspection
+	// routes through the daemon-preferred host.
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -278,7 +295,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 	}
 	handle, recoverErr := controller.Recover(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
 	if recoverErr != nil {
-		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), recoverErr); ok {
+		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), recoverErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
 				RunID: agentrun.Identity(options.runID), JobID: agentrun.Identity(head.JobID),
 				InvocationID: agentrun.Identity(head.InvocationID),
@@ -356,6 +373,11 @@ func executeRunsVerify(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
 	}
+	// The verify pre-check routes through the daemon-preferred host; the
+	// integrity verdict itself stays a direct controller action because the
+	// wire port does not carry verify yet.
+	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
+	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -363,7 +385,7 @@ func executeRunsVerify(out io.Writer, worktree string, args []string) int {
 	}
 	// A missing execution reports exit 2; every other read failure stays
 	// inside Verify's integrity verdict so automation gets a concrete reason.
-	_, inspectErr := execution.NewInProcessHost(controller).Inspect(context.Background(), execution.InspectRequest{
+	_, inspectErr := host.Inspect(context.Background(), execution.InspectRequest{
 		RunID:       agentrun.Identity(options.runID),
 		AuthContext: execution.AuthContext{Principal: principal},
 	})

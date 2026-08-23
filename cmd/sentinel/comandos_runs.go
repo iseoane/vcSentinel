@@ -12,6 +12,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
@@ -151,6 +152,50 @@ func buildRunsController(worktree string) (*execution.Controller, error) {
 		return nil, err
 	}
 	return execution.NewController(backing, promptAdapter), nil
+}
+
+// daemonEndpointForRuns resolves the repository-local daemon endpoint for
+// runs commands: it loads endpoint.json from <git-common-dir>/vas-sentinel/
+// daemon (daemon.Dir), dials it, and performs the authenticated handshake
+// bound to FingerprintRepository(gitCommonDir). ANY failure along that chain
+// — missing or corrupt record, unreachable endpoint, handshake rejection —
+// degrades into resolved=false so callers fall back cleanly; a daemon
+// problem is never an operator-visible runs error.
+//
+// Residual honesty (accepted for this slice): while a daemon owns admission,
+// another process invoking `runs retry` or `runs recover` still operates
+// through its own controller over the shared locked storage instead of the
+// daemon's serialized admission — acceptable single-operator behavior,
+// revisited when the port grows those operations.
+func daemonEndpointForRuns(worktree string) (execution.RepositoryHost, func(), bool) {
+	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		return nil, nil, false
+	}
+	endpoint, _, err := daemon.LoadEndpoint(daemon.Dir(gitCommonDir))
+	if err != nil {
+		return nil, nil, false
+	}
+	host, err := daemon.DialRemoteHost(endpoint, daemon.FingerprintRepository(gitCommonDir))
+	if err != nil {
+		return nil, nil, false
+	}
+	return host, func() { _ = host.Close() }, true
+}
+
+// runsHostWithDaemonPreference picks the host a runs handler routes its
+// repository-host operations through: a healthy daemon endpoint when one
+// resolves, otherwise NewInProcessHost(controller) exactly as before the
+// transport existed. The returned teardown must be deferred by the caller;
+// it closes the remote connection when one was dialed and is a no-op
+// otherwise. Outputs stay byte-compatible either way because both hosts read
+// and write the same durable storage under the same lock discipline.
+func runsHostWithDaemonPreference(worktree string, controller *execution.Controller) (execution.RepositoryHost, func()) {
+	remote, teardown, resolved := daemonEndpointForRuns(worktree)
+	if resolved && remote != nil {
+		return remote, teardown
+	}
+	return execution.NewInProcessHost(controller), func() {}
 }
 
 func newPromptRunAdapter(agent agentadapter.AdaptadorPrompt) (promptRunAdapter, error) {
