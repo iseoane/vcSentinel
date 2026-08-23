@@ -198,6 +198,14 @@ func NewController(s *store.Store, adapter Adapter) *Controller {
 	return NewControllerWithClock(s, adapter, time.Now)
 }
 
+// Backing exposes the durable store this controller was built over. Callers
+// that receive an already-constructed controller (the repository-local daemon
+// entry point, for example) use it to run store-level machinery such as boot
+// reconciliation against exactly the same storage the controller serves,
+// instead of threading a second, independently constructed store that could
+// drift away from the controller's own.
+func (c *Controller) Backing() *store.Store { return c.store }
+
 func NewControllerWithClock(s *store.Store, adapter Adapter, now func() time.Time) *Controller {
 	return NewControllerWithClockAndEscalation(s, adapter, now, EscalationPolicy{})
 }
