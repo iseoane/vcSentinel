@@ -9,6 +9,7 @@
 package gate
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -57,6 +58,10 @@ func CodigoSalida(estado string) int {
 type Resultado struct {
 	Estado   string
 	Mensajes []string
+	// Err carries a typed error produced by the durable-runs seam when
+	// Opciones.DurableRuns is true (R9 slice 1). The legacy orchestration,
+	// the default everywhere today, always leaves it nil.
+	Err error
 }
 
 // Opciones configura una ejecución de gate. Las costuras EjecutarValidacion y
@@ -88,6 +93,21 @@ type Opciones struct {
 	FabricaRefutador review.FabricaRefutador
 	Parallel         int
 	OpcionesRevision review.OpcionesAuditoria
+
+	// Stage is the --stage lifecycle context embedded in the durable root
+	// run request when DurableRuns is true. The legacy orchestration ignores
+	// it: today only cmd/sentinel's messages use the stage value.
+	Stage string
+	// CandidateSHA is the candidate HEAD commit SHA embedded in the durable
+	// root run request when DurableRuns is true. The legacy orchestration
+	// ignores it.
+	CandidateSHA string
+	// DurableRuns is the reversible R9 construction-time switch. FALSE is
+	// the default everywhere in this slice and keeps the legacy orchestration
+	// as THE active path with byte-identical behavior. TRUE currently builds
+	// and validates the GateRunPlan (so plan bugs surface now) and then
+	// returns ErrDurableRoutingNotWired until the routing cutover lands.
+	DurableRuns bool
 }
 
 // EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la
@@ -96,6 +116,10 @@ type Opciones struct {
 // semántica ni se intenta (regla central de la ficha, verificada en los
 // tests con un contador de invocaciones).
 func EjecutarGate(opts Opciones) Resultado {
+	if opts.DurableRuns {
+		return ejecutarGateDurable(opts)
+	}
+
 	ejecutarValidacion := opts.EjecutarValidacion
 	if ejecutarValidacion == nil {
 		ejecutarValidacion = validation.EjecutarPerfilSobreCandidato
@@ -122,6 +146,46 @@ func EjecutarGate(opts Opciones) Resultado {
 	opcionesRevision.FabricaRefutador = opts.FabricaRefutador
 	resultado := review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opcionesRevision)
 	return traducirVeredicto(resultado)
+}
+
+// ErrDurableRoutingNotWired is the explicit typed marker returned while the
+// durable gate path is machinery-only (R9 slice 1): the GateRunPlan has been
+// built and validated, but no run is admitted yet. The routing cutover in a
+// later slice replaces this failure with real durable orchestration.
+var ErrDurableRoutingNotWired = errors.New("gate: durable routing not wired yet")
+
+// ejecutarGateDurable is the reversible R9 seam. It ALWAYS builds and
+// validates the GateRunPlan first so plan-construction bugs surface now,
+// then fails explicitly with ErrDurableRoutingNotWired: nothing routes
+// through durable runs until the cutover slice wires it.
+func ejecutarGateDurable(opts Opciones) Resultado {
+	if err := buildDurableGatePlan(opts); err != nil {
+		return Resultado{
+			Estado: EstadoReviewInfrastructureError,
+			// A plan that cannot be built is infrastructure, not a code
+			// finding: same classification rule as legacy validation
+			// orchestration failures.
+			Mensajes: []string{fmt.Sprintf("gate durable run plan failed before wiring: %v", err)},
+			Err:      err,
+		}
+	}
+	return Resultado{
+		Estado:   EstadoReviewInfrastructureError,
+		Mensajes: []string{ErrDurableRoutingNotWired.Error()},
+		Err:      ErrDurableRoutingNotWired,
+	}
+}
+
+// buildDurableGatePlan derives the deterministic command list for the
+// resolved profile and validates the full plan construction path without
+// executing anything.
+func buildDurableGatePlan(opts Opciones) error {
+	commands, err := durableGateCommands(opts.OpcionesValidacion.Cfg, opts.Perfil)
+	if err != nil {
+		return err
+	}
+	_, err = BuildGateRunPlan(opts.Stage, opts.Perfil, opts.CandidateSHA, commands)
+	return err
 }
 
 // mensajesValidacionFallida redacta el detalle de qué comandos fallaron y su
