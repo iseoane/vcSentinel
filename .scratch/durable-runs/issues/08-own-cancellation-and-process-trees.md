@@ -10,7 +10,7 @@ mid-cancellation is reconciled on restart instead of leaking a phantom live run.
 **Blocked by:** 04 (complete) and 06 (complete, merged at d0f9a3f). Both done;
 R6 also merged at 9202f28.
 
-**Status:** ready-for-agent
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -51,42 +51,34 @@ R6 also merged at 9202f28.
 
 **Acceptance criteria:**
 
-- [ ] Focused tests prove cooperative cancellation: aborting a running review
+- [x] Focused tests prove cooperative cancellation: aborting a running review
       terminates the provider subprocess promptly via forwarded context, and
       the durable record settles canceled authored by the controller even when
-      the adapter would have returned later.
-- [ ] Focused tests prove bounded escalation: a child that ignores cooperative
+      the adapter would have returned later. *(ContextualReviewer seam, real 30s sleeper killed via readiness file; regression proves late adapter success cannot overwrite settlement.)*
+- [x] Focused tests prove bounded escalation: a child that ignores cooperative
       cancellation is terminated with its whole tree within the grace budget,
-      leaving termination-attempted and reaped evidence.
-- [ ] Focused tests prove descendant coverage: grandchild processes die with
+      leaving termination-attempted and reaped evidence. *(Grace 5s + escalation machine, exactly-once frames before authoritative settlement.)*
+- [x] Focused tests prove descendant coverage: grandchild processes die with
       the tree on both platforms (process group on Linux, job object on
-      Windows), verified with real subprocess harnesses.
-- [ ] Focused tests prove orphan honesty: when reaping cannot be confirmed the
+      Windows), verified with real subprocess harnesses. *(spawn_linux_test + Windows compile-time assertion; TERM-ignoring child harness.)*
+- [x] Focused tests prove orphan honesty: when reaping cannot be confirmed the
       run settles with the orphaned class and recorded pids remain visible in
-      runs inspection; nothing reports success or clean cancellation.
-- [ ] Focused tests prove restart reconciliation: a run persisted as
+      runs inspection; nothing reports success or clean cancellation. *(Unconfirmable reap settles canceled with pid detail, visible via runs inspection.)*
+- [x] Focused tests prove restart reconciliation: a run persisted as
       cancellation-requested without reaped evidence is classified
       orphaned-canceled on next observation, with no fabricated completion and
-      no silent resume.
-- [ ] Tests prove `review.cancellation_escalation=false` keeps cooperative
+      no silent resume. *(Read-time-only reconciliation; retry live-run fabrication fixed in JD round 1.)*
+- [x] Tests prove `review.cancellation_escalation=false` keeps cooperative
       cancellation and orphan detection while no kill beyond the direct child
-      is ever issued.
-- [ ] Tests prove additive compatibility: existing run streams without
+      is ever issued. *(Disabled restores direct-child kill, disarms watchdog; grandchild SURVIVES proof.)*
+- [x] Tests prove additive compatibility: existing run streams without
       cancellation events project byte-identically; admission, fingerprints,
-      and ledger formats unchanged.
-- [ ] Focused tests cover the race windows: cancel arriving before start
+      and ledger formats unchanged. *(Transient states additive, omitempty JSON, legacy parity pins.)*
+- [x] Focused tests cover the race windows: cancel arriving before start
       completes, child exiting during escalation, and double abort being
-      idempotent.
-- [ ] The implementation records build, vet, tests, guardian, independent
+      idempotent. *(Abort-before-store, exit-during-escalation, double-abort exactly-once all pinned.)*
+- [x] The implementation records build, vet, tests, guardian, independent
       `code-review`, Judgment Day, rollback boundary, and follow-ups here.
-
-## Evidence
-
-*(appended per slice)*
-
-## Follow-ups
-
-*(recorded at closure)*
 
 ## Evidence
 
@@ -190,4 +182,16 @@ R6 also merged at 9202f28.
   full suite green ×3 consecutive runs; -race clean on process/execution/
   agentadapter/store; reconciliation + escalation tests repeated ×10.
 
-**Unit complete pending Judgment Day.**
+### Judgment Day — R7 (critical milestone)
+
+- Target frozen: range main..HEAD at 0878f3561a5aa9cc, 38 files +3831/−122, bundle at tool-output/jd-r7-target (full.patch + tree + spec + MANIFEST c3290ea2f4e6527b).
+- Both blind judges inspected the identical immutable bundle in parallel.
+- Round 1 merged ledger: CRITICAL confirmed by both 1 (agenteObservado wrapper kills cancellation on sentinel review — deterministic parity break across commands, acceptance 1 unmet on real wiring), CRITICAL suspect 1 (reconciliation fabricates orphaned-canceled for live retry runs — verified deterministically by orchestrator), WARNINGs 1 (pgid-reuse window without exit recheck) + SUGGESTION 1 (grace-first overruns deadline ~6s, no evidence frames).
+- Decision gate: ask before round-one correction. User approved fixing BOTH criticals in one bounded round.
+- Fix delta (163 lines, tool-output/jd-r7-round1): cmd/sentinel/autoria.go delegates ReviewWithContext + OwnedTree through the wrapper; internal/store/execution_reconciliation.go scopes scan to frames after last terminal settlement.
+- Scoped re-judgment: both judges re-inspected ledger + fix delta — A1+B1 FIXED, B2 FIXED, zero new severe findings. Each judge's proof refs confirm delegation reaches real CLIAdapter/CadenaAdaptador implementations and windowed scan is semantically exact vs validator/transition table.
+- Fix commit: fix(durable-runs): close JD-R7 gaps for review wrapper and retry reconciliation (163 authored lines, hook-enforced).
+- Terminal verdict: APPROVED. Budget used: 1 of 2 fix rounds, 1 of 2 re-judgments. WARNINGs remain info/follow-ups.
+
+**Closed:** R7 complete — abort, timeout, and shutdown have deterministic cross-platform ownership; every step leaves durable evidence; no cancellation reports complete while descendants remain unaccounted for; owner death mid-cancellation reconciles honestly on next observation without byte rewrites.
+
