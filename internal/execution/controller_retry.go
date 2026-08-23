@@ -10,10 +10,16 @@ import (
 // Retry relaunches a terminally failed, canceled, or timed-out run as the
 // next attempt inside its original logical job and run identity. The run
 // state is reconstructed from durable evidence when this process never owned
-// it, so a fresh controller can retry a run started elsewhere. Active runs
-// fail with ErrRunNotActive; succeeded and unavailable outcomes stay final
-// and fail with ErrRunNotRetryable. Retrying an already-retried current
-// state fails explicitly instead of double-applying.
+// it, so a fresh controller can retry a run started elsewhere. An
+// orphaned-canceled stream (the R7 owner-death-during-cancellation verdict)
+// is accepted through the same contract: its reconciled canceled settlement
+// is materialized first, then the relaunch proceeds exactly as for any other
+// retryable cancellation. Active runs fail with ErrRunNotActive; succeeded
+// and unavailable outcomes stay final and fail with ErrRunNotRetryable.
+// Retrying an already-retried current state fails explicitly instead of
+// double-applying. Every relaunch derives its attempt from
+// NewRetryInvocation, so the resumed work always carries a fresh invocation
+// identity while earlier attempts keep their durable records.
 //
 // expectedRevision optionally pins the durable stream head; zero skips the
 // check because revision zero never exists once a run has events.
@@ -41,11 +47,27 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 	if expectedRevision != 0 && expectedRevision != projection.Revision {
 		return Handle{}, fmt.Errorf("%w: expected revision %d, found %d", ErrStaleRevision, expectedRevision, projection.Revision)
 	}
+	// The relaunch append guards against the head at append time; an
+	// orphaned-canceled settlement appended below moves that head by one, so
+	// the guard travels with it instead of staying on the read revision.
+	appendGuard := projection.Revision
+	from := projection.State
 	if !projection.State.Retryable() {
-		if projection.State.TerminalClass() == agentrun.TerminalNone {
-			return Handle{}, ErrRunNotActive
+		if !c.orphanedCancellationRelaunch(runID, projection) {
+			if projection.State.TerminalClass() == agentrun.TerminalNone {
+				return Handle{}, ErrRunNotActive
+			}
+			return Handle{}, ErrRunNotRetryable
 		}
-		return Handle{}, ErrRunNotRetryable
+		settlementReceipt, settleErr := c.appendOrphanedCancellationSettlement(events, projection)
+		if settleErr != nil {
+			return Handle{}, settleErr
+		}
+		// The verified escalation evidence reads canceled through the R7
+		// reconciliation, so the honest origin of the relaunch event is the
+		// reconciled state, not the raw escalation head.
+		appendGuard = settlementReceipt.Revision
+		from = agentrun.StateCanceled
 	}
 
 	var (
@@ -65,11 +87,11 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 	if err != nil {
 		return Handle{}, err
 	}
-	event, err := agentrun.NewNormalizedEvent(retryInvocation, projection.State, agentrun.StateRunning, agentrun.DecisionRetry, c.now().UTC())
+	event, err := agentrun.NewNormalizedEvent(retryInvocation, from, agentrun.StateRunning, agentrun.DecisionRetry, c.now().UTC())
 	if err != nil {
 		return Handle{}, err
 	}
-	receipt, err := c.store.AppendEvent(string(runID), event, projection.Revision)
+	receipt, err := c.store.AppendEvent(string(runID), event, appendGuard)
 	if err != nil {
 		return Handle{}, err
 	}

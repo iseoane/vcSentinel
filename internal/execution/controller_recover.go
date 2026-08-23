@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 // ErrRunNotRecoverable reports durable evidence that Recover must refuse.
@@ -30,6 +31,12 @@ var ErrRunNotRecoverable = errors.New("execution: durable run evidence cannot be
 //     delegating to Retry, which appends a DecisionRetry event and relaunches
 //     the next attempt inside the same logical job. Operators may call either
 //     entry point for these states.
+//   - orphaned-canceled heads (the R7 reconciled owner-death-during-
+//     cancellation verdict): the missing canceled settlement is materialized
+//     first — the verified escalation transitions already prove it — and the
+//     recovery then delegates to Retry, so the relaunch keeps a fresh
+//     invocation identity while the interrupted attempt's record stays
+//     intact.
 //   - succeeded or unavailable terminal outcomes: refused with
 //     ErrRunNotRecoverable; those outcomes are final and nothing may resume
 //     them.
@@ -85,9 +92,68 @@ func (c *Controller) Recover(ctx context.Context, runID agentrun.Identity, expec
 		return c.recoverAwaitingRun(ctx, runID)
 	case projection.State.Retryable():
 		return c.Retry(ctx, runID, expectedRevision)
+	case c.orphanedCancellationRelaunch(runID, projection):
+		// Ticket 10 slice 3: owner-death-during-cancellation evidence reads
+		// canceled through the R7 reconciliation. The explicit operator
+		// recovery delegates to the same fresh-identity retry contract as
+		// any other retryable cancellation; Retry materializes the
+		// settlement the dying owner never wrote before relaunching.
+		return c.Retry(ctx, runID, expectedRevision)
 	default:
 		return Handle{}, fmt.Errorf("%w: %s", ErrRunNotRecoverable, recoverRefusal(projection.State))
 	}
+}
+
+// orphanedCancellationRelaunch reports whether the verified stream carries
+// ticket 08's owner-death-during-cancellation fingerprint: escalation
+// transitions recorded without any canceled settlement frame. Only a raw
+// non-terminal head can carry it; the R7 reconciled verdict then reads as
+// canceled, which an explicit operator retry may relaunch.
+func (c *Controller) orphanedCancellationRelaunch(runID agentrun.Identity, projection *store.RunProjection) bool {
+	if projection.Terminal != agentrun.TerminalNone {
+		return false
+	}
+	reconciled, err := c.store.ReadReconciledProjection(string(runID))
+	return err == nil && reconciled.OrphanedCancellation
+}
+
+// appendOrphanedCancellationSettlement records the durable canceled
+// settlement whose absence defines an orphaned-canceled stream: the verified
+// escalation transitions already prove the cancellation, so this materializes
+// the R7 reconciled verdict instead of guessing an outcome. It must be called
+// only after orphanedCancellationRelaunch accepted the shape, and it guards
+// its append with the caller-validated read revision so a competing recovery
+// fails explicitly instead of double-appending.
+//
+// Streams whose escalation tail crashed before its newline never reach this
+// point: their unreadable tail fails closed as corruption and remains an
+// operator repair decision, not a silent rewrite.
+func (c *Controller) appendOrphanedCancellationSettlement(events []store.EventFrame, projection *store.RunProjection) (store.EventReceipt, error) {
+	if len(events) == 0 {
+		// Fail closed on the cross-process race where the reconciled
+		// verdict was read but the evidence frames vanished before this
+		// settlement append; indexing the head here would panic instead
+		// of refusing explicitly.
+		return store.EventReceipt{}, fmt.Errorf("%w: orphaned cancellation evidence vanished between reads", ErrRunNotRecoverable)
+	}
+	head := events[len(events)-1]
+	job, parent, err := recoverHeadEnvelope(events)
+	if err != nil {
+		return store.EventReceipt{}, err
+	}
+	at := c.now().UTC()
+	outcome := store.AttemptOutcome{
+		RunID: string(head.RunID), JobID: string(job.ID()),
+		InvocationID: string(parent.InvocationID()), LineageID: string(parent.LineageIdentity()),
+		Class: agentrun.OutcomeCancellation,
+		Error: "owner death during cancellation was reconciled at explicit operator recovery",
+		At:    at,
+	}
+	event, eventErr := agentrun.NewNormalizedEvent(parent, head.To, agentrun.StateCanceled, agentrun.DecisionAbort, at)
+	if eventErr != nil {
+		return store.EventReceipt{}, eventErr
+	}
+	return c.store.AppendTerminalEvent(head.RunID, event, projection.Revision, outcome)
 }
 
 // recoverRefusal explains why a projection state offers no resumable head.
