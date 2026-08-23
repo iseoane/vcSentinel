@@ -154,6 +154,13 @@ type RunProjection struct {
 	Terminal      agentrun.TerminalClass  `json:"terminal"`
 	LastEventHash string                  `json:"last_event_hash,omitempty"`
 	UpdatedAt     time.Time               `json:"updated_at,omitempty"`
+	// OrphanedCancellation is a READ-TIME restart reconciliation verdict
+	// (ticket 08 slice 3), never persisted: every writer derives projections
+	// through projectionFor, which leaves it false, and omitempty keeps the
+	// serialized bytes of state.json unchanged. It marks a non-terminal
+	// stream whose recorded escalation transitions prove the owner died
+	// mid-cancellation; the honest terminal view is canceled-orphaned.
+	OrphanedCancellation bool `json:"orphaned_cancellation,omitempty"`
 }
 
 type StateProjection = RunProjection
@@ -736,7 +743,10 @@ func knownLifecycleState(state agentrun.LifecycleState) bool {
 	case agentrun.StateCreated, agentrun.StateQueued, agentrun.StateAdmitted,
 		agentrun.StateRunning, agentrun.StateAwaitingDecision, agentrun.StateSucceeded,
 		agentrun.StateFailed, agentrun.StateCanceled, agentrun.StateTimedOut,
-		agentrun.StateUnavailable:
+		agentrun.StateUnavailable,
+		// Ticket 08 slice 2: transient escalation evidence states between
+		// the running head and the canceled settlement.
+		agentrun.StateTerminating, agentrun.StateTerminated:
 		return true
 	default:
 		return false

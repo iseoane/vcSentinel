@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"sync"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
@@ -57,6 +59,41 @@ func (a *agenteObservado) EjecutarRevision(prompt, sha string, paths []string) (
 		a.autoria.registrar(a.AuditorAgente)
 	}
 	return salida, err
+}
+
+func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if contextual, ok := a.AuditorAgente.(interface {
+		ReviewWithContext(context.Context, string, string, []string) (string, error)
+	}); ok {
+		salida, err := contextual.ReviewWithContext(ctx, prompt, sha, paths)
+		if err == nil {
+			a.autoria.registrar(a.AuditorAgente)
+		}
+		return salida, err
+	}
+	reviewer, ok := a.AuditorAgente.(interface {
+		EjecutarRevision(string, string, []string) (string, error)
+	})
+	if !ok {
+		return "", errors.New("semantic review unavailable")
+	}
+	salida, err := reviewer.EjecutarRevision(prompt, sha, paths)
+	if err == nil {
+		a.autoria.registrar(a.AuditorAgente)
+	}
+	return salida, err
+}
+
+func (a *agenteObservado) OwnedTree() *process.Tree {
+	if provider, ok := a.AuditorAgente.(interface {
+		OwnedTree() *process.Tree
+	}); ok {
+		return provider.OwnedTree()
+	}
+	return nil
 }
 
 // registrar anota el agente efectivo de un adaptador, si sabe reportarlo.

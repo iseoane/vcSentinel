@@ -68,6 +68,10 @@ Machine output never changes shape without a major note. Field names:
 
   `outcome_class` is empty until the projection reaches a terminal state
   (`success`, `failure`, `cancellation`, `timeout`, `unavailable`).
+  `orphaned_cancellation` is an optional additive field: present and true
+  only when restart reconciliation classified the run as canceled-orphaned
+  (owner died mid-cancellation); it stays omitted for every honestly settled
+  or still-recoverable run.
 
 - `status --run <id>` (detail)
 
@@ -86,7 +90,10 @@ Machine output never changes shape without a major note. Field names:
 
   `outcomes` entries reuse the store's `AttemptOutcome` JSON contract;
   `responses` entries reuse `InvocationResponse`. Optional fields are omitted
-  when empty.
+  when empty. Like the list mode, `orphaned_cancellation` appears (true)
+  only when restart reconciliation classified the run as canceled-orphaned;
+  when it does, `state`, `sequence`, and `revision` all come from the
+  reconciled view.
 
 - `logs`
 
@@ -136,3 +143,12 @@ Machine output never changes shape without a major note. Field names:
   review, and pr reporting. Setting `review.evidence_admission: false` in
   `vassentinel.yml` restores lenient acceptance while every run stays fully
   inspectable through these `runs` commands.
+- Cancellation escalation (ticket 08) is default-on: when a routed review
+  owns its provider process tree, an abort cooperates for the grace budget,
+  then escalates to whole-tree termination leaving termination-attempted and
+  reaped evidence before the canceled settlement. Setting
+  `review.cancellation_escalation: false` keeps cooperative cancellation and
+  orphan detection while never signaling beyond the direct child. A run whose
+  owner died mid-cancellation is classified canceled-orphaned on next
+  observation through restart reconciliation — no fabricated completion, no
+  silent resume, and the append-only stream is never rewritten.

@@ -88,6 +88,11 @@ type DurableTransport struct {
 	// always initializes it to true, so accidental non-wiring stays strict;
 	// the rollback seam is an explicit WithEvidenceAdmission(false).
 	admissionEnabled bool
+	// escalationPolicy configures bounded cancellation escalation (ticket 08
+	// slice 2). The zero value is enabled with default budgets; slice 3 wires
+	// review.cancellation_escalation into it through
+	// WithCancellationEscalation at construction time.
+	escalationPolicy execution.EscalationPolicy
 }
 
 // DurableTransportOption configures construction-time behavior of a
@@ -115,6 +120,17 @@ func NewDurableTransport(backing *store.Store, policy store.RunPolicy, sha strin
 		}
 	}
 	return t
+}
+
+// WithCancellationEscalation overrides the bounded escalation policy used by
+// every controller this transport builds. Zero fields keep their defaults.
+// Disabled=true restricts every kill to the DIRECT CHILD through the exec
+// kill switch: neither controller escalation nor the containment watchdog
+// ever signals the whole tree, and aborted runs settle promptly as canceled
+// with an explicit descendant-accounting caveat (never a reaped or orphaned
+// claim) instead of escalation evidence.
+func WithCancellationEscalation(policy execution.EscalationPolicy) DurableTransportOption {
+	return func(t *DurableTransport) { t.escalationPolicy = policy }
 }
 
 // candidateSalt is process-random (pid plus crypto entropy) so two processes
@@ -163,7 +179,7 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	candidate := agentrun.Candidate(fmt.Sprintf("review:%s:%s:%s:%06d", identityKey, t.sha, candidateSalt, sequence))
 	request := agentrun.NewRunRequest(candidate, agentrun.Prompt(prompt), nil)
 	adapter := NewReviewAdapter(reviewer, t.sha, t.paths, nil)
-	controller := execution.NewController(t.backing, adapter)
+	controller := execution.NewControllerWithClockAndEscalation(t.backing, adapter, nil, t.escalationPolicy)
 
 	handle, err := controller.Start(context.Background(), request, t.policy)
 	if err != nil {

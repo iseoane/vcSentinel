@@ -24,7 +24,7 @@ func executeRunsStatus(out io.Writer, worktree string, args []string) int {
 	if options.runID == "" {
 		return listExecutions(out, backing, options.jsonOut)
 	}
-	return inspectExecution(out, controller, agentrun.Identity(options.runID), options.jsonOut)
+	return inspectExecution(out, controller, backing, agentrun.Identity(options.runID), options.jsonOut)
 }
 
 func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
@@ -35,7 +35,11 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 	}
 	entries := make([]runsListEntry, 0, len(ids))
 	for _, id := range ids {
-		projection, projectionErr := backing.ReadDerivedProjection(id)
+		// Ticket 08 slice 3: the listing is a next-observation surface, so it
+		// reads through restart reconciliation — an owner death during
+		// cancellation surfaces as its honest terminal view instead of a
+		// phantom live run.
+		projection, projectionErr := backing.ReadReconciledProjection(id)
 		if projectionErr != nil {
 			fmt.Fprintf(out, "❌ Could not read the projection of %s: %v\n", id, projectionErr)
 			return runExitCode(projectionErr)
@@ -43,6 +47,7 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 		entries = append(entries, runsListEntry{
 			RunID: projection.RunID, State: projection.State,
 			OutcomeClass: projection.Terminal, Revision: projection.Revision,
+			OrphanedCancellation: projection.OrphanedCancellation,
 		})
 	}
 	if asJSON {
@@ -63,21 +68,45 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 		if outcome == "" {
 			outcome = "-"
 		}
-		fmt.Fprintf(out, "• %s  state=%s outcome=%s revision=%d\n", entry.RunID, entry.State, outcome, entry.Revision)
+		line := fmt.Sprintf("• %s  state=%s outcome=%s revision=%d", entry.RunID, entry.State, outcome, entry.Revision)
+		if entry.OrphanedCancellation {
+			line += " (orphaned-canceled)"
+		}
+		fmt.Fprintln(out, line)
 	}
 	return runExitSuccess
 }
 
-func inspectExecution(out io.Writer, controller *execution.Controller, runID agentrun.Identity, asJSON bool) int {
+func inspectExecution(out io.Writer, controller *execution.Controller, backing *store.Store, runID agentrun.Identity, asJSON bool) int {
 	inspection, err := controller.Inspect(context.Background(), runID)
 	if err != nil {
 		fmt.Fprintf(out, "❌ Could not inspect %s: %v\n", runID, err)
 		return runExitCode(err)
 	}
+	state := inspection.Projection.State
+	sequence := inspection.Projection.Sequence
+	revision := inspection.Projection.Revision
+	orphanedCanceled := false
+	// Ticket 08 slice 3: when the durable stream proves owner death during
+	// cancellation, the inspection shows the honest reconciled view instead
+	// of the raw non-terminal head. Discarding the reconcile error here is
+	// deliberate best-effort refinement: Inspect already succeeded on the
+	// raw head, so a reconcile failure downgrades to showing that raw honest
+	// state instead of failing the whole inspection.
+	if reconciled, reconcileErr := backing.ReadReconciledProjection(string(runID)); reconcileErr == nil && reconciled.OrphanedCancellation {
+		// Coherence rule: once reconciliation applies, every displayed
+		// projection field comes from the reconciled view — never a mix of
+		// raw and derived values.
+		state = reconciled.State
+		sequence = reconciled.Sequence
+		revision = reconciled.Revision
+		orphanedCanceled = true
+	}
 	summary := runsStatusSummary{
-		RunID: string(runID), State: inspection.Projection.State,
-		Sequence: inspection.Projection.Sequence, Revision: inspection.Projection.Revision,
+		RunID: string(runID), State: state,
+		Sequence: sequence, Revision: revision,
 		EventCount: len(inspection.Events), Outcomes: inspection.Outcomes, Responses: inspection.Responses,
+		OrphanedCancellation: orphanedCanceled,
 	}
 	if len(inspection.Events) > 0 {
 		summary.JobID = inspection.Events[0].JobID
@@ -92,6 +121,9 @@ func inspectExecution(out io.Writer, controller *execution.Controller, runID age
 	fmt.Fprintf(out, "🔎 Run %s\n   job %s\n   state %s (sequence %d, revision %d)\n   events %d, outcomes %d, responses %d\n",
 		summary.RunID, summary.JobID, summary.State, summary.Sequence, summary.Revision,
 		summary.EventCount, len(summary.Outcomes), len(summary.Responses))
+	if orphanedCanceled {
+		fmt.Fprintln(out, "   ⚠️ owner died during cancellation: reconciled as canceled-orphaned on restart")
+	}
 	for _, outcome := range summary.Outcomes {
 		fmt.Fprintf(out, "   • attempt %s → %s%s\n", outcome.InvocationID, outcome.Class, outcomeDetailSuffix(outcome.Error))
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -132,9 +133,47 @@ type Controller struct {
 	store   *store.Store
 	adapter Adapter
 	now     func() time.Time
+	// escalation is the bounded cancellation escalation policy of ticket 08
+	// slice 2. The zero value normalizes to enabled with default budgets;
+	// disabling it keeps cooperative cancellation and orphan detection while
+	// never issuing a kill signal beyond the direct child.
+	escalation EscalationPolicy
 
 	mu   sync.Mutex
 	runs map[string]*runState
+}
+
+// EscalationPolicy configures bounded escalation after cooperative
+// cancellation. Zero durations select the defaults; Disabled is the only way
+// to turn escalation off and stays a construction-time rollback seam wired
+// from review.cancellation_escalation (ticket 08 slice 3).
+type EscalationPolicy struct {
+	// Disabled restricts every kill to the DIRECT CHILD: cancellation and
+	// deadlines reach it through the exec kill switch (CommandContext's
+	// built-in mechanism, kept active), while no code path — neither
+	// controller escalation nor the adapter containment watchdog — ever
+	// signals the whole tree. Aborts settle promptly as canceled; when a tree
+	// was owned the settlement records the pid plus an explicit statement
+	// that descendant accounting was unavailable, never a reaped or orphaned
+	// claim beyond that. No terminating or terminated frames are appended in
+	// this mode.
+	Disabled bool
+	// Grace is the cooperative window before whole-tree termination.
+	Grace time.Duration
+	// FinalBudget bounds exit confirmation after termination; expiry settles
+	// the attempt as orphaned instead of reaped.
+	FinalBudget time.Duration
+}
+
+// Normalized returns the policy with every zero field replaced by its default.
+func (p EscalationPolicy) Normalized() EscalationPolicy {
+	if p.Grace <= 0 {
+		p.Grace = process.DefaultGrace
+	}
+	if p.FinalBudget <= 0 {
+		p.FinalBudget = process.DefaultFinalBudget
+	}
+	return p
 }
 
 type runState struct {
@@ -149,6 +188,10 @@ type runState struct {
 	done          chan struct{}
 	completion    Completion
 	completionErr error
+	// aborting marks an in-flight bounded escalation between the canceled
+	// worker context and the terminal settlement. While it is set, finish()
+	// drops late adapter results and repeated aborts stay idempotent.
+	aborting bool
 }
 
 func NewController(s *store.Store, adapter Adapter) *Controller {
@@ -156,10 +199,16 @@ func NewController(s *store.Store, adapter Adapter) *Controller {
 }
 
 func NewControllerWithClock(s *store.Store, adapter Adapter, now func() time.Time) *Controller {
+	return NewControllerWithClockAndEscalation(s, adapter, now, EscalationPolicy{})
+}
+
+// NewControllerWithClockAndEscalation builds a controller whose aborts run
+// bounded escalation against owned process trees per the given policy.
+func NewControllerWithClockAndEscalation(s *store.Store, adapter Adapter, now func() time.Time, policy EscalationPolicy) *Controller {
 	if now == nil {
 		now = time.Now
 	}
-	return &Controller{store: s, adapter: adapter, now: now, runs: make(map[string]*runState)}
+	return &Controller{store: s, adapter: adapter, now: now, escalation: policy.Normalized(), runs: make(map[string]*runState)}
 }
 
 // Start admits identities and the pre-execution lifecycle before launching a
@@ -249,7 +298,11 @@ func (c *Controller) Inspect(ctx context.Context, runID agentrun.Identity) (Insp
 }
 
 // Apply accepts the initial control actions. Abort is cooperative and
-// response creates a child invocation linked to the waiting invocation.
+// controller-authored: applying it to a running attempt cancels the worker
+// context and appends the terminal canceled settlement itself, so a late
+// adapter result can no longer author a different outcome for that attempt.
+// Repeated aborts against an already canceled settlement are idempotent.
+// Response creates a child invocation linked to the waiting invocation.
 func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action ControlAction) (ApplyResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -287,6 +340,22 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.doneClosed() {
+		// A settled canceled run answers a repeated abort idempotently: the
+		// evidence event was already appended exactly once, so re-asking
+		// neither duplicates it nor fails.
+		if action.Kind == ActionAbort && state.settledCanceled() {
+			return ApplyResult{RunID: runID, InvocationID: state.completion.InvocationID, Accepted: true}, nil
+		}
+		return ApplyResult{}, ErrRunNotActive
+	}
+	if state.aborting {
+		// Bounded escalation is in flight between cancellation and its
+		// terminal settlement. A repeated abort stays idempotent: accepted,
+		// without appending any duplicate evidence; other actions cannot
+		// interleave with an in-flight settlement.
+		if action.Kind == ActionAbort {
+			return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
+		}
 		return ApplyResult{}, ErrRunNotActive
 	}
 	switch action.Kind {
@@ -297,8 +366,7 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 		if !state.running {
 			return ApplyResult{}, ErrRunNotActive
 		}
-		state.cancel()
-		return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
+		return c.abortRunning(state, runID)
 	case ActionRespond:
 		return c.respond(state, runID, action.Response)
 	}
@@ -306,14 +374,24 @@ func (c *Controller) Apply(ctx context.Context, runID agentrun.Identity, action 
 }
 
 func (c *Controller) execute(state *runState, ctx context.Context, invocation agentrun.InvocationEnvelope, response string) {
-	result, adapterErr := c.adapter.Execute(ctx, state.job, invocation, response)
+	// Stamp the escalation policy onto the worker context so the adapter-side
+	// containment watchdog shares one budget AND one kill scope with
+	// controller-authored escalation: in Disabled mode nothing downstream of
+	// this context may signal beyond the direct child.
+	result, adapterErr := c.adapter.Execute(
+		process.WithContainmentPolicy(ctx, c.escalation.Grace, !c.escalation.Disabled),
+		state.job, invocation, response)
 	c.finish(state, invocation, result, adapterErr)
 }
 
 func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvelope, result AdapterResult, adapterErr error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.doneClosed() {
+	if state.doneClosed() || state.aborting {
+		// A settled run keeps its controller-authored terminal evidence. An
+		// in-flight escalation (aborting) owns the settlement too: whatever
+		// the adapter returns after the tree was killed is dropped here so
+		// it can never author a competing outcome.
 		return
 	}
 	class := classify(adapterErr)
@@ -394,34 +472,6 @@ func (c *Controller) respond(state *runState, runID agentrun.Identity, response 
 	state.running = true
 	go c.execute(state, workerContext, child, response)
 	return ApplyResult{RunID: runID, InvocationID: child.InvocationID(), Accepted: true}, nil
-}
-
-func (c *Controller) abortWaiting(state *runState, runID agentrun.Identity) (ApplyResult, error) {
-	at := c.now().UTC()
-	outcome := store.AttemptOutcome{
-		RunID: string(runID), JobID: string(state.job.ID()), InvocationID: string(state.invocation.InvocationID()),
-		LineageID: string(state.invocation.LineageIdentity()), Class: agentrun.OutcomeCancellation,
-		Error: "aborted while awaiting a response", At: at,
-	}
-	event, eventErr := agentrun.NewNormalizedEvent(state.invocation, agentrun.StateAwaitingDecision, agentrun.StateCanceled, agentrun.DecisionAbort, at)
-	if eventErr != nil {
-		c.completeLocked(state, state.invocation, agentrun.StateAwaitingDecision, agentrun.OutcomeCancellation, AdapterResult{}, eventErr.Error(), eventErr, true)
-		return ApplyResult{}, eventErr
-	}
-	receipt, persistenceErr := c.store.AppendTerminalEvent(string(runID), event, state.revision, outcome)
-	if persistenceErr != nil {
-		if receipt.Revision > state.revision {
-			state.revision = receipt.Revision
-			state.state = receipt.State
-		}
-		c.completeLocked(state, state.invocation, state.state, agentrun.OutcomeCancellation, AdapterResult{}, persistenceErr.Error(), persistenceErr, true)
-		return ApplyResult{}, persistenceErr
-	}
-	state.revision = receipt.Revision
-	state.state = receipt.State
-	state.running = false
-	c.completeLocked(state, state.invocation, agentrun.StateCanceled, agentrun.OutcomeCancellation, AdapterResult{}, outcome.Error, nil, false)
-	return ApplyResult{RunID: runID, InvocationID: state.invocation.InvocationID(), Accepted: true}, nil
 }
 
 func (c *Controller) appendTransition(state *runState, invocation agentrun.InvocationEnvelope, from, to agentrun.LifecycleState, decision agentrun.Decision) error {

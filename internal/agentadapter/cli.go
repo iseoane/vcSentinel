@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // TimeoutComando es el límite de una llamada al agente (300 s). La fase 1 lo
@@ -32,6 +34,16 @@ type CLIAdapter struct {
 	CommitLanguage string
 	// Timeout es el límite por llamada; si es 0 se usa TimeoutComando.
 	Timeout time.Duration
+
+	// activeTree holds the restricted reviewer's currently owned process
+	// tree, or nil when no review child is running. The execution controller
+	// reads it at abort time to escalate against the whole tree.
+	activeTree atomic.Pointer[process.Tree]
+}
+
+// OwnedTree reports the live owned review process tree, or nil.
+func (c *CLIAdapter) OwnedTree() *process.Tree {
+	return c.activeTree.Load()
 }
 
 // ReviewRequest limits an agent review to read-only exploration of planned paths.
@@ -52,17 +64,11 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 }
 
 // EjecutarRevision runs a semantic review with the bounded tool profile.
+// The legacy contract carries no context: the review runs under the adapter's
+// own timeout budget only. Context-carrying callers go through
+// ReviewWithContext so cooperative cancellation reaches the provider process.
 func (c *CLIAdapter) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = TimeoutComando
-	}
-	snapshot, safePaths, cleanup, err := createReviewSnapshot("", sha, paths)
-	if err != nil {
-		return "", err
-	}
-	defer cleanup()
-	return c.ejecutarRevisionConTimeout(ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls}, timeout)
+	return c.ReviewWithContext(context.Background(), prompt, sha, paths)
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
@@ -314,42 +320,6 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 	return strings.TrimSpace(out.String()), nil
 }
 
-func (c *CLIAdapter) ejecutarRevisionConTimeout(request ReviewRequest, timeout time.Duration) (string, error) {
-	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
-	defer cancelar()
-
-	args, restrictions, err := c.reviewCommand(request)
-	if err != nil {
-		return "", err
-	}
-	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
-	if c.esClaude() {
-		// Claude Code has no "--dir"-style flag (unlike OpenCode's --pure +
-		// --dir), so confinement to the read-only snapshot happens through
-		// cmd.Dir. --safe-mode already disables CLAUDE.md, skills, plugins,
-		// hooks, MCP servers, and custom agents, so unlike OpenCode's
-		// reviewEnvironment (which redirects HOME/XDG because opencode has no
-		// equivalent flag) no HOME/XDG redirection is needed here.
-		cmd.Dir = request.SnapshotDir
-		cmd.Env = os.Environ()
-	} else {
-		cmd.Env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)
-	}
-
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	cmd.Stdin = strings.NewReader(request.Prompt)
-	if err := cmd.Run(); err != nil {
-		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return "", fmt.Errorf("run restricted reviewer: %w: %s", err, detail)
-		}
-		return "", err
-	}
-	return strings.TrimSpace(out.String()), nil
-}
-
 func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]string, error) {
 	maxToolCalls := request.MaxToolCalls
 	if maxToolCalls <= 0 {
@@ -361,7 +331,7 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		}
 		// "--tools Read,Grep,Glob" replaces the whole built-in tool set (not
 		// an incremental allow/deny), so the reviewer can only read/search;
-		// cmd.Dir confines it to the snapshot (see ejecutarRevisionConTimeout).
+		// cmd.Dir confines it to the snapshot (see ejecutarRevision).
 		// There is no confirmed Claude Code flag/env var to cap tool-call
 		// count (OpenCode's "Steps"), so maxToolCalls is intentionally unused
 		// here; do not invent one.

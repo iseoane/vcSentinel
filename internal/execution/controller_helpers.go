@@ -20,6 +20,13 @@ func (s *runState) doneClosed() bool {
 	}
 }
 
+// settledCanceled reports whether this state already carries the durable,
+// controller-authored cancellation settlement with no infrastructure error,
+// which makes a repeated abort idempotent instead of an invalid-state error.
+func (s *runState) settledCanceled() bool {
+	return s.completionErr == nil && s.completion.State == agentrun.StateCanceled
+}
+
 func classify(err error) agentrun.OutcomeClass {
 	if err == nil {
 		return agentrun.OutcomeSuccess
