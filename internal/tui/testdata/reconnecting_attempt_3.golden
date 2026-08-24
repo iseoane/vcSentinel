@@ -4,4 +4,4 @@
    invocations 0, responses 0
 ⟳ reconnecting attempt 3/8 …
 ⚠️ observe failed: dial tcp: connection refused — reconnecting (attempt 3/8)
-q quit · r refresh
+q quit
