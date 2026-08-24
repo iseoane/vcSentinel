@@ -114,7 +114,7 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "gh CLI calls, git config reads, and clipboard helpers; no provider agent."},
 		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Line: 0, Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
-		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 206, Marker: "NewController(",
+		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 207, Marker: "NewController(",
 			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
 		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Line: 126, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the staged-commit volume measurement."},
@@ -124,11 +124,11 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
 		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---
-		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Line: 203, Marker: "exec.Command",
+		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Line: 234, Marker: "exec.Command",
 			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16): Command is the transparent spawn description; the production path runs through the owned-tree spawner in review.go (process.Spawn), mirroring cli.go's seam split. Admission binding happens at the caller, not here."},
-		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Line: 27, Marker: "EjecutarPrompt(",
+		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Line: 31, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Prompt and restricted-review surface of the ACP/acpx adapter (ticket 16 slice 2, wired in slice 3): review runs reuse the shared reviewsnapshot.Create snapshot discipline and spawn through the owned-tree process.Spawn seam like cli.go; admission binding happens at the caller, not here."},
-		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.ObtenerMensajeCommitConDiff", Line: 40, Marker: "EjecutarPrompt(",
+		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.ObtenerMensajeCommitConDiff", Line: 42, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Factory wiring of kind:acpx entries (ticket 16 slice 3): the bridge delegates commit-message generation through one prompt turn on the acp adapter. Commit-message text cannot influence a verdict or gate outcome and degrades to deterministic fallback messages on failure."},
 
 		// --- internal/agentadapter ----------------------------------------
