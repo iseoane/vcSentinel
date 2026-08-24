@@ -190,7 +190,26 @@ changing any durable format; autostarting daemons.
   FORCE=1 + TERM=xterm-256color env-independence proven; GOOS=windows build
   OK; FULL suite green twice consecutively after the drain audit.
 
-*(Judgment Day closure pending)*
+## Judgment Day closure
+
+**BLOCKED — infrastructure, not evidence.** Five judge-launch attempts
+(Judge A x3, Judge B x2 including one parallel pair) all failed with
+provider `network_error` before any inspection began. Per the judgment-day
+contract no partial or single-judge verdict is accepted, so the unit
+remains open with implementation complete and fully verified:
+
+- All three slices committed and budget-clean through 3541536.
+- Dual-axis code review PASSED for every slice (independent of JD).
+- Full suite green twice consecutively; -race green everywhere touched;
+  GOOS=windows build OK; CLICOLOR_FORCE/TERM env-independence proven.
+- Frozen target ready for judges: bundle at
+  ~/.local/share/opencode/tool-output/jd-d3-target/ (full.patch sha256
+  91e54ae46cce874595daac8cd2c1bbefc37ce92ad1a89f98404ceb0a174ac0e1, src
+  snapshot at HEAD 3541536).
+
+**Remaining step to close:** re-run jd-judge-a + jd-judge-b against this
+bundle once the subagent provider recovers, merge the ledger, apply the
+closure record. Nothing else is outstanding.
 
 ## Evidence — slice 3 (goldens, harness, closure)
 
