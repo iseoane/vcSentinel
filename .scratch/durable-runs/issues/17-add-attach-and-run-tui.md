@@ -73,7 +73,36 @@ changing any durable format; autostarting daemons.
 
 ## Evidence — slice 1 (pure read-model + CLI skeleton)
 
-*(pending)*
+- Base: main at 4058a04 (post-D2 integration).
+- Commits: feat(attach) pure run view model with cursor-based replay
+  collector (+279), test(attach) pin replay semantics and view derivation
+  (+316), feat(sentinel) runs attach list, snapshot, and follow modes
+  (+267), test(sentinel) pin attach modes, daemon preference, and detach
+  contracts (+383). All four staged candidates passed the pre-commit budget.
+- Surface: internal/attach — ReplayCollector (strict-after-cursor,
+  duplicate-suppressing, monotonic cursor, defensive Frames copy) and pure
+  BuildRunView deriving invocation order (first-appearance Order since
+  durable frames carry no attempt counter — documented honestly),
+  creating-decision mapping, evidence hash-PRESENCE flags (raw bytes never
+  surface), semantic outcome. CLI: `runs attach` list mode via reconciled
+  projection walk (ScanRecoveries rejected with in-code rationale: it
+  answers repair attention, not lifecycle truth), snapshot and --follow
+  modes through the daemon-preferred host resolver with silent fallback;
+  pagination bounded; reprint-on-change only; SIGINT/SIGTERM clean detach.
+- Independent code review (dual axis): spec PASS; standards found one hard
+  fix (usage promised SIGTERM but only os.Interrupt was registered — now
+  mirrors daemon.Run exactly) plus adopted nits: Identity threaded end to
+  end, redundant DeepEqual condition dropped after proving from store
+  read-ordering docs that outcome text cannot arrive frame-less, unchanged-
+  poll no-reprint and context-cancel detach tests added.
+- Honest limits: Ctrl-C signal path itself is exercised through the
+  cancellable-context seam rather than real signals (portable-signal
+  testing deferred); rendering is plain text by design until slice 2 swaps
+  the renderer keeping this pipeline.
+- Verification: gofmt clean; build/vet OK; focused -race green across
+  attach/cmd; GOOS=windows build OK.
+
+*(slice 2 pending)*
 
 ## Evidence — slice 2 (bubbletea program)
 
