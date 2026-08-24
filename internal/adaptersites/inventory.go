@@ -146,7 +146,7 @@ func Sites() []Site {
 		// --- internal/agentrun / internal/execution / internal/store ------
 		{Path: "internal/agentrun/contracts.go", Symbol: "InvocationEnvelope/NewRunRequest/NewCapability", Line: 61, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Contract definitions: envelopes, requests, capabilities, lifecycle states, and the transition table. The authority itself, not a caller."},
-		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Line: 244, Marker: "CreateRun(",
+		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Line: 257, Marker: "CreateRun(",
 			Class: ClassDurable, Reason: "The single lifecycle authority admits every run through store.CreateRun and settles attempts through store.AppendTerminalEvent; no feature package may call either primitive directly."},
 		{Path: "internal/execution/controller_abort.go", Symbol: "Controller abort settlement", Line: 161, Marker: "AppendTerminalEvent(",
 			Class: ClassDurable, Reason: "Abort settles through the guarded store terminal-event primitive under the controller's revision checks; nothing mutates state outside controller APIs."},
@@ -164,7 +164,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Immutable attempt-outcome record primitive: durably persists one admitted invocation result before the caller continues. Written only beside controller-authored terminal events."},
 
 		// --- internal/reviewexec (admitted review transport) ---------------
-		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.Run", Line: 199, Marker: "NewRunRequest(",
+		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.Run", Line: 203, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Review admission transport: builds the RunRequest, starts it through the controller, validates snapshot binding, and admits completions only against verified AttemptOutcome evidence."},
 		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Line: 125, Marker: "EjecutarRevision(",
 			Class: ClassDurable, Reason: "Executes exactly one admitted physical invocation per controller dispatch; receives the InvocationEnvelope and forwards cancellation/tree ownership to the controller."},

@@ -138,7 +138,7 @@ func ejecutarReview(worktree string, args []string) {
 			// review run is announced on stderr (the JSON-safe channel) the
 			// moment it is admitted, with its `runs attach --follow` command,
 			// so an operator can attach while the review is still executing.
-			ReviewTransport: durableReviewTransportConAnuncios(cfg, worktree, sha, archivos, os.Stderr),
+			ReviewTransport: announcedReviewTransport(cfg, worktree, sha, archivos, os.Stderr),
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},

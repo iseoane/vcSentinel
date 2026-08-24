@@ -223,6 +223,19 @@ func NewControllerWithClockAndEscalation(s *store.Store, adapter Adapter, now fu
 // detached per-run worker. The caller context is used only for admission; it
 // never becomes the worker cancellation context.
 func (c *Controller) Start(ctx context.Context, request agentrun.RunRequest, policy store.RunPolicy) (Handle, error) {
+	return c.StartObserved(ctx, request, policy, nil)
+}
+
+// StartObserved is Start with an admitted-run observer. Ordering guarantee:
+// onAdmitted runs synchronously on the caller's goroutine AFTER durable
+// admission is complete (CreateRun, the created→queued→admitted→running event
+// chain persisted, and the in-memory handle registered — the run is fully
+// inspectable through Inspect at callback time) and BEFORE the detached worker
+// goroutine is launched, so the provider adapter cannot have been entered when
+// the callback fires. The callback is strictly observation-only: it must never
+// block on this run's completion nor mutate its control state. A nil callback
+// behaves exactly like Start.
+func (c *Controller) StartObserved(ctx context.Context, request agentrun.RunRequest, policy store.RunPolicy, onAdmitted func(Handle)) (Handle, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -281,8 +294,14 @@ func (c *Controller) Start(ctx context.Context, request agentrun.RunRequest, pol
 	c.runs[string(job.RunID())] = state
 	c.mu.Unlock()
 
+	handle := Handle{RunID: job.RunID(), JobID: job.ID(), InvocationID: invocation.InvocationID(), state: state}
+	// Observation strictly precedes the worker launch: the callback sees a
+	// durably admitted run that has not yet reached the provider adapter.
+	if onAdmitted != nil {
+		onAdmitted(handle)
+	}
 	go c.execute(state, workerContext, invocation, "")
-	return Handle{RunID: job.RunID(), JobID: job.ID(), InvocationID: invocation.InvocationID(), state: state}, nil
+	return handle, nil
 }
 
 // Inspect reconstructs a run exclusively from durable state, so a fresh

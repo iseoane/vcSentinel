@@ -34,16 +34,17 @@ type reviewRunAnnouncer struct {
 	out  io.Writer
 }
 
-// nuevoReviewRunAnnouncer builds an announcer over out. Production passes
+// newReviewRunAnnouncer builds an announcer over out. Production passes
 // os.Stderr: the JSON-safe channel, so `sentinel review --json` consumers
 // reading stdout keep parsing valid payloads while live lines stream by.
-func nuevoReviewRunAnnouncer(out io.Writer) *reviewRunAnnouncer {
+func newReviewRunAnnouncer(out io.Writer) *reviewRunAnnouncer {
 	return &reviewRunAnnouncer{seen: make(map[string]bool), out: out}
 }
 
-// observe is the WithRunObserver callback: invoked synchronously after each
-// successful Start, before any completion can exist. The line carries the
-// canonical attach command so the ID is immediately actionable.
+// observe is the WithRunObserver callback: invoked synchronously after
+// durable admission completes and strictly before the provider worker can
+// execute, so the announcement never lags the provider start. The line
+// carries the canonical attach command so the ID is immediately actionable.
 func (a *reviewRunAnnouncer) observe(runID string) {
 	if runID == "" {
 		return
@@ -57,14 +58,14 @@ func (a *reviewRunAnnouncer) observe(runID string) {
 	fmt.Fprintf(a.out, "vas-sentinel: durable review run admitted %s; follow it live with `sentinel runs attach --run %s --follow`\n", runID, runID)
 }
 
-// durableReviewTransportConAnuncios builds the engine-side review transport
+// announcedReviewTransport builds the engine-side review transport
 // `sentinel review` uses, wiring the admission-time announcer at this command
 // boundary through the shared construction path's extraOptions seam. A
 // missing git common dir degrades to the same always-failing honest transport
 // as durableReviewTransport: each dimension surfaces it as unavailable
 // evidence instead of a silent direct-call fallback.
-func durableReviewTransportConAnuncios(cfg config.Config, worktree, sha string, paths []string, out io.Writer) review.ReviewTransport {
-	announcer := nuevoReviewRunAnnouncer(out)
+func announcedReviewTransport(cfg config.Config, worktree, sha string, paths []string, out io.Writer) review.ReviewTransport {
+	announcer := newReviewRunAnnouncer(out)
 	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
 		store.RunPolicy{ID: durableRunPolicyID},
 		[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(announcer.observe)})

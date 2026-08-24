@@ -177,6 +177,10 @@ var invocationSequence atomic.Uint64
 // SHA, a process-random salt, and a monotonic sequence so repeated audits —
 // in this process or any other — can never collide on candidate identity.
 //
+// The WithRunObserver callback fires through the controller's StartObserved
+// seam: strictly after durable admission, strictly before the provider worker
+// can execute, so admission-time announcements can never lag execution.
+//
 // Immediately after a successful Start, and only in strict admission mode,
 // the admitted snapshot is bound against the live audit context
 // (validateSnapshotBinding), failing fast before any provider answer can be
@@ -200,12 +204,18 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	adapter := NewReviewAdapter(reviewer, t.sha, t.paths, nil)
 	controller := execution.NewControllerWithClockAndEscalation(t.backing, adapter, nil, t.escalationPolicy)
 
-	handle, err := controller.Start(context.Background(), request, t.policy)
+	// The observer travels through the controller's StartObserved seam so it
+	// fires strictly after durable admission and strictly before the worker
+	// goroutine can enter the provider: an announcement built on this callback
+	// can never lag the provider start.
+	onAdmitted := func(handle execution.Handle) {
+		if t.observedRun != nil {
+			t.observedRun(string(handle.RunID))
+		}
+	}
+	handle, err := controller.StartObserved(context.Background(), request, t.policy, onAdmitted)
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
-	}
-	if t.observedRun != nil {
-		t.observedRun(string(handle.RunID))
 	}
 	if t.admissionEnabled {
 		if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {
