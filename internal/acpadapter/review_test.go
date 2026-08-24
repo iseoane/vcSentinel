@@ -179,8 +179,9 @@ func TestReviewWithContextCancelYieldsCanceledClass(t *testing.T) {
 // --- output budget -------------------------------------------------------------
 
 func TestMaxOutputBytesCapTriggersFailure(t *testing.T) {
+	const capBytes = 64 * 1024
 	a := spawnHelperConfig(t, func(cfg *Config) {
-		cfg.MaxOutputBytes = 64 * 1024 // child floods megabytes; breach is immediate
+		cfg.MaxOutputBytes = capBytes // child floods megabytes; breach is immediate
 		cfg.ChildEnv = append(cfg.ChildEnv,
 			helperModeEnv+"="+helperModeFlood,
 			helperExpectEnv+"=-",
@@ -188,13 +189,13 @@ func TestMaxOutputBytesCapTriggersFailure(t *testing.T) {
 	})
 
 	type outcome struct {
-		out string
+		res Result
 		err error
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		out, err := a.EjecutarPrompt("flood")
-		done <- outcome{out, err}
+		res, err := a.Run(context.Background(), "flood")
+		done <- outcome{res, err}
 	}()
 	select {
 	case got := <-done:
@@ -204,6 +205,12 @@ func TestMaxOutputBytesCapTriggersFailure(t *testing.T) {
 		}
 		if oe.Outcome() != agentrun.OutcomeFailure {
 			t.Errorf("Outcome() = %q, want failure classification on budget breach", oe.Outcome())
+		}
+		if len(got.res.RawStream) > capBytes {
+			t.Errorf("RawStream = %d bytes, want at most the %d-byte budget (exact retention)", len(got.res.RawStream), capBytes)
+		}
+		if len(got.res.RawStream) == 0 {
+			t.Error("RawStream empty; the drained prefix up to the breach must be retained")
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run did not end within the bounded wait after breaching the output cap")
@@ -264,6 +271,114 @@ func TestOwnedTreeTransitionsAroundARun(t *testing.T) {
 	for a.OwnedTree() != nil {
 		if time.Now().After(deadline) {
 			t.Fatal("OwnedTree stayed non-nil after the run finished")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// waitForLiveTrees polls until the adapter's owned-tree registry holds at
+// least want registered trees, failing on the bounded deadline.
+func waitForLiveTrees(t *testing.T, a *AcpxAdapter, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		a.treeMu.Lock()
+		got := len(a.liveTrees)
+		a.treeMu.Unlock()
+		if got >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("owned-tree registry = %d live trees, want at least %d", got, want)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestOwnedTreeRegistryKeepsSiblingsVisibleUntilBothFinish pins the
+// concurrency contract of the owned-tree registry: while two runs execute
+// concurrently on one adapter, abort escalation sees a live tree until BOTH
+// complete, the most recently started run is preferred, and completing one
+// run never hides its still-running sibling (a single active slot would do
+// exactly that).
+func TestOwnedTreeRegistryKeepsSiblingsVisibleUntilBothFinish(t *testing.T) {
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.ChildEnv = append(cfg.ChildEnv,
+			helperModeEnv+"="+helperModeSleep,
+			helperExpectEnv+"=-",
+		)
+	})
+	if tree := a.OwnedTree(); tree != nil {
+		t.Fatalf("OwnedTree before any run = %v, want nil while idle", tree)
+	}
+
+	type outcome struct {
+		tag string
+		err error
+	}
+	done := make(chan outcome, 2)
+
+	ctx1, cancel1 := context.WithCancel(process.WithContainmentGrace(context.Background(), 50*time.Millisecond))
+	defer cancel1()
+	go func() {
+		_, err := a.Run(ctx1, "hang-1")
+		done <- outcome{"first", err}
+	}()
+	waitForLiveTrees(t, a, 1)
+	first := a.OwnedTree()
+	if first == nil {
+		t.Fatal("registry reports a live entry but OwnedTree returned nil")
+	}
+
+	ctx2, cancel2 := context.WithCancel(process.WithContainmentGrace(context.Background(), 50*time.Millisecond))
+	defer cancel2()
+	go func() {
+		_, err := a.Run(ctx2, "hang-2")
+		done <- outcome{"second", err}
+	}()
+	waitForLiveTrees(t, a, 2)
+
+	second := a.OwnedTree()
+	if second == nil {
+		t.Fatal("OwnedTree nil while two runs are live")
+	}
+	if second == first {
+		t.Error("OwnedTree must prefer the most recently started live tree")
+	}
+
+	awaitCanceled := func(tag string) {
+		t.Helper()
+		select {
+		case got := <-done:
+			if got.tag != tag {
+				t.Fatalf("completion order broken: got %q, want %q", got.tag, tag)
+			}
+			var oe *OutcomeError
+			if !errors.As(got.err, &oe) {
+				t.Fatalf("%s run error type = %T (%v), want *OutcomeError", tag, got.err, got.err)
+			}
+			if oe.Outcome() != agentrun.OutcomeCancellation {
+				t.Errorf("%s run Outcome() = %q, want cancellation after ctx cancel", tag, oe.Outcome())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s run did not return within the bounded wait after cancellation", tag)
+		}
+	}
+
+	// Completing the FIRST run must not hide the still-running sibling.
+	cancel1()
+	awaitCanceled("first")
+	if tree := a.OwnedTree(); tree == nil || tree != second {
+		t.Fatalf("OwnedTree after first completion = %v, want the still-live sibling %v", tree, second)
+	}
+
+	// Only when BOTH runs settle does the registry drain back to nil.
+	cancel2()
+	awaitCanceled("second")
+	deadline := time.Now().Add(5 * time.Second)
+	for a.OwnedTree() != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("OwnedTree stayed non-nil after both runs finished")
 		}
 		time.Sleep(2 * time.Millisecond)
 	}

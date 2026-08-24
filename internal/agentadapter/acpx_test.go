@@ -266,6 +266,16 @@ type treeProvider interface {
 	OwnedTree() *process.Tree
 }
 
+// Compile-time pins for the runs-abort wiring: embedding must keep exposing
+// the context-carrying prompt path and tree discovery on the bridge, so
+// `sentinel runs abort` reaches the acpx child without per-call plumbing.
+var (
+	_ interface {
+		EjecutarPromptWithContext(context.Context, string) (string, error)
+	} = (*AcpxBridge)(nil)
+	_ interface{ OwnedTree() *process.Tree } = (*AcpxBridge)(nil)
+)
+
 // TestAdapterFamiliesShareStructuralContracts asserts, per contract, that a
 // CLIAdapter and an acpx-built adapter satisfy the SAME structural surface,
 // so callers need zero changes when an agent switches family.
@@ -320,6 +330,34 @@ func TestBridgePromptPassthroughReturnsOutputText(t *testing.T) {
 	}
 	if out != "BRIDGE PARITY OUTPUT" {
 		t.Errorf("EjecutarPrompt = %q, want normalized chunk text", out)
+	}
+}
+
+// TestBridgeStringDeclaresEnforcement pins the chain-diagnostic format: the
+// enforcement declaration rides in every fallback/log line so operators can
+// see which containment backend was declared for the run, not only which
+// binary answered.
+func TestBridgeStringDeclaresEnforcement(t *testing.T) {
+	bridge := helperBridge(t, nil)
+	want := "acpx(" + bridge.EffectiveIdentity().Binary + "|enforcement=" + acpadapter.EnforcementNone + ")"
+	if got := bridge.String(); got != want {
+		t.Errorf("String() = %q, want %q (identity plus declaration)", got, want)
+	}
+}
+
+// TestBridgeEjecutarPromptWithContextRoutesOutput proves the context-carrying
+// prompt shape routes the same normalized output as the legacy entry point,
+// so context-preferring callers (the durable-runs controller) lose nothing.
+func TestBridgeEjecutarPromptWithContextRoutesOutput(t *testing.T) {
+	bridge := helperBridge(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out, err := bridge.EjecutarPromptWithContext(ctx, "say PROBE")
+	if err != nil {
+		t.Fatalf("EjecutarPromptWithContext returned error: %v", err)
+	}
+	if out != "BRIDGE PARITY OUTPUT" {
+		t.Errorf("EjecutarPromptWithContext = %q, want normalized chunk text", out)
 	}
 }
 

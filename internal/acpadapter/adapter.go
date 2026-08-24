@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
@@ -84,10 +83,21 @@ type AcpxAdapter struct {
 	lastObserved  string
 	observedKnown bool
 
-	// active holds the live owned process tree while a child runs, or nil
-	// when the adapter is idle. The execution controller reads it through
+	// enforcement is the validated enforcement declaration this adapter was
+	// built with (normalized empty -> EnforcementNone at construction).
+	// Retaining it keeps the C6 admission verdict visible to every later
+	// observer instead of discarding it once construction succeeds.
+	enforcement string
+
+	// liveTrees is the registry of currently owned process trees, in start
+	// order. A single active slot would let concurrent runs hide each
+	// other's live children (and an unconditional clear on one completion
+	// would orphan a still-running sibling), so every spawned tree is
+	// registered at birth and removed ONLY when its own run completes. The
+	// execution controller reads the most recently started entry through
 	// OwnedTree at abort time to escalate against the whole tree.
-	active atomic.Pointer[process.Tree]
+	treeMu    sync.Mutex
+	liveTrees []*process.Tree
 }
 
 // NewAcpx validates cfg and returns a ready adapter. The agent token must be
@@ -115,6 +125,13 @@ func NewAcpx(cfg Config) (*AcpxAdapter, error) {
 	if maxRuntime <= 0 {
 		maxRuntime = DefaultMaxRuntimeSeconds
 	}
+	// Normalize the validated declaration (empty -> EnforcementNone) and
+	// retain it: the admission verdict is protocol evidence and must stay
+	// observable by every result and diagnostic produced later.
+	enforcement := cfg.Enforcement
+	if enforcement == "" {
+		enforcement = EnforcementNone
+	}
 	return &AcpxAdapter{
 		launcher:          append([]string(nil), launcher...),
 		agent:             cfg.Agent,
@@ -123,7 +140,16 @@ func NewAcpx(cfg Config) (*AcpxAdapter, error) {
 		maxRuntimeSeconds: maxRuntime,
 		maxOutputBytes:    cfg.MaxOutputBytes,
 		childEnv:          append([]string(nil), cfg.ChildEnv...),
+		enforcement:       enforcement,
 	}, nil
+}
+
+// EnforcementDeclaration reports the validated enforcement declaration this
+// adapter carries: the configured value verbatim, or EnforcementNone when
+// construction admitted the run as grant-by-design. It lets bridges, logs,
+// and diagnostics state which backend was declared to contain each run.
+func (a *AcpxAdapter) EnforcementDeclaration() string {
+	return a.enforcement
 }
 
 // Result is the normalized observation of one acpx turn. RawStream is kept
@@ -149,6 +175,11 @@ type Result struct {
 	// UsageJSON is the raw usage member of the terminal result, verbatim,
 	// or empty when absent.
 	UsageJSON string
+	// Enforcement is the validated enforcement declaration of the adapter
+	// that produced this turn (EnforcementNone when nothing was declared).
+	// Every result carries it so upper layers can retain what containment
+	// was promised for the admitted run alongside the wire evidence.
+	Enforcement string
 }
 
 // Class returns the agentrun outcome class implied by the result. Only the
@@ -207,12 +238,42 @@ func (a *AcpxAdapter) Command(ctx context.Context, prompt string) *exec.Cmd {
 	return cmd
 }
 
-// OwnedTree reports the live owned acpx process tree while a child runs, or
-// nil when the adapter is idle. It satisfies the execution-style TreeProvider
-// contract so controller escalation reaches the deep npx -> node(acpx) ->
-// npm exec -> node(<agent>-acp) chain.
+// OwnedTree reports one live owned acpx process tree — preferring the most
+// recently started run — or nil when the adapter is idle. It satisfies the
+// execution-style TreeProvider contract so controller escalation reaches the
+// deep npx -> node(acpx) -> npm exec -> node(<agent>-acp) chain. With
+// concurrent runs, the registry keeps every sibling visible until its own
+// run completes, so abort escalation always receives a live tree while any
+// child is still running.
 func (a *AcpxAdapter) OwnedTree() *process.Tree {
-	return a.active.Load()
+	a.treeMu.Lock()
+	defer a.treeMu.Unlock()
+	if len(a.liveTrees) == 0 {
+		return nil
+	}
+	return a.liveTrees[len(a.liveTrees)-1]
+}
+
+// registerTree publishes a freshly spawned tree BEFORE the child can produce
+// output, so no window exists in which a running child is invisible to
+// abort escalation.
+func (a *AcpxAdapter) registerTree(tree *process.Tree) {
+	a.treeMu.Lock()
+	defer a.treeMu.Unlock()
+	a.liveTrees = append(a.liveTrees, tree)
+}
+
+// unregisterTree removes exactly this run's tree at that run's completion;
+// sibling trees registered by concurrent runs stay untouched.
+func (a *AcpxAdapter) unregisterTree(tree *process.Tree) {
+	a.treeMu.Lock()
+	defer a.treeMu.Unlock()
+	for i, live := range a.liveTrees {
+		if live == tree {
+			a.liveTrees = append(a.liveTrees[:i], a.liveTrees[i+1:]...)
+			return
+		}
+	}
 }
 
 // Run executes one prompt through acpx and normalizes the resulting stream.

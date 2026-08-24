@@ -18,7 +18,9 @@ import (
 //     path is refused and the consented micro-diff path is required.
 //   - ReportaAgenteEfectivo: maps acpadapter.EffectiveIdentity onto this
 //     package's AgenteEfectivo so honest attribution records ACP runs too.
-//   - String: readable chain diagnostics ("acpx(npx:claude)").
+//   - String: readable chain diagnostics
+//     ("acpx(npx:claude|enforcement=none)"), stating which restriction
+//     backend the adapter declares alongside its identity.
 type AcpxBridge struct {
 	*acpadapter.AcpxAdapter
 
@@ -56,9 +58,15 @@ func (b *AcpxBridge) AgenteEfectivo() (AgenteEfectivo, bool) {
 	}, true
 }
 
-// String identifies the bridge in chain fallback errors.
+// String identifies the bridge in chain fallback errors and log lines. The
+// validated enforcement declaration rides along so every such line states
+// which backend was declared to contain the run, not only who answered.
+// Durable-record threading of the declaration lands with the
+// capability-policy runtime work — the store schema is outside the A2
+// boundary — so this diagnostic surface is its operator-visible carrier
+// today.
 func (b *AcpxBridge) String() string {
-	return "acpx(" + b.EffectiveIdentity().Binary + ")"
+	return "acpx(" + b.EffectiveIdentity().Binary + "|enforcement=" + b.EnforcementDeclaration() + ")"
 }
 
 // commitLanguageOrDefault mirrors CLIAdapter.idiomaCommit for the bridge.

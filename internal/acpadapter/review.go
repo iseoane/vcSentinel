@@ -18,14 +18,31 @@ import (
 // normalized assistant output. It mirrors the prompt-adapter shape of
 // internal/agentadapter so upper layers can treat both adapter kinds alike.
 // Non-success outcomes return an *OutcomeError carrying the outcome class;
-// callers classify by Outcome(), never by error presence.
+// callers classify by Outcome(), never by error presence. The returned
+// string is the assistant output ONLY, by legacy contract: programmatic
+// consumers holding *AcpxAdapter receive the full evidence Result (raw
+// stream, observed model, stop reason, usage, enforcement declaration)
+// through Run.
 // EjecutarPrompt and EjecutarRevision keep their Spanish names by
 // INTERFACE-CONFORMANCE EXCEPTION: cmd/sentinel and the review engine assert
 // these exact method names structurally (legacy AuditorAgente contract).
 // AGENTS.md's English rule governs new vocabulary; these identifiers are a
 // legacy protocol this adapter must speak to be substitutable.
 func (a *AcpxAdapter) EjecutarPrompt(prompt string) (string, error) {
-	res, err := a.Run(context.Background(), prompt)
+	return a.EjecutarPromptWithContext(context.Background(), prompt)
+}
+
+// EjecutarPromptWithContext runs the same arbitrary-prompt core as
+// EjecutarPrompt but honors the caller-supplied context instead of a
+// detached background one, so controller abort reaches the spawned acpx
+// tree through cancellation. Nil contexts fall back to Background. The
+// result contract matches EjecutarPrompt: assistant output only, with
+// non-success outcomes carried as *OutcomeError.
+func (a *AcpxAdapter) EjecutarPromptWithContext(ctx context.Context, prompt string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, err := a.Run(ctx, prompt)
 	if err != nil {
 		return "", err
 	}
@@ -63,6 +80,12 @@ func (a *AcpxAdapter) ReviewWithContext(ctx context.Context, prompt, sha string,
 	return a.outputOf(a.run(ctx, a.buildArgs(prompt, snapshot)))
 }
 
+// outputOf reduces a full Result to its assistant output for the legacy
+// string-returning review contracts. That reduction is the legacy contract,
+// not evidence loss: callers holding *AcpxAdapter get the complete Result —
+// raw stream, observed model, stop reason, usage, and enforcement
+// declaration — through Run, so nothing observed on the wire is discarded
+// before those consumers can retain it durably.
 func (a *AcpxAdapter) outputOf(res Result, err error) (string, error) {
 	if err != nil {
 		return "", err
@@ -116,8 +139,8 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 			Detail: fmt.Sprintf("acpx: launch %q failed: %v", filepath.Base(a.launcher[0]), err),
 		}
 	}
-	a.active.Store(tree)
-	defer a.active.Store(nil)
+	a.registerTree(tree)
+	defer a.unregisterTree(tree)
 
 	// Drop the parent's write end so the drain sees EOF once the child exits.
 	stdoutW.Close()
@@ -132,8 +155,21 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 		for {
 			n, readErr := stdoutR.Read(chunk)
 			if n > 0 {
-				raw.Write(chunk[:n])
 				total += int64(n)
+				retain := int64(n)
+				if a.maxOutputBytes > 0 && total > a.maxOutputBytes {
+					// Exact retention: never hold more than the configured
+					// budget in memory. The final chunk is truncated at the
+					// budget boundary while `total` keeps counting true bytes,
+					// so the breach verdict below still reflects everything
+					// the child actually produced.
+					if room := a.maxOutputBytes - (total - int64(n)); room < retain {
+						retain = room
+					}
+				}
+				if retain > 0 {
+					raw.Write(chunk[:retain])
+				}
 				if a.maxOutputBytes > 0 && total > a.maxOutputBytes {
 					// Budget breach: stop reading, break the pipe, and take
 					// the whole tree down. Closing the read end also makes
@@ -166,6 +202,7 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 		ObservedModel: stream.ObservedModel,
 		StopReason:    stream.StopReason,
 		UsageJSON:     stream.UsageJSON,
+		Enforcement:   a.enforcement,
 	}
 	a.recordObserved(stream.ObservedModel)
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -142,6 +143,39 @@ func TestNewAcpxRequiresAgentToken(t *testing.T) {
 	}
 	if _, err := NewAcpx(Config{Agent: "claude"}); err != nil {
 		t.Fatalf("NewAcpx(claude) unexpected error: %v", err)
+	}
+}
+
+// TestEnforcementDeclarationRetention pins that the validated C6 admission
+// verdict survives construction: an empty declaration normalizes to
+// EnforcementNone, and the declared value is retained verbatim and exposed
+// through EnforcementDeclaration for every later observer.
+func TestEnforcementDeclarationRetention(t *testing.T) {
+	a, err := NewAcpx(Config{Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.EnforcementDeclaration(); got != EnforcementNone {
+		t.Errorf("EnforcementDeclaration() = %q, want normalized %q", got, EnforcementNone)
+	}
+
+	a, err = NewAcpx(Config{Agent: "claude", Enforcement: EnforcementNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.EnforcementDeclaration(); got != EnforcementNone {
+		t.Errorf("EnforcementDeclaration() = %q, want %q", got, EnforcementNone)
+	}
+
+	if runtime.GOOS == "windows" {
+		return // claude-sandbox fails construction there by design (C6)
+	}
+	a, err = NewAcpx(Config{Agent: "claude", Enforcement: EnforcementClaudeSandbox})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.EnforcementDeclaration(); got != EnforcementClaudeSandbox {
+		t.Errorf("EnforcementDeclaration() = %q, want retained %q", got, EnforcementClaudeSandbox)
 	}
 }
 
@@ -283,6 +317,9 @@ func TestRunPipelineEndTurn(t *testing.T) {
 	}
 	if !strings.Contains(res.RawStream, `"agent_message_chunk"`) {
 		t.Errorf("RawStream must retain verbatim stdout bytes; got %q", res.RawStream)
+	}
+	if res.Enforcement != EnforcementNone {
+		t.Errorf("Enforcement = %q, want the normalized declaration on every result", res.Enforcement)
 	}
 	ident := a.EffectiveIdentity()
 	if ident.Model != "test-model" {
