@@ -6,13 +6,6 @@ land.
 
 ## P1 — Now (protect verification trust and core business)
 
-- [ ] **Stabilize daemon wire-parity tests under load**
-      (`TestServerErrorVocabularyParityOverWire`,
-      `TestRemoteClientRetryAndRecoverCarrySentinelIdentity`,
-      `TestServerRetryAndRecoverParityOverWire`) — intermittent failures in
-      full-suite runs; reproduced at base HEAD without local diffs; pass in
-      isolation and `-count=3`. An unreliable suite erodes every downstream
-      verification. No dependencies. Origin: 16 slice 3 verification.
 - [ ] **Admission upgrade via native sandboxes** — codex reviews admitted with
       `mode=read-only` stamped at session admission (verified write
       containment, new exit code 5 on denied ops); claude via project sandbox
@@ -65,6 +58,13 @@ land.
 
 ## Resolved
 
+- [x] **Stabilize daemon wire-parity tests under load** — fixed upstream by
+      `f2aa7a4 fix(execution): retry and recover cross-check durable truth
+      over stale bookkeeping`: control-op classification no longer trusts
+      in-memory bookkeeping over the durable stream, so the succeeded-run /
+      stale-revision races are gone. Independently verified with a flake loop
+      that went 3/5 red before the fix and 0/5 after. Origin: 16 slice 3
+      verification.
 - [x] **codex-acp `-32000 Authentication required`** — resolved by refreshing
       the ChatGPT login (`codex login`); adapter works end-to-end including
       gating probes and native-sandbox discovery. Origin: 16 environment note.
