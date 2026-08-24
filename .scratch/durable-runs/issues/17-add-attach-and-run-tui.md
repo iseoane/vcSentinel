@@ -10,7 +10,7 @@ the last seen cursor, and reaches an explicit terminal state.
 
 **Blocked by:** 16 (complete, merged at 4058a04).
 
-**Status:** in_progress
+**Status:** complete
 
 **Design contract (agreed analysis):**
 
@@ -232,10 +232,10 @@ Mechanism agreed; no contradiction. Fix budget exhausted (2/2 rounds,
 **JUDGMENT: ESCALATED ⚠️** — escalated to the operator with the residual
 recorded. Practical blast radius: narrow (requires an unclassified transport
 failure exactly during a frozen-session action; recovery is one manual
-`r` refresh). Recommended disposition awaiting operator decision: a
-two-string classifier extension plus table rows, applied OUTSIDE the
-judgment-day budget as ordinary tracked work, or acceptance as a documented
-known limitation.
+`r` refresh). RESOLVED by operator decision (option 1): the classifier extension landed
+as ordinary tracked work after escalation (fix commit classifying both
+surfaces + table rows), closing the residual outside the judgment-day
+budget with full regression coverage.
 
 ## Evidence — slice 3 (goldens, harness, closure)
 
