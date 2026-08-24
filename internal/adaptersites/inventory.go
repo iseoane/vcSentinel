@@ -123,6 +123,10 @@ func Sites() []Site {
 		{Path: "cmd/sentinel/review_transport.go", Symbol: "nuevoDurableReviewTransport/applyDurableCutover", Line: 0, Marker: "",
 			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
+		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---
+		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Run", Line: 166, Marker: "exec.Command",
+			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16 slice 1, not yet wired into factory/config): drives the acpx CLI as a child process exactly like CLIAdapter drives agent binaries; admission binding happens at the caller, not here."},
+
 		// --- internal/agentadapter ----------------------------------------
 		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Line: 32, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Fallback chain over prompt adapters; whichever member answers becomes the caller's responsibility to have admitted upstream."},
