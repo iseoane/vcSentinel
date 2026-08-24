@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -18,6 +19,62 @@ import (
 // durableRunPolicyID identifies every review-side durable run admitted by
 // this wiring.
 const durableRunPolicyID = "policy:review"
+
+// reviewRunAnnouncer surfaces each durable review run identity the moment the
+// shared transport admits it, so an operator can immediately run
+// `sentinel runs attach --run <id> --follow` while the review is still
+// executing. It belongs to the `sentinel review` command boundary only: the
+// gate cutover keeps its silent child sink and PR branch analysis keeps its
+// unwired factory, so neither inherits this output. Parallel dimensions admit
+// runs from different goroutines, so every access is mutex-guarded, and a
+// repeated observation of the same identity prints exactly once.
+type reviewRunAnnouncer struct {
+	mu   sync.Mutex
+	seen map[string]bool
+	out  io.Writer
+}
+
+// nuevoReviewRunAnnouncer builds an announcer over out. Production passes
+// os.Stderr: the JSON-safe channel, so `sentinel review --json` consumers
+// reading stdout keep parsing valid payloads while live lines stream by.
+func nuevoReviewRunAnnouncer(out io.Writer) *reviewRunAnnouncer {
+	return &reviewRunAnnouncer{seen: make(map[string]bool), out: out}
+}
+
+// observe is the WithRunObserver callback: invoked synchronously after each
+// successful Start, before any completion can exist. The line carries the
+// canonical attach command so the ID is immediately actionable.
+func (a *reviewRunAnnouncer) observe(runID string) {
+	if runID == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.seen[runID] {
+		return
+	}
+	a.seen[runID] = true
+	fmt.Fprintf(a.out, "vas-sentinel: durable review run admitted %s; follow it live with `sentinel runs attach --run %s --follow`\n", runID, runID)
+}
+
+// durableReviewTransportConAnuncios builds the engine-side review transport
+// `sentinel review` uses, wiring the admission-time announcer at this command
+// boundary through the shared construction path's extraOptions seam. A
+// missing git common dir degrades to the same always-failing honest transport
+// as durableReviewTransport: each dimension surfaces it as unavailable
+// evidence instead of a silent direct-call fallback.
+func durableReviewTransportConAnuncios(cfg config.Config, worktree, sha string, paths []string, out io.Writer) review.ReviewTransport {
+	announcer := nuevoReviewRunAnnouncer(out)
+	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
+		store.RunPolicy{ID: durableRunPolicyID},
+		[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(announcer.observe)})
+	if transport == nil {
+		return func(string, string, string, review.AuditorAgente) (string, string, error) {
+			return "", "", fmt.Errorf("durable review transport unavailable for %s: no git common dir", worktree)
+		}
+	}
+	return cerrarTransporteRevision(transport)
+}
 
 // reviewChildSink records the durable run identity of every review-side run
 // actually admitted during one gate execution (ticket 11 slice 3). Review

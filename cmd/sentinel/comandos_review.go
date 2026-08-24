@@ -134,7 +134,11 @@ func ejecutarReview(worktree string, args []string) {
 			PerfilOverride:    flags.profile,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree),
 			RutasContexto:     archivos,
-			ReviewTransport:   durableReviewTransport(cfg, worktree, sha, archivos),
+			// The announcer lives at this command boundary only: each durable
+			// review run is announced on stderr (the JSON-safe channel) the
+			// moment it is admitted, with its `runs attach --follow` command,
+			// so an operator can attach while the review is still executing.
+			ReviewTransport: durableReviewTransportConAnuncios(cfg, worktree, sha, archivos, os.Stderr),
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},
