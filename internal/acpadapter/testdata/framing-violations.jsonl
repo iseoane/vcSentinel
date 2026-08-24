@@ -1,0 +1,6 @@
+this upstream line is not JSON at all
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"configOptions":[{"id":"model","currentValue":"kimi-k2"}]}}
+{"jsonrpc":"2.0","id":9,"method":"session/prompt","params":{"sessionId":"ses_frame1","prompt":[{"type":"text","text":"Say STILL_OK."}]}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_frame1","update":{"sessionUpdate":"agent_message_chunk","messageId":"msg_3","content":{"type":"text","text":"STILL_OK"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_frame1_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding_padding","update":{"sessionUpdate":"agent_message_chunk","messageId":"msg_3","content":{"type":"text","text":"IGNORED_OVERSIZE"}}}}
+{"jsonrpc":"2.0","id":9,"result":{"stopReason":"end_turn"}}
