@@ -1,0 +1,8 @@
+🔎 Run run-tui-test
+   state succeeded (sequence 6, revision 6)
+   🏁 outcome success
+   invocations 1, responses 0
+   • #1 inv-success-1 decision=start outcome=success output-hash=present
+🏁 run reached a terminal state — press q to exit
+
+q quit · r refresh

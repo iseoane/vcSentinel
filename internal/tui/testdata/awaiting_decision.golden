@@ -1,0 +1,7 @@
+🔎 Run run-tui-test
+   state awaiting_decision (sequence 7, revision 7)
+   ⏳ still in flight
+   invocations 1, responses 1
+   • #1 inv-awaiting-1 decision=start outcome=-
+   • response → invocation=inv-awaiting-1 hash=hash:awaited-answer
+q quit · r refresh · a abort · e respond

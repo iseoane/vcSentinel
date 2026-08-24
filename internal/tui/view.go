@@ -126,15 +126,18 @@ func (m Model) statusBand() []string {
 	return lines
 }
 
-// helpFooter lists the keys that currently do something; y appears only when
-// the projection says retryable, so the footer never advertises a dead key.
+// helpFooter lists the keys that currently do something: r/a/e are inert
+// while the session is reconnecting or lost contact (handleKey refuses them
+// so a mid-backoff action cannot schedule a competing chain), and y appears
+// only when the projection says retryable — live through terminal freeze by
+// design — so the footer never advertises a dead key.
 func (m Model) helpFooter() string {
 	keys := []string{"q quit", "r refresh"}
-	if !m.frozen {
+	if !m.frozen && m.conn == stateAttached {
 		keys = append(keys, "a abort", "e respond")
-		if m.view.State.Retryable() {
-			keys = append(keys, "y retry")
-		}
+	}
+	if m.view.State.Retryable() {
+		keys = append(keys, "y retry")
 	}
 	return strings.Join(keys, " · ")
 }
