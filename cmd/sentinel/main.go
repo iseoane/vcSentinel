@@ -52,10 +52,26 @@ func main() {
 
 	switch subcomando {
 	case "--version", "-v", "version":
+		if contieneFlagAyuda(os.Args[2:]) {
+			escribirAyudaComando(os.Stdout, "version")
+			return
+		}
 		fmt.Printf("📦 VAS Sentinel versión: %s\n", version)
 		return
-	case "--help", "-h", "help":
+	case "--help", "-h":
 		imprimirAyuda()
+		return
+	case "help":
+		manejarComandoHelp(os.Args[2:])
+		return
+	}
+
+	// Intercepción central de -h/--help (ticket 15): antes de cualquier
+	// validación, inicialización o efecto, cada comando y subcomando responde
+	// con su ayuda dedicada por stdout y exit 0. Esto elimina también el bug
+	// de 'sentinel pr --help', que caía al passthrough de gh ejecutando la
+	// limpieza de fichas como efecto lateral.
+	if gestionarAyuda(os.Stdout, os.Stderr, subcomando, os.Args[2:]) {
 		return
 	}
 
