@@ -6,8 +6,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// snapshotMu serializes in-process snapshot creation and purging. Ticket 14
+// diagnosis: the flaky "llamada N devolvió una ruta distinta" failures were a
+// production race, not a test defect. Concurrent CrearSnapshot calls each ran
+// their own "git worktree add" into a private temp path and the winner then
+// ran "git worktree repair" while sibling calls were still mutating the same
+// <git-common-dir>/worktrees administrative area; git does not lock that area
+// across commands, so repair intermittently failed with exit status 128 and
+// one caller returned an error (empty path) where every caller must receive
+// the same deterministic destination. Serializing the whole create-or-reuse
+// section removes the intra-process race deterministically without loosening
+// any assertion; cross-process safety is unchanged and still relies on the
+// atomic temp-checkout + rename publication below.
+var snapshotMu sync.Mutex
 
 // ArbolDe devuelve el tree OID de una revisión.
 func ArbolDe(revision string) (string, error) {
@@ -55,6 +70,11 @@ func directorioSnapshots() (string, error) {
 // rama, sin ref que lo referencie) con "git commit-tree": ese commit no
 // aporta historia, solo sirve de punto de entrada válido para el checkout.
 func CrearSnapshot(treeOID string) (string, error) {
+	// See snapshotMu: concurrent creation inside one process raced the git
+	// worktree administrative area and made repair fail intermittently.
+	snapshotMu.Lock()
+	defer snapshotMu.Unlock()
+
 	snapshots, err := directorioSnapshots()
 	if err != nil {
 		return "", err
@@ -108,6 +128,13 @@ func CrearSnapshot(treeOID string) (string, error) {
 // (se regeneran con CrearSnapshot), así que se fuerza la eliminación si falla
 // la normal.
 func PurgarSnapshots(antiguedad time.Duration) error {
+	// The purge removes worktrees from the same administrative area the
+	// create path mutates, so it shares snapshotMu: a purge running while
+	// CrearSnapshot renames or repairs could otherwise make either git
+	// command fail on transient administrative state.
+	snapshotMu.Lock()
+	defer snapshotMu.Unlock()
+
 	snapshots, err := directorioSnapshots()
 	if err != nil {
 		return err
