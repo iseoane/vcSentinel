@@ -61,7 +61,7 @@ func ReadFrame(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-// The four repository-host operations plus the lifecycle operation. The set
+// The six repository-host operations plus the lifecycle operation. The set
 // is closed on purpose: adding an op is a protocol change and must keep the
 // server dispatch exhaustive.
 const (
@@ -69,6 +69,14 @@ const (
 	OpInspect   = "inspect"
 	OpSubscribe = "subscribe"
 	OpApply     = "apply"
+	// OpRecover and OpRetry carry the two relaunch operations. Like Start
+	// and Apply they mutate run state, so the server dispatch routes them
+	// under the same admission mutex. They were added WITHOUT bumping
+	// protocol_revision deliberately: old peers that do not know them
+	// receive a deterministic unknown-operation wire error instead of a
+	// handshake rejection, which is accepted additive evolution.
+	OpRecover = "recover"
+	OpRetry   = "retry"
 	// OpShutdown triggers the graceful server shutdown: bounded drain of
 	// in-flight dispatch operations, explicit orphan settlement for
 	// still-active runs, then an ok answer only after that sequence

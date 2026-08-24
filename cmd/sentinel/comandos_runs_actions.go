@@ -25,7 +25,7 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 		return runExitUsage
 	}
 	if strings.TrimSpace(options.prompt) == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs start --prompt <text> [--policy-id <id>]")
+		fmt.Fprintln(out, "❌ "+usoRunsStart)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -72,7 +72,7 @@ func executeRunsRespond(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" || strings.TrimSpace(options.text) == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs respond --run <id> --text <answer>")
+		fmt.Fprintln(out, "❌ "+usoRunsRespond)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -145,7 +145,7 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs abort --run <id>")
+		fmt.Fprintln(out, "❌ "+usoRunsAbort)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -191,7 +191,7 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs retry --run <id> [--expected-revision N]")
+		fmt.Fprintln(out, "❌ "+usoRunsRetry)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -199,9 +199,9 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	// The retry core stays a direct controller action this slice (the wire
-	// port does not carry retry yet); only the idempotent-head inspection
-	// routes through the daemon-preferred host.
+	// Retry routes through the daemon-preferred host end to end: the wire
+	// port carries the retry op, so a running daemon owns its admission and
+	// the direct-controller fallback only serves the no-daemon case.
 	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
 	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
@@ -209,7 +209,11 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	handle, retryErr := controller.Retry(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
+	handle, retryErr := host.Retry(context.Background(), execution.RetryRequest{
+		RunID:            agentrun.Identity(options.runID),
+		ExpectedRevision: options.expectedRevision,
+		AuthContext:      execution.AuthContext{Principal: principal},
+	})
 	if retryErr != nil {
 		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), retryErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
@@ -252,7 +256,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 	// invents, or rewrites event bytes.
 	if options.repairSet {
 		if strings.TrimSpace(options.repairID) == "" {
-			fmt.Fprintln(out, "❌ Usage: sentinel runs recover --repair <id>")
+			fmt.Fprintln(out, "❌ "+usoRunsRecoverRepair)
 			return runExitUsage
 		}
 		if options.runID != "" {
@@ -283,9 +287,9 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	// The recover core stays a direct controller action this slice (the wire
-	// port does not carry recover yet); only the idempotent-head inspection
-	// routes through the daemon-preferred host.
+	// Recover routes through the daemon-preferred host end to end: the wire
+	// port carries the recover op, so a running daemon owns its admission
+	// and the direct-controller fallback only serves the no-daemon case.
 	host, closeRemote := runsHostWithDaemonPreference(worktree, controller)
 	defer closeRemote()
 	principal, err := resolveRunsPrincipal()
@@ -293,7 +297,11 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	handle, recoverErr := controller.Recover(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
+	handle, recoverErr := host.Recover(context.Background(), execution.RecoverRequest{
+		RunID:            agentrun.Identity(options.runID),
+		ExpectedRevision: options.expectedRevision,
+		AuthContext:      execution.AuthContext{Principal: principal},
+	})
 	if recoverErr != nil {
 		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), recoverErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
@@ -365,7 +373,7 @@ func executeRunsVerify(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs verify --run <id>")
+		fmt.Fprintln(out, "❌ "+usoRunsVerify)
 		return runExitUsage
 	}
 	_, controller, err := buildReadonlyController(worktree)

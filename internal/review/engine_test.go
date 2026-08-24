@@ -60,6 +60,23 @@ func bundlesPrueba(dims ...string) []ReviewBundle {
 	return []ReviewBundle{{Name: "test", Dimensions: dims, Priority: PriorityRequired, Cost: 1}}
 }
 
+// transporteDirecto reproduces the pre-cutover direct restricted-reviewer
+// call as a ReviewTransport, so refutation and dimension fixtures keep
+// driving plain agent doubles without the durable stack. It returns an empty
+// invocation identity, exactly like the removed nil-transport branch did.
+// The optional paths mirror OpcionesAuditoria.RutasContexto for fixtures
+// whose refuter double inspects the reviewer's allowed path list.
+func transporteDirecto(sha string, rutas ...string) ReviewTransport {
+	return func(_ string, _ string, prompt string, agente AuditorAgente) (string, string, error) {
+		revisor, ok := agente.(auditorConHerramientasRestringidas)
+		if !ok {
+			return "", "", ErrRestrictedRequired
+		}
+		salida, err := revisor.EjecutarRevision(prompt, sha, rutas)
+		return salida, "", err
+	}
+}
+
 func TestAuditarCommitTodoOk(t *testing.T) {
 	fabrica, _ := fabricaFija(nil)
 	resultado := AuditarCommit(fabrica, 2, OpcionesAuditoria{
@@ -380,6 +397,7 @@ func TestAuditarCommitRefutesEachCriticalFindingOnce(t *testing.T) {
 	}
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport: transporteDirecto("abc12345"),
 		LeerContenidoSnapshot: func(sha, file string) (string, error) {
 			if sha != "abc12345" || file != "a.go" && file != "b.go" {
 				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
@@ -414,6 +432,7 @@ func TestAuditarCommitRefutedFindingPreservesV2Lifecycle(t *testing.T) {
 	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"bad() is guarded by the final implementation","sha":"abc12345","file":"a.go","evidence":"bad() guarded","line_start":1,"line_end":1}`})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport: transporteDirecto("abc12345"),
 		LeerContenidoSnapshot: func(sha, file string) (string, error) {
 			if sha != "abc12345" || file != "a.go" {
 				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
@@ -781,7 +800,7 @@ func TestAuditarCommitInvalidRefuterResponseKeepsCriticalBlocking(t *testing.T) 
 		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,
 	})
 	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`not json`})
-	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador, ReviewTransport: transporteDirecto("abc12345")})
 
 	if fake.llamadas != 1 || refutador.llamadas != 1 || resultado.Veredicto != VerdictBlock {
 		t.Fatalf("auditor=%d refuter=%d verdict=%s", fake.llamadas, refutador.llamadas, resultado.Veredicto)
@@ -799,6 +818,7 @@ func TestAuditarCommitRefuterEvidenceMustMatchImmutableSnapshot(t *testing.T) {
 	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","sha":"abc12345","file":"a.go","evidence":"missing proof","line_start":1,"line_end":1}`})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport: transporteDirecto("abc12345"),
 		LeerContenidoSnapshot: func(sha, file string) (string, error) {
 			if sha != "abc12345" || file != "a.go" {
 				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
@@ -823,6 +843,7 @@ func TestAuditarCommitInjectionShapedFindingRemainsBlocking(t *testing.T) {
 	fabricaRefutador, refutador := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"not reproducible","sha":"abc12345","file":"a.go","evidence":"missing proof","line_start":1,"line_end":1}`})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport: transporteDirecto("abc12345"),
 		LeerContenidoSnapshot: func(sha, file string) (string, error) {
 			if sha != "abc12345" || file != "a.go" {
 				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
@@ -858,6 +879,7 @@ func TestAuditarCommitRefuterPromptEnablesSHAEcho(t *testing.T) {
 	})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport: transporteDirecto(sha),
 		LeerContenidoSnapshot: func(gotSHA, file string) (string, error) {
 			if gotSHA != sha || file != "a.go" {
 				t.Fatalf("snapshot read sha=%q file=%q", gotSHA, file)
@@ -886,12 +908,12 @@ func TestRefutedLegacyCriticalWithUnresolvedV2CriticalRemainsBlocking(t *testing
 		},
 	}}
 
-	refutarHallazgosCriticos(dimensiones, fabricaRefutador, "abc12345", nil, func(sha, file string) (string, error) {
+	refutarHallazgosCriticos(dimensiones, fabricaRefutador, "abc12345", func(sha, file string) (string, error) {
 		if sha != "abc12345" || file != "a.go" {
 			t.Fatalf("snapshot read sha=%q file=%q", sha, file)
 		}
 		return "trusted proof", nil
-	})
+	}, transporteDirecto("abc12345"))
 
 	if got := dimensiones[0].Resultado.Verdict; got != VerdictBlock {
 		t.Fatalf("verdict=%q, expected unresolved v2 CRITICAL to retain block", got)
@@ -907,6 +929,7 @@ func TestAuditarCommitRefuterEvidenceMustCoverFindingLine(t *testing.T) {
 	})
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport: transporteDirecto("abc12345"),
 		LeerContenidoSnapshot: func(sha, file string) (string, error) {
 			if sha != "abc12345" || file != "a.go" {
 				t.Fatalf("snapshot read sha=%q file=%q", sha, file)
@@ -1044,6 +1067,7 @@ func TestAuditarCommitInvalidRefutationEvidenceRetainsBlock(t *testing.T) {
 
 			resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 				SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+				ReviewTransport:       transporteDirecto(sha),
 				LeerContenidoSnapshot: reader,
 			})
 			if resultado.Veredicto != VerdictBlock || resultado.Dims[0].Resultado.Findings[0].Status != StatusConfirmed {
@@ -1079,7 +1103,7 @@ func TestAuditarCommitRefuterReadsAuditedCommitContent(t *testing.T) {
 	fabricaRefutador := func() (AuditorAgente, string, error) {
 		return &agenteFake{respuestas: []string{fmt.Sprintf(`{"refuted":true,"reason":"the committed implementation is safe","sha":%q,"file":"a.go","evidence":"const immutableProof = true","line_start":1,"line_end":1}`, sha)}}, "cheap", nil
 	}
-	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador, ReviewTransport: transporteDirecto(sha)})
 	if resultado.Veredicto != VerdictWarn || resultado.Dims[0].Resultado.Findings[0].Status != StatusRefuted {
 		t.Fatalf("result=%+v, expected committed evidence to refute finding", resultado)
 	}

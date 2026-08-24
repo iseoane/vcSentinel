@@ -14,15 +14,16 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 )
 
-// Server serves the four repository-host operations over framed connections
+// Server serves the six repository-host operations over framed connections
 // against one execution.Controller. It is transport-agnostic: Serve accepts
 // any listener produced by Listen.
 //
-// Serialization contract: Start and Apply run under one admission mutex so
-// two control decisions can never interleave; Inspect and Subscribe serve
-// concurrently because they only read durable state. Apply additionally owns
-// replay detection of idempotency identities (mirroring InProcessHost), so a
-// replayed ActionID fails with ErrDuplicateAction even under concurrency.
+// Serialization contract: Start, Apply, Recover, and Retry run under one
+// admission mutex so two state-mutating control decisions can never
+// interleave; Inspect and Subscribe serve concurrently because they only
+// read durable state. Apply additionally owns replay detection of
+// idempotency identities (mirroring InProcessHost), so a replayed ActionID
+// fails with ErrDuplicateAction even under concurrency.
 // Cross-restart persistence of that replay table arrives with the daemon
 // lifecycle slice; for now it lives for this process lifetime, which is
 // strictly stronger than per-command InProcessHost semantics.
@@ -334,6 +335,10 @@ func (s *Server) dispatch(ctx context.Context, frame []byte) (encoded []byte, fa
 		result, err = s.handleSubscribe(ctx, request.Body)
 	case OpApply:
 		result, err = s.handleApply(ctx, request.Body)
+	case OpRecover:
+		result, err = s.handleRecover(ctx, request.Body)
+	case OpRetry:
+		result, err = s.handleRetry(ctx, request.Body)
 	case OpShutdown:
 		result, err = s.handleShutdown(ctx, request.Body)
 	default:
@@ -442,6 +447,47 @@ func (s *Server) handleApply(ctx context.Context, body []byte) (any, error) {
 	}
 	s.actionIDs[key] = struct{}{}
 	return s.controller.Apply(ctx, request.RunID, request.Action)
+}
+
+// handleRecover resumes one run through explicit operator recovery under the
+// admission mutex. Recovery mutates run state — it may append an
+// orphaned-cancellation settlement or relaunch a retryable head — so it can
+// never interleave with Start, Apply, or Retry. AuthContext presence is
+// enforced again here like every op: defense in depth at the trust boundary,
+// since any local process that can reach the transport may bypass our own
+// CLI. The envelope fields map positionally onto the controller seam:
+// RunID names the run and ExpectedRevision optionally pins its durable
+// stream head (zero skips the check, mirroring Controller.Recover).
+func (s *Server) handleRecover(ctx context.Context, body []byte) (any, error) {
+	var request execution.RecoverRequest
+	if err := decodeBody(body, &request); err != nil {
+		return nil, err
+	}
+	if request.AuthContext.Principal == "" {
+		return nil, execution.ErrMissingPrincipal
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	return s.controller.Recover(ctx, request.RunID, request.ExpectedRevision)
+}
+
+// handleRetry relaunches one retryable run under the admission mutex, for
+// the same state-mutating reason as Recover: the relaunch appends a retry
+// decision event and registers a live run. AuthContext presence is enforced
+// again here like every op. The envelope fields map positionally onto the
+// controller seam: RunID names the run and ExpectedRevision optionally pins
+// its durable stream head (zero skips the check, mirroring Controller.Retry).
+func (s *Server) handleRetry(ctx context.Context, body []byte) (any, error) {
+	var request execution.RetryRequest
+	if err := decodeBody(body, &request); err != nil {
+		return nil, err
+	}
+	if request.AuthContext.Principal == "" {
+		return nil, execution.ErrMissingPrincipal
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	return s.controller.Retry(ctx, request.RunID, request.ExpectedRevision)
 }
 
 // decodeBody unmarshals one operation body. Decoding failure is marked

@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -57,6 +59,11 @@ func CodigoSalida(estado string) int {
 type Resultado struct {
 	Estado   string
 	Mensajes []string
+	// Err carries a typed error produced by the durable orchestration when a
+	// plan, admission, or settlement seam fails (R9 slice 1). Facade text
+	// travels in Estado/Mensajes; Err exists for callers that need the typed
+	// cause.
+	Err error
 }
 
 // Opciones configura una ejecución de gate. Las costuras EjecutarValidacion y
@@ -88,40 +95,51 @@ type Opciones struct {
 	FabricaRefutador review.FabricaRefutador
 	Parallel         int
 	OpcionesRevision review.OpcionesAuditoria
+
+	// Stage is the --stage lifecycle context embedded in the durable root
+	// run request. cmd/sentinel's facade messages also read the stage value.
+	Stage string
+	// CandidateSHA is the candidate HEAD commit SHA embedded in the durable
+	// root run request.
+	CandidateSHA string
+	// DurableStore backs the root gate run and every validation-job
+	// settlement. A nil store fails honestly as infrastructure before any
+	// phase executes; cmd/sentinel wires it through applyDurableCutover over
+	// the repository common-dir store.
+	DurableStore *store.Store
+	// DurableReviewTransportFactory constructs the review-side transport used
+	// by the durable orchestration's review phase. It receives the gate's
+	// ROOT run ID so production wiring can thread the parent linkage into the
+	// review-side durable runs (review runs are constructed at a different
+	// site — inside the factory — and cannot be stamped by the gate
+	// orchestrator itself). Production wiring must be the same construction
+	// path `sentinel review` uses today (durableReviewTransport in
+	// cmd/sentinel), so reviewer invocations keep inheriting admission, owned
+	// process trees, and cancellation; tests inject substitutes and
+	// invocation counters here. When nil, the review phase falls back to
+	// OpcionesRevision.ReviewTransport (engine-level injection seam): there
+	// is no second review execution path.
+	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
+	// DurableReviewChildren reports the review-side child run identities that
+	// were ACTUALLY admitted during the review phase (ticket 11 slice 3).
+	// Review candidate identities are process-salted inside the shared
+	// durable transport, so the orchestrator cannot derive them from the
+	// plan: production wiring records every admission through a
+	// concurrency-safe observer sink and hands the drain function here. The
+	// orchestrator consumes it when composing the root settlement's
+	// "|children=" enumeration so the enumerated set equals the persisted
+	// ParentRunID scan even though neither side derives the IDs
+	// deterministically. When nil, only planned validation jobs (and any
+	// resolvable planned review job) are enumerated.
+	DurableReviewChildren func() []agentrun.Identity
 }
 
-// EjecutarGate aplica el orden fijo de T1.7: valida primero y, SOLO si la
-// validación pasa, ejecuta la revisión semántica.
-// Si la validación falla, ni siquiera se llama a FabricaAuditor: la revisión
-// semántica ni se intenta (regla central de la ficha, verificada en los
-// tests con un contador de invocaciones).
-func EjecutarGate(opts Opciones) Resultado {
-	ejecutarValidacion := opts.EjecutarValidacion
-	if ejecutarValidacion == nil {
-		ejecutarValidacion = validation.EjecutarPerfilSobreCandidato
-	}
-
-	runs, err := ejecutarValidacion(opts.Perfil, opts.RutasCambiadas, opts.OpcionesValidacion)
-	if err != nil {
-		// Un fallo al ORQUESTAR la validación (candidato obsoleto, snapshot no
-		// creado, capability mal referenciada en el perfil...) es
-		// infraestructura, no un hallazgo del código: nunca se inventa un
-		// VALIDATION_FAILED para algo que ni llegó a ejecutarse.
-		return Resultado{
-			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: []string{fmt.Sprintf("No se pudo ejecutar la validación: %v", err)},
-		}
-	}
-
-	hallazgos := validation.Hallazgos(runs, opts.OpcionesValidacion.Cfg.Validation.Capabilities)
-	if len(hallazgos) > 0 {
-		return Resultado{Estado: EstadoValidationFailed, Mensajes: mensajesValidacionFallida(hallazgos)}
-	}
-
-	opcionesRevision := opts.OpcionesRevision
-	opcionesRevision.FabricaRefutador = opts.FabricaRefutador
-	resultado := review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opcionesRevision)
-	return traducirVeredicto(resultado)
+// mensajeValidacionNoEjecutada is the single facade text for a validation
+// ORCHESTRATION failure (infrastructure, never a code finding). The durable
+// orchestration renders it so equivalent inputs keep the historical facade
+// text byte-identical.
+func mensajeValidacionNoEjecutada(err error) string {
+	return fmt.Sprintf("No se pudo ejecutar la validación: %v", err)
 }
 
 // mensajesValidacionFallida redacta el detalle de qué comandos fallaron y su

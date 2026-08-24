@@ -219,13 +219,14 @@ func TestServerErrorVocabularyParityOverWire(t *testing.T) {
 	})
 }
 
-// TestStaleRevisionVocabularyLocallyAndOnTheCodec pins the one registry
-// entry no current operation can raise over the four wired ops. The local
-// vocabulary is produced by driving controller.Retry directly with a wrong
-// expected revision; the codec half proves the code round-trips so a future
-// retry op inherits remote identity for free. The same holds for
-// daemon-owned failures, which never traverse this transport (a live owner
-// refuses binds before any connection exists).
+// TestStaleRevisionVocabularyLocallyAndOnTheCodec pins the stale-revision
+// registry entry end to end: driving controller.Retry directly with a wrong
+// expected revision produces the local identity, and the codec half proves
+// the code round-trips so the retry op inherits remote identity for free
+// (the full remote path is proven against the real socket in
+// server_recover_retry_test.go). The same holds for daemon-owned failures,
+// which never traverse this transport (a live owner refuses binds before any
+// connection exists).
 func TestStaleRevisionVocabularyLocallyAndOnTheCodec(t *testing.T) {
 	controller := newTestController(t, immediateAdapter("done"))
 	host := execution.NewInProcessHost(controller)

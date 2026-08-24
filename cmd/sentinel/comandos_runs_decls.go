@@ -58,22 +58,31 @@ Subcommands:
   daemon   start|status|stop
            manage the repository-local foreground daemon (no flags accepted)
            start claims the repository, settles auto-recoverable interrupted
-            runs, serves the local transport, and blocks until SIGINT/SIGTERM
-            or a remote stop; exits 0 on a clean stop, 4 when another live
-            daemon already owns the repository (its pid is named), 5 otherwise
-            status prints the live owner pid/started-at/host/transport/address;
-            exits 2 with a deterministic message when no live daemon is running
-            for this repository (the runs not-found vocabulary: the addressed
-            thing does not exist), and 5 when endpoint.json exists but is
-            unreadable or incomplete — corruption is never silent
-            stop asks the running daemon to shut down gracefully and prints its
-            orphaned-runs summary; a missing or unreachable endpoint follows
-            the same not-running contract as status (exit 2)
+           runs, serves the local transport, and blocks until SIGINT/SIGTERM
+           or a remote stop; exits 0 on a clean stop, 4 when another live
+           daemon already owns the repository (its pid is named), 5 otherwise
+           status prints the live owner pid/started-at/host/transport/address;
+           exits 2 with a deterministic message when no live daemon is running
+           for this repository (the runs not-found vocabulary: the addressed
+           thing does not exist), and 5 when endpoint.json exists but is
+           unreadable or incomplete — corruption is never silent
+           stop asks the running daemon to shut down gracefully and prints its
+           orphaned-runs summary; a missing or unreachable endpoint follows
+           the same not-running contract as status (exit 2)
+  prune    --older-than <duration> [--json]
+           explicit operator maintenance: removes ONLY terminal execution
+           records whose last event predates the cutoff and that no review
+           provenance references; non-terminal, corrupt, orphaned-canceled,
+           provenance-referenced, and parent-of-surviving records are kept
+           with an explicit reason. Nothing purges automatically.
 
 Exit codes:
   0 success (including idempotent repeats)   3 stale revision
   1 usage error                              4 invalid state for the action
   2 run not found                            5 infrastructure or corruption
+
+Each subcommand accepts ONLY the flags listed above; any other flag is
+rejected with a usage error (exit 1) instead of being ignored silently.
 
 See docs/runs-cli.md for JSON shapes and terminal-state mapping.
 `
@@ -124,6 +133,11 @@ type runOptions struct {
 	// instead of letting value zero pass silently.
 	expectedRevisionSet bool
 	limit               int
+	// olderThan records the raw --older-than value of `runs prune`;
+	// olderThanSet keeps an empty value an explicit usage error instead of
+	// degrading into a silent default.
+	olderThan    string
+	olderThanSet bool
 }
 
 // promptRunAdapter executes arbitrary operator prompts through the configured

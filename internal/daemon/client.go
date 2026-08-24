@@ -144,6 +144,28 @@ func (h *RemoteHost) Apply(ctx context.Context, request execution.ApplyRequest) 
 	return result, h.call(ctx, OpApply, request, &result)
 }
 
+// Recover resumes one run from durable evidence remotely. The envelope
+// travels unchanged; ExpectedRevision pins the durable stream head
+// server-side exactly like Controller.Recover. Sentinel identity survives
+// the wire: failures decode into *RemoteError whose Unwrap resolves the same
+// package sentinel the server-side failure carried (for example
+// ErrRunNotRecoverable on a final outcome).
+func (h *RemoteHost) Recover(ctx context.Context, request execution.RecoverRequest) (execution.Handle, error) {
+	var handle execution.Handle
+	return handle, h.call(ctx, OpRecover, request, &handle)
+}
+
+// Retry relaunches a retryable run remotely inside its original logical job
+// and run identity. The envelope travels unchanged; ExpectedRevision pins
+// the durable stream head server-side exactly like Controller.Retry.
+// Sentinel identity survives the wire: failures decode into *RemoteError
+// whose Unwrap resolves the same package sentinel the server-side failure
+// carried (for example ErrStaleRevision under a competing writer).
+func (h *RemoteHost) Retry(ctx context.Context, request execution.RetryRequest) (execution.Handle, error) {
+	var handle execution.Handle
+	return handle, h.call(ctx, OpRetry, request, &handle)
+}
+
 // Shutdown requests the graceful lifecycle operation remotely and returns the
 // orphaned-runs summary the server produced after its bounded drain. The ok
 // answer is produced only after the graceful sequence completed, so a nil

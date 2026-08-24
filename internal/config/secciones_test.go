@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -192,25 +193,36 @@ func TestTimeoutInvalidoSeIgnora(t *testing.T) {
 	}
 }
 
-func TestReviewDurableRunsFlag(t *testing.T) {
+// TestRemovedDurableRunsKeysFailStrictly pins the ticket 13 (R11) removal:
+// review.durable_runs and the whole gate section no longer exist in the
+// schema, and a yaml that still carries them fails fast through the existing
+// strict-load rules with an explicit unknown-key error naming the removed
+// key — never silently ignored, in global or project scope alike.
+func TestRemovedDurableRunsKeysFailStrictly(t *testing.T) {
 	tests := []struct {
-		name string
-		yaml string
-		want bool
+		name   string
+		global string
+		yaml   string
+		wantKy string
 	}{
-		{name: "default false when absent", yaml: "", want: false},
-		{name: "explicit true enables durable runs", yaml: "review:\n  durable_runs: true\n", want: true},
-		{name: "explicit false keeps legacy", yaml: "review:\n  durable_runs: false\n", want: false},
+		{name: "project review.durable_runs is rejected", yaml: "review:\n  durable_runs: true\n", wantKy: "durable_runs"},
+		{name: "project gate.durable_runs is rejected", yaml: "gate:\n  durable_runs: false\n", wantKy: "gate"},
+		{name: "global review.durable_runs is rejected", global: "review:\n  durable_runs: true\n", wantKy: "durable_runs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
+			escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), tt.global)
 			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
-			cfg := CargarConfiguracionLocal(worktree)
-			if cfg.Review.DurableRuns != tt.want {
-				t.Fatalf("DurableRuns = %v, want %v", cfg.Review.DurableRuns, tt.want)
+
+			_, err := CargarConfiguracionLocalEstricta(worktree)
+			if err == nil {
+				t.Fatalf("config with removed key %q loaded without error; expected a strict unknown-key failure", tt.wantKy)
+			}
+			if !strings.Contains(err.Error(), tt.wantKy) {
+				t.Fatalf("error = %v, want it to name the removed key %q", err, tt.wantKy)
 			}
 		})
 	}

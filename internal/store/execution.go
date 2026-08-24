@@ -24,13 +24,20 @@ var ErrRequestCorrupt = errors.New("store: corrupt execution request")
 
 // RunPolicy identifies the policy used to create a durable execution.
 // Policy contents are resolved elsewhere; only this stable identity is stored.
+// ParentRunID optionally records the orchestrating parent run so child runs
+// admit with a persisted linkage back to their root; empty means the run has
+// no durable parent (a root run).
 type RunPolicy struct {
-	ID string `json:"id"`
+	ID          string `json:"id"`
+	ParentRunID string `json:"parent_run_id,omitempty"`
 }
 
 // ExecutionRequest is the immutable admission request persisted at CreateRun.
-// Every field is a derived agentrun identity; raw prompts, candidates, and
-// capabilities never reach durable storage.
+// Every field except ParentRunID is a derived agentrun identity; raw prompts,
+// candidates, and capabilities never reach durable storage. ParentRunID is an
+// additive, optional linkage to the orchestrating parent run: old records
+// never carry it, old readers ignore unknown keys, and omitempty keeps the
+// persisted bytes of parentless runs identical to the legacy shape.
 type ExecutionRequest struct {
 	RunID         string   `json:"run_id"`
 	JobID         string   `json:"job_id"`
@@ -38,6 +45,7 @@ type ExecutionRequest struct {
 	CandidateID   string   `json:"candidate_id"`
 	PromptID      string   `json:"prompt_id"`
 	CapabilityIDs []string `json:"capability_ids,omitempty"`
+	ParentRunID   string   `json:"parent_run_id,omitempty"`
 }
 
 // CreateRun creates the immutable execution records and an empty event log.
@@ -51,8 +59,13 @@ func (s *Store) CreateRun(job agentrun.LogicalJob, policy RunPolicy) error {
 	if policy.ID == "" {
 		return errors.New("store: run policy identity is empty")
 	}
+	if policy.ParentRunID != "" && !validRunID(policy.ParentRunID) {
+		return fmt.Errorf("store: invalid parent run id %q", policy.ParentRunID)
+	}
 
-	requestData, err := marshalRecord(requestFor(job))
+	request := requestFor(job)
+	request.ParentRunID = policy.ParentRunID
+	requestData, err := marshalRecord(request)
 	if err != nil {
 		return err
 	}
@@ -63,22 +76,53 @@ func (s *Store) CreateRun(job agentrun.LogicalJob, policy RunPolicy) error {
 	requestPath := filepath.Join(directory, "request.json")
 	policyPath := filepath.Join(directory, "policy.json")
 
-	if err := checkImmutableRecord(requestPath, requestData); err != nil {
-		return err
+	// Ticket 14 prune admission window: admission takes the same
+	// cross-process execution event lock PruneExecutions holds while it
+	// re-verifies and removes a record, so an admission serializes against
+	// every removal critical section. Without this, a run admitted while a
+	// crash-interrupted-remnant cleanup held the lock could have its fresh
+	// records wiped by that cleanup's unconditional child clearing. With
+	// it, exactly two honest outcomes exist for an admission racing a
+	// removal of the same directory: the removal completes first and the
+	// admission recreates the record cleanly, or the admission lands first
+	// and the locked cleanup refuses because real content appeared (see
+	// removeExecutionRemnant). A record is never deleted out from under a
+	// successful admission verdict.
+	//
+	// Deadlock audit against appendEventLocked ordering: nothing may call
+	// CreateRun while already holding this directory's event lock. The only
+	// production caller (Controller.Start) invokes CreateRun sequentially
+	// before any AppendEvent/AppendTerminalEvent of the same run, and this
+	// closure nests no further lock acquisition on the same directory.
+	admit := func() error {
+		return withExecutionLock(directory, func() error {
+			if err := checkImmutableRecord(requestPath, requestData); err != nil {
+				return err
+			}
+			if err := checkImmutableRecord(policyPath, policyData); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(directory, 0700); err != nil {
+				return err
+			}
+			if err := writeImmutableRecord(requestPath, requestData); err != nil {
+				return err
+			}
+			if err := writeImmutableRecord(policyPath, policyData); err != nil {
+				return err
+			}
+			return ensureEventLog(directory)
+		})
 	}
-	if err := checkImmutableRecord(policyPath, policyData); err != nil {
-		return err
+	err = admit()
+	if errors.Is(err, os.ErrNotExist) {
+		// The racing removal deleted the whole directory in the instant
+		// between this admission's MkdirAll and its lock-file open. That
+		// removal is complete and final; recreate the directory and admit
+		// once more instead of reporting a transient miss as a refusal.
+		err = admit()
 	}
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return err
-	}
-	if err := writeImmutableRecord(requestPath, requestData); err != nil {
-		return err
-	}
-	if err := writeImmutableRecord(policyPath, policyData); err != nil {
-		return err
-	}
-	return ensureEventLog(directory)
+	return err
 }
 
 func (s *Store) executionDir(runID string) (string, error) {

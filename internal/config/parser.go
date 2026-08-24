@@ -35,10 +35,6 @@ type ReviewConfig struct {
 	Timeout          time.Duration
 	Parallel         int
 	CodeGraphContext bool
-	// DurableRuns enables routing every dimension reviewer call through the
-	// durable run controller (R4). False keeps the legacy scheduler; this
-	// flag is the construction-time rollback seam of ticket 05.
-	DurableRuns bool
 	// EvidenceAdmission enables evidence admission over durable transport
 	// output (ticket 07): snapshot binding and output-hash verification run
 	// before a completion may influence verdicts, and admission failures are
@@ -292,7 +288,6 @@ type reviewYAML struct {
 	Timeout                yaml.Node         `yaml:"timeout"`
 	Parallel               yaml.Node         `yaml:"parallel"`
 	CodeGraphContext       *bool             `yaml:"codegraph_context"`
-	DurableRuns            *bool             `yaml:"durable_runs"`
 	EvidenceAdmission      *bool             `yaml:"evidence_admission"`
 	CancellationEscalation *bool             `yaml:"cancellation_escalation"`
 	Dims                   map[string]string `yaml:"dims"`
@@ -338,6 +333,11 @@ type changeYAML struct {
 // .vas_sentinel/vassentinel.yml), así que debe aceptarse para no romper la
 // decodificación estricta de configuración existente. Añadir esa sección a
 // Config es otra tarea.
+//
+// Ticket 13 (R11): review.durable_runs and the whole gate section were
+// removed together with their legacy execution paths. A yaml still declaring
+// them is not ignored: KnownFields(true) rejects it right here with file and
+// line, naming the unknown key ("durable_runs" / "gate").
 type configYAML struct {
 	Version                  *string                     `yaml:"version"`
 	ActiveAgent              *string                     `yaml:"active_agent"`
@@ -462,9 +462,6 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		}
 		for dim, perfilDim := range raw.Review.Dims {
 			cfg.Review.Dims[dim] = perfilDim
-		}
-		if raw.Review.DurableRuns != nil {
-			cfg.Review.DurableRuns = *raw.Review.DurableRuns
 		}
 		if raw.Review.EvidenceAdmission != nil {
 			cfg.Review.EvidenceAdmission = *raw.Review.EvidenceAdmission

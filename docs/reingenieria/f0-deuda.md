@@ -545,3 +545,38 @@ y el ejemplo.
 
 **Nota**: es un defecto de *prompt*, no de arquitectura. Se arregla aquí porque
 ensucia el historial de todas las fases siguientes.
+---
+
+## Follow-up pool — durable-runs core closure (post R11, ticket 13)
+
+Registered 2026-08-24 after completing the core R-roadmap. Deferred by user
+decision; not part of any active unit.
+
+### FU-1: Spanish strings sweep in production surfaces (policy debt)
+
+Post-legacy production code still ships user-facing Spanish strings, which
+violates the AGENTS.md language policy for new artifacts:
+
+- `internal/gate/gate_durable.go`: `"gate: la ejecución duradera no pudo
+  asentarse"`.
+- `internal/setup/uninstall.go`: hook disclaimer constant (`avisoHooks-
+  Repositorio`, "no se elimina"...).
+- Validation orchestration messages (`No se pudo ejecutar la validación...`)
+  and remaining ❌-prefixed CLI texts in gate/review paths.
+
+Scope: sweep + update every test that pins those literals. Coordinate with
+FU-2 because both touch the same files.
+
+### FU-2: oversized files split (>500-line guardian threshold)
+
+Pre-existing debt recorded with guardian bypasses across multiple units:
+
+- `cmd/sentinel/main.go` (~1093 lines)
+- `internal/review/engine.go` (~682)
+- `internal/config/parser.go` (~672)
+- `internal/agentadapter/cli.go` (~575)
+- `cmd/sentinel/comandos_runs_actions.go` (~398 and growing)
+
+Split by cohesion (the engine's orchestration/adapters/tests precedent from
+R9 applies). Do the FU-1 string sweep in the same pass to avoid touching these
+files twice.

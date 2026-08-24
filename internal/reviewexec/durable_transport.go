@@ -93,6 +93,14 @@ type DurableTransport struct {
 	// review.cancellation_escalation into it through
 	// WithCancellationEscalation at construction time.
 	escalationPolicy execution.EscalationPolicy
+	// observedRun optionally receives the durable run identity of every run
+	// this transport admits, synchronously after Start succeeds and before
+	// any completion can exist (ticket 11 slice 3). Review candidate
+	// identities are process-salted, so an orchestrator that parents review
+	// runs under its own root learns the ACTUAL child identities here instead
+	// of deriving them from the plan; failures never lose the identity because
+	// it is reported at admission time, not at settlement time.
+	observedRun func(runID string)
 }
 
 // DurableTransportOption configures construction-time behavior of a
@@ -131,6 +139,17 @@ func NewDurableTransport(backing *store.Store, policy store.RunPolicy, sha strin
 // claim) instead of escalation evidence.
 func WithCancellationEscalation(policy execution.EscalationPolicy) DurableTransportOption {
 	return func(t *DurableTransport) { t.escalationPolicy = policy }
+}
+
+// WithRunObserver registers the callback invoked synchronously after each
+// successful Start with the admitted durable run identity (ticket 11 slice
+// 3). It is a wiring-time learning seam, not a telemetry hook: the callback
+// runs before any completion can exist, so every admitted run is reported
+// exactly once regardless of how its invocation later settles. Concurrency
+// safety belongs to the callback owner — parallel dimensions admit runs from
+// different goroutines.
+func WithRunObserver(observer func(runID string)) DurableTransportOption {
+	return func(t *DurableTransport) { t.observedRun = observer }
 }
 
 // candidateSalt is process-random (pid plus crypto entropy) so two processes
@@ -184,6 +203,9 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	handle, err := controller.Start(context.Background(), request, t.policy)
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
+	}
+	if t.observedRun != nil {
+		t.observedRun(string(handle.RunID))
 	}
 	if t.admissionEnabled {
 		if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {

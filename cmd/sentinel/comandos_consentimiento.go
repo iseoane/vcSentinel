@@ -9,7 +9,7 @@ import (
 
 func ejecutarConsentimientoDiff(salida io.Writer, path string, args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(salida, "❌ Uso: sentinel consentimiento-diff otorgar|revocar|estado")
+		fmt.Fprintln(salida, "❌ "+usoConsentimientoDif)
 		return 1
 	}
 	switch args[0] {

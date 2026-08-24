@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// avisoHooksRepositorio is the uninstall disclaimer pinned by tests: the
+// repository pre-commit hook installed by init is Git-managed state and stays
+// out of uninstall's blast radius.
+const avisoHooksRepositorio = "   El hook pre-commit instalado en cada repositorio (.git/hooks/pre-commit) no se elimina: gestiona hooks de git, no de sentinel."
+
 // EjecutarDesinstalacionCompleta deshace la instalación global: elimina el
 // binario, quita la ruta del PATH de usuario, limpia la configuración global y
 // restaura los archivos de shell. No toca las configuraciones per-proyecto.
@@ -40,7 +45,7 @@ func EjecutarDesinstalacionCompleta() error {
 	}
 
 	fmt.Println("✅ VAS Sentinel desinstalado.")
-	fmt.Println("   El hook pre-commit instalado en cada repositorio (.git/hooks/pre-commit) no se elimina: gestiona hooks de git, no de sentinel.")
+	fmt.Println(avisoHooksRepositorio)
 	return nil
 }
 

@@ -73,7 +73,22 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	}
 
 	verificador := nuevoVerificadorModelo(worktree)
-	resultado := gate.EjecutarGate(gate.Opciones{
+	opciones := buildGateOptions(cfg, verificador, worktree, perfil, sha, mensaje, diff, profile, archivos)
+	applyDurableCutover(&opciones, cfg, worktree, stage, sha, archivos)
+
+	resultado := gate.EjecutarGate(opciones)
+
+	fmt.Fprintf(w, "🚦 gate [%s] perfil=%s → %s\n", stage, perfil, resultado.Estado)
+	return finalizarGate(w, worktree, stage, resultado.Estado, resultado.Mensajes)
+}
+
+// buildGateOptions assembles the gate.Opciones the command hands to
+// internal/gate: validation profile, HEAD-derived revision inputs, the real
+// reviewer seams, and the per-commit review transport (nil unless
+// review.durable_routes is on). Shared by ejecutarGate and the cutover tests,
+// so tests exercise the exact production construction.
+func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, worktree, perfil, sha, mensaje, diff string, profile change.ChangeProfile, archivos []string) gate.Opciones {
+	return gate.Opciones{
 		Perfil:         perfil,
 		RutasCambiadas: archivos,
 		OpcionesValidacion: validation.OpcionesEjecucion{
@@ -91,10 +106,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
 			ReviewTransport: durableReviewTransport(cfg, worktree, sha, archivos),
 		},
-	})
-
-	fmt.Fprintf(w, "🚦 gate [%s] perfil=%s → %s\n", stage, perfil, resultado.Estado)
-	return finalizarGate(w, worktree, stage, resultado.Estado, resultado.Mensajes)
+	}
 }
 
 // fabricaRefutadorGate resolves the explicit cheap profile separately from the
