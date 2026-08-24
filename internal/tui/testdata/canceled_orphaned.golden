@@ -1,0 +1,10 @@
+🔎 Run run-tui-test
+   state canceled (sequence 9, revision 9)
+   🏁 outcome cancellation
+      error: aborted while running; process tree orphaned after termination attempt (pid 4242 unconfirmed)
+   invocations 1, responses 0
+   • #1 inv-cancel-1 decision=start outcome=cancellation
+       error: aborted while running; process tree orphaned after termination attempt (pid 4242 unconfirmed)
+🏁 run reached a terminal state — press q to exit
+
+q quit · r refresh · y retry

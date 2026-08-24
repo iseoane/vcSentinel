@@ -258,6 +258,70 @@ explicit unknown-key error naming file and line. Delete those keys when
 migrating; durable history already written stays fully inspectable via these
 `runs` commands.
 
+## `runs attach` — observing one live run
+
+`runs attach` is the human observation surface over a single durable run.
+Its data pipeline is the same everywhere: an Inspect snapshot for the durable
+projection plus event replay strictly after the resume cursor
+(`--after`, default `0`), merged into one RunView by the pure read-model in
+`internal/attach`. Evidence appears as presence and class only — output and
+response bytes never surface, only their hashes.
+
+### Modes
+
+| Invocation | Behavior |
+| --- | --- |
+| `runs attach` (no `--run`) | Lists every non-terminal durable run as an attach candidate (state, revision, head sequence, orphaned-cancellation verdict). The listing walks the reconciled projection directly from the store — read-only, no daemon roundtrip required — and exits `0` on success whether the listing is empty or not; store read failures map through the shared exit-code table below. |
+| `runs attach --run <id>` | Prints one plain-text observation snapshot rebuilt from Inspect plus replay after `--after`. This is a point-in-time view: terminal and non-terminal runs alike exit `0`; there is no wait-for-terminal code here. |
+| `runs attach --run <id> --follow` | Launches the interactive Bubble Tea attach program over the same pipeline. It repolls from the last applied cursor, survives endpoint loss through bounded reconnect, freezes on a terminal projection, and detaches cleanly on `q`, `ctrl+c`, SIGINT, or SIGTERM. `--follow` without `--run` is a usage error. |
+
+### Keys (`--follow` mode)
+
+| Key | Action | Contract |
+| --- | --- | --- |
+| `q` / `ctrl+c` | Quit | Clean detach; exits `0` even mid-run. A SIGINT/SIGTERM behaves identically. |
+| `r` | Refresh | One immediate observe cycle against a freshly resolved host. Inert while disconnected. |
+| `a` | Abort | Same idempotency identity discipline as `runs abort`: a fresh action identity per keypress, cooperative cancellation left to settle, picked up by the next observe. Inert while disconnected or frozen. |
+| `e` | Respond | Opens a text input sub-view (`enter` sends, `esc` cancels, `backspace`/`ctrl+u` edit); the typed answer travels verbatim like `runs respond --text`. While the input is open it consumes every other key, so an answer containing `q` or `a` is safe to type. |
+| `y` | Retry | Only advertised when the observed state is retryable (`failed`, `canceled`, `timed_out`). Carries `ExpectedRevision` pinned from the last observed stream head, exactly like `runs retry --expected-revision`, so a competing writer makes the relaunch fail explicitly instead of silently double-launching. Retry is deliberately the one key that stays live through terminal freeze — a settled-but-retryable run is what it exists for. |
+
+### Reconnect and terminal freeze
+
+Endpoint loss flips the session into bounded reconnect: exponential backoff
+starting at 500ms, doubling up to 8s, hard-capped at 8 attempts. Every attempt
+redials through the host provider and resumes the replay strictly after the
+last applied cursor, so nothing is duplicated or skipped across the gap. The
+status band shows the attempt counter while reconnecting; action keys stay
+inert there so a failed action can never schedule a second backoff chain.
+
+Two terminal states end the loop honestly:
+
+- **Run reached a terminal projection:** the view freezes into its final
+  state with a `press q to exit` hint instead of polling forever. `y`
+  remains available when the state says retryable.
+- **Reconnect budget exhausted:** the view freezes into a lost-contact state
+  preserving the last observation, and the process reports infrastructure
+  failure (exit `5`) instead of looping forever.
+
+### Daemon preference
+
+Every observe and keyboard action resolves its repository host through the
+daemon-preferred resolver with silent fallback: when a live repository daemon
+is serving this common dir, each resolution dials it fresh (never reusing a
+connection that may have died); otherwise the identical operations execute
+against the in-process controller over the same store. Keyboard actions thus
+produce the same durable effects as their CLI twins regardless of which
+transport served them.
+
+### Exit codes
+
+| Code | When |
+| --- | --- |
+| `0` | List mode (empty or not); snapshot mode; clean TUI detach via `q`, `ctrl+c`, SIGINT, or SIGTERM. |
+| `1` | Usage error: unknown flag, `--follow` without `--run`. |
+| `2` | The `--run` identity has no durable execution record. |
+| `5` | Observation failure of the snapshot path's mapped infrastructure errors; TUI session failure; reconnect budget exhausted while following. |
+
 ## Notes
 
 - Idempotency is per action and honest about durable state: repeating

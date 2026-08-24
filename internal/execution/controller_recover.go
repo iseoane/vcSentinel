@@ -54,9 +54,11 @@ var ErrRunNotRecoverable = errors.New("execution: durable run evidence cannot be
 // travels into any Retry delegation so competing writers fail explicitly
 // instead of racing the recovery.
 //
-// Recovery is idempotent-safe: recovering a run that is already live or
-// already recovered in this controller fails with ErrRunNotActive, and the
-// durable stream is never double-applied.
+// Recovery is idempotent-safe: recovering a run whose bookkeeping is still
+// unclosed fails with ErrRunNotActive when the durable head is non-terminal,
+// and the durable stream is never double-applied. As in Retry, an unclosed
+// entry over a terminal durable head is stale completion bookkeeping and
+// follows the evidence switch instead of refusing.
 func (c *Controller) Recover(ctx context.Context, runID agentrun.Identity, expectedRevision uint64) (Handle, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -71,13 +73,21 @@ func (c *Controller) Recover(ctx context.Context, runID agentrun.Identity, expec
 	c.mu.Lock()
 	state := c.runs[string(runID)]
 	c.mu.Unlock()
-	if state != nil && !state.doneClosed() {
-		return Handle{}, ErrRunNotActive
-	}
+	// The live-state guard cross-checks the durable stream, exactly like
+	// Retry: finish() appends the terminal event before releasing the
+	// bookkeeping, so an unclosed entry over an already-terminal durable
+	// head is stale memory, not an active run. Only a non-terminal head
+	// (running, awaiting decision) refuses here; a terminal head proceeds
+	// into the switch below, where final outcomes refuse with
+	// ErrRunNotRecoverable and retryable ones delegate to Retry.
+	liveUnclosed := state != nil && !state.doneClosed()
 
 	events, projection, err := c.durableEvidence(ctx, runID)
 	if err != nil {
 		return Handle{}, err
+	}
+	if refusalErr := retryLiveGuardRefusal(liveUnclosed, projection.State.TerminalClass() != agentrun.TerminalNone); refusalErr != nil {
+		return Handle{}, refusalErr
 	}
 	// The switch re-reads evidence inside each branch on purpose: durable
 	// state can change between this projection read and the branch's own

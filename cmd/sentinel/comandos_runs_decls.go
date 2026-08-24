@@ -33,6 +33,10 @@ const (
 	runsDefaultPolicyID  = "operator"
 	runsLogsDefaultLimit = 100
 	runsObserveInterval  = 50 * time.Millisecond
+	// Attach follow-mode pacing and pagination bounds moved to internal/tui
+	// (tui.PollInterval, tui.MaxObservePages) with the Bubble Tea program in
+	// ticket 17 slice 2; the plain-text snapshot path observes once and no
+	// longer needs them here.
 )
 
 const runsUsage = `sentinel runs <subcommand> [flags]
@@ -55,6 +59,18 @@ Subcommands:
            any entry requires an operator decision; --expected-revision is
            rejected on the scan and with --repair
   verify   --run <id> [--json]
+  attach   [--run <id>] [--after <cursor>] [--follow]
+           without --run: list every non-terminal durable run as an attach
+           candidate (reconciled projection walk, read-only); exits 0 whether
+           the listing is empty or not
+           with --run: print one plain-text observation snapshot rebuilt from
+           Inspect plus event replay strictly after --after (default 0);
+           this is a point-in-time view, so terminal and non-terminal runs
+           alike exit 0 — there is no wait-for-terminal exit code here
+           --follow requires --run and keeps repolling from the last applied
+           cursor, reprinting the full snapshot on every observed change,
+           until the run reaches its terminal state or SIGINT/SIGTERM
+           detaches cleanly (exit 0)
   daemon   start|status|stop
            manage the repository-local foreground daemon (no flags accepted)
            start claims the repository, settles auto-recoverable interrupted
@@ -138,6 +154,8 @@ type runOptions struct {
 	// degrading into a silent default.
 	olderThan    string
 	olderThanSet bool
+	// follow marks the boolean --follow of `runs attach`; it requires --run.
+	follow bool
 }
 
 // promptRunAdapter executes arbitrary operator prompts through the configured

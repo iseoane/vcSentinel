@@ -273,6 +273,92 @@ func TestFreshControllerRetriesARunItNeverStarted(t *testing.T) {
 	}
 }
 
+func TestRetryLiveGuardRefusalDecidesFromSyntheticInputs(t *testing.T) {
+	tests := []struct {
+		name         string
+		liveUnclosed bool
+		headTerminal bool
+		want         error
+	}{
+		{"released bookkeeping defers to the durable classification", false, false, nil},
+		{"released bookkeeping with a terminal head proceeds", false, true, nil},
+		{"unclosed bookkeeping over a non-terminal head refuses", true, false, ErrRunNotActive},
+		{"unclosed bookkeeping defers to a terminal durable head", true, true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := retryLiveGuardRefusal(tt.liveUnclosed, tt.headTerminal); !errors.Is(got, tt.want) {
+				t.Fatalf("retryLiveGuardRefusal(%v, %v) = %v, want %v", tt.liveUnclosed, tt.headTerminal, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRetryCrossChecksDurableTruthWhenBookkeepingLags pins the reproduced
+// product race deterministically: finish() appends the terminal event before
+// completeLocked releases the worker bookkeeping, so a wire client that polls
+// Inspect until the durable head reads terminal can call Retry while done is
+// still open. The guard must consult the durable stream instead of refusing
+// on stale live memory; before the fix this surfaced as ErrRunNotActive.
+func TestRetryCrossChecksDurableTruthWhenBookkeepingLags(t *testing.T) {
+	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "done"}}, fixedClock())
+	handle, err := controller.Start(context.Background(), testRequest("stale-bookkeeping"), testPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion, err := handle.Wait(context.Background()); err != nil || completion.State != agentrun.StateSucceeded {
+		t.Fatalf("setup completion = %+v, %v; want success", completion, err)
+	}
+
+	// Re-create the exact race window without timing luck: bookkeeping
+	// present under the run identity with done still unclosed while the
+	// durable head is already terminal — precisely what a caller observes
+	// between AppendTerminalEvent and completeLocked inside finish().
+	controller.mu.Lock()
+	controller.runs[string(handle.RunID)] = &runState{done: make(chan struct{})}
+	controller.mu.Unlock()
+
+	if _, err := controller.Retry(context.Background(), handle.RunID, 0); !errors.Is(err, ErrRunNotRetryable) {
+		t.Fatalf("retry inside the terminal-write window = %v, want ErrRunNotRetryable", err)
+	}
+}
+
+// TestRetryRelaunchesThroughStaleBookkeepingOnARetryableHead proves the
+// complementary half of the window: when the durable head inside the window
+// is retryable (failed), the retry relaunches by replacing its own stale
+// bookkeeping entry instead of refusing after the durable stream would have
+// accepted it. The store's revision guard keeps competing retries from both
+// appending, so replacing only the observed entry cannot clobber a newer run.
+func TestRetryRelaunchesThroughStaleBookkeepingOnARetryableHead(t *testing.T) {
+	adapter := &failThenSucceedAdapter{failures: 1}
+	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	handle, err := controller.Start(context.Background(), testRequest("window-relaunch"), testPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.mu.Lock()
+	settled := controller.runs[string(handle.RunID)]
+	controller.mu.Unlock()
+	if completion, err := handle.Wait(context.Background()); err != nil || completion.State != agentrun.StateFailed {
+		t.Fatalf("setup completion = %+v, %v; want failure", completion, err)
+	}
+
+	controller.mu.Lock()
+	controller.runs[string(handle.RunID)] = &runState{
+		job: settled.job, invocation: settled.invocation,
+		done: make(chan struct{}),
+	}
+	controller.mu.Unlock()
+
+	retried, err := controller.Retry(context.Background(), handle.RunID, 0)
+	if err != nil {
+		t.Fatalf("retry inside the window on a failed head = %v, want a relaunch", err)
+	}
+	if completion, err := retried.Wait(context.Background()); err != nil || completion.State != agentrun.StateSucceeded {
+		t.Fatalf("windowed retry completion = %+v, %v; want success", completion, err)
+	}
+}
+
 func TestRetryHonorsTheExpectedRevision(t *testing.T) {
 	backingStore := store.NuevoStore(t.TempDir())
 	failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("attempt failed")}, fixedClock())

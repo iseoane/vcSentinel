@@ -62,6 +62,8 @@ func executeRuns(out io.Writer, worktree string, args []string) int {
 		return executeRunsRecover(out, worktree, flags)
 	case "verify":
 		return executeRunsVerify(out, worktree, flags)
+	case "attach":
+		return executeRunsAttach(out, worktree, flags)
 	case "daemon":
 		return executeRunsDaemon(out, worktree, flags)
 	case "prune":
@@ -87,6 +89,7 @@ const (
 	flagLimit            runsFlag = "--limit"
 	flagExpectedRevision runsFlag = "--expected-revision"
 	flagOlderThan        runsFlag = "--older-than"
+	flagFollow           runsFlag = "--follow"
 )
 
 // runsSubcommandFlags is the single source of truth for which flags each
@@ -103,6 +106,7 @@ var runsSubcommandFlags = map[string][]runsFlag{
 	"retry":   {flagRun, flagExpectedRevision, flagJSON},
 	"recover": {flagRun, flagExpectedRevision, flagRepair, flagJSON},
 	"verify":  {flagRun, flagJSON},
+	"attach":  {flagRun, flagAfter, flagFollow},
 	"prune":   {flagOlderThan, flagJSON},
 }
 
@@ -123,6 +127,11 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		}
 		if runsFlag(flag) == flagJSON {
 			options.jsonOut = true
+			continue
+		}
+		if runsFlag(flag) == flagFollow {
+			// Boolean flag: it consumes no value, exactly like --json.
+			options.follow = true
 			continue
 		}
 		if i+1 >= len(args) {

@@ -7,6 +7,22 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 )
 
+// retryLiveGuardRefusal resolves the live-state guard of Retry against the
+// durable stream. finish() appends the terminal event BEFORE completeLocked
+// releases the worker bookkeeping (the done close plus the runs-map delete),
+// so between those steps live memory still claims the run is active while the
+// durable head is already terminal. During that window persisted truth
+// outranks the stale bookkeeping: the caller falls through to the shared
+// terminal classification instead of being refused here. Only an unclosed
+// bookkeeping entry over a non-terminal durable head — a genuinely running or
+// awaiting-decision run — refuses with ErrRunNotActive.
+func retryLiveGuardRefusal(liveUnclosed, headTerminal bool) error {
+	if liveUnclosed && !headTerminal {
+		return ErrRunNotActive
+	}
+	return nil
+}
+
 // Retry relaunches a terminally failed, canceled, or timed-out run as the
 // next attempt inside its original logical job and run identity. The run
 // state is reconstructed from durable evidence when this process never owned
@@ -16,6 +32,13 @@ import (
 // is materialized first, then the relaunch proceeds exactly as for any other
 // retryable cancellation. Active runs fail with ErrRunNotActive; succeeded
 // and unavailable outcomes stay final and fail with ErrRunNotRetryable.
+//
+// The live-state guard no longer trusts this process's bookkeeping alone.
+// Because finish() persists the terminal event before releasing the
+// bookkeeping, an unclosed entry is cross-checked against the durable
+// stream: a terminal head follows the shared terminal classification
+// (ErrRunNotRetryable for final outcomes, a legitimate relaunch for
+// retryable ones), and only a non-terminal head yields ErrRunNotActive.
 // Retrying an already-retried current state fails explicitly instead of
 // double-applying. Every relaunch derives its attempt from
 // NewRetryInvocation, so the resumed work always carries a fresh invocation
@@ -37,12 +60,13 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 	c.mu.Lock()
 	state := c.runs[string(runID)]
 	c.mu.Unlock()
-	if state != nil && !state.doneClosed() {
-		return Handle{}, ErrRunNotActive
-	}
+	liveUnclosed := state != nil && !state.doneClosed()
 	events, projection, err := c.durableEvidence(ctx, runID)
 	if err != nil {
 		return Handle{}, err
+	}
+	if refusalErr := retryLiveGuardRefusal(liveUnclosed, projection.State.TerminalClass() != agentrun.TerminalNone); refusalErr != nil {
+		return Handle{}, refusalErr
 	}
 	if expectedRevision != 0 && expectedRevision != projection.Revision {
 		return Handle{}, fmt.Errorf("%w: expected revision %d, found %d", ErrStaleRevision, expectedRevision, projection.Revision)
@@ -104,7 +128,14 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 	workerContext, cancel := context.WithCancel(context.Background())
 	next.cancel = cancel
 	c.mu.Lock()
-	if existing := c.runs[string(runID)]; existing != nil && !existing.doneClosed() {
+	// A relaunch that fell through the live-state guard may replace its OWN
+	// stale bookkeeping entry: the finishing worker already authored the
+	// terminal evidence, cannot write again, and completeLocked skips the
+	// map delete on pointer inequality. Any other unclosed entry means a
+	// newer live run owns this identity and the retry must refuse. The
+	// store's revision guard keeps competing retries from both appending,
+	// so only the successful appender ever reaches this install.
+	if existing := c.runs[string(runID)]; existing != nil && !existing.doneClosed() && existing != state {
 		c.mu.Unlock()
 		cancel()
 		return Handle{}, ErrRunNotActive
