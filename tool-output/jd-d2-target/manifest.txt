@@ -1,2 +1,0 @@
-71786f25626499cc8bbbac2c25b95b8ab1e52fbb5dbc4afca9f12e35a1599745  tool-output/jd-d2-target/full.patch
-a7756c5bfce82304349f6760c208d8363d0d427ba015932bb87985b64e670ab2  tool-output/jd-d2-target/spec.md
