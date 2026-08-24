@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,7 +145,10 @@ func TestGracefulShutdownCompletesFastAndReleasesEndpoint(t *testing.T) {
 
 func TestGraceHonoredThenSurvivorOrphanedWithEvidence(t *testing.T) {
 	release := make(chan struct{})
-	defer close(release)
+	// releaseAdapter is idempotent so the deterministic pre-return drain
+	// below and this failure-path safety net can both fire without panicking.
+	releaseAdapter := sync.OnceFunc(func() { close(release) })
+	defer releaseAdapter()
 	server, controller, st, ep, _ := startGracedServer(t, blockingAdapter(release), 250*time.Millisecond)
 
 	conn := connectClient(t, ep, testFingerprint(), "")
@@ -211,7 +216,56 @@ func TestGraceHonoredThenSurvivorOrphanedWithEvidence(t *testing.T) {
 	next.Prompt = "prompt:after-orphaning"
 	if response := callOp(t, reconnect, OpStart, next); !response.OK {
 		t.Fatalf("post-shutdown start failed: %+v", response.Error)
+	} else {
+		var successor execution.Handle
+		decodeBodyInto(t, response.Body, &successor)
+
+		// Teardown drain (slice-2b discipline): this successor blocks inside
+		// blockingAdapter on release; if the test returned with it still
+		// blocked, the deferred close would wake its controller worker mid
+		// t.TempDir removal and it would persist settlement evidence into a
+		// directory being deleted. Release deterministically here, observe
+		// the settlement through the wire, then require the store to prove
+		// quiescence before returning.
+		releaseAdapter()
+		waitForStateViaWire(t, reconnect, successor.RunID, agentrun.StateSucceeded)
+		awaitStoreQuiescence(t, controller, handle.RunID, successor.RunID)
 	}
+}
+
+// awaitStoreQuiescence proves no writer is left touching the run directory:
+// it polls store-side inspections until two consecutive snapshots taken one
+// full poll cycle apart are identical, so every settlement writer has
+// quiesced before t.TempDir removes the store root.
+func awaitStoreQuiescence(t *testing.T, controller *execution.Controller, ids ...agentrun.Identity) {
+	t.Helper()
+	snapshot := inspectAll(t, controller, ids)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		time.Sleep(pollInterval)
+		next := inspectAll(t, controller, ids)
+		if reflect.DeepEqual(snapshot, next) {
+			return
+		}
+		snapshot = next
+		if time.Now().After(deadline) {
+			t.Fatal("run store never quiesced before teardown")
+		}
+	}
+}
+
+// inspectAll reads the durable inspection of every named run from the store.
+func inspectAll(t *testing.T, controller *execution.Controller, ids []agentrun.Identity) []execution.Inspection {
+	t.Helper()
+	snapshots := make([]execution.Inspection, 0, len(ids))
+	for _, id := range ids {
+		inspection, err := controller.Inspect(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshots = append(snapshots, inspection)
+	}
+	return snapshots
 }
 
 func TestInFlightDispatchDrainsBeforeClosure(t *testing.T) {
