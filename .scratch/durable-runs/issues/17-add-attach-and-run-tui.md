@@ -106,7 +106,48 @@ changing any durable format; autostarting daemons.
 
 ## Evidence — slice 2 (bubbletea program)
 
-*(pending)*
+- Base: branch state after slice-1 evidence commit 94cdb66.
+- Commits: build(deps) add bubbletea and lipgloss (18 authored lines;
+  bubbletea v1.3.10 + lipgloss v1.1.0 pinned, 15 indirect modules recorded),
+  feat(tui) attach model core with snapshot observation (+241),
+  feat(tui) key routing, reconnect backoff, and admission serialization
+  guards (+290), feat(tui) host action commands and deterministic run view
+  rendering (+240), three test commits (+318/+293/+226), feat(sentinel)
+  follow mode renders through the program (+163). model.go and model_test.go
+  were split by cohesion before staging so every candidate passed the budget.
+- Surface: internal/tui Model over the unchanged internal/attach pipeline;
+  keys q/ctrl+c quit, r refresh, a abort (fresh idempotency identity per
+  keypress mirroring the CLI twin), e respond with hand-rolled textinput
+  sub-state (enter/esc/backspace/ctrl+u; bubbles dep deliberately avoided),
+  y retry gated on Retryable() carrying ExpectedRevision = view.Revision
+  (brief said Sequence — the implementer's correction is right and this
+  record adopts it: controller_retry compares Revision); reconnect =
+  exponential backoff 500ms doubling capped 8s, MaxReconnectAttempts 8,
+  cursor-resumed resubscribe proven strictly-after; exhaustion freezes an
+  honest lost-contact state exiting infrastructure; terminal projection
+  stops polling while y-through-freeze remains available per the keyboard
+  contract; ObserveSnapshot extracted once and shared by snapshot and TUI
+  paths (snapshot rendering byte-neutral).
+- Independent code review (dual axis): spec PASS including byte-compat proof
+  and removed-test audit (each superseded slice-1 contract traced to a live
+  equivalent); standards found one HARD defect fixed — reconnect tick
+  multiplication (manual refresh or action failure during reconnecting
+  scheduled competing backoff chains burning attempts ~2x) now guarded by a
+  pointer-shared backoffTracker plus conn-state key gating, with new tests
+  proving r-inertness and single-chain action failures; also applied: detach
+  context threaded into observe/action commands, dead Changed field removed
+  (reprint suppression became structural under bubbletea frame diffing —
+  documented where the field lived), stale test comment renamed. Accessors
+  RunID/Principal/Provider kept: cmd tests consume them.
+- Honest limits: golden determinism currently relies on lipgloss lazy color
+  detection — slice 3 must pin the color profile explicitly instead of
+  trusting env (CLICOLOR_FORCE could force ANSI into goldens); real-signal
+  detach still exercised via the cancellable-context seam; adaptersites
+  anchor refreshed for this branch's own line drift (206->215) and disclosed.
+- Verification: gofmt clean; build/vet OK; focused -race green across
+  tui/attach/cmd; GOOS=windows build OK; FULL suite green.
+
+*(slice 3 pending)*
 
 ## Evidence — slice 3 (goldens, harness, closure)
 
