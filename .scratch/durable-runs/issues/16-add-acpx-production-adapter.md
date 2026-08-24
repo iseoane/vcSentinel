@@ -164,7 +164,36 @@ codex-acp authentication gap (tracked follow-up).
 
 ## Evidence — slice 3 (wiring, admission, docs, parity)
 
-*(pending)*
+- Implemented by the delegated implementer; verified independently.
+- Delivered: config schema `kind: acpx` + agent token + enforcement
+  declaration (legacy configs pinned byte-identical at parse AND construction
+  level); factory wiring via `AcpxBridge` (satisfies existing structural
+  contracts, refuses plain commit path like claude/opencode CLIs, forwards
+  honest identity); C6 admission at construction with platform checks;
+  snapshot discipline relocated to neutral leaf `internal/reviewsnapshot`
+  (import-cycle-free home; delegation shims keep CLI behavior untouched);
+  parity contract tests via fake helper (no live agents); operator doc
+  docs/arquitectura/acpx-production-adapter.md (enforcement matrix,
+  fallback ordering, codex auth blocker, rollback).
+- Dual-axis review adjudications: relocation verified token-for-token
+  identical to the previous discipline; import-cycle claim confirmed real;
+  bridge judged a justified boundary (real adaptation work, not a middle
+  man); doc statements verified against code (no doc lies).
+- Review findings fixed in this slice: new Spanish identifier renamed
+  (`commitLanguageOrDefault`); **C6 pairing gap closed** — enforcement
+  claude-sandbox now requires agent token claude, pinned by fail-fast test
+  row (previously claude-sandbox+opencode constructed fine); reviewsnapshot
+  gained its own SafePaths filter table + Create happy/error/cleanup tests
+  (security-relevant filter no longer testless at its new home).
+- Known issue recorded (NOT this slice's regression): internal/daemon
+  wire-parity tests flake intermittently under full-suite load; reproduced
+  at base HEAD with diff stashed; passes isolated and -count=3. Follow-up:
+  stabilize daemon wire-parity tests.
+- Verification: gofmt/vet/build OK; focused -race OK; full suite green
+  modulo the documented daemon flake; inventory anchors refreshed after
+  line shifts. Volume 993+ authored [CRITICO] → committed through the
+  sanctioned slice plan/apply flow.
+
 
 ## Evidence — slice 4 (verification, reviews, closure)
 
