@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -76,7 +77,46 @@ func seedDurableRun(t *testing.T, worktree, name string, adapter execution.Adapt
 	if _, err := observeUntilSettled(context.Background(), controller, handle.RunID); err != nil {
 		t.Fatal(err)
 	}
+	awaitRunQuiescence(t, controller, handle.RunID)
 	return handle.RunID
+}
+
+// awaitRunQuiescence proves no settlement writer is left touching the run
+// directory before t.TempDir removes the store root: it polls controller
+// inspections until two consecutive snapshots taken one full observe cycle
+// apart are identical, so every writer has quiesced. This is the drain
+// discipline established in internal/daemon/server_shutdown_test.go; a run
+// whose state already reads terminal can still have a worker finishing its
+// durable writes when the settle observation returns.
+func awaitRunQuiescence(t *testing.T, controller *execution.Controller, ids ...agentrun.Identity) {
+	t.Helper()
+	snapshot := make([]execution.Inspection, 0, len(ids))
+	for _, id := range ids {
+		inspection, err := controller.Inspect(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot = append(snapshot, inspection)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		time.Sleep(runsObserveInterval)
+		next := make([]execution.Inspection, 0, len(ids))
+		for _, id := range ids {
+			inspection, err := controller.Inspect(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next = append(next, inspection)
+		}
+		if reflect.DeepEqual(snapshot, next) {
+			return
+		}
+		snapshot = next
+		if time.Now().After(deadline) {
+			t.Fatal("run store never quiesced before teardown")
+		}
+	}
 }
 
 func captureRunsOutput(t *testing.T, command func(io.Writer) int) (string, int) {

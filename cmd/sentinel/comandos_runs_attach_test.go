@@ -38,8 +38,10 @@ func (a gatedAdapter) Execute(ctx context.Context, _ agentrun.LogicalJob, _ agen
 }
 
 // startGatedRun admits one run through a real controller against the
-// worktree's common-dir store without waiting for it to settle.
-func startGatedRun(t *testing.T, worktree string, release chan struct{}) agentrun.Identity {
+// worktree's common-dir store without waiting for it to settle. It returns
+// the controller so the caller can drain the fixture deterministically
+// before teardown (release, settle, quiescence).
+func startGatedRun(t *testing.T, worktree string, release chan struct{}) (agentrun.Identity, *execution.Controller) {
 	t.Helper()
 	commonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {
@@ -53,7 +55,7 @@ func startGatedRun(t *testing.T, worktree string, release chan struct{}) agentru
 	if err != nil {
 		t.Fatal(err)
 	}
-	return handle.RunID
+	return handle.RunID, controller
 }
 
 // TestRunsAttachFollowConstructsTUIModel pins the slice 2 seam contract:
@@ -66,7 +68,7 @@ func TestRunsAttachFollowConstructsTUIModel(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	runID := startGatedRun(t, worktree, release)
+	runID, controller := startGatedRun(t, worktree, release)
 
 	var captured tui.Model
 	original := startAttachProgram
@@ -98,6 +100,18 @@ func TestRunsAttachFollowConstructsTUIModel(t *testing.T) {
 	if captured.Snapshot().RunID != string(runID) {
 		t.Fatalf("initial snapshot run = %q, want %q", captured.Snapshot().RunID, string(runID))
 	}
+
+	// Teardown drain: the gated worker is still parked inside the adapter
+	// when the assertions end; awaiting runs keep their worker alive BY
+	// DESIGN. Release it deterministically here (the deferred close stays as
+	// a once-guarded safety net), wait for the controller to settle the run
+	// terminal, then require store quiescence so no settlement writer races
+	// t.TempDir removal — the unlinkat "directory not empty" family.
+	releaseOnce.Do(func() { close(release) })
+	if _, err := observeUntilSettled(context.Background(), controller, runID); err != nil {
+		t.Fatal(err)
+	}
+	awaitRunQuiescence(t, controller, runID)
 }
 
 // TestRunsAttachFollowProgramFailureExitsInfrastructure pins the honest
