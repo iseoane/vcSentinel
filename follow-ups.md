@@ -50,6 +50,18 @@ land.
       is roadmap-scale and not yet ticketed; revisit when that work starts.
       The enforcement declaration itself is ALREADY durably recorded via the
       `agent.enforcement` admission capability. Origin: 16 (JD-E remainder).
+- [ ] **D4: remote host contract** — mutual auth, repository/run
+      authorization, disconnect ownership transfer, trust boundaries for
+      code/prompts/credentials/evidence. GATED on a concrete operator use
+      case for executing durable runs on another machine; no such scenario
+      exists today and the local daemon + attach TUI fully cover current
+      needs. Architecture is already prepared (transport-neutral six-op
+      RepositoryHost, JSON envelopes, cursor replay, idempotency identities),
+      so parking this costs nothing future. Origin: roadmap D4.
+- [ ] **D5: complete remote control** — remote adapter/host implementation,
+      partition reconnect, hostile-network tests. GATED on D4 landing AND an
+      approved threat model; R10 dependency already satisfied. Origin:
+      roadmap D5.
 
 ## Resolved
 

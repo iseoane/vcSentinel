@@ -32,3 +32,7 @@ the Strong audit column adds an adversarial gate; it never replaces `code-review
 R units are the current implementation frontier. D1 uses `codebase-design` but is
 not itself a strong-audit milestone. Update this matrix before starting a unit
 whose scope or risk has changed.
+
+D4/D5 (remote hosts) are PARKED as operator follow-ups (see follow-ups.md,
+P3): gated on a concrete remote-use case and an approved threat model that
+do not exist. Do not open tickets for them without explicit operator request.
