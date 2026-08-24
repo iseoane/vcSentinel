@@ -192,24 +192,50 @@ changing any durable format; autostarting daemons.
 
 ## Judgment Day closure
 
-**BLOCKED — infrastructure, not evidence.** Five judge-launch attempts
-(Judge A x3, Judge B x2 including one parallel pair) all failed with
-provider `network_error` before any inspection began. Per the judgment-day
-contract no partial or single-judge verdict is accepted, so the unit
-remains open with implementation complete and fully verified:
+### Round 1 (initial dual judgment)
 
-- All three slices committed and budget-clean through 3541536.
-- Dual-axis code review PASSED for every slice (independent of JD).
-- Full suite green twice consecutively; -race green everywhere touched;
-  GOOS=windows build OK; CLICOLOR_FORCE/TERM env-independence proven.
-- Frozen target ready for judges: bundle at
-  ~/.local/share/opencode/tool-output/jd-d3-target/ (full.patch sha256
-  91e54ae46cce874595daac8cd2c1bbefc37ce92ad1a89f98404ceb0a174ac0e1, src
-  snapshot at HEAD 3541536).
+Ledger: confirmed-severe 1 (JD-D3-1 provider cross-closing, B=CRITICAL +
+A=WARNING); single-judge warnings JD-D3-2 (terminal-boot never froze),
+JD-D3-3 (terminal boot skipped detach watcher), JD-D3-4 (footer advertised
+inert refresh). Fix round 1 executed all four; scoped re-judgment 1
+confirmed D3-2/3/4 resolved but surfaced two residuals in the new caching
+provider lifecycle: R1 (Judge B critical-rated: Reset-then-redial could
+release a host under an in-flight exchange; test gap admitted) and R2
+(Judge A warning: transport-level ACTION failures bypassed Reset/reconnect;
+frozen sessions reused dead connections).
 
-**Remaining step to close:** re-run jd-judge-a + jd-judge-b against this
-bundle once the subagent provider recovers, merge the ledger, apply the
-closure record. Nothing else is outstanding.
+### Round 2 (final authorized round)
+
+Fixes: poisoned-swap-close provider lifecycle (Reset marks poisoned without
+I/O; Host dials fresh, swaps, then releases the poisoned host through its
+own mutex-serialized Close — safety structural via RemoteHost exchange
+serialization, adversarial in-flight test added proving release waits for
+completion); connection-level action failures now route through
+handleHostError semantics with frozen sessions unfreezing into reconnecting
+on contact loss (semantic rejections stay status-line-only); deterministic
+white-box pins added. Slice-plan human decision honored: bypass approved by
+the operator for the unsplittable 458-line semantic unit (id
+2f714488523686c4), committed through sentinel slice apply.
+
+Scoped re-judgment 2: both judges converge on ONE residual —
+**JD-D3-R3: the connection-level classifier in actions.go misses two
+RemoteHost dead-connection surfaces** ("operation failed without a
+classified error" and "cannot decode the <op> result", which markConnDead
+proves unusable at client.go:252-265), leaving frozen sessions without
+automatic reconnect until manual refresh on those paths. A=WARNING
+(pre-existing surface), B=CRITICAL (behavior-activated by cached reuse).
+Mechanism agreed; no contradiction. Fix budget exhausted (2/2 rounds,
+2/2 re-judgments).
+
+### Terminal state
+
+**JUDGMENT: ESCALATED ⚠️** — escalated to the operator with the residual
+recorded. Practical blast radius: narrow (requires an unclassified transport
+failure exactly during a frozen-session action; recovery is one manual
+`r` refresh). Recommended disposition awaiting operator decision: a
+two-string classifier extension plus table rows, applied OUTSIDE the
+judgment-day budget as ordinary tracked work, or acceptance as a documented
+known limitation.
 
 ## Evidence — slice 3 (goldens, harness, closure)
 
