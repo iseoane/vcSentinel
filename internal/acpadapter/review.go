@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -91,6 +92,39 @@ func (a *AcpxAdapter) outputOf(res Result, err error) (string, error) {
 		return "", err
 	}
 	return res.Output, nil
+}
+
+// stderrExcerptLimit caps how much stderr text a failure detail may carry.
+const stderrExcerptLimit = 500
+
+// stderrExcerpt renders the bounded "stderr: ..." excerpt carried by FAILURE
+// and TIMEOUT outcome details, mirroring CLIAdapter's discipline of wrapping
+// errors with captured stderr. Trimming removes surrounding whitespace; the
+// cap keeps the LAST 500 characters, because provider diagnostics put the
+// actionable cause at the end. Empty stderr yields no excerpt at all.
+func stderrExcerpt(stderr *bytes.Buffer) string {
+	excerpt := strings.TrimSpace(stderr.String())
+	if excerpt == "" {
+		return ""
+	}
+	if len(excerpt) > stderrExcerptLimit {
+		excerpt = excerpt[len(excerpt)-stderrExcerptLimit:]
+	}
+	return "stderr: " + excerpt
+}
+
+// outcomeDetail enriches a FAILURE or TIMEOUT outcome detail with the bounded
+// stderr excerpt when the child produced any. Cancellation and success
+// outcomes must not pass through here: their details stay byte-identical to
+// the pre-enrichment contract regardless of what the child wrote to stderr.
+func outcomeDetail(class agentrun.OutcomeClass, detail string, stderr *bytes.Buffer) string {
+	if class != agentrun.OutcomeFailure && class != agentrun.OutcomeTimeout {
+		return detail
+	}
+	if excerpt := stderrExcerpt(stderr); excerpt != "" {
+		return detail + ": " + excerpt
+	}
+	return detail
 }
 
 // run executes one fully built acpx command line and normalizes its stream.
@@ -187,7 +221,7 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 		}
 	}()
 
-	go containAfterCancellation(runCtx, tree)
+	go process.ContainAfterCancellation(runCtx, tree)
 
 	waitErr := cmd.Wait()
 	tree.MarkExited()
@@ -210,7 +244,7 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 	case exceeded:
 		return res, &OutcomeError{
 			Class:  agentrun.OutcomeFailure,
-			Detail: "acpx: output budget exceeded",
+			Detail: outcomeDetail(agentrun.OutcomeFailure, "acpx: output budget exceeded", &stderr),
 		}
 	case res.StopReason == "":
 		class := agentrun.OutcomeFailure
@@ -224,38 +258,17 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 			detail = fmt.Sprintf("acpx: canceled before terminal result (%v)", parent.Err())
 		case runCtx.Err() != nil:
 			class = agentrun.OutcomeTimeout
-			detail = fmt.Sprintf("acpx: no terminal result before the runtime budget (%v)", runCtx.Err())
+			detail = outcomeDetail(class, fmt.Sprintf("acpx: no terminal result before the runtime budget (%v)", runCtx.Err()), &stderr)
+		default:
+			detail = outcomeDetail(class, detail, &stderr)
 		}
 		return res, &OutcomeError{Class: class, Detail: detail}
 	}
 	if class := res.Class(); class != agentrun.OutcomeSuccess {
 		return res, &OutcomeError{
 			Class:  class,
-			Detail: fmt.Sprintf("acpx: terminal stopReason %q", res.StopReason),
+			Detail: outcomeDetail(class, fmt.Sprintf("acpx: terminal stopReason %q", res.StopReason), &stderr),
 		}
 	}
 	return res, nil
-}
-
-// containAfterCancellation is the adapter-side safety net mirroring the CLI
-// adapter's reviewer containment: when the context fires, the tree gets the
-// shared grace budget plus margin to die through the controller's escalation
-// path first, then this watchdog hard-terminates whatever remains so no
-// descendant of the deep npx chain can outlive its budget silently. When the
-// stamped policy restricts kills to the direct child, the watchdog must never
-// fire and no code path here signals the tree.
-func containAfterCancellation(ctx context.Context, tree *process.Tree) {
-	select {
-	case <-ctx.Done():
-	case <-tree.Exited():
-		return
-	}
-	if !process.WholeTreeTermination(ctx) {
-		return
-	}
-	select {
-	case <-tree.Exited():
-	case <-time.After(process.ContainmentDeadline(ctx)):
-		_ = process.Terminate(tree)
-	}
 }

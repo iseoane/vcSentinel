@@ -17,6 +17,13 @@ const (
 	helperModeSleep = "sleep-long"
 	helperModeFlood = "oversized-output"
 
+	// Failure and noisy-cancellation modes pinning the bounded stderr
+	// enrichment of FAILURE/TIMEOUT outcome details.
+	helperModeFailNoisy   = "fail-with-stderr"
+	helperModeFailQuiet   = "fail-silent"
+	helperModeFailLong    = "fail-long-stderr"
+	helperModeCancelNoisy = "cancel-with-stderr"
+
 	// helperExpectEnv optionally overrides the pinned argument tail
 	// (space-separated) so non-default configurations — revision mode with
 	// --cwd, custom timeouts — can pin their exact command-line contract.
@@ -102,6 +109,19 @@ func TestHelperProcess(t *testing.T) {
 		for i := 0; i < 4096; i++ {
 			fmt.Fprint(os.Stdout, line)
 		}
+	case helperModeFailNoisy:
+		fmt.Fprintln(os.Stderr, "BOOM simulated provider crash")
+		fmt.Print(`{"jsonrpc":"2.0","id":9,"result":{"stopReason":"error"}}` + "\n")
+	case helperModeFailQuiet:
+		fmt.Print(`{"jsonrpc":"2.0","id":10,"result":{"stopReason":"error"}}` + "\n")
+	case helperModeFailLong:
+		// 600 filler characters followed by the actionable tail: the detail
+		// excerpt must keep only the LAST 500 characters.
+		fmt.Fprintln(os.Stderr, strings.Repeat("a", 600)+"TAIL-MARKER")
+		fmt.Print(`{"jsonrpc":"2.0","id":11,"result":{"stopReason":"error"}}` + "\n")
+	case helperModeCancelNoisy:
+		fmt.Fprintln(os.Stderr, "NOISE must never surface on a cancellation outcome")
+		fmt.Print(`{"jsonrpc":"2.0","id":12,"result":{"stopReason":"cancelled"}}` + "\n")
 	default:
 		fmt.Fprintln(os.Stderr, "unknown helper mode:", os.Getenv(helperModeEnv))
 		os.Exit(3)
@@ -131,9 +151,9 @@ func spawnHelperConfig(t *testing.T, mutate func(*Config)) *AcpxAdapter {
 	return a
 }
 
-func spawnHelper(t *testing.T, mode string) (*AcpxAdapter, error) {
+func spawnHelper(t *testing.T, mode string) *AcpxAdapter {
 	t.Helper()
 	return spawnHelperConfig(t, func(cfg *Config) {
 		cfg.ChildEnv = append(cfg.ChildEnv, helperModeEnv+"="+mode)
-	}), nil
+	})
 }
