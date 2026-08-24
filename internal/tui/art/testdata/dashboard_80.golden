@@ -1,0 +1,10 @@
+ SENTINEL CONTROL CENTER                    ● 2 daemons · 3 active · 1 attention
+> vas.sentinel           ● owned
+  ue.capability.analizer ● external
+  iseoane.dots           ○ stopped
+
+ ⠹ gate pre-push  review · security
+ ⏸ review         decision required
+ ✓ review         passed
+────────────────────────────────────────────────────────────────────────────────
+ ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit 
