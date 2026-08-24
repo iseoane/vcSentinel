@@ -96,7 +96,7 @@ func ejecutarSliceApply(salida io.Writer, args []string) int {
 		}
 	}
 	if rutaPlan == "" || rutaRespuestas == "" {
-		fmt.Fprintln(salida, "❌ Uso: sentinel slice apply --plan <plan.json> --answers <respuestas.json>")
+		fmt.Fprintln(salida, "❌ "+usoSliceApply)
 		return 1
 	}
 

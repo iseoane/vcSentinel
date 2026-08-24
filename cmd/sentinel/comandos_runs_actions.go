@@ -25,7 +25,7 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 		return runExitUsage
 	}
 	if strings.TrimSpace(options.prompt) == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs start --prompt <text> [--policy-id <id>]")
+		fmt.Fprintln(out, "❌ "+usoRunsStart)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -67,7 +67,7 @@ func executeRunsRespond(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" || strings.TrimSpace(options.text) == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs respond --run <id> --text <answer>")
+		fmt.Fprintln(out, "❌ "+usoRunsRespond)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -139,7 +139,7 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs abort --run <id>")
+		fmt.Fprintln(out, "❌ "+usoRunsAbort)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -184,7 +184,7 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs retry --run <id> [--expected-revision N]")
+		fmt.Fprintln(out, "❌ "+usoRunsRetry)
 		return runExitUsage
 	}
 	controller, err := buildRunsController(worktree)
@@ -245,7 +245,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 	// invents, or rewrites event bytes.
 	if options.repairSet {
 		if strings.TrimSpace(options.repairID) == "" {
-			fmt.Fprintln(out, "❌ Usage: sentinel runs recover --repair <id>")
+			fmt.Fprintln(out, "❌ "+usoRunsRecoverRepair)
 			return runExitUsage
 		}
 		if options.runID != "" {
@@ -358,7 +358,7 @@ func executeRunsVerify(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs verify --run <id>")
+		fmt.Fprintln(out, "❌ "+usoRunsVerify)
 		return runExitUsage
 	}
 	_, controller, err := buildReadonlyController(worktree)

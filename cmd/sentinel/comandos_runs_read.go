@@ -198,7 +198,7 @@ func executeRunsLogs(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if options.runID == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs logs --run <id> [--after <cursor>] [--limit N]")
+		fmt.Fprintln(out, "❌ "+usoRunsLogs)
 		return runExitUsage
 	}
 	_, controller, err := buildReadonlyController(worktree)
