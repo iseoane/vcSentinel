@@ -76,7 +76,10 @@ func TestFactoryPropagaElIdiomaALaCadena(t *testing.T) {
 	cfg := config.CargarConfiguracionLocal(t.TempDir())
 	cfg.CommitLanguage = "en"
 
-	cadena := construirCadena(cfg, []string{"claude", "opencode"}, "")
+	cadena, err := construirCadena(cfg, []string{"claude", "opencode"}, "")
+	if err != nil {
+		t.Fatalf("construirCadena devolvió error: %v", err)
+	}
 	if len(cadena.adaptadores) != 2 {
 		t.Fatalf("adaptadores = %d, esperado 2", len(cadena.adaptadores))
 	}

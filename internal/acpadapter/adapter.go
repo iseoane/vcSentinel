@@ -60,6 +60,13 @@ type Config struct {
 	// child process environment. Operators use it for credential passthrough;
 	// tests use it for the helper-process guard.
 	ChildEnv []string
+	// Enforcement declares which backend must guarantee any restriction
+	// capabilities the run demands (C6 admission, ticket 16). Empty and
+	// "none" admit the run as grant-by-design; "claude-sandbox" declares
+	// the project's Claude Code native sandbox as containment (unsupported
+	// on native Windows). An unknown or platform-unsatisfiable value fails
+	// construction before anything can be launched.
+	Enforcement string
 }
 
 // AcpxAdapter executes prompts through an acpx child process and retains the
@@ -88,6 +95,12 @@ type AcpxAdapter struct {
 func NewAcpx(cfg Config) (*AcpxAdapter, error) {
 	if strings.TrimSpace(cfg.Agent) == "" {
 		return nil, fmt.Errorf("acpadapter: agent token is required")
+	}
+	if err := validateEnforcementOnHost(cfg.Enforcement); err != nil {
+		return nil, err
+	}
+	if cfg.Enforcement == EnforcementClaudeSandbox && strings.TrimSpace(cfg.Agent) != "claude" {
+		return nil, fmt.Errorf("acpadapter: enforcement %q applies only to the claude agent token (the sandbox belongs to Claude Code settings), got agent %q", EnforcementClaudeSandbox, cfg.Agent)
 	}
 	launcher := cfg.Launcher
 	if len(launcher) == 0 {

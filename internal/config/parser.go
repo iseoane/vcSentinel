@@ -14,12 +14,37 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 )
 
+// Agent adapter families an agent entry may declare through its kind key.
+// The empty value is the historical CLI family: absence of kind keeps every
+// existing vassentinel.yml byte-identical in behavior.
+const (
+	AgentKindCLI  = ""
+	AgentKindACPX = "acpx"
+)
+
+// Enforcement values an agent entry may declare. They mirror the admission
+// vocabulary of internal/acpadapter (C6); config only carries the string,
+// the adapter family validates it at construction time.
+const (
+	EnforcementNone          = "none"
+	EnforcementClaudeSandbox = "claude-sandbox"
+)
+
 // AgentConfig define el modelo y esfuerzo por defecto de un agente (binario)
 // y los perfiles anidados que ese agente ofrece (esquema v2).
 type AgentConfig struct {
 	Model           string
 	ReasoningEffort string
 	Profiles        map[string]ProfileConfig
+	// Kind selects the adapter family: "" (CLI, default) or "acpx". Any
+	// other value fails construction with an explicit error.
+	Kind string
+	// ACPAgent is the acpx agent token (claude|codex|opencode|custom) when
+	// Kind is "acpx"; it is required in that case and ignored otherwise.
+	ACPAgent string
+	// Enforcement declares the restriction backend for acpx agents
+	// ("none" default; "claude-sandbox"). Validated at construction.
+	Enforcement string
 }
 
 // ProfileConfig es una receta con nombre: agente + modelo + esfuerzo. El
@@ -278,6 +303,12 @@ type agenteYAML struct {
 	Model           *string                     `yaml:"model"`
 	ReasoningEffort *string                     `yaml:"reasoning_effort"`
 	Profiles        map[string]perfilAgenteYAML `yaml:"profiles"`
+	// Kind selecciona la familia de adaptador ("" CLI por defecto, "acpx"
+	// para el adaptador ACP/acpx). Agent y Enforcement solo aplican a la
+	// familia acpx (ticket 16).
+	Kind        *string `yaml:"kind"`
+	Agent       *string `yaml:"agent"`
+	Enforcement *string `yaml:"enforcement"`
 }
 
 // reviewYAML es la sección review. Timeout/Parallel se decodifican como
@@ -421,6 +452,15 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		}
 		if agenteRaw.ReasoningEffort != nil {
 			agente.ReasoningEffort = *agenteRaw.ReasoningEffort
+		}
+		if agenteRaw.Kind != nil {
+			agente.Kind = *agenteRaw.Kind
+		}
+		if agenteRaw.Agent != nil {
+			agente.ACPAgent = *agenteRaw.Agent
+		}
+		if agenteRaw.Enforcement != nil {
+			agente.Enforcement = *agenteRaw.Enforcement
 		}
 		for perfilNombre, perfilRaw := range agenteRaw.Profiles {
 			if agente.Profiles == nil {

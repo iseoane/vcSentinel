@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -392,20 +391,6 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	}
 	args = append(args, "--dir", request.SnapshotDir)
 	return args, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
-}
-
-func rutasRevisionSeguras(rutas []string) []string {
-	seguras := make([]string, 0, len(rutas))
-	for _, ruta := range rutas {
-		normalizada := strings.ReplaceAll(ruta, "\\", "/")
-		limpia := path.Clean(normalizada)
-		drive := len(limpia) >= 2 && limpia[1] == ':'
-		if ruta == "" || path.IsAbs(limpia) || drive || limpia == "." || limpia == ".." || strings.HasPrefix(limpia, "../") || strings.HasPrefix(ruta, "-") || strings.ContainsAny(ruta, "\x00\r\n*?[]{}!") {
-			continue
-		}
-		seguras = append(seguras, limpia)
-	}
-	return seguras
 }
 
 func reviewEnvironment(configuration, snapshot, model string) []string {

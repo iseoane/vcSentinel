@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
 )
 
 // EjecutarPrompt runs one arbitrary prompt through acpx and returns the
@@ -55,7 +55,7 @@ func (a *AcpxAdapter) ReviewWithContext(ctx context.Context, prompt, sha string,
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	snapshot, _, cleanup, err := agentadapter.CreateReviewSnapshot("", sha, paths)
+	snapshot, _, cleanup, err := reviewsnapshot.Create("", sha, paths)
 	if err != nil {
 		return "", fmt.Errorf("acpx: create review snapshot: %w", err)
 	}
