@@ -45,10 +45,7 @@ func chdirToRepoRoot(t *testing.T) {
 // --- prompt passthrough ------------------------------------------------------
 
 func TestEjecutarPromptPassthrough(t *testing.T) {
-	a, err := spawnHelper(t, helperModeOK)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := spawnHelper(t, helperModeOK)
 	out, err := a.EjecutarPrompt("say PROBE")
 	if err != nil {
 		t.Fatalf("EjecutarPrompt returned error: %v", err)
@@ -59,10 +56,7 @@ func TestEjecutarPromptPassthrough(t *testing.T) {
 }
 
 func TestEjecutarPromptMapsNonSuccessToTypedOutcome(t *testing.T) {
-	a, err := spawnHelper(t, helperModeTrap)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := spawnHelper(t, helperModeTrap)
 	out, runErr := a.EjecutarPrompt("say PROBE")
 	if runErr == nil {
 		t.Fatal("EjecutarPrompt must surface a classified error for a cancelled turn")

@@ -288,10 +288,7 @@ func TestEffectiveIdentityTable(t *testing.T) {
 // TestRunPipelineEndTurn exercises the full spawn -> scan -> normalize path
 // against the fake acpx child and asserts the retained evidence contract.
 func TestRunPipelineEndTurn(t *testing.T) {
-	a, err := spawnHelper(t, helperModeOK)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := spawnHelper(t, helperModeOK)
 	res, runErr := a.Run(context.Background(), "say PROBE")
 	if runErr != nil {
 		t.Fatalf("Run returned error: %v", runErr)
@@ -337,10 +334,7 @@ func TestRunPipelineEndTurn(t *testing.T) {
 // zero plus stopReason "cancelled" must classify as cancellation, never as
 // success.
 func TestRunExitZeroCancelledIsCancellation(t *testing.T) {
-	a, err := spawnHelper(t, helperModeTrap)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := spawnHelper(t, helperModeTrap)
 	res, runErr := a.Run(context.Background(), "say PROBE")
 	if runErr == nil {
 		t.Fatal("Run must surface a classified error for a cancelled turn")

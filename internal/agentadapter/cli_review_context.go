@@ -98,10 +98,11 @@ type ownedCommand struct {
 
 // startOwnedCommand is the single spawn point of the restricted reviewer: one
 // context-bound, process-group/job-owned exec whose whole tree is accounted
-// for from birth, feeding stdin and capturing stdout and stderr. A
-// containment watchdog kills the tree if the context stays canceled past the
-// shared grace budget plus margin; controller-authored escalation normally
-// wins that race and appends the durable evidence instead.
+// for from birth, feeding stdin and capturing stdout and stderr. The shared
+// containment watchdog (process.ContainAfterCancellation) kills the tree if
+// the context stays canceled past the shared grace budget plus margin;
+// controller-authored escalation normally wins that race and appends the
+// durable evidence instead.
 func startOwnedCommand(ctx context.Context, name string, args []string, env []string, dir, stdin string) (*ownedCommand, error) {
 	var out bytes.Buffer
 	var stderr bytes.Buffer
@@ -115,34 +116,8 @@ func startOwnedCommand(ctx context.Context, name string, args []string, env []st
 	if err != nil {
 		return nil, err
 	}
-	go containAfterCancellation(ctx, tree)
+	go process.ContainAfterCancellation(ctx, tree)
 	return &ownedCommand{cmd: cmd, tree: tree, stdout: &out, stderr: &stderr}, nil
-}
-
-// containAfterCancellation is the adapter-side safety net for enabled
-// policies: when the context fires, give the tree the shared grace budget
-// plus margin to die through the controller's escalation path first, then
-// hard-terminate whatever remains so no descendant can outlive its budget
-// silently. When the stamped policy restricts kills to the direct child,
-// this watchdog must never fire: the exec kill switch already terminates the
-// direct child and nothing may signal the tree.
-func containAfterCancellation(ctx context.Context, tree *process.Tree) {
-	if ctx == nil {
-		return
-	}
-	select {
-	case <-ctx.Done():
-	case <-tree.Exited():
-		return
-	}
-	if !process.WholeTreeTermination(ctx) {
-		return
-	}
-	select {
-	case <-tree.Exited():
-	case <-time.After(process.ContainmentDeadline(ctx)):
-		_ = process.Terminate(tree)
-	}
 }
 
 // runCapturedCommand is the direct capture seam kept for callers and tests

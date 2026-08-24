@@ -126,7 +126,7 @@ func Sites() []Site {
 		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---
 		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Line: 234, Marker: "exec.Command",
 			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16): Command is the transparent spawn description; the production path runs through the owned-tree spawner in review.go (process.Spawn), mirroring cli.go's seam split. Admission binding happens at the caller, not here."},
-		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Line: 31, Marker: "EjecutarPrompt(",
+		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Line: 32, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Prompt and restricted-review surface of the ACP/acpx adapter (ticket 16 slice 2, wired in slice 3): review runs reuse the shared reviewsnapshot.Create snapshot discipline and spawn through the owned-tree process.Spawn seam like cli.go; admission binding happens at the caller, not here."},
 		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.ObtenerMensajeCommitConDiff", Line: 42, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Factory wiring of kind:acpx entries (ticket 16 slice 3): the bridge delegates commit-message generation through one prompt turn on the acp adapter. Commit-message text cannot influence a verdict or gate outcome and degrades to deterministic fallback messages on failure."},
