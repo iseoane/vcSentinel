@@ -16,16 +16,10 @@ land.
 
 ## P2 — Next (clear value, small effort)
 
-- [ ] **Surface stderr in failure details** for acpx outcomes (currently only
-      the classification detail is carried) — immediate operability gain for
-      the brand-new adapter. Origin: 16 slice 2 review.
-- [ ] **Extract containment watchdog** (`containAfterCancellation`) into
-      `internal/process` next time that file is touched — currently mirrored
-      verbatim in agentadapter and acpadapter; deduplicate before the two
-      copies diverge. Origin: 16 slice 2 review.
-- [ ] **Simplify vestigial `spawnHelper` signature** (hardcoded nil error
-      return kept for old call sites) — bundle with either P2 item above in a
-      single hygiene pass. Origin: 16 slice 2 review.
+All three P2 items landed in `8d7c2ed` (merged as `b4405f3`): shared
+`process.ContainAfterCancellation` replaced both watchdog copies; acpx
+failure/timeout details now carry a bounded stderr excerpt across all three
+failure routes; `spawnHelper` simplified. See Resolved below.
 
 ## P3 — Conditional / gated
 
@@ -58,6 +52,12 @@ land.
 
 ## Resolved
 
+- [x] **P2 hygiene batch** — shared `process.ContainAfterCancellation`
+      (R7 semantics, nil-ctx guard included) replaced both watchdog copies;
+      acpx failure/timeout details carry a bounded stderr excerpt (last 500
+      chars, all three failure routes); `spawnHelper` signature simplified.
+      Reviewed for behavior preservation (watchdog verified line-for-line
+      against the R7 original). Merged as `b4405f3`. Origin: 16 reviews.
 - [x] **Stabilize daemon wire-parity tests under load** — fixed upstream by
       `f2aa7a4 fix(execution): retry and recover cross-check durable truth
       over stale bookkeeping`: control-op classification no longer trusts
