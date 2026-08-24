@@ -180,7 +180,7 @@ func Sites() []Site {
 		// --- internal/review -------------------------------------------------
 		{Path: "internal/review/engine.go", Symbol: "invokeReview/ejecutarConReintento/refutarHallazgosCriticos", Line: 477, Marker: "EjecutarRevision(",
 			Class: ClassShared, Reason: "Engine-level injection seam behind OpcionesAuditoria.ReviewTransport. Since ticket 13 (R11) removed the review.durable_runs switch, production wiring always supplies the admitted durable transport (the CRITICAL refuter routes through it unconditionally); the direct restricted call with its transport retry survives only as a defensive fallback for direct-call fixtures."},
-		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 418, Marker: "EjecutarPrompt(",
+		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 449, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
 		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Line: 31, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing feeding reviewer context snapshots."},
