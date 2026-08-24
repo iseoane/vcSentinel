@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/attach"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
@@ -196,12 +194,6 @@ func TestCursorResumesStrictlyAfterLastApplied(t *testing.T) {
 	if len(snapshot.Invocations) != 1 {
 		t.Fatalf("invocations = %d, want the single deduplicated invocation", len(snapshot.Invocations))
 	}
-}
-
-// newTestModelWithView builds a model pre-seeded with an observed view.
-func newTestModelWithView(t *testing.T, provider HostProvider, view attach.RunView) Model {
-	t.Helper()
-	return New("run-tui-test", "tester", provider, attach.NewReplayCollector(0), view, context.Background())
 }
 
 // TestReconnectBackoffDelaysGrow documents the delay ladder the scheduler

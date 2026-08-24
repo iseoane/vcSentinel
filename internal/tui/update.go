@@ -57,6 +57,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleHostError(msg)
 	case actionResultMsg:
 		if msg.Err != nil {
+			if isConnectionLevelActionFailure(msg.Err) {
+				// A transport failure during abort/respond/retry means the
+				// session may have lost contact mid-action, so the run cannot
+				// be treated as settled even when the last projection read
+				// terminal: the durable stream may have moved past a view we
+				// can no longer refresh. Interpretation: such a failure
+				// UNFREEZES a frozen session into the bounded reconnect flow
+				// (unless contact was already declared lost, where the freeze
+				// is moot and exhaustion semantics stay authoritative), while
+				// semantic rejections keep the status-line-only landing below.
+				if m.conn != stateLost {
+					m.frozen = false
+				}
+				return m.handleHostError(hostErrMsg{Err: msg.Err, Op: msg.Kind})
+			}
 			m.status = fmt.Sprintf("❌ %s rejected: %v", msg.Kind, msg.Err)
 			return m, nil
 		}
@@ -170,11 +185,21 @@ func (m Model) updateRespondInput(key string, runes []rune) (tea.Model, tea.Cmd)
 // handleHostError enters bounded reconnect: attempt 1 schedules the first
 // backoff tick, later failures escalate the delay until exhaustion freezes
 // the session into the honest lost-contact state. It can fire from a poll, a
-// manual refresh, or an action whose host resolution failed. Only one tick
-// chain may be in flight at a time: if a backoffTickMsg is already pending,
-// the failure updates the attempt counter and status but does not schedule a
-// second scheduler — the pending tick drives the next attempt.
+// manual refresh, or an action whose host resolution failed — or whose
+// exchange failed at connection level (classified in actions.go), which
+// additionally unfreezes a frozen session into this flow. The failed host
+// is dropped from any provider cache first, so the reconnect attempt redials
+// instead of reusing the connection that just died; implementations close
+// that replaced connection only at the replacing resolution — poisoned until
+// then, released via its own Close only after the swap — never under a
+// concurrent exchange. Only one tick chain may be in flight at a time: if a
+// backoffTickMsg is already pending, the failure updates the attempt counter
+// and status but does not schedule a second scheduler — the pending tick
+// drives the next attempt.
 func (m Model) handleHostError(msg hostErrMsg) (tea.Model, tea.Cmd) {
+	if m.provider != nil {
+		m.provider.Reset()
+	}
 	if m.conn == stateLost {
 		return m, nil
 	}
@@ -275,7 +300,7 @@ func (m Model) observeCmd() tea.Cmd {
 		ctx = context.Background()
 	}
 	return func() tea.Msg {
-		host, err := provider()
+		host, err := provider.Host()
 		if err != nil {
 			return hostErrMsg{Err: err, Op: "observe"}
 		}

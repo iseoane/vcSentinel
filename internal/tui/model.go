@@ -42,9 +42,21 @@ const subscribePageLimit = 100
 
 // HostProvider resolves a repository host on demand so reconnect attempts can
 // re-resolve (a fresh dial after endpoint loss) instead of reusing a dead
-// connection. Implementations must be safe for concurrent use by command
+// connection. Implementations must cache one healthy host: repeated Host
+// resolutions return the SAME host untouched, because observe and action
+// command goroutines resolve concurrently and must never have their
+// connection released underneath an exchange. Reset POISONS the current host:
+// no future Host hands it out, and its release is deferred until the next
+// Host has dialed and swapped in the fresh one, where it goes through the
+// poisoned host's own Close. That ordering is safe because daemon.RemoteHost
+// serializes every exchange behind its internal mutex — Close acquires the
+// lock only after any in-flight exchange completes, and a completed exchange
+// cannot be harmed by a subsequent close. Safe for concurrent use by command
 // goroutines.
-type HostProvider func() (execution.RepositoryHost, error)
+type HostProvider interface {
+	Host() (execution.RepositoryHost, error)
+	Reset()
+}
 
 // connState tracks the exchange health of the attach session.
 type connState int
@@ -124,7 +136,10 @@ type observeGate struct{ mu sync.Mutex }
 
 // New builds the attach model from the already-observed initial snapshot the
 // CLI took before launching the program, so first paint is instant and
-// --after resume works unchanged.
+// --after resume works unchanged. A snapshot that already reads terminal
+// boots straight into the frozen state: --follow over a settled run must
+// render the exit hint and refuse abort/respond exactly like a session that
+// observes the terminal arrival live.
 func New(identity agentrun.Identity, principal string, provider HostProvider, collector *attach.ReplayCollector, initialView attach.RunView, detach context.Context) Model {
 	return Model{
 		identity:  identity,
@@ -134,6 +149,7 @@ func New(identity agentrun.Identity, principal string, provider HostProvider, co
 		ctx:       detach,
 		view:      initialView,
 		haveView:  initialView.RunID != "",
+		frozen:    initialView.IsTerminal(),
 		backoff:   &backoffTracker{},
 		gate:      &observeGate{},
 	}
@@ -150,13 +166,14 @@ func (m Model) Snapshot() attach.RunView { return m.view }
 func (m Model) Frozen() bool             { return m.frozen }
 func (m Model) LostContact() bool        { return m.conn == stateLost }
 
-// Init starts the poll loop (unless the run already settled) and watches the
-// detach context.
+// Init schedules the poll loop unless the run already arrived settled, and
+// ALWAYS watches the detach context: SIGINT/SIGTERM detach as cleanly from a
+// terminal-booted session as from a live one, without exception.
 func (m Model) Init() tea.Cmd {
-	if m.view.IsTerminal() {
-		return nil
+	var cmds []tea.Cmd
+	if !m.frozen {
+		cmds = append(cmds, pollTickCmd())
 	}
-	cmds := []tea.Cmd{pollTickCmd()}
 	if m.ctx != nil {
 		cmds = append(cmds, waitForDetach(m.ctx))
 	}

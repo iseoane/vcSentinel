@@ -2,13 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 )
 
@@ -22,11 +25,61 @@ func stampActionIdentity(kind string) string {
 		kind, time.Now().UnixNano(), os.Getpid(), tuiActionSequence.Add(1))
 }
 
+// daemonClosedConnText is the documented equivalence check for the daemon
+// package's unexported errConnClosed sentinel ("connection is closed"): the
+// sentinel is deliberately package-private, so callers outside internal/daemon
+// cannot errors.Is against it and can only match its stable surface text —
+// which every post-mortem call on a dead RemoteHost wraps verbatim as
+// "daemon: connection is closed".
+const daemonClosedConnText = "connection is closed"
+
+// isConnectionLevelActionFailure classifies an abort/respond/retry error into
+// the two landings Update distinguishes. CONNECTION-LEVEL failures mean the
+// transport or session died mid-action (or afterwards): they route through
+// handleHostError semantics (provider Reset + reconnecting state + backoff).
+// SEMANTIC rejections are server-classified answers about the run itself;
+// they stay status-line-only because the burned idempotency identity makes
+// auto-retry wrong. Classification rules, in order:
+//
+//  1. *daemon.RemoteError (errors.As) is by definition a decoded,
+//     server-classified rejection — semantic, never transport.
+//  2. The daemon closed-connection surface text (equivalence check above).
+//  3. Mid-exchange transport surfaces of the framed client — write/read
+//     frame failures plus the corrupt-frame and empty-body paths, each of
+//     which markConnDead in daemon.RemoteHost.call, leaving the cached
+//     connection unusable for any later retry.
+//
+// Everything else (domain sentinels like stale-revision, context
+// cancellation, in-process host validation errors) is semantic.
+func isConnectionLevelActionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var rejected *daemon.RemoteError
+	if errors.As(err, &rejected) {
+		return false
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, daemonClosedConnText):
+		return true
+	case strings.Contains(msg, "cannot send the "),
+		strings.Contains(msg, "cannot read the "),
+		strings.Contains(msg, "response frame"),
+		strings.Contains(msg, "carries no body"):
+		return true
+	default:
+		return false
+	}
+}
+
 // actionCmd routes one control action through the provider host. Host
-// resolution failures surface as hostErrMsg (reconnectable); semantic
-// rejections surface as actionResultMsg and land in the status line without
-// crashing or auto-retrying — a failed action burned its idempotency
-// identity, so the operator decides what happens next.
+// resolution failures surface as hostErrMsg (reconnectable); every perform
+// error lands as actionResultMsg carrying Err, and Update classifies it:
+// connection-level failures route through handleHostError semantics, while
+// semantic rejections stay in the status line without crashing or
+// auto-retrying — a failed action burned its idempotency identity, so the
+// operator decides what happens next.
 func (m Model) actionCmd(kind string, perform func(context.Context, execution.RepositoryHost) error) tea.Cmd {
 	provider := m.provider
 	ctx := m.ctx
@@ -34,7 +87,7 @@ func (m Model) actionCmd(kind string, perform func(context.Context, execution.Re
 		ctx = context.Background()
 	}
 	return func() tea.Msg {
-		host, err := provider()
+		host, err := provider.Host()
 		if err != nil {
 			return hostErrMsg{Err: err, Op: kind}
 		}

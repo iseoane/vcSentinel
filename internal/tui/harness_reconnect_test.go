@@ -35,13 +35,17 @@ func (p *recordingProvider) Host() (execution.RepositoryHost, error) {
 		p.failures--
 		return nil, errors.New("forced endpoint loss")
 	}
-	host, err := p.base()
+	host, err := p.base.Host()
 	if err != nil {
 		return nil, err
 	}
 	p.dialed = append(p.dialed, host)
 	return host, nil
 }
+
+// Reset is part of the HostProvider seam; this double's dial sequence is
+// driven explicitly by the test, so there is no cache to drop.
+func (p *recordingProvider) Reset() {}
 
 func (p *recordingProvider) forceFailures(n int) {
 	p.mu.Lock()
@@ -80,7 +84,7 @@ func TestHarnessReconnectResumesReplayExactlyOnce(t *testing.T) {
 	gate := newGateAdapter()
 	harness := startHarnessDaemon(t, gate)
 	wrapped := &recordingProvider{base: harness.provider}
-	harness.provider = wrapped.Host
+	harness.provider = wrapped
 
 	runID, seedHost := startHarnessRun(t, harness)
 	defer func() {
@@ -102,7 +106,7 @@ func TestHarnessReconnectResumesReplayExactlyOnce(t *testing.T) {
 	ctx := context.Background()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		host, err := harness.provider()
+		host, err := harness.provider.Host()
 		if err == nil {
 			_, _, err := ObserveSnapshot(ctx, host, runID, harnessPrincipal, groundTruth)
 			if closer, ok := host.(*daemon.RemoteHost); ok {

@@ -60,6 +60,18 @@ func (a *gateAdapter) open() {
 	}
 }
 
+// dialProvider adapts a plain dial closure to the HostProvider seam. It
+// caches nothing: harness scenarios decide connection lifetimes explicitly,
+// and Reset is inert for the same reason.
+type dialProvider struct {
+	dial func() (execution.RepositoryHost, error)
+}
+
+func (p dialProvider) Host() (execution.RepositoryHost, error) { return p.dial() }
+
+// Reset is part of the HostProvider seam; the harness dials explicitly.
+func (dialProvider) Reset() {}
+
 // harnessDaemon bundles everything one harness scenario needs: the host
 // provider dialing the real endpoint, the backing store for direct durable
 // reads, the daemon's own controller for quiescence checks, and a graceful
@@ -106,13 +118,13 @@ func startHarnessDaemon(t *testing.T, adapter execution.Adapter) harnessDaemon {
 		backing:    store.NuevoStore(commonDir),
 		controller: controller,
 	}
-	harness.provider = func() (execution.RepositoryHost, error) {
+	harness.provider = dialProvider{dial: func() (execution.RepositoryHost, error) {
 		endpoint, _, err := daemon.LoadEndpoint(daemon.Dir(commonDir))
 		if err != nil {
 			return nil, err
 		}
 		return daemon.DialRemoteHost(endpoint, daemon.FingerprintRepository(commonDir))
-	}
+	}}
 	t.Cleanup(func() {
 		if endpoint, _, err := daemon.LoadEndpoint(daemon.Dir(commonDir)); err == nil {
 			if host, dialErr := daemon.DialRemoteHost(endpoint, daemon.FingerprintRepository(commonDir)); dialErr == nil {
@@ -137,7 +149,7 @@ func startHarnessDaemon(t *testing.T, adapter execution.Adapter) harnessDaemon {
 // returns its identity; the caller owns closing that host.
 func startHarnessRun(t *testing.T, h harnessDaemon) (agentrun.Identity, execution.RepositoryHost) {
 	t.Helper()
-	host, err := h.provider()
+	host, err := h.provider.Host()
 	if err != nil {
 		t.Fatalf("dial harness daemon: %v", err)
 	}

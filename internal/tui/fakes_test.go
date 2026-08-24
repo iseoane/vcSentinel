@@ -100,19 +100,24 @@ func (h *fakeHost) appliedActions() []string {
 }
 
 // scriptedProvider serves hosts in order and fails once the script runs dry,
-// simulating endpoint loss after the last good connection dies.
+// simulating endpoint loss after the last good connection dies. Its Reset
+// only COUNTS invocations — the tests own the resolution sequence explicitly,
+// so no caching sits between Update and the scripted hosts, and the counter
+// lets transition tests assert that failure paths actually reset the
+// provider.
 type scriptedProvider struct {
-	mu    sync.Mutex
-	hosts []execution.RepositoryHost
-	calls int
+	mu     sync.Mutex
+	hosts  []execution.RepositoryHost
+	calls  int
+	resets int
 }
 
 // newScriptedProvider serves hosts in order and fails once the script runs
-// dry, simulating endpoint loss after the last good connection dies. The
-// returned closure satisfies HostProvider directly.
-func newScriptedProvider(hosts ...execution.RepositoryHost) HostProvider {
+// dry, simulating endpoint loss after the last good connection dies. It
+// returns the concrete type so tests can also assert on its reset counter.
+func newScriptedProvider(hosts ...execution.RepositoryHost) *scriptedProvider {
 	p := &scriptedProvider{hosts: hosts}
-	return p.Host
+	return p
 }
 
 func (p *scriptedProvider) Host() (execution.RepositoryHost, error) {
@@ -124,6 +129,20 @@ func (p *scriptedProvider) Host() (execution.RepositoryHost, error) {
 		return p.hosts[index], nil
 	}
 	return nil, fmt.Errorf("provider script exhausted after %d hosts", len(p.hosts))
+}
+
+// Reset is part of the HostProvider seam; it records the invocation without
+// touching the scripted resolution sequence.
+func (p *scriptedProvider) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.resets++
+}
+
+func (p *scriptedProvider) resetCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.resets
 }
 
 func (p *scriptedProvider) callCount() int {
@@ -140,6 +159,19 @@ func (p *scriptedProvider) callCount() int {
 func newTestModel(t *testing.T, provider HostProvider, afterCursor uint64, initial attach.RunView) Model {
 	t.Helper()
 	return New("run-tui-test", "tester", provider, attach.NewReplayCollector(afterCursor), initial, context.Background())
+}
+
+// newTestModelWithView builds a model pre-seeded with an observed view.
+func newTestModelWithView(t *testing.T, provider HostProvider, view attach.RunView) Model {
+	t.Helper()
+	return newTestModel(t, provider, 0, view)
+}
+
+// newTestModelWithDetach builds a model whose detach context the test owns,
+// so Init's detach watcher can be driven without a real signal.
+func newTestModelWithDetach(t *testing.T, provider HostProvider, view attach.RunView, ctx context.Context) Model {
+	t.Helper()
+	return New("run-tui-test", "tester", provider, attach.NewReplayCollector(0), view, ctx)
 }
 
 // update feeds one message through Update and hands back the typed model.
