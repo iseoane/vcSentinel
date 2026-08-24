@@ -283,8 +283,15 @@ func isRemovalRemnant(directory string) bool {
 // directory holding nothing but its event-lock file. The locked section
 // clears every child except the lock file itself — guarding against a
 // concurrent pass recreating content between classification and deletion —
-// then the lock file and the directory are removed after releasing, because
+// then the lock plus directory are removed after releasing, because
 // Windows refuses to delete paths under an open handle.
+//
+// Ticket 14 prune admission window: if real content exists under the lock —
+// an admission landed between classification and this critical section,
+// which CreateRun's own event-lock section makes a serialized possibility —
+// the cleanup refuses instead of wiping it. The stable keep reason is the
+// incomplete-admission guard: the next prune classifies the record from its
+// actual evidence like any other. Pure lock-only remnants still self-heal.
 func (s *Store) removeExecutionRemnant(runID string) error {
 	directory, err := s.executionDir(runID)
 	if err != nil {
@@ -300,9 +307,7 @@ func (s *Store) removeExecutionRemnant(runID string) error {
 			if entry.Name() == ".events.lock" {
 				continue
 			}
-			if err := os.RemoveAll(filepath.Join(directory, entry.Name())); err != nil {
-				return err
-			}
+			return pruneInLockRefusal{reason: PruneReasonIncompleteAdmission}
 		}
 		return nil
 	})
