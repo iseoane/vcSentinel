@@ -113,7 +113,7 @@ func parsearExplain(args []string) (base, head string, jsonOut bool, err error) 
 			continue
 		}
 		if strings.HasPrefix(arg, "-") || rango != "HEAD^..HEAD" {
-			return "", "", false, fmt.Errorf("uso: sentinel explain [<base>..<head>] [--json]")
+			return "", "", false, fmt.Errorf("%s", usoExplain)
 		}
 		rango = arg
 	}

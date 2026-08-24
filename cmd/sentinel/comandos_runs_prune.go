@@ -34,7 +34,7 @@ func executeRunsPrune(out io.Writer, worktree string, args []string) int {
 		return runExitUsage
 	}
 	if !options.olderThanSet || strings.TrimSpace(options.olderThan) == "" {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs prune --older-than <duration> [--json]")
+		fmt.Fprintln(out, "❌ "+usoRunsPrune)
 		return runExitUsage
 	}
 	maxAge, parseErr := time.ParseDuration(strings.TrimSpace(options.olderThan))
