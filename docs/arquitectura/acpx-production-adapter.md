@@ -60,8 +60,10 @@ Backend-specific status:
 
 - **opencode**: has no gating mechanism — probed ungated in A1. Use
   `enforcement: none` and treat runs as grant-by-design; declaring
-  `claude-sandbox` with an opencode token would be a lie the config layer
-  does not check, so do not.
+  `claude-sandbox` with an opencode token fails construction before any
+  process can start (admission fail-fast: that declaration applies only to
+  the claude agent token, because the sandbox belongs to Claude Code
+  settings), so a mismatched pair can never reach launch.
 - **codex**: currently blocked by the `codex-acp -32000 Authentication
   required` gap (fails despite CLI login). Support is gated on that
   environment fix; contract tests run without live agents, so codex work
@@ -82,9 +84,16 @@ Backend-specific status:
 
 ## Diagnostics
 
-- `sentinel runs status|logs|verify` — durable-run records carry the raw
-  stream hash, effective identity, and outcome class of every admitted acpx
-  invocation.
+- `sentinel runs status|logs|verify` — review-path outputs are hash-admitted
+  as evidence by DurableTransport (R6), and runs-prompt durable requests
+  record an `agent.enforcement` capability carrying the declared backend —
+  except under a configured daemon endpoint, where admission stays in legacy
+  explicit form by design (conservative relayed path; capability stamping
+  applies to the in-process admission only). Raw NDJSON transcripts are
+  retained programmatically on `*acpadapter.Result`
+  (`RawStream`/`ObservedModel`/`StopReason`/`Violations`/`UsageJSON`); durable
+  raw-transcript threading is an explicit follow-up gated on capability-policy
+  runtime work (store schema).
 - Outcome classes come from the terminal `stopReason`, never exit codes. A
   turn that streamed output but produced no terminal result classifies as
   failure (or timeout/cancellation when a budget fired).
