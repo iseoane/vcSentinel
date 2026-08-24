@@ -28,12 +28,14 @@ type AuthContext struct {
 }
 
 // RepositoryHost is the narrow control seam over durable runs. It carries
-// exactly four operations; transport concerns arrive in a later slice.
+// exactly six operations; transport concerns arrive in a later slice.
 type RepositoryHost interface {
 	Start(ctx context.Context, request StartRequest) (Handle, error)
 	Inspect(ctx context.Context, request InspectRequest) (Inspection, error)
 	Subscribe(ctx context.Context, request SubscribeRequest) (store.EventPage, error)
 	Apply(ctx context.Context, request ApplyRequest) (ApplyResult, error)
+	Recover(ctx context.Context, request RecoverRequest) (Handle, error)
+	Retry(ctx context.Context, request RetryRequest) (Handle, error)
 }
 
 // StartRequest names the run to admit and the durable policy governing it.
@@ -64,6 +66,24 @@ type SubscribeRequest struct {
 	AfterCursor uint64            `json:"after_cursor"`
 	Limit       int               `json:"limit"`
 	AuthContext AuthContext       `json:"auth_context"`
+}
+
+// RecoverRequest names the run resumed through explicit operator recovery.
+// ExpectedRevision optionally pins the durable stream head; zero skips the
+// check, mirroring Controller.Recover.
+type RecoverRequest struct {
+	RunID            agentrun.Identity `json:"run_id"`
+	ExpectedRevision uint64            `json:"expected_revision"`
+	AuthContext      AuthContext       `json:"auth_context"`
+}
+
+// RetryRequest names a retryable run relaunched inside its original logical
+// job and run identity. ExpectedRevision optionally pins the durable stream
+// head; zero skips the check, mirroring Controller.Retry.
+type RetryRequest struct {
+	RunID            agentrun.Identity `json:"run_id"`
+	ExpectedRevision uint64            `json:"expected_revision"`
+	AuthContext      AuthContext       `json:"auth_context"`
 }
 
 // InProcessHost serves RepositoryHost from an in-process controller. Replay
@@ -137,4 +157,23 @@ func (h *InProcessHost) Apply(ctx context.Context, request ApplyRequest) (ApplyR
 	h.actionIDs[key] = struct{}{}
 	h.mu.Unlock()
 	return h.controller.Apply(ctx, request.RunID, request.Action)
+}
+
+// Recover resumes a run from durable evidence through explicit operator
+// recovery, exactly like Controller.Recover but behind the authenticated
+// seam.
+func (h *InProcessHost) Recover(ctx context.Context, request RecoverRequest) (Handle, error) {
+	if request.AuthContext.Principal == "" {
+		return Handle{}, ErrMissingPrincipal
+	}
+	return h.controller.Recover(ctx, request.RunID, request.ExpectedRevision)
+}
+
+// Retry relaunches a retryable run inside its original identity, exactly like
+// Controller.Retry but behind the authenticated seam.
+func (h *InProcessHost) Retry(ctx context.Context, request RetryRequest) (Handle, error) {
+	if request.AuthContext.Principal == "" {
+		return Handle{}, ErrMissingPrincipal
+	}
+	return h.controller.Retry(ctx, request.RunID, request.ExpectedRevision)
 }
