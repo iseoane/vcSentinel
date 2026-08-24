@@ -8,7 +8,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
@@ -39,7 +41,7 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 
 	// Camino auto: cadena con un adaptador por cada agente disponible, en el
 	// orden de configuración del yml (fallback en cadena por petición).
-	return construirCadena(cfg, nombres, ""), nil
+	return construirCadena(cfg, nombres, "")
 }
 
 // NewAgentAdapterParaMensaje construye el adaptador para generar los mensajes
@@ -74,7 +76,7 @@ func NewAgentAdapterParaMensaje(worktreePath string) (AgentAdapter, error) {
 	}
 
 	// Camino auto: cada adaptador de la cadena resuelve SU perfil commit.
-	return construirCadena(cfg, nombres, "commit"), nil
+	return construirCadena(cfg, nombres, "commit")
 }
 
 // NewAgentAdapterNamed construye un adaptador CLI para un nombre de agente
@@ -94,36 +96,86 @@ func NewAgentAdapterNamedParaMensaje(worktreePath string, nombre string) (AgentA
 	return nuevoAdaptador(cfg, nombre, "commit")
 }
 
-// nuevoAdaptador construye el adaptador CLI de un agente concreto, resolviendo
+// nuevoAdaptador construye el adaptador de un agente concreto, resolviendo
 // el binario y la configuración de modelo/esfuerzo. Si perfil es no vacío, la
 // configuración se resuelve con el perfil anidado del agente (con fallback
 // al modelo/esfuerzo base cuando el perfil no los define); si perfil es vacío
 // se usa la configuración base del agente tal cual (compatibilidad con
-// NewAgentAdapter/NewAgentAdapterNamed).
+// NewAgentAdapter/NewAgentAdapterNamed). La familia de adaptador la decide
+// el kind declarado por la entrada (ver construirAdaptadorAgente).
 func nuevoAdaptador(cfg config.Config, nombre, perfil string) (AgentAdapter, error) {
-	if _, existe := cfg.Agents[nombre]; !existe {
-		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
-	}
-	return &CLIAdapter{
-		BinaryName:     resolverBinarioReal(nombre),
-		Config:         configAgente(cfg, nombre, perfil),
-		CommitLanguage: cfg.CommitLanguage,
-	}, nil
+	return construirAdaptadorAgente(cfg, nombre, perfil, 0)
 }
 
-// construirCadena crea la cadena de adaptadores del camino auto: un CLIAdapter
+// construirAdaptadorAgente construye el adaptador que corresponde a la
+// familia declarada por la entrada agents.<nombre>: CLIAdapter para kind
+// vacío (el camino histórico, byte-idéntico), AcpxBridge sobre
+// acpadapter.AcpxAdapter para kind "acpx" (ticket 16), y un error explícito
+// de construcción para cualquier otro valor — fail fast antes de lanzar
+// nada. timeout es el presupuesto por llamada (0 = defaults de cada familia).
+func construirAdaptadorAgente(cfg config.Config, nombre, perfil string, timeout time.Duration) (AgentAdapter, error) {
+	agente, existe := cfg.Agents[nombre]
+	if !existe {
+		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
+	}
+	switch agente.Kind {
+	case config.AgentKindCLI:
+		return &CLIAdapter{
+			BinaryName:     resolverBinarioReal(nombre),
+			Config:         configAgente(cfg, nombre, perfil),
+			CommitLanguage: cfg.CommitLanguage,
+			Timeout:        timeout,
+		}, nil
+	case config.AgentKindACPX:
+		bridge, err := construirAdaptadorACPX(cfg, nombre, configAgente(cfg, nombre, perfil), timeout)
+		if err != nil {
+			return nil, err
+		}
+		return bridge, nil
+	default:
+		return nil, fmt.Errorf("agent %q declares unknown kind %q (valid values: empty for the CLI family, %q for ACP/acpx)", nombre, agente.Kind, config.AgentKindACPX)
+	}
+}
+
+// construirAdaptadorACPX builds the ACP-backed adapter from the agent entry:
+// launcher default ["npx","-y","acpx@latest"], configured model/effort echo,
+// childEnv passthrough unchanged, and the C6 enforcement declaration validated
+// at construction time so an unsatisfiable or unknown value fails before any
+// launch. The timeout maps to the acpx --timeout budget; zero keeps the
+// adapter default.
+func construirAdaptadorACPX(cfg config.Config, nombre string, resuelto config.AgentConfig, timeout time.Duration) (*AcpxBridge, error) {
+	agente := cfg.Agents[nombre]
+	inner, err := acpadapter.NewAcpx(acpadapter.Config{
+		Agent:             agente.ACPAgent,
+		Model:             resuelto.Model,
+		Effort:            resuelto.ReasoningEffort,
+		Enforcement:       agente.Enforcement,
+		MaxRuntimeSeconds: int(timeout / time.Second),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agent %q (kind: acpx): %w", nombre, err)
+	}
+	return &AcpxBridge{AcpxAdapter: inner, commitLanguage: cfg.CommitLanguage}, nil
+}
+
+// construirCadena crea la cadena de adaptadores del camino auto: un adaptador
 // por cada agente disponible, en el orden recibido, cada uno con su
-// configuración (su perfil commit si perfil es no vacío).
-func construirCadena(cfg config.Config, disponibles []string, perfil string) *CadenaAdaptador {
+// configuración (su perfil commit si perfil es no vacío) y SU familia
+// declarada. Devuelve error si alguna entrada no puede construirse.
+func construirCadena(cfg config.Config, disponibles []string, perfil string) (*CadenaAdaptador, error) {
 	cadena := &CadenaAdaptador{}
 	for _, agente := range disponibles {
-		cadena.adaptadores = append(cadena.adaptadores, &CLIAdapter{
-			BinaryName:     resolverBinarioReal(agente),
-			Config:         configAgente(cfg, agente, perfil),
-			CommitLanguage: cfg.CommitLanguage,
-		})
+		ad, err := construirAdaptadorAgente(cfg, agente, perfil, 0)
+		if err != nil {
+			return nil, err
+		}
+		completo, ok := ad.(adaptadorCompleto)
+		if !ok {
+			return nil, fmt.Errorf("agent %q: adapter %T cannot join the fallback chain", agente, ad)
+		}
+		cadena.adaptadores = append(cadena.adaptadores, completo)
 	}
-	return cadena
+	return cadena, nil
 }
 
 // configAgente resuelve la configuración de modelo/esfuerzo de un agente. Si
@@ -160,10 +212,8 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (A
 		if len(disponibles) == 0 {
 			return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH")
 		}
-		return construirCadenaPerfil(cfg, disponibles, perfil), nil
+		return construirCadenaPerfil(cfg, disponibles, perfil)
 	}
-	binario := resolverBinarioReal(nombre)
-
 	agente := cfg.Agents[nombre]
 	modelo := perfil.Modelo
 	if modelo == "" {
@@ -174,6 +224,19 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (A
 		esfuerzo = agente.ReasoningEffort
 	}
 
+	// Familia acpx: el launcher (npx) no participa en la resolución de
+	// shims del binario; el modelo/esfuerzo heredan la misma fusión
+	// perfil->agente que el camino CLI y el timeout de auditoría mapea al
+	// presupuesto --timeout de acpx.
+	if agente.Kind == config.AgentKindACPX {
+		bridge, err := construirAdaptadorACPX(cfg, nombre, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
+		if err != nil {
+			return nil, err
+		}
+		return bridge, nil
+	}
+	binario := resolverBinarioReal(nombre)
+
 	return &CLIAdapter{
 		BinaryName:     binario,
 		Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
@@ -183,20 +246,31 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (A
 }
 
 // construirCadenaPerfil crea la cadena de adaptadores del camino auto: un
-// CLIAdapter por cada agente disponible (en el orden recibido), cada uno con
-// el modelo/esfuerzo de SU perfil anidado, no el del perfil resuelto.
-func construirCadenaPerfil(cfg config.Config, disponibles []string, perfil config.PerfilResuelto) *CadenaAdaptador {
+// adaptador por cada agente disponible (en el orden recibido), cada uno con
+// el modelo/esfuerzo de SU perfil anidado, no el del perfil resuelto, y SU
+// familia declarada. Devuelve error si alguna entrada no puede construirse.
+func construirCadenaPerfil(cfg config.Config, disponibles []string, perfil config.PerfilResuelto) (*CadenaAdaptador, error) {
 	cadena := &CadenaAdaptador{}
 	for _, agente := range disponibles {
 		modelo, esfuerzo := config.ResolverPerfilAgente(cfg, agente, perfil.Nombre)
-		cadena.adaptadores = append(cadena.adaptadores, &CLIAdapter{
-			BinaryName:     resolverBinarioReal(agente),
-			Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
-			CommitLanguage: cfg.CommitLanguage,
-			Timeout:        cfg.Review.Timeout,
-		})
+		var ad adaptadorCompleto
+		if cfg.Agents[agente].Kind == config.AgentKindACPX {
+			acpx, err := construirAdaptadorACPX(cfg, agente, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
+			if err != nil {
+				return nil, err
+			}
+			ad = acpx
+		} else {
+			ad = &CLIAdapter{
+				BinaryName:     resolverBinarioReal(agente),
+				Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
+				CommitLanguage: cfg.CommitLanguage,
+				Timeout:        cfg.Review.Timeout,
+			}
+		}
+		cadena.adaptadores = append(cadena.adaptadores, ad)
 	}
-	return cadena
+	return cadena, nil
 }
 
 // resolverBinarioReal convierte un shim npm (.cmd/.bat) en la ruta del

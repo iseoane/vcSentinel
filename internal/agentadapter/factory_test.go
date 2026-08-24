@@ -114,7 +114,10 @@ func TestConstruirCadenaPerfil(t *testing.T) {
 	}
 	perfil := config.PerfilResuelto{Nombre: "normal", Binario: "auto"}
 
-	cadena := construirCadenaPerfil(cfg, []string{"claude", "opencode"}, perfil)
+	cadena, err := construirCadenaPerfil(cfg, []string{"claude", "opencode"}, perfil)
+	if err != nil {
+		t.Fatalf("construirCadenaPerfil devolvió error: %v", err)
+	}
 	if len(cadena.adaptadores) != 2 {
 		t.Fatalf("la cadena tiene %d adaptadores, esperado 2", len(cadena.adaptadores))
 	}

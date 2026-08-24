@@ -10,11 +10,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -37,6 +39,103 @@ func (a *fakeRunsAgent) EjecutarPrompt(string) (string, error) {
 }
 
 var _ agentadapter.AdaptadorPrompt = (*fakeRunsAgent)(nil)
+
+// contextualTreeAgent extends the fake delegate with the two optional
+// contracts promptRunAdapter discovers structurally in production: the
+// context-carrying prompt path and owned-tree discovery. It records whether
+// the controller's context actually arrived.
+type contextualTreeAgent struct {
+	fakeRunsAgent
+	contextualCalls int
+	receivedCtx     context.Context
+	tree            *process.Tree
+}
+
+func (a *contextualTreeAgent) EjecutarPromptWithContext(ctx context.Context, prompt string) (string, error) {
+	a.contextualCalls++
+	a.receivedCtx = ctx
+	return a.EjecutarPrompt(prompt)
+}
+
+func (a *contextualTreeAgent) OwnedTree() *process.Tree { return a.tree }
+
+// runsJob builds one logical job for direct adapter.Execute calls.
+func runsJob(prompt string) agentrun.LogicalJob {
+	return agentrun.NewLogicalJob(agentrun.NewRunRequest(agentrun.Candidate("probe"), agentrun.Prompt(prompt), nil))
+}
+
+// TestPromptRunAdapterExecutePrefersCallerContext pins JD-R: when the
+// delegate can honor a context, Execute must route through it with the
+// received controller context, so `runs abort` cancellation reaches the
+// spawned child instead of dying at a detached background context.
+func TestPromptRunAdapterExecutePrefersCallerContext(t *testing.T) {
+	agent := &contextualTreeAgent{fakeRunsAgent: fakeRunsAgent{output: "CTX OK"}}
+	adapter, err := newPromptRunAdapter(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	res, err := adapter.Execute(ctx, runsJob("say PROBE"), agentrun.InvocationEnvelope{}, "")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if res.Output != "CTX OK" {
+		t.Errorf("Execute output = %q, want routed delegate output", res.Output)
+	}
+	if agent.contextualCalls != 1 {
+		t.Errorf("contextual path used %d times, want exactly 1", agent.contextualCalls)
+	}
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for agent.receivedCtx == nil || agent.receivedCtx.Err() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("Execute must forward the caller-supplied context to a context-aware delegate")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestPromptRunAdapterExecuteFallsBackToLegacyContract pins that delegates
+// speaking only the legacy EjecutarPrompt contract keep working unchanged.
+func TestPromptRunAdapterExecuteFallsBackToLegacyContract(t *testing.T) {
+	agent := &fakeRunsAgent{output: "LEGACY OK"}
+	adapter, err := newPromptRunAdapter(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := adapter.Execute(context.Background(), runsJob("say PROBE"), agentrun.InvocationEnvelope{}, "")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if res.Output != "LEGACY OK" {
+		t.Errorf("Execute output = %q, want legacy delegate output", res.Output)
+	}
+}
+
+// TestPromptRunAdapterOwnedTreeForwardsToOwningDelegate pins the abort-side
+// discovery: promptRunAdapter exposes the TreeProvider shape only through a
+// delegate that owns a tree, mirroring agenteObservado's forwarding.
+func TestPromptRunAdapterOwnedTreeForwardsToOwningDelegate(t *testing.T) {
+	sentinel := &process.Tree{}
+	owning := &contextualTreeAgent{tree: sentinel}
+	adapter, err := newPromptRunAdapter(owning)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := adapter.OwnedTree(); got != sentinel {
+		t.Errorf("OwnedTree() = %v, want the owning delegate's tree %v", got, sentinel)
+	}
+
+	idle, err := newPromptRunAdapter(&fakeRunsAgent{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree := idle.OwnedTree(); tree != nil {
+		t.Errorf("OwnedTree() = %v, want nil for a non-owning delegate", tree)
+	}
+}
 
 // runsSeedAdapter drives a real controller to seed durable evidence without
 // involving the CLI's agent chain.
@@ -77,6 +176,107 @@ func seedDurableRun(t *testing.T, worktree, name string, adapter execution.Adapt
 		t.Fatal(err)
 	}
 	return handle.RunID
+}
+
+// declaringEnforcementAgent extends the fake delegate with the optional
+// EnforcementDeclaration contract AcpxBridge exposes in production through
+// its embedded acpadapter.AcpxAdapter.
+type declaringEnforcementAgent struct {
+	fakeRunsAgent
+	declaration string
+}
+
+func (a *declaringEnforcementAgent) EnforcementDeclaration() string { return a.declaration }
+
+// TestRunsStartStampsEnforcementDeclarationCapability pins the durable
+// enforcement declaration: a prompt delegate exposing EnforcementDeclaration
+// flows its value into the constructed admission request as one
+// agent.enforcement capability, so CreateRun persists the declared backend
+// among the request capability identities instead of discarding it after
+// construction (the pre-fix behavior kept only the assistant output).
+func TestRunsStartStampsEnforcementDeclarationCapability(t *testing.T) {
+	replaceRunsAgent(t, &declaringEnforcementAgent{
+		fakeRunsAgent: fakeRunsAgent{output: "unused"},
+		declaration:   "claude-sandbox",
+	})
+	capabilities, err := runsAdmissionCapabilities(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities) != 1 {
+		t.Fatalf("runsAdmissionCapabilities returned %d capabilities, want exactly 1", len(capabilities))
+	}
+	if capabilities[0].Name() != enforcementCapabilityName {
+		t.Errorf("capability name = %q, want %q", capabilities[0].Name(), enforcementCapabilityName)
+	}
+	if got := capabilities[0].Attributes()["declaration"]; got != "claude-sandbox" {
+		t.Errorf("declaration attribute = %q, want %q", got, "claude-sandbox")
+	}
+
+	admission := runsStartAdmission("candidate:x", "prompt", "operator", "principal",
+		capabilities, false)
+	if err := execution.ValidateStartRequest(admission); err != nil {
+		t.Fatalf("stamped admission rejected: %v", err)
+	}
+	stamped := admission.Request.Capabilities()
+	if len(stamped) != 1 || stamped[0].Name() != enforcementCapabilityName {
+		t.Fatalf("canonical request carries %d capabilities, want exactly the stamped agent.enforcement one", len(stamped))
+	}
+	if got := stamped[0].Attributes()["declaration"]; got != "claude-sandbox" {
+		t.Errorf("canonical request declaration = %q, want %q", got, "claude-sandbox")
+	}
+	if admission.Candidate != "" || admission.Prompt != "" {
+		t.Errorf("stamped admission must travel canonically, got candidate %q prompt %q", admission.Candidate, admission.Prompt)
+	}
+}
+
+// TestRunsStartAdmissionUnchangedWithoutDeclaration pins that delegates
+// without the EnforcementDeclaration contract keep their admission
+// byte-identical to the legacy explicit form, and that an implemented-but-
+// empty declaration is skipped rather than invented. A relayed admission
+// (daemon endpoint may serve it) stays on the explicit form even when a
+// declaration exists, because capabilities cannot cross the daemon wire yet.
+func TestRunsStartAdmissionUnchangedWithoutDeclaration(t *testing.T) {
+	legacy := func(candidate, prompt, principal string) execution.StartRequest {
+		return execution.StartRequest{
+			Candidate:   candidate,
+			Prompt:      prompt,
+			Policy:      store.RunPolicy{ID: "operator"},
+			AuthContext: execution.AuthContext{Principal: principal},
+		}
+	}
+
+	replaceRunsAgent(t, &fakeRunsAgent{output: "unused"})
+	capabilities, err := runsAdmissionCapabilities(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities) != 0 {
+		t.Fatalf("non-declaring delegate produced %d capabilities, want none", len(capabilities))
+	}
+
+	replaceRunsAgent(t, &declaringEnforcementAgent{declaration: ""})
+	capabilities, err = runsAdmissionCapabilities(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities) != 0 {
+		t.Fatalf("empty declaration produced %d capabilities, want none", len(capabilities))
+	}
+
+	if got := runsStartAdmission("candidate:x", "prompt", "operator", "principal", nil, false); !reflect.DeepEqual(got, legacy("candidate:x", "prompt", "principal")) {
+		t.Errorf("unstamped admission drifted from the legacy envelope: %+v", got)
+	}
+
+	replaceRunsAgent(t, &declaringEnforcementAgent{declaration: "claude-sandbox"})
+	capabilities, err = runsAdmissionCapabilities(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayed := runsStartAdmission("candidate:x", "prompt", "operator", "principal", capabilities, true)
+	if !reflect.DeepEqual(relayed, legacy("candidate:x", "prompt", "principal")) {
+		t.Errorf("relayed admission must keep the legacy explicit form: %+v", relayed)
+	}
 }
 
 func captureRunsOutput(t *testing.T, command func(io.Writer) int) (string, int) {

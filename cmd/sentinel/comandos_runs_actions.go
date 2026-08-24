@@ -42,17 +42,21 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 	}
 	candidate := fmt.Sprintf("operator:%s:%d-%d-%06d",
 		options.policyID, time.Now().UnixNano(), os.Getpid(), runsStartSequence.Add(1))
+	capabilities, err := runsAdmissionCapabilities(worktree)
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
 	// The admission travels as the explicit Candidate/Prompt form: it is the
 	// transport-safe spelling both hosts resolve into the canonical
 	// agentrun.RunRequest, so the same envelope works in-process and across
-	// the daemon wire.
+	// the daemon wire. Only a locally admitted run whose delegate declares an
+	// enforcement backend promotes into the canonical form carrying the
+	// agent.enforcement capability; relayed admissions keep the explicit form
+	// because capabilities cannot cross the daemon wire yet.
 	handle, err := host.Start(context.Background(),
-		execution.StartRequest{
-			Candidate:   candidate,
-			Prompt:      options.prompt,
-			Policy:      store.RunPolicy{ID: options.policyID},
-			AuthContext: execution.AuthContext{Principal: principal},
-		})
+		runsStartAdmission(candidate, options.prompt, options.policyID, principal,
+			capabilities, runsRelayedAdmission(worktree)))
 	if err != nil {
 		fmt.Fprintf(out, "❌ The run could not be admitted: %v\n", err)
 		return runExitCode(err)

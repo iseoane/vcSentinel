@@ -15,6 +15,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -250,6 +251,86 @@ func runsHostWithDaemonPreference(worktree string, controller *execution.Control
 	return execution.NewInProcessHost(controller), func() {}
 }
 
+// enforcementCapabilityName names the admission capability that carries the
+// prompt delegate's validated enforcement declaration into durable records.
+const enforcementCapabilityName = "agent.enforcement"
+
+// runsAdmissionCapabilities reports the additional capabilities an
+// operator-started prompt run stamps onto its admission request. When the
+// configured prompt delegate declares an enforcement backend through
+// EnforcementDeclaration() (AcpxBridge does), one agent.enforcement
+// capability carries the declaration so CreateRun persists it among the
+// request capability identities — mirroring how the gate path stamps its
+// planned capabilities via agentrun.NewCapability. Delegates without the
+// interface contribute nothing and their admissions stay byte-identical; a
+// delegate implementing the interface but returning an empty declaration is
+// skipped too, because nothing may be invented on a durable record
+// (production adapters normalize their declaration to "none" instead).
+func runsAdmissionCapabilities(worktree string) ([]agentrun.Capability, error) {
+	agent, err := newAgentForRuns(worktree)
+	if err != nil {
+		return nil, err
+	}
+	declarer, ok := agent.(interface {
+		EnforcementDeclaration() string
+	})
+	if !ok {
+		return nil, nil
+	}
+	declaration := strings.TrimSpace(declarer.EnforcementDeclaration())
+	if declaration == "" {
+		return nil, nil
+	}
+	return []agentrun.Capability{
+		agentrun.NewCapability(enforcementCapabilityName, map[string]string{"declaration": declaration}),
+	}, nil
+}
+
+// runsRelayedAdmission reports whether a repository-local daemon endpoint is
+// configured for worktree, i.e. whether Start admission may travel to the
+// remote host. Capabilities cannot cross the daemon wire yet: RunRequest is
+// deliberately unexported identity-canonical data, so a canonical envelope
+// arrives server-side as its zero value and ValidateStartRequest would refuse
+// the mixed form. Relayed admissions therefore keep the explicit
+// Candidate/Prompt form without the enforcement capability until
+// capability-policy runtime work extends the transport; only the local
+// in-process path stamps today. A configured-but-down endpoint conservatively
+// skips stamping instead of guessing which host will serve admission.
+func runsRelayedAdmission(worktree string) bool {
+	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		return false
+	}
+	if _, _, err := daemon.LoadEndpoint(daemon.Dir(gitCommonDir)); err != nil {
+		return false
+	}
+	return true
+}
+
+// runsStartAdmission builds the admission envelope of one operator-started
+// prompt run. Without stamped capabilities — or when a daemon endpoint may
+// relay the envelope to the remote host — it stays exactly on the
+// transport-safe explicit Candidate/Prompt form used before enforcement
+// stamping existed. Only local in-process admission promotes a stamped
+// request into the canonical form carrying the capabilities, because
+// ValidateStartRequest forbids mixing the two payload forms.
+func runsStartAdmission(candidate, prompt, policyID, principal string, capabilities []agentrun.Capability, relayed bool) execution.StartRequest {
+	admission := execution.StartRequest{
+		Candidate:   candidate,
+		Prompt:      prompt,
+		Policy:      store.RunPolicy{ID: policyID},
+		AuthContext: execution.AuthContext{Principal: principal},
+	}
+	if len(capabilities) == 0 || relayed {
+		return admission
+	}
+	return execution.StartRequest{
+		Request:     agentrun.NewRunRequest(agentrun.Candidate(candidate), agentrun.Prompt(prompt), capabilities),
+		Policy:      store.RunPolicy{ID: policyID},
+		AuthContext: execution.AuthContext{Principal: principal},
+	}
+}
+
 func newPromptRunAdapter(agent agentadapter.AdaptadorPrompt) (promptRunAdapter, error) {
 	if agent == nil {
 		return promptRunAdapter{}, errors.New("the configured agent adapter cannot execute arbitrary prompts")
@@ -257,16 +338,47 @@ func newPromptRunAdapter(agent agentadapter.AdaptadorPrompt) (promptRunAdapter, 
 	return promptRunAdapter{delegate: agent}, nil
 }
 
-func (a promptRunAdapter) Execute(_ context.Context, job agentrun.LogicalJob, _ agentrun.InvocationEnvelope, response string) (execution.AdapterResult, error) {
+func (a promptRunAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ agentrun.InvocationEnvelope, response string) (execution.AdapterResult, error) {
 	prompt := string(job.Request().Prompt())
 	if strings.TrimSpace(response) != "" {
 		prompt += "\n\n" + response
 	}
-	output, err := a.delegate.EjecutarPrompt(prompt)
+	output, err := a.runPrompt(ctx, prompt)
 	if err != nil {
 		return execution.AdapterResult{}, execution.NewAdapterError(classifyOperationalError(err), err)
 	}
 	return execution.AdapterResult{Output: output}, nil
+}
+
+// runPrompt prefers the caller-supplied controller context over the legacy
+// detached contract: when the delegate can honor a context (the acpx family
+// does through EjecutarPromptWithContext), cancellation propagates down to
+// the owned child process tree; delegates speaking only the legacy
+// EjecutarPrompt contract behave exactly as before.
+func (a promptRunAdapter) runPrompt(ctx context.Context, prompt string) (string, error) {
+	if contextual, ok := a.delegate.(interface {
+		EjecutarPromptWithContext(context.Context, string) (string, error)
+	}); ok {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return contextual.EjecutarPromptWithContext(ctx, prompt)
+	}
+	return a.delegate.EjecutarPrompt(prompt)
+}
+
+// OwnedTree forwards tree discovery to the delegate when it owns a live
+// child process tree, mirroring how agenteObservado forwards the same
+// contract in autoria.go. The execution controller discovers this
+// TreeProvider shape structurally, so `sentinel runs abort` escalates
+// against exactly the tree this adapter spawned instead of finding nothing.
+func (a promptRunAdapter) OwnedTree() *process.Tree {
+	if provider, ok := a.delegate.(interface {
+		OwnedTree() *process.Tree
+	}); ok {
+		return provider.OwnedTree()
+	}
+	return nil
 }
 
 func classifyOperationalError(err error) agentrun.OutcomeClass {
