@@ -124,8 +124,10 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
 		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---
-		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Run", Line: 166, Marker: "exec.Command",
-			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16 slice 1, not yet wired into factory/config): drives the acpx CLI as a child process exactly like CLIAdapter drives agent binaries; admission binding happens at the caller, not here."},
+		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Line: 190, Marker: "exec.Command",
+			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16): Command is the transparent spawn description; the production path runs through the owned-tree spawner in review.go (process.Spawn), mirroring cli.go's seam split. Admission binding happens at the caller, not here."},
+		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Line: 27, Marker: "EjecutarPrompt(",
+			Class: ClassShared, Reason: "Prompt and restricted-review surface of the ACP/acpx adapter (ticket 16 slice 2, not yet wired): review runs reuse the sanctioned agentadapter.CreateReviewSnapshot snapshot discipline and spawn through the owned-tree process.Spawn seam like cli.go; admission binding happens at the caller, not here."},
 
 		// --- internal/agentadapter ----------------------------------------
 		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Line: 32, Marker: "EjecutarPrompt(",
