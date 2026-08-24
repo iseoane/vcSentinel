@@ -95,6 +95,11 @@ type OpcionesRama struct {
 	// significa que no se aplican a ningún commit: fail-safe explícito en vez
 	// de asumir que siempre es el último elemento de shas.
 	HallazgosDeterministasSHA string
+	// OwnDiff (T8.2, internal input) activates stacked own-diff semantics:
+	// only merge_base(parent, HEAD)..HEAD is reviewed and findings from
+	// already-audited context commits come back as read-only inherited
+	// results. Nil keeps the legacy whole-range analysis against Base.
+	OwnDiff *OwnDiffOptions
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -115,6 +120,13 @@ type ResultadoRama struct {
 	Overview      *ResultadoOverview // nil si no se pidió o no se pudo obtener
 	OverviewError string             // por qué no hay overview, si se pidió y falló
 	Decision      string             // "single" | "chain"
+	// Propio carries the explainable stacked-range resolution (T8.2). Nil
+	// keeps the legacy whole-range analysis against Base.
+	Propio *RangoPropio
+	// Heredados lists effective findings recorded by already-audited context
+	// commits (read-only): their correction belongs to the parent PR, so they
+	// never enter Fichas and can never block the current branch.
+	Heredados []HallazgoHeredado
 }
 
 // AnalizarRama analiza la rama actual contra su base (guía §12.1): resuelve
@@ -122,15 +134,26 @@ type ResultadoRama struct {
 // no autoridad), mide el volumen real con numstat, ejecuta el overview si se
 // pidió y decide PR única vs cadena por volumen + coherencia.
 func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
-	base := opts.Base
-	if base == "" {
-		base = "main"
+	desde := opts.Base
+	if desde == "" {
+		desde = "main"
+	}
+	// Stacked mode (T8.2): the reviewed range starts at the resolved parent
+	// (never a silent "main"); without a reliable signal it fails explicitly.
+	var propio *RangoPropio
+	if opts.OwnDiff != nil {
+		var err error
+		propio, err = resolverRangoPropio(opts.OwnDiff, desde)
+		if err != nil {
+			return nil, err
+		}
+		desde = propio.Parent
 	}
 	rama, err := git.RamaActual()
 	if err != nil {
 		return nil, err
 	}
-	mergeBase, err := git.MergeBase(base, "HEAD")
+	mergeBase, err := git.MergeBase(desde, "HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +226,14 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 	res := &ResultadoRama{
 		Rama: rama, SHAs: shas, Pendientes: pendientes,
 		Fichas: fichas, Volumen: volumen,
+	}
+	res.Propio = propio
+	if propio != nil {
+		heredados, err := hallazgosHeredados(ledger, propio)
+		if err != nil {
+			return nil, err
+		}
+		res.Heredados = heredados
 	}
 	if opts.Overview {
 		overview, err := overviewDeRama(opts, rama, fichas)
