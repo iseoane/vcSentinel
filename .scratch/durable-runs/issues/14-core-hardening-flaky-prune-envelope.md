@@ -55,3 +55,47 @@ principal-carrying envelopes like every other lifecycle action.
 ## Follow-ups
 
 *(recorded at closure)*
+
+## Evidence
+
+### Single slice — three root-cause fixes
+- Commits: snapshot serialization (27), sidecars-first read order (122),
+  locked admission (174), principal envelopes (144) — hook-enforced; clean.
+- FIX 1a DIAGNOSIS (production bug): concurrent CrearSnapshot calls each ran
+  git worktree add and the winner's `git worktree repair` raced siblings'
+  mutations of <git-common-dir>/worktrees admin state — git does not lock
+  that across commands. Fix: package-level snapshotMu serializes in-process
+  create-or-reuse AND purge; cross-process safety remains the atomic
+  temp-checkout+rename. Stress ×30 standalone AND ×30 under parallel
+  full-suite load: green both.
+- FIX 1b DIAGNOSIS (production bug, different from suspected): AppendTerminal-
+  Event writes terminal event then legacy sidecar under one lock, but lock-free
+  ReadAttemptOutcomes scanned log first / sidecars second — a reader could pair
+  a stale log with a fresh sidecar and misreport mid-persistence as "outcome
+  has no terminal event". Fix: sidecars read FIRST (observing one proves its
+  append completed), embedded-evidence branch before legacy errors,
+  empty-stream+sidecar contract preserved, genuine corruption errors
+  identically. Split-read regression test ×15 + suite ×5 -race.
+- FIX 2: CreateRun admission now takes the same cross-process event lock prune
+  holds (deadlock audited: sole production caller Controller.Start, invoked
+  before any append — no nested acquisition); bounded retry on ErrNotExist
+  covers the mkdir↔lock-open vanish window; remnant cleanup refuses when real
+  content appeared under the lock (new stable reason) while pure lock-only
+  remnants keep self-healing. Admission-during-prune test via race-window hook
+  precedent + 20× true-concurrency invariant.
+- FIX 3: RepositoryHost gains RecoverRequest/RetryRequest with auth_context
+  mirroring InspectRequest/ApplyRequest; ErrMissingPrincipal consistent;
+  cmd retry/recover route through host envelopes; direct controller calls
+  remain only inside the host implementation; idempotent-head fallbacks
+  verified by rewritten stale-revision test.
+- REVIEW NOTE (honest): the explore-subagent provider was down through four
+  launch attempts, so this slice's independent review was performed by the
+  orchestrator directly: deadlock audit re-derived from call graph, read-order
+  interleave analysis (both directions), envelope shape parity against sibling
+  requests, stress reproduction before/after. All hunts resolved; schema-table
+  drift for host envelopes noted as docs follow-up.
+- Verification snapshot: gofmt empty; build+vet linux+windows; full suite
+  green 25 packages ×3 runs zero FAIL; -race clean on git/store/execution/
+  cmd-sentinel.
+
+**Closed:** ticket 14 — the three post-roadmap high-priority corrections are in.
