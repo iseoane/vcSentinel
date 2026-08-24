@@ -33,12 +33,10 @@ const (
 	runsDefaultPolicyID  = "operator"
 	runsLogsDefaultLimit = 100
 	runsObserveInterval  = 50 * time.Millisecond
-	// runsAttachPollInterval spaces attach follow-mode repolls; slow enough
-	// to stay quiet, fast enough that a settling run is caught sub-second.
-	runsAttachPollInterval = 250 * time.Millisecond
-	// runsAttachMaxPages bounds one snapshot's Subscribe pagination so a
-	// misbehaving HasMore stream can never wedge a follow loop.
-	runsAttachMaxPages = 10000
+	// Attach follow-mode pacing and pagination bounds moved to internal/tui
+	// (tui.PollInterval, tui.MaxObservePages) with the Bubble Tea program in
+	// ticket 17 slice 2; the plain-text snapshot path observes once and no
+	// longer needs them here.
 )
 
 const runsUsage = `sentinel runs <subcommand> [flags]

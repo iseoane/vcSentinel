@@ -6,19 +6,24 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
-	"time"
+
+	"github.com/charmbracelet/bubbletea"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/attach"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/tui"
 )
 
-// Ticket 17 slice 1: `runs attach` is a pure observation surface over one
-// durable run. Slice 1 renders plain-text snapshots; slice 2 replaces only
-// the renderer with the Bubble Tea program while keeping this exact data
-// pipeline (Inspect snapshot + cursor-based Subscribe replay + RunView).
+// Ticket 17: `runs attach` is an observation surface over one durable run.
+// Without --follow it renders a plain-text snapshot (list mode walks the
+// store directly). With --follow it launches the Bubble Tea program over the
+// SAME data pipeline (Inspect snapshot + cursor-based Subscribe replay +
+// RunView): the TUI owns rendering, keyboard actions, bounded reconnect, and
+// terminal freeze from there on.
 
 // listAttachableRuns renders the attach picker: every durable run whose
 // reconciled projection is still non-terminal, i.e. a run that may still make
@@ -66,8 +71,10 @@ func listAttachableRuns(out io.Writer, backing *store.Store) int {
 
 // executeRunsAttach dispatches `sentinel runs attach`. Without --run it lists
 // non-terminal attach candidates; with --run it prints one plain-text
-// observation snapshot, optionally following the run live until its terminal
-// state or a SIGINT/SIGTERM detaches cleanly.
+// observation snapshot, or — under --follow — hands the observed run to the
+// Bubble Tea attach program, which exits 0 on any clean quit (q, ctrl+c,
+// SIGINT/SIGTERM) and through the infrastructure code only when the bounded
+// reconnect budget exhausts.
 func executeRunsAttach(out io.Writer, worktree string, args []string) int {
 	options, err := parseRunOptions("attach", args)
 	if err != nil {
@@ -95,12 +102,13 @@ func executeRunsAttach(out io.Writer, worktree string, args []string) int {
 	defer closeRemote()
 
 	// Same signal pair as the daemon: both SIGINT and SIGTERM detach
-	// cleanly, exactly as the command usage text promises.
+	// cleanly, exactly as the command usage text promises. The TUI watches
+	// this context too, so a mid-session signal quits as politely as q.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	collector := attach.NewReplayCollector(options.afterCursor)
 	identity := agentrun.Identity(options.runID)
-	view, _, err := observeAttachSnapshot(ctx, host, identity, principal, collector)
+	view, _, err := tui.ObserveSnapshot(ctx, host, identity, principal, collector)
 	if err != nil {
 		fmt.Fprintf(out, "❌ Could not observe %s: %v\n", options.runID, err)
 		return runExitCode(err)
@@ -109,96 +117,97 @@ func executeRunsAttach(out io.Writer, worktree string, args []string) int {
 	if !options.follow {
 		return runExitSuccess
 	}
-	return followRunsView(ctx, out, host, identity, principal, collector, view)
+	return runAttachFollow(out, worktree, controller, host, closeRemote, identity, principal, collector, view, ctx)
 }
 
-// followRunsView polls one observed run until its terminal state or until ctx
-// is cancelled (SIGINT/SIGTERM); detaching from a live run is a normal
-// operator action and always exits cleanly with success.
-func followRunsView(ctx context.Context, out io.Writer, host execution.RepositoryHost, identity agentrun.Identity, principal string, collector *attach.ReplayCollector, view attach.RunView) int {
-	for !view.IsTerminal() {
-		if interrupted(ctx) {
-			// Detaching from a live run is a normal operator action, never a
-			// failure: Ctrl-C exits cleanly with success.
-			return runExitSuccess
-		}
-		time.Sleep(runsAttachPollInterval)
-		next, nextChanged, observeErr := observeAttachSnapshot(ctx, host, identity, principal, collector)
-		if observeErr != nil {
-			if ctx.Err() != nil {
-				return runExitSuccess
-			}
-			fmt.Fprintf(out, "❌ Could not follow %s: %v\n", string(identity), observeErr)
-			return runExitCode(observeErr)
-		}
-		// Cursor movement is the complete change signal here: both the
-		// durable projection and the admitted attempt outcomes are derived
-		// from the same event stream Subscribe pages, and the store's
-		// sidecar-before-log read order guarantees an observed outcome
-		// record already has its terminal frame in the stream. A poll whose
-		// cursor did not move can therefore only rebuild an identical view.
-		if !nextChanged {
-			continue
-		}
-		// Follow mode re-renders the FULL snapshot on every observed change;
-		// slice 2 swaps this reprint for the TUI model update.
-		view = next
-		renderRunView(out, view)
+// attachHostProvider implements tui.HostProvider over the CLI resolver: every
+// call dials a fresh daemon-preferred host and tears down the previous one,
+// so reconnect attempts never reuse a dead connection. Safe for concurrent
+// command goroutines.
+type attachHostProvider struct {
+	mu         sync.Mutex
+	worktree   string
+	controller *execution.Controller
+	current    execution.RepositoryHost
+	release    func()
+}
+
+// newAttachHostProvider adopts the initially dialed host; its teardown runs
+// when the provider replaces that host or when Close drains the session.
+func newAttachHostProvider(worktree string, controller *execution.Controller, initial execution.RepositoryHost, releaseInitial func()) *attachHostProvider {
+	return &attachHostProvider{
+		worktree: worktree, controller: controller,
+		current: initial, release: releaseInitial,
+	}
+}
+
+// Host resolves the next repository host, replacing (and closing) whatever
+// came before. Resolution itself cannot fail — the resolver degrades to the
+// in-process host — but the signature matches the TUI seam so scripted test
+// doubles fit the same shape.
+func (p *attachHostProvider) Host() (execution.RepositoryHost, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	next, closeNext := runsHostWithDaemonPreference(p.worktree, p.controller)
+	if p.release != nil {
+		p.release() // idempotent teardown of the replaced connection
+	}
+	p.current = next
+	p.release = closeNext
+	return next, nil
+}
+
+// Close releases whichever host the provider currently holds.
+func (p *attachHostProvider) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.release != nil {
+		p.release()
+		p.release = nil
+	}
+	p.current = nil
+}
+
+// startAttachProgram launches the Bubble Tea attach program and returns the
+// final model. It is a var-indirected seam: driving a real terminal
+// headlessly is not possible, so tests stub this single point and pin the
+// construction contract instead.
+var startAttachProgram = func(model tui.Model) (tui.Model, error) {
+	program := tea.NewProgram(model, tea.WithAltScreen())
+	final, err := program.Run()
+	if err != nil {
+		return model, err
+	}
+	if typed, ok := final.(tui.Model); ok {
+		return typed, nil
+	}
+	return model, nil
+}
+
+// runAttachFollow runs the TUI session over the already-observed initial
+// snapshot. Clean quits exit 0 — detaching from a live run is a normal
+// operator action; losing the endpoint beyond the bounded reconnect budget
+// reports infrastructure failure honestly instead of looping forever.
+func runAttachFollow(out io.Writer, worktree string, controller *execution.Controller, host execution.RepositoryHost, closeHost func(), identity agentrun.Identity, principal string, collector *attach.ReplayCollector, view attach.RunView, detach context.Context) int {
+	provider := newAttachHostProvider(worktree, controller, host, closeHost)
+	defer provider.Close()
+	model := tui.New(identity, principal, provider.Host, collector, view, detach)
+	final, err := startAttachProgram(model)
+	if err != nil {
+		fmt.Fprintf(out, "❌ attach session for %s failed: %v\n", string(identity), err)
+		return runExitInfrastructure
+	}
+	if final.LostContact() {
+		fmt.Fprintf(out, "❌ lost contact with run %s after %d reconnect attempts\n",
+			string(identity), tui.MaxReconnectAttempts)
+		return runExitInfrastructure
 	}
 	return runExitSuccess
 }
 
-// interrupted reports whether the detach signal already fired.
-func interrupted(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
-
-// observeAttachSnapshot rebuilds one full RunView: an Inspect snapshot for
-// the projection and admitted outcomes, then Subscribe pages applied strictly
-// after the collector's cursor until the stream is exhausted. The collector
-// makes repeated observations idempotent, so polling between pages never
-// duplicates evidence.
-func observeAttachSnapshot(ctx context.Context, host execution.RepositoryHost, runID agentrun.Identity, principal string, collector *attach.ReplayCollector) (attach.RunView, bool, error) {
-	before := collector.Cursor()
-	inspection, err := host.Inspect(ctx, execution.InspectRequest{
-		RunID:       runID,
-		AuthContext: execution.AuthContext{Principal: principal},
-	})
-	if err != nil {
-		return attach.RunView{}, false, err
-	}
-	pages := 0
-	for {
-		page, err := host.Subscribe(ctx, execution.SubscribeRequest{
-			RunID:       runID,
-			AfterCursor: collector.Cursor(),
-			Limit:       runsLogsDefaultLimit,
-			AuthContext: execution.AuthContext{Principal: principal},
-		})
-		if err != nil {
-			return attach.RunView{}, false, err
-		}
-		collector.ApplyPage(page)
-		if !page.HasMore {
-			break
-		}
-		pages++
-		if pages > runsAttachMaxPages {
-			return attach.RunView{}, false, fmt.Errorf("event pagination for %s did not terminate after %d pages", runID, runsAttachMaxPages)
-		}
-	}
-	view := attach.BuildRunView(collector.Frames(), inspection.Outcomes, inspection.Projection)
-	return view, collector.Cursor() != before || view.IsTerminal(), nil
-}
-
-// renderRunView prints the stable multi-line plain-text observation report.
-// It is deterministic by construction: no wall-clock timestamps are printed,
-// so slice 2's golden views can pin this byte for byte.
+// renderRunView prints the stable multi-line plain-text observation report
+// for the non-follow snapshot mode. It is deterministic by construction: no
+// wall-clock timestamps are printed.
 func renderRunView(out io.Writer, view attach.RunView) {
 	fmt.Fprintf(out, "🔎 Run %s\n", view.RunID)
 	if view.JobID != "" {

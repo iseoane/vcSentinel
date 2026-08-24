@@ -114,7 +114,7 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "gh CLI calls, git config reads, and clipboard helpers; no provider agent."},
 		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Line: 0, Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
-		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 206, Marker: "NewController(",
+		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 215, Marker: "NewController(",
 			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
 		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Line: 126, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the staged-commit volume measurement."},
