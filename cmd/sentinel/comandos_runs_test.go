@@ -216,6 +216,8 @@ func awaitRunQuiescence(t *testing.T, controller *execution.Controller, ids ...a
 		}
 	}
 
+}
+
 // declaringEnforcementAgent extends the fake delegate with the optional
 // EnforcementDeclaration contract AcpxBridge exposes in production through
 // its embedded acpadapter.AcpxAdapter.
