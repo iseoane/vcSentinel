@@ -107,7 +107,7 @@ func TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve HEAD: %v", err)
 	}
-	mensaje, err := git.MensajeCommit(sha)
+	commitMessage, err := git.MensajeCommit(sha)
 	if err != nil {
 		t.Fatalf("commit message: %v", err)
 	}
@@ -115,31 +115,31 @@ func TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit diff: %v", err)
 	}
-	archivos, err := git.ArchivosDeCommit(sha)
+	touchedFiles, err := git.ArchivosDeCommit(sha)
 	if err != nil {
 		t.Fatalf("commit files: %v", err)
 	}
 
 	var stderrLive bytes.Buffer
 
-	fabrica := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+	auditorFactory := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
 		return &agenteRevisionFijo{salida: `{"dim":"logic","verdict":"ok","findings":[]}`}, "logic", nil
 	}
-	opciones := review.OpcionesAuditoria{
+	auditOptions := review.OpcionesAuditoria{
 		SHA:     sha,
-		Mensaje: mensaje,
+		Mensaje: commitMessage,
 		Diff:    diff,
 		Bundles: []review.ReviewBundle{{Name: "requested", Dimensions: []string{"logic"}, Priority: review.PriorityRequired, Cost: 1}},
 		// This is the exact call site `ejecutarReview` uses; production passes
 		// os.Stderr, this fixture captures it.
-		ReviewTransport: announcedReviewTransport(cfg, worktree, sha, archivos, &stderrLive),
+		ReviewTransport: announcedReviewTransport(cfg, worktree, sha, touchedFiles, &stderrLive),
 	}
 	// Capture the command/result stdout path for the whole audit: nothing from
 	// the announcement wiring may ever land there.
 	stdoutCaptured := capturarStdout(t, func() {
-		resultado := review.AuditarCommit(fabrica, 1, opciones)
-		if resultado.Veredicto != review.VerdictOK {
-			t.Fatalf("audit verdict = %q (%+v), want %q through the durable wiring", resultado.Veredicto, resultado.Dims, review.VerdictOK)
+		auditResult := review.AuditarCommit(auditorFactory, 1, auditOptions)
+		if auditResult.Veredicto != review.VerdictOK {
+			t.Fatalf("audit verdict = %q (%+v), want %q through the durable wiring", auditResult.Veredicto, auditResult.Dims, review.VerdictOK)
 		}
 	})
 
