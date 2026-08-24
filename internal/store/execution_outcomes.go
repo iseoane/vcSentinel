@@ -76,21 +76,42 @@ func (s *Store) ReadAttemptOutcomes(runID string) ([]AttemptOutcome, error) {
 	if err := ensureExecutionExists(directory); err != nil {
 		return nil, err
 	}
-	log, err := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
-	if err != nil {
-		return nil, err
+	// Ticket 14 diagnosis: the legacy sidecar records are read BEFORE the
+	// event log on purpose. AppendTerminalEvent appends the terminal event
+	// first and writes outcomes/<invocation>.json second, both inside one
+	// locked section; a lock-free reader that scanned the log first and the
+	// sidecars second could observe the fresh sidecar with a stale log and
+	// misreport a mid-persistence write as "outcome has no terminal event"
+	// (the flaky TestRunsRetryRelaunchesFailedRunInsideSameIdentity root
+	// cause). Reading sidecars first closes that window: observing a
+	// sidecar proves its terminal append already completed, so the later
+	// log scan must include it, while missing sidecars yield the honest
+	// pre-settlement view. Genuine incomplete persistence (a sidecar whose
+	// terminal event never arrives) still reports exactly the same error.
+	legacy, legacyErr := readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
+	log, scanErr := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
+	if scanErr != nil {
+		return nil, scanErr
 	}
 	if log.tail != nil {
 		return nil, IncompleteEventTailError{RunID: runID}
 	}
 	terminalFrames := terminalEventFrames(log.frames)
 	if len(log.frames) == 0 {
-		return readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
+		// A staged outcome recorded before any lifecycle event (the public
+		// SaveAttemptOutcome contract) stays readable: an empty stream with
+		// sidecars is admitted evidence in waiting, not corruption.
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		return legacy, nil
 	}
+	// Event-authoritative runs win over the legacy surface entirely: when
+	// every terminal frame carries its embedded outcome, a missing or even
+	// corrupt sidecar must not fail the read.
 	if terminalFramesHaveEmbeddedEvidence(terminalFrames) {
 		return outcomesFromFrames(terminalFrames, nil), nil
 	}
-	legacy, legacyErr := readAttemptOutcomes(filepath.Join(directory, "outcomes"), runID)
 	if legacyErr != nil {
 		if len(terminalFrames) > 0 {
 			return nil, terminalPersistenceError(runID, terminalFrames[0].InvocationID, "outcome", legacyErr)

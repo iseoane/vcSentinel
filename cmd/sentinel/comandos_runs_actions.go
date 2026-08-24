@@ -192,12 +192,17 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	host := execution.NewInProcessHost(controller)
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	handle, retryErr := controller.Retry(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
+	handle, retryErr := host.Retry(context.Background(), execution.RetryRequest{
+		RunID:            agentrun.Identity(options.runID),
+		ExpectedRevision: options.expectedRevision,
+		AuthContext:      execution.AuthContext{Principal: principal},
+	})
 	if retryErr != nil {
 		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), retryErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
@@ -271,12 +276,17 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
+	host := execution.NewInProcessHost(controller)
 	principal, err := resolveRunsPrincipal()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitCode(err)
 	}
-	handle, recoverErr := controller.Recover(context.Background(), agentrun.Identity(options.runID), options.expectedRevision)
+	handle, recoverErr := host.Recover(context.Background(), execution.RecoverRequest{
+		RunID:            agentrun.Identity(options.runID),
+		ExpectedRevision: options.expectedRevision,
+		AuthContext:      execution.AuthContext{Principal: principal},
+	})
 	if recoverErr != nil {
 		if head, ok := idempotentHeadOf(controller, principal, agentrun.Identity(options.runID), recoverErr); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{

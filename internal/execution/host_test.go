@@ -274,11 +274,11 @@ func TestRepositoryHostSurfacesDocumentedSentinelErrors(t *testing.T) {
 	}
 }
 
-// The stale-revision sentinel stays outside the port: Apply envelopes carry
-// no ExpectedRevision field, and adding one is a future envelope evolution,
-// not slice-two scope. This proves a stale retry cannot surface through the
-// seam.
-func TestStaleRevisionSentinelRemainsOutsidePortUntilEnvelopesCarryExpectedRevisions(t *testing.T) {
+// Ticket 14 envelope parity: Retry and Recover now carry ExpectedRevision
+// through the port, so a stale pin surfaces ErrStaleRevision through the
+// seam exactly like it does through the direct controller call, while Apply
+// envelopes still carry no revision field by design.
+func TestStaleRevisionSurfacesThroughTheRetryEnvelope(t *testing.T) {
 	backingStore := store.NuevoStore(t.TempDir())
 	failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("attempt failed")}, fixedClock())
 	handle, err := failed.Start(context.Background(), testRequest("stale"), testPolicy())
@@ -290,10 +290,21 @@ func TestStaleRevisionSentinelRemainsOutsidePortUntilEnvelopesCarryExpectedRevis
 	}
 
 	fresh := NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "stale output"}}, fixedClock())
-	if _, err := fresh.Retry(context.Background(), handle.RunID, 1); !errors.Is(err, ErrStaleRevision) {
-		t.Fatalf("stale revision error = %v, want errors.Is ErrStaleRevision", err)
-	}
 	host := NewInProcessHost(fresh)
+	if _, err := host.Retry(context.Background(), RetryRequest{
+		RunID:            handle.RunID,
+		ExpectedRevision: 1,
+		AuthContext:      AuthContext{Principal: testPrincipal},
+	}); !errors.Is(err, ErrStaleRevision) {
+		t.Fatalf("stale retry via host = %v, want errors.Is ErrStaleRevision", err)
+	}
+	if _, err := host.Recover(context.Background(), RecoverRequest{
+		RunID:            handle.RunID,
+		ExpectedRevision: 1,
+		AuthContext:      AuthContext{Principal: testPrincipal},
+	}); !errors.Is(err, ErrStaleRevision) {
+		t.Fatalf("stale recover via host = %v, want errors.Is ErrStaleRevision", err)
+	}
 	_, err = host.Inspect(context.Background(), InspectRequest{RunID: handle.RunID, AuthContext: AuthContext{Principal: testPrincipal}})
 	if err != nil {
 		t.Fatalf("Inspect via host after stale rejection error = %v", err)
@@ -352,6 +363,20 @@ func TestRepositoryHostRejectsAMissingPrincipalBeforeControllerContact(t *testin
 					Action:   ControlAction{Kind: ActionAbort},
 					ActionID: "action:no-principal",
 				})
+				return err
+			},
+		},
+		{
+			name: "recover",
+			call: func() error {
+				_, err := host.Recover(context.Background(), RecoverRequest{RunID: "no-principal"})
+				return err
+			},
+		},
+		{
+			name: "retry",
+			call: func() error {
+				_, err := host.Retry(context.Background(), RetryRequest{RunID: "no-principal"})
 				return err
 			},
 		},
@@ -438,6 +463,8 @@ func TestRepositoryHostRequestEnvelopesRoundTripJSON(t *testing.T) {
 		AuthContext: AuthContext{Principal: testPrincipal},
 	}
 	subscribe := SubscribeRequest{RunID: "run-123", AfterCursor: 7, Limit: 25, AuthContext: AuthContext{Principal: testPrincipal}}
+	recover := RecoverRequest{RunID: "run-123", ExpectedRevision: 3, AuthContext: AuthContext{Principal: testPrincipal}}
+	retry := RetryRequest{RunID: "run-123", ExpectedRevision: 3, AuthContext: AuthContext{Principal: testPrincipal}}
 
 	tests := []struct {
 		name     string
@@ -449,6 +476,8 @@ func TestRepositoryHostRequestEnvelopesRoundTripJSON(t *testing.T) {
 		{name: "inspect request", value: inspect, fresh: func() any { return &InspectRequest{} }, wantKeys: []string{"auth_context", "run_id"}},
 		{name: "apply request", value: apply, fresh: func() any { return &ApplyRequest{} }, wantKeys: []string{"action", "action_id", "auth_context", "run_id"}},
 		{name: "subscribe request", value: subscribe, fresh: func() any { return &SubscribeRequest{} }, wantKeys: []string{"after_cursor", "auth_context", "limit", "run_id"}},
+		{name: "recover request", value: recover, fresh: func() any { return &RecoverRequest{} }, wantKeys: []string{"auth_context", "expected_revision", "run_id"}},
+		{name: "retry request", value: retry, fresh: func() any { return &RetryRequest{} }, wantKeys: []string{"auth_context", "expected_revision", "run_id"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -481,6 +510,61 @@ func TestRepositoryHostRequestEnvelopesRoundTripJSON(t *testing.T) {
 	// Request stays the zero agentrun.RunRequest on purpose: its fields are
 	// unexported by design because raw prompts never travel as JSON — they
 	// reach durable storage as derived canonical identities.
+}
+
+// TestRepositoryHostRetryAndRecoverRelaunchInsideSameIdentity proves the
+// ticket 14 envelope parity end to end: both lifecycle operations reach the
+// controller through authenticated envelopes and relaunch the failed attempt
+// inside the original run identity, preserving the earlier outcome evidence.
+func TestRepositoryHostRetryAndRecoverRelaunchInsideSameIdentity(t *testing.T) {
+	for _, operation := range []struct {
+		name     string
+		relaunch func(h *InProcessHost, runID agentrun.Identity) (Handle, error)
+	}{
+		{
+			name: "retry",
+			relaunch: func(h *InProcessHost, runID agentrun.Identity) (Handle, error) {
+				return h.Retry(context.Background(), RetryRequest{RunID: runID, AuthContext: AuthContext{Principal: testPrincipal}})
+			},
+		},
+		{
+			name: "recover",
+			relaunch: func(h *InProcessHost, runID agentrun.Identity) (Handle, error) {
+				return h.Recover(context.Background(), RecoverRequest{RunID: runID, AuthContext: AuthContext{Principal: testPrincipal}})
+			},
+		},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			backingStore := store.NuevoStore(t.TempDir())
+			failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("attempt blew up")}, fixedClock())
+			handle, err := failed.Start(context.Background(), testRequest("relaunch-"+operation.name), testPolicy())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completion, waitErr := handle.Wait(context.Background()); waitErr != nil || completion.State != agentrun.StateFailed {
+				t.Fatalf("seed attempt = %+v, %v; want failure", completion, waitErr)
+			}
+
+			host := NewInProcessHost(NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "recovered output"}}, fixedClock()))
+			retried, err := operation.relaunch(host, handle.RunID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			completion, err := retried.Wait(context.Background())
+			if err != nil || completion.State != agentrun.StateSucceeded {
+				t.Fatalf("relaunch completion = %+v, %v; want success", completion, err)
+			}
+			inspection, err := host.Inspect(context.Background(), InspectRequest{RunID: handle.RunID, AuthContext: AuthContext{Principal: testPrincipal}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(inspection.Outcomes) != 2 ||
+				inspection.Outcomes[0].Class != agentrun.OutcomeFailure ||
+				inspection.Outcomes[1].Class != agentrun.OutcomeSuccess {
+				t.Fatalf("outcomes = %+v, want failure followed by the relaunched success", inspection.Outcomes)
+			}
+		})
+	}
 }
 
 func waitForStateViaHost(t *testing.T, host *InProcessHost, runID agentrun.Identity, want agentrun.LifecycleState) {
