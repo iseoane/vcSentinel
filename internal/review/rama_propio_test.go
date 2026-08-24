@@ -245,15 +245,45 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 		t.Error("main was assumed as parent: forbidden in a stack")
 	}
 
-	// End to end against the real T8.1 resolver: a branch with no pull
-	// request, no upstream and no local sibling branches has no reliable
-	// signal and must fail instead of falling back to main.
+	// End to end against the REAL T8.1 resolver: restore it first so this
+	// block genuinely exercises git.ResolveParentBranch instead of the fake
+	// above. A branch with no pull request, no upstream and no local sibling
+	// branches has no reliable signal and must fail instead of falling back
+	// to main. The resolver's evidence always names the detected current
+	// branch; requiring it proves the fake is out of the loop.
+	swapParentResolver(t, git.ResolveParentBranch)
 	sola := prepararRepoRama(t)
 	if _, err := AnalizarRama(NuevoLedger(sola), OpcionesRama{
 		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
 		OwnDiff: &OwnDiffOptions{ResolveParent: true},
-	}); err == nil || !strings.Contains(err.Error(), "could not resolve parent branch") {
-		t.Fatalf("error = %v, want explicit T8.1 resolver failure", err)
+	}); err == nil || !strings.Contains(err.Error(), "could not resolve parent branch") ||
+		!strings.Contains(err.Error(), "current branch=") {
+		t.Fatalf("error = %v, want explicit failure from the REAL T8.1 resolver", err)
+	}
+}
+
+// TestStackedBranchSingleRepositoryBoundary pins that stacked analysis uses
+// exactly one repository boundary: the ambient worktree. A caller-supplied
+// worktree must not direct only the parent resolution elsewhere while ranges,
+// volume and audit stay ambient — that split would resolve the parent of one
+// repository against another one's refs.
+func TestStackedBranchSingleRepositoryBoundary(t *testing.T) {
+	pila := prepareStackRepo(t)
+	var captured git.ParentResolutionOptions
+	swapParentResolver(t, func(options git.ParentResolutionOptions) (git.ParentResolution, error) {
+		captured = options
+		return fixedResolver("feature-a")(options)
+	})
+
+	_, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
+		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		OwnDiff: &OwnDiffOptions{ResolveParent: true},
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed: %v", err)
+	}
+	if captured.Worktree != "" {
+		t.Errorf("parent resolution was directed away from the ambient worktree: %q", captured.Worktree)
 	}
 }
 

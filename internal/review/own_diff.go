@@ -30,9 +30,10 @@ type OwnDiffOptions struct {
 	// (pull request base, tracking upstream, local merge base). It never
 	// falls back to "main": an unreliable signal fails the analysis.
 	ResolveParent bool
-	// Worktree bounds every git invocation of the resolution. Empty means
-	// the current working directory, like the rest of internal/git.
-	Worktree string
+	// No Worktree option on purpose (semantic review of T8.2): AnalizarRama
+	// is ambient-cwd-based end to end. Directing only the parent resolution
+	// to another repository would split the boundary between one repo's
+	// parent and another repo's ranges.
 }
 
 // RangoPropio is the explainable range evidence of a stacked analysis:
@@ -65,16 +66,13 @@ func resolverRangoPropio(opciones *OwnDiffOptions, base string) (*RangoPropio, e
 	var resolucion git.ParentResolution
 	switch {
 	case strings.TrimSpace(opciones.Parent) != "":
-		resuelto, err := defaultParentResolver(git.ParentResolutionOptions{
-			ExplicitParent: opciones.Parent,
-			Worktree:       opciones.Worktree,
-		})
+		resuelto, err := defaultParentResolver(git.ParentResolutionOptions{ExplicitParent: opciones.Parent})
 		if err != nil {
 			return nil, err
 		}
 		resolucion = resuelto
 	case opciones.ResolveParent:
-		resuelto, err := defaultParentResolver(git.ParentResolutionOptions{Worktree: opciones.Worktree})
+		resuelto, err := defaultParentResolver(git.ParentResolutionOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("stacked own-diff analysis needs a parent branch: %w", err)
 		}
