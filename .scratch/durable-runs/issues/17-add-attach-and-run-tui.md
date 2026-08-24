@@ -147,7 +147,50 @@ changing any durable format; autostarting daemons.
 - Verification: gofmt clean; build/vet OK; focused -race green across
   tui/attach/cmd; GOOS=windows build OK; FULL suite green.
 
-*(slice 3 pending)*
+## Evidence — slice 3 (goldens, harness, docs)
+
+- Base: branch state after slice-2 evidence commit 8aa35b5.
+- Commits: fix(execution) retry and recover cross-check durable truth over
+  stale bookkeeping (+139 incl. adaptersites anchors), feat(tui) pinned-
+  color golden views for six attach states (+261 across render.go, goldens,
+  view footer fix), test(tui) real-daemon acceptance harness (+299/+177 —
+  one rejected 459-line candidate split by cohesion), docs(runs) attach
+  section (+64 informational), test(sentinel) drain seeded workers before
+  teardown (+58).
+- Surface: tui.RenderPlain pins lipgloss's color profile to termenv.Ascii
+  for view-string production (termenv promoted indirect->direct; zero new
+  modules); production interactive rendering keeps detection. Six goldens
+  under internal/tui/testdata (running, awaiting_decision, succeeded,
+  canceled_orphaned, reconnecting_attempt_3, lost_contact) with an escape-
+  free tripwire (0x1b byte assertion) and an -update regeneration idiom.
+  Harness: real foreground daemon.Run in a temp repo + RemoteHost provider +
+  headless Model.Update driving — AC1 abort-through-keyboard lands durable
+  cancellation evidence; AC2/AC4 forced-disconnect flips reconnecting and
+  the resumed replay applies exactly-once (collector sequences equal a full
+  fresh replay, strictly increasing); AC5 is the golden set itself.
+  docs/runs-cli.md gains the attach section (modes, keys, exit contracts).
+- Product race fixed beyond slice code (disclosed housekeeping): wire Retry/
+  Recover could answer ErrRunNotActive from stale live bookkeeping while the
+  durable head was already terminal (finish appends the terminal event
+  before releasing worker state). Both guards now cross-check durable truth
+  through one shared refusal decision; white-box deterministic pins added;
+  the twin Recover guard was caught by the mandated stress and fixed under
+  the same pattern. Stress: 15/15 parity rounds green under concurrent load;
+  two consecutive full suites green after the drain audit below.
+- Drain audit of every ticket-17 test (table in report): one offender fixed
+  (attach model-construction fixture released+settled+quiesced), seedDurableRun
+  hardened for all callers, harness tests quiesce before durable reads;
+  stress -count=3 -race green under concurrent store/execution load.
+- Independent review flags adopted: color profile pinned explicitly instead
+  of env-trust; helpFooter no longer advertises keys that are inert while
+  disconnected (its own contract violated pre-fix); goldens are escape-free
+  rather than byte-ASCII because View() intentionally shares the CLI's UTF-8
+  glyph vocabulary — accepted as consistency over purism.
+- Verification: gofmt clean; build/vet OK; focused -race green; CLICOLOR_
+  FORCE=1 + TERM=xterm-256color env-independence proven; GOOS=windows build
+  OK; FULL suite green twice consecutively after the drain audit.
+
+*(Judgment Day closure pending)*
 
 ## Evidence — slice 3 (goldens, harness, closure)
 
