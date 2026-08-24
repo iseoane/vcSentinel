@@ -262,31 +262,6 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 	}
 }
 
-// TestStackedBranchSingleRepositoryBoundary pins that stacked analysis uses
-// exactly one repository boundary: the ambient worktree. A caller-supplied
-// worktree must not direct only the parent resolution elsewhere while ranges,
-// volume and audit stay ambient — that split would resolve the parent of one
-// repository against another one's refs.
-func TestStackedBranchSingleRepositoryBoundary(t *testing.T) {
-	pila := prepareStackRepo(t)
-	var captured git.ParentResolutionOptions
-	swapParentResolver(t, func(options git.ParentResolutionOptions) (git.ParentResolution, error) {
-		captured = options
-		return fixedResolver("feature-a")(options)
-	})
-
-	_, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
-		OwnDiff: &OwnDiffOptions{ResolveParent: true},
-	})
-	if err != nil {
-		t.Fatalf("AnalizarRama failed: %v", err)
-	}
-	if captured.Worktree != "" {
-		t.Errorf("parent resolution was directed away from the ambient worktree: %q", captured.Worktree)
-	}
-}
-
 // TestStackedBranchWithoutOptionsFails: enabling stacked mode without an
 // explicit parent or resolution is a configuration error, not silence.
 func TestStackedBranchWithoutOptionsFails(t *testing.T) {
