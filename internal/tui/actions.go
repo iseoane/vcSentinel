@@ -44,10 +44,16 @@ const daemonClosedConnText = "connection is closed"
 //  1. *daemon.RemoteError (errors.As) is by definition a decoded,
 //     server-classified rejection — semantic, never transport.
 //  2. The daemon closed-connection surface text (equivalence check above).
-//  3. Mid-exchange transport surfaces of the framed client — write/read
-//     frame failures plus the corrupt-frame and empty-body paths, each of
-//     which markConnDead in daemon.RemoteHost.call, leaving the cached
-//     connection unusable for any later retry.
+//  3. Mid-exchange transport surfaces of the framed client — EVERY path in
+//     daemon.RemoteHost.call that calls markConnDead before returning:
+//     request-write failure ("cannot send the "), response-read failure
+//     ("cannot read the "), corrupt response frame ("response frame"),
+//     ok=false answer with no classified error ("operation failed without
+//     a classified error"), empty response body ("carries no body"), and
+//     result-body decode failure ("cannot decode the "). Each leaves the
+//     cached connection unusable for any later retry. When client.go gains
+//     a new markConnDead call site, its surface text must be re-audited and
+//     added here.
 //
 // Everything else (domain sentinels like stale-revision, context
 // cancellation, in-process host validation errors) is semantic.
@@ -66,7 +72,9 @@ func isConnectionLevelActionFailure(err error) bool {
 	case strings.Contains(msg, "cannot send the "),
 		strings.Contains(msg, "cannot read the "),
 		strings.Contains(msg, "response frame"),
-		strings.Contains(msg, "carries no body"):
+		strings.Contains(msg, "operation failed without a classified error"),
+		strings.Contains(msg, "carries no body"),
+		strings.Contains(msg, "cannot decode the "):
 		return true
 	default:
 		return false

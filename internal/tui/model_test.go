@@ -68,6 +68,8 @@ func TestConnectionLevelActionErrorClassification(t *testing.T) {
 		{"mid-exchange write failure", errors.New("daemon: cannot send the apply request: broken pipe"), true},
 		{"mid-exchange read failure", errors.New("daemon: cannot read the retry response: EOF"), true},
 		{"corrupt response frame", errors.New("daemon: malformed apply response frame: junk"), true},
+		{"unclassified error answer", errors.New("daemon: the apply operation failed without a classified error"), true},
+		{"result-body decode failure", errors.New("daemon: cannot decode the inspect result: unexpected end of JSON input"), true},
 		{"empty response body", errors.New("daemon: the apply response carries no body"), true},
 		{"decoded server rejection", &daemon.RemoteError{Code: "unknown.code", Message: "stale revision"}, false},
 		{"plain semantic sentinel", errors.New("stale revision: competing writer"), false},
