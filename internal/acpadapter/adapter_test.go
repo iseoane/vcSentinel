@@ -3,7 +3,6 @@ package acpadapter
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -248,70 +247,9 @@ func TestEffectiveIdentityTable(t *testing.T) {
 }
 
 // --- helper-process pipeline tests ------------------------------------------
-
-const (
-	helperEnvVar   = "GO_WANT_ACP_HELPER_PROCESS"
-	helperModeEnv  = "ACP_HELPER_MODE"
-	helperModeOK   = "end-turn"
-	helperModeTrap = "exit0-cancelled"
-)
-
-// TestHelperProcess is the child process for the spawn tests. The parent runs
-// this same test binary as the acpx launcher, so the helper can pin the exact
-// command-line contract before emitting its canned transcript.
-func TestHelperProcess(t *testing.T) {
-	if os.Getenv(helperEnvVar) != "1" {
-		t.Skip("helper process only")
-	}
-	// Pin the exact argument tail the adapter built: global flags first,
-	// then the agent token, then exec, then the prompt.
-	wantTail := []string{"--format", "json", "--json-strict", "--timeout", "300",
-		"claude", "exec", "say PROBE"}
-	args := os.Args
-	dashdash := -1
-	for i, arg := range args {
-		if arg == "--" {
-			dashdash = i
-			break
-		}
-	}
-	if dashdash < 0 || strings.Join(args[dashdash+1:], " ") != strings.Join(wantTail, " ") {
-		fmt.Fprintf(os.Stderr, "helper got args %v (dashdash=%d), want tail %v\n", args, dashdash, wantTail)
-		os.Exit(2)
-	}
-	switch os.Getenv(helperModeEnv) {
-	case helperModeOK:
-		fmt.Print(strings.Join([]string{
-			`{"jsonrpc":"2.0","id":0,"result":{"configOptions":[{"id":"model","currentValue":"test-model"}]}}`,
-			`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"HELLO FROM FAKE ACPX"}}}}`,
-			`{"jsonrpc":"2.0","id":7,"result":{"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":2}}}`,
-			"",
-		}, "\n"))
-	case helperModeTrap:
-		// Both exit codes are 0 live; classification must still be
-		// cancellation because the terminal stopReason says so.
-		fmt.Print(`{"jsonrpc":"2.0","id":8,"result":{"stopReason":"cancelled"}}` + "\n")
-	default:
-		fmt.Fprintln(os.Stderr, "unknown helper mode:", os.Getenv(helperModeEnv))
-		os.Exit(3)
-	}
-	os.Exit(0)
-}
-
-func spawnHelper(t *testing.T, mode string) (*AcpxAdapter, error) {
-	t.Helper()
-	a, err := NewAcpx(Config{
-		Launcher: []string{os.Args[0], "-test.run=^TestHelperProcess$", "--"},
-		Agent:    "claude",
-		Effort:   "high",
-		Model:    "fallback-model",
-		ChildEnv: []string{helperEnvVar + "=1", helperModeEnv + "=" + mode},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return a, nil
-}
+//
+// The fake acpx child (TestHelperProcess) and its spawn helpers live in
+// helper_test.go; slice-2 spawn scenarios extend them there.
 
 // TestRunPipelineEndTurn exercises the full spawn -> scan -> normalize path
 // against the fake acpx child and asserts the retained evidence contract.

@@ -9,19 +9,17 @@
 package acpadapter
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // DefaultMaxRuntimeSeconds is the --timeout value used when the adapter is
@@ -52,6 +50,12 @@ type Config struct {
 	// MaxRuntimeSeconds maps to the acpx --timeout global flag. Zero or
 	// negative selects DefaultMaxRuntimeSeconds.
 	MaxRuntimeSeconds int
+	// MaxOutputBytes caps how many stdout bytes one turn may produce. Zero
+	// means unlimited. While draining the stream, crossing the cap stops
+	// reading, terminates the child, and classifies the turn as failure
+	// ("output budget exceeded"), regardless of what the truncated stream
+	// claimed.
+	MaxOutputBytes int64
 	// ChildEnv holds extra environment entries (KEY=VALUE) appended to the
 	// child process environment. Operators use it for credential passthrough;
 	// tests use it for the helper-process guard.
@@ -66,11 +70,17 @@ type AcpxAdapter struct {
 	model             string
 	effort            string
 	maxRuntimeSeconds int
+	maxOutputBytes    int64
 	childEnv          []string
 
 	mu            sync.Mutex
 	lastObserved  string
 	observedKnown bool
+
+	// active holds the live owned process tree while a child runs, or nil
+	// when the adapter is idle. The execution controller reads it through
+	// OwnedTree at abort time to escalate against the whole tree.
+	active atomic.Pointer[process.Tree]
 }
 
 // NewAcpx validates cfg and returns a ready adapter. The agent token must be
@@ -98,6 +108,7 @@ func NewAcpx(cfg Config) (*AcpxAdapter, error) {
 		model:             cfg.Model,
 		effort:            cfg.Effort,
 		maxRuntimeSeconds: maxRuntime,
+		maxOutputBytes:    cfg.MaxOutputBytes,
 		childEnv:          append([]string(nil), cfg.ChildEnv...),
 	}, nil
 }
@@ -109,7 +120,9 @@ type Result struct {
 	// Output is the assistant answer assembled from every
 	// agent_message_chunk text in stream order.
 	Output string
-	// RawStream is the verbatim stdout bytes of the child process.
+	// RawStream is the verbatim stdout bytes of the child process. When an
+	// output-budget breach ended the turn early, it holds only the drained
+	// prefix up to the breach.
 	RawStream string
 	// Violations counts framing violations skipped while parsing:
 	// non-JSON lines and lines over the per-line cap. They are never fatal.
@@ -147,27 +160,46 @@ func Classify(stopReason string) agentrun.OutcomeClass {
 // global flags first, then the agent token, then the exec subcommand, then
 // the prompt. Arguments are built programmatically; no shell is involved.
 func (a *AcpxAdapter) Args(prompt string) []string {
+	return a.buildArgs(prompt, "")
+}
+
+// buildArgs assembles the launcher argument tail. A non-empty dir inserts
+// the --cwd global option among the global flags, BEFORE the agent token, so
+// revision runs scope the agent's working domain to the isolated review
+// snapshot directory.
+func (a *AcpxAdapter) buildArgs(prompt, dir string) []string {
 	args := append([]string(nil), a.launcher[1:]...)
 	args = append(args,
 		"--format", "json",
 		"--json-strict",
 		"--timeout", strconv.Itoa(a.maxRuntimeSeconds),
-		a.agent,
-		"exec",
-		prompt,
 	)
+	if dir != "" {
+		args = append(args, "--cwd", dir)
+	}
+	args = append(args, a.agent, "exec", prompt)
 	return args
 }
 
 // Command builds the exec.Cmd for one prompt without starting it. The
 // returned command uses os/exec directly and is Windows-safe: no shell
-// interpretation happens at any point.
+// interpretation happens at any point. Production execution paths use the
+// owned-tree spawner in run() instead; Command remains the transparent
+// description of what would be executed.
 func (a *AcpxAdapter) Command(ctx context.Context, prompt string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, a.launcher[0], a.Args(prompt)...) // #nosec G204 -- launcher comes from trusted local configuration
 	if len(a.childEnv) > 0 {
 		cmd.Env = append(os.Environ(), a.childEnv...)
 	}
 	return cmd
+}
+
+// OwnedTree reports the live owned acpx process tree while a child runs, or
+// nil when the adapter is idle. It satisfies the execution-style TreeProvider
+// contract so controller escalation reaches the deep npx -> node(acpx) ->
+// npm exec -> node(<agent>-acp) chain.
+func (a *AcpxAdapter) OwnedTree() *process.Tree {
+	return a.active.Load()
 }
 
 // Run executes one prompt through acpx and normalizes the resulting stream.
@@ -178,56 +210,7 @@ func (a *AcpxAdapter) Command(ctx context.Context, prompt string) *exec.Cmd {
 // class, including cancellation, so callers classify by Outcome() rather
 // than by error presence.
 func (a *AcpxAdapter) Run(ctx context.Context, prompt string) (Result, error) {
-	cmd := a.Command(ctx, prompt)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return Result{}, &OutcomeError{
-			Class:  agentrun.OutcomeProcessError,
-			Detail: fmt.Sprintf("acpx: stdout pipe unavailable: %v", err),
-		}
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw := &bytes.Buffer{}
-	reader := bufio.NewReaderSize(io.TeeReader(stdout, raw), 64*1024)
-
-	if err := cmd.Start(); err != nil {
-		return Result{}, &OutcomeError{
-			Class:  agentrun.OutcomeProcessError,
-			Detail: fmt.Sprintf("acpx: launch %q failed: %v", filepath.Base(a.launcher[0]), err),
-		}
-	}
-	stream := ParseStream(reader, DefaultLineCapBytes)
-	waitErr := cmd.Wait()
-
-	res := Result{
-		Output:        stream.Output,
-		RawStream:     raw.String(),
-		Violations:    stream.Violations,
-		ObservedModel: stream.ObservedModel,
-		StopReason:    stream.StopReason,
-		UsageJSON:     stream.UsageJSON,
-	}
-	a.recordObserved(stream.ObservedModel)
-	if res.StopReason == "" {
-		class := agentrun.OutcomeFailure
-		detail := "acpx: no terminal result"
-		if waitErr != nil {
-			detail = fmt.Sprintf("acpx: no terminal result (child error: %v)", waitErr)
-		}
-		if ctx.Err() != nil {
-			class = agentrun.OutcomeTimeout
-			detail = fmt.Sprintf("acpx: no terminal result before context end (%v)", ctx.Err())
-		}
-		return res, &OutcomeError{Class: class, Detail: detail}
-	}
-	if class := res.Class(); class != agentrun.OutcomeSuccess {
-		return res, &OutcomeError{
-			Class:  class,
-			Detail: fmt.Sprintf("acpx: terminal stopReason %q", res.StopReason),
-		}
-	}
-	return res, nil
+	return a.run(ctx, a.Args(prompt))
 }
 
 func (a *AcpxAdapter) recordObserved(model string) {

@@ -82,3 +82,13 @@ func gitObjectContent(worktree, sha, filePath string) ([]byte, error) {
 	}
 	return output, nil
 }
+
+// CreateReviewSnapshot is the sanctioned cross-package reuse API for sibling
+// adapter packages (internal/acpadapter, ticket 16): it exposes exactly the
+// private snapshot discipline of CLIAdapter.EjecutarRevision — committed
+// content only, regular-file filtering, caller-owned cleanup func — with zero
+// behavior change. Keep this a pure delegation: any semantic change belongs
+// in createReviewSnapshot so both adapter kinds stay byte-identical.
+func CreateReviewSnapshot(worktree, sha string, paths []string) (string, []string, func(), error) {
+	return createReviewSnapshot(worktree, sha, paths)
+}
