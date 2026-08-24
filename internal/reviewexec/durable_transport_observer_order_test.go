@@ -1,9 +1,11 @@
 // Liveness proof for DurableTransport.Run + WithRunObserver: observation is
 // strictly post-admission diagnostics, so even an observer that BLOCKS
 // FOREVER must never prevent the admitted provider from being entered and
-// completing. The proof is a deterministic channel handshake — the reviewer's
-// own entry signal arriving while the observer provably stays blocked — with
-// timeouts used only as hang guards, never as elapsed-silence evidence.
+// completing. The proof is a deterministic two-signal channel handshake — an
+// explicit observer-start signal followed by the reviewer's own entry signal,
+// proving provider entry happens while the observer is provably parked inside
+// its callback — with timeouts used only as hang guards, never as
+// elapsed-silence evidence.
 package reviewexec
 
 import (
@@ -30,6 +32,7 @@ func (r *signalingReviewer) EjecutarRevision(prompt, sha string, paths []string)
 
 func TestBlockingObserverDoesNotPreventReviewerEntry(t *testing.T) {
 	reviewer := &signalingReviewer{entered: make(chan struct{})}
+	observerStarted := make(chan struct{})
 	releaseObserver := make(chan struct{})
 	observerReturned := make(chan struct{})
 	backing := store.NuevoStore(t.TempDir())
@@ -37,7 +40,8 @@ func TestBlockingObserverDoesNotPreventReviewerEntry(t *testing.T) {
 		WithEvidenceAdmission(false), // lenient mode: admission verification is not under test here
 		WithRunObserver(func(string) {
 			defer close(observerReturned)
-			<-releaseObserver // block observation indefinitely: it must not gate the provider
+			close(observerStarted) // signal first, THEN block
+			<-releaseObserver      // block observation indefinitely: it must not gate the provider
 		}),
 	)
 
@@ -51,19 +55,25 @@ func TestBlockingObserverDoesNotPreventReviewerEntry(t *testing.T) {
 		runSettled <- runResult{output: output, err: runErr}
 	}()
 
-	// Core invariant: the reviewer gets entered while the observer is still
-	// provably blocked. Entry is signaled through a channel handshake, not by
-	// any absence of activity.
+	// Step 1 — wait for the observer to actually be inside its callback and
+	// parked on its release channel (timeout is a hang guard only).
+	select {
+	case <-observerStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("hang guard: the observer never reached its callback")
+	}
+
+	// Step 2 — core invariant: with the observer PROVABLY blocked, the
+	// reviewer still gets entered through Start's independent worker launch.
+	// Entry is signaled through a channel handshake, never elapsed silence.
 	select {
 	case <-reviewer.entered:
 		// Provider entry happened without any observer cooperation.
-	case <-observerReturned:
-		t.Fatal("the observer returned before being released; the blocking premise is broken")
 	case <-time.After(5 * time.Second):
 		t.Fatal("hang guard: reviewer was never entered although the observer stayed blocked")
 	}
 
-	// Release observation so Run can settle; nothing is left blocked.
+	// Step 3 — release observation so Run can settle; nothing stays blocked.
 	close(releaseObserver)
 	select {
 	case result := <-runSettled:
