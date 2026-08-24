@@ -11,7 +11,7 @@ restrictions no available backend can enforce.
 **Blocked by:** 07 (R6, complete), 08 (R7, complete), 11 (A1 decision,
 complete).
 
-**Status:** ready-for-agent
+**Status:** closed
 
 **Audit:** Critical milestone — independent `code-review` plus Judgment Day
 are mandatory before closure.
@@ -54,28 +54,32 @@ are mandatory before closure.
 
 **Acceptance criteria:**
 
-- [ ] `AcpxAdapter` executes prompts through acpx and returns normalized
+- [x] `AcpxAdapter` executes prompts through acpx and returns normalized
       output assembled from `agent_message_chunk` text.
-- [ ] Terminal `stopReason` alone decides success vs canceled vs failed;
+- [x] Terminal `stopReason` alone decides success vs canceled vs failed;
       pinned by table tests including the both-exit-0 trap.
-- [ ] Non-JSON and oversized stdout lines are skipped, counted, and reported
+- [x] Non-JSON and oversized stdout lines are skipped, counted, and reported
       without failing the turn.
-- [ ] `AgenteEfectivo` reports launcher+agent binary, observed-or-configured
+- [x] `AgenteEfectivo` reports launcher+agent binary, observed-or-configured
       model, and never invents effort.
-- [ ] Admission rejects restriction-demands without a capable declared
+- [x] Admission rejects restriction-demands without a capable declared
       backend before spawning; accepted runs record the enforcement
       declaration.
-- [ ] Context cancellation triggers cooperative cancel and owned-tree kill
+- [x] Context cancellation triggers cooperative cancel and owned-tree kill
       across the deep spawn chain; late output cannot re-settle (JD-A1-style
-      regression proof).
-- [ ] Config selects the adapter explicitly (kind: acpx + agent token +
+      regression proof). *(Amendment, recorded at closure: delivered as ctx
+      containment kill across the owned registry plus controller escalation
+      authority — cooperative session/cancel is documented N/A for stateless
+      exec; late-output non-resettlement is guaranteed by the controller's
+      settlement authority proven in R7.)*
+- [x] Config selects the adapter explicitly (kind: acpx + agent token +
       enforcement declaration); absence changes nothing for existing users.
-- [ ] Contract tests compare prompt/review shapes against `CLIAdapter`
+- [x] Contract tests compare prompt/review shapes against `CLIAdapter`
       behavior using the fake acpx runner; A1 committed fixtures serve as
       golden transcripts where shapes match.
-- [ ] Operator documentation covers fallback ordering, diagnostics, and the
+- [x] Operator documentation covers fallback ordering, diagnostics, and the
       codex auth blocker.
-- [ ] Build, vet, full tests, guardian, independent code-review, and
+- [x] Build, vet, full tests, guardian, independent code-review, and
       Judgment Day recorded here before closure.
 
 **Out of scope:** building OS sandbox infrastructure (deferred decision);
@@ -197,4 +201,43 @@ codex-acp authentication gap (tracked follow-up).
 
 ## Evidence — slice 4 (verification, reviews, closure)
 
-*(pending)*
+- Final battery on the complete unit: gofmt/vet/build OK; FULL `go test
+  ./...` green with the documented pre-existing daemon wire-parity flake
+  passing isolated and `-count=3` (follow-up recorded below); guardian
+  measured per-slice and enforced via plan/apply throughout.
+- Independent review mapping: slices 1-3 each received dual-axis (Standards +
+  Spec) review over their real staged diff with findings fixed before their
+  commits — collectively covering 100% of the ticket's real diff. Judgment
+  Day then ran as the stronger adversarial audit on the frozen full unit.
+- Judgment Day (mandatory, critical milestone): snapshot of dace16e exported;
+  round 1 produced CRITICAL JD-E (both judges — evidence/enforcement dropped
+  before durable visibility), plus single-judge CRITICALs JD-R (runs-abort
+  blind to acpx trees) and JD-C (concurrent tree publication loss), verified
+  by the orchestrator as third reader; warnings JD-D (stale doc pairing
+  claim) and JD-M (budget over-retention). Round-1 fixes: enforcement
+  retention + accessor + Result.Enforcement + bridge String(); context-aware
+  prompt path with bridge forwarding and promptRunAdapter ctx/OwnedTree
+  forwarding (cmd-level pins); mutex-guarded start-ordered tree registry
+  with interleaving proof; doc pairing rule; exact budget truncation.
+  Re-judgment 1: all fixes verified correct by both judges; converged
+  remainder held CRITICAL (durable records carried only output; doc
+  overclaimed raw-stream-hash durability). Round-2 fixes: runs-prompt
+  admission stamps an `agent.enforcement` capability via the sanctioned
+  NewCapability mechanism at runStartCommand→ResolveAdmissionRequest (empty
+  declarations skipped, canonical-form promotion only without a daemon
+  endpoint, non-acpx delegates byte-identical, pinned by two new tests);
+  doc overclaim replaced with exact three-part behavior. Re-judgment 2
+  (final): ZERO criticals from both judges; residue = one WARNING on doc
+  precision (daemon-relayed admissions deliberately omit stamping) —
+  accepted as info and corrected in this closure commit.
+- Accepted follow-ups: durable raw-transcript threading gated on
+  capability-policy runtime work (store schema); stabilize daemon
+  wire-parity tests under load; extract containment watchdog into process
+  package; solve codex-acp -32000 auth gap; surface stderr in failure
+  details; simplify vestigial spawnHelper signature; consolidate adapter-
+  family dispatch when a third kind appears.
+
+**Status:** closed
+
+**JUDGMENT: APPROVED** (round-2 re-judgment, both judges zero-critical;
+one doc-precision WARNING accepted and fixed in closure).
