@@ -1,9 +1,9 @@
-// Ordering proof for DurableTransport.Run + WithRunObserver: the observer must
-// fire after the run is durably admitted but BEFORE the reviewer can be
-// entered, so an operator announcement (sentinel review run IDs) can never lag
-// the provider start. Before the StartObserved seam existed, Run invoked the
-// observer only after Controller.Start returned — which is after the worker
-// goroutine was already launched — so this test failed against the old wiring.
+// Liveness proof for DurableTransport.Run + WithRunObserver: observation is
+// strictly post-admission diagnostics, so even an observer that BLOCKS
+// FOREVER must never prevent the admitted provider from being entered and
+// completing. The proof is a deterministic channel handshake — the reviewer's
+// own entry signal arriving while the observer provably stays blocked — with
+// timeouts used only as hang guards, never as elapsed-silence evidence.
 package reviewexec
 
 import (
@@ -14,33 +14,30 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
-// entryBarrierReviewer signals entry by closing entered as its first
-// statement, then stays blocked until release is closed, so the observer can
-// detect deterministically whether execution already began.
-type entryBarrierReviewer struct {
+// signalingReviewer closes entered as its first statement and answers
+// immediately, so its entry depends on nothing but Start launching the worker.
+type signalingReviewer struct {
 	entered    chan struct{}
 	enteredOne sync.Once
-	release    chan struct{}
 }
 
-func (r *entryBarrierReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+const wantOutput = `{"dim":"logic","verdict":"ok","findings":[]}`
+
+func (r *signalingReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	r.enteredOne.Do(func() { close(r.entered) })
-	<-r.release // stay blocked until the test releases the provider
-	return `{"dim":"logic","verdict":"ok","findings":[]}`, nil
+	return wantOutput, nil
 }
 
-func TestRunObserverFiresBeforeReviewerExecution(t *testing.T) {
-	reviewer := &entryBarrierReviewer{entered: make(chan struct{}), release: make(chan struct{})}
+func TestBlockingObserverDoesNotPreventReviewerEntry(t *testing.T) {
+	reviewer := &signalingReviewer{entered: make(chan struct{})}
+	releaseObserver := make(chan struct{})
+	observerReturned := make(chan struct{})
 	backing := store.NuevoStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:review"}, "abc123", nil,
 		WithEvidenceAdmission(false), // lenient mode: admission verification is not under test here
 		WithRunObserver(func(string) {
-			select {
-			case <-reviewer.entered:
-				t.Error("the reviewer was entered before the admitted-run observation fired")
-			case <-time.After(200 * time.Millisecond):
-				// Observation won the race: the provider has not been entered.
-			}
+			defer close(observerReturned)
+			<-releaseObserver // block observation indefinitely: it must not gate the provider
 		}),
 	)
 
@@ -48,32 +45,36 @@ func TestRunObserverFiresBeforeReviewerExecution(t *testing.T) {
 		output string
 		err    error
 	}
-	done := make(chan runResult, 1)
+	runSettled := make(chan runResult, 1)
 	go func() {
 		output, _, runErr := transport.Run(reviewer, "logic", "prompt")
-		done <- runResult{output: output, err: runErr}
+		runSettled <- runResult{output: output, err: runErr}
 	}()
 
-	// The observer fires synchronously inside Run; give the whole flow a
-	// bounded window so a regression surfaces as a test failure, not a hang.
+	// Core invariant: the reviewer gets entered while the observer is still
+	// provably blocked. Entry is signaled through a channel handshake, not by
+	// any absence of activity.
 	select {
-	case result := <-done:
-		t.Fatalf("Run settled without the expected barrier handshake: output=%q err=%v", result.output, result.err)
-	case <-time.After(500 * time.Millisecond):
+	case <-reviewer.entered:
+		// Provider entry happened without any observer cooperation.
+	case <-observerReturned:
+		t.Fatal("the observer returned before being released; the blocking premise is broken")
+	case <-time.After(5 * time.Second):
+		t.Fatal("hang guard: reviewer was never entered although the observer stayed blocked")
 	}
 
-	// Release the blocked provider so Run settles, then verify the output.
-	close(reviewer.release)
+	// Release observation so Run can settle; nothing is left blocked.
+	close(releaseObserver)
 	select {
-	case result := <-done:
+	case result := <-runSettled:
 		if result.err != nil {
 			t.Fatalf("Run() error = %v", result.err)
 		}
-		want := `{"dim":"logic","verdict":"ok","findings":[]}`
-		if result.output != want {
-			t.Fatalf("output = %q, want %q", result.output, want)
+		if result.output != wantOutput {
+			t.Fatalf("output = %q, want %q", result.output, wantOutput)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not settle after the provider was released")
+		t.Fatal("hang guard: Run did not settle after the observer was released")
 	}
+	<-observerReturned // clean join: Run invokes the observer synchronously
 }

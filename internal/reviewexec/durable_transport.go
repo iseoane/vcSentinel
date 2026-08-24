@@ -177,9 +177,10 @@ var invocationSequence atomic.Uint64
 // SHA, a process-random salt, and a monotonic sequence so repeated audits —
 // in this process or any other — can never collide on candidate identity.
 //
-// The WithRunObserver callback fires through the controller's StartObserved
-// seam: strictly after durable admission, strictly before the provider worker
-// can execute, so admission-time announcements can never lag execution.
+// The WithRunObserver callback fires immediately after successful durable
+// admission, synchronously before any wait on this goroutine. The provider
+// worker is launched inside Start independently of the callback, so observer
+// I/O can never prevent or delay provider execution.
 //
 // Immediately after a successful Start, and only in strict admission mode,
 // the admitted snapshot is bound against the live audit context
@@ -204,18 +205,16 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	adapter := NewReviewAdapter(reviewer, t.sha, t.paths, nil)
 	controller := execution.NewControllerWithClockAndEscalation(t.backing, adapter, nil, t.escalationPolicy)
 
-	// The observer travels through the controller's StartObserved seam so it
-	// fires strictly after durable admission and strictly before the worker
-	// goroutine can enter the provider: an announcement built on this callback
-	// can never lag the provider start.
-	onAdmitted := func(handle execution.Handle) {
-		if t.observedRun != nil {
-			t.observedRun(string(handle.RunID))
-		}
-	}
-	handle, err := controller.StartObserved(context.Background(), request, t.policy, onAdmitted)
+	handle, err := controller.Start(context.Background(), request, t.policy)
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
+	}
+	// Observation happens immediately after successful durable admission,
+	// synchronously on this goroutine and before any wait: the run is already
+	// durably admitted (Start launched its detached worker), so a slow or
+	// blocking observer can never prevent the provider from executing.
+	if t.observedRun != nil {
+		t.observedRun(string(handle.RunID))
 	}
 	if t.admissionEnabled {
 		if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {

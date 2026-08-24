@@ -1,10 +1,12 @@
 // Command-level tests for the `sentinel review` admitted-run announcement
 // (bounded follow-up): each durable review run identity must surface the
-// moment the shared transport admits it — after durable admission but before
-// the provider worker can execute — so an operator can immediately run
-// `sentinel runs attach --run <id> --follow`. The announcement is wired ONLY
-// at the sentinel-review command boundary and travels on the JSON-safe stderr
-// channel, never on stdout where `review --json` consumers parse payloads.
+// moment the shared transport admits it — synchronously after successful
+// durable admission / Start and before the review path waits for completion,
+// while provider launch stays independent of diagnostic observation — so an
+// operator can immediately run `sentinel runs attach --run <id> --follow`.
+// The announcement is wired ONLY at the sentinel-review command boundary and
+// travels on the JSON-safe stderr channel, never on stdout where `review
+// --json` consumers parse payloads.
 package main
 
 import (

@@ -41,9 +41,10 @@ func newReviewRunAnnouncer(out io.Writer) *reviewRunAnnouncer {
 	return &reviewRunAnnouncer{seen: make(map[string]bool), out: out}
 }
 
-// observe is the WithRunObserver callback: invoked synchronously after
-// durable admission completes and strictly before the provider worker can
-// execute, so the announcement never lags the provider start. The line
+// observe is the WithRunObserver callback: invoked synchronously immediately
+// after durable admission, on the auditing goroutine before any wait. Start
+// launches the provider worker independently of this callback, so the
+// announcement can never prevent or delay provider execution. The line
 // carries the canonical attach command so the ID is immediately actionable.
 func (a *reviewRunAnnouncer) observe(runID string) {
 	if runID == "" {
