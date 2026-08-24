@@ -131,7 +131,36 @@ codex-acp authentication gap (tracked follow-up).
 
 ## Evidence — slice 2 (review path, cancellation, ownership)
 
-*(pending)*
+- Implemented by the delegated implementer; verified independently by the
+  orchestrator (build/vet/race on touched packages + full suite).
+- Delivered: `review.go` (EjecutarPrompt / EjecutarRevision /
+  ReviewWithContext; owned-spawn core via `process.Spawn` with containment
+  watchdog mirrored from cli_review_context.go); `adapter.go` gains
+  MaxOutputBytes, atomic OwnedTree publication, `--cwd` insertion;
+  helper fake extended (sleep-long, oversized-output, arg-recording modes);
+  exported pure-delegation wrapper `agentadapter.CreateReviewSnapshot`
+  chosen over duplication/relocation to preserve snapshot-discipline parity.
+- Cancellation semantics pinned: caller-cancel → cancellation class wrapping
+  ctx err; runtime deadline only → timeout class; cooperative session/cancel
+  documented out of scope (stateless exec; ctx kill + controller escalation
+  covers it). MaxOutputBytes breach → failure class even when truncated
+  stream contained end_turn (classification checks exceeded first).
+- Dual-axis review findings applied: stale inventory anchor corrected
+  (Symbol AcpxAdapter.Command @190 after spawn moved to review.go; line
+  re-pinned after comment insertion shifted EjecutarPrompt); no-mistakes
+  string-matching assertion removed from budget-breach test (class
+  assertion suffices); interface-conformance exception documented on the
+  legacy Spanish method names (structural AuditorAgente contract);
+  snapshot errors now carry the acpx detail prefix.
+- Accepted low-severity follow-ups (parity-inherited): tree publication
+  window identical to cli.go; cancel-during-grace can flip timeout→canceled
+  label (evidence labeling only); extract watchdog into process package next
+  time it is touched; surface stderr in failure details; drop vestigial
+  spawnHelper nil-error signature.
+- Verification: gofmt/vet/build OK; focused + `-race` OK; FULL suite green
+  (zero FAIL). Volume 690 authored [CRITICO] → committed through the
+  sanctioned slice plan/apply flow.
+
 
 ## Evidence — slice 3 (wiring, admission, docs, parity)
 
