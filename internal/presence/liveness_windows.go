@@ -20,6 +20,12 @@ const processQueryLimitedInformation = 0x1000
 // timeout separates running (WAIT_TIMEOUT) from terminating-but-resolvable
 // pids (WAIT_OBJECT_0). The record is re-read on every Probe, so a wrong
 // verdict is transient.
+//
+// Residual risk on this platform: pids are recycled by the OS, so a stale
+// endpoint.json naming a since-reused pid reports Live for an unrelated
+// process. Endpoint records are removed on every graceful daemon exit, so
+// the window opens only after a hard kill plus pid reuse; disambiguating
+// further would require daemon-owned identity checks out of scope here.
 func pidAlive(pid int) bool {
 	handle, err := syscall.OpenProcess(
 		processQueryLimitedInformation|syscall.SYNCHRONIZE, false, uint32(pid))
