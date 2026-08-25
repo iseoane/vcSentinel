@@ -25,15 +25,16 @@ func DashboardPlain(width int) string { return renderDashboard(width, false) }
 type statusKind int
 
 const (
-	stOK   statusKind = iota // green: owned, passed, clean
-	stRun                    // blue: external daemon, active run
+	stOK   statusKind = iota // green: active runs, passed, healthy work
+	stRun                    // blue: manual daemon, running activity
 	stWarn                   // yellow: decision required / attention
-	stErr                    // red: failed
-	stOff                    // dim: stopped, idle
+	stStop                   // red: daemon stopped
+	stOwn                    // rose: daemon managed by this TUI session
+	stOff                    // dim: clean / idle
 )
 
 var statusColor = map[statusKind]Color{
-	stOK: Green, stRun: Blue, stWarn: Yellow, stErr: Red, stOff: Dim,
+	stOK: Green, stRun: Blue, stWarn: Yellow, stStop: Red, stOwn: Rose, stOff: Dim,
 }
 
 type worktreeRow struct {
@@ -52,15 +53,15 @@ type repoRow struct {
 
 var mockRepos = []repoRow{
 	{
-		name: "vas.sentinel", daemon: "owned", kind: stOK, expanded: true,
+		name: "vas.sentinel", daemon: "managed", kind: stOwn, expanded: true,
 		worktrees: []worktreeRow{
 			{name: "main", state: "clean", kind: stOff},
-			{name: "tui-control-center", state: "2 runs", kind: stRun},
+			{name: "tui-control-center", state: "2 runs", kind: stOK},
 			{name: "f8-t8-2-own-diff", state: "1 attention", kind: stWarn},
 		},
 	},
-	{name: "ue.capability.analizer", daemon: "external", kind: stRun},
-	{name: "iseoane.dots", daemon: "stopped", kind: stOff},
+	{name: "ue.capability.analizer", daemon: "manual", kind: stRun},
+	{name: "iseoane.dots", daemon: "stopped", kind: stStop},
 }
 
 var mockLocation = [][2]string{
@@ -69,7 +70,7 @@ var mockLocation = [][2]string{
 	{"Worktree", "main · ~/0-workspace/vas.sentinel"},
 	{"Branch", "main"},
 	{"Origin", "git@github.com:ISeoane-Quental/vas.sentinel"},
-	{"Daemon", "● owned by this session · pid 43120"},
+	{"Daemon", "● managed by this session · pid 43120"},
 	{"Status", "clean · 3 worktrees · 3 runs"},
 }
 
@@ -121,7 +122,7 @@ func renderDashboard(width int, colors bool) string {
 func headerLine(width int) string {
 	title := span{" SENTINEL CONTROL CENTER", Purple}
 	summary := []span{
-		{"● 2 daemons ", Green},
+		{"● 2 daemons ", Rose},
 		{"· 3 active ", Blue},
 		{"· 1 attention", Yellow},
 	}

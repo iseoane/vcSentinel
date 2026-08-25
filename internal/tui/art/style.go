@@ -18,6 +18,7 @@ const (
 	Purple Color = 140
 	Cyan   Color = 110
 	White  Color = 255
+	Rose   Color = 218
 )
 
 var colorsEnabled = true

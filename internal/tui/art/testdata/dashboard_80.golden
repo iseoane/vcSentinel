@@ -2,12 +2,12 @@
  SENTINEL CONTROL CENTER                    ● 2 daemons · 3 active · 1 attention
  ══════════════════════════════════════════════════════════════════════════════ 
  REPOSITORIES                                                                   
- ▾ vas.sentinel           ● owned                                               
+ ▾ vas.sentinel           ● managed                                             
    ├─ main              clean                                                   
    ├─ tui-control-center 2 runs                                                 
    └─ ⚠ f8-t8-2-own-diff 1 attention                                            
- ▸ ue.capability.analizer ● external                                            
- ▸ iseoane.dots           ○ stopped                                             
+ ▸ ue.capability.analizer ● manual                                              
+ ▸ iseoane.dots           ● stopped                                             
  ────────────────────────────────────────────────────────────────────────────── 
  LOCATION                                                                       
  Repository   vas.sentinel                                                      
@@ -15,7 +15,7 @@
  Worktree     main · ~/0-workspace/vas.sentinel                                 
  Branch       main                                                              
  Origin       git@github.com:ISeoane-Quental/vas.sentinel                       
- Daemon       ● owned by this session · pid 43120                               
+ Daemon       ● managed by this session · pid 43120                             
  Status       clean · 3 worktrees · 3 runs                                      
  ══════════════════════════════════════════════════════════════════════════════ 
  ACTIVITY                                                                       
