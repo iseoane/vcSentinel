@@ -16,6 +16,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // TimeoutComando es el límite de una llamada al agente (300 s). La fase 1 lo
@@ -52,6 +53,7 @@ type ReviewRequest struct {
 	Paths        []string
 	SnapshotDir  string
 	MaxToolCalls int
+	ToolPolicy   reviewcontract.ToolPolicy
 }
 
 const defaultReviewToolCalls = 8
@@ -67,7 +69,13 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 // own timeout budget only. Context-carrying callers go through
 // ReviewWithContext so cooperative cancellation reaches the provider process.
 func (c *CLIAdapter) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
-	return c.ReviewWithContext(context.Background(), prompt, sha, paths)
+	return c.EjecutarRevisionConPolitica(prompt, sha, paths, reviewcontract.DefaultToolPolicy())
+}
+
+// EjecutarRevisionConPolitica translates one provider-neutral contract policy
+// into this provider's command and configuration syntax.
+func (c *CLIAdapter) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	return c.reviewWithContextPolicy(context.Background(), prompt, sha, paths, policy)
 }
 
 func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
@@ -320,6 +328,13 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 }
 
 func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]string, error) {
+	policy := request.ToolPolicy
+	if policy == (reviewcontract.ToolPolicy{}) {
+		policy = reviewcontract.DefaultToolPolicy()
+	}
+	if !policy.AllowRead || !policy.AllowSearch || !policy.RequireImmutableSnapshot || policy.AllowMutation || policy.AllowShell || policy.AllowNetwork {
+		return nil, nil, fmt.Errorf("semantic review requires the canonical read/search-only immutable snapshot tool policy")
+	}
 	maxToolCalls := request.MaxToolCalls
 	if maxToolCalls <= 0 {
 		maxToolCalls = defaultReviewToolCalls

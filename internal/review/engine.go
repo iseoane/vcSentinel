@@ -14,6 +14,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
 
@@ -25,6 +26,10 @@ type AuditorAgente interface {
 
 type auditorConHerramientasRestringidas interface {
 	EjecutarRevision(prompt, sha string, paths []string) (string, error)
+}
+
+type auditorConPoliticaHerramientas interface {
+	EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
 // FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
@@ -89,6 +94,27 @@ type ResultadoDimension struct {
 	Resultado *DimensionResult
 	Error     error
 }
+
+// ProviderExecutionFailure distinguishes provider invocation failures from
+// deterministic semantic-output errors while preserving errors.Is behavior.
+type ProviderExecutionFailure struct {
+	Err error
+}
+
+func (e *ProviderExecutionFailure) Error() string { return e.Err.Error() }
+func (e *ProviderExecutionFailure) Unwrap() error { return e.Err }
+
+// DimensionReviewRequest is the deep seam for one resolved dimension review.
+type DimensionReviewRequest struct {
+	Agent    AuditorAgente
+	Bundle   ReviewBundle
+	Contract reviewcontract.DimensionContract
+	Options  OpcionesAuditoria
+	Context  string
+}
+
+// DimensionReviewer owns prompt construction and semantic answer validation.
+type DimensionReviewer struct{}
 
 // ResultadoAuditoria agrega el veredicto global del commit.
 type ResultadoAuditoria struct {
@@ -234,15 +260,21 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 				}
 
 				rd := ResultadoDimension{Bundle: bundle.Name, Dim: dimension}
-				agente, perfil, err := fabrica(bundle, dimension)
-				rd.Perfil = perfil
-				if err != nil {
-					rd.Error = err
-					rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}
+				contract, contractErr := reviewcontract.Lookup(dimension)
+				if contractErr != nil {
+					rd.Error = contractErr
+					rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: contractErr.Error()}
 				} else {
-					opciones := opts
-					opciones.RutasContexto = rutasRevision
-					rd.Resultado, rd.Error = auditarConAgente(agente, bundle, dimension, opciones, contexto)
+					agente, perfil, err := fabrica(bundle, dimension)
+					rd.Perfil = perfil
+					if err != nil {
+						rd.Error = err
+						rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}
+					} else {
+						opciones := opts
+						opciones.RutasContexto = rutasRevision
+						rd.Resultado, rd.Error = (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agente, Bundle: bundle, Contract: contract, Options: opciones, Context: contexto})
+					}
 				}
 				rd.Resultado.Bundle = bundle.Name
 
@@ -475,34 +507,57 @@ func rutasRevisionSeguras(rutas []string) []string {
 // viaja al resultado de la dimensión y a cada hallazgo (ticket 07 slice 2b):
 // es metadato aditivo de procedencia, nunca entrada del fingerprint.
 func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
+	contract, err := reviewcontract.Lookup(dimension)
+	if err != nil {
+		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
+	}
+	return (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agente, Bundle: bundle, Contract: contract, Options: opts, Context: contexto})
+}
+
+// Review executes one resolved contract and preserves raw provider output or a
+// typed provider execution failure on the returned result for internal
+// diagnosis. Semantic-output errors remain distinct and are never retried.
+func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequest) (*DimensionResult, error) {
+	if err := ctx.Err(); err != nil {
+		failure := &ProviderExecutionFailure{Err: err}
+		return &DimensionResult{Dim: request.Contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
+	}
+	agente, bundle, opts, contract := request.Agent, request.Bundle, request.Options, request.Contract
 	ejecutar := func(prompt string) (string, error) {
+		if restringido, ok := agente.(auditorConPoliticaHerramientas); ok {
+			return restringido.EjecutarRevisionConPolitica(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
+		}
 		if restringido, ok := agente.(auditorConHerramientasRestringidas); ok {
 			return restringido.EjecutarRevision(prompt, opts.SHA, opts.RutasContexto)
 		}
 		return "", ErrRestrictedRequired
 	}
-	salida, invocacion, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+	salida, invocacion, err := invokeReview(opts, bundle, contract.Name, agente, ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 	if err != nil {
-		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
+		failure := &ProviderExecutionFailure{Err: err}
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
 
-	crudo, err := ParsearDimensionResult(salida)
+	crudo, err := ParsearDimensionResultParaContrato(salida, contract)
 	if err != nil {
-		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: salida}, err
 	}
 	crudo.InvocationID = invocacion
+	crudo.RawProviderOutput = salida
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, invocacion, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+		salida, invocacion, err = invokeReview(opts, bundle, contract.Name, agente, ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
-			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
+			failure := &ProviderExecutionFailure{Err: err}
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 		}
-		crudo, err = ParsearDimensionResult(salida)
+		crudo, err = ParsearDimensionResultParaContrato(salida, contract)
 		if err != nil {
-			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: salida}, err
 		}
 		crudo.InvocationID = invocacion
+		crudo.RawProviderOutput = salida
 	}
 	stamparSourceReview(crudo.Hallazgos)
 	stamparInvocacion(crudo.Hallazgos, invocacion)

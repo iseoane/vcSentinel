@@ -16,6 +16,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -189,7 +190,7 @@ func ejecutarPrReview(worktree string, args []string) {
 
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		perfil := config.ResolverPerfil(cfg, dimension, "")
+		perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
 			return nil, perfil.Nombre, err
@@ -763,7 +764,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		perfil := config.ResolverPerfil(cfg, dimension, "")
+		perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
 			return nil, perfil.Nombre, err

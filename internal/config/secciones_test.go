@@ -9,7 +9,7 @@ import (
 )
 
 // TestSeccionesNuevas verifica el parseo de profiles anidados por agente (v2),
-// review (timeout, parallel, dims) y lint_commands.
+// review (timeout and parallel) and lint_commands.
 func TestSeccionesNuevas(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
@@ -28,9 +28,6 @@ agents:
 review:
   timeout: 30
   parallel: 4
-  dims:
-    spec: opencode.cheap
-    security: opencode.deep
 lint_commands:
   - "gofmt -l ."
   - "go vet ./..."
@@ -51,9 +48,6 @@ lint_commands:
 	if cfg.Review.Parallel != 4 {
 		t.Errorf("Review.Parallel = %d, esperado 4", cfg.Review.Parallel)
 	}
-	if cfg.Review.Dims["spec"] != "opencode.cheap" || cfg.Review.Dims["security"] != "opencode.deep" {
-		t.Errorf("Review.Dims = %+v, esperado spec->opencode.cheap y security->opencode.deep", cfg.Review.Dims)
-	}
 	// El merge acumula comandos globales + per-proyecto: verificamos que los
 	// per-proyecto estén presentes (puede haber más si existe config global).
 	encontrados := 0
@@ -67,8 +61,7 @@ lint_commands:
 	}
 }
 
-// TestDefaultsPerfiles verifica que sin config los perfiles y dims por defecto
-// existen y son coherentes con la guía (perfiles anidados por agente, v2).
+// TestDefaultsPerfiles verifies that default provider profiles exist.
 func TestDefaultsPerfiles(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
@@ -82,9 +75,6 @@ func TestDefaultsPerfiles(t *testing.T) {
 				t.Errorf("falta el perfil %q.%q por defecto", agente, perfil)
 			}
 		}
-	}
-	if cfg.Review.Dims["spec"] != "cheap" || cfg.Review.Dims["security"] != "deep" {
-		t.Errorf("dims por defecto = %+v, esperado spec->cheap y security->deep", cfg.Review.Dims)
 	}
 	if cfg.Review.Timeout != 300*time.Second || cfg.Review.Parallel != 2 {
 		t.Errorf("defaults review = %v/%d, esperado 300s/2", cfg.Review.Timeout, cfg.Review.Parallel)

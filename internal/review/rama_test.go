@@ -51,15 +51,19 @@ func (a *auditorStub) EjecutarPrompt(prompt string) (string, error) {
 	a.mu.Lock()
 	a.llamadasAudit++
 	a.mu.Unlock()
-	return a.auditSalida, nil
+	return salidaParaDimension(a.auditSalida, prompt), nil
+}
+
+func salidaParaDimension(salida, prompt string) string {
+	return strings.ReplaceAll(salida, `"logic"`, fmt.Sprintf("%q", dimensionFromPrompt(prompt)))
 }
 
 func (a *auditorStub) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
 }
 
-// salidaAuditOK es un JSONL de auditoría válido para cualquier dimensión
-// (ParsearDimensionResult acepta la primera línea con dimensión conocida).
+// salidaAuditOK is a canonical review result whose dimension is bound to the
+// requested contract by salidaParaDimension.
 const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
 
 func fabricaStub(a AuditorAgente) FabricaAuditor {

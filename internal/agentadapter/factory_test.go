@@ -20,10 +20,10 @@ func TestNuevoAdaptadorConPerfilExplicito(t *testing.T) {
 		Profiles: map[string]config.ProfileConfig{
 			"deep": {Agent: "opencode", Model: "claude-sonnet", ReasoningEffort: "max"},
 		},
-		Review: config.ReviewConfig{Timeout: 30 * time.Second, Parallel: 2, Dims: map[string]string{"security": "deep"}},
+		Review: config.ReviewConfig{Timeout: 30 * time.Second, Parallel: 2},
 	}
 
-	perfil := config.ResolverPerfil(cfg, "security", "")
+	perfil := config.ResolverPerfil(cfg, "deep", "")
 	adapter, err := NuevoAdaptadorConPerfil(cfg, perfil)
 	if err != nil {
 		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
@@ -52,10 +52,10 @@ func TestNuevoAdaptadorConPerfilHeredaDelAgente(t *testing.T) {
 		Profiles: map[string]config.ProfileConfig{
 			"normal": {},
 		},
-		Review: config.ReviewConfig{Dims: map[string]string{}},
+		Review: config.ReviewConfig{},
 	}
 
-	perfil := config.ResolverPerfil(cfg, "logic", "")
+	perfil := config.ResolverPerfil(cfg, "normal", "")
 	adapter, err := NuevoAdaptadorConPerfil(cfg, perfil)
 	if err != nil {
 		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
@@ -79,10 +79,10 @@ func TestNuevoAdaptadorSinAgentesEnPATH(t *testing.T) {
 			"agente-inexistente-xyz": {Model: "m", ReasoningEffort: "low"},
 		},
 		Profiles: map[string]config.ProfileConfig{"normal": {}},
-		Review:   config.ReviewConfig{Dims: map[string]string{}},
+		Review:   config.ReviewConfig{},
 	}
 
-	perfil := config.ResolverPerfil(cfg, "logic", "")
+	perfil := config.ResolverPerfil(cfg, "normal", "")
 	if adapter, err := NuevoAdaptadorConPerfil(cfg, perfil); err == nil || adapter != nil {
 		t.Errorf("sin agentes en el PATH se esperaba un error explícito, obtuve %T/%v", adapter, err)
 	}

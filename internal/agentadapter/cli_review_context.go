@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // ReviewWithContext runs the same restricted review as EjecutarRevision but
@@ -23,6 +24,10 @@ import (
 // extends; reviewexec.ReviewAdapter discovers it structurally through its
 // ContextualReviewer contract, so wrappers and chains forward it unchanged.
 func (c *CLIAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
+	return c.reviewWithContextPolicy(ctx, prompt, sha, paths, reviewcontract.DefaultToolPolicy())
+}
+
+func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -35,7 +40,7 @@ func (c *CLIAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, 
 		return "", err
 	}
 	defer cleanup()
-	request := ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls}
+	request := ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls, ToolPolicy: policy}
 	return c.ejecutarRevision(ctx, request, timeout)
 }
 

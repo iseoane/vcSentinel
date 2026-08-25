@@ -11,7 +11,47 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
+
+func TestReviewCommandsTranslateTheSameContractToolPolicy(t *testing.T) {
+	contract, err := reviewcontract.Lookup(reviewcontract.DimensionSecurity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	request := ReviewRequest{Prompt: "audit", SnapshotDir: snapshot, ToolPolicy: contract.ToolPolicy}
+
+	openCode := CLIAdapter{BinaryName: "opencode"}
+	_, environment, err := openCode.reviewCommand(request)
+	if err != nil {
+		t.Fatalf("OpenCode reviewCommand() error = %v", err)
+	}
+	var configuration struct {
+		Agent map[string]struct {
+			Permission map[string]any `json:"permission"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(environment["OPENCODE_CONFIG_CONTENT"]), &configuration); err != nil {
+		t.Fatal(err)
+	}
+	permissions := configuration.Agent["reviewer"].Permission
+	if permissions["read"] == nil || permissions["grep"] == nil || permissions["glob"] == nil || permissions["bash"] == nil || permissions["edit"] == nil || permissions["write"] == nil {
+		t.Fatalf("OpenCode permissions do not translate the policy: %#v", permissions)
+	}
+
+	claude := CLIAdapter{BinaryName: "claude"}
+	args, _, err := claude.reviewCommand(request)
+	if err != nil {
+		t.Fatalf("Claude reviewCommand() error = %v", err)
+	}
+	joined := strings.Join(args, " ")
+	for _, required := range []string{"Read,Grep,Glob", "Bash,Edit,Write", filepath.ToSlash(filepath.Join(snapshot, "**"))} {
+		if !strings.Contains(joined, required) {
+			t.Errorf("Claude arguments do not translate the policy requirement %q: %v", required, args)
+		}
+	}
+}
 
 func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "snapshot")

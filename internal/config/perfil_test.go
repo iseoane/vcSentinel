@@ -4,20 +4,20 @@ import (
 	"testing"
 )
 
-func TestResolverPerfilDesdeDims(t *testing.T) {
+func TestResolverPerfilUsesSuppliedContractDefault(t *testing.T) {
 	cfg := configuracionPorDefecto()
 
-	perfil := ResolverPerfil(cfg, "logic", "")
+	perfil := ResolverPerfil(cfg, "normal", "")
 	if perfil.Nombre != "normal" {
 		t.Errorf("logic -> perfil %q, esperado normal", perfil.Nombre)
 	}
 
-	perfil = ResolverPerfil(cfg, "security", "")
+	perfil = ResolverPerfil(cfg, "deep", "")
 	if perfil.Nombre != "deep" {
 		t.Errorf("security -> perfil %q, esperado deep", perfil.Nombre)
 	}
 
-	perfil = ResolverPerfil(cfg, "spec", "")
+	perfil = ResolverPerfil(cfg, "cheap", "")
 	if perfil.Nombre != "cheap" {
 		t.Errorf("spec -> %+v, esperado cheap", perfil)
 	}
@@ -101,23 +101,22 @@ func TestResolverPerfilConOverride(t *testing.T) {
 	}
 }
 
-func TestResolverPerfilDimsConfiguradas(t *testing.T) {
+func TestResolverPerfilUsesExplicitProviderProfile(t *testing.T) {
 	cfg := configuracionPorDefecto()
-	cfg.Review.Dims["logic"] = "opencode.cheap"
 	cfg.Agents["opencode"].Profiles["cheap"] = ProfileConfig{Model: "mini"}
 
-	perfil := ResolverPerfil(cfg, "logic", "")
+	perfil := ResolverPerfil(cfg, "opencode.cheap", "")
 	if perfil.Nombre != "opencode.cheap" || perfil.Binario != "opencode" || perfil.Modelo != "mini" {
 		t.Errorf("perfil = %+v, esperado opencode.cheap con opencode/mini", perfil)
 	}
 }
 
-func TestResolverPerfilDimensionDesconocida(t *testing.T) {
+func TestResolverPerfilUsesNormalWhenRequested(t *testing.T) {
 	cfg := configuracionPorDefecto()
 
-	perfil := ResolverPerfil(cfg, "perf", "")
+	perfil := ResolverPerfil(cfg, "normal", "")
 	if perfil.Nombre != "normal" {
-		t.Errorf("dimensión sin mapear -> %q, esperado normal", perfil.Nombre)
+		t.Errorf("default profile -> %q, expected normal", perfil.Nombre)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
 
@@ -30,12 +31,26 @@ func (a *agenteFake) EjecutarPrompt(prompt string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.prompt = prompt
-	salida := "{\"dim\":\"logic\",\"verdict\":\"ok\"}"
+	salida := fmt.Sprintf("{\"dim\":%q,\"verdict\":\"ok\"}", dimensionFromPrompt(prompt))
 	if a.llamadas < len(a.respuestas) {
 		salida = a.respuestas[a.llamadas]
 	}
 	a.llamadas++
 	return salida, nil
+}
+
+func dimensionFromPrompt(prompt string) string {
+	const prefix = `against the "`
+	start := strings.Index(prompt, prefix)
+	if start < 0 {
+		return DimLogic
+	}
+	rest := prompt[start+len(prefix):]
+	end := strings.Index(rest, `" dimension`)
+	if end < 0 {
+		return DimLogic
+	}
+	return rest[:end]
 }
 
 func (a *agenteFake) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
@@ -79,7 +94,7 @@ func transporteDirecto(sha string, rutas ...string) ReviewTransport {
 
 func TestAuditarCommitTodoOk(t *testing.T) {
 	fabrica, _ := fabricaFija(nil)
-	resultado := AuditarCommit(fabrica, 2, OpcionesAuditoria{
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: "abc12345", Mensaje: "msg", Diff: "diff", Bundles: bundlesPrueba(DimLogic, DimSpec),
 	})
 	if resultado.Veredicto != VerdictOK {
@@ -87,6 +102,80 @@ func TestAuditarCommitTodoOk(t *testing.T) {
 	}
 	if len(resultado.Dims) != 2 {
 		t.Errorf("dims auditadas = %d, esperado 2", len(resultado.Dims))
+	}
+}
+
+type policyRecordingAgent struct {
+	mu       sync.Mutex
+	prompts  map[string]string
+	policies map[string]reviewcontract.ToolPolicy
+	calls    int
+}
+
+func (a *policyRecordingAgent) EjecutarPrompt(prompt string) (string, error) {
+	return a.EjecutarRevision(prompt, "", nil)
+}
+
+func (a *policyRecordingAgent) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return fmt.Sprintf(`{"dim":%q,"verdict":"ok"}`, dimensionFromPrompt(prompt)), nil
+}
+
+func (a *policyRecordingAgent) EjecutarRevisionConPolitica(prompt, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+	dimension := dimensionFromPrompt(prompt)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.prompts == nil {
+		a.prompts = map[string]string{}
+		a.policies = map[string]reviewcontract.ToolPolicy{}
+	}
+	a.prompts[dimension] = prompt
+	a.policies[dimension] = policy
+	a.calls++
+	return fmt.Sprintf(`{"dim":%q,"verdict":"ok"}`, dimension), nil
+}
+
+func TestAuditarCommitUsesResolvedContractForPromptValidationAndTools(t *testing.T) {
+	agent := &policyRecordingAgent{}
+	contracts := reviewcontract.All()
+	dimensions := make([]string, 0, len(contracts))
+	for _, contract := range contracts {
+		dimensions = append(dimensions, contract.Name)
+	}
+	result := AuditarCommit(func(ReviewBundle, string) (AuditorAgente, string, error) {
+		return agent, "normal", nil
+	}, len(dimensions), OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(dimensions...)})
+
+	if result.Veredicto != VerdictOK || agent.calls != len(contracts) {
+		t.Fatalf("verdict=%q calls=%d", result.Veredicto, agent.calls)
+	}
+	for _, contract := range contracts {
+		if !strings.Contains(agent.prompts[contract.Name], contract.Instructions) {
+			t.Errorf("prompt for %q did not use canonical instructions", contract.Name)
+		}
+		if got := agent.policies[contract.Name]; got != contract.ToolPolicy {
+			t.Errorf("policy for %q = %#v, want %#v", contract.Name, got, contract.ToolPolicy)
+		}
+	}
+}
+
+func TestAuditarCommitRejectsAnotherCanonicalDimensionWithoutRetry(t *testing.T) {
+	factory, agent := fabricaFija([]string{
+		`{"dim":"security","verdict":"ok"}`,
+		`{"dim":"logic","verdict":"ok"}`,
+	})
+	result := AuditarCommit(factory, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+	if agent.llamadas != 1 {
+		t.Fatalf("calls=%d, expected no retry for a schema failure", agent.llamadas)
+	}
+	if result.Veredicto != VerdictUnavailable || len(result.Dims) != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	var outputErr *SemanticOutputError
+	if !errors.As(result.Dims[0].Error, &outputErr) || outputErr.Class != SemanticOutputSchemaInvalid || !errors.Is(result.Dims[0].Error, ErrDimensionMismatch) {
+		t.Fatalf("error=%v, expected a wrong-dimension schema failure", result.Dims[0].Error)
+	}
+	if result.Dims[0].Resultado.RawProviderOutput != `{"dim":"security","verdict":"ok"}` {
+		t.Fatalf("raw output = %q", result.Dims[0].Resultado.RawProviderOutput)
 	}
 }
 
@@ -365,10 +454,13 @@ func TestStamparProductorEfectivoNormalizesEvidenceSetProducers(t *testing.T) {
 }
 
 func TestAuditarCommitBlockManda(t *testing.T) {
-	fabrica, _ := fabricaFija([]string{
-		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`,
-		`{"dim":"spec","verdict":"unavailable","reason":"rate_limit"}`,
-	})
+	fabrica := func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
+		output := `{"dim":"spec","verdict":"unavailable","reason":"rate_limit"}`
+		if dimension == DimLogic {
+			output = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug"}]}`
+		}
+		return auditorFunc(func(string) (string, error) { return output, nil }), "normal", nil
+	}
 	resultado := AuditarCommit(fabrica, 2, OpcionesAuditoria{
 		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic, DimSpec),
 	})
@@ -761,6 +853,9 @@ func TestAuditarConAgenteRetainsProviderFailureReason(t *testing.T) {
 	}
 	if resultado.Verdict != VerdictUnavailable || resultado.Reason != want.Error() {
 		t.Fatalf("result = %+v, expected unavailable with %q", resultado, want)
+	}
+	if resultado.ExecutionFailure == nil || !errors.Is(resultado.ExecutionFailure, want) {
+		t.Fatalf("execution failure = %#v, expected typed wrapper for %v", resultado.ExecutionFailure, want)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -116,13 +117,11 @@ func fabricaRefutadorGate(cfg config.Config, verificador *modelprobe.Verificador
 }
 
 // fabricaAuditorGate construye el agente de cada dimensión de la revisión
-// semántica con el perfil por dimensión de cfg.Review.Dims, sin override de
-// --profile: --profile de gate elige el perfil de VALIDACIÓN
-// (validation.profiles), no el perfil de revisión por dimensión, que sigue
-// siendo el de siempre (mismo criterio que ejecutarReview sin --profile).
+// semantic review with the contract-selected provider profile, without a
+// review override: gate --profile selects a validation profile only.
 func fabricaAuditorGate(cfg config.Config, verificador *modelprobe.Verificador) review.FabricaAuditor {
 	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		perfil := config.ResolverPerfil(cfg, dimension, "")
+		perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
 		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 		if err != nil {
 			return nil, perfil.Nombre, err

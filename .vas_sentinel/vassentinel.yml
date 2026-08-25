@@ -38,13 +38,6 @@ review:
   codegraph_context: true
   timeout: 600
   parallel: 3
-  dims:
-    spec: "cheap"
-    style: "cheap"
-    tests: "normal"
-    logic: "normal"
-    design: "deep"
-    security: "deep"
 validation:
   capabilities:
     format:

@@ -73,8 +73,6 @@ type ReviewConfig struct {
 	// cooperative cancellation and orphan detection while never issuing a
 	// kill signal beyond the direct child.
 	CancellationEscalation bool
-	// Dims asigna cada dimensión canónica a un perfil de agente.
-	Dims map[string]string
 }
 
 // Valores posibles de CapabilityConfig.FailsWhen: cuándo se considera que una
@@ -148,9 +146,6 @@ type Config struct {
 	BuildCommands            []string
 }
 
-// DimensionesPorDefecto son las seis dimensiones canónicas de auditoría.
-var DimensionesPorDefecto = []string{"logic", "style", "design", "tests", "security", "spec"}
-
 func configuracionPorDefecto() Config {
 	return Config{
 		ActiveAgent: "auto",
@@ -191,14 +186,6 @@ func configuracionPorDefecto() Config {
 			// rollback seam is setting it to false, which restricts every
 			// kill to the direct child.
 			CancellationEscalation: true,
-			Dims: map[string]string{
-				"spec":     "cheap",
-				"style":    "cheap",
-				"tests":    "normal",
-				"logic":    "normal",
-				"design":   "deep",
-				"security": "deep",
-			},
 		},
 		Validation: ValidationConfig{
 			Capabilities: map[string]CapabilityConfig{},
@@ -316,12 +303,11 @@ type agenteYAML struct {
 // valores no numéricos (se ignoran y queda el default), igual que hacía
 // strconv.Atoi en el parser artesanal.
 type reviewYAML struct {
-	Timeout                yaml.Node         `yaml:"timeout"`
-	Parallel               yaml.Node         `yaml:"parallel"`
-	CodeGraphContext       *bool             `yaml:"codegraph_context"`
-	EvidenceAdmission      *bool             `yaml:"evidence_admission"`
-	CancellationEscalation *bool             `yaml:"cancellation_escalation"`
-	Dims                   map[string]string `yaml:"dims"`
+	Timeout                yaml.Node `yaml:"timeout"`
+	Parallel               yaml.Node `yaml:"parallel"`
+	CodeGraphContext       *bool     `yaml:"codegraph_context"`
+	EvidenceAdmission      *bool     `yaml:"evidence_admission"`
+	CancellationEscalation *bool     `yaml:"cancellation_escalation"`
 }
 
 // capabilityYAML es una entrada de validation.capabilities.<nombre> (T1.2).
@@ -499,9 +485,6 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 		}
 		if n, ok := decodificarEnteroPositivo(&raw.Review.Parallel); ok {
 			cfg.Review.Parallel = n
-		}
-		for dim, perfilDim := range raw.Review.Dims {
-			cfg.Review.Dims[dim] = perfilDim
 		}
 		if raw.Review.EvidenceAdmission != nil {
 			cfg.Review.EvidenceAdmission = *raw.Review.EvidenceAdmission

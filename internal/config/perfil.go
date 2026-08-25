@@ -31,9 +31,10 @@ type PerfilResuelto struct {
 	Esfuerzo string
 }
 
-// ResolverPerfil decide el perfil de una dimensión: el override explícito
-// gana; si no, el mapa review.dims; si la dimensión no está mapeada, el
-// perfil "normal". El nombre acepta dos sintaxis:
+// ResolverPerfil resolves a provider profile. The caller supplies the
+// provider-neutral default selected by the authoritative review contract;
+// configuration owns provider selection, model, and effort only. The name
+// accepts two syntaxes:
 //
 //   - "agente.perfil" (v2): busca en agents.<agente>.profiles.<perfil>; el
 //     modelo/esfuerzo del perfil, si están, pisan los del agente.
@@ -42,13 +43,10 @@ type PerfilResuelto struct {
 //
 // El perfil resultante puede estar indefinido (receta vacía), lo que se
 // interpreta como heredar todo del agente elegido.
-func ResolverPerfil(cfg Config, dimension, override string) PerfilResuelto {
+func ResolverPerfil(cfg Config, defaultProfile, override string) PerfilResuelto {
 	nombre := override
 	if nombre == "" {
-		nombre = cfg.Review.Dims[dimension]
-	}
-	if nombre == "" {
-		nombre = "normal"
+		nombre = defaultProfile
 	}
 
 	// v2: "agente.perfil". El prefijo solo cuenta como agente si está

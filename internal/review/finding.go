@@ -9,28 +9,20 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // Dimensiones canónicas de auditoría. Son el contrato Go + prompt del agente:
 // el vocabulario en inglés es fijo y validado de forma estricta.
 const (
-	DimLogic    = "logic"
-	DimStyle    = "style"
-	DimDesign   = "design"
-	DimTests    = "tests"
-	DimSecurity = "security"
-	DimSpec     = "spec"
+	DimLogic    = reviewcontract.DimensionLogic
+	DimStyle    = reviewcontract.DimensionStyle
+	DimDesign   = reviewcontract.DimensionDesign
+	DimTests    = reviewcontract.DimensionTests
+	DimSecurity = reviewcontract.DimensionSecurity
+	DimSpec     = reviewcontract.DimensionSpec
 )
-
-// DimensionesValidas contiene las seis dimensiones canónicas.
-var DimensionesValidas = map[string]bool{
-	DimLogic:    true,
-	DimStyle:    true,
-	DimDesign:   true,
-	DimTests:    true,
-	DimSecurity: true,
-	DimSpec:     true,
-}
 
 // Severidades de un hallazgo.
 const (
@@ -380,6 +372,12 @@ type DimensionResult struct {
 	// (ticket 07 slice 2b). Empty for legacy direct audits; additive
 	// provenance metadata only, never a fingerprint input.
 	InvocationID string `json:"invocation_id,omitempty"`
+	// RawProviderOutput is retained only in memory for diagnosis and evidence;
+	// persisted review results continue to omit untrusted raw provider output.
+	RawProviderOutput string `json:"-"`
+	// ExecutionFailure preserves a typed provider failure separately from a
+	// deterministic semantic-output error.
+	ExecutionFailure *ProviderExecutionFailure `json:"-"`
 }
 
 // findingCrudo decodifica un elemento del array "findings" de una línea
@@ -566,6 +564,7 @@ var (
 	ErrSalidaVacia       = errors.New("el agente devolvió una salida vacía")
 	ErrJSONLInvalido     = errors.New("ninguna línea JSONL válida con dimensión")
 	ErrDimensionInvalida = errors.New("dimensión desconocida")
+	ErrDimensionMismatch = errors.New("review result dimension does not match the requested contract")
 	ErrVeredictoInvalido = errors.New("veredicto desconocido")
 )
 
@@ -645,7 +644,22 @@ func semanticOutputLooksToolDenied(output string) bool {
 // Advertencias); la primera línea con "dim" y "verdict" conocidos gana.
 // La dimensión desconocida es un error explícito, nunca un silencio.
 func ParsearDimensionResult(salida string) (*DimensionResult, error) {
-	bloque := extraerBloqueJSONL(salida)
+	contract, err := reviewcontract.Lookup(DimLogic)
+	if err != nil {
+		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
+	}
+	return parsearDimensionResult(salida, "", contract.OutputSchema)
+}
+
+// ParsearDimensionResultParaContrato parses a provider answer against the
+// schema selected for one requested contract. A valid result for any other
+// canonical dimension is a deterministic schema failure.
+func ParsearDimensionResultParaContrato(salida string, contract reviewcontract.DimensionContract) (*DimensionResult, error) {
+	return parsearDimensionResult(salida, contract.Name, contract.OutputSchema)
+}
+
+func parsearDimensionResult(salida, expectedDimension string, schema reviewcontract.OutputSchema) (*DimensionResult, error) {
+	bloque := extraerBloqueJSONLConSchema(salida, schema)
 	lineas := strings.Split(bloque, "\n")
 
 	var descartadas int
@@ -671,7 +685,7 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 			descartadas++
 			continue
 		}
-		if !DimensionesValidas[crudo.Dim] {
+		if _, err := reviewcontract.Lookup(crudo.Dim); err != nil {
 			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim), bloque)
 		}
 		if !veredictosValidos[crudo.Verdict] {
@@ -690,7 +704,7 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 		if descartadas > 0 {
 			normalizaciones = append(normalizaciones, fmt.Sprintf("%d líneas no JSONL descartadas", descartadas))
 		}
-		return &DimensionResult{
+		resultado := &DimensionResult{
 			Dim:          crudo.Dim,
 			Verdict:      veredictoFinal(crudo.Verdict, findingsV1, &normalizaciones),
 			Findings:     findingsV1,
@@ -698,7 +712,8 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 			Questions:    crudo.Questions,
 			Reason:       crudo.Reason,
 			Advertencias: normalizaciones,
-		}, nil
+		}
+		return validarDimensionContrato(resultado, expectedDimension, bloque)
 	}
 
 	if strings.TrimSpace(bloque) == "" {
@@ -710,9 +725,16 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 	// bloque completo sí es un objeto JSON; parsearlo entero evita que una
 	// auditoría válida se degrade a unavailable.
 	if res, ok := parsearObjetoMultilinea(bloque); ok {
-		return res, nil
+		return validarDimensionContrato(res, expectedDimension, bloque)
 	}
 	return nil, classifyUnparseableSemanticOutput(bloque)
+}
+
+func validarDimensionContrato(resultado *DimensionResult, expectedDimension, output string) (*DimensionResult, error) {
+	if expectedDimension == "" || resultado.Dim == expectedDimension {
+		return resultado, nil
+	}
+	return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: requested %q, received %q", ErrDimensionMismatch, expectedDimension, resultado.Dim), output)
 }
 
 // parsearObjetoMultilinea intenta interpretar el bloque como un único objeto
@@ -729,7 +751,10 @@ func parsearObjetoMultilinea(bloque string) (*DimensionResult, bool) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(bloque)), &crudo); err != nil {
 		return nil, false
 	}
-	if crudo.Dim == "" || !DimensionesValidas[crudo.Dim] {
+	if crudo.Dim == "" {
+		return nil, false
+	}
+	if _, err := reviewcontract.Lookup(crudo.Dim); err != nil {
 		return nil, false
 	}
 
@@ -796,12 +821,20 @@ func veredictoDeSeveridades(hallazgos []ReviewFinding) string {
 // extraerBloqueJSONL recorta la salida al segmento entre BEGIN_REVIEW y
 // END_REVIEW cuando existen; si no, devuelve la salida completa.
 func extraerBloqueJSONL(salida string) string {
-	inicio := strings.Index(salida, "BEGIN_REVIEW")
+	contract, err := reviewcontract.Lookup(DimLogic)
+	if err != nil {
+		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
+	}
+	return extraerBloqueJSONLConSchema(salida, contract.OutputSchema)
+}
+
+func extraerBloqueJSONLConSchema(salida string, schema reviewcontract.OutputSchema) string {
+	inicio := strings.Index(salida, schema.BeginDelimiter)
 	if inicio < 0 {
 		return salida
 	}
-	inicio += len("BEGIN_REVIEW")
-	fin := strings.Index(salida[inicio:], "END_REVIEW")
+	inicio += len(schema.BeginDelimiter)
+	fin := strings.Index(salida[inicio:], schema.EndDelimiter)
 	if fin < 0 {
 		return salida[inicio:]
 	}

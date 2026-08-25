@@ -17,6 +17,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -116,7 +117,7 @@ func ejecutarReview(worktree string, args []string) {
 		// ficha registre el autor real y no el perfil pedido (H4/T0.2).
 		autoria := &recolectorAutoria{}
 		fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-			perfil := config.ResolverPerfil(cfg, dimension, flags.profile)
+			perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), flags.profile)
 			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
 			if err != nil {
 				return nil, perfil.Nombre, err

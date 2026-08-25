@@ -18,7 +18,7 @@ func (s *historyStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	if strings.Contains(prompt, "+defect\n") && !strings.Contains(prompt, "Pull request intention:") {
 		return auditOutputCritical, nil
 	}
-	return s.auditSalida, nil
+	return salidaParaDimension(s.auditSalida, prompt), nil
 }
 
 // netCriticalOutput is v2-shaped: evidence+confidence make it a Hallazgo, which is what AuditarCommit aggregates.
@@ -35,9 +35,9 @@ type answeringStub struct {
 func (s *answeringStub) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	s.prompts = append(s.prompts, prompt)
 	if strings.Contains(prompt, s.marker) {
-		return s.output, nil
+		return salidaParaDimension(s.output, prompt), nil
 	}
-	return s.auditSalida, nil
+	return salidaParaDimension(s.auditSalida, prompt), nil
 }
 
 func addDefectCommits(t *testing.T, fix bool) (shaDefect string) {
