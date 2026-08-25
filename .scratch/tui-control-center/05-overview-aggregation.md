@@ -14,12 +14,15 @@ daemon presence. One unhealthy repository must never fail the whole view.
 - `func Collect(registryPath string) ([]Repo, error)`: open the registry;
   for each entry IN REGISTRY SORT ORDER produce one Repo. Disabled entries
   are included but flagged (caller filters). Entry.Missing() true =>
-  Missing=true with no probes. Otherwise run inventory.Inspect; on failure
-  record Error and still fill Daemon via presence.Probe over the resolved
-  common dir (probe degrades to Stopped by design). Daemon probe uses
-  git.ObtenerGitCommonDir(repoPath); if even that fails, Error notes it and
-  Daemon stays Stopped zero-value.
-- Registry open failure IS a hard error (no registry, no overview).
+  Missing=true with no probes. Otherwise the probe order is common-dir
+  FIRST (git.ObtenerGitCommonDir), then presence.Probe(commonDir) ALWAYS,
+  then inventory.Inspect independently: a failed common-dir records Error
+  with Stopped daemon and skips Inspect entirely; a failed Inspect after a
+  successful probe keeps Daemon and records Error only. (Amended after
+  review: the original prose read inspect-first; probe-first is binding.)
+- Registry open failure IS a hard error for corrupt JSON or a directory at
+  the registry path; an ABSENT file inherits registry.Open's empty-registry
+  semantics (empty snapshot, nil error).
 - No writes, no dialing, nothing started; pure fan-out of existing readers.
 
 ## Non-goals
@@ -33,3 +36,13 @@ daemon presence. One unhealthy repository must never fail the whole view.
   daemon without failing Collect; disabled entry included and flagged;
   ordering matches registry sort; corrupt registry path errors explicitly.
 - build/vet/focused/race/full suite green; within the 400-line budget.
+
+## Review amendments (Slice 5)
+
+- Probe-first degradation ladder is normative (Scope amended above).
+- Commit 1f49fed touched consumed package internal/presence comment-only to
+  document pid-reuse residual risk symmetrically on both platforms;
+  accepted as a docs exception to the "no changes to consumed packages"
+  rule.
+- Test helpers mirror the inventory test files per established per-package
+  Go practice; extract a shared internal testutil if a third copy appears.
