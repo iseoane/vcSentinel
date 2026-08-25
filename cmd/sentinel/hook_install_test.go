@@ -28,7 +28,7 @@ func repositoryCount(t *testing.T, path string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store.Len()
+	return len(store.List())
 }
 
 // prepareInitRepository creates a throwaway repository with the DEFAULT hooks
@@ -191,7 +191,7 @@ func TestUninitRevierteHookConfigYReglas(t *testing.T) {
 // TestUninitPreservaHookAjeno: if another tool replaced the hook after init,
 // uninit must leave it alone instead of deleting what it did not install.
 func TestUninitPreservaHookAjeno(t *testing.T) {
-	isolateRepositoryRegistry(t)
+	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
 	ejecutarInit(root)
 
@@ -213,6 +213,27 @@ func TestUninitPreservaHookAjeno(t *testing.T) {
 	}
 	if string(datos) != ajeno {
 		t.Errorf("uninit modified the foreign hook: %q", datos)
+	}
+	if count := repositoryCount(t, registryPath); count != 0 {
+		t.Errorf("foreign hook prevented registry removal: %d repositories remain", count)
+	}
+}
+
+func TestUninitKeepsRegistryWhenCleanupFails(t *testing.T) {
+	registryPath := isolateRepositoryRegistry(t)
+	root := prepareInitRepository(t)
+	ejecutarInit(root)
+	configPath := filepath.Join(root, ".vas_sentinel", "vassentinel.yml")
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(configPath, "blocked"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	ejecutarUninit(root)
+	if count := repositoryCount(t, registryPath); count != 1 {
+		t.Fatalf("failed uninit left %d registry entries, want 1", count)
 	}
 }
 

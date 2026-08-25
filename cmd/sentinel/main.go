@@ -29,17 +29,14 @@ var resolveRepositoryRegistryPath = func() (string, error) {
 	return filepath.Join(home, ".vas_sentinel", "repositories.json"), nil
 }
 
-func updateRepositoryRegistry(repositoryPath string, register bool) {
+func updateRepositoryRegistry(repositoryPath string, update func(*registry.Registry, string) (bool, error)) {
 	path, err := resolveRepositoryRegistryPath()
 	if err == nil {
-		var stored *registry.Registry
-		stored, err = registry.Open(path)
-		if err == nil {
-			if register {
-				_, err = stored.Register(repositoryPath)
-			} else {
-				_, err = stored.Remove(repositoryPath)
-			}
+		stored, openErr := registry.Open(path)
+		if openErr != nil {
+			err = openErr
+		} else {
+			_, err = update(stored, repositoryPath)
 		}
 	}
 	if err != nil {
@@ -362,7 +359,7 @@ func ejecutarInit(path string) {
 
 	fmt.Println("⚓ Git Hook 'pre-commit' instalado en este repositorio. Entorno securizado con éxito.")
 	if rulesSucceeded && configurationSucceeded {
-		updateRepositoryRegistry(path, true)
+		updateRepositoryRegistry(path, (*registry.Registry).Register)
 	}
 }
 
@@ -386,10 +383,12 @@ func ejecutarUninit(path string) {
 
 	fmt.Println("🗑️ Revirtiendo VAS Sentinel en este repositorio...")
 
+	cleanupSucceeded := true
 	for _, nombre := range []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"} {
 		retiradas, err := quitarReglasDeArchivo(filepath.Join(path, nombre))
 		switch {
 		case err != nil:
+			cleanupSucceeded = false
 			fmt.Printf("⚠️ No se pudo limpiar %s: %v\n", nombre, err)
 		case retiradas:
 			fmt.Printf("📝 Reglas de volumen retiradas de: %s\n", nombre)
@@ -399,6 +398,7 @@ func ejecutarUninit(path string) {
 	rutaConfig := filepath.Join(path, ".vas_sentinel", "vassentinel.yml")
 	if err := os.Remove(rutaConfig); err != nil {
 		if !os.IsNotExist(err) {
+			cleanupSucceeded = false
 			fmt.Printf("⚠️ No se pudo eliminar %s: %v\n", rutaConfig, err)
 		}
 	} else {
@@ -407,13 +407,19 @@ func ejecutarUninit(path string) {
 
 	commonDir, err := git.ObtenerGitCommonDir(path)
 	if err != nil {
+		cleanupSucceeded = false
 		fmt.Printf("⚠️ No se pudo determinar el directorio Git del repositorio: %v\n", err)
 	} else {
-		quitarHookSiEsDeSentinel(filepath.Join(commonDir, "hooks", "pre-commit"))
+		if err := quitarHookSiEsDeSentinel(filepath.Join(commonDir, "hooks", "pre-commit")); err != nil {
+			cleanupSucceeded = false
+			fmt.Printf("⚠️ No se pudo limpiar el hook: %v\n", err)
+		}
 	}
 
 	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
-	updateRepositoryRegistry(path, false)
+	if cleanupSucceeded {
+		updateRepositoryRegistry(path, (*registry.Registry).Remove)
+	}
 }
 
 // inyectarReglasDeArchivo appends the managed rule when it is absent and
@@ -485,23 +491,22 @@ func quitarReglasDeArchivo(ruta string) (bool, error) {
 // quitarHookSiEsDeSentinel borra el hook pre-commit en hookPath solo si su
 // contenido coincide exactamente con el que generarScriptHook produce ahora;
 // si difiere (otro origen) o no existe, no lo toca.
-func quitarHookSiEsDeSentinel(hookPath string) {
+func quitarHookSiEsDeSentinel(hookPath string) error {
 	actual, err := os.ReadFile(hookPath)
 	switch {
 	case os.IsNotExist(err):
-		return
+		return nil
 	case err != nil:
-		fmt.Printf("⚠️ No se pudo leer el hook existente: %v\n", err)
-		return
+		return err
 	case string(actual) != generarScriptHook():
 		fmt.Println("⚠️ El hook 'pre-commit' actual no coincide con el instalado por VAS Sentinel: no se toca.")
-		return
+		return nil
 	}
 	if err := os.Remove(hookPath); err != nil {
-		fmt.Printf("⚠️ No se pudo eliminar el hook: %v\n", err)
-		return
+		return err
 	}
 	fmt.Println("⚓ Hook 'pre-commit' eliminado.")
+	return nil
 }
 
 // generarScriptHook devuelve el contenido del hook pre-commit adaptado al

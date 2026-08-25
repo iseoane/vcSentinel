@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -106,10 +107,10 @@ func (r *Registry) Remove(dir string) (removed bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	previous, exists := r.entries[dir]
-	if !exists {
+	if _, exists := r.entries[dir]; !exists {
 		return false, nil
 	}
+	previous := r.entries[dir]
 	delete(r.entries, dir)
 	if err := r.writeLocked(); err != nil {
 		r.entries[dir] = previous
@@ -150,20 +151,18 @@ func (r *Registry) listLocked() []Entry {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	return entries
 }
-func (r *Registry) Len() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.entries)
-}
 func normalizePath(path string) (string, error) {
 	if path == "" {
 		return "", errors.New("path is empty")
 	}
-	absolute, err := filepath.Abs(filepath.Clean(path))
+	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Clean(absolute), nil
+	if runtime.GOOS == "windows" {
+		absolute = strings.ToLower(absolute)
+	}
+	return absolute, nil
 }
 func decode(data []byte, path string) (document, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -173,10 +172,7 @@ func decode(data []byte, path string) (document, error) {
 		return input, fmt.Errorf("registry: invalid JSON in %s: %w", path, err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return input, fmt.Errorf("registry: invalid JSON in %s: multiple values", path)
-		}
-		return input, fmt.Errorf("registry: invalid JSON in %s: trailing data: %w", path, err)
+		return input, fmt.Errorf("registry: invalid JSON in %s: trailing data", path)
 	}
 	if input.Version != schemaVersion {
 		return input, fmt.Errorf("registry: invalid version in %s", path)
@@ -219,14 +215,6 @@ func (r *Registry) writeLocked() error {
 		return err
 	}
 	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, r.path); err == nil {
-		return nil
-	} else if runtime.GOOS != "windows" {
-		return err
-	}
-	if err := os.Remove(r.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return os.Rename(temporaryPath, r.path)
