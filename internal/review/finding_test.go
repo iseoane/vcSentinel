@@ -63,6 +63,46 @@ func TestParsearDimensionResultInvalida(t *testing.T) {
 	}
 }
 
+func TestParsearDimensionResultClassifiesDeterministicOutputErrors(t *testing.T) {
+	longSecret := strings.Repeat("x", 300)
+	tests := []struct {
+		name     string
+		output   string
+		class    SemanticOutputClass
+		legacy   error
+		redacted string
+	}{
+		{name: "empty payload", output: "", class: SemanticOutputMissingPayload, legacy: ErrSalidaVacia},
+		{name: "prose payload", output: "I cannot provide the requested review.", class: SemanticOutputMissingPayload, legacy: ErrJSONLInvalido},
+		{name: "tool denial prose", output: "Permission denied: Read(/host/private.go)", class: SemanticOutputToolDenied, legacy: ErrJSONLInvalido},
+		{name: "malformed JSON", output: `{"dim":"logic",`, class: SemanticOutputMalformedJSON, legacy: ErrJSONLInvalido},
+		{name: "schema invalid result", output: `{"dim":"logic","verdict":false}`, class: SemanticOutputSchemaInvalid, legacy: ErrJSONLInvalido},
+		{name: "redacts and bounds excerpt", output: "tool denied token=" + longSecret, class: SemanticOutputToolDenied, legacy: ErrJSONLInvalido, redacted: longSecret},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParsearDimensionResult(tt.output)
+			if !errors.Is(err, tt.legacy) {
+				t.Fatalf("errors.Is(%v, %v) = false", err, tt.legacy)
+			}
+			var outputErr *SemanticOutputError
+			if !errors.As(err, &outputErr) {
+				t.Fatalf("error = %T %v, expected SemanticOutputError", err, err)
+			}
+			if outputErr.Class != tt.class {
+				t.Errorf("class = %q, expected %q", outputErr.Class, tt.class)
+			}
+			if len([]rune(outputErr.Evidence)) > maxSemanticOutputEvidenceRunes {
+				t.Errorf("evidence length = %d, expected at most %d", len([]rune(outputErr.Evidence)), maxSemanticOutputEvidenceRunes)
+			}
+			if tt.redacted != "" && strings.Contains(outputErr.Evidence, tt.redacted) {
+				t.Errorf("evidence leaks the supplied secret: %q", outputErr.Evidence)
+			}
+		})
+	}
+}
+
 func TestParsearDimensionResultDesconocida(t *testing.T) {
 	_, err := ParsearDimensionResult(`{"dim":"perf","verdict":"ok"}`)
 	if !errors.Is(err, ErrDimensionInvalida) {

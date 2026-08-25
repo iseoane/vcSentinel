@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -568,6 +569,75 @@ var (
 	ErrVeredictoInvalido = errors.New("veredicto desconocido")
 )
 
+// SemanticOutputClass identifies deterministic failures in a provider's
+// returned payload. Provider execution failures do not use this type.
+type SemanticOutputClass string
+
+const (
+	SemanticOutputMissingPayload SemanticOutputClass = "missing_semantic_payload"
+	SemanticOutputToolDenied     SemanticOutputClass = "tool_denied"
+	SemanticOutputMalformedJSON  SemanticOutputClass = "malformed_json"
+	SemanticOutputSchemaInvalid  SemanticOutputClass = "schema_invalid"
+)
+
+const maxSemanticOutputEvidenceRunes = 240
+
+var semanticOutputSecret = regexp.MustCompile(`(?i)\b(api[_ -]?key|authorization|token|password|secret)\b\s*[:=]\s*(?:bearer\s+)?[^\s,;]+`)
+
+// SemanticOutputError preserves a bounded, redacted excerpt for deterministic
+// provider output failures while retaining the legacy sentinel through Unwrap.
+type SemanticOutputError struct {
+	Class    SemanticOutputClass
+	Evidence string
+	legacy   error
+}
+
+func (e *SemanticOutputError) Error() string {
+	if e.Evidence == "" {
+		return fmt.Sprintf("semantic review output %s", e.Class)
+	}
+	return fmt.Sprintf("semantic review output %s: %s", e.Class, e.Evidence)
+}
+
+func (e *SemanticOutputError) Unwrap() error { return e.legacy }
+
+func newSemanticOutputError(class SemanticOutputClass, legacy error, output string) error {
+	return &SemanticOutputError{Class: class, Evidence: semanticOutputEvidence(output), legacy: legacy}
+}
+
+func semanticOutputEvidence(output string) string {
+	evidence := semanticOutputSecret.ReplaceAllString(strings.Join(strings.Fields(output), " "), "$1=[REDACTED]")
+	runes := []rune(evidence)
+	if len(runes) <= maxSemanticOutputEvidenceRunes {
+		return evidence
+	}
+	return string(runes[:maxSemanticOutputEvidenceRunes])
+}
+
+func classifyUnparseableSemanticOutput(output string) error {
+	trimmed := strings.TrimSpace(output)
+	legacy := ErrJSONLInvalido
+	switch {
+	case semanticOutputLooksToolDenied(trimmed):
+		return newSemanticOutputError(SemanticOutputToolDenied, legacy, output)
+	case json.Valid([]byte(trimmed)):
+		return newSemanticOutputError(SemanticOutputSchemaInvalid, legacy, output)
+	case strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "["):
+		return newSemanticOutputError(SemanticOutputMalformedJSON, legacy, output)
+	default:
+		return newSemanticOutputError(SemanticOutputMissingPayload, legacy, output)
+	}
+}
+
+func semanticOutputLooksToolDenied(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "access denied") ||
+		strings.Contains(lower, "not allowed") ||
+		strings.Contains(lower, "not permitted") ||
+		(strings.Contains(lower, "tool") && strings.Contains(lower, "denied"))
+}
+
 // ParsearDimensionResult extrae el resultado de una dimensión de la salida
 // cruda del agente. Tolera texto alrededor y fences de markdown: localiza el
 // bloque delimitado por BEGIN_REVIEW / END_REVIEW si existe y, si no, usa toda
@@ -602,11 +672,11 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 			continue
 		}
 		if !DimensionesValidas[crudo.Dim] {
-			return nil, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim)
+			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim), bloque)
 		}
 		if !veredictosValidos[crudo.Verdict] {
 			if len(crudo.Findings) == 0 {
-				return nil, fmt.Errorf("%w: %q (dimensión %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim)
+				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimensión %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim), bloque)
 			}
 			// Veredictos de facto ("issues", "error", ...) con hallazgos se
 			// derivan de las severidades en lugar de abortar la auditoría.
@@ -632,7 +702,7 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 	}
 
 	if strings.TrimSpace(bloque) == "" {
-		return nil, ErrSalidaVacia
+		return nil, newSemanticOutputError(SemanticOutputMissingPayload, ErrSalidaVacia, bloque)
 	}
 	// Fallback: algunos modelos (p. ej. el perfil cheap con reasoning low)
 	// emiten el objeto JSON formateado en varias líneas (pretty-printed)
@@ -642,7 +712,7 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 	if res, ok := parsearObjetoMultilinea(bloque); ok {
 		return res, nil
 	}
-	return nil, ErrJSONLInvalido
+	return nil, classifyUnparseableSemanticOutput(bloque)
 }
 
 // parsearObjetoMultilinea intenta interpretar el bloque como un único objeto

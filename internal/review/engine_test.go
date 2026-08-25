@@ -729,11 +729,21 @@ func hasResultBundle(results []ResultadoDimension, bundle string) bool {
 	return false
 }
 
-func TestAuditarCommitInvalidOutputIsNotRetried(t *testing.T) {
-	fabrica, fake := fabricaFija([]string{"not json", `{"dim":"logic","verdict":"ok"}`})
-	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
-	if fake.llamadas != 1 || resultado.Veredicto != VerdictUnavailable {
-		t.Fatalf("calls=%d verdict=%s", fake.llamadas, resultado.Veredicto)
+func TestAuditarCommitDeterministicOutputErrorsAreNotRetried(t *testing.T) {
+	tests := map[string]string{
+		"missing payload": "review unavailable",
+		"tool denial":     "Permission denied: Read(/host/private.go)",
+		"malformed JSON":  `{"dim":"logic",`,
+		"schema invalid":  `{"dim":"logic","verdict":false}`,
+	}
+	for name, output := range tests {
+		t.Run(name, func(t *testing.T) {
+			fabrica, fake := fabricaFija([]string{output, `{"dim":"logic","verdict":"ok"}`})
+			resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+			if fake.llamadas != 1 || resultado.Veredicto != VerdictUnavailable {
+				t.Fatalf("calls=%d verdict=%s", fake.llamadas, resultado.Veredicto)
+			}
+		})
 	}
 }
 
@@ -744,6 +754,10 @@ func TestAuditarConAgenteRetainsProviderFailureReason(t *testing.T) {
 	}), ReviewBundle{}, DimLogic, OpcionesAuditoria{SHA: "abc"}, "")
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, expected %v", err, want)
+	}
+	var outputErr *SemanticOutputError
+	if errors.As(err, &outputErr) {
+		t.Fatalf("provider error was classified as deterministic output failure: %+v", outputErr)
 	}
 	if resultado.Verdict != VerdictUnavailable || resultado.Reason != want.Error() {
 		t.Fatalf("result = %+v, expected unavailable with %q", resultado, want)

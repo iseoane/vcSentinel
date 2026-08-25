@@ -57,8 +57,9 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 	dir := ""
 	if c.esClaude() {
 		// Claude Code has no "--dir"-style flag (unlike OpenCode's --pure +
-		// --dir), so confinement to the read-only snapshot happens through
-		// the working directory. --safe-mode already disables CLAUDE.md,
+		// --dir), so it runs with the snapshot as its working directory. Tool
+		// authorization is configured by reviewCommand; this is not an OS sandbox.
+		// --safe-mode already disables CLAUDE.md,
 		// skills, plugins, hooks, MCP servers, and custom agents, so unlike
 		// OpenCode's reviewEnvironment (which redirects HOME/XDG because
 		// opencode has no equivalent flag) no HOME/XDG redirection is needed

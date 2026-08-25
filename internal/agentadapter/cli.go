@@ -328,13 +328,19 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		if request.SnapshotDir == "" {
 			return nil, nil, fmt.Errorf("semantic review requires an immutable snapshot directory")
 		}
-		// "--tools Read,Grep,Glob" replaces the whole built-in tool set (not
-		// an incremental allow/deny), so the reviewer can only read/search;
-		// cmd.Dir confines it to the snapshot (see ejecutarRevision).
+		snapshotPattern := filepath.ToSlash(filepath.Join(request.SnapshotDir, "**"))
+		allowedTools := strings.Join([]string{
+			"Read(" + snapshotPattern + ")",
+			"Grep(" + snapshotPattern + ")",
+			"Glob(" + snapshotPattern + ")",
+		}, ",")
+		// The built-in tool set is read/search only. The explicit allow patterns
+		// bind those tools to the immutable snapshot, while dontAsk rejects any
+		// unadmitted call without an interactive permission prompt.
 		// There is no confirmed Claude Code flag/env var to cap tool-call
 		// count (OpenCode's "Steps"), so maxToolCalls is intentionally unused
 		// here; do not invent one.
-		args := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob"}
+		args := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", allowedTools, "--disallowed-tools", "Bash,Edit,Write"}
 		if c.Config.Model != "" {
 			args = append(args, "--model", c.Config.Model)
 		}
@@ -349,19 +355,16 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	if request.SnapshotDir == "" {
 		return nil, nil, fmt.Errorf("semantic review requires an immutable snapshot directory")
 	}
-	safePaths := rutasRevisionSeguras(request.Paths)
 	permissions := map[string]map[string]string{
 		"bash":  {"*": "deny"},
 		"edit":  {"*": "deny"},
 		"write": {"*": "deny"},
-		"read":  {"*": "deny"},
-		"grep":  {"*": "deny"},
-		"glob":  {"*": "deny"},
-	}
-	for _, ruta := range safePaths {
-		permissions["read"][ruta] = "allow"
-		permissions["grep"][ruta] = "allow"
-		permissions["glob"][ruta] = "allow"
+		"read":  {"*": "deny", filepath.ToSlash(filepath.Join(request.SnapshotDir, "**")): "allow"},
+		// Grep and Glob receive user-supplied search expressions, not the paths
+		// found by those searches. Restricting them to audited filenames would
+		// reject ordinary expressions while contributing no snapshot containment.
+		"grep": {"*": "allow"},
+		"glob": {"*": "allow"},
 	}
 	permission := make(map[string]any, len(permissions)+1)
 	permission["*"] = "deny"

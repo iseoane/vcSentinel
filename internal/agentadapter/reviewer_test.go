@@ -14,6 +14,8 @@ import (
 )
 
 func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	snapshotPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
 	adapter := CLIAdapter{
 		BinaryName: "opencode",
 		Config: config.AgentConfig{
@@ -24,14 +26,14 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	args, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt:       "audit",
 		Paths:        []string{"internal/review/engine.go", "internal/planning/context.go"},
-		SnapshotDir:  "/snapshot",
+		SnapshotDir:  snapshot,
 		MaxToolCalls: 7,
 	})
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	if expected := []string{"run", "--pure", "--agent", "reviewer", "--model", "openai/gpt-5.6-terra", "--dir", "/snapshot"}; !reflect.DeepEqual(args, expected) {
+	if expected := []string{"run", "--pure", "--agent", "reviewer", "--model", "openai/gpt-5.6-terra", "--dir", snapshot}; !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
 
@@ -68,28 +70,32 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	if got := reviewer.Permission["webfetch"]; got != nil {
 		t.Errorf("webfetch permission = %v, expected absent", got)
 	}
-	for _, path := range []string{"internal/review/engine.go", "internal/planning/context.go"} {
-		for _, tool := range []string{"read", "grep", "glob"} {
-			if got := reviewer.Permission[tool].(map[string]any)[path]; got != "allow" {
-				t.Errorf("%s permission for %q = %v, expected allow", tool, path, got)
-			}
+	readPermissions := reviewer.Permission["read"].(map[string]any)
+	if !reflect.DeepEqual(readPermissions, map[string]any{"*": "deny", snapshotPattern: "allow"}) {
+		t.Errorf("read permissions = %v, expected only the absolute snapshot pattern", readPermissions)
+	}
+	for _, tool := range []string{"grep", "glob"} {
+		permissions := reviewer.Permission[tool].(map[string]any)
+		if !reflect.DeepEqual(permissions, map[string]any{"*": "allow"}) {
+			t.Errorf("%s permissions = %v, expected ordinary search expressions to remain allowed", tool, permissions)
 		}
 	}
 }
 
 func TestReviewCommandOpenCodeOmitsEmptyModelConfiguration(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	adapter := CLIAdapter{BinaryName: "opencode"}
 	args, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt:       "audit",
 		Paths:        []string{"internal/review/engine.go"},
-		SnapshotDir:  "/snapshot",
+		SnapshotDir:  snapshot,
 		MaxToolCalls: 7,
 	})
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	if expected := []string{"run", "--pure", "--agent", "reviewer", "--dir", "/snapshot"}; !reflect.DeepEqual(args, expected) {
+	if expected := []string{"run", "--pure", "--agent", "reviewer", "--dir", snapshot}; !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
 
@@ -110,12 +116,14 @@ func TestReviewCommandOpenCodeOmitsEmptyModelConfiguration(t *testing.T) {
 	if got := permission["bash"].(map[string]any)["*"]; got != "deny" {
 		t.Errorf("bash permission = %v, expected deny", got)
 	}
-	if got := permission["read"].(map[string]any)["internal/review/engine.go"]; got != "allow" {
-		t.Errorf("read permission = %v, expected allow", got)
+	wantPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
+	if got := permission["read"].(map[string]any)[wantPattern]; got != "allow" {
+		t.Errorf("read permission = %v, expected allow for the snapshot pattern", got)
 	}
 }
 
-func TestReviewCommandOpenCodeFiltersUnsafePaths(t *testing.T) {
+func TestReviewCommandOpenCodeDoesNotUseAuditedPathsAsPermissionPatterns(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	adapter := CLIAdapter{BinaryName: "opencode"}
 	_, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt: "audit",
@@ -136,7 +144,7 @@ func TestReviewCommandOpenCodeFiltersUnsafePaths(t *testing.T) {
 			"brace{a,b}.go",
 			"-option.go",
 		},
-		SnapshotDir: "/snapshot",
+		SnapshotDir: snapshot,
 	})
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
@@ -150,15 +158,19 @@ func TestReviewCommandOpenCodeFiltersUnsafePaths(t *testing.T) {
 	if err := json.Unmarshal([]byte(env["OPENCODE_CONFIG_CONTENT"]), &config); err != nil {
 		t.Fatalf("review configuration is invalid JSON: %v", err)
 	}
-	for _, tool := range []string{"read", "grep", "glob"} {
-		permissions := config.Agent["reviewer"].Permission[tool].(map[string]any)
-		if got := permissions["internal/review/engine.go"]; got != "allow" {
-			t.Errorf("%s normalized permission = %v, expected allow", tool, got)
+	readPermissions := config.Agent["reviewer"].Permission["read"].(map[string]any)
+	wantPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
+	if !reflect.DeepEqual(readPermissions, map[string]any{"*": "deny", wantPattern: "allow"}) {
+		t.Fatalf("read permissions = %v, expected only the snapshot pattern", readPermissions)
+	}
+	for _, auditedPath := range []string{"internal/review/engine.go", "/etc/passwd", "../outside.go", "star*.go"} {
+		if _, exists := readPermissions[auditedPath]; exists {
+			t.Errorf("read permissions unexpectedly include audited path %q", auditedPath)
 		}
-		for _, unsafe := range []string{"/etc/passwd", "../outside.go", "nested/../../outside.go", "C:/outside.go", "D:\\outside.go", "unsafe\x00path", "unsafe\rpath", "unsafe\npath", "star*.go", "double**.go", "question?.go", "class[ab].go", "brace{a,b}.go", "-option.go"} {
-			if got := permissions[unsafe]; got != nil {
-				t.Errorf("%s permission for unsafe path %q = %v, expected absent", tool, unsafe, got)
-			}
+	}
+	for _, tool := range []string{"grep", "glob"} {
+		if got := config.Agent["reviewer"].Permission[tool].(map[string]any); !reflect.DeepEqual(got, map[string]any{"*": "allow"}) {
+			t.Errorf("%s permissions = %v, expected ordinary expression access", tool, got)
 		}
 	}
 }
@@ -337,12 +349,12 @@ func TestReviewCommandRequiresSnapshotDirectory(t *testing.T) {
 	}
 }
 
-// TestReviewCommandClaudeBuildsPathConfinedArgs verifies that claude gets a
-// working, path-confined review invocation (--safe-mode plus a tool set
-// replaced with read-only tools) instead of the provider-agnostic
-// "unavailable" error: unlike opencode, cmd.Dir (not a permission map)
-// confines it to the snapshot, see ejecutarRevision.
-func TestReviewCommandClaudeBuildsPathConfinedArgs(t *testing.T) {
+// TestReviewCommandClaudeBuildsSnapshotBoundArgs verifies the explicit
+// read/search tool set, snapshot-bound allow patterns, and non-interactive
+// rejection mode. The process working directory is asserted separately.
+func TestReviewCommandClaudeBuildsSnapshotBoundArgs(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	snapshotPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
 	adapter := CLIAdapter{
 		BinaryName: "claude",
 		Config: config.AgentConfig{
@@ -353,13 +365,13 @@ func TestReviewCommandClaudeBuildsPathConfinedArgs(t *testing.T) {
 	args, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt:      "audit",
 		Paths:       []string{"internal/review/engine.go"},
-		SnapshotDir: "/snapshot",
+		SnapshotDir: snapshot,
 	})
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	expected := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob", "--model", "claude-sonnet-5", "--effort", "high"}
+	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--model", "claude-sonnet-5", "--effort", "high"}
 	if !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
@@ -371,24 +383,28 @@ func TestReviewCommandClaudeBuildsPathConfinedArgs(t *testing.T) {
 // TestReviewCommandClaudeExeIsDetected mirrors the opencode.exe coverage:
 // nombreBase must strip the platform suffix so Windows binaries are detected.
 func TestReviewCommandClaudeExeIsDetected(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	snapshotPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
 	adapter := CLIAdapter{BinaryName: "claude.exe"}
-	args, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: "/snapshot"})
+	args, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: snapshot})
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
-	expected := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob"}
+	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write"}
 	if !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
 }
 
 func TestReviewCommandClaudeOmitsEmptyModelConfiguration(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	snapshotPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
 	adapter := CLIAdapter{BinaryName: "claude"}
-	args, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: "/snapshot"})
+	args, _, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: snapshot})
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
-	expected := []string{"-p", "--safe-mode", "--tools", "Read,Grep,Glob"}
+	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write"}
 	if !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
@@ -402,9 +418,9 @@ func TestReviewCommandClaudeRequiresSnapshotDirectory(t *testing.T) {
 	}
 }
 
-// TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd verifies the actual
-// os/exec wiring: claude has no "--dir" flag, so confinement to the snapshot
-// must happen through cmd.Dir (see ejecutarRevision).
+// TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd verifies the actual os/exec
+// wiring: Claude has no "--dir" flag, so the review process starts in the
+// immutable snapshot directory.
 func TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
 	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
@@ -420,6 +436,11 @@ func TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	}
 	if captura.Stdin != "audit" {
 		t.Fatalf("stdin = %q, expected the review prompt", captura.Stdin)
+	}
+	snapshotPattern := filepath.ToSlash(filepath.Join(snapshotDir, "**"))
+	wantArgs := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write"}
+	if !reflect.DeepEqual(captura.Args, wantArgs) {
+		t.Fatalf("args = %v, expected restricted snapshot-bound invocation %v", captura.Args, wantArgs)
 	}
 }
 
