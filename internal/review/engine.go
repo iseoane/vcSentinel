@@ -660,18 +660,65 @@ func veredictoGlobal(dims []ResultadoDimension) (string, []AgentQuestion) {
 }
 
 // String resume la auditoría para la salida en consola.
+// Los unavailable siempre muestran su reason y su clase (admission vs
+// infrastructure) aunque el veredicto global sea block: sin eso un block
+// oculta que otras dimensiones ni siquiera llegaron a auditarse y el operador
+// no ve el motivo real.
 func (r ResultadoAuditoria) String() string {
-	lineas := make([]string, 0, len(r.Dims)+len(r.Skipped)+2)
-	lineas = append(lineas, fmt.Sprintf("🔎 Revisión de %s: %s", r.SHA[:8], r.Veredicto))
+	lineas := make([]string, 0, len(r.Dims)+len(r.Skipped)+6)
+	shaCorto := r.SHA
+	if len(shaCorto) > 8 {
+		shaCorto = shaCorto[:8]
+	}
+	lineas = append(lineas, fmt.Sprintf("🔎 Revisión de %s: %s", shaCorto, r.Veredicto))
 	for _, rd := range r.Dims {
 		veredicto := "?"
+		reason := ""
 		if rd.Resultado != nil {
 			veredicto = rd.Resultado.Verdict
+			reason = rd.Resultado.Reason
+		}
+		if reason == "" && rd.Error != nil {
+			reason = rd.Error.Error()
+		}
+		if rd.Resultado == nil && rd.Error != nil && veredicto == "?" {
+			veredicto = VerdictUnavailable
 		}
 		lineas = append(lineas, fmt.Sprintf("  %-9s %-11s %s", rd.Dim, veredicto, rd.Perfil))
+		if veredicto == VerdictUnavailable && strings.TrimSpace(reason) != "" {
+			class := "infrastructure"
+			if strings.HasPrefix(reason, "admission: ") {
+				class = "admission"
+			}
+			lineas = append(lineas, fmt.Sprintf("    ↳ reason=%q class=%s", reason, class))
+		}
 	}
 	for _, skipped := range r.Skipped {
 		lineas = append(lineas, fmt.Sprintf("  %-9s %-11s %s", skipped.Name, "skipped", skipped.Reason))
+	}
+	if r.Veredicto == VerdictBlock {
+		var unav []string
+		for _, rd := range r.Dims {
+			isUnav := false
+			if rd.Resultado != nil && rd.Resultado.Verdict == VerdictUnavailable {
+				isUnav = true
+			} else if rd.Resultado == nil && rd.Error != nil {
+				isUnav = true
+			}
+			if isUnav {
+				name := rd.Dim
+				if name == "" && rd.Resultado != nil {
+					name = rd.Resultado.Dim
+				}
+				if name == "" {
+					name = "?"
+				}
+				unav = append(unav, name)
+			}
+		}
+		if len(unav) > 0 {
+			lineas = append(lineas, fmt.Sprintf("  ⚠️  %d dimension(es) unavailable (%s) — ver reason arriba (no oculta el block, pero explica cobertura incompleta)", len(unav), strings.Join(unav, ", ")))
+		}
 	}
 	return "\n" + strings.Join(lineas, "\n")
 }
