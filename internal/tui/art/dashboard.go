@@ -89,7 +89,23 @@ var mockActivity = []activityRow{
 	{icon: "✓", flow: "review", stage: "passed", state: "PASSED", kind: stOK, age: "01:48"},
 }
 
-const mockKeys = " ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit"
+// mockKeys is the navigation footer: keys render in the purple accent,
+// descriptions in dim.
+var mockKeys = []struct{ key, desc string }{
+	{"↑↓", "navigate"}, {"enter", "open"}, {"a", "abort"}, {"r", "retry"},
+	{"/", "filter"}, {"?", "help"}, {"q", "quit"},
+}
+
+func keyLine(width int) string {
+	spans := []span{{" ", Reset}}
+	for i, k := range mockKeys {
+		if i > 0 {
+			spans = append(spans, span{" · ", Dim})
+		}
+		spans = append(spans, span{k.key, Purple}, span{" " + k.desc, Dim})
+	}
+	return spanLine(width, spans...)
+}
 
 func renderDashboard(width int, colors bool) string {
 	old := colorsEnabled
@@ -114,7 +130,7 @@ func renderDashboard(width int, colors bool) string {
 	}
 
 	lines = append(lines, rule(width, true))
-	lines = append(lines, spanLine(width, span{mockKeys, Dim}))
+	lines = append(lines, keyLine(width))
 	return strings.Join(lines, "\n")
 }
 
