@@ -47,11 +47,21 @@ func Open(path string) (*Registry, error) {
 		return nil, fmt.Errorf("registry: invalid registry path: %w", err)
 	}
 	r := &Registry{path: path, entries: make(map[string]Entry)}
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return r, nil
 		}
+		return nil, fmt.Errorf("registry: cannot inspect %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("registry: registry path is a directory: %s", path)
+	}
+	if err := protectExisting(path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, fmt.Errorf("registry: cannot read %s: %w", path, err)
 	}
 	input, err := decode(data, path)
@@ -143,6 +153,13 @@ func (r *Registry) List() []Entry {
 	defer r.mu.Unlock()
 	return r.listLocked()
 }
+
+func (r *Registry) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.entries)
+}
+
 func (r *Registry) listLocked() []Entry {
 	entries := make([]Entry, 0, len(r.entries))
 	for _, entry := range r.entries {
@@ -187,7 +204,7 @@ func (r *Registry) writeLocked() error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return fmt.Errorf("registry: cannot create %s: %w", directory, err)
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := protectDirectory(directory); err != nil {
 		return fmt.Errorf("registry: cannot protect %s: %w", directory, err)
 	}
 	entries := r.listLocked()
@@ -205,8 +222,8 @@ func (r *Registry) writeLocked() error {
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = temporary.Close(); _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0600); err != nil {
-		return err
+	if err := protectFile(temporaryPath); err != nil {
+		return fmt.Errorf("registry: cannot protect temporary file: %w", err)
 	}
 	if _, err := temporary.Write(data); err != nil {
 		return err
@@ -217,5 +234,19 @@ func (r *Registry) writeLocked() error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, r.path)
+	if err := replaceFile(temporaryPath, r.path); err != nil {
+		return fmt.Errorf("registry: cannot replace %s: %w", r.path, err)
+	}
+	return nil
+}
+
+func protectExisting(path string) error {
+	directory := filepath.Dir(path)
+	if err := protectDirectory(directory); err != nil {
+		return fmt.Errorf("registry: cannot protect %s: %w", directory, err)
+	}
+	if err := protectFile(path); err != nil {
+		return fmt.Errorf("registry: cannot protect %s: %w", path, err)
+	}
+	return nil
 }
