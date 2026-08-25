@@ -38,7 +38,7 @@ func TestDashboardShowsContractSections(t *testing.T) {
 	dash := DashboardPlain(100)
 	for _, want := range []string{
 		"SENTINEL CONTROL CENTER", "REPOSITORIES", "LOCATION", "ACTIVITY",
-		"vas.sentinel", "tui-control-center", "Origin", "navigate",
+		"vas.sentinel", "tui-control-cent", "Origin", "navigate",
 	} {
 		if !strings.Contains(dash, want) {
 			t.Errorf("dashboard missing contract section %q", want)
@@ -46,5 +46,32 @@ func TestDashboardShowsContractSections(t *testing.T) {
 	}
 	if !strings.Contains(dash, "════") {
 		t.Error("dashboard missing double-line separators")
+	}
+}
+
+// TestDashboardTreeColumnsAlign pins the spec-review fix: worktree state
+// columns start at the same rune column because names are truncated, not
+// allowed to push the column right.
+func TestDashboardTreeColumnsAlign(t *testing.T) {
+	dash := DashboardPlain(100)
+	var columns []int
+	for _, line := range strings.Split(dash, "\n") {
+		stateIdx := -1
+		for _, state := range []string{"clean", "2 runs", "1 attention"} {
+			if i := strings.Index(line, state); i >= 0 && (stateIdx < 0 || i < stateIdx) {
+				stateIdx = i
+			}
+		}
+		if stateIdx >= 0 && strings.Contains(line[:stateIdx], "─") {
+			columns = append(columns, runeLen(line[:stateIdx]))
+		}
+	}
+	if len(columns) < 3 {
+		t.Fatalf("expected 3 worktree rows, got %d", len(columns))
+	}
+	for i := 1; i < len(columns); i++ {
+		if columns[i] != columns[0] {
+			t.Fatalf("worktree state columns misaligned: %v", columns)
+		}
 	}
 }

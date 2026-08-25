@@ -3,19 +3,13 @@ package art
 import "strings"
 
 // Dashboard renders the Control Center mock at the given terminal width in
-// ANSI color. Layout follows the operator-approved contract:
-//
-//	╔═ header ═══════════════════════════════════╗
-//	║ title                        daemon totals  ║
-//	╠═ tree ════════╦═ location ═════════════════╣
-//	║ repos/workt.  ║ selected repo/worktree info ║
-//	║               ╟═ activity ═════════════════╣
-//	║               ║ live runs and their states  ║
-//	╠═ keys ════════╩═════════════════════════════╣
-//	║ navigation                                  ║
-//	╚═════════════════════════════════════════════╝
-//
-// Data is fictional and fixed: this is the visual contract, not a live view.
+// ANSI color. Layout follows the operator-approved contract: a full-width
+// double rule opens and closes the frame and separates every major section;
+// the header carries the title and the colored daemon summary; the tree pane
+// sits beside the right pane (LOCATION over a double rule, then ACTIVITY)
+// joined by a dim vertical bar; the navigation footer closes the frame.
+// Below 84 columns the panes stack at full width. Data is fictional and
+// fixed: this is the visual contract, not a live view.
 func Dashboard(width int) string { return renderDashboard(width, true) }
 
 // DashboardPlain renders the same layout without any ANSI escapes.
@@ -66,11 +60,11 @@ var mockRepos = []repoRow{
 
 var mockLocation = [][2]string{
 	{"Repository", "vas.sentinel"},
-	{"Path", "/home/iseoane/0-workspace/vas.sentinel"},
-	{"Worktree", "main · ~/0-workspace/vas.sentinel"},
+	{"Path", "/home/operator/workspace/vas.sentinel"},
+	{"Worktree", "main · ~/workspace/vas.sentinel"},
 	{"Branch", "main"},
-	{"Origin", "git@github.com:ISeoane-Quental/vas.sentinel"},
-	{"Daemon", "● managed by this session · pid 43120"},
+	{"Origin", "git@github.com:org/vas.sentinel"},
+	{"Daemon", "● managed by this session · pid 4321"},
 	{"Status", "clean · 3 worktrees · 3 runs"},
 }
 
@@ -96,7 +90,7 @@ var mockKeys = []struct{ key, desc string }{
 	{"/", "filter"}, {"?", "help"}, {"q", "quit"},
 }
 
-func keyLine(width int) string {
+func keyLine(p painter, width int) string {
 	spans := []span{{" ", Reset}}
 	for i, k := range mockKeys {
 		if i > 0 {
@@ -104,38 +98,36 @@ func keyLine(width int) string {
 		}
 		spans = append(spans, span{k.key, Purple}, span{" " + k.desc, Dim})
 	}
-	return spanLine(width, spans...)
+	return p.spanLine(width, spans...)
 }
 
 func renderDashboard(width int, colors bool) string {
-	old := colorsEnabled
-	SetColors(colors)
-	defer SetColors(old)
+	p := painter{colors: colors}
 
 	var lines []string
-	lines = append(lines, rule(width, true))
-	lines = append(lines, headerLine(width))
-	lines = append(lines, rule(width, true))
+	lines = append(lines, rule(p, width, true))
+	lines = append(lines, headerLine(p, width))
+	lines = append(lines, rule(p, width, true))
 
 	if width < 84 {
 		// Stacked: every block gets the full width.
-		lines = append(lines, treeLines(width)...)
-		lines = append(lines, rule(width, false))
-		lines = append(lines, rightLines(width)...)
+		lines = append(lines, treeLines(p, width)...)
+		lines = append(lines, rule(p, width, false))
+		lines = append(lines, rightLines(p, width)...)
 	} else {
 		leftWidth := leftPaneWidth(width)
-		tree := treeLines(leftWidth)
-		right := rightLines(width - leftWidth - 3)
-		lines = append(lines, zipPanes(tree, right, leftWidth, width)...)
+		tree := treeLines(p, leftWidth)
+		right := rightLines(p, width-leftWidth-3)
+		lines = append(lines, zipPanes(p, tree, right, leftWidth, width)...)
 	}
 
-	lines = append(lines, rule(width, true))
-	lines = append(lines, keyLine(width))
+	lines = append(lines, rule(p, width, true))
+	lines = append(lines, keyLine(p, width))
 	return strings.Join(lines, "\n")
 }
 
 // headerLine renders the title with the colored daemon summary right-aligned.
-func headerLine(width int) string {
+func headerLine(p painter, width int) string {
 	title := span{" SENTINEL CONTROL CENTER", Purple}
 	summary := []span{
 		{"● 2 daemons ", Rose},
@@ -148,15 +140,15 @@ func headerLine(width int) string {
 	}
 	gap := width - runeLen(title.text) - summaryWidth
 	if gap < 1 {
-		return spanLine(width, title)
+		return p.spanLine(width, title)
 	}
-	return spanLine(width, title, span{spaces(gap), Reset}, summary[0], summary[1], summary[2])
+	return p.spanLine(width, title, span{spaces(gap), Reset}, summary[0], summary[1], summary[2])
 }
 
 // treeLines renders the repository/worktree tree pane with fixed state
 // columns so statuses align down the panel.
-func treeLines(w int) []string {
-	lines := []string{spanLine(w, span{" REPOSITORIES", White})}
+func treeLines(p painter, w int) []string {
+	lines := []string{p.spanLine(w, span{" REPOSITORIES", White})}
 	for _, r := range mockRepos {
 		marker := "▸"
 		if r.expanded {
@@ -166,8 +158,8 @@ func treeLines(w int) []string {
 		if r.kind != stOff {
 			dot = "●"
 		}
-		lines = append(lines, spanLine(w,
-			span{" " + marker + " " + padRunes(r.name, 22), White},
+		lines = append(lines, p.spanLine(w,
+			span{" " + marker + " " + fitRunes(r.name, 22), White},
 			span{" " + dot + " " + r.daemon, statusColor[r.kind]}))
 		if r.expanded {
 			for i, wt := range r.worktrees {
@@ -179,8 +171,8 @@ func treeLines(w int) []string {
 				if wt.kind == stWarn {
 					name = "⚠ " + name
 				}
-				lines = append(lines, spanLine(w,
-					span{"   " + branch + " " + padRunes(name, 17), Dim},
+				lines = append(lines, p.spanLine(w,
+					span{"   " + branch + " " + fitRunes(name, 17), Dim},
 					span{" " + wt.state, statusColor[wt.kind]}))
 			}
 		}
@@ -188,32 +180,34 @@ func treeLines(w int) []string {
 	return lines
 }
 
-// padRunes right-pads s with spaces to n visible runes.
-func padRunes(s string, n int) string {
-	if runeLen(s) >= n {
-		return s
+// fitRunes truncates s to n visible runes and right-pads it, so every row
+// that promises a fixed column actually keeps it.
+func fitRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		r = r[:n]
 	}
-	return s + spaces(n-runeLen(s))
+	return string(r) + spaces(n-len(r))
 }
 
 // rightLines renders the LOCATION block, an inner double separator, and the
 // ACTIVITY block for the pane width.
-func rightLines(w int) []string {
+func rightLines(p painter, w int) []string {
 	var lines []string
-	lines = append(lines, spanLine(w, span{" LOCATION", White}))
+	lines = append(lines, p.spanLine(w, span{" LOCATION", White}))
 	for _, kv := range mockLocation {
-		lines = append(lines, spanLine(w,
+		lines = append(lines, p.spanLine(w,
 			span{" " + kv[0] + spaces(12-runeLen(kv[0])), Dim},
 			span{" " + kv[1], White}))
 	}
-	lines = append(lines, spanLine(w, span{" " + strings.Repeat("═", maxInt(4, w-2)), Purple}))
-	lines = append(lines, spanLine(w, span{" ACTIVITY", White}))
+	lines = append(lines, p.spanLine(w, span{" " + strings.Repeat("═", maxInt(4, w-2)), Purple}))
+	lines = append(lines, p.spanLine(w, span{" ACTIVITY", White}))
 	for _, a := range mockActivity {
-		lines = append(lines, spanLine(w,
+		lines = append(lines, p.spanLine(w,
 			span{" " + a.icon, statusColor[a.kind]},
-			span{" " + padRunes(a.flow, 16), White},
-			span{padRunes(a.stage, 20), Dim},
-			span{padRunes(a.state, 9), statusColor[a.kind]},
+			span{" " + fitRunes(a.flow, 16), White},
+			span{fitRunes(a.stage, 20), Dim},
+			span{fitRunes(a.state, 9), statusColor[a.kind]},
 			span{a.age, Dim}))
 	}
 	return lines
@@ -222,10 +216,10 @@ func rightLines(w int) []string {
 // zipPanes places the tree beside the right pane with a vertical separator.
 // Both inputs may already carry ANSI colors, so alignment measures visible
 // runes only.
-func zipPanes(left, right []string, leftWidth, width int) []string {
+func zipPanes(p painter, left, right []string, leftWidth, width int) []string {
 	rows := maxInt(len(left), len(right))
 	out := make([]string, 0, rows)
-	separator := Paint(Dim, " │ ")
+	separator := p.paint(Dim, " │ ")
 	for i := 0; i < rows; i++ {
 		l, r := "", ""
 		if i < len(left) {
@@ -283,14 +277,14 @@ func stripEscapes(s string) string {
 }
 
 // rule renders a full-width separator: ═ for major sections, ─ inside.
-func rule(width int, major bool) string {
+func rule(p painter, width int, major bool) string {
 	char := "─"
 	c := Dim
 	if major {
 		char = "═"
 		c = Purple
 	}
-	return spanLine(width, span{" " + strings.Repeat(char, maxInt(4, width-2)), c})
+	return p.spanLine(width, span{" " + strings.Repeat(char, maxInt(4, width-2)), c})
 }
 
 // leftPaneWidth fixes the tree pane: 38% of the width, clamped so the

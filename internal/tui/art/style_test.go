@@ -5,22 +5,19 @@ import (
 	"testing"
 )
 
-func TestPaintHonorsSwitch(t *testing.T) {
-	SetColors(true)
-	colored := Paint(Red, "x")
+func TestPainterHonorsFlag(t *testing.T) {
+	colored := painter{colors: true}.paint(Red, "x")
 	if !strings.Contains(colored, "\x1b[38;5;167m") {
-		t.Fatalf("Paint with colors on lost the escape: %q", colored)
+		t.Fatalf("painter with colors lost the escape: %q", colored)
 	}
-	SetColors(false)
-	if got := Paint(Red, "x"); got != "x" {
-		t.Fatalf("Paint with colors off altered content: %q", got)
+	if got := (painter{colors: false}).paint(Red, "x"); got != "x" {
+		t.Fatalf("painter without colors altered content: %q", got)
 	}
-	SetColors(true)
 }
 
 func TestSpanLinePadsToWidth(t *testing.T) {
-	SetColors(false)
-	line := spanLine(10, span{"ab", White}, span{"cd", Red})
+	p := painter{colors: false}
+	line := p.spanLine(10, span{"ab", White}, span{"cd", Red})
 	if runeLen(line) != 10 {
 		t.Fatalf("line width %d, want 10: %q", runeLen(line), line)
 	}
@@ -30,16 +27,16 @@ func TestSpanLinePadsToWidth(t *testing.T) {
 }
 
 func TestSpanLineTruncatesOverflow(t *testing.T) {
-	SetColors(false)
-	line := spanLine(4, span{"abcdef", White})
+	p := painter{colors: false}
+	line := p.spanLine(4, span{"abcdef", White})
 	if runeLen(line) != 4 || line != "abcd" {
 		t.Fatalf("overflow line = %q, want %q", line, "abcd")
 	}
 }
 
 func TestSpanLineMeasuresThroughColors(t *testing.T) {
-	SetColors(true)
-	line := spanLine(10, span{"ab", White}, span{"cd", Red})
+	p := painter{colors: true}
+	line := p.spanLine(10, span{"ab", White}, span{"cd", Red})
 	if runeLen(stripEscapes(line)) != 10 {
 		t.Fatalf("visible width %d, want 10", runeLen(stripEscapes(line)))
 	}
@@ -49,7 +46,6 @@ func TestSpanLineMeasuresThroughColors(t *testing.T) {
 }
 
 func TestTruncateVisibleKeepsEscapes(t *testing.T) {
-	SetColors(true)
 	in := Paint(Red, "abcdef")
 	out := truncateVisible(in, 3)
 	if got := stripEscapes(out); got != "abc" {
@@ -57,5 +53,14 @@ func TestTruncateVisibleKeepsEscapes(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, "\x1b[0m") {
 		t.Fatal("truncateVisible left the color open")
+	}
+}
+
+func TestFitRunesTruncatesAndPads(t *testing.T) {
+	if got := fitRunes("abcdef", 4); got != "abcd" {
+		t.Fatalf("fitRunes overflow = %q, want %q", got, "abcd")
+	}
+	if got := fitRunes("ab", 4); got != "ab  " {
+		t.Fatalf("fitRunes pad = %q, want %q", got, "ab  ")
 	}
 }

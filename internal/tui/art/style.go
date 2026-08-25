@@ -3,9 +3,11 @@ package art
 import "strings"
 
 // Text styling for the dashboard contract: xterm-256 foreground colors with
-// a global switch so the same layout renders plain (goldens, pipes) or
-// colored (terminal, HTML preview). Padding logic always measures runes on
-// plain text; Paint is applied only when a line is finalized.
+// the enabled flag carried explicitly by a painter value. Rendering never
+// touches package-global state, so concurrent colored and plain renders
+// cannot interfere. Padding logic always measures visible runes; color
+// escapes are applied only when a line is finalized.
+
 type Color int
 
 const (
@@ -21,31 +23,23 @@ const (
 	Rose   Color = 218
 )
 
-var colorsEnabled = true
+// painter applies this render's color decision to every span it writes.
+type painter struct{ colors bool }
 
-// SetColors toggles ANSI emission for the whole package. DashboardPlain
-// uses it internally; tests may too.
-func SetColors(enabled bool) { colorsEnabled = enabled }
-
-// Paint wraps s in an xterm-256 foreground escape. With colors disabled it
-// returns s untouched, so rune content is identical in both modes.
-func Paint(c Color, s string) string {
-	if !colorsEnabled || c == Reset || s == "" {
+// paint wraps s in an xterm-256 foreground escape when colors are enabled
+// for this painter; otherwise it returns s untouched, so rune content is
+// identical in both modes.
+func (p painter) paint(c Color, s string) string {
+	if !p.colors || c == Reset || s == "" {
 		return s
 	}
 	return "\x1b[38;5;" + itoa(int(c)) + "m" + s + "\x1b[0m"
 }
 
-// span is one styled run of text inside a layout line.
-type span struct {
-	text string
-	c    Color
-}
-
 // spanLine joins spans, padding with spaces so the visible rune width equals
-// width. Spans hold plain text; Paint is applied here, and measurement always
+// width. Spans hold plain text; paint is applied here, and measurement always
 // strips escapes so color never affects alignment.
-func spanLine(width int, spans ...span) string {
+func (p painter) spanLine(width int, spans ...span) string {
 	total := 0
 	for _, s := range spans {
 		total += runeLen(s.text)
@@ -61,12 +55,25 @@ func spanLine(width int, spans ...span) string {
 			text = truncateRunes(text, remaining)
 		}
 		remaining -= runeLen(text)
-		out.WriteString(Paint(s.c, text))
+		out.WriteString(p.paint(s.c, text))
 		if remaining <= 0 {
 			break
 		}
 	}
 	return out.String()
+}
+
+// Paint colors s unconditionally. It exists for tests and external consumers
+// that need a colored fragment; the renderer uses painter instead, so no
+// render path depends on mutable global state.
+func Paint(c Color, s string) string {
+	return painter{colors: true}.paint(c, s)
+}
+
+// span is one styled run of text inside a layout line.
+type span struct {
+	text string
+	c    Color
 }
 
 // builder accumulates strings with minimal overhead.
