@@ -50,3 +50,16 @@ stops only its own daemon on exit, and keeps the snapshot fresh.
 - `sentinel help` lists tui; `sentinel tui --anything` exits 1.
 - build/vet/focused/race/full suite green; within the 400-line budget
   (request recorded bypass through the orchestrator if indivisible).
+
+## Review decisions
+- Budget bypass granted by standing operator authorization: command
+  wiring plus its injected-fake tests are one atomic unit (839 lines);
+  splitting would ship an untested dispatch mid-history.
+- adaptersites Sites() row added for the new exec.Command site —
+  machine-enforced governance, ClassInfra (spawns our own binary).
+- The wire-stop sequence stays intentionally similar to
+  executeRunsDaemonStop without a shared helper: contracts diverge
+  (quiet idempotence vs CLI exit codes); extract if touched again.
+- Missing endpoint at stop time is quiet success (idempotent
+  not-running contract), matching `runs daemon stop`.
+- Test helper renamed captureStopOutput.

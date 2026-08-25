@@ -39,3 +39,11 @@ flags track reality without restarting the TUI.
   Err(); unknown messages still ignored.
 - No wall-clock sleeps in tests; build/vet/focused/race/full suite
   green; within the 400-line budget.
+
+## Review decisions
+- Budget bypass granted by standing operator authorization: loop code
+  and its deterministic tests form one indivisible unit (427 lines).
+- `refreshSnapshot` renamed `refreshSnapshotCmd` per the repo's
+  command-producer naming convention; scheduler-seam eagerness
+  documented on scheduleCmd. Err() stays a display string while no
+  consumer needs error identity.
