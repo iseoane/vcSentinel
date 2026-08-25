@@ -384,7 +384,7 @@ func TestRenderPlantillaPr(t *testing.T) {
 	if !strings.Contains(salida, "Cambio coherente") {
 		t.Errorf("falta el rationale del overview: %s", salida)
 	}
-	if !strings.Contains(salida, "Matriz de auditoría") {
+	if !strings.Contains(salida, "OWN") {
 		t.Errorf("falta la matriz: %s", salida)
 	}
 	if !strings.Contains(salida, "go vet ./...") {

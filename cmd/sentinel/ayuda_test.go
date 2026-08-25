@@ -65,7 +65,7 @@ func TestAyudaTraeTodosLosSubcomandos(t *testing.T) {
 // de pr review sin enterrarlos en mitad de la descripción.
 func TestAyudaPrDocumentaFlags(t *testing.T) {
 	ayuda := construirAyuda()
-	if !strings.Contains(ayuda, "Flags de pr review:") {
+	if !strings.Contains(ayuda, "pr review flags:") {
 		t.Error("la ayuda debe documentar los flags de pr review")
 	}
 }

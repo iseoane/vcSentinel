@@ -213,6 +213,12 @@ func TestStackedBranchExplicitParent(t *testing.T) {
 	if res.Propio.Parent != "feature-a" || res.Propio.ParentSource != string(git.ParentSourceExplicit) {
 		t.Errorf("parent = %s/%s, want feature-a/explicit", res.Propio.Parent, res.Propio.ParentSource)
 	}
+	gitEjecutar(t, "update-ref", "refs/remotes/origin/feature-a", pila.shaA)
+	gitEjecutar(t, "branch", "-D", "feature-a")
+	remote, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{SoloPendientes: true, OwnDiff: &OwnDiffOptions{Parent: "origin/feature-a"}})
+	if err != nil || remote.Propio.Parent != "origin/feature-a" || remote.Propio.PublicationBranch != "feature-a" || remote.Propio.PropioDesde != pila.shaA {
+		t.Fatalf("remote-only parent = %+v, err=%v", remote, err)
+	}
 
 	_, err = AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
 		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),

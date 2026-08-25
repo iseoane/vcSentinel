@@ -154,23 +154,25 @@ Example:
 )
 
 const (
-	textoAyudaPr = `Purpose: pull-request operations. Without a recognized subcommand the arguments pass through to 'gh pr create'.
+	textoAyudaPr = `Purpose: pull-request operations.
 
 Usage:
-  sentinel pr [gh pr create passthrough arguments]
   sentinel pr create [...]
   sentinel pr review [...]
+
+The legacy 'sentinel pr [gh arguments]' passthrough was removed: use 'sentinel pr create' instead.
 
 Run 'sentinel help pr create' or 'sentinel help pr review' for their flags.
 `
 	textoAyudaPrCreate = `Purpose: analyze the branch, apply the blocking gate, and publish the pull request through gh with the honest verification template.
 
 Usage:
-  sentinel pr create [--base X] [--chain-pr] [--force --reason "..."]
+  sentinel pr create [--base X] [--parent X] [--chain-pr] [--force --reason "..."]
 
 Flags:
-  --base      Comparison branch for the analysis.
-  --chain-pr  Publish the full branch even when it exceeds the review budget.
+  --base      Comparison branch for the analysis; context/default base for stacked layers.
+  --parent    Explicit stacked parent branch: only the own diff against it is reviewed, and the PR targets it.
+  --chain-pr  Declare this branch as a stack layer and publish it even when oversized. Without --parent, the parent branch is resolved strictly and fails closed without a reliable signal.
   --force     Override a red validation verdict; requires --reason.
   --reason    Explicit motive recorded alongside --force.
 
@@ -180,10 +182,11 @@ Example:
 	textoAyudaPrReview = `Purpose: dry-run analysis of the unpublished branch: audit matrix, summary, and the single-versus-chained PR decision. Publishes nothing.
 
 Usage:
-  sentinel pr review [--base X] [--only-unaudited] [--overview] [--json]
+  sentinel pr review [--base X] [--parent X] [--only-unaudited] [--overview] [--json]
 
 Flags:
   --base            Comparison branch (default main).
+  --parent          Explicit stacked parent branch: reviews only the own diff against it; inherited findings render separately (non-blocking).
   --only-unaudited  Restrict the analysis to commits without a review record.
   --overview        Include the PR overview in the analysis.
   --json            Emit machine-readable JSON.

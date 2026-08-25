@@ -21,6 +21,8 @@ type ParentResolution struct {
 	Reference string
 	Source    ParentSource
 	Evidence  []string
+	// PublicationBranch is the verified gh --base branch name (T8.4/B).
+	PublicationBranch string
 }
 
 type ParentResolutionOptions struct {
@@ -95,7 +97,21 @@ func verifiedParent(worktree, ref string, source ParentSource, evidence []string
 	if check.err != nil || strings.TrimSpace(check.stdout) == "" {
 		return ParentResolution{}, &ParentResolutionError{Reason: fmt.Sprintf("parent reference %q is not a commit", ref), Evidence: proof}
 	}
-	return ParentResolution{Reference: ref, Source: source, Evidence: append(proof, "resolved commit="+strings.TrimSpace(check.stdout))}, nil
+	full := strings.TrimSpace(run(worktree, "git", "rev-parse", "--symbolic-full-name", ref).stdout)
+	notPublishable := fmt.Sprintf("parent %q is not a publishable branch (tag, SHA, revision expression or ambiguity)", ref)
+	publication := ref
+	if strings.HasPrefix(full, "refs/remotes/") {
+		rest := strings.TrimPrefix(full, "refs/remotes/")
+		if _, name, ok := strings.Cut(rest, "/"); ok && rest == ref {
+			publication = name
+		}
+	} else if full != "refs/heads/"+ref {
+		publication = ""
+	}
+	if publication == "" {
+		return ParentResolution{}, &ParentResolutionError{Reason: notPublishable, Evidence: proof}
+	}
+	return ParentResolution{Reference: ref, PublicationBranch: publication, Source: source, Evidence: append(proof, "resolved commit="+strings.TrimSpace(check.stdout))}, nil
 }
 
 func pullRequestParent(worktree string, run parentCommandRunner) (string, string, bool, error) {
@@ -116,6 +132,14 @@ func pullRequestParent(worktree string, run parentCommandRunner) (string, string
 	ref := strings.TrimSpace(payload.BaseRefName)
 	if ref == "" {
 		return "", "gh pr view: baseRefName is empty", false, fmt.Errorf("gh returned an empty baseRefName")
+	}
+	if run(worktree, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+ref).err != nil {
+		refs, listErr := gitText(run, worktree, "for-each-ref", "--format=%(refname:short)", "refs/remotes/*/"+ref)
+		candidates := strings.Fields(refs)
+		if listErr != nil || len(candidates) != 1 {
+			return "", "gh pr view: baseRefName=" + ref, false, fmt.Errorf("pull request base %q has %d remote candidates", ref, len(candidates))
+		}
+		ref = candidates[0]
 	}
 	return ref, fmt.Sprintf("gh pr view: baseRefName=%s", ref), true, nil
 }
