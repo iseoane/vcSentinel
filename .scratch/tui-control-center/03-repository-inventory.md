@@ -47,3 +47,9 @@ Normative decisions adopted while closing the Slice 3 code-review findings:
 - HEAD hashes of exactly 40 or 64 lowercase hex characters are accepted,
   covering repositories created with either sha1 or sha256 object format
   (`git init --object-format=sha256`).
+
+## Operator decision (2026-08-25)
+
+The operator approved continuing with the cumulative slice diff (561 added
+lines) under the same explicit-bypass precedent recorded for Slice 2. Every
+individual commit passed the staged hook (398 PUNTO_OPTIMO, 113 PEQUENO).
