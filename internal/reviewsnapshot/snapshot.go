@@ -24,22 +24,31 @@ import (
 )
 
 // SafePaths filters and normalizes reviewer-audited paths: absolute paths,
-// drive letters, traversal escapes, option-looking strings, and paths
-// carrying control or glob metacharacters are dropped; the survivors are
-// slash-normalized and cleaned. Shared by every adapter family so the review
-// snapshot accepts exactly the same path vocabulary everywhere.
+// drive letters, traversal escapes, option-looking strings, paths carrying
+// control or glob metacharacters, and sensitive environment files are dropped;
+// the survivors are slash-normalized and cleaned. Environment examples ending
+// in .env.example remain reviewable. Shared by every adapter family so the
+// review snapshot accepts exactly the same path vocabulary everywhere.
 func SafePaths(paths []string) []string {
 	safe := make([]string, 0, len(paths))
 	for _, p := range paths {
 		normalized := strings.ReplaceAll(p, "\\", "/")
 		clean := path.Clean(normalized)
 		drive := len(clean) >= 2 && clean[1] == ':'
-		if p == "" || path.IsAbs(clean) || drive || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(p, "-") || strings.ContainsAny(p, "\x00\r\n*?[]{}!") {
+		if p == "" || path.IsAbs(clean) || drive || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(p, "-") || strings.ContainsAny(p, "\x00\r\n*?[]{}!") || isSensitiveEnvironmentFile(clean) {
 			continue
 		}
 		safe = append(safe, clean)
 	}
 	return safe
+}
+
+func isSensitiveEnvironmentFile(filePath string) bool {
+	name := strings.ToLower(path.Base(filePath))
+	if strings.HasSuffix(name, ".env.example") {
+		return false
+	}
+	return strings.HasSuffix(name, ".env") || strings.Contains(name, ".env.")
 }
 
 // Create materializes the read-only review snapshot for sha restricted to

@@ -184,7 +184,7 @@ func Sites() []Site {
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
 		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Line: 31, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing feeding reviewer context snapshots."},
-		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Line: 96, Marker: "exec.Command",
+		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Line: 105, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Shared read-only review snapshot discipline (git ls-tree/show plumbing) relocated in ticket 16 slice 3 so both adapter families run the exact same committed-content materialization; never invokes a provider agent."},
 
 		// --- advisory/narrative helpers --------------------------------------

@@ -356,16 +356,16 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	if request.SnapshotDir == "" {
 		return nil, nil, fmt.Errorf("semantic review requires an immutable snapshot directory")
 	}
-	permissions := map[string]map[string]string{
-		"bash":  {"*": "deny"},
-		"edit":  {"*": "deny"},
-		"write": {"*": "deny"},
-		"read":  {"*": "deny", filepath.ToSlash(filepath.Join(request.SnapshotDir, "**")): "allow"},
+	permissions := map[string]any{
+		"bash":  map[string]string{"*": "deny"},
+		"edit":  map[string]string{"*": "deny"},
+		"write": map[string]string{"*": "deny"},
+		"read":  openCodeReadPermissions(request.SnapshotDir, request.Paths),
 		// Grep and Glob receive user-supplied search expressions, not the paths
 		// found by those searches. Restricting them to audited filenames would
 		// reject ordinary expressions while contributing no snapshot containment.
-		"grep": {"*": "allow"},
-		"glob": {"*": "allow"},
+		"grep": map[string]string{"*": "allow"},
+		"glob": map[string]string{"*": "allow"},
 	}
 	permission := make(map[string]any, len(permissions)+1)
 	permission["*"] = "deny"
@@ -395,6 +395,43 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	}
 	args = append(args, "--dir", request.SnapshotDir)
 	return args, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
+}
+
+type openCodeReadPermissionRules struct {
+	allowed []string
+}
+
+func openCodeReadPermissions(snapshot string, auditedPaths []string) openCodeReadPermissionRules {
+	allowed := make([]string, 0, len(auditedPaths)*2)
+	seen := make(map[string]bool, len(auditedPaths)*2)
+	for _, auditedPath := range rutasRevisionSeguras(auditedPaths) {
+		for _, pathForm := range []string{
+			auditedPath,
+			filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(auditedPath))),
+		} {
+			if !seen[pathForm] {
+				seen[pathForm] = true
+				allowed = append(allowed, pathForm)
+			}
+		}
+	}
+	return openCodeReadPermissionRules{allowed: allowed}
+}
+
+func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {
+	var encoded bytes.Buffer
+	encoded.WriteString(`{"*":"deny"`)
+	for _, resource := range rules.allowed {
+		key, err := json.Marshal(resource)
+		if err != nil {
+			return nil, err
+		}
+		encoded.WriteByte(',')
+		encoded.Write(key)
+		encoded.WriteString(`:"allow"`)
+	}
+	encoded.WriteByte('}')
+	return encoded.Bytes(), nil
 }
 
 func reviewEnvironment(configuration, snapshot, model string) []string {

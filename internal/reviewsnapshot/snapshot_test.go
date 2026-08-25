@@ -1,9 +1,11 @@
 package reviewsnapshot
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -45,6 +47,29 @@ func TestSafePathsCleansNavigation(t *testing.T) {
 	}
 }
 
+func TestSafePathsFiltersSensitiveEnvironmentFilesCaseInsensitively(t *testing.T) {
+	paths := []string{
+		`config\service.yaml`,
+		`.env`,
+		`config/.ENV`,
+		`config/service.EnV.Local`,
+		`config/service.env.example.extra`,
+		`.env.example`,
+		`config/service.env.example`,
+		`config/SERVICE.ENV.EXAMPLE`,
+	}
+	want := []string{
+		"config/service.yaml",
+		".env.example",
+		"config/service.env.example",
+		"config/SERVICE.ENV.EXAMPLE",
+	}
+
+	if got := SafePaths(paths); !reflect.DeepEqual(got, want) {
+		t.Fatalf("SafePaths() = %v, want %v", got, want)
+	}
+}
+
 // gitInit commits one file in a fresh repository and returns its root plus
 // the short-safe full SHA of the commit.
 func gitInit(t *testing.T) (string, string) {
@@ -64,6 +89,12 @@ func gitInit(t *testing.T) (string, string) {
 	run("config", "user.email", "t@t")
 	run("config", "user.name", "t")
 	if err := os.WriteFile(filepath.Join(dir, "audited.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("SENSITIVE=value\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env.example"), []byte("SENSITIVE=example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run("add", ".")
@@ -91,6 +122,26 @@ func TestCreateMaterializesCommittedContentAndCleansUp(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(snapshot); !os.IsNotExist(err) {
 		t.Fatalf("snapshot still exists after cleanup: %v", err)
+	}
+}
+
+func TestCreateNeverMaterializesSensitiveEnvironmentFiles(t *testing.T) {
+	root, sha := gitInit(t)
+	snapshot, survived, cleanup, err := Create(root, sha, []string{".env", ".env.example"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer cleanup()
+
+	if !reflect.DeepEqual(survived, []string{".env.example"}) {
+		t.Fatalf("survived = %v, want only .env.example", survived)
+	}
+	if _, err := os.Stat(filepath.Join(snapshot, ".env")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("sensitive environment file exists in snapshot: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(snapshot, ".env.example"))
+	if err != nil || string(data) != "SENSITIVE=example\n" {
+		t.Fatalf("example content = %q, err=%v", data, err)
 	}
 }
 
