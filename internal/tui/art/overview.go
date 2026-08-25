@@ -11,20 +11,22 @@ import (
 // RenderOverview renders a real overview snapshot through the layout engine
 // approved in the Slice 1 contract: same frame, rules, header shape, pane
 // split, state colors, and footer. Every line derives from the snapshot.
-func RenderOverview(width int, repos []overview.Repo) string {
-	return renderOverview(width, true, repos)
+// selected picks the repository shown in the LOCATION pane; see overviewRight
+// for the clamping rule.
+func RenderOverview(width int, repos []overview.Repo, selected int) string {
+	return renderOverview(width, true, repos, selected)
 }
 
 // RenderOverviewPlain renders the same real-data layout without ANSI escapes.
-func RenderOverviewPlain(width int, repos []overview.Repo) string {
-	return renderOverview(width, false, repos)
+func RenderOverviewPlain(width int, repos []overview.Repo, selected int) string {
+	return renderOverview(width, false, repos, selected)
 }
 
-func renderOverview(width int, colors bool, repos []overview.Repo) string {
+func renderOverview(width int, colors bool, repos []overview.Repo, selected int) string {
 	p := painter{colors: colors}
 	return renderFrame(p, width, overviewSummary(repos),
 		func(w int) []string { return overviewTree(p, w, repos) },
-		func(w int) []string { return overviewRight(p, w, repos) })
+		func(w int) []string { return overviewRight(p, w, repos, selected) })
 }
 
 // overviewSummary computes the header counts under the approved semantics:
@@ -124,16 +126,25 @@ func overviewTree(p painter, w int, repos []overview.Repo) []string {
 	return lines
 }
 
-// overviewRight builds the right pane for the first repository (selection
-// arrives in a later slice): LOCATION fields plus one derived ACTIVITY row
-// per repository. No repositories means dashes and an empty ACTIVITY.
-func overviewRight(p painter, w int, repos []overview.Repo) []string {
+// overviewRight builds the right pane around the operator-selected
+// repository: LOCATION fields plus one derived ACTIVITY row per repository.
+// Clamping rule: a selected inside [0, len(repos)-1] renders exactly that
+// repository; an empty registry has no selection at all and keeps the dash
+// placeholder; a negative selected falls back to index 0, and one past the
+// last repository falls back to the last index, so rendering never panics.
+func overviewRight(p painter, w int, repos []overview.Repo, selected int) []string {
 	var location [][2]string
 	if len(repos) == 0 {
 		location = [][2]string{{"Repository", "-"}, {"Path", "-"}, {"Branch", "-"},
 			{"Origin", "-"}, {"Daemon", "-"}, {"Status", "-"}}
 	} else {
-		location = overviewLocation(repos[0])
+		if selected < 0 {
+			selected = 0
+		}
+		if selected > len(repos)-1 {
+			selected = len(repos) - 1
+		}
+		location = overviewLocation(repos[selected])
 	}
 	return rightLines(p, w, location, overviewActivity(repos))
 }
