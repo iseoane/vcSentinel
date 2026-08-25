@@ -26,10 +26,11 @@ func ReadPathAtRevision(rev, path string) (string, bool, error) {
 	return content, true, nil
 }
 
-// RangeRenames returns rename/copy destinations keyed by their source path for
-// an immutable revision range. It parses `git diff --name-status -z -M`
-// NUL-safely: with -z every record is NUL-terminated and rename/copy records
-// carry a score token plus two path tokens, so quoting can never corrupt the mapping.
+// RangeRenames returns rename destinations keyed by their source path for an
+// immutable revision range. It parses `git diff --name-status -z -M`
+// NUL-safely: with -z every record is NUL-terminated and rename records carry
+// a score token plus two path tokens, so quoting can never corrupt the
+// mapping. (-M detects renames only; copies would require -C.)
 func RangeRenames(from, to string) (map[string]string, error) {
 	listing, err := ejecutarGitSalida("diff", "--name-status", "-z", "-M", from+".."+to)
 	if err != nil {
