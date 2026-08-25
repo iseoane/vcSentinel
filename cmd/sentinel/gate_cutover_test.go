@@ -41,7 +41,7 @@ func (a *agenteRevisionFijo) EjecutarRevision(string, string, []string) (string,
 	return a.salida, nil
 }
 
-func (a *agenteRevisionFijo) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *agenteRevisionFijo) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 

@@ -30,7 +30,7 @@ type RestrictedReviewer interface {
 // production invocation must carry the resolved dimension tool policy instead
 // of selecting a fallback policy at the transport boundary.
 type PolicyRestrictedReviewer interface {
-	EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+	ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
 // PolicyProvider exposes the contract policy bound by the review engine for
@@ -54,7 +54,7 @@ type ContextualReviewer interface {
 // PolicyContextualReviewer is the cancellation-aware semantic-review
 // capability paired with PolicyRestrictedReviewer.
 type PolicyContextualReviewer interface {
-	ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+	ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
 // Classifier assigns a durable outcome class to an operational failure. It
@@ -156,9 +156,9 @@ func (a *ReviewAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ 
 			return execution.AdapterResult{}, execution.NewAdapterError(a.classify(errors.New("reviewexec: policy-aware reviewer is required")), errors.New("reviewexec: policy-aware reviewer is required"))
 		}
 		if contextual, ok := a.reviewer.(PolicyContextualReviewer); ok {
-			output, err = contextual.ReviewWithContextConPolitica(ctx, prompt, a.sha, a.paths, *a.policy)
+			output, err = contextual.ReviewWithContextAndPolicy(ctx, prompt, a.sha, a.paths, *a.policy)
 		} else {
-			output, err = policyReviewer.EjecutarRevisionConPolitica(prompt, a.sha, a.paths, *a.policy)
+			output, err = policyReviewer.ReviewWithPolicy(prompt, a.sha, a.paths, *a.policy)
 		}
 	} else if contextual, ok := a.reviewer.(ContextualReviewer); ok {
 		output, err = contextual.ReviewWithContext(ctx, prompt, a.sha, a.paths)

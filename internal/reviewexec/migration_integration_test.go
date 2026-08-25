@@ -98,7 +98,7 @@ func (a *cannedAgent) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *cannedAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *cannedAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -111,7 +111,7 @@ func (failingAgent) EjecutarRevision(string, string, []string) (string, error) {
 	return "", errors.New("provider exploded during audit")
 }
 
-func (failingAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (failingAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return failingAgent{}.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -152,7 +152,7 @@ func (b *barrierAgent) EjecutarRevision(prompt, _ string, _ []string) (string, e
 	return fmt.Sprintf(`{"dim":%q,"verdict":"ok"}`, migrationDimensionFromPrompt(prompt)), nil
 }
 
-func (b *barrierAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (b *barrierAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return b.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -182,14 +182,14 @@ func (o *observerAgent) EjecutarRevision(prompt, sha string, paths []string) (st
 	return output, err
 }
 
-func (o *observerAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (o *observerAgent) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	reviewer, ok := o.inner.(interface {
-		EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error)
+		ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error)
 	})
 	if !ok {
 		return "", review.ErrRestrictedRequired
 	}
-	output, err := reviewer.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
+	output, err := reviewer.ReviewWithPolicy(prompt, sha, paths, policy)
 	if err == nil {
 		o.mu.Lock()
 		o.successes++

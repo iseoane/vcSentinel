@@ -69,12 +69,12 @@ func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
 // own timeout budget only. Context-carrying callers go through
 // ReviewWithContext so cooperative cancellation reaches the provider process.
 func (c *CLIAdapter) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
-	return c.EjecutarRevisionConPolitica(prompt, sha, paths, reviewcontract.DefaultToolPolicy())
+	return c.ReviewWithPolicy(prompt, sha, paths, reviewcontract.DefaultToolPolicy())
 }
 
-// EjecutarRevisionConPolitica translates one provider-neutral contract policy
+// ReviewWithPolicy translates one provider-neutral contract policy
 // into this provider's command and configuration syntax.
-func (c *CLIAdapter) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (c *CLIAdapter) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	return c.reviewWithContextPolicy(context.Background(), prompt, sha, paths, policy)
 }
 

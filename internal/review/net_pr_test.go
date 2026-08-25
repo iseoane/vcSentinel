@@ -23,7 +23,7 @@ func (s *historyStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	return salidaParaDimension(s.auditSalida, prompt), nil
 }
 
-func (s *historyStub) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (s *historyStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return s.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -46,7 +46,7 @@ func (s *answeringStub) EjecutarRevision(prompt, _ string, _ []string) (string, 
 	return salidaParaDimension(s.auditSalida, prompt), nil
 }
 
-func (s *answeringStub) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (s *answeringStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return s.EjecutarRevision(prompt, sha, paths)
 }
 

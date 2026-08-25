@@ -48,7 +48,7 @@ func (a *stubAuditorRebase) EjecutarRevision(prompt, _ string, _ []string) (stri
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *stubAuditorRebase) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *stubAuditorRebase) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 

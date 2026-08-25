@@ -49,7 +49,7 @@ func (a *rebaseV2StubAgent) EjecutarRevision(prompt, _ string, _ []string) (stri
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *rebaseV2StubAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *rebaseV2StubAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 

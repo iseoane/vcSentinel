@@ -51,7 +51,7 @@ type adaptadorRevisionFake struct {
 	policy reviewcontract.ToolPolicy
 }
 
-func (f *adaptadorRevisionFake) EjecutarRevisionConPolitica(prompt, sha string, rutas []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (f *adaptadorRevisionFake) ReviewWithPolicy(prompt, sha string, rutas []string, policy reviewcontract.ToolPolicy) (string, error) {
 	f.policy = policy
 	return f.EjecutarRevision(prompt, sha, rutas)
 }
@@ -140,14 +140,14 @@ func TestCadenaEjecutarRevisionUsesLaterRestrictedAdapter(t *testing.T) {
 	}
 }
 
-func TestCadenaEjecutarRevisionConPoliticaForwardsResolvedPolicy(t *testing.T) {
+func TestChainReviewWithPolicyForwardsResolvedPolicy(t *testing.T) {
 	adapter := &adaptadorRevisionFake{adaptadorFake: adaptadorFake{nombre: "policy-aware", salida: "ok"}}
 	chain := &CadenaAdaptador{adaptadores: []adaptadorCompleto{adapter}}
 	policy := reviewcontract.DefaultToolPolicy()
 
-	output, err := chain.EjecutarRevisionConPolitica("review", "abc", []string{"safe.go"}, policy)
+	output, err := chain.ReviewWithPolicy("review", "abc", []string{"safe.go"}, policy)
 	if err != nil || output != "ok" {
-		t.Fatalf("EjecutarRevisionConPolitica() = %q, %v", output, err)
+		t.Fatalf("ReviewWithPolicy() = %q, %v", output, err)
 	}
 	if adapter.policy != policy {
 		t.Fatalf("policy = %#v, want %#v", adapter.policy, policy)

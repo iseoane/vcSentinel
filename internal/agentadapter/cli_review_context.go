@@ -27,9 +27,9 @@ func (c *CLIAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, 
 	return c.reviewWithContextPolicy(ctx, prompt, sha, paths, reviewcontract.DefaultToolPolicy())
 }
 
-// ReviewWithContextConPolitica executes a semantic review under the supplied
+// ReviewWithContextAndPolicy executes a semantic review under the supplied
 // provider-neutral contract policy while preserving controller cancellation.
-func (c *CLIAdapter) ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (c *CLIAdapter) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	return c.reviewWithContextPolicy(ctx, prompt, sha, paths, policy)
 }
 

@@ -63,7 +63,7 @@ func (a *auditorStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *auditorStub) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *auditorStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -90,7 +90,7 @@ func (a *auditorRutasStub) EjecutarRevision(prompt, _ string, rutas []string) (s
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *auditorRutasStub) EjecutarRevisionConPolitica(prompt, sha string, rutas []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *auditorRutasStub) ReviewWithPolicy(prompt, sha string, rutas []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, rutas)
 }
 

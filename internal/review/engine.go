@@ -28,47 +28,47 @@ type auditorConHerramientasRestringidas interface {
 	EjecutarRevision(prompt, sha string, paths []string) (string, error)
 }
 
-type auditorConPoliticaHerramientas interface {
-	EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+type policyAwareReviewer interface {
+	ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
-type auditorContextualConPoliticaHerramientas interface {
-	ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+type contextualPolicyAwareReviewer interface {
+	ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
-// auditorConPoliticaVinculada carries the resolved dimension policy through a
+// policyBoundReviewer carries the resolved dimension policy through a
 // transport that predates the contract registry. It deliberately exposes the
 // same policy-aware method as providers so the durable adapter can require and
 // invoke it without importing this package.
-type auditorConPoliticaVinculada struct {
+type policyBoundReviewer struct {
 	AuditorAgente
 	policy reviewcontract.ToolPolicy
 }
 
-func vincularPolitica(agente AuditorAgente, policy reviewcontract.ToolPolicy) auditorConPoliticaVinculada {
-	return auditorConPoliticaVinculada{AuditorAgente: agente, policy: policy}
+func bindPolicy(agente AuditorAgente, policy reviewcontract.ToolPolicy) policyBoundReviewer {
+	return policyBoundReviewer{AuditorAgente: agente, policy: policy}
 }
 
-func (a auditorConPoliticaVinculada) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	revisor, ok := a.AuditorAgente.(auditorConPoliticaHerramientas)
+func (a policyBoundReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	revisor, ok := a.AuditorAgente.(policyAwareReviewer)
 	if !ok {
 		return "", ErrRestrictedRequired
 	}
-	return revisor.EjecutarRevisionConPolitica(prompt, sha, paths, a.policy)
+	return revisor.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
 
-func (a auditorConPoliticaVinculada) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
-	return a.EjecutarRevisionConPolitica(prompt, sha, paths, a.policy)
+func (a policyBoundReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+	return a.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
 
-func (a auditorConPoliticaVinculada) ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	if revisor, ok := a.AuditorAgente.(auditorContextualConPoliticaHerramientas); ok {
-		return revisor.ReviewWithContextConPolitica(ctx, prompt, sha, paths, a.policy)
+func (a policyBoundReviewer) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	if revisor, ok := a.AuditorAgente.(contextualPolicyAwareReviewer); ok {
+		return revisor.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, a.policy)
 	}
-	return a.EjecutarRevisionConPolitica(prompt, sha, paths, a.policy)
+	return a.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
 
-func (a auditorConPoliticaVinculada) ReviewToolPolicy() reviewcontract.ToolPolicy { return a.policy }
+func (a policyBoundReviewer) ReviewToolPolicy() reviewcontract.ToolPolicy { return a.policy }
 
 // FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
 // además el nombre del perfil aplicado. Inyectable en los tests.
@@ -414,13 +414,13 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			if err != nil {
 				continue
 			}
-			if _, ok := refutador.(auditorConPoliticaHerramientas); !ok {
+			if _, ok := refutador.(policyAwareReviewer); !ok {
 				continue
 			}
 			prompt := construirPromptRefutacion(sha, dimension.Dim, *finding)
 			// Admitted envelope flow: the refuter answer influences verdicts,
 			// so it may never bypass admission.
-			salida, invocacion, err := transport("refutation", dimension.Dim, prompt, vincularPolitica(refutador, contract.ToolPolicy))
+			salida, invocacion, err := transport("refutation", dimension.Dim, prompt, bindPolicy(refutador, contract.ToolPolicy))
 			if err != nil {
 				continue
 			}
@@ -568,14 +568,14 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		return &DimensionResult{Dim: request.Contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
 	agente, bundle, opts, contract := request.Agent, request.Bundle, request.Options, request.Contract
-	if _, ok := agente.(auditorConPoliticaHerramientas); !ok {
+	if _, ok := agente.(policyAwareReviewer); !ok {
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: ErrRestrictedRequired.Error()}, ErrRestrictedRequired
 	}
 	ejecutar := func(prompt string) (string, error) {
-		restringido := agente.(auditorConPoliticaHerramientas)
-		return restringido.EjecutarRevisionConPolitica(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
+		restringido := agente.(policyAwareReviewer)
+		return restringido.ReviewWithPolicy(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
 	}
-	salida, invocacion, err := invokeReview(opts, bundle, contract.Name, vincularPolitica(agente, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+	salida, invocacion, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agente, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 	if err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
@@ -590,7 +590,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, invocacion, err = invokeReview(opts, bundle, contract.Name, vincularPolitica(agente, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+		salida, invocacion, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agente, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
 			failure := &ProviderExecutionFailure{Err: err}
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure

@@ -86,7 +86,7 @@ func (a *agenteFake) EjecutarRevision(prompt, _ string, _ []string) (string, err
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *agenteFake) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *agenteFake) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -116,7 +116,7 @@ func bundlesPrueba(dims ...string) []ReviewBundle {
 // whose refuter double inspects the reviewer's allowed path list.
 func transporteDirecto(sha string, rutas ...string) ReviewTransport {
 	return func(_ string, _ string, prompt string, agente AuditorAgente) (string, string, error) {
-		revisor, ok := agente.(auditorConPoliticaHerramientas)
+		revisor, ok := agente.(policyAwareReviewer)
 		if !ok {
 			return "", "", ErrRestrictedRequired
 		}
@@ -126,7 +126,7 @@ func transporteDirecto(sha string, rutas ...string) ReviewTransport {
 		}); ok {
 			policy = vinculado.ReviewToolPolicy()
 		}
-		salida, err := revisor.EjecutarRevisionConPolitica(prompt, sha, rutas, policy)
+		salida, err := revisor.ReviewWithPolicy(prompt, sha, rutas, policy)
 		return salida, "", err
 	}
 }
@@ -159,7 +159,7 @@ func (a *policyRecordingAgent) EjecutarRevision(prompt, _ string, _ []string) (s
 	return fmt.Sprintf(`{"dim":%q,"verdict":"ok"}`, dimensionFromPrompt(prompt)), nil
 }
 
-func (a *policyRecordingAgent) EjecutarRevisionConPolitica(prompt, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *policyRecordingAgent) ReviewWithPolicy(prompt, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
 	dimension := dimensionFromPrompt(prompt)
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -236,7 +236,7 @@ func (a *contractOutputAgent) EjecutarRevision(prompt, sha string, paths []strin
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *contractOutputAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *contractOutputAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -304,7 +304,7 @@ func (a *agentePrompt) EjecutarRevision(prompt, _ string, _ []string) (string, e
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *agentePrompt) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *agentePrompt) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -461,7 +461,7 @@ func (a agenteEfectivoFake) EjecutarRevision(string, string, []string) (string, 
 	return completarContratoDePrueba(a.respuesta), nil
 }
 
-func (a agenteEfectivoFake) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a agenteEfectivoFake) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -719,7 +719,7 @@ func (agenteError) EjecutarRevision(prompt, _ string, _ []string) (string, error
 	return agenteError{}.EjecutarPrompt(prompt)
 }
 
-func (agenteError) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (agenteError) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return agenteError{}.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -1359,7 +1359,7 @@ func (f auditorFunc) EjecutarRevision(prompt, _ string, _ []string) (string, err
 	return f.EjecutarPrompt(prompt)
 }
 
-func (f auditorFunc) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (f auditorFunc) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return f.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -1406,7 +1406,7 @@ func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
 	if gotBundle != "quality" || gotDim != "logic" || strings.TrimSpace(gotPrompt) == "" {
 		t.Fatalf("transport args = %q/%q/%q, want bundle, dimension, and built prompt", gotBundle, gotDim, gotPrompt)
 	}
-	if _, ok := gotAgent.(auditorConPoliticaVinculada); !ok {
+	if _, ok := gotAgent.(policyBoundReviewer); !ok {
 		t.Fatalf("transport agent = %T, want the policy-bound reviewer", gotAgent)
 	}
 	fake.mu.Lock()

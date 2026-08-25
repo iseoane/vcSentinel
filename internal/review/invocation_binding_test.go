@@ -47,7 +47,7 @@ type agenteTransporteSilencioso struct{}
 
 func (agenteTransporteSilencioso) EjecutarPrompt(string) (string, error) { return "", nil }
 
-func (agenteTransporteSilencioso) EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error) {
+func (agenteTransporteSilencioso) ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error) {
 	return "", nil
 }
 
@@ -60,7 +60,7 @@ func (a *agenteRestringidoContado) EjecutarRevision(string, string, []string) (s
 	return respuestaV2Invocacion, nil
 }
 
-func (a *agenteRestringidoContado) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *agenteRestringidoContado) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 

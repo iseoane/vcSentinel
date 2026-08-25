@@ -690,7 +690,7 @@ func parsearDimensionResult(salida, expectedDimension string, schema reviewcontr
 		}
 		if !veredictosValidos[crudo.Verdict] {
 			if len(crudo.Findings) == 0 {
-				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimensión %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim), bloque)
+				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimension %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim), bloque)
 			}
 			// Veredictos de facto ("issues", "error", ...) con hallazgos se
 			// derivan de las severidades en lugar de abortar la auditoría.

@@ -28,7 +28,7 @@ func (a *auditorFalso) EjecutarRevision(prompt, _ string, _ []string) (string, e
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *auditorFalso) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *auditorFalso) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -309,7 +309,7 @@ func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string)
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *auditorSecuencial) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *auditorSecuencial) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 

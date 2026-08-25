@@ -414,7 +414,7 @@ func (a *agenteFakeSecuencialReview) EjecutarRevision(prompt, _ string, _ []stri
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *agenteFakeSecuencialReview) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *agenteFakeSecuencialReview) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 

@@ -62,14 +62,14 @@ func (a *agenteObservado) EjecutarRevision(prompt, sha string, paths []string) (
 	return salida, err
 }
 
-func (a *agenteObservado) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *agenteObservado) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	reviewer, ok := a.AuditorAgente.(interface {
-		EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error)
+		ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error)
 	})
 	if !ok {
 		return "", review.ErrRestrictedRequired
 	}
-	salida, err := reviewer.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
+	salida, err := reviewer.ReviewWithPolicy(prompt, sha, paths, policy)
 	if err == nil {
 		a.autoria.registrar(a.AuditorAgente)
 	}
@@ -102,20 +102,20 @@ func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha str
 	return salida, err
 }
 
-func (a *agenteObservado) ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *agenteObservado) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if contextual, ok := a.AuditorAgente.(interface {
-		ReviewWithContextConPolitica(context.Context, string, string, []string, reviewcontract.ToolPolicy) (string, error)
+		ReviewWithContextAndPolicy(context.Context, string, string, []string, reviewcontract.ToolPolicy) (string, error)
 	}); ok {
-		salida, err := contextual.ReviewWithContextConPolitica(ctx, prompt, sha, paths, policy)
+		salida, err := contextual.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, policy)
 		if err == nil {
 			a.autoria.registrar(a.AuditorAgente)
 		}
 		return salida, err
 	}
-	return a.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
+	return a.ReviewWithPolicy(prompt, sha, paths, policy)
 }
 
 func (a *agenteObservado) OwnedTree() *process.Tree {

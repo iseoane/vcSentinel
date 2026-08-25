@@ -264,7 +264,7 @@ type contextualReviewer interface {
 }
 
 type policyRestrictedReviewer interface {
-	EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+	ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
 type treeProvider interface {

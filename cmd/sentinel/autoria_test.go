@@ -32,7 +32,7 @@ type agentePoliticaGrabada struct{ policy reviewcontract.ToolPolicy }
 
 func (*agentePoliticaGrabada) EjecutarPrompt(string) (string, error) { return "ok", nil }
 
-func (a *agentePoliticaGrabada) EjecutarRevisionConPolitica(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *agentePoliticaGrabada) ReviewWithPolicy(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
 	a.policy = policy
 	return "ok", nil
 }
@@ -83,8 +83,8 @@ func TestAgenteObservadoForwardsSemanticToolPolicy(t *testing.T) {
 	agent := &agenteObservado{AuditorAgente: inner, autoria: &recolectorAutoria{}}
 	policy := reviewcontract.DefaultToolPolicy()
 
-	if _, err := agent.EjecutarRevisionConPolitica("review", "abc", []string{"a.go"}, policy); err != nil {
-		t.Fatalf("EjecutarRevisionConPolitica() error = %v", err)
+	if _, err := agent.ReviewWithPolicy("review", "abc", []string{"a.go"}, policy); err != nil {
+		t.Fatalf("ReviewWithPolicy() error = %v", err)
 	}
 	if inner.policy != policy {
 		t.Fatalf("policy = %#v, want %#v", inner.policy, policy)

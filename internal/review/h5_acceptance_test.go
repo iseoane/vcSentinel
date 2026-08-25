@@ -25,7 +25,7 @@ func (r h5Reviewer) EjecutarRevision(string, string, []string) (string, error) {
 	return r.resultado()
 }
 
-func (r h5Reviewer) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (r h5Reviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return r.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -75,7 +75,7 @@ func (r h5Refuter) EjecutarRevision(prompt, sha string, paths []string) (string,
 	return h5RefutationFailure(), nil
 }
 
-func (r h5Refuter) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (r h5Refuter) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return r.EjecutarRevision(prompt, sha, paths)
 }
 

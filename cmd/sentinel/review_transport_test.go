@@ -36,7 +36,7 @@ func (a *fakeRestrictedAgent) EjecutarRevision(prompt, _ string, paths []string)
 	return prompt + "|" + a.response, nil
 }
 
-func (a *fakeRestrictedAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *fakeRestrictedAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -63,7 +63,7 @@ func (a *policyRecordingRestrictedAgent) EjecutarRevision(string, string, []stri
 	return `{"dim":"logic","verdict":"ok"}`, nil
 }
 
-func (a *policyRecordingRestrictedAgent) EjecutarRevisionConPolitica(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *policyRecordingRestrictedAgent) ReviewWithPolicy(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
 	a.policy = policy
 	a.calls++
 	return `{"dim":"logic","verdict":"ok"}`, nil
