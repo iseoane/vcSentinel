@@ -51,9 +51,9 @@ type adaptadorRevisionFake struct {
 	policy reviewcontract.ToolPolicy
 }
 
-func (f *adaptadorRevisionFake) ReviewWithPolicy(prompt, sha string, rutas []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (f *adaptadorRevisionFake) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	f.policy = policy
-	return f.EjecutarRevision(prompt, sha, rutas)
+	return f.EjecutarRevision(prompt, sha, paths)
 }
 
 func (f *adaptadorRevisionFake) EjecutarRevision(prompt, sha string, rutas []string) (string, error) {

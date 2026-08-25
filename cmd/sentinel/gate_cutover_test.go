@@ -123,8 +123,8 @@ func construirOpcionesCutover(t *testing.T, worktree, stage, ymlExtra string, au
 
 func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	worktree := repositorioCutover(t)
-	bloqueoJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo confirmable","evidence":"risk()","confidence":"high"}]}`
-	opciones, _, sink := construirOpcionesCutover(t, worktree, "pre-push", "", bloqueoJSON)
+	blockingJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"confirmable risk","evidence":"risk()","confidence":"high"}]}`
+	opciones, _, sink := construirOpcionesCutover(t, worktree, "pre-push", "", blockingJSON)
 
 	if sink == nil {
 		t.Fatal("applyDurableCutover returned no sink, expected the durable wiring always on")

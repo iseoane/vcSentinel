@@ -40,7 +40,7 @@ const descripcionHallazgoRebase = "hallazgo real de prueba de rebase"
 func (a *stubAuditorRebase) EjecutarPrompt(prompt string) (string, error) {
 	a.llamadas++
 	return "BEGIN_REVIEW\n" +
-		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + descripcionHallazgoRebase + `","suggestion":"revisar antes del rebase","evidence":"content-b","confidence":"high"}]}` +
+		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + descripcionHallazgoRebase + `","suggestion":"review before rebase","evidence":"content-b","confidence":"high"}]}` +
 		"\nEND_REVIEW\n", nil
 }
 

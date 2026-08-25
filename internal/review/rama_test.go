@@ -90,8 +90,8 @@ func (a *auditorRutasStub) EjecutarRevision(prompt, _ string, rutas []string) (s
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *auditorRutasStub) ReviewWithPolicy(prompt, sha string, rutas []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.EjecutarRevision(prompt, sha, rutas)
+func (a *auditorRutasStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 // fakeStoreBlobs es un StoreBlobs de prueba que no depende de un

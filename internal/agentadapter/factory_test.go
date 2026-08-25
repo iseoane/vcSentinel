@@ -23,8 +23,8 @@ func TestNuevoAdaptadorConPerfilExplicito(t *testing.T) {
 		Review: config.ReviewConfig{Timeout: 30 * time.Second, Parallel: 2},
 	}
 
-	perfil := config.ResolverPerfil(cfg, "deep", "")
-	adapter, err := NuevoAdaptadorConPerfil(cfg, perfil)
+	profile := config.ResolverPerfil(cfg, "deep", "")
+	adapter, err := NuevoAdaptadorConPerfil(cfg, profile)
 	if err != nil {
 		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
 	}
@@ -55,8 +55,8 @@ func TestNuevoAdaptadorConPerfilHeredaDelAgente(t *testing.T) {
 		Review: config.ReviewConfig{},
 	}
 
-	perfil := config.ResolverPerfil(cfg, "normal", "")
-	adapter, err := NuevoAdaptadorConPerfil(cfg, perfil)
+	profile := config.ResolverPerfil(cfg, "normal", "")
+	adapter, err := NuevoAdaptadorConPerfil(cfg, profile)
 	if err != nil {
 		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
 	}
@@ -82,8 +82,8 @@ func TestNuevoAdaptadorSinAgentesEnPATH(t *testing.T) {
 		Review:   config.ReviewConfig{},
 	}
 
-	perfil := config.ResolverPerfil(cfg, "normal", "")
-	if adapter, err := NuevoAdaptadorConPerfil(cfg, perfil); err == nil || adapter != nil {
+	profile := config.ResolverPerfil(cfg, "normal", "")
+	if adapter, err := NuevoAdaptadorConPerfil(cfg, profile); err == nil || adapter != nil {
 		t.Errorf("sin agentes en el PATH se esperaba un error explícito, obtuve %T/%v", adapter, err)
 	}
 }

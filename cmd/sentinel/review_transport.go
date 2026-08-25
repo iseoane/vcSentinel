@@ -126,12 +126,12 @@ func reviewTransportFactory(cfg config.Config, worktree string) func(sha string,
 // verified-evidence identity threading. One construction site keeps the two
 // paths from drifting.
 func cerrarTransporteRevision(transport *reviewexec.DurableTransport) review.ReviewTransport {
-	return func(bundleName, dimension, prompt string, agente review.AuditorAgente) (string, string, error) {
-		restricted, ok := agente.(reviewexec.PolicyRestrictedReviewer)
+	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
+		restricted, ok := agent.(reviewexec.PolicyRestrictedReviewer)
 		if !ok {
 			return "", "", review.ErrRestrictedRequired
 		}
-		policyProvider, ok := agente.(reviewexec.PolicyProvider)
+		policyProvider, ok := agent.(reviewexec.PolicyProvider)
 		if !ok {
 			return "", "", review.ErrRestrictedRequired
 		}

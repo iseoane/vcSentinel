@@ -117,13 +117,13 @@ func ejecutarReview(worktree string, args []string) {
 		// ficha registre el autor real y no el perfil pedido (H4/T0.2).
 		autoria := &recolectorAutoria{}
 		fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-			perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), flags.profile)
-			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+			profile := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), flags.profile)
+			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, profile)
 			if err != nil {
-				return nil, perfil.Nombre, err
+				return nil, profile.Nombre, err
 			}
-			verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
-			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, perfil.Nombre, nil
+			verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, profile.Nombre, nil
 		}
 
 		opciones := review.OpcionesAuditoria{

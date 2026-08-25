@@ -265,7 +265,7 @@ func caracteristicaPresente(caracteristicas []change.Caracteristica, nombre stri
 func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria) ResultadoAuditoria {
 	resultado := ResultadoAuditoria{SHA: opts.SHA}
 	rutasRevision := rutasRevisionSeguras(opts.RutasContexto)
-	contexto := contextoRevisor(opts.ProveedorContexto, opts.SHA, rutasRevision)
+	reviewContext := contextoRevisor(opts.ProveedorContexto, opts.SHA, rutasRevision)
 	if parallel < 1 {
 		parallel = 1
 	}
@@ -303,15 +303,15 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 					rd.Error = contractErr
 					rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: contractErr.Error()}
 				} else {
-					agente, perfil, err := fabrica(bundle, dimension)
-					rd.Perfil = perfil
+					agent, profile, err := fabrica(bundle, dimension)
+					rd.Perfil = profile
 					if err != nil {
 						rd.Error = err
 						rd.Resultado = &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}
 					} else {
-						opciones := opts
-						opciones.RutasContexto = rutasRevision
-						rd.Resultado, rd.Error = (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agente, Bundle: bundle, Contract: contract, Options: opciones, Context: contexto})
+						options := opts
+						options.RutasContexto = rutasRevision
+						rd.Resultado, rd.Error = (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agent, Bundle: bundle, Contract: contract, Options: options, Context: reviewContext})
 					}
 				}
 				rd.Resultado.Bundle = bundle.Name

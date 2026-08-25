@@ -7,19 +7,19 @@ import (
 func TestResolverPerfilUsesSuppliedContractDefault(t *testing.T) {
 	cfg := configuracionPorDefecto()
 
-	perfil := ResolverPerfil(cfg, "normal", "")
-	if perfil.Nombre != "normal" {
-		t.Errorf("logic -> perfil %q, esperado normal", perfil.Nombre)
+	profile := ResolverPerfil(cfg, "normal", "")
+	if profile.Nombre != "normal" {
+		t.Errorf("logic -> profile %q, expected normal", profile.Nombre)
 	}
 
-	perfil = ResolverPerfil(cfg, "deep", "")
-	if perfil.Nombre != "deep" {
-		t.Errorf("security -> perfil %q, esperado deep", perfil.Nombre)
+	profile = ResolverPerfil(cfg, "deep", "")
+	if profile.Nombre != "deep" {
+		t.Errorf("security -> profile %q, expected deep", profile.Nombre)
 	}
 
-	perfil = ResolverPerfil(cfg, "cheap", "")
-	if perfil.Nombre != "cheap" {
-		t.Errorf("spec -> %+v, esperado cheap", perfil)
+	profile = ResolverPerfil(cfg, "cheap", "")
+	if profile.Nombre != "cheap" {
+		t.Errorf("spec -> %+v, expected cheap", profile)
 	}
 }
 
@@ -105,18 +105,18 @@ func TestResolverPerfilUsesExplicitProviderProfile(t *testing.T) {
 	cfg := configuracionPorDefecto()
 	cfg.Agents["opencode"].Profiles["cheap"] = ProfileConfig{Model: "mini"}
 
-	perfil := ResolverPerfil(cfg, "opencode.cheap", "")
-	if perfil.Nombre != "opencode.cheap" || perfil.Binario != "opencode" || perfil.Modelo != "mini" {
-		t.Errorf("perfil = %+v, esperado opencode.cheap con opencode/mini", perfil)
+	profile := ResolverPerfil(cfg, "opencode.cheap", "")
+	if profile.Nombre != "opencode.cheap" || profile.Binario != "opencode" || profile.Modelo != "mini" {
+		t.Errorf("profile = %+v, expected opencode.cheap with opencode/mini", profile)
 	}
 }
 
 func TestResolverPerfilUsesNormalWhenRequested(t *testing.T) {
 	cfg := configuracionPorDefecto()
 
-	perfil := ResolverPerfil(cfg, "normal", "")
-	if perfil.Nombre != "normal" {
-		t.Errorf("default profile -> %q, expected normal", perfil.Nombre)
+	profile := ResolverPerfil(cfg, "normal", "")
+	if profile.Nombre != "normal" {
+		t.Errorf("default profile -> %q, expected normal", profile.Nombre)
 	}
 }
 

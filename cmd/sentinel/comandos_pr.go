@@ -190,13 +190,13 @@ func ejecutarPrReview(worktree string, args []string) {
 
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
-		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+		profile := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
+		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, profile)
 		if err != nil {
-			return nil, perfil.Nombre, err
+			return nil, profile.Nombre, err
 		}
-		verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
-		return adapter, perfil.Nombre, nil
+		verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+		return adapter, profile.Nombre, nil
 	}
 
 	base := flags.base
@@ -764,13 +764,13 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
-		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+		profile := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
+		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, profile)
 		if err != nil {
-			return nil, perfil.Nombre, err
+			return nil, profile.Nombre, err
 		}
-		verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
-		return adapter, perfil.Nombre, nil
+		verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+		return adapter, profile.Nombre, nil
 	}
 
 	base := flags.base

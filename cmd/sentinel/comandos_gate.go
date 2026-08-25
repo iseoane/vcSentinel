@@ -121,13 +121,13 @@ func fabricaRefutadorGate(cfg config.Config, verificador *modelprobe.Verificador
 // review override: gate --profile selects a validation profile only.
 func fabricaAuditorGate(cfg config.Config, verificador *modelprobe.Verificador) review.FabricaAuditor {
 	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		perfil := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
-		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, perfil)
+		profile := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
+		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, profile)
 		if err != nil {
-			return nil, perfil.Nombre, err
+			return nil, profile.Nombre, err
 		}
-		verificador.Verificar(perfil.Nombre, perfil.Modelo, adapter)
-		return adapter, perfil.Nombre, nil
+		verificador.Verificar(profile.Nombre, profile.Modelo, adapter)
+		return adapter, profile.Nombre, nil
 	}
 }
 

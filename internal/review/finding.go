@@ -658,9 +658,9 @@ func ParseDimensionResultForContract(output string, contract reviewcontract.Dime
 	return parseDimensionResult(output, contract.Name, contract.OutputSchema, contract.EvidencePolicy)
 }
 
-func parseDimensionResult(salida, expectedDimension string, schema reviewcontract.OutputSchema, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error) {
-	bloque := extractJSONLBlockWithSchema(salida, schema)
-	lineas := strings.Split(bloque, "\n")
+func parseDimensionResult(output, expectedDimension string, schema reviewcontract.OutputSchema, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error) {
+	block := extractJSONLBlockWithSchema(output, schema)
+	lineas := strings.Split(block, "\n")
 
 	var descartadas int
 	var normalizaciones []string
@@ -686,11 +686,11 @@ func parseDimensionResult(salida, expectedDimension string, schema reviewcontrac
 			continue
 		}
 		if _, err := reviewcontract.Lookup(crudo.Dim); err != nil {
-			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim), bloque)
+			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim), block)
 		}
 		if !veredictosValidos[crudo.Verdict] {
 			if len(crudo.Findings) == 0 {
-				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimension %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim), bloque)
+				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimension %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim), block)
 			}
 			// Veredictos de facto ("issues", "error", ...) con hallazgos se
 			// derivan de las severidades en lugar de abortar la auditoría.
@@ -699,7 +699,7 @@ func parseDimensionResult(salida, expectedDimension string, schema reviewcontrac
 			crudo.Verdict = ""
 		}
 		if err := validateFindingsAgainstContract(crudo.Findings, evidencePolicy); err != nil {
-			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, bloque)
+			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, block)
 		}
 
 		findingsV1, hallazgosV2 := procesarFindings(crudo.Findings, crudo.Dim, &normalizaciones)
@@ -707,7 +707,7 @@ func parseDimensionResult(salida, expectedDimension string, schema reviewcontrac
 		if descartadas > 0 {
 			normalizaciones = append(normalizaciones, fmt.Sprintf("%d líneas no JSONL descartadas", descartadas))
 		}
-		resultado := &DimensionResult{
+		result := &DimensionResult{
 			Dim:          crudo.Dim,
 			Verdict:      veredictoFinal(crudo.Verdict, findingsV1, &normalizaciones),
 			Findings:     findingsV1,
@@ -716,24 +716,24 @@ func parseDimensionResult(salida, expectedDimension string, schema reviewcontrac
 			Reason:       crudo.Reason,
 			Advertencias: normalizaciones,
 		}
-		return validateContractDimension(resultado, expectedDimension, bloque)
+		return validateContractDimension(result, expectedDimension, block)
 	}
 
-	if strings.TrimSpace(bloque) == "" {
-		return nil, newSemanticOutputError(SemanticOutputMissingPayload, ErrSalidaVacia, bloque)
+	if strings.TrimSpace(block) == "" {
+		return nil, newSemanticOutputError(SemanticOutputMissingPayload, ErrSalidaVacia, block)
 	}
 	// Fallback: algunos modelos (p. ej. el perfil cheap con reasoning low)
 	// emiten el objeto JSON formateado en varias líneas (pretty-printed)
 	// dentro del bloque. Ninguna línea individual es JSONL válido, pero el
 	// bloque completo sí es un objeto JSON; parsearlo entero evita que una
 	// auditoría válida se degrade a unavailable.
-	if res, err, ok := parsearObjetoMultilinea(bloque, evidencePolicy); ok {
+	if res, err, ok := parsearObjetoMultilinea(block, evidencePolicy); ok {
 		if err != nil {
 			return nil, err
 		}
-		return validateContractDimension(res, expectedDimension, bloque)
+		return validateContractDimension(res, expectedDimension, block)
 	}
-	return nil, classifyUnparseableSemanticOutput(bloque)
+	return nil, classifyUnparseableSemanticOutput(block)
 }
 
 func validateFindingsAgainstContract(findings []findingCrudo, policy reviewcontract.EvidencePolicy) error {
