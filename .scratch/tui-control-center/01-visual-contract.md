@@ -47,3 +47,13 @@ Delete `internal/tui/art` and `tools/tuipreview`; nothing else references them.
   `go run ./tools/tuipreview -html <path>` (all states + dashboards).
 - Pending: operator visual approval; independent code-review + Judgment Day
   run after the visual gate to avoid re-reviewing rejected artwork.
+
+## Evidence (redesign round, operator feedback 2026-08-24)
+
+- Operator rejected the pixel-art guardian and the flat dashboard; new
+  contract: header panel, tree pane, LOCATION + ACTIVITY right pane, double
+  separators, colored states.
+- Commits: 7f9bc8d (drop pixel art), cd9f55f (ANSI styling), 3df8b1a
+  (dashboard redesign + preview). All within budget; suite green incl. race.
+- HTML proof regenerated via tuipreview -html.
+- Pending: operator visual approval of the redesign; then code-review + JD.
