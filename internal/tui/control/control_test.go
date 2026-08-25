@@ -1,8 +1,10 @@
 package control
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbletea"
@@ -316,5 +318,308 @@ func TestViewEmptyRegistryRendersEmptyState(t *testing.T) {
 		if utf8.RuneCountInString(line) > DefaultWidth {
 			t.Errorf("default-width line %d overflows %d columns: %q", i, DefaultWidth, line)
 		}
+	}
+}
+
+// Live refresh loop coverage pairing with control.go. Everything runs
+// synchronously: bubbletea commands are plain funcs, so tests call them
+// directly instead of waiting on timers — no wall-clock sleeps anywhere.
+
+// scheduledMsg marks a scheduler invocation that made it into a batch, so
+// tests can prove both tick effects (reschedule plus refresh) exist.
+type scheduledMsg struct{}
+
+// recorder captures what the live loop did: scheduler invocations with their
+// intervals and collector invocations with a canned result, pinning the exact
+// one-tick/one-refresh/one-reschedule contract without sleeping.
+type recorder struct {
+	schedules []time.Duration
+	refreshes int
+	repos     []overview.Repo
+	err       error
+}
+
+// schedule records the requested cadence and returns a marker command so the
+// test can count it among the batch's concrete effects.
+func (r *recorder) schedule(d time.Duration) tea.Cmd {
+	r.schedules = append(r.schedules, d)
+	return func() tea.Msg { return scheduledMsg{} }
+}
+
+// refresh returns the canned snapshot, recording the call.
+func (r *recorder) refresh() ([]overview.Repo, error) {
+	r.refreshes++
+	return r.repos, r.err
+}
+
+// collectEffects executes cmd synchronously and returns every produced
+// message, unwrapping tea.Batch into its member commands.
+func collectEffects(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var msgs []tea.Msg
+	for _, c := range batch {
+		if c != nil {
+			msgs = append(msgs, c())
+		}
+	}
+	return msgs
+}
+
+// snapshotOf extracts the single snapshot message among collected effects,
+// failing when there is none or more than one.
+func snapshotOf(t *testing.T, msgs []tea.Msg) snapshotMsg {
+	t.Helper()
+	var found []snapshotMsg
+	for _, msg := range msgs {
+		if snap, ok := msg.(snapshotMsg); ok {
+			found = append(found, snap)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0]
+	case 0:
+		t.Fatalf("no snapshot message among %d collected effects", len(msgs))
+	default:
+		t.Fatalf("collected %d snapshot messages, want exactly one", len(found))
+	}
+	return snapshotMsg{}
+}
+
+// TestNewLivePanicsOnNilRefresh pins the documented constructor contract: a
+// live loop with nothing to collect is a programming error.
+func TestNewLivePanicsOnNilRefresh(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewLive with a nil refresh must panic by contract")
+		}
+	}()
+	_ = NewLive(nil, nil, time.Second)
+}
+
+// TestNewLiveClampsNonPositiveInterval pins the defensive cadence: callers
+// pass a positive interval, but zero or negative values fall back to exactly
+// DefaultRefreshInterval instead of producing a degenerate ticker.
+func TestNewLiveClampsNonPositiveInterval(t *testing.T) {
+	rec := &recorder{}
+	for _, in := range []time.Duration{0, -time.Millisecond, -time.Hour} {
+		m := NewLive(nil, rec.refresh, in)
+		if m.interval != DefaultRefreshInterval {
+			t.Errorf("NewLive(interval=%v) kept %v, want the documented default %v",
+				in, m.interval, DefaultRefreshInterval)
+		}
+	}
+	m := NewLive(nil, rec.refresh, 5*time.Second)
+	if m.interval != 5*time.Second {
+		t.Errorf("positive interval rewritten to %v, want 5s kept verbatim", m.interval)
+	}
+}
+
+// TestNewLiveInitSchedulesFirstTick proves Init arms the loop: a non-nil
+// first-tick command through the default tea.Tick scheduler (never executed,
+// so no timer ever fires) and no scheduler contact before Update runs.
+func TestNewLiveInitSchedulesFirstTick(t *testing.T) {
+	rec := &recorder{}
+	m := NewLive([]overview.Repo{repo("alpha")}, rec.refresh, time.Second)
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("live Init scheduled nothing, want the first tick")
+	}
+	if len(rec.schedules) != 0 {
+		t.Errorf("Init contacted the scheduler directly (%v), want scheduling deferred to ticks", rec.schedules)
+	}
+}
+
+// TestStaticModelIgnoresLiveLoopMessages pins New's passivity under the new
+// message types: Init stays nil and a stray tick neither panics nor mutates
+// anything, because static models never enabled the loop.
+func TestStaticModelIgnoresLiveLoopMessages(t *testing.T) {
+	m := New([]overview.Repo{repo("alpha")})
+	if cmd := m.Init(); cmd != nil {
+		t.Fatalf("static Init scheduled %v, want nothing", cmd)
+	}
+	next, cmd := m.Update(tickMsg{})
+	if cmd != nil {
+		t.Fatalf("tick on a static model scheduled %v, want nothing", cmd)
+	}
+	static := next.(Model)
+	if static.Width() != m.Width() || static.Selected() != m.Selected() ||
+		static.Quitting() || len(static.Repos()) != 1 || static.Err() != "" {
+		t.Errorf("tick mutated a static model")
+	}
+}
+
+// TestUnknownMessageIgnored pins the default branch against regression now
+// that Update routes more message types.
+func TestUnknownMessageIgnored(t *testing.T) {
+	repos := []overview.Repo{repo("alpha")}
+	before := pressKeys(t, New(repos), "down")
+	next, cmd := before.Update(struct{ opaque int }{opaque: 7})
+	if cmd != nil {
+		t.Errorf("unknown message scheduled %v", cmd)
+	}
+	after := next.(Model)
+	if after.Width() != before.Width() || after.Selected() != before.Selected() ||
+		after.Quitting() || len(after.Repos()) != 1 {
+		t.Errorf("unknown message mutated the model")
+	}
+}
+
+// TestTickDrivesExactlyOneRefreshAndReschedule pins the cycle contract: one
+// tick maps to exactly one reschedule at the model's interval plus exactly
+// one snapshot collection, both delivered as batch effects whose results the
+// runtime may deliver in any order.
+func TestTickDrivesExactlyOneRefreshAndReschedule(t *testing.T) {
+	rec := &recorder{repos: []overview.Repo{repo("fresh")}}
+	interval := 750 * time.Millisecond
+	m := NewLive([]overview.Repo{repo("stale")}, rec.refresh, interval)
+	m.schedule = rec.schedule
+
+	next, cmd := m.Update(tickMsg{})
+	live := next.(Model)
+	if cmd == nil {
+		t.Fatal("tick scheduled nothing, want reschedule plus refresh")
+	}
+	if len(rec.schedules) != 1 || rec.schedules[0] != interval {
+		t.Fatalf("schedule calls = %v, want exactly one at %v", rec.schedules, interval)
+	}
+	if rec.refreshes != 0 {
+		t.Fatalf("refresh ran %d times inside Update, want deferred to the command", rec.refreshes)
+	}
+
+	effects := collectEffects(t, cmd)
+	var snapshots, reschedules int
+	for _, msg := range effects {
+		switch msg.(type) {
+		case snapshotMsg:
+			snapshots++
+		case scheduledMsg:
+			reschedules++
+		default:
+			t.Errorf("tick batch produced unexpected effect %T", msg)
+		}
+	}
+	if snapshots != 1 || reschedules != 1 {
+		t.Fatalf("tick produced %d snapshots and %d reschedules, want exactly one of each", snapshots, reschedules)
+	}
+	if rec.refreshes != 1 {
+		t.Fatalf("refresh ran %d times for one tick, want exactly once", rec.refreshes)
+	}
+
+	live = update(t, live, snapshotOf(t, effects))
+	if got := live.Repos(); len(got) != 1 || got[0].Name != "fresh" {
+		t.Errorf("Repos() = %v, want the refreshed snapshot", got)
+	}
+	if live.Err() != "" {
+		t.Errorf("Err() = %q, want empty after a healthy refresh", live.Err())
+	}
+}
+
+// TestSnapshotMsgTransitions drives every snapshot outcome: success replaces
+// the registry and clears any recorded error while clamping the cursor back
+// into range with the same >= 0 semantics as key navigation; failure keeps
+// the last good snapshot untouched and records the error text.
+func TestSnapshotMsgTransitions(t *testing.T) {
+	alpha, beta, gamma := repo("alpha"), repo("beta"), repo("gamma")
+	fresh := []overview.Repo{repo("fresh")}
+	tests := []struct {
+		name       string
+		repos      []overview.Repo // initial registry
+		downs      int             // cursor presses before the snapshot lands
+		priorErr   bool            // plant a failing snapshot before msg
+		msg        snapshotMsg
+		wantRepos  []string // wanted names after msg
+		wantSelect int
+		wantErr    string
+	}{
+		{
+			name:       "success replaces repos and clears err",
+			repos:      []overview.Repo{alpha},
+			msg:        snapshotMsg{repos: fresh},
+			wantRepos:  []string{"fresh"},
+			wantSelect: 0,
+			wantErr:    "",
+		},
+		{
+			name:       "success clamps the cursor after the registry shrinks",
+			repos:      []overview.Repo{alpha, beta, gamma},
+			downs:      2,
+			msg:        snapshotMsg{repos: fresh},
+			wantRepos:  []string{"fresh"},
+			wantSelect: 0,
+			wantErr:    "",
+		},
+		{
+			name:       "success clamps to the last repository without overshoot",
+			repos:      []overview.Repo{alpha, beta, gamma},
+			downs:      2,
+			msg:        snapshotMsg{repos: []overview.Repo{repo("one"), repo("two")}},
+			wantRepos:  []string{"one", "two"},
+			wantSelect: 1,
+			wantErr:    "",
+		},
+		{
+			name:       "success onto an empty registry parks the cursor at the top",
+			repos:      []overview.Repo{alpha, beta},
+			downs:      1,
+			msg:        snapshotMsg{},
+			wantRepos:  nil,
+			wantSelect: 0,
+			wantErr:    "",
+		},
+		{
+			name:       "failure keeps the last good snapshot and records the error",
+			repos:      []overview.Repo{alpha, beta},
+			downs:      1,
+			msg:        snapshotMsg{err: errors.New("collector offline")},
+			wantRepos:  []string{"alpha", "beta"},
+			wantSelect: 1,
+			wantErr:    "collector offline",
+		},
+		{
+			name:       "a later success clears a planted error",
+			repos:      []overview.Repo{alpha},
+			priorErr:   true,
+			msg:        snapshotMsg{repos: fresh},
+			wantRepos:  []string{"fresh"},
+			wantSelect: 0,
+			wantErr:    "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewLive(tt.repos, (&recorder{}).refresh, time.Second)
+			for i := 0; i < tt.downs; i++ {
+				m = update(t, m, keyMsg("down"))
+			}
+			if tt.priorErr {
+				m = update(t, m, snapshotMsg{err: errors.New("planted failure")})
+			}
+			m = update(t, m, tt.msg)
+
+			got := m.Repos()
+			if len(got) != len(tt.wantRepos) {
+				t.Fatalf("Repos() has %d entries (%v), want %d", len(got), got, len(tt.wantRepos))
+			}
+			for i, want := range tt.wantRepos {
+				if got[i].Name != want {
+					t.Errorf("Repos()[%d].Name = %q, want %q", i, got[i].Name, want)
+				}
+			}
+			if m.Selected() != tt.wantSelect {
+				t.Errorf("selected = %d, want %d", m.Selected(), tt.wantSelect)
+			}
+			if m.Err() != tt.wantErr {
+				t.Errorf("Err() = %q, want %q", m.Err(), tt.wantErr)
+			}
+		})
 	}
 }
