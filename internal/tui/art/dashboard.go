@@ -200,7 +200,7 @@ func rightLines(p painter, w int) []string {
 			span{" " + kv[0] + spaces(12-runeLen(kv[0])), Dim},
 			span{" " + kv[1], White}))
 	}
-	lines = append(lines, p.spanLine(w, span{" " + strings.Repeat("═", maxInt(4, w-2)), Purple}))
+	lines = append(lines, p.spanLine(w, span{" " + strings.Repeat("═", max(4, w-2)), Purple}))
 	lines = append(lines, p.spanLine(w, span{" ACTIVITY", White}))
 	for _, a := range mockActivity {
 		lines = append(lines, p.spanLine(w,
@@ -217,7 +217,7 @@ func rightLines(p painter, w int) []string {
 // Both inputs may already carry ANSI colors, so alignment measures visible
 // runes only.
 func zipPanes(p painter, left, right []string, leftWidth, width int) []string {
-	rows := maxInt(len(left), len(right))
+	rows := max(len(left), len(right))
 	out := make([]string, 0, rows)
 	separator := p.paint(Dim, " │ ")
 	for i := 0; i < rows; i++ {
@@ -284,7 +284,7 @@ func rule(p painter, width int, major bool) string {
 		char = "═"
 		c = Purple
 	}
-	return p.spanLine(width, span{" " + strings.Repeat(char, maxInt(4, width-2)), c})
+	return p.spanLine(width, span{" " + strings.Repeat(char, max(4, width-2)), c})
 }
 
 // leftPaneWidth fixes the tree pane: 38% of the width, clamped so the
@@ -298,11 +298,4 @@ func leftPaneWidth(width int) int {
 		w = 44
 	}
 	return w
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

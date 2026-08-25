@@ -76,18 +76,6 @@ type span struct {
 	c    Color
 }
 
-// builder accumulates strings with minimal overhead.
-type builder struct{ parts []string }
-
-func (b *builder) add(s string) { b.parts = append(b.parts, s) }
-func (b *builder) String() string {
-	out := ""
-	for _, p := range b.parts {
-		out += p
-	}
-	return out
-}
-
 func spaces(n int) string {
 	if n <= 0 {
 		return ""

@@ -25,11 +25,15 @@ obtain explicit operator approval before any infrastructure work starts.
 - No CLI wiring, no registry, no catalog, no daemon supervision.
 - No changes outside the worktree; main and reengineering artifacts untouched.
 
-## Acceptance
+## Acceptance (amended after operator review)
 
-- Operator approves splash, compact mascot, and dashboards (visual gate).
+- Operator approves the dashboard contract (the pixel-art splash and
+  compact mascot were REJECTED and removed; text-first dashboard only).
 - `go build ./...`, `go vet ./...`, focused tests green; goldens stable.
 - Staged commits within the 400-line review budget (split by work unit).
+- Review mechanism: sentinel review ran for this slice; subsequent slices
+  use the code-review skill until the operator fixes the sentinel review
+  defects recorded above.
 
 ## Rollback
 
