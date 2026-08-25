@@ -9,8 +9,27 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/setup"
 )
+
+func isolateRepositoryRegistry(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "repositories.json")
+	previous := resolveRepositoryRegistryPath
+	resolveRepositoryRegistryPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { resolveRepositoryRegistryPath = previous })
+	return path
+}
+
+func repositoryCount(t *testing.T, path string) int {
+	t.Helper()
+	store, err := registry.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store.Len()
+}
 
 // prepareInitRepository creates a throwaway repository with the DEFAULT hooks
 // layout (no core.hooksPath override), so init's hook lands where plain Git
@@ -37,6 +56,7 @@ func prepareInitRepository(t *testing.T) string {
 // executable on Linux, the marked guardian rule block lands in the agent
 // instruction files, and the per-project configuration is created.
 func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
+	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
 
 	ejecutarInit(root)
@@ -91,6 +111,9 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 	if !setup.EstaInicializado(root) {
 		t.Error("init did not leave the per-project configuration (.vas_sentinel/vassentinel.yml)")
 	}
+	if count := repositoryCount(t, registryPath); count != 1 {
+		t.Fatalf("init registered %d repositories, want 1", count)
+	}
 
 	t.Run("is idempotent", func(t *testing.T) {
 		hookBefore, err := os.ReadFile(hookPath)
@@ -112,6 +135,9 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 		if n := strings.Count(string(agents), marcadorInicio); n != 1 {
 			t.Errorf("after repeating init there are %d rule blocks, expected 1", n)
 		}
+		if count := repositoryCount(t, registryPath); count != 1 {
+			t.Errorf("repeated init registered %d repositories, want 1", count)
+		}
 	})
 }
 
@@ -120,6 +146,7 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 // removed, rule blocks retired from the agent files while their own content
 // survives.
 func TestUninitRevierteHookConfigYReglas(t *testing.T) {
+	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
 	contenidoPropio := "# My project\n\nOwn documentation.\n"
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(contenidoPropio), 0644); err != nil {
@@ -145,6 +172,9 @@ func TestUninitRevierteHookConfigYReglas(t *testing.T) {
 	if setup.EstaInicializado(root) {
 		t.Error("uninit did not remove the per-project configuration")
 	}
+	if count := repositoryCount(t, registryPath); count != 0 {
+		t.Errorf("uninit left %d repositories registered", count)
+	}
 	datos, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +191,7 @@ func TestUninitRevierteHookConfigYReglas(t *testing.T) {
 // TestUninitPreservaHookAjeno: if another tool replaced the hook after init,
 // uninit must leave it alone instead of deleting what it did not install.
 func TestUninitPreservaHookAjeno(t *testing.T) {
+	isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
 	ejecutarInit(root)
 
@@ -182,6 +213,23 @@ func TestUninitPreservaHookAjeno(t *testing.T) {
 	}
 	if string(datos) != ajeno {
 		t.Errorf("uninit modified the foreign hook: %q", datos)
+	}
+}
+
+func TestInitContinuesWhenRepositoryRegistryUpdateFails(t *testing.T) {
+	root := prepareInitRepository(t)
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	previous := resolveRepositoryRegistryPath
+	resolveRepositoryRegistryPath = func() (string, error) {
+		return filepath.Join(parentFile, "repositories.json"), nil
+	}
+	t.Cleanup(func() { resolveRepositoryRegistryPath = previous })
+	ejecutarInit(root)
+	if !setup.EstaInicializado(root) {
+		t.Fatal("init failed because the additive registry update failed")
 	}
 }
 

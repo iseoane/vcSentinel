@@ -15,10 +15,37 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/setup"
 )
 
 var version = "dev"
+
+var resolveRepositoryRegistryPath = func() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".vas_sentinel", "repositories.json"), nil
+}
+
+func updateRepositoryRegistry(repositoryPath string, register bool) {
+	path, err := resolveRepositoryRegistryPath()
+	if err == nil {
+		var stored *registry.Registry
+		stored, err = registry.Open(path)
+		if err == nil {
+			if register {
+				_, err = stored.Register(repositoryPath)
+			} else {
+				_, err = stored.Remove(repositoryPath)
+			}
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vas-sentinel: repository registry update failed: %v\n", err)
+	}
+}
 
 // marcadorInicio y marcadorFin delimitan el bloque de reglas de volumen de
 // forma estable entre versiones: init/uninit lo detectan y lo retiran por
@@ -285,11 +312,13 @@ func ejecutarInit(path string) {
 	fmt.Println("⚙️ Inicializando VAS Sentinel en este entorno...")
 
 	archivosObjetivo := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}
+	rulesSucceeded := true
 
 	for _, nombre := range archivosObjetivo {
 		escrito, err := inyectarReglasDeArchivo(filepath.Join(path, nombre))
 		switch {
 		case err != nil:
+			rulesSucceeded = false
 			fmt.Printf("⚠️ No se pudo inyectar en %s: %v\n", nombre, err)
 		case escrito:
 			fmt.Printf("📝 Reglas de volumen inyectadas en: %s\n", nombre)
@@ -323,13 +352,18 @@ func ejecutarInit(path string) {
 		os.Exit(1)
 	}
 
+	configurationSucceeded := true
 	if err := setup.CrearConfiguracionPerProyecto(path); err != nil {
+		configurationSucceeded = false
 		fmt.Printf("⚠️ No se pudo crear la configuración per-proyecto: %v\n", err)
 	} else {
 		fmt.Println("📄 Configuración per-proyecto creada en: .vas_sentinel/vassentinel.yml")
 	}
 
 	fmt.Println("⚓ Git Hook 'pre-commit' instalado en este repositorio. Entorno securizado con éxito.")
+	if rulesSucceeded && configurationSucceeded {
+		updateRepositoryRegistry(path, true)
+	}
 }
 
 // ejecutarUninit revierte en este repositorio exactamente lo que 'init' hizo:
@@ -379,6 +413,7 @@ func ejecutarUninit(path string) {
 	}
 
 	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
+	updateRepositoryRegistry(path, false)
 }
 
 // inyectarReglasDeArchivo appends the managed rule when it is absent and
