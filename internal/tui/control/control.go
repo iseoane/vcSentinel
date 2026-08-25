@@ -157,7 +157,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// exactly one refresh. Batch keeps both effects; bubbletea gives no
 		// ordering guarantees between them, and none are needed because they
 		// are independent.
-		return m, tea.Batch(m.scheduleCmd(m.interval), m.refreshSnapshot())
+		return m, tea.Batch(m.scheduleCmd(m.interval), m.refreshSnapshotCmd())
 	case snapshotMsg:
 		if msg.err != nil {
 			m.err = msg.err.Error()
@@ -185,8 +185,9 @@ func (m Model) View() string {
 }
 
 // scheduleCmd resolves the tick scheduler: live models use their injected
-// scheduler when set, falling back to tea.Tick otherwise, so a model that
-// never went through NewLive can never panic on a stray tick either.
+// scheduler when set (it runs eagerly inside Update — a test seam only),
+// falling back to tea.Tick otherwise, so a model that never went through
+// NewLive can never panic on a stray tick either.
 func (m Model) scheduleCmd(d time.Duration) tea.Cmd {
 	if m.schedule != nil {
 		return m.schedule(d)
@@ -194,10 +195,10 @@ func (m Model) scheduleCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-// refreshSnapshot runs the injected collector inside the command goroutine
+// refreshSnapshotCmd runs the injected collector inside the command goroutine
 // and wraps its result as its own message, keeping Update pure: the snapshot
 // lands later than the reschedule it raced with, in either order.
-func (m Model) refreshSnapshot() tea.Cmd {
+func (m Model) refreshSnapshotCmd() tea.Cmd {
 	refresh := m.refresh
 	return func() tea.Msg {
 		repos, err := refresh()
