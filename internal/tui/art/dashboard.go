@@ -68,6 +68,13 @@ var mockLocation = [][2]string{
 	{"Status", "clean · 3 worktrees · 3 runs"},
 }
 
+// mockSummary is the fixed header daemon summary of the visual contract.
+var mockSummary = []span{
+	{"● 2 daemons ", Rose},
+	{"· 3 active ", Blue},
+	{"· 1 attention", Yellow},
+}
+
 type activityRow struct {
 	icon  string
 	flow  string
@@ -103,22 +110,30 @@ func keyLine(p painter, width int) string {
 
 func renderDashboard(width int, colors bool) string {
 	p := painter{colors: colors}
+	return renderFrame(p, width, mockSummary,
+		func(w int) []string { return treeLines(p, w, mockRepos) },
+		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity) })
+}
 
+// renderFrame assembles the approved frame: rules, header with the daemon
+// summary, panes (stacked below 84 columns), and navigation footer. Pane
+// builders run lazily because the two modes need different pane widths;
+// mock and real-data renders share this frame unchanged.
+func renderFrame(p painter, width int, summary []span, tree, right func(int) []string) string {
 	var lines []string
 	lines = append(lines, rule(p, width, true))
-	lines = append(lines, headerLine(p, width))
+	lines = append(lines, headerLine(p, width, summary))
 	lines = append(lines, rule(p, width, true))
 
 	if width < 84 {
 		// Stacked: every block gets the full width.
-		lines = append(lines, treeLines(p, width)...)
+		lines = append(lines, tree(width)...)
 		lines = append(lines, rule(p, width, false))
-		lines = append(lines, rightLines(p, width)...)
+		lines = append(lines, right(width)...)
 	} else {
 		leftWidth := leftPaneWidth(width)
-		tree := treeLines(p, leftWidth)
-		right := rightLines(p, width-leftWidth-3)
-		lines = append(lines, zipPanes(p, tree, right, leftWidth, width)...)
+		rightWidth := width - leftWidth - 3
+		lines = append(lines, zipPanes(p, tree(leftWidth), right(rightWidth), leftWidth, width)...)
 	}
 
 	lines = append(lines, rule(p, width, true))
@@ -127,13 +142,8 @@ func renderDashboard(width int, colors bool) string {
 }
 
 // headerLine renders the title with the colored daemon summary right-aligned.
-func headerLine(p painter, width int) string {
+func headerLine(p painter, width int, summary []span) string {
 	title := span{" SENTINEL CONTROL CENTER", Purple}
-	summary := []span{
-		{"● 2 daemons ", Rose},
-		{"· 3 active ", Blue},
-		{"· 1 attention", Yellow},
-	}
 	summaryWidth := 0
 	for _, s := range summary {
 		summaryWidth += runeLen(s.text)
@@ -142,14 +152,16 @@ func headerLine(p painter, width int) string {
 	if gap < 1 {
 		return p.spanLine(width, title)
 	}
-	return p.spanLine(width, title, span{spaces(gap), Reset}, summary[0], summary[1], summary[2])
+	spans := make([]span, 0, len(summary)+2)
+	spans = append(spans, title, span{spaces(gap), Reset})
+	return p.spanLine(width, append(spans, summary...)...)
 }
 
 // treeLines renders the repository/worktree tree pane with fixed state
 // columns so statuses align down the panel.
-func treeLines(p painter, w int) []string {
+func treeLines(p painter, w int, repos []repoRow) []string {
 	lines := []string{p.spanLine(w, span{" REPOSITORIES", White})}
-	for _, r := range mockRepos {
+	for _, r := range repos {
 		marker := "▸"
 		if r.expanded {
 			marker = "▾"
@@ -192,17 +204,17 @@ func fitRunes(s string, n int) string {
 
 // rightLines renders the LOCATION block, an inner double separator, and the
 // ACTIVITY block for the pane width.
-func rightLines(p painter, w int) []string {
+func rightLines(p painter, w int, location [][2]string, activity []activityRow) []string {
 	var lines []string
 	lines = append(lines, p.spanLine(w, span{" LOCATION", White}))
-	for _, kv := range mockLocation {
+	for _, kv := range location {
 		lines = append(lines, p.spanLine(w,
 			span{" " + kv[0] + spaces(12-runeLen(kv[0])), Dim},
 			span{" " + kv[1], White}))
 	}
 	lines = append(lines, p.spanLine(w, span{" " + strings.Repeat("═", max(4, w-2)), Purple}))
 	lines = append(lines, p.spanLine(w, span{" ACTIVITY", White}))
-	for _, a := range mockActivity {
+	for _, a := range activity {
 		lines = append(lines, p.spanLine(w,
 			span{" " + a.icon, statusColor[a.kind]},
 			span{" " + fitRunes(a.flow, 16), White},
