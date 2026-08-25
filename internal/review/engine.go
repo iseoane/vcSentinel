@@ -581,7 +581,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
 
-	crudo, err := ParsearDimensionResultParaContrato(output, contract)
+	crudo, err := ParseDimensionResultForContract(output, contract)
 	if err != nil {
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
 	}
@@ -595,7 +595,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 			failure := &ProviderExecutionFailure{Err: err}
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 		}
-		crudo, err = ParsearDimensionResultParaContrato(output, contract)
+		crudo, err = ParseDimensionResultForContract(output, contract)
 		if err != nil {
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
 		}

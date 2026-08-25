@@ -52,11 +52,11 @@ func (a *auditorStub) EjecutarPrompt(prompt string) (string, error) {
 	a.mu.Lock()
 	a.llamadasAudit++
 	a.mu.Unlock()
-	return salidaParaDimension(a.auditSalida, prompt), nil
+	return outputForDimension(a.auditSalida, prompt), nil
 }
 
-func salidaParaDimension(salida, prompt string) string {
-	return strings.ReplaceAll(salida, `"logic"`, fmt.Sprintf("%q", dimensionFromPrompt(prompt)))
+func outputForDimension(output, prompt string) string {
+	return strings.ReplaceAll(output, `"logic"`, fmt.Sprintf("%q", dimensionFromPrompt(prompt)))
 }
 
 func (a *auditorStub) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
@@ -68,7 +68,7 @@ func (a *auditorStub) ReviewWithPolicy(prompt, sha string, paths []string, _ rev
 }
 
 // salidaAuditOK is a canonical review result whose dimension is bound to the
-// requested contract by salidaParaDimension.
+// requested contract by outputForDimension.
 const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
 
 func fabricaStub(a AuditorAgente) FabricaAuditor {

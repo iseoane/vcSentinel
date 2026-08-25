@@ -37,10 +37,10 @@ func (a *agenteFake) EjecutarPrompt(prompt string) (string, error) {
 		salida = a.respuestas[a.llamadas]
 	}
 	a.llamadas++
-	return completarContratoDePrueba(salida), nil
+	return completeTestContract(salida), nil
 }
 
-func completarContratoDePrueba(output string) string {
+func completeTestContract(output string) string {
 	var result map[string]any
 	if json.Unmarshal([]byte(output), &result) != nil {
 		return output
@@ -458,7 +458,7 @@ type agenteEfectivoFake struct {
 func (a agenteEfectivoFake) EjecutarPrompt(string) (string, error) { return a.respuesta, nil }
 
 func (a agenteEfectivoFake) EjecutarRevision(string, string, []string) (string, error) {
-	return completarContratoDePrueba(a.respuesta), nil
+	return completeTestContract(a.respuesta), nil
 }
 
 func (a agenteEfectivoFake) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
@@ -1352,7 +1352,7 @@ type auditorFunc func(string) (string, error)
 
 func (f auditorFunc) EjecutarPrompt(prompt string) (string, error) {
 	output, err := f(prompt)
-	return completarContratoDePrueba(output), err
+	return completeTestContract(output), err
 }
 
 func (f auditorFunc) EjecutarRevision(prompt, _ string, _ []string) (string, error) {

@@ -648,18 +648,18 @@ func ParsearDimensionResult(salida string) (*DimensionResult, error) {
 	if err != nil {
 		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
 	}
-	return parsearDimensionResult(salida, "", contract.OutputSchema, reviewcontract.EvidencePolicy{})
+	return parseDimensionResult(salida, "", contract.OutputSchema, reviewcontract.EvidencePolicy{})
 }
 
-// ParsearDimensionResultParaContrato parses a provider answer against the
+// ParseDimensionResultForContract parses a provider answer against the
 // schema selected for one requested contract. A valid result for any other
 // canonical dimension is a deterministic schema failure.
-func ParsearDimensionResultParaContrato(salida string, contract reviewcontract.DimensionContract) (*DimensionResult, error) {
-	return parsearDimensionResult(salida, contract.Name, contract.OutputSchema, contract.EvidencePolicy)
+func ParseDimensionResultForContract(output string, contract reviewcontract.DimensionContract) (*DimensionResult, error) {
+	return parseDimensionResult(output, contract.Name, contract.OutputSchema, contract.EvidencePolicy)
 }
 
-func parsearDimensionResult(salida, expectedDimension string, schema reviewcontract.OutputSchema, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error) {
-	bloque := extraerBloqueJSONLConSchema(salida, schema)
+func parseDimensionResult(salida, expectedDimension string, schema reviewcontract.OutputSchema, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error) {
+	bloque := extractJSONLBlockWithSchema(salida, schema)
 	lineas := strings.Split(bloque, "\n")
 
 	var descartadas int
@@ -698,7 +698,7 @@ func parsearDimensionResult(salida, expectedDimension string, schema reviewcontr
 				fmt.Sprintf("veredicto %q normalizado según severidades de hallazgos", crudo.Verdict))
 			crudo.Verdict = ""
 		}
-		if err := validarFindingsContraContrato(crudo.Findings, evidencePolicy); err != nil {
+		if err := validateFindingsAgainstContract(crudo.Findings, evidencePolicy); err != nil {
 			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, bloque)
 		}
 
@@ -716,7 +716,7 @@ func parsearDimensionResult(salida, expectedDimension string, schema reviewcontr
 			Reason:       crudo.Reason,
 			Advertencias: normalizaciones,
 		}
-		return validarDimensionContrato(resultado, expectedDimension, bloque)
+		return validateContractDimension(resultado, expectedDimension, bloque)
 	}
 
 	if strings.TrimSpace(bloque) == "" {
@@ -731,12 +731,12 @@ func parsearDimensionResult(salida, expectedDimension string, schema reviewcontr
 		if err != nil {
 			return nil, err
 		}
-		return validarDimensionContrato(res, expectedDimension, bloque)
+		return validateContractDimension(res, expectedDimension, bloque)
 	}
 	return nil, classifyUnparseableSemanticOutput(bloque)
 }
 
-func validarFindingsContraContrato(findings []findingCrudo, policy reviewcontract.EvidencePolicy) error {
+func validateFindingsAgainstContract(findings []findingCrudo, policy reviewcontract.EvidencePolicy) error {
 	if !policy.RequireLiteralEvidence && !policy.RequireConfidence {
 		return nil
 	}
@@ -756,11 +756,11 @@ func validarFindingsContraContrato(findings []findingCrudo, policy reviewcontrac
 	return nil
 }
 
-func validarDimensionContrato(resultado *DimensionResult, expectedDimension, output string) (*DimensionResult, error) {
-	if expectedDimension == "" || resultado.Dim == expectedDimension {
-		return resultado, nil
+func validateContractDimension(result *DimensionResult, expectedDimension, output string) (*DimensionResult, error) {
+	if expectedDimension == "" || result.Dim == expectedDimension {
+		return result, nil
 	}
-	return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: requested %q, received %q", ErrDimensionMismatch, expectedDimension, resultado.Dim), output)
+	return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: requested %q, received %q", ErrDimensionMismatch, expectedDimension, result.Dim), output)
 }
 
 // parsearObjetoMultilinea intenta interpretar el bloque como un único objeto
@@ -794,7 +794,7 @@ func parsearObjetoMultilinea(bloque string, evidencePolicy reviewcontract.Eviden
 			fmt.Sprintf("veredicto %q normalizado según severidades de hallazgos", verdict))
 		verdict = ""
 	}
-	if err := validarFindingsContraContrato(crudo.Findings, evidencePolicy); err != nil {
+	if err := validateFindingsAgainstContract(crudo.Findings, evidencePolicy); err != nil {
 		return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, bloque), true
 	}
 
@@ -854,18 +854,18 @@ func extraerBloqueJSONL(salida string) string {
 	if err != nil {
 		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
 	}
-	return extraerBloqueJSONLConSchema(salida, contract.OutputSchema)
+	return extractJSONLBlockWithSchema(salida, contract.OutputSchema)
 }
 
-func extraerBloqueJSONLConSchema(salida string, schema reviewcontract.OutputSchema) string {
-	inicio := strings.Index(salida, schema.BeginDelimiter)
+func extractJSONLBlockWithSchema(output string, schema reviewcontract.OutputSchema) string {
+	inicio := strings.Index(output, schema.BeginDelimiter)
 	if inicio < 0 {
-		return salida
+		return output
 	}
 	inicio += len(schema.BeginDelimiter)
-	fin := strings.Index(salida[inicio:], schema.EndDelimiter)
+	fin := strings.Index(output[inicio:], schema.EndDelimiter)
 	if fin < 0 {
-		return salida[inicio:]
+		return output[inicio:]
 	}
-	return salida[inicio : inicio+fin]
+	return output[inicio : inicio+fin]
 }

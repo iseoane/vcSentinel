@@ -21,7 +21,7 @@ type auditorFalso struct {
 }
 
 func (a *auditorFalso) EjecutarPrompt(prompt string) (string, error) {
-	return completarContratoDePrueba(a.salida), a.err
+	return completeTestContract(a.salida), a.err
 }
 
 func (a *auditorFalso) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
@@ -32,7 +32,7 @@ func (a *auditorFalso) ReviewWithPolicy(prompt, sha string, paths []string, _ re
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
-func completarContratoDePrueba(output string) string {
+func completeTestContract(output string) string {
 	var result map[string]any
 	if json.Unmarshal([]byte(output), &result) != nil {
 		return output
@@ -302,7 +302,7 @@ type auditorSecuencial struct {
 func (a *auditorSecuencial) EjecutarPrompt(string) (string, error) {
 	salida := a.respuestas[*a.llamadas]
 	*a.llamadas++
-	return completarContratoDePrueba(salida), nil
+	return completeTestContract(salida), nil
 }
 
 func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string) (string, error) {

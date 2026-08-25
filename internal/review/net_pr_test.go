@@ -20,7 +20,7 @@ func (s *historyStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	if strings.Contains(prompt, "+defect\n") && !strings.Contains(prompt, "Pull request intention:") {
 		return auditOutputCritical, nil
 	}
-	return salidaParaDimension(s.auditSalida, prompt), nil
+	return outputForDimension(s.auditSalida, prompt), nil
 }
 
 func (s *historyStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
@@ -41,9 +41,9 @@ type answeringStub struct {
 func (s *answeringStub) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	s.prompts = append(s.prompts, prompt)
 	if strings.Contains(prompt, s.marker) {
-		return salidaParaDimension(s.output, prompt), nil
+		return outputForDimension(s.output, prompt), nil
 	}
-	return salidaParaDimension(s.auditSalida, prompt), nil
+	return outputForDimension(s.auditSalida, prompt), nil
 }
 
 func (s *answeringStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {

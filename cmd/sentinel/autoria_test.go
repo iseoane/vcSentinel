@@ -28,11 +28,11 @@ type agenteSoloPrompt struct {
 	prompts int
 }
 
-type agentePoliticaGrabada struct{ policy reviewcontract.ToolPolicy }
+type policyRecordingAgent struct{ policy reviewcontract.ToolPolicy }
 
-func (*agentePoliticaGrabada) EjecutarPrompt(string) (string, error) { return "ok", nil }
+func (*policyRecordingAgent) EjecutarPrompt(string) (string, error) { return "ok", nil }
 
-func (a *agentePoliticaGrabada) ReviewWithPolicy(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *policyRecordingAgent) ReviewWithPolicy(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
 	a.policy = policy
 	return "ok", nil
 }
@@ -79,7 +79,7 @@ func TestAgenteObservadoEjecutarRevisionRequiereCapacidadRestringida(t *testing.
 }
 
 func TestAgenteObservadoForwardsSemanticToolPolicy(t *testing.T) {
-	inner := &agentePoliticaGrabada{}
+	inner := &policyRecordingAgent{}
 	agent := &agenteObservado{AuditorAgente: inner, autoria: &recolectorAutoria{}}
 	policy := reviewcontract.DefaultToolPolicy()
 

@@ -30,7 +30,7 @@ func (r h5Reviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ revie
 }
 
 func (r h5Reviewer) resultado() (string, error) {
-	return completarContratoDePrueba(string(mustJSON(struct {
+	return completeTestContract(string(mustJSON(struct {
 		Dim      string          `json:"dim"`
 		Verdict  string          `json:"verdict"`
 		Findings []ReviewFinding `json:"findings"`
