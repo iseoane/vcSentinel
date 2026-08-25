@@ -3,6 +3,7 @@ package control
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbletea"
 
@@ -41,8 +42,8 @@ func update(t *testing.T, m Model, msg tea.Msg) Model {
 	return next.(Model)
 }
 
-// apply drives m through a sequence of key presses.
-func apply(t *testing.T, m Model, keys ...string) Model {
+// pressKeys drives m through a sequence of key presses.
+func pressKeys(t *testing.T, m Model, keys ...string) Model {
 	t.Helper()
 	for _, k := range keys {
 		m = update(t, m, keyMsg(k))
@@ -107,7 +108,7 @@ func TestUpdateKeyRouting(t *testing.T) {
 		},
 		{
 			name:  "k moves the cursor up",
-			setup: func(t *testing.T) Model { return apply(t, New(repos), "down", "down") },
+			setup: func(t *testing.T) Model { return pressKeys(t, New(repos), "down", "down") },
 			key:   "k",
 			assert: func(t *testing.T, before Model, after Model, cmd tea.Cmd) {
 				want := before.Selected() - 1
@@ -128,7 +129,7 @@ func TestUpdateKeyRouting(t *testing.T) {
 		},
 		{
 			name:  "down clamps at the bottom",
-			setup: func(t *testing.T) Model { return apply(t, New(repos), "down", "down") },
+			setup: func(t *testing.T) Model { return pressKeys(t, New(repos), "down", "down") },
 			key:   "down",
 			assert: func(t *testing.T, before Model, after Model, cmd tea.Cmd) {
 				if after.Selected() != len(repos)-1 {
@@ -191,7 +192,7 @@ func TestUpdateKeyRouting(t *testing.T) {
 		},
 		{
 			name:  "unknown key leaves the whole model untouched",
-			setup: func(t *testing.T) Model { return apply(t, New(repos), "down") },
+			setup: func(t *testing.T) Model { return pressKeys(t, New(repos), "down") },
 			key:   "z",
 			assert: func(t *testing.T, before Model, after Model, cmd tea.Cmd) {
 				if after.Width() != before.Width() || after.Selected() != before.Selected() ||
@@ -285,7 +286,7 @@ func locationBlock(t *testing.T, view string) string {
 // repository and asserts its name and path drive the LOCATION block instead
 // of any other repository's.
 func TestViewRendersSelectedRepository(t *testing.T) {
-	m := apply(t, New([]overview.Repo{repo("alpha"), repo("beta"), repo("gamma")}), "down")
+	m := pressKeys(t, New([]overview.Repo{repo("alpha"), repo("beta"), repo("gamma")}), "down")
 	m = update(t, m, tea.WindowSizeMsg{Width: 70, Height: 24}) // stacked layout
 	loc := locationBlock(t, stripANSI(m.View()))
 	if !strings.Contains(loc, "beta") {
@@ -302,12 +303,18 @@ func TestViewRendersSelectedRepository(t *testing.T) {
 }
 
 // TestViewEmptyRegistryRendersEmptyState proves View never panics on an
-// empty registry (the renderer clamps out-of-range selections) and shows the
-// approved empty state.
+// empty registry (the renderer clamps out-of-range selections), shows the
+// approved empty state, and honors the default width before any window-size
+// message arrives.
 func TestViewEmptyRegistryRendersEmptyState(t *testing.T) {
 	m := New(nil)
 	out := stripANSI(m.View())
 	if !strings.Contains(out, "no repositories registered") {
 		t.Errorf("empty registry view missing the empty-state line:\n%s", out)
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if utf8.RuneCountInString(line) > DefaultWidth {
+			t.Errorf("default-width line %d overflows %d columns: %q", i, DefaultWidth, line)
+		}
 	}
 }
