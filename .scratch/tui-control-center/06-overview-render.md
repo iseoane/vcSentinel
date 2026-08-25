@@ -38,3 +38,11 @@ while keeping the approved mock goldens untouched as the visual contract.
 - Plain==colored rune parity asserted; all sections present at 84+ widths.
 - Existing art goldens unchanged and green; build/vet/focused/race/full
   suite green; within the 400-line budget.
+
+## Review decisions
+- The header "active" count is dirty worktrees, not durable runs:
+  overview.Repo carries no run facts yet (non-goals forbid touching
+  internal/overview this slice). Documented in overviewSummary; real run
+  counts arrive when the live model slice plumbs them.
+- Stopped repositories render red "○ STOPPED" in ACTIVITY (spec fix from
+  review: the default branch previously swallowed stStop as green HEALTHY).
