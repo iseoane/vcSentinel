@@ -91,6 +91,40 @@ func TestAgenteObservadoForwardsSemanticToolPolicy(t *testing.T) {
 	}
 }
 
+// reporteroEfectivo sabe decir quién atendió su última petición; es la
+// capacidad que el motor necesita para sellar el producer de cada hallazgo.
+type reporteroEfectivo struct {
+	identidad agentadapter.AgenteEfectivo
+	reporta   bool
+}
+
+func (r reporteroEfectivo) EjecutarPrompt(string) (string, error) { return "ok", nil }
+
+func (r reporteroEfectivo) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
+	return r.identidad, r.reporta
+}
+
+// TestAgenteObservadoReenviaElRespondedorEfectivo: el envoltorio debe exponer
+// la identidad del hijo real; si no, los producers de los hallazgos quedan
+// vacíos en la vía durable (defecto demostrado en la revisión en vivo de
+// 9c68ef3).
+func TestAgenteObservadoReenviaElRespondedorEfectivo(t *testing.T) {
+	efectivo := agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-luna", Esfuerzo: "max"}
+	envuelto := &observedAgent{
+		AuditorAgente: reporteroEfectivo{identidad: efectivo, reporta: true},
+		authorship:    &recolectorAutoria{},
+	}
+	obtenido, ok := envuelto.AgenteEfectivo()
+	if !ok || obtenido != efectivo {
+		t.Fatalf("AgenteEfectivo() = (%+v, %v), esperado (%+v, true)", obtenido, ok, efectivo)
+	}
+
+	mudo := &observedAgent{AuditorAgente: &agenteSoloPrompt{}, authorship: &recolectorAutoria{}}
+	if _, ok := mudo.AgenteEfectivo(); ok {
+		t.Fatal("un agente sin reporte no debería declarar identidad")
+	}
+}
+
 // TestRecolectorRegistraElAgenteQueRespondio: el caso de H4. La ficha debe
 // guardar quién respondió, no el nombre del perfil pedido.
 func TestRecolectorRegistraElAgenteQueRespondio(t *testing.T) {

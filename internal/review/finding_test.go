@@ -78,6 +78,8 @@ func TestParsearDimensionResultClassifiesDeterministicOutputErrors(t *testing.T)
 		{name: "malformed JSON", output: `{"dim":"logic",`, class: SemanticOutputMalformedJSON, legacy: ErrJSONLInvalido},
 		{name: "schema invalid result", output: `{"dim":"logic","verdict":false}`, class: SemanticOutputSchemaInvalid, legacy: ErrJSONLInvalido},
 		{name: "redacts and bounds excerpt", output: "tool denied token=" + longSecret, class: SemanticOutputToolDenied, legacy: ErrJSONLInvalido, redacted: longSecret},
+		{name: "redacts quoted json secret", output: `tool denied {"token":"s3cr3t-value"}`, class: SemanticOutputToolDenied, legacy: ErrJSONLInvalido, redacted: "s3cr3t-value"},
+		{name: "redacts quoted spaced json secret", output: `access denied {"api_key": "AKIA-EXAMPLE", "detail": "read"}`, class: SemanticOutputToolDenied, legacy: ErrJSONLInvalido, redacted: "AKIA-EXAMPLE"},
 	}
 
 	for _, tt := range tests {

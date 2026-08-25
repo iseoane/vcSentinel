@@ -70,6 +70,17 @@ func (a policyBoundReviewer) ReviewWithContextAndPolicy(ctx context.Context, pro
 
 func (a policyBoundReviewer) ReviewToolPolicy() reviewcontract.ToolPolicy { return a.policy }
 
+// AgenteEfectivo forwards the wrapped agent's effective-responder report so
+// per-finding producer stamping keeps working through the policy binding the
+// durable transport requires.
+func (a policyBoundReviewer) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
+	reporta, ok := a.AuditorAgente.(agentadapter.ReportaAgenteEfectivo)
+	if !ok {
+		return agentadapter.AgenteEfectivo{}, false
+	}
+	return reporta.AgenteEfectivo()
+}
+
 // FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
 // además el nombre del perfil aplicado. Inyectable en los tests.
 type FabricaAuditor func(bundle ReviewBundle, dimension string) (AuditorAgente, string, error)

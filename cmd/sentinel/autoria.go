@@ -47,6 +47,17 @@ func (a *observedAgent) EjecutarPrompt(prompt string) (string, error) {
 	return salida, err
 }
 
+// AgenteEfectivo forwards the wrapped adapter's effective-responder report so
+// per-finding producer stamping survives authorship observation: the engine
+// sees this wrapper, not the CLIAdapter that knows who answered.
+func (a *observedAgent) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
+	reporta, ok := a.AuditorAgente.(agentadapter.ReportaAgenteEfectivo)
+	if !ok {
+		return agentadapter.AgenteEfectivo{}, false
+	}
+	return reporta.AgenteEfectivo()
+}
+
 func (a *observedAgent) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	reviewer, ok := a.AuditorAgente.(interface {
 		EjecutarRevision(string, string, []string) (string, error)

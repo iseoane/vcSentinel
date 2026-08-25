@@ -583,6 +583,11 @@ const maxSemanticOutputEvidenceRunes = 240
 
 var semanticOutputSecret = regexp.MustCompile(`(?i)\b(api[_ -]?key|authorization|token|password|secret)\b\s*[:=]\s*(?:bearer\s+)?[^\s,;]+`)
 
+// semanticOutputQuotedSecret covers JSON-shaped secrets the bare pattern
+// misses, where a quote separates the key from its value
+// ({"token":"SECRET"}). Live review evidence showed exactly this form.
+var semanticOutputQuotedSecret = regexp.MustCompile(`(?i)"(api[_ -]?key|authorization|token|password|secret)"\s*:\s*"[^"]*"`)
+
 // SemanticOutputError preserves a bounded, redacted excerpt for deterministic
 // provider output failures while retaining the legacy sentinel through Unwrap.
 type SemanticOutputError struct {
@@ -605,7 +610,9 @@ func newSemanticOutputError(class SemanticOutputClass, legacy error, output stri
 }
 
 func semanticOutputEvidence(output string) string {
-	evidence := semanticOutputSecret.ReplaceAllString(strings.Join(strings.Fields(output), " "), "$1=[REDACTED]")
+	evidence := strings.Join(strings.Fields(output), " ")
+	evidence = semanticOutputSecret.ReplaceAllString(evidence, "$1=[REDACTED]")
+	evidence = semanticOutputQuotedSecret.ReplaceAllString(evidence, `"$1":"[REDACTED]"`)
 	runes := []rune(evidence)
 	if len(runes) <= maxSemanticOutputEvidenceRunes {
 		return evidence

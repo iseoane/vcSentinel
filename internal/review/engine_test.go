@@ -1438,3 +1438,37 @@ func TestReviewTransportErrorBecomesUnavailableWithConcreteReason(t *testing.T) 
 		t.Fatalf("dimension = %+v, want unavailable verdict preserving concrete reason", dim)
 	}
 }
+
+type reporteroEfectivoFake struct {
+	agenteFake
+	efectivo agentadapter.AgenteEfectivo
+	reporta  bool
+}
+
+func (r *reporteroEfectivoFake) EjecutarPrompt(string) (string, error) { return "ok", nil }
+
+func (r *reporteroEfectivoFake) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
+	return r.efectivo, r.reporta
+}
+
+// TestPolicyBoundReviewerReenviaElRespondedorEfectivo garantiza que el
+// sellado de producer por hallazgo sobrevive al enlace de política del
+// transporte durable (defecto demostrado en la revisión en vivo).
+func TestPolicyBoundReviewerReenviaElRespondedorEfectivo(t *testing.T) {
+	efectivo := agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-luna", Esfuerzo: "max"}
+	policy := reviewcontract.DefaultToolPolicy()
+	enlazado := bindPolicy(&reporteroEfectivoFake{efectivo: efectivo, reporta: true}, policy)
+
+	obtenido, ok := enlazado.AgenteEfectivo()
+	if !ok || obtenido != efectivo {
+		t.Fatalf("AgenteEfectivo() = (%+v, %v), esperado (%+v, true)", obtenido, ok, efectivo)
+	}
+	if !enlazado.ReviewToolPolicy().AllowRead {
+		t.Fatal("ReviewToolPolicy perdió la política canónica")
+	}
+
+	mudo := bindPolicy(&agenteFake{}, policy)
+	if _, ok := mudo.AgenteEfectivo(); ok {
+		t.Fatal("un agente sin reporte no debería declarar identidad")
+	}
+}
