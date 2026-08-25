@@ -57,3 +57,28 @@ Delete `internal/tui/art` and `tools/tuipreview`; nothing else references them.
   (dashboard redesign + preview). All within budget; suite green incl. race.
 - HTML proof regenerated via tuipreview -html.
 - Pending: operator visual approval of the redesign; then code-review + JD.
+
+## Review round 2 (sentinel review, then paused)
+
+- sentinel review of 3df8b1a found: spec CRITICAL (doc comment promised an
+  outer box frame the renderer never draws), spec WARNING (state columns not
+  aligned for long names), design WARNING (renderDashboard mutated
+  package-global color state), security WARNING (mock embedded operator
+  identity). All four fixed in 655802d; design re-review verdict ok.
+- Re-review logic WARNING (SetColors removal breaking callers) verified
+  INERT: zero callers module-wide, build and tests green.
+- OPERATOR DIRECTIVE: sentinel reviews are PAUSED until the operator fixes
+  the defects discovered while running them. Until then slice verification
+  uses the code-review skill. Defects discovered (for the operator):
+  1. A review killed mid-run leaves durable runs stuck in class
+     operator_required; `runs recover --repair` refuses the class and
+     `runs abort` is accepted but inert (state stays running) — no CLI
+     surface settles them.
+  2. Review ledger records are written to the LINKED WORKTREE's git dir
+     (.git/worktrees/<name>/vas-sentinel/) instead of the git COMMON dir,
+     so records split across worktrees and main-side listing/prune cannot
+     see them.
+  3. `sentinel review --json` still emitted the human-readable summary; no
+     machine-readable document was produced.
+  4. Three orphaned operator_required runs remain in the shared store as
+     known residue: 16eee5c5…, c7bd62ca…, e98dbc89….
