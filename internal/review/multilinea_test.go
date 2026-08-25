@@ -18,7 +18,7 @@ func TestParsearDimensionResultJSONMultilinea(t *testing.T) {
 }
 END_REVIEW`
 
-	res, err := ParsearDimensionResult(salida)
+	res, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error con JSON pretty-printed: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestParsearDimensionResultJSONMultilineaConHallazgos(t *testing.T) {
 }
 END_REVIEW`
 
-	res, err := ParsearDimensionResult(salida)
+	res, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error con JSON multilínea + hallazgos: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestParsearDimensionResultJSONMultilineaSinDelimitadores(t *testing.T) {
   "findings": []
 }`
 
-	res, err := ParsearDimensionResult(salida)
+	res, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error sin delimitadores: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestParseJSONMultilineaEsFallback(t *testing.T) {
 }
 END_REVIEW`
 
-	res, err := ParsearDimensionResult(salida)
+	res, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -119,9 +119,9 @@ END_REVIEW`
 	}
 }
 
-// TestParsearDimensionResultJSONMultilineaConCamposV2: el fallback multilínea
-// (parsearObjetoMultilinea) también debe reconocer los campos exclusivos de
-// v2 (Hallazgo) dentro de un finding, igual que el camino JSONL de una línea.
+// TestParsearDimensionResultJSONMultilineaConCamposV2 verifies that the
+// multiline fallback (parseMultilineObject) recognizes v2-only Hallazgo
+// fields inside a finding, matching the one-line JSONL path.
 func TestParsearDimensionResultJSONMultilineaConCamposV2(t *testing.T) {
 	salida := `BEGIN_REVIEW
 {
@@ -140,7 +140,7 @@ func TestParsearDimensionResultJSONMultilineaConCamposV2(t *testing.T) {
 }
 END_REVIEW`
 
-	res, err := ParsearDimensionResult(salida)
+	res, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error con campos v2 en multilínea: %v", err)
 	}
@@ -170,7 +170,7 @@ BEGIN_REVIEW
 END_REVIEW
 Fin de la auditoría.`
 
-	res, err := ParsearDimensionResult(salida)
+	res, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error con texto alrededor: %v", err)
 	}

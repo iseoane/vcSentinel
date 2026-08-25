@@ -104,7 +104,7 @@ var canaryMarkers = []string{
 func Sites() []Site {
 	return []Site{
 		// --- cmd/sentinel -------------------------------------------------
-		{Path: "cmd/sentinel/autoria.go", Symbol: "agenteObservado.EjecutarPrompt/EjecutarRevision", Line: 43, Marker: "EjecutarPrompt(",
+		{Path: "cmd/sentinel/autoria.go", Symbol: "observedAgent.EjecutarPrompt/EjecutarRevision", Line: 43, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Observer decorator over the configured auditor: it delegates to the wrapped adapter after recording the effective agent. Used identically by the admitted transport path and the gated legacy path; spawns nothing itself."},
 		{Path: "cmd/sentinel/comandos_estado.go", Symbol: "ejecutarEnShell", Line: 137, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Deterministic shell runner for configured lint/test/build commands; never consults an agent."},

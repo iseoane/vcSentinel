@@ -369,26 +369,22 @@ func repoDePruebaConUnCommit(t *testing.T, nombreArchivo, contenido string) (rep
 	return repo, strings.TrimSpace(string(salida))
 }
 
-// agenteFakeSecuencialReview devuelve, en orden, las respuestas JSONL fijas
-// de respuestas, y repite la última indefinidamente una vez agotada la
-// lista (nunca cae a un "ok" por defecto): auditarConAgente
-// (internal/review/engine.go) ya hace su propia ronda extra interna cuando
-// la primera respuesta es "question" y opts.Respuestas no está vacío, así
-// que un agente que sigue preguntando de verdad (el caso deadlock de T7.6)
-// necesita devolver "question" en TODAS las llamadas, no solo en la primera,
-// para que ese round-trip interno no lo disfrace de "ok". Mismo patrón que
-// agenteFake en internal/review/engine_test.go y stubAuditorRebase en
-// internal/review/rebase_test.go — duplicado aquí porque ninguno de esos
-// tipos está exportado desde internal/review.
+// agenteFakeSecuencialReview returns its fixed JSONL answers in order, then
+// repeats the final one indefinitely. auditWithAgent (internal/review/engine.go)
+// makes its own extra round when the first answer is "question" and
+// opts.Respuestas is not empty. A genuinely repeating agent (the T7.6
+// deadlock case) must therefore return "question" on every call so that
+// internal round trip cannot disguise it as "ok". This duplicates the
+// pattern from agenteFake in internal/review/engine_test.go and
+// rebaseReviewerStub in internal/review/rebase_test.go because neither type
+// is exported from internal/review.
 type agenteFakeSecuencialReview struct {
 	respuestas []string
 	llamadas   int
-	// prompts registra, en orden, el texto exacto de cada prompt recibido —
-	// usado para verificar que el texto de Respuestas (opts.Respuestas)
-	// realmente llega al agente en la segunda sub-ronda interna de
-	// auditarConAgente (internal/review/engine.go), la que se dispara solo
-	// cuando la primera respuesta es "question" y opts.Respuestas no está
-	// vacío, no solo que el veredicto final sea el esperado.
+	// prompts records each received prompt in order. It proves that
+	// Respuestas (opts.Respuestas) reaches the agent in auditWithAgent's
+	// second internal sub-round only after the first answer is "question",
+	// not merely that the final verdict is expected.
 	prompts []string
 }
 
@@ -405,11 +401,10 @@ func (a *agenteFakeSecuencialReview) EjecutarPrompt(prompt string) (string, erro
 	return a.respuestas[idx], nil
 }
 
-// EjecutarRevision implementa auditorConHerramientasRestringidas (interfaz
-// interna de internal/review no exportada): auditarConAgente exige ese tipo
-// y, si el agente inyectado no lo implementa, el resultado es
-// VerdictUnavailable ("restricted reviewer capability is required") en vez
-// de parsear la respuesta fija de la prueba.
+// EjecutarRevision implements the internal restricted-reviewer interface.
+// auditWithAgent requires that type; without it, the injected agent returns
+// VerdictUnavailable ("restricted reviewer capability is required") rather
+// than parsing the fixture response.
 func (a *agenteFakeSecuencialReview) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
 }
@@ -609,11 +604,10 @@ func TestAplicarPreguntasPendientes_ContestadasComparteIDEntreArchivos_NoPierdeN
 			{ID: "q1", Text: "¿procede en b.go?", File: "b.go"},
 		},
 	}
-	// La primera sub-ronda interna de auditarConAgente siempre pregunta SIN
-	// Respuestas; solo si esa primera respuesta es "question" hace una
-	// segunda sub-ronda CON Respuestas embebido. El primer elemento fuerza
-	// esa segunda sub-ronda; el segundo es lo que de verdad se comprueba (el
-	// prompt recibido en esa segunda llamada).
+	// The first internal sub-round of auditWithAgent always asks WITHOUT
+	// Respuestas. Only a "question" first answer triggers a second sub-round
+	// WITH embedded Respuestas. The first item triggers that round; the second
+	// is the assertion target, the prompt received in the second call.
 	fabrica, fake := fabricaFakeSecuencialReviewCapturando([]string{
 		`{"dim":"logic","verdict":"question"}`,
 		`{"dim":"logic","verdict":"ok"}`,

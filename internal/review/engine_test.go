@@ -476,9 +476,9 @@ func TestAuditarConAgenteStampsTrustedEffectiveProducer(t *testing.T) {
 		definido:  true,
 	}
 
-	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
+	resultado, err := auditWithAgent(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
 	if err != nil {
-		t.Fatalf("auditarConAgente() error = %v", err)
+		t.Fatalf("auditWithAgent() error = %v", err)
 	}
 	if len(resultado.Hallazgos) != 1 {
 		t.Fatalf("hallazgos = %#v, expected one", resultado.Hallazgos)
@@ -497,9 +497,9 @@ func TestAuditarConAgenteStampsSourceReviewEvenIfModelClaimsOtherwise(t *testing
 		return `{"dim":"logic","verdict":"warn","findings":[{"file":"config.go","line":12,"severity":"WARNING","description":"d","source":"validation"}]}`, nil
 	})
 
-	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
+	resultado, err := auditWithAgent(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{}, "")
 	if err != nil {
-		t.Fatalf("auditarConAgente() error = %v", err)
+		t.Fatalf("auditWithAgent() error = %v", err)
 	}
 	if len(resultado.Hallazgos) != 1 {
 		t.Fatalf("hallazgos = %#v, expected one", resultado.Hallazgos)
@@ -960,7 +960,7 @@ func TestAuditarCommitDeterministicOutputErrorsAreNotRetried(t *testing.T) {
 
 func TestAuditarConAgenteRetainsProviderFailureReason(t *testing.T) {
 	want := errors.New("reviewer exited: provider request failed")
-	resultado, err := auditarConAgente(auditorFunc(func(string) (string, error) {
+	resultado, err := auditWithAgent(auditorFunc(func(string) (string, error) {
 		return "", want
 	}), ReviewBundle{}, DimLogic, OpcionesAuditoria{SHA: "abc"}, "")
 	if !errors.Is(err, want) {
@@ -979,7 +979,7 @@ func TestAuditarConAgenteRetainsProviderFailureReason(t *testing.T) {
 }
 
 // TestAuditarConAgenteRetainsProviderFailureReasonOnAnsweredRetry covers the
-// second call auditarConAgente makes (opts.Respuestas set after a question
+// second call auditWithAgent makes (opts.Respuestas set after a question
 // verdict), which the first regression test above never reaches: it always
 // fails on the first call, so it could not tell whether the answered retry
 // still discarded err.Error() in favor of the old fixed "provider_unavailable"
@@ -994,7 +994,7 @@ func TestAuditarConAgenteRetainsProviderFailureReasonOnAnsweredRetry(t *testing.
 		}
 		return "", want
 	})
-	resultado, err := auditarConAgente(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{SHA: "abc", Respuestas: "sí, continuar"}, "")
+	resultado, err := auditWithAgent(agente, ReviewBundle{}, DimLogic, OpcionesAuditoria{SHA: "abc", Respuestas: "sí, continuar"}, "")
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, expected %v", err, want)
 	}

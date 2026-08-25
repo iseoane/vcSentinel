@@ -43,7 +43,7 @@ type adaptadorFakeDiff struct {
 	diffErr    error
 }
 
-type adaptadorRevisionFake struct {
+type adapterReviewFake struct {
 	adaptadorFake
 	prompt string
 	sha    string
@@ -51,12 +51,12 @@ type adaptadorRevisionFake struct {
 	policy reviewcontract.ToolPolicy
 }
 
-func (f *adaptadorRevisionFake) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (f *adapterReviewFake) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	f.policy = policy
 	return f.EjecutarRevision(prompt, sha, paths)
 }
 
-func (f *adaptadorRevisionFake) EjecutarRevision(prompt, sha string, rutas []string) (string, error) {
+func (f *adapterReviewFake) EjecutarRevision(prompt, sha string, rutas []string) (string, error) {
 	f.prompt = prompt
 	f.sha = sha
 	f.rutas = append([]string(nil), rutas...)
@@ -128,7 +128,7 @@ func TestCadenaEjecutarRevisionRequiereCapacidadRestringida(t *testing.T) {
 
 func TestCadenaEjecutarRevisionUsesLaterRestrictedAdapter(t *testing.T) {
 	sinRevision := &adaptadorFake{nombre: "sin-revision", salida: "no debe ejecutarse"}
-	conRevision := &adaptadorRevisionFake{adaptadorFake: adaptadorFake{nombre: "con-revision", salida: "ok"}}
+	conRevision := &adapterReviewFake{adaptadorFake: adaptadorFake{nombre: "con-revision", salida: "ok"}}
 	cadena := &CadenaAdaptador{adaptadores: []adaptadorCompleto{sinRevision, conRevision}}
 
 	salida, err := cadena.EjecutarRevision("revisar", "abc123", []string{"safe.go"})
@@ -141,7 +141,7 @@ func TestCadenaEjecutarRevisionUsesLaterRestrictedAdapter(t *testing.T) {
 }
 
 func TestChainReviewWithPolicyForwardsResolvedPolicy(t *testing.T) {
-	adapter := &adaptadorRevisionFake{adaptadorFake: adaptadorFake{nombre: "policy-aware", salida: "ok"}}
+	adapter := &adapterReviewFake{adaptadorFake: adaptadorFake{nombre: "policy-aware", salida: "ok"}}
 	chain := &CadenaAdaptador{adaptadores: []adaptadorCompleto{adapter}}
 	policy := reviewcontract.DefaultToolPolicy()
 

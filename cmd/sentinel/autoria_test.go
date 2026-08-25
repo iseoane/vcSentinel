@@ -47,9 +47,9 @@ func (a *agenteSoloPrompt) EjecutarPrompt(string) (string, error) {
 // éxito, nunca antes ni tras un fallo.
 func TestAgenteObservadoRegistraSoloTrasResponder(t *testing.T) {
 	recolector := &recolectorAutoria{}
-	fallido := &agenteObservado{
+	fallido := &observedAgent{
 		AuditorAgente: agenteQueFalla{adaptadorDe("claude", "opus", "xhigh")},
-		autoria:       recolector,
+		authorship:    recolector,
 	}
 	if _, err := fallido.EjecutarPrompt("hola"); err == nil {
 		t.Fatal("se esperaba error del agente")
@@ -61,9 +61,9 @@ func TestAgenteObservadoRegistraSoloTrasResponder(t *testing.T) {
 
 func TestAgenteObservadoEjecutarRevisionRequiereCapacidadRestringida(t *testing.T) {
 	soloPrompt := &agenteSoloPrompt{}
-	agente := &agenteObservado{
+	agente := &observedAgent{
 		AuditorAgente: soloPrompt,
-		autoria:       &recolectorAutoria{},
+		authorship:    &recolectorAutoria{},
 	}
 
 	_, err := agente.EjecutarRevision("revisar", "abc", []string{"a.go"})
@@ -80,7 +80,7 @@ func TestAgenteObservadoEjecutarRevisionRequiereCapacidadRestringida(t *testing.
 
 func TestAgenteObservadoForwardsSemanticToolPolicy(t *testing.T) {
 	inner := &policyRecordingAgent{}
-	agent := &agenteObservado{AuditorAgente: inner, autoria: &recolectorAutoria{}}
+	agent := &observedAgent{AuditorAgente: inner, authorship: &recolectorAutoria{}}
 	policy := reviewcontract.DefaultToolPolicy()
 
 	if _, err := agent.ReviewWithPolicy("review", "abc", []string{"a.go"}, policy); err != nil {

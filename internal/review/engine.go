@@ -546,17 +546,16 @@ func rutasRevisionSeguras(rutas []string) []string {
 	return seguras
 }
 
-// auditarConAgente ejecuta el prompt (con la ronda extra de --answer si el
-// agente pide aclaraciones) y parsea el JSONL del agente. Cuando la llamada
-// pasó por un transporte que reporta su identidad de invocación, esa identidad
-// viaja al resultado de la dimensión y a cada hallazgo (ticket 07 slice 2b):
-// es metadato aditivo de procedencia, nunca entrada del fingerprint.
-func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, contexto string) (*DimensionResult, error) {
+// auditWithAgent executes the prompt, including the extra --answer round when
+// the agent requests clarification, then parses its JSONL. A transport-reported
+// invocation identity is added to the dimension result and each finding
+// (ticket 07 slice 2b) as provenance metadata, never as fingerprint input.
+func auditWithAgent(agent AuditorAgente, bundle ReviewBundle, dimension string, opts OpcionesAuditoria, reviewContext string) (*DimensionResult, error) {
 	contract, err := reviewcontract.Lookup(dimension)
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
-	return (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agente, Bundle: bundle, Contract: contract, Options: opts, Context: contexto})
+	return (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agent, Bundle: bundle, Contract: contract, Options: opts, Context: reviewContext})
 }
 
 // Review executes one resolved contract and preserves raw provider output or a
@@ -575,7 +574,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		policyReviewer := agent.(policyAwareReviewer)
 		return policyReviewer.ReviewWithPolicy(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
 	}
-	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 	if err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
@@ -590,7 +589,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
 			failure := &ProviderExecutionFailure{Err: err}
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure

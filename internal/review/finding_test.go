@@ -9,7 +9,7 @@ import (
 
 func TestParsearDimensionResultLimpio(t *testing.T) {
 	salida := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"internal/a.go","line":10,"severity":"WARNING","description":"condición redundante","suggestion":"simplifica"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestParsearDimensionResultLimpio(t *testing.T) {
 
 func TestParsearDimensionResultConFencesYTexto(t *testing.T) {
 	salida := "Analizando el diff...\n```json\nBEGIN_REVIEW\n{\"dim\":\"security\",\"verdict\":\"ok\"}\nEND_REVIEW\n```\nFin"
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestParsearDimensionResultConFencesYTexto(t *testing.T) {
 
 func TestParsearDimensionResultSinDelimitadores(t *testing.T) {
 	salida := "{\"dim\":\"design\",\"verdict\":\"warn\",\"findings\":[]}\n"
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -50,14 +50,14 @@ func TestParsearDimensionResultSinDelimitadores(t *testing.T) {
 }
 
 func TestParsearDimensionResultVacia(t *testing.T) {
-	_, err := ParsearDimensionResult("")
+	_, err := ParseDimensionResult("")
 	if !errors.Is(err, ErrSalidaVacia) {
 		t.Errorf("se esperaba ErrSalidaVacia, obtenido %v", err)
 	}
 }
 
 func TestParsearDimensionResultInvalida(t *testing.T) {
-	_, err := ParsearDimensionResult("esto no es json\nBEGIN_REVIEW\ntampoco\nEND_REVIEW\n")
+	_, err := ParseDimensionResult("esto no es json\nBEGIN_REVIEW\ntampoco\nEND_REVIEW\n")
 	if !errors.Is(err, ErrJSONLInvalido) {
 		t.Errorf("se esperaba ErrJSONLInvalido, obtenido %v", err)
 	}
@@ -82,7 +82,7 @@ func TestParsearDimensionResultClassifiesDeterministicOutputErrors(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParsearDimensionResult(tt.output)
+			_, err := ParseDimensionResult(tt.output)
 			if !errors.Is(err, tt.legacy) {
 				t.Fatalf("errors.Is(%v, %v) = false", err, tt.legacy)
 			}
@@ -104,7 +104,7 @@ func TestParsearDimensionResultClassifiesDeterministicOutputErrors(t *testing.T)
 }
 
 func TestParsearDimensionResultDesconocida(t *testing.T) {
-	_, err := ParsearDimensionResult(`{"dim":"perf","verdict":"ok"}`)
+	_, err := ParseDimensionResult(`{"dim":"perf","verdict":"ok"}`)
 	if !errors.Is(err, ErrDimensionInvalida) {
 		t.Errorf("se esperaba ErrDimensionInvalida, obtenido %v", err)
 	}
@@ -117,7 +117,7 @@ func TestParsearDimensionResultVeredictoDeFactoConHallazgos(t *testing.T) {
 	// El agente real devuelve a veces "issues" como veredicto con hallazgos:
 	// con hallazgos se deriva de las severidades, sin hallazgos es un error.
 	salida := `{"dim":"logic","verdict":"issues","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"WARNING","description":"d"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -128,14 +128,14 @@ func TestParsearDimensionResultVeredictoDeFactoConHallazgos(t *testing.T) {
 		t.Error("se esperaba advertencia por la normalización del veredicto")
 	}
 
-	if _, err := ParsearDimensionResult(`{"dim":"logic","verdict":"issues"}`); !errors.Is(err, ErrVeredictoInvalido) {
+	if _, err := ParseDimensionResult(`{"dim":"logic","verdict":"issues"}`); !errors.Is(err, ErrVeredictoInvalido) {
 		t.Errorf("veredicto de facto sin hallazgos debería ser %v, obtenido %v", ErrVeredictoInvalido, err)
 	}
 }
 
 func TestParsearDimensionResultOkConCriticoSubeABlock(t *testing.T) {
 	salida := `{"dim":"security","verdict":"ok","findings":[{"dimension":"security","file":"a.go","line":2,"severity":"CRITICAL","description":"secreto expuesto"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestParsearDimensionResultOkConCriticoSubeABlock(t *testing.T) {
 
 func TestParsearDimensionResultOkConWarningSubeAWarn(t *testing.T) {
 	salida := `{"dim":"style","verdict":"ok","findings":[{"dimension":"style","file":"a.go","line":3,"severity":"ADVISORY","description":"nombre confuso"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestParsearDimensionResultOkConWarningSubeAWarn(t *testing.T) {
 
 func TestParsearDimensionResultQuestionSeRespeta(t *testing.T) {
 	salida := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"¿X?"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestParsearDimensionResultQuestionSeRespeta(t *testing.T) {
 
 func TestParsearDimensionResultSeveridadDesconocida(t *testing.T) {
 	salida := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"FATAL","description":"d"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestParsearDimensionResultDescartaLineasBasura(t *testing.T) {
 	// válida gana. (Una línea JSON válida con dimensión desconocida, en cambio,
 	// aborta con error explícito: TestParsearDimensionResultDesconocida.)
 	salida := "texto del agente sin sentido\n```\n{\"dim\":\"tests\",\"verdict\":\"ok\"}\n```\n"
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestParsearDimensionResultDescartaLineasBasura(t *testing.T) {
 
 func TestParsearDimensionResultPreguntas(t *testing.T) {
 	salida := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"¿El rebase debe abortar si hay cambios sin commitear?"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestParsearDimensionResultFindingSoloV1NoGeneraHallazgo(t *testing.T) {
 	// "findings". Hallazgos debe quedar vacío: no se detecta nada v2 porque
 	// no hay ningún campo exclusivo de v2 presente.
 	salida := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"a.go","line":10,"severity":"WARNING","description":"d","suggestion":"s"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestParsearDimensionResultFindingSoloV1NoGeneraHallazgo(t *testing.T) {
 // respaldo existe para evitar.
 func TestParsearDimensionResultLocationVaciaUsaRespaldoV1(t *testing.T) {
 	salida := `{"dim":"security","verdict":"warn","findings":[{"file":"a.go","line":7,"severity":"WARNING","description":"x","evidence":"y","location":{}}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestParsearDimensionResultFindingV1YV2GeneraAmbos(t *testing.T) {
 	// campos v2 (evidence/confidence) debe aparecer en ambos lados: Findings
 	// (v1, compatibilidad) y Hallazgos (v2, adelantándose a F5).
 	salida := `{"dim":"security","verdict":"warn","findings":[{"file":"a.go","line":7,"severity":"WARNING","description":"posible fuga","evidence":"token := req.Header.Get(\"X\")","confidence":0.6}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestParsearDimensionResultAcceptsCategoricalConfidence(t *testing.T) {
 	}
 	for _, caso := range casos {
 		salida := `{"dim":"tests","verdict":"fail","findings":[{"dimension":"tests","file":"a_test.go","line":1,"severity":"WARNING","description":"d","evidence":"e","confidence":"` + caso.nivel + `"}]}`
-		resultado, err := ParsearDimensionResult(salida)
+		resultado, err := ParseDimensionResult(salida)
 		if err != nil {
 			t.Fatalf("nivel %q: ParsearDimensionResult devolvió error: %v", caso.nivel, err)
 		}
@@ -597,7 +597,7 @@ func TestParsearDimensionResultAcceptsCategoricalConfidence(t *testing.T) {
 
 func TestParsearDimensionResultRejectsUnknownConfidenceLevel(t *testing.T) {
 	salida := `{"dim":"tests","verdict":"fail","findings":[{"dimension":"tests","file":"a_test.go","line":1,"severity":"WARNING","description":"d","evidence":"e","confidence":"certain"}]}`
-	_, err := ParsearDimensionResult(salida)
+	_, err := ParseDimensionResult(salida)
 	if err == nil {
 		t.Fatal("ParsearDimensionResult() error = nil, expected an explicit error for an unknown confidence level")
 	}
@@ -607,7 +607,7 @@ func TestParsearDimensionResultSeveridadV2DesconocidaSeNormaliza(t *testing.T) {
 	// Misma regla de normalización de severidad que v1 (T2.4: un solo
 	// criterio), aplicada también al Hallazgo v2 derivado del mismo finding.
 	salida := `{"dim":"logic","verdict":"warn","findings":[{"file":"a.go","line":1,"severity":"FATAL","description":"d","evidence":"e"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestParsearDimensionResultSeveridadV2DesconocidaSeNormaliza(t *testing.T) {
 
 func TestParsearDimensionResultUnavailable(t *testing.T) {
 	salida := `{"dim":"security","verdict":"unavailable","reason":"rate_limit"}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}

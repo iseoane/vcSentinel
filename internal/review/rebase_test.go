@@ -22,33 +22,29 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
-// stubAuditorRebase implementa review.AuditorAgente y cuenta cuántas veces
-// se le invoca para auditar (no para el overview, que no se usa aquí).
-// Devuelve un hallazgo REAL (no solo un veredicto "ok"): sin esto, el bug de
-// B-01 (los findings desaparecen tras adoptar por blob) no se detecta,
-// porque un stub que nunca produce hallazgos no puede probar que
-// sobrevivan.
-type stubAuditorRebase struct {
-	llamadas int
+// rebaseReviewerStub implements review.AuditorAgente and counts audit calls,
+// excluding the unused overview. It returns a real finding so B-01 (findings
+// lost after blob adoption) remains detectable.
+type rebaseReviewerStub struct {
+	calls int
 }
 
-// descripcionHallazgoRebase identifica el hallazgo real inyectado por el
-// stub, para comprobar después que sigue siendo recuperable bajo el SHA
-// post-rebase.
-const descripcionHallazgoRebase = "hallazgo real de prueba de rebase"
+// rebaseFindingDescription identifies the injected finding that must remain
+// recoverable under the post-rebase SHA.
+const rebaseFindingDescription = "rebase test finding"
 
-func (a *stubAuditorRebase) EjecutarPrompt(prompt string) (string, error) {
-	a.llamadas++
+func (a *rebaseReviewerStub) EjecutarPrompt(prompt string) (string, error) {
+	a.calls++
 	return "BEGIN_REVIEW\n" +
-		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + descripcionHallazgoRebase + `","suggestion":"review before rebase","evidence":"content-b","confidence":"high"}]}` +
+		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + rebaseFindingDescription + `","suggestion":"review before rebase","evidence":"content-b","confidence":"high"}]}` +
 		"\nEND_REVIEW\n", nil
 }
 
-func (a *stubAuditorRebase) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+func (a *rebaseReviewerStub) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *stubAuditorRebase) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *rebaseReviewerStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -67,7 +63,7 @@ func fichaTieneHallazgo(f review.Ficha, descripcion string) bool {
 	return false
 }
 
-func fabricaStubRebase(a *stubAuditorRebase) review.FabricaAuditor {
+func fabricaStubRebase(a *rebaseReviewerStub) review.FabricaAuditor {
 	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 		return a, "stub", nil
 	}
@@ -128,7 +124,7 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 	gitDir := repo + "/.git"
 	ledger := review.NuevoLedger(gitDir)
 	st := store.NuevoStore(gitDir)
-	stub := &stubAuditorRebase{}
+	stub := &rebaseReviewerStub{}
 
 	res, err := review.AnalizarRama(ledger, review.OpcionesRama{
 		Fabrica: fabricaStubRebase(stub), Parallel: 1, Store: st,
@@ -139,9 +135,9 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 	if len(res.Pendientes) != 3 {
 		t.Fatalf("Pendientes = %v, esperado 3 commits nuevos", res.Pendientes)
 	}
-	llamadasAntes := stub.llamadas
-	if llamadasAntes == 0 {
-		t.Fatal("el auditor debería haberse invocado en la primera pasada")
+	callsBefore := stub.calls
+	if callsBefore == 0 {
+		t.Fatal("reviewer should have been called during the first pass")
 	}
 	if len(res.SHAs) != 3 {
 		t.Fatalf("SHAs antes del rebase = %v, esperado 3 commits", res.SHAs)
@@ -172,8 +168,8 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 	if len(res2.Pendientes) != 0 {
 		t.Errorf("Pendientes tras el rebase = %v, esperado 0 (contenido ya revisado por blob)", res2.Pendientes)
 	}
-	if stub.llamadas != llamadasAntes {
-		t.Errorf("el auditor se invocó %d veces más tras el rebase, esperado 0 llamadas nuevas", stub.llamadas-llamadasAntes)
+	if stub.calls != callsBefore {
+		t.Errorf("reviewer was called %d additional times after rebase; expected 0", stub.calls-callsBefore)
 	}
 
 	// El criterio de salida real de F2 no es solo "Pendientes = 0 y el
@@ -199,7 +195,7 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 	if fichaB == nil {
 		t.Fatalf("no hay ficha para el SHA post-rebase de b.txt (%s) en res2.Fichas: el hallazgo real desapareció", shaBDespues)
 	}
-	if !fichaTieneHallazgo(*fichaB, descripcionHallazgoRebase) {
+	if !fichaTieneHallazgo(*fichaB, rebaseFindingDescription) {
 		t.Errorf("la ficha adoptada bajo %s no conserva el hallazgo real: %+v", shaBDespues, fichaB)
 	}
 }

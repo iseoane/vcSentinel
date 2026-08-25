@@ -116,7 +116,7 @@ func TestPromptRunAdapterExecuteFallsBackToLegacyContract(t *testing.T) {
 
 // TestPromptRunAdapterOwnedTreeForwardsToOwningDelegate pins the abort-side
 // discovery: promptRunAdapter exposes the TreeProvider shape only through a
-// delegate that owns a tree, mirroring agenteObservado's forwarding.
+// delegate that owns a tree, mirroring observedAgent's forwarding.
 func TestPromptRunAdapterOwnedTreeForwardsToOwningDelegate(t *testing.T) {
 	sentinel := &process.Tree{}
 	owning := &contextualTreeAgent{tree: sentinel}

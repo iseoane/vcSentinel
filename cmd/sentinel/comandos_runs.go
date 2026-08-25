@@ -377,7 +377,7 @@ func (a promptRunAdapter) runPrompt(ctx context.Context, prompt string) (string,
 }
 
 // OwnedTree forwards tree discovery to the delegate when it owns a live
-// child process tree, mirroring how agenteObservado forwards the same
+// child process tree, mirroring how observedAgent forwards the same
 // contract in autoria.go. The execution controller discovers this
 // TreeProvider shape structurally, so `sentinel runs abort` escalates
 // against exactly the tree this adapter spawned instead of finding nothing.

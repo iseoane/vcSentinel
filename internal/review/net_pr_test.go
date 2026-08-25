@@ -20,7 +20,7 @@ func (s *historyStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	if strings.Contains(prompt, "+defect\n") && !strings.Contains(prompt, "Pull request intention:") {
 		return auditOutputCritical, nil
 	}
-	return outputForDimension(s.auditSalida, prompt), nil
+	return outputForDimension(s.auditOutput, prompt), nil
 }
 
 func (s *historyStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
@@ -30,7 +30,7 @@ func (s *historyStub) ReviewWithPolicy(prompt, sha string, paths []string, _ rev
 // netCriticalOutput is v2-shaped: evidence+confidence make it a Hallazgo, which is what AuditarCommit aggregates.
 const netCriticalOutput = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"block\",\"findings\":[{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":1,\"severity\":\"CRITICAL\",\"description\":\"net defect\",\"evidence\":\"+defect\",\"confidence\":\"high\"}]}\nEND_REVIEW\n"
 
-// answeringStub answers output for prompts carrying marker, auditSalida otherwise.
+// answeringStub answers output for prompts carrying marker, auditOutput otherwise.
 type answeringStub struct {
 	auditorStub
 	prompts []string
@@ -43,7 +43,7 @@ func (s *answeringStub) EjecutarRevision(prompt, _ string, _ []string) (string, 
 	if strings.Contains(prompt, s.marker) {
 		return outputForDimension(s.output, prompt), nil
 	}
-	return outputForDimension(s.auditSalida, prompt), nil
+	return outputForDimension(s.auditOutput, prompt), nil
 }
 
 func (s *answeringStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
@@ -74,7 +74,7 @@ func TestNetReviewIndependentOfHistoricalFindings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gitDir := prepararRepoRama(t)
 			shaDefect := addDefectCommits(t, tc.fix)
-			stub := &historyStub{auditorStub: auditorStub{auditSalida: salidaAuditOK}}
+			stub := &historyStub{auditorStub: auditorStub{auditOutput: auditOutputOK}}
 			res, err := AnalizarRama(NuevoLedger(gitDir), OpcionesRama{Fabrica: fabricaStub(stub), Parallel: 1, NetReview: &NetReviewOptions{Intention: "Add x module", Validation: "lint-ok"}})
 			if err != nil || res.Net == nil || res.Net.From != strings.TrimSpace(gitSalida(t, "merge-base", "main", "HEAD")) {
 				t.Fatalf("net result/range wrong: %v %+v", err, res.Net)
@@ -139,7 +139,7 @@ func TestNetReviewRenameAndDeletionClassification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gitDir := prepararRepoRama(t)
 			shaDefect := tc.arrange(t)
-			stub := &historyStub{auditorStub: auditorStub{auditSalida: salidaAuditOK}}
+			stub := &historyStub{auditorStub: auditorStub{auditOutput: auditOutputOK}}
 			res, err := AnalizarRama(NuevoLedger(gitDir), OpcionesRama{Fabrica: fabricaStub(stub), Parallel: 1, NetReview: &NetReviewOptions{}})
 			if err != nil || res.Net == nil {
 				t.Fatalf("net review failed: %v %+v", err, res.Net)
@@ -184,7 +184,7 @@ func TestNetReviewClassificationErrorStaysActive(t *testing.T) {
 	commitEnRama(t, "x.go", "kept\n")
 	from := strings.TrimSpace(gitSalida(t, "merge-base", "main", "HEAD"))
 	to := strings.TrimSpace(gitSalida(t, "rev-parse", "HEAD"))
-	stub := &historyStub{auditorStub: auditorStub{auditSalida: salidaAuditOK}}
+	stub := &historyStub{auditorStub: auditorStub{auditOutput: auditOutputOK}}
 	res, err := runNetReview(&NetReviewOptions{}, OpcionesRama{Fabrica: fabricaStub(stub), Parallel: 1}, from, to, []Ficha{
 		{SHA: "malformed-origin-sha", Revisions: []Revision{{AggregatedFindings: []Hallazgo{{Dimension: DimLogic, Severity: SevCritical, Description: "vanished defect", Location: Ubicacion{Archivo: "gone.go", LineaInicio: 1}}}}}},
 		{SHA: to, Revisions: []Revision{{AggregatedFindings: []Hallazgo{{Dimension: DimStyle, Severity: SevWarning, Description: "surviving debt", Location: Ubicacion{Archivo: "x.go", LineaInicio: 1, LineaFin: 1}}}}}},
@@ -201,7 +201,7 @@ func TestNetReviewClassificationErrorStaysActive(t *testing.T) {
 func TestStackedNetReviewUsesOwnRange(t *testing.T) {
 	stack := prepareStackRepo(t)
 	swapParentResolver(t, fixedResolver("feature-a"))
-	opts := OpcionesRama{Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}), Parallel: 1, OwnDiff: &OwnDiffOptions{ResolveParent: true}, NetReview: &NetReviewOptions{}}
+	opts := OpcionesRama{Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}), Parallel: 1, OwnDiff: &OwnDiffOptions{ResolveParent: true}, NetReview: &NetReviewOptions{}}
 	res, err := AnalizarRama(NuevoLedger(stack.gitDir), opts)
 	if err != nil || res.Net == nil || res.Net.From != stack.shaA {
 		t.Errorf("net start = %v/%v, want own-diff start %s (not base %s)", err, res.Net, stack.shaA, stack.baseSHA)

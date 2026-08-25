@@ -115,7 +115,7 @@ func ejecutarReview(worktree string, args []string) {
 
 		// El recolector anota qué agente atendió cada dimensión para que la
 		// ficha registre el autor real y no el perfil pedido (H4/T0.2).
-		autoria := &recolectorAutoria{}
+		authorship := &recolectorAutoria{}
 		fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
 			profile := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), flags.profile)
 			adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, profile)
@@ -123,7 +123,7 @@ func ejecutarReview(worktree string, args []string) {
 				return nil, profile.Nombre, err
 			}
 			verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
-			return &agenteObservado{AuditorAgente: adapter, autoria: autoria}, profile.Nombre, nil
+			return &observedAgent{AuditorAgente: adapter, authorship: authorship}, profile.Nombre, nil
 		}
 
 		opciones := review.OpcionesAuditoria{
@@ -160,7 +160,7 @@ func ejecutarReview(worktree string, args []string) {
 			modelo = "default"
 		}
 		fixed := review.RevisionCorrigeBlockPrevio(ledger, sha, resultado.Veredicto)
-		efectivo := autoria.consolidar()
+		efectivo := authorship.consolidar()
 		revision := review.Revision{
 			At:                 time.Now(),
 			Result:             resultado.Veredicto,

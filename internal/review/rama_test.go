@@ -31,12 +31,12 @@ func gitEjecutar(t *testing.T, args ...string) {
 	gitSalida(t, args...)
 }
 
-// auditorStub responde distinto según el prompt: las auditorías por dimensión
-// reciben auditSalida (JSONL válido); el overview (que contiene la palabra
-// "coherente" en el prompt) recibe overviewSalida.
+// auditorStub returns output by prompt: dimension audits receive auditOutput
+// (valid JSONL); the overview (which contains "coherente") receives
+// overviewOutput.
 type auditorStub struct {
-	auditSalida    string
-	overviewSalida string
+	auditOutput    string
+	overviewOutput string
 	mu             sync.Mutex
 	llamadasAudit  int
 	llamadasOv     int
@@ -47,12 +47,12 @@ func (a *auditorStub) EjecutarPrompt(prompt string) (string, error) {
 		a.mu.Lock()
 		a.llamadasOv++
 		a.mu.Unlock()
-		return a.overviewSalida, nil
+		return a.overviewOutput, nil
 	}
 	a.mu.Lock()
 	a.llamadasAudit++
 	a.mu.Unlock()
-	return outputForDimension(a.auditSalida, prompt), nil
+	return outputForDimension(a.auditOutput, prompt), nil
 }
 
 func outputForDimension(output, prompt string) string {
@@ -67,9 +67,9 @@ func (a *auditorStub) ReviewWithPolicy(prompt, sha string, paths []string, _ rev
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
-// salidaAuditOK is a canonical review result whose dimension is bound to the
+// auditOutputOK is a canonical review result whose dimension is bound to the
 // requested contract by outputForDimension.
-const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
+const auditOutputOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
 
 func fabricaStub(a AuditorAgente) FabricaAuditor {
 	return func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
@@ -77,20 +77,20 @@ func fabricaStub(a AuditorAgente) FabricaAuditor {
 	}
 }
 
-type auditorRutasStub struct {
+type pathAuditorStub struct {
 	auditorStub
 	mu    sync.Mutex
-	rutas [][]string
+	paths [][]string
 }
 
-func (a *auditorRutasStub) EjecutarRevision(prompt, _ string, rutas []string) (string, error) {
+func (a *pathAuditorStub) EjecutarRevision(prompt, _ string, paths []string) (string, error) {
 	a.mu.Lock()
-	a.rutas = append(a.rutas, append([]string(nil), rutas...))
+	a.paths = append(a.paths, append([]string(nil), paths...))
 	a.mu.Unlock()
 	return a.EjecutarPrompt(prompt)
 }
 
-func (a *auditorRutasStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+func (a *pathAuditorStub) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	return a.EjecutarRevision(prompt, sha, paths)
 }
 
@@ -166,7 +166,7 @@ func TestAnalizarRamaAuditaPendientes(t *testing.T) {
 	gitDir := prepararRepoRama(t)
 	sha := commitEnRama(t, "feat.txt", "1\n2\n3\n4\n5\n")
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorStub{auditSalida: salidaAuditOK}
+	stub := &auditorStub{auditOutput: auditOutputOK}
 	parallel := 2
 
 	res, err := AnalizarRama(ledger, OpcionesRama{Fabrica: fabricaStub(stub), Parallel: parallel})
@@ -224,7 +224,7 @@ func TestAuditarCommitRamaPassesImmutableCommitPathsToRestrictedReviewer(t *test
 		t.Fatal(err)
 	}
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorRutasStub{auditorStub: auditorStub{auditSalida: salidaAuditOK}}
+	stub := &pathAuditorStub{auditorStub: auditorStub{auditOutput: auditOutputOK}}
 
 	err := auditarCommitRama(ledger, sha, OpcionesRama{
 		Fabrica: func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
@@ -235,12 +235,12 @@ func TestAuditarCommitRamaPassesImmutableCommitPathsToRestrictedReviewer(t *test
 	if err != nil {
 		t.Fatalf("auditarCommitRama() error = %v", err)
 	}
-	if len(stub.rutas) == 0 {
+	if len(stub.paths) == 0 {
 		t.Fatal("restricted reviewer received no planned paths")
 	}
-	for _, rutas := range stub.rutas {
-		if expected := []string{"committed.go"}; !reflect.DeepEqual(rutas, expected) {
-			t.Errorf("reviewer paths = %v, expected immutable commit paths %v", rutas, expected)
+	for _, paths := range stub.paths {
+		if expected := []string{"committed.go"}; !reflect.DeepEqual(paths, expected) {
+			t.Errorf("reviewer paths = %v, expected immutable commit paths %v", paths, expected)
 		}
 	}
 }
@@ -254,7 +254,7 @@ func TestAnalizarRamaAvisaOnCommitPorCadaPendienteEnOrden(t *testing.T) {
 	sha1 := commitEnRama(t, "feat1.txt", "1\n2\n")
 	sha2 := commitEnRama(t, "feat2.txt", "3\n4\n")
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorStub{auditSalida: salidaAuditOK}
+	stub := &auditorStub{auditOutput: auditOutputOK}
 
 	type aviso struct {
 		idx, total int
@@ -290,7 +290,7 @@ func TestAnalizarRamaSoloPendientes(t *testing.T) {
 	gitDir := prepararRepoRama(t)
 	sha := commitEnRama(t, "feat.txt", "1\n2\n3\n")
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorStub{auditSalida: salidaAuditOK}
+	stub := &auditorStub{auditOutput: auditOutputOK}
 
 	if _, err := AnalizarRama(ledger, OpcionesRama{Fabrica: fabricaStub(stub), Parallel: 1}); err != nil {
 		t.Fatalf("primera pasada falló: %v", err)
@@ -319,7 +319,7 @@ func TestDecisionChainPorVolumen(t *testing.T) {
 	gitDir := prepararRepoRama(t)
 	commitEnRama(t, "grande.txt", strings.Repeat("x\n", 500))
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorStub{auditSalida: salidaAuditOK}
+	stub := &auditorStub{auditOutput: auditOutputOK}
 
 	res, err := AnalizarRama(ledger, OpcionesRama{Fabrica: fabricaStub(stub), Parallel: 1})
 	if err != nil {
@@ -346,7 +346,7 @@ func TestDecisionOverview(t *testing.T) {
 			gitDir := prepararRepoRama(t)
 			commitEnRama(t, "grande.txt", strings.Repeat("x\n", 500))
 			ledger := NuevoLedger(gitDir)
-			stub := &auditorStub{auditSalida: salidaAuditOK, overviewSalida: caso.coherente}
+			stub := &auditorStub{auditOutput: auditOutputOK, overviewOutput: caso.coherente}
 
 			res, err := AnalizarRama(ledger, OpcionesRama{
 				Fabrica: fabricaStub(stub), Parallel: 1, Overview: true,
@@ -501,7 +501,7 @@ func TestAuditarCommitRamaContinuaSiRegistrarBlobsFalla(t *testing.T) {
 	gitDir := prepararRepoRama(t)
 	sha := commitEnRama(t, "feat.txt", "1\n2\n3\n")
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorStub{auditSalida: salidaAuditOK}
+	stub := &auditorStub{auditOutput: auditOutputOK}
 	fake := &fakeStoreBlobs{erroRegistrar: errors.New("fallo simulado de registro de blobs")}
 
 	err := auditarCommitRama(ledger, sha, OpcionesRama{
@@ -538,7 +538,7 @@ func TestAuditarCommitRamaRoutesThroughPerCommitTransport(t *testing.T) {
 	gitDir := prepararRepoRama(t)
 	sha := commitEnRama(t, "transport.go", "package transport\n")
 	ledger := NuevoLedger(gitDir)
-	stub := &auditorStub{auditSalida: salidaAuditOK}
+	stub := &auditorStub{auditOutput: auditOutputOK}
 
 	var factorySHA string
 	var factoryPaths []string
@@ -553,7 +553,7 @@ func TestAuditarCommitRamaRoutesThroughPerCommitTransport(t *testing.T) {
 			factoryPaths = paths
 			return func(_, _, _ string, _ AuditorAgente) (string, string, error) {
 				transportCalled = true
-				return salidaAuditOK, "", nil
+				return auditOutputOK, "", nil
 			}
 		},
 	})

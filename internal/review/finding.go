@@ -637,18 +637,17 @@ func semanticOutputLooksToolDenied(output string) bool {
 		(strings.Contains(lower, "tool") && strings.Contains(lower, "denied"))
 }
 
-// ParsearDimensionResult extrae el resultado de una dimensión de la salida
-// cruda del agente. Tolera texto alrededor y fences de markdown: localiza el
-// bloque delimitado por BEGIN_REVIEW / END_REVIEW si existe y, si no, usa toda
-// la salida. Las líneas que no son JSONL válido se descartan (se cuentan para
-// Advertencias); la primera línea con "dim" y "verdict" conocidos gana.
-// La dimensión desconocida es un error explícito, nunca un silencio.
-func ParsearDimensionResult(salida string) (*DimensionResult, error) {
+// ParseDimensionResult extracts one dimension result from raw provider output.
+// It accepts surrounding text and markdown fences, locating a BEGIN_REVIEW /
+// END_REVIEW block when present and otherwise using the complete output. Lines
+// that are not valid JSONL are discarded; the first known "dim" and "verdict"
+// wins. An unknown dimension always returns an explicit error.
+func ParseDimensionResult(output string) (*DimensionResult, error) {
 	contract, err := reviewcontract.Lookup(DimLogic)
 	if err != nil {
 		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
 	}
-	return parseDimensionResult(salida, "", contract.OutputSchema, reviewcontract.EvidencePolicy{})
+	return parseDimensionResult(output, "", contract.OutputSchema, reviewcontract.EvidencePolicy{})
 }
 
 // ParseDimensionResultForContract parses a provider answer against the
@@ -727,7 +726,7 @@ func parseDimensionResult(output, expectedDimension string, schema reviewcontrac
 	// dentro del bloque. Ninguna línea individual es JSONL válido, pero el
 	// bloque completo sí es un objeto JSON; parsearlo entero evita que una
 	// auditoría válida se degrade a unavailable.
-	if res, err, ok := parsearObjetoMultilinea(block, evidencePolicy); ok {
+	if res, err, ok := parseMultilineObject(block, evidencePolicy); ok {
 		if err != nil {
 			return nil, err
 		}
@@ -763,10 +762,10 @@ func validateContractDimension(result *DimensionResult, expectedDimension, outpu
 	return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: requested %q, received %q", ErrDimensionMismatch, expectedDimension, result.Dim), output)
 }
 
-// parsearObjetoMultilinea intenta interpretar el bloque como un único objeto
-// JSON (tolerando formato pretty-printed con saltos de línea). Devuelve ok
-// solo si el parseo completo tiene éxito y la dimensión es canónica.
-func parsearObjetoMultilinea(bloque string, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error, bool) {
+// parseMultilineObject attempts to decode the block as one JSON object,
+// accepting pretty-printed multiline output. It reports ok only when complete
+// parsing succeeds and the dimension is canonical.
+func parseMultilineObject(block string, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error, bool) {
 	var crudo struct {
 		Dim       string          `json:"dim"`
 		Verdict   string          `json:"verdict"`
@@ -774,7 +773,7 @@ func parsearObjetoMultilinea(bloque string, evidencePolicy reviewcontract.Eviden
 		Questions []AgentQuestion `json:"questions"`
 		Reason    string          `json:"reason"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(bloque)), &crudo); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(block)), &crudo); err != nil {
 		return nil, nil, false
 	}
 	if crudo.Dim == "" {
@@ -795,7 +794,7 @@ func parsearObjetoMultilinea(bloque string, evidencePolicy reviewcontract.Eviden
 		verdict = ""
 	}
 	if err := validateFindingsAgainstContract(crudo.Findings, evidencePolicy); err != nil {
-		return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, bloque), true
+		return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, block), true
 	}
 
 	findingsV1, hallazgosV2 := procesarFindings(crudo.Findings, crudo.Dim, &normalizaciones)
@@ -847,14 +846,14 @@ func veredictoDeSeveridades(hallazgos []ReviewFinding) string {
 	return peor
 }
 
-// extraerBloqueJSONL recorta la salida al segmento entre BEGIN_REVIEW y
-// END_REVIEW cuando existen; si no, devuelve la salida completa.
-func extraerBloqueJSONL(salida string) string {
+// extractJSONLBlock trims output to the segment between BEGIN_REVIEW and
+// END_REVIEW when present; otherwise it returns the complete output.
+func extractJSONLBlock(output string) string {
 	contract, err := reviewcontract.Lookup(DimLogic)
 	if err != nil {
 		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
 	}
-	return extractJSONLBlockWithSchema(salida, contract.OutputSchema)
+	return extractJSONLBlockWithSchema(output, contract.OutputSchema)
 }
 
 func extractJSONLBlockWithSchema(output string, schema reviewcontract.OutputSchema) string {

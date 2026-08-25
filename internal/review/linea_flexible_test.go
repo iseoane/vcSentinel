@@ -11,7 +11,7 @@ import (
 // (ErrJSONLInvalido). El parseo debe aceptar ambos tipos.
 func TestParsearDimensionResultLineaComoString(t *testing.T) {
 	salida := `{"dim":"spec","verdict":"FAIL","findings":[{"dimension":"spec","file":"README.md","line":"126","severity":"CRITICAL","description":"d"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error con line como string: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestParsearDimensionResultLineaComoString(t *testing.T) {
 // funcionando tras aceptar la forma string.
 func TestParsearDimensionResultLineaNumero(t *testing.T) {
 	salida := `{"dim":"spec","verdict":"FAIL","findings":[{"dimension":"spec","file":"a.go","line":42,"severity":"CRITICAL","description":"d"}]}`
-	resultado, err := ParsearDimensionResult(salida)
+	resultado, err := ParseDimensionResult(salida)
 	if err != nil {
 		t.Fatalf("ParsearDimensionResult devolvió error: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestParsearDimensionResultLineaNumero(t *testing.T) {
 // JSON de otro tipo, sigue siendo una línea inválida (se descarta) — nunca un
 // panic ni un número inventado.
 func TestParsearDimensionResultLineaNoNumerica(t *testing.T) {
-	_, err := ParsearDimensionResult(`{"dim":"spec","verdict":"FAIL","findings":[{"dimension":"spec","file":"a.go","line":"L126-130","severity":"CRITICAL","description":"d"}]}`)
+	_, err := ParseDimensionResult(`{"dim":"spec","verdict":"FAIL","findings":[{"dimension":"spec","file":"a.go","line":"L126-130","severity":"CRITICAL","description":"d"}]}`)
 	if !errors.Is(err, ErrJSONLInvalido) {
 		t.Errorf("se esperaba ErrJSONLInvalido (línea descartada), obtenido %v", err)
 	}

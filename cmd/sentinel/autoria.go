@@ -30,25 +30,24 @@ type recolectorAutoria struct {
 	agentes []agentadapter.AgenteEfectivo
 }
 
-// agenteObservado envuelve el agente de una dimensión y anota quién respondió
-// DESPUÉS de cada petición con éxito. El momento importa: en una cadena con
-// `active_agent: auto`, cuál de los hijos atiende solo se sabe una vez ha
-// contestado, así que preguntarlo antes daría el mismo dato equivocado que
-// H4 registraba.
-type agenteObservado struct {
+// observedAgent wraps one dimension agent and records the responder only
+// AFTER a successful request. Timing matters: in an `active_agent: auto`
+// chain, the child that serves the request is known only after it responds,
+// so asking earlier would reproduce the incorrect H4 record.
+type observedAgent struct {
 	review.AuditorAgente
-	autoria *recolectorAutoria
+	authorship *recolectorAutoria
 }
 
-func (a *agenteObservado) EjecutarPrompt(prompt string) (string, error) {
+func (a *observedAgent) EjecutarPrompt(prompt string) (string, error) {
 	salida, err := a.AuditorAgente.EjecutarPrompt(prompt)
 	if err == nil {
-		a.autoria.registrar(a.AuditorAgente)
+		a.authorship.registrar(a.AuditorAgente)
 	}
 	return salida, err
 }
 
-func (a *agenteObservado) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (a *observedAgent) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	reviewer, ok := a.AuditorAgente.(interface {
 		EjecutarRevision(string, string, []string) (string, error)
 	})
@@ -57,12 +56,12 @@ func (a *agenteObservado) EjecutarRevision(prompt, sha string, paths []string) (
 	}
 	salida, err := reviewer.EjecutarRevision(prompt, sha, paths)
 	if err == nil {
-		a.autoria.registrar(a.AuditorAgente)
+		a.authorship.registrar(a.AuditorAgente)
 	}
 	return salida, err
 }
 
-func (a *agenteObservado) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *observedAgent) ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	reviewer, ok := a.AuditorAgente.(interface {
 		ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error)
 	})
@@ -71,12 +70,12 @@ func (a *agenteObservado) ReviewWithPolicy(prompt, sha string, paths []string, p
 	}
 	output, err := reviewer.ReviewWithPolicy(prompt, sha, paths, policy)
 	if err == nil {
-		a.autoria.registrar(a.AuditorAgente)
+		a.authorship.registrar(a.AuditorAgente)
 	}
 	return output, err
 }
 
-func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
+func (a *observedAgent) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -85,7 +84,7 @@ func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha str
 	}); ok {
 		salida, err := contextual.ReviewWithContext(ctx, prompt, sha, paths)
 		if err == nil {
-			a.autoria.registrar(a.AuditorAgente)
+			a.authorship.registrar(a.AuditorAgente)
 		}
 		return salida, err
 	}
@@ -97,12 +96,12 @@ func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha str
 	}
 	salida, err := reviewer.EjecutarRevision(prompt, sha, paths)
 	if err == nil {
-		a.autoria.registrar(a.AuditorAgente)
+		a.authorship.registrar(a.AuditorAgente)
 	}
 	return salida, err
 }
 
-func (a *agenteObservado) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+func (a *observedAgent) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -111,14 +110,14 @@ func (a *agenteObservado) ReviewWithContextAndPolicy(ctx context.Context, prompt
 	}); ok {
 		output, err := contextual.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, policy)
 		if err == nil {
-			a.autoria.registrar(a.AuditorAgente)
+			a.authorship.registrar(a.AuditorAgente)
 		}
 		return output, err
 	}
 	return a.ReviewWithPolicy(prompt, sha, paths, policy)
 }
 
-func (a *agenteObservado) OwnedTree() *process.Tree {
+func (a *observedAgent) OwnedTree() *process.Tree {
 	if provider, ok := a.AuditorAgente.(interface {
 		OwnedTree() *process.Tree
 	}); ok {

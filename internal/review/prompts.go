@@ -9,19 +9,18 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
-// ConstruirPromptAuditoria arma el prompt maestro para auditar un commit
-// contra una dimensión. Incluye el mensaje del commit, el diff, el glosario
-// de la dimensión, los smells de diseño como guía y, si el usuario resolvió
-// preguntas (--answer), esas respuestas como segunda ronda.
-func ConstruirPromptAuditoria(dimension, mensaje, diff, respuestas string) string {
+// BuildAuditPrompt constructs the master prompt for auditing a commit against
+// one dimension. It includes the commit message, diff, dimension glossary,
+// design smells as guidance, and user answers (--answer) for a second round.
+func BuildAuditPrompt(dimension, message, diff, answers string) string {
 	contract, err := reviewcontract.Lookup(dimension)
 	if err != nil {
 		return ""
 	}
-	return construirPromptConContexto(ReviewBundle{}, contract, mensaje, diff, respuestas, "", nil, "", "")
+	return buildPromptWithContext(ReviewBundle{}, contract, message, diff, answers, "", nil, "", "")
 }
 
-func construirPromptConContexto(bundle ReviewBundle, contract reviewcontract.DimensionContract, message, diff, answers, context string, paths []string, unitLabel, unitHistory string) string {
+func buildPromptWithContext(bundle ReviewBundle, contract reviewcontract.DimensionContract, message, diff, answers, context string, paths []string, unitLabel, unitHistory string) string {
 
 	unitName, messageLabel := "commit", "Commit message:"
 	netSection := ""

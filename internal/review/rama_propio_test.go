@@ -77,7 +77,7 @@ func TestStackedBranchExplainsRanges(t *testing.T) {
 	swapParentResolver(t, fixedResolver("feature-a"))
 
 	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 2,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
@@ -116,7 +116,7 @@ func TestStackedBranchInheritedFindingDoesNotBlock(t *testing.T) {
 
 	gitEjecutar(t, "checkout", "feature-a")
 	if _, err := AnalizarRama(ledger, OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditSalida: auditOutputCritical}),
+		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputCritical}),
 		Parallel: 1,
 	}); err != nil {
 		t.Fatalf("audit of A failed: %v", err)
@@ -124,7 +124,7 @@ func TestStackedBranchInheritedFindingDoesNotBlock(t *testing.T) {
 	gitEjecutar(t, "checkout", "feature-b")
 
 	res, err := AnalizarRama(ledger, OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
@@ -154,7 +154,7 @@ func TestStackedBranchOwnFindingBlocks(t *testing.T) {
 	swapParentResolver(t, fixedResolver("feature-a"))
 
 	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditSalida: auditOutputCritical}),
+		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputCritical}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
@@ -176,7 +176,7 @@ func TestStackedBranchContextIsReadOnly(t *testing.T) {
 	swapParentResolver(t, fixedResolver("feature-a"))
 
 	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
@@ -203,7 +203,7 @@ func TestStackedBranchExplicitParent(t *testing.T) {
 	pila := prepareStackRepo(t)
 
 	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{Parent: "feature-a"},
 	})
@@ -215,7 +215,7 @@ func TestStackedBranchExplicitParent(t *testing.T) {
 	}
 
 	_, err = AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{Parent: "no-existe"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a commit") {
@@ -235,7 +235,7 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 	})
 
 	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{ResolveParent: true},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no reliable parent signal") {
@@ -254,7 +254,7 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 	swapParentResolver(t, git.ResolveParentBranch)
 	sola := prepararRepoRama(t)
 	if _, err := AnalizarRama(NuevoLedger(sola), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{ResolveParent: true},
 	}); err == nil || !strings.Contains(err.Error(), "could not resolve parent branch") ||
 		!strings.Contains(err.Error(), "current branch=") {
@@ -267,7 +267,7 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 func TestStackedBranchWithoutOptionsFails(t *testing.T) {
 	pila := prepareStackRepo(t)
 	_, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditSalida: salidaAuditOK}),
+		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{},
 	})
 	if err == nil || !errors.Is(err, errOwnDiffWithoutParent) {
