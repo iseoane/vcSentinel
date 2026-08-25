@@ -86,3 +86,10 @@ Delete `internal/tui/art` and `tools/tuipreview`; nothing else references them.
      machine-readable document was produced.
   4. Three orphaned operator_required runs remain in the shared store as
      known residue: 16eee5c5…, c7bd62ca…, e98dbc89….
+
+## Operator decision (2026-08-25)
+
+The operator explicitly APPROVED the Slice 2 cumulative diff of 543 added
+lines against the 400-line review budget (bypass granted after three review
+rounds found no functional blockers). Commits ae2b20c, df12aaf, 26cd4d2 are
+accepted as-is. Next unit: Slice 3.
