@@ -69,11 +69,11 @@ func (a *agenteObservado) ReviewWithPolicy(prompt, sha string, paths []string, p
 	if !ok {
 		return "", review.ErrRestrictedRequired
 	}
-	salida, err := reviewer.ReviewWithPolicy(prompt, sha, paths, policy)
+	output, err := reviewer.ReviewWithPolicy(prompt, sha, paths, policy)
 	if err == nil {
 		a.autoria.registrar(a.AuditorAgente)
 	}
-	return salida, err
+	return output, err
 }
 
 func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
@@ -109,11 +109,11 @@ func (a *agenteObservado) ReviewWithContextAndPolicy(ctx context.Context, prompt
 	if contextual, ok := a.AuditorAgente.(interface {
 		ReviewWithContextAndPolicy(context.Context, string, string, []string, reviewcontract.ToolPolicy) (string, error)
 	}); ok {
-		salida, err := contextual.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, policy)
+		output, err := contextual.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, policy)
 		if err == nil {
 			a.autoria.registrar(a.AuditorAgente)
 		}
-		return salida, err
+		return output, err
 	}
 	return a.ReviewWithPolicy(prompt, sha, paths, policy)
 }

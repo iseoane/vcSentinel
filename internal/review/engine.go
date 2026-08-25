@@ -45,16 +45,16 @@ type policyBoundReviewer struct {
 	policy reviewcontract.ToolPolicy
 }
 
-func bindPolicy(agente AuditorAgente, policy reviewcontract.ToolPolicy) policyBoundReviewer {
-	return policyBoundReviewer{AuditorAgente: agente, policy: policy}
+func bindPolicy(agent AuditorAgente, policy reviewcontract.ToolPolicy) policyBoundReviewer {
+	return policyBoundReviewer{AuditorAgente: agent, policy: policy}
 }
 
 func (a policyBoundReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	revisor, ok := a.AuditorAgente.(policyAwareReviewer)
+	reviewer, ok := a.AuditorAgente.(policyAwareReviewer)
 	if !ok {
 		return "", ErrRestrictedRequired
 	}
-	return revisor.ReviewWithPolicy(prompt, sha, paths, a.policy)
+	return reviewer.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
 
 func (a policyBoundReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
@@ -62,8 +62,8 @@ func (a policyBoundReviewer) EjecutarRevision(prompt, sha string, paths []string
 }
 
 func (a policyBoundReviewer) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	if revisor, ok := a.AuditorAgente.(contextualPolicyAwareReviewer); ok {
-		return revisor.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, a.policy)
+	if reviewer, ok := a.AuditorAgente.(contextualPolicyAwareReviewer); ok {
+		return reviewer.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, a.policy)
 	}
 	return a.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
@@ -567,44 +567,44 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: request.Contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
-	agente, bundle, opts, contract := request.Agent, request.Bundle, request.Options, request.Contract
-	if _, ok := agente.(policyAwareReviewer); !ok {
+	agent, bundle, opts, contract := request.Agent, request.Bundle, request.Options, request.Contract
+	if _, ok := agent.(policyAwareReviewer); !ok {
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: ErrRestrictedRequired.Error()}, ErrRestrictedRequired
 	}
 	ejecutar := func(prompt string) (string, error) {
-		restringido := agente.(policyAwareReviewer)
-		return restringido.ReviewWithPolicy(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
+		policyReviewer := agent.(policyAwareReviewer)
+		return policyReviewer.ReviewWithPolicy(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
 	}
-	salida, invocacion, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agente, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 	if err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
 
-	crudo, err := ParsearDimensionResultParaContrato(salida, contract)
+	crudo, err := ParsearDimensionResultParaContrato(output, contract)
 	if err != nil {
-		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: salida}, err
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
 	}
-	crudo.InvocationID = invocacion
-	crudo.RawProviderOutput = salida
+	crudo.InvocationID = invocation
+	crudo.RawProviderOutput = output
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, invocacion, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agente, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, construirPromptConContexto(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
 			failure := &ProviderExecutionFailure{Err: err}
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 		}
-		crudo, err = ParsearDimensionResultParaContrato(salida, contract)
+		crudo, err = ParsearDimensionResultParaContrato(output, contract)
 		if err != nil {
-			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: salida}, err
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
 		}
-		crudo.InvocationID = invocacion
-		crudo.RawProviderOutput = salida
+		crudo.InvocationID = invocation
+		crudo.RawProviderOutput = output
 	}
 	stamparSourceReview(crudo.Hallazgos)
-	stamparInvocacion(crudo.Hallazgos, invocacion)
-	stamparProductorEfectivo(crudo.Hallazgos, agente)
+	stamparInvocacion(crudo.Hallazgos, invocation)
+	stamparProductorEfectivo(crudo.Hallazgos, agent)
 	return crudo, nil
 }
 
