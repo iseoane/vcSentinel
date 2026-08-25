@@ -83,6 +83,7 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `status` | Show volume, audit records, and recent events. Supports `--json` and `--prune`. |
 | `explain` | Explain a commit range's change profile, detected characteristics, risk, and cohesion. Supports `--json`. |
 | `consentimiento-diff` | Grant, revoke, or show local consent for external diffs. |
+| `tui` | Open the full-screen control center over the repository registry; starts and owns this repository's daemon for the session and stops it gracefully on exit. |
 | `pr` | Create a pull request through `gh`; `pr review` analyzes the unpublished branch. |
 | `install` / `upgrade` / `uninstall` | Manage the installed binary. |
 
@@ -100,6 +101,7 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `gate`: loads project configuration strictly, validates the selected `validation.profiles` profile, then audits `HEAD`. `--stage` identifies lifecycle context; `--profile` selects validation, not review, configuration.
 - `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
 - `pr review`: chooses single versus chained review using `review.LimiteDecisionChain`, which equals the guardian limit of 400 lines. Configured lint, test, and build commands run deterministically without consulting an agent.
+- `tui`: renders the global registry snapshot (`~/.vas_sentinel/repositories.json`) live at a 2-second interval through `internal/tui/control` and the approved art layout. When no daemon is live for the current repository it spawns one detached child and owns it for the session; foreign daemons are never stopped. The activity pane derives repository state only; per-run rows remain future work.
 - `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook that enforces staged volume.
 
 ## Configuration
