@@ -170,25 +170,31 @@ func TestUpdateKeyRouting(t *testing.T) {
 			},
 		},
 		{
-			name:  "q flags quitting without scheduling anything",
+			name:  "q flags quitting and returns the quit command",
 			setup: func(t *testing.T) Model { return New(repos) },
 			key:   "q",
 			assert: func(t *testing.T, before Model, after Model, cmd tea.Cmd) {
 				if !after.Quitting() {
 					t.Errorf("q did not flag quitting")
 				}
-				if cmd != nil {
-					t.Errorf("q scheduled %v, want nothing", cmd)
+				if cmd == nil {
+					t.Fatalf("q returned no command, want tea.Quit")
+				}
+				if msg := cmd(); msg == nil {
+					t.Errorf("the q command produced no message")
 				}
 			},
 		},
 		{
-			name:  "ctrl+c flags quitting",
+			name:  "ctrl+c flags quitting and returns the quit command",
 			setup: func(t *testing.T) Model { return New(repos) },
 			key:   "ctrl+c",
 			assert: func(t *testing.T, before Model, after Model, cmd tea.Cmd) {
 				if !after.Quitting() {
 					t.Errorf("ctrl+c did not flag quitting")
+				}
+				if cmd == nil {
+					t.Errorf("ctrl+c returned no command, want tea.Quit")
 				}
 			},
 		},

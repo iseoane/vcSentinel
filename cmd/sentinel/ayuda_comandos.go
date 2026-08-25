@@ -150,6 +150,8 @@ Example:
 	"runs recover": textoAyudaRunsRecover,
 	"runs verify":  textoAyudaRunsVerify,
 	"runs prune":   textoAyudaRunsPrune,
+
+	"tui": textoAyudaTui,
 }
 
 // esFlagAyuda reports whether one argument requests help.

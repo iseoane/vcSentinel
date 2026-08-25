@@ -119,7 +119,8 @@ func (m Model) Init() tea.Cmd {
 // Update is the pure state-machine transition: messages in, next model plus
 // at most one scheduled command out. Window resizes set the render width
 // with a floor at minWidth; up/k and down/j move the repository cursor
-// clamped to [0, len(repos)-1]; q and ctrl+c flag quitting; on live models a
+// clamped to [0, len(repos)-1]; q and ctrl+c flag quitting and return
+// tea.Quit as their command so a real program ends the session; on live models a
 // tick maps to exactly one reschedule plus one snapshot collection, a
 // successful snapshot replaces the repositories (clamping the selection back
 // into range), and a failed snapshot keeps the last good snapshot while
@@ -146,6 +147,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "q", "ctrl+c":
 			m.quitting = true
+			// The quit flag stays for headless tests; the command is what a
+			// real tea.Program consumes to end the session.
+			return m, tea.Quit
 		}
 		return m, nil
 	case tickMsg:
