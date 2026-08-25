@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -36,7 +37,35 @@ func (a *agenteFake) EjecutarPrompt(prompt string) (string, error) {
 		salida = a.respuestas[a.llamadas]
 	}
 	a.llamadas++
-	return salida, nil
+	return completarContratoDePrueba(salida), nil
+}
+
+func completarContratoDePrueba(output string) string {
+	var result map[string]any
+	if json.Unmarshal([]byte(output), &result) != nil {
+		return output
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok {
+		return output
+	}
+	for _, item := range findings {
+		finding, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := finding["evidence"]; !ok {
+			finding["evidence"] = "test evidence"
+		}
+		if _, ok := finding["confidence"]; !ok {
+			finding["confidence"] = "high"
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return output
+	}
+	return string(encoded)
 }
 
 func dimensionFromPrompt(prompt string) string {
@@ -55,6 +84,10 @@ func dimensionFromPrompt(prompt string) string {
 
 func (a *agenteFake) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *agenteFake) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func fabricaFija(respuestas []string) (FabricaAuditor, *agenteFake) {
@@ -83,11 +116,17 @@ func bundlesPrueba(dims ...string) []ReviewBundle {
 // whose refuter double inspects the reviewer's allowed path list.
 func transporteDirecto(sha string, rutas ...string) ReviewTransport {
 	return func(_ string, _ string, prompt string, agente AuditorAgente) (string, string, error) {
-		revisor, ok := agente.(auditorConHerramientasRestringidas)
+		revisor, ok := agente.(auditorConPoliticaHerramientas)
 		if !ok {
 			return "", "", ErrRestrictedRequired
 		}
-		salida, err := revisor.EjecutarRevision(prompt, sha, rutas)
+		policy := reviewcontract.DefaultToolPolicy()
+		if vinculado, ok := agente.(interface {
+			ReviewToolPolicy() reviewcontract.ToolPolicy
+		}); ok {
+			policy = vinculado.ReviewToolPolicy()
+		}
+		salida, err := revisor.EjecutarRevisionConPolitica(prompt, sha, rutas, policy)
 		return salida, "", err
 	}
 }
@@ -158,6 +197,74 @@ func TestAuditarCommitUsesResolvedContractForPromptValidationAndTools(t *testing
 	}
 }
 
+func TestAuditarCommitRejectsFindingsMissingContractEvidenceOrConfidenceWithoutRetry(t *testing.T) {
+	for name, output := range map[string]string{
+		"missing literal evidence": `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","confidence":"high"}]}`,
+		"missing confidence":       `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","evidence":"unsafe()"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			agent := &contractOutputAgent{responses: []string{output, `{"dim":"logic","verdict":"ok"}`}}
+			factory := func(ReviewBundle, string) (AuditorAgente, string, error) { return agent, "normal", nil }
+			result := AuditarCommit(factory, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+
+			if agent.calls != 1 {
+				t.Fatalf("calls=%d, want one; schema failures must not retry", agent.calls)
+			}
+			if result.Veredicto != VerdictUnavailable || len(result.Findings) != 0 {
+				t.Fatalf("result=%+v, want unavailable with no verdict-influencing finding", result)
+			}
+			var outputErr *SemanticOutputError
+			if !errors.As(result.Dims[0].Error, &outputErr) || outputErr.Class != SemanticOutputSchemaInvalid {
+				t.Fatalf("error=%v, want SemanticOutputSchemaInvalid", result.Dims[0].Error)
+			}
+		})
+	}
+}
+
+type contractOutputAgent struct {
+	responses []string
+	calls     int
+}
+
+func (a *contractOutputAgent) EjecutarPrompt(string) (string, error) {
+	output := a.responses[a.calls]
+	a.calls++
+	return output, nil
+}
+
+func (a *contractOutputAgent) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
+func (a *contractOutputAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
+}
+
+func TestAuditarCommitRejectsLegacyOnlySemanticReviewer(t *testing.T) {
+	legacy := &legacyOnlySemanticAgent{}
+	result := AuditarCommit(func(ReviewBundle, string) (AuditorAgente, string, error) {
+		return legacy, "legacy-only", nil
+	}, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+
+	if legacy.calls != 0 {
+		t.Fatalf("legacy reviewer calls=%d, want 0", legacy.calls)
+	}
+	if result.Veredicto != VerdictUnavailable || !errors.Is(result.Dims[0].Error, ErrRestrictedRequired) {
+		t.Fatalf("result=%+v, want unavailable restricted-policy rejection", result)
+	}
+}
+
+type legacyOnlySemanticAgent struct{ calls int }
+
+func (a *legacyOnlySemanticAgent) EjecutarPrompt(string) (string, error) {
+	a.calls++
+	return `{"dim":"logic","verdict":"ok"}`, nil
+}
+
+func (a *legacyOnlySemanticAgent) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+	return a.EjecutarPrompt(prompt)
+}
+
 func TestAuditarCommitRejectsAnotherCanonicalDimensionWithoutRetry(t *testing.T) {
 	factory, agent := fabricaFija([]string{
 		`{"dim":"security","verdict":"ok"}`,
@@ -195,6 +302,10 @@ func (a *agentePrompt) EjecutarPrompt(prompt string) (string, error) {
 
 func (a *agentePrompt) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *agentePrompt) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
@@ -347,7 +458,11 @@ type agenteEfectivoFake struct {
 func (a agenteEfectivoFake) EjecutarPrompt(string) (string, error) { return a.respuesta, nil }
 
 func (a agenteEfectivoFake) EjecutarRevision(string, string, []string) (string, error) {
-	return a.respuesta, nil
+	return completarContratoDePrueba(a.respuesta), nil
+}
+
+func (a agenteEfectivoFake) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func (a agenteEfectivoFake) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
@@ -602,6 +717,10 @@ func (agenteError) EjecutarPrompt(prompt string) (string, error) {
 
 func (agenteError) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return agenteError{}.EjecutarPrompt(prompt)
+}
+
+func (agenteError) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return agenteError{}.EjecutarRevision(prompt, sha, paths)
 }
 
 var errTimeoutSimulado = &errorSimulado{}
@@ -1231,9 +1350,18 @@ func runGit(t *testing.T, dir string, args ...string) string {
 
 type auditorFunc func(string) (string, error)
 
-func (f auditorFunc) EjecutarPrompt(prompt string) (string, error) { return f(prompt) }
+func (f auditorFunc) EjecutarPrompt(prompt string) (string, error) {
+	output, err := f(prompt)
+	return completarContratoDePrueba(output), err
+}
 
-func (f auditorFunc) EjecutarRevision(prompt, _ string, _ []string) (string, error) { return f(prompt) }
+func (f auditorFunc) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+	return f.EjecutarPrompt(prompt)
+}
+
+func (f auditorFunc) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return f.EjecutarRevision(prompt, sha, paths)
+}
 
 func TestAuditarCommitRejectsUnrestrictedPromptAdapter(t *testing.T) {
 	called := false
@@ -1278,8 +1406,8 @@ func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
 	if gotBundle != "quality" || gotDim != "logic" || strings.TrimSpace(gotPrompt) == "" {
 		t.Fatalf("transport args = %q/%q/%q, want bundle, dimension, and built prompt", gotBundle, gotDim, gotPrompt)
 	}
-	if gotAgent != AuditorAgente(fake) {
-		t.Fatal("transport received a different agent than the fabric produced")
+	if _, ok := gotAgent.(auditorConPoliticaVinculada); !ok {
+		t.Fatalf("transport agent = %T, want the policy-bound reviewer", gotAgent)
 	}
 	fake.mu.Lock()
 	calls := fake.llamadas

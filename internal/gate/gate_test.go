@@ -1,12 +1,14 @@
 package gate
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
@@ -19,11 +21,43 @@ type auditorFalso struct {
 }
 
 func (a *auditorFalso) EjecutarPrompt(prompt string) (string, error) {
-	return a.salida, a.err
+	return completarContratoDePrueba(a.salida), a.err
 }
 
 func (a *auditorFalso) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *auditorFalso) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
+}
+
+func completarContratoDePrueba(output string) string {
+	var result map[string]any
+	if json.Unmarshal([]byte(output), &result) != nil {
+		return output
+	}
+	findings, ok := result["findings"].([]any)
+	if !ok {
+		return output
+	}
+	for _, item := range findings {
+		finding, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := finding["evidence"]; !ok {
+			finding["evidence"] = "test evidence"
+		}
+		if _, ok := finding["confidence"]; !ok {
+			finding["confidence"] = "high"
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return output
+	}
+	return string(encoded)
 }
 
 // fabricaContadora construye una review.FabricaAuditor que cuenta cuántas
@@ -268,11 +302,15 @@ type auditorSecuencial struct {
 func (a *auditorSecuencial) EjecutarPrompt(string) (string, error) {
 	salida := a.respuestas[*a.llamadas]
 	*a.llamadas++
-	return salida, nil
+	return completarContratoDePrueba(salida), nil
 }
 
 func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *auditorSecuencial) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {

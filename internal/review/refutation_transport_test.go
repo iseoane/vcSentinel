@@ -8,7 +8,7 @@ import (
 
 const (
 	refutationSHA        = "abc12345"
-	hallazgoCriticoJSON  = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","evidence":"criticalCall()"}]}`
+	hallazgoCriticoJSON  = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","evidence":"criticalCall()","confidence":"high"}]}`
 	refutacionValidaJSON = `{"refuted":true,"reason":"the committed implementation is safe","sha":"abc12345","file":"a.go","evidence":"criticalCall()","line_start":1,"line_end":1}`
 )
 

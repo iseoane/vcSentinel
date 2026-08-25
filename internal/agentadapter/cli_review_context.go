@@ -27,6 +27,12 @@ func (c *CLIAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, 
 	return c.reviewWithContextPolicy(ctx, prompt, sha, paths, reviewcontract.DefaultToolPolicy())
 }
 
+// ReviewWithContextConPolitica executes a semantic review under the supplied
+// provider-neutral contract policy while preserving controller cancellation.
+func (c *CLIAdapter) ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	return c.reviewWithContextPolicy(ctx, prompt, sha, paths, policy)
+}
+
 func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -63,12 +69,9 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 	if c.esClaude() {
 		// Claude Code has no "--dir"-style flag (unlike OpenCode's --pure +
 		// --dir), so it runs with the snapshot as its working directory. Tool
-		// authorization is configured by reviewCommand; this is not an OS sandbox.
-		// --safe-mode already disables CLAUDE.md,
-		// skills, plugins, hooks, MCP servers, and custom agents, so unlike
-		// OpenCode's reviewEnvironment (which redirects HOME/XDG because
-		// opencode has no equivalent flag) no HOME/XDG redirection is needed
-		// here.
+		// authorization is configured by reviewCommand; this is not an OS
+		// sandbox. Tests verify the generated CLI arguments and snapshot cwd,
+		// not live provider permission enforcement or path-matcher behavior.
 		dir = request.SnapshotDir
 	} else {
 		env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)

@@ -8,6 +8,7 @@ package reviewexec
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -70,16 +72,34 @@ type cannedAgent struct {
 	calls     int32
 }
 
-func (a *cannedAgent) EjecutarPrompt(string) (string, error) {
+func (a *cannedAgent) EjecutarPrompt(prompt string) (string, error) {
 	index := int(atomic.AddInt32(&a.calls, 1)) - 1
 	if index < len(a.responses) {
 		return a.responses[index], nil
 	}
-	return `{"dim":"logic","verdict":"ok"}`, nil
+	return fmt.Sprintf(`{"dim":%q,"verdict":"ok"}`, migrationDimensionFromPrompt(prompt)), nil
+}
+
+func migrationDimensionFromPrompt(prompt string) string {
+	const prefix = `against the "`
+	start := strings.Index(prompt, prefix)
+	if start < 0 {
+		return "logic"
+	}
+	rest := prompt[start+len(prefix):]
+	end := strings.Index(rest, `" dimension`)
+	if end < 0 {
+		return "logic"
+	}
+	return rest[:end]
 }
 
 func (a *cannedAgent) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *cannedAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 // failingAgent fails every restricted call with concrete provider evidence.
@@ -89,6 +109,10 @@ func (failingAgent) EjecutarPrompt(string) (string, error) { return "", nil }
 
 func (failingAgent) EjecutarRevision(string, string, []string) (string, error) {
 	return "", errors.New("provider exploded during audit")
+}
+
+func (failingAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return failingAgent{}.EjecutarRevision(prompt, sha, paths)
 }
 
 // barrierAgent releases its wave only when waveSize reviewers are inside the
@@ -108,7 +132,7 @@ func newBarrierAgent(waveSize int32) *barrierAgent {
 
 func (b *barrierAgent) EjecutarPrompt(string) (string, error) { return "", nil }
 
-func (b *barrierAgent) EjecutarRevision(string, string, []string) (string, error) {
+func (b *barrierAgent) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	current := atomic.AddInt32(&b.active, 1)
 	defer atomic.AddInt32(&b.active, -1)
 	for {
@@ -125,7 +149,11 @@ func (b *barrierAgent) EjecutarRevision(string, string, []string) (string, error
 	case <-time.After(2 * time.Second):
 		return "", errors.New("barrier timeout: dimensions were executed serially")
 	}
-	return `{"dim":"logic","verdict":"ok"}`, nil
+	return fmt.Sprintf(`{"dim":%q,"verdict":"ok"}`, migrationDimensionFromPrompt(prompt)), nil
+}
+
+func (b *barrierAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return b.EjecutarRevision(prompt, sha, paths)
 }
 
 func (b *barrierAgent) observedPeak() int32 { return atomic.LoadInt32(&b.peak) }
@@ -145,6 +173,23 @@ func (o *observerAgent) EjecutarPrompt(string) (string, error) { return "", nil 
 
 func (o *observerAgent) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
 	output, err := o.inner.EjecutarRevision(prompt, sha, paths)
+	if err == nil {
+		o.mu.Lock()
+		o.successes++
+		o.answerer = "wrapped-dimension-agent"
+		o.mu.Unlock()
+	}
+	return output, err
+}
+
+func (o *observerAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	reviewer, ok := o.inner.(interface {
+		EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error)
+	})
+	if !ok {
+		return "", review.ErrRestrictedRequired
+	}
+	output, err := reviewer.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
 	if err == nil {
 		o.mu.Lock()
 		o.successes++
@@ -295,7 +340,7 @@ func TestDurablePathAttributionRecordsAnsweringAgent(t *testing.T) {
 
 // findingBearingResponse emits one v2 finding (marker fields make esV2 true)
 // so content parity — not just counts — is proven between execution modes.
-const findingBearingResponse = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","severity":"critical","description":"unchecked nil dereference in handler","id":"logic-nil-deref-1","title":"nil dereference","evidence":"handler dereferences cfg before the nil guard","location":{"file":"a.go","line_start":3,"line_end":3},"status":"open"}]}`
+const findingBearingResponse = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","severity":"critical","description":"unchecked nil dereference in handler","id":"logic-nil-deref-1","title":"nil dereference","evidence":"handler dereferences cfg before the nil guard","confidence":"high","location":{"file":"a.go","line_start":3,"line_end":3},"status":"open"}]}`
 
 func TestMigrationFindingsParityCarriesFullContent(t *testing.T) {
 	factory := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {

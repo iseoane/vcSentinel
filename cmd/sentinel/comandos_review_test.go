@@ -14,6 +14,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -411,6 +412,10 @@ func (a *agenteFakeSecuencialReview) EjecutarPrompt(prompt string) (string, erro
 // de parsear la respuesta fija de la prueba.
 func (a *agenteFakeSecuencialReview) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *agenteFakeSecuencialReview) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func fabricaFakeSecuencialReview(respuestas []string) review.FabricaAuditor {

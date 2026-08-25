@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 type h5Case struct {
@@ -23,12 +25,16 @@ func (r h5Reviewer) EjecutarRevision(string, string, []string) (string, error) {
 	return r.resultado()
 }
 
+func (r h5Reviewer) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return r.EjecutarRevision(prompt, sha, paths)
+}
+
 func (r h5Reviewer) resultado() (string, error) {
-	return string(mustJSON(struct {
+	return completarContratoDePrueba(string(mustJSON(struct {
 		Dim      string          `json:"dim"`
 		Verdict  string          `json:"verdict"`
 		Findings []ReviewFinding `json:"findings"`
-	}{Dim: DimLogic, Verdict: VerdictBlock, Findings: r.findings})), nil
+	}{Dim: DimLogic, Verdict: VerdictBlock, Findings: r.findings}))), nil
 }
 
 type h5Refuter struct {
@@ -67,6 +73,10 @@ func (r h5Refuter) EjecutarRevision(prompt, sha string, paths []string) (string,
 		return string(mustJSON(response)), nil
 	}
 	return h5RefutationFailure(), nil
+}
+
+func (r h5Refuter) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return r.EjecutarRevision(prompt, sha, paths)
 }
 
 func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {

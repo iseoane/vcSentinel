@@ -8,6 +8,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // agentesMultiples es el valor que se registra cuando las dimensiones de una
@@ -61,6 +62,20 @@ func (a *agenteObservado) EjecutarRevision(prompt, sha string, paths []string) (
 	return salida, err
 }
 
+func (a *agenteObservado) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	reviewer, ok := a.AuditorAgente.(interface {
+		EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error)
+	})
+	if !ok {
+		return "", review.ErrRestrictedRequired
+	}
+	salida, err := reviewer.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
+	if err == nil {
+		a.autoria.registrar(a.AuditorAgente)
+	}
+	return salida, err
+}
+
 func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -85,6 +100,22 @@ func (a *agenteObservado) ReviewWithContext(ctx context.Context, prompt, sha str
 		a.autoria.registrar(a.AuditorAgente)
 	}
 	return salida, err
+}
+
+func (a *agenteObservado) ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if contextual, ok := a.AuditorAgente.(interface {
+		ReviewWithContextConPolitica(context.Context, string, string, []string, reviewcontract.ToolPolicy) (string, error)
+	}); ok {
+		salida, err := contextual.ReviewWithContextConPolitica(ctx, prompt, sha, paths, policy)
+		if err == nil {
+			a.autoria.registrar(a.AuditorAgente)
+		}
+		return salida, err
+	}
+	return a.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
 }
 
 func (a *agenteObservado) OwnedTree() *process.Tree {

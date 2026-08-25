@@ -7,13 +7,15 @@ package review
 
 import (
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // respuestaV2Invocacion carries one v2 finding (the "id" marker makes esV2
 // true) so the engine-level tests can observe per-finding binding, not just
 // the dimension result.
 const respuestaV2Invocacion = "BEGIN_REVIEW\n" +
-	`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","severity":"CRITICAL","description":"unchecked nil dereference in handler","id":"inv-bind-1","title":"nil dereference","evidence":"handler dereferences cfg before the nil guard","location":{"file":"a.go","line_start":3,"line_end":3},"status":"open"}]}` +
+	`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","severity":"CRITICAL","description":"unchecked nil dereference in handler","id":"inv-bind-1","title":"nil dereference","evidence":"handler dereferences cfg before the nil guard","confidence":"high","location":{"file":"a.go","line_start":3,"line_end":3},"status":"open"}]}` +
 	"\nEND_REVIEW"
 
 func bundlesInvocacion() []ReviewBundle {
@@ -45,6 +47,10 @@ type agenteTransporteSilencioso struct{}
 
 func (agenteTransporteSilencioso) EjecutarPrompt(string) (string, error) { return "", nil }
 
+func (agenteTransporteSilencioso) EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error) {
+	return "", nil
+}
+
 type agenteRestringidoContado struct{ llamadas int }
 
 func (a *agenteRestringidoContado) EjecutarPrompt(string) (string, error) { return "", nil }
@@ -52,6 +58,10 @@ func (a *agenteRestringidoContado) EjecutarPrompt(string) (string, error) { retu
 func (a *agenteRestringidoContado) EjecutarRevision(string, string, []string) (string, error) {
 	a.llamadas++
 	return respuestaV2Invocacion, nil
+}
+
+func (a *agenteRestringidoContado) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func TestAuditarCommitBindsTransportInvocationToFindings(t *testing.T) {

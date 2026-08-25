@@ -26,6 +26,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 const ymlValidacionCutover = "version: \"2.0\"\nvalidation:\n  capabilities:\n    lint:\n      command: \"echo ok\"\n      fails_when: \"exit_code\"\n  profiles:\n    standard: [\"lint\"]\n"
@@ -38,6 +39,10 @@ type agenteRevisionFijo struct{ salida string }
 func (a *agenteRevisionFijo) EjecutarPrompt(string) (string, error) { return a.salida, nil }
 func (a *agenteRevisionFijo) EjecutarRevision(string, string, []string) (string, error) {
 	return a.salida, nil
+}
+
+func (a *agenteRevisionFijo) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 // repositorioCutover creates a real repository with one commit so HEAD
@@ -118,7 +123,7 @@ func construirOpcionesCutover(t *testing.T, worktree, stage, ymlExtra string, au
 
 func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	worktree := repositorioCutover(t)
-	bloqueoJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo confirmable"}]}`
+	bloqueoJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo confirmable","evidence":"risk()","confidence":"high"}]}`
 	opciones, _, sink := construirOpcionesCutover(t, worktree, "pre-push", "", bloqueoJSON)
 
 	if sink == nil {

@@ -127,13 +127,17 @@ func reviewTransportFactory(cfg config.Config, worktree string) func(sha string,
 // paths from drifting.
 func cerrarTransporteRevision(transport *reviewexec.DurableTransport) review.ReviewTransport {
 	return func(bundleName, dimension, prompt string, agente review.AuditorAgente) (string, string, error) {
-		restricted, ok := agente.(reviewexec.RestrictedReviewer)
+		restricted, ok := agente.(reviewexec.PolicyRestrictedReviewer)
+		if !ok {
+			return "", "", review.ErrRestrictedRequired
+		}
+		policyProvider, ok := agente.(reviewexec.PolicyProvider)
 		if !ok {
 			return "", "", review.ErrRestrictedRequired
 		}
 		// Ticket 07 slice 2b: the verified durable evidence travels with the
 		// output so the engine can bind findings to their producing invocation.
-		output, evidence, err := transport.Run(restricted, bundleName+"/"+dimension, prompt)
+		output, evidence, err := transport.RunWithPolicy(restricted, bundleName+"/"+dimension, prompt, policyProvider.ReviewToolPolicy())
 		if err != nil {
 			return "", "", err
 		}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // gitSalida ejecuta git en el cwd y devuelve la salida estándar.
@@ -62,6 +63,10 @@ func (a *auditorStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 	return a.EjecutarPrompt(prompt)
 }
 
+func (a *auditorStub) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
+}
+
 // salidaAuditOK is a canonical review result whose dimension is bound to the
 // requested contract by salidaParaDimension.
 const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
@@ -83,6 +88,10 @@ func (a *auditorRutasStub) EjecutarRevision(prompt, _ string, rutas []string) (s
 	a.rutas = append(a.rutas, append([]string(nil), rutas...))
 	a.mu.Unlock()
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *auditorRutasStub) EjecutarRevisionConPolitica(prompt, sha string, rutas []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, rutas)
 }
 
 // fakeStoreBlobs es un StoreBlobs de prueba que no depende de un

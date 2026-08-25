@@ -12,7 +12,7 @@ import (
 
 // auditOutputCritical is a valid audit JSONL that reports one CRITICAL finding
 // for every commit audited with it.
-const auditOutputCritical = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"block\",\"findings\":[{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":1,\"severity\":\"CRITICAL\",\"description\":\"injected defect\"}]}\nEND_REVIEW\n"
+const auditOutputCritical = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"block\",\"findings\":[{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":1,\"severity\":\"CRITICAL\",\"description\":\"injected defect\",\"evidence\":\"defect\",\"confidence\":\"high\"}]}\nEND_REVIEW\n"
 
 // stackRepo is a temporary repository holding the stack main -> feature-a ->
 // feature-b (current branch: feature-b), plus the SHAs needed by assertions.

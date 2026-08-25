@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -39,12 +40,16 @@ const descripcionHallazgoRebase = "hallazgo real de prueba de rebase"
 func (a *stubAuditorRebase) EjecutarPrompt(prompt string) (string, error) {
 	a.llamadas++
 	return "BEGIN_REVIEW\n" +
-		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + descripcionHallazgoRebase + `","suggestion":"revisar antes del rebase"}]}` +
+		`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + descripcionHallazgoRebase + `","suggestion":"revisar antes del rebase","evidence":"content-b","confidence":"high"}]}` +
 		"\nEND_REVIEW\n", nil
 }
 
 func (a *stubAuditorRebase) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *stubAuditorRebase) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 // fichaTieneHallazgo recorre todas las revisiones/dimensiones de una ficha

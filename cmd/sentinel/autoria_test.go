@@ -6,6 +6,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 func adaptadorDe(binario, modelo, esfuerzo string) *agentadapter.CLIAdapter {
@@ -25,6 +26,15 @@ func (agenteQueFalla) EjecutarPrompt(string) (string, error) {
 
 type agenteSoloPrompt struct {
 	prompts int
+}
+
+type agentePoliticaGrabada struct{ policy reviewcontract.ToolPolicy }
+
+func (*agentePoliticaGrabada) EjecutarPrompt(string) (string, error) { return "ok", nil }
+
+func (a *agentePoliticaGrabada) EjecutarRevisionConPolitica(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+	a.policy = policy
+	return "ok", nil
 }
 
 func (a *agenteSoloPrompt) EjecutarPrompt(string) (string, error) {
@@ -65,6 +75,19 @@ func TestAgenteObservadoEjecutarRevisionRequiereCapacidadRestringida(t *testing.
 	}
 	if soloPrompt.prompts != 0 {
 		t.Errorf("EjecutarPrompt se ejecutó %d veces, esperado 0", soloPrompt.prompts)
+	}
+}
+
+func TestAgenteObservadoForwardsSemanticToolPolicy(t *testing.T) {
+	inner := &agentePoliticaGrabada{}
+	agent := &agenteObservado{AuditorAgente: inner, autoria: &recolectorAutoria{}}
+	policy := reviewcontract.DefaultToolPolicy()
+
+	if _, err := agent.EjecutarRevisionConPolitica("review", "abc", []string{"a.go"}, policy); err != nil {
+		t.Fatalf("EjecutarRevisionConPolitica() error = %v", err)
+	}
+	if inner.policy != policy {
+		t.Fatalf("policy = %#v, want %#v", inner.policy, policy)
 	}
 }
 

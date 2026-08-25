@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // adaptadorCompleto es la interfaz interna que CadenaAdaptador exige a sus
@@ -47,6 +48,19 @@ func (c *CadenaAdaptador) EjecutarRevision(prompt, sha string, paths []string) (
 	})
 }
 
+// EjecutarRevisionConPolitica preserves fallback without allowing a semantic
+// review to discard its resolved dimension policy.
+func (c *CadenaAdaptador) EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	return c.primeroExitoso(func(a adaptadorCompleto) (string, error) {
+		if reviewer, ok := a.(interface {
+			EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error)
+		}); ok {
+			return reviewer.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
+		}
+		return "", fmt.Errorf("semantic review unavailable: adapter %s does not implement the policy-aware reviewer", nombreAdaptador(a))
+	})
+}
+
 // ReviewWithContext preserves per-request fallback while forwarding the
 // cancellation context: children that accept a context receive it so aborts
 // reach their spawned provider processes; children that only implement the
@@ -64,6 +78,24 @@ func (c *CadenaAdaptador) ReviewWithContext(ctx context.Context, prompt, sha str
 			return reviewer.EjecutarRevision(prompt, sha, paths)
 		}
 		return "", fmt.Errorf("semantic review unavailable: adapter %s does not implement EjecutarRevision", nombreAdaptador(a))
+	})
+}
+
+// ReviewWithContextConPolitica forwards cancellation and the resolved policy
+// together; legacy reviewers cannot satisfy a semantic review through a chain.
+func (c *CadenaAdaptador) ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	return c.primeroExitoso(func(a adaptadorCompleto) (string, error) {
+		if reviewer, ok := a.(interface {
+			ReviewWithContextConPolitica(context.Context, string, string, []string, reviewcontract.ToolPolicy) (string, error)
+		}); ok {
+			return reviewer.ReviewWithContextConPolitica(ctx, prompt, sha, paths, policy)
+		}
+		if reviewer, ok := a.(interface {
+			EjecutarRevisionConPolitica(string, string, []string, reviewcontract.ToolPolicy) (string, error)
+		}); ok {
+			return reviewer.EjecutarRevisionConPolitica(prompt, sha, paths, policy)
+		}
+		return "", fmt.Errorf("semantic review unavailable: adapter %s does not implement the policy-aware reviewer", nombreAdaptador(a))
 	})
 }
 

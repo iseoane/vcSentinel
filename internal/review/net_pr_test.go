@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // historyStub answers CRITICAL for prompts carrying commit 2's "+defect" diff line, ok otherwise.
@@ -19,6 +21,10 @@ func (s *historyStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 		return auditOutputCritical, nil
 	}
 	return salidaParaDimension(s.auditSalida, prompt), nil
+}
+
+func (s *historyStub) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return s.EjecutarRevision(prompt, sha, paths)
 }
 
 // netCriticalOutput is v2-shaped: evidence+confidence make it a Hallazgo, which is what AuditarCommit aggregates.
@@ -38,6 +44,10 @@ func (s *answeringStub) EjecutarRevision(prompt, _ string, _ []string) (string, 
 		return salidaParaDimension(s.output, prompt), nil
 	}
 	return salidaParaDimension(s.auditSalida, prompt), nil
+}
+
+func (s *answeringStub) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return s.EjecutarRevision(prompt, sha, paths)
 }
 
 func addDefectCommits(t *testing.T, fix bool) (shaDefect string) {

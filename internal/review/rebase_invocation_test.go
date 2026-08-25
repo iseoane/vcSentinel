@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -31,7 +32,7 @@ const (
 // the persisted ficha carries Hallazgos whose InvocationID binding can be
 // checked after adoption.
 var rebaseV2Response = "BEGIN_REVIEW\n" +
-	`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + invocationFindingDescription + `","id":"rebase-inv-1","title":"durable provenance","evidence":"content-b","location":{"file":"b.txt","line_start":1,"line_end":1},"status":"open"}]}` +
+	`{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"b.txt","line":1,"severity":"WARNING","description":"` + invocationFindingDescription + `","id":"rebase-inv-1","title":"durable provenance","evidence":"content-b","confidence":"high","location":{"file":"b.txt","line_start":1,"line_end":1},"status":"open"}]}` +
 	"\nEND_REVIEW"
 
 // rebaseV2StubAgent implements review.AuditorAgente but must NEVER be
@@ -46,6 +47,10 @@ func (a *rebaseV2StubAgent) EjecutarPrompt(string) (string, error) {
 
 func (a *rebaseV2StubAgent) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
 	return a.EjecutarPrompt(prompt)
+}
+
+func (a *rebaseV2StubAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
 }
 
 func rebaseV2StubFactory(a *rebaseV2StubAgent) review.FabricaAuditor {

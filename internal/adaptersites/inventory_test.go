@@ -212,7 +212,7 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	}
 
 	transport := readFile(t, root, "internal/reviewexec/durable_transport.go")
-	runBody := functionBody(t, transport, ") Run(reviewer RestrictedReviewer")
+	runBody := functionBody(t, transport, ") run(reviewer any")
 	for _, seam := range []string{
 		"agentrun.NewRunRequest(", // request admitted...
 		"controller.Start(",       // ...through the controller lifecycle authority
@@ -220,7 +220,7 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 		"t.verifyEvidence(",       // output admitted only against durable evidence
 	} {
 		if !strings.Contains(runBody, seam) {
-			t.Errorf("DurableTransport.Run lost its admission seam %q", seam)
+			t.Errorf("DurableTransport.run lost its admission seam %q", seam)
 		}
 	}
 

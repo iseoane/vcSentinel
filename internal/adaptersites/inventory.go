@@ -104,13 +104,13 @@ var canaryMarkers = []string{
 func Sites() []Site {
 	return []Site{
 		// --- cmd/sentinel -------------------------------------------------
-		{Path: "cmd/sentinel/autoria.go", Symbol: "agenteObservado.EjecutarPrompt/EjecutarRevision", Line: 42, Marker: "EjecutarPrompt(",
+		{Path: "cmd/sentinel/autoria.go", Symbol: "agenteObservado.EjecutarPrompt/EjecutarRevision", Line: 43, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Observer decorator over the configured auditor: it delegates to the wrapped adapter after recording the effective agent. Used identically by the admitted transport path and the gated legacy path; spawns nothing itself."},
 		{Path: "cmd/sentinel/comandos_estado.go", Symbol: "ejecutarEnShell", Line: 137, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Deterministic shell runner for configured lint/test/build commands; never consults an agent."},
 		{Path: "cmd/sentinel/comandos_explain.go", Symbol: "explain range plumbing", Line: 164, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the change-profile explainer."},
-		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Line: 81, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Line: 82, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "gh CLI calls, git config reads, and clipboard helpers; no provider agent."},
 		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Line: 0, Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
@@ -132,9 +132,9 @@ func Sites() []Site {
 			Class: ClassHelper, Reason: "Factory wiring of kind:acpx entries (ticket 16 slice 3): the bridge delegates commit-message generation through one prompt turn on the acp adapter. Commit-message text cannot influence a verdict or gate outcome and degrades to deterministic fallback messages on failure."},
 
 		// --- internal/agentadapter ----------------------------------------
-		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Line: 32, Marker: "EjecutarPrompt(",
+		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Line: 33, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Fallback chain over prompt adapters; whichever member answers becomes the caller's responsibility to have admitted upstream."},
-		{Path: "internal/agentadapter/cli.go", Symbol: "CLIAdapter EjecutarPrompt/EjecutarRevision", Line: 190, Marker: "exec.Command",
+		{Path: "internal/agentadapter/cli.go", Symbol: "CLIAdapter EjecutarPrompt/EjecutarRevision", Line: 198, Marker: "exec.Command",
 			Class: ClassShared, Reason: "THE provider process spawn seam (exec.CommandContext). Both the admitted review adapter and the gated legacy reviewers funnel through these methods; admission binding happens at the caller, not here."},
 		{Path: "internal/agentadapter/contractadapter.go", Symbol: "AgentAdapter/AdaptadorPrompt interfaces", Line: 11, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Interface declarations only; no execution."},
@@ -164,9 +164,9 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Immutable attempt-outcome record primitive: durably persists one admitted invocation result before the caller continues. Written only beside controller-authored terminal events."},
 
 		// --- internal/reviewexec (admitted review transport) ---------------
-		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.Run", Line: 204, Marker: "NewRunRequest(",
+		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.RunWithPolicy", Line: 216, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Review admission transport: builds the RunRequest, starts it through the controller, validates snapshot binding, and admits completions only against verified AttemptOutcome evidence."},
-		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Line: 125, Marker: "EjecutarRevision(",
+		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Line: 167, Marker: "EjecutarRevision(",
 			Class: ClassDurable, Reason: "Executes exactly one admitted physical invocation per controller dispatch; receives the InvocationEnvelope and forwards cancellation/tree ownership to the controller."},
 
 		// --- internal/gate --------------------------------------------------
@@ -178,7 +178,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Deterministic plan construction: builds the admission requests (candidate/prompt/capabilities) later admitted verbatim by the controller."},
 
 		// --- internal/review -------------------------------------------------
-		{Path: "internal/review/engine.go", Symbol: "invokeReview/ejecutarConReintento/refutarHallazgosCriticos", Line: 480, Marker: "EjecutarRevision(",
+		{Path: "internal/review/engine.go", Symbol: "policy-bound durable reviewer adapter", Line: 60, Marker: "EjecutarRevision(",
 			Class: ClassShared, Reason: "Engine-level injection seam behind OpcionesAuditoria.ReviewTransport. Since ticket 13 (R11) removed the review.durable_runs switch, production wiring always supplies the admitted durable transport (the CRITICAL refuter routes through it unconditionally); the direct restricted call with its transport retry survives only as a defensive fallback for direct-call fixtures."},
 		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 462, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},

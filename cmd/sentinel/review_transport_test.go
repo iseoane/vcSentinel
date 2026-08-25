@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // initGitRepo makes the temp directory a real repository so
@@ -34,11 +36,62 @@ func (a *fakeRestrictedAgent) EjecutarRevision(prompt, _ string, paths []string)
 	return prompt + "|" + a.response, nil
 }
 
+func (a *fakeRestrictedAgent) EjecutarRevisionConPolitica(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.EjecutarRevision(prompt, sha, paths)
+}
+
+func (*fakeRestrictedAgent) ReviewToolPolicy() reviewcontract.ToolPolicy {
+	return reviewcontract.DefaultToolPolicy()
+}
+
 // agentWithoutRevision satisfies AuditorAgente only: it lacks the restricted
 // reviewer capability the durable transport requires.
 type agentWithoutRevision struct{}
 
 func (agentWithoutRevision) EjecutarPrompt(string) (string, error) { return "", nil }
+
+type policyRecordingRestrictedAgent struct {
+	policy reviewcontract.ToolPolicy
+	calls  int
+}
+
+func (a *policyRecordingRestrictedAgent) EjecutarPrompt(string) (string, error) {
+	return `{"dim":"logic","verdict":"ok"}`, nil
+}
+
+func (a *policyRecordingRestrictedAgent) EjecutarRevision(string, string, []string) (string, error) {
+	return `{"dim":"logic","verdict":"ok"}`, nil
+}
+
+func (a *policyRecordingRestrictedAgent) EjecutarRevisionConPolitica(_ string, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+	a.policy = policy
+	a.calls++
+	return `{"dim":"logic","verdict":"ok"}`, nil
+}
+
+func TestDurableReviewTransportForwardsResolvedToolPolicy(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Review.EvidenceAdmission = true
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	agent := &policyRecordingRestrictedAgent{}
+	contract, err := reviewcontract.Lookup(reviewcontract.DimensionLogic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := review.AuditarCommit(func(review.ReviewBundle, string) (review.AuditorAgente, string, error) {
+		return agent, "normal", nil
+	}, 1, review.OpcionesAuditoria{
+		SHA:             "sha-policy",
+		Bundles:         []review.ReviewBundle{{Name: "quality", Dimensions: []string{review.DimLogic}, Priority: review.PriorityRequired, Cost: 1}},
+		ReviewTransport: durableReviewTransport(cfg, worktree, "sha-policy", []string{"x.go"}),
+	})
+
+	if result.Veredicto != review.VerdictOK || agent.calls != 1 || agent.policy != contract.ToolPolicy {
+		t.Fatalf("result=%+v calls=%d policy=%#v, want one durable policy-aware call with %#v", result, agent.calls, agent.policy, contract.ToolPolicy)
+	}
+}
 
 // TestDurableReviewTransportFailsHonestWithoutGitDir pins the ticket 13
 // (R11) cutover completion: with no git common dir there is no legacy path to

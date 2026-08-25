@@ -15,6 +15,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // --- fake acpx helper process (no live agents) --------------------------------
@@ -262,6 +263,10 @@ type contextualReviewer interface {
 	ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error)
 }
 
+type policyRestrictedReviewer interface {
+	EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+}
+
 type treeProvider interface {
 	OwnedTree() *process.Tree
 }
@@ -300,7 +305,7 @@ func TestAdapterFamiliesShareStructuralContracts(t *testing.T) {
 		{name: "commit-message surface (AgentAdapter)", hold: func(a any) bool { _, ok := a.(AgentAdapter); return ok }},
 		{name: "arbitrary prompt (AdaptadorPrompt)", hold: func(a any) bool { _, ok := a.(AdaptadorPrompt); return ok }},
 		{name: "micro-diff commit messages (AdapterConDiff)", hold: func(a any) bool { _, ok := a.(AdapterConDiff); return ok }},
-		{name: "restricted review", hold: func(a any) bool { _, ok := a.(restrictedReviewer); return ok }},
+		{name: "legacy restricted review", hold: func(a any) bool { _, ok := a.(restrictedReviewer); return ok }},
 		{name: "contextual review", hold: func(a any) bool { _, ok := a.(contextualReviewer); return ok }},
 		{name: "owned tree provider", hold: func(a any) bool { _, ok := a.(treeProvider); return ok }},
 		{name: "effective-agent attribution", hold: func(a any) bool { _, ok := a.(ReportaAgenteEfectivo); return ok }},
@@ -315,6 +320,17 @@ func TestAdapterFamiliesShareStructuralContracts(t *testing.T) {
 				t.Errorf("AcpxBridge does not satisfy the shared contract")
 			}
 		})
+	}
+}
+
+func TestSemanticReviewPolicyAdmitsCLIProvidersAndRejectsACPBridge(t *testing.T) {
+	for _, binary := range []string{"opencode", "claude"} {
+		if _, ok := any(&CLIAdapter{BinaryName: binary}).(policyRestrictedReviewer); !ok {
+			t.Errorf("%s CLI adapter does not implement the semantic policy contract", binary)
+		}
+	}
+	if _, ok := any(helperBridge(t, nil)).(policyRestrictedReviewer); ok {
+		t.Fatal("ACP bridge implements the semantic policy contract; ACP/acpx must remain outside semantic review")
 	}
 }
 

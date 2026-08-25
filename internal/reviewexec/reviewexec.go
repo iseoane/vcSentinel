@@ -10,6 +10,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // RestrictedReviewer is the structural contract of the review engine's
@@ -25,6 +26,19 @@ type RestrictedReviewer interface {
 	EjecutarRevision(prompt, sha string, paths []string) (string, error)
 }
 
+// PolicyRestrictedReviewer is the semantic-review capability. A durable
+// production invocation must carry the resolved dimension tool policy instead
+// of selecting a fallback policy at the transport boundary.
+type PolicyRestrictedReviewer interface {
+	EjecutarRevisionConPolitica(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
+}
+
+// PolicyProvider exposes the contract policy bound by the review engine for
+// one durable invocation.
+type PolicyProvider interface {
+	ReviewToolPolicy() reviewcontract.ToolPolicy
+}
+
 // ContextualReviewer is the optional contract of reviewers that can carry the
 // worker cancellation context down to the spawned provider process. It is
 // discovered structurally, exactly like the effective-agent observer wrappers,
@@ -35,6 +49,12 @@ type RestrictedReviewer interface {
 // every implementer because Go structural satisfaction requires it.
 type ContextualReviewer interface {
 	ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error)
+}
+
+// PolicyContextualReviewer is the cancellation-aware semantic-review
+// capability paired with PolicyRestrictedReviewer.
+type PolicyContextualReviewer interface {
+	ReviewWithContextConPolitica(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }
 
 // Classifier assigns a durable outcome class to an operational failure. It
@@ -82,10 +102,21 @@ type TreeProvider interface {
 // adapter's owned tree through TreeProvider and escalates against it after the
 // cooperative grace budget expires.
 type ReviewAdapter struct {
-	reviewer RestrictedReviewer
+	reviewer any
 	sha      string
 	paths    []string
 	classify Classifier
+	policy   *reviewcontract.ToolPolicy
+}
+
+// NewReviewAdapterWithPolicy constructs the production semantic-review path.
+// It has no default policy: callers must provide the contract resolved for the
+// dimension being executed.
+func NewReviewAdapterWithPolicy(reviewer PolicyRestrictedReviewer, sha string, paths []string, policy reviewcontract.ToolPolicy, classify Classifier) *ReviewAdapter {
+	if classify == nil {
+		classify = DefaultClassifier
+	}
+	return &ReviewAdapter{reviewer: reviewer, sha: sha, paths: paths, classify: classify, policy: &policy}
 }
 
 // NewReviewAdapter binds one dimension's reviewer to its audited commit
@@ -119,10 +150,21 @@ func (a *ReviewAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ 
 		output string
 		err    error
 	)
-	if contextual, ok := a.reviewer.(ContextualReviewer); ok {
+	if a.policy != nil {
+		policyReviewer, ok := a.reviewer.(PolicyRestrictedReviewer)
+		if !ok {
+			return execution.AdapterResult{}, execution.NewAdapterError(a.classify(errors.New("reviewexec: policy-aware reviewer is required")), errors.New("reviewexec: policy-aware reviewer is required"))
+		}
+		if contextual, ok := a.reviewer.(PolicyContextualReviewer); ok {
+			output, err = contextual.ReviewWithContextConPolitica(ctx, prompt, a.sha, a.paths, *a.policy)
+		} else {
+			output, err = policyReviewer.EjecutarRevisionConPolitica(prompt, a.sha, a.paths, *a.policy)
+		}
+	} else if contextual, ok := a.reviewer.(ContextualReviewer); ok {
 		output, err = contextual.ReviewWithContext(ctx, prompt, a.sha, a.paths)
 	} else {
-		output, err = a.reviewer.EjecutarRevision(prompt, a.sha, a.paths)
+		legacy := a.reviewer.(RestrictedReviewer)
+		output, err = legacy.EjecutarRevision(prompt, a.sha, a.paths)
 	}
 	if err != nil {
 		return execution.AdapterResult{}, execution.NewAdapterError(a.classify(err), err)

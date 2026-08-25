@@ -11,6 +11,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -196,13 +197,37 @@ var invocationSequence atomic.Uint64
 // output with zero Evidence, byte-compatible with the transport as it existed
 // before ticket 07. Every run stays inspectable through `sentinel runs`.
 func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, Evidence, error) {
+	return t.run(reviewer, identityKey, prompt, nil)
+}
+
+// RunWithPolicy executes an admitted production semantic review with the
+// exact policy resolved for its dimension. Unlike Run, it has no default
+// policy compatibility path.
+func (t *DurableTransport) RunWithPolicy(reviewer PolicyRestrictedReviewer, identityKey, prompt string, policy reviewcontract.ToolPolicy) (string, Evidence, error) {
+	return t.run(reviewer, identityKey, prompt, &policy)
+}
+
+func (t *DurableTransport) run(reviewer any, identityKey, prompt string, policy *reviewcontract.ToolPolicy) (string, Evidence, error) {
 	if t.backing == nil {
 		return "", Evidence{}, errors.New("reviewexec: durable transport requires a store")
 	}
 	sequence := invocationSequence.Add(1)
 	candidate := agentrun.Candidate(fmt.Sprintf("review:%s:%s:%s:%06d", identityKey, t.sha, candidateSalt, sequence))
 	request := agentrun.NewRunRequest(candidate, agentrun.Prompt(prompt), nil)
-	adapter := NewReviewAdapter(reviewer, t.sha, t.paths, nil)
+	var adapter *ReviewAdapter
+	if policy == nil {
+		legacy, ok := reviewer.(RestrictedReviewer)
+		if !ok {
+			return "", Evidence{}, errors.New("reviewexec: restricted reviewer is required")
+		}
+		adapter = NewReviewAdapter(legacy, t.sha, t.paths, nil)
+	} else {
+		policyReviewer, ok := reviewer.(PolicyRestrictedReviewer)
+		if !ok {
+			return "", Evidence{}, errors.New("reviewexec: policy-aware reviewer is required")
+		}
+		adapter = NewReviewAdapterWithPolicy(policyReviewer, t.sha, t.paths, *policy, nil)
+	}
 	controller := execution.NewControllerWithClockAndEscalation(t.backing, adapter, nil, t.escalationPolicy)
 
 	handle, err := controller.Start(context.Background(), request, t.policy)
