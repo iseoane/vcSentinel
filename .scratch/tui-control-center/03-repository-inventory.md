@@ -35,3 +35,15 @@ no writes anywhere.
 
 ## Rollback
 Delete `internal/inventory`; nothing else depends on it yet.
+
+## Review amendments (Slice 3)
+
+Normative decisions adopted while closing the Slice 3 code-review findings:
+
+- Bare main entries report `Clean=true`: with no working tree there is
+  nothing to probe, so cleanliness is vacuously true for them.
+- `bare` is accepted only on the first (main) porcelain block; any later
+  block carrying `bare` is a parse error.
+- HEAD hashes of exactly 40 or 64 lowercase hex characters are accepted,
+  covering repositories created with either sha1 or sha256 object format
+  (`git init --object-format=sha256`).

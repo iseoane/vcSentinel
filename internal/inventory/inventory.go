@@ -48,7 +48,19 @@ func (execRunner) run(dir string, args ...string) ([]byte, error) {
 	return out, err
 }
 
-var headHashRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// headHashRE accepts lowercase object names of both supported hash sizes:
+// 40 hex for sha1 and 64 hex for sha256 (`git init --object-format=sha256`).
+var headHashRE = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// normalizeWorktreePath converts the slash-separated absolute path git emits
+// (even on Windows) into a native cleaned absolute path on the host OS.
+func normalizeWorktreePath(p string) (string, error) {
+	abs, err := filepath.Abs(filepath.FromSlash(p))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
 
 // Inspect normalizes repoPath and collects the snapshot. Every git failure
 // wraps the command and the failing path; never a partial snapshot with nil.
@@ -114,7 +126,9 @@ type parsedEntry struct {
 // listWorktrees runs and strictly parses `git worktree list --porcelain`.
 // Only the documented tokens (worktree, HEAD, branch, bare, detached,
 // locked [reason]) are accepted; anything unknown, duplicated, contradictory,
-// or a block not starting with `worktree` is an error. bare is main-entry-only.
+// or a block not starting with `worktree` is an error. Every block must carry
+// exactly one HEAD token, bare is main-entry-only, and zero blocks is a
+// malformed-input error.
 func listWorktrees(r runner, root string) ([]parsedEntry, error) {
 	const command = "git worktree list --porcelain"
 	out, err := r.run(root, "worktree", "list", "--porcelain")
@@ -136,6 +150,9 @@ func listWorktrees(r runner, root string) ([]parsedEntry, error) {
 	finalize := func(endLine int) error {
 		if current == nil {
 			return nil
+		}
+		if !sawHead {
+			return fail(endLine, "worktree %q carries no HEAD token", current.Path)
 		}
 		if bare && mainSeen {
 			return fail(endLine, "linked worktree %q carries the bare attribute", current.Path)
@@ -164,13 +181,17 @@ func listWorktrees(r runner, root string) ([]parsedEntry, error) {
 			if path == "" {
 				return nil, fail(i, "worktree token without a path")
 			}
-			current = &Worktree{Path: path}
+			native, err := normalizeWorktreePath(path)
+			if err != nil {
+				return nil, fmt.Errorf("inventory: %s at %q: worktree path %q: %w", command, root, path, err)
+			}
+			current = &Worktree{Path: native}
 		case "HEAD":
 			if current == nil || sawHead {
 				return nil, fail(i, "unexpected HEAD token %q", line)
 			}
 			if hash := strings.TrimSpace(rest); !headHashRE.MatchString(hash) {
-				return nil, fail(i, "HEAD hash %q is not 40 hexadecimal characters", hash)
+				return nil, fail(i, "HEAD hash %q is not 40 or 64 hexadecimal characters", hash)
 			}
 			sawHead = true // validated but deliberately not stored in this slice
 		case "branch":
@@ -202,6 +223,9 @@ func listWorktrees(r runner, root string) ([]parsedEntry, error) {
 	}
 	if err := finalize(len(lines)); err != nil {
 		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("inventory: %s at %q: malformed porcelain output: zero worktree blocks", command, root)
 	}
 	return entries, nil
 }

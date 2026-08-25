@@ -164,6 +164,7 @@ func newStub(worktreeList string) stubRunner {
 		"rev-parse --git-dir":            {},
 		"config --get remote.origin.url": {},
 		"worktree list --porcelain":      {out: []byte(worktreeList)},
+		"status --porcelain":             {}, // cleanliness probe for parsed entries
 	}}
 }
 
@@ -176,5 +177,87 @@ func TestInspectStrictPorcelainUnknownTokenFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "frobnicated") || !strings.Contains(err.Error(), "malformed") {
 		t.Fatalf("error should report the unknown token as malformed, got: %v", err)
+	}
+}
+
+const stubSha1Hash = "0123456789abcdef0123456789abcdef01234567"
+
+func TestInspectAcceptsSha256HeadHash(t *testing.T) {
+	sha256Hash := stubSha1Hash + "0123456789abcdef01234567" // 64 hex characters
+	list := fmt.Sprintf("worktree /tmp/repo\nHEAD %s\nbranch refs/heads/main\n", sha256Hash)
+
+	snapshot, err := inspect(filepath.Join(string(filepath.Separator), "tmp", "repo"), newStub(list))
+	if err != nil {
+		t.Fatalf("a sha256 (64-hex) HEAD hash must be accepted: %v", err)
+	}
+	wantPath, err := normalizeWorktreePath("/tmp/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Snapshot{
+		Repository: "repo",
+		Worktrees:  []Worktree{{Path: wantPath, Branch: "main", Clean: true}},
+	}
+	if !reflect.DeepEqual(snapshot, want) {
+		t.Fatalf("snapshot mismatch:\n got: %#v\nwant: %#v", snapshot, want)
+	}
+}
+
+func TestInspectAcceptsLockedWithReason(t *testing.T) {
+	list := fmt.Sprintf("worktree /tmp/repo\nlocked admin requested prune\nHEAD %s\nbranch refs/heads/main\n", stubSha1Hash)
+
+	snapshot, err := inspect(filepath.Join(string(filepath.Separator), "tmp", "repo"), newStub(list))
+	if err != nil {
+		t.Fatalf("`locked <reason>` must be accepted: %v", err)
+	}
+	if len(snapshot.Worktrees) != 1 || snapshot.Worktrees[0].Branch != "main" || !snapshot.Worktrees[0].Clean {
+		t.Fatalf("unexpected worktrees from locked block: %#v", snapshot.Worktrees)
+	}
+}
+
+func TestInspectStrictPorcelainRejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		list    string
+		wantErr []string
+	}{
+		{
+			name:    "empty porcelain output",
+			list:    "",
+			wantErr: []string{"malformed", "zero worktree"},
+		},
+		{
+			name:    "block without any HEAD token",
+			list:    "worktree /tmp/repo\nbranch refs/heads/main\n",
+			wantErr: []string{"malformed", "no HEAD token"},
+		},
+		{
+			name:    "duplicated HEAD token",
+			list:    fmt.Sprintf("worktree /tmp/repo\nHEAD %s\nHEAD %s\nbranch refs/heads/main\n", stubSha1Hash, stubSha1Hash),
+			wantErr: []string{"malformed", "unexpected HEAD token"},
+		},
+		{
+			name:    "branch reference without refs/heads prefix",
+			list:    fmt.Sprintf("worktree /tmp/repo\nHEAD %s\nbranch refs/tags/v1\n", stubSha1Hash),
+			wantErr: []string{"malformed", "refs/heads/"},
+		},
+		{
+			name:    "41-character head hash",
+			list:    fmt.Sprintf("worktree /tmp/repo\nHEAD %s0\nbranch refs/heads/main\n", stubSha1Hash),
+			wantErr: []string{"malformed", "40 or 64 hexadecimal"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot, err := inspect(filepath.Join(string(filepath.Separator), "tmp", "repo"), newStub(tt.list))
+			if err == nil {
+				t.Fatalf("expected a malformed-input error, got %#v", snapshot)
+			}
+			for _, want := range tt.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error should mention %q, got: %v", want, err)
+				}
+			}
+		})
 	}
 }
