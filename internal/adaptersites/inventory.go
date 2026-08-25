@@ -214,6 +214,8 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "CodeGraph enrichment binary; metadata only, never a provider agent."},
 		{Path: "internal/graph/native.go", Symbol: "native graph plumbing", Line: 387, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the native graph analyzer."},
+		{Path: "internal/inventory/inventory.go", Symbol: "execRunner.run", Line: 41, Marker: "exec.Command",
+			Class: ClassInfra, Reason: "Read-only git plumbing for repository inventory snapshots (rev-parse/config/worktree list/status); never invokes a provider agent."},
 		{Path: "internal/ops/events.go", Symbol: "gh pr view probe", Line: 201, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "GitHub CLI state probe for ops events."},
 		{Path: "internal/planning/context.go", Symbol: "planning context", Line: 34, Marker: "exec.Command",
