@@ -87,7 +87,14 @@ func TestRenderOverviewMissingDirFlagged(t *testing.T) {
 
 func TestRenderOverviewDaemonColors(t *testing.T) {
 	colored := RenderOverview(100, []overview.Repo{liveRepo("a"), stoppedRepo("b")})
-	assertContains(t, colored, colorPrefix(Rose, " ● live"), colorPrefix(Red, " ● stopped"))
+	assertContains(t, colored, colorPrefix(Rose, " ● live"), colorPrefix(Red, " ● stopped"),
+		colorPrefix(Rose, " ●"), colorPrefix(Red, " ○"),
+		colorPrefix(Rose, "LIVE"), colorPrefix(Red, "STOPPED"))
+	dash := RenderOverviewPlain(100, []overview.Repo{liveRepo("a"), stoppedRepo("b")})
+	assertContains(t, dash, "LIVE", "STOPPED")
+	if strings.Contains(dash, "HEALTHY") {
+		t.Errorf("a stopped repository must not render as HEALTHY:\n%s", dash)
+	}
 }
 
 func TestRenderOverviewEmptyRegistry(t *testing.T) {

@@ -29,14 +29,17 @@ func renderOverview(width int, colors bool, repos []overview.Repo) string {
 
 // overviewSummary computes the header counts under the approved semantics:
 // live daemons rose, dirty worktrees as active blue, Error-or-Missing repos
-// as yellow attention.
+// as yellow attention. Attention reuses classifyRepo so the header and the
+// tree pane can never disagree about which repositories need attention.
+// Active counts dirty worktrees as the observable stand-in for run activity
+// until durable-run facts feed this header in a later slice.
 func overviewSummary(repos []overview.Repo) []span {
 	daemons, active, attention := 0, 0, 0
 	for _, r := range repos {
 		if r.Daemon.Live {
 			daemons++
 		}
-		if r.Error != "" || r.Missing {
+		if classifyRepo(r).kind == stWarn {
 			attention++
 		}
 		for _, wt := range r.Worktrees {
@@ -181,7 +184,7 @@ func statusField(r overview.Repo) string {
 
 // overviewActivity derives one ACTIVITY row per repository without inventing
 // data: icon by worst observable state (attention beats a live daemon beats
-// healthy), repo name in flow, worktree count — or the degradation Error
+// stopped), repo name in flow, worktree count — or the degradation Error
 // itself — in stage, empty age until durable runs feed this pane later.
 func overviewActivity(repos []overview.Repo) []activityRow {
 	rows := make([]activityRow, 0, len(repos))
@@ -197,6 +200,9 @@ func overviewActivity(repos []overview.Repo) []activityRow {
 			}
 		case stOwn:
 			row.icon, row.kind, row.state = "●", stOwn, "LIVE"
+			row.stage = worktreeCount(r)
+		case stStop:
+			row.icon, row.kind, row.state = "○", stStop, "STOPPED"
 			row.stage = worktreeCount(r)
 		default:
 			row.icon, row.kind, row.state = "✓", stOK, "HEALTHY"
