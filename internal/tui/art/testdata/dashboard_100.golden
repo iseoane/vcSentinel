@@ -1,16 +1,18 @@
+ ══════════════════════════════════════════════════════════════════════════════════════════════════ 
  SENTINEL CONTROL CENTER                                        ● 2 daemons · 3 active · 1 attention
-REPOSITORIES                        WORKTREES
-> vas.sentinel          ● owned     > main               main                     clean
-  ue.capability.analizer ● extern…    tui-control-center feat/tui-control-center  clean
-  iseoane.dots          ○ stopped     f8-t8-2-own-diff   feat/f8-t8-2-own-diff    2 runs
-                                    
-                                    ACTIVITY
-                                      ⠹ gate pre-push  review · security      02:14
-                                      ⏸ review         decision required      05:32
-                                      ✓ review         passed                 01:48
-────────────────────────────────────────────────────────────────────────────────────────────────────
- Repository  vas.sentinel
- Worktree    ~/0-workspace/vas.sentinel  ·  branch main  ·  clean
- Selected    gate pre-push · run 01K9Q… · state running · stage review/security
-────────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit 
+ ══════════════════════════════════════════════════════════════════════════════════════════════════ 
+ REPOSITORIES                          │  LOCATION                                                  
+ ▾ vas.sentinel           ● owned      │  Repository   vas.sentinel                                 
+   ├─ main              clean          │  Path         /home/iseoane/0-workspace/vas.sentinel       
+   ├─ tui-control-center 2 runs        │  Worktree     main · ~/0-workspace/vas.sentinel            
+   └─ ⚠ f8-t8-2-own-diff 1 attention   │  Branch       main                                         
+ ▸ ue.capability.analizer ● external   │  Origin       git@github.com:ISeoane-Quental/vas.sentinel  
+ ▸ iseoane.dots           ○ stopped    │  Daemon       ● owned by this session · pid 43120          
+                                       │  Status       clean · 3 worktrees · 3 runs                 
+                                       │  ═════════════════════════════════════════════════════════ 
+                                       │  ACTIVITY                                                  
+                                       │  ⠹ gate pre-push   review · security   RUNNING  02:14      
+                                       │  ⏸ review          decision required   DECISION 05:32      
+                                       │  ✓ review          passed              PASSED   01:48      
+ ══════════════════════════════════════════════════════════════════════════════════════════════════ 
+ ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit                          

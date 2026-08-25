@@ -20,11 +20,12 @@ func main() {
 	html.WriteString("<html><body style='background:#141018;color:#ddd;font-family:monospace'>\n")
 
 	for _, w := range []int{80, 100, 140} {
+		fmt.Printf("── dashboard · %d columns (plain) %s\n%s\n", w, strings.Repeat("─", 18), art.DashboardPlain(w))
 		colored := art.Dashboard(w)
-		fmt.Printf("── dashboard · %d columns %s\n%s\n", w, strings.Repeat("─", 20), colored)
 		if *htmlOut != "" {
 			html.WriteString(fmt.Sprintf("<h2>dashboard — %d columns</h2>\n<pre style='padding:12px;'>%s</pre>\n", w, escapeANSI(colored)))
 		}
+		fmt.Printf("── dashboard · %d columns (color) %s\n%s\n", w, strings.Repeat("─", 19), colored)
 	}
 
 	if *htmlOut != "" {

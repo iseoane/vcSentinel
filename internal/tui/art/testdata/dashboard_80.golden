@@ -1,10 +1,26 @@
+ ══════════════════════════════════════════════════════════════════════════════ 
  SENTINEL CONTROL CENTER                    ● 2 daemons · 3 active · 1 attention
-> vas.sentinel           ● owned
-  ue.capability.analizer ● external
-  iseoane.dots           ○ stopped
-
- ⠹ gate pre-push  review · security
- ⏸ review         decision required
- ✓ review         passed
-────────────────────────────────────────────────────────────────────────────────
- ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit 
+ ══════════════════════════════════════════════════════════════════════════════ 
+ REPOSITORIES                                                                   
+ ▾ vas.sentinel           ● owned                                               
+   ├─ main              clean                                                   
+   ├─ tui-control-center 2 runs                                                 
+   └─ ⚠ f8-t8-2-own-diff 1 attention                                            
+ ▸ ue.capability.analizer ● external                                            
+ ▸ iseoane.dots           ○ stopped                                             
+ ────────────────────────────────────────────────────────────────────────────── 
+ LOCATION                                                                       
+ Repository   vas.sentinel                                                      
+ Path         /home/iseoane/0-workspace/vas.sentinel                            
+ Worktree     main · ~/0-workspace/vas.sentinel                                 
+ Branch       main                                                              
+ Origin       git@github.com:ISeoane-Quental/vas.sentinel                       
+ Daemon       ● owned by this session · pid 43120                               
+ Status       clean · 3 worktrees · 3 runs                                      
+ ══════════════════════════════════════════════════════════════════════════════ 
+ ACTIVITY                                                                       
+ ⠹ gate pre-push   review · security   RUNNING  02:14                           
+ ⏸ review          decision required   DECISION 05:32                           
+ ✓ review          passed              PASSED   01:48                           
+ ══════════════════════════════════════════════════════════════════════════════ 
+ ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit      
