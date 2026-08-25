@@ -75,7 +75,7 @@ func TestConstruirPromptAuditoriaAllowsBoundedReadOnlyExploration(t *testing.T) 
 }
 
 func TestConstruirPromptConContextoListsPlannedPaths(t *testing.T) {
-	prompt := construirPromptConContexto(ReviewBundle{}, DimLogic, "message", "diff", "", "", []string{"b.go", "a.go"})
+	prompt := construirPromptConContexto(ReviewBundle{}, DimLogic, "message", "diff", "", "", []string{"b.go", "a.go"}, "", "")
 
 	if !strings.Contains(prompt, "Permitted paths:\n- a.go\n- b.go") {
 		t.Fatalf("prompt does not list sorted permitted paths:\n%s", prompt)

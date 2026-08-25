@@ -245,6 +245,16 @@ func TestContenidoDeArchivoEnCommit(t *testing.T) {
 	if _, err := ContenidoDeArchivoEnCommit(shas[1], "no-existe.go"); err == nil {
 		t.Error("ContenidoDeArchivoEnCommit con archivo inexistente en ese commit debería devolver error")
 	}
+
+	if c, p, e := ReadPathAtRevision(shas[1], "a.go"); !p || e != nil || c != "package a\n" {
+		t.Errorf("ReadPathAtRevision present = %q/%v/%v", c, p, e)
+	}
+	if _, p, e := ReadPathAtRevision(shas[1], "no-existe.go"); p || e != nil {
+		t.Errorf("ReadPathAtRevision absent = %v %v", p, e)
+	}
+	if _, _, e := ReadPathAtRevision("not-a-rev", "a.go"); e == nil {
+		t.Error("invalid revision must fail, never report absence")
+	}
 }
 
 func TestBlobDeArchivoEnCommit(t *testing.T) {

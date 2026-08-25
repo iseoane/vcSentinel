@@ -76,6 +76,9 @@ type OpcionesAuditoria struct {
 	// for direct-call fixtures and falls back to the restricted direct call
 	// with its transport retry.
 	ReviewTransport ReviewTransport
+	// NetUnit* relabel the prompt as a NET-unit audit (T8.3); empty label = commit prompt unchanged.
+	NetUnitLabel   string
+	NetUnitHistory string
 }
 
 // ResultadoDimension es el veredicto de una dimensión tras la auditoría.
@@ -478,7 +481,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 		}
 		return "", ErrRestrictedRequired
 	}
-	salida, invocacion, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto))
+	salida, invocacion, err := invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, "", contexto, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 	if err != nil {
 		return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 	}
@@ -491,7 +494,7 @@ func auditarConAgente(agente AuditorAgente, bundle ReviewBundle, dimension strin
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		salida, invocacion, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto))
+		salida, invocacion, err = invokeReview(opts, bundle, dimension, agente, ejecutar, construirPromptConContexto(bundle, dimension, opts.Mensaje, opts.Diff, opts.Respuestas, contexto, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
 			return &DimensionResult{Dim: dimension, Verdict: VerdictUnavailable, Reason: err.Error()}, err
 		}

@@ -100,6 +100,8 @@ type OpcionesRama struct {
 	// already-audited context commits come back as read-only inherited
 	// results. Nil keeps the legacy whole-range analysis against Base.
 	OwnDiff *OwnDiffOptions
+	// NetReview (T8.3, internal opt-in; CLI: T8.4) audits the net range via the engine seams.
+	NetReview *NetReviewOptions
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -127,6 +129,8 @@ type ResultadoRama struct {
 	// commits (read-only): their correction belongs to the parent PR, so they
 	// never enter Fichas and can never block the current branch.
 	Heredados []HallazgoHeredado
+	// Net, non-nil after a NetReview opt-in: independent audit of the net range.
+	Net *NetReview
 }
 
 // AnalizarRama analiza la rama actual contra su base (guía §12.1): resuelve
@@ -226,6 +230,15 @@ func AnalizarRama(ledger *Ledger, opts OpcionesRama) (*ResultadoRama, error) {
 	res := &ResultadoRama{
 		Rama: rama, SHAs: shas, Pendientes: pendientes,
 		Fichas: fichas, Volumen: volumen,
+	}
+	if opts.NetReview != nil { // T8.3: mergeBase already is merge_base(base_or_resolved_parent, HEAD)
+		head := mergeBase
+		if len(shas) > 0 {
+			head = shas[len(shas)-1]
+		}
+		if res.Net, err = runNetReview(opts.NetReview, opts, mergeBase, head, fichas); err != nil {
+			return nil, err
+		}
 	}
 	res.Propio = propio
 	if propio != nil {

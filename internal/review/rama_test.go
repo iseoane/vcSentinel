@@ -62,7 +62,7 @@ func (a *auditorStub) EjecutarRevision(prompt, _ string, _ []string) (string, er
 // (ParsearDimensionResult acepta la primera línea con dimensión conocida).
 const salidaAuditOK = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"ok\"}\nEND_REVIEW\n"
 
-func fabricaStub(a *auditorStub) FabricaAuditor {
+func fabricaStub(a AuditorAgente) FabricaAuditor {
 	return func(_ ReviewBundle, dimension string) (AuditorAgente, string, error) {
 		return a, "stub", nil
 	}
@@ -159,6 +159,9 @@ func TestAnalizarRamaAuditaPendientes(t *testing.T) {
 	res, err := AnalizarRama(ledger, OpcionesRama{Fabrica: fabricaStub(stub), Parallel: parallel})
 	if err != nil {
 		t.Fatalf("AnalizarRama falló: %v", err)
+	}
+	if res.Net != nil {
+		t.Fatal("default path executed a net review without opting in")
 	}
 
 	if len(res.SHAs) != 1 || res.SHAs[0] != sha {

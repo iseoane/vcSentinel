@@ -24,15 +24,21 @@ var DefinicionesDimensiones = map[string]string{
 // de la dimensión, los smells de diseño como guía y, si el usuario resolvió
 // preguntas (--answer), esas respuestas como segunda ronda.
 func ConstruirPromptAuditoria(dimension, mensaje, diff, respuestas string) string {
-	return construirPromptConContexto(ReviewBundle{}, dimension, mensaje, diff, respuestas, "", nil)
+	return construirPromptConContexto(ReviewBundle{}, dimension, mensaje, diff, respuestas, "", nil, "", "")
 }
 
-func construirPromptConContexto(bundle ReviewBundle, dimension, mensaje, diff, respuestas, contexto string, paths []string) string {
+func construirPromptConContexto(bundle ReviewBundle, dimension, mensaje, diff, respuestas, contexto string, paths []string, unitLabel, unitHistory string) string {
 	definicion := DefinicionesDimensiones[dimension]
 	if definicion == "" {
 		definicion = "No definition available."
 	}
 
+	unitName, messageLabel := "commit", "Commit message:"
+	netSection := ""
+	if unitLabel != "" && strings.TrimSpace(unitHistory) != "" { // T8.3 framing; empty label = byte-identical
+		unitName, messageLabel = unitLabel, "Pull request intention:"
+		netSection = "\n" + unitHistory + "\n"
+	}
 	seccionRespuestas := ""
 	if strings.TrimSpace(respuestas) != "" {
 		seccionRespuestas = fmt.Sprintf(`
@@ -58,18 +64,18 @@ Clarifications from the user (resolve the pending questions with these and finis
 		proposito = "\nReview purpose: Concurrency and data integrity. Focus on synchronization, race conditions, transactional behavior, and data consistency.\n"
 	}
 
-	return fmt.Sprintf(`You are a rigorous technical auditor. Audit ONE commit against the %q dimension.
+	return fmt.Sprintf(`You are a rigorous technical auditor. Audit ONE %s against the %q dimension.
 
 Dimension definition:
 	%s%s
 
-Commit message:
+%s
 %s
 
 Diff to audit:
 %s
 %s
-%s
+%s%s
 
 Audit rules:
 	- You may use Read, Grep, and Glob for read-only exploration of planned paths only. Do not use Bash, do not write files, and do not use the network.
@@ -82,7 +88,7 @@ Audit rules:
 - If there is nothing to report, return {"dim": %q, "verdict": "ok"}.
 	- Output ONLY one JSONL object between BEGIN_REVIEW and END_REVIEW. No markdown outside the delimiters. No commentary. Keys: dim, verdict, findings (dimension, file, line, severity, description, suggestion, evidence, confidence), questions (id, text, file), reason.`+seccionRespuestas+`
 BEGIN_REVIEW
-		END_REVIEW`, dimension, definicion, proposito, mensaje, diff, seccionContexto, seccionRutas, dimension)
+		END_REVIEW`, unitName, dimension, definicion, proposito, messageLabel, mensaje, diff, seccionContexto, seccionRutas, netSection, dimension)
 }
 
 func construirPromptRefutacion(sha, dimension string, finding ReviewFinding) string {
