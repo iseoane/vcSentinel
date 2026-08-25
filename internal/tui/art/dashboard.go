@@ -194,7 +194,8 @@ func rightLines(w int) []string {
 	lines = append(lines, spanLine(w, span{" ACTIVITY", White}))
 	for _, a := range mockActivity {
 		lines = append(lines, spanLine(w,
-			span{" " + a.icon + " " + padRunes(a.flow, 16), White},
+			span{" " + a.icon, statusColor[a.kind]},
+			span{" " + padRunes(a.flow, 16), White},
 			span{padRunes(a.stage, 20), Dim},
 			span{padRunes(a.state, 9), statusColor[a.kind]},
 			span{a.age, Dim}))
