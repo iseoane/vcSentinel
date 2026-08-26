@@ -58,6 +58,14 @@ type Model struct {
 	selected int
 	quitting bool
 
+	// Dual-pane navigation state. The zero values encode the initial
+	// contract: tree focus, runs cursor at the first render-order position,
+	// no open run detail, help closed.
+	focus     art.FocusPane
+	runCursor art.RunPos
+	openRunID string
+	help      bool
+
 	// Live-refresh loop state. Every field stays zero on static models built
 	// through New, which is exactly what keeps them passive: a nil refresh
 	// disables Init scheduling and makes stray ticks inert. schedule may be
@@ -103,6 +111,19 @@ func (m Model) Selected() int          { return m.selected }
 func (m Model) Quitting() bool         { return m.quitting }
 func (m Model) Repos() []overview.Repo { return m.repos }
 
+// Focus reports the pane that currently owns keyboard navigation.
+func (m Model) Focus() art.FocusPane { return m.focus }
+
+// RunCursorPosition reports the run-row position the runs cursor points at.
+func (m Model) RunCursorPosition() art.RunPos { return m.runCursor }
+
+// OpenRun reports the identifier of the expanded run detail; empty when no
+// run is open.
+func (m Model) OpenRun() string { return m.openRunID }
+
+// HelpVisible reports whether the KEYS overlay replaces the pane content.
+func (m Model) HelpVisible() bool { return m.help }
+
 // Err reports the last snapshot-collection failure as text; empty while the
 // loop is healthy (and always, on static models).
 func (m Model) Err() string { return m.err }
@@ -118,13 +139,20 @@ func (m Model) Init() tea.Cmd {
 
 // Update is the pure state-machine transition: messages in, next model plus
 // at most one scheduled command out. Window resizes set the render width
-// with a floor at minWidth; up/k and down/j move the repository cursor
-// clamped to [0, len(repos)-1]; q and ctrl+c flag quitting and return
-// tea.Quit as their command so a real program ends the session; on live models a
-// tick maps to exactly one reschedule plus one snapshot collection, a
-// successful snapshot replaces the repositories (clamping the selection back
-// into range), and a failed snapshot keeps the last good snapshot while
-// recording the error; everything else leaves the model untouched.
+// with a floor at minWidth. Keys route through the focused pane: q and
+// ctrl+c quit from any state; "?" toggles the help overlay; any other key
+// while help is open closes it and is otherwise swallowed. In the tree,
+// up/k and down/j move the repository cursor clamped to [0, len(repos)-1]
+// and enter moves focus to the runs pane without changing the selection. In
+// the runs pane, up/k and down/j walk every visible run row of the current
+// snapshot in render order with clamping (an empty run list is a no-op),
+// enter toggles the open-run detail under the cursor, and any actual cursor
+// movement clears an open detail. tab and shift+tab switch focus (a clamped
+// no-op on an empty registry). On live models a tick maps to exactly one
+// reschedule plus one snapshot collection, a successful snapshot replaces
+// the repositories (clamping the selection back into range), and a failed
+// snapshot keeps the last good snapshot while recording the error;
+// everything else leaves the model untouched.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -135,21 +163,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "k":
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "down", "j":
-			// len(repos)-1 is -1 on an empty registry, so the comparison is
-			// false and the cursor cannot move: no move when empty.
-			if m.selected < len(m.repos)-1 {
-				m.selected++
-			}
 		case "q", "ctrl+c":
 			m.quitting = true
 			// The quit flag stays for headless tests; the command is what a
 			// real tea.Program consumes to end the session.
 			return m, tea.Quit
+		case "?":
+			m.help = !m.help
+		default:
+			if m.help {
+				// Any other key closes help first and is otherwise swallowed.
+				m.help = false
+				return m, nil
+			}
+			switch msg.String() {
+			case "tab", "shift+tab":
+				m.toggleFocus()
+			case "up", "k":
+				if m.focus == art.FocusRuns {
+					m.moveRunCursor(-1)
+				} else if m.selected > 0 {
+					m.selected--
+				}
+			case "down", "j":
+				if m.focus == art.FocusRuns {
+					m.moveRunCursor(1)
+				} else if m.selected < len(m.repos)-1 {
+					// len(repos)-1 is -1 on an empty registry, so the
+					// comparison is false and the cursor cannot move.
+					m.selected++
+				}
+			case "enter":
+				if m.focus == art.FocusTree {
+					m.focus = art.FocusRuns
+				} else {
+					m.toggleOpenRun()
+				}
+			}
 		}
 		return m, nil
 	case tickMsg:
@@ -182,10 +232,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the snapshot through the approved layout engine. The renderer
-// clamps an out-of-range selected (and keeps the dash placeholder on an empty
-// registry), so View never panics regardless of cursor state.
+// clamps an out-of-range repository cursor (and keeps the dash placeholder
+// on an empty registry), so View never panics regardless of navigation state.
 func (m Model) View() string {
-	return art.RenderOverview(m.width, m.repos, m.selected)
+	return art.RenderOverview(m.width, art.ViewState{
+		Repos:      m.repos,
+		RepoCursor: m.selected,
+		Focus:      m.focus,
+		RunCursor:  m.runCursor,
+		OpenRunID:  m.openRunID,
+		Help:       m.help,
+	})
+}
+
+// toggleFocus switches between the tree and the runs pane; an empty registry
+// has no runs side to focus, so switching is a clamped no-op there.
+func (m *Model) toggleFocus() {
+	if len(m.repos) == 0 {
+		return
+	}
+	if m.focus == art.FocusTree {
+		m.focus = art.FocusRuns
+		return
+	}
+	m.focus = art.FocusTree
+}
+
+// moveRunCursor walks the visible run rows of the CURRENT snapshot in render
+// order, clamping at both ends; an empty run list is a no-op. A stale cursor
+// left behind by a snapshot swap re-anchors from the top of the walk in the
+// pressed direction. Any actual movement clears an open run detail.
+func (m *Model) moveRunCursor(delta int) {
+	visible := art.VisibleRuns(art.ViewState{Repos: m.repos})
+	if len(visible) == 0 {
+		return
+	}
+	current := 0
+	for i, pos := range visible {
+		if pos == m.runCursor {
+			current = i
+			break
+		}
+	}
+	next := current + delta
+	if next < 0 {
+		next = 0
+	}
+	if last := len(visible) - 1; next > last {
+		next = last
+	}
+	if next == current && visible[current] == m.runCursor {
+		return // clamped against a valid position: nothing moved
+	}
+	m.runCursor = visible[next]
+	m.openRunID = ""
+}
+
+// toggleOpenRun expands or collapses the run detail under the runs cursor;
+// pressing enter on anything that is not a currently visible run row leaves
+// the model untouched.
+func (m *Model) toggleOpenRun() {
+	for _, pos := range art.VisibleRuns(art.ViewState{Repos: m.repos}) {
+		if pos != m.runCursor {
+			continue
+		}
+		id := m.repos[pos.Repo].Runs[pos.Run].RunID
+		if m.openRunID == id {
+			m.openRunID = ""
+		} else {
+			m.openRunID = id
+		}
+		return
+	}
 }
 
 // scheduleCmd resolves the tick scheduler: live models use their injected

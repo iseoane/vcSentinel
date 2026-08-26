@@ -82,6 +82,12 @@ type activityRow struct {
 	state string
 	kind  statusKind
 	age   string
+
+	// Navigation affordances for real snapshots; the fixed mock leaves both
+	// at their zero values. focused prefixes a purple "▸" over the leading
+	// icon column; detail appends one dim line right after the row.
+	focused bool
+	detail  string
 }
 
 var mockActivity = []activityRow{
@@ -95,6 +101,19 @@ var mockActivity = []activityRow{
 var mockKeys = []struct{ key, desc string }{
 	{"↑↓", "navigate"}, {"enter", "open"}, {"a", "abort"}, {"r", "retry"},
 	{"/", "filter"}, {"?", "help"}, {"q", "quit"},
+}
+
+// helpKeys is the KEYS overlay shown while help is open: one row per
+// navigation key with a short description, including the keys whose action
+// is not wired yet.
+var helpKeys = []struct{ key, desc string }{
+	{"↑↓", "navigate panes"},
+	{"tab", "focus"},
+	{"enter", "open/close run"},
+	{"a", "abort (soon)"},
+	{"r", "retry (soon)"},
+	{"?", "help"},
+	{"q", "quit"},
 }
 
 func keyLine(p painter, width int) string {
@@ -112,7 +131,7 @@ func renderDashboard(width int, colors bool) string {
 	p := painter{colors: colors}
 	return renderFrame(p, width, mockSummary,
 		func(w int) []string { return treeLines(p, w, mockRepos) },
-		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity) })
+		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity, false) })
 }
 
 // renderFrame assembles the approved frame: rules, header with the daemon
@@ -203,8 +222,9 @@ func fitRunes(s string, n int) string {
 }
 
 // rightLines renders the LOCATION block, an inner double separator, and the
-// ACTIVITY block for the pane width.
-func rightLines(p painter, w int, location [][2]string, activity []activityRow) []string {
+// ACTIVITY block for the pane width. runsFocused marks the ACTIVITY heading
+// as the focused pane; unfocused rendering keeps the exact historical bytes.
+func rightLines(p painter, w int, location [][2]string, activity []activityRow, runsFocused bool) []string {
 	var lines []string
 	lines = append(lines, p.spanLine(w, span{" LOCATION", White}))
 	for _, kv := range location {
@@ -213,14 +233,26 @@ func rightLines(p painter, w int, location [][2]string, activity []activityRow) 
 			span{" " + kv[1], White}))
 	}
 	lines = append(lines, p.spanLine(w, span{" " + strings.Repeat("═", max(4, w-2)), Purple}))
-	lines = append(lines, p.spanLine(w, span{" ACTIVITY", White}))
+	header := span{" ACTIVITY", White}
+	if runsFocused {
+		header = span{" ▸ ACTIVITY", Purple}
+	}
+	lines = append(lines, p.spanLine(w, header))
 	for _, a := range activity {
-		lines = append(lines, p.spanLine(w,
+		spans := make([]span, 0, 6)
+		if a.focused {
+			spans = append(spans, span{"▸", Purple})
+		}
+		spans = append(spans,
 			span{" " + a.icon, statusColor[a.kind]},
 			span{" " + fitRunes(a.flow, 16), White},
 			span{fitRunes(a.stage, 20), Dim},
 			span{fitRunes(a.state, 9), statusColor[a.kind]},
-			span{a.age, Dim}))
+			span{a.age, Dim})
+		lines = append(lines, p.spanLine(w, spans...))
+		if a.detail != "" {
+			lines = append(lines, p.spanLine(w, span{a.detail, Dim}))
+		}
 	}
 	return lines
 }

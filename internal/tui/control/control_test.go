@@ -9,7 +9,10 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/tui/art"
 )
 
 // Update-transition and View coverage pairing with control.go. The style
@@ -23,6 +26,27 @@ func repo(name string) overview.Repo {
 		Origin: "git@github.com:org/" + name}
 }
 
+// repoWithRuns builds a repository whose snapshot carries durable-run
+// summaries with fixed ids; state and revision only feed rendering.
+func repoWithRuns(name string, ids ...string) overview.Repo {
+	r := repo(name)
+	for _, id := range ids {
+		r.Runs = append(r.Runs, presence.RunSummary{RunID: id, State: agentrun.StateRunning, Revision: 1})
+	}
+	return r
+}
+
+// navRepos builds the shared dual-pane registry: two repositories carrying
+// runs around one runless repository, so the flat run walk crosses
+// repository boundaries and skips the gap.
+func navRepos() []overview.Repo {
+	return []overview.Repo{
+		repoWithRuns("alpha", "aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb"),
+		repo("middle"),
+		repoWithRuns("gamma", "cccccccccccccccccccc"),
+	}
+}
+
 // keyMsg builds a tea.KeyMsg the way a real terminal would deliver it.
 func keyMsg(key string) tea.KeyMsg {
 	switch key {
@@ -32,6 +56,12 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyDown}
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
@@ -628,4 +658,286 @@ func TestSnapshotMsgTransitions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUpdateFocusSwitching pins tab/shift+tab and the tree-side enter rule:
+// focus moves between panes, an empty registry clamps the switch to a no-op,
+// and enter hands focus to the runs pane without touching the selection.
+func TestUpdateFocusSwitching(t *testing.T) {
+	repos := navRepos()
+	tests := []struct {
+		name       string
+		setup      func(*testing.T) Model
+		key        string
+		wantFocus  art.FocusPane
+		wantSelect int
+	}{
+		{
+			name:       "tab switches focus to the runs pane",
+			setup:      func(t *testing.T) Model { return New(repos) },
+			key:        "tab",
+			wantFocus:  art.FocusRuns,
+			wantSelect: 0,
+		},
+		{
+			name:       "shift+tab returns focus to the tree",
+			setup:      func(t *testing.T) Model { return pressKeys(t, New(repos), "tab") },
+			key:        "shift+tab",
+			wantFocus:  art.FocusTree,
+			wantSelect: 0,
+		},
+		{
+			name:       "tab is a clamped no-op on an empty registry",
+			setup:      func(t *testing.T) Model { return New(nil) },
+			key:        "tab",
+			wantFocus:  art.FocusTree,
+			wantSelect: 0,
+		},
+		{
+			name:       "shift+tab on an empty registry stays in the tree",
+			setup:      func(t *testing.T) Model { return New(nil) },
+			key:        "shift+tab",
+			wantFocus:  art.FocusTree,
+			wantSelect: 0,
+		},
+		{
+			name:       "enter in the tree moves focus to runs without changing selection",
+			setup:      func(t *testing.T) Model { return pressKeys(t, New(repos), "down") },
+			key:        "enter",
+			wantFocus:  art.FocusRuns,
+			wantSelect: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.setup(t)
+			next, cmd := m.Update(keyMsg(tt.key))
+			if cmd != nil {
+				t.Errorf("%s scheduled %v, want nothing", tt.key, cmd)
+			}
+			after := next.(Model)
+			if after.Focus() != tt.wantFocus {
+				t.Errorf("focus = %v, want %v", after.Focus(), tt.wantFocus)
+			}
+			if after.Selected() != tt.wantSelect {
+				t.Errorf("selected = %d, want %d", after.Selected(), tt.wantSelect)
+			}
+		})
+	}
+}
+
+// TestUpdateRunCursorWalksRenderOrder pins the runs-pane walk: up/down/j/k
+// move over VisibleRuns of the current snapshot in render order — across
+// repository boundaries, skipping summary-only repos — with hard clamps at
+// both ends, and focus stays on the runs pane throughout.
+func TestUpdateRunCursorWalksRenderOrder(t *testing.T) {
+	repos := navRepos()
+	visible := art.VisibleRuns(art.ViewState{Repos: repos})
+	if len(visible) != 3 {
+		t.Fatalf("fixture walk = %v, want three run rows", visible)
+	}
+	tests := []struct {
+		name  string
+		start int      // index into visible the model is parked on
+		keys  []string // presses after parking
+		want  art.RunPos
+	}{
+		{"j crosses into the next repository's runs", 0, []string{"j"}, visible[1]},
+		{"j skips the runless middle repository", 1, []string{"j"}, visible[2]},
+		{"j clamps at the last visible run", 2, []string{"j"}, visible[2]},
+		{"k walks back one row", 2, []string{"k"}, visible[1]},
+		{"k clamps at the first visible run", 0, []string{"k"}, visible[0]},
+		{"up arrow equals k", 1, []string{"up"}, visible[0]},
+		{"down arrow equals j", 1, []string{"down"}, visible[2]},
+		{"a longer sequence lands where arithmetic says", 0, []string{"j", "j", "k"}, visible[1]},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(repos)
+			m.focus = art.FocusRuns
+			m.runCursor = visible[tt.start]
+			m = pressKeys(t, m, tt.keys...)
+			if got := m.RunCursorPosition(); got != tt.want {
+				t.Errorf("cursor = %v, want %v", got, tt.want)
+			}
+			if m.Focus() != art.FocusRuns {
+				t.Errorf("walking must not change focus, got %v", m.Focus())
+			}
+		})
+	}
+}
+
+// TestUpdateRunCursorNoOpsWithoutRuns pins the empty-walk contract: with no
+// navigable rows every direction key and enter are inert no-ops.
+func TestUpdateRunCursorNoOpsWithoutRuns(t *testing.T) {
+	m := New([]overview.Repo{repo("plain"), repo("bare")})
+	m.focus = art.FocusRuns
+	m = pressKeys(t, m, "j", "j", "k", "k")
+	if m.RunCursorPosition() != (art.RunPos{}) {
+		t.Errorf("cursor moved on a runless registry: %v", m.RunCursorPosition())
+	}
+	m = update(t, m, keyMsg("enter"))
+	if m.OpenRun() != "" || m.RunCursorPosition() != (art.RunPos{}) {
+		t.Errorf("enter on an empty walk mutated the model: open=%q cursor=%v",
+			m.OpenRun(), m.RunCursorPosition())
+	}
+	empty := New(nil)
+	empty.focus = art.FocusRuns
+	empty = pressKeys(t, empty, "j", "k")
+	if empty.RunCursorPosition() != (art.RunPos{}) {
+		t.Errorf("cursor moved on a nil registry: %v", empty.RunCursorPosition())
+	}
+}
+
+// TestUpdateEnterTogglesOpenRun pins enter semantics inside the runs pane:
+// it opens, closes, re-opens another run, movement clears it, a clamped
+// move does not, and a stale cursor neither panics nor opens anything.
+func TestUpdateEnterTogglesOpenRun(t *testing.T) {
+	repos := navRepos()
+	visible := art.VisibleRuns(art.ViewState{Repos: repos})
+	build := func(start int) Model {
+		m := New(repos)
+		m.focus = art.FocusRuns
+		m.runCursor = visible[start]
+		return m
+	}
+	t.Run("enter opens the run under the cursor", func(t *testing.T) {
+		m := update(t, build(0), keyMsg("enter"))
+		if got := m.OpenRun(); got != "aaaaaaaaaaaaaaaaaaaa" {
+			t.Errorf("open run = %q, want the first alpha run", got)
+		}
+	})
+	t.Run("enter again closes the same run", func(t *testing.T) {
+		m := pressKeys(t, build(1), "enter", "enter")
+		if got := m.OpenRun(); got != "" {
+			t.Errorf("open run = %q, want cleared by the second enter", got)
+		}
+	})
+	t.Run("enter opens another run after moving", func(t *testing.T) {
+		m := pressKeys(t, build(0), "enter", "j", "j", "enter")
+		if got := m.OpenRun(); got != "cccccccccccccccccccc" {
+			t.Errorf("open run = %q, want the gamma run", got)
+		}
+	})
+	t.Run("moving clears an open run", func(t *testing.T) {
+		m := pressKeys(t, build(0), "enter", "j")
+		if got := m.OpenRun(); got != "" {
+			t.Errorf("moving left %q open, want cleared", got)
+		}
+		if m.RunCursorPosition() != visible[1] {
+			t.Errorf("cursor = %v, want %v", m.RunCursorPosition(), visible[1])
+		}
+	})
+	t.Run("a clamped move that cannot move keeps the detail open", func(t *testing.T) {
+		m := pressKeys(t, build(0), "enter", "k")
+		if got := m.OpenRun(); got != "aaaaaaaaaaaaaaaaaaaa" {
+			t.Errorf("clamped move cleared %q, want it kept", got)
+		}
+	})
+	t.Run("a stale cursor re-anchors without opening anything", func(t *testing.T) {
+		m := New(repos)
+		m.focus = art.FocusRuns
+		m.runCursor = art.RunPos{Repo: 9, Run: 9}
+		m.openRunID = "stale"
+		m = pressKeys(t, m, "j")
+		if m.OpenRun() != "" {
+			t.Errorf("re-anchor kept a stale detail open: %q", m.OpenRun())
+		}
+		if m.RunCursorPosition() != visible[1] {
+			t.Errorf("cursor = %v, want the re-anchored walk position %v", m.RunCursorPosition(), visible[1])
+		}
+	})
+}
+
+// TestUpdateHelpToggleAndSwallow pins the help overlay state machine: "?"
+// toggles, any other key closes help first and is otherwise swallowed, and
+// q/ctrl+c still quit from help.
+func TestUpdateHelpToggleAndSwallow(t *testing.T) {
+	repos := navRepos()
+	t.Run("? toggles help on and off", func(t *testing.T) {
+		m := pressKeys(t, New(repos), "?")
+		if !m.HelpVisible() {
+			t.Fatalf("? did not open help")
+		}
+		m = pressKeys(t, m, "?")
+		if m.HelpVisible() {
+			t.Errorf("the second ? did not close help")
+		}
+	})
+	for _, key := range []string{"down", "up", "k", "j", "tab", "enter"} {
+		t.Run("help swallows "+key, func(t *testing.T) {
+			m := pressKeys(t, New(repos), "down", "?")
+			m = pressKeys(t, m, key)
+			if m.HelpVisible() {
+				t.Errorf("%s did not close help", key)
+			}
+			if m.Selected() != 1 || m.Focus() != art.FocusTree ||
+				m.RunCursorPosition() != (art.RunPos{}) || m.OpenRun() != "" {
+				t.Errorf("%s leaked through help: selected=%d focus=%v cursor=%v open=%q",
+					key, m.Selected(), m.Focus(), m.RunCursorPosition(), m.OpenRun())
+			}
+		})
+	}
+	for _, key := range []string{"q", "ctrl+c"} {
+		t.Run("quit works while help is open via "+key, func(t *testing.T) {
+			m := pressKeys(t, New(repos), "?")
+			next, cmd := m.Update(keyMsg(key))
+			after := next.(Model)
+			if !after.Quitting() {
+				t.Errorf("%s did not flag quitting from help", key)
+			}
+			if cmd == nil || cmd() == nil {
+				t.Errorf("%s returned no quit command from help", key)
+			}
+		})
+	}
+}
+
+// TestViewRendersNavigationStates drives real models through Update and pins
+// what each navigation state paints: focused headings and row prefix, the
+// open-run detail line, and the KEYS overlay replacing pane content.
+func TestViewRendersNavigationStates(t *testing.T) {
+	repos := navRepos()
+	stacked := tea.WindowSizeMsg{Width: 80, Height: 24} // below 84: stacked layout
+	t.Run("runs focus marks its heading and the focused row", func(t *testing.T) {
+		m := New(repos)
+		m.focus = art.FocusRuns
+		m = update(t, m, stacked)
+		out := stripANSI(m.View())
+		assertContains := func(got string, wants ...string) {
+			t.Helper()
+			for _, want := range wants {
+				if !strings.Contains(got, want) {
+					t.Fatalf("view missing %q:\n%s", want, got)
+				}
+			}
+		}
+		assertContains(out, " ▸ ACTIVITY", "\n▸ ")
+		if strings.Contains(out, " ▸ REPOSITORIES") {
+			t.Errorf("unfocused tree heading carried the marker:\n%s", out)
+		}
+	})
+	t.Run("open run appends the full-id detail line", func(t *testing.T) {
+		m := New(repos)
+		m.focus = art.FocusRuns
+		m.openRunID = "aaaaaaaaaaaaaaaaaaaa"
+		m = update(t, m, stacked)
+		out := stripANSI(m.View())
+		if !strings.Contains(out, "   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 1") ||
+			!strings.Contains(out, "0001-01-01T00:00:00Z") {
+			t.Errorf("view missing the open-run detail line:\n%s", out)
+		}
+	})
+	t.Run("help replaces the pane content with the KEYS block", func(t *testing.T) {
+		m := New(repos)
+		m.help = true
+		m = update(t, m, stacked)
+		out := stripANSI(m.View())
+		if !strings.Contains(out, " KEYS") || !strings.Contains(out, "navigate panes") {
+			t.Errorf("help view missing the KEYS block:\n%s", out)
+		}
+		if strings.Contains(out, "LOCATION") || strings.Contains(out, "ACTIVITY") {
+			t.Errorf("help view leaked pane content:\n%s", out)
+		}
+	})
 }

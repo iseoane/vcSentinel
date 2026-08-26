@@ -73,7 +73,7 @@ func assertContains(t *testing.T, got string, wants ...string) {
 }
 
 func TestRenderOverviewHealthySingleRepo(t *testing.T) {
-	dash := RenderOverviewPlain(100, []overview.Repo{liveRepo("vas.sentinel", wt("main", true))}, 0)
+	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{liveRepo("vas.sentinel", wt("main", true))}})
 	assertContains(t, dash, "SENTINEL CONTROL CENTER", "REPOSITORIES", "LOCATION",
 		"ACTIVITY", "vas.sentinel", "● live", "main", "clean",
 		"git@github.com:org/vas.sentinel", "pid 4321",
@@ -83,40 +83,40 @@ func TestRenderOverviewHealthySingleRepo(t *testing.T) {
 
 func TestRenderOverviewMultiWorktree(t *testing.T) {
 	repos := []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}
-	dash := RenderOverviewPlain(100, repos, 0)
+	dash := RenderOverviewPlain(100, ViewState{Repos: repos})
 	// Since Slice 10 the header counts runs, not dirty worktrees: this
 	// fixture carries none, so active stays zero even with a dirty tree.
 	assertContains(t, dash, "├─", "└─", " dirty", "· 0 active")
-	if !strings.Contains(RenderOverview(100, repos, 0), colorPrefix(Blue, " dirty")) {
+	if !strings.Contains(RenderOverview(100, ViewState{Repos: repos}), colorPrefix(Blue, " dirty")) {
 		t.Error("dirty child must be blue")
 	}
 }
 
 func TestRenderOverviewDegradedRepoShowsError(t *testing.T) {
 	degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom"}
-	dash := RenderOverviewPlain(100, []overview.Repo{degraded}, 0)
+	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{degraded}})
 	// Pane width truncates the one-line error: assert on the prefix that
 	// survives both the tree child line and the ACTIVITY stage column.
 	if n := strings.Count(dash, "overview: inspect re"); n < 2 {
 		t.Errorf("error text must reach tree (%d hits) and activity stage:\n%s", n, dash)
 	}
 	assertContains(t, dash, "ATTENTION", "⚠", "· 1 attention")
-	if !strings.Contains(RenderOverview(100, []overview.Repo{degraded}, 0), colorPrefix(Yellow, " ● attention")) {
+	if !strings.Contains(RenderOverview(100, ViewState{Repos: []overview.Repo{degraded}}), colorPrefix(Yellow, " ● attention")) {
 		t.Error("attention state must be yellow")
 	}
 }
 
 func TestRenderOverviewMissingDirFlagged(t *testing.T) {
-	dash := RenderOverviewPlain(100, []overview.Repo{{Name: "ghost", Missing: true}}, 0)
+	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{{Name: "ghost", Missing: true}}})
 	assertContains(t, dash, "● missing", "· 1 attention")
 }
 
 func TestRenderOverviewDaemonColors(t *testing.T) {
-	colored := RenderOverview(100, []overview.Repo{liveRepo("a"), stoppedRepo("b")}, 0)
+	colored := RenderOverview(100, ViewState{Repos: []overview.Repo{liveRepo("a"), stoppedRepo("b")}})
 	assertContains(t, colored, colorPrefix(Rose, " ● live"), colorPrefix(Red, " ● stopped"),
 		colorPrefix(Rose, " ●"), colorPrefix(Red, " ○"),
 		colorPrefix(Rose, "LIVE"), colorPrefix(Red, "STOPPED"))
-	dash := RenderOverviewPlain(100, []overview.Repo{liveRepo("a"), stoppedRepo("b")}, 0)
+	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{liveRepo("a"), stoppedRepo("b")}})
 	assertContains(t, dash, "LIVE", "STOPPED")
 	if strings.Contains(dash, "HEALTHY") {
 		t.Errorf("a stopped repository must not render as HEALTHY:\n%s", dash)
@@ -124,16 +124,16 @@ func TestRenderOverviewDaemonColors(t *testing.T) {
 }
 
 func TestRenderOverviewEmptyRegistry(t *testing.T) {
-	dash := RenderOverviewPlain(100, nil, 0)
+	dash := RenderOverviewPlain(100, ViewState{Repos: nil})
 	assertContains(t, dash, "no repositories registered", "REPOSITORIES",
 		"LOCATION", "ACTIVITY", "navigate", "● 0 daemons")
 	assertWidth(t, dash, 100)
 }
 
 func TestRenderOverviewStacksBelow84(t *testing.T) {
-	dash := RenderOverviewPlain(70, []overview.Repo{
+	dash := RenderOverviewPlain(70, ViewState{Repos: []overview.Repo{
 		liveRepo("vas.sentinel", wt("main", true)), stoppedRepo("second"),
-	}, 0)
+	}})
 	assertContains(t, dash, "REPOSITORIES", "LOCATION", "ACTIVITY", "vas.sentinel", "second")
 	assertWidth(t, dash, 70)
 	if strings.Contains(dash, " │ ") {
@@ -143,42 +143,50 @@ func TestRenderOverviewStacksBelow84(t *testing.T) {
 
 // TestRenderOverviewPlainMatchesColoredRuneParity pins the color contract:
 // stripping escapes from a colored render yields the plain render for every
-// fixture and both layout modes.
+// fixture and both layout modes, including the Slice 11 navigation states.
 func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
-	fixtures := map[string][]overview.Repo{
-		"healthy": {liveRepo("vas.sentinel", wt("main", true))},
-		"multi":   {stoppedRepo("multi", wt("main", true), wt("feature", false))},
-		"degraded": {
-			{Name: "broken", Error: "overview: inspect repository boom"}},
-		"missing": {{Name: "ghost", Missing: true}},
-		// Run rows carry zero timestamps so the age column stays the
-		// deterministic dash across both sequential renders.
-		"runs": {
-			liveRepoWithRuns("alpha",
-				run("11111111111111111111", agentrun.StateRunning, 4, time.Time{}),
-				run("22222222222222222222", agentrun.StateSucceeded, 5, time.Time{})),
-			{Name: "gamma", Error: "probe failed",
-				Runs: []presence.RunSummary{run("33333333333333333333", agentrun.StateAwaitingDecision, 2, time.Time{})}},
-			stoppedRepo("beta", wt("dev", true)),
-		},
-		"mixed": {
-			liveRepo("alpha", wt("main", false)),
-			stoppedRepo("beta", wt("dev", true), wt("spike", false)),
-			{Name: "gamma", Error: "probe failed"},
-			{Name: "delta", Missing: true},
-		},
-		"empty": nil,
+	// Run rows carry zero timestamps so the age column stays the
+	// deterministic dash across both sequential renders.
+	runsRepos := []overview.Repo{
+		liveRepoWithRuns("alpha",
+			run("11111111111111111111", agentrun.StateRunning, 4, time.Time{}),
+			run("22222222222222222222", agentrun.StateSucceeded, 5, time.Time{})),
+		{Name: "gamma", Error: "probe failed",
+			Runs: []presence.RunSummary{run("33333333333333333333", agentrun.StateAwaitingDecision, 2, time.Time{})}},
+		stoppedRepo("beta", wt("dev", true)),
 	}
-	for name, repos := range fixtures {
+	mixed := []overview.Repo{
+		liveRepo("alpha", wt("main", false)),
+		stoppedRepo("beta", wt("dev", true), wt("spike", false)),
+		{Name: "gamma", Error: "probe failed"},
+		{Name: "delta", Missing: true},
+	}
+	fixtures := []struct {
+		name string
+		view ViewState
+	}{
+		{"healthy", ViewState{Repos: []overview.Repo{liveRepo("vas.sentinel", wt("main", true))}}},
+		{"multi", ViewState{Repos: []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}}},
+		{"degraded", ViewState{Repos: []overview.Repo{{Name: "broken", Error: "overview: inspect repository boom"}}}},
+		{"missing", ViewState{Repos: []overview.Repo{{Name: "ghost", Missing: true}}}},
+		{"runs", ViewState{Repos: runsRepos}},
+		{"mixed", ViewState{Repos: mixed}},
+		{"empty", ViewState{}},
+		{"run-focus", ViewState{Repos: runsRepos, Focus: FocusRuns, RunCursor: RunPos{Repo: 0, Run: 1}}},
+		{"open-run", ViewState{Repos: runsRepos, OpenRunID: "11111111111111111111"}},
+		{"help", ViewState{Repos: mixed, Help: true}},
+	}
+	for _, fx := range fixtures {
 		for _, width := range []int{60, 70, 100, 140} {
-			plain := RenderOverviewPlain(width, repos, 0)
-			colored := RenderOverview(width, repos, 0)
+			plain := RenderOverviewPlain(width, fx.view)
+			colored := RenderOverview(width, fx.view)
 			if plain != stripEscapes(colored) {
-				t.Errorf("%s/%d: color mode altered visible content", name, width)
+				t.Errorf("%s/%d: color mode altered visible content", fx.name, width)
 			}
-			if len(repos) > 0 && !strings.Contains(colored, "\x1b[38;5;") {
-				t.Errorf("%s/%d: colored render emitted no escapes", name, width)
+			if len(fx.view.Repos) > 0 && !strings.Contains(colored, "\x1b[38;5;") {
+				t.Errorf("%s/%d: colored render emitted no escapes", fx.name, width)
 			}
+			assertWidth(t, plain, width)
 		}
 	}
 }
@@ -194,7 +202,7 @@ func TestRenderOverviewHeaderCounts(t *testing.T) {
 		{Name: "gamma", Error: "probe failed"},
 		{Name: "delta", Missing: true},
 	}
-	header := strings.Split(RenderOverviewPlain(120, repos, 0), "\n")[1]
+	header := strings.Split(RenderOverviewPlain(120, ViewState{Repos: repos}), "\n")[1]
 	assertContains(t, header, "● 1 daemons ", "· 0 active ", "· 2 attention")
 }
 
@@ -223,7 +231,7 @@ func TestRenderOverviewSelectionClamping(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dash := RenderOverviewPlain(70, repos, tt.selected)
+			dash := RenderOverviewPlain(70, ViewState{Repos: repos, RepoCursor: tt.selected})
 			loc := locationBlock(t, dash)
 			if !strings.Contains(loc, tt.want) {
 				t.Errorf("LOCATION block missing %q:\n%s", tt.want, loc)
@@ -235,7 +243,7 @@ func TestRenderOverviewSelectionClamping(t *testing.T) {
 			}
 		})
 	}
-	dash := RenderOverviewPlain(70, nil, -7)
+	dash := RenderOverviewPlain(70, ViewState{Repos: nil, RepoCursor: -7})
 	assertContains(t, dash, "no repositories registered")
 }
 
@@ -268,13 +276,14 @@ func locationBlock(t *testing.T, dash string) string {
 // activityBlock extracts the ACTIVITY rows from a plain render: everything
 // between the ACTIVITY header and the major rule that closes the block. It
 // requires a stacked width (below 84 columns) so the pane lines are not
-// interleaved with the tree.
+// interleaved with the tree. Both heading shapes match because the focused
+// pane prefixes its marker.
 func activityBlock(t *testing.T, dash string) string {
 	t.Helper()
 	lines := strings.Split(dash, "\n")
 	start := -1
 	for i, l := range lines {
-		if strings.HasPrefix(l, " ACTIVITY") {
+		if strings.HasPrefix(l, " ACTIVITY") || strings.HasPrefix(l, " ▸ ACTIVITY") {
 			start = i
 			break
 		}
@@ -321,13 +330,13 @@ func TestOverviewActivityRunStateMapping(t *testing.T) {
 		t.Run(string(tt.state), func(t *testing.T) {
 			repos := []overview.Repo{{Name: "solo",
 				Runs: []presence.RunSummary{run("abcdef1234567890abcd", tt.state, 7, time.Time{})}}}
-			act := activityBlock(t, RenderOverviewPlain(70, repos, 0))
+			act := activityBlock(t, RenderOverviewPlain(70, ViewState{Repos: repos}))
 			assertContains(t, act, tt.icon, tt.word, "abcdef123456", "rev 7")
-			colored := RenderOverview(70, repos, 0)
+			colored := RenderOverview(70, ViewState{Repos: repos})
 			if !strings.Contains(colored, colorPrefix(tt.color, " "+tt.icon)) {
 				t.Errorf("icon %q must inherit color %d:\n%s", tt.icon, tt.color, colored)
 			}
-			if plain := RenderOverviewPlain(70, repos, 0); plain != stripEscapes(colored) {
+			if plain := RenderOverviewPlain(70, ViewState{Repos: repos}); plain != stripEscapes(colored) {
 				t.Error("color mode altered visible content")
 			}
 		})
@@ -345,7 +354,7 @@ func TestRenderOverviewMixedRepoReplacesSummaryWithRuns(t *testing.T) {
 		run("aaaaaaaaaaaaaaaaaaaa", agentrun.StateRunning, 4, now.Add(-2*time.Minute)),
 		run("bbbbbbbbbbbbbbbbbbbb", agentrun.StateAwaitingDecision, 6, time.Time{}),
 	}
-	dash := RenderOverviewPlain(70, repos, 0)
+	dash := RenderOverviewPlain(70, ViewState{Repos: repos})
 	assertContains(t, dash, "clean", "dirty") // tree pane untouched
 	act := activityBlock(t, dash)
 	assertContains(t, act, "aaaaaaaaaaaa", "RUNNING", "rev 4", "02:00",
@@ -367,7 +376,7 @@ func TestRenderOverviewStoppedRepoRunsReplaceSummary(t *testing.T) {
 	repos[0].Runs = []presence.RunSummary{
 		run("dddddddddddddddddddd", agentrun.StateFailed, 9, now.Add(-time.Second)),
 	}
-	act := activityBlock(t, RenderOverviewPlain(70, repos, 0))
+	act := activityBlock(t, RenderOverviewPlain(70, ViewState{Repos: repos}))
 	assertContains(t, act, "dddddddddddd", "FAILED")
 	for _, leaked := range []string{"STOPPED", "halted"} {
 		if strings.Contains(act, leaked) {
@@ -383,7 +392,7 @@ func TestRenderOverviewStoppedRepoRunsReplaceSummary(t *testing.T) {
 func TestRenderOverviewDegradedRepoKeepsSummaryWithoutInventedRuns(t *testing.T) {
 	t.Run("no runs means exactly one summary row", func(t *testing.T) {
 		degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom"}
-		act := activityBlock(t, RenderOverviewPlain(70, []overview.Repo{degraded}, 0))
+		act := activityBlock(t, RenderOverviewPlain(70, ViewState{Repos: []overview.Repo{degraded}}))
 		assertContains(t, act, "ATTENTION")
 		if strings.Count(act, "ATTENTION") != 1 || strings.Contains(act, "rev ") {
 			t.Errorf("degraded repo must render one invented-free row:\n%s", act)
@@ -392,7 +401,7 @@ func TestRenderOverviewDegradedRepoKeepsSummaryWithoutInventedRuns(t *testing.T)
 	t.Run("carried runs append after the summary row", func(t *testing.T) {
 		degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom",
 			Runs: []presence.RunSummary{run("cccccccccccccccccccc", agentrun.StateSucceeded, 3, time.Time{})}}
-		act := activityBlock(t, RenderOverviewPlain(70, []overview.Repo{degraded}, 0))
+		act := activityBlock(t, RenderOverviewPlain(70, ViewState{Repos: []overview.Repo{degraded}}))
 		assertContains(t, act, "ATTENTION", "PASSED", "cccccccccccc", "rev 3")
 	})
 }
@@ -414,7 +423,7 @@ func TestRenderOverviewHeaderCountsNonTerminalRunsOnly(t *testing.T) {
 		}},
 		{Name: "c"},
 	}
-	header := strings.Split(RenderOverviewPlain(120, repos, 0), "\n")[1]
+	header := strings.Split(RenderOverviewPlain(120, ViewState{Repos: repos}), "\n")[1]
 	assertContains(t, header, "● 0 daemons ", "· 2 active ", "· 0 attention")
 }
 
@@ -423,7 +432,7 @@ func TestRenderOverviewHeaderCountsNonTerminalRunsOnly(t *testing.T) {
 // summaries with worktree counts, and nothing run-shaped anywhere.
 func TestRenderOverviewEmptyRunsRepoBehaviorUnchanged(t *testing.T) {
 	repos := []overview.Repo{liveRepo("alpha", wt("main", true)), stoppedRepo("beta", wt("dev", true))}
-	dash := RenderOverviewPlain(70, repos, 0)
+	dash := RenderOverviewPlain(70, ViewState{Repos: repos})
 	act := activityBlock(t, dash)
 	assertContains(t, act, "alpha", "LIVE", "beta", "STOPPED", "1 worktree")
 	if strings.Contains(act, "rev ") {
@@ -457,4 +466,170 @@ func TestFormatAgeCompactRules(t *testing.T) {
 			}
 		})
 	}
+}
+
+// runsNavRepos builds the shared navigation fixture: two live repositories
+// carrying runs around a runless one, so the flat run walk crosses
+// repository boundaries and skips the gap. Ids are full-length (20 runes)
+// because the detail line must show the complete identifier.
+func runsNavRepos() []overview.Repo {
+	return []overview.Repo{
+		liveRepoWithRuns("alpha",
+			run("aaaaaaaaaaaaaaaaaaaa", agentrun.StateRunning, 4, time.Time{}),
+			run("bbbbbbbbbbbbbbbbbbbb", agentrun.StateAwaitingDecision, 6, time.Time{})),
+		liveRepo("middle"),
+		liveRepoWithRuns("gamma",
+			run("cccccccccccccccccccc", agentrun.StateSucceeded, 3, time.Time{})),
+	}
+}
+
+// TestVisibleRunsRenderOrder pins the walk contract: run rows only, in the
+// exact order the ACTIVITY pane draws them — repo by repo, stored order
+// inside each repository, summary-only repositories skipped.
+func TestVisibleRunsRenderOrder(t *testing.T) {
+	got := VisibleRuns(ViewState{Repos: runsNavRepos()})
+	want := []RunPos{{Repo: 0, Run: 0}, {Repo: 0, Run: 1}, {Repo: 2, Run: 0}}
+	if len(got) != len(want) {
+		t.Fatalf("VisibleRuns = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("VisibleRuns[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+	if got := VisibleRuns(ViewState{}); len(got) != 0 {
+		t.Errorf("VisibleRuns on an empty state = %v, want none", got)
+	}
+}
+
+// TestOverviewHeadingFocusMarkers pins the heading affordance: the focused
+// pane's heading gains a purple "▸" marker; unfocused headings keep the
+// exact historical bytes.
+func TestOverviewHeadingFocusMarkers(t *testing.T) {
+	repos := runsNavRepos()
+	t.Run("tree focus marks REPOSITORIES purple", func(t *testing.T) {
+		colored := RenderOverview(100, ViewState{Repos: repos})
+		assertContains(t, colored, colorPrefix(Purple, " ▸ REPOSITORIES"))
+		if strings.Contains(colored, colorPrefix(Purple, " ▸ ACTIVITY")) {
+			t.Errorf("unfocused ACTIVITY heading must not carry the marker:\n%s", colored)
+		}
+	})
+	t.Run("runs focus marks ACTIVITY purple", func(t *testing.T) {
+		colored := RenderOverview(100, ViewState{Repos: repos, Focus: FocusRuns})
+		assertContains(t, colored, colorPrefix(Purple, " ▸ ACTIVITY"))
+		if strings.Contains(colored, colorPrefix(Purple, " ▸ REPOSITORIES")) {
+			t.Errorf("unfocused REPOSITORIES heading must not carry the marker:\n%s", colored)
+		}
+	})
+	t.Run("unfocused headings keep the exact historical bytes", func(t *testing.T) {
+		dash := RenderOverviewPlain(70, ViewState{Repos: repos, Focus: FocusRuns})
+		assertContains(t, dash, "\n REPOSITORIES")
+		assertContains(t, dash, " ▸ ACTIVITY")
+		if strings.Contains(dash, "▸ REPOSITORIES") {
+			t.Errorf("unfocused tree heading must stay unmarked:\n%s", dash)
+		}
+	})
+}
+
+// TestOverviewTreeCursorGlyph pins the tree affordance: only the repository
+// under the cursor swaps its expand glyph for "▸" and only while the tree
+// owns focus; expanded rows otherwise keep "▾" and child lines never change.
+func TestOverviewTreeCursorGlyph(t *testing.T) {
+	repos := []overview.Repo{liveRepo("alpha"), liveRepo("beta")}
+	dash := RenderOverviewPlain(70, ViewState{Repos: repos, RepoCursor: 1})
+	assertContains(t, dash, " ▾ alpha", " ▸ beta")
+	other := RenderOverviewPlain(70, ViewState{Repos: repos, RepoCursor: 1, Focus: FocusRuns})
+	assertContains(t, other, " ▾ alpha", " ▾ beta")
+	withTrees := []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}
+	child := RenderOverviewPlain(70, ViewState{Repos: withTrees})
+	assertContains(t, child, "├─ main", "└─ feature")
+}
+
+// TestOverviewRunCursorPrefixOnlyFocusedRow pins the runs affordance: exactly
+// one ACTIVITY row — the one at RunCursor, and only while the runs pane owns
+// focus — prefixes "▸" in purple over its icon column.
+func TestOverviewRunCursorPrefixOnlyFocusedRow(t *testing.T) {
+	repos := runsNavRepos()
+	view := ViewState{Repos: repos, Focus: FocusRuns, RunCursor: RunPos{Repo: 2, Run: 0}}
+	act := activityBlock(t, RenderOverviewPlain(80, view))
+	assertContains(t, act, "cccccccccccc")
+	prefixed := 0
+	for _, l := range strings.Split(act, "\n") {
+		if strings.HasPrefix(l, "▸ ") {
+			prefixed++
+		}
+	}
+	if prefixed != 1 {
+		t.Errorf("%d rows carry the focus prefix, want exactly one:\n%s", prefixed, act)
+	}
+	treeFocus := RenderOverviewPlain(80, ViewState{Repos: repos})
+	for _, l := range strings.Split(activityBlock(t, treeFocus), "\n") {
+		if strings.HasPrefix(l, "▸ ") {
+			t.Fatalf("tree focus must leave every run row unprefixed:\n%s", treeFocus)
+		}
+	}
+	colored := RenderOverview(80, view)
+	if !strings.Contains(colored, colorPrefix(Purple, "▸")) {
+		t.Errorf("the focus prefix must be purple:\n%s", colored)
+	}
+}
+
+// TestOverviewOpenRunDetailLine pins the inline expansion: the row whose
+// full run id matches OpenRunID appends exactly one dim detail line with the
+// full id, state word, revision, UTC timestamp, and compact age; unknown or
+// empty ids render nothing extra.
+func TestOverviewOpenRunDetailLine(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	pinClock(t, now)
+	repos := runsNavRepos()
+	repos[0].Runs[0].UpdatedAt = now.Add(-2 * time.Minute)
+	dash := RenderOverviewPlain(80, ViewState{Repos: repos, OpenRunID: "aaaaaaaaaaaaaaaaaaaa"})
+	want := "   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 4 · 2023-11-14T22:11:20Z · 02:00"
+	assertContains(t, dash, want)
+	if n := strings.Count(dash, "   └─"); n != 1 {
+		t.Errorf("%d detail lines rendered, want exactly one:\n%s", n, dash)
+	}
+	for _, id := range []string{"", "zzzzzzzzzzzzzzzzzzzz"} {
+		quiet := RenderOverviewPlain(80, ViewState{Repos: repos, OpenRunID: id})
+		if strings.Contains(quiet, "   └─") {
+			t.Errorf("OpenRunID %q must render no detail line:\n%s", id, quiet)
+		}
+	}
+}
+
+// TestOverviewHelpBlockReplacesPaneContent pins the help overlay: the KEYS
+// block replaces the LOCATION+ACTIVITY content behind the same inner double
+// rule, lists every navigation key, and keeps the width discipline.
+func TestOverviewHelpBlockReplacesPaneContent(t *testing.T) {
+	dash := RenderOverviewPlain(70, ViewState{Repos: runsNavRepos(), Help: true})
+	assertContains(t, dash, " KEYS",
+		"↑↓", "navigate panes",
+		"tab", "focus",
+		"enter", "open/close run",
+		"abort (soon)", "retry (soon)",
+		"?", "help", "quit")
+	if strings.Contains(dash, "LOCATION") || strings.Contains(dash, "ACTIVITY") {
+		t.Errorf("help must replace the pane content wholesale:\n%s", dash)
+	}
+	lines := strings.Split(dash, "\n")
+	keysIdx := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, " KEYS") {
+			keysIdx = i
+			break
+		}
+	}
+	if keysIdx < 0 {
+		t.Fatalf("no KEYS heading:\n%s", dash)
+	}
+	innerRule := false
+	for i := 0; i < keysIdx; i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "══") {
+			innerRule = true
+		}
+	}
+	if !innerRule {
+		t.Errorf("the inner double rule must survive above KEYS:\n%s", dash)
+	}
+	assertWidth(t, dash, 70)
 }

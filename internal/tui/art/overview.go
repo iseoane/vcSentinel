@@ -2,6 +2,7 @@ package art
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -19,25 +20,53 @@ var timeNow = time.Now
 // column before the layout engine pads it to the approved width.
 const maxRunFlowRunes = 12
 
+// FocusPane names the pane that owns keyboard navigation.
+type FocusPane int
+
+const (
+	// FocusTree navigates repositories in the left tree pane.
+	FocusTree FocusPane = iota
+	// FocusRuns navigates durable-run rows in the ACTIVITY pane.
+	FocusRuns
+)
+
+// RunPos identifies one navigable run row: Repo indexes ViewState.Repos and
+// Run indexes that repository's Runs slice.
+type RunPos struct {
+	Repo int
+	Run  int
+}
+
+// ViewState is the single render-state value of the overview screen. The
+// zero value renders the historical default frame: every repository, cursor
+// on the first one, tree focus, nothing open, help closed.
+type ViewState struct {
+	Repos      []overview.Repo
+	RepoCursor int
+	Focus      FocusPane
+	RunCursor  RunPos
+	OpenRunID  string
+	Help       bool
+}
+
 // RenderOverview renders a real overview snapshot through the layout engine
 // approved in the Slice 1 contract: same frame, rules, header shape, pane
-// split, state colors, and footer. Every line derives from the snapshot.
-// selected picks the repository shown in the LOCATION pane; see overviewRight
-// for the clamping rule.
-func RenderOverview(width int, repos []overview.Repo, selected int) string {
-	return renderOverview(width, true, repos, selected)
+// split, state colors, and footer. Every line derives from the view state;
+// see overviewRight for the cursor-clamping rule.
+func RenderOverview(width int, s ViewState) string {
+	return renderOverview(width, true, s)
 }
 
 // RenderOverviewPlain renders the same real-data layout without ANSI escapes.
-func RenderOverviewPlain(width int, repos []overview.Repo, selected int) string {
-	return renderOverview(width, false, repos, selected)
+func RenderOverviewPlain(width int, s ViewState) string {
+	return renderOverview(width, false, s)
 }
 
-func renderOverview(width int, colors bool, repos []overview.Repo, selected int) string {
+func renderOverview(width int, colors bool, s ViewState) string {
 	p := painter{colors: colors}
-	return renderFrame(p, width, overviewSummary(repos),
-		func(w int) []string { return overviewTree(p, w, repos) },
-		func(w int) []string { return overviewRight(p, w, repos, selected) })
+	return renderFrame(p, width, overviewSummary(s.Repos),
+		func(w int) []string { return overviewTree(p, w, s) },
+		func(w int) []string { return overviewRight(p, w, s) })
 }
 
 // overviewSummary computes the header counts under the approved semantics:
@@ -106,19 +135,46 @@ func worktreeName(wt inventory.Worktree) string {
 	return wt.Branch
 }
 
+// VisibleRuns returns the render-order positions of the navigable RUN rows
+// in s.Repos: repository summary rows are not navigable. The sequence walks
+// repositories in snapshot order and runs in stored order inside each one —
+// exactly the order the ACTIVITY pane draws its run rows — so control can
+// move a cursor over what the operator sees.
+func VisibleRuns(s ViewState) []RunPos {
+	var positions []RunPos
+	for i, r := range s.Repos {
+		for j := range r.Runs {
+			positions = append(positions, RunPos{Repo: i, Run: j})
+		}
+	}
+	return positions
+}
+
 // overviewTree renders the tree pane: one line per repo with its daemon
 // state word, then one child line per worktree or, for a degraded repo, its
 // recorded Error in place of the children. An empty registry renders the
-// empty-state line inside the untouched frame.
-func overviewTree(p painter, w int, repos []overview.Repo) []string {
-	lines := []string{p.spanLine(w, span{" REPOSITORIES", White})}
+// empty-state line inside the untouched frame. While the tree owns focus its
+// heading carries a purple marker and the repository under the cursor shows
+// "▸" in place of its expand glyph; unfocused rendering keeps the exact
+// historical bytes.
+func overviewTree(p painter, w int, s ViewState) []string {
+	heading := span{" REPOSITORIES", White}
+	if s.Focus == FocusTree {
+		heading = span{" ▸ REPOSITORIES", Purple}
+	}
+	lines := []string{p.spanLine(w, heading)}
+	repos := s.Repos
 	if len(repos) == 0 {
 		return append(lines, p.spanLine(w, span{" no repositories registered", Dim}))
 	}
-	for _, r := range repos {
+	for i, r := range repos {
 		state := classifyRepo(r)
+		marker := "▾"
+		if s.Focus == FocusTree && i == s.RepoCursor {
+			marker = "▸"
+		}
 		lines = append(lines, p.spanLine(w,
-			span{" ▾ " + fitRunes(r.Name, 22), White},
+			span{" " + marker + " " + fitRunes(r.Name, 22), White},
 			span{" ● " + state.word, statusColor[state.kind]}))
 		if r.Error != "" {
 			lines = append(lines, p.spanLine(w, span{"   └─ ", Dim}, span{r.Error, Dim}))
@@ -140,16 +196,23 @@ func overviewTree(p painter, w int, repos []overview.Repo) []string {
 
 // overviewRight builds the right pane around the operator-selected
 // repository: LOCATION fields plus one derived ACTIVITY row per repository.
-// Clamping rule: a selected inside [0, len(repos)-1] renders exactly that
+// Clamping rule: a cursor inside [0, len(repos)-1] renders exactly that
 // repository; an empty registry has no selection at all and keeps the dash
-// placeholder; a negative selected falls back to index 0, and one past the
+// placeholder; a negative cursor falls back to index 0, and one past the
 // last repository falls back to the last index, so rendering never panics.
-func overviewRight(p painter, w int, repos []overview.Repo, selected int) []string {
+// While help is open the LOCATION+ACTIVITY content is replaced wholesale by
+// the KEYS block behind the same inner double rule.
+func overviewRight(p painter, w int, s ViewState) []string {
+	if s.Help {
+		return helpLines(p, w)
+	}
+	repos := s.Repos
 	var location [][2]string
 	if len(repos) == 0 {
 		location = [][2]string{{"Repository", "-"}, {"Path", "-"}, {"Branch", "-"},
 			{"Origin", "-"}, {"Daemon", "-"}, {"Status", "-"}}
 	} else {
+		selected := s.RepoCursor
 		if selected < 0 {
 			selected = 0
 		}
@@ -158,7 +221,23 @@ func overviewRight(p painter, w int, repos []overview.Repo, selected int) []stri
 		}
 		location = overviewLocation(repos[selected])
 	}
-	return rightLines(p, w, location, overviewActivity(repos))
+	return rightLines(p, w, location, overviewActivity(s), s.Focus == FocusRuns)
+}
+
+// helpLines replaces the pane content while help is open: the inner double
+// rule stays for visual continuity, then the KEYS heading followed by one
+// row per navigation key in the footer's key/desc column style.
+func helpLines(p painter, w int) []string {
+	lines := []string{
+		p.spanLine(w, span{" " + strings.Repeat("═", max(4, w-2)), Purple}),
+		p.spanLine(w, span{" KEYS", White}),
+	}
+	for _, k := range helpKeys {
+		lines = append(lines, p.spanLine(w,
+			span{" " + fitRunes(k.key, 7), Purple},
+			span{" " + k.desc, Dim}))
+	}
+	return lines
 }
 
 // overviewLocation projects one repo into the LOCATION field block: Branch
@@ -212,18 +291,43 @@ func statusField(r overview.Repo) string {
 // repository line. Attention and degraded repositories ALWAYS keep their
 // summary row and append their run rows after it. A repository with neither
 // children nor runs nor degradation renders exactly one summary row.
-func overviewActivity(repos []overview.Repo) []activityRow {
-	rows := make([]activityRow, 0, len(repos))
-	for _, r := range repos {
+// Navigation: while the runs pane owns focus, the row at RunCursor gets a
+// purple "▸" over its leading icon column; a row whose full run id matches
+// OpenRunID grows one dim detail line (mismatched ids render nothing).
+func overviewActivity(s ViewState) []activityRow {
+	rows := make([]activityRow, 0, len(s.Repos))
+	for i, r := range s.Repos {
 		state := classifyRepo(r)
 		if !(len(r.Runs) > 0 && (state.kind == stOwn || state.kind == stStop)) {
 			rows = append(rows, summaryActivityRow(r, state))
 		}
-		for _, run := range r.Runs {
-			rows = append(rows, runRow(run))
+		for j, runSummary := range r.Runs {
+			row := runRow(runSummary)
+			if s.Focus == FocusRuns && s.RunCursor == (RunPos{Repo: i, Run: j}) {
+				row.focused = true
+			}
+			if s.OpenRunID != "" && s.OpenRunID == runSummary.RunID {
+				row.detail = runDetail(runSummary)
+			}
+			rows = append(rows, row)
 		}
 	}
 	return rows
+}
+
+// runDetail renders the inline expansion of one open run on a single dim
+// line: full id, state word, revision, UpdatedAt stamped in UTC, and the
+// same compact age the row's age column shows. Narrow panes clamp it
+// through spanLine.
+func runDetail(run presence.RunSummary) string {
+	_, _, word := runState(run.State)
+	age := "-"
+	if !run.UpdatedAt.IsZero() {
+		age = formatAge(timeNow().Sub(run.UpdatedAt))
+	}
+	return fmt.Sprintf("   └─ %s · %s · rev %d · %s · %s",
+		run.RunID, word, run.Revision,
+		run.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"), age)
 }
 
 // summaryActivityRow builds the classic per-repository row: icon by worst
