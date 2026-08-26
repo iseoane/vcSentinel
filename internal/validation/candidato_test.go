@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -348,7 +349,14 @@ func TestEjecutarPerfilSobreCandidato_BarraSnapshotsAntiguos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no se pudo resolver el árbol de HEAD: %v", err)
 	}
-	antiguo, err := git.CrearSnapshot("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+	emptyTree := exec.Command("git", "mktree")
+	emptyTree.Dir = dir
+	emptyTree.Stdin = strings.NewReader("")
+	output, err := emptyTree.Output()
+	if err != nil {
+		t.Fatalf("no se pudo materializar el árbol vacío: %v", err)
+	}
+	antiguo, err := git.CrearSnapshot(strings.TrimSpace(string(output)))
 	if err != nil {
 		t.Fatalf("no se pudo crear el snapshot envejecido: %v", err)
 	}

@@ -54,6 +54,11 @@ func EjecutarPerfilSobreCandidato(perfil string, rutasCambiadas []string, opts O
 		return EjecutarPerfil(perfil, opts)
 	}
 
+	// Snapshot cleanup is best-effort, but it must cover every worktree-mode
+	// attempt, including failures while freezing the candidate or creating its
+	// snapshot.
+	defer func() { _ = git.PurgarSnapshots(git.RetencionSnapshots) }()
+
 	candidato, err := git.Congelar()
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo congelar el candidato antes de validar: %w", err)
@@ -70,12 +75,6 @@ func EjecutarPerfilSobreCandidato(perfil string, rutasCambiadas []string, opts O
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo crear el snapshot de validación: %w", err)
 	}
-
-	// El barrido viaja con cada flujo que crea snapshots: sin este cable,
-	// PurgarSnapshots solo existía para los tests y los snapshots desechables
-	// se acumulaban indefinidamente. Best-effort por diseño: un fallo de
-	// limpieza jamás invalida una validación ya ejecutada.
-	defer func() { _ = git.PurgarSnapshots(git.RetencionSnapshots) }()
 
 	opts.Worktree = snapshot
 	opts.autorizacion = graph.AutorizacionAlcance{}

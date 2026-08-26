@@ -81,7 +81,7 @@ func CrearSnapshot(treeOID string) (string, error) {
 	}
 	destino := filepath.Join(snapshots, treeOID)
 	if info, err := os.Stat(destino); err == nil && info.IsDir() {
-		return destino, nil
+		return refrescarSnapshot(destino)
 	}
 
 	commitAncla, err := ejecutarGitSalida("commit-tree", treeOID, "-m", "vas-sentinel: snapshot")
@@ -106,7 +106,7 @@ func CrearSnapshot(treeOID string) (string, error) {
 			// el worktree temporal propio (en su ruta original, todavía
 			// consistente) y se reutiliza el resultado ajeno.
 			_, _ = ejecutarGitSalida("worktree", "remove", "--force", temporal)
-			return destino, nil
+			return refrescarSnapshot(destino)
 		}
 		_, _ = ejecutarGitSalida("worktree", "remove", "--force", temporal)
 		return "", fmt.Errorf("no se pudo publicar el snapshot %s: %w", treeOID, err)
@@ -120,6 +120,17 @@ func CrearSnapshot(treeOID string) (string, error) {
 		return "", fmt.Errorf("no se pudo reparar los metadatos del worktree del snapshot %s: %w", treeOID, err)
 	}
 
+	return refrescarSnapshot(destino)
+}
+
+// refrescarSnapshot marks a snapshot as actively acquired. Purge uses the
+// modification time as its retention boundary, so reusing an old snapshot
+// cannot make an overlapping validation look disposable.
+func refrescarSnapshot(destino string) (string, error) {
+	agora := time.Now()
+	if err := os.Chtimes(destino, agora, agora); err != nil {
+		return "", fmt.Errorf("no se pudo refrescar el snapshot %s: %w", destino, err)
+	}
 	return destino, nil
 }
 
