@@ -13,6 +13,11 @@ land.
       Converts today's biggest containment gap into real enforcement for the
       dominant use case (reviews). No blocking dependencies. Origin: 16 +
       live probes.
+      Live-probed instance (2026-08-26): OpenCode `grep`/`glob` permission
+      rules match search expressions, not searched paths, so an injected
+      prompt inside committed content can point them at arbitrary host paths;
+      `read` is exactly confined (ask-fallback contract), and Claude confines
+      `Grep`/`Glob` by path, so the channel is adapter-specific.
 
 ## P2 — Next (clear value, small effort)
 
