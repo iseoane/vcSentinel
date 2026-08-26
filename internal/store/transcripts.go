@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// MaxTranscriptBytes bounds the raw provider output retained per invocation.
+// The durable outcome still retains the hash of the full provider answer.
+const MaxTranscriptBytes = 1 << 20
+
 // TranscriptSidecar is the exact JSON shape persisted next to one durable
 // execution record. It carries the raw provider stdout that the event stream
 // deliberately never stores (event frames carry only hashes), so every
@@ -30,6 +34,9 @@ type TranscriptSidecar struct {
 func (s *Store) WriteTranscript(runID, invocationID string, at time.Time, output string) (string, int64, error) {
 	if !validRunID(runID) || !validRunID(invocationID) {
 		return "", 0, fmt.Errorf("store: invalid transcript identity run=%q invocation=%q", runID, invocationID)
+	}
+	if len(output) > MaxTranscriptBytes {
+		return "", 0, fmt.Errorf("store: transcript exceeds %d-byte retention limit", MaxTranscriptBytes)
 	}
 	directory, err := s.executionDir(runID)
 	if err != nil {

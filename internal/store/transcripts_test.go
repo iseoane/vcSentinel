@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,19 @@ func TestWriteTranscriptProducesExactSidecarShape(t *testing.T) {
 	}
 	if size != int64(len(raw)) {
 		t.Fatalf("size = %d, want %d", size, len(raw))
+	}
+}
+
+func TestWriteTranscriptRejectsOversizedOutput(t *testing.T) {
+	backing, _, runID := newTranscriptFixture(t)
+	output := strings.Repeat("x", MaxTranscriptBytes+1)
+
+	if _, _, err := backing.WriteTranscript(runID, "inv-too-large", time.Now().UTC(), output); err == nil {
+		t.Fatal("WriteTranscript() accepted output beyond the retention limit")
+	}
+	path := filepath.Join(backing.dir, "executions", "v1", runID, "transcripts", "inv-too-large.json")
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized transcript sidecar exists or could not be checked: %v", err)
 	}
 }
 
