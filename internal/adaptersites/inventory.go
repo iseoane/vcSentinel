@@ -158,7 +158,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Constructs the canonical admission request from the transport-safe Candidate/Prompt pair so every RepositoryHost Start admits exclusively through the controller's durable envelope flow."},
 		{Path: "internal/store/execution.go", Symbol: "Store.CreateRun", Line: 53, Marker: "CreateRun(",
 			Class: ClassDurable, Reason: "Admission record primitive: writes the immutable request.json for a new durable run. Called only by the execution controller, never by feature packages."},
-		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Line: 197, Marker: "AppendEvent(",
+		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Line: 209, Marker: "AppendEvent(",
 			Class: ClassDurable, Reason: "Append-only event log primitives (plain and terminal-with-outcome); called only by the execution controller internals, never by feature packages."},
 		{Path: "internal/store/execution_outcomes.go", Symbol: "Store.SaveAttemptOutcome", Line: 64, Marker: "SaveAttemptOutcome(",
 			Class: ClassDurable, Reason: "Immutable attempt-outcome record primitive: durably persists one admitted invocation result before the caller continues. Written only beside controller-authored terminal events."},

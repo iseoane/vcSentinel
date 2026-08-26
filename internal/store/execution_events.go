@@ -107,6 +107,12 @@ type EventFrame struct {
 	OutcomeClass       agentrun.OutcomeClass   `json:"outcome_class,omitempty"`
 	OutcomeError       string                  `json:"outcome_error,omitempty"`
 	OutputHash         string                  `json:"output_hash,omitempty"`
+	TranscriptSHA256   string                  `json:"transcript_sha256,omitempty"`
+	TranscriptSize     int64                   `json:"transcript_size,omitempty"`
+	Agent              string                  `json:"agent,omitempty"`
+	Model              string                  `json:"model,omitempty"`
+	Effort             string                  `json:"effort,omitempty"`
+	StopReason         string                  `json:"stop_reason,omitempty"`
 	From               agentrun.LifecycleState `json:"from"`
 	To                 agentrun.LifecycleState `json:"to"`
 	Decision           agentrun.Decision       `json:"decision"`
@@ -176,6 +182,12 @@ type eventContent struct {
 	OutcomeClass       agentrun.OutcomeClass   `json:"outcome_class,omitempty"`
 	OutcomeError       string                  `json:"outcome_error,omitempty"`
 	OutputHash         string                  `json:"output_hash,omitempty"`
+	TranscriptSHA256   string                  `json:"transcript_sha256,omitempty"`
+	TranscriptSize     int64                   `json:"transcript_size,omitempty"`
+	Agent              string                  `json:"agent,omitempty"`
+	Model              string                  `json:"model,omitempty"`
+	Effort             string                  `json:"effort,omitempty"`
+	StopReason         string                  `json:"stop_reason,omitempty"`
 	From               agentrun.LifecycleState `json:"from"`
 	To                 agentrun.LifecycleState `json:"to"`
 	Decision           agentrun.Decision       `json:"decision"`
@@ -296,6 +308,12 @@ func (s *Store) appendEventLocked(directory, runID string, event agentrun.Normal
 		frame.OutcomeClass = outcome.Class
 		frame.OutcomeError = outcome.Error
 		frame.OutputHash = outcome.OutputHash
+		frame.TranscriptSHA256 = outcome.TranscriptSHA256
+		frame.TranscriptSize = outcome.TranscriptSize
+		frame.Agent = outcome.Agent
+		frame.Model = outcome.Model
+		frame.Effort = outcome.Effort
+		frame.StopReason = outcome.StopReason
 		frame.ContentHash = hashEventContent(frame.content())
 	}
 	result := eventAppendResult{attempted: true}
@@ -524,6 +542,8 @@ func (e EventFrame) content() eventContent {
 		InvocationID: e.InvocationID, LineageID: e.LineageID,
 		ParentInvocationID: e.ParentInvocationID, ResponseHash: e.ResponseHash,
 		OutcomeClass: e.OutcomeClass, OutcomeError: e.OutcomeError, OutputHash: e.OutputHash,
+		TranscriptSHA256: e.TranscriptSHA256, TranscriptSize: e.TranscriptSize,
+		Agent: e.Agent, Model: e.Model, Effort: e.Effort, StopReason: e.StopReason,
 		From: e.From, To: e.To, Decision: e.Decision, Terminal: e.Terminal,
 	}
 }

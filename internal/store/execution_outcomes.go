@@ -254,18 +254,13 @@ func outcomesFromFrames(frames []EventFrame, legacy []AttemptOutcome) []AttemptO
 			RunID: frame.RunID, JobID: frame.JobID, InvocationID: frame.InvocationID,
 			LineageID: frame.LineageID, Class: class, Error: frame.OutcomeError,
 			OutputHash: frame.OutputHash, At: frame.At,
+			TranscriptSHA256: frame.TranscriptSHA256, TranscriptSize: frame.TranscriptSize,
+			Agent: frame.Agent, Model: frame.Model, Effort: frame.Effort, StopReason: frame.StopReason,
 		}
 		if frame.OutcomeClass == "" {
 			if legacyOutcome, ok := legacyByInvocation[frame.InvocationID]; ok {
 				outcome = legacyOutcome
 			}
-		} else if legacyOutcome, ok := legacyByInvocation[frame.InvocationID]; ok {
-			outcome.TranscriptSHA256 = legacyOutcome.TranscriptSHA256
-			outcome.TranscriptSize = legacyOutcome.TranscriptSize
-			outcome.Agent = legacyOutcome.Agent
-			outcome.Model = legacyOutcome.Model
-			outcome.Effort = legacyOutcome.Effort
-			outcome.StopReason = legacyOutcome.StopReason
 		}
 		outcomes = append(outcomes, outcome)
 	}
