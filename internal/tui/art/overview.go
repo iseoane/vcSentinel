@@ -68,12 +68,16 @@ type ViewState struct {
 	Repos      []overview.Repo
 	RepoCursor int // deprecated: use TreeCursor.Repo; kept for test migration
 	TreeCursor TreePos
-	Focus      FocusPane
-	RunCursor  RunPos
-	OpenRunID  string
-	Help       bool
-	Filter     string
-	Filtering  bool // true while the operator is typing a filter query
+	// TreeCursorSet distinguishes an explicit first-worktree selection
+	// (Repo=0, Worktree=0) from the zero-value cursor, which means the first
+	// repository row for backwards-compatible render callers.
+	TreeCursorSet bool
+	Focus         FocusPane
+	RunCursor     RunPos
+	OpenRunID     string
+	Help          bool
+	Filter        string
+	Filtering     bool // true while the operator is typing a filter query
 }
 
 // RenderOverview renders a real overview snapshot through the layout engine
@@ -109,28 +113,66 @@ func renderOverview(width int, colors bool, s ViewState) string {
 }
 
 func filterRepos(repos []overview.Repo, filter string) []overview.Repo {
-	filter = strings.ToLower(filter)
-	var filtered []overview.Repo
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return repos
+	}
+	filtered := make([]overview.Repo, 0, len(repos))
 	for _, r := range repos {
-		if strings.Contains(strings.ToLower(r.Name), filter) ||
-			strings.Contains(strings.ToLower(r.Path), filter) {
+		// A repository identity match keeps all of its descendants visible.
+		repoMatch := strings.Contains(strings.ToLower(r.Name), filter) ||
+			strings.Contains(strings.ToLower(r.Path), filter) ||
+			strings.Contains(strings.ToLower(r.Origin), filter) ||
+			strings.Contains(strings.ToLower(r.Error), filter)
+		if !repoMatch {
+			// A worktree match keeps only the matching worktree and runs
+			// explicitly attributed to it.
+			var matchedWorktrees []inventory.Worktree
+			for _, wt := range r.Worktrees {
+				if strings.Contains(strings.ToLower(wt.Branch), filter) ||
+					strings.Contains(strings.ToLower(wt.Path), filter) {
+					matchedWorktrees = append(matchedWorktrees, wt)
+				}
+			}
+			if len(matchedWorktrees) > 0 {
+				matchedPaths := make(map[string]struct{}, len(matchedWorktrees))
+				for _, wt := range matchedWorktrees {
+					matchedPaths[wt.Path] = struct{}{}
+				}
+				matchedRuns := make([]presence.RunSummary, 0, len(r.Runs))
+				for _, run := range r.Runs {
+					if _, ok := matchedPaths[run.Worktree]; ok {
+						matchedRuns = append(matchedRuns, run)
+					}
+				}
+				copy := r
+				copy.Worktrees = matchedWorktrees
+				copy.Runs = matchedRuns
+				filtered = append(filtered, copy)
+				continue
+			}
+		}
+		if repoMatch {
 			filtered = append(filtered, r)
 			continue
 		}
-		for _, wt := range r.Worktrees {
-			if strings.Contains(strings.ToLower(wt.Branch), filter) ||
-				strings.Contains(strings.ToLower(wt.Path), filter) {
-				filtered = append(filtered, r)
-				break
-			}
-		}
+		// A run-level match keeps only matching runs, so the query is useful
+		// for narrowing operation, commit, state, reason, or run id.
+		matchedRuns := make([]presence.RunSummary, 0, len(r.Runs))
 		for _, run := range r.Runs {
 			if strings.Contains(strings.ToLower(run.Operation), filter) ||
 				strings.Contains(strings.ToLower(run.Commit), filter) ||
-				strings.Contains(strings.ToLower(run.RunID), filter) {
-				filtered = append(filtered, r)
-				break
+				strings.Contains(strings.ToLower(run.Worktree), filter) ||
+				strings.Contains(strings.ToLower(run.Reason), filter) ||
+				strings.Contains(strings.ToLower(run.RunID), filter) ||
+				strings.Contains(strings.ToLower(string(run.State)), filter) {
+				matchedRuns = append(matchedRuns, run)
 			}
+		}
+		if len(matchedRuns) > 0 {
+			copy := r
+			copy.Runs = matchedRuns
+			filtered = append(filtered, copy)
 		}
 	}
 	return filtered
@@ -246,6 +288,24 @@ func VisibleTreePositions(s ViewState) []TreePos {
 	return positions
 }
 
+// effectiveTreeCursor resolves legacy render callers that leave TreeCursor at
+// its zero value. The control model marks its cursor explicitly, so selecting
+// the first worktree remains distinguishable from the default repository row.
+func effectiveTreeCursor(s ViewState) TreePos {
+	cursor := s.TreeCursor
+	if !s.TreeCursorSet && cursor.Repo == 0 && cursor.Worktree == 0 {
+		if s.RepoCursor != 0 {
+			cursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
+		} else {
+			cursor.Worktree = -1
+		}
+	}
+	if cursor.Worktree < -1 {
+		cursor.Worktree = -1
+	}
+	return cursor
+}
+
 // overviewTree renders the tree pane: one line per repo with its daemon
 // state word, then one child line per worktree — capped at maxTreeChildren,
 // with any further children collapsed into one final dim "… N more" line —
@@ -266,26 +326,20 @@ func overviewTree(p painter, w int, s ViewState) []string {
 	// Show the filter bar when the operator is typing or a filter is active.
 	if s.Filtering || s.Filter != "" {
 		filterText := s.Filter
-		if filterText == "" {
-			filterText = " "
+		if s.Filtering {
+			filterText += "▏"
+		} else if filterText == "" {
+			filterText = "▏"
 		}
 		lines = append(lines, p.spanLine(w,
-			span{" /", Purple},
+			span{" / FILTER: ", Purple},
 			span{filterText, White}))
 	}
 	repos := s.Repos
 	if len(repos) == 0 {
 		return append(lines, p.spanLine(w, span{" no repositories registered", Dim}))
 	}
-	// Resolve the effective tree cursor: prefer TreeCursor, fallback to
-	// deprecated RepoCursor for old call sites and tests.
-	treeCursor := s.TreeCursor
-	if treeCursor.Repo == 0 && treeCursor.Worktree == 0 && s.RepoCursor != 0 {
-		treeCursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
-	}
-	if treeCursor.Worktree < -1 {
-		treeCursor.Worktree = -1
-	}
+	treeCursor := effectiveTreeCursor(s)
 	for i, r := range repos {
 		state := classifyRepo(r)
 		expanded := i == treeCursor.Repo
@@ -354,11 +408,7 @@ func overviewRight(p painter, w int, s ViewState) []string {
 		location = [][2]string{{"Repository", "-"}, {"Path", "-"}, {"Branch", "-"},
 			{"Origin", "-"}, {"Daemon", "-"}, {"Status", "-"}}
 	} else {
-		// Prefer TreeCursor, fallback to deprecated RepoCursor.
-		cursor := s.TreeCursor
-		if cursor.Repo == 0 && cursor.Worktree == 0 && s.RepoCursor != 0 {
-			cursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
-		}
+		cursor := effectiveTreeCursor(s)
 		selectedRepo := cursor.Repo
 		if selectedRepo < 0 {
 			selectedRepo = 0
@@ -465,19 +515,27 @@ func overviewActivity(s ViewState) []activityRow {
 	// Determine worktree filter: when a worktree is selected, only runs for
 	// that worktree's path are shown. Repo row shows all runs for the repo.
 	filterWorktree := ""
-	if s.TreeCursor.Worktree >= 0 && s.TreeCursor.Repo >= 0 && s.TreeCursor.Repo < len(s.Repos) {
-		if wtIdx := s.TreeCursor.Worktree; wtIdx < len(s.Repos[s.TreeCursor.Repo].Worktrees) {
-			filterWorktree = s.Repos[s.TreeCursor.Repo].Worktrees[wtIdx].Path
+	treeCursor := effectiveTreeCursor(s)
+	if treeCursor.Worktree >= 0 && treeCursor.Repo >= 0 && treeCursor.Repo < len(s.Repos) {
+		if wtIdx := treeCursor.Worktree; wtIdx < len(s.Repos[treeCursor.Repo].Worktrees) {
+			filterWorktree = s.Repos[treeCursor.Repo].Worktrees[wtIdx].Path
 		}
 	}
 	for i, r := range s.Repos {
 		state := classifyRepo(r)
-		if !(len(r.Runs) > 0 && (state.kind == stOwn || state.kind == stStop)) {
+		visibleRunCount := 0
+		for _, runSummary := range r.Runs {
+			if filterWorktree != "" && runSummary.Worktree != filterWorktree {
+				continue
+			}
+			visibleRunCount++
+		}
+		if !(visibleRunCount > 0 && (state.kind == stOwn || state.kind == stStop)) {
 			rows = append(rows, summaryActivityRow(r, state))
 		}
 		for j, runSummary := range r.Runs {
 			// Filter by worktree when a worktree is selected.
-			if filterWorktree != "" && runSummary.Worktree != "" && runSummary.Worktree != filterWorktree {
+			if filterWorktree != "" && runSummary.Worktree != filterWorktree {
 				continue
 			}
 			row := runRow(runSummary)

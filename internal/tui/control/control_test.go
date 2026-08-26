@@ -62,6 +62,10 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "enter":
 		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEscape}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
@@ -253,6 +257,53 @@ func TestUpdateKeyRouting(t *testing.T) {
 			next, cmd := m.Update(keyMsg(tt.key))
 			tt.assert(t, before, next.(Model), cmd)
 		})
+	}
+}
+
+// TestFilterInputIsVisibleAndDoesNotTriggerShortcuts pins the filter input
+// contract: slash opens an observable query bar, printable shortcut-looking
+// runes stay in the query, and the query narrows the rendered repositories.
+func TestFilterInputIsVisibleAndDoesNotTriggerShortcuts(t *testing.T) {
+	m := New([]overview.Repo{repo("alpha"), repo("beta")})
+	m = update(t, m, keyMsg("/"))
+	if !m.filtering {
+		t.Fatal("slash did not enter filtering mode")
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, " / FILTER: ▏") {
+		t.Fatalf("empty filter bar is not visible:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("q"))
+	m = update(t, m, keyMsg("?"))
+	if m.Quitting() || m.HelpVisible() {
+		t.Fatalf("filter runes triggered global shortcuts: quitting=%v help=%v", m.Quitting(), m.HelpVisible())
+	}
+	if view := stripANSI(m.View()); !strings.Contains(view, " / FILTER: q?▏") {
+		t.Fatalf("typed filter is not visible:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("backspace"))
+	if !strings.Contains(stripANSI(m.View()), " / FILTER: q▏") {
+		t.Fatalf("backspace did not remove one query rune:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	if m.filtering {
+		t.Fatal("escape did not leave filtering mode")
+	}
+}
+
+// TestFilterInputNarrowsView verifies the control model passes the active
+// query through to the renderer instead of only storing it internally.
+func TestFilterInputNarrowsView(t *testing.T) {
+	m := New([]overview.Repo{repo("alpha"), repo("beta")})
+	m = pressKeys(t, m, "/", "beta")
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "beta") {
+		t.Fatalf("filtered view lost the matching repository:\n%s", out)
+	}
+	if strings.Contains(out, "alpha") {
+		t.Fatalf("filtered view still renders the non-matching repository:\n%s", out)
 	}
 }
 

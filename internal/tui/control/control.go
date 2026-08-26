@@ -148,7 +148,7 @@ type Model struct {
 // selected starts at the first repository. The model is static: no refresh
 // loop is enabled, Init schedules nothing, and stray ticks are ignored.
 func New(repos []overview.Repo) Model {
-	return Model{width: DefaultWidth, repos: repos}
+	return Model{width: DefaultWidth, repos: repos, treeCursor: art.TreePos{Worktree: -1}}
 }
 
 // NewLive builds the control-center model with the live refresh loop
@@ -175,7 +175,7 @@ func NewLive(repos []overview.Repo, refresh func() ([]overview.Repo, error), int
 	if interval <= 0 {
 		interval = DefaultRefreshInterval
 	}
-	return Model{width: DefaultWidth, repos: repos, refresh: refresh, interval: interval, actions: actions}
+	return Model{width: DefaultWidth, repos: repos, treeCursor: art.TreePos{Worktree: -1}, refresh: refresh, interval: interval, actions: actions}
 }
 
 // Accessors pinning the construction contract for tests.
@@ -260,6 +260,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		var cmd tea.Cmd
+		// Filter input has priority over normal shortcuts: q and ? are valid
+		// query characters, while ctrl+c remains the global quit escape.
+		if m.filtering {
+			switch msg.String() {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "enter", "esc":
+				m.filtering = false
+				return m, nil
+			case "backspace", "ctrl+h":
+				runes := []rune(m.filter)
+				if len(runes) > 0 {
+					m.filter = string(runes[:len(runes)-1])
+				}
+				return m, nil
+			default:
+				if msg.Type == tea.KeyRunes {
+					m.filter += string(msg.Runes)
+				} else if msg.Type == tea.KeySpace {
+					m.filter += " "
+				}
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
@@ -273,26 +298,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Any other key closes help first and is otherwise swallowed.
 				m.help = false
 				return m, nil
-			}
-			// Filtering mode has priority over normal keys.
-			if m.filtering {
-				switch msg.String() {
-				case "enter", "esc":
-					m.filtering = false
-					return m, nil
-				case "backspace", "ctrl+h":
-					if len(m.filter) > 0 {
-						m.filter = m.filter[:len(m.filter)-1]
-					}
-					return m, nil
-				default:
-					s := msg.String()
-					if len(s) >= 1 && s != "up" && s != "down" && s != "left" && s != "right" {
-						m.filter += s
-						return m, nil
-					}
-					return m, nil
-				}
 			}
 			switch msg.String() {
 			case "tab", "shift+tab":
@@ -340,11 +345,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.repos = msg.repos
-		if last := len(m.repos) - 1; m.selected > last {
-			m.selected = last
-		}
-		if m.selected < 0 {
+		if len(m.repos) == 0 {
 			m.selected = 0
+			m.treeCursor = art.TreePos{Worktree: -1}
+		} else {
+			last := len(m.repos) - 1
+			if m.treeCursor.Repo < 0 {
+				m.treeCursor.Repo = 0
+			}
+			if m.treeCursor.Repo > last {
+				m.treeCursor.Repo = last
+			}
+			if m.treeCursor.Worktree >= len(m.repos[m.treeCursor.Repo].Worktrees) {
+				m.treeCursor.Worktree = -1
+			}
+			m.selected = m.treeCursor.Repo
 		}
 		m.err = ""
 		return m, nil
@@ -381,14 +396,15 @@ func (m Model) View() string {
 		treeCursor = art.TreePos{Repo: m.selected, Worktree: -1}
 	}
 	return art.RenderOverview(m.width, art.ViewState{
-		Repos:      m.repos,
-		TreeCursor: treeCursor,
-		Focus:      m.focus,
-		RunCursor:  m.runCursor,
-		OpenRunID:  m.openRunID,
-		Help:       m.help,
-		Filter:     m.filter,
-		Filtering:  m.filtering,
+		Repos:         m.repos,
+		TreeCursor:    treeCursor,
+		TreeCursorSet: true,
+		Focus:         m.focus,
+		RunCursor:     m.runCursor,
+		OpenRunID:     m.openRunID,
+		Help:          m.help,
+		Filter:        m.filter,
+		Filtering:     m.filtering,
 	})
 }
 

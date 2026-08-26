@@ -109,15 +109,14 @@ var mockKeys = []keyHint{
 }
 
 // helpKeys is the KEYS overlay shown while help is open: one row per
-// footer key with a short description, including the keys whose action
-// is not wired yet.
+// footer key with a short description.
 var helpKeys = []keyHint{
 	{"↑↓", "navigate panes"},
 	{"tab", "focus"},
 	{"enter", "open/close run"},
-	{"a", "abort (soon)"},
-	{"r", "retry (soon)"},
-	{"/", "filter (soon)"},
+	{"a", "abort"},
+	{"r", "retry"},
+	{"/", "filter"},
 	{"?", "help"},
 	{"q", "quit"},
 }

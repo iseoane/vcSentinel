@@ -380,6 +380,123 @@ func TestOverviewActivityFlowUsesOperationWithIdFallback(t *testing.T) {
 	}
 }
 
+// TestFilterReposNarrowsRunMatches verifies that a run-field query keeps the
+// matching repository but removes unrelated runs from the ACTIVITY pane.
+func TestFilterReposNarrowsRunMatches(t *testing.T) {
+	repos := []overview.Repo{
+		liveRepoWithRuns("alpha",
+			runWithOperation("logic-run", agentrun.StateRunning, 1, time.Time{}, "review logic"),
+			runWithOperation("style-run", agentrun.StateSucceeded, 2, time.Time{}, "review style")),
+		liveRepoWithRuns("beta",
+			runWithOperation("other-run", agentrun.StateSucceeded, 3, time.Time{}, "review tests")),
+	}
+
+	filtered := filterRepos(repos, "logic")
+	if len(filtered) != 1 || filtered[0].Name != "alpha" {
+		t.Fatalf("filter returned repositories %#v, want only alpha", filtered)
+	}
+	if len(filtered[0].Runs) != 1 || filtered[0].Runs[0].RunID != "logic-run" {
+		t.Fatalf("filtered alpha runs = %#v, want only logic-run", filtered[0].Runs)
+	}
+}
+
+// TestFilterReposKeepsDescendantsForRepositoryMatch verifies that matching a
+// repository identity is a broad match and does not hide its run history.
+func TestFilterReposKeepsDescendantsForRepositoryMatch(t *testing.T) {
+	repos := []overview.Repo{liveRepoWithRuns("alpha",
+		runWithOperation("logic-run", agentrun.StateRunning, 1, time.Time{}, "review logic"),
+		runWithOperation("style-run", agentrun.StateSucceeded, 2, time.Time{}, "review style"))}
+
+	filtered := filterRepos(repos, "alpha")
+	if len(filtered) != 1 || len(filtered[0].Runs) != 2 {
+		t.Fatalf("repository match narrowed descendants: %#v", filtered)
+	}
+}
+
+// TestFilterReposNarrowsWorktreeMatches verifies that a worktree query keeps
+// the matching child and only runs explicitly attributed to that child.
+func TestFilterReposNarrowsWorktreeMatches(t *testing.T) {
+	repo := liveRepoWithRuns("project",
+		runWithOperation("main-run", agentrun.StateSucceeded, 1, time.Time{}, "review main"),
+		runWithOperation("feature-run", agentrun.StateRunning, 2, time.Time{}, "review feature"))
+	repo.Worktrees = []inventory.Worktree{wt("main", true), wt("feature", false)}
+	repo.Runs[0].Worktree = repo.Worktrees[0].Path
+	repo.Runs[1].Worktree = repo.Worktrees[1].Path
+
+	filtered := filterRepos([]overview.Repo{repo}, "feature")
+	if len(filtered) != 1 || len(filtered[0].Worktrees) != 1 ||
+		filtered[0].Worktrees[0].Branch != "feature" {
+		t.Fatalf("filtered worktrees = %#v, want only feature", filtered)
+	}
+	if len(filtered[0].Runs) != 1 || filtered[0].Runs[0].RunID != "feature-run" {
+		t.Fatalf("filtered worktree runs = %#v, want only feature-run", filtered[0].Runs)
+	}
+}
+
+// TestOverviewActivityFiltersBySelectedWorktree verifies that selecting a
+// worktree excludes unrelated and legacy-unattributed runs from ACTIVITY.
+func TestOverviewActivityFiltersBySelectedWorktree(t *testing.T) {
+	repo := liveRepoWithRuns("project",
+		runWithOperation("main-run", agentrun.StateSucceeded, 1, time.Time{}, "review main"),
+		runWithOperation("feature-run", agentrun.StateRunning, 2, time.Time{}, "review feature"),
+		run("legacy-run", agentrun.StateSucceeded, 3, time.Time{}))
+	repo.Worktrees = []inventory.Worktree{wt("main", true), wt("feature", false)}
+	repo.Runs[0].Worktree = repo.Worktrees[0].Path
+	repo.Runs[1].Worktree = repo.Worktrees[1].Path
+
+	act := activityBlock(t, RenderOverviewPlain(80, ViewState{
+		Repos:      []overview.Repo{repo},
+		TreeCursor: TreePos{Repo: 0, Worktree: 1},
+	}))
+	assertContains(t, act, "review feature")
+	for _, hidden := range []string{"main-run", "review main", "legacy-run"} {
+		if strings.Contains(act, hidden) {
+			t.Errorf("selected worktree leaked %q into ACTIVITY:\n%s", hidden, act)
+		}
+	}
+}
+
+// TestOverviewActivityDistinguishesDefaultAndFirstWorktree pins the cursor
+// sentinel: a zero-value ViewState shows all runs, while an explicit first
+// worktree selection filters to its attributed runs.
+func TestOverviewActivityDistinguishesDefaultAndFirstWorktree(t *testing.T) {
+	repo := liveRepoWithRuns("project",
+		runWithOperation("main-run", agentrun.StateSucceeded, 1, time.Time{}, "review main"),
+		runWithOperation("feature-run", agentrun.StateRunning, 2, time.Time{}, "review feature"))
+	repo.Worktrees = []inventory.Worktree{wt("main", true), wt("feature", false)}
+	repo.Runs[0].Worktree = repo.Worktrees[0].Path
+	repo.Runs[1].Worktree = repo.Worktrees[1].Path
+
+	allRuns := activityBlock(t, RenderOverviewPlain(80, ViewState{Repos: []overview.Repo{repo}}))
+	assertContains(t, allRuns, "review main", "review feature")
+
+	firstWorktree := activityBlock(t, RenderOverviewPlain(80, ViewState{
+		Repos:      []overview.Repo{repo},
+		TreeCursor: TreePos{Repo: 0, Worktree: 0}, TreeCursorSet: true,
+	}))
+	assertContains(t, firstWorktree, "review main")
+	if strings.Contains(firstWorktree, "review feature") {
+		t.Errorf("explicit first worktree leaked another worktree run:\n%s", firstWorktree)
+	}
+}
+
+// TestRenderOverviewFilterBar makes the filter mode observable: the query and
+// an editing cursor are visible while typing, and the cursor disappears after
+// the query is committed.
+func TestRenderOverviewFilterBar(t *testing.T) {
+	repos := []overview.Repo{liveRepoWithRuns("alpha",
+		runWithOperation("logic-run", agentrun.StateRunning, 1, time.Time{}, "review logic"))}
+
+	editing := RenderOverviewPlain(80, ViewState{Repos: repos, Filter: "logic", Filtering: true})
+	assertContains(t, editing, " / FILTER: logic▏")
+
+	committed := RenderOverviewPlain(80, ViewState{Repos: repos, Filter: "logic"})
+	assertContains(t, committed, " / FILTER: logic")
+	if strings.Contains(committed, "logic▏") {
+		t.Errorf("committed filter still shows the editing cursor:\n%s", committed)
+	}
+}
+
 // TestRenderOverviewHeaderCounts pins the summary arithmetic on a mixed
 // snapshot: one live daemon, two attention repos, and zero active — since
 // Slice 10 active counts non-terminal runs and this fixture carries none,
@@ -795,8 +912,8 @@ func TestOverviewHelpBlockReplacesPaneContent(t *testing.T) {
 		"↑↓", "navigate panes",
 		"tab", "focus",
 		"enter", "open/close run",
-		"abort (soon)", "retry (soon)",
-		"/", "filter (soon)",
+		"abort", "retry",
+		"/", "filter",
 		"?", "help", "quit")
 	if strings.Contains(dash, "LOCATION") || strings.Contains(dash, "ACTIVITY") {
 		t.Errorf("help must replace the pane content wholesale:\n%s", dash)

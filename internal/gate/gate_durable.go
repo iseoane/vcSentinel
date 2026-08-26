@@ -100,7 +100,7 @@ func EjecutarGate(opts Opciones) Resultado {
 	root, err := controller.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
 		ID:        DurableGateRunPolicyID,
 		Operation: gateRootOperation(opts.Stage),
-		Commit:    opts.CandidateSHA[:7],
+		Commit:    shortCommitLabel(opts.CandidateSHA),
 		Worktree:  opts.OpcionesValidacion.Worktree,
 	})
 	if err != nil {
@@ -258,7 +258,7 @@ func asentarTrabajosValidacion(jobs []GateJobPlan, runs []validation.ValidationR
 			ID:          DurableGateRunPolicyID,
 			ParentRunID: string(parentRunID),
 			Operation:   "validate " + jobs[index].Command,
-			Commit:      opts.CandidateSHA[:7],
+			Commit:      shortCommitLabel(opts.CandidateSHA),
 			Worktree:    opts.OpcionesValidacion.Worktree,
 		})
 		if err != nil {
@@ -278,6 +278,15 @@ func asentarTrabajosValidacion(jobs []GateJobPlan, runs []validation.ValidationR
 		}
 	}
 	return children, nil
+}
+
+// shortCommitLabel keeps the activity label compact without assuming the gate
+// candidate is a full Git SHA; tests and synthetic callers may use short ids.
+func shortCommitLabel(sha string) string {
+	if len(sha) <= 7 {
+		return sha
+	}
+	return sha[:7]
 }
 
 // settlementPorEstado maps the existing facade vocabulary onto the root
