@@ -71,6 +71,12 @@ func EjecutarPerfilSobreCandidato(perfil string, rutasCambiadas []string, opts O
 		return nil, fmt.Errorf("no se pudo crear el snapshot de validación: %w", err)
 	}
 
+	// El barrido viaja con cada flujo que crea snapshots: sin este cable,
+	// PurgarSnapshots solo existía para los tests y los snapshots desechables
+	// se acumulaban indefinidamente. Best-effort por diseño: un fallo de
+	// limpieza jamás invalida una validación ya ejecutada.
+	defer func() { _ = git.PurgarSnapshots(git.RetencionSnapshots) }()
+
 	opts.Worktree = snapshot
 	opts.autorizacion = graph.AutorizacionAlcance{}
 	if opts.ProveedorGraph != nil && len(rutasCambiadas) > 0 {

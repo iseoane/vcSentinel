@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -334,5 +335,47 @@ func TestEjecutarPerfilSobreCandidato_SinGraphProviderUsaCommandCompleto(t *test
 	}
 	if runs[0].Alcance != AlcanceCompleto || runs[0].MotivoAlcance == "" {
 		t.Fatalf("decisión de alcance no explicada: %+v", runs[0])
+	}
+}
+
+// TestEjecutarPerfilSobreCandidato_BarraSnapshotsAntiguos cierra el cable de
+// limpieza: cada flujo que crea un snapshot barre los que superan la
+// retención, sin tocar los frescos reutilizables.
+func TestEjecutarPerfilSobreCandidato_BarraSnapshotsAntiguos(t *testing.T) {
+	dir := repoDeCandidatoTest(t)
+
+	arbolHEAD, err := git.ArbolDe("HEAD")
+	if err != nil {
+		t.Fatalf("no se pudo resolver el árbol de HEAD: %v", err)
+	}
+	antiguo, err := git.CrearSnapshot("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+	if err != nil {
+		t.Fatalf("no se pudo crear el snapshot envejecido: %v", err)
+	}
+	pasado := time.Now().Add(-(git.RetencionSnapshots + time.Hour))
+	if err := os.Chtimes(antiguo, pasado, pasado); err != nil {
+		t.Fatalf("no se pudo envejecer el snapshot: %v", err)
+	}
+
+	opts := OpcionesEjecucion{Worktree: dir, Cfg: cfgPerfilCandidatoTest(config.ModeWorktree)}
+	opts.Ejecutar = func(string) (int, string, error) { return 0, "ok", nil }
+	if _, err := EjecutarPerfilSobreCandidato("perfil", nil, opts); err != nil {
+		t.Fatalf("no esperaba error, obtuve: %v", err)
+	}
+
+	commonDir, err := git.ObtenerGitCommonDir(dir)
+	if err != nil {
+		t.Fatalf("no se pudo obtener el common-dir: %v", err)
+	}
+	entradas, err := os.ReadDir(filepath.Join(commonDir, "vas-sentinel", "snapshots"))
+	if err != nil {
+		t.Fatalf("no se pudo leer el directorio de snapshots: %v", err)
+	}
+	if len(entradas) != 1 || entradas[0].Name() != arbolHEAD {
+		var nombres []string
+		for _, entrada := range entradas {
+			nombres = append(nombres, entrada.Name())
+		}
+		t.Fatalf("tras el barrido quedaron %v, esperaba solo el snapshot fresco %s", nombres, arbolHEAD)
 	}
 }

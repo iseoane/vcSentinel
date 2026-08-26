@@ -123,6 +123,13 @@ func CrearSnapshot(treeOID string) (string, error) {
 	return destino, nil
 }
 
+// RetencionSnapshots es la edad a partir de la cual el barrido automático
+// considera basura un snapshot: los snapshots son una caché desechable por
+// árbol (CrearSnapshot reutiliza el existente), así que la retención solo
+// necesita cubrir la reutilización dentro de una sesión de trabajo típica,
+// no archivar. Es la única fuente de este umbral.
+const RetencionSnapshots = 24 * time.Hour
+
 // PurgarSnapshots elimina los snapshots de <git-common-dir>/vas-sentinel/snapshots
 // cuya fecha de modificación sea más antigua que antiguedad. Son desechables
 // (se regeneran con CrearSnapshot), así que se fuerza la eliminación si falla
