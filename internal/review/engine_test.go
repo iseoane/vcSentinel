@@ -16,6 +16,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
@@ -1470,5 +1471,27 @@ func TestPolicyBoundReviewerReenviaElRespondedorEfectivo(t *testing.T) {
 	mudo := bindPolicy(&agenteFake{}, policy)
 	if _, ok := mudo.AgenteEfectivo(); ok {
 		t.Fatal("un agente sin reporte no debería declarar identidad")
+	}
+}
+
+type arbolFalso struct{ agenteFake }
+
+func (a *arbolFalso) OwnedTree() *process.Tree { return &process.Tree{} }
+
+// TestPolicyBoundReviewerReenviaElArbolDeProcesos cierra el hallazgo CRITICAL
+// confirmado en la revisión en vivo de 4148b16: sin este reenvío, la
+// escalación de cancelación durable pierde el árbol del proveedor y degrada a
+// cancelación cooperativa silenciosa.
+func TestPolicyBoundReviewerReenviaElArbolDeProcesos(t *testing.T) {
+	policy := reviewcontract.DefaultToolPolicy()
+
+	conArbol := bindPolicy(&arbolFalso{}, policy)
+	if conArbol.OwnedTree() == nil {
+		t.Fatal("OwnedTree() = nil, esperado el árbol del reviewer envuelto")
+	}
+
+	sinArbol := bindPolicy(&agenteFake{}, policy)
+	if sinArbol.OwnedTree() != nil {
+		t.Fatal("OwnedTree() debería ser nil sin capacidad en el reviewer envuelto")
 	}
 }

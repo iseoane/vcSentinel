@@ -14,6 +14,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
 )
@@ -79,6 +80,18 @@ func (a policyBoundReviewer) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool
 		return agentadapter.AgenteEfectivo{}, false
 	}
 	return reporta.AgenteEfectivo()
+}
+
+// OwnedTree forwards the wrapped reviewer's live process tree so durable
+// cancellation can escalate against the whole tree despite policy binding:
+// hiding this capability would silently degrade aborts to cooperative-only.
+func (a policyBoundReviewer) OwnedTree() *process.Tree {
+	if provider, ok := a.AuditorAgente.(interface {
+		OwnedTree() *process.Tree
+	}); ok {
+		return provider.OwnedTree()
+	}
+	return nil
 }
 
 // FabricaAuditor construye el agente para un bundle y una dimensión, y devuelve
