@@ -438,7 +438,7 @@ func TestNewLivePanicsOnNilRefresh(t *testing.T) {
 			t.Fatal("NewLive with a nil refresh must panic by contract")
 		}
 	}()
-	_ = NewLive(nil, nil, time.Second)
+	_ = NewLive(nil, nil, time.Second, nil)
 }
 
 // TestNewLiveClampsNonPositiveInterval pins the defensive cadence: callers
@@ -447,13 +447,13 @@ func TestNewLivePanicsOnNilRefresh(t *testing.T) {
 func TestNewLiveClampsNonPositiveInterval(t *testing.T) {
 	rec := &recorder{}
 	for _, in := range []time.Duration{0, -time.Millisecond, -time.Hour} {
-		m := NewLive(nil, rec.refresh, in)
+		m := NewLive(nil, rec.refresh, in, nil)
 		if m.interval != DefaultRefreshInterval {
 			t.Errorf("NewLive(interval=%v) kept %v, want the documented default %v",
 				in, m.interval, DefaultRefreshInterval)
 		}
 	}
-	m := NewLive(nil, rec.refresh, 5*time.Second)
+	m := NewLive(nil, rec.refresh, 5*time.Second, nil)
 	if m.interval != 5*time.Second {
 		t.Errorf("positive interval rewritten to %v, want 5s kept verbatim", m.interval)
 	}
@@ -464,7 +464,7 @@ func TestNewLiveClampsNonPositiveInterval(t *testing.T) {
 // so no timer ever fires) and no scheduler contact before Update runs.
 func TestNewLiveInitSchedulesFirstTick(t *testing.T) {
 	rec := &recorder{}
-	m := NewLive([]overview.Repo{repo("alpha")}, rec.refresh, time.Second)
+	m := NewLive([]overview.Repo{repo("alpha")}, rec.refresh, time.Second, nil)
 	cmd := m.Init()
 	if cmd == nil {
 		t.Fatal("live Init scheduled nothing, want the first tick")
@@ -516,7 +516,7 @@ func TestUnknownMessageIgnored(t *testing.T) {
 func TestTickDrivesExactlyOneRefreshAndReschedule(t *testing.T) {
 	rec := &recorder{repos: []overview.Repo{repo("fresh")}}
 	interval := 750 * time.Millisecond
-	m := NewLive([]overview.Repo{repo("stale")}, rec.refresh, interval)
+	m := NewLive([]overview.Repo{repo("stale")}, rec.refresh, interval, nil)
 	m.schedule = rec.schedule
 
 	next, cmd := m.Update(tickMsg{})
@@ -632,7 +632,7 @@ func TestSnapshotMsgTransitions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := NewLive(tt.repos, (&recorder{}).refresh, time.Second)
+			m := NewLive(tt.repos, (&recorder{}).refresh, time.Second, nil)
 			for i := 0; i < tt.downs; i++ {
 				m = update(t, m, keyMsg("down"))
 			}

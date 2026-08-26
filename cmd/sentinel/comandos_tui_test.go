@@ -348,7 +348,7 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 		var captured control.Model
 		starts := stubStartControlCenter(t, nil, &captured)
 		var out bytes.Buffer
-		if code := executeTuiSession(&out, registryPath, gate); code != runExitSuccess {
+		if code := executeTuiSession(&out, registryPath, t.TempDir(), gate); code != runExitSuccess {
 			t.Fatalf("exit = %d, want success:\n%s", code, out.String())
 		}
 		if host.shutdowns != 0 {
@@ -381,7 +381,7 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 		var captured control.Model
 		starts := stubStartControlCenter(t, nil, &captured)
 		var out bytes.Buffer
-		if code := executeTuiSession(&out, registryPath, gate); code != runExitSuccess {
+		if code := executeTuiSession(&out, registryPath, t.TempDir(), gate); code != runExitSuccess {
 			t.Fatalf("exit = %d, want success:\n%s", code, out.String())
 		}
 		if host.shutdowns != 1 || host.closes != 1 {
@@ -408,7 +408,7 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 		var captured control.Model
 		stubStartControlCenter(t, errors.New("terminal exploded"), &captured)
 		var out bytes.Buffer
-		if code := executeTuiSession(&out, registryPath, gate); code != runExitInfrastructure {
+		if code := executeTuiSession(&out, registryPath, t.TempDir(), gate); code != runExitInfrastructure {
 			t.Fatalf("exit = %d, want infrastructure:\n%s", code, out.String())
 		}
 		if host.shutdowns != 1 {
@@ -436,7 +436,7 @@ func TestExecuteTuiSessionRegistryFailureExitsInfrastructure(t *testing.T) {
 	starts := stubStartControlCenter(t, nil, &captured)
 	var out bytes.Buffer
 	// A directory is never a valid registry file.
-	if code := executeTuiSession(&out, t.TempDir(), gate); code != runExitInfrastructure {
+	if code := executeTuiSession(&out, t.TempDir(), t.TempDir(), gate); code != runExitInfrastructure {
 		t.Fatalf("exit = %d, want infrastructure:\n%s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "❌") {

@@ -116,7 +116,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
 		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 216, Marker: "NewController(",
 			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
-		{Path: "cmd/sentinel/comandos_tui.go", Symbol: "spawnDetachedTuiDaemon", Line: 134, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_tui.go", Symbol: "spawnDetachedTuiDaemon", Line: 138, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Control-center daemon lifecycle (slice 9): spawns THIS binary as `runs daemon start` detached for the current repository; the child admits runs through the same durable controller path as every other daemon start. Never spawns a provider agent directly."},
 		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Line: 126, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the staged-commit volume measurement."},

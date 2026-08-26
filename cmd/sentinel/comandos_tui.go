@@ -18,10 +18,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -198,6 +202,137 @@ func stopOwnedTuiDaemon(out io.Writer, gate tuiDaemonGate) {
 	}
 }
 
+// tuiSessionController and tuiSessionHost mirror the runs CLI plumbing behind
+// var seams so session-action unit tests can substitute fake controllers and
+// fake repository hosts instead of real daemons, stores, and configured
+// agents. Production code never reassigns them.
+var (
+	tuiSessionController = buildRunsController
+	tuiSessionHost       = runsHostWithDaemonPreference
+)
+
+// sessionRunActions wires the control center's a/r keys onto the same
+// durable-runs plumbing the `sentinel runs` CLI uses, restricted to the
+// SESSION repository: each dispatch resolves the principal, builds the
+// controller, and dials the daemon-preferred host exactly like
+// executeRunsAbort and executeRunsRetry, sends Apply with a fresh unique
+// ActionID or Retry WITHOUT the CLI's settle wait (the 2-second refresh loop
+// observes the transition instead), applies the idempotent-head fallback on
+// rejection, and reports the outcome through the control package's
+// action-result channel. Actions against any other repository's path fail
+// fast into an immediate error command without touching hosts or principals.
+type sessionRunActions struct {
+	// worktree is the session repository root; foreign paths never reach a
+	// host.
+	worktree string
+}
+
+// Compile-time proof that the session implementation satisfies the TUI seam.
+var _ control.RunActions = sessionRunActions{}
+
+// newSessionRunActions binds the operator actions to one session worktree,
+// resolving it to an absolute root once so later registry-path comparisons
+// stay stable regardless of the process working directory.
+func newSessionRunActions(worktree string) sessionRunActions {
+	root, err := filepath.Abs(worktree)
+	if err != nil {
+		root = filepath.Clean(worktree)
+	}
+	return sessionRunActions{worktree: root}
+}
+
+// Abort mirrors executeRunsAbort minus printing and waiting: unique ActionID,
+// authenticated envelope, idempotent-head fallback on rejection. Cooperative
+// cancellation is not waited on, exactly like the CLI: canceling only signals
+// the worker context and may settle much later.
+func (a sessionRunActions) Abort(repoPath, runID string) tea.Cmd {
+	return a.dispatch(control.KindAbort, repoPath, runID,
+		func(ctx context.Context, host execution.RepositoryHost, principal string) error {
+			actionID := fmt.Sprintf("action:%s:%d-%d-%06d",
+				execution.ActionAbort, time.Now().UnixNano(), os.Getpid(), runsActionSequence.Add(1))
+			_, applyErr := host.Apply(ctx, execution.ApplyRequest{
+				RunID:       agentrun.Identity(runID),
+				Action:      execution.ControlAction{Kind: execution.ActionAbort},
+				ActionID:    actionID,
+				AuthContext: execution.AuthContext{Principal: principal},
+			})
+			if applyErr == nil {
+				return nil
+			}
+			if _, ok := idempotentHeadOf(host, principal, agentrun.Identity(runID), applyErr); ok {
+				return nil // the settled idempotent head proves the goal holds
+			}
+			return applyErr
+		})
+}
+
+// Retry mirrors executeRunsRetry minus printing AND minus the settle wait:
+// the control center's refresh loop shows the resulting state transition, so
+// no observeUntilSettled polling happens here. ExpectedRevision stays zero —
+// the same skip-the-pin default the CLI uses when --expected-revision is
+// absent.
+func (a sessionRunActions) Retry(repoPath, runID string) tea.Cmd {
+	return a.dispatch(control.KindRetry, repoPath, runID,
+		func(ctx context.Context, host execution.RepositoryHost, principal string) error {
+			_, retryErr := host.Retry(ctx, execution.RetryRequest{
+				RunID:            agentrun.Identity(runID),
+				ExpectedRevision: 0,
+				AuthContext:      execution.AuthContext{Principal: principal},
+			})
+			if retryErr == nil {
+				return nil
+			}
+			if _, ok := idempotentHeadOf(host, principal, agentrun.Identity(runID), retryErr); ok {
+				return nil // the run already carries a live attempt
+			}
+			return retryErr
+		})
+}
+
+// dispatch gates the action to the session repository, performs op against a
+// freshly resolved daemon-preferred host inside the command goroutine (the
+// host teardown is deferred there too), and translates the outcome into the
+// control package's action-result command. A foreign repository path
+// short-circuits into an immediate failing command before anything is
+// resolved.
+func (a sessionRunActions) dispatch(kind, repoPath, runID string,
+	op func(context.Context, execution.RepositoryHost, string) error) tea.Cmd {
+	if !sameSessionRepository(a.worktree, repoPath) {
+		return control.ActionResult(kind, repoPath, runID,
+			errors.New("actions are limited to the session repository"))
+	}
+	return func() tea.Msg {
+		err := func() error {
+			controller, buildErr := tuiSessionController(a.worktree)
+			if buildErr != nil {
+				return buildErr
+			}
+			host, closeHost := tuiSessionHost(a.worktree, controller)
+			defer closeHost() // runs inside the command goroutine, never in Update
+			principal, principalErr := resolveRunsPrincipal()
+			if principalErr != nil {
+				return principalErr
+			}
+			return op(context.Background(), host, principal)
+		}()
+		return control.ActionResult(kind, repoPath, runID, err)()
+	}
+}
+
+// sameSessionRepository reports whether repoPath addresses the session worktree.
+// Both sides are cleaned; Windows compares case-insensitively per its file-
+// system convention, every other platform compares byte for byte.
+func sameSessionRepository(worktree, repoPath string) bool {
+	if strings.TrimSpace(repoPath) == "" {
+		return false
+	}
+	left, right := filepath.Clean(worktree), filepath.Clean(repoPath)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
 // startControlCenter launches the Bubble Tea control-center program with the
 // alt screen and reports whether the session ended cleanly. Like its attach
 // sibling, it is a var-indirected seam: driving a real terminal headlessly
@@ -211,10 +346,11 @@ var startControlCenter = func(model control.Model) error {
 
 // executeTuiSession runs one full control-center session over prepared
 // inputs: collect the initial snapshot, settle daemon ownership, open the
-// program, then stop the owned daemon (if any) once Run returns. Splitting
+// program, then stop the owned daemon (if any) once Run returns. The a/r
+// keys bind to the session worktree through sessionRunActions. Splitting
 // it from executeTui keeps the snapshot/ownership wiring injectable for the
 // shutdown-on-exit tests without touching real daemons.
-func executeTuiSession(out io.Writer, registryPath string, gate tuiDaemonGate) int {
+func executeTuiSession(out io.Writer, registryPath, worktree string, gate tuiDaemonGate) int {
 	initial, err := overview.Collect(registryPath)
 	if err != nil {
 		fmt.Fprintf(out, "❌ Could not load the repository overview: %v\n", err)
@@ -227,7 +363,7 @@ func executeTuiSession(out io.Writer, registryPath string, gate tuiDaemonGate) i
 	}
 	model := control.NewLive(initial, func() ([]overview.Repo, error) {
 		return overview.Collect(registryPath)
-	}, control.DefaultRefreshInterval)
+	}, control.DefaultRefreshInterval, newSessionRunActions(worktree))
 	runErr := startControlCenter(model)
 	if owned {
 		stopOwnedTuiDaemon(out, gate)
@@ -254,5 +390,5 @@ func executeTui(out io.Writer, worktree string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
 	}
-	return executeTuiSession(out, registryPath, newTuiDaemonGate(commonDir))
+	return executeTuiSession(out, registryPath, worktree, newTuiDaemonGate(commonDir))
 }
