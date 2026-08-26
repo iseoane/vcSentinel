@@ -388,6 +388,7 @@ func (m Model) View() string {
 		OpenRunID:  m.openRunID,
 		Help:       m.help,
 		Filter:     m.filter,
+		Filtering:  m.filtering,
 	})
 }
 

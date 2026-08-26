@@ -73,6 +73,7 @@ type ViewState struct {
 	OpenRunID  string
 	Help       bool
 	Filter     string
+	Filtering  bool // true while the operator is typing a filter query
 }
 
 // RenderOverview renders a real overview snapshot through the layout engine
@@ -262,6 +263,16 @@ func overviewTree(p painter, w int, s ViewState) []string {
 		heading = span{" ▸ REPOSITORIES", Purple}
 	}
 	lines := []string{p.spanLine(w, heading)}
+	// Show the filter bar when the operator is typing or a filter is active.
+	if s.Filtering || s.Filter != "" {
+		filterText := s.Filter
+		if filterText == "" {
+			filterText = " "
+		}
+		lines = append(lines, p.spanLine(w,
+			span{" /", Purple},
+			span{filterText, White}))
+	}
 	repos := s.Repos
 	if len(repos) == 0 {
 		return append(lines, p.spanLine(w, span{" no repositories registered", Dim}))
