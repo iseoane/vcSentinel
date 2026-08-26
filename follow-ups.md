@@ -43,7 +43,7 @@ failure routes; `spawnHelper` simplified. See Resolved below.
 - [x] **Consolidate adapter-family dispatch** when a third adapter kind
       appears — kind switch currently lives in three factory sites. Trigger:
       third kind existing. Origin: 16 slice 3 review.
-- [ ] **Durable raw-transcript threading** — persist raw NDJSON transcripts /
+- [x] **Durable raw-transcript threading** — persist raw NDJSON transcripts /
       observed model / stop reason into durable run records. GATED on the
       capability-policy runtime work (requires store schema extension), which
       is roadmap-scale and not yet ticketed; revisit when that work starts.
