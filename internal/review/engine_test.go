@@ -943,10 +943,9 @@ func hasResultBundle(results []ResultadoDimension, bundle string) bool {
 
 func TestAuditarCommitDeterministicOutputErrorsAreNotRetried(t *testing.T) {
 	tests := map[string]string{
-		"missing payload": "review unavailable",
-		"tool denial":     "Permission denied: Read(/host/private.go)",
-		"malformed JSON":  `{"dim":"logic",`,
-		"schema invalid":  `{"dim":"logic","verdict":false}`,
+		"tool denial":    "Permission denied: Read(/host/private.go)",
+		"malformed JSON": `{"dim":"logic",`,
+		"schema invalid": `{"dim":"logic","verdict":false}`,
 	}
 	for name, output := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -956,6 +955,14 @@ func TestAuditarCommitDeterministicOutputErrorsAreNotRetried(t *testing.T) {
 				t.Fatalf("calls=%d verdict=%s", fake.llamadas, resultado.Veredicto)
 			}
 		})
+	}
+}
+
+func TestAuditarCommitRetriesMissingSemanticPayload(t *testing.T) {
+	fabrica, fake := fabricaFija([]string{"review unavailable", `{"dim":"logic","verdict":"ok"}`})
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+	if fake.llamadas != 2 || resultado.Veredicto != VerdictOK {
+		t.Fatalf("calls=%d verdict=%s", fake.llamadas, resultado.Veredicto)
 	}
 }
 

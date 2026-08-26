@@ -584,8 +584,8 @@ func auditWithAgent(agent AuditorAgente, bundle ReviewBundle, dimension string, 
 
 // Review executes one resolved contract and preserves raw provider output or a
 // typed provider execution failure on the returned result for internal
-// diagnosis. A malformed schema gets one corrective retry; other semantic
-// output errors remain distinct and are never retried.
+// diagnosis. A malformed semantic payload gets one corrective retry; provider
+// execution failures remain distinct and are never retried.
 func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequest) (*DimensionResult, error) {
 	if err := ctx.Err(); err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
@@ -643,16 +643,19 @@ const formatRetryInstruction = "\n\nFORMAT RETRY: Your previous response did not
 
 func shouldRetryFormat(err error, output string) bool {
 	var semantic *SemanticOutputError
-	if !errors.As(err, &semantic) || semantic.Class != SemanticOutputSchemaInvalid {
+	if !errors.As(err, &semantic) {
+		return false
+	}
+	if semantic.Class == SemanticOutputMissingPayload {
+		return true
+	}
+	if semantic.Class != SemanticOutputSchemaInvalid {
 		return false
 	}
 	var envelope struct {
 		Verdict string `json:"verdict"`
 	}
-	if json.Unmarshal([]byte(output), &envelope) != nil {
-		return false
-	}
-	return envelope.Verdict != "" && !veredictosValidos[envelope.Verdict]
+	return json.Unmarshal([]byte(output), &envelope) == nil && envelope.Verdict != "" && !veredictosValidos[envelope.Verdict]
 }
 
 // stamparSourceReview marca todo Hallazgo que sale de la revisión semántica

@@ -71,6 +71,17 @@ var orphanableHeadStates = map[agentrun.LifecycleState]bool{
 // error names each failed run alongside how many settlements landed, so one
 // undecidable stream cannot strand later survivors unsettled.
 func (c *Controller) OrphanActiveRuns(detail string) ([]agentrun.Identity, error) {
+	return c.orphanRuns(detail, true)
+}
+
+// OrphanOwnedRuns settles only runs this controller admitted. A graceful
+// daemon shutdown must not take ownership of a review supervised by a separate
+// in-process controller; a later recovery scan handles genuine residue.
+func (c *Controller) OrphanOwnedRuns(detail string) ([]agentrun.Identity, error) {
+	return c.orphanRuns(detail, false)
+}
+
+func (c *Controller) orphanRuns(detail string, includeDurableResidue bool) ([]agentrun.Identity, error) {
 	if c.store == nil {
 		return nil, ErrControllerNotReady
 	}
@@ -85,12 +96,14 @@ func (c *Controller) OrphanActiveRuns(detail string) ([]agentrun.Identity, error
 	}
 	c.mu.Unlock()
 
-	durableIDs, err := c.store.ListExecutionIDs()
-	if err != nil {
-		return nil, err
-	}
-	for _, id := range durableIDs {
-		candidates[id] = struct{}{}
+	if includeDurableResidue {
+		durableIDs, err := c.store.ListExecutionIDs()
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range durableIDs {
+			candidates[id] = struct{}{}
+		}
 	}
 
 	orphaned := make([]agentrun.Identity, 0, len(candidates))

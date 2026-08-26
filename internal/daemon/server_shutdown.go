@@ -138,7 +138,7 @@ func (s *Server) runGracefulSequence() (int, error) {
 	if remaining := time.Until(deadline); remaining > 0 {
 		s.controller.WaitForActiveRuns(remaining)
 	}
-	orphaned, err := s.controller.OrphanActiveRuns(OrphanedByShutdown)
+	orphaned, err := s.controller.OrphanOwnedRuns(OrphanedByShutdown)
 	s.mu.Lock()
 	s.orphanedRuns = len(orphaned)
 	s.mu.Unlock()
