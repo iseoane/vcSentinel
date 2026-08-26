@@ -272,13 +272,17 @@ func TestPurgeSkipsAcquiredSnapshot(t *testing.T) {
 	}
 }
 
-func TestSnapshotLockReleasedAfterProcessExit(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "snapshot.lock")
+func TestAcquireSnapshotLockReleasedAfterProcessExit(t *testing.T) {
+	requiereGitReal(t)
+	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	t.Chdir(dir)
+	tree := ejecutarGit(t, dir, "rev-parse", "HEAD^{tree}")
 	readyPath := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotLockHelper$")
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"VAS_SENTINEL_SNAPSHOT_LOCK_HELPER=1",
-		"VAS_SENTINEL_SNAPSHOT_LOCK_PATH="+lockPath,
+		"VAS_SENTINEL_SNAPSHOT_LOCK_TREE="+tree,
 		"VAS_SENTINEL_SNAPSHOT_LOCK_READY="+readyPath,
 	)
 	if err := cmd.Start(); err != nil {
@@ -298,18 +302,24 @@ func TestSnapshotLockReleasedAfterProcessExit(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("helper did not acquire the shared snapshot lock")
+			t.Fatal("helper did not acquire the snapshot")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	lock, acquired, err := lockSnapshot(lockPath, true, false)
+	pathBytes, err := os.ReadFile(readyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if acquired {
-		_ = lock.Close()
-		t.Fatal("exclusive lock acquired while another process held a shared lock")
+	path := string(pathBytes)
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := PurgarSnapshots(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("snapshot was purged while another process held it: %v", err)
 	}
 
 	if err := cmd.Process.Kill(); err != nil {
@@ -320,15 +330,11 @@ func TestSnapshotLockReleasedAfterProcessExit(t *testing.T) {
 	}
 	waited = true
 
-	lock, acquired, err = lockSnapshot(lockPath, true, false)
-	if err != nil {
+	if err := PurgarSnapshots(0); err != nil {
 		t.Fatal(err)
 	}
-	if !acquired {
-		t.Fatal("exclusive lock remained unavailable after owner process exit")
-	}
-	if err := lock.Close(); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("snapshot remained after its owner process exited: %v", err)
 	}
 }
 
@@ -336,15 +342,15 @@ func TestSnapshotLockHelper(t *testing.T) {
 	if os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_HELPER") != "1" {
 		return
 	}
-	lock, acquired, err := lockSnapshot(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_PATH"), false, true)
-	if err != nil || !acquired {
+	path, release, err := AcquireSnapshot(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_TREE"))
+	if err != nil {
 		os.Exit(2)
 	}
-	if err := os.WriteFile(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_READY"), nil, 0600); err != nil {
+	if err := os.WriteFile(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_READY"), []byte(path), 0600); err != nil {
 		os.Exit(3)
 	}
 	for {
-		runtime.KeepAlive(lock)
+		runtime.KeepAlive(release)
 		time.Sleep(time.Second)
 	}
 }
