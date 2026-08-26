@@ -124,10 +124,12 @@ func (s *Store) ReadAttemptOutcomes(runID string) ([]AttemptOutcome, error) {
 		return legacy, nil
 	}
 	// Event-authoritative runs win over the legacy surface entirely: when
-	// every terminal frame carries its embedded outcome, a missing or even
-	// corrupt sidecar must not fail the read.
+	// every terminal frame carries its embedded outcome, a missing or corrupt
+	// sidecar must not fail the read. A valid sidecar still carries additive
+	// transcript provenance that predates the event schema, so merge it without
+	// letting it override event-authoritative lifecycle evidence.
 	if terminalFramesHaveEmbeddedEvidence(terminalFrames) {
-		return outcomesFromFrames(terminalFrames, nil), nil
+		return outcomesFromFrames(terminalFrames, legacy), nil
 	}
 	if legacyErr != nil {
 		if len(terminalFrames) > 0 {
@@ -257,6 +259,13 @@ func outcomesFromFrames(frames []EventFrame, legacy []AttemptOutcome) []AttemptO
 			if legacyOutcome, ok := legacyByInvocation[frame.InvocationID]; ok {
 				outcome = legacyOutcome
 			}
+		} else if legacyOutcome, ok := legacyByInvocation[frame.InvocationID]; ok {
+			outcome.TranscriptSHA256 = legacyOutcome.TranscriptSHA256
+			outcome.TranscriptSize = legacyOutcome.TranscriptSize
+			outcome.Agent = legacyOutcome.Agent
+			outcome.Model = legacyOutcome.Model
+			outcome.Effort = legacyOutcome.Effort
+			outcome.StopReason = legacyOutcome.StopReason
 		}
 		outcomes = append(outcomes, outcome)
 	}

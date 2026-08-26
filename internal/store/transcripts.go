@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,29 @@ func (s *Store) WriteTranscript(runID, invocationID string, at time.Time, output
 	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:]), int64(len(data)), nil
+}
+
+// RemoveTranscript discards an unreferenced transcript after terminal outcome
+// persistence fails. Missing sidecars are already absent and therefore succeed.
+func (s *Store) RemoveTranscript(runID, invocationID string) error {
+	if !validRunID(runID) || !validRunID(invocationID) {
+		return fmt.Errorf("store: invalid transcript identity run=%q invocation=%q", runID, invocationID)
+	}
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return err
+	}
+	if err := ensureExecutionExists(directory); err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "transcripts", invocationID+".json")
+	return withExecutionLock(directory, func() error {
+		err := os.Remove(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	})
 }
 
 // ExecutionDir exposes the on-disk execution directory of one run so callers

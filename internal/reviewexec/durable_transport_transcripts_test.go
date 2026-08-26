@@ -51,7 +51,7 @@ func runAttributedReview(t *testing.T, reviewer RestrictedReviewer, wantOutput s
 
 func TestDurableTransportPersistsTranscriptSidecar(t *testing.T) {
 	reviewer := &attributedReviewer{output: "raw verdict text"}
-	_, execDir, evidence, output := runAttributedReview(t, reviewer, reviewer.output)
+	backing, execDir, evidence, output := runAttributedReview(t, reviewer, reviewer.output)
 
 	sidecarPath := filepath.Join(execDir, "transcripts", evidence.InvocationID+".json")
 	raw, err := os.ReadFile(sidecarPath)
@@ -97,6 +97,19 @@ func TestDurableTransportPersistsTranscriptSidecar(t *testing.T) {
 	}
 	if outcome.StopReason != "" {
 		t.Fatalf("stop_reason = %q, want empty because the provider output exposes none", outcome.StopReason)
+	}
+
+	outcomes, err := backing.ReadAttemptOutcomes(evidence.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 {
+		t.Fatalf("public outcomes = %d, want 1", len(outcomes))
+	}
+	publicOutcome := outcomes[0]
+	if publicOutcome.TranscriptSHA256 != outcome.TranscriptSHA256 || publicOutcome.TranscriptSize != outcome.TranscriptSize ||
+		publicOutcome.Agent != outcome.Agent || publicOutcome.Model != outcome.Model || publicOutcome.Effort != outcome.Effort || publicOutcome.StopReason != outcome.StopReason {
+		t.Fatalf("public outcome lost transcript provenance: %+v", publicOutcome)
 	}
 
 	if ok, reason := store.VerifyTranscript(execDir, evidence.InvocationID); !ok {

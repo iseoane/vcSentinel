@@ -37,14 +37,14 @@ type TranscriptReporter interface {
 // strictly best-effort: any sidecar failure skips the annotation entirely and
 // leaves the durable behavior byte-compatible with the pre-transcript flow,
 // because a transcript must never turn a healthy review into an error.
-func (c *Controller) captureTranscript(invocation *store.AttemptOutcome, result AdapterResult, reporter TranscriptReporter) {
+func (c *Controller) captureTranscript(invocation *store.AttemptOutcome, result AdapterResult, reporter TranscriptReporter) bool {
 	if result.Output == "" {
-		return
+		return false
 	}
 	digest, size, err := c.store.WriteTranscript(invocation.RunID, invocation.InvocationID, invocation.At, result.Output)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "execution: transcript sidecar for invocation %s skipped: %v\n", invocation.InvocationID, err)
-		return
+		return false
 	}
 	identity := reporter.TranscriptMetadata()
 	invocation.TranscriptSHA256 = digest
@@ -53,4 +53,5 @@ func (c *Controller) captureTranscript(invocation *store.AttemptOutcome, result 
 	invocation.Model = identity.Model
 	invocation.Effort = identity.Effort
 	invocation.StopReason = identity.StopReason
+	return true
 }

@@ -146,7 +146,7 @@ func Sites() []Site {
 		// --- internal/agentrun / internal/execution / internal/store ------
 		{Path: "internal/agentrun/contracts.go", Symbol: "InvocationEnvelope/NewRunRequest/NewCapability", Line: 61, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Contract definitions: envelopes, requests, capabilities, lifecycle states, and the transition table. The authority itself, not a caller."},
-		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Line: 244, Marker: "CreateRun(",
+		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Line: 245, Marker: "CreateRun(",
 			Class: ClassDurable, Reason: "The single lifecycle authority admits every run through store.CreateRun and settles attempts through store.AppendTerminalEvent; no feature package may call either primitive directly."},
 		{Path: "internal/execution/controller_abort.go", Symbol: "Controller abort settlement", Line: 161, Marker: "AppendTerminalEvent(",
 			Class: ClassDurable, Reason: "Abort settles through the guarded store terminal-event primitive under the controller's revision checks; nothing mutates state outside controller APIs."},

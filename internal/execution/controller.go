@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -448,9 +449,10 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	decision := terminalDecision(class)
 	at := c.now().UTC()
 	outcome.At = at
+	capturedTranscript := false
 	if adapterErr == nil && !result.AwaitingDecision {
 		if reporter, ok := c.adapter.(TranscriptReporter); ok {
-			c.captureTranscript(&outcome, result, reporter)
+			capturedTranscript = c.captureTranscript(&outcome, result, reporter)
 		}
 	}
 	event, eventErr := agentrun.NewNormalizedEvent(invocation, state.state, target, decision, at)
@@ -460,6 +462,11 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	}
 	receipt, persistenceErr := c.store.AppendTerminalEvent(string(invocation.RunID()), event, state.revision, outcome)
 	if persistenceErr != nil {
+		if capturedTranscript {
+			if err := c.store.RemoveTranscript(outcome.RunID, outcome.InvocationID); err != nil {
+				fmt.Fprintf(os.Stderr, "execution: transcript sidecar cleanup for invocation %s failed: %v\n", outcome.InvocationID, err)
+			}
+		}
 		if receipt.Revision > state.revision {
 			state.revision = receipt.Revision
 			state.state = receipt.State
