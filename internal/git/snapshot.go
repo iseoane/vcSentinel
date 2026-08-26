@@ -24,6 +24,8 @@ import (
 // atomic temp-checkout + rename publication below.
 var snapshotMu sync.Mutex
 
+const snapshotLeaseDir = "snapshot-leases"
+
 // ArbolDe devuelve el tree OID de una revisión.
 func ArbolDe(revision string) (string, error) {
 	// Una revisión que empieza con "-" se interpretaría como una opción de
@@ -123,6 +125,36 @@ func CrearSnapshot(treeOID string) (string, error) {
 	return refrescarSnapshot(destino)
 }
 
+// AcquireSnapshot keeps a shared lease for one validation while it uses a
+// snapshot. The release function is idempotent and must be deferred by callers.
+func AcquireSnapshot(treeOID string) (string, func(), error) {
+	snapshots, err := directorioSnapshots()
+	if err != nil {
+		return "", nil, err
+	}
+	leaseDir := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
+	if err := os.MkdirAll(leaseDir, 0700); err != nil {
+		return "", nil, err
+	}
+	lease := filepath.Join(leaseDir, fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()))
+	if err := os.WriteFile(lease, nil, 0600); err != nil {
+		return "", nil, err
+	}
+	path, err := CrearSnapshot(treeOID)
+	if err != nil {
+		_ = os.Remove(lease)
+		return "", nil, err
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			_ = os.Remove(lease)
+			_ = os.Remove(leaseDir)
+		})
+	}
+	return path, release, nil
+}
+
 // refrescarSnapshot marks a snapshot as actively acquired. Purge uses the
 // modification time as its retention boundary, so reusing an old snapshot
 // cannot make an overlapping validation look disposable.
@@ -175,6 +207,9 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		if info.ModTime().After(limite) {
 			continue
 		}
+		if snapshotLeased(snapshots, entrada.Name(), limite) {
+			continue
+		}
 		ruta := filepath.Join(snapshots, entrada.Name())
 		if _, err := ejecutarGitSalida("worktree", "remove", ruta); err != nil {
 			if _, errForzado := ejecutarGitSalida("worktree", "remove", "--force", ruta); errForzado != nil {
@@ -195,4 +230,28 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		_, _ = ejecutarGitSalida("worktree", "prune")
 	}
 	return errors.Join(errores...)
+}
+
+func snapshotLeased(snapshots, treeOID string, staleBefore time.Time) bool {
+	leaseRoot := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
+	entries, err := os.ReadDir(leaseRoot)
+	if err != nil {
+		return false
+	}
+	active := false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(staleBefore) {
+			active = true
+			continue
+		}
+		_ = os.Remove(filepath.Join(leaseRoot, entry.Name()))
+	}
+	return active
 }

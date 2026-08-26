@@ -71,10 +71,11 @@ func EjecutarPerfilSobreCandidato(perfil string, rutasCambiadas []string, opts O
 	// de llamar a esta función, y SigueVigente los daría por buenos si nada
 	// más cambiaba durante la ejecución: el resultado parecería vigente pero
 	// habría validado un árbol distinto del que el usuario congeló.
-	snapshot, err := git.CrearSnapshot(candidato.Arbol)
+	snapshot, releaseSnapshot, err := git.AcquireSnapshot(candidato.Arbol)
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo crear el snapshot de validación: %w", err)
 	}
+	defer releaseSnapshot()
 
 	opts.Worktree = snapshot
 	opts.autorizacion = graph.AutorizacionAlcance{}
