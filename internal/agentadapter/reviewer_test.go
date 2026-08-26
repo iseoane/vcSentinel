@@ -164,6 +164,10 @@ func TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard(t *testing.T) {
 	if strings.Contains(readRules, `"*"`) {
 		t.Fatalf("read rules = %s, expected no wildcard entry", readRules)
 	}
+	relativeKey, err := json.Marshal("&review.go")
+	if err != nil {
+		t.Fatal(err)
+	}
 	absolute := filepath.ToSlash(filepath.Join(snapshot, "&review.go"))
 	absoluteKey, err := json.Marshal(absolute)
 	if err != nil {
@@ -174,7 +178,7 @@ func TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"&review.go":"allow"`,
+		string(relativeKey) + `:"allow"`,
 		string(absoluteKey) + `:"allow"`,
 		string(strippedKey) + `:"allow"`,
 	} {
@@ -212,8 +216,8 @@ func TestReviewCommandOpenCodeOmitsEmptyModelConfiguration(t *testing.T) {
 		}
 	}
 	permission := reviewer["permission"].(map[string]any)
-	if got := permission["*"]; got != "deny" {
-		t.Errorf("default permission = %v, expected deny", got)
+	if got := permission["*"]; got != "ask" {
+		t.Errorf("default permission = %v, expected ask (non-interactive auto-reject)", got)
 	}
 	if got := permission["bash"].(map[string]any)["*"]; got != "deny" {
 		t.Errorf("bash permission = %v, expected deny", got)
