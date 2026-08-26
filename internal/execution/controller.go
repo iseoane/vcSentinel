@@ -448,6 +448,11 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	decision := terminalDecision(class)
 	at := c.now().UTC()
 	outcome.At = at
+	if adapterErr == nil && !result.AwaitingDecision {
+		if reporter, ok := c.adapter.(TranscriptReporter); ok {
+			c.captureTranscript(&outcome, result, reporter)
+		}
+	}
 	event, eventErr := agentrun.NewNormalizedEvent(invocation, state.state, target, decision, at)
 	if eventErr != nil {
 		c.completeLocked(state, invocation, state.state, class, result, joinText(adapterErr, eventErr), eventErr, true)

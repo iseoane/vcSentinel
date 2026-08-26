@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
@@ -170,4 +171,26 @@ func (a *ReviewAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ 
 		return execution.AdapterResult{}, execution.NewAdapterError(a.classify(err), err)
 	}
 	return execution.AdapterResult{Output: output}, nil
+}
+
+// TranscriptMetadata implements execution.TranscriptReporter: it forwards the
+// wrapped reviewer's AgenteEfectivo report so the durable transcript sidecar
+// records who actually answered. The controller queries this only after a
+// successful Execute, exactly when the report is honest. StopReason stays
+// empty today because the raw provider output carries no stop-reason field
+// this layer can observe; it must never be fabricated.
+func (a *ReviewAdapter) TranscriptMetadata() execution.TranscriptIdentity {
+	reporta, ok := a.reviewer.(agentadapter.ReportaAgenteEfectivo)
+	if !ok {
+		return execution.TranscriptIdentity{}
+	}
+	efectivo, ok := reporta.AgenteEfectivo()
+	if !ok || efectivo.Vacio() {
+		return execution.TranscriptIdentity{}
+	}
+	return execution.TranscriptIdentity{
+		Agent:  efectivo.Binario,
+		Model:  efectivo.Modelo,
+		Effort: efectivo.Esfuerzo,
+	}
 }

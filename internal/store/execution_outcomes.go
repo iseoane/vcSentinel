@@ -17,7 +17,10 @@ var ErrAttemptOutcomeCorrupt = errors.New("store: corrupt attempt outcome")
 
 // AttemptOutcome is the admitted operational result of one physical adapter
 // invocation. Raw adapter output is deliberately not persisted; OutputHash
-// binds any output returned to the caller to this invocation.
+// binds any output returned to the caller to this invocation. The transcript
+// and identity fields are additive provenance: every one is omitempty, so
+// records written before raw-transcript threading keep their exact legacy
+// bytes and old readers ignore the new keys.
 type AttemptOutcome struct {
 	RunID        string                `json:"run_id"`
 	JobID        string                `json:"job_id"`
@@ -27,6 +30,20 @@ type AttemptOutcome struct {
 	Error        string                `json:"error,omitempty"`
 	OutputHash   string                `json:"output_hash,omitempty"`
 	At           time.Time             `json:"at"`
+	// TranscriptSHA256 and TranscriptSize are tamper evidence over the exact
+	// bytes of <execution-dir>/transcripts/<InvocationID>.json (see
+	// VerifyTranscript). They are recorded only when the sidecar write
+	// succeeded; absence means no transcript exists for this invocation.
+	TranscriptSHA256 string `json:"transcript_sha256,omitempty"`
+	TranscriptSize   int64  `json:"transcript_size,omitempty"`
+	// Agent, Model, Effort, and StopReason are the observed effective
+	// identity of the responder, reported by the adapter only after a
+	// successful request. They are never fabricated: fields the provider did
+	// not expose stay empty.
+	Agent      string `json:"agent,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Effort     string `json:"effort,omitempty"`
+	StopReason string `json:"stop_reason,omitempty"`
 }
 
 // InvocationResponse binds an explicit control response to the child
