@@ -150,6 +150,8 @@ Example:
 	"runs recover": textoAyudaRunsRecover,
 	"runs verify":  textoAyudaRunsVerify,
 	"runs prune":   textoAyudaRunsPrune,
+	"runs attach":  textoAyudaRunsAttach,
+	"runs daemon":  textoAyudaRunsDaemon,
 }
 
 // esFlagAyuda reports whether one argument requests help.
@@ -187,6 +189,13 @@ func resolverRutaComando(subcomando string, args []string) (string, []string) {
 		case "runs":
 			if _, ok := runsSubcommandFlags[args[0]]; ok {
 				return "runs " + args[0], args[1:]
+			}
+			// 'daemon' takes no flags by contract, so it is absent from
+			// runsSubcommandFlags; it still owns a dedicated help key one
+			// level down, matching the single-level registration of every
+			// other multi-word command ('slice plan', 'pr review').
+			if args[0] == "daemon" {
+				return "runs daemon", args[1:]
 			}
 		}
 	}

@@ -23,6 +23,7 @@ var ayudaClavesEsperadas = []string{
 	"install", "upgrade", "uninstall",
 	"runs", "runs start", "runs status", "runs logs", "runs respond",
 	"runs abort", "runs retry", "runs recover", "runs verify", "runs prune",
+	"runs attach", "runs daemon",
 }
 
 // invocacionDeClave translates a help key into the dispatcher arguments that
@@ -184,6 +185,8 @@ func TestTextosAyudaDocumentanFlagsDeclarados(t *testing.T) {
 		"runs retry":   usoRunsRetry,
 		"runs verify":  usoRunsVerify,
 		"runs prune":   usoRunsPrune,
+		"runs attach":  usoRunsAttach,
+		"runs daemon":  usoRunsDaemon,
 	}
 	for clave, lineaUso := range casos {
 		texto, ok := ayudaComandos[clave]

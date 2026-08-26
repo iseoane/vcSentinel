@@ -26,6 +26,8 @@ const (
 	usoRunsRecoverRepair = "Usage: sentinel runs recover --repair <id>"
 	usoRunsVerify        = "Usage: sentinel runs verify --run <id>"
 	usoRunsPrune         = "Usage: sentinel runs prune --older-than <duration> [--json]"
+	usoRunsAttach        = "Usage: sentinel runs attach [--run <id>] [--after <cursor>] [--follow]"
+	usoRunsDaemon        = "Usage: sentinel runs daemon start|status|stop"
 )
 
 const (
@@ -297,6 +299,66 @@ Flags:
 
 Example:
   sentinel runs prune --older-than 720h --json
+`
+	textoAyudaRunsAttach = `Purpose: observe one durable run live: list attachable candidates, print a point-in-time snapshot, or follow a run with the terminal UI.
+
+Usage:
+  ` + usoRunsAttach + `
+
+Modes:
+  without --run        List every non-terminal durable run as an attach
+                       candidate (read-only reconciled projection walk);
+                       exits 0 whether the listing is empty or not.
+  --run <id>           Print one plain-text observation snapshot rebuilt
+                       from Inspect plus event replay strictly after
+                       --after (default 0). Point-in-time view: terminal
+                       and non-terminal runs alike exit 0.
+  --run <id> --follow  Launch the Bubble Tea attach view over the same data
+                       pipeline; it keeps repolling from the last applied
+                       cursor until the run reaches its terminal state or
+                       you detach.
+
+Flags:
+  --run    Run to observe.
+  --after  Replay events strictly after this cursor.
+  --follow Follow mode; requires --run.
+
+Exit contract:
+  0  clean quit in every mode: a followed run reaching its terminal state
+     freezes the view and exits 0, and SIGINT/SIGTERM detach exactly as
+     cleanly as pressing q. Other failures follow the shared runs codes
+     (2 run not found, 4 invalid state, 5 infrastructure).
+
+Follow-mode keys (the live footer lists only the keys active in the current
+session state):
+  q quit · r refresh · a abort · e respond · y retry (when retryable)
+`
+	textoAyudaRunsDaemon = `Purpose: manage the repository-local foreground daemon.
+
+Usage:
+  ` + usoRunsDaemon + `
+
+Subcommands:
+  start   Claim the repository, settle auto-recoverable interrupted runs,
+          serve the local transport, and block until SIGINT/SIGTERM or a
+          remote stop.
+  status  Print the live owner pid/started-at/host/transport/address.
+  stop    Ask the running daemon to shut down gracefully and print its
+          orphaned-runs summary.
+
+Flags:
+  none. The three subcommands take no flags by contract: any argument beyond
+  the subcommand name is rejected as a usage error.
+
+Exit codes:
+  start   0 on a clean stop; 4 when another live daemon already owns the
+          repository (its pid is named); 5 otherwise.
+  status  0 while a live daemon answers; 2 with a deterministic message when
+          no live daemon is running for this repository; 5 when endpoint.json
+          exists but is unreadable or incomplete — corruption is never silent.
+  stop    0 after a graceful shutdown; a missing or unreachable endpoint
+          follows the same not-running contract as status (exit 2); 5 on a
+          corrupt record or a daemon-side shutdown failure.
 `
 )
 

@@ -25,7 +25,7 @@ const daemonNotRunningMessage = "📭 No daemon is running for this repository.\
 // usage code.
 func executeRunsDaemon(out io.Writer, worktree string, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(out, "❌ Usage: sentinel runs daemon start|status|stop")
+		fmt.Fprintln(out, "❌ "+usoRunsDaemon)
 		return runExitUsage
 	}
 	subcommand, flags := args[0], args[1:]

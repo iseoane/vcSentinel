@@ -76,6 +76,15 @@ func listAttachableRuns(out io.Writer, backing *store.Store) int {
 // SIGINT/SIGTERM) and through the infrastructure code only when the bounded
 // reconnect budget exhausts.
 func executeRunsAttach(out io.Writer, worktree string, args []string) int {
+	// Help wins over everything (ticket 15 invariant): the dedicated text is
+	// served before flag parsing, so even a flag line the parser would reject
+	// still answers with documentation and exit 0. The central interceptor in
+	// main.go covers the CLI path; this guard keeps the handler honest when
+	// reached directly.
+	if contieneFlagAyuda(args) {
+		fmt.Fprint(out, textoAyudaRunsAttach)
+		return runExitSuccess
+	}
 	options, err := parseRunOptions("attach", args)
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
