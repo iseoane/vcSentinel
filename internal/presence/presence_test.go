@@ -179,6 +179,25 @@ func TestRecentRunsReportsStateRevisionAndLimitTail(t *testing.T) {
 		t.Fatalf("failed run = %+v, want state failed revision 4", s)
 	}
 
+	// UpdatedAt is copied verbatim from the stored projection: the seeded
+	// terminal event carries a real timestamp, while a run that never left
+	// the created state has no event frames and therefore none at all.
+	storedCreated, err := st.ReadProjection(createdID)
+	if err != nil {
+		t.Fatalf("read created projection: %v", err)
+	}
+	storedFailed, err := st.ReadProjection(failedID)
+	if err != nil {
+		t.Fatalf("read failed projection: %v", err)
+	}
+	if !byID[createdID].UpdatedAt.Equal(storedCreated.UpdatedAt) || !storedCreated.UpdatedAt.IsZero() {
+		t.Fatalf("created UpdatedAt = %v, want the stored zero value", byID[createdID].UpdatedAt)
+	}
+	if !byID[failedID].UpdatedAt.Equal(storedFailed.UpdatedAt) || storedFailed.UpdatedAt.IsZero() {
+		t.Fatalf("failed UpdatedAt = %v, want the stored terminal-event time %v",
+			byID[failedID].UpdatedAt, storedFailed.UpdatedAt)
+	}
+
 	// Run ids are content hashes without time information, so the documented
 	// deterministic choice for a tight limit is the lexicographic tail of the
 	// sorted identifier list.

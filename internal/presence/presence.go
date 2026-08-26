@@ -51,9 +51,10 @@ func Probe(gitCommonDir string) Presence {
 
 // RunSummary is one projected durable run as shown in the activity pane.
 type RunSummary struct {
-	RunID    string
-	State    agentrun.LifecycleState
-	Revision uint64
+	RunID     string
+	State     agentrun.LifecycleState
+	Revision  uint64
+	UpdatedAt time.Time
 }
 
 // RecentRuns returns at most limit projected durable runs anchored at the
@@ -85,9 +86,10 @@ func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 			return nil, fmt.Errorf("presence: read projection under %s: %w", gitCommonDir, err)
 		}
 		summaries = append(summaries, RunSummary{
-			RunID:    projection.RunID,
-			State:    projection.State,
-			Revision: projection.Revision,
+			RunID:     projection.RunID,
+			State:     projection.State,
+			Revision:  projection.Revision,
+			UpdatedAt: projection.UpdatedAt,
 		})
 	}
 	return summaries, nil

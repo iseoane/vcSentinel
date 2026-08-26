@@ -2,6 +2,7 @@ package overview
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
@@ -226,5 +228,145 @@ func TestCollectMissingRegistryYieldsEmptySnapshot(t *testing.T) {
 	}
 	if len(repos) != 0 {
 		t.Fatalf("absent registry must yield no rows, got %#v", repos)
+	}
+}
+
+// stubRecentRuns swaps the package seam for stub and restores it on cleanup;
+// the returned slice records every directory the seam was asked about.
+func stubRecentRuns(t *testing.T, stub func(dir string, limit int) ([]presence.RunSummary, error)) *[]string {
+	t.Helper()
+	calls := &[]string{}
+	previous := recentRuns
+	recentRuns = func(dir string, limit int) ([]presence.RunSummary, error) {
+		*calls = append(*calls, dir)
+		return stub(dir, limit)
+	}
+	t.Cleanup(func() { recentRuns = previous })
+	return calls
+}
+
+func TestCollectStoresRecentRunsUpToLimit(t *testing.T) {
+	repo := initRepo(t)
+	path := registryPath(t)
+	writeRegistry(t, path, registry.Entry{Path: repo, Name: "runs", Enabled: true})
+	want := []presence.RunSummary{
+		{RunID: "aaaaaaaaaaaaaaaaaaaa", State: agentrun.StateRunning, Revision: 4},
+		{RunID: "bbbbbbbbbbbbbbbbbbbb", State: agentrun.StateSucceeded, Revision: 5},
+	}
+	var gotLimit int
+	stubRecentRuns(t, func(dir string, limit int) ([]presence.RunSummary, error) {
+		gotLimit = limit
+		if dir != filepath.Join(repo, ".git") {
+			t.Errorf("runs read anchored at %q, want the resolved common dir", dir)
+		}
+		return want, nil
+	})
+
+	repos, err := Collect(path)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("Collect returned %d repos, want 1: %#v", len(repos), repos)
+	}
+	if !reflect.DeepEqual(repos[0].Runs, want) {
+		t.Fatalf("runs mismatch:\n got: %#v\nwant: %#v", repos[0].Runs, want)
+	}
+	if gotLimit != recentRunLimit {
+		t.Fatalf("runs read used limit %d, want the package const %d", gotLimit, recentRunLimit)
+	}
+	if repos[0].Error != "" || len(repos[0].Worktrees) != 1 || repos[0].Daemon != stopped() {
+		t.Fatalf("healthy probes must stay intact beside stored runs: %#v", repos[0])
+	}
+}
+
+func TestCollectRunsFailureRecordsErrorWithoutFailingView(t *testing.T) {
+	repo := initRepo(t)
+	path := registryPath(t)
+	writeRegistry(t, path, registry.Entry{Path: repo, Name: "runs", Enabled: true})
+	stubRecentRuns(t, func(string, int) ([]presence.RunSummary, error) {
+		return nil, errors.New("store exploded")
+	})
+
+	repos, err := Collect(path)
+	if err != nil {
+		t.Fatalf("a runs-read failure must never fail Collect: %v", err)
+	}
+	repo0 := repos[0]
+	if !strings.Contains(repo0.Error, "read recent runs") || !strings.Contains(repo0.Error, "store exploded") {
+		t.Fatalf("runs failure must record its cause in Error, got %q", repo0.Error)
+	}
+	if repo0.Runs != nil {
+		t.Fatalf("failed read must leave Runs nil, got %#v", repo0.Runs)
+	}
+	if len(repo0.Worktrees) != 1 || repo0.Daemon != stopped() {
+		t.Fatalf("independent probes must keep their results: %#v", repo0)
+	}
+}
+
+// breakWorktreeInventory adds a linked worktree and deletes its directory, so
+// the strict inventory parser rejects the stale entry while the git common
+// dir still resolves: exactly the double-failure shape needed to pin that a
+// later runs-read failure cannot steal Repo.Error.
+func breakWorktreeInventory(t *testing.T, repo string) {
+	t.Helper()
+	wt := filepath.Join(t.TempDir(), "doomed")
+	runGit(t, repo, "worktree", "add", wt, "-b", "doomed")
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCollectPreservesFirstObservedErrorWhenRunsReadAlsoFails(t *testing.T) {
+	repo := initRepo(t)
+	breakWorktreeInventory(t, repo)
+	path := registryPath(t)
+	writeRegistry(t, path, registry.Entry{Path: repo, Name: "broken", Enabled: true})
+	seen := false
+	stubRecentRuns(t, func(string, int) ([]presence.RunSummary, error) {
+		seen = true
+		return nil, errors.New("store exploded")
+	})
+
+	repos, err := Collect(path)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if !seen {
+		t.Fatal("the runs read must still execute after an inventory failure")
+	}
+	if !strings.Contains(repos[0].Error, "inspect repository") {
+		t.Fatalf("first observed cause must win, got %q", repos[0].Error)
+	}
+	if strings.Contains(repos[0].Error, "read recent runs") {
+		t.Fatalf("the later runs cause must not overwrite the original error: %q", repos[0].Error)
+	}
+	if repos[0].Runs != nil {
+		t.Fatalf("failed read must leave Runs nil, got %#v", repos[0].Runs)
+	}
+}
+
+func TestCollectStoresSuccessfulRunRowsBesideOriginalError(t *testing.T) {
+	repo := initRepo(t)
+	breakWorktreeInventory(t, repo)
+	path := registryPath(t)
+	writeRegistry(t, path, registry.Entry{Path: repo, Name: "broken", Enabled: true})
+	want := []presence.RunSummary{
+		{RunID: "cccccccccccccccccccc", State: agentrun.StateCanceled, Revision: 9},
+	}
+	stubRecentRuns(t, func(string, int) ([]presence.RunSummary, error) {
+		return want, nil
+	})
+
+	repos, err := Collect(path)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if !strings.Contains(repos[0].Error, "inspect repository") {
+		t.Fatalf("original degradation cause must survive, got %q", repos[0].Error)
+	}
+	if !reflect.DeepEqual(repos[0].Runs, want) {
+		t.Fatalf("successful runs must be stored even beside an earlier error:\n got: %#v\nwant: %#v",
+			repos[0].Runs, want)
 	}
 }

@@ -3,8 +3,10 @@ package art
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
@@ -16,6 +18,20 @@ func wt(branch string, clean bool) inventory.Worktree {
 	return inventory.Worktree{Path: "/tmp/repo/" + branch, Branch: branch, Clean: clean}
 }
 
+// run builds a run summary fixture with a fixed id and revision; updatedAt
+// is interpreted against the current timeNow seam.
+func run(id string, state agentrun.LifecycleState, revision uint64, updatedAt time.Time) presence.RunSummary {
+	return presence.RunSummary{RunID: id, State: state, Revision: revision, UpdatedAt: updatedAt}
+}
+
+// pinClock freezes the age clock for the duration of the test.
+func pinClock(t *testing.T, now time.Time) {
+	t.Helper()
+	previous := timeNow
+	timeNow = func() time.Time { return now }
+	t.Cleanup(func() { timeNow = previous })
+}
+
 func liveRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
 	return overview.Repo{Name: name, Path: "/tmp/" + name, Enabled: true,
 		Origin: "git@github.com:org/" + name, Worktrees: worktrees,
@@ -24,6 +40,14 @@ func liveRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
 
 func stoppedRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
 	return overview.Repo{Name: name, Path: "/tmp/" + name, Enabled: true, Worktrees: worktrees}
+}
+
+// liveRepoWithRuns builds a live repository whose snapshot carries durable-run
+// summaries; per the ACTIVITY rule its runs replace the summary row.
+func liveRepoWithRuns(name string, runs ...presence.RunSummary) overview.Repo {
+	repo := liveRepo(name)
+	repo.Runs = runs
+	return repo
 }
 
 func colorPrefix(c Color, s string) string {
@@ -60,7 +84,9 @@ func TestRenderOverviewHealthySingleRepo(t *testing.T) {
 func TestRenderOverviewMultiWorktree(t *testing.T) {
 	repos := []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}
 	dash := RenderOverviewPlain(100, repos, 0)
-	assertContains(t, dash, "├─", "└─", " dirty", "· 1 active")
+	// Since Slice 10 the header counts runs, not dirty worktrees: this
+	// fixture carries none, so active stays zero even with a dirty tree.
+	assertContains(t, dash, "├─", "└─", " dirty", "· 0 active")
 	if !strings.Contains(RenderOverview(100, repos, 0), colorPrefix(Blue, " dirty")) {
 		t.Error("dirty child must be blue")
 	}
@@ -120,10 +146,21 @@ func TestRenderOverviewStacksBelow84(t *testing.T) {
 // fixture and both layout modes.
 func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 	fixtures := map[string][]overview.Repo{
-		"healthy":  {liveRepo("vas.sentinel", wt("main", true))},
-		"multi":    {stoppedRepo("multi", wt("main", true), wt("feature", false))},
-		"degraded": {{Name: "broken", Error: "overview: inspect repository boom"}},
-		"missing":  {{Name: "ghost", Missing: true}},
+		"healthy": {liveRepo("vas.sentinel", wt("main", true))},
+		"multi":   {stoppedRepo("multi", wt("main", true), wt("feature", false))},
+		"degraded": {
+			{Name: "broken", Error: "overview: inspect repository boom"}},
+		"missing": {{Name: "ghost", Missing: true}},
+		// Run rows carry zero timestamps so the age column stays the
+		// deterministic dash across both sequential renders.
+		"runs": {
+			liveRepoWithRuns("alpha",
+				run("11111111111111111111", agentrun.StateRunning, 4, time.Time{}),
+				run("22222222222222222222", agentrun.StateSucceeded, 5, time.Time{})),
+			{Name: "gamma", Error: "probe failed",
+				Runs: []presence.RunSummary{run("33333333333333333333", agentrun.StateAwaitingDecision, 2, time.Time{})}},
+			stoppedRepo("beta", wt("dev", true)),
+		},
 		"mixed": {
 			liveRepo("alpha", wt("main", false)),
 			stoppedRepo("beta", wt("dev", true), wt("spike", false)),
@@ -147,7 +184,9 @@ func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 }
 
 // TestRenderOverviewHeaderCounts pins the summary arithmetic on a mixed
-// snapshot: one live daemon, one dirty worktree, two attention repos.
+// snapshot: one live daemon, two attention repos, and zero active — since
+// Slice 10 active counts non-terminal runs and this fixture carries none,
+// regardless of its dirty worktree.
 func TestRenderOverviewHeaderCounts(t *testing.T) {
 	repos := []overview.Repo{
 		liveRepo("alpha", wt("main", false)),
@@ -156,7 +195,7 @@ func TestRenderOverviewHeaderCounts(t *testing.T) {
 		{Name: "delta", Missing: true},
 	}
 	header := strings.Split(RenderOverviewPlain(120, repos, 0), "\n")[1]
-	assertContains(t, header, "● 1 daemons ", "· 1 active ", "· 2 attention")
+	assertContains(t, header, "● 1 daemons ", "· 0 active ", "· 2 attention")
 }
 
 // TestRenderOverviewSelectionClamping pins the selection rule on the right
@@ -224,4 +263,179 @@ func locationBlock(t *testing.T, dash string) string {
 		block = append(block, lines[i])
 	}
 	return strings.Join(block, "\n")
+}
+
+// activityBlock extracts the ACTIVITY rows from a plain render: everything
+// between the ACTIVITY header and the major rule that closes the block. It
+// requires a stacked width (below 84 columns) so the pane lines are not
+// interleaved with the tree.
+func activityBlock(t *testing.T, dash string) string {
+	t.Helper()
+	lines := strings.Split(dash, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, " ACTIVITY") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("render has no ACTIVITY header:\n%s", dash)
+	}
+	var block []string
+	for i := start + 1; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "══") {
+			break
+		}
+		block = append(block, lines[i])
+	}
+	return strings.Join(block, "\n")
+}
+
+// TestOverviewActivityRunStateMapping covers every LifecycleState in the
+// approved table: the running family spins blue as RUNNING,
+// awaiting_decision pauses yellow as DECISION, succeeded passes green,
+// failed/timed_out/unavailable fail red, and canceled/terminated settle dim
+// as CANCELED. Icons inherit their state color.
+func TestOverviewActivityRunStateMapping(t *testing.T) {
+	tests := []struct {
+		state agentrun.LifecycleState
+		icon  string
+		word  string
+		color Color
+	}{
+		{agentrun.StateCreated, "⠹", "RUNNING", Blue},
+		{agentrun.StateQueued, "⠹", "RUNNING", Blue},
+		{agentrun.StateAdmitted, "⠹", "RUNNING", Blue},
+		{agentrun.StateRunning, "⠹", "RUNNING", Blue},
+		{agentrun.StateTerminating, "⠹", "RUNNING", Blue},
+		{agentrun.StateAwaitingDecision, "⏸", "DECISION", Yellow},
+		{agentrun.StateSucceeded, "✓", "PASSED", Green},
+		{agentrun.StateFailed, "✗", "FAILED", Red},
+		{agentrun.StateTimedOut, "✗", "FAILED", Red},
+		{agentrun.StateUnavailable, "✗", "FAILED", Red},
+		{agentrun.StateCanceled, "○", "CANCELED", Dim},
+		{agentrun.StateTerminated, "○", "CANCELED", Dim},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			repos := []overview.Repo{{Name: "solo",
+				Runs: []presence.RunSummary{run("abcdef1234567890abcd", tt.state, 7, time.Time{})}}}
+			act := activityBlock(t, RenderOverviewPlain(70, repos, 0))
+			assertContains(t, act, tt.icon, tt.word, "abcdef123456", "rev 7")
+			colored := RenderOverview(70, repos, 0)
+			if !strings.Contains(colored, colorPrefix(tt.color, " "+tt.icon)) {
+				t.Errorf("icon %q must inherit color %d:\n%s", tt.icon, tt.color, colored)
+			}
+			if plain := RenderOverviewPlain(70, repos, 0); plain != stripEscapes(colored) {
+				t.Error("color mode altered visible content")
+			}
+		})
+	}
+}
+
+// TestRenderOverviewMixedRepoReplacesSummaryWithRuns pins the row layout on a
+// repository carrying both worktrees and runs: its runs replace the LIVE
+// summary row entirely, while the tree pane keeps rendering the worktrees.
+func TestRenderOverviewMixedRepoReplacesSummaryWithRuns(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	pinClock(t, now)
+	repos := []overview.Repo{liveRepo("vas.sentinel", wt("main", true), wt("feature", false))}
+	repos[0].Runs = []presence.RunSummary{
+		run("aaaaaaaaaaaaaaaaaaaa", agentrun.StateRunning, 4, now.Add(-2*time.Minute)),
+		run("bbbbbbbbbbbbbbbbbbbb", agentrun.StateAwaitingDecision, 6, time.Time{}),
+	}
+	dash := RenderOverviewPlain(70, repos, 0)
+	assertContains(t, dash, "clean", "dirty") // tree pane untouched
+	act := activityBlock(t, dash)
+	assertContains(t, act, "aaaaaaaaaaaa", "RUNNING", "rev 4", "02:00",
+		"bbbbbbbbbbbb", "DECISION", "rev 6", "-")
+	for _, leaked := range []string{"LIVE", "vas.sentinel", "worktrees"} {
+		if strings.Contains(act, leaked) {
+			t.Errorf("runs must replace the summary row; ACTIVITY leaked %q:\n%s", leaked, act)
+		}
+	}
+}
+
+// TestRenderOverviewDegradedRepoKeepsSummaryWithoutInventedRuns pins both
+// halves of the degraded rule: without runs exactly one summary row renders
+// (nothing invented), and runs a degraded snapshot does carry, they append
+// after the kept ATTENTION row.
+func TestRenderOverviewDegradedRepoKeepsSummaryWithoutInventedRuns(t *testing.T) {
+	t.Run("no runs means exactly one summary row", func(t *testing.T) {
+		degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom"}
+		act := activityBlock(t, RenderOverviewPlain(70, []overview.Repo{degraded}, 0))
+		assertContains(t, act, "ATTENTION")
+		if strings.Count(act, "ATTENTION") != 1 || strings.Contains(act, "rev ") {
+			t.Errorf("degraded repo must render one invented-free row:\n%s", act)
+		}
+	})
+	t.Run("carried runs append after the summary row", func(t *testing.T) {
+		degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom",
+			Runs: []presence.RunSummary{run("cccccccccccccccccccc", agentrun.StateSucceeded, 3, time.Time{})}}
+		act := activityBlock(t, RenderOverviewPlain(70, []overview.Repo{degraded}, 0))
+		assertContains(t, act, "ATTENTION", "PASSED", "cccccccccccc", "rev 3")
+	})
+}
+
+// TestRenderOverviewHeaderCountsNonTerminalRunsOnly pins the header arithmetic:
+// active counts lifecycle states without a terminal class across all
+// repositories' runs. Note terminated carries no terminal class yet (the
+// canceled settlement stays authoritative), so it still counts as active.
+func TestRenderOverviewHeaderCountsNonTerminalRunsOnly(t *testing.T) {
+	repos := []overview.Repo{
+		{Name: "a", Runs: []presence.RunSummary{
+			run("11111111111111111111", agentrun.StateRunning, 1, time.Time{}),
+			run("22222222222222222222", agentrun.StateSucceeded, 2, time.Time{}),
+		}},
+		{Name: "b", Runs: []presence.RunSummary{
+			run("33333333333333333333", agentrun.StateFailed, 3, time.Time{}),
+			run("44444444444444444444", agentrun.StateCanceled, 4, time.Time{}),
+			run("55555555555555555555", agentrun.StateTerminated, 5, time.Time{}),
+		}},
+		{Name: "c"},
+	}
+	header := strings.Split(RenderOverviewPlain(120, repos, 0), "\n")[1]
+	assertContains(t, header, "● 0 daemons ", "· 2 active ", "· 0 attention")
+}
+
+// TestRenderOverviewEmptyRunsRepoBehaviorUnchanged pins that repositories
+// without runs keep the exact pre-Slice-10 rows: classic LIVE/STOPPED
+// summaries with worktree counts, and nothing run-shaped anywhere.
+func TestRenderOverviewEmptyRunsRepoBehaviorUnchanged(t *testing.T) {
+	repos := []overview.Repo{liveRepo("alpha", wt("main", true)), stoppedRepo("beta", wt("dev", true))}
+	dash := RenderOverviewPlain(70, repos, 0)
+	act := activityBlock(t, dash)
+	assertContains(t, act, "alpha", "LIVE", "beta", "STOPPED", "1 worktree")
+	if strings.Contains(act, "rev ") {
+		t.Errorf("repositories without runs must not grow run rows:\n%s", act)
+	}
+	header := strings.Split(dash, "\n")[1]
+	assertContains(t, header, "· 0 active ")
+}
+
+// TestFormatAgeCompactRules pins the compact clock: mm:ss below one hour,
+// h:mm:ss afterwards, and clamping for negative durations.
+func TestFormatAgeCompactRules(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{"zero", 0, "00:00"},
+		{"fifty nine seconds", 59 * time.Second, "00:59"},
+		{"one minute", time.Minute, "01:00"},
+		{"just below an hour", 59*time.Minute + 59*time.Second, "59:59"},
+		{"one hour flips format", time.Hour, "1:00:00"},
+		{"hour minute second", time.Hour + time.Minute + time.Second, "1:01:01"},
+		{"ten hours", 10 * time.Hour, "10:00:00"},
+		{"negative clamps to zero", -5 * time.Second, "00:00"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatAge(tt.d); got != tt.want {
+				t.Fatalf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
 }

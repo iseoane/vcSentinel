@@ -23,7 +23,17 @@ type Repo struct {
 	Worktrees []inventory.Worktree
 	Origin    string
 	Daemon    presence.Presence
+	Runs      []presence.RunSummary
 }
+
+// recentRunLimit bounds how many durable-run summaries each repository
+// snapshot carries; the activity pane renders one row per summary.
+const recentRunLimit = 3
+
+// recentRuns is the RecentRuns seam: a package-level function variable so
+// Collect tests can stub the store-backed read without building real
+// execution stores. Production code never reassigns it.
+var recentRuns = presence.RecentRuns
 
 // Collect opens the registry at registryPath and builds exactly one Repo per
 // entry, preserving the registry's sort order (by Path).
@@ -32,13 +42,19 @@ type Repo struct {
 // failure (no registry, no overview); it is never combined with a partial
 // slice. Every per-repository problem lives in that Repo's Error field:
 //
-//   - Entry.Missing(): Missing is flagged and both probes are skipped
-//     (Worktrees nil, Origin empty, Daemon the Stopped zero value).
+//   - Entry.Missing(): Missing is flagged and every probe is skipped
+//     (Worktrees nil, Origin empty, Daemon the Stopped zero value, Runs nil).
 //   - Otherwise the git common dir is resolved first; on failure Error
-//     records it while Daemon stays the zero value and Worktrees stays nil.
+//     records it while Daemon stays the zero value and Worktrees and Runs
+//     stay nil.
 //   - Once the common dir resolves, the presence probe always runs (it
-//     degrades to Stopped by its own contract); a subsequent inventory
-//     failure records Error while keeping the probe result.
+//     degrades to Stopped by its own contract); an inventory failure records
+//     Error while keeping the probe result.
+//   - The recent-runs read still executes afterwards: a successful read
+//     stores up to recentRunLimit summaries in Runs (an empty store keeps
+//     Runs nil); a runs-read failure records its cause in Error only when
+//     the field is still empty (the first observed cause wins) and also
+//     leaves Runs nil.
 //
 // Disabled entries are included but flagged; callers filter. There is no
 // caching and nothing is written, dialed, or started.
@@ -62,8 +78,11 @@ func Collect(registryPath string) ([]Repo, error) {
 	return repos, nil
 }
 
-// collectProbes fills repo with the daemon and inventory facts of repoPath,
-// recording any failure in repo.Error without ever failing the collection.
+// collectProbes fills repo with the daemon, inventory, and durable-run facts
+// of repoPath, recording any failure in repo.Error without ever failing the
+// collection. The probes are independent reads over the resolved common dir:
+// an early failure keeps its recorded cause because every later failure only
+// writes when Error is still empty.
 func collectProbes(repo *Repo, repoPath string) {
 	commonDir, err := git.ObtenerGitCommonDir(repoPath)
 	if err != nil {
@@ -74,8 +93,18 @@ func collectProbes(repo *Repo, repoPath string) {
 	snapshot, err := inventory.Inspect(repoPath)
 	if err != nil {
 		repo.Error = fmt.Sprintf("overview: inspect repository %q: %v", repoPath, err)
-		return
+	} else {
+		repo.Worktrees = snapshot.Worktrees
+		repo.Origin = snapshot.Origin
 	}
-	repo.Worktrees = snapshot.Worktrees
-	repo.Origin = snapshot.Origin
+	runs, err := recentRuns(commonDir, recentRunLimit)
+	if err != nil {
+		if repo.Error == "" { // first observed cause wins
+			repo.Error = fmt.Sprintf("overview: read recent runs for %q: %v", repoPath, err)
+		}
+		return // Runs stays nil: never invent rows from a failed read.
+	}
+	if len(runs) > 0 {
+		repo.Runs = runs // empty reads stay nil so runless repos compare and render as before
+	}
 }
