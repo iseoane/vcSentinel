@@ -7,7 +7,8 @@ import (
 )
 
 // prepararPlanConGigante deja el repo con un archivo normal y otro gigante,
-// y devuelve el plan emitido (con su decisión pendiente).
+// y devuelve el plan emitido (con su bypass automático por unidad
+// indivisible).
 func prepararPlanConGigante(t *testing.T) *PlanSerializado {
 	t.Helper()
 	prepararRepoTemp(t)
@@ -21,10 +22,29 @@ func prepararPlanConGigante(t *testing.T) *PlanSerializado {
 	if err != nil {
 		t.Fatalf("ConstruirPlanParaAgente falló: %v", err)
 	}
-	if len(plan.DecisionesPendientes) != 1 {
-		t.Fatalf("se esperaba 1 decisión pendiente, obtuve %d", len(plan.DecisionesPendientes))
+	if len(plan.DecisionesPendientes) != 0 {
+		t.Fatalf("la clase indivisible ya no es humana; obtuve %d pendientes", len(plan.DecisionesPendientes))
+	}
+	if len(plan.DecisionesAutomaticas) != 1 {
+		t.Fatalf("se esperaba 1 decisión automática, obtuve %d", len(plan.DecisionesAutomaticas))
+	}
+	if plan.DecisionesAutomaticas[0].Motivo != MotivoIndivisible {
+		t.Fatalf("motivo = %q, esperado %q", plan.DecisionesAutomaticas[0].Motivo, MotivoIndivisible)
 	}
 	return plan
+}
+
+// inyectarDecisionHumana añade una decisión pendiente sintética (clase fichero
+// gigante) para ejercitar las respuestas humanas sobre un plan ya calculado.
+func inyectarDecisionHumana(t *testing.T, plan *PlanSerializado) string {
+	t.Helper()
+	id := "decision-humana-test"
+	plan.DecisionesPendientes = append(plan.DecisionesPendientes, DecisionPendiente{
+		ID: id, Archivo: "gigante.go", Lineas: 600,
+		Pregunta: "test", Opciones: []string{RespuestaBypass, RespuestaAbortar},
+	})
+	plan.PlanID = calcularPlanIDPlan(plan)
+	return id
 }
 
 func respuestasBypass(plan *PlanSerializado) RespuestasPlan {
@@ -76,6 +96,7 @@ func TestAplicarPlanRechazaRespuestasDeOtroPlan(t *testing.T) {
 // «aprobar todo» es implícito.
 func TestAplicarPlanExigeRespuestaExplicita(t *testing.T) {
 	plan := prepararPlanConGigante(t)
+	inyectarDecisionHumana(t, plan)
 	commitsAntes := contarCommits(t)
 
 	_, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID, Respuestas: map[string]string{}})
@@ -92,8 +113,10 @@ func TestAplicarPlanRespetaElAborto(t *testing.T) {
 	plan := prepararPlanConGigante(t)
 	commitsAntes := contarCommits(t)
 
+	id := inyectarDecisionHumana(t, plan)
+
 	respuestas := respuestasBypass(plan)
-	respuestas.Respuestas[plan.DecisionesPendientes[0].ID] = RespuestaAbortar
+	respuestas.Respuestas[id] = RespuestaAbortar
 
 	_, err := AplicarPlanAprobado(plan, respuestas)
 	if !errors.Is(err, ErrDecisionAbortada) {

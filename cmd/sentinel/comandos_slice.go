@@ -111,6 +111,10 @@ func ejecutarSliceApply(salida io.Writer, args []string) int {
 		return 1
 	}
 
+	for _, automatica := range plan.DecisionesAutomaticas {
+		fmt.Fprintf(salida, "⚙️ Bypass automático otorgado por el plan: %s (%d líneas, %s)\n", automatica.ID, automatica.Lineas, automatica.Motivo)
+	}
+
 	resultados, err := git.AplicarPlanAprobado(&plan, respuestas)
 	if err != nil {
 		fmt.Fprintf(salida, "❌ %v\n", err)
@@ -145,6 +149,9 @@ func imprimirPlanSerializado(salida io.Writer, plan *git.PlanSerializado) {
 		for _, ruta := range lote.Rutas {
 			fmt.Fprintf(salida, "   • %s\n", ruta)
 		}
+	}
+	for _, automatica := range plan.DecisionesAutomaticas {
+		fmt.Fprintf(salida, "\n⚙️ Bypass automático %s — %d líneas (%s)\n   %s: el plan lo otorga sin preguntar porque la unidad no puede dividirse con seguridad.\n", automatica.ID, automatica.Lineas, automatica.Archivo, automatica.Motivo)
 	}
 	for _, decision := range plan.DecisionesPendientes {
 		fmt.Fprintf(salida, "\n❓ Decisión pendiente %s\n   %s\n   Opciones: %v\n", decision.ID, decision.Pregunta, decision.Opciones)

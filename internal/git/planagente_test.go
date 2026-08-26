@@ -46,19 +46,21 @@ func TestConstruirPlanParaAgenteRegistraDecisionSinCommitear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConstruirPlanParaAgente devolvió error: %v", err)
 	}
-	if len(plan.DecisionesPendientes) != 1 {
-		t.Fatalf("se esperaba 1 decisión pendiente, obtuve %d", len(plan.DecisionesPendientes))
+	if len(plan.DecisionesPendientes) != 0 {
+		t.Fatalf("la clase indivisible ya no pregunta; obtuve %d pendientes", len(plan.DecisionesPendientes))
 	}
-	decision := plan.DecisionesPendientes[0]
-	if decision.Archivo != "gigante.go" {
-		t.Errorf("archivo de la decisión = %q, esperado gigante.go", decision.Archivo)
+	if len(plan.DecisionesAutomaticas) != 1 {
+		t.Fatalf("se esperaba 1 decisión automática, obtuve %d", len(plan.DecisionesAutomaticas))
 	}
-	if decision.ID == "" {
-		t.Error("la decisión pendiente no tiene id")
+	automatica := plan.DecisionesAutomaticas[0]
+	if automatica.Archivo != "gigante.go" {
+		t.Errorf("archivo de la decisión = %q, esperado gigante.go", automatica.Archivo)
 	}
-	esperadas := []string{RespuestaBypass, RespuestaAbortar}
-	if strings.Join(decision.Opciones, ",") != strings.Join(esperadas, ",") {
-		t.Errorf("opciones = %v, esperado %v", decision.Opciones, esperadas)
+	if automatica.ID == "" {
+		t.Error("la decisión automática no tiene id")
+	}
+	if automatica.Motivo != MotivoIndivisible {
+		t.Errorf("motivo = %q, esperado %q", automatica.Motivo, MotivoIndivisible)
 	}
 	if commitsAntes != contarCommits(t) {
 		t.Error("ConstruirPlanParaAgente creó commits: debe proponer sin ejecutar")

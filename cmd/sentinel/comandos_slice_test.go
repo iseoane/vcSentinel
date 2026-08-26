@@ -123,9 +123,10 @@ func TestElegirAdaptadorSinConsentimientoUsaFallbackDeterminista(t *testing.T) {
 	}
 }
 
-// TestEjecutarSlicePlanDevuelveTresConDecisionPendiente cubre el contrato de
-// exit de T0.9: 3 cuando hay una decisión que solo el usuario puede responder.
-func TestEjecutarSlicePlanDevuelveTresConDecisionPendiente(t *testing.T) {
+// TestEjecutarSlicePlanBypassAutomaticoIndivisible cubre la clase indivisible:
+// una unidad que no puede subdividirse por átomos obtiene el bypass del propio
+// plan (sin exit 3 ni pregunta), notificado en decisiones_automaticas.
+func TestEjecutarSlicePlanBypassAutomaticoIndivisible(t *testing.T) {
 	prepararRepoParaPlan(t)
 	contenido := strings.Repeat("// línea de relleno\n", 600)
 	if err := os.WriteFile("gigante.go", []byte(contenido), 0644); err != nil {
@@ -133,8 +134,8 @@ func TestEjecutarSlicePlanDevuelveTresConDecisionPendiente(t *testing.T) {
 	}
 
 	var salida bytes.Buffer
-	if codigo := ejecutarSlicePlan(&salida, []string{"--json"}); codigo != codigoSalidaDecisionesPendientes {
-		t.Fatalf("exit = %d, esperado %d. Salida: %s", codigo, codigoSalidaDecisionesPendientes, salida.String())
+	if codigo := ejecutarSlicePlan(&salida, []string{"--json"}); codigo != 0 {
+		t.Fatalf("exit = %d, esperado 0. Salida: %s", codigo, salida.String())
 	}
 
 	var plan struct {
@@ -142,6 +143,10 @@ func TestEjecutarSlicePlanDevuelveTresConDecisionPendiente(t *testing.T) {
 		DecisionesPendientes []struct {
 			Archivo string `json:"archivo"`
 		} `json:"decisiones_pendientes"`
+		DecisionesAutomaticas []struct {
+			Archivo string `json:"archivo"`
+			Motivo  string `json:"motivo"`
+		} `json:"decisiones_automaticas"`
 	}
 	if err := json.Unmarshal(salida.Bytes(), &plan); err != nil {
 		t.Fatalf("la salida --json no es JSON válido: %v", err)
@@ -149,8 +154,14 @@ func TestEjecutarSlicePlanDevuelveTresConDecisionPendiente(t *testing.T) {
 	if plan.PlanID == "" {
 		t.Error("el plan emitido no trae plan_id")
 	}
-	if len(plan.DecisionesPendientes) != 1 || plan.DecisionesPendientes[0].Archivo != "gigante.go" {
-		t.Errorf("decisiones pendientes = %+v", plan.DecisionesPendientes)
+	if len(plan.DecisionesPendientes) != 0 {
+		t.Errorf("decisiones pendientes = %+v, esperado vacío", plan.DecisionesPendientes)
+	}
+	if len(plan.DecisionesAutomaticas) != 1 || plan.DecisionesAutomaticas[0].Archivo != "gigante.go" {
+		t.Fatalf("decisiones automáticas = %+v", plan.DecisionesAutomaticas)
+	}
+	if plan.DecisionesAutomaticas[0].Motivo != "unidad no divisible por átomos de diff" {
+		t.Errorf("motivo = %q", plan.DecisionesAutomaticas[0].Motivo)
 	}
 }
 

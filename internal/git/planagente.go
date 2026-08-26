@@ -25,6 +25,20 @@ type DecisionPendiente struct {
 	Opciones []string `json:"opciones"`
 }
 
+// DecisionAutomatica registra un bypass que el plan otorga por política sin
+// trasladarlo al humano: la unidad es indivisible por átomos de diff, así que
+// no existe una división más segura que preguntar. Queda notificada en el
+// plan y en cada apply para que la exención nunca sea silenciosa.
+type DecisionAutomatica struct {
+	ID      string `json:"id"`
+	Archivo string `json:"archivo"`
+	Lineas  int    `json:"lineas"`
+	Motivo  string `json:"motivo"`
+}
+
+// MotivoIndivisible es el único motivo de bypass automático actual.
+const MotivoIndivisible = "unidad no divisible por átomos de diff"
+
 // LoteSerializado es la proyección estable de un LotePlanificado en el plan
 // emitido: solo lo que un consumidor externo necesita para revisarlo.
 type LoteSerializado struct {
@@ -41,12 +55,13 @@ type LoteSerializado struct {
 // commitea nada y es idempotente: sobre el mismo árbol produce el mismo
 // PlanID y el mismo EstadoWorktree.
 type PlanSerializado struct {
-	PlanID               string              `json:"plan_id"`
-	EstadoWorktree       string              `json:"estado_worktree"`
-	Lotes                []LoteSerializado   `json:"lotes"`
-	Changes              []PlannedChange     `json:"changes,omitempty"`
-	DecisionesPendientes []DecisionPendiente `json:"decisiones_pendientes"`
-	Explanation          string              `json:"explanation,omitempty"`
+	PlanID                string               `json:"plan_id"`
+	EstadoWorktree        string               `json:"estado_worktree"`
+	Lotes                 []LoteSerializado    `json:"lotes"`
+	Changes               []PlannedChange      `json:"changes,omitempty"`
+	DecisionesPendientes  []DecisionPendiente  `json:"decisiones_pendientes"`
+	DecisionesAutomaticas []DecisionAutomatica `json:"decisiones_automaticas"`
+	Explanation           string               `json:"explanation,omitempty"`
 }
 
 // registradorDecisiones implementa la segunda vía del callback de decisión de
@@ -55,18 +70,20 @@ type PlanSerializado struct {
 // true aquí NO aprueba nada: el lote queda marcado como gigante y `slice
 // apply` se negará mientras la decisión no tenga respuesta explícita.
 type registradorDecisiones struct {
-	pendientes []DecisionPendiente
+	pendientes  []DecisionPendiente
+	automaticas []DecisionAutomatica
 }
 
 func (r *registradorDecisiones) semanticCallback(unit SemanticOversizedUnit) (bool, error) {
-	r.pendientes = append(r.pendientes, DecisionPendiente{
+	// Indivisible by exact diff atoms: asking a human to choose between two
+	// identical outcomes (bypass the only possible slice, or abort) adds a
+	// roundtrip without adding a decision. The plan grants the bypass itself
+	// and records it as an automatic decision so apply announces it.
+	r.automaticas = append(r.automaticas, DecisionAutomatica{
 		ID:      unit.ID,
 		Archivo: strings.Join(unit.Paths, ", "),
 		Lineas:  unit.AddedLines,
-		Pregunta: fmt.Sprintf(
-			"The semantic unit %s has %d authored additions and cannot be safely subdivided by exact diff atoms. Bypass it as one reviewable slice or abort?",
-			strings.Join(unit.Paths, ", "), unit.AddedLines),
-		Opciones: []string{RespuestaBypass, RespuestaAbortar},
+		Motivo:  MotivoIndivisible,
 	})
 	return true, nil
 }
@@ -120,7 +137,7 @@ func ConstruirPlanParaAgenteConOpciones(adapter generadorMensajesCommit, options
 		GenerarMensajesLotes(plan, adapter)
 	}
 	plan.Changes = changes
-	serializado := SerializarPlan(plan, registrador.pendientes, "")
+	serializado := serializarPlanConAutomaticas(plan, registrador.pendientes, registrador.automaticas, "")
 	serializado.EstadoWorktree = hashPlannedChangesState(changes)
 	if err := RecalculatePlanID(serializado); err != nil {
 		return nil, err
@@ -180,6 +197,10 @@ func RutasDelPlan(plan *PlanSerializado) []string {
 
 // SerializarPlan proyecta el plan y calcula su PlanID a partir de los lotes.
 func SerializarPlan(plan *PlanFragmentacion, pendientes []DecisionPendiente, estado string) *PlanSerializado {
+	return serializarPlanConAutomaticas(plan, pendientes, nil, estado)
+}
+
+func serializarPlanConAutomaticas(plan *PlanFragmentacion, pendientes []DecisionPendiente, automaticas []DecisionAutomatica, estado string) *PlanSerializado {
 	lotes := make([]LoteSerializado, 0, len(plan.Lotes))
 	for _, lote := range plan.Lotes {
 		mensaje := lote.Mensaje
@@ -197,15 +218,19 @@ func SerializarPlan(plan *PlanFragmentacion, pendientes []DecisionPendiente, est
 		})
 	}
 	serializado := &PlanSerializado{
-		EstadoWorktree:       estado,
-		Lotes:                lotes,
-		Changes:              cloneChanges(plan.Changes),
-		DecisionesPendientes: append([]DecisionPendiente(nil), pendientes...),
-		Explanation:          plan.Explanation,
+		EstadoWorktree:        estado,
+		Lotes:                 lotes,
+		Changes:               cloneChanges(plan.Changes),
+		DecisionesPendientes:  append([]DecisionPendiente(nil), pendientes...),
+		DecisionesAutomaticas: append([]DecisionAutomatica(nil), automaticas...),
+		Explanation:           plan.Explanation,
 	}
 	asignarSelectoresSerializados(serializado)
 	if pendientes == nil {
 		serializado.DecisionesPendientes = []DecisionPendiente{}
+	}
+	if automaticas == nil {
+		serializado.DecisionesAutomaticas = []DecisionAutomatica{}
 	}
 	serializado.PlanID = calcularPlanIDPlan(serializado)
 	return serializado
