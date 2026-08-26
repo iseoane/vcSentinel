@@ -144,7 +144,7 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 					return tt.ready
 				},
 			}
-			owned, err := gate.resolveOwnership()
+			owned, _, err := gate.resolveOwnership()
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("resolveOwnership() error = %v, want it to contain %q", err, tt.wantErr)
@@ -245,7 +245,7 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 			},
 		}
 		var out bytes.Buffer
-		stopOwnedTuiDaemon(&out, gate)
+		stopOwnedTuiDaemon(&out, gate, 0)
 		if host.shutdowns != 1 || host.closes != 1 {
 			t.Fatalf("shutdowns = %d, closes = %d, want exactly one of each", host.shutdowns, host.closes)
 		}
@@ -268,7 +268,7 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 			},
 		}
 		var out bytes.Buffer
-		stopOwnedTuiDaemon(&out, gate)
+		stopOwnedTuiDaemon(&out, gate, 0)
 		if dials != 0 || out.Len() != 0 {
 			t.Fatalf("absent endpoint dialed %d times and printed %q", dials, out.String())
 		}
@@ -309,7 +309,7 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 func captureStopOutput(t *testing.T, gate tuiDaemonGate) string {
 	t.Helper()
 	var out bytes.Buffer
-	stopOwnedTuiDaemon(&out, gate)
+	stopOwnedTuiDaemon(&out, gate, 0)
 	return out.String()
 }
 

@@ -57,7 +57,7 @@ type Repo struct {
 
 // recentRunLimit bounds how many durable-run summaries each repository
 // snapshot carries; the activity pane renders one row per summary.
-const recentRunLimit = 3
+const recentRunLimit = 10
 
 // recentRuns is the RecentRuns seam: a package-level function variable so
 // Collect tests can stub the store-backed read without building real

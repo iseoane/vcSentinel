@@ -32,7 +32,7 @@ const maxOperationFlowRunes = 16
 // unbounded tree would still drown every other repository and push the
 // activity pane off-screen. Degraded repositories are exempt: they render
 // their Error line instead of children, so they neither count nor collapse.
-const maxTreeChildren = 12
+const maxTreeChildren = 20
 
 // FocusPane names the pane that owns keyboard navigation.
 type FocusPane int

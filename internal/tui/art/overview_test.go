@@ -116,7 +116,7 @@ func TestRenderOverviewMultiWorktree(t *testing.T) {
 // the "├─" connector — followed by one final dim "… N more" line carrying
 // the "└─"; hidden children never leak into the render.
 func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
-	repos := []overview.Repo{stoppedRepo("big", manyWorktrees(15)...)}
+	repos := []overview.Repo{stoppedRepo("big", manyWorktrees(maxTreeChildren+3)...)}
 	dash := RenderOverviewPlain(100, ViewState{Repos: repos})
 	if got := strings.Count(dash, "   ├─"); got != maxTreeChildren {
 		t.Errorf("%d child lines rendered, want maxTreeChildren=%d:\n%s", got, maxTreeChildren, dash)
@@ -125,13 +125,15 @@ func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
 	if got := strings.Count(dash, "   └─"); got != 1 {
 		t.Errorf("the overflow line must be the only └─ child row, got %d:\n%s", got, dash)
 	}
-	for _, hidden := range []string{"branch-12", "branch-13", "branch-14"} {
+	for i := maxTreeChildren; i < maxTreeChildren+3; i++ {
+		hidden := fmt.Sprintf("branch-%02d", i)
 		if strings.Contains(dash, hidden) {
 			t.Errorf("collapsed child %q must not render:\n%s", hidden, dash)
 		}
 	}
-	if !strings.Contains(dash, "branch-11 ") {
-		t.Errorf("the twelfth child must render right above the overflow line:\n%s", dash)
+	lastVisible := fmt.Sprintf("branch-%02d ", maxTreeChildren-1)
+	if !strings.Contains(dash, lastVisible) {
+		t.Errorf("the last visible child %q must render right above the overflow line:\n%s", lastVisible, dash)
 	}
 	assertWidth(t, dash, 100)
 	colored := RenderOverview(100, ViewState{Repos: repos})
@@ -147,8 +149,9 @@ func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
 // Error line replaces the children wholesale.
 func TestOverviewTreeAtLimitAndDegradedExempt(t *testing.T) {
 	exact := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
-		stoppedRepo("edge", manyWorktrees(maxTreeChildren)...)}})
-	assertContains(t, exact, "   └─ branch-11")
+		stoppedRepo("edge", manyWorktrees(maxTreeChildren)... )}})
+	lastBranch := fmt.Sprintf("   └─ branch-%02d", maxTreeChildren-1)
+	assertContains(t, exact, lastBranch)
 	if got := strings.Count(exact, "   ├─"); got != maxTreeChildren-1 {
 		t.Errorf("%d connected children at the limit, want %d:\n%s", got, maxTreeChildren-1, exact)
 	}

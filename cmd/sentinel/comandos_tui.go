@@ -60,6 +60,10 @@ type tuiDaemonHost interface {
 // not usable; build it through newTuiDaemonGate in production or with fakes
 // in tests.
 type tuiDaemonGate struct {
+	// commonDir is the git common directory for this repository. It is
+	// used to resolve the daemon claim's liveness without going through
+	// the endpoint.
+	commonDir string
 	// loadEndpoint reads the repository's daemon discovery record. It wraps
 	// os.ErrNotExist when no record exists; any other error means an
 	// unreadable or corrupt residue. Both shapes are reclaimable states.
@@ -67,44 +71,77 @@ type tuiDaemonGate struct {
 	// dial connects to a loaded endpoint with the repository fingerprint
 	// handshake. A success proves a live (foreign) daemon is serving.
 	dial func(endpoint daemon.Endpoint) (tuiDaemonHost, error)
+	// inspectAlive reports whether the current owner claim's PID is still
+	// alive. It is used to distinguish a transient dial failure (live owner)
+	// from a truly stale daemon. Nil means the check is unavailable and the
+	// caller must treat dial failures as stale (conservative for tests that
+	// don't need it).
+	inspectAlive func() bool
 	// spawn launches `<selfexe> runs daemon start` detached.
 	spawn func() error
 	// waitReady reports whether the freshly spawned daemon published its
 	// endpoint record within its startup budget.
 	waitReady func() bool
+	// ownerPID is the PID of the daemon this session started, captured at
+	// resolveOwnership time. It is used on shutdown to verify we still own
+	// the same daemon before sending Shutdown, so we never kill a daemon
+	// that was started by another process after we stole or reclaimed.
+	ownerPID int
 }
 
 // resolveOwnership applies the ownership decision matrix:
 //
 //   - record absent (os.ErrNotExist) or unreadable/corrupt: stale-reclaimable
 //     state, spawn and own;
-//   - record loads but nobody answers the dial: stale residue from a dead
-//     owner, whose claim is reclaimed deterministically by the next start,
-//     so spawn and own;
-//   - record loads and dials: a foreign daemon is live — never touched here.
+//   - record loads and dials: a foreign daemon is live — never touched here;
+//   - record loads but nobody answers the dial: check the claim's PID
+//     liveness before deciding — a transient dial failure must not be
+//     mistaken for a stale daemon, or the TUI would steal a live owner's
+//     slot and later orphan its runs on exit.
 //
 // A spawn failure or readiness timeout returns an error so the caller exits
 // infrastructure BEFORE opening the TUI: the session must never open
 // half-owned. The dialable path closes the probed connection immediately:
 // the probe exists only to classify ownership, never to hold the wire.
-func (g tuiDaemonGate) resolveOwnership() (owned bool, err error) {
+//
+// When owned is true, ownerPID is the PID of the daemon that now owns the
+// slot (the freshly spawned one). The caller must remember it and verify it
+// on shutdown so a later claim steal does not make the TUI kill a foreign
+// daemon.
+func (g *tuiDaemonGate) resolveOwnership() (owned bool, ownerPID int, err error) {
 	endpoint, loadErr := g.loadEndpoint()
 	if loadErr == nil {
 		host, dialErr := g.dial(endpoint)
 		if dialErr == nil {
 			_ = host.Close()
-			return false, nil
+			return false, 0, nil
 		}
-		// Nobody answers the recorded endpoint: stale residue left by a dead
-		// owner; fall through to the reclaiming spawn below.
+		// Dial failed — don't assume stale immediately. Check if the claim's
+		// PID is still alive; a live PID means the daemon is likely still
+		// running and the dial failure is transient (overload, handshake race).
+		// Only a dead PID is safely reclaimable.
+		if g.inspectAlive != nil && g.inspectAlive() {
+			return false, 0, nil
+		}
+		// Nobody answers and the claim is dead or unreadable: stale residue
+		// left by a dead owner; fall through to the reclaiming spawn below.
 	}
 	if err := g.spawn(); err != nil {
-		return false, fmt.Errorf("could not start the repository daemon: %w", err)
+		return false, 0, fmt.Errorf("could not start the repository daemon: %w", err)
 	}
 	if !g.waitReady() {
-		return false, errors.New("the repository daemon did not become reachable before its startup budget expired")
+		return false, 0, errors.New("the repository daemon did not become reachable before its startup budget expired")
 	}
-	return true, nil
+	// Capture the PID we now own so shutdown can verify it hasn't been
+	// stolen by another process in the meantime.
+	var pid int
+	if g.commonDir != "" {
+		if owner, alive, err := daemon.InspectOwner(g.commonDir); err == nil && alive {
+			pid = owner.PID
+			g.ownerPID = pid
+		}
+	}
+	return true, pid, nil
 }
 
 // waitTuiDaemonReady polls load until it reports nil once, giving up after
@@ -148,12 +185,17 @@ func spawnDetachedTuiDaemon() error {
 func newTuiDaemonGate(commonDir string) tuiDaemonGate {
 	dir := daemon.Dir(commonDir)
 	return tuiDaemonGate{
+		commonDir: commonDir,
 		loadEndpoint: func() (daemon.Endpoint, error) {
 			endpoint, _, err := daemon.LoadEndpoint(dir)
 			return endpoint, err
 		},
 		dial: func(endpoint daemon.Endpoint) (tuiDaemonHost, error) {
 			return daemon.DialRemoteHost(endpoint, daemon.FingerprintRepository(commonDir))
+		},
+		inspectAlive: func() bool {
+			_, alive, err := daemon.InspectOwner(commonDir)
+			return err == nil && alive
 		},
 		spawn: spawnDetachedTuiDaemon,
 		waitReady: func() bool {
@@ -173,7 +215,18 @@ func newTuiDaemonGate(commonDir string) tuiDaemonGate {
 // record follows the idempotent not-running contract: the owned daemon is
 // already gone, which is the desired end state, reported quietly. Foreign
 // daemons can never reach this path — owned=false never calls it.
-func stopOwnedTuiDaemon(out io.Writer, gate tuiDaemonGate) {
+//
+// expectedPID is the PID captured at resolveOwnership time. If it is non-zero
+// and the current owner PID differs, the daemon has been stolen or restarted
+// by another process since we started, and we must not kill the new owner.
+func stopOwnedTuiDaemon(out io.Writer, gate tuiDaemonGate, expectedPID int) {
+	if expectedPID != 0 && gate.commonDir != "" {
+		if owner, alive, err := daemon.InspectOwner(gate.commonDir); err == nil && alive {
+			if owner.PID != expectedPID {
+				return
+			}
+		}
+	}
 	endpoint, err := gate.loadEndpoint()
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -356,7 +409,7 @@ func executeTuiSession(out io.Writer, registryPath, worktree string, gate tuiDae
 		fmt.Fprintf(out, "❌ Could not load the repository overview: %v\n", err)
 		return runExitInfrastructure
 	}
-	owned, err := gate.resolveOwnership()
+	owned, ownerPID, err := gate.resolveOwnership()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return runExitInfrastructure
@@ -366,7 +419,7 @@ func executeTuiSession(out io.Writer, registryPath, worktree string, gate tuiDae
 	}, control.DefaultRefreshInterval, newSessionRunActions(worktree))
 	runErr := startControlCenter(model)
 	if owned {
-		stopOwnedTuiDaemon(out, gate)
+		stopOwnedTuiDaemon(out, gate, ownerPID)
 	}
 	if runErr != nil {
 		fmt.Fprintf(out, "❌ The control-center session failed: %v\n", runErr)
