@@ -21,7 +21,7 @@ land.
 
 ## P2 — Next (clear value, small effort)
 
-- [ ] **Make `runs attach` discoverable by help** — `attach` is missing from
+- [x] **Make `runs attach` discoverable by help** — `attach` is missing from
       the `sentinel runs --help` subcommand list, and `runs attach --help`
       exits with a rejection although the command accepts real flags
       (`--run`, `--follow`). The ticket-15 central `-h/--help` interception
