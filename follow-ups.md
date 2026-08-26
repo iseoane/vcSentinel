@@ -49,6 +49,11 @@ failure routes; `spawnHelper` simplified. See Resolved below.
       is roadmap-scale and not yet ticketed; revisit when that work starts.
       The enforcement declaration itself is ALREADY durably recorded via the
       `agent.enforcement` admission capability. Origin: 16 (JD-E remainder).
+
+## P-Future — parked (maybe someday)
+
+No current trigger or use case; revisited only if circumstances change.
+
 - [ ] **D4: remote host contract** — mutual auth, repository/run
       authorization, disconnect ownership transfer, trust boundaries for
       code/prompts/credentials/evidence. GATED on a concrete operator use
