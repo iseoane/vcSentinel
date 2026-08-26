@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -244,19 +245,106 @@ func TestTreeOIDIsValid(t *testing.T) {
 	}
 }
 
-func TestRemoveStalePurgeMarker(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), snapshotPurgeMarker)
-	if err := os.Mkdir(marker, 0700); err != nil {
+func TestPurgeSkipsAcquiredSnapshot(t *testing.T) {
+	requiereGitReal(t)
+	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	t.Chdir(dir)
+	tree, err := ArbolDe("HEAD")
+	if err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-snapshotPurgeMarkerMaxAge - time.Second)
-	if err := os.Chtimes(marker, old, old); err != nil {
+	path, release, err := AcquireSnapshot(tree)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !removeStalePurgeMarker(marker) {
-		t.Fatal("expected stale purge marker to be removed")
+	if err := PurgarSnapshots(0); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("marker still exists or could not be checked: %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("acquired snapshot was purged: %v", err)
+	}
+	release()
+	if err := PurgarSnapshots(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("released snapshot was not purged: %v", err)
+	}
+}
+
+func TestSnapshotLockReleasedAfterProcessExit(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "snapshot.lock")
+	readyPath := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotLockHelper$")
+	cmd.Env = append(os.Environ(),
+		"VAS_SENTINEL_SNAPSHOT_LOCK_HELPER=1",
+		"VAS_SENTINEL_SNAPSHOT_LOCK_PATH="+lockPath,
+		"VAS_SENTINEL_SNAPSHOT_LOCK_READY="+readyPath,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("helper did not acquire the shared snapshot lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	lock, acquired, err := lockSnapshot(lockPath, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acquired {
+		_ = lock.Close()
+		t.Fatal("exclusive lock acquired while another process held a shared lock")
+	}
+
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("killed helper exited successfully")
+	}
+	waited = true
+
+	lock, acquired, err = lockSnapshot(lockPath, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("exclusive lock remained unavailable after owner process exit")
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotLockHelper(t *testing.T) {
+	if os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_HELPER") != "1" {
+		return
+	}
+	lock, acquired, err := lockSnapshot(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_PATH"), false, true)
+	if err != nil || !acquired {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_READY"), nil, 0600); err != nil {
+		os.Exit(3)
+	}
+	for {
+		runtime.KeepAlive(lock)
+		time.Sleep(time.Second)
 	}
 }

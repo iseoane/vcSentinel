@@ -24,11 +24,7 @@ import (
 // atomic temp-checkout + rename publication below.
 var snapshotMu sync.Mutex
 
-const snapshotLeaseDir = "snapshot-leases"
-
-const snapshotPurgeMarker = ".purging"
-
-const snapshotPurgeMarkerMaxAge = time.Minute
+const snapshotLockDir = "snapshot-locks"
 
 // ArbolDe devuelve el tree OID de una revisión.
 func ArbolDe(revision string) (string, error) {
@@ -129,7 +125,7 @@ func CrearSnapshot(treeOID string) (string, error) {
 	return refrescarSnapshot(destino)
 }
 
-// AcquireSnapshot keeps a shared lease for one validation while it uses a
+// AcquireSnapshot keeps a shared OS lock for one validation while it uses a
 // snapshot. The release function is idempotent and must be deferred by callers.
 func AcquireSnapshot(treeOID string) (string, func(), error) {
 	if !treeOIDIsValid(treeOID) {
@@ -139,67 +135,37 @@ func AcquireSnapshot(treeOID string) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	leaseDir := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
-	lease, err := createSnapshotLease(leaseDir)
+	lockPath, err := snapshotLockPath(snapshots, treeOID)
 	if err != nil {
 		return "", nil, err
+	}
+	lock, acquired, err := lockSnapshot(lockPath, false, true)
+	if err != nil {
+		return "", nil, err
+	}
+	if !acquired {
+		return "", nil, errors.New("snapshot shared lock was not acquired")
 	}
 	path, err := CrearSnapshot(treeOID)
 	if err != nil {
-		_ = os.Remove(lease)
+		_ = lock.Close()
 		return "", nil, err
 	}
 	var once sync.Once
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go refreshSnapshotLease(lease, stop, done)
 	release := func() {
 		once.Do(func() {
-			close(stop)
-			<-done
-			_ = os.Remove(lease)
-			_ = os.Remove(leaseDir)
+			_ = lock.Close()
 		})
 	}
 	return path, release, nil
 }
 
-func createSnapshotLease(leaseDir string) (string, error) {
-	for {
-		if err := os.MkdirAll(leaseDir, 0700); err != nil {
-			return "", err
-		}
-		lease := filepath.Join(leaseDir, fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()))
-		if err := os.WriteFile(lease, nil, 0600); err != nil {
-			return "", err
-		}
-		marker := filepath.Join(leaseDir, snapshotPurgeMarker)
-		if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
-			return lease, nil
-		} else if err != nil {
-			_ = os.Remove(lease)
-			return "", err
-		}
-		_ = os.Remove(lease)
-		if removeStalePurgeMarker(marker) {
-			continue
-		}
-		time.Sleep(10 * time.Millisecond)
+func snapshotLockPath(snapshots, treeOID string) (string, error) {
+	dir := filepath.Join(filepath.Dir(snapshots), snapshotLockDir)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
 	}
-}
-
-func refreshSnapshotLease(path string, stop <-chan struct{}, done chan<- struct{}) {
-	defer close(done)
-	ticker := time.NewTicker(RetencionSnapshots / 4)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case now := <-ticker.C:
-			_ = os.Chtimes(path, now, now)
-		}
-	}
+	return filepath.Join(dir, treeOID+".lock"), nil
 }
 
 // refrescarSnapshot marks a snapshot as actively acquired. Purge uses the
@@ -254,12 +220,17 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		if info.ModTime().After(limite) {
 			continue
 		}
-		endPurge, err := claimSnapshotPurge(snapshots, entrada.Name())
+		lockPath, err := snapshotLockPath(snapshots, entrada.Name())
 		if err != nil {
+			errores = append(errores, err)
 			continue
 		}
-		if snapshotLeased(snapshots, entrada.Name(), limite) {
-			endPurge()
+		lock, acquired, err := lockSnapshot(lockPath, true, false)
+		if err != nil {
+			errores = append(errores, err)
+			continue
+		}
+		if !acquired {
 			continue
 		}
 		ruta := filepath.Join(snapshots, entrada.Name())
@@ -272,11 +243,11 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 				// bucle continúa: es limpieza best-effort por snapshot, un
 				// fallo aislado no debe impedir purgar los demás.
 				errores = append(errores, fmt.Errorf("no se pudo eliminar el snapshot %s: %w", ruta, errForzado))
-				endPurge()
+				_ = lock.Close()
 				continue
 			}
 		}
-		endPurge()
+		_ = lock.Close()
 		huboEliminacion = true
 	}
 
@@ -284,57 +255,6 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		_, _ = ejecutarGitSalida("worktree", "prune")
 	}
 	return errors.Join(errores...)
-}
-
-func claimSnapshotPurge(snapshots, treeOID string) (func(), error) {
-	leaseDir := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
-	if err := os.MkdirAll(leaseDir, 0700); err != nil {
-		return nil, err
-	}
-	marker := filepath.Join(leaseDir, snapshotPurgeMarker)
-	for {
-		if err := os.Mkdir(marker, 0700); err == nil {
-			break
-		} else if !os.IsExist(err) || !removeStalePurgeMarker(marker) {
-			return nil, err
-		}
-	}
-	return func() {
-		_ = os.Remove(marker)
-		_ = os.Remove(leaseDir)
-	}, nil
-}
-
-func removeStalePurgeMarker(marker string) bool {
-	info, err := os.Stat(marker)
-	if err != nil || time.Since(info.ModTime()) < snapshotPurgeMarkerMaxAge {
-		return false
-	}
-	return os.Remove(marker) == nil
-}
-
-func snapshotLeased(snapshots, treeOID string, staleBefore time.Time) bool {
-	leaseRoot := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
-	entries, err := os.ReadDir(leaseRoot)
-	if err != nil {
-		return false
-	}
-	active := false
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == snapshotPurgeMarker {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(staleBefore) {
-			active = true
-			continue
-		}
-		_ = os.Remove(filepath.Join(leaseRoot, entry.Name()))
-	}
-	return active
 }
 
 func treeOIDIsValid(treeOID string) bool {
