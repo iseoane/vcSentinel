@@ -364,6 +364,13 @@ func TestEjecutarPerfilSobreCandidato_BarraSnapshotsAntiguos(t *testing.T) {
 	if err := os.Chtimes(antiguo, pasado, pasado); err != nil {
 		t.Fatalf("no se pudo envejecer el snapshot: %v", err)
 	}
+	activo, err := git.CrearSnapshot(arbolHEAD)
+	if err != nil {
+		t.Fatalf("no se pudo crear el snapshot activo: %v", err)
+	}
+	if err := os.Chtimes(activo, pasado, pasado); err != nil {
+		t.Fatalf("no se pudo envejecer el snapshot activo: %v", err)
+	}
 
 	opts := OpcionesEjecucion{Worktree: dir, Cfg: cfgPerfilCandidatoTest(config.ModeWorktree)}
 	opts.Ejecutar = func(string) (int, string, error) { return 0, "ok", nil }
@@ -385,5 +392,12 @@ func TestEjecutarPerfilSobreCandidato_BarraSnapshotsAntiguos(t *testing.T) {
 			nombres = append(nombres, entrada.Name())
 		}
 		t.Fatalf("tras el barrido quedaron %v, esperaba solo el snapshot fresco %s", nombres, arbolHEAD)
+	}
+	info, err := os.Stat(activo)
+	if err != nil {
+		t.Fatalf("el snapshot reutilizado no sobrevivió: %v", err)
+	}
+	if !info.ModTime().After(pasado) {
+		t.Fatalf("el snapshot reutilizado no fue refrescado: %s", info.ModTime())
 	}
 }

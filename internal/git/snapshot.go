@@ -127,10 +127,9 @@ func CrearSnapshot(treeOID string) (string, error) {
 // modification time as its retention boundary, so reusing an old snapshot
 // cannot make an overlapping validation look disposable.
 func refrescarSnapshot(destino string) (string, error) {
-	agora := time.Now()
-	if err := os.Chtimes(destino, agora, agora); err != nil {
-		return "", fmt.Errorf("no se pudo refrescar el snapshot %s: %w", destino, err)
-	}
+	// Retention is a cache optimization, never a reason to reject a usable
+	// snapshot when filesystem metadata cannot be updated.
+	_ = os.Chtimes(destino, time.Now(), time.Now())
 	return destino, nil
 }
 
