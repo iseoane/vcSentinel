@@ -178,7 +178,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Deterministic plan construction: builds the admission requests (candidate/prompt/capabilities) later admitted verbatim by the controller."},
 
 		// --- internal/review -------------------------------------------------
-		{Path: "internal/review/engine.go", Symbol: "policy-bound durable reviewer adapter", Line: 60, Marker: "EjecutarRevision(",
+		{Path: "internal/review/engine.go", Symbol: "policy-bound durable reviewer adapter", Line: 61, Marker: "EjecutarRevision(",
 			Class: ClassShared, Reason: "Engine-level injection seam behind OpcionesAuditoria.ReviewTransport. Since ticket 13 (R11) removed the review.durable_runs switch, production wiring always supplies the admitted durable transport (the CRITICAL refuter routes through it unconditionally); the direct restricted call with its transport retry survives only as a defensive fallback for direct-call fixtures."},
 		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 462, Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
