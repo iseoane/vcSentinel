@@ -28,6 +28,8 @@ const snapshotLeaseDir = "snapshot-leases"
 
 const snapshotPurgeMarker = ".purging"
 
+const snapshotPurgeMarkerMaxAge = time.Minute
+
 // ArbolDe devuelve el tree OID de una revisión.
 func ArbolDe(revision string) (string, error) {
 	// Una revisión que empieza con "-" se interpretaría como una opción de
@@ -171,13 +173,17 @@ func createSnapshotLease(leaseDir string) (string, error) {
 		if err := os.WriteFile(lease, nil, 0600); err != nil {
 			return "", err
 		}
-		if _, err := os.Stat(filepath.Join(leaseDir, snapshotPurgeMarker)); errors.Is(err, os.ErrNotExist) {
+		marker := filepath.Join(leaseDir, snapshotPurgeMarker)
+		if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
 			return lease, nil
 		} else if err != nil {
 			_ = os.Remove(lease)
 			return "", err
 		}
 		_ = os.Remove(lease)
+		if removeStalePurgeMarker(marker) {
+			continue
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -286,10 +292,25 @@ func claimSnapshotPurge(snapshots, treeOID string) (func(), error) {
 		return nil, err
 	}
 	marker := filepath.Join(leaseDir, snapshotPurgeMarker)
-	if err := os.Mkdir(marker, 0700); err != nil {
-		return nil, err
+	for {
+		if err := os.Mkdir(marker, 0700); err == nil {
+			break
+		} else if !os.IsExist(err) || !removeStalePurgeMarker(marker) {
+			return nil, err
+		}
 	}
-	return func() { _ = os.Remove(marker) }, nil
+	return func() {
+		_ = os.Remove(marker)
+		_ = os.Remove(leaseDir)
+	}, nil
+}
+
+func removeStalePurgeMarker(marker string) bool {
+	info, err := os.Stat(marker)
+	if err != nil || time.Since(info.ModTime()) < snapshotPurgeMarkerMaxAge {
+		return false
+	}
+	return os.Remove(marker) == nil
 }
 
 func snapshotLeased(snapshots, treeOID string, staleBefore time.Time) bool {

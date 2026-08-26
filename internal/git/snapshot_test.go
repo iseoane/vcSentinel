@@ -232,3 +232,31 @@ func TestPurgarSnapshotsConAntiguedadLargaNoPurga(t *testing.T) {
 		t.Errorf("el snapshot no debería haberse purgado (err=%v)", err)
 	}
 }
+
+func TestTreeOIDIsValid(t *testing.T) {
+	if !treeOIDIsValid(strings.Repeat("a", 40)) || !treeOIDIsValid(strings.Repeat("B", 64)) {
+		t.Fatal("expected SHA-1 and SHA-256 object ids to be valid")
+	}
+	for _, value := range []string{"", "../" + strings.Repeat("a", 40), strings.Repeat("g", 40), strings.Repeat("a", 39)} {
+		if treeOIDIsValid(value) {
+			t.Fatalf("treeOIDIsValid(%q) = true", value)
+		}
+	}
+}
+
+func TestRemoveStalePurgeMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), snapshotPurgeMarker)
+	if err := os.Mkdir(marker, 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-snapshotPurgeMarkerMaxAge - time.Second)
+	if err := os.Chtimes(marker, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !removeStalePurgeMarker(marker) {
+		t.Fatal("expected stale purge marker to be removed")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker still exists or could not be checked: %v", err)
+	}
+}
