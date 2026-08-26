@@ -275,6 +275,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(runes) > 0 {
 					m.filter = string(runes[:len(runes)-1])
 				}
+				m.reanchorCursors()
 				return m, nil
 			default:
 				if msg.Type == tea.KeyRunes {
@@ -282,6 +283,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if msg.Type == tea.KeySpace {
 					m.filter += " "
 				}
+				m.reanchorCursors()
 				return m, nil
 			}
 		}
@@ -325,6 +327,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				m.filtering = true
 				m.filter = ""
+				m.reanchorCursors()
 				return m, nil
 			}
 		}
@@ -345,22 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.repos = msg.repos
-		if len(m.repos) == 0 {
-			m.selected = 0
-			m.treeCursor = art.TreePos{Worktree: -1}
-		} else {
-			last := len(m.repos) - 1
-			if m.treeCursor.Repo < 0 {
-				m.treeCursor.Repo = 0
-			}
-			if m.treeCursor.Repo > last {
-				m.treeCursor.Repo = last
-			}
-			if m.treeCursor.Worktree >= len(m.repos[m.treeCursor.Repo].Worktrees) {
-				m.treeCursor.Worktree = -1
-			}
-			m.selected = m.treeCursor.Repo
-		}
+		m.reanchorCursors()
 		m.err = ""
 		return m, nil
 	case actionResultMsg:
@@ -426,7 +414,10 @@ func (m *Model) toggleFocus() {
 // left behind by a snapshot swap re-anchors from the top of the walk in the
 // pressed direction. Any actual movement clears an open run detail.
 func (m *Model) moveRunCursor(delta int) {
-	visible := art.VisibleRuns(art.ViewState{Repos: m.repos})
+	repos := art.ProjectOverview(m.repos, m.filter)
+	visible := art.VisibleRuns(art.ViewState{
+		Repos: repos, TreeCursor: m.treeCursor, TreeCursorSet: true,
+	})
 	if len(visible) == 0 {
 		return
 	}
@@ -454,7 +445,10 @@ func (m *Model) moveRunCursor(delta int) {
 // moveTreeCursor walks the visible tree rows of the current snapshot in
 // render order, clamping at both ends. An empty registry is a no-op.
 func (m *Model) moveTreeCursor(delta int) {
-	visible := art.VisibleTreePositions(art.ViewState{Repos: m.repos, TreeCursor: m.treeCursor})
+	repos := art.ProjectOverview(m.repos, m.filter)
+	visible := art.VisibleTreePositions(art.ViewState{
+		Repos: repos, TreeCursor: m.treeCursor, TreeCursorSet: true,
+	})
 	if len(visible) == 0 {
 		return
 	}
@@ -476,18 +470,21 @@ func (m *Model) moveTreeCursor(delta int) {
 		return
 	}
 	m.treeCursor = visible[next]
-	m.selected = m.treeCursor.Repo
+	m.reanchorCursors()
 }
 
 // toggleOpenRun expands or collapses the run detail under the runs cursor;
 // pressing enter on anything that is not a currently visible run row leaves
 // the model untouched.
 func (m *Model) toggleOpenRun() {
-	for _, pos := range art.VisibleRuns(art.ViewState{Repos: m.repos}) {
+	repos := art.ProjectOverview(m.repos, m.filter)
+	for _, pos := range art.VisibleRuns(art.ViewState{
+		Repos: repos, TreeCursor: m.treeCursor, TreeCursorSet: true,
+	}) {
 		if pos != m.runCursor {
 			continue
 		}
-		id := m.repos[pos.Repo].Runs[pos.Run].RunID
+		id := repos[pos.Repo].Runs[pos.Run].RunID
 		if m.openRunID == id {
 			m.openRunID = ""
 		} else {
@@ -508,11 +505,12 @@ func (m *Model) requestRunAction(key string) tea.Cmd {
 	if m.actions == nil || m.focus != art.FocusRuns {
 		return nil
 	}
-	pos, ok := focusedVisibleRun(m.repos, m.runCursor)
+	repos := art.ProjectOverview(m.repos, m.filter)
+	pos, ok := focusedVisibleRun(repos, m.treeCursor, m.runCursor)
 	if !ok {
 		return nil
 	}
-	target := m.repos[pos.Repo]
+	target := repos[pos.Repo]
 	if !target.Enabled || target.Missing || target.Error != "" {
 		return nil
 	}
@@ -527,13 +525,77 @@ func (m *Model) requestRunAction(key string) tea.Cmd {
 
 // focusedVisibleRun reports whether pos names a currently visible run row of
 // the snapshot, reusing the render-order walk VisibleRuns publishes.
-func focusedVisibleRun(repos []overview.Repo, pos art.RunPos) (art.RunPos, bool) {
-	for _, visible := range art.VisibleRuns(art.ViewState{Repos: repos}) {
+func focusedVisibleRun(repos []overview.Repo, treeCursor art.TreePos, pos art.RunPos) (art.RunPos, bool) {
+	for _, visible := range art.VisibleRuns(art.ViewState{
+		Repos: repos, TreeCursor: treeCursor, TreeCursorSet: true,
+	}) {
 		if visible == pos {
 			return visible, true
 		}
 	}
 	return art.RunPos{}, false
+}
+
+// reanchorCursors keeps every cursor in the same filtered coordinate system
+// used by rendering. A filter or snapshot may remove the old row, so the
+// nearest safe fallback is the first visible repository/run. Hidden detail
+// lines are cleared rather than retained against an absent run.
+func (m *Model) reanchorCursors() {
+	repos := art.ProjectOverview(m.repos, m.filter)
+	if len(repos) == 0 {
+		m.selected = 0
+		m.treeCursor = art.TreePos{Worktree: -1}
+		m.runCursor = art.RunPos{}
+		m.openRunID = ""
+		return
+	}
+
+	if m.treeCursor.Repo < 0 {
+		m.treeCursor.Repo = 0
+	}
+	if m.treeCursor.Repo >= len(repos) {
+		m.treeCursor.Repo = len(repos) - 1
+	}
+	if m.treeCursor.Worktree < -1 {
+		m.treeCursor.Worktree = -1
+	}
+	treeState := art.ViewState{
+		Repos: repos, TreeCursor: m.treeCursor, TreeCursorSet: true,
+	}
+	validTree := false
+	for _, pos := range art.VisibleTreePositions(treeState) {
+		if pos == m.treeCursor {
+			validTree = true
+			break
+		}
+	}
+	if !validTree {
+		m.treeCursor.Worktree = -1
+	}
+	m.selected = m.treeCursor.Repo
+
+	runState := art.ViewState{
+		Repos: repos, TreeCursor: m.treeCursor, TreeCursorSet: true,
+	}
+	visibleRuns := art.VisibleRuns(runState)
+	runFound := false
+	openFound := m.openRunID == ""
+	for _, pos := range visibleRuns {
+		if pos == m.runCursor {
+			runFound = true
+		}
+		if m.openRunID != "" && repos[pos.Repo].Runs[pos.Run].RunID == m.openRunID {
+			openFound = true
+		}
+	}
+	if len(visibleRuns) == 0 {
+		m.runCursor = art.RunPos{}
+	} else if !runFound {
+		m.runCursor = visibleRuns[0]
+	}
+	if !openFound {
+		m.openRunID = ""
+	}
 }
 
 // scheduleCmd resolves the tick scheduler: live models use their injected

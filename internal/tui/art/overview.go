@@ -27,7 +27,7 @@ const maxOperationFlowRunes = 16
 
 // maxTreeChildren bounds how many worktree child lines one repository may
 // render in the tree pane before the rest collapse behind a single dim
-// "… N more" line (slice 13): snapshot plumbing worktrees are already
+// "… N more" line (slice 13, intentionally 20): snapshot plumbing worktrees are already
 // filtered out of the snapshot, so this cap is defense in depth against
 // operator repositories that legitimately carry dozens of worktrees — an
 // unbounded tree would still drown every other repository and push the
@@ -95,10 +95,9 @@ func RenderOverviewPlain(width int, s ViewState) string {
 
 func renderOverview(width int, colors bool, s ViewState) string {
 	p := painter{colors: colors}
-	repos := s.Repos
+	repos := ProjectOverview(s.Repos, s.Filter)
+	s.Repos = repos
 	if s.Filter != "" {
-		repos = filterRepos(repos, s.Filter)
-		s.Repos = repos
 		// Clamp cursors to filtered view.
 		if s.TreeCursor.Repo >= len(repos) {
 			s.TreeCursor = TreePos{Repo: len(repos) - 1, Worktree: -1}
@@ -112,7 +111,12 @@ func renderOverview(width int, colors bool, s ViewState) string {
 		func(w int) []string { return overviewRight(p, w, s) })
 }
 
-func filterRepos(repos []overview.Repo, filter string) []overview.Repo {
+// ProjectOverview returns the immutable view of repos that matches filter.
+// Repository matches retain all descendants; worktree and run matches retain
+// only the matching descendants. The control model uses this same projection
+// for cursor navigation and actions, so every command targets a row the
+// renderer can show.
+func ProjectOverview(repos []overview.Repo, filter string) []overview.Repo {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	if filter == "" {
 		return repos
@@ -251,12 +255,30 @@ func worktreeName(wt inventory.Worktree) string {
 // move a cursor over what the operator sees.
 func VisibleRuns(s ViewState) []RunPos {
 	var positions []RunPos
+	worktreePath := selectedWorktreePath(s)
 	for i, r := range s.Repos {
-		for j := range r.Runs {
+		for j, run := range r.Runs {
+			if worktreePath != "" && run.Worktree != worktreePath {
+				continue
+			}
 			positions = append(positions, RunPos{Repo: i, Run: j})
 		}
 	}
 	return positions
+}
+
+// selectedWorktreePath returns the worktree path whose runs ACTIVITY shows,
+// or empty when the repository row (rather than a child row) is selected.
+func selectedWorktreePath(s ViewState) string {
+	cursor := effectiveTreeCursor(s)
+	if cursor.Worktree < 0 || cursor.Repo < 0 || cursor.Repo >= len(s.Repos) {
+		return ""
+	}
+	worktrees := s.Repos[cursor.Repo].Worktrees
+	if cursor.Worktree >= len(worktrees) {
+		return ""
+	}
+	return worktrees[cursor.Worktree].Path
 }
 
 // VisibleTreePositions returns the render-order positions of the navigable
@@ -514,13 +536,7 @@ func overviewActivity(s ViewState) []activityRow {
 	rows := make([]activityRow, 0, len(s.Repos))
 	// Determine worktree filter: when a worktree is selected, only runs for
 	// that worktree's path are shown. Repo row shows all runs for the repo.
-	filterWorktree := ""
-	treeCursor := effectiveTreeCursor(s)
-	if treeCursor.Worktree >= 0 && treeCursor.Repo >= 0 && treeCursor.Repo < len(s.Repos) {
-		if wtIdx := treeCursor.Worktree; wtIdx < len(s.Repos[treeCursor.Repo].Worktrees) {
-			filterWorktree = s.Repos[treeCursor.Repo].Worktrees[wtIdx].Path
-		}
-	}
+	filterWorktree := selectedWorktreePath(s)
 	for i, r := range s.Repos {
 		state := classifyRepo(r)
 		visibleRunCount := 0

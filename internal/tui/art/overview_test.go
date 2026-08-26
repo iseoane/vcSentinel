@@ -2,6 +2,7 @@ package art
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 // Fixtures build snapshot values directly (no git needed). colorPrefix
 // matches painted spans whose text spanLine right-pads before wrapping.
 func wt(branch string, clean bool) inventory.Worktree {
-	return inventory.Worktree{Path: "/tmp/repo/" + branch, Branch: branch, Clean: clean}
+	return inventory.Worktree{Path: filepath.Join("/tmp/repo", branch), Branch: branch, Clean: clean}
 }
 
 // run builds a run summary fixture with a fixed id and revision; updatedAt
@@ -42,13 +43,13 @@ func pinClock(t *testing.T, now time.Time) {
 }
 
 func liveRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
-	return overview.Repo{Name: name, Path: "/tmp/" + name, Enabled: true,
+	return overview.Repo{Name: name, Path: filepath.Join("/tmp", name), Enabled: true,
 		Origin: "git@github.com:org/" + name, Worktrees: worktrees,
 		Daemon: presence.Presence{Live: true, PID: 4321}}
 }
 
 func stoppedRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
-	return overview.Repo{Name: name, Path: "/tmp/" + name, Enabled: true, Worktrees: worktrees}
+	return overview.Repo{Name: name, Path: filepath.Join("/tmp", name), Enabled: true, Worktrees: worktrees}
 }
 
 // manyWorktrees builds n distinct child fixtures alternating clean/dirty,
@@ -112,26 +113,27 @@ func TestRenderOverviewMultiWorktree(t *testing.T) {
 }
 
 // TestOverviewTreeCollapsesBeyondMaxChildren pins the slice-13 overflow
-// rule: exactly maxTreeChildren children render — every one of them keeping
+// rule: exactly 20 children render — every one of them keeping
 // the "├─" connector — followed by one final dim "… N more" line carrying
 // the "└─"; hidden children never leak into the render.
 func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
-	repos := []overview.Repo{stoppedRepo("big", manyWorktrees(maxTreeChildren+3)...)}
+	const expectedTreeChildren = 20
+	repos := []overview.Repo{stoppedRepo("big", manyWorktrees(expectedTreeChildren+3)...)}
 	dash := RenderOverviewPlain(100, ViewState{Repos: repos, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
-	if got := strings.Count(dash, "   ├─"); got != maxTreeChildren {
-		t.Errorf("%d child lines rendered, want maxTreeChildren=%d:\n%s", got, maxTreeChildren, dash)
+	if got := strings.Count(dash, "   ├─"); got != expectedTreeChildren {
+		t.Errorf("%d child lines rendered, want exactly %d:\n%s", got, expectedTreeChildren, dash)
 	}
 	assertContains(t, dash, "   └─ … 3 more")
 	if got := strings.Count(dash, "   └─"); got != 1 {
 		t.Errorf("the overflow line must be the only └─ child row, got %d:\n%s", got, dash)
 	}
-	for i := maxTreeChildren; i < maxTreeChildren+3; i++ {
+	for i := expectedTreeChildren; i < expectedTreeChildren+3; i++ {
 		hidden := fmt.Sprintf("branch-%02d", i)
 		if strings.Contains(dash, hidden) {
 			t.Errorf("collapsed child %q must not render:\n%s", hidden, dash)
 		}
 	}
-	lastVisible := fmt.Sprintf("branch-%02d ", maxTreeChildren-1)
+	lastVisible := fmt.Sprintf("branch-%02d ", expectedTreeChildren-1)
 	if !strings.Contains(dash, lastVisible) {
 		t.Errorf("the last visible child %q must render right above the overflow line:\n%s", lastVisible, dash)
 	}
@@ -143,17 +145,17 @@ func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
 }
 
 // TestOverviewTreeAtLimitAndDegradedExempt pins both non-collapse sides: at
-// exactly maxTreeChildren every child renders with the classic final "└─"
+// exactly 20 children every child renders with the classic final "└─"
 // and no overflow line appears; fewer children stay untouched; and a
 // degraded repository is exempt from counting and collapsing entirely — its
 // Error line replaces the children wholesale.
 func TestOverviewTreeAtLimitAndDegradedExempt(t *testing.T) {
 	exact := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
-		stoppedRepo("edge", manyWorktrees(maxTreeChildren)...)}, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
-	lastBranch := fmt.Sprintf("   └─ branch-%02d", maxTreeChildren-1)
+		stoppedRepo("edge", manyWorktrees(20)...)}, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
+	lastBranch := fmt.Sprintf("   └─ branch-%02d", 19)
 	assertContains(t, exact, lastBranch)
-	if got := strings.Count(exact, "   ├─"); got != maxTreeChildren-1 {
-		t.Errorf("%d connected children at the limit, want %d:\n%s", got, maxTreeChildren-1, exact)
+	if got := strings.Count(exact, "   ├─"); got != 19 {
+		t.Errorf("%d connected children at the limit, want 19:\n%s", got, exact)
 	}
 	if strings.Contains(exact, "more") {
 		t.Errorf("a repository at exactly maxTreeChildren must not collapse:\n%s", exact)
@@ -391,7 +393,7 @@ func TestFilterReposNarrowsRunMatches(t *testing.T) {
 			runWithOperation("other-run", agentrun.StateSucceeded, 3, time.Time{}, "review tests")),
 	}
 
-	filtered := filterRepos(repos, "logic")
+	filtered := ProjectOverview(repos, "logic")
 	if len(filtered) != 1 || filtered[0].Name != "alpha" {
 		t.Fatalf("filter returned repositories %#v, want only alpha", filtered)
 	}
@@ -407,7 +409,7 @@ func TestFilterReposKeepsDescendantsForRepositoryMatch(t *testing.T) {
 		runWithOperation("logic-run", agentrun.StateRunning, 1, time.Time{}, "review logic"),
 		runWithOperation("style-run", agentrun.StateSucceeded, 2, time.Time{}, "review style"))}
 
-	filtered := filterRepos(repos, "alpha")
+	filtered := ProjectOverview(repos, "alpha")
 	if len(filtered) != 1 || len(filtered[0].Runs) != 2 {
 		t.Fatalf("repository match narrowed descendants: %#v", filtered)
 	}
@@ -423,7 +425,7 @@ func TestFilterReposNarrowsWorktreeMatches(t *testing.T) {
 	repo.Runs[0].Worktree = repo.Worktrees[0].Path
 	repo.Runs[1].Worktree = repo.Worktrees[1].Path
 
-	filtered := filterRepos([]overview.Repo{repo}, "feature")
+	filtered := ProjectOverview([]overview.Repo{repo}, "feature")
 	if len(filtered) != 1 || len(filtered[0].Worktrees) != 1 ||
 		filtered[0].Worktrees[0].Branch != "feature" {
 		t.Fatalf("filtered worktrees = %#v, want only feature", filtered)

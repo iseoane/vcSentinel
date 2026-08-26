@@ -8,12 +8,15 @@ package control
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/tui/art"
 )
 
@@ -93,12 +96,12 @@ func TestRunActionGatingMatrix(t *testing.T) {
 		{
 			name:  "abort fires on a healthy repository's run",
 			start: 0, focusRuns: true, key: "a",
-			wantCall: "abort /tmp/healthy aaaaaaaaaaaaaaaaaaaa",
+			wantCall: "abort " + filepath.Join("/tmp", "healthy") + " aaaaaaaaaaaaaaaaaaaa",
 		},
 		{
 			name:  "retry fires on a healthy repository's run",
 			start: 0, focusRuns: true, key: "r",
-			wantCall: "retry /tmp/healthy aaaaaaaaaaaaaaaaaaaa",
+			wantCall: "retry " + filepath.Join("/tmp", "healthy") + " aaaaaaaaaaaaaaaaaaaa",
 		},
 		{
 			name:  "disabled repository never dispatches",
@@ -166,7 +169,7 @@ func TestRunActionGatingMatrix(t *testing.T) {
 			if cmd == nil {
 				t.Fatalf("%s dispatched without returning the hook command", tt.key)
 			}
-			wantKind, wantPath, wantRun := KindAbort, "/tmp/healthy", "aaaaaaaaaaaaaaaaaaaa"
+			wantKind, wantPath, wantRun := KindAbort, filepath.Join("/tmp", "healthy"), "aaaaaaaaaaaaaaaaaaaa"
 			if tt.key == "r" {
 				wantKind = KindRetry
 			}
@@ -189,6 +192,70 @@ func TestRunActionGatingMatrix(t *testing.T) {
 				t.Errorf("completion = %+v, want it to echo the pending marker", result)
 			}
 		})
+	}
+}
+
+// TestFilteredRunActionsTargetVisibleRows proves that the action target uses
+// the same filtered coordinates as the ACTIVITY rows. It covers broad
+// repository matches and narrowed run matches for both actions.
+func TestFilteredRunActionsTargetVisibleRows(t *testing.T) {
+	alpha := repoWithRuns("alpha", "alpha-run")
+	alpha.Runs[0].Operation = "review alpha"
+	alpha.Runs = append(alpha.Runs, presence.RunSummary{
+		RunID: "target-run", State: "running", Operation: "review target",
+	})
+	beta := repoWithRuns("beta", "beta-run")
+	repos := []overview.Repo{alpha, beta}
+
+	tests := []struct {
+		name     string
+		filter   string
+		action   string
+		wantCall string
+	}{
+		{"abort targets the filtered repository", "beta", "a", "abort " + filepath.Join("/tmp", "beta") + " beta-run"},
+		{"retry targets the filtered repository", "beta", "r", "retry " + filepath.Join("/tmp", "beta") + " beta-run"},
+		{"abort targets the filtered run", "target", "a", "abort " + filepath.Join("/tmp", "alpha") + " target-run"},
+		{"retry targets the filtered run", "target", "r", "retry " + filepath.Join("/tmp", "alpha") + " target-run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &spyActions{}
+			m := NewLive(repos, (&recorder{}).refresh, time.Second, spy)
+			m = pressKeys(t, m, "/", tt.filter, "enter", "tab")
+			_, cmd := m.Update(keyMsg(tt.action))
+			if cmd == nil {
+				t.Fatalf("filtered %s did not dispatch an action", tt.action)
+			}
+			if len(spy.calls) != 1 || spy.calls[0] != tt.wantCall {
+				t.Fatalf("action calls = %v, want [%s]", spy.calls, tt.wantCall)
+			}
+		})
+	}
+}
+
+// TestRunActionsFollowSelectedWorktree proves that changing the tree
+// selection reanchors the run cursor before an action is dispatched. The
+// hidden run must never receive the action when ACTIVITY shows only the
+// selected worktree's run.
+func TestRunActionsFollowSelectedWorktree(t *testing.T) {
+	r := repoWithRuns("project", "main-run", "feature-run")
+	r.Worktrees = []inventory.Worktree{
+		{Path: "/tmp/project/main", Branch: "main", Clean: true},
+		{Path: "/tmp/project/feature", Branch: "feature", Clean: false},
+	}
+	r.Runs[0].Worktree = r.Worktrees[0].Path
+	r.Runs[1].Worktree = r.Worktrees[1].Path
+	spy := &spyActions{}
+	m := NewLive([]overview.Repo{r}, (&recorder{}).refresh, time.Second, spy)
+	m = pressKeys(t, m, "down", "down", "tab")
+	_, cmd := m.Update(keyMsg("a"))
+	if cmd == nil {
+		t.Fatal("action on the selected worktree did not dispatch")
+	}
+	wantCall := "abort " + filepath.Join("/tmp", "project") + " feature-run"
+	if len(spy.calls) != 1 || spy.calls[0] != wantCall {
+		t.Fatalf("action calls = %v, want the selected worktree run", spy.calls)
 	}
 }
 
@@ -223,10 +290,10 @@ func TestRunActionNilActionsArePureNoOps(t *testing.T) {
 // Err with overwrite semantics, and success stays silent.
 func TestRunActionResultLifecycle(t *testing.T) {
 	const (
-		path = "/tmp/healthy"
 		runA = "aaaaaaaaaaaaaaaaaaaa"
 		runB = "bbbbbbbbbbbbbbbbbbbb"
 	)
+	path := filepath.Join("/tmp", "healthy")
 
 	t.Run("matching failure clears pending and lands on Err", func(t *testing.T) {
 		m := focused(actionRepos(), &spyActions{}, 0)
@@ -272,7 +339,7 @@ func TestRunActionResultLifecycle(t *testing.T) {
 		stales := []actionResultMsg{
 			{Kind: KindAbort, RepoPath: path, RunID: runB, Err: errors.New("wrong run")},
 			{Kind: KindRetry, RepoPath: path, RunID: runA, Err: errors.New("wrong kind")},
-			{Kind: KindAbort, RepoPath: "/tmp/elsewhere", RunID: runA, Err: errors.New("wrong repo")},
+			{Kind: KindAbort, RepoPath: filepath.Join("/tmp", "elsewhere"), RunID: runA, Err: errors.New("wrong repo")},
 		}
 		for _, stale := range stales {
 			m = update(t, m, stale)
@@ -320,13 +387,13 @@ func TestRunActionResultLifecycle(t *testing.T) {
 // the command built through ActionResult yields exactly the private message
 // Update consumes, so external implementations cannot drift off-contract.
 func TestActionResultConstructorIsConsumable(t *testing.T) {
-	msg := ActionResult(KindRetry, "/tmp/healthy", "aaaaaaaaaaaaaaaaaaaa",
+	msg := ActionResult(KindRetry, filepath.Join("/tmp", "healthy"), "aaaaaaaaaaaaaaaaaaaa",
 		errors.New("retry rejected"))()
 	result, ok := msg.(actionResultMsg)
 	if !ok {
 		t.Fatalf("ActionResult yielded %T, want actionResultMsg", msg)
 	}
-	if result.Kind != KindRetry || result.RepoPath != "/tmp/healthy" ||
+	if result.Kind != KindRetry || result.RepoPath != filepath.Join("/tmp", "healthy") ||
 		result.RunID != "aaaaaaaaaaaaaaaaaaaa" || result.Err == nil {
 		t.Fatalf("ActionResult payload = %+v, want the constructed identity plus error", result)
 	}

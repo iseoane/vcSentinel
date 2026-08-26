@@ -16,11 +16,6 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
 )
 
-// snapshotsBaseSuffix is the sentinel plumbing area relative to the git
-// common dir: worktrees created there are internal bookkeeping (validation
-// snapshots), never operator-visible state.
-const snapshotsBaseSuffix = "/vas-sentinel/snapshots"
-
 // isInternalWorktree reports whether worktreePath lives inside the sentinel
 // snapshot area under commonDir, i.e. equals or nests below
 // <commonDir>/vas-sentinel/snapshots.
@@ -34,12 +29,18 @@ const snapshotsBaseSuffix = "/vas-sentinel/snapshots"
 // about casing there; on case-sensitive platforms it stays exact so two
 // genuinely distinct directories can never collide.
 func isInternalWorktree(worktreePath, commonDir string) bool {
-	base := strings.TrimRight(filepath.ToSlash(commonDir), "/") + snapshotsBaseSuffix
-	path := strings.TrimRight(filepath.ToSlash(worktreePath), "/")
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(path, base) || strings.HasPrefix(strings.ToLower(path), strings.ToLower(base)+"/")
+	base := filepath.ToSlash(filepath.Clean(filepath.Join(commonDir, "vas-sentinel", "snapshots")))
+	path := filepath.ToSlash(filepath.Clean(worktreePath))
+	isWithin := func(candidate, root string) bool {
+		if candidate == root {
+			return true
+		}
+		return strings.HasPrefix(candidate, root) && len(candidate) > len(root) && candidate[len(root)] == '/'
 	}
-	return path == base || strings.HasPrefix(path, base+"/")
+	if runtime.GOOS == "windows" {
+		return isWithin(strings.ToLower(path), strings.ToLower(base))
+	}
+	return isWithin(path, base)
 }
 
 // Repo is the dashboard fact sheet of one registered repository.
@@ -56,7 +57,8 @@ type Repo struct {
 }
 
 // recentRunLimit bounds how many durable-run summaries each repository
-// snapshot carries; the activity pane renders one row per summary.
+// snapshot carries; the activity pane renders one row per summary. Ten is the
+// intentional operator-visible history depth for the control center.
 const recentRunLimit = 10
 
 // recentRuns is the RecentRuns seam: a package-level function variable so

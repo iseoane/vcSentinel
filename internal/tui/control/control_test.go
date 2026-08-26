@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ import (
 // repo builds a minimal stopped snapshot entry; only the identity fields the
 // LOCATION block renders are needed.
 func repo(name string) overview.Repo {
-	return overview.Repo{Name: name, Path: "/tmp/" + name, Enabled: true,
+	return overview.Repo{Name: name, Path: filepath.Join("/tmp", name), Enabled: true,
 		Origin: "git@github.com:org/" + name}
 }
 
@@ -381,8 +382,8 @@ func TestViewRendersSelectedRepository(t *testing.T) {
 	if !strings.Contains(loc, "beta") {
 		t.Errorf("LOCATION block missing the selected repository \"beta\":\n%s", loc)
 	}
-	if !strings.Contains(loc, "/tmp/beta") {
-		t.Errorf("LOCATION block missing the selected path \"/tmp/beta\":\n%s", loc)
+	if !strings.Contains(loc, filepath.Join("/tmp", "beta")) {
+		t.Errorf("LOCATION block missing the selected beta path:\n%s", loc)
 	}
 	for _, other := range []string{"alpha", "gamma"} {
 		if strings.Contains(loc, other) {

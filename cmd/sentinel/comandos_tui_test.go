@@ -31,6 +31,15 @@ type recordingDaemonHost struct {
 	shutdownErr error
 }
 
+func testDaemonOwner() daemon.Owner {
+	return daemon.Owner{
+		PID:              4321,
+		StartedAt:        time.Unix(1700000000, 0).UTC(),
+		Host:             "tui-test",
+		ProtocolRevision: daemon.ProtocolRevision,
+	}
+}
+
 func (h *recordingDaemonHost) Shutdown(_ context.Context, _ daemon.ShutdownRequest) (daemon.ShutdownResult, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -114,6 +123,7 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			host := &recordingDaemonHost{}
 			spawns, dials, readyCalls := 0, 0, 0
+			expectedOwner := testDaemonOwner()
 			gate := tuiDaemonGate{
 				loadEndpoint: func() (daemon.Endpoint, error) {
 					switch {
@@ -131,6 +141,12 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 						return nil, errors.New("connection refused")
 					}
 					return host, nil
+				},
+				inspectOwner: func() (daemon.Owner, bool, error) {
+					if spawns == 0 {
+						return daemon.Owner{}, false, os.ErrNotExist
+					}
+					return expectedOwner, true, nil
 				},
 				spawn: func() error {
 					spawns++
@@ -236,6 +252,9 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 		host := &recordingDaemonHost{}
 		dials := 0
 		gate := tuiDaemonGate{
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return testDaemonOwner(), true, nil
+			},
 			loadEndpoint: func() (daemon.Endpoint, error) {
 				return daemon.Endpoint{Network: "unix", Address: "/sock"}, nil
 			},
@@ -245,7 +264,7 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 			},
 		}
 		var out bytes.Buffer
-		stopOwnedTuiDaemon(&out, gate, 0)
+		stopOwnedTuiDaemon(&out, gate, testDaemonOwner())
 		if host.shutdowns != 1 || host.closes != 1 {
 			t.Fatalf("shutdowns = %d, closes = %d, want exactly one of each", host.shutdowns, host.closes)
 		}
@@ -259,6 +278,9 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 	t.Run("missing record is quietly done", func(t *testing.T) {
 		dials := 0
 		gate := tuiDaemonGate{
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return daemon.Owner{}, false, os.ErrNotExist
+			},
 			loadEndpoint: func() (daemon.Endpoint, error) {
 				return daemon.Endpoint{}, os.ErrNotExist
 			},
@@ -268,7 +290,7 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 			},
 		}
 		var out bytes.Buffer
-		stopOwnedTuiDaemon(&out, gate, 0)
+		stopOwnedTuiDaemon(&out, gate, testDaemonOwner())
 		if dials != 0 || out.Len() != 0 {
 			t.Fatalf("absent endpoint dialed %d times and printed %q", dials, out.String())
 		}
@@ -305,11 +327,59 @@ func TestStopOwnedTuiDaemon(t *testing.T) {
 	})
 }
 
+// TestTuiDaemonOwnershipFailsClosed proves that missing or changed owner
+// identity can never authorize a shutdown of the endpoint currently on disk.
+func TestTuiDaemonOwnershipFailsClosed(t *testing.T) {
+	t.Run("startup without an inspectable owner is rejected", func(t *testing.T) {
+		gate := tuiDaemonGate{
+			loadEndpoint: func() (daemon.Endpoint, error) { return daemon.Endpoint{}, os.ErrNotExist },
+			spawn:        func() error { return nil },
+			waitReady:    func() bool { return true },
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return daemon.Owner{}, false, errors.New("owner claim unreadable")
+			},
+		}
+		owned, owner, err := gate.resolveOwnership()
+		if err == nil || !strings.Contains(err.Error(), "verify ownership") {
+			t.Fatalf("resolveOwnership() error = %v, want an ownership verification error", err)
+		}
+		if owned || validTuiOwner(owner) {
+			t.Fatalf("resolveOwnership() = owned=%v owner=%+v, want no shutdown authority", owned, owner)
+		}
+	})
+
+	t.Run("replacement owner is never shut down", func(t *testing.T) {
+		host := &recordingDaemonHost{}
+		expected := testDaemonOwner()
+		replacement := expected
+		replacement.StartedAt = replacement.StartedAt.Add(time.Second)
+		loads := 0
+		gate := tuiDaemonGate{
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return replacement, true, nil
+			},
+			loadEndpoint: func() (daemon.Endpoint, error) {
+				loads++
+				return daemon.Endpoint{Network: "unix", Address: "/sock"}, nil
+			},
+			dial: func(daemon.Endpoint) (tuiDaemonHost, error) { return host, nil },
+		}
+		var out bytes.Buffer
+		stopOwnedTuiDaemon(&out, gate, expected)
+		if host.shutdowns != 0 || loads != 0 {
+			t.Fatalf("replacement stop touched host: shutdowns=%d endpoint loads=%d", host.shutdowns, loads)
+		}
+	})
+}
+
 // captureStopOutput runs one stop against a buffer and returns the text.
 func captureStopOutput(t *testing.T, gate tuiDaemonGate) string {
 	t.Helper()
+	gate.inspectOwner = func() (daemon.Owner, bool, error) {
+		return testDaemonOwner(), true, nil
+	}
 	var out bytes.Buffer
-	stopOwnedTuiDaemon(&out, gate, 0)
+	stopOwnedTuiDaemon(&out, gate, testDaemonOwner())
 	return out.String()
 }
 
@@ -367,6 +437,7 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 	t.Run("an owned daemon stops exactly once on exit", func(t *testing.T) {
 		spawned := false
 		host := &recordingDaemonHost{}
+		expectedOwner := testDaemonOwner()
 		gate := tuiDaemonGate{
 			loadEndpoint: func() (daemon.Endpoint, error) {
 				if !spawned {
@@ -374,7 +445,13 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 				}
 				return daemon.Endpoint{Network: "unix", Address: "/sock"}, nil
 			},
-			dial:      func(daemon.Endpoint) (tuiDaemonHost, error) { return host, nil },
+			dial: func(daemon.Endpoint) (tuiDaemonHost, error) { return host, nil },
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				if !spawned {
+					return daemon.Owner{}, false, os.ErrNotExist
+				}
+				return expectedOwner, true, nil
+			},
 			spawn:     func() error { spawned = true; return nil },
 			waitReady: func() bool { return true },
 		}
@@ -394,6 +471,7 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 	t.Run("a failed session still stops its own daemon", func(t *testing.T) {
 		spawned := false
 		host := &recordingDaemonHost{}
+		expectedOwner := testDaemonOwner()
 		gate := tuiDaemonGate{
 			loadEndpoint: func() (daemon.Endpoint, error) {
 				if !spawned {
@@ -401,7 +479,13 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 				}
 				return daemon.Endpoint{Network: "unix", Address: "/sock"}, nil
 			},
-			dial:      func(daemon.Endpoint) (tuiDaemonHost, error) { return host, nil },
+			dial: func(daemon.Endpoint) (tuiDaemonHost, error) { return host, nil },
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				if !spawned {
+					return daemon.Owner{}, false, os.ErrNotExist
+				}
+				return expectedOwner, true, nil
+			},
 			spawn:     func() error { spawned = true; return nil },
 			waitReady: func() bool { return true },
 		}

@@ -272,8 +272,8 @@ func TestCollectStoresRecentRunsUpToLimit(t *testing.T) {
 	if !reflect.DeepEqual(repos[0].Runs, want) {
 		t.Fatalf("runs mismatch:\n got: %#v\nwant: %#v", repos[0].Runs, want)
 	}
-	if gotLimit != recentRunLimit {
-		t.Fatalf("runs read used limit %d, want the package const %d", gotLimit, recentRunLimit)
+	if gotLimit != 10 {
+		t.Fatalf("runs read used limit %d, want the explicit operator history limit 10", gotLimit)
 	}
 	if repos[0].Error != "" || len(repos[0].Worktrees) != 1 || repos[0].Daemon != stopped() {
 		t.Fatalf("healthy probes must stay intact beside stored runs: %#v", repos[0])
