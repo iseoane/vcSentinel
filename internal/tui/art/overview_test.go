@@ -357,6 +357,25 @@ func TestRenderOverviewMixedRepoReplacesSummaryWithRuns(t *testing.T) {
 	}
 }
 
+// TestRenderOverviewStoppedRepoRunsReplaceSummary pins the STOPPED half of
+// the suppression rule: a stopped repository carrying runs shows its runs
+// instead of the red STOPPED summary row.
+func TestRenderOverviewStoppedRepoRunsReplaceSummary(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	pinClock(t, now)
+	repos := []overview.Repo{stoppedRepo("halted", wt("main", true))}
+	repos[0].Runs = []presence.RunSummary{
+		run("dddddddddddddddddddd", agentrun.StateFailed, 9, now.Add(-time.Second)),
+	}
+	act := activityBlock(t, RenderOverviewPlain(70, repos, 0))
+	assertContains(t, act, "dddddddddddd", "FAILED")
+	for _, leaked := range []string{"STOPPED", "halted"} {
+		if strings.Contains(act, leaked) {
+			t.Errorf("runs must replace the STOPPED summary row; ACTIVITY leaked %q:\n%s", leaked, act)
+		}
+	}
+}
+
 // TestRenderOverviewDegradedRepoKeepsSummaryWithoutInventedRuns pins both
 // halves of the degraded rule: without runs exactly one summary row renders
 // (nothing invented), and runs a degraded snapshot does carry, they append

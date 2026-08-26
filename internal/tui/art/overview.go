@@ -256,7 +256,10 @@ func summaryActivityRow(r overview.Repo, state repoState) activityRow {
 // class. It rides the exported agentrun vocabulary (TerminalClass) instead
 // of duplicating a local state list; transient evidence states such as
 // terminated carry no terminal class yet and therefore still count as
-// active.
+// active. Note the deliberate tension with runState: terminated renders as
+// a quiet dim CANCELED row while the header still counts it active — that
+// mirrors the domain contract, where the canceled settlement, not the
+// terminated marker, is the authoritative terminal frame.
 func isTerminalRun(state agentrun.LifecycleState) bool {
 	return state.TerminalClass() != agentrun.TerminalNone
 }
@@ -267,7 +270,10 @@ func isTerminalRun(state agentrun.LifecycleState) bool {
 // yellow as DECISION, succeeded passes green as PASSED,
 // failed/timed_out/unavailable fail red as FAILED, and canceled/terminated
 // settle dim as CANCELED. Unknown values degrade to the running family:
-// absence of terminal evidence must not render as quiet.
+// absence of terminal evidence must not render as quiet. This switch and
+// isTerminalRun must stay aligned: a new agentrun state lands here via the
+// default case (RUNNING) while the header predicate reads TerminalClass,
+// so a state gaining a terminal class must also gain its explicit row.
 func runState(state agentrun.LifecycleState) (icon string, kind statusKind, word string) {
 	switch state {
 	case agentrun.StateAwaitingDecision:
