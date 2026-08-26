@@ -367,8 +367,15 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		"grep": map[string]string{"*": "allow"},
 		"glob": map[string]string{"*": "allow"},
 	}
+	// The agent-level fallback is "ask", not "deny": live probing (OpenCode
+	// 1.18.23) showed deny dominance — once any matching rule denies, later
+	// exact allows never win, so an agent-level deny would block every
+	// admitted read. In a non-interactive run "ask" auto-rejects, which keeps
+	// the boundary fail-closed (unmatched tools, external reads, inherited MCP
+	// servers) without shadowing the explicit read allows. The read map itself
+	// carries no wildcard for the same shadowing reason.
 	permission := make(map[string]any, len(permissions)+1)
-	permission["*"] = "deny"
+	permission["*"] = "ask"
 	for tool, rules := range permissions {
 		permission[tool] = rules
 	}
@@ -402,12 +409,20 @@ type openCodeReadPermissionRules struct {
 }
 
 func openCodeReadPermissions(snapshot string, auditedPaths []string) openCodeReadPermissionRules {
-	allowed := make([]string, 0, len(auditedPaths)*2)
-	seen := make(map[string]bool, len(auditedPaths)*2)
+	allowed := make([]string, 0, len(auditedPaths)*3)
+	seen := make(map[string]bool, len(auditedPaths)*3)
 	for _, auditedPath := range rutasRevisionSeguras(auditedPaths) {
+		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(auditedPath)))
+		// Live probing (OpenCode 1.18.23) showed the permission resource is
+		// normalized inconsistently: relative calls keep repo-relative form,
+		// while absolute calls may be evaluated with the leading slash
+		// stripped. Allowing all three deterministic forms keeps admitted
+		// reads usable; anything else still falls through to the agent-level
+		// "ask" fallback, which auto-rejects non-interactively.
 		for _, pathForm := range []string{
 			auditedPath,
-			filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(auditedPath))),
+			absolute,
+			strings.TrimPrefix(absolute, "/"),
 		} {
 			if !seen[pathForm] {
 				seen[pathForm] = true
@@ -420,13 +435,15 @@ func openCodeReadPermissions(snapshot string, auditedPaths []string) openCodeRea
 
 func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {
 	var encoded bytes.Buffer
-	encoded.WriteString(`{"*":"deny"`)
-	for _, resource := range rules.allowed {
+	encoded.WriteByte('{')
+	for i, resource := range rules.allowed {
+		if i > 0 {
+			encoded.WriteByte(',')
+		}
 		key, err := json.Marshal(resource)
 		if err != nil {
 			return nil, err
 		}
-		encoded.WriteByte(',')
 		encoded.Write(key)
 		encoded.WriteString(`:"allow"`)
 	}

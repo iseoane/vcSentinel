@@ -98,8 +98,8 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	if reviewer.Steps != 7 {
 		t.Errorf("steps = %d, expected 7", reviewer.Steps)
 	}
-	if got := reviewer.Permission["*"]; got != "deny" {
-		t.Errorf("default permission = %v, expected deny", got)
+	if got := reviewer.Permission["*"]; got != "ask" {
+		t.Errorf("default permission = %v, expected ask (non-interactive auto-reject)", got)
 	}
 	for _, tool := range []string{"bash", "edit", "write"} {
 		if got := reviewer.Permission[tool].(map[string]any)["*"]; got != "deny" {
@@ -110,13 +110,18 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 		t.Errorf("webfetch permission = %v, expected absent", got)
 	}
 	readPermissions := reviewer.Permission["read"].(map[string]any)
-	wantReadPermissions := map[string]any{"*": "deny"}
+	if _, hasWildcard := readPermissions["*"]; hasWildcard {
+		t.Errorf("read permissions = %v, expected no wildcard (it shadows exact allows)", readPermissions)
+	}
+	wantReadPermissions := map[string]any{}
 	for _, admittedPath := range []string{"internal/review/engine.go", "internal/planning/context.go"} {
-		wantReadPermissions[admittedPath] = "allow"
-		wantReadPermissions[filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(admittedPath)))] = "allow"
+		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(admittedPath)))
+		for _, form := range []string{admittedPath, absolute, strings.TrimPrefix(absolute, "/")} {
+			wantReadPermissions[form] = "allow"
+		}
 	}
 	if !reflect.DeepEqual(readPermissions, wantReadPermissions) {
-		t.Errorf("read permissions = %v, expected exact admitted relative and snapshot paths %v", readPermissions, wantReadPermissions)
+		t.Errorf("read permissions = %v, expected exact admitted paths in all three resource forms %v", readPermissions, wantReadPermissions)
 	}
 	for _, tool := range []string{"grep", "glob"} {
 		permissions := reviewer.Permission[tool].(map[string]any)
@@ -126,7 +131,12 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	}
 }
 
-func TestReviewCommandOpenCodeEmitsFallbackBeforeExactReadRules(t *testing.T) {
+// TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard pins the live
+// provider contract: wildcards inside the read map shadow exact allows under
+// current OpenCode evaluation, so containment relies on the agent-level ask
+// fallback (auto-rejected non-interactively) while the read map carries only
+// exact allows in all three resource forms.
+func TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	adapter := CLIAdapter{BinaryName: "opencode"}
 	_, env, err := adapter.reviewCommand(ReviewRequest{
@@ -146,15 +156,31 @@ func TestReviewCommandOpenCodeEmitsFallbackBeforeExactReadRules(t *testing.T) {
 	if err := json.Unmarshal([]byte(env["OPENCODE_CONFIG_CONTENT"]), &configuration); err != nil {
 		t.Fatalf("review configuration is invalid JSON: %v", err)
 	}
-	readRules := string(configuration.Agent["reviewer"].Permission["read"])
-	fallbackIndex := strings.Index(readRules, `"*":"deny"`)
-	exactKey, err := json.Marshal("&review.go")
+	permission := configuration.Agent["reviewer"].Permission
+	if string(permission["*"]) != `"ask"` {
+		t.Fatalf("agent-level fallback = %s, expected \"ask\"", permission["*"])
+	}
+	readRules := string(permission["read"])
+	if strings.Contains(readRules, `"*"`) {
+		t.Fatalf("read rules = %s, expected no wildcard entry", readRules)
+	}
+	absolute := filepath.ToSlash(filepath.Join(snapshot, "&review.go"))
+	absoluteKey, err := json.Marshal(absolute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exactIndex := strings.Index(readRules, string(exactKey)+`:"allow"`)
-	if fallbackIndex < 0 || exactIndex < 0 || fallbackIndex > exactIndex {
-		t.Fatalf("read rules = %s, expected fallback deny before exact allow", readRules)
+	strippedKey, err := json.Marshal(strings.TrimPrefix(absolute, "/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"&review.go":"allow"`,
+		string(absoluteKey) + `:"allow"`,
+		string(strippedKey) + `:"allow"`,
+	} {
+		if !strings.Contains(readRules, want) {
+			t.Fatalf("read rules = %s, missing allow for %s", readRules, want)
+		}
 	}
 }
 
@@ -241,40 +267,36 @@ func TestReviewCommandOpenCodeAllowsOnlyAdmittedReadPathForms(t *testing.T) {
 		t.Fatalf("review configuration is invalid JSON: %v", err)
 	}
 	readPermissions := config.Agent["reviewer"].Permission["read"].(map[string]any)
-	wantPermissions := map[string]any{"*": "deny"}
+	if got := config.Agent["reviewer"].Permission["*"]; got != "ask" {
+		t.Fatalf("agent-level fallback = %v, expected ask (non-interactive auto-reject)", got)
+	}
+	wantPermissions := map[string]any{}
 	for _, admittedPath := range []string{"internal/agentadapter/cli.go", "internal/agentadapter/cli_review_context.go", ".env.example"} {
-		wantPermissions[admittedPath] = "allow"
-		wantPermissions[filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(admittedPath)))] = "allow"
+		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(admittedPath)))
+		for _, form := range []string{admittedPath, absolute, strings.TrimPrefix(absolute, "/")} {
+			wantPermissions[form] = "allow"
+		}
 	}
 	if !reflect.DeepEqual(readPermissions, wantPermissions) {
-		t.Fatalf("read permissions = %v, expected exact admitted relative and snapshot paths %v", readPermissions, wantPermissions)
+		t.Fatalf("read permissions = %v, expected exact admitted paths in all three resource forms %v", readPermissions, wantPermissions)
 	}
 	for _, test := range []struct {
 		name string
 		path string
-		want string
 	}{
-		{name: "admitted relative path", path: "internal/agentadapter/cli.go", want: "allow"},
-		{name: "admitted absolute snapshot path", path: filepath.ToSlash(filepath.Join(snapshot, "internal", "agentadapter", "cli.go")), want: "allow"},
-		{name: "environment example", path: ".env.example", want: "allow"},
-		{name: "absolute snapshot environment example", path: filepath.ToSlash(filepath.Join(snapshot, ".env.example")), want: "allow"},
-		{name: "unrelated relative path", path: "internal/review/engine.go", want: "deny"},
-		{name: "unrelated absolute snapshot path", path: filepath.ToSlash(filepath.Join(snapshot, "internal", "review", "engine.go")), want: "deny"},
-		{name: "wildcard path", path: "*", want: "deny"},
-		{name: "environment file", path: ".env", want: "deny"},
-		{name: "nested environment file", path: "config/.env.local", want: "deny"},
-		{name: "parent traversal", path: "../outside.go", want: "deny"},
-		{name: "glob path", path: "star*.go", want: "deny"},
-		{name: "absolute snapshot environment file", path: filepath.ToSlash(filepath.Join(snapshot, ".env")), want: "deny"},
-		{name: "external absolute path", path: "/etc/passwd", want: "deny"},
+		{name: "unrelated relative path", path: "internal/review/engine.go"},
+		{name: "unrelated absolute snapshot path", path: filepath.ToSlash(filepath.Join(snapshot, "internal", "review", "engine.go"))},
+		{name: "wildcard path", path: "*"},
+		{name: "environment file", path: ".env"},
+		{name: "nested environment file", path: "config/.env.local"},
+		{name: "parent traversal", path: "../outside.go"},
+		{name: "glob path", path: "star*.go"},
+		{name: "absolute snapshot environment file", path: filepath.ToSlash(filepath.Join(snapshot, ".env"))},
+		{name: "external absolute path", path: "/etc/passwd"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, exists := readPermissions[test.path]
-			if !exists {
-				got = readPermissions["*"]
-			}
-			if got != test.want {
-				t.Errorf("read permission for %q = %v, expected %s", test.path, got, test.want)
+			if _, exists := readPermissions[test.path]; exists {
+				t.Errorf("read permission for %q unexpectedly exists; unmatched reads must fall through to the agent-level ask fallback", test.path)
 			}
 		})
 	}
