@@ -267,17 +267,21 @@ func overviewTree(p painter, w int, s ViewState) []string {
 		return append(lines, p.spanLine(w, span{" no repositories registered", Dim}))
 	}
 	// Resolve the effective tree cursor: prefer TreeCursor, fallback to
-		// deprecated RepoCursor for old call sites and tests.
-		treeCursor := s.TreeCursor
-		if treeCursor.Repo == 0 && treeCursor.Worktree == 0 && s.RepoCursor != 0 {
-			treeCursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
-		}
-		if treeCursor.Worktree < -1 {
-			treeCursor.Worktree = -1
-		}
+	// deprecated RepoCursor for old call sites and tests.
+	treeCursor := s.TreeCursor
+	if treeCursor.Repo == 0 && treeCursor.Worktree == 0 && s.RepoCursor != 0 {
+		treeCursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
+	}
+	if treeCursor.Worktree < -1 {
+		treeCursor.Worktree = -1
+	}
 	for i, r := range repos {
 		state := classifyRepo(r)
-		marker := "▾"
+		expanded := i == treeCursor.Repo
+		marker := "▸"
+		if expanded {
+			marker = "▾"
+		}
 		if s.Focus == FocusTree && i == treeCursor.Repo && treeCursor.Worktree == -1 {
 			marker = "▸"
 		}
@@ -286,6 +290,9 @@ func overviewTree(p painter, w int, s ViewState) []string {
 			span{" ● " + state.word, statusColor[state.kind]}))
 		if r.Error != "" {
 			lines = append(lines, p.spanLine(w, span{"   └─ ", Dim}, span{r.Error, Dim}))
+			continue
+		}
+		if !expanded {
 			continue
 		}
 		total := len(r.Worktrees)

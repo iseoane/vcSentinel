@@ -286,8 +286,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				default:
-					if len(msg.String()) == 1 {
-						m.filter += msg.String()
+					s := msg.String()
+					if len(s) >= 1 && s != "up" && s != "down" && s != "left" && s != "right" {
+						m.filter += s
 						return m, nil
 					}
 					return m, nil

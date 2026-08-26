@@ -104,7 +104,7 @@ type keyHint struct{ key, desc string }
 // mockKeys is the navigation footer: keys render in the purple accent,
 // descriptions in dim.
 var mockKeys = []keyHint{
-	{"↑↓", "navigate"}, {"enter", "open"}, {"a", "abort"}, {"r", "retry"},
+	{"↑↓", "navigate"}, {"tab", "repos/activity"}, {"enter", "open"}, {"a", "abort"}, {"r", "retry"},
 	{"/", "filter"}, {"?", "help"}, {"q", "quit"},
 }
 

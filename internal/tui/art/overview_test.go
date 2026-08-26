@@ -149,7 +149,7 @@ func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
 // Error line replaces the children wholesale.
 func TestOverviewTreeAtLimitAndDegradedExempt(t *testing.T) {
 	exact := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
-		stoppedRepo("edge", manyWorktrees(maxTreeChildren)... )}, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
+		stoppedRepo("edge", manyWorktrees(maxTreeChildren)...)}, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
 	lastBranch := fmt.Sprintf("   └─ branch-%02d", maxTreeChildren-1)
 	assertContains(t, exact, lastBranch)
 	if got := strings.Count(exact, "   ├─"); got != maxTreeChildren-1 {
@@ -725,10 +725,10 @@ func TestOverviewHeadingFocusMarkers(t *testing.T) {
 // owns focus; expanded rows otherwise keep "▾" and child lines never change.
 func TestOverviewTreeCursorGlyph(t *testing.T) {
 	repos := []overview.Repo{liveRepo("alpha"), liveRepo("beta")}
-	dash := RenderOverviewPlain(70, ViewState{Repos: repos, RepoCursor: 1})
-	assertContains(t, dash, " ▾ alpha", " ▸ beta")
-	other := RenderOverviewPlain(70, ViewState{Repos: repos, RepoCursor: 1, Focus: FocusRuns})
-	assertContains(t, other, " ▾ alpha", " ▾ beta")
+	dash := RenderOverviewPlain(70, ViewState{Repos: repos, TreeCursor: TreePos{Repo: 1, Worktree: -1}})
+	assertContains(t, dash, " ▸ alpha", " ▸ beta")
+	other := RenderOverviewPlain(70, ViewState{Repos: repos, TreeCursor: TreePos{Repo: 1, Worktree: -1}, Focus: FocusRuns})
+	assertContains(t, other, " ▸ alpha", " ▾ beta")
 	withTrees := []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}
 	child := RenderOverviewPlain(70, ViewState{Repos: withTrees, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
 	assertContains(t, child, "├─ main", "└─ feature")
