@@ -160,13 +160,13 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Admission record primitive: writes the immutable request.json for a new durable run. Called only by the execution controller, never by feature packages."},
 		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Line: 197, Marker: "AppendEvent(",
 			Class: ClassDurable, Reason: "Append-only event log primitives (plain and terminal-with-outcome); called only by the execution controller internals, never by feature packages."},
-		{Path: "internal/store/execution_outcomes.go", Symbol: "Store.SaveAttemptOutcome", Line: 47, Marker: "SaveAttemptOutcome(",
+		{Path: "internal/store/execution_outcomes.go", Symbol: "Store.SaveAttemptOutcome", Line: 64, Marker: "SaveAttemptOutcome(",
 			Class: ClassDurable, Reason: "Immutable attempt-outcome record primitive: durably persists one admitted invocation result before the caller continues. Written only beside controller-authored terminal events."},
 
 		// --- internal/reviewexec (admitted review transport) ---------------
 		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.RunWithPolicy", Line: 216, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Review admission transport: builds the RunRequest, starts it through the controller, validates snapshot binding, and admits completions only against verified AttemptOutcome evidence."},
-		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Line: 167, Marker: "EjecutarRevision(",
+		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Line: 168, Marker: "EjecutarRevision(",
 			Class: ClassDurable, Reason: "Executes exactly one admitted physical invocation per controller dispatch; receives the InvocationEnvelope and forwards cancellation/tree ownership to the controller."},
 
 		// --- internal/gate --------------------------------------------------
