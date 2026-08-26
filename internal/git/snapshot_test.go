@@ -346,8 +346,13 @@ func TestSnapshotLockHelper(t *testing.T) {
 	if err != nil {
 		os.Exit(2)
 	}
-	if err := os.WriteFile(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_READY"), []byte(path), 0600); err != nil {
+	readyPath := os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_READY")
+	tempPath := readyPath + ".tmp"
+	if err := os.WriteFile(tempPath, []byte(path), 0600); err != nil {
 		os.Exit(3)
+	}
+	if err := os.Rename(tempPath, readyPath); err != nil {
+		os.Exit(4)
 	}
 	for {
 		runtime.KeepAlive(release)
