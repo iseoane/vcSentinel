@@ -370,3 +370,89 @@ func TestCollectStoresSuccessfulRunRowsBesideOriginalError(t *testing.T) {
 			repos[0].Runs, want)
 	}
 }
+
+// TestIsInternalWorktree pins the slice-13 plumbing rule on the exported
+// helper: a worktree is internal when it equals or nests under
+// <commonDir>/vas-sentinel/snapshots, with trailing slashes accepted and no
+// prefix-boundary false positives.
+func TestIsInternalWorktree(t *testing.T) {
+	tests := []struct {
+		name       string
+		wtPath     string
+		commonDir  string
+		isInternal bool
+	}{
+		{"exact snapshots base", "/repo/.git/vas-sentinel/snapshots", "/repo/.git", true},
+		{"direct child", "/repo/.git/vas-sentinel/snapshots/abc123", "/repo/.git", true},
+		{"deeply nested subpath", "/repo/.git/vas-sentinel/snapshots/abc/sub/x", "/repo/.git", true},
+		{"sibling area under vas-sentinel", "/repo/.git/vas-sentinel/store", "/repo/.git", false},
+		{"prefix without boundary", "/repo/.git/vas-sentinel/snapshots-extra/x", "/repo/.git", false},
+		{"outside the common dir", "/elsewhere/vas-sentinel/snapshots/abc", "/repo/.git", false},
+		{"trailing slash on the common dir", "/repo/.git/vas-sentinel/snapshots/abc/", "/repo/.git/", true},
+		{"trailing slash on the worktree path", "/repo/.git/vas-sentinel/snapshots/abc/", "/repo/.git", true},
+		{"empty worktree path", "", "/repo/.git", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsInternalWorktree(tt.wtPath, tt.commonDir); got != tt.isInternal {
+				t.Errorf("IsInternalWorktree(%q, %q) = %v, want %v", tt.wtPath, tt.commonDir, got, tt.isInternal)
+			}
+		})
+	}
+}
+
+// TestCollectFiltersInternalSnapshotWorktrees drives Collect against a real
+// repository carrying a real linked worktree planted inside the sentinel
+// snapshot area under its .git common dir (git registers such worktrees
+// fine). Every count surface downstream of Repo.Worktrees (tree children,
+// LOCATION status tallies, clean/dirty splits) sees only the
+// operator-visible worktrees.
+func TestCollectFiltersInternalSnapshotWorktrees(t *testing.T) {
+	repo := initRepo(t)
+	common := filepath.Join(repo, ".git")
+
+	feature := filepath.Join(t.TempDir(), "feature")
+	runGit(t, repo, "worktree", "add", feature, "-b", "feature")
+	writeFile(t, filepath.Join(feature, "dirty.txt"), "pending change\n")
+
+	snapshotsArea := filepath.Join(common, "vas-sentinel", "snapshots")
+	if err := os.MkdirAll(snapshotsArea, 0755); err != nil {
+		t.Fatal(err)
+	}
+	plumbing := filepath.Join(snapshotsArea, "seed")
+	runGit(t, repo, "worktree", "add", "--detach", plumbing, "HEAD")
+
+	path := registryPath(t)
+	writeRegistry(t, path, registry.Entry{Path: repo, Name: "filtered", Enabled: true})
+
+	repos, err := Collect(path)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Error != "" {
+		t.Fatalf("a healthy repo with plumbing worktrees must collect cleanly: %#v", repos)
+	}
+	byPath := map[string]inventory.Worktree{}
+	for _, w := range repos[0].Worktrees {
+		byPath[w.Path] = w
+	}
+	if len(byPath) != 2 {
+		t.Fatalf("internal snapshot plumbing must be filtered before Repo.Worktrees: %#v", repos[0].Worktrees)
+	}
+	main, hasMain := byPath[repo]
+	feat, hasFeature := byPath[feature]
+	if !hasMain || !hasFeature {
+		t.Fatalf("operator-visible worktrees missing:\n got: %#v\nwant paths %q and %q", byPath, repo, feature)
+	}
+	if !main.Clean {
+		t.Errorf("the main worktree must stay clean: %#v", main)
+	}
+	if feat.Clean {
+		t.Errorf("the dirty tally must reflect only visible worktrees: %#v", feat)
+	}
+	for p := range byPath {
+		if IsInternalWorktree(p, common) {
+			t.Errorf("internal plumbing leaked into the snapshot view: %q", p)
+		}
+	}
+}

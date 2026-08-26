@@ -1,6 +1,7 @@
 package art
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,16 @@ func liveRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
 
 func stoppedRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
 	return overview.Repo{Name: name, Path: "/tmp/" + name, Enabled: true, Worktrees: worktrees}
+}
+
+// manyWorktrees builds n distinct child fixtures alternating clean/dirty,
+// with zero-padded names so hidden and shown children are easy to assert.
+func manyWorktrees(n int) []inventory.Worktree {
+	worktrees := make([]inventory.Worktree, n)
+	for i := range worktrees {
+		worktrees[i] = wt(fmt.Sprintf("branch-%02d", i), i%2 == 0)
+	}
+	return worktrees
 }
 
 // liveRepoWithRuns builds a live repository whose snapshot carries durable-run
@@ -89,6 +100,72 @@ func TestRenderOverviewMultiWorktree(t *testing.T) {
 	assertContains(t, dash, "├─", "└─", " dirty", "· 0 active")
 	if !strings.Contains(RenderOverview(100, ViewState{Repos: repos}), colorPrefix(Blue, " dirty")) {
 		t.Error("dirty child must be blue")
+	}
+}
+
+// TestOverviewTreeCollapsesBeyondMaxChildren pins the slice-13 overflow
+// rule: exactly maxTreeChildren children render — every one of them keeping
+// the "├─" connector — followed by one final dim "… N more" line carrying
+// the "└─"; hidden children never leak into the render.
+func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
+	repos := []overview.Repo{stoppedRepo("big", manyWorktrees(15)...)}
+	dash := RenderOverviewPlain(100, ViewState{Repos: repos})
+	if got := strings.Count(dash, "   ├─"); got != maxTreeChildren {
+		t.Errorf("%d child lines rendered, want maxTreeChildren=%d:\n%s", got, maxTreeChildren, dash)
+	}
+	assertContains(t, dash, "   └─ … 3 more")
+	if got := strings.Count(dash, "   └─"); got != 1 {
+		t.Errorf("the overflow line must be the only └─ child row, got %d:\n%s", got, dash)
+	}
+	for _, hidden := range []string{"branch-12", "branch-13", "branch-14"} {
+		if strings.Contains(dash, hidden) {
+			t.Errorf("collapsed child %q must not render:\n%s", hidden, dash)
+		}
+	}
+	if !strings.Contains(dash, "branch-11 ") {
+		t.Errorf("the twelfth child must render right above the overflow line:\n%s", dash)
+	}
+	assertWidth(t, dash, 100)
+	colored := RenderOverview(100, ViewState{Repos: repos})
+	if !strings.Contains(colored, colorPrefix(Dim, "… 3 more")) {
+		t.Errorf("the overflow line must render dim:\n%s", colored)
+	}
+}
+
+// TestOverviewTreeAtLimitAndDegradedExempt pins both non-collapse sides: at
+// exactly maxTreeChildren every child renders with the classic final "└─"
+// and no overflow line appears; fewer children stay untouched; and a
+// degraded repository is exempt from counting and collapsing entirely — its
+// Error line replaces the children wholesale.
+func TestOverviewTreeAtLimitAndDegradedExempt(t *testing.T) {
+	exact := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
+		stoppedRepo("edge", manyWorktrees(maxTreeChildren)...)}})
+	assertContains(t, exact, "   └─ branch-11")
+	if got := strings.Count(exact, "   ├─"); got != maxTreeChildren-1 {
+		t.Errorf("%d connected children at the limit, want %d:\n%s", got, maxTreeChildren-1, exact)
+	}
+	if strings.Contains(exact, "more") {
+		t.Errorf("a repository at exactly maxTreeChildren must not collapse:\n%s", exact)
+	}
+
+	small := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
+		stoppedRepo("small", wt("main", true), wt("dev", true), wt("spike", false))}})
+	assertContains(t, small, "   └─ spike")
+	if strings.Contains(small, "more") {
+		t.Errorf("a repository under maxTreeChildren must not grow an overflow line:\n%s", small)
+	}
+
+	degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom",
+		Worktrees: manyWorktrees(15)}
+	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{degraded}})
+	// The one-line Error clamps at the pane width: assert on the prefix that
+	// survives truncation.
+	assertContains(t, dash, "   └─ overview:")
+	if got := strings.Count(dash, "   ├─"); got != 0 {
+		t.Errorf("a degraded repository must render no counted children, got %d:\n%s", got, dash)
+	}
+	if strings.Contains(dash, "… ") {
+		t.Errorf("a degraded repository must not grow an overflow line:\n%s", dash)
 	}
 }
 
@@ -167,6 +244,8 @@ func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 	}{
 		{"healthy", ViewState{Repos: []overview.Repo{liveRepo("vas.sentinel", wt("main", true))}}},
 		{"multi", ViewState{Repos: []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}}},
+		{"overflow", ViewState{Repos: []overview.Repo{
+			stoppedRepo("big", manyWorktrees(15)...), stoppedRepo("after")}}},
 		{"degraded", ViewState{Repos: []overview.Repo{{Name: "broken", Error: "overview: inspect repository boom"}}}},
 		{"missing", ViewState{Repos: []overview.Repo{{Name: "ghost", Missing: true}}}},
 		{"runs", ViewState{Repos: runsRepos}},

@@ -58,6 +58,12 @@ func directorioSnapshots() (string, error) {
 	return dir, nil
 }
 
+// snapshotRetention is how long a snapshot worktree may sit unused in the
+// plumbing area before creation sweeps it: snapshots are disposable caches
+// of tree states, so anything older than a day is stale by definition
+// (slice 13).
+const snapshotRetention = 24 * time.Hour
+
 // CrearSnapshot crea (o reutiliza) un worktree Git separado en modo detached
 // para el árbol treeOID, dentro del common-dir del repositorio, de forma que
 // cualquier worktree enlazado del mismo repositorio vea y reutilice el mismo
@@ -120,6 +126,10 @@ func CrearSnapshot(treeOID string) (string, error) {
 		return "", fmt.Errorf("no se pudo reparar los metadatos del worktree del snapshot %s: %w", treeOID, err)
 	}
 
+	// Best-effort hygiene sweep after a successful publish (slice 13): this
+	// is housekeeping, not correctness — a failed sweep never fails creation.
+	_ = purgarSnapshotsLocked(snapshotRetention)
+
 	return destino, nil
 }
 
@@ -135,6 +145,16 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 
+	return purgarSnapshotsLocked(antiguedad)
+}
+
+// purgarSnapshotsLocked is the purge body proper; the caller must already
+// hold snapshotMu. It removes every snapshot directory whose ModTime is
+// older than antiguedad, best-effort per entry: a snapshot neither the
+// normal nor the forced removal can clean accumulates an error instead of
+// pretending the disk came out clean (B15), but one broken snapshot never
+// blocks the rest of the sweep.
+func purgarSnapshotsLocked(antiguedad time.Duration) error {
 	snapshots, err := directorioSnapshots()
 	if err != nil {
 		return err

@@ -6,12 +6,34 @@ package overview
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
 )
+
+// snapshotsBaseSuffix is the sentinel plumbing area relative to the git
+// common dir: worktrees created there are internal bookkeeping (validation
+// snapshots), never operator-visible state.
+const snapshotsBaseSuffix = "/vas-sentinel/snapshots"
+
+// IsInternalWorktree reports whether worktreePath lives inside the sentinel
+// snapshot area under commonDir, i.e. equals or nests below
+// <commonDir>/vas-sentinel/snapshots.
+//
+// Both inputs are slash-normalized with filepath.ToSlash before comparing:
+// inventory paths arrive native-cleaned per host OS (internal/inventory
+// converts git's slash output back to native), while commonDir comes from
+// the git plumbing in whatever form the platform produces. Trailing slashes
+// on either side are accepted.
+func IsInternalWorktree(worktreePath, commonDir string) bool {
+	base := strings.TrimRight(filepath.ToSlash(commonDir), "/") + snapshotsBaseSuffix
+	path := strings.TrimRight(filepath.ToSlash(worktreePath), "/")
+	return path == base || strings.HasPrefix(path, base+"/")
+}
 
 // Repo is the dashboard fact sheet of one registered repository.
 type Repo struct {
@@ -50,6 +72,11 @@ var recentRuns = presence.RecentRuns
 //   - Once the common dir resolves, the presence probe always runs (it
 //     degrades to Stopped by its own contract); an inventory failure records
 //     Error while keeping the probe result.
+//   - A successful inventory keeps only operator-visible worktrees: internal
+//     sentinel plumbing under <commonDir>/vas-sentinel/snapshots (validation
+//     snapshot worktrees) is filtered out before it reaches Repo.Worktrees,
+//     so every derived count (tree children, LOCATION status tallies) sees
+//     the same visible set.
 //   - The recent-runs read still executes afterwards: a successful read
 //     stores up to recentRunLimit summaries in Runs (an empty store keeps
 //     Runs nil); a runs-read failure records its cause in Error only when
@@ -94,7 +121,7 @@ func collectProbes(repo *Repo, repoPath string) {
 	if err != nil {
 		repo.Error = fmt.Sprintf("overview: inspect repository %q: %v", repoPath, err)
 	} else {
-		repo.Worktrees = snapshot.Worktrees
+		repo.Worktrees = visibleWorktrees(snapshot.Worktrees, commonDir)
 		repo.Origin = snapshot.Origin
 	}
 	runs, err := recentRuns(commonDir, recentRunLimit)
@@ -107,4 +134,20 @@ func collectProbes(repo *Repo, repoPath string) {
 	if len(runs) > 0 {
 		repo.Runs = runs // empty reads stay nil so runless repos compare and render as before
 	}
+}
+
+// visibleWorktrees filters the inventory's worktrees down to the
+// operator-visible set: internal sentinel plumbing (snapshot worktrees under
+// the common dir's vas-sentinel/snapshots area) never reaches the snapshot
+// view, keeping tree children and every derived count honest. A result with
+// no survivors stays nil so empty views keep comparing and rendering as nil.
+func visibleWorktrees(worktrees []inventory.Worktree, commonDir string) []inventory.Worktree {
+	var visible []inventory.Worktree
+	for _, wt := range worktrees {
+		if IsInternalWorktree(wt.Path, commonDir) {
+			continue
+		}
+		visible = append(visible, wt)
+	}
+	return visible
 }

@@ -19,6 +19,14 @@ var timeNow = time.Now
 // column before the layout engine pads it to the approved width.
 const maxRunFlowRunes = 12
 
+// maxTreeChildren bounds how many worktree child lines one repository may
+// render in the tree pane before the rest collapse behind a single dim
+// "... N more" line (slice 13): real repositories carry dozens of snapshot
+// churn worktrees, and an unbounded tree would drown every other repository.
+// Degraded repositories are exempt: they render their Error line instead of
+// children, so they neither count nor collapse.
+const maxTreeChildren = 12
+
 // FocusPane names the pane that owns keyboard navigation.
 type FocusPane int
 
@@ -150,12 +158,16 @@ func VisibleRuns(s ViewState) []RunPos {
 }
 
 // overviewTree renders the tree pane: one line per repo with its daemon
-// state word, then one child line per worktree or, for a degraded repo, its
-// recorded Error in place of the children. An empty registry renders the
-// empty-state line inside the untouched frame. While the tree owns focus its
-// heading carries a purple marker and the repository under the cursor shows
-// "▸" in place of its expand glyph; unfocused rendering keeps the exact
-// historical bytes.
+// state word, then one child line per worktree — capped at maxTreeChildren,
+// with any further children collapsed into one final dim "… N more" line —
+// or, for a degraded repo, its recorded Error in place of the children
+// (degraded repos never count nor collapse). The overflow line always draws
+// the "└─" connector and the child above it keeps "├─", since the overflow
+// line is by construction the last visible row. An empty registry renders
+// the empty-state line inside the untouched frame. While the tree owns focus
+// its heading carries a purple marker and the repository under the cursor
+// shows "▸" in place of its expand glyph; unfocused rendering keeps the
+// exact historical bytes.
 func overviewTree(p painter, w int, s ViewState) []string {
 	heading := span{" REPOSITORIES", White}
 	if s.Focus == FocusTree {
@@ -179,15 +191,25 @@ func overviewTree(p painter, w int, s ViewState) []string {
 			lines = append(lines, p.spanLine(w, span{"   └─ ", Dim}, span{r.Error, Dim}))
 			continue
 		}
-		for i, wt := range r.Worktrees {
-			child := classifyWorktree(wt)
+		total := len(r.Worktrees)
+		shown := total
+		if shown > maxTreeChildren {
+			shown = maxTreeChildren
+		}
+		for j := 0; j < shown; j++ {
+			child := classifyWorktree(r.Worktrees[j])
 			branch := "├─"
-			if i == len(r.Worktrees)-1 {
+			if j == total-1 { // genuinely the final visible row of this repo
 				branch = "└─"
 			}
 			lines = append(lines, p.spanLine(w,
-				span{"   " + branch + " " + fitRunes(worktreeName(wt), 17), Dim},
+				span{"   " + branch + " " + fitRunes(worktreeName(r.Worktrees[j]), 17), Dim},
 				span{" " + child.state, statusColor[child.kind]}))
+		}
+		if total > maxTreeChildren {
+			lines = append(lines, p.spanLine(w,
+				span{"   └─ ", Dim},
+				span{fmt.Sprintf("… %d more", total-maxTreeChildren), Dim}))
 		}
 	}
 	return lines
