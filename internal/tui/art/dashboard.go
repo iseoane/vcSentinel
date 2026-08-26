@@ -139,16 +139,24 @@ func renderDashboard(width int, colors bool) string {
 		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity, false, false) })
 }
 
+// Activity column widths: the caption row and every data row anchor to the
+// same three numbers so the columns stay aligned at any pane width.
+const (
+	activityFlowWidth  = 16
+	activityStageWidth = 20
+	activityStateWidth = 9
+)
+
 // activityCaptionRow renders the dim column-caption row anchored to the exact
 // fitRunes widths the run rows use: a blank icon cell (two runes, matching
-// " " + one-rune icon), FLOW(16), STAGE(20), STATE(9), and the trailing AGE
-// label. spanLine clamps it on panes narrower than its 51 visible runes.
+// " " + one-rune icon), FLOW, STAGE, STATE, and the trailing AGE label.
+// spanLine clamps it on panes narrower than its 51 visible runes.
 func activityCaptionRow(p painter, w int) string {
 	return p.spanLine(w,
 		span{"  ", Dim},
-		span{" " + fitRunes("FLOW", 16), Dim},
-		span{fitRunes("STAGE", 20), Dim},
-		span{fitRunes("STATE", 9), Dim},
+		span{" " + fitRunes("FLOW", activityFlowWidth), Dim},
+		span{fitRunes("STAGE", activityStageWidth), Dim},
+		span{fitRunes("STATE", activityStateWidth), Dim},
 		span{"AGE", Dim})
 }
 
@@ -269,9 +277,9 @@ func rightLines(p painter, w int, location [][2]string, activity []activityRow, 
 		}
 		spans = append(spans,
 			span{" " + a.icon, statusColor[a.kind]},
-			span{" " + fitRunes(a.flow, 16), White},
-			span{fitRunes(a.stage, 20), Dim},
-			span{fitRunes(a.state, 9), statusColor[a.kind]},
+			span{" " + fitRunes(a.flow, activityFlowWidth), White},
+			span{fitRunes(a.stage, activityStageWidth), Dim},
+			span{fitRunes(a.state, activityStateWidth), statusColor[a.kind]},
 			span{a.age, Dim})
 		lines = append(lines, p.spanLine(w, spans...))
 		if a.detail != "" {

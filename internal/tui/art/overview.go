@@ -424,7 +424,7 @@ func runRow(run presence.RunSummary) activityRow {
 	icon, kind, word := runState(run.State)
 	flow := truncateRunes(run.RunID, maxRunFlowRunes)
 	if run.Operation != "" {
-		flow = truncateRunes(run.Operation, maxOperationFlowRunes)
+		flow = truncateRunes(sanitizeLabel(run.Operation), maxOperationFlowRunes)
 	}
 	return activityRow{
 		icon:  icon,
@@ -434,6 +434,19 @@ func runRow(run presence.RunSummary) activityRow {
 		kind:  kind,
 		age:   runAge(run),
 	}
+}
+
+// sanitizeLabel strips control characters (newlines, tabs, escapes) from an
+// operation label at the render boundary: labels may embed operator-supplied
+// command text, and a raw control rune would split or recolor TUI rows.
+func sanitizeLabel(label string) string {
+	clean := make([]rune, 0, len(label))
+	for _, r := range label {
+		if r >= 0x20 && r != 0x7f {
+			clean = append(clean, r)
+		}
+	}
+	return string(clean)
 }
 
 // runAge renders a run's compact age: a dash when the stored projection

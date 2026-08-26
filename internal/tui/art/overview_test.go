@@ -820,3 +820,19 @@ func TestOverviewHelpBlockReplacesPaneContent(t *testing.T) {
 	}
 	assertWidth(t, dash, 70)
 }
+
+// TestRunRowSanitizesOperationLabels pins the render-boundary hygiene rule:
+// control characters inside an operation label (operator-supplied command
+// text) never reach the row bytes.
+func TestRunRowSanitizesOperationLabels(t *testing.T) {
+	row := runRow(presence.RunSummary{
+		RunID: "aaaaaaaaaaaaaaaaaaaa", State: agentrun.StateRunning,
+		Operation: "validate go\ttest\n./... \x1b[31m--race",
+	})
+	if strings.ContainsAny(row.flow, "\n\t\x1b") {
+		t.Errorf("control characters leaked into the flow column: %q", row.flow)
+	}
+	if row.flow != "validate gotest." {
+		t.Errorf("sanitized label truncated unexpectedly: %q", row.flow)
+	}
+}
