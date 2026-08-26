@@ -7,6 +7,7 @@ package overview
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -20,7 +21,7 @@ import (
 // snapshots), never operator-visible state.
 const snapshotsBaseSuffix = "/vas-sentinel/snapshots"
 
-// IsInternalWorktree reports whether worktreePath lives inside the sentinel
+// isInternalWorktree reports whether worktreePath lives inside the sentinel
 // snapshot area under commonDir, i.e. equals or nests below
 // <commonDir>/vas-sentinel/snapshots.
 //
@@ -28,10 +29,16 @@ const snapshotsBaseSuffix = "/vas-sentinel/snapshots"
 // inventory paths arrive native-cleaned per host OS (internal/inventory
 // converts git's slash output back to native), while commonDir comes from
 // the git plumbing in whatever form the platform produces. Trailing slashes
-// on either side are accepted.
-func IsInternalWorktree(worktreePath, commonDir string) bool {
+// on either side are accepted. On Windows the final comparison folds case,
+// because registry entries, git-resolved paths, and mapped drives disagree
+// about casing there; on case-sensitive platforms it stays exact so two
+// genuinely distinct directories can never collide.
+func isInternalWorktree(worktreePath, commonDir string) bool {
 	base := strings.TrimRight(filepath.ToSlash(commonDir), "/") + snapshotsBaseSuffix
 	path := strings.TrimRight(filepath.ToSlash(worktreePath), "/")
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(path, base) || strings.HasPrefix(strings.ToLower(path), strings.ToLower(base)+"/")
+	}
 	return path == base || strings.HasPrefix(path, base+"/")
 }
 
@@ -144,7 +151,7 @@ func collectProbes(repo *Repo, repoPath string) {
 func visibleWorktrees(worktrees []inventory.Worktree, commonDir string) []inventory.Worktree {
 	var visible []inventory.Worktree
 	for _, wt := range worktrees {
-		if IsInternalWorktree(wt.Path, commonDir) {
+		if isInternalWorktree(wt.Path, commonDir) {
 			continue
 		}
 		visible = append(visible, wt)

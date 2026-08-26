@@ -21,10 +21,12 @@ const maxRunFlowRunes = 12
 
 // maxTreeChildren bounds how many worktree child lines one repository may
 // render in the tree pane before the rest collapse behind a single dim
-// "... N more" line (slice 13): real repositories carry dozens of snapshot
-// churn worktrees, and an unbounded tree would drown every other repository.
-// Degraded repositories are exempt: they render their Error line instead of
-// children, so they neither count nor collapse.
+// "… N more" line (slice 13): snapshot plumbing worktrees are already
+// filtered out of the snapshot, so this cap is defense in depth against
+// operator repositories that legitimately carry dozens of worktrees — an
+// unbounded tree would still drown every other repository and push the
+// activity pane off-screen. Degraded repositories are exempt: they render
+// their Error line instead of children, so they neither count nor collapse.
 const maxTreeChildren = 12
 
 // FocusPane names the pane that owns keyboard navigation.
@@ -196,14 +198,14 @@ func overviewTree(p painter, w int, s ViewState) []string {
 		if shown > maxTreeChildren {
 			shown = maxTreeChildren
 		}
-		for j := 0; j < shown; j++ {
-			child := classifyWorktree(r.Worktrees[j])
+		for j, wt := range r.Worktrees[:shown] {
+			child := classifyWorktree(wt)
 			branch := "├─"
 			if j == total-1 { // genuinely the final visible row of this repo
 				branch = "└─"
 			}
 			lines = append(lines, p.spanLine(w,
-				span{"   " + branch + " " + fitRunes(worktreeName(r.Worktrees[j]), 17), Dim},
+				span{"   " + branch + " " + fitRunes(worktreeName(wt), 17), Dim},
 				span{" " + child.state, statusColor[child.kind]}))
 		}
 		if total > maxTreeChildren {

@@ -371,11 +371,11 @@ func TestCollectStoresSuccessfulRunRowsBesideOriginalError(t *testing.T) {
 	}
 }
 
-// TestIsInternalWorktree pins the slice-13 plumbing rule on the exported
+// TestIsInternalWorktreeRule pins the slice-13 plumbing rule on the
 // helper: a worktree is internal when it equals or nests under
 // <commonDir>/vas-sentinel/snapshots, with trailing slashes accepted and no
 // prefix-boundary false positives.
-func TestIsInternalWorktree(t *testing.T) {
+func TestIsInternalWorktreeRule(t *testing.T) {
 	tests := []struct {
 		name       string
 		wtPath     string
@@ -394,8 +394,8 @@ func TestIsInternalWorktree(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsInternalWorktree(tt.wtPath, tt.commonDir); got != tt.isInternal {
-				t.Errorf("IsInternalWorktree(%q, %q) = %v, want %v", tt.wtPath, tt.commonDir, got, tt.isInternal)
+			if got := isInternalWorktree(tt.wtPath, tt.commonDir); got != tt.isInternal {
+				t.Errorf("isInternalWorktree(%q, %q) = %v, want %v", tt.wtPath, tt.commonDir, got, tt.isInternal)
 			}
 		})
 	}
@@ -451,7 +451,7 @@ func TestCollectFiltersInternalSnapshotWorktrees(t *testing.T) {
 		t.Errorf("the dirty tally must reflect only visible worktrees: %#v", feat)
 	}
 	for p := range byPath {
-		if IsInternalWorktree(p, common) {
+		if isInternalWorktree(p, common) {
 			t.Errorf("internal plumbing leaked into the snapshot view: %q", p)
 		}
 	}
