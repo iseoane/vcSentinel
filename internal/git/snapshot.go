@@ -26,6 +26,8 @@ var snapshotMu sync.Mutex
 
 const snapshotLeaseDir = "snapshot-leases"
 
+const snapshotPurgeMarker = ".purging"
+
 // ArbolDe devuelve el tree OID de una revisión.
 func ArbolDe(revision string) (string, error) {
 	// Una revisión que empieza con "-" se interpretaría como una opción de
@@ -128,16 +130,16 @@ func CrearSnapshot(treeOID string) (string, error) {
 // AcquireSnapshot keeps a shared lease for one validation while it uses a
 // snapshot. The release function is idempotent and must be deferred by callers.
 func AcquireSnapshot(treeOID string) (string, func(), error) {
+	if !treeOIDIsValid(treeOID) {
+		return "", nil, fmt.Errorf("invalid snapshot tree object id %q", treeOID)
+	}
 	snapshots, err := directorioSnapshots()
 	if err != nil {
 		return "", nil, err
 	}
 	leaseDir := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
-	if err := os.MkdirAll(leaseDir, 0700); err != nil {
-		return "", nil, err
-	}
-	lease := filepath.Join(leaseDir, fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()))
-	if err := os.WriteFile(lease, nil, 0600); err != nil {
+	lease, err := createSnapshotLease(leaseDir)
+	if err != nil {
 		return "", nil, err
 	}
 	path, err := CrearSnapshot(treeOID)
@@ -158,6 +160,26 @@ func AcquireSnapshot(treeOID string) (string, func(), error) {
 		})
 	}
 	return path, release, nil
+}
+
+func createSnapshotLease(leaseDir string) (string, error) {
+	for {
+		if err := os.MkdirAll(leaseDir, 0700); err != nil {
+			return "", err
+		}
+		lease := filepath.Join(leaseDir, fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()))
+		if err := os.WriteFile(lease, nil, 0600); err != nil {
+			return "", err
+		}
+		if _, err := os.Stat(filepath.Join(leaseDir, snapshotPurgeMarker)); errors.Is(err, os.ErrNotExist) {
+			return lease, nil
+		} else if err != nil {
+			_ = os.Remove(lease)
+			return "", err
+		}
+		_ = os.Remove(lease)
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func refreshSnapshotLease(path string, stop <-chan struct{}, done chan<- struct{}) {
@@ -226,7 +248,12 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		if info.ModTime().After(limite) {
 			continue
 		}
+		endPurge, err := claimSnapshotPurge(snapshots, entrada.Name())
+		if err != nil {
+			continue
+		}
 		if snapshotLeased(snapshots, entrada.Name(), limite) {
+			endPurge()
 			continue
 		}
 		ruta := filepath.Join(snapshots, entrada.Name())
@@ -239,9 +266,11 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 				// bucle continúa: es limpieza best-effort por snapshot, un
 				// fallo aislado no debe impedir purgar los demás.
 				errores = append(errores, fmt.Errorf("no se pudo eliminar el snapshot %s: %w", ruta, errForzado))
+				endPurge()
 				continue
 			}
 		}
+		endPurge()
 		huboEliminacion = true
 	}
 
@@ -249,6 +278,18 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 		_, _ = ejecutarGitSalida("worktree", "prune")
 	}
 	return errors.Join(errores...)
+}
+
+func claimSnapshotPurge(snapshots, treeOID string) (func(), error) {
+	leaseDir := filepath.Join(filepath.Dir(snapshots), snapshotLeaseDir, treeOID)
+	if err := os.MkdirAll(leaseDir, 0700); err != nil {
+		return nil, err
+	}
+	marker := filepath.Join(leaseDir, snapshotPurgeMarker)
+	if err := os.Mkdir(marker, 0700); err != nil {
+		return nil, err
+	}
+	return func() { _ = os.Remove(marker) }, nil
 }
 
 func snapshotLeased(snapshots, treeOID string, staleBefore time.Time) bool {
@@ -259,7 +300,7 @@ func snapshotLeased(snapshots, treeOID string, staleBefore time.Time) bool {
 	}
 	active := false
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || entry.Name() == snapshotPurgeMarker {
 			continue
 		}
 		info, err := entry.Info()
@@ -273,4 +314,16 @@ func snapshotLeased(snapshots, treeOID string, staleBefore time.Time) bool {
 		_ = os.Remove(filepath.Join(leaseRoot, entry.Name()))
 	}
 	return active
+}
+
+func treeOIDIsValid(treeOID string) bool {
+	if len(treeOID) != 40 && len(treeOID) != 64 {
+		return false
+	}
+	for _, r := range treeOID {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
 }
