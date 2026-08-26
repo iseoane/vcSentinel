@@ -584,7 +584,8 @@ func auditWithAgent(agent AuditorAgente, bundle ReviewBundle, dimension string, 
 
 // Review executes one resolved contract and preserves raw provider output or a
 // typed provider execution failure on the returned result for internal
-// diagnosis. Semantic-output errors remain distinct and are never retried.
+// diagnosis. A malformed schema gets one corrective retry; other semantic
+// output errors remain distinct and are never retried.
 func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequest) (*DimensionResult, error) {
 	if err := ctx.Err(); err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
@@ -598,13 +599,20 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		policyReviewer := agent.(policyAwareReviewer)
 		return policyReviewer.ReviewWithPolicy(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
 	}
-	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+	prompt := buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory)
+	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
 	if err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
 
 	crudo, err := ParseDimensionResultForContract(output, contract)
+	if shouldRetryFormat(err, output) {
+		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt+formatRetryInstruction)
+		if err == nil {
+			crudo, err = ParseDimensionResultForContract(output, contract)
+		}
+	}
 	if err != nil {
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
 	}
@@ -629,6 +637,22 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	stamparInvocacion(crudo.Hallazgos, invocation)
 	stamparProductorEfectivo(crudo.Hallazgos, agent)
 	return crudo, nil
+}
+
+const formatRetryInstruction = "\n\nFORMAT RETRY: Your previous response did not satisfy the required review schema. Return only one complete BEGIN_REVIEW/END_REVIEW payload with verdict set to ok, warn, block, question, or unavailable and every required finding field."
+
+func shouldRetryFormat(err error, output string) bool {
+	var semantic *SemanticOutputError
+	if !errors.As(err, &semantic) || semantic.Class != SemanticOutputSchemaInvalid {
+		return false
+	}
+	var envelope struct {
+		Verdict string `json:"verdict"`
+	}
+	if json.Unmarshal([]byte(output), &envelope) != nil {
+		return false
+	}
+	return envelope.Verdict != "" && !veredictosValidos[envelope.Verdict]
 }
 
 // stamparSourceReview marca todo Hallazgo que sale de la revisión semántica

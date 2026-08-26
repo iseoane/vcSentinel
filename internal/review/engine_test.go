@@ -1418,6 +1418,32 @@ func TestReviewTransportRoutesDimensionCallsAndParsesOutput(t *testing.T) {
 	}
 }
 
+func TestReviewTransportRetriesSchemaInvalidOutputOnce(t *testing.T) {
+	fake := &agenteFake{}
+	calls := 0
+	transport := func(_, _, prompt string, _ AuditorAgente) (string, string, error) {
+		calls++
+		if calls == 1 {
+			return `{"dim":"logic","verdict":"findings"}`, "inv-invalid", nil
+		}
+		if !strings.Contains(prompt, "FORMAT RETRY") {
+			t.Fatal("retry prompt does not request schema correction")
+		}
+		return `{"dim":"logic","verdict":"ok"}`, "inv-corrected", nil
+	}
+	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return fake, "normal", nil
+	}, 1, OpcionesAuditoria{
+		SHA: "sha-schema-retry", Bundles: []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}, ReviewTransport: transport,
+	})
+	if calls != 2 || len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil || resultado.Dims[0].Resultado.Verdict != VerdictOK {
+		t.Fatalf("calls = %d, result = %+v, want one corrective retry ending ok", calls, resultado)
+	}
+	if resultado.Dims[0].Resultado.InvocationID != "inv-corrected" {
+		t.Fatalf("invocation = %q, want corrected invocation", resultado.Dims[0].Resultado.InvocationID)
+	}
+}
+
 func TestReviewTransportErrorBecomesUnavailableWithConcreteReason(t *testing.T) {
 	fake := &agenteFake{}
 	transport := func(_, _, _ string, _ AuditorAgente) (string, string, error) {
