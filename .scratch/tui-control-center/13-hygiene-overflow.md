@@ -19,7 +19,7 @@ A) internal/overview — hide internal plumbing:
      therefore reflect only operator-visible worktrees. Document on
      Collect.
 B) internal/tui/art — overflow control:
-   - Package const `maxTreeChildren = 12`: a repository renders at most
+   - Package const `maxTreeChildren = 20`: a repository renders at most
      that many worktree child lines; further children collapse into one
      final dim line `└─ … N more`. The degradation Error line is never
      counted nor collapsed. Plain==colored parity must hold; widths and
@@ -64,3 +64,5 @@ C) internal/git — wire the existing purge:
   for an existing tree never trigger hygiene — accepted.
 - Sweep re-resolving directorioSnapshots inside the locked helper is
   accepted (same cwd contract).
+- The operator-visible worktree child cap is intentionally twenty, not the
+  original ticket draft's twelve; overflow tests assert the literal contract.

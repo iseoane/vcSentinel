@@ -10,7 +10,7 @@ making the header "active" count real runs instead of dirty worktrees.
 - internal/presence: `RunSummary` gains `UpdatedAt time.Time` copied
   from the stored projection (additive; existing callers unaffected).
 - internal/overview: `Repo` gains `Runs []presence.RunSummary`.
-  `collectProbes` fetches up to `recentRunLimit` (package const, 3)
+  `collectProbes` fetches up to `recentRunLimit` (package const, 10)
   via presence.RecentRuns once the common dir resolved. Degradation:
   a runs-read failure records its error in Repo.Error only when the
   field is still empty (the first observed cause wins) and leaves
@@ -59,7 +59,11 @@ making the header "active" count real runs instead of dirty worktrees.
 - terminated counts as header-active while rendering dim CANCELED —
   domain contract honored, tension documented at isTerminalRun.
 - Runs-read failures beside an earlier repo error stay swallowed by
-  the first-error-wins contract; ops-level diagnostics remain out of
-  scope for this slice.
+   the first-error-wins contract; ops-level diagnostics remain out of
+   scope for this slice.
+- The operator-visible recent-run history is intentionally ten summaries per
+  repository, not the original ticket draft's three; tests assert the literal
+  contract rather than coupling the expected value to the implementation
+  constant.
 - Ticket wording drift resolved in favor of the implemented replace
   rule; STOPPED-with-runs suppression now test-pinned.
