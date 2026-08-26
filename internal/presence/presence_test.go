@@ -113,6 +113,72 @@ func seedRun(t *testing.T, st *store.Store, candidate string) string {
 	return runID
 }
 
+// admitRunWithOperation admits one durable run carrying an operator-facing
+// operation label; an empty label produces the legacy-shaped policy bytes.
+func admitRunWithOperation(t *testing.T, st *store.Store, candidate, operation string) string {
+	t.Helper()
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
+		agentrun.Candidate(candidate), agentrun.Prompt("presence fixture"), nil))
+	runID := string(job.RunID())
+	if err := st.CreateRun(job, store.RunPolicy{ID: "policy:test", Operation: operation}); err != nil {
+		t.Fatalf("create run %s: %v", candidate, err)
+	}
+	return runID
+}
+
+// TestRecentRunsSurfacesOperationsAndDegradesSoftly pins slice 14's contract:
+// labeled runs surface their admitted operation through RecentRuns, legacy
+// records read back empty, and an unreadable policy degrades SOFTLY — the
+// whole listing must survive with that one summary's label emptied out,
+// because a cosmetic metadata miss can never fail the activity pane.
+func TestRecentRunsSurfacesOperationsAndDegradesSoftly(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	reviewID := admitRunWithOperation(t, st, "candidate:labeled-review", "review")
+	gateID := admitRunWithOperation(t, st, "candidate:labeled-gate", "gate pre-push")
+	bareID := admitRunWithOperation(t, st, "candidate:legacy-bare", "")
+
+	byID := func(summaries []RunSummary) map[string]RunSummary {
+		indexed := make(map[string]RunSummary, len(summaries))
+		for _, s := range summaries {
+			indexed[s.RunID] = s
+		}
+		return indexed
+	}
+
+	summaries, err := RecentRuns(commonDir, 10)
+	if err != nil || len(summaries) != 3 {
+		t.Fatalf("want all three seeded runs, got %#v, %v", summaries, err)
+	}
+	labels := byID(summaries)
+	if labels[reviewID].Operation != "review" {
+		t.Fatalf("review run operation = %q, want %q", labels[reviewID].Operation, "review")
+	}
+	if labels[gateID].Operation != "gate pre-push" {
+		t.Fatalf("gate run operation = %q, want %q", labels[gateID].Operation, "gate pre-push")
+	}
+	if labels[bareID].Operation != "" {
+		t.Fatalf("legacy run operation = %q, want empty", labels[bareID].Operation)
+	}
+
+	corruptErr := os.WriteFile(filepath.Join(commonDir, "vas-sentinel", "executions", "v1", gateID, "policy.json"),
+		[]byte("{not json"), 0600)
+	if corruptErr != nil {
+		t.Fatal(corruptErr)
+	}
+	summaries, err = RecentRuns(commonDir, 10)
+	if err != nil || len(summaries) != 3 {
+		t.Fatalf("a corrupt policy must degrade softly, got %#v, %v", summaries, err)
+	}
+	labels = byID(summaries)
+	if labels[gateID].Operation != "" {
+		t.Fatalf("degraded run operation = %q, want empty", labels[gateID].Operation)
+	}
+	if labels[reviewID].Operation != "review" || labels[bareID].Operation != "" {
+		t.Fatalf("the other summaries must survive the degraded listing untouched: %+v", labels)
+	}
+}
+
 // seedFailedRun drives a fresh run to terminal failed through exported store
 // APIs only (CreateRun, AppendEvent, AppendTerminalEvent): no adapter involved.
 func seedFailedRun(t *testing.T, st *store.Store, candidate string) string {

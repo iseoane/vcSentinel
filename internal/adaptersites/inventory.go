@@ -158,7 +158,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Retry relaunch events append through the same guarded store primitive."},
 		{Path: "internal/execution/host.go", Symbol: "ResolveAdmissionRequest", Line: 92, Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Constructs the canonical admission request from the transport-safe Candidate/Prompt pair so every RepositoryHost Start admits exclusively through the controller's durable envelope flow."},
-		{Path: "internal/store/execution.go", Symbol: "Store.CreateRun", Line: 53, Marker: "CreateRun(",
+		{Path: "internal/store/execution.go", Symbol: "Store.CreateRun", Line: 65, Marker: "CreateRun(",
 			Class: ClassDurable, Reason: "Admission record primitive: writes the immutable request.json for a new durable run. Called only by the execution controller, never by feature packages."},
 		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Line: 197, Marker: "AppendEvent(",
 			Class: ClassDurable, Reason: "Append-only event log primitives (plain and terminal-with-outcome); called only by the execution controller internals, never by feature packages."},
@@ -172,7 +172,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Executes exactly one admitted physical invocation per controller dispatch; receives the InvocationEnvelope and forwards cancellation/tree ownership to the controller."},
 
 		// --- internal/gate --------------------------------------------------
-		{Path: "internal/gate/gate_durable.go", Symbol: "EjecutarGate/asentarTrabajosValidacion", Line: 88, Marker: "NewController(",
+		{Path: "internal/gate/gate_durable.go", Symbol: "EjecutarGate/asentarTrabajosValidacion", Line: 99, Marker: "NewController(",
 			Class: ClassDurable, Reason: "Gate orchestrator and sole execution path (ticket 13 R11 merged the removed legacy orchestration into it): admits ONE root run plus one settled child job per validation command, all through controller.Start with persisted parent linkage."},
 		{Path: "internal/gate/gate_durable_adapters.go", Symbol: "rootRunAdapter/settledValidationAdapter", Line: 98, Marker: "agentrun.NewCapability",
 			Class: ClassDurable, Reason: "Gate execution adapters receive the admitted InvocationEnvelope on every controller dispatch; neither spawns anything nor mutates state outside controller APIs."},

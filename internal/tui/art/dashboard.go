@@ -136,7 +136,20 @@ func renderDashboard(width int, colors bool) string {
 	p := painter{colors: colors}
 	return renderFrame(p, width, mockSummary,
 		func(w int) []string { return treeLines(p, w, mockRepos) },
-		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity, false) })
+		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity, false, false) })
+}
+
+// activityCaptionRow renders the dim column-caption row anchored to the exact
+// fitRunes widths the run rows use: a blank icon cell (two runes, matching
+// " " + one-rune icon), FLOW(16), STAGE(20), STATE(9), and the trailing AGE
+// label. spanLine clamps it on panes narrower than its 51 visible runes.
+func activityCaptionRow(p painter, w int) string {
+	return p.spanLine(w,
+		span{"  ", Dim},
+		span{" " + fitRunes("FLOW", 16), Dim},
+		span{fitRunes("STAGE", 20), Dim},
+		span{fitRunes("STATE", 9), Dim},
+		span{"AGE", Dim})
 }
 
 // renderFrame assembles the approved frame: rules, header with the daemon
@@ -229,7 +242,10 @@ func fitRunes(s string, n int) string {
 // rightLines renders the LOCATION block, an inner double separator, and the
 // ACTIVITY block for the pane width. runsFocused marks the ACTIVITY heading
 // as the focused pane; unfocused rendering keeps the exact historical bytes.
-func rightLines(p painter, w int, location [][2]string, activity []activityRow, runsFocused bool) []string {
+// captions renders the dim column-caption row under the ACTIVITY heading:
+// only the real-data pane path enables it, because the mock dashboard is a
+// byte-frozen visual contract whose goldens must never move.
+func rightLines(p painter, w int, location [][2]string, activity []activityRow, runsFocused, captions bool) []string {
 	var lines []string
 	lines = append(lines, p.spanLine(w, span{" LOCATION", White}))
 	for _, kv := range location {
@@ -243,6 +259,9 @@ func rightLines(p painter, w int, location [][2]string, activity []activityRow, 
 		header = span{" ▸ ACTIVITY", Purple}
 	}
 	lines = append(lines, p.spanLine(w, header))
+	if captions {
+		lines = append(lines, activityCaptionRow(p, w))
+	}
 	for _, a := range activity {
 		spans := make([]span, 0, 6)
 		if a.focused {

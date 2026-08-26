@@ -19,6 +19,11 @@ var timeNow = time.Now
 // column before the layout engine pads it to the approved width.
 const maxRunFlowRunes = 12
 
+// maxOperationFlowRunes bounds how many runes of an admitted operation label
+// reach the flow column; labels keep the full 16-rune flow width the rows
+// already reserve, two more than the legacy id fallback.
+const maxOperationFlowRunes = 16
+
 // maxTreeChildren bounds how many worktree child lines one repository may
 // render in the tree pane before the rest collapse behind a single dim
 // "… N more" line (slice 13): snapshot plumbing worktrees are already
@@ -244,7 +249,7 @@ func overviewRight(p painter, w int, s ViewState) []string {
 		}
 		location = overviewLocation(repos[selected])
 	}
-	return rightLines(p, w, location, overviewActivity(s), s.Focus == FocusRuns)
+	return rightLines(p, w, location, overviewActivity(s), s.Focus == FocusRuns, true)
 }
 
 // helpLines replaces the pane content while help is open: the inner double
@@ -409,16 +414,21 @@ func runState(state agentrun.LifecycleState) (icon string, kind statusKind, word
 	}
 }
 
-// runRow projects one durable-run summary into an ACTIVITY row: the first 12
-// runes of the run identifier label the flow column (the layout engine pads
-// it to the approved width), the revision labels stage, and age counts
-// elapsed time since the stored projection timestamp — a dash when the
-// projection carried none.
+// runRow projects one durable-run summary into an ACTIVITY row: the flow
+// column carries the admitted operation label when the run has one (truncated
+// to the 16-rune flow width; the layout engine pads it downstream), else the
+// first 12 runes of the run identifier as today; the revision labels stage,
+// and age counts elapsed time since the stored projection timestamp — a dash
+// when the projection carried none.
 func runRow(run presence.RunSummary) activityRow {
 	icon, kind, word := runState(run.State)
+	flow := truncateRunes(run.RunID, maxRunFlowRunes)
+	if run.Operation != "" {
+		flow = truncateRunes(run.Operation, maxOperationFlowRunes)
+	}
 	return activityRow{
 		icon:  icon,
-		flow:  truncateRunes(run.RunID, maxRunFlowRunes),
+		flow:  flow,
 		stage: fmt.Sprintf("rev %d", run.Revision),
 		state: word,
 		kind:  kind,

@@ -63,6 +63,17 @@ import (
 // settlement run per validation logical job under it.
 const DurableGateRunPolicyID = "policy:gate"
 
+// gateRootOperation labels the gate root run for activity surfaces: the
+// lowercase lifecycle stage the gate is running under, which is the only
+// context this admission site honestly holds. An empty stage degrades to the
+// plain "gate" minimum instead of a dangling space.
+func gateRootOperation(stage string) string {
+	if stage == "" {
+		return "gate"
+	}
+	return "gate " + stage
+}
+
 // EjecutarGate executes one gate run durably — the only execution path since
 // ticket 13 (R11). It always builds and validates the GateRunPlan first so
 // plan-construction bugs surface before anything is admitted, then admits ONE
@@ -86,7 +97,10 @@ func EjecutarGate(opts Opciones) Resultado {
 
 	settle := make(chan rootSettlement, 1)
 	controller := execution.NewController(opts.DurableStore, rootRunAdapter{settle: settle})
-	root, err := controller.Start(context.Background(), plan.Root.Request(), store.RunPolicy{ID: DurableGateRunPolicyID})
+	root, err := controller.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
+		ID:        DurableGateRunPolicyID,
+		Operation: gateRootOperation(opts.Stage),
+	})
 	if err != nil {
 		return infraResultado(fmt.Errorf("gate: durable root run not admitted: %w", err))
 	}
@@ -234,9 +248,14 @@ func asentarTrabajosValidacion(jobs []GateJobPlan, runs []validation.ValidationR
 			output: salidaEvidencia(index, evidencia),
 		}
 		controller := execution.NewController(opts.DurableStore, adapter)
+		// The exact command is what identifies this child job at admission
+		// time (the plan pins it in deterministic profile order), so the
+		// label carries it verbatim after the "validate" layer verb; long
+		// commands are a rendering-truncation concern, not a data concern.
 		handle, err := controller.Start(context.Background(), job.Request(), store.RunPolicy{
 			ID:          DurableGateRunPolicyID,
 			ParentRunID: string(parentRunID),
+			Operation:   "validate " + jobs[index].Command,
 		})
 		if err != nil {
 			return children, fmt.Errorf("validation job %d (%s) not admitted: %w", index, jobs[index].Command, err)

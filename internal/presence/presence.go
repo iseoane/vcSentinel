@@ -55,6 +55,10 @@ type RunSummary struct {
 	State     agentrun.LifecycleState
 	Revision  uint64
 	UpdatedAt time.Time
+	// Operation is the operator-facing label admitted with the run
+	// ("review", "gate pre-push", "run"); empty for legacy records and when
+	// the policy record cannot be read.
+	Operation string
 }
 
 // RecentRuns returns at most limit projected durable runs anchored at the
@@ -67,6 +71,14 @@ type RunSummary struct {
 // belongs to callers consulting richer projection fields. limit <= 0 and an
 // empty store yield an empty slice and nil; store failures propagate wrapped
 // with the path.
+//
+// Operation contract: each summary costs one extra small policy.json read
+// through store.ReadRunOperation (bounded by limit; the control center asks
+// for 3), which is acceptable for an operator-facing pane. Read failures
+// degrade SOFTLY — an unreadable or corrupt policy must not fail the whole
+// listing over cosmetic metadata, so the summary survives with an empty
+// Operation and the renderer falls back to the id prefix. Only the
+// projection read remains a hard failure.
 func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 	if limit <= 0 {
 		return []RunSummary{}, nil
@@ -85,11 +97,16 @@ func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 		if err != nil {
 			return nil, fmt.Errorf("presence: read projection under %s: %w", gitCommonDir, err)
 		}
+		operation, opErr := st.ReadRunOperation(id)
+		if opErr != nil {
+			operation = ""
+		}
 		summaries = append(summaries, RunSummary{
 			RunID:     projection.RunID,
 			State:     projection.State,
 			Revision:  projection.Revision,
 			UpdatedAt: projection.UpdatedAt,
+			Operation: operation,
 		})
 	}
 	return summaries, nil

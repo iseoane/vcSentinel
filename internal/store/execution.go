@@ -22,14 +22,26 @@ var ErrImmutableConflict = errors.New("store: immutable execution record conflic
 // trusted.
 var ErrRequestCorrupt = errors.New("store: corrupt execution request")
 
+// ErrPolicyCorrupt means that a persisted run policy record failed to decode
+// into its recorded shape, so its operator-facing operation label cannot be
+// trusted.
+var ErrPolicyCorrupt = errors.New("store: corrupt run policy")
+
 // RunPolicy identifies the policy used to create a durable execution.
 // Policy contents are resolved elsewhere; only this stable identity is stored.
 // ParentRunID optionally records the orchestrating parent run so child runs
 // admit with a persisted linkage back to their root; empty means the run has
 // no durable parent (a root run).
+//
+// Operation optionally carries the operator-facing label ("review",
+// "gate pre-push", "run") that activity surfaces render in place of the bare
+// run id. Like ParentRunID it is additive: old records never carry it, old
+// readers ignore unknown keys, and omitempty keeps the persisted bytes of
+// unlabeled runs identical to the legacy shape.
 type RunPolicy struct {
 	ID          string `json:"id"`
 	ParentRunID string `json:"parent_run_id,omitempty"`
+	Operation   string `json:"operation,omitempty"`
 }
 
 // ExecutionRequest is the immutable admission request persisted at CreateRun.
@@ -192,6 +204,33 @@ func (s *Store) ReadExecutionRequest(runID string) (ExecutionRequest, error) {
 		return ExecutionRequest{}, fmt.Errorf("%w: %s", ErrRequestCorrupt, path)
 	}
 	return request, nil
+}
+
+// ReadRunOperation reads the operator-facing operation label persisted in one
+// durable run's immutable policy record; records admitted before the label
+// existed (or without one) return an empty string. A missing record reports a
+// not-found error wrapping ErrExecutionNotFound — the same vocabulary the
+// other readers use — and bytes that fail to decode into the recorded shape
+// report an error wrapping ErrPolicyCorrupt, so callers can separate store
+// damage from absent history.
+func (s *Store) ReadRunOperation(runID string) (string, error) {
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(directory, "policy.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
+	}
+	if err != nil {
+		return "", err
+	}
+	var policy RunPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return "", fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
+	}
+	return policy.Operation, nil
 }
 
 func requestFor(job agentrun.LogicalJob) ExecutionRequest {

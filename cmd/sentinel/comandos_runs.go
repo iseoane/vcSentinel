@@ -324,10 +324,12 @@ func runsRelayedAdmission(worktree string) bool {
 // request into the canonical form carrying the capabilities, because
 // ValidateStartRequest forbids mixing the two payload forms.
 func runsStartAdmission(candidate, prompt, policyID, principal string, capabilities []agentrun.Capability, relayed bool) execution.StartRequest {
+	// Both forms carry the honest generic "run" label: an operator-started
+	// prompt run has no more specific identity at this admission site.
 	admission := execution.StartRequest{
 		Candidate:   candidate,
 		Prompt:      prompt,
-		Policy:      store.RunPolicy{ID: policyID},
+		Policy:      store.RunPolicy{ID: policyID, Operation: "run"},
 		AuthContext: execution.AuthContext{Principal: principal},
 	}
 	if len(capabilities) == 0 || relayed {
@@ -335,7 +337,7 @@ func runsStartAdmission(candidate, prompt, policyID, principal string, capabilit
 	}
 	return execution.StartRequest{
 		Request:     agentrun.NewRunRequest(agentrun.Candidate(candidate), agentrun.Prompt(prompt), capabilities),
-		Policy:      store.RunPolicy{ID: policyID},
+		Policy:      store.RunPolicy{ID: policyID, Operation: "run"},
 		AuthContext: execution.AuthContext{Principal: principal},
 	}
 }

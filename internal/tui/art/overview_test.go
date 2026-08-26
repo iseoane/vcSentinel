@@ -25,6 +25,14 @@ func run(id string, state agentrun.LifecycleState, revision uint64, updatedAt ti
 	return presence.RunSummary{RunID: id, State: state, Revision: revision, UpdatedAt: updatedAt}
 }
 
+// runWithOperation extends run with an admitted operator-facing operation
+// label (slice 14).
+func runWithOperation(id string, state agentrun.LifecycleState, revision uint64, updatedAt time.Time, operation string) presence.RunSummary {
+	summary := run(id, state, revision, updatedAt)
+	summary.Operation = operation
+	return summary
+}
+
 // pinClock freezes the age clock for the duration of the test.
 func pinClock(t *testing.T, now time.Time) {
 	t.Helper()
@@ -223,11 +231,13 @@ func TestRenderOverviewStacksBelow84(t *testing.T) {
 // fixture and both layout modes, including the Slice 11 navigation states.
 func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 	// Run rows carry zero timestamps so the age column stays the
-	// deterministic dash across both sequential renders.
+	// deterministic dash across both sequential renders. Slice 14: one run
+	// carries an operation label, exercising caption + labeled-flow parity
+	// at every width.
 	runsRepos := []overview.Repo{
 		liveRepoWithRuns("alpha",
 			run("11111111111111111111", agentrun.StateRunning, 4, time.Time{}),
-			run("22222222222222222222", agentrun.StateSucceeded, 5, time.Time{})),
+			runWithOperation("22222222222222222222", agentrun.StateSucceeded, 5, time.Time{}, "gate pre-push")),
 		{Name: "gamma", Error: "probe failed",
 			Runs: []presence.RunSummary{run("33333333333333333333", agentrun.StateAwaitingDecision, 2, time.Time{})}},
 		stoppedRepo("beta", wt("dev", true)),
@@ -267,6 +277,103 @@ func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 			}
 			assertWidth(t, plain, width)
 		}
+	}
+}
+
+// expectedCaptionRow rebuilds the dim column-caption row from the same
+// fitRunes geometry the rows use, so the pinned bytes can never silently
+// drift from the layout widths: blank icon cell (two runes), FLOW(16),
+// STAGE(20), STATE(9), and the trailing AGE label.
+func expectedCaptionRow() string {
+	return "  " + " " + fitRunes("FLOW", 16) + fitRunes("STAGE", 20) + fitRunes("STATE", 9) + "AGE"
+}
+
+// TestOverviewActivityCaptionRowAnchors pins slice 14's caption contract:
+// exactly one caption row renders immediately under the ACTIVITY heading in
+// the real-data path, anchored to the same columns the run rows use — flow
+// content starts where FLOW starts, the stage value where STAGE does, the
+// state word where STATE does, and the age where AGE does. The mock
+// dashboard stays byte-frozen without captions.
+func TestOverviewActivityCaptionRowAnchors(t *testing.T) {
+	want := expectedCaptionRow()
+	repos := []overview.Repo{{Name: "solo",
+		Runs: []presence.RunSummary{run("abcdef1234567890abcd", agentrun.StateRunning, 7, time.Time{})}}}
+	// Stacked width: activityBlock needs the pane lines uninterleaved from
+	// the tree, and 70 columns still fit the whole caption row.
+	act := activityBlock(t, RenderOverviewPlain(70, ViewState{Repos: repos}))
+	lines := strings.Split(act, "\n")
+	trim := func(l string) string { return strings.TrimRight(l, " ") }
+	if got := trim(lines[0]); got != want {
+		t.Fatalf("first ACTIVITY line = %q, want the caption row %q", got, want)
+	}
+	count := 0
+	for _, l := range lines {
+		if trim(l) == want {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%d caption rows rendered, want exactly one:\n%s", count, act)
+	}
+
+	row := trim(lines[1])
+	caption := trim(lines[0])
+	// Column positions are compared in RUNE space: icons like "⠹" are
+	// multi-byte, so byte offsets would lie about the visible grid.
+	runeIndex := func(s, sub string) int {
+		i := strings.Index(s, sub)
+		if i < 0 {
+			return -1
+		}
+		return utf8.RuneCountInString(s[:i])
+	}
+	for _, anchor := range []struct{ captionMarker, rowMarker string }{
+		{"FLOW", "abcdef123456"},
+		{"STAGE", "rev 7"},
+		{"STATE", "RUNNING"},
+	} {
+		if got, expect := runeIndex(caption, anchor.captionMarker), runeIndex(row, anchor.rowMarker); got != expect {
+			t.Errorf("column %q at rune %d but row content %q at rune %d:\ncaption %q\nrow    %q",
+				anchor.captionMarker, got, anchor.rowMarker, expect, caption, row)
+		}
+	}
+	if got, expect := utf8.RuneCountInString(caption)-len("AGE"), utf8.RuneCountInString(row)-1; got != expect {
+		t.Errorf("trailing AGE column at rune %d but row age at rune %d:\ncaption %q\nrow    %q",
+			got, expect, caption, row)
+	}
+
+	for _, w := range []int{60, 80, 100, 140} {
+		if strings.Contains(DashboardPlain(w), "FLOW") {
+			t.Errorf("mock dashboard(%d) must stay caption-free (byte-frozen goldens)", w)
+		}
+	}
+}
+
+// TestOverviewActivityFlowUsesOperationWithIdFallback pins the flow-column
+// rule: a run with an admitted operation shows it (clamped to the 16-rune
+// flow width), while a run without one keeps today's 12-rune id prefix.
+func TestOverviewActivityFlowUsesOperationWithIdFallback(t *testing.T) {
+	repos := []overview.Repo{{Name: "solo", Runs: []presence.RunSummary{
+		run("11111111111111111111", agentrun.StateRunning, 1, time.Time{}),
+		runWithOperation("22222222222222222222", agentrun.StateSucceeded, 2, time.Time{}, "gate pre-push"),
+	}}}
+	act := activityBlock(t, RenderOverviewPlain(80, ViewState{Repos: repos}))
+	assertContains(t, act, "gate pre-push")
+	if strings.Contains(act, "2222222") {
+		t.Errorf("the operation label must replace the id prefix:\n%s", act)
+	}
+	assertContains(t, act, "111111111111")
+	if strings.Contains(act, "1111111111111") {
+		t.Errorf("the id fallback must stay at %d runes:\n%s", maxRunFlowRunes, act)
+	}
+
+	longLabel := "review security-and-beyond"
+	repos[0].Runs = append(repos[0].Runs,
+		runWithOperation("33333333333333333333", agentrun.StateFailed, 3, time.Time{}, longLabel))
+	act = activityBlock(t, RenderOverviewPlain(80, ViewState{Repos: repos}))
+	assertContains(t, act, truncateRunes(longLabel, maxOperationFlowRunes))
+	if strings.Contains(act, longLabel) {
+		t.Errorf("a long operation must clamp to the %d-rune flow width:\n%s", maxOperationFlowRunes, act)
 	}
 }
 
