@@ -63,6 +63,12 @@ type RunSummary struct {
 	// audits, when the producer knew it at admission time. Empty for
 	// legacy records.
 	Commit string
+	// Worktree is the worktree path that launched the run, when known.
+	// Empty for legacy records.
+	Worktree string
+	// Reason is the terminal error for failed/canceled runs, when available.
+	// Empty for non-terminal or legacy records.
+	Reason string
 }
 
 // RecentRuns returns at most limit projected durable runs anchored at the
@@ -109,6 +115,16 @@ func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 		if cErr != nil {
 			commit = ""
 		}
+		worktree, wErr := st.ReadRunWorktree(id)
+		if wErr != nil {
+			worktree = ""
+		}
+		reason := ""
+		if projection.State == agentrun.StateFailed || projection.State == agentrun.StateCanceled || projection.State == agentrun.StateTimedOut || projection.State == agentrun.StateUnavailable {
+			if r, err := st.ReadRunReason(id); err == nil {
+				reason = r
+			}
+		}
 		summaries = append(summaries, RunSummary{
 			RunID:     projection.RunID,
 			State:     projection.State,
@@ -116,6 +132,8 @@ func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 			UpdatedAt: projection.UpdatedAt,
 			Operation: operation,
 			Commit:    commit,
+			Worktree:  worktree,
+			Reason:    reason,
 		})
 	}
 	return summaries, nil

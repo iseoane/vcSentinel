@@ -451,12 +451,24 @@ func statusField(r overview.Repo) string {
 // OpenRunID grows one dim detail line (mismatched ids render nothing).
 func overviewActivity(s ViewState) []activityRow {
 	rows := make([]activityRow, 0, len(s.Repos))
+	// Determine worktree filter: when a worktree is selected, only runs for
+	// that worktree's path are shown. Repo row shows all runs for the repo.
+	filterWorktree := ""
+	if s.TreeCursor.Worktree >= 0 && s.TreeCursor.Repo >= 0 && s.TreeCursor.Repo < len(s.Repos) {
+		if wtIdx := s.TreeCursor.Worktree; wtIdx < len(s.Repos[s.TreeCursor.Repo].Worktrees) {
+			filterWorktree = s.Repos[s.TreeCursor.Repo].Worktrees[wtIdx].Path
+		}
+	}
 	for i, r := range s.Repos {
 		state := classifyRepo(r)
 		if !(len(r.Runs) > 0 && (state.kind == stOwn || state.kind == stStop)) {
 			rows = append(rows, summaryActivityRow(r, state))
 		}
 		for j, runSummary := range r.Runs {
+			// Filter by worktree when a worktree is selected.
+			if filterWorktree != "" && runSummary.Worktree != "" && runSummary.Worktree != filterWorktree {
+				continue
+			}
 			row := runRow(runSummary)
 			if s.Focus == FocusRuns && s.RunCursor == (RunPos{Repo: i, Run: j}) {
 				row.focused = true
@@ -471,14 +483,22 @@ func overviewActivity(s ViewState) []activityRow {
 }
 
 // runDetail renders the inline expansion of one open run on a single dim
-// line: full id, state word, revision, UpdatedAt stamped in UTC, and the
-// same compact age the row's age column shows. Narrow panes clamp it
-// through spanLine.
+// line: full id, state word, revision, UpdatedAt stamped in UTC, the same
+// compact age the row's age column shows, and the failure reason when
+// available. Narrow panes clamp it through spanLine.
 func runDetail(run presence.RunSummary) string {
 	_, _, word := runState(run.State)
-	return fmt.Sprintf("   └─ %s · %s · rev %d · %s · %s",
+	base := fmt.Sprintf("   └─ %s · %s · rev %d · %s · %s",
 		run.RunID, word, run.Revision,
 		run.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"), runAge(run))
+	if run.Reason != "" {
+		reason := sanitizeLabel(run.Reason)
+		if len(reason) > 120 {
+			reason = reason[:120] + "…"
+		}
+		base += " · " + reason
+	}
+	return base
 }
 
 // summaryActivityRow builds the classic per-repository row: icon by worst
@@ -585,10 +605,15 @@ func sanitizeLabel(label string) string {
 }
 
 // runAge renders a run's compact age: a dash when the stored projection
-// carried no timestamp, the approved clock otherwise.
+// carried no timestamp, the approved clock for running states, and a static
+// timestamp for terminal states so the age column stops ticking once the run
+// has settled.
 func runAge(run presence.RunSummary) string {
 	if run.UpdatedAt.IsZero() {
 		return "-"
+	}
+	if isTerminalRun(run.State) {
+		return run.UpdatedAt.Format("15:04:05")
 	}
 	return formatAge(timeNow().Sub(run.UpdatedAt))
 }

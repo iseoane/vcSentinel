@@ -94,7 +94,7 @@ func durableReviewTransport(cfg config.Config, worktree, sha string, paths []str
 	// names only arrive per Run() call after admission, so no per-dimension
 	// information is structurally reachable at this construction site.
 	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
-		store.RunPolicy{ID: durableRunPolicyID, Operation: "review", Commit: sha[:7]}, nil)
+		store.RunPolicy{ID: durableRunPolicyID, Operation: "review", Commit: sha[:7], Worktree: worktree}, nil)
 	if transport == nil {
 		return func(string, string, string, review.AuditorAgente) (string, string, error) {
 			return "", "", fmt.Errorf("durable review transport unavailable for %s: no git common dir", worktree)
@@ -165,7 +165,7 @@ func applyDurableCutover(opciones *gate.Opciones, cfg config.Config, worktree, s
 		// Same honest minimum as the standalone root: one policy per commit
 		// transport, dimensions only known per Run() call, so the label
 		// stays plain "review" and the ParentRunID keeps the gate linkage.
-		policy := store.RunPolicy{ID: durableRunPolicyID, ParentRunID: string(rootRunID), Operation: "review", Commit: sha[:7]}
+		policy := store.RunPolicy{ID: durableRunPolicyID, ParentRunID: string(rootRunID), Operation: "review", Commit: sha[:7], Worktree: worktree}
 		transport := nuevoDurableReviewTransport(cfg, worktree, sha, archivos, policy,
 			[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(sink.observe)})
 		if transport == nil {

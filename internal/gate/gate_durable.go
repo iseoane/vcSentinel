@@ -101,6 +101,7 @@ func EjecutarGate(opts Opciones) Resultado {
 		ID:        DurableGateRunPolicyID,
 		Operation: gateRootOperation(opts.Stage),
 		Commit:    opts.CandidateSHA[:7],
+		Worktree:  opts.OpcionesValidacion.Worktree,
 	})
 	if err != nil {
 		return infraResultado(fmt.Errorf("gate: durable root run not admitted: %w", err))
@@ -258,6 +259,7 @@ func asentarTrabajosValidacion(jobs []GateJobPlan, runs []validation.ValidationR
 			ParentRunID: string(parentRunID),
 			Operation:   "validate " + jobs[index].Command,
 			Commit:      opts.CandidateSHA[:7],
+			Worktree:    opts.OpcionesValidacion.Worktree,
 		})
 		if err != nil {
 			return children, fmt.Errorf("validation job %d (%s) not admitted: %w", index, jobs[index].Command, err)
