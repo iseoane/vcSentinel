@@ -76,12 +76,13 @@ var mockSummary = []span{
 }
 
 type activityRow struct {
-	icon  string
-	flow  string
-	stage string
-	state string
-	kind  statusKind
-	age   string
+	icon   string
+	commit string
+	flow   string
+	stage  string
+	state  string
+	kind   statusKind
+	age    string
 
 	// Navigation affordances for real snapshots; the fixed mock leaves both
 	// at their zero values. focused prefixes a purple "▸" over the leading
@@ -140,21 +141,23 @@ func renderDashboard(width int, colors bool) string {
 }
 
 // Activity column widths: the caption row and every data row anchor to the
-// same three numbers so the columns stay aligned at any pane width.
+// same numbers so the columns stay aligned at any pane width.
 const (
-	activityFlowWidth  = 16
-	activityStageWidth = 20
-	activityStateWidth = 9
+	activityCommitWidth = 7
+	activityFlowWidth   = 16
+	activityStageWidth  = 20
+	activityStateWidth  = 9
 )
 
 // activityCaptionRow renders the dim column-caption row anchored to the exact
 // fitRunes widths the run rows use: a blank icon cell (two runes, matching
-// " " + one-rune icon), FLOW, STAGE, STATE, and the trailing AGE label.
-// spanLine clamps it on panes narrower than its 51 visible runes.
+// " " + one-rune icon), COMMIT(7), FLOW, STAGE, STATE, and the trailing AGE
+// label. spanLine clamps it on panes narrower than its now 59 visible runes.
 func activityCaptionRow(p painter, w int) string {
 	return p.spanLine(w,
 		span{"  ", Dim},
-		span{" " + fitRunes("FLOW", activityFlowWidth), Dim},
+		span{" " + fitRunes("COMMIT", activityCommitWidth), Dim},
+		span{fitRunes("FLOW", activityFlowWidth), Dim},
 		span{fitRunes("STAGE", activityStageWidth), Dim},
 		span{fitRunes("STATE", activityStateWidth), Dim},
 		span{"AGE", Dim})
@@ -271,13 +274,18 @@ func rightLines(p painter, w int, location [][2]string, activity []activityRow, 
 		lines = append(lines, activityCaptionRow(p, w))
 	}
 	for _, a := range activity {
-		spans := make([]span, 0, 6)
+		spans := make([]span, 0, 7)
 		if a.focused {
 			spans = append(spans, span{"▸", Purple})
 		}
+		commitCell := a.commit
+		if commitCell == "" {
+			commitCell = "—"
+		}
 		spans = append(spans,
 			span{" " + a.icon, statusColor[a.kind]},
-			span{" " + fitRunes(a.flow, activityFlowWidth), White},
+			span{" " + fitRunes(commitCell, activityCommitWidth), Dim},
+			span{fitRunes(a.flow, activityFlowWidth), White},
 			span{fitRunes(a.stage, activityStageWidth), Dim},
 			span{fitRunes(a.state, activityStateWidth), statusColor[a.kind]},
 			span{a.age, Dim})

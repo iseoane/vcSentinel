@@ -204,6 +204,17 @@ func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt 
 	if err != nil {
 		return "", Evidence{}, fmt.Errorf("review run %s not admitted: %w", identityKey, err)
 	}
+	// Enrich the stored operation label with the per-dimension identity
+	// now that it is known. Admission-time policy is generic "review", but
+	// the TUI and `sentinel runs` surfaces want "review logic" etc. This
+	// best-effort update keeps the persisted bytes compatible (additive).
+	if t.policy.Operation == "review" && identityKey != "" {
+		if dim := identityKey[strings.LastIndex(identityKey, "/")+1:]; dim != "" && dim != "review" {
+			if storeErr := t.backing.UpdateRunOperation(string(handle.RunID), "review "+dim); storeErr != nil {
+				fmt.Fprintf(os.Stderr, "reviewexec: could not enrich operation label for run %s: %v\n", handle.RunID, storeErr)
+			}
+		}
+	}
 	if t.observedRun != nil {
 		t.observedRun(string(handle.RunID))
 	}

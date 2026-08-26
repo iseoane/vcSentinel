@@ -2,6 +2,7 @@ package art
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -51,16 +52,27 @@ type RunPos struct {
 	Run  int
 }
 
+// TreePos identifies one navigable row in the repository tree: Repo indexes
+// ViewState.Repos and Worktree indexes that repository's Worktrees slice.
+// Worktree == -1 means the repository row itself; 0..n-1 means a worktree
+// child. The pair is the single cursor for the tree pane.
+type TreePos struct {
+	Repo     int
+	Worktree int
+}
+
 // ViewState is the single render-state value of the overview screen. The
 // zero value renders the historical default frame: every repository, cursor
-// on the first one, tree focus, nothing open, help closed.
+// on the first one (repo row), tree focus, nothing open, help closed.
 type ViewState struct {
 	Repos      []overview.Repo
-	RepoCursor int
+	RepoCursor int // deprecated: use TreeCursor.Repo; kept for test migration
+	TreeCursor TreePos
 	Focus      FocusPane
 	RunCursor  RunPos
 	OpenRunID  string
 	Help       bool
+	Filter     string
 }
 
 // RenderOverview renders a real overview snapshot through the layout engine
@@ -78,9 +90,49 @@ func RenderOverviewPlain(width int, s ViewState) string {
 
 func renderOverview(width int, colors bool, s ViewState) string {
 	p := painter{colors: colors}
-	return renderFrame(p, width, overviewSummary(s.Repos),
+	repos := s.Repos
+	if s.Filter != "" {
+		repos = filterRepos(repos, s.Filter)
+		s.Repos = repos
+		// Clamp cursors to filtered view.
+		if s.TreeCursor.Repo >= len(repos) {
+			s.TreeCursor = TreePos{Repo: len(repos) - 1, Worktree: -1}
+		}
+		if s.TreeCursor.Repo < 0 && len(repos) > 0 {
+			s.TreeCursor = TreePos{Repo: 0, Worktree: -1}
+		}
+	}
+	return renderFrame(p, width, overviewSummary(repos),
 		func(w int) []string { return overviewTree(p, w, s) },
 		func(w int) []string { return overviewRight(p, w, s) })
+}
+
+func filterRepos(repos []overview.Repo, filter string) []overview.Repo {
+	filter = strings.ToLower(filter)
+	var filtered []overview.Repo
+	for _, r := range repos {
+		if strings.Contains(strings.ToLower(r.Name), filter) ||
+			strings.Contains(strings.ToLower(r.Path), filter) {
+			filtered = append(filtered, r)
+			continue
+		}
+		for _, wt := range r.Worktrees {
+			if strings.Contains(strings.ToLower(wt.Branch), filter) ||
+				strings.Contains(strings.ToLower(wt.Path), filter) {
+				filtered = append(filtered, r)
+				break
+			}
+		}
+		for _, run := range r.Runs {
+			if strings.Contains(strings.ToLower(run.Operation), filter) ||
+				strings.Contains(strings.ToLower(run.Commit), filter) ||
+				strings.Contains(strings.ToLower(run.RunID), filter) {
+				filtered = append(filtered, r)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 // overviewSummary computes the header counts under the approved semantics:
@@ -164,6 +216,35 @@ func VisibleRuns(s ViewState) []RunPos {
 	return positions
 }
 
+// VisibleTreePositions returns the render-order positions of the navigable
+// TREE rows in s.Repos: one per repository plus one per visible worktree of
+// the selected repository. Only the selected repo's worktrees are expanded,
+// so the sequence is repos in order, with the selected repo's worktrees
+// interleaved directly after it.
+func VisibleTreePositions(s ViewState) []TreePos {
+	var positions []TreePos
+	selected := s.TreeCursor.Repo
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= len(s.Repos) && len(s.Repos) > 0 {
+		selected = len(s.Repos) - 1
+	}
+	for i, r := range s.Repos {
+		positions = append(positions, TreePos{Repo: i, Worktree: -1})
+		if i == selected && r.Error == "" {
+			shown := len(r.Worktrees)
+			if shown > maxTreeChildren {
+				shown = maxTreeChildren
+			}
+			for j := 0; j < shown; j++ {
+				positions = append(positions, TreePos{Repo: i, Worktree: j})
+			}
+		}
+	}
+	return positions
+}
+
 // overviewTree renders the tree pane: one line per repo with its daemon
 // state word, then one child line per worktree — capped at maxTreeChildren,
 // with any further children collapsed into one final dim "… N more" line —
@@ -185,10 +266,19 @@ func overviewTree(p painter, w int, s ViewState) []string {
 	if len(repos) == 0 {
 		return append(lines, p.spanLine(w, span{" no repositories registered", Dim}))
 	}
+	// Resolve the effective tree cursor: prefer TreeCursor, fallback to
+		// deprecated RepoCursor for old call sites and tests.
+		treeCursor := s.TreeCursor
+		if treeCursor.Repo == 0 && treeCursor.Worktree == 0 && s.RepoCursor != 0 {
+			treeCursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
+		}
+		if treeCursor.Worktree < -1 {
+			treeCursor.Worktree = -1
+		}
 	for i, r := range repos {
 		state := classifyRepo(r)
 		marker := "▾"
-		if s.Focus == FocusTree && i == s.RepoCursor {
+		if s.Focus == FocusTree && i == treeCursor.Repo && treeCursor.Worktree == -1 {
 			marker = "▸"
 		}
 		lines = append(lines, p.spanLine(w,
@@ -209,8 +299,14 @@ func overviewTree(p painter, w int, s ViewState) []string {
 			if j == total-1 { // genuinely the final visible row of this repo
 				branch = "└─"
 			}
+			// Highlight the worktree row when the tree cursor points at it.
+			wtStyle := Dim
+			if s.Focus == FocusTree && i == treeCursor.Repo && j == treeCursor.Worktree {
+				wtStyle = White
+				branch = "▸─"
+			}
 			lines = append(lines, p.spanLine(w,
-				span{"   " + branch + " " + fitRunes(worktreeName(wt), 17), Dim},
+				span{"   " + branch + " " + fitRunes(worktreeName(wt), 17), wtStyle},
 				span{" " + child.state, statusColor[child.kind]}))
 		}
 		if total > maxTreeChildren {
@@ -240,14 +336,24 @@ func overviewRight(p painter, w int, s ViewState) []string {
 		location = [][2]string{{"Repository", "-"}, {"Path", "-"}, {"Branch", "-"},
 			{"Origin", "-"}, {"Daemon", "-"}, {"Status", "-"}}
 	} else {
-		selected := s.RepoCursor
-		if selected < 0 {
-			selected = 0
+		// Prefer TreeCursor, fallback to deprecated RepoCursor.
+		cursor := s.TreeCursor
+		if cursor.Repo == 0 && cursor.Worktree == 0 && s.RepoCursor != 0 {
+			cursor = TreePos{Repo: s.RepoCursor, Worktree: -1}
 		}
-		if selected > len(repos)-1 {
-			selected = len(repos) - 1
+		selectedRepo := cursor.Repo
+		if selectedRepo < 0 {
+			selectedRepo = 0
 		}
-		location = overviewLocation(repos[selected])
+		if selectedRepo > len(repos)-1 {
+			selectedRepo = len(repos) - 1
+		}
+		repo := repos[selectedRepo]
+		if cursor.Worktree >= 0 && cursor.Worktree < len(repo.Worktrees) {
+			location = overviewLocationForWorktree(repo, repo.Worktrees[cursor.Worktree])
+		} else {
+			location = overviewLocation(repo)
+		}
 	}
 	return rightLines(p, w, location, overviewActivity(s), s.Focus == FocusRuns, true)
 }
@@ -278,6 +384,23 @@ func overviewLocation(r overview.Repo) [][2]string {
 	}
 	if len(r.Worktrees) > 0 {
 		location[2][1] = worktreeName(r.Worktrees[0])
+	}
+	if location[3][1] == "" {
+		location[3][1] = "-"
+	}
+	return location
+}
+
+// overviewLocationForWorktree projects one worktree of a repository into the
+// LOCATION block: the worktree's branch and path are shown explicitly.
+func overviewLocationForWorktree(r overview.Repo, wt inventory.Worktree) [][2]string {
+	location := [][2]string{
+		{"Repository", r.Name},
+		{"Path", wt.Path},
+		{"Branch", worktreeName(wt)},
+		{"Origin", r.Origin},
+		{"Daemon", daemonField(r.Daemon)},
+		{"Status", statusField(r)},
 	}
 	if location[3][1] == "" {
 		location[3][1] = "-"
@@ -426,13 +549,18 @@ func runRow(run presence.RunSummary) activityRow {
 	if run.Operation != "" {
 		flow = truncateRunes(sanitizeLabel(run.Operation), maxOperationFlowRunes)
 	}
+	commit := ""
+	if run.Commit != "" {
+		commit = truncateRunes(run.Commit, activityCommitWidth)
+	}
 	return activityRow{
-		icon:  icon,
-		flow:  flow,
-		stage: fmt.Sprintf("rev %d", run.Revision),
-		state: word,
-		kind:  kind,
-		age:   runAge(run),
+		icon:   icon,
+		commit: commit,
+		flow:   flow,
+		stage:  fmt.Sprintf("rev %d", run.Revision),
+		state:  word,
+		kind:   kind,
+		age:    runAge(run),
 	}
 }
 

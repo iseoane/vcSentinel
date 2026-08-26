@@ -102,7 +102,7 @@ func TestRenderOverviewHealthySingleRepo(t *testing.T) {
 
 func TestRenderOverviewMultiWorktree(t *testing.T) {
 	repos := []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}
-	dash := RenderOverviewPlain(100, ViewState{Repos: repos})
+	dash := RenderOverviewPlain(100, ViewState{Repos: repos, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
 	// Since Slice 10 the header counts runs, not dirty worktrees: this
 	// fixture carries none, so active stays zero even with a dirty tree.
 	assertContains(t, dash, "├─", "└─", " dirty", "· 0 active")
@@ -117,7 +117,7 @@ func TestRenderOverviewMultiWorktree(t *testing.T) {
 // the "└─"; hidden children never leak into the render.
 func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
 	repos := []overview.Repo{stoppedRepo("big", manyWorktrees(maxTreeChildren+3)...)}
-	dash := RenderOverviewPlain(100, ViewState{Repos: repos})
+	dash := RenderOverviewPlain(100, ViewState{Repos: repos, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
 	if got := strings.Count(dash, "   ├─"); got != maxTreeChildren {
 		t.Errorf("%d child lines rendered, want maxTreeChildren=%d:\n%s", got, maxTreeChildren, dash)
 	}
@@ -149,7 +149,7 @@ func TestOverviewTreeCollapsesBeyondMaxChildren(t *testing.T) {
 // Error line replaces the children wholesale.
 func TestOverviewTreeAtLimitAndDegradedExempt(t *testing.T) {
 	exact := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
-		stoppedRepo("edge", manyWorktrees(maxTreeChildren)... )}})
+		stoppedRepo("edge", manyWorktrees(maxTreeChildren)... )}, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
 	lastBranch := fmt.Sprintf("   └─ branch-%02d", maxTreeChildren-1)
 	assertContains(t, exact, lastBranch)
 	if got := strings.Count(exact, "   ├─"); got != maxTreeChildren-1 {
@@ -288,7 +288,7 @@ func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 // drift from the layout widths: blank icon cell (two runes), FLOW(16),
 // STAGE(20), STATE(9), and the trailing AGE label.
 func expectedCaptionRow() string {
-	return "  " + " " + fitRunes("FLOW", 16) + fitRunes("STAGE", 20) + fitRunes("STATE", 9) + "AGE"
+	return "  " + " " + fitRunes("COMMIT", 7) + fitRunes("FLOW", 16) + fitRunes("STAGE", 20) + fitRunes("STATE", 9) + "AGE"
 }
 
 // TestOverviewActivityCaptionRowAnchors pins slice 14's caption contract:
@@ -730,7 +730,7 @@ func TestOverviewTreeCursorGlyph(t *testing.T) {
 	other := RenderOverviewPlain(70, ViewState{Repos: repos, RepoCursor: 1, Focus: FocusRuns})
 	assertContains(t, other, " ▾ alpha", " ▾ beta")
 	withTrees := []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}
-	child := RenderOverviewPlain(70, ViewState{Repos: withTrees})
+	child := RenderOverviewPlain(70, ViewState{Repos: withTrees, TreeCursor: TreePos{Repo: 0, Worktree: -1}})
 	assertContains(t, child, "├─ main", "└─ feature")
 }
 

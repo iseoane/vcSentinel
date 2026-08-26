@@ -19,8 +19,8 @@
  Status       clean · 3 worktrees · 3 runs                                      
  ══════════════════════════════════════════════════════════════════════════════ 
  ACTIVITY                                                                       
- ⠹ gate pre-push   review · security   RUNNING  02:14                           
- ⏸ review          decision required   DECISION 05:32                           
- ✓ review          passed              PASSED   01:48                           
+ ⠹ —      gate pre-push   review · security   RUNNING  02:14                    
+ ⏸ —      review          decision required   DECISION 05:32                    
+ ✓ —      review          passed              PASSED   01:48                    
  ══════════════════════════════════════════════════════════════════════════════ 
  ↑↓ navigate · enter open · a abort · r retry · / filter · ? help · q quit      

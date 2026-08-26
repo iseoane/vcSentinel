@@ -112,16 +112,19 @@ type actionResultMsg struct {
 type Model struct {
 	width    int
 	repos    []overview.Repo
-	selected int
+	selected int // deprecated: use treeCursor.Repo
 	quitting bool
 
 	// Dual-pane navigation state. The zero values encode the initial
 	// contract: tree focus, runs cursor at the first render-order position,
 	// no open run detail, help closed.
-	focus     art.FocusPane
-	runCursor art.RunPos
-	openRunID string
-	help      bool
+	focus      art.FocusPane
+	treeCursor art.TreePos
+	runCursor  art.RunPos
+	openRunID  string
+	help       bool
+	filter     string
+	filtering  bool
 
 	// Keyboard-dispatched run actions. actions is nil on static models and
 	// whenever the caller wants a/r inert; pending marks one dispatched
@@ -271,22 +274,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.help = false
 				return m, nil
 			}
+			// Filtering mode has priority over normal keys.
+			if m.filtering {
+				switch msg.String() {
+				case "enter", "esc":
+					m.filtering = false
+					return m, nil
+				case "backspace", "ctrl+h":
+					if len(m.filter) > 0 {
+						m.filter = m.filter[:len(m.filter)-1]
+					}
+					return m, nil
+				default:
+					if len(msg.String()) == 1 {
+						m.filter += msg.String()
+						return m, nil
+					}
+					return m, nil
+				}
+			}
 			switch msg.String() {
 			case "tab", "shift+tab":
 				m.toggleFocus()
 			case "up", "k":
 				if m.focus == art.FocusRuns {
 					m.moveRunCursor(-1)
-				} else if m.selected > 0 {
-					m.selected--
+				} else {
+					m.moveTreeCursor(-1)
 				}
 			case "down", "j":
 				if m.focus == art.FocusRuns {
 					m.moveRunCursor(1)
-				} else if m.selected < len(m.repos)-1 {
-					// len(repos)-1 is -1 on an empty registry, so the
-					// comparison is false and the cursor cannot move.
-					m.selected++
+				} else {
+					m.moveTreeCursor(1)
 				}
 			case "enter":
 				if m.focus == art.FocusTree {
@@ -296,6 +316,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "a", "r":
 				cmd = m.requestRunAction(msg.String())
+			case "/":
+				m.filtering = true
+				m.filter = ""
+				return m, nil
 			}
 		}
 		return m, cmd
@@ -349,13 +373,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // clamps an out-of-range repository cursor (and keeps the dash placeholder
 // on an empty registry), so View never panics regardless of navigation state.
 func (m Model) View() string {
+	// Keep selected in sync with treeCursor for backward compat with tests
+	// that still read Selected().
+	treeCursor := m.treeCursor
+	if treeCursor.Repo == 0 && treeCursor.Worktree == 0 && m.selected != 0 {
+		treeCursor = art.TreePos{Repo: m.selected, Worktree: -1}
+	}
 	return art.RenderOverview(m.width, art.ViewState{
 		Repos:      m.repos,
-		RepoCursor: m.selected,
+		TreeCursor: treeCursor,
 		Focus:      m.focus,
 		RunCursor:  m.runCursor,
 		OpenRunID:  m.openRunID,
 		Help:       m.help,
+		Filter:     m.filter,
 	})
 }
 
@@ -400,6 +431,34 @@ func (m *Model) moveRunCursor(delta int) {
 	}
 	m.runCursor = visible[next]
 	m.openRunID = ""
+}
+
+// moveTreeCursor walks the visible tree rows of the current snapshot in
+// render order, clamping at both ends. An empty registry is a no-op.
+func (m *Model) moveTreeCursor(delta int) {
+	visible := art.VisibleTreePositions(art.ViewState{Repos: m.repos, TreeCursor: m.treeCursor})
+	if len(visible) == 0 {
+		return
+	}
+	current := 0
+	for i, pos := range visible {
+		if pos == m.treeCursor {
+			current = i
+			break
+		}
+	}
+	next := current + delta
+	if next < 0 {
+		next = 0
+	}
+	if last := len(visible) - 1; next > last {
+		next = last
+	}
+	if next == current && visible[current] == m.treeCursor {
+		return
+	}
+	m.treeCursor = visible[next]
+	m.selected = m.treeCursor.Repo
 }
 
 // toggleOpenRun expands or collapses the run detail under the runs cursor;

@@ -56,9 +56,13 @@ type RunSummary struct {
 	Revision  uint64
 	UpdatedAt time.Time
 	// Operation is the operator-facing label admitted with the run
-	// ("review", "gate pre-push", "run"); empty for legacy records and when
-	// the policy record cannot be read.
+	// ("review logic", "gate pre-push", "run"); empty for legacy records and
+	// when the policy record cannot be read.
 	Operation string
+	// Commit is the audited commit short SHA (7 runes) that the run
+	// audits, when the producer knew it at admission time. Empty for
+	// legacy records.
+	Commit string
 }
 
 // RecentRuns returns at most limit projected durable runs anchored at the
@@ -101,12 +105,17 @@ func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 		if opErr != nil {
 			operation = ""
 		}
+		commit, cErr := st.ReadRunCommit(id)
+		if cErr != nil {
+			commit = ""
+		}
 		summaries = append(summaries, RunSummary{
 			RunID:     projection.RunID,
 			State:     projection.State,
 			Revision:  projection.Revision,
 			UpdatedAt: projection.UpdatedAt,
 			Operation: operation,
+			Commit:    commit,
 		})
 	}
 	return summaries, nil

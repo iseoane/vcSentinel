@@ -35,13 +35,16 @@ var ErrPolicyCorrupt = errors.New("store: corrupt run policy")
 //
 // Operation optionally carries the operator-facing label ("review",
 // "gate pre-push", "run") that activity surfaces render in place of the bare
-// run id. Like ParentRunID it is additive: old records never carry it, old
+// run id. Commit optionally carries the audited commit short SHA (7 runes)
+// that the run audits, so the activity pane can show it without re-deriving
+// it from the candidate. Both are additive: old records never carry them, old
 // readers ignore unknown keys, and omitempty keeps the persisted bytes of
 // unlabeled runs identical to the legacy shape.
 type RunPolicy struct {
 	ID          string `json:"id"`
 	ParentRunID string `json:"parent_run_id,omitempty"`
 	Operation   string `json:"operation,omitempty"`
+	Commit      string `json:"commit,omitempty"`
 }
 
 // ExecutionRequest is the immutable admission request persisted at CreateRun.
@@ -231,6 +234,82 @@ func (s *Store) ReadRunOperation(runID string) (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
 	}
 	return policy.Operation, nil
+}
+
+func (s *Store) UpdateRunOperation(runID, operation string) error {
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "policy.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
+	}
+	if err != nil {
+		return err
+	}
+	var policy RunPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
+	}
+	policy.Operation = operation
+	updated, err := marshalRecord(policy)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, updated, 0600); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ReadRunCommit(runID string) (string, error) {
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(directory, "policy.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
+	}
+	if err != nil {
+		return "", err
+	}
+	var policy RunPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return "", fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
+	}
+	return policy.Commit, nil
+}
+
+func (s *Store) UpdateRunCommit(runID, commit string) error {
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "policy.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
+	}
+	if err != nil {
+		return err
+	}
+	var policy RunPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
+	}
+	policy.Commit = commit
+	updated, err := marshalRecord(policy)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, updated, 0600); err != nil {
+		return err
+	}
+	return nil
 }
 
 func requestFor(job agentrun.LogicalJob) ExecutionRequest {
