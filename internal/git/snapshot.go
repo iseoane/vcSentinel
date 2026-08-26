@@ -146,13 +146,32 @@ func AcquireSnapshot(treeOID string) (string, func(), error) {
 		return "", nil, err
 	}
 	var once sync.Once
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go refreshSnapshotLease(lease, stop, done)
 	release := func() {
 		once.Do(func() {
+			close(stop)
+			<-done
 			_ = os.Remove(lease)
 			_ = os.Remove(leaseDir)
 		})
 	}
 	return path, release, nil
+}
+
+func refreshSnapshotLease(path string, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(RetencionSnapshots / 4)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			_ = os.Chtimes(path, now, now)
+		}
+	}
 }
 
 // refrescarSnapshot marks a snapshot as actively acquired. Purge uses the
