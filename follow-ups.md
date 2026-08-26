@@ -40,7 +40,7 @@ failure routes; `spawnHelper` simplified. See Resolved below.
       UNCONFIRMED on native Windows. Blocking ONLY if production runs on
       Windows; no action needed while Debian is the deployment platform.
       Origin: A1 probes.
-- [ ] **Consolidate adapter-family dispatch** when a third adapter kind
+- [x] **Consolidate adapter-family dispatch** when a third adapter kind
       appears — kind switch currently lives in three factory sites. Trigger:
       third kind existing. Origin: 16 slice 3 review.
 - [ ] **Durable raw-transcript threading** — persist raw NDJSON transcripts /

@@ -114,26 +114,35 @@ func nuevoAdaptador(cfg config.Config, nombre, perfil string) (AgentAdapter, err
 // de construcción para cualquier otro valor — fail fast antes de lanzar
 // nada. timeout es el presupuesto por llamada (0 = defaults de cada familia).
 func construirAdaptadorAgente(cfg config.Config, nombre, perfil string, timeout time.Duration) (AgentAdapter, error) {
-	agente, existe := cfg.Agents[nombre]
-	if !existe {
+	if _, existe := cfg.Agents[nombre]; !existe {
 		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
 	}
-	switch agente.Kind {
+	return construirFamilia(cfg, nombre, configAgente(cfg, nombre, perfil), timeout)
+}
+
+// construirFamilia is the ONLY place that selects the adapter family for one
+// agent entry: every factory path (named profile, auto chain, resolved
+// profile chain, review-profile resolution) converges here, so introducing a
+// third kind means touching exactly one switch instead of hunting call sites.
+// The follow-up "Consolidate adapter-family dispatch" landed precisely to
+// enforce this invariant.
+func construirFamilia(cfg config.Config, nombre string, resuelto config.AgentConfig, timeout time.Duration) (AgentAdapter, error) {
+	switch cfg.Agents[nombre].Kind {
 	case config.AgentKindCLI:
 		return &CLIAdapter{
 			BinaryName:     resolverBinarioReal(nombre),
-			Config:         configAgente(cfg, nombre, perfil),
+			Config:         resuelto,
 			CommitLanguage: cfg.CommitLanguage,
 			Timeout:        timeout,
 		}, nil
 	case config.AgentKindACPX:
-		bridge, err := construirAdaptadorACPX(cfg, nombre, configAgente(cfg, nombre, perfil), timeout)
+		bridge, err := construirAdaptadorACPX(cfg, nombre, resuelto, timeout)
 		if err != nil {
 			return nil, err
 		}
 		return bridge, nil
 	default:
-		return nil, fmt.Errorf("agent %q declares unknown kind %q (valid values: empty for the CLI family, %q for ACP/acpx)", nombre, agente.Kind, config.AgentKindACPX)
+		return nil, fmt.Errorf("agent %q declares unknown kind %q (valid values: empty for the CLI family, %q for ACP/acpx)", nombre, cfg.Agents[nombre].Kind, config.AgentKindACPX)
 	}
 }
 
@@ -224,25 +233,19 @@ func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (A
 		esfuerzo = agente.ReasoningEffort
 	}
 
-	// Familia acpx: el launcher (npx) no participa en la resolución de
-	// shims del binario; el modelo/esfuerzo heredan la misma fusión
-	// perfil->agente que el camino CLI y el timeout de auditoría mapea al
-	// presupuesto --timeout de acpx.
-	if agente.Kind == config.AgentKindACPX {
-		bridge, err := construirAdaptadorACPX(cfg, nombre, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
-		if err != nil {
-			return nil, err
-		}
-		return bridge, nil
+	// El launcher (npx) no participa en la resolución de shims del binario;
+	// el modelo/esfuerzo heredan la misma fusión perfil->agente que el camino
+	// CLI y el timeout de auditoría mapea al presupuesto --timeout de acpx.
+	// La familia la decide exclusivamente construirFamilia.
+	ad, err := construirFamilia(cfg, nombre, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
+	if err != nil {
+		return nil, err
 	}
-	binario := resolverBinarioReal(nombre)
-
-	return &CLIAdapter{
-		BinaryName:     binario,
-		Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
-		CommitLanguage: cfg.CommitLanguage,
-		Timeout:        cfg.Review.Timeout,
-	}, nil
+	prompt, ok := ad.(AdaptadorPrompt)
+	if !ok {
+		return nil, fmt.Errorf("agent %q: adapter %T cannot serve arbitrary prompts", nombre, ad)
+	}
+	return prompt, nil
 }
 
 // construirCadenaPerfil crea la cadena de adaptadores del camino auto: un
@@ -253,22 +256,15 @@ func construirCadenaPerfil(cfg config.Config, disponibles []string, perfil confi
 	cadena := &CadenaAdaptador{}
 	for _, agente := range disponibles {
 		modelo, esfuerzo := config.ResolverPerfilAgente(cfg, agente, perfil.Nombre)
-		var ad adaptadorCompleto
-		if cfg.Agents[agente].Kind == config.AgentKindACPX {
-			acpx, err := construirAdaptadorACPX(cfg, agente, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
-			if err != nil {
-				return nil, err
-			}
-			ad = acpx
-		} else {
-			ad = &CLIAdapter{
-				BinaryName:     resolverBinarioReal(agente),
-				Config:         config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo},
-				CommitLanguage: cfg.CommitLanguage,
-				Timeout:        cfg.Review.Timeout,
-			}
+		ad, err := construirFamilia(cfg, agente, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
+		if err != nil {
+			return nil, err
 		}
-		cadena.adaptadores = append(cadena.adaptadores, ad)
+		completo, ok := ad.(adaptadorCompleto)
+		if !ok {
+			return nil, fmt.Errorf("agent %q: adapter %T cannot join the fallback chain", agente, ad)
+		}
+		cadena.adaptadores = append(cadena.adaptadores, completo)
 	}
 	return cadena, nil
 }

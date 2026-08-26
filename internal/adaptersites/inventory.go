@@ -138,7 +138,7 @@ func Sites() []Site {
 			Class: ClassShared, Reason: "THE provider process spawn seam (exec.CommandContext). Both the admitted review adapter and the gated legacy reviewers funnel through these methods; admission binding happens at the caller, not here."},
 		{Path: "internal/agentadapter/contractadapter.go", Symbol: "AgentAdapter/AdaptadorPrompt interfaces", Line: 11, Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Interface declarations only; no execution."},
-		{Path: "internal/agentadapter/factory.go", Symbol: "shim resolution note", Line: 277, Marker: "exec.Command",
+		{Path: "internal/agentadapter/factory.go", Symbol: "shim resolution note", Line: 273, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Comment-only reference (Windows .cmd shim caveat); the actual spawn lives in cli.go."},
 		{Path: "internal/agentadapter/snapshot.go", Symbol: "snapshot delegation to reviewsnapshot", Line: 0, Marker: "",
 			Class: ClassInfra, Reason: "Since ticket 16 slice 3 this file only delegates to internal/reviewsnapshot (shared by both adapter families); the git plumbing and its spawn seam moved with the implementation."},
