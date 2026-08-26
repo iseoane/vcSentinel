@@ -891,6 +891,20 @@ func TestUpdateHelpToggleAndSwallow(t *testing.T) {
 			}
 		})
 	}
+	t.Run("quit works from runs focus via q", func(t *testing.T) {
+		m := pressKeys(t, New(repos), "enter")
+		if m.Focus() != art.FocusRuns {
+			t.Fatalf("enter did not move focus to the runs pane")
+		}
+		next, cmd := m.Update(keyMsg("q"))
+		after := next.(Model)
+		if !after.Quitting() {
+			t.Errorf("q did not flag quitting from runs focus")
+		}
+		if cmd == nil || cmd() == nil {
+			t.Errorf("q returned no quit command from runs focus")
+		}
+	})
 }
 
 // TestViewRendersNavigationStates drives real models through Update and pins

@@ -2,7 +2,6 @@ package art
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -226,12 +225,9 @@ func overviewRight(p painter, w int, s ViewState) []string {
 
 // helpLines replaces the pane content while help is open: the inner double
 // rule stays for visual continuity, then the KEYS heading followed by one
-// row per navigation key in the footer's key/desc column style.
+// row per footer key in the key/desc column style.
 func helpLines(p painter, w int) []string {
-	lines := []string{
-		p.spanLine(w, span{" " + strings.Repeat("═", max(4, w-2)), Purple}),
-		p.spanLine(w, span{" KEYS", White}),
-	}
+	lines := []string{rule(p, w, true), p.spanLine(w, span{" KEYS", White})}
 	for _, k := range helpKeys {
 		lines = append(lines, p.spanLine(w,
 			span{" " + fitRunes(k.key, 7), Purple},
@@ -321,13 +317,9 @@ func overviewActivity(s ViewState) []activityRow {
 // through spanLine.
 func runDetail(run presence.RunSummary) string {
 	_, _, word := runState(run.State)
-	age := "-"
-	if !run.UpdatedAt.IsZero() {
-		age = formatAge(timeNow().Sub(run.UpdatedAt))
-	}
 	return fmt.Sprintf("   └─ %s · %s · rev %d · %s · %s",
 		run.RunID, word, run.Revision,
-		run.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"), age)
+		run.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"), runAge(run))
 }
 
 // summaryActivityRow builds the classic per-repository row: icon by worst
@@ -400,19 +392,23 @@ func runState(state agentrun.LifecycleState) (icon string, kind statusKind, word
 // projection carried none.
 func runRow(run presence.RunSummary) activityRow {
 	icon, kind, word := runState(run.State)
-	stage := fmt.Sprintf("rev %d", run.Revision)
-	age := "-"
-	if !run.UpdatedAt.IsZero() {
-		age = formatAge(timeNow().Sub(run.UpdatedAt))
-	}
 	return activityRow{
 		icon:  icon,
 		flow:  truncateRunes(run.RunID, maxRunFlowRunes),
-		stage: stage,
+		stage: fmt.Sprintf("rev %d", run.Revision),
 		state: word,
 		kind:  kind,
-		age:   age,
+		age:   runAge(run),
 	}
+}
+
+// runAge renders a run's compact age: a dash when the stored projection
+// carried no timestamp, the approved clock otherwise.
+func runAge(run presence.RunSummary) string {
+	if run.UpdatedAt.IsZero() {
+		return "-"
+	}
+	return formatAge(timeNow().Sub(run.UpdatedAt))
 }
 
 // formatAge renders a duration as the approved compact clock: mm:ss below

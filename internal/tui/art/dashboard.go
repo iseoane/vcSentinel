@@ -96,22 +96,27 @@ var mockActivity = []activityRow{
 	{icon: "✓", flow: "review", stage: "passed", state: "PASSED", kind: stOK, age: "01:48"},
 }
 
+// keyHint pairs one navigation key with its short description; it backs
+// both the footer line and the KEYS help overlay.
+type keyHint struct{ key, desc string }
+
 // mockKeys is the navigation footer: keys render in the purple accent,
 // descriptions in dim.
-var mockKeys = []struct{ key, desc string }{
+var mockKeys = []keyHint{
 	{"↑↓", "navigate"}, {"enter", "open"}, {"a", "abort"}, {"r", "retry"},
 	{"/", "filter"}, {"?", "help"}, {"q", "quit"},
 }
 
 // helpKeys is the KEYS overlay shown while help is open: one row per
-// navigation key with a short description, including the keys whose action
+// footer key with a short description, including the keys whose action
 // is not wired yet.
-var helpKeys = []struct{ key, desc string }{
+var helpKeys = []keyHint{
 	{"↑↓", "navigate panes"},
 	{"tab", "focus"},
 	{"enter", "open/close run"},
 	{"a", "abort (soon)"},
 	{"r", "retry (soon)"},
+	{"/", "filter (soon)"},
 	{"?", "help"},
 	{"q", "quit"},
 }

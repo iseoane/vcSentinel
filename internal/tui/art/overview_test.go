@@ -607,6 +607,7 @@ func TestOverviewHelpBlockReplacesPaneContent(t *testing.T) {
 		"tab", "focus",
 		"enter", "open/close run",
 		"abort (soon)", "retry (soon)",
+		"/", "filter (soon)",
 		"?", "help", "quit")
 	if strings.Contains(dash, "LOCATION") || strings.Contains(dash, "ACTIVITY") {
 		t.Errorf("help must replace the pane content wholesale:\n%s", dash)
