@@ -6,7 +6,6 @@ VAS Sentinel is a deterministic local Go guardian that reports accumulated workt
 
 - All development artifacts created or changed from now on MUST be in English: source code, identifiers, comments, tests, documentation, user-facing strings, prompts, configuration values, commit messages, PRs, issues, and release notes.
 - Keep the human-agent conversation in standard Spanish from Spain unless the user requests another language.
-- Use GPT-5.6 Terra with high reasoning effort for implementation unless the user explicitly requests a different model or effort.
 - Existing Spanish artifacts are legacy content. Do not translate them opportunistically; translate only as part of a scoped change.
 - Commit messages MUST use Conventional Commits in English, for example `feat(gate): validate the standard profile`.
 
@@ -14,7 +13,7 @@ VAS Sentinel is a deterministic local Go guardian that reports accumulated workt
 
 `sentinel slice` without arguments is an interactive stdin REPL and agents cannot drive it. Use this non-interactive flow instead:
 
-`sentinel check` measures the whole worktree and is advisory, including at `CRITICO`. The repository pre-commit hook invokes `sentinel check --staged`; that staged candidate is the enforcement boundary for the 400-line review budget.
+`sentinel check` measures the whole worktree and is advisory, including at `CRITICO`. The repository pre-commit hook invokes `sentinel check --staged`; that staged candidate is the enforcement boundary for the 400-line review budget. If `sentinel` is not on PATH, use `go run ./cmd/sentinel <args>` from the repo root instead.
 
 1. Run `sentinel slice plan --json > plan.json`. It proposes reviewable selections and **does not create commits**. It is idempotent: the same tree produces the same `plan_id`.
    - Exit `0`: no decision is required.
@@ -34,6 +33,13 @@ The human retains the decision. This flow only changes how the question is trans
 - For quick verification, run `go build ./...` and `go vet ./...`.
 - Generate cross-platform release assets with `go run ./tools/release`. Publish the complete release with `infra/release.bat` or `infra/release.sh`.
 - Bootstrap installation without an existing binary with `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest`.
+
+## Tests
+
+- Whole suite: `go test ./...`. It passes and takes about three minutes; `internal/durableruns_e2e`, `internal/daemon`, and `internal/process` spawn real child processes, so they dominate that time.
+- Single package: `go test ./internal/execution`.
+- Single test: `go test ./cmd/sentinel -run TestCheck`.
+- Golden files live in two independent packages with their own `-update` flag; regenerate each one separately: `go test ./internal/tui -update` and `go test ./internal/tui/art -update`.
 
 ## Cross-platform requirements
 
@@ -59,9 +65,11 @@ Code and scripts MUST behave the same on Windows and Debian:
 - `internal/ops` records, rotates, purges, and reads events from the repository common directory.
 - `internal/setup` installs, upgrades, and removes the binary and manages configuration templates.
 
-Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification.
+Durable runs/Control Center are layered on the same common directory: `internal/agentrun` + `internal/reviewcontract` are contracts, `internal/execution` is the controller over `internal/store` event stream with `internal/planning`, `internal/acpadapter`, `internal/reviewexec`, `internal/reviewsnapshot`, `internal/remediation`, `internal/process`; observation flows `internal/registry`+`internal/inventory`+`internal/presence`→`internal/overview`, `internal/attach`→`internal/tui`; `internal/daemon` owns the daemon, `internal/validation` the gate checks.
 
-Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md) and [`docs/reingenieria/`](docs/reingenieria/).
+Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Reengineering phase work (phases F0-F9, tasks TN.M) must load `.claude/skills/reingenieria-phase-task/SKILL.md` first.
+
+Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md), [`docs/reingenieria/`](docs/reingenieria/), and [`docs/runs-cli.md`](docs/runs-cli.md) for the `runs` flag and exit-code contract.
 
 ## Commands
 
@@ -83,6 +91,7 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `status` | Show volume, audit records, and recent events. Supports `--json` and `--prune`. |
 | `explain` | Explain a commit range's change profile, detected characteristics, risk, and cohesion. Supports `--json`. |
 | `consentimiento-diff` | Grant, revoke, or show local consent for external diffs. |
+| `runs` | Operate durable runs: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, `prune`. Exit codes are contract, not convention: `1` usage, `2` run not found, `3` stale revision, `4` invalid state, `5` infrastructure failure. See `docs/runs-cli.md`. |
 | `tui` | Open the full-screen control center over the repository registry; starts and owns this repository's daemon for the session and stops it gracefully on exit. |
 | `pr` | Create a pull request through `gh`; `pr review` analyzes the unpublished branch. |
 | `install` / `upgrade` / `uninstall` | Manage the installed binary. |
