@@ -18,6 +18,8 @@ import (
 // it.
 var timeNow = time.Now
 
+var runningGlyphs = []string{"⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠋", "⠙"}
+
 // maxRunFlowRunes bounds how many runes of a run identifier label the flow
 // column before the layout engine pads it to the approved width.
 const maxRunFlowRunes = 12
@@ -580,22 +582,20 @@ func overviewActivity(s ViewState) []activityRow {
 	return rows
 }
 
-// runDetail renders the inline expansion of one open run on a single dim
-// line: full id, state word, revision, full StartedAt and UpdatedAt stamped in
-// UTC, the same compact age the row's AGE column shows, and the failure reason
-// when available. Narrow panes clamp it through spanLine.
+// runDetail renders the inline expansion of one open run on a single dim line.
+// A failure reason is sanitized and rendered first as "└─ error: ...";
+// otherwise the line shows the full id, state word, revision, local system
+// StartedAt and UpdatedAt timestamps, and the same compact age as the row.
+// Narrow panes clamp it through spanLine.
 func runDetail(run presence.RunSummary) string {
+	if run.Reason != "" {
+		reason := truncateRunes(sanitizeLabel(run.Reason), 120)
+		return "   └─ error: " + reason
+	}
 	_, _, word := runState(run.State)
 	base := fmt.Sprintf("   └─ %s · %s · rev %d · started %s · updated %s · age %s",
 		run.RunID, word, run.Revision,
 		formatRunTimestamp(run.StartedAt), formatRunTimestamp(run.UpdatedAt), runAge(run))
-	if run.Reason != "" {
-		reason := sanitizeLabel(run.Reason)
-		if len(reason) > 120 {
-			reason = reason[:120] + "…"
-		}
-		base += " · " + reason
-	}
 	return base
 }
 
@@ -670,6 +670,9 @@ func runState(state agentrun.LifecycleState) (icon string, kind statusKind, word
 // clock.
 func runRow(run presence.RunSummary) activityRow {
 	icon, kind, word := runState(run.State)
+	if kind == stRun {
+		icon = runningGlyph(timeNow())
+	}
 	flow := truncateRunes(run.RunID, maxRunFlowRunes)
 	if run.Operation != "" {
 		flow = truncateRunes(sanitizeLabel(run.Operation), maxOperationFlowRunes)
@@ -735,7 +738,16 @@ func formatRunTimestamp(at time.Time) string {
 	if at.IsZero() {
 		return "-"
 	}
-	return at.UTC().Format("2006-01-02T15:04:05Z")
+	return at.Local().Format("2006-01-02 15:04:05")
+}
+
+func runningGlyph(now time.Time) string {
+	frame := now.UnixNano() / int64(500*time.Millisecond)
+	index := frame % int64(len(runningGlyphs))
+	if index < 0 {
+		index += int64(len(runningGlyphs))
+	}
+	return runningGlyphs[index]
 }
 
 // formatAge renders a duration as the approved compact clock: mm:ss below

@@ -195,6 +195,30 @@ func TestRunActionGatingMatrix(t *testing.T) {
 	}
 }
 
+func TestAggregateGateRootActionsAreDisabled(t *testing.T) {
+	const reason = "gate root is an aggregate; abort and retry are unavailable"
+	repo := repoWithRuns("gate", "gate-root")
+	repo.Runs[0].ControlDisabledReason = reason
+	for _, key := range []string{"a", "r"} {
+		spy := &spyActions{}
+		m := focused([]overview.Repo{repo}, spy, 0)
+		next, cmd := m.Update(keyMsg(key))
+		after := next.(Model)
+		if cmd != nil || len(spy.calls) != 0 {
+			t.Fatalf("aggregate %s dispatched cmd=%v calls=%v", key, cmd, spy.calls)
+		}
+		if _, _, _, ok := after.PendingAction(); ok || after.Err() != reason {
+			t.Fatalf("aggregate %s feedback = pending=%v err=%q", key, ok, after.Err())
+		}
+	}
+
+	spy := &spyActions{}
+	ordinary := focused([]overview.Repo{repoWithRuns("ordinary", "ordinary-run")}, spy, 0)
+	if _, cmd := ordinary.Update(keyMsg("a")); cmd == nil || len(spy.calls) != 1 {
+		t.Fatalf("ordinary run did not dispatch: cmd=%v calls=%v", cmd, spy.calls)
+	}
+}
+
 // TestFilteredRunActionsTargetVisibleRows proves that the action target uses
 // the same filtered coordinates as the ACTIVITY rows. It covers broad
 // repository matches and narrowed run matches for both actions.

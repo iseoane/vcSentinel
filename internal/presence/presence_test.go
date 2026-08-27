@@ -114,6 +114,30 @@ func seedRun(t *testing.T, st *store.Store, candidate string) string {
 	return runID
 }
 
+func seedRunWithPolicyAt(t *testing.T, st *store.Store, candidate string,
+	policy store.RunPolicy, at time.Time) string {
+	t.Helper()
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
+		agentrun.Candidate(candidate), agentrun.Prompt("presence fixture"), nil))
+	runID := string(job.RunID())
+	if err := st.CreateRun(job, policy); err != nil {
+		t.Fatalf("create run %s: %v", candidate, err)
+	}
+	invocation, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := agentrun.NewNormalizedEvent(invocation, agentrun.StateCreated,
+		agentrun.StateQueued, agentrun.DecisionStart, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AppendEvent(runID, event, 0); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	return runID
+}
+
 // admitRunWithOperation admits one durable run carrying an operator-facing
 // operation label; an empty label produces the legacy-shaped policy bytes.
 func admitRunWithOperation(t *testing.T, st *store.Store, candidate, operation string) string {
@@ -227,7 +251,7 @@ func seedFailedRunAt(t *testing.T, st *store.Store, candidate string, base time.
 	return runID
 }
 
-func TestRecentRunsOrdersByProjectionTime(t *testing.T) {
+func TestRecentRunsPrioritizesStateThenProjectionTime(t *testing.T) {
 	commonDir := t.TempDir()
 	st := store.NuevoStore(commonDir)
 	olderStartedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -263,9 +287,10 @@ func TestRecentRunsOrdersByProjectionTime(t *testing.T) {
 		}
 	}
 
-	// RecentRuns copies projection timestamps verbatim and orders timestamped
-	// runs newest-first. A zero timestamp is deterministic but never outranks a
-	// timestamped run, and it is not replaced with a time derived from the id.
+	// RecentRuns copies projection timestamps verbatim and orders each lifecycle
+	// group timestamped newest-first. A zero timestamp is deterministic but never
+	// outranks a timestamped run, and it is not replaced with a time derived from
+	// the id.
 	for _, tc := range []struct {
 		id      string
 		at      time.Time
@@ -284,12 +309,12 @@ func TestRecentRunsOrdersByProjectionTime(t *testing.T) {
 		}
 	}
 
-	if summaries[0].RunID != newerID || summaries[1].RunID != olderID || summaries[2].RunID != zeroID {
-		t.Fatalf("runs must be newest-first, with zero-time last, got %#v", summaries)
+	if summaries[0].RunID != zeroID || summaries[1].RunID != newerID || summaries[2].RunID != olderID {
+		t.Fatalf("active runs must precede terminal runs, with zero-time last in their group, got %#v", summaries)
 	}
 	summaries, err = RecentRuns(commonDir, 1)
-	if err != nil || len(summaries) != 1 || summaries[0].RunID != newerID {
-		t.Fatalf("limit 1 must yield newest projection %s, got %#v, %v", newerID, summaries, err)
+	if err != nil || len(summaries) != 1 || summaries[0].RunID != zeroID {
+		t.Fatalf("limit 1 must yield the highest-priority active run %s, got %#v, %v", zeroID, summaries, err)
 	}
 }
 
@@ -307,6 +332,132 @@ func TestRecentRunsBreaksProjectionTimeTiesByRunID(t *testing.T) {
 	summaries, err := RecentRuns(commonDir, 2)
 	if err != nil || len(summaries) != 2 || summaries[0].RunID != wantFirst || summaries[1].RunID != wantSecond {
 		t.Fatalf("equal projection times must sort by RunID, got %#v, %v", summaries, err)
+	}
+}
+
+func TestRecentRunsSuppressesChildrenBeforeGlobalQuota(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	parentID := seedRunWithPolicyAt(t, st, "activity-parent", store.RunPolicy{
+		ID: "policy:activity",
+	}, base)
+	for i := 0; i < 11; i++ {
+		seedRunWithPolicyAt(t, st, "activity-child-"+strconv.Itoa(i), store.RunPolicy{
+			ID: "policy:activity", ParentRunID: parentID,
+		}, base.Add(time.Duration(i+1)*time.Minute))
+	}
+
+	summaries, err := RecentRuns(commonDir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].RunID != parentID {
+		t.Fatalf("child runs must be suppressed before quota selection: %#v", summaries)
+	}
+}
+
+func TestRecentRunsKeepsChildWithMissingParentVisible(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	orphanID := seedRunWithPolicyAt(t, st, "activity-orphan", store.RunPolicy{
+		ID: "policy:activity", ParentRunID: "missing-parent",
+	}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+
+	summaries, err := RecentRuns(commonDir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].RunID != orphanID {
+		t.Fatalf("child with a missing parent must remain visible: %#v", summaries)
+	}
+}
+
+func TestRecentRunsPlacesActiveRunsBeforeTerminalRuns(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	activeID := seedRunWithPolicyAt(t, st, "activity-active", store.RunPolicy{
+		ID: "policy:activity",
+	}, base)
+	zeroID := seedRun(t, st, "activity-zero")
+	olderTerminalID := seedFailedRunAt(t, st, "activity-terminal-older", base.Add(time.Hour))
+	newerTerminalID := seedFailedRunAt(t, st, "activity-terminal-newer", base.Add(2*time.Hour))
+
+	summaries, err := RecentRuns(commonDir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{activeID, zeroID, newerTerminalID, olderTerminalID}
+	if len(summaries) != len(want) {
+		t.Fatalf("got %d summaries, want %d: %#v", len(summaries), len(want), summaries)
+	}
+	for i, id := range want {
+		if summaries[i].RunID != id {
+			t.Errorf("summary[%d] = %s, want %s; summaries=%#v", i, summaries[i].RunID, id, summaries)
+		}
+	}
+}
+
+func TestRecentRunsCollapsesGateChildrenAndKeepsWorktreeQuota(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	mainPath := filepath.Join(t.TempDir(), "main")
+	featurePath := filepath.Join(t.TempDir(), "feature")
+	rootID := seedRunWithPolicyAt(t, st, "gate-root", store.RunPolicy{
+		ID: gateRootPolicyID, Operation: "gate pre-push", Worktree: mainPath,
+	}, base.Add(20*time.Minute))
+	childID := seedRunWithPolicyAt(t, st, "gate-child", store.RunPolicy{
+		ID: gateRootPolicyID, ParentRunID: rootID, Worktree: featurePath,
+	}, base.Add(30*time.Minute))
+	featureID := seedRunWithPolicyAt(t, st, "feature-new", store.RunPolicy{
+		ID: "policy:review", Operation: "review", Worktree: featurePath,
+	}, base.Add(10*time.Minute))
+	seedRunWithPolicyAt(t, st, "feature-old", store.RunPolicy{
+		ID: "policy:review", Operation: "review", Worktree: featurePath,
+	}, base.Add(9*time.Minute))
+
+	summaries, err := RecentRunsForWorktrees(commonDir, 1, []string{featurePath})
+	if err != nil || len(summaries) != 2 {
+		t.Fatalf("gate root plus selected worktree run = %#v, %v", summaries, err)
+	}
+	if summaries[0].RunID != rootID || summaries[0].ControlDisabledReason != gateRootControlDisabledReason {
+		t.Fatalf("root summary = %+v, want aggregate control disabled", summaries[0])
+	}
+	if summaries[1].RunID != featureID || summaries[1].ControlDisabledReason != "" {
+		t.Fatalf("selected worktree summary = %+v, want ordinary actionable run", summaries[1])
+	}
+	for _, summary := range summaries {
+		if summary.RunID == childID {
+			t.Fatalf("suppressed gate child leaked into summaries: %#v", summaries)
+		}
+	}
+}
+
+func TestRecentRunsStopsPolicyScanAfterQuotasAreFilled(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		seedRunWithPolicyAt(t, st, "scan-"+strconv.Itoa(i), store.RunPolicy{
+			ID: "policy:test", Worktree: worktree,
+		}, base.Add(time.Duration(3-i)*time.Minute))
+	}
+	var inspected []string
+	previous := readRunPolicy
+	readRunPolicy = func(st *store.Store, runID string) (store.RunPolicy, error) {
+		inspected = append(inspected, runID)
+		return st.ReadRunPolicy(runID)
+	}
+	t.Cleanup(func() { readRunPolicy = previous })
+
+	if _, err := RecentRunsForWorktrees(commonDir, 1, []string{worktree}); err != nil {
+		t.Fatal(err)
+	}
+	if len(inspected) != 1 {
+		t.Fatalf("satisfied quotas opened %d policy records, want 1: %v", len(inspected), inspected)
 	}
 }
 

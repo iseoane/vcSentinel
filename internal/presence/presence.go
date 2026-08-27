@@ -55,15 +55,25 @@ func Probe(gitCommonDir string) Presence {
 
 // RunSummary is one projected durable run as shown in the activity pane.
 type RunSummary struct {
-	RunID     string
-	State     agentrun.LifecycleState
-	Revision  uint64
-	StartedAt time.Time
-	UpdatedAt time.Time
-	Operation string
-	Commit    string
-	Worktree  string
-	Reason    string
+	RunID                 string
+	State                 agentrun.LifecycleState
+	Revision              uint64
+	StartedAt             time.Time
+	UpdatedAt             time.Time
+	Operation             string
+	Commit                string
+	Worktree              string
+	Reason                string
+	ControlDisabledReason string
+}
+
+const (
+	gateRootPolicyID              = "policy:gate"
+	gateRootControlDisabledReason = "gate root is an aggregate; abort and retry are unavailable"
+)
+
+var readRunPolicy = func(st *store.Store, runID string) (store.RunPolicy, error) {
+	return st.ReadRunPolicy(runID)
 }
 
 // RecentRuns returns the globally newest limit projected durable runs anchored
@@ -98,6 +108,11 @@ func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths
 	}
 	sort.Slice(summaries, func(i, j int) bool {
 		left, right := summaries[i], summaries[j]
+		leftTerminal := isTerminalRun(left.State)
+		rightTerminal := isTerminalRun(right.State)
+		if leftTerminal != rightTerminal {
+			return !leftTerminal
+		}
 		leftZero, rightZero := left.UpdatedAt.IsZero(), right.UpdatedAt.IsZero()
 		if leftZero != rightZero {
 			return !leftZero
@@ -108,43 +123,76 @@ func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths
 		return left.RunID < right.RunID
 	})
 
-	retained := make([]bool, len(summaries))
-	for i := 0; i < len(summaries) && i < limit; i++ {
-		retained[i] = true
+	executionIDs := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		executionIDs[id] = struct{}{}
 	}
 	remaining := worktreeQuotas(visibleWorktreePaths, limit)
-	for i := range summaries {
-		if !retained[i] && len(remaining) == 0 {
+	globalRemaining := limit
+	union := make([]RunSummary, 0, limit)
+	for _, summary := range summaries {
+		if globalRemaining == 0 && len(remaining) == 0 {
 			break
 		}
-		policy, err := st.ReadRunPolicy(summaries[i].RunID)
+		policy, err := readRunPolicy(st, summary.RunID)
 		if err != nil {
+			// A legacy or damaged policy remains visible globally but cannot
+			// contribute worktree metadata or child suppression.
+			if globalRemaining == 0 {
+				continue
+			}
+			union = append(union, summary)
+			globalRemaining--
 			continue
 		}
-		summaries[i].Operation = policy.Operation
-		summaries[i].Commit = policy.Commit
-		summaries[i].Worktree = policy.Worktree
-		if key := normalizeWorktreePath(policy.Worktree); key != "" {
-			if quota, ok := remaining[key]; ok {
-				retained[i] = true
-				if quota <= 1 {
-					delete(remaining, key)
-				} else {
-					remaining[key] = quota - 1
-				}
+		if policy.ParentRunID != "" {
+			if _, exists := executionIDs[policy.ParentRunID]; exists {
+				continue
 			}
+		}
+		if globalRemaining == 0 && !consumeWorktreeQuota(remaining, policy.Worktree) {
+			continue
+		}
+		summary = applyRunPolicy(summary, policy)
+		union = append(union, summary)
+		if globalRemaining > 0 {
+			globalRemaining--
+			consumeWorktreeQuota(remaining, policy.Worktree)
 		}
 	}
 
-	union := make([]RunSummary, 0, len(summaries))
-	for i := range summaries {
-		if !retained[i] {
-			continue
-		}
-		enrichRunSummary(st, &summaries[i])
-		union = append(union, summaries[i])
+	for i := range union {
+		enrichRunSummary(st, &union[i])
 	}
 	return union, nil
+}
+
+func consumeWorktreeQuota(remaining map[string]int, worktree string) bool {
+	key := normalizeWorktreePath(worktree)
+	quota, ok := remaining[key]
+	if !ok {
+		return false
+	}
+	if quota <= 1 {
+		delete(remaining, key)
+	} else {
+		remaining[key] = quota - 1
+	}
+	return true
+}
+
+func applyRunPolicy(summary RunSummary, policy store.RunPolicy) RunSummary {
+	summary.Operation = policy.Operation
+	summary.Commit = policy.Commit
+	summary.Worktree = policy.Worktree
+	if policy.ID == gateRootPolicyID && policy.ParentRunID == "" {
+		summary.ControlDisabledReason = gateRootControlDisabledReason
+	}
+	return summary
+}
+
+func isTerminalRun(state agentrun.LifecycleState) bool {
+	return state.TerminalClass() != agentrun.TerminalNone
 }
 
 func worktreeQuotas(paths []string, limit int) map[string]int {

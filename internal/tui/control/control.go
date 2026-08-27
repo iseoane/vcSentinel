@@ -512,6 +512,8 @@ func (m *Model) toggleOpenRun() {
 // on a currently visible run row (the exact walk the ACTIVITY pane draws),
 // and that row's repository is enabled, non-missing, and error-free; every
 // unmet gate — including a nil hook or a pending action — is a pure no-op.
+// An explicit control-disabled reason is surfaced through Err instead of
+// creating a pending marker or dispatching either action.
 // When the gate opens,
 // the pending marker goes up before the hook command is handed out, and only
 // the matching result message clears it afterwards.
@@ -528,7 +530,12 @@ func (m *Model) requestRunAction(key string) tea.Cmd {
 	if !target.Enabled || target.Missing || target.Error != "" {
 		return nil
 	}
-	runID := target.Runs[pos.Run].RunID
+	run := target.Runs[pos.Run]
+	if run.ControlDisabledReason != "" {
+		m.err = run.ControlDisabledReason
+		return nil
+	}
+	runID := run.RunID
 	if key == "r" {
 		m.pending = &pendingAction{Kind: KindRetry, RepoPath: target.Path, RunID: runID}
 		return m.actions.Retry(target.Path, runID)

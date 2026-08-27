@@ -320,6 +320,7 @@ func TestRenderOverviewStacksBelow84(t *testing.T) {
 // stripping escapes from a colored render yields the plain render for every
 // fixture and both layout modes, including the Slice 11 navigation states.
 func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
+	pinClock(t, time.Unix(0, 0))
 	// Run rows carry zero timestamps so the age column stays the
 	// deterministic dash across both sequential renders. Slice 14: one run
 	// carries an operation label, exercising caption + labeled-flow parity
@@ -778,6 +779,7 @@ func activityBlock(t *testing.T, dash string) string {
 // failed/timed_out/unavailable fail red, and canceled/terminated settle dim
 // as CANCELED. Icons inherit their state color.
 func TestOverviewActivityRunStateMapping(t *testing.T) {
+	pinClock(t, time.Unix(0, 0))
 	tests := []struct {
 		state agentrun.LifecycleState
 		icon  string
@@ -972,6 +974,74 @@ func TestRunRowAgeAndWhenUseAdmissionTimestamps(t *testing.T) {
 	}
 }
 
+func TestRunningIconAdvancesWithRenderClock(t *testing.T) {
+	startedAt := time.Date(2026, 1, 2, 12, 34, 56, 0, time.UTC)
+	pinClock(t, startedAt)
+	view := ViewState{Repos: []overview.Repo{{Name: "activity", Runs: []presence.RunSummary{
+		runWithTimes("running", agentrun.StateRunning, 1, startedAt, startedAt),
+	}}}}
+	first := activityBlock(t, RenderOverviewPlain(70, view))
+	timeNow = func() time.Time { return startedAt.Add(2 * time.Second) }
+	second := activityBlock(t, RenderOverviewPlain(70, view))
+	icon := func(block string) string {
+		for _, line := range strings.Split(block, "\n") {
+			if strings.Contains(line, "RUNNING") {
+				return string([]rune(strings.TrimSpace(line))[0])
+			}
+		}
+		return ""
+	}
+
+	if firstIcon, secondIcon := icon(first), icon(second); firstIcon == "" || firstIcon == secondIcon {
+		t.Fatalf("visible running icon did not advance after two seconds: %q -> %q", firstIcon, secondIcon)
+	}
+	if !strings.Contains(first, "RUNNING") || !strings.Contains(second, "RUNNING") {
+		t.Fatalf("redraw changed the visible running state:\n%s\n%s", first, second)
+	}
+}
+
+func TestFailedRunDetailStartsWithSanitizedError(t *testing.T) {
+	run := presence.RunSummary{
+		RunID: "failed-run", State: agentrun.StateFailed, Revision: 4,
+		Reason: "adapter failed\nwith details",
+	}
+	detail := runDetail(run)
+	wantPrefix := "   └─ error: adapter failedwith details"
+	if !strings.HasPrefix(detail, wantPrefix) {
+		t.Fatalf("failed detail = %q, want prefix %q", detail, wantPrefix)
+	}
+	if strings.Contains(detail, "FAILED") || strings.Contains(detail, "rev 4") || strings.Contains(detail, "started ") {
+		t.Fatalf("failed detail duplicated row metadata before/around error: %q", detail)
+	}
+
+	activity := activityBlock(t, RenderOverviewPlain(70, ViewState{
+		Repos:     []overview.Repo{{Name: "activity", Runs: []presence.RunSummary{run}}},
+		OpenRunID: "failed-run",
+	}))
+	if !strings.Contains(activity, wantPrefix) {
+		t.Fatalf("narrow activity did not expose the failure reason first:\n%s", activity)
+	}
+}
+
+func TestRunDetailUsesLocalNumericTimestamps(t *testing.T) {
+	previous := time.Local
+	time.Local = time.FixedZone("fixture-local", 5*60*60+30*60)
+	t.Cleanup(func() { time.Local = previous })
+
+	startedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	updatedAt := startedAt.Add(time.Minute)
+	detail := runDetail(runWithTimes("successful-run", agentrun.StateSucceeded, 2, startedAt, updatedAt))
+	for _, at := range []time.Time{startedAt, updatedAt} {
+		want := at.Local().Format("2006-01-02 15:04:05")
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail %q does not contain local timestamp %q", detail, want)
+		}
+	}
+	if strings.Contains(detail, "T03:04:05Z") {
+		t.Fatalf("detail still renders UTC timestamp: %q", detail)
+	}
+}
+
 func TestRenderOverviewKeepsAgeAndWhenVisibleAtTerminalWidths(t *testing.T) {
 	startedAt := time.Date(2026, 1, 2, 12, 34, 56, 0, time.UTC)
 	pinClock(t, startedAt.Add(2*time.Minute+3*time.Second))
@@ -1096,17 +1166,19 @@ func TestOverviewRunCursorPrefixOnlyFocusedRow(t *testing.T) {
 
 // TestOverviewOpenRunDetailLine pins the inline expansion: the row whose
 // full run id matches OpenRunID appends exactly one dim detail line with the
-// full id, state word, revision, full UTC timestamps, and compact age; unknown
+// full id, state word, revision, full local timestamps, and compact age; unknown
 // or empty ids render nothing extra.
 func TestOverviewOpenRunDetailLine(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	pinClock(t, now)
 	repos := runsNavRepos()
 	startedAt := now.Add(-3 * time.Minute)
+	updatedAt := now.Add(-2 * time.Minute)
 	repos[0].Runs[0] = runWithTimes(repos[0].Runs[0].RunID, agentrun.StateRunning, 4,
-		startedAt, now.Add(-2*time.Minute))
+		startedAt, updatedAt)
 	detail := runDetail(repos[0].Runs[0])
-	want := "   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 4 · started 2023-11-14T22:10:20Z · updated 2023-11-14T22:11:20Z · age 03:00"
+	want := fmt.Sprintf("   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 4 · started %s · updated %s · age 03:00",
+		startedAt.Local().Format("2006-01-02 15:04:05"), updatedAt.Local().Format("2006-01-02 15:04:05"))
 	assertContains(t, detail, want)
 	dash := RenderOverviewPlain(80, ViewState{Repos: repos, OpenRunID: "aaaaaaaaaaaaaaaaaaaa"})
 	if n := strings.Count(dash, "   └─"); n != 1 {
