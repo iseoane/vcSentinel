@@ -110,7 +110,7 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Deterministic shell runner for configured lint/test/build commands; never consults an agent."},
 		{Path: "cmd/sentinel/comandos_explain.go", Symbol: "explain range plumbing", Line: 164, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the change-profile explainer."},
-		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Line: 548, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Line: 542, Marker: "exec.Command",
 			Class: ClassInfra, Reason: "gh pr create publication, git config reads, and clipboard helpers; no provider agent. The legacy 'sentinel pr' gh passthrough was retired (T8.4), removing its former spawn site."},
 		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Line: 0, Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
