@@ -150,9 +150,17 @@ criterion-2 wiring below (one recorded line reference refreshed in
 | T8.3 | ✅ closed | `43c4109` |
 | T8.4 | ✅ closed with deviations | `467be1b`, `fd8cc09` |
 
-Phase state: **🔄 open pending the §4.3 gate**. Tasks T8.1–T8.4 are
-implemented. Exit criterion 2 was initially unreachable from the PR commands;
-it was closed in this same pass (see «Criterion 2 — closed»).
+Phase state: **✅ closed at `a244833`**. Tasks T8.1–T8.4 are implemented and
+the three exit criteria have evidence. Exit criterion 2 was initially
+unreachable from the PR commands and was closed in this same pass (see
+«Criterion 2 — closed»).
+
+§4.3 phase gate: `go build ./...`, `go vet ./...` and `go test ./...` green;
+`./build.sh` produced `bin/0.2.0/sentinel`; `sentinel gate --stage pre-push`
+returned **PASS** with review `ok` on `a244833`; the candidate was promoted to
+`~/.vas_sentinel/bin/sentinel`. Step 4 (`sentinel pr review --base main`) does
+not apply: every commit landed straight on `main`, so `merge-base(main, HEAD)`
+equals `HEAD` and the range is empty — the same exception recorded for F4.
 
 ### Exit criteria
 
