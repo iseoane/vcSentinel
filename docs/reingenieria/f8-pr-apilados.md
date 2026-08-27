@@ -132,3 +132,115 @@ corrige → la PR no lo reporta.
 
 **Aceptación**: los tests existentes de `comandos_pr_test.go` que sigan aplicando
 pasan; los que cambien se adaptan explicando por qué.
+
+---
+
+## Progress and deviations
+
+Verified on 2026-08-27 against the code merged at `8f9a90a`
+("Merge branch 'f8-t8-4-pr-cli' into main — T8.4 stacked PR support").
+`go build ./...` and `go vet ./...` clean; full `go test ./...` green after the
+criterion-2 wiring below (one recorded line reference refreshed in
+`internal/adaptersites/inventory.go:113`, the same bookkeeping as `c462cf1`).
+
+| Task | State | Closing commits |
+|---|---|---|
+| T8.1 | ✅ closed with deviation | `cc53e3b`, `834d5e9`, `7eb3846` |
+| T8.2 | ✅ closed with deviation | `43c4109`, `edd67b8`, `467be1b` |
+| T8.3 | ✅ closed | `43c4109` |
+| T8.4 | ✅ closed with deviations | `467be1b`, `fd8cc09` |
+
+Phase state: **🔄 open pending the §4.3 gate**. Tasks T8.1–T8.4 are
+implemented. Exit criterion 2 was initially unreachable from the PR commands;
+it was closed in this same pass (see «Criterion 2 — closed»).
+
+### Exit criteria
+
+| # | Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | Reviewing B over A neither reports nor blocks on A's findings | Covered | `internal/review/rama_propio_test.go:112` `TestStackedBranchInheritedFindingDoesNotBlock`; read-only context at `:174` |
+| 2 | Rebasing a stacked PR's base preserves the review of everything unchanged | Covered | `internal/review/rebase_test.go:221` `TestStackedBranchSurvivesBaseRebaseViaBlob`; CLI wiring at `cmd/sentinel/comandos_pr_test.go:1368` `TestResolveBlobStoreResolvesTheCommonDir` and `:1389` `TestExecutePrCreateWiresTheBlobStore` |
+| 3 | A PR is reviewed as a net unit, not as the sum of its commits | Covered | `internal/review/net_pr_test.go:65` `TestNetReviewIndependentOfHistoricalFindings`, `:201` `TestStackedNetReviewUsesOwnRange` |
+
+### Criterion 2 — closed
+
+**Original state.** Blob-based reuse in `AnalizarRama` is gated on
+`opts.Store != nil` (`internal/review/rama.go:172`), and `OpcionesRama.Store`
+was never assigned in production code: both CLI call sites omitted it. Through
+`sentinel pr review` and `sentinel pr create`, reuse never fired, so rebasing a
+stack's base re-audited every commit. The only rebase-survival test,
+`internal/review/rebase_test.go:95` `TestAnalizarRamaSobreviveRebaseViaBlob`, is
+F2's criterion, injects its own store and has no stacked dimension.
+
+Measured, not assumed: with `Store` removed from the new stacked test, the
+second pass reports `Pendientes = [<2 SHAs>]` and the auditor is called **8
+extra times** after the base rebase.
+
+**Fix.** `resolveBlobStore(worktree)` (`cmd/sentinel/comandos_pr.go:49`) builds
+the store from `git.ObtenerGitCommonDir` — the common dir, never the
+per-worktree git dir, because linked worktrees share one store — and is wired
+at both call sites: `pr review` directly (`comandos_pr.go:223`) and `pr create`
+through the new `depsPrCreate.blobStore` seam (`:711`, `:835`), which exists
+because `resolveBlobStore` shells out to git and `depsPrCreate` exists to keep
+that out of tests. Failure to resolve the common dir warns on stderr and returns
+nil: reuse is an optimization, not authority, so it degrades to the previous
+SHA-only behaviour instead of aborting a real review.
+
+**Evidence.** `TestStackedBranchSurvivesBaseRebaseViaBlob`
+(`internal/review/rebase_test.go:221`) builds a real `main → layer-a → layer-b`
+stack, audits layer-b's own range, advances `main`, rebases `layer-a` onto it and
+replants `layer-b` with `git rebase --onto`, then asserts 0 pending commits, 0
+additional auditor calls, and that the real finding is still recoverable under
+b1's new SHA. Unlike F2's test, the rewritten commit here is the **parent
+layer**, so the child's own range is recomputed against a parent whose SHA also
+changed.
+
+**Residual limit.** `ejecutarPrReview` calls `os.Exit` and has no injectable
+seam, so its wiring is covered at the helper level
+(`TestResolveBlobStoreResolvesTheCommonDir`) rather than end-to-end. Adding a
+seam to `pr review` was out of scope for this change.
+
+### T8.1 deviations
+
+- Step 4 of the precedence was substituted. The ficha asks for «the local branch
+  whose merge-base with the current one is the most recent».
+  `localMergeBaseParent` (`internal/git/parent.go:176-224`) instead requires the
+  candidate tip to *be* the merge-base (strict ancestor), removes candidates that
+  are ancestors of other candidates, and **fails with `ambiguous local parent
+  candidates`** (`:221`) when more than one survives. Safer and consistent with
+  the hard rule «never `main` by default», but not the specified rule.
+- The work landed in a new `internal/git/parent.go` (272 lines);
+  `internal/git/mergebase.go` was not modified. The legacy `UpstreamOMain`
+  (`internal/git/commit.go:133`) still exists but is not on this path.
+- Budget: 272 lines against a declared ≤ 260.
+
+### T8.2 deviations
+
+- There is no `inherited: true` field on a finding. The mechanism is structural:
+  `HallazgoHeredado` (`internal/review/own_diff.go:57`) plus a separate
+  `res.Heredados` slice that never enters `res.Fichas`, which is what makes it
+  non-blocking. The JSON *key* `"inherited"` exists at
+  `cmd/sentinel/comandos_pr.go:286`, but `HallazgoHeredado` carries no JSON tags.
+  Behaviourally equivalent to the ficha and proven non-blocking; the named field
+  does not exist.
+
+### T8.4 deviations
+
+- Item 2 is `pr create`-only. `pr review` hardcodes
+  `stackOwnDiff(flags.parent, false)` (`cmd/sentinel/comandos_pr.go:210`), so
+  `--chain-pr` has no stack semantics on `pr review`.
+- Item 3 distinguishes own from inherited **by section**
+  (`OWN (per-commit audit)` at `:246` and `INHERITED (non-blocking)` at `:248`),
+  not by a per-row marker. A commit whose finding was archived by the net review
+  still shows a `block` cell in the OWN matrix while the net verdict is `ok`;
+  nothing marks that cell as archived.
+- Item 4: the legacy passthrough was removed outright
+  (`retiredPassthroughDisposition`, `cmd/sentinel/comandos_pr.go:37-39`, exit 1
+  with guidance) rather than deprecated over a period.
+  `docs/arquitectura/replanteamiento-objetivo.md:28` is now stale: it still
+  describes `comandos_pr.go` as `pr review / pr create / passthrough gh`.
+- `TestParsearFlagsPrCreate` (`cmd/sentinel/comandos_pr_test.go:549`) does not
+  exercise `--parent`; the create-side parser boundary is only covered
+  end-to-end.
+- All four tasks used commit messages different from the ficha's mandated ones,
+  equivalent in scope. Same precedent already accepted for F3.
