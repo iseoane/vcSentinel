@@ -1023,6 +1023,18 @@ func TestFailedRunDetailStartsWithSanitizedError(t *testing.T) {
 	}
 }
 
+func TestRunDetailFallsBackToMetadataWhenReasonSanitizesEmpty(t *testing.T) {
+	startedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	run := runWithTimes("successful-run", agentrun.StateSucceeded, 2, startedAt, startedAt.Add(time.Minute))
+	run.Reason = "\x00\t\n\x1b\x7f"
+
+	detail := runDetail(run)
+	if strings.Contains(detail, "error:") {
+		t.Fatalf("control-only reason rendered an empty error: %q", detail)
+	}
+	assertContains(t, detail, "successful-run", "PASSED", "rev 2", "started ", "updated ", "age 01:00")
+}
+
 func TestRunDetailUsesLocalNumericTimestamps(t *testing.T) {
 	previous := time.Local
 	time.Local = time.FixedZone("fixture-local", 5*60*60+30*60)

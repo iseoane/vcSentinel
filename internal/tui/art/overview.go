@@ -588,8 +588,8 @@ func overviewActivity(s ViewState) []activityRow {
 // StartedAt and UpdatedAt timestamps, and the same compact age as the row.
 // Narrow panes clamp it through spanLine.
 func runDetail(run presence.RunSummary) string {
-	if run.Reason != "" {
-		reason := truncateRunes(sanitizeLabel(run.Reason), 120)
+	reason := truncateRunes(sanitizeLabel(run.Reason), 120)
+	if reason != "" {
 		return "   └─ error: " + reason
 	}
 	_, _, word := runState(run.State)

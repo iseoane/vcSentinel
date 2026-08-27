@@ -68,8 +68,9 @@ type RunSummary struct {
 }
 
 const (
-	gateRootPolicyID              = "policy:gate"
-	gateRootControlDisabledReason = "gate root is an aggregate; abort and retry are unavailable"
+	gateRootPolicyID                = "policy:gate"
+	gateRootControlDisabledReason   = "gate root is an aggregate; abort and retry are unavailable"
+	policyReadControlDisabledReason = "run policy metadata is unavailable; abort and retry are disabled"
 )
 
 var readRunPolicy = func(st *store.Store, runID string) (store.RunPolicy, error) {
@@ -129,7 +130,7 @@ func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths
 	}
 	remaining := worktreeQuotas(visibleWorktreePaths, limit)
 	globalRemaining := limit
-	union := make([]RunSummary, 0, limit)
+	union := make([]RunSummary, 0, len(summaries))
 	for _, summary := range summaries {
 		if globalRemaining == 0 && len(remaining) == 0 {
 			break
@@ -141,6 +142,7 @@ func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths
 			if globalRemaining == 0 {
 				continue
 			}
+			summary.ControlDisabledReason = policyReadControlDisabledReason
 			union = append(union, summary)
 			globalRemaining--
 			continue

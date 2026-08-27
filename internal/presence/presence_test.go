@@ -199,6 +199,9 @@ func TestRecentRunsSurfacesOperationsAndDegradesSoftly(t *testing.T) {
 	if labels[gateID].Operation != "" || labels[gateID].Worktree != "" {
 		t.Fatalf("malformed policy metadata = (%q,%q), want empty", labels[gateID].Operation, labels[gateID].Worktree)
 	}
+	if labels[gateID].ControlDisabledReason != policyReadControlDisabledReason {
+		t.Fatalf("malformed policy control reason = %q, want %q", labels[gateID].ControlDisabledReason, policyReadControlDisabledReason)
+	}
 	if labels[reviewID].Operation != "review" || labels[bareID].Operation != "" {
 		t.Fatalf("the other summaries must survive the degraded listing untouched: %+v", labels)
 	}
@@ -361,7 +364,7 @@ func TestRecentRunsKeepsChildWithMissingParentVisible(t *testing.T) {
 	commonDir := t.TempDir()
 	st := store.NuevoStore(commonDir)
 	orphanID := seedRunWithPolicyAt(t, st, "activity-orphan", store.RunPolicy{
-		ID: "policy:activity", ParentRunID: "missing-parent",
+		ID: gateRootPolicyID, ParentRunID: "missing-parent",
 	}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 
 	summaries, err := RecentRuns(commonDir, 10)
@@ -370,6 +373,9 @@ func TestRecentRunsKeepsChildWithMissingParentVisible(t *testing.T) {
 	}
 	if len(summaries) != 1 || summaries[0].RunID != orphanID {
 		t.Fatalf("child with a missing parent must remain visible: %#v", summaries)
+	}
+	if summaries[0].ControlDisabledReason != "" {
+		t.Fatalf("orphan gate child control reason = %q, want empty", summaries[0].ControlDisabledReason)
 	}
 }
 
@@ -491,5 +497,13 @@ func TestRecentRunsEmptyStoreAndDegenerateLimits(t *testing.T) {
 				t.Fatalf("want empty non-nil slice and nil error, got %#v, %v", summaries, err)
 			}
 		})
+	}
+}
+
+func TestRecentRunsAcceptsHugeLimitWithEmptyStore(t *testing.T) {
+	limit := int(^uint(0) >> 1)
+	summaries, err := RecentRunsForWorktrees(t.TempDir(), limit, nil)
+	if err != nil || summaries == nil || len(summaries) != 0 {
+		t.Fatalf("huge limit on an empty store = %#v, %v; want an empty non-nil slice", summaries, err)
 	}
 }

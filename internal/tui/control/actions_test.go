@@ -219,6 +219,26 @@ func TestAggregateGateRootActionsAreDisabled(t *testing.T) {
 	}
 }
 
+func TestUnreadablePolicyActionsAreDisabled(t *testing.T) {
+	const reason = "run policy metadata is unavailable; abort and retry are disabled"
+	for _, key := range []string{"a", "r"} {
+		t.Run(key, func(t *testing.T) {
+			repo := repoWithRuns("unreadable", "unreadable-run")
+			repo.Runs[0].ControlDisabledReason = reason
+			spy := &spyActions{}
+			m := focused([]overview.Repo{repo}, spy, 0)
+			next, cmd := m.Update(keyMsg(key))
+			after := next.(Model)
+			if cmd != nil || len(spy.calls) != 0 {
+				t.Fatalf("unreadable policy %s dispatched cmd=%v calls=%v", key, cmd, spy.calls)
+			}
+			if _, _, _, ok := after.PendingAction(); ok || after.Err() != reason {
+				t.Fatalf("unreadable policy %s feedback = pending=%v err=%q", key, ok, after.Err())
+			}
+		})
+	}
+}
+
 // TestFilteredRunActionsTargetVisibleRows proves that the action target uses
 // the same filtered coordinates as the ACTIVITY rows. It covers broad
 // repository matches and narrowed run matches for both actions.
