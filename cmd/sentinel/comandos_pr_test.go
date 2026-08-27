@@ -1366,30 +1366,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 // a helper that silently returned nil inside a real repository would make the
 // criterion unreachable from the PR commands without any test noticing.
 func TestResolveBlobStoreResolvesTheCommonDir(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not available in PATH")
-	}
-	repo := t.TempDir()
-	for _, args := range [][]string{
-		{"-C", repo, "init", "-q", "-b", "main"},
-		{"-C", repo, "config", "user.email", "test@vas.sentinel"},
-		{"-C", repo, "config", "user.name", "VAS Sentinel Test"},
-	} {
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"-C", repo, "add", "base.txt"},
-		{"-C", repo, "commit", "-q", "-m", "feat(base): base"},
-	} {
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	repo := repoGitTemporal(t)
 	principal, err := resolveBlobStore(repo)
 	if err != nil {
 		t.Fatalf("resolveBlobStore inside a real repository: %v", err)
@@ -1449,5 +1426,96 @@ func TestExecutePrCreateWiresTheBlobStore(t *testing.T) {
 	ejecutarPrCreateCon(&bytes.Buffer{}, "wt", nil, deps)
 	if opts.Store == nil {
 		t.Error("OpcionesRama.Store is nil: pr create never reaches blob reuse, so a base rebase re-audits the whole stack")
+	}
+}
+
+// repoGitTemporal creates a throwaway repository with one commit. The
+// blob-store wiring tests need a real one because resolveBlobStore shells out
+// to git rev-parse for the common dir.
+func repoGitTemporal(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available in PATH")
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.email", "test@vas.sentinel"},
+		{"config", "user.name", "VAS Sentinel Test"},
+		{"add", "base.txt"},
+		{"commit", "-q", "-m", "feat(base): base"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return repo
+}
+
+// TestOpcionesRamaPrReviewWiresTheBlobStore covers the pr review half of F8
+// criterion 2. ejecutarPrReview calls os.Exit and cannot be driven from a test,
+// so the store assignment lives in this extracted assembler; without this test,
+// deleting it would fail nothing.
+func TestOpcionesRamaPrReviewWiresTheBlobStore(t *testing.T) {
+	repo := repoGitTemporal(t)
+	opciones, err := opcionesRamaPrReview(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil)
+	if err != nil {
+		t.Fatalf("opcionesRamaPrReview inside a real repository: %v", err)
+	}
+	esperado, err := resolveBlobStore(repo)
+	if err != nil {
+		t.Fatalf("resolveBlobStore: %v", err)
+	}
+	if !reflect.DeepEqual(opciones.Store, esperado) {
+		t.Errorf("OpcionesRama.Store = %v, expected the resolved blob store %v: pr review would never reach blob reuse, so a base rebase re-audits the whole stack", opciones.Store, esperado)
+	}
+	if opciones.Base != "main" {
+		t.Errorf("Base = %q with an empty --base, expected \"main\"", opciones.Base)
+	}
+	if opciones.OwnDiff == nil || opciones.OwnDiff.Parent != "layer-a" {
+		t.Errorf("OwnDiff = %+v, expected the explicit --parent to reach the stacked own-diff", opciones.OwnDiff)
+	}
+	if opciones.NetReview == nil {
+		t.Error("NetReview is nil: the PR would be reviewed as the sum of its commits")
+	}
+	if opciones.FabricaRefutador == nil {
+		t.Error("FabricaRefutador is nil: the options no longer travel through opcionesRamaConRefutador")
+	}
+
+	// Outside a repository the caller's warning path must stay reachable: the
+	// options are still usable and simply carry no store.
+	fuera, err := opcionesRamaPrReview(config.Config{}, nil, t.TempDir(), flagsPrReview{}, nil)
+	if err == nil {
+		t.Error("expected an error outside a repository so the caller can warn")
+	}
+	if fuera.Store != nil {
+		t.Errorf("Store = %v outside a repository, expected nil", fuera.Store)
+	}
+}
+
+// TestDepsPrCreateRealesWiresTheBlobStore covers the production wiring of the
+// pr create seam. TestExecutePrCreateWiresTheBlobStore substitutes the seam, so
+// on its own it cannot notice the production assignment disappearing.
+func TestDepsPrCreateRealesWiresTheBlobStore(t *testing.T) {
+	deps := depsPrCreateReales()
+	if deps.blobStore == nil {
+		t.Fatal("depsPrCreate.blobStore is nil in production: pr create never reaches blob reuse")
+	}
+	repo := repoGitTemporal(t)
+	desdeDeps, err := deps.blobStore(repo)
+	if err != nil {
+		t.Fatalf("deps.blobStore inside a real repository: %v", err)
+	}
+	directo, err := resolveBlobStore(repo)
+	if err != nil {
+		t.Fatalf("resolveBlobStore: %v", err)
+	}
+	if !reflect.DeepEqual(desdeDeps, directo) {
+		t.Errorf("deps.blobStore resolved %v while resolveBlobStore resolved %v: the production seam is not wired to resolveBlobStore", desdeDeps, directo)
 	}
 }

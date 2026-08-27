@@ -176,6 +176,40 @@ func textoDecision(decision string, volumen int) string {
 	return "Decisión PR: " + decision
 }
 
+// opcionesRamaPrReview assembles the branch-analysis options pr review hands to
+// AnalizarRama. It is a separate function, not an inline literal, because
+// ejecutarPrReview calls os.Exit and cannot be driven from a test: the wiring it
+// carries — notably the blob store that keeps a base rebase cheap (F8 criterion
+// 2) — would otherwise be deletable without failing anything.
+//
+// The returned error is only the blob-store resolution failure. Reuse is
+// optional, so the options come back usable with a nil Store and the caller
+// warns through its own stream.
+func opcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador, worktree string, flags flagsPrReview, fabrica review.FabricaAuditor) (review.OpcionesRama, error) {
+	base := flags.base
+	if base == "" {
+		base = "main"
+	}
+	blobStore, err := resolveBlobStore(worktree)
+	return opcionesRamaConRefutador(cfg, verificador, review.OpcionesRama{
+		Base:                   base,
+		SoloPendientes:         flags.soloPendientes,
+		Overview:               flags.overview,
+		Fabrica:                fabrica,
+		Parallel:               cfg.Review.Parallel,
+		Store:                  blobStore,
+		ReviewTransportFactory: reviewTransportFactory(cfg, worktree),
+		OnCommit: func(idx, total int, sha string) {
+			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
+		},
+		OnDimension: func(dim string) {
+			fmt.Printf("  ⏳ %s …\n", dim)
+		},
+		OwnDiff:   stackOwnDiff(flags.parent, false),
+		NetReview: &review.NetReviewOptions{Intention: honestNetIntention, Validation: "pr review performs no deterministic validation"},
+	}), err
+}
+
 // ejecutarPrReview analiza la rama contra la base y muestra la matriz de
 // auditoría, el resumen y la decisión single/chain. Es dry-run: no publica
 // nada. Registra el evento pr-review al terminar.
@@ -211,32 +245,13 @@ func ejecutarPrReview(worktree string, args []string) {
 		return adapter, profile.Nombre, nil
 	}
 
-	base := flags.base
-	if base == "" {
-		base = "main"
-	}
-	blobStore, err := resolveBlobStore(worktree)
+	opciones, err := opcionesRamaPrReview(cfg, verificadorModelo, worktree, flags, fabrica)
 	if err != nil {
 		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
 	}
+	base := opciones.Base
 	ledger := review.NuevoLedger(gitDir)
-	res, err := review.AnalizarRama(ledger, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
-		Base:                   base,
-		SoloPendientes:         flags.soloPendientes,
-		Overview:               flags.overview,
-		Fabrica:                fabrica,
-		Parallel:               cfg.Review.Parallel,
-		Store:                  blobStore,
-		ReviewTransportFactory: reviewTransportFactory(cfg, worktree),
-		OnCommit: func(idx, total int, sha string) {
-			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
-		},
-		OnDimension: func(dim string) {
-			fmt.Printf("  ⏳ %s …\n", dim)
-		},
-		OwnDiff:   stackOwnDiff(flags.parent, false),
-		NetReview: &review.NetReviewOptions{Intention: honestNetIntention, Validation: "pr review performs no deterministic validation"},
-	}))
+	res, err := review.AnalizarRama(ledger, opciones)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
@@ -691,7 +706,15 @@ type depsPrCreate struct {
 // del veredicto semántico, plantilla honesta con las dos naturalezas de
 // evidencia y publicación con gh o fallback a portapapeles.
 func ejecutarPrCreate(worktree string, args []string) {
-	os.Exit(ejecutarPrCreateCon(os.Stdout, worktree, args, depsPrCreate{
+	os.Exit(ejecutarPrCreateCon(os.Stdout, worktree, args, depsPrCreateReales()))
+}
+
+// depsPrCreateReales resolves the production seams of pr create. Extracted from
+// ejecutarPrCreate for the same reason as opcionesRamaPrReview: ejecutarPrCreate
+// calls os.Exit, so a seam silently losing its production wiring — the blob
+// store of F8 criterion 2 among them — would fail no test.
+func depsPrCreateReales() depsPrCreate {
+	return depsPrCreate{
 		// Config ESTRICTA (hallazgo del orquestador, F1): pr create es
 		// justo el comando cuyo punto entero es "la validación manda", así
 		// que un yml roto debe fallar alto igual que gate/pr review/status,
@@ -715,7 +738,7 @@ func ejecutarPrCreate(worktree string, args []string) {
 		resolverActor:     resolverActor,
 		escribirPlantilla: escribirPlantillaPR,
 		blobStore:         resolveBlobStore,
-	}))
+	}
 }
 
 // ejecutarPrCreateCon es la versión inyectable de ejecutarPrCreate (seam de
