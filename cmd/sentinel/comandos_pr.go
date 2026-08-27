@@ -43,16 +43,18 @@ func stackOwnDiff(parent string, chainPR bool) *review.OwnDiffOptions {
 // It MUST receive the git COMMON dir, never the per-worktree git dir: linked
 // worktrees share one store, and store.NuevoStore documents that contract.
 //
-// Reuse is an optimization, not authority. If the common dir cannot be
-// resolved there is nothing to reuse, so it warns on stderr and returns nil,
-// which restores the SHA-only behaviour instead of aborting a real review.
-func resolveBlobStore(worktree string) review.StoreBlobs {
+// Reuse never fabricates a verdict: AnalizarRama adopts an EXISTING ficha
+// under the new SHA, exactly as the ledger cache already did per SHA. The
+// store is therefore optional, and the error travels to the caller instead of
+// to os.Stderr so every command routes the warning through the writer it
+// already uses for its own diagnostics; a nil store restores the SHA-only
+// behaviour rather than aborting a real review.
+func resolveBlobStore(worktree string) (review.StoreBlobs, error) {
 	commonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vas-sentinel: could not resolve the git-common-dir; reviews will not be reused by content after a rebase (%v)\n", err)
-		return nil
+		return nil, err
 	}
-	return store.NuevoStore(commonDir)
+	return store.NuevoStore(commonDir), nil
 }
 
 func retiredPassthroughDisposition() (string, int) {
@@ -213,6 +215,10 @@ func ejecutarPrReview(worktree string, args []string) {
 	if base == "" {
 		base = "main"
 	}
+	blobStore, err := resolveBlobStore(worktree)
+	if err != nil {
+		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
+	}
 	ledger := review.NuevoLedger(gitDir)
 	res, err := review.AnalizarRama(ledger, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:                   base,
@@ -220,7 +226,7 @@ func ejecutarPrReview(worktree string, args []string) {
 		Overview:               flags.overview,
 		Fabrica:                fabrica,
 		Parallel:               cfg.Review.Parallel,
-		Store:                  resolveBlobStore(worktree),
+		Store:                  blobStore,
 		ReviewTransportFactory: reviewTransportFactory(cfg, worktree),
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
@@ -677,7 +683,7 @@ type depsPrCreate struct {
 	// reuse reviews after a rebase (F8 criterion 2). It is a seam because
 	// resolveBlobStore shells out to git, which depsPrCreate exists to avoid;
 	// nil means no reuse, the behaviour before this wiring.
-	blobStore func(worktree string) review.StoreBlobs
+	blobStore func(worktree string) (review.StoreBlobs, error)
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -822,7 +828,10 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	}
 	var blobStore review.StoreBlobs
 	if deps.blobStore != nil {
-		blobStore = deps.blobStore(worktree)
+		var err error
+		if blobStore, err = deps.blobStore(worktree); err != nil {
+			fmt.Fprintf(w, "⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
+		}
 	}
 	res, err := deps.analizarRama(gitDir, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:                      base,

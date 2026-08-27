@@ -1370,16 +1370,55 @@ func TestResolveBlobStoreResolvesTheCommonDir(t *testing.T) {
 		t.Skip("git is not available in PATH")
 	}
 	repo := t.TempDir()
-	if out, err := exec.Command("git", "init", "-q", "-b", "main", repo).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
+	for _, args := range [][]string{
+		{"-C", repo, "init", "-q", "-b", "main"},
+		{"-C", repo, "config", "user.email", "test@vas.sentinel"},
+		{"-C", repo, "config", "user.name", "VAS Sentinel Test"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
-	if st := resolveBlobStore(repo); st == nil {
-		t.Error("resolveBlobStore returned nil inside a real repository: blob reuse would never fire and a base rebase would re-audit everything")
+	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	// Outside a repository the reuse optimization must degrade to nil instead
-	// of aborting a real review with a half-built store.
-	if st := resolveBlobStore(t.TempDir()); st != nil {
-		t.Errorf("resolveBlobStore outside a repository = %v, expected nil", st)
+	for _, args := range [][]string{
+		{"-C", repo, "add", "base.txt"},
+		{"-C", repo, "commit", "-q", "-m", "feat(base): base"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	principal, err := resolveBlobStore(repo)
+	if err != nil {
+		t.Fatalf("resolveBlobStore inside a real repository: %v", err)
+	}
+	if principal == nil {
+		t.Fatal("resolveBlobStore returned a nil store inside a real repository: blob reuse would never fire and a base rebase would re-audit everything")
+	}
+
+	// The contract the doc comment declares mandatory: linked worktrees share
+	// ONE store. A plain repository cannot prove it, because there the
+	// per-worktree git dir and the common dir are the same path; only a linked
+	// worktree distinguishes ObtenerGitCommonDir from ObtenerGitDir.
+	enlazado := filepath.Join(t.TempDir(), "linked")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", "-b", "linked", enlazado).CombinedOutput(); err != nil {
+		t.Skipf("git worktree add is unavailable: %v\n%s", err, out)
+	}
+	deEnlazado, err := resolveBlobStore(enlazado)
+	if err != nil {
+		t.Fatalf("resolveBlobStore inside a linked worktree: %v", err)
+	}
+	if !reflect.DeepEqual(principal, deEnlazado) {
+		t.Errorf("the linked worktree resolved a different store (%v) than the main worktree (%v): reviews would not be shared across worktrees", deEnlazado, principal)
+	}
+
+	// Outside a repository the reuse optimization must report the failure and
+	// return no store, so the caller degrades instead of publishing with a
+	// half-built one.
+	if st, err := resolveBlobStore(t.TempDir()); err == nil || st != nil {
+		t.Errorf("resolveBlobStore outside a repository = (%v, %v), expected (nil, error)", st, err)
 	}
 }
 
@@ -1394,8 +1433,13 @@ func TestExecutePrCreateWiresTheBlobStore(t *testing.T) {
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
 			return nil, nil
 		},
-		blobStore:    func(string) review.StoreBlobs { return store.NuevoStore(t.TempDir()) },
-		analizarRama: func(_ string, o review.OpcionesRama) (*review.ResultadoRama, error) { opts = o; return nil, errors.New("cut the flow right after AnalizarRama: this test only observes its options") },
+		blobStore: func(string) (review.StoreBlobs, error) {
+			return store.NuevoStore(t.TempDir()), nil
+		},
+		analizarRama: func(_ string, o review.OpcionesRama) (*review.ResultadoRama, error) {
+			opts = o
+			return nil, errors.New("cut the flow right after AnalizarRama: this test only observes its options")
+		},
 		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
