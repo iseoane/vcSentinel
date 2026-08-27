@@ -47,6 +47,8 @@ type RangoPropio struct {
 	PropioDesde   string   // merge_base(parent, HEAD): start of the reviewed range
 	ContextoDesde string   // merge_base(base, parent): start of the read-only range
 	Evidencia     []string // ordered resolution evidence from the T8.1 resolver
+	// PublicationBranch is the bare branch accepted by gh --base.
+	PublicationBranch string
 }
 
 // HallazgoHeredado is one finding introduced outside the current branch's own
@@ -81,6 +83,7 @@ func resolverRangoPropio(opciones *OwnDiffOptions, base string) (*RangoPropio, e
 		return nil, errOwnDiffWithoutParent
 	}
 	rango.Parent = resolucion.Reference
+	rango.PublicationBranch = resolucion.PublicationBranch
 	rango.ParentSource = string(resolucion.Source)
 	rango.Evidencia = resolucion.Evidence
 

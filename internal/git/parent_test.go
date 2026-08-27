@@ -69,12 +69,51 @@ func TestResolveParentBranchRejectsMissingExplicitParent(t *testing.T) {
 	}
 }
 
+func TestResolveParentBranchPublicationBranch(t *testing.T) {
+	dir := parentStackRepository(t)
+	parentGit(t, dir, "update-ref", "refs/remotes/origin/b", "B")
+	res, err := ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: "refs/remotes/origin/b"})
+	if err != nil || res.Reference != "refs/remotes/origin/b" || res.PublicationBranch != "b" {
+		t.Fatalf("full remote parent: (%q, %q, %v), want refs/remotes/origin/b/b", res.Reference, res.PublicationBranch, err)
+	}
+	res, err = ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: "origin/b"})
+	if err != nil || res.Reference != "origin/b" || res.PublicationBranch != "b" {
+		t.Fatalf("shorthand remote parent: (%q, %q, %v), want origin/b/b", res.Reference, res.PublicationBranch, err)
+	}
+	parentGit(t, dir, "update-ref", "refs/remotes/origin/HEAD", "B")
+	for _, ref := range []string{"refs/remotes/origin/HEAD", "origin/HEAD"} {
+		_, err := ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: ref})
+		if err == nil || !strings.Contains(err.Error(), "not a publishable branch") {
+			t.Errorf("parent %q: err=%v, want HEAD to be rejected as non-publishable", ref, err)
+		}
+	}
+	parentGit(t, dir, "tag", "tagB", "B")
+	sha := strings.TrimSpace(runParentCommand(dir, "git", "rev-parse", "B").stdout)
+	for _, ref := range []string{"tagB", sha} {
+		_, err := ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: ref})
+		if err == nil || !strings.Contains(err.Error(), "not a publishable branch") {
+			t.Errorf("parent %q: err=%v, want publishable-branch failure", ref, err)
+		}
+	}
+	gh := parentCommandResult{stdout: `{"baseRefName":"layer-a"}`}
+	parentGit(t, dir, "update-ref", "refs/remotes/origin/layer-a", "B")
+	res, err = resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(gh))
+	if err != nil || res.Reference != "origin/layer-a" || res.PublicationBranch != "layer-a" {
+		t.Fatalf("resolution = %+v, err = %v", res, err)
+	}
+	parentGit(t, dir, "update-ref", "refs/remotes/upstream/layer-a", "B")
+	_, err = resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(gh))
+	if err == nil || !strings.Contains(err.Error(), "2 remote candidates") {
+		t.Fatalf("ambiguous error = %v", err)
+	}
+}
+
 func TestResolveParentBranchRejectsMissingPullRequestBase(t *testing.T) {
 	dir := parentStackRepository(t)
 	parentGit(t, dir, "branch", "--set-upstream-to=B")
 	gh := parentCommandResult{stdout: `{"baseRefName":"missing"}`}
 	_, err := resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(gh))
-	if err == nil || !strings.Contains(err.Error(), `parent reference "missing" is not a commit`) {
+	if err == nil || !strings.Contains(err.Error(), `pull request base "missing" has 0 remote candidates`) {
 		t.Fatalf("error = %v, want missing pull request base error without fallback", err)
 	}
 }

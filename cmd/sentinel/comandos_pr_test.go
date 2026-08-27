@@ -44,25 +44,31 @@ func TestEjecutarPrReview_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
 	}
 }
 
-// TestVerboPr: el dispatch decide entre review, create y el passthrough
-// legacy a gh pr create.
+// TestVerboPr verifies review/create dispatch and retired passthrough handling.
 func TestVerboPr(t *testing.T) {
 	casos := []struct {
 		args []string
 		want string
 	}{
-		{[]string{}, "legacy"},
+		{[]string{}, ""},
 		{[]string{"review"}, "review"},
 		{[]string{"review", "--base", "dev"}, "review"},
 		{[]string{"create"}, "create"},
 		{[]string{"create", "--draft"}, "create"},
-		{[]string{"--title", "hola"}, "legacy"},
-		{[]string{"-t", "hola"}, "legacy"},
+		{[]string{"--title", "hola"}, ""},
+		{[]string{"-t", "hola"}, ""},
 	}
 	for _, caso := range casos {
 		if got := verboPr(caso.args); got != caso.want {
-			t.Errorf("verboPr(%v) = %q, esperado %q", caso.args, got, caso.want)
+			t.Errorf("verboPr(%v) = %q, want %q", caso.args, got, caso.want)
 		}
+	}
+	message, exitCode := retiredPassthroughDisposition()
+	if exitCode != 1 ||
+		!strings.Contains(message, "was removed") ||
+		!strings.Contains(message, "sentinel pr create") ||
+		!strings.Contains(message, "sentinel pr review") {
+		t.Errorf("retired passthrough = (%d, %q), want exit 1 and removal/create-or-review guidance", exitCode, message)
 	}
 }
 
@@ -89,6 +95,17 @@ func TestParsearFlagsPrReview(t *testing.T) {
 	}
 	if _, err := parsearFlagsPrReview([]string{"--base"}); err == nil {
 		t.Error("--base sin valor debería fallar")
+	}
+	rf, err := parsearFlagsPrReview([]string{"--parent", "layer-a"})
+	if err != nil || rf.parent != "layer-a" {
+		t.Errorf("--parent accept: (%q,%v)", rf.parent, err)
+	}
+	for _, args := range [][]string{{"--parent"}, {"--parent", ""}, {"--parent", "--chain-pr"}} {
+		_, errR := parsearFlagsPrReview(args)
+		_, errC := parsearFlagsPrCreate(args)
+		if errR == nil || errC == nil {
+			t.Errorf("%v: want an explicit failure, got %v/%v", args, errR, errC)
+		}
 	}
 }
 
@@ -1259,45 +1276,87 @@ func TestEjecutarPrCreateCon_CargaConfigConError_Exit1SinValidarNiPublicar(t *te
 	}
 }
 
-// TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestacado
-// cubre el cuarto escenario: con validación en verde, un veredicto semántico
-// block ya no bloquea (advisory) — publica igual con el aviso destacado
-// visible tanto en la salida como en la plantilla generada.
-func TestEjecutarPrCreateCon_ValidacionVerdeVeredictoBlock_PublicaConAvisoDestacado(t *testing.T) {
-	fichaBlock := fichaCreateAyuda("abc1234", review.VerdictBlock,
-		review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictBlock,
-			Findings: []review.ReviewFinding{hallazgoCritico()}})
-	var cuerpoPublicado string
-	var salida bytes.Buffer
-	codigo := ejecutarPrCreateCon(&salida, "worktree", nil, depsPrCreate{
+func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
+	res := &review.ResultadoRama{
+		Fichas: []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictOK)}, SHAs: []string{"abc1234"}, Decision: "single",
+		Net: &review.NetReview{Audit: review.ResultadoAuditoria{Veredicto: review.VerdictBlock,
+			Findings: []review.Hallazgo{{Dimension: review.DimSecurity, Severity: review.SevCritical, Description: "secret logged"}}}},
+		Heredados: []review.HallazgoHeredado{{SHA: "deadbeefcafe", Hallazgo: review.Hallazgo{Dimension: review.DimLogic, Severity: review.SevCritical}}},
+	}
+	var opts review.OpcionesRama
+	pubBase, body := "", ""
+	output := &bytes.Buffer{}
+	deps := depsPrCreate{
 		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		obtenerGitDir: func() (string, error) { return "gd", nil },
 		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			return nil, nil // validación en verde: sin runs, sin hallazgos
+			return nil, nil
 		},
-		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
-			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
+		analizarRama: func(_ string, o review.OpcionesRama) (*review.ResultadoRama, error) { opts = o; return res, nil },
 		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
-		publicar: func(worktree, ruta, base string) (string, bool, error) {
-			datos, err := os.ReadFile(ruta)
-			if err != nil {
-				t.Fatalf("no se pudo leer la plantilla publicada: %v", err)
-			}
-			cuerpoPublicado = string(datos)
-			return "https://github.com/x/pr/10", false, nil
+		publicar: func(_, path, base string) (string, bool, error) {
+			pubBase = base
+			data, _ := os.ReadFile(path)
+			body = string(data)
+			return "https://x/pr/1", false, nil
 		},
 		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
-	})
-	if codigo != 0 {
-		t.Fatalf("codigo = %d, esperado 0 (el veredicto semántico ya no bloquea)", codigo)
 	}
-	if !strings.Contains(salida.String(), "AVISO") {
-		t.Errorf("la salida debe mostrar el aviso destacado del veredicto block: %s", salida.String())
+	res.Propio = &review.RangoPropio{Parent: "layer-a", PublicationBranch: "layer-a"}
+	code := ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
+	if code != 0 || pubBase != "layer-a" || *opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
+		opts.NetReview == nil || opts.NetReview.Intention != honestNetIntention {
+		t.Errorf("stacked: exitCode=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
 	}
-	if !strings.Contains(cuerpoPublicado, "block") {
-		t.Errorf("la plantilla publicada debe mostrar el veredicto block: %s", cuerpoPublicado)
+	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("published body lacks %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "No pending risks") {
+		t.Errorf("a net BLOCK must not claim a risk-free body: %s", body)
+	}
+	pubBase, output = "", new(bytes.Buffer)
+	code = ejecutarPrCreateCon(output, "wt", []string{"--chain-pr"}, deps)
+	if code != 0 ||
+		pubBase != "layer-a" ||
+		opts.OwnDiff == nil ||
+		*opts.OwnDiff != (review.OwnDiffOptions{ResolveParent: true}) {
+		t.Errorf("chain-only: base=%q own=%v", pubBase, opts.OwnDiff)
+	}
+	res.Propio = &review.RangoPropio{Parent: "layer-a"}
+	pubBase, output = "", new(bytes.Buffer)
+	plantillaCreated, publishCalled := false, false
+	deps.escribirPlantilla = func(string) (string, error) { plantillaCreated = true; return "/tmp/sentinel_pr_fake.md", nil }
+	origPublicar := deps.publicar
+	deps.publicar = func(wt, path, base string) (string, bool, error) {
+		publishCalled = true
+		return origPublicar(wt, path, base)
+	}
+	code = ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a"}, deps)
+	if code != 1 ||
+		pubBase != "" ||
+		opts.OwnDiff == nil ||
+		*opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
+		plantillaCreated ||
+		publishCalled {
+		t.Errorf("missing publication branch: base=%q own=%v templateCreated=%v publishCalled=%v output=%q", pubBase, opts.OwnDiff, plantillaCreated, publishCalled, output.String())
+	}
+	deps.escribirPlantilla = nil
+	deps.publicar = origPublicar
+	res.Net.Audit.Veredicto = review.VerdictOK
+	res.Net.Audit.Findings, res.Fichas, res.Propio = nil, []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictBlock)}, nil
+	pubBase, output = "", new(bytes.Buffer)
+	code = ejecutarPrCreateCon(output, "wt", nil, deps)
+	if code != 0 || strings.Contains(output.String(), "AVISO") || !strings.Contains(body, "Net audit verdict: ok") {
+		t.Errorf("net OK over historical BLOCK must not warn: %s / %s", output.String(), body)
+	}
+	res.Propio, res.Net, res.Heredados = nil, nil, nil
+	pubBase = ""
+	code = ejecutarPrCreateCon(output, "wt", nil, deps)
+	if code != 0 || pubBase != "main" {
+		t.Errorf("legacy: exitCode=%d base=%q, want 0/main", code, pubBase)
 	}
 }

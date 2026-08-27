@@ -22,9 +22,23 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
-// verboPr decide la rama del subcomando pr: "review" y "create" son verbos
-// propios; cualquier otra cosa (flags de gh o nada) es el passthrough legacy
-// a gh pr create.
+const honestNetIntention = "No PR title/description exists before publication: claims cover branch commits and the net diff only."
+
+// stackOwnDiff maps CLI stack signals; explicit --parent wins.
+func stackOwnDiff(parent string, chainPR bool) *review.OwnDiffOptions {
+	switch {
+	case parent != "":
+		return &review.OwnDiffOptions{Parent: parent}
+	case chainPR:
+		return &review.OwnDiffOptions{ResolveParent: true}
+	}
+	return nil
+}
+
+func retiredPassthroughDisposition() (string, int) {
+	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr create' to publish a reviewed pull request or 'sentinel pr review' for a dry-run analysis.", 1
+}
+
 func verboPr(args []string) string {
 	if len(args) > 0 {
 		switch args[0] {
@@ -34,12 +48,9 @@ func verboPr(args []string) string {
 			return "create"
 		}
 	}
-	return "legacy"
+	return ""
 }
 
-// ejecutarPr despacha el subcomando pr (fase 2): pr review analiza la rama
-// sin publicar nada; pr create analiza, aplica el gate de block y publica con
-// la plantilla honesta; el resto mantiene el passthrough legacy a gh pr create.
 func ejecutarPr(worktree string, args []string) {
 	switch verboPr(args) {
 	case "review":
@@ -47,45 +58,9 @@ func ejecutarPr(worktree string, args []string) {
 	case "create":
 		ejecutarPrCreate(worktree, args[1:])
 	default:
-		ejecutarPrLegacy(args)
-	}
-}
-
-// ejecutarPrLegacy es el passthrough a gh pr create con la limpieza previa de
-// fichas huérfanas (comportamiento histórico de sentinel pr).
-func ejecutarPrLegacy(args []string) {
-	if _, err := exec.LookPath("gh"); err != nil {
-		fmt.Println("? gh (GitHub CLI) no está en el PATH. Instálalo o crea el PR manualmente.")
-		os.Exit(1)
-	}
-
-	gitDir, err := git.ObtenerGitDir()
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
-	eliminados, err := purgarHuerfanasConEventos(gitDir)
-	if err != nil {
-		// La limpieza es auxiliar al PR: se avisa y se continúa, no se aborta.
-		fmt.Printf("? Aviso: no se pudieron purgar fichas huérfanas (%v). El PR se crea igualmente.\n", err)
-	}
-	if len(eliminados) == 0 {
-		fmt.Println("? Limpieza previa: no hay fichas huérfanas.")
-	} else {
-		fmt.Printf("? Limpieza previa: eliminadas %d fichas de commits que ya no existen (y sus eventos).\n", len(eliminados))
-		for _, sha := range eliminados {
-			fmt.Printf("  - %s\n", sha)
-		}
-	}
-
-	cmdArgs := append([]string{"pr", "create"}, args...)
-	cmd := exec.Command("gh", cmdArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("? gh pr create terminó con error (código %d).\n", exitCodeDeError(err))
-		os.Exit(1)
+		msg, code := retiredPassthroughDisposition()
+		fmt.Println(msg)
+		os.Exit(code)
 	}
 }
 
@@ -95,6 +70,14 @@ type flagsPrReview struct {
 	soloPendientes bool // --only-unaudited
 	overview       bool // --overview
 	jsonOut        bool // --json
+	parent         string
+}
+
+func parseParentFlagValue(args []string, at int) (string, error) {
+	if at >= len(args) || strings.TrimSpace(args[at]) == "" || strings.HasPrefix(args[at], "-") {
+		return "", fmt.Errorf("--parent requires a non-blank branch value (the stacked parent branch)")
+	}
+	return args[at], nil
 }
 
 // parsearFlagsPrReview parsea las opciones de pr review con la misma sintaxis
@@ -110,6 +93,13 @@ func parsearFlagsPrReview(args []string) (flagsPrReview, error) {
 			}
 			i++
 			flags.base = args[i]
+		case "--parent":
+			i++
+			val, err := parseParentFlagValue(args, i)
+			if err != nil {
+				return flags, err
+			}
+			flags.parent = val
 		case "--only-unaudited":
 			flags.soloPendientes = true
 		case "--overview":
@@ -217,6 +207,8 @@ func ejecutarPrReview(worktree string, args []string) {
 		OnDimension: func(dim string) {
 			fmt.Printf("  ⏳ %s …\n", dim)
 		},
+		OwnDiff:   stackOwnDiff(flags.parent, false),
+		NetReview: &review.NetReviewOptions{Intention: honestNetIntention, Validation: "pr review performs no deterministic validation"},
 	}))
 	if err != nil {
 		fmt.Printf("? %v\n", err)
@@ -242,15 +234,18 @@ func ejecutarPrReview(worktree string, args []string) {
 		return
 	}
 
-	if len(res.Fichas) == 0 {
-		fmt.Println("_No hay commits auditados en la rama._")
-		return
+	if res.Net != nil { // T8.4/A: the authoritative verdict leads the report
+		fmt.Println(review.VerdictLine(res))
 	}
-	fmt.Println(review.RenderMatriz(res.Fichas))
-	fmt.Println()
-	fmt.Println(review.RenderResumen(res.Fichas))
-	fmt.Println()
-	fmt.Println(textoDecision(res.Decision, res.Volumen))
+	if len(res.Fichas) > 0 {
+		fmt.Println("OWN (per-commit audit)")
+		fmt.Println(review.RenderMatriz(res.Fichas))
+		if res.Net == nil { // historical summary only without a net authority
+			fmt.Println(review.RenderResumen(res.Fichas))
+		}
+		fmt.Println(textoDecision(res.Decision, res.Volumen))
+	}
+	fmt.Print(review.InheritedSection(res.Heredados))
 	// Ticket 07: admission failures are first-class evidence, so the terminal
 	// report never lets them pass as generic infrastructure unavailability.
 	if admission, _ := conteoNoDisponibles(res.Fichas); admission > 0 {
@@ -284,6 +279,15 @@ func salidaJSONPrReview(base string, res *review.ResultadoRama) map[string]any {
 	if res.OverviewError != "" {
 		salida["overview_error"] = res.OverviewError
 	}
+	if res.Propio != nil { // T8.4/E
+		salida["own"] = res.Propio
+	}
+	if len(res.Heredados) > 0 {
+		salida["inherited"] = res.Heredados
+	}
+	if res.Net != nil {
+		salida["net"] = res.Net
+	}
 	return salida
 }
 
@@ -315,6 +319,7 @@ type flagsPrCreate struct {
 	chainPR bool   // --chain-pr: publicar la rama completa aunque sea descomunal
 	force   bool   // --force: superar la validación en rojo (T1.8: el único gate que bloquea)
 	reason  string // --reason: motivo explícito y obligatorio junto a --force
+	parent  string
 }
 
 // parsearFlagsPrCreate parsea las opciones de pr create con la misma sintaxis
@@ -333,6 +338,13 @@ func parsearFlagsPrCreate(args []string) (flagsPrCreate, error) {
 			}
 			i++
 			flags.base = args[i]
+		case "--parent":
+			i++
+			val, err := parseParentFlagValue(args, i)
+			if err != nil {
+				return flags, err
+			}
+			flags.parent = val
 		case "--chain-pr":
 			flags.chainPR = true
 		case "--force":
@@ -637,6 +649,9 @@ type depsPrCreate struct {
 	// de depsPrCreate de testear "sin git, agentes ni gh reales" (comentario
 	// de arriba).
 	resolverActor func(worktree string) string
+	// escribirPlantilla allows tests to observe whether the PR template was
+	// created. When nil, ejecutarPrCreateCon uses escribirPlantillaPR.
+	escribirPlantilla func(string) (string, error)
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -665,7 +680,8 @@ func ejecutarPrCreate(worktree string, args []string) {
 		registrarDecision: func(commonDir string, d *store.Decision) error {
 			return store.NuevoStore(commonDir).RegistrarDecision(d)
 		},
-		resolverActor: resolverActor,
+		resolverActor:     resolverActor,
+		escribirPlantilla: escribirPlantillaPR,
 	}))
 }
 
@@ -792,6 +808,8 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		OnDimension: func(dim string) {
 			fmt.Fprintf(w, "  ⏳ %s …\n", dim)
 		},
+		OwnDiff:   stackOwnDiff(flags.parent, flags.chainPR),
+		NetReview: &review.NetReviewOptions{Intention: honestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs))},
 	}))
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
@@ -803,8 +821,10 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		return 1
 	}
 
-	// Gate semántico advisory (T1.8): nunca bloquea, solo avisa destacado.
-	if avisar, bloqueantes := avisoSemantico(res.Fichas); avisar {
+	// The net audit is the advisory authority when present.
+	if res.Net != nil {
+		fmt.Fprintln(w, review.VerdictLine(res))
+	} else if avisar, bloqueantes := avisoSemantico(res.Fichas); avisar {
 		fmt.Fprintln(w, "⚠️  AVISO: veredicto de auditoría semántica = block (no bloquea la publicación, advisory).")
 		for _, h := range bloqueantes {
 			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
@@ -822,14 +842,26 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	verificacion := deps.verificar(worktree, gitDir, cfg, verificadorModelo)
 	verificacion.Validacion = comandosDeValidacion(runs)
 
-	cuerpo := review.RenderPlantillaPr(res.Fichas, res.Overview, verificacion, version)
-	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
+	publishBase := base
+	if res.Propio != nil {
+		if res.Propio.PublicationBranch == "" {
+			fmt.Fprintln(w, "? Refusing to publish: the stacked parent has no verified publication branch.")
+			return 1
+		}
+		publishBase = res.Propio.PublicationBranch
+	}
+
+	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
+	escribir := deps.escribirPlantilla
+	if escribir == nil {
+		escribir = escribirPlantillaPR
+	}
+	rutaPlantilla, err := escribir(cuerpo)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-
-	prURL, fallback, err := deps.publicar(worktree, rutaPlantilla, base)
+	prURL, fallback, err := deps.publicar(worktree, rutaPlantilla, publishBase)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
