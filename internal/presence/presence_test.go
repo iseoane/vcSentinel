@@ -1,6 +1,7 @@
 package presence
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,13 +183,16 @@ func TestRecentRunsSurfacesOperationsAndDegradesSoftly(t *testing.T) {
 // seedFailedRun drives a fresh run to terminal failed through exported store
 // APIs only (CreateRun, AppendEvent, AppendTerminalEvent): no adapter involved.
 func seedFailedRun(t *testing.T, st *store.Store, candidate string) string {
+	return seedFailedRunAt(t, st, candidate, time.Unix(1700000000, 0).UTC())
+}
+
+func seedFailedRunAt(t *testing.T, st *store.Store, candidate string, base time.Time) string {
 	t.Helper()
 	runID, job := admitRun(t, st, candidate)
 	invocation, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := time.Unix(1700000000, 0).UTC()
 	for revision, step := range [...]struct{ from, to agentrun.LifecycleState }{
 		{agentrun.StateCreated, agentrun.StateQueued},
 		{agentrun.StateQueued, agentrun.StateAdmitted},
@@ -223,57 +227,102 @@ func seedFailedRun(t *testing.T, st *store.Store, candidate string) string {
 	return runID
 }
 
-func TestRecentRunsReportsStateRevisionAndLimitTail(t *testing.T) {
+func TestRecentRunsOrdersByProjectionTime(t *testing.T) {
 	commonDir := t.TempDir()
 	st := store.NuevoStore(commonDir)
-	createdID := seedRun(t, st, "candidate:presence-created")
-	failedID := seedFailedRun(t, st, "candidate:presence-failed")
+	olderStartedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	newerStartedAt := time.Date(2026, 1, 2, 3, 5, 5, 0, time.UTC)
+	olderID := seedFailedRunAt(t, st, "candidate:presence-fixture-003",
+		olderStartedAt)
+	newerID := seedFailedRunAt(t, st, "candidate:presence-fixture-000",
+		newerStartedAt)
+	zeroID := seedRun(t, st, "candidate:presence-zero")
+	if newerID >= olderID {
+		t.Fatalf("fixture newer run id %s must sort before older run id %s", newerID, olderID)
+	}
 
 	summaries, err := RecentRuns(commonDir, 10)
-	if err != nil || len(summaries) != 2 {
-		t.Fatalf("want both seeded runs, got %#v, %v", summaries, err)
+	if err != nil || len(summaries) != 3 {
+		t.Fatalf("want all three seeded runs, got %#v, %v", summaries, err)
 	}
 	byID := make(map[string]RunSummary, len(summaries))
 	for _, summary := range summaries {
 		byID[summary.RunID] = summary
 	}
-	if s := byID[createdID]; s.State != agentrun.StateCreated || s.Revision != 0 {
-		t.Fatalf("created run = %+v, want state created revision 0", s)
+	if s := byID[zeroID]; s.State != agentrun.StateCreated || s.Revision != 0 {
+		t.Fatalf("zero-time run = %+v, want state created revision 0", s)
 	}
 	// Three non-terminal events plus the terminal event land on revision 4.
-	if s := byID[failedID]; s.State != agentrun.StateFailed || s.Revision != 4 {
-		t.Fatalf("failed run = %+v, want state failed revision 4", s)
+	for _, id := range []string{olderID, newerID} {
+		s := byID[id]
+		if s.State != agentrun.StateFailed || s.Revision != 4 {
+			t.Fatalf("failed run = %+v, want state failed revision 4", s)
+		}
+		if s.Reason != "presence fixture failure" {
+			t.Fatalf("failed run reason = %q, want terminal event error", s.Reason)
+		}
 	}
 
-	// UpdatedAt is copied verbatim from the stored projection: the seeded
-	// terminal event carries a real timestamp, while a run that never left
-	// the created state has no event frames and therefore none at all.
-	storedCreated, err := st.ReadProjection(createdID)
-	if err != nil {
-		t.Fatalf("read created projection: %v", err)
-	}
-	storedFailed, err := st.ReadProjection(failedID)
-	if err != nil {
-		t.Fatalf("read failed projection: %v", err)
-	}
-	if !byID[createdID].UpdatedAt.Equal(storedCreated.UpdatedAt) || !storedCreated.UpdatedAt.IsZero() {
-		t.Fatalf("created UpdatedAt = %v, want the stored zero value", byID[createdID].UpdatedAt)
-	}
-	if !byID[failedID].UpdatedAt.Equal(storedFailed.UpdatedAt) || storedFailed.UpdatedAt.IsZero() {
-		t.Fatalf("failed UpdatedAt = %v, want the stored terminal-event time %v",
-			byID[failedID].UpdatedAt, storedFailed.UpdatedAt)
+	// RecentRuns copies projection timestamps verbatim and orders timestamped
+	// runs newest-first. A zero timestamp is deterministic but never outranks a
+	// timestamped run, and it is not replaced with a time derived from the id.
+	for _, tc := range []struct {
+		id      string
+		at      time.Time
+		started time.Time
+		zero    bool
+	}{
+		{id: olderID, at: olderStartedAt.Add(10 * time.Second), started: olderStartedAt},
+		{id: newerID, at: newerStartedAt.Add(10 * time.Second), started: newerStartedAt},
+		{id: zeroID, zero: true},
+	} {
+		if got := byID[tc.id].UpdatedAt; !got.Equal(tc.at) || got.IsZero() != tc.zero {
+			t.Fatalf("run %s UpdatedAt = %v, want %v (zero=%v)", tc.id, got, tc.at, tc.zero)
+		}
+		if got := byID[tc.id].StartedAt; !got.Equal(tc.started) || got.IsZero() != tc.zero {
+			t.Fatalf("run %s StartedAt = %v, want %v (zero=%v)", tc.id, got, tc.started, tc.zero)
+		}
 	}
 
-	// Run ids are content hashes without time information, so the documented
-	// deterministic choice for a tight limit is the lexicographic tail of the
-	// sorted identifier list.
-	expectedTail := createdID
-	if failedID > expectedTail {
-		expectedTail = failedID
+	if summaries[0].RunID != newerID || summaries[1].RunID != olderID || summaries[2].RunID != zeroID {
+		t.Fatalf("runs must be newest-first, with zero-time last, got %#v", summaries)
 	}
 	summaries, err = RecentRuns(commonDir, 1)
-	if err != nil || len(summaries) != 1 || summaries[0].RunID != expectedTail {
-		t.Fatalf("limit 1 must yield only tail id %s, got %#v, %v", expectedTail, summaries, err)
+	if err != nil || len(summaries) != 1 || summaries[0].RunID != newerID {
+		t.Fatalf("limit 1 must yield newest projection %s, got %#v, %v", newerID, summaries, err)
+	}
+}
+
+func TestRecentRunsBreaksProjectionTimeTiesByRunID(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	leftID := seedFailedRunAt(t, st, "candidate:presence-tie-left", base)
+	rightID := seedFailedRunAt(t, st, "candidate:presence-tie-right", base)
+	wantFirst, wantSecond := leftID, rightID
+	if wantSecond < wantFirst {
+		wantFirst, wantSecond = wantSecond, wantFirst
+	}
+
+	summaries, err := RecentRuns(commonDir, 2)
+	if err != nil || len(summaries) != 2 || summaries[0].RunID != wantFirst || summaries[1].RunID != wantSecond {
+		t.Fatalf("equal projection times must sort by RunID, got %#v, %v", summaries, err)
+	}
+}
+
+func TestRecentRunsSurfacesHistoricalProjectionCorruption(t *testing.T) {
+	commonDir := t.TempDir()
+	st := store.NuevoStore(commonDir)
+	historicalID := seedRun(t, st, "candidate:presence-corrupt-history")
+	seedFailedRun(t, st, "candidate:presence-corrupt-history-newer")
+	statePath := filepath.Join(commonDir, "vas-sentinel", "executions", "v1", historicalID, "state.json")
+	if err := os.WriteFile(statePath, []byte("{not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RecentRuns(commonDir, 1)
+	if !errors.Is(err, store.ErrProjectionCorrupt) {
+		t.Fatalf("historical projection corruption error = %v, want %v", err, store.ErrProjectionCorrupt)
 	}
 }
 

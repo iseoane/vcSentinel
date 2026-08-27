@@ -68,7 +68,7 @@ func (a *reviewRunAnnouncer) observe(runID string) {
 func announcedReviewTransport(cfg config.Config, worktree, sha string, paths []string, out io.Writer) review.ReviewTransport {
 	announcer := newReviewRunAnnouncer(out)
 	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
-		store.RunPolicy{ID: durableRunPolicyID},
+		store.RunPolicy{ID: durableRunPolicyID, Operation: "review", Commit: shortCommit(sha), Worktree: worktree},
 		[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(announcer.observe)})
 	if transport == nil {
 		return func(string, string, string, review.AuditorAgente) (string, string, error) {

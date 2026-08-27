@@ -36,6 +36,12 @@ func run(id string, state agentrun.LifecycleState, revision uint64, updatedAt ti
 	return presence.RunSummary{RunID: id, State: state, Revision: revision, UpdatedAt: updatedAt}
 }
 
+func runWithTimes(id string, state agentrun.LifecycleState, revision uint64, startedAt, updatedAt time.Time) presence.RunSummary {
+	return presence.RunSummary{
+		RunID: id, State: state, Revision: revision, StartedAt: startedAt, UpdatedAt: updatedAt,
+	}
+}
+
 // runWithOperation extends run with an admitted operator-facing operation
 // label (slice 14).
 func runWithOperation(id string, state agentrun.LifecycleState, revision uint64, updatedAt time.Time, operation string) presence.RunSummary {
@@ -297,10 +303,12 @@ func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 
 // expectedCaptionRow rebuilds the dim column-caption row from the same
 // fitRunes geometry the rows use, so the pinned bytes can never silently
-// drift from the layout widths: blank icon cell (two runes), FLOW(16),
-// STAGE(20), STATE(9), and the trailing AGE label.
+// drift from the layout widths: blank icon cell (two runes), COMMIT(7), FLOW(16),
+// STAGE(20), STATE(9), AGE(8), and the trailing WHEN label.
 func expectedCaptionRow() string {
-	return "  " + " " + fitRunes("COMMIT", 7) + fitRunes("FLOW", 16) + fitRunes("STAGE", 20) + fitRunes("STATE", 9) + "AGE"
+	return "  " + " " + fitRunes("COMMIT", activityCommitWidth) +
+		fitRunes("FLOW", activityFlowWidth) + fitRunes("STAGE", activityStageWidth) +
+		fitRunes("STATE", activityStateWidth) + fitRunes("AGE", activityAgeWidth) + "WHEN"
 }
 
 // TestOverviewActivityCaptionRowAnchors pins slice 14's caption contract:
@@ -311,11 +319,14 @@ func expectedCaptionRow() string {
 // dashboard stays byte-frozen without captions.
 func TestOverviewActivityCaptionRowAnchors(t *testing.T) {
 	want := expectedCaptionRow()
+	startedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("fixture", 5*60*60+30*60))
+	pinClock(t, startedAt.Add(time.Minute))
 	repos := []overview.Repo{{Name: "solo",
-		Runs: []presence.RunSummary{run("abcdef1234567890abcd", agentrun.StateRunning, 7, time.Time{})}}}
+		Runs: []presence.RunSummary{runWithTimes("abcdef1234567890abcd", agentrun.StateRunning, 7,
+			startedAt, startedAt.Add(15*time.Second))}}}
 	// Stacked width: activityBlock needs the pane lines uninterleaved from
-	// the tree, and 70 columns still fit the whole caption row.
-	act := activityBlock(t, RenderOverviewPlain(70, ViewState{Repos: repos}))
+	// the tree, and 80 columns show both trailing columns in full.
+	act := activityBlock(t, RenderOverviewPlain(80, ViewState{Repos: repos}))
 	lines := strings.Split(act, "\n")
 	trim := func(l string) string { return strings.TrimRight(l, " ") }
 	if got := trim(lines[0]); got != want {
@@ -346,17 +357,21 @@ func TestOverviewActivityCaptionRowAnchors(t *testing.T) {
 		{"FLOW", "abcdef123456"},
 		{"STAGE", "rev 7"},
 		{"STATE", "RUNNING"},
+		{"WHEN", startedAt.Local().Format("15:04:05")},
 	} {
 		if got, expect := runeIndex(caption, anchor.captionMarker), runeIndex(row, anchor.rowMarker); got != expect {
 			t.Errorf("column %q at rune %d but row content %q at rune %d:\ncaption %q\nrow    %q",
 				anchor.captionMarker, got, anchor.rowMarker, expect, caption, row)
 		}
 	}
-	if got, expect := utf8.RuneCountInString(caption)-len("AGE"), utf8.RuneCountInString(row)-1; got != expect {
-		t.Errorf("trailing AGE column at rune %d but row age at rune %d:\ncaption %q\nrow    %q",
+	ageCaptionByte := strings.LastIndex(caption, "AGE")
+	if ageCaptionByte < 0 {
+		t.Fatalf("caption has no AGE marker: %q", caption)
+	}
+	if got, expect := utf8.RuneCountInString(caption[:ageCaptionByte]), runeIndex(row, "01:00"); got != expect {
+		t.Errorf("AGE column at rune %d but row age at rune %d:\ncaption %q\nrow    %q",
 			got, expect, caption, row)
 	}
-
 	for _, w := range []int{60, 80, 100, 140} {
 		if strings.Contains(DashboardPlain(w), "FLOW") {
 			t.Errorf("mock dashboard(%d) must stay caption-free (byte-frozen goldens)", w)
@@ -669,7 +684,8 @@ func TestRenderOverviewMixedRepoReplacesSummaryWithRuns(t *testing.T) {
 	pinClock(t, now)
 	repos := []overview.Repo{liveRepo("vas.sentinel", wt("main", true), wt("feature", false))}
 	repos[0].Runs = []presence.RunSummary{
-		run("aaaaaaaaaaaaaaaaaaaa", agentrun.StateRunning, 4, now.Add(-2*time.Minute)),
+		runWithTimes("aaaaaaaaaaaaaaaaaaaa", agentrun.StateRunning, 4,
+			now.Add(-2*time.Minute), now.Add(-2*time.Minute)),
 		run("bbbbbbbbbbbbbbbbbbbb", agentrun.StateAwaitingDecision, 6, time.Time{}),
 	}
 	dash := RenderOverviewPlain(70, ViewState{Repos: repos})
@@ -786,6 +802,38 @@ func TestFormatAgeCompactRules(t *testing.T) {
 	}
 }
 
+// TestRunRowAgeAndWhenUseAdmissionTimestamps pins the two trailing columns:
+// active AGE uses the injected current time minus StartedAt, terminal AGE uses
+// UpdatedAt minus StartedAt and remains stable, and WHEN formats StartedAt in
+// the operator's local zone without mutating the process-wide clock location.
+func TestRunRowAgeAndWhenUseAdmissionTimestamps(t *testing.T) {
+	startedAt := time.Date(2026, 1, 2, 12, 34, 56, 0, time.FixedZone("fixture", 5*60*60+30*60))
+	now := startedAt.Add(2*time.Minute + 3*time.Second)
+	pinClock(t, now)
+	wantWhen := startedAt.Local().Format("15:04:05")
+
+	active := runRow(runWithTimes("active", agentrun.StateRunning, 1, startedAt, startedAt.Add(15*time.Second)))
+	if active.age != "02:03" || active.when != wantWhen {
+		t.Fatalf("active columns = AGE %q WHEN %q, want AGE %q WHEN %q", active.age, active.when, "02:03", wantWhen)
+	}
+
+	terminal := runRow(runWithTimes("terminal", agentrun.StateSucceeded, 2, startedAt,
+		startedAt.Add(time.Hour+2*time.Minute+3*time.Second)))
+	if terminal.age != "1:02:03" || terminal.when != wantWhen {
+		t.Fatalf("terminal columns = AGE %q WHEN %q, want AGE %q WHEN %q", terminal.age, terminal.when, "1:02:03", wantWhen)
+	}
+	timeNow = func() time.Time { return now.Add(24 * time.Hour) }
+	if got := runAge(presence.RunSummary{State: agentrun.StateSucceeded, StartedAt: startedAt,
+		UpdatedAt: startedAt.Add(time.Hour + 2*time.Minute + 3*time.Second)}); got != "1:02:03" {
+		t.Fatalf("terminal AGE changed with the clock = %q, want %q", got, "1:02:03")
+	}
+
+	legacy := runRow(run("legacy", agentrun.StateRunning, 0, time.Time{}))
+	if legacy.age != "-" || legacy.when != "-" {
+		t.Fatalf("legacy columns = AGE %q WHEN %q, want dashes", legacy.age, legacy.when)
+	}
+}
+
 // runsNavRepos builds the shared navigation fixture: two live repositories
 // carrying runs around a runless one, so the flat run walk crosses
 // repository boundaries and skips the gap. Ids are full-length (20 runes)
@@ -894,16 +942,19 @@ func TestOverviewRunCursorPrefixOnlyFocusedRow(t *testing.T) {
 
 // TestOverviewOpenRunDetailLine pins the inline expansion: the row whose
 // full run id matches OpenRunID appends exactly one dim detail line with the
-// full id, state word, revision, UTC timestamp, and compact age; unknown or
-// empty ids render nothing extra.
+// full id, state word, revision, full UTC timestamps, and compact age; unknown
+// or empty ids render nothing extra.
 func TestOverviewOpenRunDetailLine(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	pinClock(t, now)
 	repos := runsNavRepos()
-	repos[0].Runs[0].UpdatedAt = now.Add(-2 * time.Minute)
+	startedAt := now.Add(-3 * time.Minute)
+	repos[0].Runs[0] = runWithTimes(repos[0].Runs[0].RunID, agentrun.StateRunning, 4,
+		startedAt, now.Add(-2*time.Minute))
+	detail := runDetail(repos[0].Runs[0])
+	want := "   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 4 · started 2023-11-14T22:10:20Z · updated 2023-11-14T22:11:20Z · age 03:00"
+	assertContains(t, detail, want)
 	dash := RenderOverviewPlain(80, ViewState{Repos: repos, OpenRunID: "aaaaaaaaaaaaaaaaaaaa"})
-	want := "   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 4 · 2023-11-14T22:11:20Z · 02:00"
-	assertContains(t, dash, want)
 	if n := strings.Count(dash, "   └─"); n != 1 {
 		t.Errorf("%d detail lines rendered, want exactly one:\n%s", n, dash)
 	}

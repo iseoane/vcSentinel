@@ -584,14 +584,14 @@ func overviewActivity(s ViewState) []activityRow {
 }
 
 // runDetail renders the inline expansion of one open run on a single dim
-// line: full id, state word, revision, UpdatedAt stamped in UTC, the same
-// compact age the row's age column shows, and the failure reason when
-// available. Narrow panes clamp it through spanLine.
+// line: full id, state word, revision, full StartedAt and UpdatedAt stamped in
+// UTC, the same compact age the row's AGE column shows, and the failure reason
+// when available. Narrow panes clamp it through spanLine.
 func runDetail(run presence.RunSummary) string {
 	_, _, word := runState(run.State)
-	base := fmt.Sprintf("   └─ %s · %s · rev %d · %s · %s",
+	base := fmt.Sprintf("   └─ %s · %s · rev %d · started %s · updated %s · age %s",
 		run.RunID, word, run.Revision,
-		run.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"), runAge(run))
+		formatRunTimestamp(run.StartedAt), formatRunTimestamp(run.UpdatedAt), runAge(run))
 	if run.Reason != "" {
 		reason := sanitizeLabel(run.Reason)
 		if len(reason) > 120 {
@@ -605,7 +605,7 @@ func runDetail(run presence.RunSummary) string {
 // summaryActivityRow builds the classic per-repository row: icon by worst
 // observable state (attention beats a live daemon beats stopped), repo name
 // in flow, worktree count — or the degradation Error itself — in stage,
-// empty age.
+// empty AGE and WHEN.
 func summaryActivityRow(r overview.Repo, state repoState) activityRow {
 	row := activityRow{flow: r.Name}
 	switch state.kind {
@@ -669,8 +669,8 @@ func runState(state agentrun.LifecycleState) (icon string, kind statusKind, word
 // column carries the admitted operation label when the run has one (truncated
 // to the 16-rune flow width; the layout engine pads it downstream), else the
 // first 12 runes of the run identifier as today; the revision labels stage,
-// and age counts elapsed time since the stored projection timestamp — a dash
-// when the projection carried none.
+// AGE counts elapsed time since admission, and WHEN shows the local admission
+// clock.
 func runRow(run presence.RunSummary) activityRow {
 	icon, kind, word := runState(run.State)
 	flow := truncateRunes(run.RunID, maxRunFlowRunes)
@@ -689,6 +689,7 @@ func runRow(run presence.RunSummary) activityRow {
 		state:  word,
 		kind:   kind,
 		age:    runAge(run),
+		when:   runWhen(run),
 	}
 }
 
@@ -705,18 +706,39 @@ func sanitizeLabel(label string) string {
 	return string(clean)
 }
 
-// runAge renders a run's compact age: a dash when the stored projection
-// carried no timestamp, the approved clock for running states, and a static
-// timestamp for terminal states so the age column stops ticking once the run
-// has settled.
+// runAge renders a run's compact elapsed duration: active runs use the
+// approved clock from StartedAt, while terminal runs use UpdatedAt-StartedAt
+// so the AGE column stops ticking once the run has settled. Missing timestamps
+// render a dash, and formatAge clamps clock skew to zero.
 func runAge(run presence.RunSummary) string {
-	if run.UpdatedAt.IsZero() {
+	if run.StartedAt.IsZero() {
 		return "-"
 	}
+	end := timeNow()
 	if isTerminalRun(run.State) {
-		return run.UpdatedAt.Format("15:04:05")
+		if run.UpdatedAt.IsZero() {
+			return "-"
+		}
+		end = run.UpdatedAt
 	}
-	return formatAge(timeNow().Sub(run.UpdatedAt))
+	return formatAge(end.Sub(run.StartedAt))
+}
+
+// runWhen renders the local wall-clock time at which the run was admitted.
+// Calling Local at the render boundary keeps the output on the operator's
+// platform without mutating the process-wide time zone in tests.
+func runWhen(run presence.RunSummary) string {
+	if run.StartedAt.IsZero() {
+		return "-"
+	}
+	return run.StartedAt.Local().Format("15:04:05")
+}
+
+func formatRunTimestamp(at time.Time) string {
+	if at.IsZero() {
+		return "-"
+	}
+	return at.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 // formatAge renders a duration as the approved compact clock: mm:ss below

@@ -1031,7 +1031,7 @@ func TestViewRendersNavigationStates(t *testing.T) {
 		m = update(t, m, stacked)
 		out := stripANSI(m.View())
 		if !strings.Contains(out, "   └─ aaaaaaaaaaaaaaaaaaaa · RUNNING · rev 1") ||
-			!strings.Contains(out, "0001-01-01T00:00:00Z") {
+			!strings.Contains(out, "started - · updated - · age -") {
 			t.Errorf("view missing the open-run detail line:\n%s", out)
 		}
 	})

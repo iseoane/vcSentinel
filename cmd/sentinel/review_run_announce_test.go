@@ -166,6 +166,27 @@ func TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 		if n := strings.Count(announcements, wantCmd); n != 1 {
 			t.Errorf("run %s announced %d times, want exactly 1:\n%s", id, n, announcements)
 		}
+		operation, err := st.ReadRunOperation(id)
+		if err != nil {
+			t.Fatalf("ReadRunOperation(%s) error = %v", id, err)
+		}
+		if !strings.HasPrefix(operation, "review") {
+			t.Errorf("run %s operation = %q, want a review label", id, operation)
+		}
+		commit, err := st.ReadRunCommit(id)
+		if err != nil {
+			t.Fatalf("ReadRunCommit(%s) error = %v", id, err)
+		}
+		if commit != shortCommit(sha) {
+			t.Errorf("run %s commit = %q, want %q", id, commit, shortCommit(sha))
+		}
+		admittedWorktree, err := st.ReadRunWorktree(id)
+		if err != nil {
+			t.Fatalf("ReadRunWorktree(%s) error = %v", id, err)
+		}
+		if admittedWorktree != worktree {
+			t.Errorf("run %s worktree = %q, want exact path %q", id, admittedWorktree, worktree)
+		}
 	}
 	// JSON-safety: zero announcement bytes reached the stdout path.
 	if strings.Contains(stdoutCaptured, "vas-sentinel:") || strings.Contains(stdoutCaptured, "--follow") {

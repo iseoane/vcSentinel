@@ -83,6 +83,7 @@ type activityRow struct {
 	state  string
 	kind   statusKind
 	age    string
+	when   string
 
 	// Navigation affordances for real snapshots; the fixed mock leaves both
 	// at their zero values. focused prefixes a purple "▸" over the leading
@@ -146,12 +147,14 @@ const (
 	activityFlowWidth   = 16
 	activityStageWidth  = 20
 	activityStateWidth  = 9
+	activityAgeWidth    = 8
+	activityWhenWidth   = 8
 )
 
 // activityCaptionRow renders the dim column-caption row anchored to the exact
 // fitRunes widths the run rows use: a blank icon cell (two runes, matching
-// " " + one-rune icon), COMMIT(7), FLOW, STAGE, STATE, and the trailing AGE
-// label. spanLine clamps it on panes narrower than its now 59 visible runes.
+// " " + one-rune icon), COMMIT(7), FLOW, STAGE, STATE, AGE, and WHEN. The
+// final label needs no padding, and spanLine clamps the row on narrow panes.
 func activityCaptionRow(p painter, w int) string {
 	return p.spanLine(w,
 		span{"  ", Dim},
@@ -159,7 +162,8 @@ func activityCaptionRow(p painter, w int) string {
 		span{fitRunes("FLOW", activityFlowWidth), Dim},
 		span{fitRunes("STAGE", activityStageWidth), Dim},
 		span{fitRunes("STATE", activityStateWidth), Dim},
-		span{"AGE", Dim})
+		span{fitRunes("AGE", activityAgeWidth), Dim},
+		span{"WHEN", Dim})
 }
 
 // renderFrame assembles the approved frame: rules, header with the daemon
@@ -273,7 +277,7 @@ func rightLines(p painter, w int, location [][2]string, activity []activityRow, 
 		lines = append(lines, activityCaptionRow(p, w))
 	}
 	for _, a := range activity {
-		spans := make([]span, 0, 7)
+		spans := make([]span, 0, 9)
 		if a.focused {
 			spans = append(spans, span{"▸", Purple})
 		}
@@ -286,8 +290,16 @@ func rightLines(p painter, w int, location [][2]string, activity []activityRow, 
 			span{" " + fitRunes(commitCell, activityCommitWidth), Dim},
 			span{fitRunes(a.flow, activityFlowWidth), White},
 			span{fitRunes(a.stage, activityStageWidth), Dim},
-			span{fitRunes(a.state, activityStateWidth), statusColor[a.kind]},
-			span{a.age, Dim})
+			span{fitRunes(a.state, activityStateWidth), statusColor[a.kind]})
+		if captions {
+			spans = append(spans,
+				span{fitRunes(a.age, activityAgeWidth), Dim},
+				span{fitRunes(a.when, activityWhenWidth), Dim})
+		} else {
+			// The fixed mock dashboard is byte-frozen; keep its historical
+			// activity row geometry separate from real snapshot columns.
+			spans = append(spans, span{a.age, Dim})
+		}
 		lines = append(lines, p.spanLine(w, spans...))
 		if a.detail != "" {
 			lines = append(lines, p.spanLine(w, span{a.detail, Dim}))
