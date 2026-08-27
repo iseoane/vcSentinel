@@ -152,6 +152,7 @@ Example:
 	"runs prune":   textoAyudaRunsPrune,
 	"runs attach":  textoAyudaRunsAttach,
 	"runs daemon":  textoAyudaRunsDaemon,
+	"tui":          textoAyudaTui,
 }
 
 // esFlagAyuda reports whether one argument requests help.

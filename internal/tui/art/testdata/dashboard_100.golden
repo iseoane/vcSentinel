@@ -1,0 +1,18 @@
+ ══════════════════════════════════════════════════════════════════════════════════════════════════ 
+ SENTINEL CONTROL CENTER                                        ● 2 daemons · 3 active · 1 attention
+ ══════════════════════════════════════════════════════════════════════════════════════════════════ 
+ REPOSITORIES                          │  LOCATION                                                  
+ ▾ vas.sentinel           ● managed    │  Repository   vas.sentinel                                 
+   ├─ main              clean          │  Path         /home/operator/workspace/vas.sentinel        
+   ├─ tui-control-cente 2 runs         │  Worktree     main · ~/workspace/vas.sentinel              
+   └─ ⚠ f8-t8-2-own-dif 1 attention    │  Branch       main                                         
+ ▸ ue.capability.analizer ● manual     │  Origin       git@github.com:org/vas.sentinel              
+ ▸ iseoane.dots           ● stopped    │  Daemon       ● managed by this session · pid 4321         
+                                       │  Status       clean · 3 worktrees · 3 runs                 
+                                       │  ═════════════════════════════════════════════════════════ 
+                                       │  ACTIVITY                                                  
+                                       │  ⠹ —      gate pre-push   review · security   RUNNING  02:1
+                                       │  ⏸ —      review          decision required   DECISION 05:3
+                                       │  ✓ —      review          passed              PASSED   01:4
+ ══════════════════════════════════════════════════════════════════════════════════════════════════ 
+ ↑↓ navigate · tab repos/activity · enter open · a abort · r retry · / filter · ? help · q quit     

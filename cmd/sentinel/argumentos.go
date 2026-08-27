@@ -19,6 +19,7 @@ var subcomandosSinArgumentos = map[string]bool{
 	"install":   true,
 	"upgrade":   true,
 	"uninstall": true,
+	"tui":       true,
 }
 
 // subcomandosDeSlice son las vías no interactivas de slice, que sí tienen

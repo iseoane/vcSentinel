@@ -1,0 +1,26 @@
+ ══════════════════════════════════════════════════════════════════════════════ 
+ SENTINEL CONTROL CENTER                    ● 2 daemons · 3 active · 1 attention
+ ══════════════════════════════════════════════════════════════════════════════ 
+ REPOSITORIES                                                                   
+ ▾ vas.sentinel           ● managed                                             
+   ├─ main              clean                                                   
+   ├─ tui-control-cente 2 runs                                                  
+   └─ ⚠ f8-t8-2-own-dif 1 attention                                             
+ ▸ ue.capability.analizer ● manual                                              
+ ▸ iseoane.dots           ● stopped                                             
+ ────────────────────────────────────────────────────────────────────────────── 
+ LOCATION                                                                       
+ Repository   vas.sentinel                                                      
+ Path         /home/operator/workspace/vas.sentinel                             
+ Worktree     main · ~/workspace/vas.sentinel                                   
+ Branch       main                                                              
+ Origin       git@github.com:org/vas.sentinel                                   
+ Daemon       ● managed by this session · pid 4321                              
+ Status       clean · 3 worktrees · 3 runs                                      
+ ══════════════════════════════════════════════════════════════════════════════ 
+ ACTIVITY                                                                       
+ ⠹ —      gate pre-push   review · security   RUNNING  02:14                    
+ ⏸ —      review          decision required   DECISION 05:32                    
+ ✓ —      review          passed              PASSED   01:48                    
+ ══════════════════════════════════════════════════════════════════════════════ 
+ ↑↓ navigate · tab repos/activity · enter open · a abort · r retry · / filter · 

@@ -122,7 +122,14 @@ func CrearSnapshot(treeOID string) (string, error) {
 		return "", fmt.Errorf("no se pudo reparar los metadatos del worktree del snapshot %s: %w", treeOID, err)
 	}
 
-	return refrescarSnapshot(destino)
+	path, err := refrescarSnapshot(destino)
+	if err != nil {
+		return "", err
+	}
+	// Best-effort hygiene sweep after a successful publish: this is
+	// housekeeping, not correctness, so a failed sweep never fails creation.
+	_ = purgarSnapshotsLocked(RetencionSnapshots)
+	return path, nil
 }
 
 // AcquireSnapshot keeps a shared OS lock for one validation while it uses a
@@ -197,6 +204,16 @@ func PurgarSnapshots(antiguedad time.Duration) error {
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 
+	return purgarSnapshotsLocked(antiguedad)
+}
+
+// purgarSnapshotsLocked is the purge body proper; the caller must already
+// hold snapshotMu. It removes every snapshot directory whose ModTime is
+// older than antiguedad, best-effort per entry: a snapshot neither the
+// normal nor the forced removal can clean accumulates an error instead of
+// pretending the disk came out clean (B15), but one broken snapshot never
+// blocks the rest of the sweep.
+func purgarSnapshotsLocked(antiguedad time.Duration) error {
 	snapshots, err := directorioSnapshots()
 	if err != nil {
 		return err

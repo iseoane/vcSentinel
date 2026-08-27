@@ -152,7 +152,12 @@ func cerrarTransporteRevision(transport *reviewexec.DurableTransport) review.Rev
 // no longer exists: it returns an always-failing transport whose error each
 // dimension surfaces as honest unavailable evidence.
 func durableReviewTransport(cfg config.Config, worktree, sha string, paths []string) review.ReviewTransport {
-	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths, store.RunPolicy{ID: durableRunPolicyID}, nil)
+	// Operation is the honest minimum "review": policies are admission-time
+	// records built once per commit transport, while dimension and bundle
+	// names only arrive per Run() call after admission, so no per-dimension
+	// information is structurally reachable at this construction site.
+	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
+		store.RunPolicy{ID: durableRunPolicyID, Operation: "review", Commit: shortCommit(sha), Worktree: worktree}, nil)
 	if transport == nil {
 		return func(string, string, string, review.AuditorAgente) (string, string, error) {
 			return "", "", fmt.Errorf("durable review transport unavailable for %s: no git common dir", worktree)
@@ -220,7 +225,10 @@ func applyDurableCutover(opciones *gate.Opciones, cfg config.Config, worktree, s
 	opciones.DurableStore = durableStore
 	opciones.DurableReviewChildren = sink.learned
 	opciones.DurableReviewTransportFactory = func(rootRunID agentrun.Identity) review.ReviewTransport {
-		policy := store.RunPolicy{ID: durableRunPolicyID, ParentRunID: string(rootRunID)}
+		// Same honest minimum as the standalone root: one policy per commit
+		// transport, dimensions only known per Run() call, so the label
+		// stays plain "review" and the ParentRunID keeps the gate linkage.
+		policy := store.RunPolicy{ID: durableRunPolicyID, ParentRunID: string(rootRunID), Operation: "review", Commit: shortCommit(sha), Worktree: worktree}
 		transport := nuevoDurableReviewTransport(cfg, worktree, sha, archivos, policy,
 			[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(sink.observe)})
 		if transport == nil {
@@ -229,4 +237,13 @@ func applyDurableCutover(opciones *gate.Opciones, cfg config.Config, worktree, s
 		return cerrarTransporteRevision(transport)
 	}
 	return sink
+}
+
+// shortCommit keeps the activity label compact without assuming callers pass a
+// full Git SHA; tests and error paths legitimately use short candidates.
+func shortCommit(sha string) string {
+	if len(sha) <= 7 {
+		return sha
+	}
+	return sha[:7]
 }

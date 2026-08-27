@@ -276,12 +276,14 @@ func TestRunsStartStampsEnforcementDeclarationCapability(t *testing.T) {
 // empty declaration is skipped rather than invented. A relayed admission
 // (daemon endpoint may serve it) stays on the explicit form even when a
 // declaration exists, because capabilities cannot cross the daemon wire yet.
+// Slice 14: the only sanctioned drift is the operator-facing Operation label,
+// identical across both envelope forms.
 func TestRunsStartAdmissionUnchangedWithoutDeclaration(t *testing.T) {
 	legacy := func(candidate, prompt, principal string) execution.StartRequest {
 		return execution.StartRequest{
 			Candidate:   candidate,
 			Prompt:      prompt,
-			Policy:      store.RunPolicy{ID: "operator"},
+			Policy:      store.RunPolicy{ID: "operator", Operation: "run"},
 			AuthContext: execution.AuthContext{Principal: principal},
 		}
 	}
@@ -316,6 +318,21 @@ func TestRunsStartAdmissionUnchangedWithoutDeclaration(t *testing.T) {
 	relayed := runsStartAdmission("candidate:x", "prompt", "operator", "principal", capabilities, true)
 	if !reflect.DeepEqual(relayed, legacy("candidate:x", "prompt", "principal")) {
 		t.Errorf("relayed admission must keep the legacy explicit form: %+v", relayed)
+	}
+}
+
+// TestRunsStartAdmissionCarriesRunOperation pins slice 14's generic label:
+// both admission envelope forms of an operator-started prompt run persist the
+// honest "run" operation so activity surfaces can say WHAT the run is.
+func TestRunsStartAdmissionCarriesRunOperation(t *testing.T) {
+	explicit := runsStartAdmission("candidate:x", "prompt", "operator", "principal", nil, false)
+	if explicit.Policy.Operation != "run" {
+		t.Errorf("explicit-form Policy.Operation = %q, want %q", explicit.Policy.Operation, "run")
+	}
+	stamped := runsStartAdmission("candidate:x", "prompt", "operator", "principal",
+		[]agentrun.Capability{agentrun.NewCapability("agent.enforcement", map[string]string{"declaration": "none"})}, false)
+	if stamped.Policy.Operation != "run" {
+		t.Errorf("canonical-form Policy.Operation = %q, want %q", stamped.Policy.Operation, "run")
 	}
 }
 

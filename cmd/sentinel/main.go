@@ -15,10 +15,34 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/setup"
 )
 
 var version = "dev"
+
+var resolveRepositoryRegistryPath = func() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".vas_sentinel", "repositories.json"), nil
+}
+
+func updateRepositoryRegistry(repositoryPath string, update func(*registry.Registry, string) (bool, error)) {
+	path, err := resolveRepositoryRegistryPath()
+	if err == nil {
+		stored, openErr := registry.Open(path)
+		if openErr != nil {
+			err = openErr
+		} else {
+			_, err = update(stored, repositoryPath)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vas-sentinel: repository registry update failed: %v\n", err)
+	}
+}
 
 // marcadorInicio y marcadorFin delimitan el bloque de reglas de volumen de
 // forma estable entre versiones: init/uninit lo detectan y lo retiran por
@@ -138,6 +162,9 @@ func main() {
 	case "runs":
 		requireInicializado(worktreeActual)
 		os.Exit(executeRuns(os.Stdout, worktreeActual, os.Args[2:]))
+	case "tui":
+		requireInicializado(worktreeActual)
+		os.Exit(executeTui(os.Stdout, worktreeActual))
 	case "install":
 		if err := setup.EjecutarInstalacionCompleta(); err != nil {
 			fmt.Printf("❌ Error en la instalación: %v\n", err)
@@ -154,7 +181,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'runs', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
@@ -173,7 +200,7 @@ func requireInicializado(worktreeActual string) {
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | runs | consentimiento-diff | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | runs | tui | consentimiento-diff | install | upgrade | uninstall]")
 }
 
 // imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
@@ -189,8 +216,8 @@ func construirAyuda() string {
 	var b strings.Builder
 	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
 	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             lint | rebase | status | explain | pr | runs | consentimiento-diff |\n")
-	b.WriteString("             install | upgrade | uninstall]\n\n")
+	b.WriteString("             lint | rebase | status | explain | pr | runs | tui |\n")
+	b.WriteString("             consentimiento-diff | install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcomandos:\n")
 	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
 	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
@@ -211,6 +238,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
 	imprimirItemAyuda(&b, "", "Flags de pr review: --base X --only-unaudited --overview --json.")
 	imprimirItemAyuda(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/runs-cli.md for flags, JSON shapes, and exit codes.")
+	imprimirItemAyuda(&b, "tui", "Open the full-screen control center (starts/stops this repository's daemon for the session).")
 	imprimirItemAyuda(&b, "consentimiento-diff", "Gestiona el grant local por usuario y repositorio: otorgar, revocar o estado.")
 	imprimirItemAyuda(&b, "install", "Descarga e instala la última release publicada desde GitHub.")
 	imprimirItemAyuda(&b, "upgrade", "Reemplaza el binario actual por la última release publicada.")
@@ -285,11 +313,13 @@ func ejecutarInit(path string) {
 	fmt.Println("⚙️ Inicializando VAS Sentinel en este entorno...")
 
 	archivosObjetivo := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}
+	rulesSucceeded := true
 
 	for _, nombre := range archivosObjetivo {
 		escrito, err := inyectarReglasDeArchivo(filepath.Join(path, nombre))
 		switch {
 		case err != nil:
+			rulesSucceeded = false
 			fmt.Printf("⚠️ No se pudo inyectar en %s: %v\n", nombre, err)
 		case escrito:
 			fmt.Printf("📝 Reglas de volumen inyectadas en: %s\n", nombre)
@@ -323,13 +353,18 @@ func ejecutarInit(path string) {
 		os.Exit(1)
 	}
 
+	configurationSucceeded := true
 	if err := setup.CrearConfiguracionPerProyecto(path); err != nil {
+		configurationSucceeded = false
 		fmt.Printf("⚠️ No se pudo crear la configuración per-proyecto: %v\n", err)
 	} else {
 		fmt.Println("📄 Configuración per-proyecto creada en: .vas_sentinel/vassentinel.yml")
 	}
 
 	fmt.Println("⚓ Git Hook 'pre-commit' instalado en este repositorio. Entorno securizado con éxito.")
+	if rulesSucceeded && configurationSucceeded {
+		updateRepositoryRegistry(path, (*registry.Registry).Register)
+	}
 }
 
 // ejecutarUninit revierte en este repositorio exactamente lo que 'init' hizo:
@@ -352,10 +387,12 @@ func ejecutarUninit(path string) {
 
 	fmt.Println("🗑️ Revirtiendo VAS Sentinel en este repositorio...")
 
+	cleanupSucceeded := true
 	for _, nombre := range []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"} {
 		retiradas, err := quitarReglasDeArchivo(filepath.Join(path, nombre))
 		switch {
 		case err != nil:
+			cleanupSucceeded = false
 			fmt.Printf("⚠️ No se pudo limpiar %s: %v\n", nombre, err)
 		case retiradas:
 			fmt.Printf("📝 Reglas de volumen retiradas de: %s\n", nombre)
@@ -365,6 +402,7 @@ func ejecutarUninit(path string) {
 	rutaConfig := filepath.Join(path, ".vas_sentinel", "vassentinel.yml")
 	if err := os.Remove(rutaConfig); err != nil {
 		if !os.IsNotExist(err) {
+			cleanupSucceeded = false
 			fmt.Printf("⚠️ No se pudo eliminar %s: %v\n", rutaConfig, err)
 		}
 	} else {
@@ -373,12 +411,19 @@ func ejecutarUninit(path string) {
 
 	commonDir, err := git.ObtenerGitCommonDir(path)
 	if err != nil {
+		cleanupSucceeded = false
 		fmt.Printf("⚠️ No se pudo determinar el directorio Git del repositorio: %v\n", err)
 	} else {
-		quitarHookSiEsDeSentinel(filepath.Join(commonDir, "hooks", "pre-commit"))
+		if err := quitarHookSiEsDeSentinel(filepath.Join(commonDir, "hooks", "pre-commit")); err != nil {
+			cleanupSucceeded = false
+			fmt.Printf("⚠️ No se pudo limpiar el hook: %v\n", err)
+		}
 	}
 
 	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
+	if cleanupSucceeded {
+		updateRepositoryRegistry(path, (*registry.Registry).Remove)
+	}
 }
 
 // inyectarReglasDeArchivo appends the managed rule when it is absent and
@@ -450,23 +495,22 @@ func quitarReglasDeArchivo(ruta string) (bool, error) {
 // quitarHookSiEsDeSentinel borra el hook pre-commit en hookPath solo si su
 // contenido coincide exactamente con el que generarScriptHook produce ahora;
 // si difiere (otro origen) o no existe, no lo toca.
-func quitarHookSiEsDeSentinel(hookPath string) {
+func quitarHookSiEsDeSentinel(hookPath string) error {
 	actual, err := os.ReadFile(hookPath)
 	switch {
 	case os.IsNotExist(err):
-		return
+		return nil
 	case err != nil:
-		fmt.Printf("⚠️ No se pudo leer el hook existente: %v\n", err)
-		return
+		return err
 	case string(actual) != generarScriptHook():
 		fmt.Println("⚠️ El hook 'pre-commit' actual no coincide con el instalado por VAS Sentinel: no se toca.")
-		return
+		return nil
 	}
 	if err := os.Remove(hookPath); err != nil {
-		fmt.Printf("⚠️ No se pudo eliminar el hook: %v\n", err)
-		return
+		return err
 	}
 	fmt.Println("⚓ Hook 'pre-commit' eliminado.")
+	return nil
 }
 
 // generarScriptHook devuelve el contenido del hook pre-commit adaptado al

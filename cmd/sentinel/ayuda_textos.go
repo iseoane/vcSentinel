@@ -356,9 +356,23 @@ Exit codes:
   status  0 while a live daemon answers; 2 with a deterministic message when
           no live daemon is running for this repository; 5 when endpoint.json
           exists but is unreadable or incomplete — corruption is never silent.
-  stop    0 after a graceful shutdown; a missing or unreachable endpoint
-          follows the same not-running contract as status (exit 2); 5 on a
-          corrupt record or a daemon-side shutdown failure.
+ stop    0 after a graceful shutdown; a missing or unreachable endpoint
+           follows the same not-running contract as status (exit 2); 5 on a
+           corrupt record or a daemon-side shutdown failure.
+	`
+	textoAyudaTui = `Purpose: open the full-screen control center over the repository registry snapshot, refreshed live while the session is open.
+
+Usage:
+  sentinel tui
+
+Flags:
+  none. Any extra argument or flag is rejected with exit 1.
+
+Notes:
+  When no daemon is live for the current repository, the control center starts one detached and owns it for the session, stopping it gracefully on exit. A daemon already owned by another session is left untouched. Startup or readiness failures exit 5 before the interface opens; stop failures print one error line but keep exit success.
+
+Example:
+  sentinel tui
 `
 )
 
