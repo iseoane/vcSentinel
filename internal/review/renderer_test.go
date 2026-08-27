@@ -772,7 +772,7 @@ func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
 	if !strings.Contains(salidaVacia, "## Riesgos") {
 		t.Fatalf("falta la sección Riesgos: %s", salidaVacia)
 	}
-	if !strings.Contains(salidaVacia, "Sin riesgos pendientes") {
+	if !strings.Contains(salidaVacia, "No pending risks") {
 		t.Errorf("sin riesgos debe mostrar el placeholder honesto: %s", salidaVacia)
 	}
 
@@ -796,7 +796,7 @@ func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
 	if strings.Contains(salidaCon, "scope amplio") {
 		t.Errorf("los ADVISORY no son riesgos y no deben listarse: %s", salidaCon)
 	}
-	if strings.Contains(salidaCon, "Sin riesgos pendientes") {
+	if strings.Contains(salidaCon, "No pending risks") {
 		t.Errorf("con riesgos no debe mostrarse el placeholder: %s", salidaCon)
 	}
 
@@ -811,7 +811,7 @@ func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
 	if strings.Contains(salidaCorregida, "dato expuesto") {
 		t.Errorf("los hallazgos de una ficha corregida no son riesgos pendientes: %s", salidaCorregida)
 	}
-	if !strings.Contains(salidaCorregida, "Sin riesgos pendientes") {
+	if !strings.Contains(salidaCorregida, "No pending risks") {
 		t.Errorf("con todo corregido debe mostrarse el placeholder: %s", salidaCorregida)
 	}
 }

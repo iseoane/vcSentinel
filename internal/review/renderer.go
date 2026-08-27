@@ -608,20 +608,20 @@ func RenderBranchPRTemplate(res *ResultadoRama, verificacion VerificacionPlantil
 	b.WriteString(InheritedSection(res.Heredados))
 
 	b.WriteString("## Riesgos\n")
-	var pendientes []string
+	var pending []string
 	if res.Net == nil {
-		pendientes = riesgos(res.Fichas)
+		pending = riesgos(res.Fichas)
 	} else {
 		for _, h := range res.Net.Audit.Findings {
 			if h.Severity == SevCritical || h.Severity == SevWarning {
-				pendientes = append(pendientes, renderMergedFinding(fmt.Sprintf("%.7s", res.Net.To), h))
+				pending = append(pending, renderMergedFinding(fmt.Sprintf("%.7s", res.Net.To), h))
 			}
 		}
 	}
-	if len(pendientes) == 0 {
-		b.WriteString("_Sin riesgos pendientes en la última revisión._\n\n")
+	if len(pending) == 0 {
+		b.WriteString("_No pending risks in the latest review._\n\n")
 	} else {
-		for _, r := range pendientes {
+		for _, r := range pending {
 			b.WriteString(r + "\n")
 		}
 		b.WriteString("\n")

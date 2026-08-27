@@ -828,13 +828,6 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	verificacion := deps.verificar(worktree, gitDir, cfg, verificadorModelo)
 	verificacion.Validacion = comandosDeValidacion(runs)
 
-	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
-	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
-	if err != nil {
-		fmt.Fprintf(w, "? %v\n", err)
-		return 1
-	}
-
 	publishBase := base
 	if res.Propio != nil {
 		if res.Propio.PublicationBranch == "" {
@@ -842,6 +835,13 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 			return 1
 		}
 		publishBase = res.Propio.PublicationBranch
+	}
+
+	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
+	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 	prURL, fallback, err := deps.publicar(worktree, rutaPlantilla, publishBase)
 	if err != nil {

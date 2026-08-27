@@ -44,8 +44,7 @@ func TestEjecutarPrReview_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
 	}
 }
 
-// TestVerboPr: el dispatch decide entre review, create y el passthrough
-// legacy a gh pr create.
+// TestVerboPr verifies review/create dispatch and retired passthrough handling.
 func TestVerboPr(t *testing.T) {
 	casos := []struct {
 		args []string
@@ -63,6 +62,13 @@ func TestVerboPr(t *testing.T) {
 		if got := verboPr(caso.args); got != caso.want {
 			t.Errorf("verboPr(%v) = %q, want %q", caso.args, got, caso.want)
 		}
+	}
+	message, exitCode := retiredPassthroughDisposition()
+	if exitCode != 1 ||
+		!strings.Contains(message, "was removed") ||
+		!strings.Contains(message, "sentinel pr create") ||
+		!strings.Contains(message, "sentinel pr review") {
+		t.Errorf("retired passthrough = (%d, %q), want exit 1 and removal/create-or-review guidance", exitCode, message)
 	}
 }
 
@@ -1309,14 +1315,25 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 			t.Errorf("published body lacks %q: %s", want, body)
 		}
 	}
-	if strings.Contains(body, "Sin riesgos pendientes") {
+	if strings.Contains(body, "No pending risks") {
 		t.Errorf("a net BLOCK must not claim a risk-free body: %s", body)
+	}
+	pubBase, output = "", new(bytes.Buffer)
+	code = ejecutarPrCreateCon(output, "wt", []string{"--chain-pr"}, deps)
+	if code != 0 ||
+		pubBase != "layer-a" ||
+		opts.OwnDiff == nil ||
+		*opts.OwnDiff != (review.OwnDiffOptions{ResolveParent: true}) {
+		t.Errorf("chain-only: base=%q own=%v", pubBase, opts.OwnDiff)
 	}
 	res.Propio = &review.RangoPropio{Parent: "layer-a"}
 	pubBase, output = "", new(bytes.Buffer)
 	code = ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a"}, deps)
-	if code != 1 || pubBase != "" {
-		t.Errorf("missing publication branch must refuse: exitCode=%d base=%q", code, pubBase)
+	if code != 1 ||
+		pubBase != "" ||
+		opts.OwnDiff == nil ||
+		*opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) {
+		t.Errorf("missing publication branch: base=%q own=%v", pubBase, opts.OwnDiff)
 	}
 	res.Net.Audit.Veredicto = review.VerdictOK
 	res.Net.Audit.Findings, res.Fichas, res.Propio = nil, []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictBlock)}, nil
