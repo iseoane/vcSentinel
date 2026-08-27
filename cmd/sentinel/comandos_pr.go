@@ -35,6 +35,26 @@ func stackOwnDiff(parent string, chainPR bool) *review.OwnDiffOptions {
 	return nil
 }
 
+// resolveBlobStore resolves the blob store AnalizarRama needs to reuse reviews
+// by CONTENT instead of by SHA (F2 exit criterion), which is what makes
+// rebasing the base of a stacked PR cheap (F8 exit criterion 2): without it
+// every rewritten SHA looks unreviewed and the whole stack is audited again.
+//
+// It MUST receive the git COMMON dir, never the per-worktree git dir: linked
+// worktrees share one store, and store.NuevoStore documents that contract.
+//
+// Reuse is an optimization, not authority. If the common dir cannot be
+// resolved there is nothing to reuse, so it warns on stderr and returns nil,
+// which restores the SHA-only behaviour instead of aborting a real review.
+func resolveBlobStore(worktree string) review.StoreBlobs {
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vas-sentinel: could not resolve the git-common-dir; reviews will not be reused by content after a rebase (%v)\n", err)
+		return nil
+	}
+	return store.NuevoStore(commonDir)
+}
+
 func retiredPassthroughDisposition() (string, int) {
 	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr create' to publish a reviewed pull request or 'sentinel pr review' for a dry-run analysis.", 1
 }
@@ -200,6 +220,7 @@ func ejecutarPrReview(worktree string, args []string) {
 		Overview:               flags.overview,
 		Fabrica:                fabrica,
 		Parallel:               cfg.Review.Parallel,
+		Store:                  resolveBlobStore(worktree),
 		ReviewTransportFactory: reviewTransportFactory(cfg, worktree),
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
@@ -652,6 +673,11 @@ type depsPrCreate struct {
 	// escribirPlantilla allows tests to observe whether the PR template was
 	// created. When nil, ejecutarPrCreateCon uses escribirPlantillaPR.
 	escribirPlantilla func(string) (string, error)
+	// blobStore builds the content-addressed store that lets AnalizarRama
+	// reuse reviews after a rebase (F8 criterion 2). It is a seam because
+	// resolveBlobStore shells out to git, which depsPrCreate exists to avoid;
+	// nil means no reuse, the behaviour before this wiring.
+	blobStore func(worktree string) review.StoreBlobs
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -682,6 +708,7 @@ func ejecutarPrCreate(worktree string, args []string) {
 		},
 		resolverActor:     resolverActor,
 		escribirPlantilla: escribirPlantillaPR,
+		blobStore:         resolveBlobStore,
 	}))
 }
 
@@ -793,6 +820,10 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	if base == "" {
 		base = "main"
 	}
+	var blobStore review.StoreBlobs
+	if deps.blobStore != nil {
+		blobStore = deps.blobStore(worktree)
+	}
 	res, err := deps.analizarRama(gitDir, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:                      base,
 		SoloPendientes:            false,
@@ -801,6 +832,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		HallazgosDeterministasSHA: shaValidado,
 		Fabrica:                   fabrica,
 		Parallel:                  cfg.Review.Parallel,
+		Store:                     blobStore,
 		ReviewTransportFactory:    reviewTransportFactory(cfg, worktree),
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))

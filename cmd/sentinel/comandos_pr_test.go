@@ -1360,3 +1360,50 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 		t.Errorf("legacy: exitCode=%d base=%q, want 0/main", code, pubBase)
 	}
 }
+
+// TestResolveBlobStoreResolvesTheCommonDir covers the F8 criterion 2 wiring at its
+// only nil-able point: blob reuse in AnalizarRama is gated on Store != nil, so
+// a helper that silently returned nil inside a real repository would make the
+// criterion unreachable from the PR commands without any test noticing.
+func TestResolveBlobStoreResolvesTheCommonDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available in PATH")
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", "-b", "main", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if st := resolveBlobStore(repo); st == nil {
+		t.Error("resolveBlobStore returned nil inside a real repository: blob reuse would never fire and a base rebase would re-audit everything")
+	}
+	// Outside a repository the reuse optimization must degrade to nil instead
+	// of aborting a real review with a half-built store.
+	if st := resolveBlobStore(t.TempDir()); st != nil {
+		t.Errorf("resolveBlobStore outside a repository = %v, expected nil", st)
+	}
+}
+
+// TestExecutePrCreateWiresTheBlobStore is the pr create half of F8 criterion 2:
+// the command must hand AnalizarRama the shared blob store, otherwise rebasing
+// the stack base re-audits every commit.
+func TestExecutePrCreateWiresTheBlobStore(t *testing.T) {
+	var opts review.OpcionesRama
+	deps := depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gd", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		blobStore:    func(string) review.StoreBlobs { return store.NuevoStore(t.TempDir()) },
+		analizarRama: func(_ string, o review.OpcionesRama) (*review.ResultadoRama, error) { opts = o; return nil, errors.New("cut the flow right after AnalizarRama: this test only observes its options") },
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		resolverActor:   func(string) string { return "actor" },
+	}
+	ejecutarPrCreateCon(&bytes.Buffer{}, "wt", nil, deps)
+	if opts.Store == nil {
+		t.Error("OpcionesRama.Store is nil: pr create never reaches blob reuse, so a base rebase re-audits the whole stack")
+	}
+}

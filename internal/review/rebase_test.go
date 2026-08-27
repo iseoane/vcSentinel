@@ -199,3 +199,130 @@ func TestAnalizarRamaSobreviveRebaseViaBlob(t *testing.T) {
 		t.Errorf("la ficha adoptada bajo %s no conserva el hallazgo real: %+v", shaBDespues, fichaB)
 	}
 }
+
+// gitOutputRebase runs git and returns its trimmed stdout. The stacked test
+// needs the pre-rebase tip of the parent layer to rebase the child onto the
+// rewritten parent, and gitEjecutarRebase discards output.
+func gitOutputRebase(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		t.Fatalf("git %v falló: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestStackedBranchSurvivesBaseRebaseViaBlob is F8 exit criterion 2: rebasing
+// the base of a stacked PR preserves the review of everything that did not
+// change. It differs from TestAnalizarRamaSobreviveRebaseViaBlob (F2 criterion
+// 1, no stack) because here the rewritten commit is the PARENT layer: the
+// child's own range is recomputed against a parent whose SHA changed, so blob
+// coverage has to survive both rewrites at once.
+func TestStackedBranchSurvivesBaseRebaseViaBlob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("salta la integración con repositorio git real en modo -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está disponible en el PATH")
+	}
+
+	repo := t.TempDir()
+	t.Chdir(repo)
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@vas.sentinel"},
+		{"config", "user.name", "VAS Sentinel Test"},
+		{"config", "core.hooksPath", ""},
+	} {
+		gitEjecutarRebase(t, args...)
+	}
+	if err := os.WriteFile("base.txt", []byte(strings.Repeat("b\n", 5)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitEjecutarRebase(t, "add", "base.txt")
+	gitEjecutarRebase(t, "commit", "-m", "feat(base): base de la pila")
+
+	// Stack main → layer-a → layer-b. layer-a is the parent PR; layer-b is
+	// the one under review.
+	gitEjecutarRebase(t, "checkout", "-b", "layer-a")
+	commitEnRamaRebase(t, "a.txt", "contenido a\n")
+	gitEjecutarRebase(t, "checkout", "-b", "layer-b")
+	commitEnRamaRebase(t, "b1.txt", "contenido b1\n")
+	commitEnRamaRebase(t, "b2.txt", "contenido b2\n")
+
+	gitDir := repo + "/.git"
+	ledger := review.NuevoLedger(gitDir)
+	st := store.NuevoStore(gitDir)
+	stub := &rebaseReviewerStub{}
+	opciones := func() review.OpcionesRama {
+		return review.OpcionesRama{
+			Base: "main", Fabrica: fabricaStubRebase(stub), Parallel: 1, Store: st,
+			OwnDiff: &review.OwnDiffOptions{Parent: "layer-a"},
+		}
+	}
+
+	res, err := review.AnalizarRama(ledger, opciones())
+	if err != nil {
+		t.Fatalf("primera pasada falló: %v", err)
+	}
+	// Own range only: a.txt belongs to layer-a and must not be audited here.
+	if len(res.SHAs) != 2 {
+		t.Fatalf("SHAs = %v, esperado los 2 commits propios de layer-b", res.SHAs)
+	}
+	if len(res.Pendientes) != 2 {
+		t.Fatalf("Pendientes = %v, esperado 2", res.Pendientes)
+	}
+	callsBefore := stub.calls
+	if callsBefore == 0 {
+		t.Fatal("el auditor debería haberse llamado en la primera pasada")
+	}
+	shaB1Antes := res.SHAs[0]
+
+	// Rebase of the STACK BASE: main advances, layer-a is rewritten onto it,
+	// and layer-b is replanted onto the rewritten layer-a. Not a line of
+	// b1.txt or b2.txt changes, but every SHA in the stack does.
+	tipAAntes := gitOutputRebase(t, "rev-parse", "layer-a")
+	gitEjecutarRebase(t, "checkout", "main")
+	if err := os.WriteFile("docs.txt", []byte("docs\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitEjecutarRebase(t, "add", "docs.txt")
+	gitEjecutarRebase(t, "commit", "-m", "docs: avanzar main")
+	gitEjecutarRebase(t, "checkout", "layer-a")
+	gitEjecutarRebase(t, "rebase", "main")
+	gitEjecutarRebase(t, "checkout", "layer-b")
+	gitEjecutarRebase(t, "rebase", "--onto", "layer-a", tipAAntes)
+
+	res2, err := review.AnalizarRama(ledger, opciones())
+	if err != nil {
+		t.Fatalf("segunda pasada (post-rebase de la base) falló: %v", err)
+	}
+	if len(res2.SHAs) != 2 {
+		t.Fatalf("SHAs tras el rebase = %v, esperado 2", res2.SHAs)
+	}
+	shaB1Despues := res2.SHAs[0]
+	if shaB1Despues == shaB1Antes {
+		t.Fatal("el SHA de b1.txt no cambió tras rebasar la base: el test no prueba nada")
+	}
+	if len(res2.Pendientes) != 0 {
+		t.Errorf("Pendientes tras rebasar la base = %v, esperado 0 (contenido ya revisado por blob)", res2.Pendientes)
+	}
+	if stub.calls != callsBefore {
+		t.Errorf("el auditor se llamó %d veces más tras rebasar la base; esperado 0", stub.calls-callsBefore)
+	}
+
+	// El criterio no es solo "no se re-audita": el hallazgo real debe seguir
+	// recuperable bajo el SHA nuevo del commit reescrito.
+	var fichaB1 *review.Ficha
+	for i := range res2.Fichas {
+		if res2.Fichas[i].SHA == shaB1Despues {
+			fichaB1 = &res2.Fichas[i]
+		}
+	}
+	if fichaB1 == nil {
+		t.Fatalf("no hay ficha para el SHA post-rebase de b1.txt (%s): la revisión se perdió al rebasar la base", shaB1Despues)
+	}
+	if !fichaTieneHallazgo(*fichaB1, rebaseFindingDescription) {
+		t.Errorf("la ficha adoptada bajo %s no conserva el hallazgo real: %+v", shaB1Despues, fichaB1)
+	}
+}
