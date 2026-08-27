@@ -73,6 +73,7 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 		wantDials      int
 		wantCloses     int
 		wantReadyCalls int
+		wantCleanups   int
 	}{
 		{
 			name:           "absent record spawns an owned daemon",
@@ -117,12 +118,13 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 			wantErr:        "did not become reachable",
 			wantSpawns:     1,
 			wantReadyCalls: 1,
+			wantCleanups:   1,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			host := &recordingDaemonHost{}
-			spawns, dials, readyCalls := 0, 0, 0
+			spawns, dials, readyCalls, cleanups := 0, 0, 0, 0
 			expectedOwner := testDaemonOwner()
 			gate := tuiDaemonGate{
 				loadEndpoint: func() (daemon.Endpoint, error) {
@@ -148,14 +150,20 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 					}
 					return expectedOwner, true, nil
 				},
-				spawn: func() error {
+				spawn: func() (tuiDaemonProcess, error) {
 					spawns++
 					if tt.spawnFails {
-						return errors.New("exec failed")
+						return tuiDaemonProcess{}, errors.New("exec failed")
 					}
-					return nil
+					return tuiDaemonProcess{
+						pid: expectedOwner.PID,
+						cleanup: func() error {
+							cleanups++
+							return nil
+						},
+					}, nil
 				},
-				waitReady: func() bool {
+				waitReady: func(int) bool {
 					readyCalls++
 					return tt.ready
 				},
@@ -182,6 +190,9 @@ func TestTuiDaemonGateOwnershipMatrix(t *testing.T) {
 			}
 			if readyCalls != tt.wantReadyCalls {
 				t.Errorf("waitReady calls = %d, want %d", readyCalls, tt.wantReadyCalls)
+			}
+			if cleanups != tt.wantCleanups {
+				t.Errorf("child cleanups = %d, want %d", cleanups, tt.wantCleanups)
 			}
 		})
 	}
@@ -333,8 +344,8 @@ func TestTuiDaemonOwnershipFailsClosed(t *testing.T) {
 	t.Run("startup without an inspectable owner is rejected", func(t *testing.T) {
 		gate := tuiDaemonGate{
 			loadEndpoint: func() (daemon.Endpoint, error) { return daemon.Endpoint{}, os.ErrNotExist },
-			spawn:        func() error { return nil },
-			waitReady:    func() bool { return true },
+			spawn:        func() (tuiDaemonProcess, error) { return tuiDaemonProcess{pid: 4321}, nil },
+			waitReady:    func(int) bool { return true },
 			inspectOwner: func() (daemon.Owner, bool, error) {
 				return daemon.Owner{}, false, errors.New("owner claim unreadable")
 			},
@@ -368,6 +379,96 @@ func TestTuiDaemonOwnershipFailsClosed(t *testing.T) {
 		stopOwnedTuiDaemon(&out, gate, expected)
 		if host.shutdowns != 0 || loads != 0 {
 			t.Fatalf("replacement stop touched host: shutdowns=%d endpoint loads=%d", host.shutdowns, loads)
+		}
+	})
+
+	t.Run("endpoint from a replacement generation is never dialed", func(t *testing.T) {
+		host := &recordingDaemonHost{}
+		expected := testDaemonOwner()
+		replacement := expected
+		replacement.StartedAt = replacement.StartedAt.Add(time.Second)
+		loads := 0
+		gate := tuiDaemonGate{
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return expected, true, nil
+			},
+			loadEndpointRecord: func() (daemon.Endpoint, daemon.Owner, error) {
+				loads++
+				return daemon.Endpoint{Network: "unix", Address: "/replacement"}, replacement, nil
+			},
+			dial: func(daemon.Endpoint) (tuiDaemonHost, error) { return host, nil },
+		}
+		var out bytes.Buffer
+		stopOwnedTuiDaemon(&out, gate, expected)
+		if host.shutdowns != 0 || loads != 1 {
+			t.Fatalf("replacement endpoint was touched: shutdowns=%d endpoint loads=%d", host.shutdowns, loads)
+		}
+	})
+
+	t.Run("claim from another child is not adopted and is cleaned up", func(t *testing.T) {
+		expected := testDaemonOwner()
+		cleanupCalls := 0
+		gate := tuiDaemonGate{
+			loadEndpoint: func() (daemon.Endpoint, error) {
+				return daemon.Endpoint{}, os.ErrNotExist
+			},
+			spawn: func() (tuiDaemonProcess, error) {
+				return tuiDaemonProcess{
+					pid: expected.PID + 1,
+					cleanup: func() error {
+						cleanupCalls++
+						return nil
+					},
+				}, nil
+			},
+			waitReady: func(int) bool { return true },
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return expected, true, nil
+			},
+		}
+		owned, _, err := gate.resolveOwnership()
+		if err == nil || !strings.Contains(err.Error(), "spawned child pid") {
+			t.Fatalf("resolveOwnership() error = %v, want child identity mismatch", err)
+		}
+		if owned || cleanupCalls != 1 {
+			t.Fatalf("resolveOwnership() = owned=%v cleanupCalls=%d, want false and one cleanup", owned, cleanupCalls)
+		}
+	})
+
+	t.Run("endpoint from another generation is not adopted after spawn", func(t *testing.T) {
+		expected := testDaemonOwner()
+		replacement := expected
+		replacement.StartedAt = replacement.StartedAt.Add(time.Second)
+		spawned := false
+		cleanupCalls := 0
+		gate := tuiDaemonGate{
+			loadEndpointRecord: func() (daemon.Endpoint, daemon.Owner, error) {
+				if !spawned {
+					return daemon.Endpoint{}, daemon.Owner{}, os.ErrNotExist
+				}
+				return daemon.Endpoint{Network: "unix", Address: "/replacement"}, replacement, nil
+			},
+			spawn: func() (tuiDaemonProcess, error) {
+				spawned = true
+				return tuiDaemonProcess{
+					pid: expected.PID,
+					cleanup: func() error {
+						cleanupCalls++
+						return nil
+					},
+				}, nil
+			},
+			waitReady: func(int) bool { return true },
+			inspectOwner: func() (daemon.Owner, bool, error) {
+				return expected, true, nil
+			},
+		}
+		owned, _, err := gate.resolveOwnership()
+		if err == nil || !strings.Contains(err.Error(), "endpoint owner") {
+			t.Fatalf("resolveOwnership() error = %v, want endpoint-generation mismatch", err)
+		}
+		if owned || cleanupCalls != 1 {
+			t.Fatalf("resolveOwnership() = owned=%v cleanupCalls=%d, want false and one cleanup", owned, cleanupCalls)
 		}
 	})
 }
@@ -452,8 +553,8 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 				}
 				return expectedOwner, true, nil
 			},
-			spawn:     func() error { spawned = true; return nil },
-			waitReady: func() bool { return true },
+			spawn:     func() (tuiDaemonProcess, error) { spawned = true; return tuiDaemonProcess{pid: expectedOwner.PID}, nil },
+			waitReady: func(int) bool { return true },
 		}
 		var captured control.Model
 		starts := stubStartControlCenter(t, nil, &captured)
@@ -486,8 +587,8 @@ func TestExecuteTuiSessionShutdownContract(t *testing.T) {
 				}
 				return expectedOwner, true, nil
 			},
-			spawn:     func() error { spawned = true; return nil },
-			waitReady: func() bool { return true },
+			spawn:     func() (tuiDaemonProcess, error) { spawned = true; return tuiDaemonProcess{pid: expectedOwner.PID}, nil },
+			waitReady: func(int) bool { return true },
 		}
 		var captured control.Model
 		stubStartControlCenter(t, errors.New("terminal exploded"), &captured)
@@ -511,9 +612,9 @@ func TestExecuteTuiSessionRegistryFailureExitsInfrastructure(t *testing.T) {
 			t.Error("the ownership gate was contacted although the registry failed to open")
 			return daemon.Endpoint{}, nil
 		},
-		spawn: func() error {
+		spawn: func() (tuiDaemonProcess, error) {
 			t.Error("a daemon was spawned although the registry failed to open")
-			return nil
+			return tuiDaemonProcess{}, nil
 		},
 	}
 	var captured control.Model

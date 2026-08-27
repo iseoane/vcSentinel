@@ -3,6 +3,7 @@ package art
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,15 @@ import (
 // matches painted spans whose text spanLine right-pads before wrapping.
 func wt(branch string, clean bool) inventory.Worktree {
 	return inventory.Worktree{Path: filepath.Join("/tmp/repo", branch), Branch: branch, Clean: clean}
+}
+
+func TestSameWorktreePathUsesHostSemantics(t *testing.T) {
+	left := filepath.Join("/tmp", "Project", "worktree")
+	right := filepath.Join("/tmp", "project", "worktree")
+	want := runtime.GOOS == "windows"
+	if got := sameWorktreePath(left, right); got != want {
+		t.Fatalf("sameWorktreePath(%q, %q) = %v, want %v on %s", left, right, got, want, runtime.GOOS)
+	}
 }
 
 // run builds a run summary fixture with a fixed id and revision; updatedAt

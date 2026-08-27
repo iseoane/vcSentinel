@@ -2,6 +2,8 @@ package art
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -139,14 +141,13 @@ func ProjectOverview(repos []overview.Repo, filter string) []overview.Repo {
 				}
 			}
 			if len(matchedWorktrees) > 0 {
-				matchedPaths := make(map[string]struct{}, len(matchedWorktrees))
-				for _, wt := range matchedWorktrees {
-					matchedPaths[wt.Path] = struct{}{}
-				}
 				matchedRuns := make([]presence.RunSummary, 0, len(r.Runs))
 				for _, run := range r.Runs {
-					if _, ok := matchedPaths[run.Worktree]; ok {
-						matchedRuns = append(matchedRuns, run)
+					for _, wt := range matchedWorktrees {
+						if sameWorktreePath(wt.Path, run.Worktree) {
+							matchedRuns = append(matchedRuns, run)
+							break
+						}
 					}
 				}
 				copy := r
@@ -258,7 +259,7 @@ func VisibleRuns(s ViewState) []RunPos {
 	worktreePath := selectedWorktreePath(s)
 	for i, r := range s.Repos {
 		for j, run := range r.Runs {
-			if worktreePath != "" && run.Worktree != worktreePath {
+			if worktreePath != "" && !sameWorktreePath(run.Worktree, worktreePath) {
 				continue
 			}
 			positions = append(positions, RunPos{Repo: i, Run: j})
@@ -279,6 +280,21 @@ func selectedWorktreePath(s ViewState) string {
 		return ""
 	}
 	return worktrees[cursor.Worktree].Path
+}
+
+// sameWorktreePath compares persisted inventory paths using the host's file
+// system semantics. Windows worktree paths may differ only by drive or case
+// normalization between inventory and durable-run records.
+func sameWorktreePath(left, right string) bool {
+	if left == "" || right == "" {
+		return left == right
+	}
+	left = filepath.Clean(filepath.FromSlash(left))
+	right = filepath.Clean(filepath.FromSlash(right))
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 // VisibleTreePositions returns the render-order positions of the navigable
@@ -541,7 +557,7 @@ func overviewActivity(s ViewState) []activityRow {
 		state := classifyRepo(r)
 		visibleRunCount := 0
 		for _, runSummary := range r.Runs {
-			if filterWorktree != "" && runSummary.Worktree != filterWorktree {
+			if filterWorktree != "" && !sameWorktreePath(runSummary.Worktree, filterWorktree) {
 				continue
 			}
 			visibleRunCount++
@@ -551,7 +567,7 @@ func overviewActivity(s ViewState) []activityRow {
 		}
 		for j, runSummary := range r.Runs {
 			// Filter by worktree when a worktree is selected.
-			if filterWorktree != "" && runSummary.Worktree != filterWorktree {
+			if filterWorktree != "" && !sameWorktreePath(runSummary.Worktree, filterWorktree) {
 				continue
 			}
 			row := runRow(runSummary)

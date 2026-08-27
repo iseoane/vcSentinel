@@ -611,6 +611,47 @@ func TestTickDrivesExactlyOneRefreshAndReschedule(t *testing.T) {
 	}
 }
 
+// TestTickDoesNotOverlapRefreshes pins the serialized collection contract: a
+// slow first refresh keeps the cadence scheduled but a second tick cannot
+// launch an older competing snapshot that might overwrite a newer one.
+func TestTickDoesNotOverlapRefreshes(t *testing.T) {
+	rec := &recorder{repos: []overview.Repo{repo("fresh")}}
+	m := NewLive([]overview.Repo{repo("stale")}, rec.refresh, time.Second, nil)
+	m.schedule = rec.schedule
+
+	firstNext, firstCmd := m.Update(tickMsg{})
+	first := firstNext.(Model)
+	firstEffects := collectEffects(t, firstCmd)
+	if rec.refreshes != 1 {
+		t.Fatalf("first tick ran %d refreshes, want one", rec.refreshes)
+	}
+
+	secondNext, secondCmd := first.Update(tickMsg{})
+	second := secondNext.(Model)
+	secondEffects := collectEffects(t, secondCmd)
+	if rec.refreshes != 1 {
+		t.Fatalf("overlapping tick ran %d refreshes, want the in-flight one only", rec.refreshes)
+	}
+	if len(secondEffects) != 1 {
+		t.Fatalf("overlapping tick produced %d effects, want only the reschedule", len(secondEffects))
+	}
+	if _, ok := secondEffects[0].(scheduledMsg); !ok {
+		t.Fatalf("overlapping tick effect = %T, want scheduledMsg", secondEffects[0])
+	}
+
+	firstSnapshot := snapshotOf(t, firstEffects)
+	second = update(t, second, firstSnapshot)
+	_, thirdCmd := second.Update(tickMsg{})
+	thirdEffects := collectEffects(t, thirdCmd)
+	if rec.refreshes != 2 {
+		t.Fatalf("next tick ran %d refreshes, want two after the first completed", rec.refreshes)
+	}
+	thirdSnapshot := snapshotOf(t, thirdEffects)
+	if len(thirdSnapshot.repos) != 1 || thirdSnapshot.repos[0].Name != "fresh" {
+		t.Fatalf("next tick snapshot = %#v, want the refreshed registry", thirdSnapshot.repos)
+	}
+}
+
 // TestSnapshotMsgTransitions drives every snapshot outcome: success replaces
 // the registry and clears any recorded error while clamping the cursor back
 // into range with the same >= 0 semantics as key navigation; failure keeps

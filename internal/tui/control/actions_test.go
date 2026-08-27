@@ -241,8 +241,8 @@ func TestFilteredRunActionsTargetVisibleRows(t *testing.T) {
 func TestRunActionsFollowSelectedWorktree(t *testing.T) {
 	r := repoWithRuns("project", "main-run", "feature-run")
 	r.Worktrees = []inventory.Worktree{
-		{Path: "/tmp/project/main", Branch: "main", Clean: true},
-		{Path: "/tmp/project/feature", Branch: "feature", Clean: false},
+		{Path: filepath.Join("/tmp", "project", "main"), Branch: "main", Clean: true},
+		{Path: filepath.Join("/tmp", "project", "feature"), Branch: "feature", Clean: false},
 	}
 	r.Runs[0].Worktree = r.Worktrees[0].Path
 	r.Runs[1].Worktree = r.Worktrees[1].Path
@@ -256,6 +256,29 @@ func TestRunActionsFollowSelectedWorktree(t *testing.T) {
 	wantCall := "abort " + filepath.Join("/tmp", "project") + " feature-run"
 	if len(spy.calls) != 1 || spy.calls[0] != wantCall {
 		t.Fatalf("action calls = %v, want the selected worktree run", spy.calls)
+	}
+}
+
+// TestRunFilterClearsWorktreeScope proves a new global query does not leave
+// ACTIVITY constrained to a previously selected, unrelated worktree.
+func TestRunFilterClearsWorktreeScope(t *testing.T) {
+	r := repoWithRuns("project", "main-run", "target-run")
+	r.Worktrees = []inventory.Worktree{
+		{Path: filepath.Join("/tmp", "project", "main"), Branch: "main", Clean: true},
+		{Path: filepath.Join("/tmp", "project", "feature"), Branch: "feature", Clean: false},
+	}
+	r.Runs[0].Worktree = r.Worktrees[0].Path
+	r.Runs[1].Worktree = r.Worktrees[1].Path
+	spy := &spyActions{}
+	m := NewLive([]overview.Repo{r}, (&recorder{}).refresh, time.Second, spy)
+	m = pressKeys(t, m, "down", "down", "/", "target", "enter", "tab")
+	_, cmd := m.Update(keyMsg("a"))
+	if cmd == nil || len(spy.calls) != 1 {
+		t.Fatalf("filtered action cmd=%v calls=%v, want the matching run", cmd, spy.calls)
+	}
+	want := "abort " + filepath.Join("/tmp", "project") + " target-run"
+	if spy.calls[0] != want {
+		t.Fatalf("filtered action call = %q, want %q", spy.calls[0], want)
 	}
 }
 
@@ -379,6 +402,19 @@ func TestRunActionResultLifecycle(t *testing.T) {
 		m = update(t, m, actionResultMsg{Kind: KindAbort, RepoPath: path, RunID: runA})
 		if _, _, _, ok := m.PendingAction(); ok {
 			t.Error("the matching result stopped clearing the marker after a swap")
+		}
+	})
+	t.Run("a second action cannot replace a pending dispatch", func(t *testing.T) {
+		spy := &spyActions{}
+		m := focused(actionRepos(), spy, 0)
+		m = update(t, m, keyMsg("a"))
+		next, cmd := m.Update(keyMsg("r"))
+		if cmd != nil || len(spy.calls) != 1 {
+			t.Fatalf("second action dispatched cmd=%v calls=%v, want no dispatch", cmd, spy.calls)
+		}
+		kind, repoPath, runID, ok := next.(Model).PendingAction()
+		if !ok || kind != KindAbort || repoPath != path || runID != runA {
+			t.Fatalf("second action replaced pending marker: (%q,%q,%q,%t)", kind, repoPath, runID, ok)
 		}
 	})
 }

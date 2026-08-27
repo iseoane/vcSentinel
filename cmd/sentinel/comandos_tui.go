@@ -54,6 +54,21 @@ type tuiDaemonHost interface {
 	Close() error
 }
 
+// tuiDaemonProcess retains the child identity returned by the detached spawn.
+// The pid is compared with the owner claim before the session gains shutdown
+// authority; cleanup is used when startup fails before ownership is proven.
+type tuiDaemonProcess struct {
+	pid     int
+	cleanup func() error
+}
+
+func (p tuiDaemonProcess) cleanupIfRunning() error {
+	if p.cleanup == nil {
+		return nil
+	}
+	return p.cleanup()
+}
+
 // tuiDaemonGate bundles every external effect of the ownership decision and
 // the session-end shutdown behind injectable closures, so the whole matrix
 // is unit-testable without real daemons or filesystems. The zero value is
@@ -76,11 +91,16 @@ type tuiDaemonGate struct {
 	// shutdown. Nil means the check is unavailable; production gates always
 	// provide it.
 	inspectOwner func() (daemon.Owner, bool, error)
-	// spawn launches `<selfexe> runs daemon start` detached.
-	spawn func() error
-	// waitReady reports whether the freshly spawned daemon published its
-	// endpoint record within its startup budget.
-	waitReady func() bool
+	// loadEndpointRecord is the production loader that retains the owner
+	// metadata persisted beside the endpoint. It prevents an endpoint from one
+	// daemon generation being used with the claim of another generation.
+	loadEndpointRecord func() (daemon.Endpoint, daemon.Owner, error)
+	// spawn launches `<selfexe> runs daemon start` detached and returns the
+	// child identity used to correlate the resulting claim.
+	spawn func() (tuiDaemonProcess, error)
+	// waitReady reports whether the freshly spawned child published an endpoint
+	// record belonging to its own pid within its startup budget.
+	waitReady func(pid int) bool
 }
 
 // resolveOwnership applies the ownership decision matrix:
@@ -102,7 +122,7 @@ type tuiDaemonGate struct {
 // daemon. The caller must retain it and verify it before shutdown so a later
 // claim replacement cannot make the TUI kill a foreign daemon.
 func (g *tuiDaemonGate) resolveOwnership() (owned bool, owner daemon.Owner, err error) {
-	endpoint, loadErr := g.loadEndpoint()
+	endpoint, _, _, loadErr := g.loadEndpointState()
 	if loadErr == nil {
 		host, dialErr := g.dial(endpoint)
 		if dialErr == nil {
@@ -122,10 +142,20 @@ func (g *tuiDaemonGate) resolveOwnership() (owned bool, owner daemon.Owner, err 
 		// Nobody answers and the claim is dead or unreadable: stale residue
 		// left by a dead owner; fall through to the reclaiming spawn below.
 	}
-	if err := g.spawn(); err != nil {
+	spawned, err := g.spawn()
+	if err != nil {
 		return false, daemon.Owner{}, fmt.Errorf("could not start the repository daemon: %w", err)
 	}
-	if !g.waitReady() {
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = spawned.cleanupIfRunning()
+		}
+	}()
+	if spawned.pid <= 0 {
+		return false, daemon.Owner{}, errors.New("could not verify ownership of the repository daemon: spawned child has no valid pid")
+	}
+	if g.waitReady == nil || !g.waitReady(spawned.pid) {
 		return false, daemon.Owner{}, errors.New("the repository daemon did not become reachable before its startup budget expired")
 	}
 	if g.inspectOwner == nil {
@@ -138,6 +168,18 @@ func (g *tuiDaemonGate) resolveOwnership() (owned bool, owner daemon.Owner, err 
 	if !alive || !validTuiOwner(owner) {
 		return false, daemon.Owner{}, errors.New("could not verify ownership of the repository daemon after startup")
 	}
+	if owner.PID != spawned.pid {
+		return false, daemon.Owner{}, fmt.Errorf("could not verify ownership of the repository daemon: claim pid %d does not match spawned child pid %d", owner.PID, spawned.pid)
+	}
+	if _, endpointOwner, ownerKnown, inspectErr := g.loadEndpointState(); ownerKnown {
+		if inspectErr != nil {
+			return false, daemon.Owner{}, fmt.Errorf("could not verify the daemon endpoint owner: %w", inspectErr)
+		}
+		if !sameTuiOwner(owner, endpointOwner) {
+			return false, daemon.Owner{}, errors.New("could not verify ownership of the repository daemon: endpoint owner does not match the claim")
+		}
+	}
+	cleanup = false
 	return true, owner, nil
 }
 
@@ -157,6 +199,26 @@ func sameTuiOwner(expected, current daemon.Owner) bool {
 		expected.StartedAt.Equal(current.StartedAt) &&
 		expected.Host == current.Host &&
 		expected.ProtocolRevision == current.ProtocolRevision
+}
+
+// loadEndpointState preserves endpoint owner metadata when the production
+// gate reads discovery. Test gates may provide the endpoint-only seam;
+// production gates always set loadEndpointRecord and therefore get the
+// generation check.
+func (g tuiDaemonGate) loadEndpointState() (daemon.Endpoint, daemon.Owner, bool, error) {
+	if g.loadEndpointRecord != nil {
+		endpoint, owner, err := g.loadEndpointRecord()
+		return endpoint, owner, true, err
+	}
+	if g.loadEndpoint != nil {
+		endpoint, err := g.loadEndpoint()
+		return endpoint, daemon.Owner{}, false, err
+	}
+	if g.commonDir != "" {
+		endpoint, owner, err := daemon.LoadEndpoint(daemon.Dir(g.commonDir))
+		return endpoint, owner, true, err
+	}
+	return daemon.Endpoint{}, daemon.Owner{}, false, errors.New("daemon endpoint loading is unavailable")
 }
 
 // tuiOwnerMatches verifies the claim retained by this session. A missing or
@@ -210,18 +272,27 @@ func waitTuiDaemonReady(load func() error, budget, interval time.Duration) bool 
 // throwaway goroutine — waiting synchronously would tie this process to the
 // daemon's whole lifetime, and never waiting would leave a zombie behind if
 // the daemon dies mid-session.
-func spawnDetachedTuiDaemon() error {
+func spawnDetachedTuiDaemon() (tuiDaemonProcess, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("could not resolve the sentinel binary: %w", err)
+		return tuiDaemonProcess{}, fmt.Errorf("could not resolve the sentinel binary: %w", err)
 	}
 	cmd := exec.Command(exe, "runs", "daemon", "start")
 	cmd.SysProcAttr = detachSysProcAttr()
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("could not launch 'runs daemon start': %w", err)
+		return tuiDaemonProcess{}, fmt.Errorf("could not launch 'runs daemon start': %w", err)
 	}
 	go func() { _ = cmd.Wait() }()
-	return nil
+	return tuiDaemonProcess{
+		pid: cmd.Process.Pid,
+		cleanup: func() error {
+			err := cmd.Process.Kill()
+			if errors.Is(err, os.ErrProcessDone) {
+				return nil
+			}
+			return err
+		},
+	}, nil
 }
 
 // newTuiDaemonGate binds the gate to one repository's real daemon effects.
@@ -233,6 +304,9 @@ func newTuiDaemonGate(commonDir string) tuiDaemonGate {
 			endpoint, _, err := daemon.LoadEndpoint(dir)
 			return endpoint, err
 		},
+		loadEndpointRecord: func() (daemon.Endpoint, daemon.Owner, error) {
+			return daemon.LoadEndpoint(dir)
+		},
 		dial: func(endpoint daemon.Endpoint) (tuiDaemonHost, error) {
 			return daemon.DialRemoteHost(endpoint, daemon.FingerprintRepository(commonDir))
 		},
@@ -240,10 +314,16 @@ func newTuiDaemonGate(commonDir string) tuiDaemonGate {
 			return daemon.InspectOwner(commonDir)
 		},
 		spawn: spawnDetachedTuiDaemon,
-		waitReady: func() bool {
+		waitReady: func(pid int) bool {
 			return waitTuiDaemonReady(func() error {
-				_, _, err := daemon.LoadEndpoint(dir)
-				return err
+				_, owner, err := daemon.LoadEndpoint(dir)
+				if err != nil {
+					return err
+				}
+				if owner.PID != pid {
+					return fmt.Errorf("endpoint owner pid %d does not match spawned child pid %d", owner.PID, pid)
+				}
+				return nil
 			}, tuiDaemonReadyBudget, tuiDaemonReadyPoll)
 		},
 	}
@@ -270,12 +350,15 @@ func stopOwnedTuiDaemon(out io.Writer, gate tuiDaemonGate, expectedOwner daemon.
 	if !owned {
 		return
 	}
-	endpoint, err := gate.loadEndpoint()
+	endpoint, endpointOwner, ownerKnown, err := gate.loadEndpointState()
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return
 	case err != nil:
 		fmt.Fprintf(out, "❌ Could not read the daemon endpoint record: %v\n", err)
+		return
+	}
+	if ownerKnown && !sameTuiOwner(expectedOwner, endpointOwner) {
 		return
 	}
 	owned, err = tuiOwnerMatches(gate, expectedOwner)

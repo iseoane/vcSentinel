@@ -40,8 +40,8 @@ const (
 // package's commands produce them.
 
 // tickMsg fires once per interval on live models; receiving it consumes one
-// scheduling slot, so it maps to exactly one reschedule plus exactly one
-// snapshot-collection command.
+// scheduling slot, and starts a collection only when the previous one has
+// completed.
 type tickMsg struct{}
 
 // snapshotMsg carries one refresh result from the command goroutine back to
@@ -137,10 +137,11 @@ type Model struct {
 	// through New, which is exactly what keeps them passive: a nil refresh
 	// disables Init scheduling and makes stray ticks inert. schedule may be
 	// nil even on live models: scheduleCmd then falls back to tea.Tick.
-	refresh  func() ([]overview.Repo, error)
-	interval time.Duration
-	schedule func(time.Duration) tea.Cmd
-	err      string
+	refresh    func() ([]overview.Repo, error)
+	interval   time.Duration
+	schedule   func(time.Duration) tea.Cmd
+	refreshing bool
+	err        string
 }
 
 // New builds the control-center model over the given snapshot. Width starts
@@ -242,10 +243,10 @@ func (m Model) Init() tea.Cmd {
 // for the visible run under the cursor when its repository is enabled,
 // non-missing, and error-free — every unmet gate (including a nil hook) is a
 // pure no-op. tab and shift+tab switch focus (a clamped no-op on an empty
-// registry). On live models a tick maps to exactly one
-// reschedule plus one snapshot collection, a successful snapshot replaces
-// the repositories (clamping the selection back into range), and a failed
-// snapshot keeps the last good snapshot while recording the error; an
+// registry). On live models a tick always reschedules and starts at most one
+// snapshot collection, a successful snapshot replaces the repositories
+// (clamping the selection back into range), and a failed snapshot keeps the
+// last good snapshot while recording the error; an
 // action-result message clears the pending marker only when kind, repository,
 // and run match the latest dispatch, records rejections on Err with overwrite
 // semantics, and stays silent on success; everything else leaves the model
@@ -327,6 +328,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				m.filtering = true
 				m.filter = ""
+				// A new global query must not remain constrained by the
+				// previously selected worktree; the query may target a run in
+				// another child.
+				m.treeCursor.Worktree = -1
 				m.reanchorCursors()
 				return m, nil
 			}
@@ -337,18 +342,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Static models never enabled the loop: a stray tick is inert.
 			return m, nil
 		}
-		// One tick consumes its scheduling slot: exactly one reschedule plus
-		// exactly one refresh. Batch keeps both effects; bubbletea gives no
-		// ordering guarantees between them, and none are needed because they
-		// are independent.
-		return m, tea.Batch(m.scheduleCmd(m.interval), m.refreshSnapshotCmd())
+		// Keep the cadence alive, but never let a slow collection overlap the
+		// next one: an older snapshot must not overwrite a newer snapshot.
+		next := m.scheduleCmd(m.interval)
+		if m.refreshing {
+			return m, next
+		}
+		m.refreshing = true
+		return m, tea.Batch(next, m.refreshSnapshotCmd())
 	case snapshotMsg:
 		if msg.err != nil {
+			m.refreshing = false
 			m.err = msg.err.Error()
 			return m, nil
 		}
 		m.repos = msg.repos
 		m.reanchorCursors()
+		m.refreshing = false
 		m.err = ""
 		return m, nil
 	case actionResultMsg:
@@ -498,11 +508,12 @@ func (m *Model) toggleOpenRun() {
 // when an actions hook is wired, the runs pane owns focus, the cursor rests
 // on a currently visible run row (the exact walk the ACTIVITY pane draws),
 // and that row's repository is enabled, non-missing, and error-free; every
-// unmet gate — including a nil hook — is a pure no-op. When the gate opens,
+// unmet gate — including a nil hook or a pending action — is a pure no-op.
+// When the gate opens,
 // the pending marker goes up before the hook command is handed out, and only
 // the matching result message clears it afterwards.
 func (m *Model) requestRunAction(key string) tea.Cmd {
-	if m.actions == nil || m.focus != art.FocusRuns {
+	if m.actions == nil || m.focus != art.FocusRuns || m.pending != nil {
 		return nil
 	}
 	repos := art.ProjectOverview(m.repos, m.filter)
