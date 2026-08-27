@@ -121,6 +121,16 @@ func TestReadRunOperationClassifiesAbsentAndDamagedRecords(t *testing.T) {
 			wantErr: ErrPolicyCorrupt,
 		},
 		{
+			name:  "missing policy identity",
+			runID: string(job.RunID()),
+			write: func() {
+				if err := os.WriteFile(filepath.Join(directory, "policy.json"), []byte(`{"worktree":"/hidden"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: ErrPolicyCorrupt,
+		},
+		{
 			name:     "invalid run id",
 			runID:    "../outside",
 			wantText: "invalid run id",

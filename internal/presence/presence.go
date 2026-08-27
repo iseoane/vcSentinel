@@ -6,7 +6,10 @@ package presence
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
@@ -57,45 +60,21 @@ type RunSummary struct {
 	Revision  uint64
 	StartedAt time.Time
 	UpdatedAt time.Time
-	// Operation is the operator-facing label admitted with the run
-	// ("review logic", "gate pre-push", "run"); empty for legacy records and
-	// when the policy record cannot be read.
 	Operation string
-	// Commit is the audited commit short SHA (7 runes) that the run
-	// audits, when the producer knew it at admission time. Empty for
-	// legacy records.
-	Commit string
-	// Worktree is the worktree path that launched the run, when known.
-	// Empty for legacy records.
-	Worktree string
-	// Reason is the terminal error for failed/canceled runs, when available.
-	// Empty for non-terminal or legacy records.
-	Reason string
+	Commit    string
+	Worktree  string
+	Reason    string
 }
 
-// RecentRuns returns at most limit projected durable runs anchored at the
-// shared store under gitCommonDir.
-//
-// Ordering contract: run identifiers are sha256 hex digests of the request
-// identity (agentrun.NewLogicalJob), carrying NO time information. RecentRuns
-// therefore reads every projection before selecting rows, returns timestamped
-// runs newest-first, breaks equal timestamps by ascending RunID, and places
-// zero-time projections after every timestamped run with the same RunID
-// tie-break. A zero timestamp is never replaced with a time derived from the
-// identifier. The projection scan is O(history) so corruption anywhere in the
-// repository remains visible; policy and event metadata enrichment happens only
-// after sorting and trimming, so it is bounded by limit. limit <= 0 and an
-// empty store yield an empty slice and nil; store failures propagate wrapped
-// with the path.
-//
-// Metadata contract: after ordering and trimming, each retained summary costs
-// up to three small policy.json reads (operation, commit, and worktree) and one
-// bounded event-log read for its start time and terminal reason, so enrichment
-// is O(limit). Read failures degrade SOFTLY — an unreadable or corrupt policy
-// or event stream must not fail the whole listing over cosmetic metadata, so
-// the summary survives with empty metadata and the renderer falls back to the
-// id prefix. Only projection reads remain hard failures.
+// RecentRuns returns the globally newest limit projected durable runs anchored
+// at the shared store under gitCommonDir.
 func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
+	return RecentRunsForWorktrees(gitCommonDir, limit, nil)
+}
+
+// RecentRunsForWorktrees returns global and per-visible-worktree newest runs.
+// Projection failures are hard; metadata enrichment failures are soft.
+func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths []string) ([]RunSummary, error) {
 	if limit <= 0 {
 		return []RunSummary{}, nil
 	}
@@ -128,35 +107,73 @@ func RecentRuns(gitCommonDir string, limit int) ([]RunSummary, error) {
 		}
 		return left.RunID < right.RunID
 	})
-	if len(summaries) > limit {
-		summaries = summaries[:limit]
+
+	retained := make([]bool, len(summaries))
+	for i := 0; i < len(summaries) && i < limit; i++ {
+		retained[i] = true
 	}
+	remaining := worktreeQuotas(visibleWorktreePaths, limit)
 	for i := range summaries {
-		id := summaries[i].RunID
-		operation, opErr := st.ReadRunOperation(id)
-		if opErr != nil {
-			operation = ""
+		if !retained[i] && len(remaining) == 0 {
+			break
 		}
-		commit, cErr := st.ReadRunCommit(id)
-		if cErr != nil {
-			commit = ""
+		policy, err := st.ReadRunPolicy(summaries[i].RunID)
+		if err != nil {
+			continue
 		}
-		worktree, wErr := st.ReadRunWorktree(id)
-		if wErr != nil {
-			worktree = ""
-		}
-		reason := ""
-		eventLimit := max(1, int(summaries[i].Revision))
-		if page, err := st.ReadEvents(id, 0, eventLimit); err == nil && len(page.Events) > 0 {
-			summaries[i].StartedAt = page.Events[0].At
-			if summaries[i].State == agentrun.StateFailed || summaries[i].State == agentrun.StateCanceled || summaries[i].State == agentrun.StateTimedOut || summaries[i].State == agentrun.StateUnavailable {
-				reason = page.Events[len(page.Events)-1].OutcomeError
+		summaries[i].Operation = policy.Operation
+		summaries[i].Commit = policy.Commit
+		summaries[i].Worktree = policy.Worktree
+		if key := normalizeWorktreePath(policy.Worktree); key != "" {
+			if quota, ok := remaining[key]; ok {
+				retained[i] = true
+				if quota <= 1 {
+					delete(remaining, key)
+				} else {
+					remaining[key] = quota - 1
+				}
 			}
 		}
-		summaries[i].Operation = operation
-		summaries[i].Commit = commit
-		summaries[i].Worktree = worktree
-		summaries[i].Reason = reason
 	}
-	return summaries, nil
+
+	union := make([]RunSummary, 0, len(summaries))
+	for i := range summaries {
+		if !retained[i] {
+			continue
+		}
+		enrichRunSummary(st, &summaries[i])
+		union = append(union, summaries[i])
+	}
+	return union, nil
+}
+
+func worktreeQuotas(paths []string, limit int) map[string]int {
+	quotas := make(map[string]int, len(paths))
+	for _, path := range paths {
+		if key := normalizeWorktreePath(path); key != "" {
+			quotas[key] = limit
+		}
+	}
+	return quotas
+}
+
+func normalizeWorktreePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	path = filepath.Clean(filepath.FromSlash(path))
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
+func enrichRunSummary(st *store.Store, summary *RunSummary) {
+	eventLimit := max(1, int(summary.Revision))
+	if page, err := st.ReadEvents(summary.RunID, 0, eventLimit); err == nil && len(page.Events) > 0 {
+		summary.StartedAt = page.Events[0].At
+		if summary.State == agentrun.StateFailed || summary.State == agentrun.StateCanceled || summary.State == agentrun.StateTimedOut || summary.State == agentrun.StateUnavailable {
+			summary.Reason = page.Events[len(page.Events)-1].OutcomeError
+		}
+	}
 }

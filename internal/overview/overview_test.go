@@ -233,13 +233,13 @@ func TestCollectMissingRegistryYieldsEmptySnapshot(t *testing.T) {
 
 // stubRecentRuns swaps the package seam for stub and restores it on cleanup;
 // the returned slice records every directory the seam was asked about.
-func stubRecentRuns(t *testing.T, stub func(dir string, limit int) ([]presence.RunSummary, error)) *[]string {
+func stubRecentRuns(t *testing.T, stub func(dir string, limit int, visiblePaths []string) ([]presence.RunSummary, error)) *[]string {
 	t.Helper()
 	calls := &[]string{}
 	previous := recentRuns
-	recentRuns = func(dir string, limit int) ([]presence.RunSummary, error) {
+	recentRuns = func(dir string, limit int, visiblePaths []string) ([]presence.RunSummary, error) {
 		*calls = append(*calls, dir)
-		return stub(dir, limit)
+		return stub(dir, limit, visiblePaths)
 	}
 	t.Cleanup(func() { recentRuns = previous })
 	return calls
@@ -247,6 +247,9 @@ func stubRecentRuns(t *testing.T, stub func(dir string, limit int) ([]presence.R
 
 func TestCollectStoresRecentRunsUpToLimit(t *testing.T) {
 	repo := initRepo(t)
+	for i := 0; i < MaxSelectableWorktrees; i++ {
+		runGit(t, repo, "worktree", "add", "--detach", filepath.ToSlash(filepath.Join(t.TempDir(), "linked")), "HEAD")
+	}
 	path := registryPath(t)
 	writeRegistry(t, path, registry.Entry{Path: repo, Name: "runs", Enabled: true})
 	want := []presence.RunSummary{
@@ -254,8 +257,10 @@ func TestCollectStoresRecentRunsUpToLimit(t *testing.T) {
 		{RunID: "bbbbbbbbbbbbbbbbbbbb", State: agentrun.StateSucceeded, Revision: 5},
 	}
 	var gotLimit int
-	stubRecentRuns(t, func(dir string, limit int) ([]presence.RunSummary, error) {
+	var gotPaths []string
+	stubRecentRuns(t, func(dir string, limit int, visiblePaths []string) ([]presence.RunSummary, error) {
 		gotLimit = limit
+		gotPaths = append([]string(nil), visiblePaths...)
 		if dir != filepath.Join(repo, ".git") {
 			t.Errorf("runs read anchored at %q, want the resolved common dir", dir)
 		}
@@ -275,7 +280,10 @@ func TestCollectStoresRecentRunsUpToLimit(t *testing.T) {
 	if gotLimit != 10 {
 		t.Fatalf("runs read used limit %d, want the explicit operator history limit 10", gotLimit)
 	}
-	if repos[0].Error != "" || len(repos[0].Worktrees) != 1 || repos[0].Daemon != stopped() {
+	if len(gotPaths) != MaxSelectableWorktrees || len(repos[0].Worktrees) != MaxSelectableWorktrees+1 {
+		t.Fatalf("runs read received %d of %d inventory worktree paths", len(gotPaths), len(repos[0].Worktrees))
+	}
+	if repos[0].Error != "" || len(repos[0].Worktrees) != MaxSelectableWorktrees+1 || repos[0].Daemon != stopped() {
 		t.Fatalf("healthy probes must stay intact beside stored runs: %#v", repos[0])
 	}
 }
@@ -284,7 +292,7 @@ func TestCollectRunsFailureRecordsErrorWithoutFailingView(t *testing.T) {
 	repo := initRepo(t)
 	path := registryPath(t)
 	writeRegistry(t, path, registry.Entry{Path: repo, Name: "runs", Enabled: true})
-	stubRecentRuns(t, func(string, int) ([]presence.RunSummary, error) {
+	stubRecentRuns(t, func(string, int, []string) ([]presence.RunSummary, error) {
 		return nil, errors.New("store exploded")
 	})
 
@@ -323,7 +331,7 @@ func TestCollectPreservesFirstObservedErrorWhenRunsReadAlsoFails(t *testing.T) {
 	path := registryPath(t)
 	writeRegistry(t, path, registry.Entry{Path: repo, Name: "broken", Enabled: true})
 	seen := false
-	stubRecentRuns(t, func(string, int) ([]presence.RunSummary, error) {
+	stubRecentRuns(t, func(string, int, []string) ([]presence.RunSummary, error) {
 		seen = true
 		return nil, errors.New("store exploded")
 	})
@@ -354,7 +362,7 @@ func TestCollectStoresSuccessfulRunRowsBesideOriginalError(t *testing.T) {
 	want := []presence.RunSummary{
 		{RunID: "cccccccccccccccccccc", State: agentrun.StateCanceled, Revision: 9},
 	}
-	stubRecentRuns(t, func(string, int) ([]presence.RunSummary, error) {
+	stubRecentRuns(t, func(string, int, []string) ([]presence.RunSummary, error) {
 		return want, nil
 	})
 

@@ -27,15 +27,10 @@ const maxRunFlowRunes = 12
 // already reserve, two more than the legacy id fallback.
 const maxOperationFlowRunes = 16
 
-// maxTreeChildren bounds how many worktree child lines one repository may
-// render in the tree pane before the rest collapse behind a single dim
-// "… N more" line (slice 13, intentionally 20): snapshot plumbing worktrees are already
-// filtered out of the snapshot, so this cap is defense in depth against
-// operator repositories that legitimately carry dozens of worktrees — an
-// unbounded tree would still drown every other repository and push the
-// activity pane off-screen. Degraded repositories are exempt: they render
-// their Error line instead of children, so they neither count nor collapse.
-const maxTreeChildren = 20
+// maxVisibleRuns is the operator-visible history depth for every activity
+// scope. Repo.Runs may carry a larger union so selecting a worktree can still
+// reach runs older than the repository-global newest rows.
+const maxVisibleRuns = 10
 
 // FocusPane names the pane that owns keyboard navigation.
 type FocusPane int
@@ -110,7 +105,7 @@ func renderOverview(width int, colors bool, s ViewState) string {
 	}
 	return renderFrame(p, width, overviewSummary(repos),
 		func(w int) []string { return overviewTree(p, w, s) },
-		func(w int) []string { return overviewRight(p, w, s) })
+		func(w int) []string { return overviewRight(p, w, s) }, activityMinRightWidth)
 }
 
 // ProjectOverview returns the immutable view of repos that matches filter.
@@ -134,7 +129,7 @@ func ProjectOverview(repos []overview.Repo, filter string) []overview.Repo {
 			// A worktree match keeps only the matching worktree and runs
 			// explicitly attributed to it.
 			var matchedWorktrees []inventory.Worktree
-			for _, wt := range r.Worktrees {
+			for _, wt := range r.Worktrees[:min(len(r.Worktrees), overview.MaxSelectableWorktrees)] {
 				if strings.Contains(strings.ToLower(wt.Branch), filter) ||
 					strings.Contains(strings.ToLower(wt.Path), filter) {
 					matchedWorktrees = append(matchedWorktrees, wt)
@@ -249,27 +244,35 @@ func worktreeName(wt inventory.Worktree) string {
 	return wt.Branch
 }
 
-// VisibleRuns returns the render-order positions of the navigable RUN rows
-// in s.Repos: repository summary rows are not navigable. The sequence walks
-// repositories in snapshot order and runs in stored order inside each one —
-// exactly the order the ACTIVITY pane draws its run rows — so control can
-// move a cursor over what the operator sees.
+// VisibleRuns returns the capped render-order positions drawn by ACTIVITY.
 func VisibleRuns(s ViewState) []RunPos {
 	var positions []RunPos
+	cursor := effectiveTreeCursor(s)
 	worktreePath := selectedWorktreePath(s)
+	selectedRepo := -1
+	if worktreePath != "" {
+		selectedRepo = cursor.Repo
+	}
 	for i, r := range s.Repos {
+		if selectedRepo >= 0 && i != selectedRepo {
+			continue
+		}
+		visible := 0
 		for j, run := range r.Runs {
 			if worktreePath != "" && !sameWorktreePath(run.Worktree, worktreePath) {
 				continue
 			}
+			if visible == maxVisibleRuns {
+				break
+			}
 			positions = append(positions, RunPos{Repo: i, Run: j})
+			visible++
 		}
 	}
 	return positions
 }
 
-// selectedWorktreePath returns the worktree path whose runs ACTIVITY shows,
-// or empty when the repository row (rather than a child row) is selected.
+// selectedWorktreePath returns the selected child path, or empty for a repo row.
 func selectedWorktreePath(s ViewState) string {
 	cursor := effectiveTreeCursor(s)
 	if cursor.Worktree < 0 || cursor.Repo < 0 || cursor.Repo >= len(s.Repos) {
@@ -282,9 +285,7 @@ func selectedWorktreePath(s ViewState) string {
 	return worktrees[cursor.Worktree].Path
 }
 
-// sameWorktreePath compares persisted inventory paths using the host's file
-// system semantics. Windows worktree paths may differ only by drive or case
-// normalization between inventory and durable-run records.
+// sameWorktreePath compares persisted paths using host filesystem semantics.
 func sameWorktreePath(left, right string) bool {
 	if left == "" || right == "" {
 		return left == right
@@ -315,8 +316,8 @@ func VisibleTreePositions(s ViewState) []TreePos {
 		positions = append(positions, TreePos{Repo: i, Worktree: -1})
 		if i == selected && r.Error == "" {
 			shown := len(r.Worktrees)
-			if shown > maxTreeChildren {
-				shown = maxTreeChildren
+			if shown > overview.MaxSelectableWorktrees {
+				shown = overview.MaxSelectableWorktrees
 			}
 			for j := 0; j < shown; j++ {
 				positions = append(positions, TreePos{Repo: i, Worktree: j})
@@ -345,7 +346,7 @@ func effectiveTreeCursor(s ViewState) TreePos {
 }
 
 // overviewTree renders the tree pane: one line per repo with its daemon
-// state word, then one child line per worktree — capped at maxTreeChildren,
+// state word, then one child line per worktree — capped at the shared limit,
 // with any further children collapsed into one final dim "… N more" line —
 // or, for a degraded repo, its recorded Error in place of the children
 // (degraded repos never count nor collapse). The overflow line always draws
@@ -400,8 +401,8 @@ func overviewTree(p painter, w int, s ViewState) []string {
 		}
 		total := len(r.Worktrees)
 		shown := total
-		if shown > maxTreeChildren {
-			shown = maxTreeChildren
+		if shown > overview.MaxSelectableWorktrees {
+			shown = overview.MaxSelectableWorktrees
 		}
 		for j, wt := range r.Worktrees[:shown] {
 			child := classifyWorktree(wt)
@@ -419,10 +420,10 @@ func overviewTree(p painter, w int, s ViewState) []string {
 				span{"   " + branch + " " + fitRunes(worktreeName(wt), 17), wtStyle},
 				span{" " + child.state, statusColor[child.kind]}))
 		}
-		if total > maxTreeChildren {
+		if total > overview.MaxSelectableWorktrees {
 			lines = append(lines, p.spanLine(w,
 				span{"   └─ ", Dim},
-				span{fmt.Sprintf("… %d more", total-maxTreeChildren), Dim}))
+				span{fmt.Sprintf("… %d more", total-overview.MaxSelectableWorktrees), Dim}))
 		}
 	}
 	return lines
@@ -550,24 +551,20 @@ func statusField(r overview.Repo) string {
 // OpenRunID grows one dim detail line (mismatched ids render nothing).
 func overviewActivity(s ViewState) []activityRow {
 	rows := make([]activityRow, 0, len(s.Repos))
-	// Determine worktree filter: when a worktree is selected, only runs for
-	// that worktree's path are shown. Repo row shows all runs for the repo.
-	filterWorktree := selectedWorktreePath(s)
+	visibleRuns := VisibleRuns(s)
+	visibleSet := make(map[RunPos]struct{}, len(visibleRuns))
+	visibleByRepo := make(map[int]int, len(s.Repos))
+	for _, pos := range visibleRuns {
+		visibleSet[pos] = struct{}{}
+		visibleByRepo[pos.Repo]++
+	}
 	for i, r := range s.Repos {
 		state := classifyRepo(r)
-		visibleRunCount := 0
-		for _, runSummary := range r.Runs {
-			if filterWorktree != "" && !sameWorktreePath(runSummary.Worktree, filterWorktree) {
-				continue
-			}
-			visibleRunCount++
-		}
-		if !(visibleRunCount > 0 && (state.kind == stOwn || state.kind == stStop)) {
+		if !(visibleByRepo[i] > 0 && (state.kind == stOwn || state.kind == stStop)) {
 			rows = append(rows, summaryActivityRow(r, state))
 		}
 		for j, runSummary := range r.Runs {
-			// Filter by worktree when a worktree is selected.
-			if filterWorktree != "" && !sameWorktreePath(runSummary.Worktree, filterWorktree) {
+			if _, ok := visibleSet[RunPos{Repo: i, Run: j}]; !ok {
 				continue
 			}
 			row := runRow(runSummary)
@@ -731,7 +728,7 @@ func runWhen(run presence.RunSummary) string {
 	if run.StartedAt.IsZero() {
 		return "-"
 	}
-	return run.StartedAt.Local().Format("15:04:05")
+	return run.StartedAt.Local().Format("2006-01-02 15:04")
 }
 
 func formatRunTimestamp(at time.Time) string {

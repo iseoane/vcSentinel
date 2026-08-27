@@ -212,31 +212,33 @@ func (s *Store) ReadExecutionRequest(runID string) (ExecutionRequest, error) {
 	return request, nil
 }
 
-// ReadRunOperation reads the operator-facing operation label persisted in one
-// durable run's immutable policy record; records admitted before the label
-// existed (or without one) return an empty string. A missing record reports a
-// not-found error wrapping ErrExecutionNotFound — the same vocabulary the
-// other readers use — and bytes that fail to decode into the recorded shape
-// report an error wrapping ErrPolicyCorrupt, so callers can separate store
-// damage from absent history.
-func (s *Store) ReadRunOperation(runID string) (string, error) {
+// ReadRunPolicy reads one immutable policy record. Optional legacy fields may
+// be empty; missing or structurally invalid records return their sentinels.
+func (s *Store) ReadRunPolicy(runID string) (RunPolicy, error) {
 	directory, err := s.executionDir(runID)
 	if err != nil {
-		return "", err
+		return RunPolicy{}, err
 	}
 	path := filepath.Join(directory, "policy.json")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
+		return RunPolicy{}, fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
 	}
 	if err != nil {
-		return "", err
+		return RunPolicy{}, err
 	}
 	var policy RunPolicy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return "", fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
+	if err := json.Unmarshal(data, &policy); err != nil || policy.ID == "" {
+		return RunPolicy{}, fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
 	}
-	return policy.Operation, nil
+	return policy, nil
+}
+
+// ReadRunOperation reads the operator-facing operation label persisted in one
+// durable run's immutable policy record.
+func (s *Store) ReadRunOperation(runID string) (string, error) {
+	policy, err := s.ReadRunPolicy(runID)
+	return policy.Operation, err
 }
 
 func (s *Store) UpdateRunOperation(runID, operation string) error {
@@ -268,21 +270,9 @@ func (s *Store) UpdateRunOperation(runID, operation string) error {
 }
 
 func (s *Store) ReadRunCommit(runID string) (string, error) {
-	directory, err := s.executionDir(runID)
+	policy, err := s.ReadRunPolicy(runID)
 	if err != nil {
 		return "", err
-	}
-	path := filepath.Join(directory, "policy.json")
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
-	}
-	if err != nil {
-		return "", err
-	}
-	var policy RunPolicy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return "", fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
 	}
 	return policy.Commit, nil
 }
@@ -316,21 +306,9 @@ func (s *Store) UpdateRunCommit(runID, commit string) error {
 }
 
 func (s *Store) ReadRunWorktree(runID string) (string, error) {
-	directory, err := s.executionDir(runID)
+	policy, err := s.ReadRunPolicy(runID)
 	if err != nil {
 		return "", err
-	}
-	path := filepath.Join(directory, "policy.json")
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("%w: %s", ErrExecutionNotFound, path)
-	}
-	if err != nil {
-		return "", err
-	}
-	var policy RunPolicy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return "", fmt.Errorf("%w: %s", ErrPolicyCorrupt, path)
 	}
 	return policy.Worktree, nil
 }

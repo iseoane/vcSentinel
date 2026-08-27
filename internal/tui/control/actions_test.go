@@ -259,6 +259,24 @@ func TestRunActionsFollowSelectedWorktree(t *testing.T) {
 	}
 }
 
+func TestRunActionsPreserveSelectedRunAcrossRefresh(t *testing.T) {
+	const runID = "shared-run"
+	left, right := repo("left"), repo("right")
+	left.Runs = []presence.RunSummary{{RunID: runID, State: "running"}}
+	right.Runs = []presence.RunSummary{{RunID: runID, State: "running"}}
+	spy := &spyActions{}
+	m := NewLive([]overview.Repo{left, right}, (&recorder{}).refresh, time.Second, spy)
+	m.focus, m.runCursor = art.FocusRuns, art.RunPos{Repo: 0, Run: 0}
+	fresh := left
+	fresh.Runs = append([]presence.RunSummary{{RunID: "newer", State: "running"}}, left.Runs...)
+	m = update(t, m, snapshotMsg{repos: []overview.Repo{fresh, right}})
+	_, cmd := m.Update(keyMsg("a"))
+	want := "abort " + filepath.Join("/tmp", "left") + " " + runID
+	if cmd == nil || len(spy.calls) != 1 || spy.calls[0] != want {
+		t.Fatalf("refresh action = cmd %v calls %v, want [%s]", cmd, spy.calls, want)
+	}
+}
+
 // TestRunFilterClearsWorktreeScope proves a new global query does not leave
 // ACTIVITY constrained to a previously selected, unrelated worktree.
 func TestRunFilterClearsWorktreeScope(t *testing.T) {

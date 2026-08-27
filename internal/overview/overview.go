@@ -16,18 +16,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
 )
 
-// isInternalWorktree reports whether worktreePath lives inside the sentinel
-// snapshot area under commonDir, i.e. equals or nests below
-// <commonDir>/vas-sentinel/snapshots.
-//
-// Both inputs are slash-normalized with filepath.ToSlash before comparing:
-// inventory paths arrive native-cleaned per host OS (internal/inventory
-// converts git's slash output back to native), while commonDir comes from
-// the git plumbing in whatever form the platform produces. Trailing slashes
-// on either side are accepted. On Windows the final comparison folds case,
-// because registry entries, git-resolved paths, and mapped drives disagree
-// about casing there; on case-sensitive platforms it stays exact so two
-// genuinely distinct directories can never collide.
+// isInternalWorktree applies host-normalized paths to the snapshot area rule.
 func isInternalWorktree(worktreePath, commonDir string) bool {
 	base := filepath.ToSlash(filepath.Clean(filepath.Join(commonDir, "vas-sentinel", "snapshots")))
 	path := filepath.ToSlash(filepath.Clean(worktreePath))
@@ -56,44 +45,17 @@ type Repo struct {
 	Runs      []presence.RunSummary
 }
 
-// recentRunLimit bounds how many durable-run summaries each repository
-// snapshot carries; the activity pane renders one row per summary. Ten is the
-// intentional operator-visible history depth for the control center.
+// recentRunLimit is the operator-visible history depth for each activity scope.
 const recentRunLimit = 10
 
-// recentRuns is the RecentRuns seam: a package-level function variable so
-// Collect tests can stub the store-backed read without building real
-// execution stores. Production code never reassigns it.
-var recentRuns = presence.RecentRuns
+// MaxSelectableWorktrees is the TUI's selectable worktree cap.
+const MaxSelectableWorktrees = 20
 
-// Collect opens the registry at registryPath and builds exactly one Repo per
-// entry, preserving the registry's sort order (by Path).
-//
-// Degradation contract — the returned error is reserved for registry-open
-// failure (no registry, no overview); it is never combined with a partial
-// slice. Every per-repository problem lives in that Repo's Error field:
-//
-//   - Entry.Missing(): Missing is flagged and every probe is skipped
-//     (Worktrees nil, Origin empty, Daemon the Stopped zero value, Runs nil).
-//   - Otherwise the git common dir is resolved first; on failure Error
-//     records it while Daemon stays the zero value and Worktrees and Runs
-//     stay nil.
-//   - Once the common dir resolves, the presence probe always runs (it
-//     degrades to Stopped by its own contract); an inventory failure records
-//     Error while keeping the probe result.
-//   - A successful inventory keeps only operator-visible worktrees: internal
-//     sentinel plumbing under <commonDir>/vas-sentinel/snapshots (validation
-//     snapshot worktrees) is filtered out before it reaches Repo.Worktrees,
-//     so every derived count (tree children, LOCATION status tallies) sees
-//     the same visible set.
-//   - The recent-runs read still executes afterwards: a successful read
-//     stores up to recentRunLimit summaries in Runs (an empty store keeps
-//     Runs nil); a runs-read failure records its cause in Error only when
-//     the field is still empty (the first observed cause wins) and also
-//     leaves Runs nil.
-//
-// Disabled entries are included but flagged; callers filter. There is no
-// caching and nothing is written, dialed, or started.
+// recentRuns is the store-backed read seam used by Collect tests.
+var recentRuns = presence.RecentRunsForWorktrees
+
+// Collect builds one deterministic Repo per registry entry and records probe
+// failures on that Repo instead of failing the whole overview.
 func Collect(registryPath string) ([]Repo, error) {
 	reg, err := registry.Open(registryPath)
 	if err != nil {
@@ -114,11 +76,7 @@ func Collect(registryPath string) ([]Repo, error) {
 	return repos, nil
 }
 
-// collectProbes fills repo with the daemon, inventory, and durable-run facts
-// of repoPath, recording any failure in repo.Error without ever failing the
-// collection. The probes are independent reads over the resolved common dir:
-// an early failure keeps its recorded cause because every later failure only
-// writes when Error is still empty.
+// collectProbes fills one Repo with independent daemon, inventory, and run reads.
 func collectProbes(repo *Repo, repoPath string) {
 	commonDir, err := git.ObtenerGitCommonDir(repoPath)
 	if err != nil {
@@ -133,7 +91,15 @@ func collectProbes(repo *Repo, repoPath string) {
 		repo.Worktrees = visibleWorktrees(snapshot.Worktrees, commonDir)
 		repo.Origin = snapshot.Origin
 	}
-	runs, err := recentRuns(commonDir, recentRunLimit)
+	worktrees := repo.Worktrees
+	if len(worktrees) > MaxSelectableWorktrees {
+		worktrees = worktrees[:MaxSelectableWorktrees]
+	}
+	visiblePaths := make([]string, 0, len(worktrees))
+	for _, worktree := range worktrees {
+		visiblePaths = append(visiblePaths, worktree.Path)
+	}
+	runs, err := recentRuns(commonDir, recentRunLimit, visiblePaths)
 	if err != nil {
 		if repo.Error == "" { // first observed cause wins
 			repo.Error = fmt.Sprintf("overview: read recent runs for %q: %v", repoPath, err)
@@ -145,11 +111,7 @@ func collectProbes(repo *Repo, repoPath string) {
 	}
 }
 
-// visibleWorktrees filters the inventory's worktrees down to the
-// operator-visible set: internal sentinel plumbing (snapshot worktrees under
-// the common dir's vas-sentinel/snapshots area) never reaches the snapshot
-// view, keeping tree children and every derived count honest. A result with
-// no survivors stays nil so empty views keep comparing and rendering as nil.
+// visibleWorktrees removes internal snapshot worktrees from the view.
 func visibleWorktrees(worktrees []inventory.Worktree, commonDir string) []inventory.Worktree {
 	var visible []inventory.Worktree
 	for _, wt := range worktrees {

@@ -163,17 +163,17 @@ func TestRecentRunsSurfacesOperationsAndDegradesSoftly(t *testing.T) {
 	}
 
 	corruptErr := os.WriteFile(filepath.Join(commonDir, "vas-sentinel", "executions", "v1", gateID, "policy.json"),
-		[]byte("{not json"), 0600)
+		[]byte(`{"worktree":"/hidden"}`), 0600)
 	if corruptErr != nil {
 		t.Fatal(corruptErr)
 	}
-	summaries, err = RecentRuns(commonDir, 10)
+	summaries, err = RecentRunsForWorktrees(commonDir, 10, []string{"/hidden"})
 	if err != nil || len(summaries) != 3 {
 		t.Fatalf("a corrupt policy must degrade softly, got %#v, %v", summaries, err)
 	}
 	labels = byID(summaries)
-	if labels[gateID].Operation != "" {
-		t.Fatalf("degraded run operation = %q, want empty", labels[gateID].Operation)
+	if labels[gateID].Operation != "" || labels[gateID].Worktree != "" {
+		t.Fatalf("malformed policy metadata = (%q,%q), want empty", labels[gateID].Operation, labels[gateID].Worktree)
 	}
 	if labels[reviewID].Operation != "review" || labels[bareID].Operation != "" {
 		t.Fatalf("the other summaries must survive the degraded listing untouched: %+v", labels)

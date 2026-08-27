@@ -94,6 +94,8 @@ type pendingAction struct {
 	RunID    string
 }
 
+type runIdentity struct{ repoPath, runID string }
+
 // actionResultMsg carries one dispatched run action's outcome from the hook's
 // command goroutine back to Update. Only a message matching the current
 // pending marker is consumed: stale results are ignored whole. Failure lands
@@ -356,8 +358,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err.Error()
 			return m, nil
 		}
+		selectedRun := m.currentRunIdentity()
 		m.repos = msg.repos
-		m.reanchorCursors()
+		m.reanchorCursors(selectedRun)
 		m.refreshing = false
 		m.err = ""
 		return m, nil
@@ -547,11 +550,13 @@ func focusedVisibleRun(repos []overview.Repo, treeCursor art.TreePos, pos art.Ru
 	return art.RunPos{}, false
 }
 
-// reanchorCursors keeps every cursor in the same filtered coordinate system
-// used by rendering. A filter or snapshot may remove the old row, so the
-// nearest safe fallback is the first visible repository/run. Hidden detail
-// lines are cleared rather than retained against an absent run.
-func (m *Model) reanchorCursors() {
+// reanchorCursors keeps cursors aligned with the filtered rendered snapshot.
+// Snapshot replacement preserves the selected run identity when visible.
+func (m *Model) reanchorCursors(preservedRun ...runIdentity) {
+	selectedRun := m.currentRunIdentity()
+	if len(preservedRun) > 0 {
+		selectedRun = preservedRun[0]
+	}
 	repos := art.ProjectOverview(m.repos, m.filter)
 	if len(repos) == 0 {
 		m.selected = 0
@@ -592,7 +597,10 @@ func (m *Model) reanchorCursors() {
 	runFound := false
 	openFound := m.openRunID == ""
 	for _, pos := range visibleRuns {
-		if pos == m.runCursor {
+		matches := selectedRun.runID != "" && repos[pos.Repo].Path == selectedRun.repoPath &&
+			repos[pos.Repo].Runs[pos.Run].RunID == selectedRun.runID
+		if !runFound && (matches || selectedRun.runID == "" && pos == m.runCursor) {
+			m.runCursor = pos
 			runFound = true
 		}
 		if m.openRunID != "" && repos[pos.Repo].Runs[pos.Run].RunID == m.openRunID {
@@ -607,6 +615,15 @@ func (m *Model) reanchorCursors() {
 	if !openFound {
 		m.openRunID = ""
 	}
+}
+
+func (m *Model) currentRunIdentity() runIdentity {
+	repos := art.ProjectOverview(m.repos, m.filter)
+	pos, ok := focusedVisibleRun(repos, m.treeCursor, m.runCursor)
+	if !ok {
+		return runIdentity{}
+	}
+	return runIdentity{repoPath: repos[pos.Repo].Path, runID: repos[pos.Repo].Runs[pos.Run].RunID}
 }
 
 // scheduleCmd resolves the tick scheduler: live models use their injected

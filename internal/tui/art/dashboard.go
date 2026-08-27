@@ -137,7 +137,7 @@ func renderDashboard(width int, colors bool) string {
 	p := painter{colors: colors}
 	return renderFrame(p, width, mockSummary,
 		func(w int) []string { return treeLines(p, w, mockRepos) },
-		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity, false, false) })
+		func(w int) []string { return rightLines(p, w, mockLocation, mockActivity, false, false) }, 0)
 }
 
 // Activity column widths: the caption row and every data row anchor to the
@@ -148,13 +148,12 @@ const (
 	activityStageWidth  = 20
 	activityStateWidth  = 9
 	activityAgeWidth    = 8
-	activityWhenWidth   = 8
+	activityWhenWidth   = 16
+	// Keep real activity columns visible beside the tree.
+	activityMinRightWidth = 80
 )
 
-// activityCaptionRow renders the dim column-caption row anchored to the exact
-// fitRunes widths the run rows use: a blank icon cell (two runes, matching
-// " " + one-rune icon), COMMIT(7), FLOW, STAGE, STATE, AGE, and WHEN. The
-// final label needs no padding, and spanLine clamps the row on narrow panes.
+// activityCaptionRow renders captions using the data-row column widths.
 func activityCaptionRow(p painter, w int) string {
 	return p.spanLine(w,
 		span{"  ", Dim},
@@ -166,17 +165,19 @@ func activityCaptionRow(p painter, w int) string {
 		span{"WHEN", Dim})
 }
 
-// renderFrame assembles the approved frame: rules, header with the daemon
-// summary, panes (stacked below 84 columns), and navigation footer. Pane
-// builders run lazily because the two modes need different pane widths;
-// mock and real-data renders share this frame unchanged.
-func renderFrame(p painter, width int, summary []span, tree, right func(int) []string) string {
+// renderFrame assembles the frame. A positive minRightWidth protects fixed
+// right-pane columns before choosing side-by-side layout.
+func renderFrame(p painter, width int, summary []span, tree, right func(int) []string, minRightWidth int) string {
 	var lines []string
 	lines = append(lines, rule(p, width, true))
 	lines = append(lines, headerLine(p, width, summary))
 	lines = append(lines, rule(p, width, true))
 
-	if width < 84 {
+	sideBySide := width >= 84
+	if minRightWidth > 0 {
+		sideBySide = width-leftPaneWidth(width)-3 >= minRightWidth
+	}
+	if !sideBySide {
 		// Stacked: every block gets the full width.
 		lines = append(lines, tree(width)...)
 		lines = append(lines, rule(p, width, false))

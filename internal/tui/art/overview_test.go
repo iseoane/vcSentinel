@@ -1,7 +1,10 @@
 package art
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,12 +16,78 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 // Fixtures build snapshot values directly (no git needed). colorPrefix
 // matches painted spans whose text spanLine right-pads before wrapping.
 func wt(branch string, clean bool) inventory.Worktree {
 	return inventory.Worktree{Path: filepath.Join("/tmp/repo", branch), Branch: branch, Clean: clean}
+}
+
+func runActivityGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+func initActivityRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runActivityGit(t, dir, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runActivityGit(t, dir, "add", ".")
+	runActivityGit(t, dir, "-c", "user.email=test@vas.sentinel", "-c", "user.name=VAS Sentinel Test",
+		"-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: base")
+	return dir
+}
+
+func writeActivityRegistry(t *testing.T, path string, entries ...registry.Entry) {
+	t.Helper()
+	for i := range entries {
+		entries[i].Path = filepath.ToSlash(entries[i].Path)
+	}
+	data, err := json.MarshalIndent(struct {
+		Version      int              `json:"version"`
+		Repositories []registry.Entry `json:"repositories"`
+	}{Version: 1, Repositories: entries}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedActivityRun(t *testing.T, st *store.Store, candidate, worktree string, at time.Time) string {
+	t.Helper()
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
+		agentrun.Candidate(candidate), agentrun.Prompt("activity fixture"), nil))
+	runID := string(job.RunID())
+	if err := st.CreateRun(job, store.RunPolicy{
+		ID: "policy:activity", Operation: candidate, Worktree: worktree,
+	}); err != nil {
+		t.Fatalf("create activity run %s: %v", candidate, err)
+	}
+	invocation, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := agentrun.NewNormalizedEvent(invocation, agentrun.StateCreated, agentrun.StateQueued,
+		agentrun.DecisionStart, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AppendEvent(runID, event, 0); err != nil {
+		t.Fatalf("append activity event: %v", err)
+	}
+	return runID
 }
 
 func TestSameWorktreePathUsesHostSemantics(t *testing.T) {
@@ -174,14 +243,14 @@ func TestOverviewTreeAtLimitAndDegradedExempt(t *testing.T) {
 		t.Errorf("%d connected children at the limit, want 19:\n%s", got, exact)
 	}
 	if strings.Contains(exact, "more") {
-		t.Errorf("a repository at exactly maxTreeChildren must not collapse:\n%s", exact)
+		t.Errorf("a repository at the selectable cap must not collapse:\n%s", exact)
 	}
 
 	small := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{
 		stoppedRepo("small", wt("main", true), wt("dev", true), wt("spike", false))}})
 	assertContains(t, small, "   └─ spike")
 	if strings.Contains(small, "more") {
-		t.Errorf("a repository under maxTreeChildren must not grow an overflow line:\n%s", small)
+		t.Errorf("a repository under the selectable cap must not grow an overflow line:\n%s", small)
 	}
 
 	degraded := overview.Repo{Name: "broken", Error: "overview: inspect repository boom",
@@ -357,7 +426,7 @@ func TestOverviewActivityCaptionRowAnchors(t *testing.T) {
 		{"FLOW", "abcdef123456"},
 		{"STAGE", "rev 7"},
 		{"STATE", "RUNNING"},
-		{"WHEN", startedAt.Local().Format("15:04:05")},
+		{"WHEN", startedAt.Local().Format("2006-01-02 15:04")},
 	} {
 		if got, expect := runeIndex(caption, anchor.captionMarker), runeIndex(row, anchor.rowMarker); got != expect {
 			t.Errorf("column %q at rune %d but row content %q at rune %d:\ncaption %q\nrow    %q",
@@ -449,6 +518,9 @@ func TestFilterReposNarrowsWorktreeMatches(t *testing.T) {
 	repo.Worktrees = []inventory.Worktree{wt("main", true), wt("feature", false)}
 	repo.Runs[0].Worktree = repo.Worktrees[0].Path
 	repo.Runs[1].Worktree = repo.Worktrees[1].Path
+	for i := 3; i <= overview.MaxSelectableWorktrees+1; i++ {
+		repo.Worktrees = append(repo.Worktrees, wt(fmt.Sprintf("branch-%02d", i), true))
+	}
 
 	filtered := ProjectOverview([]overview.Repo{repo}, "feature")
 	if len(filtered) != 1 || len(filtered[0].Worktrees) != 1 ||
@@ -457,6 +529,9 @@ func TestFilterReposNarrowsWorktreeMatches(t *testing.T) {
 	}
 	if len(filtered[0].Runs) != 1 || filtered[0].Runs[0].RunID != "feature-run" {
 		t.Fatalf("filtered worktree runs = %#v, want only feature-run", filtered[0].Runs)
+	}
+	if filtered = ProjectOverview([]overview.Repo{repo}, "branch-21"); len(filtered) != 0 {
+		t.Fatalf("worktree beyond selectable cap became selectable: %#v", filtered)
 	}
 }
 
@@ -504,6 +579,69 @@ func TestOverviewActivityDistinguishesDefaultAndFirstWorktree(t *testing.T) {
 	assertContains(t, firstWorktree, "review main")
 	if strings.Contains(firstWorktree, "review feature") {
 		t.Errorf("explicit first worktree leaked another worktree run:\n%s", firstWorktree)
+	}
+}
+
+// TestCollectedRunsFeedRepositoryAndWorktreeActivityScopes covers Store -> TUI.
+func TestCollectedRunsFeedRepositoryAndWorktreeActivityScopes(t *testing.T) {
+	repoPath := initActivityRepo(t)
+	featurePath := filepath.Join(t.TempDir(), "feature")
+	runActivityGit(t, repoPath, "worktree", "add", featurePath, "-b", "feature")
+	st := store.NuevoStore(filepath.Join(repoPath, ".git"))
+	mainBase := time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)
+	featureBase := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
+	for i := 0; i < 11; i++ {
+		label := fmt.Sprintf("main-%02d", i)
+		seedActivityRun(t, st, label, repoPath, mainBase.Add(time.Duration(i)*time.Minute))
+	}
+	for i := 0; i < 10; i++ {
+		label := fmt.Sprintf("feature-%02d", i)
+		seedActivityRun(t, st, label, featurePath, featureBase.Add(time.Duration(i)*time.Minute))
+	}
+	seedActivityRun(t, st, "legacy-unattributed", "", featureBase.Add(-time.Minute))
+
+	registryPath := filepath.Join(t.TempDir(), "repositories.json")
+	writeActivityRegistry(t, registryPath, registry.Entry{
+		Path: repoPath, Name: "activity", Enabled: true,
+	})
+	repos, err := overview.Collect(registryPath)
+	if err != nil {
+		t.Fatalf("overview.Collect: %v", err)
+	}
+	if len(repos) != 1 || len(repos[0].Runs) != 20 {
+		t.Fatalf("collected runs = %d, want global ten plus feature ten: %#v", len(repos[0].Runs), repos)
+	}
+
+	globalActivity := activityBlock(t, RenderOverviewPlain(80, ViewState{Repos: repos}))
+	for i := 1; i <= 10; i++ {
+		if !strings.Contains(globalActivity, fmt.Sprintf("main-%02d", i)) {
+			t.Errorf("repository activity missing global run main-%02d:\n%s", i, globalActivity)
+		}
+	}
+	if strings.Contains(globalActivity, "main-00") || strings.Contains(globalActivity, "feature-") {
+		t.Errorf("repository scope leaked runs outside the global ten:\n%s", globalActivity)
+	}
+
+	featureIndex := -1
+	for i, worktree := range repos[0].Worktrees {
+		if filepath.Clean(worktree.Path) == filepath.Clean(featurePath) {
+			featureIndex = i
+			break
+		}
+	}
+	if featureIndex < 0 {
+		t.Fatalf("collected worktrees omitted feature path %q: %#v", featurePath, repos[0].Worktrees)
+	}
+	selected := ViewState{Repos: repos, TreeCursor: TreePos{Repo: 0, Worktree: featureIndex}, TreeCursorSet: true}
+	featurePositions := VisibleRuns(selected)
+	if len(featurePositions) != 10 {
+		t.Fatalf("selected feature positions = %v, want exactly ten", featurePositions)
+	}
+	featureActivity := activityBlock(t, RenderOverviewPlain(80, selected))
+	assertContains(t, featureActivity, "feature-00", "feature-01", "feature-02", "feature-03", "feature-04",
+		"feature-05", "feature-06", "feature-07", "feature-08", "feature-09")
+	if strings.Contains(featureActivity, "main-") {
+		t.Errorf("selected worktree activity leaked main runs:\n%s", featureActivity)
 	}
 }
 
@@ -810,7 +948,7 @@ func TestRunRowAgeAndWhenUseAdmissionTimestamps(t *testing.T) {
 	startedAt := time.Date(2026, 1, 2, 12, 34, 56, 0, time.FixedZone("fixture", 5*60*60+30*60))
 	now := startedAt.Add(2*time.Minute + 3*time.Second)
 	pinClock(t, now)
-	wantWhen := startedAt.Local().Format("15:04:05")
+	wantWhen := startedAt.Local().Format("2006-01-02 15:04")
 
 	active := runRow(runWithTimes("active", agentrun.StateRunning, 1, startedAt, startedAt.Add(15*time.Second)))
 	if active.age != "02:03" || active.when != wantWhen {
@@ -831,6 +969,22 @@ func TestRunRowAgeAndWhenUseAdmissionTimestamps(t *testing.T) {
 	legacy := runRow(run("legacy", agentrun.StateRunning, 0, time.Time{}))
 	if legacy.age != "-" || legacy.when != "-" {
 		t.Fatalf("legacy columns = AGE %q WHEN %q, want dashes", legacy.age, legacy.when)
+	}
+}
+
+func TestRenderOverviewKeepsAgeAndWhenVisibleAtTerminalWidths(t *testing.T) {
+	startedAt := time.Date(2026, 1, 2, 12, 34, 56, 0, time.UTC)
+	pinClock(t, startedAt.Add(2*time.Minute+3*time.Second))
+	repos := []overview.Repo{{Name: "activity", Runs: []presence.RunSummary{
+		runWithTimes("activity-run", agentrun.StateRunning, 1, startedAt, startedAt.Add(time.Minute)),
+	}}}
+	wantWhen := startedAt.Local().Format("2006-01-02 15:04")
+	for _, width := range []int{84, 100, 118, 140} {
+		dash := RenderOverviewPlain(width, ViewState{
+			Repos: repos, Focus: FocusRuns, RunCursor: RunPos{Repo: 0, Run: 0},
+		})
+		assertContains(t, dash, "02:03", wantWhen)
+		assertWidth(t, dash, width)
 	}
 }
 
