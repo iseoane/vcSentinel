@@ -76,6 +76,17 @@ func TestResolveParentBranchPublicationBranch(t *testing.T) {
 	if err != nil || res.Reference != "refs/remotes/origin/b" || res.PublicationBranch != "b" {
 		t.Fatalf("full remote parent: (%q, %q, %v), want refs/remotes/origin/b/b", res.Reference, res.PublicationBranch, err)
 	}
+	res, err = ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: "origin/b"})
+	if err != nil || res.Reference != "origin/b" || res.PublicationBranch != "b" {
+		t.Fatalf("shorthand remote parent: (%q, %q, %v), want origin/b/b", res.Reference, res.PublicationBranch, err)
+	}
+	parentGit(t, dir, "update-ref", "refs/remotes/origin/HEAD", "B")
+	for _, ref := range []string{"refs/remotes/origin/HEAD", "origin/HEAD"} {
+		_, err := ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: ref})
+		if err == nil || !strings.Contains(err.Error(), "not a publishable branch") {
+			t.Errorf("parent %q: err=%v, want HEAD to be rejected as non-publishable", ref, err)
+		}
+	}
 	parentGit(t, dir, "tag", "tagB", "B")
 	sha := strings.TrimSpace(runParentCommand(dir, "git", "rev-parse", "B").stdout)
 	for _, ref := range []string{"tagB", sha} {

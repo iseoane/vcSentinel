@@ -72,6 +72,13 @@ type flagsPrReview struct {
 	parent         string
 }
 
+func parseParentFlagValue(args []string, at int) (string, error) {
+	if at >= len(args) || strings.TrimSpace(args[at]) == "" || strings.HasPrefix(args[at], "-") {
+		return "", fmt.Errorf("--parent requires a non-blank branch value (the stacked parent branch)")
+	}
+	return args[at], nil
+}
+
 // parsearFlagsPrReview parsea las opciones de pr review con la misma sintaxis
 // simple de pares "flag valor" que el resto de subcomandos.
 func parsearFlagsPrReview(args []string) (flagsPrReview, error) {
@@ -87,10 +94,11 @@ func parsearFlagsPrReview(args []string) (flagsPrReview, error) {
 			flags.base = args[i]
 		case "--parent":
 			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" || strings.HasPrefix(args[i], "-") {
-				return flags, fmt.Errorf("--parent requires a non-blank branch value (the stacked parent branch)")
+			val, err := parseParentFlagValue(args, i)
+			if err != nil {
+				return flags, err
 			}
-			flags.parent = args[i]
+			flags.parent = val
 		case "--only-unaudited":
 			flags.soloPendientes = true
 		case "--overview":
@@ -331,10 +339,11 @@ func parsearFlagsPrCreate(args []string) (flagsPrCreate, error) {
 			flags.base = args[i]
 		case "--parent":
 			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" || strings.HasPrefix(args[i], "-") {
-				return flags, fmt.Errorf("--parent requires a non-blank branch value (the stacked parent branch)")
+			val, err := parseParentFlagValue(args, i)
+			if err != nil {
+				return flags, err
 			}
-			flags.parent = args[i]
+			flags.parent = val
 		case "--chain-pr":
 			flags.chainPR = true
 		case "--force":
@@ -639,6 +648,9 @@ type depsPrCreate struct {
 	// de depsPrCreate de testear "sin git, agentes ni gh reales" (comentario
 	// de arriba).
 	resolverActor func(worktree string) string
+	// escribirPlantilla allows tests to observe whether the PR template was
+	// created. When nil, ejecutarPrCreateCon uses escribirPlantillaPR.
+	escribirPlantilla func(string) (string, error)
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -667,7 +679,8 @@ func ejecutarPrCreate(worktree string, args []string) {
 		registrarDecision: func(commonDir string, d *store.Decision) error {
 			return store.NuevoStore(commonDir).RegistrarDecision(d)
 		},
-		resolverActor: resolverActor,
+		resolverActor:     resolverActor,
+		escribirPlantilla: escribirPlantillaPR,
 	}))
 }
 
@@ -838,7 +851,11 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	}
 
 	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
-	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
+	escribir := deps.escribirPlantilla
+	if escribir == nil {
+		escribir = escribirPlantillaPR
+	}
+	rutaPlantilla, err := escribir(cuerpo)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1

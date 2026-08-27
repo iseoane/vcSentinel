@@ -104,7 +104,7 @@ func verifiedParent(worktree, ref string, source ParentSource, evidence []string
 	} else if strings.HasPrefix(full, "refs/remotes/") {
 		remoteRef := strings.TrimPrefix(full, "refs/remotes/")
 		remote, branch, ok := strings.Cut(remoteRef, "/")
-		if ok && remote != "" && branch != "" && (ref == remoteRef || ref == full) {
+		if ok && remote != "" && branch != "" && branch != "HEAD" && (ref == remoteRef || ref == full) {
 			publication = branch
 		}
 	}

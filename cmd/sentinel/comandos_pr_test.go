@@ -1328,13 +1328,24 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	}
 	res.Propio = &review.RangoPropio{Parent: "layer-a"}
 	pubBase, output = "", new(bytes.Buffer)
+	plantillaCreated, publishCalled := false, false
+	deps.escribirPlantilla = func(string) (string, error) { plantillaCreated = true; return "/tmp/sentinel_pr_fake.md", nil }
+	origPublicar := deps.publicar
+	deps.publicar = func(wt, path, base string) (string, bool, error) {
+		publishCalled = true
+		return origPublicar(wt, path, base)
+	}
 	code = ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a"}, deps)
 	if code != 1 ||
 		pubBase != "" ||
 		opts.OwnDiff == nil ||
-		*opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) {
-		t.Errorf("missing publication branch: base=%q own=%v", pubBase, opts.OwnDiff)
+		*opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
+		plantillaCreated ||
+		publishCalled {
+		t.Errorf("missing publication branch: base=%q own=%v templateCreated=%v publishCalled=%v output=%q", pubBase, opts.OwnDiff, plantillaCreated, publishCalled, output.String())
 	}
+	deps.escribirPlantilla = nil
+	deps.publicar = origPublicar
 	res.Net.Audit.Veredicto = review.VerdictOK
 	res.Net.Audit.Findings, res.Fichas, res.Propio = nil, []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictBlock)}, nil
 	pubBase, output = "", new(bytes.Buffer)
