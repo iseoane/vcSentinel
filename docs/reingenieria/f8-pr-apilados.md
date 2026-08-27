@@ -176,15 +176,19 @@ Measured, not assumed: with `Store` removed from the new stacked test, the
 second pass reports `Pendientes = [<2 SHAs>]` and the auditor is called **8
 extra times** after the base rebase.
 
-**Fix.** `resolveBlobStore(worktree)` (`cmd/sentinel/comandos_pr.go:49`) builds
+**Fix.** `resolveBlobStore(worktree)` (`cmd/sentinel/comandos_pr.go:52`) builds
 the store from `git.ObtenerGitCommonDir` — the common dir, never the
 per-worktree git dir, because linked worktrees share one store — and is wired
-at both call sites: `pr review` directly (`comandos_pr.go:223`) and `pr create`
-through the new `depsPrCreate.blobStore` seam (`:711`, `:835`), which exists
+at both call sites: `pr review` directly (`comandos_pr.go:229`) and `pr create`
+through the new `depsPrCreate.blobStore` seam (`:717`, `:844`), which exists
 because `resolveBlobStore` shells out to git and `depsPrCreate` exists to keep
-that out of tests. Failure to resolve the common dir warns on stderr and returns
-nil: reuse is an optimization, not authority, so it degrades to the previous
-SHA-only behaviour instead of aborting a real review.
+that out of tests. It returns `(store, error)`; each command formats the warning
+through the writer it already uses for its own diagnostics, and a nil store
+degrades to the previous SHA-only behaviour instead of aborting a real review.
+
+Reuse is not a new trust boundary: `AnalizarRama` adopts an EXISTING ficha under
+the new SHA (`ledger.AdoptarFicha`), which is the same authority the per-SHA
+ledger cache in the same common dir already had. It never fabricates a verdict.
 
 **Evidence.** `TestStackedBranchSurvivesBaseRebaseViaBlob`
 (`internal/review/rebase_test.go:221`) builds a real `main → layer-a → layer-b`
@@ -195,10 +199,30 @@ b1's new SHA. Unlike F2's test, the rewritten commit here is the **parent
 layer**, so the child's own range is recomputed against a parent whose SHA also
 changed.
 
-**Residual limit.** `ejecutarPrReview` calls `os.Exit` and has no injectable
-seam, so its wiring is covered at the helper level
-(`TestResolveBlobStoreResolvesTheCommonDir`) rather than end-to-end. Adding a
-seam to `pr review` was out of scope for this change.
+`TestResolveBlobStoreResolvesTheCommonDir`
+(`cmd/sentinel/comandos_pr_test.go:1368`) asserts the mandatory contract with a
+real linked worktree: `resolveBlobStore` must resolve the SAME store from the
+main worktree and from a `git worktree add` child. Verified by mutation —
+pointing `git.ObtenerGitCommonDir` at `--git-dir` makes the linked worktree
+resolve `.git/worktrees/linked/vas-sentinel` and the test fails.
+
+**Residual limits.** `ejecutarPrReview` calls `os.Exit` and has no injectable
+seam, so the one-line assignments that wire the store in production
+(`comandos_pr.go:229` and the `blobStore: resolveBlobStore` default at `:717`)
+are not themselves covered: the create test substitutes the seam and the helper
+test exercises `resolveBlobStore` in isolation. Deleting either production line
+would not fail a test. Adding a seam to `pr review` was out of scope.
+
+**Review round.** `sentinel review cd5c6e9` returned `warn` on all five
+dimensions, no `block`. Three warnings were accepted and fixed: the diagnostic
+written to `os.Stderr` instead of the command writer, the helper test unable to
+distinguish the common dir from the per-worktree git dir, and the loose
+"optimization, not authority" wording. Two were recorded and not acted on: the
+`depsPrCreate` cohesion objection to a third git/store-shaped member, and the
+extra `git rev-parse` on the `--force` path, which resolves the common dir twice
+in one run. One was dismissed with primary evidence: the reviewer computed the
+inventory line as 572, but `grep -n exec.Command` puts the marker at 579 and the
+inventory test asserts it.
 
 ### T8.1 deviations
 
