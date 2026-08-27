@@ -38,9 +38,6 @@ func retiredPassthroughDisposition() (string, int) {
 	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr create' to publish a reviewed pull request or 'sentinel pr review' for a dry-run analysis.", 1
 }
 
-// verboPr decide la rama del subcomando pr: "review" y "create" son verbos
-// propios; cualquier otra cosa (flags de gh o nada) es el passthrough legacy
-// a gh pr create.
 func verboPr(args []string) string {
 	if len(args) > 0 {
 		switch args[0] {
@@ -53,9 +50,6 @@ func verboPr(args []string) string {
 	return ""
 }
 
-// ejecutarPr despacha el subcomando pr (fase 2): pr review analiza la rama
-// sin publicar nada; pr create analiza, aplica el gate de block y publica con
-// la plantilla honesta; el resto mantiene el passthrough legacy a gh pr create.
 func ejecutarPr(worktree string, args []string) {
 	switch verboPr(args) {
 	case "review":
@@ -834,7 +828,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	verificacion := deps.verificar(worktree, gitDir, cfg, verificadorModelo)
 	verificacion.Validacion = comandosDeValidacion(runs)
 
-	cuerpo := review.RenderPlantillaPrRama(res, verificacion, version)
+	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
 	rutaPlantilla, err := escribirPlantillaPR(cuerpo)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)

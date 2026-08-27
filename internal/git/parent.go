@@ -98,15 +98,15 @@ func verifiedParent(worktree, ref string, source ParentSource, evidence []string
 		return ParentResolution{}, &ParentResolutionError{Reason: fmt.Sprintf("parent reference %q is not a commit", ref), Evidence: proof}
 	}
 	full := strings.TrimSpace(run(worktree, "git", "rev-parse", "--symbolic-full-name", ref).stdout)
-	notPublishable := fmt.Sprintf("parent %q is not a publishable branch (tag, SHA, revision expression or ambiguity)", ref)
-	publication := ref
-	if strings.HasPrefix(full, "refs/remotes/") {
-		rest := strings.TrimPrefix(full, "refs/remotes/")
-		if _, name, ok := strings.Cut(rest, "/"); ok && rest == ref {
-			publication = name
+	notPublishable, publication := fmt.Sprintf("parent %q is not a publishable branch (tag, SHA, revision expression or ambiguity)", ref), ""
+	if full == "refs/heads/"+ref {
+		publication = ref
+	} else if strings.HasPrefix(full, "refs/remotes/") {
+		remoteRef := strings.TrimPrefix(full, "refs/remotes/")
+		remote, branch, ok := strings.Cut(remoteRef, "/")
+		if ok && remote != "" && branch != "" && (ref == remoteRef || ref == full) {
+			publication = branch
 		}
-	} else if full != "refs/heads/"+ref {
-		publication = ""
 	}
 	if publication == "" {
 		return ParentResolution{}, &ParentResolutionError{Reason: notPublishable, Evidence: proof}

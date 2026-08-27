@@ -1302,7 +1302,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	code := ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
 	if code != 0 || pubBase != "layer-a" || *opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
 		opts.NetReview == nil || opts.NetReview.Intention != honestNetIntention {
-		t.Errorf("stacked: codigo=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
+		t.Errorf("stacked: exitCode=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
 	}
 	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee"} {
 		if !strings.Contains(body, want) {
@@ -1316,7 +1316,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	pubBase, output = "", new(bytes.Buffer)
 	code = ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a"}, deps)
 	if code != 1 || pubBase != "" {
-		t.Errorf("missing publication branch must refuse: codigo=%d base=%q", code, pubBase)
+		t.Errorf("missing publication branch must refuse: exitCode=%d base=%q", code, pubBase)
 	}
 	res.Net.Audit.Veredicto = review.VerdictOK
 	res.Net.Audit.Findings, res.Fichas, res.Propio = nil, []review.Ficha{fichaCreateAyuda("abc1234", review.VerdictBlock)}, nil
@@ -1329,6 +1329,6 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	pubBase = ""
 	code = ejecutarPrCreateCon(output, "wt", nil, deps)
 	if code != 0 || pubBase != "main" {
-		t.Errorf("legacy: codigo=%d base=%q, want 0/main", code, pubBase)
+		t.Errorf("legacy: exitCode=%d base=%q, want 0/main", code, pubBase)
 	}
 }

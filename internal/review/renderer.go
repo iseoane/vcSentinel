@@ -586,7 +586,7 @@ func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 	return bloqueantes
 }
 
-func RenderPlantillaPrRama(res *ResultadoRama, verificacion VerificacionPlantilla, version string) string {
+func RenderBranchPRTemplate(res *ResultadoRama, verificacion VerificacionPlantilla, version string) string {
 	var b strings.Builder
 	b.WriteString(VerdictLine(res) + "\n\n")
 
@@ -635,5 +635,5 @@ func RenderPlantillaPrRama(res *ResultadoRama, verificacion VerificacionPlantill
 	return TruncarCuerpo(b.String(), LimiteCuerpoPR)
 }
 func RenderPlantillaPr(fichas []Ficha, overview *ResultadoOverview, verificacion VerificacionPlantilla, version string) string {
-	return RenderPlantillaPrRama(&ResultadoRama{Fichas: fichas, Overview: overview}, verificacion, version)
+	return RenderBranchPRTemplate(&ResultadoRama{Fichas: fichas, Overview: overview}, verificacion, version)
 }

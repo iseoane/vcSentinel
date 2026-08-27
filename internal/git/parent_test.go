@@ -72,9 +72,9 @@ func TestResolveParentBranchRejectsMissingExplicitParent(t *testing.T) {
 func TestResolveParentBranchPublicationBranch(t *testing.T) {
 	dir := parentStackRepository(t)
 	parentGit(t, dir, "update-ref", "refs/remotes/origin/b", "B")
-	res, err := ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: "origin/b"})
-	if err != nil || res.Reference != "origin/b" || res.PublicationBranch != "b" {
-		t.Fatalf("remote parent: (%q, %q, %v), want origin/b/b", res.Reference, res.PublicationBranch, err)
+	res, err := ResolveParentBranch(ParentResolutionOptions{Worktree: dir, ExplicitParent: "refs/remotes/origin/b"})
+	if err != nil || res.Reference != "refs/remotes/origin/b" || res.PublicationBranch != "b" {
+		t.Fatalf("full remote parent: (%q, %q, %v), want refs/remotes/origin/b/b", res.Reference, res.PublicationBranch, err)
 	}
 	parentGit(t, dir, "tag", "tagB", "B")
 	sha := strings.TrimSpace(runParentCommand(dir, "git", "rev-parse", "B").stdout)
