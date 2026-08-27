@@ -30,15 +30,6 @@ func readFile(t *testing.T, root, rel string) string {
 	return string(content)
 }
 
-// lineText returns the 1-indexed line of the given text.
-func lineText(text string, line int) string {
-	lines := strings.Split(text, "\n")
-	if line < 1 || line > len(lines) {
-		return ""
-	}
-	return lines[line-1]
-}
-
 // functionBody extracts the source of the first function whose declaration
 // contains needle, from that declaration line through its matching closing
 // brace. It is deliberately textual: brace counting over gofmt-clean files
@@ -78,7 +69,7 @@ func functionBody(t *testing.T, text, needle string) string {
 }
 
 // TestAdapterExecutionSitesInventory proves the curated enumeration matches
-// reality: every declared entry exists and still pins its marker line, and
+// reality: every declared entry exists and still pins its anchored site, and
 // every scanned canary-bearing file is classified. A new execution or
 // lifecycle-mutation site appearing anywhere in the module fails here until
 // it is added to the inventory with an explicit class and reason.
@@ -126,10 +117,16 @@ func TestAdapterExecutionSitesInventory(t *testing.T) {
 		if site.Marker == "" {
 			continue // documentation-only row
 		}
-		current := lineText(text, site.Line)
-		if !strings.Contains(current, site.Marker) {
-			t.Errorf("inventory entry %s (%s): line %d no longer contains marker %q; refresh the recorded line. Current: %q",
-				site.Path, site.Symbol, site.Line, site.Marker, strings.TrimSpace(current))
+		if site.Anchor == "" {
+			t.Errorf("inventory entry %s (%s) declares marker %q with no anchor: the entry cannot be pinned to the file", site.Path, site.Symbol, site.Marker)
+			continue
+		}
+		if !strings.Contains(site.Anchor, site.Marker) {
+			t.Errorf("inventory entry %s (%s): anchor %q does not contain its own marker %q; the entry pins the wrong text", site.Path, site.Symbol, site.Anchor, site.Marker)
+			continue
+		}
+		if !strings.Contains(text, site.Anchor) {
+			t.Errorf("inventory entry %s (%s): the file no longer contains the anchored site %q; re-read the site and refresh the anchor, class and reason", site.Path, site.Symbol, site.Anchor)
 		}
 	}
 }

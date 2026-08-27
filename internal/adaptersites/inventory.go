@@ -67,10 +67,17 @@ type Site struct {
 	Path string
 	// Symbol names the representative function or type hosting the site.
 	Symbol string
-	// Line is the representative current line number. Entries with a Marker
-	// assert that this line still contains it, so the enumeration cannot rot
-	// silently; refresh the number when code moves.
-	Line int
+	// Anchor is the verbatim source text of the representative site, trimmed
+	// of surrounding whitespace. Entries with a Marker assert that the file
+	// still CONTAINS this text, so the enumeration cannot rot silently when a
+	// site is rewritten or removed. It deliberately replaces the former line
+	// number, which every unrelated insertion above the site invalidated:
+	// that churn produced refresh commits with no audit signal in them.
+	//
+	// The anchor need not be unique inside its file — some files hold several
+	// byte-identical spawn lines, where uniqueness would carry no meaning.
+	// Symbol remains the human pointer to WHICH site the entry represents.
+	Anchor string
 	// Marker is the canary token that pins this entry to the scan. Empty for
 	// documentation-only rows.
 	Marker string
@@ -104,135 +111,135 @@ var canaryMarkers = []string{
 func Sites() []Site {
 	return []Site{
 		// --- cmd/sentinel -------------------------------------------------
-		{Path: "cmd/sentinel/autoria.go", Symbol: "observedAgent.EjecutarPrompt/EjecutarRevision", Line: 43, Marker: "EjecutarPrompt(",
+		{Path: "cmd/sentinel/autoria.go", Symbol: "observedAgent.EjecutarPrompt/EjecutarRevision", Anchor: "salida, err := a.AuditorAgente.EjecutarPrompt(prompt)", Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Observer decorator over the configured auditor: it delegates to the wrapped adapter after recording the effective agent. Used identically by the admitted transport path and the gated legacy path; spawns nothing itself."},
-		{Path: "cmd/sentinel/comandos_estado.go", Symbol: "ejecutarEnShell", Line: 137, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_estado.go", Symbol: "ejecutarEnShell", Anchor: "cmd = exec.Command(\"cmd\", \"/C\", comando)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Deterministic shell runner for configured lint/test/build commands; never consults an agent."},
-		{Path: "cmd/sentinel/comandos_explain.go", Symbol: "explain range plumbing", Line: 164, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_explain.go", Symbol: "explain range plumbing", Anchor: "salida, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the change-profile explainer."},
-		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Line: 579, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Anchor: "cmd := exec.Command(\"gh\", args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "gh pr create publication, git config reads, and clipboard helpers; no provider agent. The legacy 'sentinel pr' gh passthrough was retired (T8.4), removing its former spawn site."},
-		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Line: 0, Marker: "",
+		{Path: "cmd/sentinel/comandos_runs_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Anchor: "", Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
-		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Line: 216, Marker: "NewController(",
+		{Path: "cmd/sentinel/comandos_runs.go", Symbol: "promptRunAdapter/buildRunsController", Anchor: "return execution.NewController(backing, promptAdapter), nil", Marker: "NewController(",
 			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
-		{Path: "cmd/sentinel/comandos_tui.go", Symbol: "spawnDetachedTuiDaemon", Line: 280, Marker: "exec.Command",
+		{Path: "cmd/sentinel/comandos_tui.go", Symbol: "spawnDetachedTuiDaemon", Anchor: "cmd := exec.Command(exe, \"runs\", \"daemon\", \"start\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Control-center daemon lifecycle (slice 9): spawns THIS binary as `runs daemon start` detached for the current repository; the child admits runs through the same durable controller path as every other daemon start. Never spawns a provider agent directly."},
-		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Line: 126, Marker: "exec.Command",
+		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the staged-commit volume measurement."},
-		{Path: "cmd/sentinel/main.go", Symbol: "elegirAdaptadorYGenerarMensajes -> git.GenerarMensajesLotes", Line: 0, Marker: "",
+		{Path: "cmd/sentinel/main.go", Symbol: "elegirAdaptadorYGenerarMensajes -> git.GenerarMensajesLotes", Anchor: "", Marker: "",
 			Class: ClassHelper, Reason: "Commit-message generation asks the agent for batch message TEXT consumed by the interactive slice flow. It produces no verdict and cannot flip any gate outcome; adapter unavailability degrades to deterministic fallback messages."},
-		{Path: "cmd/sentinel/review_transport.go", Symbol: "nuevoDurableReviewTransport/applyDurableCutover", Line: 0, Marker: "",
+		{Path: "cmd/sentinel/review_transport.go", Symbol: "nuevoDurableReviewTransport/applyDurableCutover", Anchor: "", Marker: "",
 			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
 		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---
-		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Line: 234, Marker: "exec.Command",
+		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Anchor: "cmd := exec.CommandContext(ctx, a.launcher[0], a.Args(prompt)...) // #nosec G204 -- launcher comes from trusted local configuration", Marker: "exec.Command",
 			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16): Command is the transparent spawn description; the production path runs through the owned-tree spawner in review.go (process.Spawn), mirroring cli.go's seam split. Admission binding happens at the caller, not here."},
-		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Line: 32, Marker: "EjecutarPrompt(",
+		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Anchor: "func (a *AcpxAdapter) EjecutarPrompt(prompt string) (string, error) {", Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Prompt and restricted-review surface of the ACP/acpx adapter (ticket 16 slice 2, wired in slice 3): review runs reuse the shared reviewsnapshot.Create snapshot discipline and spawn through the owned-tree process.Spawn seam like cli.go; admission binding happens at the caller, not here."},
-		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.ObtenerMensajeCommitConDiff", Line: 42, Marker: "EjecutarPrompt(",
+		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.ObtenerMensajeCommitConDiff", Anchor: "salida, err := b.EjecutarPrompt(prompt)", Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Factory wiring of kind:acpx entries (ticket 16 slice 3): the bridge delegates commit-message generation through one prompt turn on the acp adapter. Commit-message text cannot influence a verdict or gate outcome and degrades to deterministic fallback messages on failure."},
 
 		// --- internal/agentadapter ----------------------------------------
-		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Line: 33, Marker: "EjecutarPrompt(",
+		{Path: "internal/agentadapter/cadena.go", Symbol: "CadenaAdaptador.EjecutarPrompt", Anchor: "func (c *CadenaAdaptador) EjecutarPrompt(prompt string) (string, error) {", Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Fallback chain over prompt adapters; whichever member answers becomes the caller's responsibility to have admitted upstream."},
-		{Path: "internal/agentadapter/cli.go", Symbol: "CLIAdapter EjecutarPrompt/EjecutarRevision", Line: 198, Marker: "exec.Command",
+		{Path: "internal/agentadapter/cli.go", Symbol: "CLIAdapter EjecutarPrompt/EjecutarRevision", Anchor: "cmd := exec.CommandContext(ctx, c.BinaryName, args...)", Marker: "exec.Command",
 			Class: ClassShared, Reason: "THE provider process spawn seam (exec.CommandContext). Both the admitted review adapter and the gated legacy reviewers funnel through these methods; admission binding happens at the caller, not here."},
-		{Path: "internal/agentadapter/contractadapter.go", Symbol: "AgentAdapter/AdaptadorPrompt interfaces", Line: 11, Marker: "EjecutarPrompt(",
+		{Path: "internal/agentadapter/contractadapter.go", Symbol: "AgentAdapter/AdaptadorPrompt interfaces", Anchor: "EjecutarPrompt(prompt string) (string, error)", Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Interface declarations only; no execution."},
-		{Path: "internal/agentadapter/factory.go", Symbol: "shim resolution note", Line: 273, Marker: "exec.Command",
+		{Path: "internal/agentadapter/factory.go", Symbol: "shim resolution note", Anchor: "// binario real al que apunta. Ejecutar shims .cmd con exec.Command usa cmd.exe", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Comment-only reference (Windows .cmd shim caveat); the actual spawn lives in cli.go."},
-		{Path: "internal/agentadapter/snapshot.go", Symbol: "snapshot delegation to reviewsnapshot", Line: 0, Marker: "",
+		{Path: "internal/agentadapter/snapshot.go", Symbol: "snapshot delegation to reviewsnapshot", Anchor: "", Marker: "",
 			Class: ClassInfra, Reason: "Since ticket 16 slice 3 this file only delegates to internal/reviewsnapshot (shared by both adapter families); the git plumbing and its spawn seam moved with the implementation."},
 
 		// --- internal/agentrun / internal/execution / internal/store ------
-		{Path: "internal/agentrun/contracts.go", Symbol: "InvocationEnvelope/NewRunRequest/NewCapability", Line: 61, Marker: "NewRunRequest(",
+		{Path: "internal/agentrun/contracts.go", Symbol: "InvocationEnvelope/NewRunRequest/NewCapability", Anchor: "func NewRunRequest(candidate Candidate, prompt Prompt, capabilities []Capability) RunRequest {", Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Contract definitions: envelopes, requests, capabilities, lifecycle states, and the transition table. The authority itself, not a caller."},
-		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Line: 245, Marker: "CreateRun(",
+		{Path: "internal/execution/controller.go", Symbol: "Controller Start admission / terminal persistence", Anchor: "if err := c.store.CreateRun(job, policy); err != nil {", Marker: "CreateRun(",
 			Class: ClassDurable, Reason: "The single lifecycle authority admits every run through store.CreateRun and settles attempts through store.AppendTerminalEvent; no feature package may call either primitive directly."},
-		{Path: "internal/execution/controller_abort.go", Symbol: "Controller abort settlement", Line: 161, Marker: "AppendTerminalEvent(",
+		{Path: "internal/execution/controller_abort.go", Symbol: "Controller abort settlement", Anchor: "receipt, persistenceErr := c.store.AppendTerminalEvent(string(runID), event, state.revision, outcome)", Marker: "AppendTerminalEvent(",
 			Class: ClassDurable, Reason: "Abort settles through the guarded store terminal-event primitive under the controller's revision checks; nothing mutates state outside controller APIs."},
-		{Path: "internal/execution/controller_recover.go", Symbol: "Controller recover settlement", Line: 172, Marker: "AppendTerminalEvent(",
+		{Path: "internal/execution/controller_recover.go", Symbol: "Controller recover settlement", Anchor: "return c.store.AppendTerminalEvent(head.RunID, event, projection.Revision, outcome)", Marker: "AppendTerminalEvent(",
 			Class: ClassDurable, Reason: "Recovery settlement appends its terminal event through the same guarded store primitive; the honest reconciled verdict is the only source."},
-		{Path: "internal/execution/controller_retry.go", Symbol: "Controller retry append", Line: 118, Marker: "AppendEvent(",
+		{Path: "internal/execution/controller_retry.go", Symbol: "Controller retry append", Anchor: "receipt, err := c.store.AppendEvent(string(runID), event, appendGuard)", Marker: "AppendEvent(",
 			Class: ClassDurable, Reason: "Retry relaunch events append through the same guarded store primitive."},
-		{Path: "internal/execution/host.go", Symbol: "ResolveAdmissionRequest", Line: 92, Marker: "NewRunRequest(",
+		{Path: "internal/execution/host.go", Symbol: "ResolveAdmissionRequest", Anchor: "return agentrun.NewRunRequest(agentrun.Candidate(request.Candidate), agentrun.Prompt(request.Prompt), nil)", Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Constructs the canonical admission request from the transport-safe Candidate/Prompt pair so every RepositoryHost Start admits exclusively through the controller's durable envelope flow."},
-		{Path: "internal/store/execution.go", Symbol: "Store.CreateRun", Line: 71, Marker: "CreateRun(",
+		{Path: "internal/store/execution.go", Symbol: "Store.CreateRun", Anchor: "func (s *Store) CreateRun(job agentrun.LogicalJob, policy RunPolicy) error {", Marker: "CreateRun(",
 			Class: ClassDurable, Reason: "Admission record primitive: writes the immutable request.json for a new durable run. Called only by the execution controller, never by feature packages."},
-		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Line: 209, Marker: "AppendEvent(",
+		{Path: "internal/store/execution_events.go", Symbol: "Store.AppendEvent/AppendTerminalEvent", Anchor: "func (s *Store) AppendEvent(runID string, event agentrun.NormalizedEvent, expectedRevision uint64) (EventReceipt, error) {", Marker: "AppendEvent(",
 			Class: ClassDurable, Reason: "Append-only event log primitives (plain and terminal-with-outcome); called only by the execution controller internals, never by feature packages."},
-		{Path: "internal/store/execution_outcomes.go", Symbol: "Store.SaveAttemptOutcome", Line: 64, Marker: "SaveAttemptOutcome(",
+		{Path: "internal/store/execution_outcomes.go", Symbol: "Store.SaveAttemptOutcome", Anchor: "func (s *Store) SaveAttemptOutcome(outcome AttemptOutcome) error {", Marker: "SaveAttemptOutcome(",
 			Class: ClassDurable, Reason: "Immutable attempt-outcome record primitive: durably persists one admitted invocation result before the caller continues. Written only beside controller-authored terminal events."},
 
 		// --- internal/reviewexec (admitted review transport) ---------------
-		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.RunWithPolicy", Line: 216, Marker: "NewRunRequest(",
+		{Path: "internal/reviewexec/durable_transport.go", Symbol: "DurableTransport.RunWithPolicy", Anchor: "request := agentrun.NewRunRequest(candidate, agentrun.Prompt(prompt), nil)", Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Review admission transport: builds the RunRequest, starts it through the controller, validates snapshot binding, and admits completions only against verified AttemptOutcome evidence."},
-		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Line: 168, Marker: "EjecutarRevision(",
+		{Path: "internal/reviewexec/reviewexec.go", Symbol: "ReviewAdapter.Execute", Anchor: "output, err = legacy.EjecutarRevision(prompt, a.sha, a.paths)", Marker: "EjecutarRevision(",
 			Class: ClassDurable, Reason: "Executes exactly one admitted physical invocation per controller dispatch; receives the InvocationEnvelope and forwards cancellation/tree ownership to the controller."},
 
 		// --- internal/gate --------------------------------------------------
-		{Path: "internal/gate/gate_durable.go", Symbol: "EjecutarGate/asentarTrabajosValidacion", Line: 99, Marker: "NewController(",
+		{Path: "internal/gate/gate_durable.go", Symbol: "EjecutarGate/asentarTrabajosValidacion", Anchor: "controller := execution.NewController(opts.DurableStore, rootRunAdapter{settle: settle})", Marker: "NewController(",
 			Class: ClassDurable, Reason: "Gate orchestrator and sole execution path (ticket 13 R11 merged the removed legacy orchestration into it): admits ONE root run plus one settled child job per validation command, all through controller.Start with persisted parent linkage."},
-		{Path: "internal/gate/gate_durable_adapters.go", Symbol: "rootRunAdapter/settledValidationAdapter", Line: 98, Marker: "agentrun.NewCapability",
+		{Path: "internal/gate/gate_durable_adapters.go", Symbol: "rootRunAdapter/settledValidationAdapter", Anchor: "stamped = append(stamped, agentrun.NewCapability(capability.Name(), attributes))", Marker: "agentrun.NewCapability",
 			Class: ClassDurable, Reason: "Gate execution adapters receive the admitted InvocationEnvelope on every controller dispatch; neither spawns anything nor mutates state outside controller APIs."},
-		{Path: "internal/gate/gate_run_plan.go", Symbol: "BuildGateRunPlan", Line: 134, Marker: "NewRunRequest(",
+		{Path: "internal/gate/gate_run_plan.go", Symbol: "BuildGateRunPlan", Anchor: "root := agentrun.NewLogicalJob(agentrun.NewRunRequest(", Marker: "NewRunRequest(",
 			Class: ClassDurable, Reason: "Deterministic plan construction: builds the admission requests (candidate/prompt/capabilities) later admitted verbatim by the controller."},
 
 		// --- internal/review -------------------------------------------------
-		{Path: "internal/review/engine.go", Symbol: "policy-bound durable reviewer adapter", Line: 61, Marker: "EjecutarRevision(",
+		{Path: "internal/review/engine.go", Symbol: "policy-bound durable reviewer adapter", Anchor: "func (a policyBoundReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {", Marker: "EjecutarRevision(",
 			Class: ClassShared, Reason: "Engine-level injection seam behind OpcionesAuditoria.ReviewTransport. Since ticket 13 (R11) removed the review.durable_runs switch, production wiring always supplies the admitted durable transport (the CRITICAL refuter routes through it unconditionally); the direct restricted call with its transport retry survives only as a defensive fallback for direct-call fixtures."},
-		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Line: 462, Marker: "EjecutarPrompt(",
+		{Path: "internal/review/rama.go", Symbol: "overviewDeRama", Anchor: "salida, err := agente.EjecutarPrompt(ConstruirPromptOverview(rama, fichas))", Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
-		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Line: 31, Marker: "exec.Command",
+		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Anchor: "salida, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing feeding reviewer context snapshots."},
-		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Line: 105, Marker: "exec.Command",
+		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Anchor: "cmd := exec.Command(\"git\", \"-C\", worktree, \"ls-tree\", \"-z\", sha, \"--\", filePath)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Shared read-only review snapshot discipline (git ls-tree/show plumbing) relocated in ticket 16 slice 3 so both adapter families run the exact same committed-content materialization; never invokes a provider agent."},
 
 		// --- advisory/narrative helpers --------------------------------------
-		{Path: "internal/modelprobe/verificador.go", Symbol: "Verificador.Verificar", Line: 44, Marker: "EjecutarPrompt(",
+		{Path: "internal/modelprobe/verificador.go", Symbol: "Verificador.Verificar", Anchor: "actual, err := agente.EjecutarPrompt(promptModelo)", Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "One-shot model identity probe; records a mismatch in the profile store and explicitly never affects the caller's review request."},
-		{Path: "internal/ops/verificar.go", Symbol: "Verificar delegar mode", Line: 148, Marker: "EjecutarPrompt(",
+		{Path: "internal/ops/verificar.go", Symbol: "Verificar delegar mode", Anchor: "salida, err := opts.Agente.EjecutarPrompt(promptVerificacion())", Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Advisory tested-contract delegation; every failure degrades to ModoOmitido. Verification never blocks (aviso, nunca bloqueo)."},
-		{Path: "internal/validation/validacion.go", Symbol: "delegarSinCapabilities", Line: 229, Marker: "EjecutarPrompt(",
+		{Path: "internal/validation/validacion.go", Symbol: "delegarSinCapabilities", Anchor: "salida, err := opts.Agente.EjecutarPrompt(promptDelegacion())", Marker: "EjecutarPrompt(",
 			Class: ClassHelper, Reason: "Delegated validation profile fallback. Structurally incapable of influencing gate outcomes: delegated runs (capabilityDelegada) are excluded from Fallo AND Hallazgos before any blocking decision, and every error path returns an empty list. Narrative evidence only, by documented design."},
-		{Path: "internal/agentshell/agentshell.go", Symbol: "system shell runner", Line: 33, Marker: "exec.Command",
+		{Path: "internal/agentshell/agentshell.go", Symbol: "system shell runner", Anchor: "cmd = exec.Command(\"cmd\", \"/c\", comando)", Marker: "exec.Command",
 			Class: ClassHelper, Reason: "Shell executor beneath the advisory delegated contracts (ops.Verificar / validation delegation); consumers are advisory-only, so the shell itself gates nothing."},
 
 		// --- non-agent infrastructure ----------------------------------------
-		{Path: "internal/change/perfil.go", Symbol: "change profiling", Line: 137, Marker: "exec.Command",
+		{Path: "internal/change/perfil.go", Symbol: "change profiling", Anchor: "salida, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git diff/tree-hash plumbing for change profiles."},
-		{Path: "internal/git/gitdir.go", Symbol: "ObtenerGitCommonDir", Line: 32, Marker: "exec.Command",
+		{Path: "internal/git/gitdir.go", Symbol: "ObtenerGitCommonDir", Anchor: "cmd := exec.Command(\"git\", \"-C\", path, \"rev-parse\", \"--git-common-dir\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git common-dir discovery backing the shared durable store location."},
-		{Path: "internal/git/parent.go", Symbol: "git command runner", Line: 266, Marker: "exec.Command",
+		{Path: "internal/git/parent.go", Symbol: "git command runner", Anchor: "cmd := exec.Command(command, args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Generic git plumbing."},
-		{Path: "internal/git/plan.go", Symbol: "slice commit plumbing", Line: 384, Marker: "exec.Command",
+		{Path: "internal/git/plan.go", Symbol: "slice commit plumbing", Anchor: "if salida, err := exec.Command(\"git\", argsAdd...).CombinedOutput(); err != nil {", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "git add/commit plumbing for approved slice batches (--no-verify by design). Message generation above is classified separately as a helper."},
-		{Path: "internal/git/selection_apply.go", Symbol: "selection apply plumbing", Line: 396, Marker: "exec.Command",
+		{Path: "internal/git/selection_apply.go", Symbol: "selection apply plumbing", Anchor: "cmd := exec.Command(\"git\", args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing applying approved selections."},
-		{Path: "internal/git/slice.go", Symbol: "diff/measurement plumbing", Line: 164, Marker: "exec.Command",
+		{Path: "internal/git/slice.go", Symbol: "diff/measurement plumbing", Anchor: "cmd := exec.Command(\"git\", args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git diff and volume measurement plumbing."},
-		{Path: "internal/graph/codegraph.go", Symbol: "codegraph CLI client", Line: 154, Marker: "exec.Command",
+		{Path: "internal/graph/codegraph.go", Symbol: "codegraph CLI client", Anchor: "cmd := exec.CommandContext(ctx, ejecutable, args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "CodeGraph enrichment binary; metadata only, never a provider agent."},
-		{Path: "internal/graph/native.go", Symbol: "native graph plumbing", Line: 387, Marker: "exec.Command",
+		{Path: "internal/graph/native.go", Symbol: "native graph plumbing", Anchor: "cmd := exec.Command(\"git\", append([]string{\"-c\", \"core.attributesFile=\" + os.DevNull, \"-c\", \"diff.external=\", \"-C\", directorio}, args...)...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the native graph analyzer."},
-		{Path: "internal/inventory/inventory.go", Symbol: "execRunner.run", Line: 41, Marker: "exec.Command",
+		{Path: "internal/inventory/inventory.go", Symbol: "execRunner.run", Anchor: "cmd := exec.Command(\"git\", args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Read-only git plumbing for repository inventory snapshots (rev-parse/config/worktree list/status); never invokes a provider agent."},
-		{Path: "internal/ops/events.go", Symbol: "gh pr view probe", Line: 201, Marker: "exec.Command",
+		{Path: "internal/ops/events.go", Symbol: "gh pr view probe", Anchor: "salida, err := exec.Command(\"gh\", \"pr\", \"view\", strconv.Itoa(numero), \"--json\", \"state\").Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "GitHub CLI state probe for ops events."},
-		{Path: "internal/planning/context.go", Symbol: "planning context", Line: 34, Marker: "exec.Command",
+		{Path: "internal/planning/context.go", Symbol: "planning context", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for planning context."},
-		{Path: "internal/process/process.go", Symbol: "process runner", Line: 158, Marker: "exec.Command",
+		{Path: "internal/process/process.go", Symbol: "process runner", Anchor: "cmd := exec.CommandContext(ctx, name, args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Low-level context-aware process runner beneath the provider seam; owns tree accounting, not agents."},
-		{Path: "internal/setup/github.go", Symbol: "gh auth token", Line: 53, Marker: "exec.Command",
+		{Path: "internal/setup/github.go", Symbol: "gh auth token", Anchor: "cmd := exec.Command(\"gh\", \"auth\", \"token\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Installer credential probe."},
-		{Path: "internal/setup/install.go", Symbol: "installer", Line: 198, Marker: "exec.Command",
+		{Path: "internal/setup/install.go", Symbol: "installer", Anchor: "cmd := exec.Command(\"go\", \"install\", paquete)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "go install/GOPATH/PATH installer plumbing."},
-		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Line: 107, Marker: "exec.Command",
+		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Anchor: "cmd := exec.Command(\"powershell\", \"-NoProfile\", \"-Command\", comando)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "PATH cleanup plumbing."},
-		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Line: 163, Marker: "exec.Command",
+		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Anchor: "cmd := exec.Command(binarioActual, \"--version\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Binary version probe for upgrades."},
-		{Path: "tools/release/main.go", Symbol: "release tooling", Line: 89, Marker: "exec.Command",
+		{Path: "tools/release/main.go", Symbol: "release tooling", Anchor: "cmd := exec.Command(\"gh\", \"release\", \"view\", \"--json\", \"tagName\", \"--jq\", \".tagName\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Release asset tooling outside the sentinel runtime."},
 	}
 }
