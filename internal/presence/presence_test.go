@@ -501,9 +501,31 @@ func TestRecentRunsEmptyStoreAndDegenerateLimits(t *testing.T) {
 }
 
 func TestRecentRunsAcceptsHugeLimitWithEmptyStore(t *testing.T) {
-	limit := int(^uint(0) >> 1)
-	summaries, err := RecentRunsForWorktrees(t.TempDir(), limit, nil)
-	if err != nil || summaries == nil || len(summaries) != 0 {
-		t.Fatalf("huge limit on an empty store = %#v, %v; want an empty non-nil slice", summaries, err)
-	}
+	t.Run("empty history", func(t *testing.T) {
+		limit := int(^uint(0) >> 1)
+		summaries, err := RecentRunsForWorktrees(t.TempDir(), limit, nil)
+		if err != nil || summaries == nil || len(summaries) != 0 {
+			t.Fatalf("huge limit on an empty store = %#v, %v; want an empty non-nil slice", summaries, err)
+		}
+	})
+
+	t.Run("small limit does not preallocate full history", func(t *testing.T) {
+		commonDir := t.TempDir()
+		st := store.NuevoStore(commonDir)
+		base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		const historySize = 64
+		for i := 0; i < historySize; i++ {
+			seedRunWithPolicyAt(t, st, "capacity-history-"+strconv.Itoa(i), store.RunPolicy{
+				ID: "policy:test",
+			}, base.Add(time.Duration(i)*time.Second))
+		}
+
+		summaries, err := RecentRunsForWorktrees(commonDir, 1, nil)
+		if err != nil || len(summaries) != 1 {
+			t.Fatalf("small-limit history result = %#v, %v; want one summary", summaries, err)
+		}
+		if got := cap(summaries); got != 1 {
+			t.Fatalf("small-limit result capacity = %d, want 1 despite %d historical summaries", got, historySize)
+		}
+	})
 }

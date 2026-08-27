@@ -130,7 +130,7 @@ func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths
 	}
 	remaining := worktreeQuotas(visibleWorktreePaths, limit)
 	globalRemaining := limit
-	union := make([]RunSummary, 0, len(summaries))
+	union := make([]RunSummary, 0, min(limit, len(summaries)))
 	for _, summary := range summaries {
 		if globalRemaining == 0 && len(remaining) == 0 {
 			break
