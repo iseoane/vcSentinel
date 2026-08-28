@@ -148,11 +148,7 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		var err error
 		switch runsFlag(flag) {
 		case flagReason:
-			if i+1 >= len(args) {
-				return options, fmt.Errorf("flag %s requires a value", flag)
-			}
-			i++
-			options.reason = args[i]
+			options.reason = value
 		case flagRun:
 			options.runID = value
 		case flagRepair:

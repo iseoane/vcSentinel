@@ -355,21 +355,42 @@ func TestRunsAbortOrphanedRequiresAReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A blank reason must be refused exactly like an absent one: a settlement
+	// whose recorded assertion is whitespace records nothing.
+	for _, caso := range []struct {
+		nombre string
+		args   []string
+	}{
+		{"reason absent", []string{"abort", "--run", runID, "--orphaned"}},
+		{"reason blank", []string{"abort", "--run", runID, "--orphaned", "--reason", "   "}},
+	} {
+		t.Run(caso.nombre, func(t *testing.T) {
+			output, code := captureRunsOutput(t, func(w io.Writer) int {
+				return executeRuns(w, worktree, caso.args)
+			})
+			if code == runExitSuccess {
+				t.Errorf("--orphaned settled the run without a recorded assertion:\n%s", output)
+			}
+			if !strings.Contains(output, "--reason") {
+				t.Errorf("the refusal does not name the missing flag:\n%s", output)
+			}
+			despues, err := backing.ReadEvents(runID, 0, 128)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(despues.Events) != len(antes.Events) {
+				t.Errorf("durable events went from %d to %d: a refused settlement must write nothing", len(antes.Events), len(despues.Events))
+			}
+		})
+	}
+
+	// The pairing holds both ways: --reason without --orphaned would discard
+	// the operator's words silently, which is what the flag exists to prevent.
 	output, code := captureRunsOutput(t, func(w io.Writer) int {
-		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--orphaned"})
+		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--reason", "sin orphaned"})
 	})
 	if code == runExitSuccess {
-		t.Errorf("--orphaned without --reason settled the run:\n%s", output)
-	}
-	if !strings.Contains(output, "--reason") {
-		t.Errorf("the refusal does not name the missing flag:\n%s", output)
-	}
-	despues, err := backing.ReadEvents(runID, 0, 128)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(despues.Events) != len(antes.Events) {
-		t.Errorf("durable events went from %d to %d: a refused settlement must write nothing", len(antes.Events), len(despues.Events))
+		t.Errorf("--reason without --orphaned was accepted, discarding the operator's words:\n%s", output)
 	}
 }
 

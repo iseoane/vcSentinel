@@ -15,6 +15,7 @@ import (
 var runsAllFlags = []string{
 	"--json", "--run", "--repair", "--text", "--prompt",
 	"--policy-id", "--after", "--limit", "--expected-revision", "--older-than",
+	"--reason",
 }
 
 // runsAcceptMatrix hardcodes, per subcommand, exactly the flags it declares.
@@ -144,6 +145,45 @@ func TestExecuteRunsRejectsForeignSubcommandFlags(t *testing.T) {
 			}
 			if !strings.Contains(output, "not accepted by 'sentinel runs") {
 				t.Fatalf("output lacks the strict-flag reason: %s", output)
+			}
+		})
+	}
+}
+
+// TestParseRunOptionsReasonDoesNotSwallowTheNextFlag pins the cursor invariant
+// the parse loop owns: it advances exactly twice per flag/value pair, once in
+// the shared post-switch step and once in the for statement. A case that
+// advances on its own consumes a third token and silently drops whatever
+// follows.
+//
+// Every existing --reason test placed the flag LAST, which is structurally
+// blind to that class of bug: the swallowed token simply does not exist. The
+// review found the defect the tests could not.
+func TestParseRunOptionsReasonDoesNotSwallowTheNextFlag(t *testing.T) {
+	casos := []struct {
+		nombre string
+		args   []string
+	}{
+		{"reason before json", []string{"--run", "r1", "--orphaned", "--reason", "x", "--json"}},
+		{"reason before run", []string{"--orphaned", "--reason", "x", "--run", "r1", "--json"}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			options, err := parseRunOptions("abort", caso.args)
+			if err != nil {
+				t.Fatalf("parseRunOptions(%v): %v", caso.args, err)
+			}
+			if options.reason != "x" {
+				t.Errorf("reason = %q, want %q", options.reason, "x")
+			}
+			if options.runID != "r1" {
+				t.Errorf("runID = %q, want %q: --reason swallowed the following flag", options.runID, "r1")
+			}
+			if !options.jsonOut {
+				t.Error("jsonOut = false: --reason swallowed the following flag, so --json was never parsed")
+			}
+			if !options.orphaned {
+				t.Error("orphaned = false, want true")
 			}
 		})
 	}

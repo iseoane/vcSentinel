@@ -159,6 +159,19 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintln(out, "❌ "+usoRunsAbort)
 		return runExitUsage
 	}
+	// Declarative flag validation, before any controller, host, principal or
+	// action identity is built: the pairing rule holds for every run, not only
+	// for the branch that ends up settling one. Inside settleOrphanedRun the
+	// same check only fired after host.Apply answered ErrRunNotActive, so on a
+	// LIVE run both --orphaned and a missing --reason were silently ignored.
+	if options.orphaned && strings.TrimSpace(options.reason) == "" {
+		fmt.Fprintln(out, "❌ --orphaned requires --reason \"...\": the CLI cannot prove the owner process is gone, so the durable settlement records whose assertion it rests on")
+		return runExitUsage
+	}
+	if !options.orphaned && strings.TrimSpace(options.reason) != "" {
+		fmt.Fprintln(out, "❌ --reason only applies with --orphaned: an ordinary abort records no operator assertion, so the words would be silently discarded")
+		return runExitUsage
+	}
 	controller, err := buildRunsController(worktree)
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
@@ -228,12 +241,8 @@ const orphanedAbortPrefix = "operator orphaned this run through sentinel runs ab
 // separate in-process controller could still be executing this run and its late
 // result would then be dropped, exactly as a deliberate abort drops one. The
 // mandatory reason is what keeps that trade visible in the durable record
-// instead of implied.
+// instead of implied; executeRunsAbort guarantees it is non-blank before here.
 func settleOrphanedRun(out io.Writer, options runOptions, controller *execution.Controller, runID agentrun.Identity) int {
-	if strings.TrimSpace(options.reason) == "" {
-		fmt.Fprintln(out, "❌ --orphaned requires --reason \"...\": the CLI cannot prove the owner process is gone, so the durable settlement records whose assertion it rests on")
-		return runExitUsage
-	}
 	settled, err := controller.OrphanRun(runID, orphanedAbortPrefix+options.reason)
 	if err != nil {
 		fmt.Fprintf(out, "❌ orphaned abort rejected: %v\n", err)
