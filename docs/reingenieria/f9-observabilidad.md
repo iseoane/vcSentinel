@@ -286,7 +286,23 @@ Close the phase only when `sentinel metrics` answers from local storage,
 historical data remains readable, observed identity is truthful, success and
 failure paths are covered, at least one default is calibrated from a
 pre-declared sufficient sample, and retention collects published detail without
-moving a single aggregate. Then update this file, `README.md`, and
+moving a single aggregate.
+
+Then retire the phase's branches and worktrees, and not before: every slice
+produces its own candidate branch, and deleting one mid-phase loses the context
+a later slice may need. Cleanup belongs to closure for the same reason the
+guardian promotion does.
+
+Order matters, because a branch whose worktree still exists cannot be deleted:
+`git worktree remove <path>` first, then `git branch -d <name>`. Retire only
+branches whose outcome is recorded in this file — merged, or explicitly
+discarded with its reason. A branch that is neither is unfinished work, not
+residue. The worktrees under `.git/vas-sentinel/snapshots/` are Sentinel's own
+validation snapshots, purged automatically after 24h by
+internal/validation/candidato.go; they are never part of this cleanup.
+
+Open at the time of writing: `f9-t9-0-plan`, `f9-t9-1a-luna`, `f9-t9-1a-schema`,
+each with a linked worktree under `../vas.sentinel-worktrees/`. Then update this file, `README.md`, and
 `docs/arquitectura/replanteamiento-objetivo.md`; use `f0-deuda.md` only for
 genuine deferred work. Document deviations instead of rewriting history.
 
