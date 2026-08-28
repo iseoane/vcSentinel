@@ -291,3 +291,80 @@ func planValidationJobsForTest(t *testing.T, opts Opciones) []GateJobPlan {
 	}
 	return plan.ValidationJobs()
 }
+
+// TestGateDurableRerunsTheSameCandidate is the re-admission defect: the gate
+// derives its root and job identities deterministically from (stage, profile,
+// candidate SHA, commands), and Controller.Start refuses any identity that
+// already carries lifecycle events. A candidate therefore got exactly ONE gate
+// execution ever — running it again returned "durable root run not admitted".
+//
+// It was found in operation, not in theory: a pre-push gate aborted because an
+// unrelated file changed mid-validation, and the retry on the same commit could
+// never be admitted again, leaving the guardian unable to re-certify it.
+func TestGateDurableRerunsTheSameCandidate(t *testing.T) {
+	transportes := 0
+	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base.EjecutarValidacion = ejecutarPerfilSinCandidato
+	durableOpts := opcionesDurable(t, base, &transportes)
+
+	primero := EjecutarGate(durableOpts)
+	if primero.Estado == EstadoReviewInfrastructureError {
+		t.Fatalf("first gate is infrastructure-broken before the case starts: %v", primero.Mensajes)
+	}
+
+	segundo := EjecutarGate(durableOpts)
+	if segundo.Estado == EstadoReviewInfrastructureError {
+		t.Fatalf("re-running the gate on the same candidate = %q %v; the guardian must be able to re-certify a commit it already gated", segundo.Estado, segundo.Mensajes)
+	}
+	if segundo.Estado != primero.Estado {
+		t.Errorf("second gate estado = %q, expected the same verdict as the first (%q): the same candidate and the same commands cannot change the outcome", segundo.Estado, primero.Estado)
+	}
+}
+
+// bloqueanteAdapter keeps a run running until liberar is closed, so a test can
+// hold a non-terminal root run in durable state while another gate tries to
+// admit the same candidate.
+type bloqueanteAdapter struct{ liberar chan struct{} }
+
+func (a bloqueanteAdapter) Execute(_ context.Context, _ agentrun.LogicalJob, _ agentrun.InvocationEnvelope, _ string) (execution.AdapterResult, error) {
+	<-a.liberar
+	return execution.AdapterResult{}, nil
+}
+
+// TestGateDurableRefusesAConcurrentGateOnTheSameCandidate pins the other half
+// of the admission probe. Climbing to the next attempt is right only when the
+// previous execution SETTLED; a root run that is still alive means a second
+// gate is racing the first over the same candidate, and refusing it stays
+// correct — with its own message, not the raw admission error.
+func TestGateDurableRefusesAConcurrentGateOnTheSameCandidate(t *testing.T) {
+	transportes := 0
+	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base.EjecutarValidacion = ejecutarPerfilSinCandidato
+	durableOpts := opcionesDurable(t, base, &transportes)
+
+	plan, err := buildDurableGatePlan(durableOpts)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	liberar := make(chan struct{})
+	vivo := execution.NewController(durableOpts.DurableStore, bloqueanteAdapter{liberar: liberar})
+	if _, err := vivo.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
+		ID: DurableGateRunPolicyID, Operation: gateRootOperation(durableOpts.Stage),
+		Commit: shortCommitLabel(durableOpts.CandidateSHA), Worktree: durableOpts.OpcionesValidacion.Worktree,
+	}); err != nil {
+		t.Fatalf("could not hold a live root run: %v", err)
+	}
+	defer close(liberar)
+
+	resultado := EjecutarGate(durableOpts)
+
+	if resultado.Estado != EstadoReviewInfrastructureError {
+		t.Fatalf("estado = %q, expected the concurrent gate to be refused", resultado.Estado)
+	}
+	mensaje := strings.Join(resultado.Mensajes, "\n")
+	if !strings.Contains(mensaje, "already running this candidate") {
+		t.Errorf("message = %q; a concurrent gate must say so instead of surfacing the raw admission error", mensaje)
+	}
+}

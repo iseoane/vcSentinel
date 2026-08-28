@@ -97,14 +97,9 @@ func EjecutarGate(opts Opciones) Resultado {
 
 	settle := make(chan rootSettlement, 1)
 	controller := execution.NewController(opts.DurableStore, rootRunAdapter{settle: settle})
-	root, err := controller.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
-		ID:        DurableGateRunPolicyID,
-		Operation: gateRootOperation(opts.Stage),
-		Commit:    shortCommitLabel(opts.CandidateSHA),
-		Worktree:  opts.OpcionesValidacion.Worktree,
-	})
+	plan, root, err := admitirRaizGate(controller, opts, plan)
 	if err != nil {
-		return infraResultado(fmt.Errorf("gate: durable root run not admitted: %w", err))
+		return infraResultado(err)
 	}
 
 	// Panic guard: a panic inside any phase must never leave the root worker
@@ -132,15 +127,76 @@ func EjecutarGate(opts Opciones) Resultado {
 	return resultado
 }
 
+// maxIntentosGate bounds the admission probe. Each climb means one previously
+// settled gate execution over the same candidate, so the real count is tiny; the
+// bound only stops a pathological store from spinning forever.
+const maxIntentosGate = 64
+
+// admitirRaizGate admits the root run of a gate execution, climbing attempts
+// when the candidate was already gated before.
+//
+// Every identity of the plan derives deterministically from (stage, profile,
+// candidate SHA, commands), and Controller.Start refuses an identity that
+// already carries lifecycle events. Without this probe a candidate got exactly
+// ONE gate execution ever: a second run — after a green gate, or after one
+// aborted by an infrastructure failure — could never be admitted, leaving the
+// guardian unable to re-certify a commit.
+//
+// The refusal itself is right and stays: reusing a spent run identity would
+// append a new lifecycle onto a settled stream. What changes is that a NEW gate
+// execution is what it says it is, a new run, and takes the next attempt.
+//
+// A pre-existing run that is NOT terminal is a different situation entirely:
+// another gate is executing this candidate right now, and refusing is correct.
+func admitirRaizGate(controller *execution.Controller, opts Opciones, plan GateRunPlan) (GateRunPlan, execution.Handle, error) {
+	inspector := execution.NewController(opts.DurableStore, nil)
+	for attempt := plan.Attempt; attempt < maxIntentosGate; attempt++ {
+		if attempt != plan.Attempt {
+			siguiente, err := buildDurableGatePlanIntento(opts, attempt)
+			if err != nil {
+				return GateRunPlan{}, execution.Handle{}, fmt.Errorf("gate: durable run plan failed for attempt %d: %w", attempt, err)
+			}
+			plan = siguiente
+		}
+		root, err := controller.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
+			ID:        DurableGateRunPolicyID,
+			Operation: gateRootOperation(opts.Stage),
+			Commit:    shortCommitLabel(opts.CandidateSHA),
+			Worktree:  opts.OpcionesValidacion.Worktree,
+		})
+		if err == nil {
+			return plan, root, nil
+		}
+		if !errors.Is(err, execution.ErrRunAlreadyExists) {
+			return GateRunPlan{}, execution.Handle{}, fmt.Errorf("gate: durable root run not admitted: %w", err)
+		}
+		inspeccion, inspectErr := inspector.Inspect(context.Background(), plan.Root.RunID())
+		if inspectErr != nil {
+			return GateRunPlan{}, execution.Handle{}, fmt.Errorf("gate: durable root run not admitted and its existing record is unreadable: %w", inspectErr)
+		}
+		if inspeccion.Projection.Terminal == agentrun.TerminalNone {
+			return GateRunPlan{}, execution.Handle{}, fmt.Errorf("gate: another gate execution is already running this candidate (run %s, state %s): wait for it to settle instead of starting a second one", plan.Root.RunID(), inspeccion.Projection.State)
+		}
+	}
+	return GateRunPlan{}, execution.Handle{}, fmt.Errorf("gate: this candidate already has %d settled gate executions; refusing to open another", maxIntentosGate)
+}
+
 // buildDurableGatePlan derives the deterministic command list for the
 // resolved profile and validates the full plan construction path without
 // executing anything.
 func buildDurableGatePlan(opts Opciones) (GateRunPlan, error) {
+	return buildDurableGatePlanIntento(opts, 0)
+}
+
+// buildDurableGatePlanIntento is buildDurableGatePlan for a specific execution
+// attempt. Attempt 0 is what every caller wants; the admission probe in
+// EjecutarGate is the only place that climbs.
+func buildDurableGatePlanIntento(opts Opciones, attempt int) (GateRunPlan, error) {
 	commands, err := durableGateCommands(opts.OpcionesValidacion.Cfg, opts.Perfil)
 	if err != nil {
 		return GateRunPlan{}, err
 	}
-	return BuildGateRunPlan(opts.Stage, opts.Perfil, opts.CandidateSHA, commands)
+	return BuildGateRunPlan(opts.Stage, opts.Perfil, opts.CandidateSHA, commands, attempt)
 }
 
 // infraResultado classifies a durable-infrastructure failure: never a code

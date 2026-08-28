@@ -14,7 +14,7 @@ import (
 // explicit rejection of unexplainable inputs.
 func TestGateRunPlanBuilder(t *testing.T) {
 	t.Run("embeds stage profile and candidate sha in the root request", func(t *testing.T) {
-		plan, err := BuildGateRunPlan("pre-push", "standard", "abc123def456", []string{"go vet ./..."})
+		plan, err := BuildGateRunPlan("pre-push", "standard", "abc123def456", []string{"go vet ./..."}, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -36,7 +36,7 @@ func TestGateRunPlanBuilder(t *testing.T) {
 
 	t.Run("one validation job per command in exact profile order plus one review job", func(t *testing.T) {
 		commands := []string{"go vet ./...", "gofmt -l .", "go test ./internal/gate/"}
-		plan, err := BuildGateRunPlan("pr", "full", "deadbeef", commands)
+		plan, err := BuildGateRunPlan("pr", "full", "deadbeef", commands, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -67,7 +67,7 @@ func TestGateRunPlanBuilder(t *testing.T) {
 	})
 
 	t.Run("empty profile still yields exactly one review job", func(t *testing.T) {
-		plan, err := BuildGateRunPlan("pre-commit", "delegated", "cafe0000", nil)
+		plan, err := BuildGateRunPlan("pre-commit", "delegated", "cafe0000", nil, 0)
 		if err != nil {
 			t.Fatalf("empty profile must build a valid plan, got %v", err)
 		}
@@ -81,11 +81,11 @@ func TestGateRunPlanBuilder(t *testing.T) {
 	})
 
 	t.Run("same inputs derive identical identities", func(t *testing.T) {
-		first, err := BuildGateRunPlan("pr", "standard", "aa11bb22", []string{"cmd-a", "cmd-b"})
+		first, err := BuildGateRunPlan("pr", "standard", "aa11bb22", []string{"cmd-a", "cmd-b"}, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		second, err := BuildGateRunPlan("pr", "standard", "aa11bb22", []string{"cmd-a", "cmd-b"})
+		second, err := BuildGateRunPlan("pr", "standard", "aa11bb22", []string{"cmd-a", "cmd-b"}, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -100,7 +100,7 @@ func TestGateRunPlanBuilder(t *testing.T) {
 	})
 
 	t.Run("different inputs derive different root identities", func(t *testing.T) {
-		base, err := BuildGateRunPlan("pr", "standard", "sha-1", []string{"cmd-a"})
+		base, err := BuildGateRunPlan("pr", "standard", "sha-1", []string{"cmd-a"}, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -111,7 +111,7 @@ func TestGateRunPlanBuilder(t *testing.T) {
 			"commands": {"pr", "standard", "sha-1", "cmd-b"},
 		}
 		for name, args := range variants {
-			variant, err := BuildGateRunPlan(args[0], args[1], args[2], []string{args[3]})
+			variant, err := BuildGateRunPlan(args[0], args[1], args[2], []string{args[3]}, 0)
 			if err != nil {
 				t.Fatalf("variant %s: unexpected error: %v", name, err)
 			}
@@ -136,7 +136,7 @@ func TestGateRunPlanBuilder(t *testing.T) {
 		}
 		for _, testCase := range cases {
 			t.Run(testCase.name, func(t *testing.T) {
-				_, err := BuildGateRunPlan(testCase.stage, testCase.profile, testCase.sha, testCase.commands)
+				_, err := BuildGateRunPlan(testCase.stage, testCase.profile, testCase.sha, testCase.commands, 0)
 				var planErr GatePlanError
 				if !errors.As(err, &planErr) {
 					t.Fatalf("expected GatePlanError, got %v", err)
@@ -207,4 +207,48 @@ func errorMessage(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// TestGateRunPlanAttemptDiscriminates proves the attempt discriminator does
+// what the admission probe relies on: a later attempt derives a DIFFERENT
+// identity for the root and for every job, while attempt 0 keeps the identities
+// a candidate has always had. Without this, the probe could climb forever
+// against an identity that never changes.
+func TestGateRunPlanAttemptDiscriminates(t *testing.T) {
+	comandos := []string{"cmd-a", "cmd-b"}
+	primero, err := BuildGateRunPlan("pr", "standard", "sha-1", comandos, 0)
+	if err != nil {
+		t.Fatalf("attempt 0: %v", err)
+	}
+	segundo, err := BuildGateRunPlan("pr", "standard", "sha-1", comandos, 1)
+	if err != nil {
+		t.Fatalf("attempt 1: %v", err)
+	}
+	if primero.Root.RunID() == segundo.Root.RunID() {
+		t.Fatal("attempt 1 reused the root run identity of attempt 0: a re-gated candidate would still be refused")
+	}
+	if len(primero.Jobs) != len(segundo.Jobs) || len(primero.Jobs) == 0 {
+		t.Fatalf("job counts diverged: %d vs %d", len(primero.Jobs), len(segundo.Jobs))
+	}
+	for i := range primero.Jobs {
+		if primero.Jobs[i].Job.RunID() == segundo.Jobs[i].Job.RunID() {
+			t.Errorf("job %d reused its identity across attempts: the child would be refused even with a fresh root", i)
+		}
+	}
+	if primero.Attempt != 0 || segundo.Attempt != 1 {
+		t.Errorf("plan attempts = %d, %d; expected 0, 1", primero.Attempt, segundo.Attempt)
+	}
+
+	// Attempt 0 must stay byte-identical to the historical identity, or every
+	// durable record written before the discriminator existed is orphaned.
+	repetido, err := BuildGateRunPlan("pr", "standard", "sha-1", comandos, 0)
+	if err != nil {
+		t.Fatalf("attempt 0 rebuild: %v", err)
+	}
+	if repetido.Root.RunID() != primero.Root.RunID() {
+		t.Error("attempt 0 is no longer deterministic")
+	}
+	if _, err := BuildGateRunPlan("pr", "standard", "sha-1", comandos, -1); err == nil {
+		t.Error("a negative attempt should be rejected explicitly")
+	}
 }

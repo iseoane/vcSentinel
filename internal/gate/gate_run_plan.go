@@ -58,6 +58,11 @@ type GateJobPlan struct {
 // profile order first, then exactly one review job, mirroring today's fixed
 // validation-before-review ordering without executing either layer.
 type GateRunPlan struct {
+	// Attempt is the gate execution ordinal this plan derives its identities
+	// from. Zero is the first execution over a candidate and keeps the
+	// historical identities; a later attempt exists only because the previous
+	// one already settled.
+	Attempt      int
 	Stage        string
 	Profile      string
 	CandidateSHA string
@@ -112,7 +117,10 @@ func (e GatePlanError) Error() string {
 // SHA, and the ordered command-list identity; each validation command gets
 // one logical job in exact profile order, followed by exactly one review
 // job. The same inputs always derive the same identities.
-func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string) (GateRunPlan, error) {
+func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string, attempt int) (GateRunPlan, error) {
+	if attempt < 0 {
+		return GateRunPlan{}, GatePlanError{Field: "attempt", Reason: "must not be negative"}
+	}
 	if strings.TrimSpace(stage) == "" {
 		return GateRunPlan{}, GatePlanError{Field: "stage", Reason: "must be a non-empty lifecycle stage"}
 	}
@@ -134,7 +142,7 @@ func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string) (G
 	root := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 		agentrun.Candidate(candidateSHA),
 		agentrun.Prompt(canonicalPrompt(promptDomainRoot, stage, profile)),
-		[]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, commandAttributes(commands))},
+		[]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, conIntento(commandAttributes(commands), attempt))},
 	))
 
 	jobs := make([]GateJobPlan, 0, len(commands)+1)
@@ -146,11 +154,11 @@ func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string) (G
 			Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
 				agentrun.Candidate(candidateSHA),
 				agentrun.Prompt(canonicalPrompt(promptDomainValidation, stage, profile, position)),
-				[]agentrun.Capability{agentrun.NewCapability(capabilityNameCommand, map[string]string{
+				[]agentrun.Capability{agentrun.NewCapability(capabilityNameCommand, conIntento(map[string]string{
 					"profile":  profile,
 					"position": position,
 					"command":  command,
-				})},
+				}, attempt))},
 			)),
 		})
 	}
@@ -159,13 +167,14 @@ func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string) (G
 		Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
 			agentrun.Candidate(candidateSHA),
 			agentrun.Prompt(canonicalPrompt(promptDomainReview, stage, profile)),
-			[]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, map[string]string{
+			[]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, conIntento(map[string]string{
 				"profile": profile,
-			})},
+			}, attempt))},
 		)),
 	})
 
 	return GateRunPlan{
+		Attempt:          attempt,
 		Stage:            stage,
 		Profile:          profile,
 		CandidateSHA:     candidateSHA,
@@ -202,6 +211,29 @@ func durableGateCommands(cfg config.Config, profile string) ([]string, error) {
 
 func canonicalPrompt(domain string, parts ...string) string {
 	return strings.Join(append([]string{domain}, parts...), "\x00")
+}
+
+// conIntento folds the gate execution attempt into a capability's attributes
+// so every identity of the plan — root and jobs alike — is distinct per
+// attempt. Attempt 0 returns the attributes UNCHANGED on purpose: the
+// identities a candidate has always derived stay byte-identical, so durable
+// records written before this existed remain addressable and no migration is
+// needed.
+//
+// The discriminator is the attempt, never a timestamp or a nonce: two gates
+// launched concurrently on the same candidate still derive the same identity
+// and one of them is correctly refused, which is the collision guard worth
+// keeping. Only a SEQUENTIAL re-run, after the previous attempt settled,
+// climbs to the next attempt.
+func conIntento(attributes map[string]string, attempt int) map[string]string {
+	if attempt == 0 {
+		return attributes
+	}
+	if attributes == nil {
+		attributes = map[string]string{}
+	}
+	attributes["attempt"] = strconv.Itoa(attempt)
+	return attributes
 }
 
 func commandAttributes(commands []string) map[string]string {
