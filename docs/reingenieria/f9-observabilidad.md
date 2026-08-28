@@ -80,9 +80,27 @@ Required invariants:
 - The snapshot is immutable and written at most once beside the existing
   durable execution. Tests must cover the rejected second write.
 
-Candidate note: branch `f9-t9-1a-schema`, commit `5a59067`, contains an
-unaccepted candidate in `execution_metrics.go` and its tests. Validate and
-correct that candidate; do not reimplement it or treat it as integrated.
+Candidate note: TWO independent unaccepted candidates exist, neither pushed to
+the remote. Verify both before choosing; do not reimplement either.
+
+- `f9-t9-1a-luna`, commit `c99caf2`, based on `1e148a5` (this plan, merged).
+  336 lines plus 674 of tests, across three commits that explicitly address the
+  write-once invariant. Newer and far more thoroughly covered.
+- `f9-t9-1a-schema`, commit `5a59067`, based on `ba7bb3f` (predates this plan).
+  315 lines plus 280 of tests. This is the candidate the original note named,
+  and it is the older of the two.
+
+They are not related: neither branch contains the other's commit, so they are
+two separate implementations of the same slice. Pick one, record why, and update
+this note.
+
+Retention consequence (added with T9.5): both candidates write `metrics.json`
+INSIDE `executions/v1/<runID>/`, so `store.removeExecutionDirectory` would
+delete the snapshot together with the execution it measures — destroying exactly
+the record T9.5 requires to survive. Resolve this in T9.1a, before T9.5 is
+built: either place the snapshot outside the execution directory, or make the
+prune path preserve it explicitly. Whichever is chosen, a test must prove the
+snapshot is still readable after its execution has been pruned.
 
 Checks:
 
