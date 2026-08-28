@@ -54,6 +54,27 @@ func knownClass(class agentrun.OutcomeClass) bool {
 	}
 }
 
+// outcomeDeEstadoTerminal es la inversa de terminalState: traduce el estado
+// terminal que otro escritor ya dejó en el stream a la clase de outcome
+// equivalente, para reconciliar una carrera de asentamiento perdida sin
+// inventar una clase distinta de la que consta durablemente.
+func outcomeDeEstadoTerminal(state agentrun.LifecycleState) (agentrun.OutcomeClass, bool) {
+	switch state {
+	case agentrun.StateSucceeded:
+		return agentrun.OutcomeSuccess, true
+	case agentrun.StateUnavailable:
+		return agentrun.OutcomeUnavailable, true
+	case agentrun.StateTimedOut:
+		return agentrun.OutcomeTimeout, true
+	case agentrun.StateCanceled:
+		return agentrun.OutcomeCancellation, true
+	case agentrun.StateFailed:
+		return agentrun.OutcomeFailure, true
+	default:
+		return "", false
+	}
+}
+
 func terminalState(class agentrun.OutcomeClass) agentrun.LifecycleState {
 	switch class {
 	case agentrun.OutcomeSuccess:

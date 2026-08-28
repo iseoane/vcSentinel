@@ -19,8 +19,11 @@ before classifying its dimension as unavailable.
 
 **Acceptance criteria:**
 
-- [ ] Focused tests reproduce a daemon shutdown racing a controller terminal
+- [x] Focused tests reproduce a daemon shutdown racing a controller terminal
       completion and prove the review result is terminal rather than unavailable.
+      TestFinishReconcilesALostTerminalAppendRace settles the run from a second
+      controller mid-execution and proves the worker reconciles the durable
+      terminal event instead of reporting an infrastructure error.
 - [x] Focused tests prove malformed semantic payloads get one corrective retry.
       TestShouldRetryFormatCubreTodoFalloDeFormato covers every class;
       TestReviewTransportRetriesEvidencePolicyFailureOnce and

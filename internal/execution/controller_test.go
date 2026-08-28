@@ -320,3 +320,44 @@ func waitForState(t *testing.T, controller *Controller, runID agentrun.Identity,
 	inspection, err := controller.Inspect(context.Background(), runID)
 	t.Fatalf("state = %q, error = %v, want %q; inspection = %+v", inspection.Projection.State, err, want, inspection)
 }
+
+// TestFinishReconcilesALostTerminalAppendRace cubre el criterio abierto de la
+// ficha 18: "A controller that loses a terminal append race must reconcile the
+// durable terminal event instead of reporting an infrastructure error".
+//
+// Es la peor forma de perder trabajo del sistema: el proveedor YA respondió,
+// los tokens ya se gastaron y la respuesta existía, pero otro escritor asentó
+// el run primero y el worker tira todo con un conflicto de revisión que el
+// usuario ve como `store: expected execution revision N, found M`. El resultado
+// ajeno es la autoridad —ya está escrito y es inmutable—, pero eso hace que el
+// run esté ASENTADO, no que la ejecución haya fallado.
+func TestFinishReconcilesALostTerminalAppendRace(t *testing.T) {
+	backing := store.NuevoStore(t.TempDir())
+	adapter := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	controller := NewControllerWithClock(backing, adapter, fixedClock())
+
+	handle, err := controller.Start(context.Background(), testRequest("carrera"), testPolicy())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	<-adapter.started
+
+	// Otro escritor asienta el run mientras el worker sigue ejecutando: es lo
+	// que hacía el barrido de apagado del daemon, y lo que puede hacer
+	// cualquier proceso con acceso al store.
+	ajeno := NewControllerWithClock(backing, &scriptedAdapter{}, fixedClock())
+	asentado, err := ajeno.OrphanRun(handle.RunID, "asentado por otro escritor durante la ejecución")
+	if err != nil || !asentado {
+		t.Fatalf("no se pudo asentar el run desde fuera: settled=%v err=%v", asentado, err)
+	}
+
+	close(adapter.release)
+
+	completion, waitErr := handle.Wait(context.Background())
+	if waitErr != nil {
+		t.Fatalf("Wait = %v; perder la carrera de asentamiento deja el run ASENTADO, no fallido: el worker debe reconciliar el evento terminal duradero", waitErr)
+	}
+	if completion.State.TerminalClass() == agentrun.TerminalNone {
+		t.Errorf("estado = %q, esperado el terminal que dejó el otro escritor", completion.State)
+	}
+}

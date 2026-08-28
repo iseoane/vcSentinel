@@ -471,6 +471,27 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 			state.revision = receipt.Revision
 			state.state = receipt.State
 		}
+		// Ficha 18: perder la carrera del append terminal NO es un fallo de
+		// infraestructura. Otro escritor asentó el run primero y su evento es
+		// la autoridad —ya está escrito y es inmutable—, pero eso significa que
+		// el run está ASENTADO, no que esta ejecución fracasara. Reportarlo como
+		// error tiraba trabajo ya pagado: el proveedor había respondido y la
+		// salida existía, y el usuario solo veía "expected execution revision N,
+		// found M".
+		//
+		// Solo se reconcilia si la cabeza duradera YA es terminal. Un conflicto
+		// contra una cabeza no terminal es una escritura concurrente de verdad y
+		// sigue siendo un error. El resultado propio se descarta igual que ante
+		// un abort: la clase reportada es la que consta durablemente, nunca la
+		// nuestra.
+		if errors.Is(persistenceErr, store.ErrRevisionConflict) {
+			if reconciliado, clase, ok := c.reconcileLostTerminalRace(invocation.RunID()); ok {
+				state.revision = reconciliado.Revision
+				state.state = reconciliado.State
+				c.completeLocked(state, invocation, reconciliado.State, clase, AdapterResult{}, "settled by another writer while this attempt was running: "+string(reconciliado.Terminal), nil, false)
+				return
+			}
+		}
 		c.completeLocked(state, invocation, state.state, class, result, joinText(adapterErr, persistenceErr), persistenceErr, true)
 		return
 	}
@@ -479,6 +500,26 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	state.running = false
 	state.cancel = nil
 	c.completeLocked(state, invocation, target, class, result, errorText(adapterErr), nil, false)
+}
+
+// reconcileLostTerminalRace lee el estado duradero tras perder el append
+// terminal. Devuelve la proyección y su clase solo cuando la cabeza ya es
+// terminal, que es la única situación en la que el run está realmente asentado
+// por otro escritor.
+func (c *Controller) reconcileLostTerminalRace(runID agentrun.Identity) (store.RunProjection, agentrun.OutcomeClass, bool) {
+	proyeccion, err := c.store.ReadDerivedProjection(string(runID))
+	if err != nil || proyeccion == nil {
+		return store.RunProjection{}, "", false
+	}
+	projection := *proyeccion
+	if projection.Terminal == agentrun.TerminalNone {
+		return store.RunProjection{}, "", false
+	}
+	clase, ok := outcomeDeEstadoTerminal(projection.State)
+	if !ok {
+		return store.RunProjection{}, "", false
+	}
+	return projection, clase, true
 }
 
 func (c *Controller) respond(state *runState, runID agentrun.Identity, response string) (ApplyResult, error) {
