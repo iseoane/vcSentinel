@@ -611,6 +611,9 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	}
 	prompt := buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory)
 	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
+	if err != nil && esFalloTransitorioDeProveedor(err) {
+		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
+	}
 	if err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
@@ -647,6 +650,49 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	stamparInvocacion(crudo.Hallazgos, invocation)
 	stamparProductorEfectivo(crudo.Hallazgos, agent)
 	return crudo, nil
+}
+
+// fallosPermanentesDeProveedor son los textos que prueban que repetir la
+// llamada no puede cambiar nada. Se comparan por contenido porque vienen del
+// stderr del proveedor, que no ofrece códigos estables.
+var fallosPermanentesDeProveedor = []string{
+	// Modelo inexistente o mal escrito en la configuración. Observado como
+	// `"claude-opus" is not a model this version of Claude Code recognizes`.
+	"is not a model",
+	// La política de herramientas exigida no existe para ese proveedor: lo
+	// rechaza reviewCommand antes de lanzar nada.
+	"not configured for this provider",
+}
+
+// esFalloTransitorioDeProveedor decide si un fallo de EJECUCIÓN merece el único
+// reintento. Antes no se reintentaba ninguno: con `active_agent` fijado a un
+// binario concreto no se construye cadena de adaptadores, así que un 500 del
+// backend era terminal al primer intento y perdía la dimensión entera.
+//
+// El criterio es asimétrico a propósito. Reintentar un fallo permanente cuesta
+// una llamada más y vuelve a fallar igual; NO reintentar uno transitorio pierde
+// la dimensión completa. Por eso se reintenta salvo prueba de que no sirve:
+//
+//   - un plazo agotado no se reintenta: costaría otro timeout entero;
+//   - una cancelación no se reintenta: el llamante pidió parar;
+//   - los fallos permanentes conocidos no se reintentan.
+//
+// Un fallo de formato NO llega aquí: lo decide shouldRetryFormat, después de
+// que el proveedor haya respondido.
+func esFalloTransitorioDeProveedor(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	texto := err.Error()
+	for _, permanente := range fallosPermanentesDeProveedor {
+		if strings.Contains(texto, permanente) {
+			return false
+		}
+	}
+	return true
 }
 
 const formatRetryInstruction = "\n\nFORMAT RETRY: Your previous response did not satisfy the required review schema. Return only one complete BEGIN_REVIEW/END_REVIEW payload with verdict set to ok, warn, block, question, or unavailable. EVERY finding must carry a non-empty literal `evidence` quoted from the reviewed code and a `confidence` value; a single finding missing either one discards the whole response."

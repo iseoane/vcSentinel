@@ -1657,3 +1657,72 @@ func TestErrRestrictedRequiredNombraElAdaptador(t *testing.T) {
 		t.Errorf("err = %q; debe nombrar el adaptador incapaz para que el fallo sea accionable", err)
 	}
 }
+
+// TestReintentoDeFallosTransitoriosDelProveedor cubre el último hueco real de
+// `unavailable`: un fallo de EJECUCIÓN del proveedor no se reintentaba nunca.
+// Con `active_agent` fijado a un binario no se construye cadena de adaptadores,
+// así que un 500 del backend era terminal al primer intento y se perdía la
+// dimensión entera.
+//
+// El criterio es asimétrico a propósito: reintentar un fallo permanente cuesta
+// una llamada más y vuelve a fallar igual; no reintentar uno transitorio pierde
+// la dimensión. Por eso se reintenta salvo que sepamos que no sirve de nada.
+func TestReintentoDeFallosTransitoriosDelProveedor(t *testing.T) {
+	casos := []struct {
+		nombre       string
+		errPrimero   error
+		llamadas     int
+		veredictoFin string
+	}{
+		{
+			nombre:       "500 del backend: transitorio, se reintenta",
+			errPrimero:   errors.New(`run restricted reviewer: exit status 1: {"name":"UnknownError","data":{"message":"Unexpected server error."}}`),
+			llamadas:     2,
+			veredictoFin: VerdictOK,
+		},
+		{
+			nombre:       "fallo de proceso sin detalle: transitorio, se reintenta",
+			errPrimero:   errors.New("exit status 1"),
+			llamadas:     2,
+			veredictoFin: VerdictOK,
+		},
+		{
+			nombre:       "modelo mal configurado: permanente, no se reintenta",
+			errPrimero:   errors.New(`run restricted reviewer: exit status 1: "claude-opus" is not a model this version of Claude Code recognizes`),
+			llamadas:     1,
+			veredictoFin: VerdictUnavailable,
+		},
+		{
+			nombre:       "plazo agotado: reintentar cuesta otro timeout entero",
+			errPrimero:   fmt.Errorf("run restricted reviewer timed out after 10m0s: %w", errors.Join(errors.New("signal: terminated"), context.DeadlineExceeded)),
+			llamadas:     1,
+			veredictoFin: VerdictUnavailable,
+		},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			llamadas := 0
+			transport := func(_, _, _ string, _ AuditorAgente) (string, string, error) {
+				llamadas++
+				if llamadas == 1 {
+					return "", "", caso.errPrimero
+				}
+				return `{"dim":"logic","verdict":"ok"}`, "inv-2", nil
+			}
+			resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+				return &agenteFake{}, "normal", nil
+			}, 1, OpcionesAuditoria{
+				SHA: "sha-transitorio", Bundles: []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}, ReviewTransport: transport,
+			})
+			if llamadas != caso.llamadas {
+				t.Errorf("llamadas = %d, esperado %d", llamadas, caso.llamadas)
+			}
+			if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
+				t.Fatalf("resultado = %+v", resultado)
+			}
+			if got := resultado.Dims[0].Resultado.Verdict; got != caso.veredictoFin {
+				t.Errorf("veredicto = %q, esperado %q", got, caso.veredictoFin)
+			}
+		})
+	}
+}
