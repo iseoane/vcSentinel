@@ -3,6 +3,7 @@ package reviewexec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -170,6 +171,17 @@ func TestDefaultClassifierMapsContextErrors(t *testing.T) {
 		{name: "canceled", err: context.Canceled, class: agentrun.OutcomeCancellation},
 		{name: "deadline", err: context.DeadlineExceeded, class: agentrun.OutcomeTimeout},
 		{name: "wrapped deadline", err: errors.Join(errors.New("review timed out"), context.DeadlineExceeded), class: agentrun.OutcomeTimeout},
+		// The exact shape the CLI adapter now produces when the reviewer blows
+		// review.timeout: the process was SIGTERM'd by the containment
+		// watchdog, so cmd.Wait says "signal: terminated" and only the joined
+		// context error carries the timeout. Pinning it here keeps both ends of
+		// the fix together — a regression at either one makes a timeout look
+		// like a plain provider failure again.
+		{
+			name:  "reviewer terminated after its deadline",
+			err:   fmt.Errorf("run restricted reviewer timed out after 10m0s: %w: provider stderr", errors.Join(errors.New("signal: terminated"), context.DeadlineExceeded)),
+			class: agentrun.OutcomeTimeout,
+		},
 		{name: "other", err: errors.New("provider 500"), class: agentrun.OutcomeFailure},
 	}
 	for _, tt := range tests {

@@ -3,6 +3,7 @@ package agentadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -608,5 +609,25 @@ func TestReviewCommandRejectsProvidersWithoutBoundedToolPermissions(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "semantic review is unavailable") {
 		t.Fatalf("reviewCommand() error = %q, expected provider-agnostic unavailable error", err)
+	}
+}
+
+// TestEjecutarRevisionMarcaElPlazoAgotado fija que un revisor que agota su
+// plazo sea distinguible de uno que se cae. El vigilante de contención manda
+// SIGTERM al grupo de procesos, así que cmd.Wait devuelve "signal: terminated"
+// — un texto que no dice nada del plazo. Sin esta marca, reviewexec clasifica
+// el timeout como OutcomeFailure y el registro durable miente sobre por qué
+// falló la dimensión.
+func TestEjecutarRevisionMarcaElPlazoAgotado(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
+	snapshotDir := t.TempDir()
+	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 200 * time.Millisecond}
+
+	_, err := adapter.ejecutarRevision(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("ejecutarRevision() = nil error, expected the deadline to fire")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error = %v; it must wrap context.DeadlineExceeded so the durable record classifies it as a timeout instead of a failure", err)
 	}
 }

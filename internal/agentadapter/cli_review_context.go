@@ -3,6 +3,7 @@ package agentadapter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -88,6 +89,24 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 	spawn.tree.Release()
 	if waitErr != nil {
 		detail := strings.TrimSpace(spawn.stderr.String())
+		// This function owns the deadline, so it is the ONLY place that can
+		// tell a provider crash from a provider that ran out of time. When the
+		// deadline fires, the containment watchdog SIGTERMs the process group
+		// and cmd.Wait reports "signal: terminated" — a text that says nothing
+		// about a timeout. Joining ctx.Err() keeps errors.Is(err,
+		// context.DeadlineExceeded) true end to end, so reviewexec's classifier
+		// records OutcomeTimeout instead of OutcomeFailure and the durable
+		// record stops misreporting why the dimension failed.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			motivo := "timed out after " + timeout.String()
+			if errors.Is(ctxErr, context.Canceled) {
+				motivo = "canceled"
+			}
+			if detail != "" {
+				return "", fmt.Errorf("run restricted reviewer %s: %w: %s", motivo, errors.Join(waitErr, ctxErr), detail)
+			}
+			return "", fmt.Errorf("run restricted reviewer %s: %w", motivo, errors.Join(waitErr, ctxErr))
+		}
 		if detail != "" {
 			return "", fmt.Errorf("run restricted reviewer: %w: %s", waitErr, detail)
 		}

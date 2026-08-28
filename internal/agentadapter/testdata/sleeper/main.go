@@ -40,6 +40,14 @@ func main() {
 			posicionP = i + 1
 		}
 	}
+	// VAS_SENTINEL_TEST_SLEEP permite forzar la espera cuando el adaptador
+	// construye los argumentos y no hay hueco para el argumento numérico
+	// (modo revisión: las banderas las fija reviewCommand).
+	if espera := os.Getenv("VAS_SENTINEL_TEST_SLEEP"); espera != "" {
+		if n, err := strconv.Atoi(espera); err == nil {
+			segundos = n
+		}
+	}
 	time.Sleep(time.Duration(segundos) * time.Second)
 
 	prompt := ""
