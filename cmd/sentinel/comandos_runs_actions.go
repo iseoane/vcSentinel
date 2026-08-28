@@ -121,7 +121,14 @@ type idempotentHead struct {
 	State        agentrun.LifecycleState
 }
 
-func idempotentHeadOf(host execution.RepositoryHost, principal string, runID agentrun.Identity, err error) (idempotentHead, bool) {
+// runningSatisfies says whether a RUNNING head already satisfies the caller's
+// goal. It does for retry and recover, whose goal is "there is a live attempt".
+// It never does for abort: a running head is precisely what the abort failed to
+// stop, so accepting it reported "✅ accepted=true / resulting state running"
+// and exit 0 while writing nothing — telling an operator a run was canceled
+// while it was still alive. Observed on three orphaned runs whose owner process
+// was gone.
+func idempotentHeadOf(host execution.RepositoryHost, principal string, runID agentrun.Identity, err error, runningSatisfies bool) (idempotentHead, bool) {
 	if !errors.Is(err, execution.ErrRunNotActive) {
 		return idempotentHead{}, false
 	}
@@ -133,7 +140,7 @@ func idempotentHeadOf(host execution.RepositoryHost, principal string, runID age
 		return idempotentHead{}, false
 	}
 	state := inspection.Projection.State
-	if state != agentrun.StateRunning && state.TerminalClass() == agentrun.TerminalNone {
+	if state.TerminalClass() == agentrun.TerminalNone && !(runningSatisfies && state == agentrun.StateRunning) {
 		return idempotentHead{}, false
 	}
 	events := inspection.Events
@@ -173,7 +180,7 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 		AuthContext: execution.AuthContext{Principal: principal},
 	})
 	if applyErr != nil {
-		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), applyErr); ok {
+		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), applyErr, false); ok {
 			settled := execution.ApplyResult{
 				RunID: agentrun.Identity(options.runID), InvocationID: agentrun.Identity(head.InvocationID),
 				Accepted: true,
@@ -219,7 +226,7 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		AuthContext:      execution.AuthContext{Principal: principal},
 	})
 	if retryErr != nil {
-		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), retryErr); ok {
+		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), retryErr, true); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
 				RunID: agentrun.Identity(options.runID), JobID: agentrun.Identity(head.JobID),
 				InvocationID: agentrun.Identity(head.InvocationID),
@@ -307,7 +314,7 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 		AuthContext:      execution.AuthContext{Principal: principal},
 	})
 	if recoverErr != nil {
-		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), recoverErr); ok {
+		if head, ok := idempotentHeadOf(host, principal, agentrun.Identity(options.runID), recoverErr, true); ok {
 			return printRunActionResult(out, options.jsonOut, execution.Handle{
 				RunID: agentrun.Identity(options.runID), JobID: agentrun.Identity(head.JobID),
 				InvocationID: agentrun.Identity(head.InvocationID),

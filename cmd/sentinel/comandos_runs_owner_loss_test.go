@@ -219,3 +219,47 @@ func TestRunsRecoverRejectsExpectedRevisionOutsideResumePath(t *testing.T) {
 		})
 	}
 }
+
+// TestRunsAbortDoesNotClaimSuccessOnALiveHead pins the honesty of the abort
+// exit contract. idempotentHeadOf is shared by abort, retry and recover, and it
+// accepts a RUNNING head as "the goal already holds". That is true for retry and
+// recover — there is already a live attempt — and exactly false for abort: a
+// running head is what the abort failed to stop.
+//
+// Observed in operation on three orphaned runs: `sentinel runs abort` printed
+// "✅ accepted=true / resulting state running" and exited 0 while writing
+// nothing at all, telling the operator a run was canceled while it was not.
+func TestRunsAbortDoesNotClaimSuccessOnALiveHead(t *testing.T) {
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := store.NuevoStore(commonDir)
+	// No extra transitions: the head stays running with no live owner in this
+	// process, which is the shape of an orphaned run.
+	runID := string(appendReconciledFixtureStream(t, backing, "candidate:orphaned-running", nil))
+	antes, err := backing.ReadEvents(runID, 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, code := captureRunsOutput(t, func(w io.Writer) int {
+		return executeRuns(w, worktree, []string{"abort", "--run", runID})
+	})
+
+	if code == runExitSuccess {
+		t.Errorf("abort exit = %d (success) on a run whose head is still running; an operator reading this believes the run was canceled. Output:\n%s", code, output)
+	}
+	if strings.Contains(output, "✅") {
+		t.Errorf("abort rendered a success mark for a run it did not settle:\n%s", output)
+	}
+	despues, err := backing.ReadEvents(runID, 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(despues.Events) != len(antes.Events) {
+		t.Errorf("durable events went from %d to %d: a refused abort must write nothing", len(antes.Events), len(despues.Events))
+	}
+}

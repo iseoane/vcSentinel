@@ -454,7 +454,7 @@ func (a sessionRunActions) Abort(repoPath, runID string) tea.Cmd {
 			if applyErr == nil {
 				return nil
 			}
-			if _, ok := idempotentHeadOf(host, principal, agentrun.Identity(runID), applyErr); ok {
+			if _, ok := idempotentHeadOf(host, principal, agentrun.Identity(runID), applyErr, false); ok {
 				return nil // the settled idempotent head proves the goal holds
 			}
 			return applyErr
@@ -477,7 +477,7 @@ func (a sessionRunActions) Retry(repoPath, runID string) tea.Cmd {
 			if retryErr == nil {
 				return nil
 			}
-			if _, ok := idempotentHeadOf(host, principal, agentrun.Identity(runID), retryErr); ok {
+			if _, ok := idempotentHeadOf(host, principal, agentrun.Identity(runID), retryErr, true); ok {
 				return nil // the run already carries a live attempt
 			}
 			return retryErr

@@ -284,17 +284,28 @@ func TestSessionRunActionsRetrySkipsSettleWait(t *testing.T) {
 
 // TestSessionRunActionsIdempotentHeadFallbackAccepts pins the fallback shape
 // on both hooks: an ErrRunNotActive rejection consults the host's durable
-// evidence EXACTLY ONCE, and a settled head turns the rejection into quiet
-// success because the goal already holds.
+// evidence EXACTLY ONCE, and a head that already satisfies the action's goal
+// turns the rejection into quiet success.
+//
+// The abort fixture changed. It was named settledHead while carrying
+// StateRunning, and asserted that aborting a RUNNING run is quiet success —
+// which is the defect this test now guards against, not a contract: abort's
+// goal is a stopped run, so a running head means the abort did not happen. A
+// live head still satisfies RETRY, whose goal is "there is a live attempt", so
+// that half is unchanged and only its fixture is named honestly.
 func TestSessionRunActionsIdempotentHeadFallbackAccepts(t *testing.T) {
 	worktree := t.TempDir()
-	settledHead := execution.Inspection{
+	cabezaViva := execution.Inspection{
 		Projection: store.RunProjection{State: agentrun.StateRunning},
 		Events:     []store.EventFrame{{JobID: "job-1"}, {InvocationID: "inv-2"}},
 	}
+	cabezaAsentada := execution.Inspection{
+		Projection: store.RunProjection{State: agentrun.StateCanceled},
+		Events:     []store.EventFrame{{JobID: "job-1"}, {InvocationID: "inv-2"}},
+	}
 
-	t.Run("abort fallback accepts the settled head", func(t *testing.T) {
-		host := &tuiActionsFakeHost{inspect: settledHead}
+	t.Run("abort fallback accepts an already settled head", func(t *testing.T) {
+		host := &tuiActionsFakeHost{inspect: cabezaAsentada}
 		stubTuiActionSeams(t, host)
 		host.applyErr = fmt.Errorf("controller refused: %w", execution.ErrRunNotActive)
 		cmd := newSessionRunActions(worktree).Abort(worktree, tuiActionsRunID)
@@ -308,8 +319,18 @@ func TestSessionRunActionsIdempotentHeadFallbackAccepts(t *testing.T) {
 				applies, inspects)
 		}
 	})
+	t.Run("abort fallback refuses a still running head", func(t *testing.T) {
+		host := &tuiActionsFakeHost{inspect: cabezaViva}
+		stubTuiActionSeams(t, host)
+		host.applyErr = fmt.Errorf("controller refused: %w", execution.ErrRunNotActive)
+		cmd := newSessionRunActions(worktree).Abort(worktree, tuiActionsRunID)
+		m := deliverTuiActionResult(t, cmd(), control.KindAbort, worktree, tuiActionsRunID)
+		if m.Err() == "" {
+			t.Error("a run still running was reported as aborted: the operator would believe it stopped")
+		}
+	})
 	t.Run("retry fallback accepts the live attempt", func(t *testing.T) {
-		host := &tuiActionsFakeHost{inspect: settledHead}
+		host := &tuiActionsFakeHost{inspect: cabezaViva}
 		stubTuiActionSeams(t, host)
 		host.retryErr = fmt.Errorf("controller refused: %w", execution.ErrRunNotActive)
 		cmd := newSessionRunActions(worktree).Retry(worktree, tuiActionsRunID)
