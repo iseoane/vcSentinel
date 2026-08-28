@@ -15,6 +15,9 @@ propia guía §10 admite que es una decisión de coste, no de calidad.
 2. Ninguna métrica requiere telemetría externa: todo sale del store local.
 3. Al menos un ajuste de configuración por defecto se justifica con datos
    medidos, no con criterio.
+4. La retención borra el detalle en vuelo una vez publicado el trabajo, sin
+   alterar ningún agregado que `sentinel metrics` reporte (añadido en la
+   revalidación T9.0; ver T9.5).
 
 > Revalidar la ficha al abrir la fase. El detalle de esta fase depende de qué
 > haya producido F5 y F6 realmente.
@@ -57,6 +60,7 @@ F9 or accept any implementation candidate.
 | T9.3b — CLI | T9.3a | OpenCode `openai/gpt-5.6-luna` / Max | `cmd/sentinel` and `internal/metrics` | `sentinel metrics`, `--json`, and help expose local aggregates with stable units and null unknowns. |
 | T9.4a — observation window | T9.3b | OpenCode `openai/gpt-5.6-luna` / Max; user/orchestrator operates it | Metrics output and this phase record | Sufficiency thresholds are frozen before collection; insufficient data blocks calibration without moving the thresholds. |
 | T9.4b — calibration | Sufficient T9.4a result | OpenCode `openai/gpt-5.6-luna` / Max | Only defaults justified by evidence | At least one default change cites reproducible metric, period, sample, old/new value, expected effect, risk, and rollback. |
+| T9.5 — event-driven retention | Accepted T9.1b; reconciled with T9.2 | OpenCode `openai/gpt-5.6-luna` / Max | `internal/review/ledger.go`, `internal/store/execution_prune.go`, `internal/ops/events.go`, `internal/git`, `cmd/sentinel` triggers | One cascade deletes in-flight detail for published or vanished commits; every metrics snapshot survives; nothing is deleted before its snapshot exists; aggregates are unchanged. |
 | Phase closure | All exit criteria | `task` Medium for documentation only | This file, `README.md`, architecture deviations, optional debt pool | F9 closes only after local metrics, historical compatibility, one evidence-backed calibration, and final verification. |
 
 ### T9.1a — durable metrics schema
@@ -166,6 +170,82 @@ Correlation is not presented as causality. Missing effective-model evidence or
 insufficient coverage blocks model calibration. Never modify tests, fixtures,
 goldens, or verification assets merely to make a calibration pass.
 
+### T9.5 — event-driven retention
+
+**Why this belongs to F9 and not before it.** This phase already forbids
+conflating absence with zero: historical ledgers stay readable and missing
+evidence is unknown, never zero. Deleting execution evidence before T9.1b
+writes its snapshot would therefore degrade the first observation window
+permanently, and every aggregate computed afterwards would be measuring a store
+someone emptied. The reverse is equally true: once the snapshot exists, keeping
+the heavy per-commit detail forever serves nothing. Sentinel exists to control
+work IN FLIGHT — review dimensions, correct them, publish with guarantees — so
+the detail has no operational reader once the work is published.
+
+**Publication boundary.** A commit is published when it is an ancestor of the
+remote base branch (`git merge-base --is-ancestor <sha> origin/main`).
+
+Two rejected alternatives, both verified against this repository:
+
+- NOT "the pull request was merged": `pr-create` has never run here (152
+  `review`, 56 `gate`, 1 `pr-review`, 0 `pr-create` recorded events), so a
+  PR-only trigger would never fire and nothing would ever be collected.
+- NOT "ancestor of local `main`": with a direct-to-main flow the record would
+  die immediately after the commit, before `gate` or `pr review` could read it.
+
+The remote boundary is the only one that holds for both flows, and it coincides
+exactly with the end of the in-flight window.
+
+**The cascade.** One primitive, two entry conditions, several triggers:
+
+```
+commit no longer exists (rebase/amend/squash)  ─┐
+commit published in the remote base branch     ─┴─► ficha ─► its events ─► its runs
+                                                    (the metrics snapshot survives)
+```
+
+The deletion primitives already exist and are covered by tests:
+`review.Ledger.PurgarHuerfanas`, `ops.PurgeEventosDe`, and
+`store.PruneExecutions` together with `collectProvenanceReferences`, which
+already computes which invocations remain referenced. Today the cascade is cut:
+`status --prune` deletes the ficha and its events but never the runs, which is
+why executions accumulate unbounded.
+
+**Triggers.** Commands that already consult the remote — `rebase` and
+`gate --stage pre-push`. Retention is best-effort and never blocks or fails the
+real operation.
+
+**Invariants.**
+
+- Nothing is deleted whose metrics snapshot has not been written. A missing
+  snapshot keeps the execution, exactly as absence is never read as zero.
+- The snapshot outlives its execution and stays readable by the aggregator.
+- Deletion is the idempotence guarantee: an artifact reaches the metrics exactly
+  once, because afterwards it no longer exists. No running counter is needed and
+  none may be introduced — that would be the parallel ledger this phase forbids.
+- Local, unpublished work is never touched.
+- The events half must be reconciled with T9.2 before wiring: that slice forbids
+  rewriting historical `events.jsonl`, and `PurgeEventosDePRsResueltas` — dead
+  code today, with zero callers — rewrites the file. Either T9.2's append-only
+  contract admits compaction explicitly, or the events stay and only the ficha
+  and runs are collected.
+
+**Acceptance.** Tests prove that an unpublished commit keeps everything; that a
+published commit loses ficha, events and runs while its snapshot remains; that
+an execution without a snapshot is never deleted; and that the aggregate
+`sentinel metrics` reports over the surviving window is byte-identical before
+and after retention runs. That last property is the real guarantee: retention
+must be invisible to measurement.
+
+Checks:
+
+```text
+go test -count=1 ./internal/review ./internal/store ./internal/ops ./internal/git
+go test -race -count=1 ./internal/store
+go build ./...
+go vet ./...
+```
+
 ### Final verification and closure
 
 Run all commands from the final candidate worktree:
@@ -186,15 +266,16 @@ assets to manufacture those results.
 
 Close the phase only when `sentinel metrics` answers from local storage,
 historical data remains readable, observed identity is truthful, success and
-failure paths are covered, and at least one default is calibrated from a
-pre-declared sufficient sample. Then update this file, `README.md`, and
+failure paths are covered, at least one default is calibrated from a
+pre-declared sufficient sample, and retention collects published detail without
+moving a single aggregate. Then update this file, `README.md`, and
 `docs/arquitectura/replanteamiento-objetivo.md`; use `f0-deuda.md` only for
 genuine deferred work. Document deviations instead of rewriting history.
 
 Key risks: parallel ledgers, absence/zero conflation, retry double-counting,
 configured-versus-observed model attribution, incompatible cost aggregation,
-JSONL history breakage, post-hoc sample thresholds, and checks run from the
-wrong worktree.
+JSONL history breakage, post-hoc sample thresholds, checks run from the
+wrong worktree, and retention deleting evidence before its snapshot exists.
 
 ---
 
