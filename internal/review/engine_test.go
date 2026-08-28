@@ -198,18 +198,21 @@ func TestAuditarCommitUsesResolvedContractForPromptValidationAndTools(t *testing
 	}
 }
 
-func TestAuditarCommitRejectsFindingsMissingContractEvidenceOrConfidenceWithoutRetry(t *testing.T) {
+func TestAuditarCommitRejectsFindingsMissingContractEvidenceOrConfidence(t *testing.T) {
 	for name, output := range map[string]string{
 		"missing literal evidence": `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","confidence":"high"}]}`,
 		"missing confidence":       `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","evidence":"unsafe()"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			agent := &contractOutputAgent{responses: []string{output, `{"dim":"logic","verdict":"ok"}`}}
+			// Ambas respuestas incumplen igual: el reintento existe, pero un
+			// finding sin evidencia NUNCA influye en el veredicto, que es la
+			// garantía que este test defiende.
+			agent := &contractOutputAgent{responses: []string{output, output}}
 			factory := func(ReviewBundle, string) (AuditorAgente, string, error) { return agent, "normal", nil }
 			result := AuditarCommit(factory, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
 
-			if agent.calls != 1 {
-				t.Fatalf("calls=%d, want one; schema failures must not retry", agent.calls)
+			if agent.calls != 2 {
+				t.Fatalf("calls=%d, want exactly one corrective retry", agent.calls)
 			}
 			if result.Veredicto != VerdictUnavailable || len(result.Findings) != 0 {
 				t.Fatalf("result=%+v, want unavailable with no verdict-influencing finding", result)
@@ -266,14 +269,16 @@ func (a *legacyOnlySemanticAgent) EjecutarRevision(prompt, sha string, paths []s
 	return a.EjecutarPrompt(prompt)
 }
 
-func TestAuditarCommitRejectsAnotherCanonicalDimensionWithoutRetry(t *testing.T) {
+func TestAuditarCommitRejectsAnotherCanonicalDimension(t *testing.T) {
+	// Insiste con la dimensión equivocada en ambas respuestas: se reintenta una
+	// vez, pero una respuesta de otra dimensión no se acepta jamás.
 	factory, agent := fabricaFija([]string{
 		`{"dim":"security","verdict":"ok"}`,
-		`{"dim":"logic","verdict":"ok"}`,
+		`{"dim":"security","verdict":"ok"}`,
 	})
 	result := AuditarCommit(factory, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
-	if agent.llamadas != 1 {
-		t.Fatalf("calls=%d, expected no retry for a schema failure", agent.llamadas)
+	if agent.llamadas != 2 {
+		t.Fatalf("calls=%d, expected exactly one corrective retry", agent.llamadas)
 	}
 	if result.Veredicto != VerdictUnavailable || len(result.Dims) != 1 {
 		t.Fatalf("result=%+v", result)
@@ -941,21 +946,41 @@ func hasResultBundle(results []ResultadoDimension, bundle string) bool {
 	return false
 }
 
-func TestAuditarCommitDeterministicOutputErrorsAreNotRetried(t *testing.T) {
-	tests := map[string]string{
-		"tool denial":    "Permission denied: Read(/host/private.go)",
-		"malformed JSON": `{"dim":"logic",`,
-		"schema invalid": `{"dim":"logic","verdict":false}`,
-	}
-	for name, output := range tests {
-		t.Run(name, func(t *testing.T) {
-			fabrica, fake := fabricaFija([]string{output, `{"dim":"logic","verdict":"ok"}`})
-			resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
-			if fake.llamadas != 1 || resultado.Veredicto != VerdictUnavailable {
-				t.Fatalf("calls=%d verdict=%s", fake.llamadas, resultado.Veredicto)
-			}
-		})
-	}
+// TestAuditarCommitRetriesFormatFailuresButNotToolDenial reemplaza a
+// TestAuditarCommitDeterministicOutputErrorsAreNotRetried, que fijaba que
+// NINGÚN error determinista de salida se reintentaba.
+//
+// Por qué cambia: un payload mal formado es un fallo de FORMATO, y el modelo
+// puede corregirlo si se le dice — es justo lo que pide el contrato de la ficha
+// 18 ("semantic-output format failures get one corrective retry"). Perder una
+// dimensión entera por una coma mal puesta cuesta más que una segunda llamada.
+// La denegación de herramienta NO cambia: no es un problema de formato y
+// repetir el prompt no concede permisos, así que sigue sin reintento.
+func TestAuditarCommitRetriesFormatFailuresButNotToolDenial(t *testing.T) {
+	t.Run("los fallos de formato se reintentan una vez", func(t *testing.T) {
+		for name, output := range map[string]string{
+			"malformed JSON": `{"dim":"logic",`,
+			"schema invalid": `{"dim":"logic","verdict":false}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				fabrica, fake := fabricaFija([]string{output, `{"dim":"logic","verdict":"ok"}`})
+				resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+				if fake.llamadas != 2 {
+					t.Fatalf("llamadas=%d, esperado exactamente un reintento correctivo", fake.llamadas)
+				}
+				if resultado.Veredicto != VerdictOK {
+					t.Fatalf("veredicto=%s, esperado que el reintento rescate la dimensión", resultado.Veredicto)
+				}
+			})
+		}
+	})
+	t.Run("la denegacion de herramienta no se reintenta", func(t *testing.T) {
+		fabrica, fake := fabricaFija([]string{"Permission denied: Read(/host/private.go)", `{"dim":"logic","verdict":"ok"}`})
+		resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{SHA: "abc", Bundles: bundlesPrueba(DimLogic)})
+		if fake.llamadas != 1 || resultado.Veredicto != VerdictUnavailable {
+			t.Fatalf("llamadas=%d veredicto=%s, esperado una sola llamada y unavailable", fake.llamadas, resultado.Veredicto)
+		}
+	})
 }
 
 func TestAuditarCommitRetriesMissingSemanticPayload(t *testing.T) {
@@ -1526,5 +1551,79 @@ func TestPolicyBoundReviewerReenviaElArbolDeProcesos(t *testing.T) {
 	sinArbol := bindPolicy(&agenteFake{}, policy)
 	if sinArbol.OwnedTree() != nil {
 		t.Fatal("OwnedTree() debería ser nil sin capacidad en el reviewer envuelto")
+	}
+}
+
+// TestShouldRetryFormatCubreTodoFalloDeFormato cierra el criterio pendiente de
+// la ficha 18: "Semantic-output format failures get one corrective retry;
+// provider execution failures and valid semantic blockers do not retry".
+//
+// El filtro anterior re-parseaba la salida completa como UN objeto JSON y solo
+// reintentaba si traía un veredicto inválido no vacío. Eso dejaba fuera el caso
+// que de verdad ocurre: un payload JSONL con veredicto VÁLIDO cuyos findings
+// incumplen la política de evidencia. Las seis dimensiones canónicas exigen
+// evidence literal y confidence, y basta un finding sin evidencia para tirar el
+// bloque entero y marcar la dimensión unavailable, sin reintento.
+func TestShouldRetryFormatCubreTodoFalloDeFormato(t *testing.T) {
+	// Payload realista: JSONL, veredicto válido, un finding sin evidence. Es la
+	// forma exacta que producía schema_invalid sin reintento.
+	sinEvidencia := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"WARNING","description":"algo","confidence":"high"}]}`
+
+	casos := []struct {
+		nombre    string
+		err       error
+		reintenta bool
+	}{
+		{"payload ausente", newSemanticOutputError(SemanticOutputMissingPayload, ErrSalidaVacia, ""), true},
+		{"json malformado", newSemanticOutputError(SemanticOutputMalformedJSON, ErrJSONLInvalido, "{no cierra"), true},
+		{"schema invalido por veredicto", newSemanticOutputError(SemanticOutputSchemaInvalid, ErrVeredictoInvalido, `{"dim":"logic","verdict":"findings"}`), true},
+		{"schema invalido por politica de evidencia", newSemanticOutputError(SemanticOutputSchemaInvalid, ErrJSONLInvalido, sinEvidencia), true},
+		// Denegar herramientas no es un fallo de formato: repetir el prompt no
+		// concede permisos, solo gasta otra llamada al proveedor.
+		{"herramienta denegada", newSemanticOutputError(SemanticOutputToolDenied, ErrSalidaVacia, ""), false},
+		{"fallo de ejecucion del proveedor", &ProviderExecutionFailure{Err: errors.New("exit status 1")}, false},
+		{"sin error", nil, false},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			if got := shouldRetryFormat(caso.err); got != caso.reintenta {
+				t.Errorf("shouldRetryFormat = %v, esperado %v", got, caso.reintenta)
+			}
+		})
+	}
+}
+
+// TestReviewTransportRetriesEvidencePolicyFailureOnce es el reintento probado
+// de punta a punta sobre la forma que de verdad falla en producción, no sobre
+// un veredicto inválido: un payload JSONL con veredicto VÁLIDO cuyo finding no
+// trae la evidencia literal que exigen las seis dimensiones canónicas. Basta
+// uno así para descartar el bloque entero, y antes ese caso no se reintentaba.
+func TestReviewTransportRetriesEvidencePolicyFailureOnce(t *testing.T) {
+	fake := &agenteFake{}
+	calls := 0
+	transport := func(_, _, prompt string, _ AuditorAgente) (string, string, error) {
+		calls++
+		if calls == 1 {
+			// Veredicto válido; el finding incumple RequireLiteralEvidence.
+			return `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"WARNING","description":"algo","confidence":"high"}]}`, "inv-sin-evidencia", nil
+		}
+		if !strings.Contains(prompt, "FORMAT RETRY") {
+			t.Fatal("retry prompt does not request schema correction")
+		}
+		if !strings.Contains(prompt, "evidence") {
+			t.Error("the retry instruction does not name the evidence requirement it was rejected for")
+		}
+		return `{"dim":"logic","verdict":"ok"}`, "inv-corregida", nil
+	}
+	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return fake, "normal", nil
+	}, 1, OpcionesAuditoria{
+		SHA: "sha-evidence-retry", Bundles: []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}, ReviewTransport: transport,
+	})
+	if calls != 2 {
+		t.Fatalf("llamadas = %d, esperado exactamente un reintento correctivo", calls)
+	}
+	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil || resultado.Dims[0].Resultado.Verdict != VerdictOK {
+		t.Fatalf("resultado = %+v, esperado que el reintento rescate la dimensión en vez de dejarla unavailable", resultado)
 	}
 }

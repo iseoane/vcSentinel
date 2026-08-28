@@ -21,7 +21,10 @@ before classifying its dimension as unavailable.
 
 - [ ] Focused tests reproduce a daemon shutdown racing a controller terminal
       completion and prove the review result is terminal rather than unavailable.
-- [ ] Focused tests prove malformed semantic payloads get one corrective retry.
+- [x] Focused tests prove malformed semantic payloads get one corrective retry.
+      TestShouldRetryFormatCubreTodoFalloDeFormato covers every class;
+      TestReviewTransportRetriesEvidencePolicyFailureOnce and
+      TestAuditarCommitRetriesFormatFailuresButNotToolDenial prove it end to end.
 - [ ] Focused tests prove no daemon shutdown or reconciliation path fabricates a
       provider completion.
 - [ ] Build, vet, focused tests, full tests, guardian, and independent review

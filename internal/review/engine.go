@@ -607,7 +607,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	}
 
 	crudo, err := ParseDimensionResultForContract(output, contract)
-	if shouldRetryFormat(err, output) {
+	if shouldRetryFormat(err) {
 		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt+formatRetryInstruction)
 		if err == nil {
 			crudo, err = ParseDimensionResultForContract(output, contract)
@@ -639,23 +639,35 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	return crudo, nil
 }
 
-const formatRetryInstruction = "\n\nFORMAT RETRY: Your previous response did not satisfy the required review schema. Return only one complete BEGIN_REVIEW/END_REVIEW payload with verdict set to ok, warn, block, question, or unavailable and every required finding field."
+const formatRetryInstruction = "\n\nFORMAT RETRY: Your previous response did not satisfy the required review schema. Return only one complete BEGIN_REVIEW/END_REVIEW payload with verdict set to ok, warn, block, question, or unavailable. EVERY finding must carry a non-empty literal `evidence` quoted from the reviewed code and a `confidence` value; a single finding missing either one discards the whole response."
 
-func shouldRetryFormat(err error, output string) bool {
+// shouldRetryFormat decides the ONE corrective retry a malformed semantic
+// payload gets. Every SemanticOutputClass that means "the provider answered but
+// the payload does not satisfy the contract" qualifies, because that is exactly
+// what a corrective instruction can fix.
+//
+// It used to re-parse the output as a single JSON object and retry only when
+// that object carried a non-empty INVALID verdict. That missed the failure that
+// actually happens: a JSONL payload with a VALID verdict whose findings breach
+// the evidence policy. All six canonical dimensions require literal evidence and
+// confidence, and one offending finding discards the whole block, so those
+// dimensions went straight to unavailable with no second chance.
+//
+// tool_denied is deliberately excluded: a denied tool is not a format problem,
+// and repeating the prompt cannot grant permissions — it would only spend
+// another provider call. Provider execution failures never reach here, because
+// they are not SemanticOutputError at all.
+func shouldRetryFormat(err error) bool {
 	var semantic *SemanticOutputError
 	if !errors.As(err, &semantic) {
 		return false
 	}
-	if semantic.Class == SemanticOutputMissingPayload {
+	switch semantic.Class {
+	case SemanticOutputMissingPayload, SemanticOutputMalformedJSON, SemanticOutputSchemaInvalid:
 		return true
-	}
-	if semantic.Class != SemanticOutputSchemaInvalid {
+	default:
 		return false
 	}
-	var envelope struct {
-		Verdict string `json:"verdict"`
-	}
-	return json.Unmarshal([]byte(output), &envelope) == nil && envelope.Verdict != "" && !veredictosValidos[envelope.Verdict]
 }
 
 // stamparSourceReview marca todo Hallazgo que sale de la revisión semántica
