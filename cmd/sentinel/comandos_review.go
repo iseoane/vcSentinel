@@ -40,13 +40,15 @@ func ejecutarReview(worktree string, args []string) {
 		os.Exit(1)
 	}
 	cfg = aplicarTimeoutFlag(cfg, flags)
-	gitDir, err := git.ObtenerGitDir()
+	// Resuelto desde el worktree sobre el que se opera, nunca desde el cwd del
+	// proceso: ver el comentario de git.ObtenerGitDirDe.
+	gitDir, err := git.ObtenerGitDirDe(worktree)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
 
-	shas, err := resolverShasAuditoria(flags)
+	shas, err := resolverShasAuditoria(gitDir, flags)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
@@ -630,7 +632,11 @@ func fixTocaHallazgos(archivosFix map[string]bool, dims []review.DimensionResult
 // de commits pedida (default HEAD), la cadena desde el base (--chain) o todos
 // los commits sin ficha (--all). --chain/--all no se combinan con targets
 // explícitos: no tiene sentido mezclar dos criterios de selección.
-func resolverShasAuditoria(flags flagsAuditoria) ([]string, error) {
+// resolverShasAuditoria recibe el gitDir ya resuelto por el llamante en vez de
+// resolverlo de nuevo: era la segunda resolución del mismo dato y la hacía
+// desde el cwd, así que --all leía el ledger del repositorio equivocado cuando
+// el worktree no era el directorio de trabajo.
+func resolverShasAuditoria(gitDir string, flags flagsAuditoria) ([]string, error) {
 	// Default a HEAD vive aquí, no en parsearFlagsAuditoria (B17): es la
 	// única función que necesita un target por defecto (status no tiene
 	// concepto de target). flags se recibe por valor: mutar targets aquí no
@@ -653,10 +659,6 @@ func resolverShasAuditoria(flags flagsAuditoria) ([]string, error) {
 			return nil, errors.New("--all no se combina con una lista de commits: audita todo el historial sin ficha")
 		}
 		todos, err := git.SHAsHasta(flags.targets[0])
-		if err != nil {
-			return nil, err
-		}
-		gitDir, err := git.ObtenerGitDir()
 		if err != nil {
 			return nil, err
 		}

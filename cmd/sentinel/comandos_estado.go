@@ -297,7 +297,7 @@ func ejecutarStatus(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	gitDir, err := git.ObtenerGitDir()
+	gitDir, err := git.ObtenerGitDirDe(worktree)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
