@@ -593,3 +593,82 @@ func TestReadExecutionMetricsRejectsMismatchedRunID(t *testing.T) {
 		t.Fatalf("ReadExecutionMetrics() error = %v, want corrupt metrics for mismatched run id", err)
 	}
 }
+
+func TestSaveExecutionMetricsRejectsSavingsForFullScope(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	metrics := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   string(job.RunID()),
+		Scope: &ExecutionScope{
+			Kind:    ScopeFull,
+			Savings: &ExecutionSavings{},
+		},
+	}
+	if err := store.SaveExecutionMetrics(metrics); !errors.Is(err, ErrExecutionMetricsCorrupt) {
+		t.Fatalf("SaveExecutionMetrics() error = %v, want corrupt metrics for full-scope savings", err)
+	}
+}
+
+func TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce(t *testing.T) {
+	root := t.TempDir()
+	first := NuevoStore(root)
+	second := NuevoStore(root)
+	job := testJob()
+	if err := first.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	runID := string(job.RunID())
+	metrics := []ExecutionMetrics{
+		{
+			Version: ExecutionMetricsSchemaVersion,
+			RunID:   runID,
+			Failures: []ExecutionFailure{{
+				Class:  FailureInvalidOutput,
+				Detail: "first",
+			}},
+		},
+		{
+			Version: ExecutionMetricsSchemaVersion,
+			RunID:   runID,
+			Failures: []ExecutionFailure{{
+				Class:  FailureInvalidOutput,
+				Detail: "second",
+			}},
+		},
+	}
+	results := make(chan error, len(metrics))
+	start := make(chan struct{})
+	go func() {
+		<-start
+		results <- first.SaveExecutionMetrics(metrics[0])
+	}()
+	go func() {
+		<-start
+		results <- second.SaveExecutionMetrics(metrics[1])
+	}()
+	close(start)
+
+	successes, conflicts := 0, 0
+	for range metrics {
+		switch err := <-results; {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrImmutableConflict):
+			conflicts++
+		default:
+			t.Fatalf("concurrent SaveExecutionMetrics() error = %v, want one success and one immutable conflict", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent SaveExecutionMetrics() results = %d successes, %d conflicts, want one each", successes, conflicts)
+	}
+	if got, err := first.ReadExecutionMetrics(runID); err != nil {
+		t.Fatal(err)
+	} else if got == nil || len(got.Failures) != 1 {
+		t.Fatalf("persisted metrics = %#v, want exactly one winning snapshot", got)
+	}
+}

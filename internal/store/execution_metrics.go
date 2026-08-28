@@ -157,9 +157,7 @@ func (s *Store) SaveExecutionMetrics(metrics ExecutionMetrics) error {
 	if err != nil {
 		return err
 	}
-	return withExecutionLock(directory, func() error {
-		return writeImmutableRecordOnce(filepath.Join(directory, "metrics.json"), data)
-	})
+	return writeImmutableRecordOnce(filepath.Join(directory, "metrics.json"), data)
 }
 
 // ReadExecutionMetrics returns nil, nil when a durable execution predates the
@@ -224,6 +222,9 @@ func validateExecutionMetrics(metrics ExecutionMetrics, expectedRunID string) er
 	if metrics.Scope != nil {
 		if metrics.Scope.Kind == "" {
 			return fmt.Errorf("%w: scope kind is empty", ErrExecutionMetricsCorrupt)
+		}
+		if metrics.Scope.Kind == ScopeFull && metrics.Scope.Savings != nil {
+			return fmt.Errorf("%w: full scope cannot report savings", ErrExecutionMetricsCorrupt)
 		}
 		if metrics.Scope.Savings != nil {
 			if err := validateExecutionSavings(*metrics.Scope.Savings); err != nil {
@@ -318,13 +319,18 @@ func validateExecutionCost(cost ExecutionCost) error {
 }
 
 func writeImmutableRecordOnce(path string, expected []byte) error {
-	_, err := os.Lstat(path)
-	switch {
-	case err == nil:
-		return fmt.Errorf("%w: %s", ErrImmutableConflict, path)
-	case !errors.Is(err, os.ErrNotExist):
-		return err
-	default:
-		return atomicWrite(path, expected)
-	}
+	// The existence check and atomic rename must share the execution lock.
+	// Independent Store values can otherwise both observe absence and let the
+	// latter rename replace the first immutable snapshot.
+	return withExecutionLock(filepath.Dir(path), func() error {
+		_, err := os.Lstat(path)
+		switch {
+		case err == nil:
+			return fmt.Errorf("%w: %s", ErrImmutableConflict, path)
+		case !errors.Is(err, os.ErrNotExist):
+			return err
+		default:
+			return atomicWrite(path, expected)
+		}
+	})
 }
