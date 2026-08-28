@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestSafePathsFiltersHostileVocabulary(t *testing.T) {
@@ -148,5 +149,53 @@ func TestCreateNeverMaterializesSensitiveEnvironmentFiles(t *testing.T) {
 func TestCreateRequiresSHA(t *testing.T) {
 	if _, _, _, err := Create("", "", nil); err == nil {
 		t.Fatal("Create without SHA must fail before any git call")
+	}
+}
+
+// TestCreateRecolectaSnapshotsAbandonados cubre una fuga real: el cleanup de
+// Create es un defer del llamante, y un defer no corre si el proceso muere de
+// golpe (Ctrl+C, gate abortado, apagado del daemon). No había NINGÚN recolector
+// —el único sitio que mencionaba el prefijo era la línea que los crea— así que
+// cada revisión interrumpida dejaba su snapshot para siempre.
+//
+// Medido en esta máquina: 472 MB acumulados en un tmpfs de 3,8 GB. Cuando /tmp
+// se llena no fallan solo las revisiones; falla hasta compilar.
+func TestCreateRecolectaSnapshotsAbandonados(t *testing.T) {
+	raiz := t.TempDir()
+	t.Setenv("TMPDIR", raiz)
+
+	viejo := filepath.Join(raiz, "vas-sentinel-review-abandonado")
+	if err := os.MkdirAll(filepath.Join(viejo, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	antiguo := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(viejo, antiguo, antiguo); err != nil {
+		t.Fatal(err)
+	}
+	reciente := filepath.Join(raiz, "vas-sentinel-review-en-curso")
+	if err := os.MkdirAll(reciente, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ajeno := filepath.Join(raiz, "otra-cosa-cualquiera")
+	if err := os.MkdirAll(ajeno, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(ajeno, antiguo, antiguo); err != nil {
+		t.Fatal(err)
+	}
+
+	recolectados := reapAbandonedSnapshots(time.Now(), staleSnapshotAge)
+
+	if recolectados != 1 {
+		t.Errorf("recolectados = %d, esperado 1", recolectados)
+	}
+	if _, err := os.Stat(viejo); !os.IsNotExist(err) {
+		t.Error("el snapshot abandonado sigue ahí: la fuga continúa")
+	}
+	if _, err := os.Stat(reciente); err != nil {
+		t.Error("se borró un snapshot reciente: podría estar en uso por una revisión viva")
+	}
+	if _, err := os.Stat(ajeno); err != nil {
+		t.Error("se borró un directorio que no es nuestro")
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SafePaths filters and normalizes reviewer-audited paths: absolute paths,
@@ -51,6 +52,50 @@ func isSensitiveEnvironmentFile(filePath string) bool {
 	return strings.HasSuffix(name, ".env") || strings.Contains(name, ".env.")
 }
 
+// staleSnapshotAge bounds how long an abandoned snapshot may survive. A review
+// can never outlive review.timeout (300s by default), so anything older than a
+// day is definitively residue from a process that died before its cleanup ran,
+// never work in flight. The margin is deliberately enormous: deleting a live
+// snapshot would sabotage a running review, while deleting one a day late costs
+// nothing.
+const staleSnapshotAge = 24 * time.Hour
+
+// reapAbandonedSnapshots removes review snapshots left behind by processes that
+// died before their caller-owned cleanup could run — Ctrl+C, an aborted gate, a
+// daemon shutdown. The cleanup Create returns is a defer, and a defer does not
+// run when the process is killed, so without this the directories accumulated
+// forever: 472 MB were measured on one machine, in a 3.8 GB tmpfs where filling
+// /tmp breaks not just reviews but compilation.
+//
+// It is best-effort by contract: every error is ignored, because failing to
+// tidy must never fail the review that was about to start. It only ever touches
+// entries carrying this package's own prefix.
+func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
+	raiz := os.TempDir()
+	entradas, err := os.ReadDir(raiz)
+	if err != nil {
+		return 0
+	}
+	recolectados := 0
+	for _, entrada := range entradas {
+		if !entrada.IsDir() || !strings.HasPrefix(entrada.Name(), snapshotPrefix) {
+			continue
+		}
+		info, err := entrada.Info()
+		if err != nil || now.Sub(info.ModTime()) < maxAge {
+			continue
+		}
+		if os.RemoveAll(filepath.Join(raiz, entrada.Name())) == nil {
+			recolectados++
+		}
+	}
+	return recolectados
+}
+
+// snapshotPrefix identifies this package's temporary directories, both when
+// creating one and when reaping the ones nobody cleaned up.
+const snapshotPrefix = "vas-sentinel-review-"
+
 // Create materializes the read-only review snapshot for sha restricted to
 // paths. It returns the snapshot directory, the subset of paths that survived
 // the committed-regular-file filter, a caller-owned cleanup func, and an
@@ -67,7 +112,11 @@ func Create(worktree, sha string, paths []string) (string, []string, func(), err
 			return "", nil, nil, fmt.Errorf("resolve review worktree: %w", err)
 		}
 	}
-	snapshot, err := os.MkdirTemp("", "vas-sentinel-review-")
+	// Tidy before creating: the reaper is best-effort and never blocks the
+	// review, but tying it to snapshot creation means the residue is bounded by
+	// use instead of growing until something else breaks.
+	reapAbandonedSnapshots(time.Now(), staleSnapshotAge)
+	snapshot, err := os.MkdirTemp("", snapshotPrefix)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("create review snapshot: %w", err)
 	}
