@@ -42,6 +42,9 @@ const (
 	capabilityNameCommands = "gate.validation.commands"
 	capabilityNameCommand  = "gate.validation.command"
 	capabilityNameReview   = "gate.review.phase"
+	// capabilityNameAttempt carries the gate execution ordinal and nothing
+	// else, so the command capabilities keep meaning exactly "these commands".
+	capabilityNameAttempt = "gate.execution.attempt"
 )
 
 // GateJobPlan is one logical job descriptor under the gate root run. The
@@ -117,7 +120,15 @@ func (e GatePlanError) Error() string {
 // SHA, and the ordered command-list identity; each validation command gets
 // one logical job in exact profile order, followed by exactly one review
 // job. The same inputs always derive the same identities.
-func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string, attempt int) (GateRunPlan, error) {
+func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string) (GateRunPlan, error) {
+	return BuildGateRunPlanIntento(stage, profile, candidateSHA, commands, 0)
+}
+
+// BuildGateRunPlanIntento is BuildGateRunPlan for a specific execution attempt.
+// Attempt 0 is BuildGateRunPlan exactly, which is what every caller but the
+// gate's admission probe wants; keeping the plain signature avoids a magic 0 at
+// every call site.
+func BuildGateRunPlanIntento(stage, profile, candidateSHA string, commands []string, attempt int) (GateRunPlan, error) {
 	if attempt < 0 {
 		return GateRunPlan{}, GatePlanError{Field: "attempt", Reason: "must not be negative"}
 	}
@@ -142,7 +153,7 @@ func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string, at
 	root := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 		agentrun.Candidate(candidateSHA),
 		agentrun.Prompt(canonicalPrompt(promptDomainRoot, stage, profile)),
-		[]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, conIntento(commandAttributes(commands), attempt))},
+		conIntento([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, commandAttributes(commands))}, attempt),
 	))
 
 	jobs := make([]GateJobPlan, 0, len(commands)+1)
@@ -154,11 +165,11 @@ func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string, at
 			Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
 				agentrun.Candidate(candidateSHA),
 				agentrun.Prompt(canonicalPrompt(promptDomainValidation, stage, profile, position)),
-				[]agentrun.Capability{agentrun.NewCapability(capabilityNameCommand, conIntento(map[string]string{
+				conIntento([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommand, map[string]string{
 					"profile":  profile,
 					"position": position,
 					"command":  command,
-				}, attempt))},
+				})}, attempt),
 			)),
 		})
 	}
@@ -167,9 +178,9 @@ func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string, at
 		Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
 			agentrun.Candidate(candidateSHA),
 			agentrun.Prompt(canonicalPrompt(promptDomainReview, stage, profile)),
-			[]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, conIntento(map[string]string{
+			conIntento([]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, map[string]string{
 				"profile": profile,
-			}, attempt))},
+			})}, attempt),
 		)),
 	})
 
@@ -213,27 +224,28 @@ func canonicalPrompt(domain string, parts ...string) string {
 	return strings.Join(append([]string{domain}, parts...), "\x00")
 }
 
-// conIntento folds the gate execution attempt into a capability's attributes
-// so every identity of the plan — root and jobs alike — is distinct per
-// attempt. Attempt 0 returns the attributes UNCHANGED on purpose: the
-// identities a candidate has always derived stay byte-identical, so durable
-// records written before this existed remain addressable and no migration is
-// needed.
+// conIntento appends the execution attempt as its OWN capability, so every
+// identity of the plan — root and jobs alike — is distinct per attempt. It is a
+// separate capability on purpose: folding the ordinal into the command
+// capability would give capabilityNameCommands two different derivations, one
+// here and one in ValidationCommandsIdentity, and a capability name must mean
+// one thing. It also returns a new slice rather than mutating its argument.
+//
+// Attempt 0 appends NOTHING: the identities a candidate has always derived stay
+// byte-identical, so durable records written before this existed remain
+// addressable and no migration is needed.
 //
 // The discriminator is the attempt, never a timestamp or a nonce: two gates
 // launched concurrently on the same candidate still derive the same identity
 // and one of them is correctly refused, which is the collision guard worth
 // keeping. Only a SEQUENTIAL re-run, after the previous attempt settled,
 // climbs to the next attempt.
-func conIntento(attributes map[string]string, attempt int) map[string]string {
+func conIntento(capabilities []agentrun.Capability, attempt int) []agentrun.Capability {
 	if attempt == 0 {
-		return attributes
+		return capabilities
 	}
-	if attributes == nil {
-		attributes = map[string]string{}
-	}
-	attributes["attempt"] = strconv.Itoa(attempt)
-	return attributes
+	return append(append([]agentrun.Capability(nil), capabilities...),
+		agentrun.NewCapability(capabilityNameAttempt, map[string]string{"ordinal": strconv.Itoa(attempt)}))
 }
 
 func commandAttributes(commands []string) map[string]string {

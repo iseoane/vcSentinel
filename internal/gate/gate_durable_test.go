@@ -320,6 +320,106 @@ func TestGateDurableRerunsTheSameCandidate(t *testing.T) {
 	if segundo.Estado != primero.Estado {
 		t.Errorf("second gate estado = %q, expected the same verdict as the first (%q): the same candidate and the same commands cannot change the outcome", segundo.Estado, primero.Estado)
 	}
+
+	// Facade equality is not enough: a permissive Controller.Start would look
+	// identical from here while appending a second lifecycle onto attempt 0's
+	// settled stream. Inspect attempt 1 explicitly and prove it settled on its
+	// OWN identity, distinct from attempt 0.
+	intento0, err := BuildDurableGatePlanIntento(durableOpts, 0)
+	if err != nil {
+		t.Fatalf("attempt 0 plan: %v", err)
+	}
+	intento1, err := BuildDurableGatePlanIntento(durableOpts, 1)
+	if err != nil {
+		t.Fatalf("attempt 1 plan: %v", err)
+	}
+	if intento0.Root.RunID() == intento1.Root.RunID() {
+		t.Fatal("both attempts derive the same root identity: the discriminator is not discriminating")
+	}
+	inspector := execution.NewController(durableOpts.DurableStore, nil)
+	for nombre, runID := range map[string]agentrun.Identity{
+		"attempt 0": intento0.Root.RunID(), "attempt 1": intento1.Root.RunID(),
+	} {
+		inspeccion, err := inspector.Inspect(context.Background(), runID)
+		if err != nil {
+			t.Fatalf("%s root inspection: %v", nombre, err)
+		}
+		if inspeccion.Projection.Terminal == agentrun.TerminalNone {
+			t.Errorf("%s root did not settle: terminal=%q state=%q", nombre, inspeccion.Projection.Terminal, inspeccion.Projection.State)
+		}
+	}
+}
+
+// TestGateDurableRerunsAfterAnUnavailableRoot covers the case that actually
+// exposed the defect: the first gate settles unavailable because the semantic
+// review cannot run, and the candidate must still be gateable afterwards.
+// TestGateDurableRerunsTheSameCandidate only proves the green path, and the
+// probe treats every terminal class alike, so without this the abort-and-retry
+// path stays plausible rather than pinned.
+func TestGateDurableRerunsAfterAnUnavailableRoot(t *testing.T) {
+	transportes := 0
+	// An empty auditor output settles the review as infrastructure-unavailable.
+	roto := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(new(int), "", nil))
+	roto.EjecutarValidacion = ejecutarPerfilSinCandidato
+	durableOpts := opcionesDurable(t, roto, &transportes)
+
+	primero := EjecutarGate(durableOpts)
+	if primero.Estado != EstadoReviewInfrastructureError {
+		t.Fatalf("first gate estado = %q, expected the infrastructure failure this case is about", primero.Estado)
+	}
+	intento0, err := BuildDurableGatePlanIntento(durableOpts, 0)
+	if err != nil {
+		t.Fatalf("attempt 0 plan: %v", err)
+	}
+	inspeccion, err := execution.NewController(durableOpts.DurableStore, nil).Inspect(context.Background(), intento0.Root.RunID())
+	if err != nil {
+		t.Fatalf("attempt 0 inspection: %v", err)
+	}
+	if inspeccion.Projection.Terminal != agentrun.TerminalUnavailable {
+		t.Fatalf("attempt 0 terminal = %q, expected %q", inspeccion.Projection.Terminal, agentrun.TerminalUnavailable)
+	}
+
+	// Same candidate, working reviewer this time: the guardian must be able to
+	// certify the commit its own infrastructure failure left uncertified.
+	sano := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	sano.EjecutarValidacion = ejecutarPerfilSinCandidato
+	segundoOpts := sano
+	segundoOpts.Stage = durableOpts.Stage
+	segundoOpts.CandidateSHA = durableOpts.CandidateSHA
+	segundoOpts.DurableStore = durableOpts.DurableStore
+	segundoOpts.DurableReviewTransportFactory = durableOpts.DurableReviewTransportFactory
+
+	segundo := EjecutarGate(segundoOpts)
+	if segundo.Estado != EstadoPass {
+		t.Fatalf("second gate estado = %q, expected %q: an infrastructure failure must not brick the candidate", segundo.Estado, EstadoPass)
+	}
+}
+
+// TestGateDurableRefusesAnExhaustedCandidate covers the probe's bound. With the
+// real limit of 64 the branch would need 64 real gate executions, so the test
+// lowers it instead of leaving the refusal unproven.
+func TestGateDurableRefusesAnExhaustedCandidate(t *testing.T) {
+	original := maxIntentosGate
+	maxIntentosGate = 1
+	t.Cleanup(func() { maxIntentosGate = original })
+
+	transportes := 0
+	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
+		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base.EjecutarValidacion = ejecutarPerfilSinCandidato
+	durableOpts := opcionesDurable(t, base, &transportes)
+
+	if primero := EjecutarGate(durableOpts); primero.Estado == EstadoReviewInfrastructureError {
+		t.Fatalf("first gate is broken before the case starts: %v", primero.Mensajes)
+	}
+	segundo := EjecutarGate(durableOpts)
+	if segundo.Estado != EstadoReviewInfrastructureError {
+		t.Fatalf("estado = %q, expected the exhausted bound to refuse", segundo.Estado)
+	}
+	if mensaje := strings.Join(segundo.Mensajes, "\n"); !strings.Contains(mensaje, "settled gate executions") {
+		t.Errorf("message = %q, expected the exhaustion refusal to say so", mensaje)
+	}
 }
 
 // bloqueanteAdapter keeps a run running until liberar is closed, so a test can
@@ -350,13 +450,24 @@ func TestGateDurableRefusesAConcurrentGateOnTheSameCandidate(t *testing.T) {
 	}
 	liberar := make(chan struct{})
 	vivo := execution.NewController(durableOpts.DurableStore, bloqueanteAdapter{liberar: liberar})
-	if _, err := vivo.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
+	// Timing invariant this test relies on: Start persists the running head
+	// BEFORE returning its handle, so by the time EjecutarGate probes, the
+	// non-terminal record is durably visible. The handle is kept and waited on
+	// so the blocked worker finishes writing before t.TempDir is removed —
+	// dropping it makes the cleanup race the worker.
+	handle, err := vivo.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
 		ID: DurableGateRunPolicyID, Operation: gateRootOperation(durableOpts.Stage),
 		Commit: shortCommitLabel(durableOpts.CandidateSHA), Worktree: durableOpts.OpcionesValidacion.Worktree,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("could not hold a live root run: %v", err)
 	}
-	defer close(liberar)
+	t.Cleanup(func() {
+		close(liberar)
+		if _, err := handle.Wait(context.Background()); err != nil {
+			t.Logf("held run did not settle cleanly: %v", err)
+		}
+	})
 
 	resultado := EjecutarGate(durableOpts)
 
