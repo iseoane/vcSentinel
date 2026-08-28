@@ -48,11 +48,14 @@ Subcommands:
   status   [--run <id>] [--json]
   logs     --run <id> [--after <cursor>] [--limit N] [--json]
   respond  --run <id> --text <response> [--json]
-  abort    --run <id> [--orphaned] [--json]
-           --orphaned retires a run whose durable head is non-terminal and
-           whose owner process is gone: it records the operator decision as a
-           canceled settlement authored from the verified stream. Without it,
-           an abort that cannot reach a live run fails instead of pretending
+  abort    --run <id> [--orphaned --reason "..."] [--json]
+           --orphaned retires a run whose durable head is non-terminal after
+           the consulted host reported no live state for it, recording the
+           operator decision as a canceled settlement authored from the
+           verified stream. --reason is REQUIRED with it: no available evidence
+           proves that some other process is not still executing the run, so
+           the record names whose assertion it rests on. Without --orphaned an
+           abort that cannot reach a live run fails instead of pretending
   retry    --run <id> [--expected-revision N] [--json]
   recover  --run <id> [--expected-revision N] [--json]
            --repair <id> rebuilds the lagging state snapshot of one run the
@@ -147,7 +150,12 @@ type runOptions struct {
 	// decision to retire a run whose durable head is non-terminal and whose
 	// owner is gone. It is never implicit, so an ordinary abort keeps failing
 	// honestly instead of settling a run behind the operator's back.
-	orphaned         bool
+	orphaned bool
+	// reason carries the operator's own justification for --orphaned. It is
+	// mandatory there because the CLI cannot PROVE the owner is gone, so the
+	// durable settlement records whose assertion it rests on — the same
+	// precedent as `pr create --force --reason`.
+	reason           string
 	text             string
 	prompt           string
 	policyID         string

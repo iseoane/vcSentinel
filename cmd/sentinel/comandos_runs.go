@@ -91,6 +91,7 @@ const (
 	flagOlderThan        runsFlag = "--older-than"
 	flagFollow           runsFlag = "--follow"
 	flagOrphaned         runsFlag = "--orphaned"
+	flagReason           runsFlag = "--reason"
 )
 
 // runsSubcommandFlags is the single source of truth for which flags each
@@ -103,7 +104,7 @@ var runsSubcommandFlags = map[string][]runsFlag{
 	"status":  {flagRun, flagJSON},
 	"logs":    {flagRun, flagAfter, flagLimit, flagJSON},
 	"respond": {flagRun, flagText, flagJSON},
-	"abort":   {flagRun, flagOrphaned, flagJSON},
+	"abort":   {flagRun, flagOrphaned, flagReason, flagJSON},
 	"retry":   {flagRun, flagExpectedRevision, flagJSON},
 	"recover": {flagRun, flagExpectedRevision, flagRepair, flagJSON},
 	"verify":  {flagRun, flagJSON},
@@ -146,6 +147,12 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		value := args[i+1]
 		var err error
 		switch runsFlag(flag) {
+		case flagReason:
+			if i+1 >= len(args) {
+				return options, fmt.Errorf("flag %s requires a value", flag)
+			}
+			i++
+			options.reason = args[i]
 		case flagRun:
 			options.runID = value
 		case flagRepair:

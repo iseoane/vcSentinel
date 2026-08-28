@@ -187,16 +187,21 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 			}
 			return printApplyResult(out, options.jsonOut, settled, &head.State)
 		}
-		// Nobody live owns this run, the daemon included, or Apply would not
-		// have answered ErrRunNotActive. That is exactly the shape --orphaned
-		// retires; without it the refusal at least names the exit, because a
-		// run the classifier parks in operator_required has no other one.
+		// ErrRunNotActive proves only that the CONSULTED host holds no live
+		// state for this run — the daemon when one is resolved, this process
+		// otherwise. It does NOT prove the run is unowned: a separate
+		// in-process controller can still be supervising it, which is exactly
+		// why OrphanOwnedRuns exists alongside OrphanActiveRuns. No per-run
+		// owner identity is recorded anywhere in the store, so that absence
+		// cannot be verified from here at all. --orphaned therefore rests on
+		// the operator's assertion and records it as such.
 		if errors.Is(applyErr, execution.ErrRunNotActive) {
 			if options.orphaned {
 				return settleOrphanedRun(out, options, controller, agentrun.Identity(options.runID))
 			}
 			fmt.Fprintf(out, "❌ abort rejected: %v\n", applyErr)
-			fmt.Fprintf(out, "   If its owner process is gone, retire it with: sentinel runs abort --run %s --orphaned\n", options.runID)
+			fmt.Fprintf(out, "   If you can confirm its owner process is gone, retire it with:\n")
+			fmt.Fprintf(out, "   sentinel runs abort --run %s --orphaned --reason \"...\"\n", options.runID)
 			return runExitCode(applyErr)
 		}
 		fmt.Fprintf(out, "❌ abort rejected: %v\n", applyErr)
@@ -207,17 +212,29 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 	return printApplyResult(out, options.jsonOut, result, nil)
 }
 
-// orphanedAbortReason is the recorded operator decision. It names the command
-// that authored it and states plainly that no outcome was ever observed, so a
-// later reader can never mistake this settlement for an outcome the system saw.
-const orphanedAbortReason = "operator orphaned this run through sentinel runs abort --orphaned: the owner process was gone and no outcome was ever observed"
+// orphanedAbortPrefix opens the recorded reason. It states the provenance of
+// the settlement before the operator's own words: no outcome was ever observed,
+// and no evidence proved the owner was gone, so a later reader can never take
+// this frame for something the system watched happen.
+const orphanedAbortPrefix = "operator orphaned this run through sentinel runs abort --orphaned; no outcome was ever observed and no owner-liveness evidence was available. Operator reason: "
 
 // settleOrphanedRun records the operator decision the recovery classifier was
-// waiting for. It goes through the controller directly on purpose: the host
-// already answered ErrRunNotActive, so there is no live owner to route around,
-// and the settlement is the same one the daemon-shutdown sweep authors.
+// waiting for, because the classifier is read-only by contract and never
+// guesses an outcome.
+//
+// It uses the controller directly because the consulted host already answered
+// ErrRunNotActive, so there is nothing live to route around THERE. That is not
+// proof of absence: no per-run owner identity is recorded in the store, so a
+// separate in-process controller could still be executing this run and its late
+// result would then be dropped, exactly as a deliberate abort drops one. The
+// mandatory reason is what keeps that trade visible in the durable record
+// instead of implied.
 func settleOrphanedRun(out io.Writer, options runOptions, controller *execution.Controller, runID agentrun.Identity) int {
-	settled, err := controller.OrphanRun(runID, orphanedAbortReason)
+	if strings.TrimSpace(options.reason) == "" {
+		fmt.Fprintln(out, "❌ --orphaned requires --reason \"...\": the CLI cannot prove the owner process is gone, so the durable settlement records whose assertion it rests on")
+		return runExitUsage
+	}
+	settled, err := controller.OrphanRun(runID, orphanedAbortPrefix+options.reason)
 	if err != nil {
 		fmt.Fprintf(out, "❌ orphaned abort rejected: %v\n", err)
 		return runExitCode(err)

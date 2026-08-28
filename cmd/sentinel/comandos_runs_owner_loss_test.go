@@ -292,7 +292,7 @@ func TestRunsAbortOrphanedSettlesAnOwnerlessRun(t *testing.T) {
 	}
 
 	output, code := captureRunsOutput(t, func(w io.Writer) int {
-		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--orphaned"})
+		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--orphaned", "--reason", "el proceso propietario ya no existe"})
 	})
 	if code != runExitSuccess {
 		t.Fatalf("abort --orphaned exit = %d, want %d; output:\n%s", code, runExitSuccess, output)
@@ -324,6 +324,52 @@ func TestRunsAbortOrphanedSettlesAnOwnerlessRun(t *testing.T) {
 	}
 	if !strings.Contains(string(crudo), "orphan") {
 		t.Error("the appended settlement records no orphaning reason")
+	}
+	// The operator's own words and the provenance disclaimer must both survive
+	// into the record: without them the frame is indistinguishable from an
+	// ordinary abort, and its basis is invisible.
+	if !strings.Contains(string(crudo), "el proceso propietario ya no existe") {
+		t.Error("the operator reason is not recorded in the settlement")
+	}
+	if !strings.Contains(string(crudo), "no owner-liveness evidence was available") {
+		t.Error("the settlement does not record that it rests on an unverified assertion")
+	}
+}
+
+// TestRunsAbortOrphanedRequiresAReason pins the guard the security review asked
+// for. The CLI cannot prove the owner process is gone — no per-run owner
+// identity is recorded anywhere in the store, and ErrRunNotActive only speaks
+// for the consulted host — so the settlement must never rest on an unrecorded
+// assumption. It rests on a named assertion or it does not happen.
+func TestRunsAbortOrphanedRequiresAReason(t *testing.T) {
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := store.NuevoStore(commonDir)
+	runID := string(appendReconciledFixtureStream(t, backing, "candidate:orphaned-no-reason", nil))
+	antes, err := backing.ReadEvents(runID, 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, code := captureRunsOutput(t, func(w io.Writer) int {
+		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--orphaned"})
+	})
+	if code == runExitSuccess {
+		t.Errorf("--orphaned without --reason settled the run:\n%s", output)
+	}
+	if !strings.Contains(output, "--reason") {
+		t.Errorf("the refusal does not name the missing flag:\n%s", output)
+	}
+	despues, err := backing.ReadEvents(runID, 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(despues.Events) != len(antes.Events) {
+		t.Errorf("durable events went from %d to %d: a refused settlement must write nothing", len(antes.Events), len(despues.Events))
 	}
 }
 
