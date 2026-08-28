@@ -212,6 +212,122 @@ func TestReadExecutionMetricsTreatsHistoricalExecutionAsAbsent(t *testing.T) {
 		t.Fatalf("ReadExecutionMetrics() = %#v, want nil for a historical execution without metrics", metrics)
 	}
 }
+func TestExecutionMetricsPreservesObservedZeroAndUnavailable(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+
+	zeroDuration := time.Duration(0)
+	zeroTokens := int64(0)
+	metrics := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   string(job.RunID()),
+		Timing: &ExecutionTiming{
+			TotalDurationNanos: &zeroDuration,
+			ByCapability: []CapabilityTiming{{
+				CapabilityID:  "capability-zero",
+				DurationNanos: 0,
+			}},
+		},
+		Usage: &ExecutionTokenUsage{
+			InputTokens: &zeroTokens,
+			Source:      ObservationSourceAdapter,
+		},
+		Cost: &ExecutionCost{
+			AmountMicros: 0,
+			Currency:     "USD",
+			Provenance: CostProvenance{
+				Source: CostSourceEstimate,
+			},
+		},
+		Scope: &ExecutionScope{Kind: ScopeFull},
+	}
+	if err := store.SaveExecutionMetrics(metrics); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
+
+	got, err := store.ReadExecutionMetrics(string(job.RunID()))
+	if err != nil {
+		t.Fatalf("ReadExecutionMetrics() error = %v", err)
+	}
+	if got.Timing == nil || got.Timing.TotalDurationNanos == nil || *got.Timing.TotalDurationNanos != 0 {
+		t.Fatalf("timing total = %#v, want an observed zero", got.Timing)
+	}
+	if len(got.Timing.ByCapability) != 1 || got.Timing.ByCapability[0].DurationNanos != 0 {
+		t.Fatalf("capability timing = %#v, want an observed zero row", got.Timing.ByCapability)
+	}
+	if got.Usage == nil || got.Usage.InputTokens == nil || *got.Usage.InputTokens != 0 {
+		t.Fatalf("usage input = %#v, want an observed zero", got.Usage)
+	}
+	if got.Usage.OutputTokens != nil {
+		t.Fatalf("usage output = %#v, want unavailable", got.Usage.OutputTokens)
+	}
+	if got.Cost == nil || got.Cost.AmountMicros != 0 {
+		t.Fatalf("cost = %#v, want an observed zero", got.Cost)
+	}
+	if got.Scope == nil || got.Scope.Kind != ScopeFull || got.Scope.Savings != nil {
+		t.Fatalf("scope = %#v, want full scope with unavailable savings", got.Scope)
+	}
+}
+
+func TestExecutionMetricsAcceptsInvocationIdentityWithoutAgentObservation(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	metrics := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   string(job.RunID()),
+		Identities: []ObservedExecutionIdentity{{
+			InvocationID: "attempt-1",
+			Source:       ObservationSourceAdapter,
+		}},
+	}
+	if err := store.SaveExecutionMetrics(metrics); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
+	got, err := store.ReadExecutionMetrics(string(job.RunID()))
+	if err != nil {
+		t.Fatalf("ReadExecutionMetrics() error = %v", err)
+	}
+	if len(got.Identities) != 1 || got.Identities[0].InvocationID != "attempt-1" {
+		t.Fatalf("identities = %#v, want invocation identity without agent fields", got.Identities)
+	}
+}
+
+func TestSaveExecutionMetricsRejectsSecondWrite(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	metrics := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   string(job.RunID()),
+	}
+	if err := store.SaveExecutionMetrics(metrics); err != nil {
+		t.Fatalf("first SaveExecutionMetrics() error = %v", err)
+	}
+
+	if err := store.SaveExecutionMetrics(metrics); !errors.Is(err, ErrImmutableConflict) {
+		t.Fatalf("second SaveExecutionMetrics() error = %v, want immutable conflict", err)
+	}
+	conflicting := metrics
+	conflicting.Failures = []ExecutionFailure{{Class: FailureInvalidOutput, Detail: "changed"}}
+	if err := store.SaveExecutionMetrics(conflicting); !errors.Is(err, ErrImmutableConflict) {
+		t.Fatalf("conflicting SaveExecutionMetrics() error = %v, want immutable conflict", err)
+	}
+	got, err := store.ReadExecutionMetrics(string(job.RunID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, &metrics) {
+		t.Fatalf("conflicting write changed the immutable snapshot: got %#v, want %#v", got, &metrics)
+	}
+}
 
 func TestReadExecutionMetricsAcceptsUnknownFieldsAndValues(t *testing.T) {
 	store := NuevoStore(t.TempDir())
@@ -276,5 +392,204 @@ func TestReadExecutionMetricsRejectsUnsupportedSchemaVersion(t *testing.T) {
 	_, err = store.ReadExecutionMetrics(string(job.RunID()))
 	if !errors.Is(err, ErrUnsupportedExecutionMetricsVersion) {
 		t.Fatalf("ReadExecutionMetrics() error = %v, want unsupported schema version", err)
+	}
+}
+func TestSaveExecutionMetricsRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ExecutionMetrics)
+	}{
+		{
+			name: "invalid run id",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.RunID = "../escape"
+			},
+		},
+		{
+			name: "identity source missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Identities = []ObservedExecutionIdentity{{Agent: "agent"}}
+			},
+		},
+		{
+			name: "identity values missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Identities = []ObservedExecutionIdentity{{Source: ObservationSourceAdapter}}
+			},
+		},
+		{
+			name: "identity invocation id invalid",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Identities = []ObservedExecutionIdentity{{
+					InvocationID: "../attempt",
+					Agent:        "agent",
+					Source:       ObservationSourceAdapter,
+				}}
+			},
+		},
+		{
+			name: "total duration negative",
+			mutate: func(metrics *ExecutionMetrics) {
+				duration := -time.Nanosecond
+				metrics.Timing = &ExecutionTiming{TotalDurationNanos: &duration}
+			},
+		},
+		{
+			name: "capability timing invalid",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Timing = &ExecutionTiming{ByCapability: []CapabilityTiming{{
+					CapabilityID:  "",
+					DurationNanos: -time.Nanosecond,
+				}}}
+			},
+		},
+		{
+			name: "agent timing negative",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Timing = &ExecutionTiming{ByAgent: []AgentTiming{{
+					Identity:      ObservedExecutionIdentity{Agent: "agent", Source: ObservationSourceAdapter},
+					DurationNanos: -time.Nanosecond,
+				}}}
+			},
+		},
+		{
+			name: "usage source missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Usage = &ExecutionTokenUsage{}
+			},
+		},
+		{
+			name: "token count negative",
+			mutate: func(metrics *ExecutionMetrics) {
+				tokens := int64(-1)
+				metrics.Usage = &ExecutionTokenUsage{
+					InputTokens: &tokens,
+					Source:      ObservationSourceAdapter,
+				}
+			},
+		},
+		{
+			name: "cost currency missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Cost = &ExecutionCost{
+					Provenance: CostProvenance{Source: CostSourceEstimate},
+				}
+			},
+		},
+		{
+			name: "cost source missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Cost = &ExecutionCost{Currency: "USD"}
+			},
+		},
+		{
+			name: "cost amount negative",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Cost = &ExecutionCost{
+					AmountMicros: -1,
+					Currency:     "USD",
+					Provenance:   CostProvenance{Source: CostSourceEstimate},
+				}
+			},
+		},
+		{
+			name: "scope kind missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Scope = &ExecutionScope{}
+			},
+		},
+		{
+			name: "saved duration negative",
+			mutate: func(metrics *ExecutionMetrics) {
+				duration := -time.Nanosecond
+				metrics.Scope = &ExecutionScope{
+					Kind:    ScopeAffected,
+					Savings: &ExecutionSavings{DurationNanos: &duration},
+				}
+			},
+		},
+		{
+			name: "reuse capability id missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Reuse = &ExecutionReuse{ReusedCapabilityIDs: []string{""}}
+			},
+		},
+		{
+			name: "failure class missing",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Failures = []ExecutionFailure{{}}
+			},
+		},
+		{
+			name: "failure invocation id invalid",
+			mutate: func(metrics *ExecutionMetrics) {
+				metrics.Failures = []ExecutionFailure{{
+					InvocationID: "../attempt",
+					Class:        FailureInvalidOutput,
+				}}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NuevoStore(t.TempDir())
+			job := testJob()
+			if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+				t.Fatal(err)
+			}
+			metrics := ExecutionMetrics{
+				Version: ExecutionMetricsSchemaVersion,
+				RunID:   string(job.RunID()),
+			}
+			test.mutate(&metrics)
+			if err := store.SaveExecutionMetrics(metrics); !errors.Is(err, ErrExecutionMetricsCorrupt) {
+				t.Fatalf("SaveExecutionMetrics() error = %v, want corrupt metrics", err)
+			}
+		})
+	}
+}
+
+func TestReadExecutionMetricsRejectsCorruptJSON(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := store.executionDir(string(job.RunID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "metrics.json"), []byte(`{"version":1,`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.ReadExecutionMetrics(string(job.RunID()))
+	if !errors.Is(err, ErrExecutionMetricsCorrupt) {
+		t.Fatalf("ReadExecutionMetrics() error = %v, want corrupt metrics", err)
+	}
+	if errors.Is(err, ErrUnsupportedExecutionMetricsVersion) {
+		t.Fatalf("ReadExecutionMetrics() error = %v, malformed JSON must not be classified as an unsupported version", err)
+	}
+}
+
+func TestReadExecutionMetricsRejectsMismatchedRunID(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := store.executionDir(string(job.RunID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := `{"version":1,"run_id":"different-run"}`
+	if err := os.WriteFile(filepath.Join(directory, "metrics.json"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.ReadExecutionMetrics(string(job.RunID()))
+	if !errors.Is(err, ErrExecutionMetricsCorrupt) {
+		t.Fatalf("ReadExecutionMetrics() error = %v, want corrupt metrics for mismatched run id", err)
 	}
 }

@@ -100,7 +100,10 @@ type CostProvenance struct {
 // Readers retain future non-empty values.
 type ScopeKind string
 
-const ScopeAffected ScopeKind = "affected"
+const (
+	ScopeFull     ScopeKind = "full"
+	ScopeAffected ScopeKind = "affected"
+)
 
 // ExecutionScope records the execution scope and any measured savings.
 type ExecutionScope struct {
@@ -155,7 +158,7 @@ func (s *Store) SaveExecutionMetrics(metrics ExecutionMetrics) error {
 		return err
 	}
 	return withExecutionLock(directory, func() error {
-		return writeImmutableRecord(filepath.Join(directory, "metrics.json"), data)
+		return writeImmutableRecordOnce(filepath.Join(directory, "metrics.json"), data)
 	})
 }
 
@@ -250,7 +253,7 @@ func validateObservedIdentity(identity ObservedExecutionIdentity) error {
 	if identity.Source == "" {
 		return fmt.Errorf("%w: identity source is empty", ErrExecutionMetricsCorrupt)
 	}
-	if identity.Agent == "" && identity.Model == "" && identity.Effort == "" {
+	if identity.InvocationID == "" && identity.Agent == "" && identity.Model == "" && identity.Effort == "" {
 		return fmt.Errorf("%w: identity has no observed values", ErrExecutionMetricsCorrupt)
 	}
 	if identity.InvocationID != "" && !validRunID(identity.InvocationID) {
@@ -312,4 +315,16 @@ func validateExecutionCost(cost ExecutionCost) error {
 		return fmt.Errorf("%w: invalid cost", ErrExecutionMetricsCorrupt)
 	}
 	return nil
+}
+
+func writeImmutableRecordOnce(path string, expected []byte) error {
+	_, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return fmt.Errorf("%w: %s", ErrImmutableConflict, path)
+	case !errors.Is(err, os.ErrNotExist):
+		return err
+	default:
+		return atomicWrite(path, expected)
+	}
 }
