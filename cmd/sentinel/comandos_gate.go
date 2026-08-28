@@ -165,12 +165,19 @@ func finalizarGate(w io.Writer, worktree, stage, estado string, mensajes []strin
 	return gate.CodigoSalida(estado)
 }
 
-// registrarEventoGate anexa el evento "gate" al log del repositorio. Un
-// gitDir no resoluble (worktree fuera de un repo Git) no puede pasar de
+// registrarEventoGate anexa el evento "gate" al log del repositorio SOBRE EL
+// QUE SE OPERÓ, resuelto desde worktree y no desde el directorio de trabajo del
+// proceso. La diferencia no es cosmética: con ObtenerGitDir() el evento se
+// escribía en el repositorio donde casualmente corría el binario, así que los
+// tests de gate —que pasan un worktree temporal mientras el cwd es este
+// repositorio— anexaban sus fallos deliberados al registro operativo real.
+//
+// Un gitDir no resoluble (worktree fuera de un repo Git) no puede pasar de
 // requireInicializado, pero por si acaso el registro es best-effort: no
-// aborta gate por un fallo al registrar su propio evento.
+// aborta gate por un fallo al registrar su propio evento, y ante la duda no
+// escribe en ningún sitio antes que escribir en el sitio equivocado.
 func registrarEventoGate(worktree, stage, estado string) {
-	gitDir, err := git.ObtenerGitDir()
+	gitDir, err := git.ObtenerGitDirDe(worktree)
 	if err != nil {
 		return
 	}
