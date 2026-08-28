@@ -1462,10 +1462,34 @@ func repoGitTemporal(t *testing.T) string {
 // so the store assignment lives in this extracted assembler; without this test,
 // deleting it would fail nothing.
 func TestOpcionesRamaPrReviewWiresTheBlobStore(t *testing.T) {
+	// Assert everything that needs no repository FIRST, on the failure path
+	// itself: outside a repository the caller only warns, so the options must
+	// still come back fully usable. Ordering it this way also keeps these
+	// assertions out of reach of repoGitTemporal's skip when git is absent.
+	fuera, avisoStore := opcionesRamaPrReview(config.Config{}, nil, t.TempDir(), flagsPrReview{parent: "layer-a"}, nil)
+	if avisoStore == nil {
+		t.Error("expected an error outside a repository so the caller can warn")
+	}
+	if fuera.Store != nil {
+		t.Errorf("Store = %v outside a repository, expected nil", fuera.Store)
+	}
+	if fuera.Base != "main" {
+		t.Errorf("Base = %q with an empty --base, expected \"main\"", fuera.Base)
+	}
+	if fuera.OwnDiff == nil || fuera.OwnDiff.Parent != "layer-a" {
+		t.Errorf("OwnDiff = %+v, expected the explicit --parent to reach the stacked own-diff", fuera.OwnDiff)
+	}
+	if fuera.NetReview == nil {
+		t.Error("NetReview is nil: the PR would be reviewed as the sum of its commits")
+	}
+	if fuera.FabricaRefutador == nil {
+		t.Error("FabricaRefutador is nil: the options no longer travel through opcionesRamaConRefutador")
+	}
+
 	repo := repoGitTemporal(t)
-	opciones, err := opcionesRamaPrReview(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil)
-	if err != nil {
-		t.Fatalf("opcionesRamaPrReview inside a real repository: %v", err)
+	opciones, avisoStore := opcionesRamaPrReview(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil)
+	if avisoStore != nil {
+		t.Fatalf("opcionesRamaPrReview inside a real repository: %v", avisoStore)
 	}
 	esperado, err := resolveBlobStore(repo)
 	if err != nil {
@@ -1474,28 +1498,6 @@ func TestOpcionesRamaPrReviewWiresTheBlobStore(t *testing.T) {
 	if !reflect.DeepEqual(opciones.Store, esperado) {
 		t.Errorf("OpcionesRama.Store = %v, expected the resolved blob store %v: pr review would never reach blob reuse, so a base rebase re-audits the whole stack", opciones.Store, esperado)
 	}
-	if opciones.Base != "main" {
-		t.Errorf("Base = %q with an empty --base, expected \"main\"", opciones.Base)
-	}
-	if opciones.OwnDiff == nil || opciones.OwnDiff.Parent != "layer-a" {
-		t.Errorf("OwnDiff = %+v, expected the explicit --parent to reach the stacked own-diff", opciones.OwnDiff)
-	}
-	if opciones.NetReview == nil {
-		t.Error("NetReview is nil: the PR would be reviewed as the sum of its commits")
-	}
-	if opciones.FabricaRefutador == nil {
-		t.Error("FabricaRefutador is nil: the options no longer travel through opcionesRamaConRefutador")
-	}
-
-	// Outside a repository the caller's warning path must stay reachable: the
-	// options are still usable and simply carry no store.
-	fuera, err := opcionesRamaPrReview(config.Config{}, nil, t.TempDir(), flagsPrReview{}, nil)
-	if err == nil {
-		t.Error("expected an error outside a repository so the caller can warn")
-	}
-	if fuera.Store != nil {
-		t.Errorf("Store = %v outside a repository, expected nil", fuera.Store)
-	}
 }
 
 // TestDepsPrCreateRealesWiresTheBlobStore covers the production wiring of the
@@ -1503,6 +1505,23 @@ func TestOpcionesRamaPrReviewWiresTheBlobStore(t *testing.T) {
 // on its own it cannot notice the production assignment disappearing.
 func TestDepsPrCreateRealesWiresTheBlobStore(t *testing.T) {
 	deps := depsPrCreateReales()
+	// Sweep every seam, not just the blob store: depsPrCreateReales exists so
+	// that a production wiring silently disappearing fails a test, and that
+	// promise is only worth what the sweep covers.
+	costuras := map[string]bool{
+		"cargarConfig": deps.cargarConfig == nil, "obtenerGitDir": deps.obtenerGitDir == nil,
+		"obtenerSHAHead": deps.obtenerSHAHead == nil, "ejecutarValidacion": deps.ejecutarValidacion == nil,
+		"analizarRama": deps.analizarRama == nil, "verificar": deps.verificar == nil,
+		"publicar": deps.publicar == nil, "registrarEvento": deps.registrarEvento == nil,
+		"obtenerGitCommonDir": deps.obtenerGitCommonDir == nil, "registrarDecision": deps.registrarDecision == nil,
+		"resolverActor": deps.resolverActor == nil, "escribirPlantilla": deps.escribirPlantilla == nil,
+		"blobStore": deps.blobStore == nil,
+	}
+	for nombre, ausente := range costuras {
+		if ausente {
+			t.Errorf("depsPrCreate.%s is nil in production: pr create would panic or silently lose that step", nombre)
+		}
+	}
 	if deps.blobStore == nil {
 		t.Fatal("depsPrCreate.blobStore is nil in production: pr create never reaches blob reuse")
 	}

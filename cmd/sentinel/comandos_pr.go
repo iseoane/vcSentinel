@@ -182,15 +182,16 @@ func textoDecision(decision string, volumen int) string {
 // carries — notably the blob store that keeps a base rebase cheap (F8 criterion
 // 2) — would otherwise be deletable without failing anything.
 //
-// The returned error is only the blob-store resolution failure. Reuse is
-// optional, so the options come back usable with a nil Store and the caller
-// warns through its own stream.
-func opcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador, worktree string, flags flagsPrReview, fabrica review.FabricaAuditor) (review.OpcionesRama, error) {
+// The named results say what the signature alone would get wrong: avisoStore is
+// ONLY the blob-store resolution failure, never a reason to abort. Reuse is
+// optional, so opciones comes back fully usable with a nil Store and the caller
+// warns through its own stream instead of returning.
+func opcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador, worktree string, flags flagsPrReview, fabrica review.FabricaAuditor) (opciones review.OpcionesRama, avisoStore error) {
 	base := flags.base
 	if base == "" {
 		base = "main"
 	}
-	blobStore, err := resolveBlobStore(worktree)
+	blobStore, avisoStore := resolveBlobStore(worktree)
 	return opcionesRamaConRefutador(cfg, verificador, review.OpcionesRama{
 		Base:                   base,
 		SoloPendientes:         flags.soloPendientes,
@@ -207,7 +208,7 @@ func opcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador
 		},
 		OwnDiff:   stackOwnDiff(flags.parent, false),
 		NetReview: &review.NetReviewOptions{Intention: honestNetIntention, Validation: "pr review performs no deterministic validation"},
-	}), err
+	}), avisoStore
 }
 
 // ejecutarPrReview analiza la rama contra la base y muestra la matriz de

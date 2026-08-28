@@ -32,6 +32,7 @@ package adaptersites
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -68,14 +69,20 @@ type Site struct {
 	// Symbol names the representative function or type hosting the site.
 	Symbol string
 	// Anchor is the verbatim source text of the representative site, trimmed
-	// of surrounding whitespace. Entries with a Marker assert that the file
-	// still CONTAINS this text, so the enumeration cannot rot silently when a
-	// site is rewritten or removed. It deliberately replaces the former line
-	// number, which every unrelated insertion above the site invalidated:
-	// that churn produced refresh commits with no audit signal in them.
+	// of surrounding whitespace and of any trailing line comment. Entries with
+	// a Marker assert that the file still CONTAINS this text. It deliberately
+	// replaces the former line number, which every unrelated insertion above
+	// the site invalidated: that churn produced refresh commits with no audit
+	// signal in them.
 	//
-	// The anchor need not be unique inside its file — some files hold several
-	// byte-identical spawn lines, where uniqueness would carry no meaning.
+	// What this pins exactly: the anchored TEXT still exists somewhere in the
+	// file. Where a file holds several byte-identical spawn lines (see
+	// internal/agentadapter/cli.go), rewriting one of them leaves the check
+	// green while a sibling survives — the pin is per-text, not per-site, and
+	// the promise stops there. Completeness is the separate invariant, and it
+	// does not depend on anchors: ScanMarkerFiles still fails on any
+	// undeclared file that starts carrying a canary token.
+	//
 	// Symbol remains the human pointer to WHICH site the entry represents.
 	Anchor string
 	// Marker is the canary token that pins this entry to the scan. Empty for
@@ -86,6 +93,32 @@ type Site struct {
 	// Reason records WHY the site holds its class; for out-of-scope sites it
 	// is the precise contract-required justification.
 	Reason string
+}
+
+// AnchorProblem reports why a curated entry no longer matches the file text,
+// or "" when the entry is sound. It lives here, not in the test, so the rule
+// that decides audit rot can be exercised against synthetic entries: before
+// this existed, every real entry passed and no test proved the check would
+// fail on a stale anchor.
+//
+// Documentation-only rows (empty Marker) carry no anchor and are always sound.
+func AnchorProblem(text string, site Site) string {
+	if site.Marker == "" {
+		if site.Anchor != "" {
+			return "documentation-only row declares an anchor but no marker: either pin a marker or drop the anchor"
+		}
+		return ""
+	}
+	if site.Anchor == "" {
+		return "entry declares marker " + strconv.Quote(site.Marker) + " with no anchor: it cannot be pinned to the file"
+	}
+	if !strings.Contains(site.Anchor, site.Marker) {
+		return "anchor " + strconv.Quote(site.Anchor) + " does not contain its own marker " + strconv.Quote(site.Marker) + ": the entry pins the wrong text"
+	}
+	if !strings.Contains(text, site.Anchor) {
+		return "the file no longer contains the anchored site " + strconv.Quote(site.Anchor) + ": re-read the site and refresh the anchor, class and reason"
+	}
+	return ""
 }
 
 // canaryMarkers are the textual tokens whose presence in any non-test Go file
@@ -133,7 +166,7 @@ func Sites() []Site {
 			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
 		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---
-		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Anchor: "cmd := exec.CommandContext(ctx, a.launcher[0], a.Args(prompt)...) // #nosec G204 -- launcher comes from trusted local configuration", Marker: "exec.Command",
+		{Path: "internal/acpadapter/adapter.go", Symbol: "AcpxAdapter.Command", Anchor: "cmd := exec.CommandContext(ctx, a.launcher[0], a.Args(prompt)...)", Marker: "exec.Command",
 			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16): Command is the transparent spawn description; the production path runs through the owned-tree spawner in review.go (process.Spawn), mirroring cli.go's seam split. Admission binding happens at the caller, not here."},
 		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter EjecutarPrompt/EjecutarRevision/ReviewWithContext", Anchor: "func (a *AcpxAdapter) EjecutarPrompt(prompt string) (string, error) {", Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Prompt and restricted-review surface of the ACP/acpx adapter (ticket 16 slice 2, wired in slice 3): review runs reuse the shared reviewsnapshot.Create snapshot discipline and spawn through the owned-tree process.Spawn seam like cli.go; admission binding happens at the caller, not here."},
@@ -147,8 +180,8 @@ func Sites() []Site {
 			Class: ClassShared, Reason: "THE provider process spawn seam (exec.CommandContext). Both the admitted review adapter and the gated legacy reviewers funnel through these methods; admission binding happens at the caller, not here."},
 		{Path: "internal/agentadapter/contractadapter.go", Symbol: "AgentAdapter/AdaptadorPrompt interfaces", Anchor: "EjecutarPrompt(prompt string) (string, error)", Marker: "EjecutarPrompt(",
 			Class: ClassShared, Reason: "Interface declarations only; no execution."},
-		{Path: "internal/agentadapter/factory.go", Symbol: "shim resolution note", Anchor: "// binario real al que apunta. Ejecutar shims .cmd con exec.Command usa cmd.exe", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "Comment-only reference (Windows .cmd shim caveat); the actual spawn lives in cli.go."},
+		{Path: "internal/agentadapter/factory.go", Symbol: "shim resolution note", Anchor: "", Marker: "",
+			Class: ClassInfra, Reason: "Documentation-only row: the file's ONLY exec.Command occurrence is prose inside the resolverBinarioReal doc comment (Windows .cmd shim caveat), so there is no spawn site to anchor; the actual spawn lives in cli.go. Anchoring the sentence would make rewording unrelated prose fail the audit."},
 		{Path: "internal/agentadapter/snapshot.go", Symbol: "snapshot delegation to reviewsnapshot", Anchor: "", Marker: "",
 			Class: ClassInfra, Reason: "Since ticket 16 slice 3 this file only delegates to internal/reviewsnapshot (shared by both adapter families); the git plumbing and its spawn seam moved with the implementation."},
 

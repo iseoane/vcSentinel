@@ -111,22 +111,11 @@ func TestAdapterExecutionSitesInventory(t *testing.T) {
 		}
 	}
 
-	// Every declared entry must exist on disk and pin a real line.
+	// Every declared entry must exist on disk and still pin its anchored site.
 	for _, site := range sites {
 		text := readFile(t, root, site.Path)
-		if site.Marker == "" {
-			continue // documentation-only row
-		}
-		if site.Anchor == "" {
-			t.Errorf("inventory entry %s (%s) declares marker %q with no anchor: the entry cannot be pinned to the file", site.Path, site.Symbol, site.Marker)
-			continue
-		}
-		if !strings.Contains(site.Anchor, site.Marker) {
-			t.Errorf("inventory entry %s (%s): anchor %q does not contain its own marker %q; the entry pins the wrong text", site.Path, site.Symbol, site.Anchor, site.Marker)
-			continue
-		}
-		if !strings.Contains(text, site.Anchor) {
-			t.Errorf("inventory entry %s (%s): the file no longer contains the anchored site %q; re-read the site and refresh the anchor, class and reason", site.Path, site.Symbol, site.Anchor)
+		if problem := AnchorProblem(text, site); problem != "" {
+			t.Errorf("inventory entry %s (%s): %s", site.Path, site.Symbol, problem)
 		}
 	}
 }
@@ -291,5 +280,33 @@ func TestNoCompatibilityGatedSitesRemain(t *testing.T) {
 	parser := readFile(t, root, "internal/config/parser.go")
 	if got := strings.Count(parser, `yaml:"durable_runs"`); got != 0 {
 		t.Errorf("review.durable_runs and gate.durable_runs were removed in R11, found %d remaining yaml tags", got)
+	}
+}
+
+// TestAnchorProblemDetectsRot is the negative proof the anchor pin needs: every
+// real entry passes, so without synthetic cases nothing shows the check would
+// actually fail on a stale, empty or mismatched anchor.
+func TestAnchorProblemDetectsRot(t *testing.T) {
+	const text = "package p\n\nfunc f() { cmd := exec.Command(\"gh\", \"pr\") }\n"
+	casos := []struct {
+		nombre  string
+		site    Site
+		problem bool
+	}{
+		{"sound entry", Site{Anchor: `cmd := exec.Command("gh", "pr")`, Marker: "exec.Command"}, false},
+		{"documentation-only row", Site{}, false},
+		{"stale anchor: the site was rewritten", Site{Anchor: `cmd := exec.CommandContext(ctx, "gh", "pr")`, Marker: "exec.Command"}, true},
+		{"anchor removed from the file", Site{Anchor: `cmd := exec.Command("git", "status")`, Marker: "exec.Command"}, true},
+		{"marker declared with no anchor", Site{Marker: "exec.Command"}, true},
+		{"anchor that does not carry its own marker", Site{Anchor: "return nil", Marker: "exec.Command"}, true},
+		{"documentation-only row carrying an anchor", Site{Anchor: `cmd := exec.Command("gh", "pr")`}, true},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			problem := AnchorProblem(text, caso.site)
+			if (problem != "") != caso.problem {
+				t.Errorf("AnchorProblem = %q, expected a problem: %v", problem, caso.problem)
+			}
+		})
 	}
 }
