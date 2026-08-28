@@ -286,12 +286,47 @@ type runsRepairOutput struct {
 	Rewritten   bool   `json:"rewritten"`
 }
 
-func observeUntilSettled(ctx context.Context, c *execution.Controller, runID agentrun.Identity) (store.RunProjection, error) {
+// inspectorDurable es lo único que observeUntilSettled necesita del
+// controller. Es una interfaz para poder probar la tolerancia al tail a medio
+// escribir sin montar una ejecución real: *execution.Controller la satisface.
+type inspectorDurable interface {
+	Inspect(ctx context.Context, runID agentrun.Identity) (execution.Inspection, error)
+}
+
+// maxTailsAMedioEscribir acota cuántas observaciones consecutivas de un tail
+// incompleto se toleran antes de reportarlo. Con runsObserveInterval de 50 ms
+// son ~2 s: de sobra para que termine un append concurrente, y lo bastante
+// corto para no colgar el comando ante un tail truncado de verdad.
+const maxTailsAMedioEscribir = 40
+
+func observeUntilSettled(ctx context.Context, c inspectorDurable, runID agentrun.Identity) (store.RunProjection, error) {
+	tailsSeguidos := 0
 	for {
 		inspection, err := c.Inspect(ctx, runID)
 		if err != nil {
+			// Los lectores del store son deliberadamente SIN CERROJO mientras
+			// el escritor sí lo toma (ver ReadAttemptOutcomes), así que un
+			// lector puede ver el último registro JSONL a medio anexar. El
+			// store llama a ese estado "recoverable" porque se resuelve solo en
+			// cuanto la escritura termina: es un "todavía no", no un fallo.
+			// Tratarlo como error convertía una carrera benigna en
+			// REVIEW_INFRASTRUCTURE_ERROR.
+			//
+			// Un tail truncado de verdad, dejado por un proceso muerto a media
+			// escritura, nunca se completa: por eso la tolerancia está acotada
+			// y el error acaba saliendo con su identidad intacta.
+			if errors.Is(err, store.ErrIncompleteEventTail) && tailsSeguidos < maxTailsAMedioEscribir {
+				tailsSeguidos++
+				select {
+				case <-ctx.Done():
+					return store.RunProjection{}, ctx.Err()
+				case <-time.After(runsObserveInterval):
+				}
+				continue
+			}
 			return store.RunProjection{}, err
 		}
+		tailsSeguidos = 0
 		state := inspection.Projection.State
 		if state == agentrun.StateAwaitingDecision || state.TerminalClass() != agentrun.TerminalNone {
 			return inspection.Projection, nil
