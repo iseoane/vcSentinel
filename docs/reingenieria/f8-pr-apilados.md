@@ -214,12 +214,32 @@ main worktree and from a `git worktree add` child. Verified by mutation —
 pointing `git.ObtenerGitCommonDir` at `--git-dir` makes the linked worktree
 resolve `.git/worktrees/linked/vas-sentinel` and the test fails.
 
-**Residual limits.** `ejecutarPrReview` calls `os.Exit` and has no injectable
-seam, so the one-line assignments that wire the store in production
-(`comandos_pr.go:229` and the `blobStore: resolveBlobStore` default at `:717`)
-are not themselves covered: the create test substitutes the seam and the helper
-test exercises `resolveBlobStore` in isolation. Deleting either production line
-would not fail a test. Adding a seam to `pr review` was out of scope.
+**Production wiring, covered.** Both commands call `os.Exit`, so the assignments
+were extracted into functions a test can drive: `opcionesRamaPrReview`
+(`comandos_pr.go:189`) assembles the options `pr review` hands to
+`AnalizarRama`, and `depsPrCreateReales` (`:717`) resolves the production seams
+of `pr create`. `TestOpcionesRamaPrReviewWiresTheBlobStore` and
+`TestDepsPrCreateRealesWiresTheBlobStore` compare the resolved store against
+`resolveBlobStore` instead of asserting non-nil, and the second sweeps all
+thirteen seams. Verified by mutation: deleting `Store` from the assembler,
+repointing the production seam, and removing `publicar` each fail their test.
+
+**Recorded, not acted on.** The review also raised: `depsPrCreate` now holds
+three git/store-shaped members; the `--force` path resolves the common dir
+twice in one run; `pr review` still prints through `fmt.Printf` while `pr
+create` threads an `io.Writer`; and the store comparison uses
+`reflect.DeepEqual` on the value rather than the common-dir path. Parameterizing
+the store resolver in `opcionesRamaPrReview`, also suggested, was rejected: it
+would move the assignment back inside the `os.Exit`-bound function and reopen
+the gap this work closes.
+
+**Inventory churn, removed.** `internal/adaptersites` recorded absolute line
+numbers, so any insertion in `cmd/sentinel/comandos_pr.go` invalidated an entry
+— this work alone forced two refreshes (551, 573, 579) with no audit signal in
+them. `Site.Anchor` now pins the verbatim source text of the site and
+`AnchorProblem` decides rot, with `TestAnchorProblemDetectsRot` covering its
+four failure branches. Demonstrated on the very next commit: the spawn sites
+moved from 425/534/579 to 440/549/594 and the inventory needed no edit.
 
 **Review round.** `sentinel review cd5c6e9` returned `warn` on all five
 dimensions, no `block`. Three warnings were accepted and fixed: the diagnostic
