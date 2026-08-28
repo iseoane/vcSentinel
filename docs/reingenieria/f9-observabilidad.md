@@ -21,57 +21,180 @@ propia guía §10 admite que es una decisión de coste, no de calidad.
 
 ## Opening revalidation and execution plan
 
-**Phase status**: Open. T9.0 revalidates the phase before implementation; it
-does not close F9.
+**Phase status**: Open. T9.0 defines the execution contract; it does not close
+F9 or accept any implementation candidate.
 
-### Revalidated architecture boundaries
+### Authority and execution policy
 
-- Durable Runs is the execution authority. Metrics belong to its durable
-  execution evidence, not to a second execution path.
-- Legacy `store.Run` must not become a parallel metrics ledger. Readers may
-  project compatible historical data, but new execution facts have one
-  authoritative durable-run source.
-- Effective model and usage may originate in adapter evidence. Persist observed
-  evidence when available; do not infer it from a requested model or fabricate
-  it when absent.
-- Historical data remains readable, including pre-existing ledgers and run
-  streams, through compatible readers.
+- Durable Runs is the sole execution authority. New metrics live with durable
+  execution evidence; legacy `store.Run` must not become a parallel ledger.
+- Historical ledgers and streams remain readable. Missing model, usage, cost,
+  timing, or scope evidence means unknown, never zero.
+- Effective model and usage come from observed adapter evidence. Never infer
+  them from requested configuration.
+- Harness subagents implement F9. Sentinel never implements it and is not used
+  to review this plan. For the agreed final candidate, Sentinel uses the
+  repository YAML's configured OpenCode reviewer and profiles for check, slice,
+  review, gate, and evidence verification; the plan does not override them.
+- Use one writer per task in a dedicated worktree. Use `scout` at High effort
+  for read-only mapping. The user explicitly selected OpenCode
+  `openai/gpt-5.6-luna` with `reasoning_effort: max` for every implementation
+  and review-fix writer. Record the effective identity from execution evidence
+  and stop if the requested model or effort was not honored.
+- The fixed `sonnet / high` rows and line budgets below are retained as
+  historical context. This plan supersedes them; quality and compatibility
+  take precedence over advisory size.
 
-### Dispatch, Sentinel, and model boundary
+### Execution matrix
 
-- F9 implementation is delegated through harness subagents only. Sentinel does
-  not implement F9; it is reserved for check, slice, review, gate, and
-  execution evidence or validation.
-- Sentinel's configured `active_agent: auto` and its profiles are separate from
-  harness dispatch. They do not select or promise a harness subagent model.
-- Use `codex-rescue` at High effort for substantial implementation, `scout` at
-  High effort for read-only mapping, and `task` at Medium or High effort for
-  mechanical or local writing according to scope. Each task has one designated
-  writer in its own dedicated worktree.
-- The harness Task API exposes type and effort, but no model selector. Do not
-  invent or hardcode a model identity; record the effective model only when
-  execution or adapter evidence exposes it.
-- Sentinel determines the applicable review scope from the candidate it
-  inspects.
-- The legacy fixed `Agent | sonnet / high` rows below are superseded as
-  execution metadata and retained only as historical context. Their former
-  line budgets are advisory: quality, compatibility, and the acceptance
-  boundaries below take precedence.
+| Slice | Depends on | Writer / effort | Primary targets | Deliverable and acceptance |
+|---|---|---|---|---|
+| T9.0 — revalidation | Observed F5/F6 and Durable Runs state | `scout` High, then `task` Medium | This document | Authority, dispatch, compatibility, task, and closure contracts are explicit; F9 stays open. |
+| T9.1a — durable schema | T9.0 | OpenCode `openai/gpt-5.6-luna` / Max | `internal/store/execution_metrics.go`, `internal/store/execution_metrics_test.go`, existing `execution_*` storage | Versioned immutable metrics snapshot; historical absence stays absent; unsupported versions fail explicitly; `store.Run` is unchanged. |
+| T9.1b — producers | Accepted T9.1a | OpenCode `openai/gpt-5.6-luna` / Max | `internal/execution`, `internal/acpadapter`, `internal/reviewexec`, `internal/store/execution_events.go`, `internal/store/execution_outcomes.go` | Real timing, identity, usage, cost, scope, reuse, and failure facts reach one final snapshot without inference or retry double-counting. |
+| T9.2 — structured ops events | T9.1b | OpenCode `openai/gpt-5.6-luna` / Max | `internal/ops/events.go` and every `detail` producer/reader | New object payloads and old string payloads coexist in one append-only JSONL stream without rewriting history. |
+| T9.3a — aggregator | T9.1b, T9.2 | OpenCode `openai/gpt-5.6-luna` / Max | Existing metrics responsibility or new `internal/metrics` | Pure deterministic aggregates with coverage, numerators, denominators, stable ordering, and no CLI coupling. |
+| T9.3b — CLI | T9.3a | OpenCode `openai/gpt-5.6-luna` / Max | `cmd/sentinel` and `internal/metrics` | `sentinel metrics`, `--json`, and help expose local aggregates with stable units and null unknowns. |
+| T9.4a — observation window | T9.3b | OpenCode `openai/gpt-5.6-luna` / Max; user/orchestrator operates it | Metrics output and this phase record | Sufficiency thresholds are frozen before collection; insufficient data blocks calibration without moving the thresholds. |
+| T9.4b — calibration | Sufficient T9.4a result | OpenCode `openai/gpt-5.6-luna` / Max | Only defaults justified by evidence | At least one default change cites reproducible metric, period, sample, old/new value, expected effect, risk, and rollback. |
+| Phase closure | All exit criteria | `task` Medium for documentation only | This file, `README.md`, architecture deviations, optional debt pool | F9 closes only after local metrics, historical compatibility, one evidence-backed calibration, and final verification. |
 
-| Slice | Dependencies | Harness delegation (type / effort) | Sentinel profile boundary | Model-selection rule | Output | Acceptance boundary |
-|---|---|---|---|---|---|---|
-| T9.0 — revalidation | Observed F5/F6 and Durable Runs state | `scout` / High for mapping, then `task` / Medium as the single writer | `active_agent: auto` is Sentinel-only; no implementation | No Task API selector; effective identity from evidence only | Revalidated F9 plan and task matrix | Records authority, compatibility, dispatch, and review boundaries; F9 remains open. |
-| T9.1a — durable schema | T9.0 | `codex-rescue` / High, single writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Durable-run metrics schema and compatible readers | New execution facts have one durable-run source; `store.Run` is not a parallel ledger; historical data stays readable. |
-| T9.1b — instrumentation | T9.1a; adapter evidence surfaces | `codex-rescue` / High, single writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Durable-run instrumentation for timing, cost, usage, failures, and effective identity | Persists observed execution facts, including failures, without inventing effective model or usage. |
-| T9.2 — structured events | T9.1b | `codex-rescue` / High, single writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Structured append-only event payloads and compatible readers | Old and new event lines are readable together; append-only behavior remains intact. |
-| T9.3a — aggregator | T9.1b and T9.2 | `codex-rescue` / High, single writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Data aggregation for the F9 metric questions | Synthetic durable and historical data yields hand-verifiable aggregates; no CLI contract is claimed here. |
-| T9.3b — CLI | T9.3a | `task` / Medium for local CLI wiring; High if scope expands, single writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | `sentinel metrics`, including structured output | The command exposes the verified aggregates from local stored data. |
-| T9.4a — observation window | T9.3b | `task` / Medium, single writer; user/orchestrator operates the window | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Sample-sufficiency rule and observation-window record | Defines minimum coverage, volume, and duration before observation; insufficient data is explicit and no calibration occurs. |
-| T9.4b — data-backed calibration | T9.4a and a sufficient observation result | `task` / Medium for local configuration changes, single writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Measured default-configuration changes with rationale | Cannot proceed on insufficient data; every calibration links to the measured evidence that justifies it. |
-| Phase closure | T9.4b and all F9 exit criteria | `task` / Medium, single documentation writer | Sentinel validates evidence only | No Task API selector; effective identity from evidence only | Closure evidence and planned progress/deviation updates | F9 is marked closed only after its exit criteria and closure artifacts are evidenced. |
+### T9.1a — durable metrics schema
 
-The phase-closure row is future work. T9.0 does not update the README phase
-status or close F9.
+Represent run/invocation identity, observed agent/model/effort and source,
+total/per-capability/per-agent timing, optional token usage, exact integral
+cost plus currency and provenance, full/affected scope and measured savings,
+reuse/recomputation, and classified failures.
+
+Required invariants:
+
+- Optional numeric pointers distinguish observed zero from unavailable data.
+- IDs, negative durations/tokens/costs, empty required sources, and mismatched
+  run identities are rejected.
+- Unknown extension fields and future non-empty categorical values remain
+  readable when safe; unsupported schema versions return a classified error.
+- The snapshot is immutable and written at most once beside the existing
+  durable execution. Tests must cover the rejected second write.
+
+Candidate note: branch `f9-t9-1a-schema`, commit `5a59067`, contains an
+unaccepted candidate in `execution_metrics.go` and its tests. Validate and
+correct that candidate; do not reimplement it or treat it as integrated.
+
+Checks:
+
+```text
+go test -count=1 ./internal/store
+go test -race -count=1 ./internal/store
+go build ./...
+go vet ./...
+```
+
+### T9.1b — producer instrumentation
+
+Map `acpadapter.Result` (`ObservedModel`, `UsageJSON`, `StopReason`,
+`Enforcement`), execution attempts/outcomes/retry/recovery, and
+`reviewexec.DurableTransport` before editing. Capture monotonic start/end time,
+normalize only known usage formats, retain observed identity, classify existing
+failure outcomes, and record scope/reuse at their real decision points. Persist
+one final snapshot. Cover success, partial/no usage, requested-versus-observed
+model, timeout, cancellation, invalid output, provider/process failure, retry,
+recovery, fallback, and metrics-write failure.
+
+Run focused tests and race tests for every touched package, then build and vet.
+
+### T9.2 — structured append-only events
+
+Write new `detail` values as typed JSON objects. Read legacy strings, new
+objects, and mixed files in original order. Preserve non-JSON legacy text and
+unknown object fields. Never rewrite historical `events.jsonl`.
+
+Checks:
+
+```text
+go test -count=1 ./internal/ops
+go test -race -count=1 ./internal/ops
+go build ./...
+go vet ./...
+```
+
+### T9.3a — deterministic aggregation
+
+Aggregate effective findings, confirmations, refutations, user overrides,
+reopens, remediation outcomes, execution metrics, and reuse. Every ratio
+returns numerator, denominator, and coverage. Zero denominators produce
+unavailable values, never NaN or infinity. Logical retries count once;
+superseded findings are not effective findings; currencies are not combined
+without explicit normalization. Define deterministic percentile and rounding
+rules and stable dimension/model/stage ordering.
+
+Use a hand-verifiable synthetic store containing two dimensions, two models, a
+confirmed finding, a refutation, an override, a reopen, successful and failed
+remediation, a retry, missing cost, and mixed historical/current data.
+
+### T9.3b — `sentinel metrics`
+
+Support:
+
+```text
+sentinel metrics
+sentinel metrics --json
+sentinel metrics --help
+help metrics
+```
+
+The handler only renders the aggregator. Human output shows coverage and
+insufficient-sample warnings. JSON uses stable units, null unknowns, explicit
+numerators/denominators, and deterministic ordering. Test empty, historical,
+mixed, and unreadable stores; help exits 0 with empty stderr; undeclared flags
+exit 1. Smoke-test the three executable command forms with `go run`.
+
+### T9.4a — observation sufficiency
+
+Before collecting data, freeze minimum duration, logical-run volume,
+per-dimension coverage, effective-identity coverage, usage/cost coverage,
+included candidate classes, and retry/failure handling. The values are chosen
+from expected operating volume, not invented in this plan. Evaluate the same
+store deterministically. Insufficient evidence blocks T9.4b; never lower the
+threshold after seeing results.
+
+### T9.4b — evidence-backed calibration
+
+An allowed change adjusts bundles, severity thresholds, model profiles,
+full/affected scope, or remediation policy. Each change records metric, period,
+sample and coverage, old/new value, expected effect, risk, and rollback.
+Correlation is not presented as causality. Missing effective-model evidence or
+insufficient coverage blocks model calibration. Never modify tests, fixtures,
+goldens, or verification assets merely to make a calibration pass.
+
+### Final verification and closure
+
+Run all commands from the final candidate worktree:
+
+```text
+go build ./...
+go vet ./...
+go test -count=1 ./...
+go test -race -count=1 <explicit touched package list>
+bin/0.2.0/sentinel check
+```
+
+Expected result: every command exits 0, all packages pass, the race detector
+reports no race, and Sentinel reports a successful measurement. Only after the
+candidate and its intended paths are fixed may the agreed final slice, review,
+gate, and durable evidence verification run. Never change tests or verification
+assets to manufacture those results.
+
+Close the phase only when `sentinel metrics` answers from local storage,
+historical data remains readable, observed identity is truthful, success and
+failure paths are covered, and at least one default is calibrated from a
+pre-declared sufficient sample. Then update this file, `README.md`, and
+`docs/arquitectura/replanteamiento-objetivo.md`; use `f0-deuda.md` only for
+genuine deferred work. Document deviations instead of rewriting history.
+
+Key risks: parallel ledgers, absence/zero conflation, retry double-counting,
+configured-versus-observed model attribution, incompatible cost aggregation,
+JSONL history breakage, post-hoc sample thresholds, and checks run from the
+wrong worktree.
 
 ---
 
