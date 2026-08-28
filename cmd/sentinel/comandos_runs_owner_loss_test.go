@@ -368,8 +368,8 @@ func TestRunsAbortOrphanedRequiresAReason(t *testing.T) {
 			output, code := captureRunsOutput(t, func(w io.Writer) int {
 				return executeRuns(w, worktree, caso.args)
 			})
-			if code == runExitSuccess {
-				t.Errorf("--orphaned settled the run without a recorded assertion:\n%s", output)
+			if code != runExitUsage {
+				t.Errorf("exit = %d, want %d (usage): any other refusal would also pass a mere not-success assertion:\n%s", code, runExitUsage, output)
 			}
 			if !strings.Contains(output, "--reason") {
 				t.Errorf("the refusal does not name the missing flag:\n%s", output)
@@ -389,8 +389,30 @@ func TestRunsAbortOrphanedRequiresAReason(t *testing.T) {
 	output, code := captureRunsOutput(t, func(w io.Writer) int {
 		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--reason", "sin orphaned"})
 	})
-	if code == runExitSuccess {
-		t.Errorf("--reason without --orphaned was accepted, discarding the operator's words:\n%s", output)
+	if code != runExitUsage {
+		t.Errorf("exit = %d, want %d (usage): --reason without --orphaned would discard the operator's words:\n%s", code, runExitUsage, output)
+	}
+
+	// The pairing is validated BEFORE any run lookup, controller, host or
+	// action identity exists. An identity that does not exist would fail with
+	// "run not found" from any path past that block, so a usage exit here is
+	// what proves the ordering — the previous assertions passed equally well
+	// against the old code, which only checked inside settleOrphanedRun.
+	for _, caso := range []struct {
+		nombre string
+		args   []string
+	}{
+		{"orphaned without reason", []string{"abort", "--run", "no-existe", "--orphaned"}},
+		{"reason without orphaned", []string{"abort", "--run", "no-existe", "--reason", "x"}},
+	} {
+		t.Run(caso.nombre+" is refused before the run is looked up", func(t *testing.T) {
+			salida, codigo := captureRunsOutput(t, func(w io.Writer) int {
+				return executeRuns(w, worktree, caso.args)
+			})
+			if codigo != runExitUsage {
+				t.Errorf("exit = %d, want %d (usage): the pairing is checked after the run lookup, so a live run would ignore it silently:\n%s", codigo, runExitUsage, salida)
+			}
+		})
 	}
 }
 
