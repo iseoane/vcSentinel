@@ -11,6 +11,20 @@ import (
 	"time"
 )
 
+func writeExecutionMetricsTestRecord(t *testing.T, store *Store, runID string, data []byte) {
+	t.Helper()
+	path, err := store.executionMetricsPath(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSaveAndReadExecutionMetricsRoundTrip(t *testing.T) {
 	store := NuevoStore(t.TempDir())
 	job := testJob()
@@ -105,11 +119,11 @@ func TestSaveAndReadExecutionMetricsRoundTrip(t *testing.T) {
 		t.Fatalf("ReadExecutionMetrics() = %#v, want %#v", got, &metrics)
 	}
 
-	directory, err := store.executionDir(string(job.RunID()))
+	path, err := store.executionMetricsPath(string(job.RunID()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(directory, "metrics.json"))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +207,7 @@ func TestSaveAndReadExecutionMetricsRoundTrip(t *testing.T) {
   ]
 }`, string(job.RunID()))
 	if !bytes.Equal(data, []byte(wantJSON)) {
-		t.Fatalf("metrics.json = %s, want stable JSON %s", data, wantJSON)
+		t.Fatalf("retained metrics JSON = %s, want stable JSON %s", data, wantJSON)
 	}
 }
 
@@ -212,6 +226,25 @@ func TestReadExecutionMetricsTreatsHistoricalExecutionAsAbsent(t *testing.T) {
 		t.Fatalf("ReadExecutionMetrics() = %#v, want nil for a historical execution without metrics", metrics)
 	}
 }
+func TestSaveExecutionMetricsRejectsNonexistentExecution(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	metrics := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   "missing-run",
+	}
+	err := store.SaveExecutionMetrics(metrics)
+	if !errors.Is(err, ErrExecutionNotFound) {
+		t.Fatalf("SaveExecutionMetrics() error = %v, want ErrExecutionNotFound", err)
+	}
+	path, pathErr := store.executionMetricsPath(metrics.RunID)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("metrics path Lstat() error = %v, want os.ErrNotExist", statErr)
+	}
+}
+
 func TestExecutionMetricsPreservesObservedZeroAndUnavailable(t *testing.T) {
 	store := NuevoStore(t.TempDir())
 	job := testJob()
@@ -335,10 +368,6 @@ func TestReadExecutionMetricsAcceptsUnknownFieldsAndValues(t *testing.T) {
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
 	}
-	directory, err := store.executionDir(string(job.RunID()))
-	if err != nil {
-		t.Fatal(err)
-	}
 	data := fmt.Sprintf(`{
   "version": 1,
   "run_id": %q,
@@ -349,9 +378,7 @@ func TestReadExecutionMetricsAcceptsUnknownFieldsAndValues(t *testing.T) {
   "failures": [{"class":"future-failure"}],
   "future_extension": {"enabled": true}
 }`, string(job.RunID()))
-	if err := os.WriteFile(filepath.Join(directory, "metrics.json"), []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutionMetricsTestRecord(t, store, string(job.RunID()), []byte(data))
 
 	metrics, err := store.ReadExecutionMetrics(string(job.RunID()))
 	if err != nil {
@@ -380,16 +407,10 @@ func TestReadExecutionMetricsRejectsUnsupportedSchemaVersion(t *testing.T) {
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
 	}
-	directory, err := store.executionDir(string(job.RunID()))
-	if err != nil {
-		t.Fatal(err)
-	}
 	data := fmt.Sprintf(`{"version":2,"run_id":%q}`, string(job.RunID()))
-	if err := os.WriteFile(filepath.Join(directory, "metrics.json"), []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutionMetricsTestRecord(t, store, string(job.RunID()), []byte(data))
 
-	_, err = store.ReadExecutionMetrics(string(job.RunID()))
+	_, err := store.ReadExecutionMetrics(string(job.RunID()))
 	if !errors.Is(err, ErrUnsupportedExecutionMetricsVersion) {
 		t.Fatalf("ReadExecutionMetrics() error = %v, want unsupported schema version", err)
 	}
@@ -556,15 +577,9 @@ func TestReadExecutionMetricsRejectsCorruptJSON(t *testing.T) {
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
 	}
-	directory, err := store.executionDir(string(job.RunID()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, "metrics.json"), []byte(`{"version":1,`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutionMetricsTestRecord(t, store, string(job.RunID()), []byte(`{"version":1,`))
 
-	_, err = store.ReadExecutionMetrics(string(job.RunID()))
+	_, err := store.ReadExecutionMetrics(string(job.RunID()))
 	if !errors.Is(err, ErrExecutionMetricsCorrupt) {
 		t.Fatalf("ReadExecutionMetrics() error = %v, want corrupt metrics", err)
 	}
@@ -579,16 +594,9 @@ func TestReadExecutionMetricsRejectsMismatchedRunID(t *testing.T) {
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
 	}
-	directory, err := store.executionDir(string(job.RunID()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	data := `{"version":1,"run_id":"different-run"}`
-	if err := os.WriteFile(filepath.Join(directory, "metrics.json"), []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutionMetricsTestRecord(t, store, string(job.RunID()), []byte(`{"version":1,"run_id":"different-run"}`))
 
-	_, err = store.ReadExecutionMetrics(string(job.RunID()))
+	_, err := store.ReadExecutionMetrics(string(job.RunID()))
 	if !errors.Is(err, ErrExecutionMetricsCorrupt) {
 		t.Fatalf("ReadExecutionMetrics() error = %v, want corrupt metrics for mismatched run id", err)
 	}
@@ -610,6 +618,56 @@ func TestSaveExecutionMetricsRejectsSavingsForFullScope(t *testing.T) {
 	}
 	if err := store.SaveExecutionMetrics(metrics); !errors.Is(err, ErrExecutionMetricsCorrupt) {
 		t.Fatalf("SaveExecutionMetrics() error = %v, want corrupt metrics for full-scope savings", err)
+	}
+}
+
+func TestPruneExecutionsRetainsReadableExecutionMetrics(t *testing.T) {
+	store := NuevoStore(t.TempDir())
+	runID, _ := seedPruneRun(t, store, "metrics-retention", "", pruneTerminalSuccess(), pruneAncientTime)
+	metrics := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   runID,
+		Failures: []ExecutionFailure{{
+			Class:  FailureInvalidOutput,
+			Detail: "retained after pruning",
+		}},
+	}
+	if err := store.SaveExecutionMetrics(metrics); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
+	path, err := store.executionMetricsPath(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := store.PruneExecutions(pruneAncientTime.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatalf("PruneExecutions() error = %v", err)
+	}
+	if decision := decisionFor(t, report, runID); decision.Action != PruneActionPruned {
+		t.Fatalf("prune decision = %#v, want pruned", decision)
+	}
+	if executionDirectoryExists(t, store, runID) {
+		t.Fatalf("execution directory for %s still exists after pruning", runID)
+	}
+
+	got, err := store.ReadExecutionMetrics(runID)
+	if err != nil {
+		t.Fatalf("ReadExecutionMetrics() after pruning error = %v", err)
+	}
+	if !reflect.DeepEqual(got, &metrics) {
+		t.Fatalf("ReadExecutionMetrics() after pruning = %#v, want %#v", got, &metrics)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("retained metrics bytes changed during pruning: before %s, after %s", before, after)
 	}
 }
 
@@ -640,27 +698,34 @@ func TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce(t *testing.T) 
 			}},
 		},
 	}
-	results := make(chan error, len(metrics))
+	type saveResult struct {
+		metrics ExecutionMetrics
+		err     error
+	}
+	results := make(chan saveResult, len(metrics))
 	start := make(chan struct{})
 	go func() {
 		<-start
-		results <- first.SaveExecutionMetrics(metrics[0])
+		results <- saveResult{metrics: metrics[0], err: first.SaveExecutionMetrics(metrics[0])}
 	}()
 	go func() {
 		<-start
-		results <- second.SaveExecutionMetrics(metrics[1])
+		results <- saveResult{metrics: metrics[1], err: second.SaveExecutionMetrics(metrics[1])}
 	}()
 	close(start)
 
 	successes, conflicts := 0, 0
+	var winner ExecutionMetrics
 	for range metrics {
-		switch err := <-results; {
-		case err == nil:
+		result := <-results
+		switch {
+		case result.err == nil:
 			successes++
-		case errors.Is(err, ErrImmutableConflict):
+			winner = result.metrics
+		case errors.Is(result.err, ErrImmutableConflict):
 			conflicts++
 		default:
-			t.Fatalf("concurrent SaveExecutionMetrics() error = %v, want one success and one immutable conflict", err)
+			t.Fatalf("concurrent SaveExecutionMetrics() error = %v, want one success and one immutable conflict", result.err)
 		}
 	}
 	if successes != 1 || conflicts != 1 {
@@ -668,7 +733,7 @@ func TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce(t *testing.T) 
 	}
 	if got, err := first.ReadExecutionMetrics(runID); err != nil {
 		t.Fatal(err)
-	} else if got == nil || len(got.Failures) != 1 {
-		t.Fatalf("persisted metrics = %#v, want exactly one winning snapshot", got)
+	} else if !reflect.DeepEqual(got, &winner) {
+		t.Fatalf("persisted metrics = %#v, want exact successful writer snapshot %#v", got, &winner)
 	}
 }

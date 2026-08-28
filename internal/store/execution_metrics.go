@@ -139,9 +139,21 @@ type ExecutionFailure struct {
 	Detail       string       `json:"detail,omitempty"`
 }
 
-// SaveExecutionMetrics writes the single immutable metrics snapshot alongside
-// its durable execution records. The execution directory is the authority;
-// legacy store.Run records are intentionally never written or extended here.
+// executionMetricsPath returns the retained, versioned metrics record for one
+// run. It deliberately does not live under the execution directory because
+// pruning removes that directory after the run's in-flight detail is no longer
+// needed.
+func (s *Store) executionMetricsPath(runID string) (string, error) {
+	if !validRunID(runID) {
+		return "", fmt.Errorf("store: invalid run id %q", runID)
+	}
+	return filepath.Join(s.dir, "metrics", "v1", runID+".json"), nil
+}
+
+// SaveExecutionMetrics writes the single immutable metrics snapshot in the
+// store-owned retained metrics history. The execution directory is the
+// authority; legacy store.Run records are intentionally never written or
+// extended here.
 func (s *Store) SaveExecutionMetrics(metrics ExecutionMetrics) error {
 	if err := validateExecutionMetrics(metrics, metrics.RunID); err != nil {
 		return err
@@ -150,28 +162,26 @@ func (s *Store) SaveExecutionMetrics(metrics ExecutionMetrics) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureExecutionExists(directory); err != nil {
+	path, err := s.executionMetricsPath(metrics.RunID)
+	if err != nil {
 		return err
 	}
 	data, err := marshalRecord(metrics)
 	if err != nil {
 		return err
 	}
-	return writeImmutableRecordOnce(filepath.Join(directory, "metrics.json"), data)
+	return writeImmutableRecordOnce(directory, path, data)
 }
 
 // ReadExecutionMetrics returns nil, nil when a durable execution predates the
 // metrics schema. A nil result is absence of evidence, never a zero-valued
-// metric snapshot; callers must preserve that distinction.
+// metric snapshot; callers must preserve that distinction. The retained
+// snapshot remains readable after its execution directory is pruned.
 func (s *Store) ReadExecutionMetrics(runID string) (*ExecutionMetrics, error) {
-	directory, err := s.executionDir(runID)
+	path, err := s.executionMetricsPath(runID)
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureExecutionExists(directory); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(directory, "metrics.json")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -318,11 +328,15 @@ func validateExecutionCost(cost ExecutionCost) error {
 	return nil
 }
 
-func writeImmutableRecordOnce(path string, expected []byte) error {
-	// The existence check and atomic rename must share the execution lock.
-	// Independent Store values can otherwise both observe absence and let the
-	// latter rename replace the first immutable snapshot.
-	return withExecutionLock(filepath.Dir(path), func() error {
+func writeImmutableRecordOnce(directory, path string, expected []byte) error {
+	// The execution directory is the authority for both admission and
+	// retention. Keep the existence check, destination Lstat, and atomic
+	// rename under its cross-process lock so pruning cannot remove the
+	// execution between those checks and the write.
+	return withExecutionLock(directory, func() error {
+		if err := ensureExecutionExists(directory); err != nil {
+			return err
+		}
 		_, err := os.Lstat(path)
 		switch {
 		case err == nil:

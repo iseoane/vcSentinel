@@ -80,27 +80,27 @@ Required invariants:
 - The snapshot is immutable and written at most once beside the existing
   durable execution. Tests must cover the rejected second write.
 
-Candidate note: TWO independent unaccepted candidates exist, neither pushed to
-the remote. Verify both before choosing; do not reimplement either.
+Candidate decision: `f9-t9-1a-luna` is the accepted correction base. Both
+candidates are preserved on `origin`; neither is merged into `main`.
 
-- `f9-t9-1a-luna`, commit `c99caf2`, based on `1e148a5` (this plan, merged).
-  336 lines plus 674 of tests, across three commits that explicitly address the
-  write-once invariant. Newer and far more thoroughly covered.
-- `f9-t9-1a-schema`, commit `5a59067`, based on `ba7bb3f` (predates this plan).
-  315 lines plus 280 of tests. This is the candidate the original note named,
-  and it is the older of the two.
+- Selected: `f9-t9-1a-luna`, rebased onto `origin/main`. Its write-once path
+  holds the existence check and atomic rename under the execution lock, so two
+  independent `Store` values cannot replace the first snapshot. It also covers
+  full-scope savings validation, invocation-only observed identity, historical
+  absence, unsupported versions, corrupt records, and strict second writes.
+- Rejected: `f9-t9-1a-schema` at `5a59067`. It exposes the same schema API but
+  does not make the existence check and rename one locked write-once operation,
+  so a concurrent second writer can replace the first snapshot.
 
-They are not related: neither branch contains the other's commit, so they are
-two separate implementations of the same slice. Pick one, record why, and update
-this note.
+The branches are independent implementations and cannot be combined by merge.
+The Luna candidate is validated and corrected in place; it is not reimplemented.
 
-Retention consequence (added with T9.5): both candidates write `metrics.json`
-INSIDE `executions/v1/<runID>/`, so `store.removeExecutionDirectory` would
-delete the snapshot together with the execution it measures — destroying exactly
-the record T9.5 requires to survive. Resolve this in T9.1a, before T9.5 is
-built: either place the snapshot outside the execution directory, or make the
-prune path preserve it explicitly. Whichever is chosen, a test must prove the
-snapshot is still readable after its execution has been pruned.
+Retention decision: metrics snapshots live outside
+`executions/v1/<runID>/`. Execution pruning may delete the heavy run directory
+without moving or rewriting its immutable snapshot, and `ReadExecutionMetrics`
+remains usable after that deletion. `SaveExecutionMetrics` still requires an
+admitted execution. A focused test must prove the snapshot remains readable
+after `PruneExecutions` removes the execution.
 
 Checks:
 
