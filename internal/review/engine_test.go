@@ -1658,6 +1658,17 @@ func TestErrRestrictedRequiredNombraElAdaptador(t *testing.T) {
 	}
 }
 
+// errorAsentado imita el *reviewexec.TerminalError: un run que ASENTÓ
+// durablemente. Se declara aquí porque internal/reviewexec importa este
+// paquete, así que la dependencia solo puede ir en ese sentido.
+type errorAsentado struct {
+	texto        string
+	reintentable bool
+}
+
+func (e *errorAsentado) Error() string                  { return e.texto }
+func (e *errorAsentado) ProviderSettledRetryable() bool { return e.reintentable }
+
 // TestReintentoDeFallosTransitoriosDelProveedor cubre el último hueco real de
 // `unavailable`: un fallo de EJECUCIÓN del proveedor no se reintentaba nunca.
 // Con `active_agent` fijado a un binario no se construye cadena de adaptadores,
@@ -1675,26 +1686,29 @@ func TestReintentoDeFallosTransitoriosDelProveedor(t *testing.T) {
 		veredictoFin string
 	}{
 		{
-			nombre:       "500 del backend: transitorio, se reintenta",
-			errPrimero:   errors.New(`run restricted reviewer: exit status 1: {"name":"UnknownError","data":{"message":"Unexpected server error."}}`),
+			nombre:       "run asentado con fallo: se reintenta",
+			errPrimero:   &errorAsentado{texto: `run ended failure: {"name":"UnknownError","data":{"message":"Unexpected server error."}}`, reintentable: true},
 			llamadas:     2,
 			veredictoFin: VerdictOK,
 		},
 		{
-			nombre:       "fallo de proceso sin detalle: transitorio, se reintenta",
-			errPrimero:   errors.New("exit status 1"),
-			llamadas:     2,
-			veredictoFin: VerdictOK,
-		},
-		{
-			nombre:       "modelo mal configurado: permanente, no se reintenta",
-			errPrimero:   errors.New(`run restricted reviewer: exit status 1: "claude-opus" is not a model this version of Claude Code recognizes`),
+			nombre:       "run asentado no reintentable (timeout, cancelacion): no se reintenta",
+			errPrimero:   &errorAsentado{texto: "run ended timeout", reintentable: false},
 			llamadas:     1,
 			veredictoFin: VerdictUnavailable,
 		},
 		{
-			nombre:       "plazo agotado: reintentar cuesta otro timeout entero",
-			errPrimero:   fmt.Errorf("run restricted reviewer timed out after 10m0s: %w", errors.Join(errors.New("signal: terminated"), context.DeadlineExceeded)),
+			// La revisión que bloqueó la primera versión: un error de admisión
+			// puede significar que el proveedor YA ejecutó. Repetirlo duplicaría
+			// invocaciones, así que la lista blanca lo deja fuera.
+			nombre:       "fallo de admision u observacion: nunca se reintenta",
+			errPrimero:   errors.New("review run quality/logic not admitted: execution: run already has durable lifecycle events"),
+			llamadas:     1,
+			veredictoFin: VerdictUnavailable,
+		},
+		{
+			nombre:       "modelo mal configurado: permanente aunque asiente",
+			errPrimero:   &errorAsentado{texto: `run ended failure: "claude-opus" is not a model this version of Claude Code recognizes`, reintentable: true},
 			llamadas:     1,
 			veredictoFin: VerdictUnavailable,
 		},

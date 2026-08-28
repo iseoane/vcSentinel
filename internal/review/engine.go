@@ -664,18 +664,32 @@ var fallosPermanentesDeProveedor = []string{
 	"not configured for this provider",
 }
 
-// esFalloTransitorioDeProveedor decide si un fallo de EJECUCIÓN merece el único
-// reintento. Antes no se reintentaba ninguno: con `active_agent` fijado a un
-// binario concreto no se construye cadena de adaptadores, así que un 500 del
-// backend era terminal al primer intento y perdía la dimensión entera.
+// proveedorAsentadoReintentable lo implementa el error que un transporte
+// devuelve cuando el run ASENTÓ durablemente con un resultado no exitoso.
 //
-// El criterio es asimétrico a propósito. Reintentar un fallo permanente cuesta
-// una llamada más y vuelve a fallar igual; NO reintentar uno transitorio pierde
-// la dimensión completa. Por eso se reintenta salvo prueba de que no sirve:
+// La distinción es la que hace seguro el reintento y la señaló la revisión que
+// bloqueó la primera versión de este código: un transporte también devuelve
+// fallos de ADMISIÓN y errores posteriores al envío, y repetir esos puede
+// duplicar invocaciones. Un run asentado, en cambio, ya terminó y está
+// registrado, así que reintentar abre un run nuevo y no duplica nada.
 //
-//   - un plazo agotado no se reintenta: costaría otro timeout entero;
-//   - una cancelación no se reintenta: el llamante pidió parar;
-//   - los fallos permanentes conocidos no se reintentan.
+// Se declara como interfaz aquí, y no se importa el tipo concreto, porque
+// internal/reviewexec ya importa este paquete: la dirección de dependencia solo
+// admite que sea el transporte quien declare su error reintentable.
+type proveedorAsentadoReintentable interface {
+	ProviderSettledRetryable() bool
+}
+
+// esFalloTransitorioDeProveedor decide si un fallo merece el único reintento.
+// Es una LISTA BLANCA: solo un run asentado con un resultado reintentable
+// entra. Todo lo demás —admisión, observación, evidencia, o cualquier error del
+// camino directo— se rechaza, porque no podemos probar que el proveedor no
+// llegara a ejecutar.
+//
+// Eso también impide que este reintento se componga con el de invokeReview:
+// ejecutarConReintento solo actúa cuando no hay transporte, y ese camino nunca
+// produce un error asentado, así que el presupuesto sigue siendo una sola
+// repetición.
 //
 // Un fallo de formato NO llega aquí: lo decide shouldRetryFormat, después de
 // que el proveedor haya respondido.
@@ -683,7 +697,8 @@ func esFalloTransitorioDeProveedor(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	var asentado proveedorAsentadoReintentable
+	if !errors.As(err, &asentado) || !asentado.ProviderSettledRetryable() {
 		return false
 	}
 	texto := err.Error()

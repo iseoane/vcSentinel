@@ -26,6 +26,22 @@ type TerminalError struct {
 
 func (e *TerminalError) Error() string { return e.Text }
 
+// ProviderSettledRetryable declara que este error representa un run que ASENTÓ
+// durablemente, no un fallo de admisión ni una incertidumbre posterior al
+// envío. Solo por eso el motor puede repetir la dimensión sin arriesgarse a
+// duplicar una invocación: el intento anterior terminó y quedó registrado.
+//
+// Un timeout no entra: repetirlo costaría otro plazo completo. Una cancelación
+// tampoco: el llamante pidió parar. El éxito no es un fallo.
+func (e *TerminalError) ProviderSettledRetryable() bool {
+	switch e.Class {
+	case agentrun.OutcomeFailure, agentrun.OutcomeUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Evidence is the durable provenance bound to an admitted completion. Every
 // field is copied from the AttemptOutcome record persisted by the execution
 // controller, so accepted output always travels with verifiable provenance.
