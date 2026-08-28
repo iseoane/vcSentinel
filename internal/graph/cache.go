@@ -214,6 +214,9 @@ func (p *proveedorNativo) guardarCache(consumidos []string) error {
 }
 
 func (p *proveedorNativo) guardarCacheSinMutex(consumidos []string) error {
+	// Best-effort: no poder limpiar entradas caducadas nunca debe impedir
+	// guardar la caché que se acaba de calcular.
+	_ = PurgarCacheGrafo(p.directorio, RetencionCacheGrafo)
 	relativas := make([]string, 0, len(consumidos))
 	for _, archivo := range consumidos {
 		relativa, err := filepath.Rel(p.directorio, archivo)
@@ -318,6 +321,19 @@ func clonarMapa(origen map[string]string) map[string]string {
 	return destino
 }
 
+// RetencionCacheGrafo es la edad a partir de la cual una entrada de caché se
+// considera desechable. Es el mismo criterio que git.RetencionSnapshots: la
+// caché se regenera sola, así que perder una entrada solo cuesta un recálculo,
+// mientras que conservarlas todas de por vida no cuesta nada visible hasta que
+// el directorio ya es enorme.
+const RetencionCacheGrafo = 24 * time.Hour
+
+// PurgarCacheGrafo elimina las entradas de caché anteriores a antiguedad.
+//
+// Existía escrita y probada pero SIN UN SOLO LLAMANTE en producción, así que la
+// caché crecía sin límite. Ahora la invoca guardarCacheSinMutex: purgar al
+// escribir acota el residuo por el uso, que es el mismo patrón con el que
+// internal/validation/candidato.go invoca git.PurgarSnapshots.
 func PurgarCacheGrafo(directorio string, antiguedad time.Duration) error {
 	raiz, err := raizCache(directorio)
 	if err != nil {
