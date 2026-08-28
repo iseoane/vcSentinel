@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -77,7 +78,9 @@ func (a *observedAgent) ReviewWithPolicy(prompt, sha string, paths []string, pol
 		ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error)
 	})
 	if !ok {
-		return "", review.ErrRestrictedRequired
+		// Mismo diagnóstico accionable que el motor: nombra el adaptador en
+		// vez de repetir seis veces una capacidad ausente sin dueño.
+		return "", fmt.Errorf("%w: the configured agent %T cannot review under a tool policy; configure a CLI agent (claude or opencode) for review", review.ErrRestrictedRequired, a.AuditorAgente)
 	}
 	output, err := reviewer.ReviewWithPolicy(prompt, sha, paths, policy)
 	if err == nil {

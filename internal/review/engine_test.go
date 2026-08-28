@@ -1627,3 +1627,33 @@ func TestReviewTransportRetriesEvidencePolicyFailureOnce(t *testing.T) {
 		t.Fatalf("resultado = %+v, esperado que el reintento rescate la dimensión en vez de dejarla unavailable", resultado)
 	}
 }
+
+// agenteSinRevisionRestringida es un adaptador que sabe ejecutar prompts pero
+// no implementa el contrato de revisor restringido: exactamente la forma de
+// acpadapter.AcpxAdapter, que no tiene ReviewWithPolicy ni superficie de
+// permisos de herramientas.
+type agenteSinRevisionRestringida struct{}
+
+func (agenteSinRevisionRestringida) EjecutarPrompt(string) (string, error) { return "", nil }
+func (agenteSinRevisionRestringida) EjecutarRevision(string, string, []string) (string, error) {
+	return "", nil
+}
+
+// TestErrRestrictedRequiredNombraElAdaptador cubre un diagnóstico inútil: si
+// configuras `kind: acpx`, la revisión falla con "restricted reviewer
+// capability is required" y nada más. Ni qué adaptador, ni por qué, ni qué
+// hacer. Se repite por cada dimensión, así que el usuario ve seis veces el
+// mismo mensaje opaco.
+func TestErrRestrictedRequiredNombraElAdaptador(t *testing.T) {
+	_, err := bindPolicy(agenteSinRevisionRestringida{}, reviewcontract.ToolPolicy{}).ReviewWithPolicy("p", "sha", nil, reviewcontract.ToolPolicy{})
+
+	if err == nil {
+		t.Fatal("esperado el rechazo por capacidad ausente")
+	}
+	if !errors.Is(err, ErrRestrictedRequired) {
+		t.Errorf("err = %v; debe conservar ErrRestrictedRequired para que los llamantes lo sigan reconociendo", err)
+	}
+	if !strings.Contains(err.Error(), "agenteSinRevisionRestringida") {
+		t.Errorf("err = %q; debe nombrar el adaptador incapaz para que el fallo sea accionable", err)
+	}
+}

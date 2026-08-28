@@ -53,9 +53,19 @@ func bindPolicy(agent AuditorAgente, policy reviewcontract.ToolPolicy) policyBou
 func (a policyBoundReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
 	reviewer, ok := a.AuditorAgente.(policyAwareReviewer)
 	if !ok {
-		return "", ErrRestrictedRequired
+		return "", capacidadRestringidaAusente(a.AuditorAgente)
 	}
 	return reviewer.ReviewWithPolicy(prompt, sha, paths, a.policy)
+}
+
+// capacidadRestringidaAusente nombra al adaptador que no puede revisar. Sin
+// esto el rechazo era "restricted reviewer capability is required" a secas,
+// repetido una vez por dimensión: seis mensajes idénticos que no dicen qué
+// adaptador falla, por qué, ni qué hacer. El caso real es configurar
+// `kind: acpx`, cuyo adaptador no implementa ReviewWithPolicy ni expone
+// superficie de permisos de herramientas.
+func capacidadRestringidaAusente(agente AuditorAgente) error {
+	return fmt.Errorf("%w: the configured agent %T cannot review under a tool policy; configure a CLI agent (claude or opencode) for review", ErrRestrictedRequired, agente)
 }
 
 func (a policyBoundReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
