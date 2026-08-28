@@ -158,6 +158,32 @@ func (c *Controller) WaitForActiveRuns(budget time.Duration) int {
 	}
 }
 
+// OrphanRun is the per-run operator entry to the same settlement the shutdown
+// sweep performs: it retires ONE run whose durable head is non-terminal and
+// whose owner is gone. OrphanActiveRuns sweeps; this decides about one.
+//
+// It exists because the recovery classifier is read-only by contract and
+// refuses to guess an outcome, so a running head with no owner is classified
+// operator_required and stays there forever: `runs prune` skips non-terminal
+// records, and Apply(abort) fails with ErrRunNotActive. The missing input was
+// never evidence, it was the operator's decision, and detail is where that
+// decision is recorded. Nothing is invented: the canceled frame is authored
+// from the verified stream by appendOrphanedCancellationSettlement, pinned to
+// the observed revision, and an undecidable head still fails explicitly.
+//
+// detail must be non-empty for the same reason the sweep requires it: an
+// orphaned settlement without its reason is indistinguishable from an ordinary
+// abort. It reports whether this call authored the settlement.
+func (c *Controller) OrphanRun(runID agentrun.Identity, detail string) (bool, error) {
+	if c.store == nil {
+		return false, ErrControllerNotReady
+	}
+	if strings.TrimSpace(detail) == "" {
+		return false, errors.New("execution: orphan settlement requires a non-empty reason")
+	}
+	return c.orphanRun(runID, detail)
+}
+
 // orphanRun settles one candidate survivor. It reports whether a durable
 // canceled settlement was authored by this call.
 func (c *Controller) orphanRun(runID agentrun.Identity, detail string) (bool, error) {

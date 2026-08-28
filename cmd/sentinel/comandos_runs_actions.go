@@ -187,12 +187,59 @@ func executeRunsAbort(out io.Writer, worktree string, args []string) int {
 			}
 			return printApplyResult(out, options.jsonOut, settled, &head.State)
 		}
+		// Nobody live owns this run, the daemon included, or Apply would not
+		// have answered ErrRunNotActive. That is exactly the shape --orphaned
+		// retires; without it the refusal at least names the exit, because a
+		// run the classifier parks in operator_required has no other one.
+		if errors.Is(applyErr, execution.ErrRunNotActive) {
+			if options.orphaned {
+				return settleOrphanedRun(out, options, controller, agentrun.Identity(options.runID))
+			}
+			fmt.Fprintf(out, "❌ abort rejected: %v\n", applyErr)
+			fmt.Fprintf(out, "   If its owner process is gone, retire it with: sentinel runs abort --run %s --orphaned\n", options.runID)
+			return runExitCode(applyErr)
+		}
 		fmt.Fprintf(out, "❌ abort rejected: %v\n", applyErr)
 		return runExitCode(applyErr)
 	}
 	// Cooperative cancellation is not waited on: canceling only signals the
 	// worker context, and the underlying adapter call may settle much later.
 	return printApplyResult(out, options.jsonOut, result, nil)
+}
+
+// orphanedAbortReason is the recorded operator decision. It names the command
+// that authored it and states plainly that no outcome was ever observed, so a
+// later reader can never mistake this settlement for an outcome the system saw.
+const orphanedAbortReason = "operator orphaned this run through sentinel runs abort --orphaned: the owner process was gone and no outcome was ever observed"
+
+// settleOrphanedRun records the operator decision the recovery classifier was
+// waiting for. It goes through the controller directly on purpose: the host
+// already answered ErrRunNotActive, so there is no live owner to route around,
+// and the settlement is the same one the daemon-shutdown sweep authors.
+func settleOrphanedRun(out io.Writer, options runOptions, controller *execution.Controller, runID agentrun.Identity) int {
+	settled, err := controller.OrphanRun(runID, orphanedAbortReason)
+	if err != nil {
+		fmt.Fprintf(out, "❌ orphaned abort rejected: %v\n", err)
+		return runExitCode(err)
+	}
+	if !settled {
+		fmt.Fprintf(out, "❌ run %s was not orphaned: its durable head is already terminal or carries no evidence\n", runID)
+		return runExitInvalidState
+	}
+	proyeccion, err := controller.Backing().ReadDerivedProjection(string(runID))
+	if err != nil {
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return runExitCode(err)
+	}
+	// Report the invocation the settlement was authored under, so the result
+	// identifies the frame it wrote instead of rendering an empty identity.
+	var invocation agentrun.Identity
+	if page, err := controller.Backing().ReadEvents(string(runID), 0, 128); err == nil && len(page.Events) > 0 {
+		invocation = agentrun.Identity(page.Events[len(page.Events)-1].InvocationID)
+	}
+	return printApplyResult(out, options.jsonOut, execution.ApplyResult{
+		RunID: runID, InvocationID: invocation, Accepted: true,
+	}, &proyeccion.State)
 }
 
 func executeRunsRetry(out io.Writer, worktree string, args []string) int {

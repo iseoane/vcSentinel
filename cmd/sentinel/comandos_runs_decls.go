@@ -48,7 +48,11 @@ Subcommands:
   status   [--run <id>] [--json]
   logs     --run <id> [--after <cursor>] [--limit N] [--json]
   respond  --run <id> --text <response> [--json]
-  abort    --run <id> [--json]
+  abort    --run <id> [--orphaned] [--json]
+           --orphaned retires a run whose durable head is non-terminal and
+           whose owner process is gone: it records the operator decision as a
+           canceled settlement authored from the verified stream. Without it,
+           an abort that cannot reach a live run fails instead of pretending
   retry    --run <id> [--expected-revision N] [--json]
   recover  --run <id> [--expected-revision N] [--json]
            --repair <id> rebuilds the lagging state snapshot of one run the
@@ -138,7 +142,12 @@ type runOptions struct {
 	// repairSet records that the --repair flag was seen at all, so an empty
 	// identity stays an explicit usage error instead of degrading into the
 	// read-only scan.
-	repairSet        bool
+	repairSet bool
+	// orphaned records the --orphaned opt-in of `runs abort`: the operator
+	// decision to retire a run whose durable head is non-terminal and whose
+	// owner is gone. It is never implicit, so an ordinary abort keeps failing
+	// honestly instead of settling a run behind the operator's back.
+	orphaned         bool
 	text             string
 	prompt           string
 	policyID         string

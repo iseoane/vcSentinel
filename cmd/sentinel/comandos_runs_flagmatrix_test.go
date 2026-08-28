@@ -25,7 +25,7 @@ var runsAcceptMatrix = map[string]map[string]bool{
 	"status":  {"--run": true, "--json": true},
 	"logs":    {"--run": true, "--after": true, "--limit": true, "--json": true},
 	"respond": {"--run": true, "--text": true, "--json": true},
-	"abort":   {"--run": true, "--json": true},
+	"abort":   {"--run": true, "--orphaned": true, "--json": true},
 	"retry":   {"--run": true, "--expected-revision": true, "--json": true},
 	"recover": {"--run": true, "--expected-revision": true, "--repair": true, "--json": true},
 	"verify":  {"--run": true, "--json": true},

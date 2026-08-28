@@ -90,6 +90,7 @@ const (
 	flagExpectedRevision runsFlag = "--expected-revision"
 	flagOlderThan        runsFlag = "--older-than"
 	flagFollow           runsFlag = "--follow"
+	flagOrphaned         runsFlag = "--orphaned"
 )
 
 // runsSubcommandFlags is the single source of truth for which flags each
@@ -102,7 +103,7 @@ var runsSubcommandFlags = map[string][]runsFlag{
 	"status":  {flagRun, flagJSON},
 	"logs":    {flagRun, flagAfter, flagLimit, flagJSON},
 	"respond": {flagRun, flagText, flagJSON},
-	"abort":   {flagRun, flagJSON},
+	"abort":   {flagRun, flagOrphaned, flagJSON},
 	"retry":   {flagRun, flagExpectedRevision, flagJSON},
 	"recover": {flagRun, flagExpectedRevision, flagRepair, flagJSON},
 	"verify":  {flagRun, flagJSON},
@@ -127,6 +128,11 @@ func parseRunOptions(subcommand string, args []string) (runOptions, error) {
 		}
 		if runsFlag(flag) == flagJSON {
 			options.jsonOut = true
+			continue
+		}
+		if runsFlag(flag) == flagOrphaned {
+			// Boolean flag: it consumes no value, exactly like --json.
+			options.orphaned = true
 			continue
 		}
 		if runsFlag(flag) == flagFollow {

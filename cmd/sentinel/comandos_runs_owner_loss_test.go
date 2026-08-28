@@ -263,3 +263,90 @@ func TestRunsAbortDoesNotClaimSuccessOnALiveHead(t *testing.T) {
 		t.Errorf("durable events went from %d to %d: a refused abort must write nothing", len(antes.Events), len(despues.Events))
 	}
 }
+
+// TestRunsAbortOrphanedSettlesAnOwnerlessRun closes the operator gap the honest
+// refusal exposed: a run whose head is running with no live owner had NO way to
+// be retired. The recovery classifier is read-only and refuses to guess an
+// outcome, and `runs prune` skips non-terminal records, so such a run stayed in
+// the scan forever.
+//
+// The settlement is not invented evidence. It goes through the same
+// appendOrphanedCancellationSettlement the daemon-shutdown sweep already uses:
+// a canceled frame authored from the verified stream, revision-pinned, and
+// carrying a mandatory non-empty reason — the codebase requires that reason
+// precisely so an orphaned settlement can never be mistaken for an ordinary
+// abort. What the flag adds is the operator decision the classifier was waiting
+// for.
+func TestRunsAbortOrphanedSettlesAnOwnerlessRun(t *testing.T) {
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := store.NuevoStore(commonDir)
+	runID := string(appendReconciledFixtureStream(t, backing, "candidate:orphaned-settle", nil))
+	antes, err := backing.ReadEvents(runID, 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, code := captureRunsOutput(t, func(w io.Writer) int {
+		return executeRuns(w, worktree, []string{"abort", "--run", runID, "--orphaned"})
+	})
+	if code != runExitSuccess {
+		t.Fatalf("abort --orphaned exit = %d, want %d; output:\n%s", code, runExitSuccess, output)
+	}
+
+	if strings.Contains(output, "invocation )") {
+		t.Errorf("the result renders an empty invocation identity:\n%s", output)
+	}
+	proyeccion, err := backing.ReadDerivedProjection(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proyeccion.Terminal == agentrun.TerminalNone {
+		t.Errorf("run is still non-terminal after an orphaned abort: state=%q terminal=%q", proyeccion.State, proyeccion.Terminal)
+	}
+	despues, err := backing.ReadEvents(runID, 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(despues.Events) != len(antes.Events)+1 {
+		t.Errorf("durable events went from %d to %d, want exactly one appended settlement", len(antes.Events), len(despues.Events))
+	}
+
+	// The reason must be recorded, or the settlement is indistinguishable from
+	// an ordinary abort.
+	crudo, err := os.ReadFile(filepath.Join(commonDir, "vas-sentinel", "executions", "v1", runID, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(crudo), "orphan") {
+		t.Error("the appended settlement records no orphaning reason")
+	}
+}
+
+// TestRunsAbortRefusalNamesTheOrphanedExit is the discoverability half: the
+// honest refusal must tell the operator how to retire the run, or the fix is
+// only reachable by reading the source.
+func TestRunsAbortRefusalNamesTheOrphanedExit(t *testing.T) {
+	worktree := t.TempDir()
+	initGitRepo(t, worktree)
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := store.NuevoStore(commonDir)
+	runID := string(appendReconciledFixtureStream(t, backing, "candidate:orphaned-hint", nil))
+
+	output, code := captureRunsOutput(t, func(w io.Writer) int {
+		return executeRuns(w, worktree, []string{"abort", "--run", runID})
+	})
+	if code == runExitSuccess {
+		t.Fatalf("plain abort still reports success on an ownerless run:\n%s", output)
+	}
+	if !strings.Contains(output, "--orphaned") {
+		t.Errorf("the refusal does not name the exit:\n%s", output)
+	}
+}
