@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
@@ -176,4 +180,100 @@ func TestRecolectorConElMismoAgenteRepetidoSiConsolida(t *testing.T) {
 	if autoria := recolector.consolidar(); autoria.Binario != "claude" {
 		t.Errorf("binario = %q, esperado claude", autoria.Binario)
 	}
+}
+
+// richPolicyAgent offers the rich seam that carries the policy.
+type richPolicyAgent struct {
+	policy reviewcontract.ToolPolicy
+	ctx    context.Context
+}
+
+func (*richPolicyAgent) EjecutarPrompt(string) (string, error) { return "ok", nil }
+
+func (a *richPolicyAgent) ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error) {
+	return "", errors.New("the context-free path must not be reached")
+}
+
+func (a *richPolicyAgent) ReviewWithContextAndPolicyResult(ctx context.Context, _, _ string, _ []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error) {
+	a.ctx, a.policy = ctx, policy
+	return acpadapter.Result{Output: "rich"}, nil
+}
+
+// contextualPolicyAgent offers only the context-aware policy form, which is
+// what most CLI reviewers expose.
+type contextualPolicyAgent struct {
+	policy reviewcontract.ToolPolicy
+	ctx    context.Context
+}
+
+func (*contextualPolicyAgent) EjecutarPrompt(string) (string, error) { return "ok", nil }
+
+func (a *contextualPolicyAgent) ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error) {
+	return "", errors.New("the context-free path must not be reached while a context-aware one exists")
+}
+
+func (a *contextualPolicyAgent) ReviewWithContextAndPolicy(ctx context.Context, _, _ string, _ []string, policy reviewcontract.ToolPolicy) (string, error) {
+	a.ctx, a.policy = ctx, policy
+	return "contextual", nil
+}
+
+// TestObservedAgentRichPolicySeamDescendsWithoutLosingCapabilities pins the
+// production descent. The policy binding prefers this seam, so it must not
+// skip a capability the adapter still has: dropping to the context-free form
+// while a context-aware one exists would discard cancellation and deadlines,
+// and reaching a policy-free form would discard the tool restrictions.
+func TestObservedAgentRichPolicySeamDescendsWithoutLosingCapabilities(t *testing.T) {
+	policy := reviewcontract.ToolPolicy{AllowRead: true, AllowSearch: true, RequireImmutableSnapshot: true}
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "caller")
+
+	t.Run("rich policy-aware adapter wins", func(t *testing.T) {
+		inner := &richPolicyAgent{}
+		recolector := &recolectorAutoria{}
+		agent := &observedAgent{AuditorAgente: inner, authorship: recolector}
+		res, err := agent.ReviewWithContextAndPolicyResult(ctx, "p", "sha", []string{"a.go"}, policy)
+		if err != nil || res.Output != "rich" {
+			t.Fatalf("result = %+v, err = %v; want the rich adapter's result", res, err)
+		}
+		if inner.policy != policy {
+			t.Errorf("policy = %+v, want the resolved policy", inner.policy)
+		}
+		if inner.ctx == nil || inner.ctx.Value(ctxKey{}) != "caller" {
+			t.Error("the caller context did not reach the rich adapter")
+		}
+	})
+
+	t.Run("context-aware policy adapter is preferred over the context-free form", func(t *testing.T) {
+		inner := &contextualPolicyAgent{}
+		agent := &observedAgent{AuditorAgente: inner, authorship: &recolectorAutoria{}}
+		res, err := agent.ReviewWithContextAndPolicyResult(ctx, "p", "sha", []string{"a.go"}, policy)
+		if err != nil || res.Output != "contextual" {
+			t.Fatalf("result = %+v, err = %v; want the context-aware adapter's output", res, err)
+		}
+		if inner.policy != policy {
+			t.Errorf("policy = %+v, want the resolved policy", inner.policy)
+		}
+		if inner.ctx == nil || inner.ctx.Value(ctxKey{}) != "caller" {
+			t.Error("the caller context did not reach the context-aware adapter")
+		}
+	})
+
+	t.Run("policy-free adapter still carries the policy", func(t *testing.T) {
+		inner := &policyRecordingAgent{}
+		agent := &observedAgent{AuditorAgente: inner, authorship: &recolectorAutoria{}}
+		if _, err := agent.ReviewWithContextAndPolicyResult(ctx, "p", "sha", []string{"a.go"}, policy); err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		if inner.policy != policy {
+			t.Errorf("policy = %+v, want the resolved policy", inner.policy)
+		}
+	})
+
+	t.Run("an adapter that cannot review under a policy is refused", func(t *testing.T) {
+		agent := &observedAgent{AuditorAgente: &agenteSoloPrompt{}, authorship: &recolectorAutoria{}}
+		_, err := agent.ReviewWithContextAndPolicyResult(ctx, "p", "sha", []string{"a.go"}, policy)
+		if !errors.Is(err, review.ErrRestrictedRequired) {
+			t.Fatalf("error = %v, want ErrRestrictedRequired", err)
+		}
+	})
 }

@@ -254,8 +254,13 @@ func TestReviewWithCallerDeadlineYieldsTimeoutClass(t *testing.T) {
 			helperExpectEnv+"=-",
 		)
 	})
+	// The child sleeps for a minute, so the deadline decides the outcome. It is
+	// deliberately wide: a margin measured in seconds keeps a slow spawn on a
+	// loaded runner from failing before the deadline and turning this into a
+	// process error, which is the neighbouring class this test exists to keep
+	// separate.
 	ctx, cancel := context.WithTimeout(
-		process.WithContainmentGrace(context.Background(), 50*time.Millisecond), 150*time.Millisecond)
+		process.WithContainmentGrace(context.Background(), 50*time.Millisecond), 3*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -276,7 +281,7 @@ func TestReviewWithCallerDeadlineYieldsTimeoutClass(t *testing.T) {
 		if !strings.Contains(oe.Error(), "context deadline exceeded") {
 			t.Errorf("detail = %q, want it to wrap the context error", oe.Error())
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		cancel()
 		t.Fatal("ReviewWithContext did not return within the bounded wait")
 	}

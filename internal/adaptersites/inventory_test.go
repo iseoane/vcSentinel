@@ -254,6 +254,15 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	if !strings.Contains(refuteBody, "refutarHallazgosCriticosConEvidencia(") {
 		t.Errorf("refutarHallazgosCriticos must delegate to the evidence-carrying refuter instead of reaching a reviewer directly")
 	}
+
+	// The metrics snapshot must be written under the revision it was folded
+	// from, or a concurrent retry can move the head between the fold and the
+	// write. The unguarded entry point still exists for callers that hold no
+	// revision, so the controller's own call site is pinned here.
+	finalizeBody := functionBody(t, readFile(t, root, "internal/execution/metrics_finalize.go"), "func (c *Controller) finalizeMetrics(")
+	if !strings.Contains(finalizeBody, "SaveExecutionMetricsForRevision(") {
+		t.Errorf("Controller.finalizeMetrics must write through the revision-guarded save")
+	}
 }
 
 // TestNoCompatibilityGatedSitesRemain proves the ticket 13 (R11) cutover

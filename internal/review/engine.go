@@ -527,8 +527,14 @@ func refutarHallazgosCriticosConEvidencia(dimensiones []ResultadoDimension, fabr
 			}
 			invocacion := evidence.InvocationID
 			finalize := func(class, detail string) error {
-				if finalizer == nil || evidence.RunID == "" || evidence.InvocationID == "" {
+				if finalizer == nil {
+					// Metrics are not wired on this path (direct fixtures and
+					// the legacy transport), so there is nothing to record and
+					// nothing to protect.
 					return nil
+				}
+				if evidence.RunID == "" || evidence.InvocationID == "" {
+					return fmt.Errorf("refutation of %s:%d produced no durable identity to record", finding.File, finding.Line)
 				}
 				return finalizer(evidence.RunID, evidence.InvocationID, class, detail)
 			}

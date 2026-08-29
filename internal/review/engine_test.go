@@ -1874,3 +1874,38 @@ func TestSemanticFailureKeepsItsClass(t *testing.T) {
 		t.Errorf("class/detail = %q/%q, want empty for a non-semantic error", class, detail)
 	}
 }
+
+// TestRefutationWithoutDurableIdentityKeepsTheBlocker closes the other half of
+// the fail-closed ordering. When metrics are wired, a refutation that reports
+// no durable identity cannot be recorded at all, so treating that silence as a
+// successful recording would downgrade a confirmed CRITICAL with no evidence
+// behind it.
+func TestRefutationWithoutDurableIdentityKeepsTheBlocker(t *testing.T) {
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","source":"review","status":"pending","evidence":"bad()","location":{"file":"a.go","line_start":1}}]}`,
+	})
+	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"bad() is guarded by the final implementation","sha":"abc12345","file":"a.go","evidence":"bad() guarded","line_start":1,"line_end":1}`})
+	directo := transporteDirecto("abc12345")
+	transport := func(bundle, dim, prompt string, agente AuditorAgente) (string, ReviewEvidence, error) {
+		salida, _, err := directo(bundle, dim, prompt, agente)
+		if bundle == "refutation" {
+			// Admitted, but the transport could not attribute the call.
+			return salida, ReviewEvidence{}, err
+		}
+		return salida, ReviewEvidence{RunID: "run-dimension", InvocationID: "inv-dimension"}, err
+	}
+
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransportWithEvidence: transport,
+		FinalizeMetrics:             func(string, string, string, string) error { return nil },
+		LeerContenidoSnapshot:       func(string, string) (string, error) { return "bad() guarded", nil },
+	})
+
+	if resultado.Veredicto != VerdictBlock {
+		t.Fatalf("verdict = %q, want %q: an unattributable refutation must not downgrade", resultado.Veredicto, VerdictBlock)
+	}
+	if resultado.Dims[0].Resultado.RefutedCritical {
+		t.Fatal("RefutedCritical is set although the refutation could not be recorded")
+	}
+}

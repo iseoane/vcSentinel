@@ -91,10 +91,11 @@ func (a *observedAgent) ReviewWithPolicy(prompt, sha string, paths []string, pol
 }
 
 // ReviewWithContextAndPolicyResult is the rich review seam that carries the
-// resolved tool policy. It prefers a policy-aware rich adapter and otherwise
-// falls back to ReviewWithPolicy, which keeps the ErrRestrictedRequired gate:
-// an agent that cannot review under a policy must be refused here too, not
-// quietly served through a policy-free path.
+// resolved tool policy. The policy binding prefers this method, so it owns the
+// whole descent and must not skip a capability the adapter still has: the rich
+// policy-aware form, then the context-aware policy form, and only then the
+// context-free one. Every step carries the policy, so ReviewWithPolicy's
+// ErrRestrictedRequired refusal still guards an agent that cannot honour it.
 func (a *observedAgent) ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -107,6 +108,15 @@ func (a *observedAgent) ReviewWithContextAndPolicyResult(ctx context.Context, pr
 			a.authorship.registrar(a.AuditorAgente)
 		}
 		return res, err
+	}
+	if contextual, ok := a.AuditorAgente.(interface {
+		ReviewWithContextAndPolicy(context.Context, string, string, []string, reviewcontract.ToolPolicy) (string, error)
+	}); ok {
+		output, err := contextual.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, policy)
+		if err == nil {
+			a.authorship.registrar(a.AuditorAgente)
+		}
+		return acpadapter.Result{Output: output}, err
 	}
 	output, err := a.ReviewWithPolicy(prompt, sha, paths, policy)
 	return acpadapter.Result{Output: output}, err
