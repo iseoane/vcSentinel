@@ -124,6 +124,34 @@ recovery, fallback, and metrics-write failure.
 
 Run focused tests and race tests for every touched package, then build and vet.
 
+Producer coverage (recorded at implementation). Timing, observed identity,
+usage, and classified failures reach the snapshot from real evidence. `Cost`,
+`Scope`, and `Reuse` stay nil, and that absence is a determination, not an
+omission:
+
+- Cost: no configured adapter reports a price on the wire and the repository
+  holds no pricing table, so any value would be invented. `ExecutionCost`
+  requires an explicit `Provenance.Source`, and there is none to record.
+- Scope: the only real full-versus-affected decision is
+  `internal/validation.resolverComando`, which belongs to the deterministic
+  validation gate, not to an agent execution. `ExecutionMetrics` is keyed by
+  durable run ID, so recording that decision here would attribute it to a run
+  that never took it.
+- Reuse: no capability-level reuse path exists. `Controller.Start` rejects a
+  duplicate run with `ErrRunAlreadyExists` instead of serving it from a prior
+  result, so there is no reuse or recomputation to record.
+
+Consequence for T9.3a: report the three as zero coverage, never as a measured
+zero. The producers they would require are recorded as FU-3 in `f0-deuda.md`.
+
+Reviewer deviation (this candidate only). The plan fixes the repository YAML's
+OpenCode reviewer for check, slice, review, gate, and evidence verification.
+That provider was out of quota when this candidate was frozen, so review and
+gate ran under `MY_SUB_AGENT=claude`, which overrides `active_agent` without
+changing the committed configuration. The YAML is unmodified; only this run's
+reviewer identity deviates, and the effective identity stays recorded in the
+durable evidence.
+
 ### T9.2 — structured append-only events
 
 Write new `detail` values as typed JSON objects. Read legacy strings, new
@@ -302,7 +330,9 @@ validation snapshots, purged automatically after 24h by
 internal/validation/candidato.go; they are never part of this cleanup.
 
 Open at the time of writing: `f9-t9-0-plan`, `f9-t9-1a-luna`, `f9-t9-1a-schema`,
-each with a linked worktree under `../vas.sentinel-worktrees/`. Then update this file, `README.md`, and
+`f9-t9-1b-luna`, each with a linked worktree under `../vas.sentinel-worktrees/`.
+`f9-t9-1a-schema` already carries its rejection reason in the T9.1a candidate
+decision, so it may be retired at closure. Then update this file, `README.md`, and
 `docs/arquitectura/replanteamiento-objetivo.md`; use `f0-deuda.md` only for
 genuine deferred work. Document deviations instead of rewriting history.
 

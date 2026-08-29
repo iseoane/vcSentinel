@@ -580,3 +580,32 @@ Pre-existing debt recorded with guardian bypasses across multiple units:
 Split by cohesion (the engine's orchestration/adapters/tests precedent from
 R9 applies). Do the FU-1 string sweep in the same pass to avoid touching these
 files twice.
+
+---
+
+## Follow-up pool — F9 observability (T9.1b)
+
+Registered 2026-08-29 while accepting T9.1b. Deferred because no evidence
+source exists today, not because the work was skipped.
+
+### FU-3: cost, scope, and reuse have no producer
+
+T9.1a's schema declares `ExecutionCost`, `ExecutionScope`, and
+`ExecutionReuse`. T9.1b leaves all three nil because none has an observable
+source in the agent execution path:
+
+- Cost: no configured adapter reports a price and the repository holds no
+  pricing table. A producer needs either provider-reported cost on the wire or
+  an explicit, versioned pricing source; `Provenance.Source` exists precisely
+  so an estimate can never masquerade as a report.
+- Scope: `internal/validation.resolverComando` decides full versus affected,
+  but it belongs to the deterministic gate, not to a durable run.
+  `ExecutionMetrics` is keyed by run ID, so a producer needs a validation-side
+  record, not an attribution onto an agent run that never made the decision.
+- Reuse: `Controller.Start` rejects a duplicate run with
+  `ErrRunAlreadyExists`; nothing serves a capability from a prior result. A
+  producer needs an actual reuse path to exist first.
+
+Target: revisit when a provider exposes cost, or when validation-scope and
+capability-reuse evidence gains a durable home of its own. Until then T9.3a
+must report zero coverage for the three, never a measured zero.
