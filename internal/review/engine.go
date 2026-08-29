@@ -219,7 +219,10 @@ type ProviderExecutionFailure struct {
 	Err error
 }
 
-func (e *ProviderExecutionFailure) Error() string { return e.Err.Error() }
+// Error antepone la causa que el proveedor reportó dentro de su flujo. Un
+// fallo de herramienta se manifiesta como timeout, y sin esto el operador lee
+// la consecuencia en vez del motivo.
+func (e *ProviderExecutionFailure) Error() string { return razonConCausa(e.Err.Error()) }
 func (e *ProviderExecutionFailure) Unwrap() error { return e.Err }
 
 // DimensionReviewRequest is the deep seam for one resolved dimension review.
