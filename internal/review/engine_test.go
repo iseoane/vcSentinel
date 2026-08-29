@@ -332,6 +332,26 @@ func TestAuditarCommitIncluyeContextoSinHacerloFatal(t *testing.T) {
 	}
 }
 
+func TestAuditarCommitRetainsContextSkipReason(t *testing.T) {
+	const reason = "codegraph context skipped: dirty_worktree"
+	agent := &agentePrompt{}
+	factory := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return agent, "normal", nil
+	}
+	result := AuditarCommit(factory, 1, OpcionesAuditoria{
+		SHA:               "abc",
+		Bundles:           bundlesPrueba(DimLogic),
+		ProveedorContexto: proveedorContextoFake{err: errors.New(reason)},
+		RutasContexto:     []string{"internal/review/engine.go"},
+	})
+	if result.Veredicto != VerdictOK {
+		t.Fatalf("verdict = %q, want review to remain non-fatal", result.Veredicto)
+	}
+	if result.ContextSkipReason != reason {
+		t.Fatalf("context skip reason = %q, want %q", result.ContextSkipReason, reason)
+	}
+}
+
 func TestAuditarCommitDisplaysOnlyValidatedPaths(t *testing.T) {
 	agente := &agentePrompt{}
 	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) { return agente, "normal", nil }

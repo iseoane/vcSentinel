@@ -124,3 +124,20 @@ func TestCausasDelProveedor(t *testing.T) {
 		}
 	})
 }
+
+func TestCausaProveedorCompactaExcluyeTrazaDelEvento(t *testing.T) {
+	enriquecida := razonConCausa(falloRealDelGate)
+	got := CausaProveedorCompacta(enriquecida)
+	want := prefijoCausaProveedor + "ripgrep execution failed"
+	if got != want {
+		t.Fatalf("compact cause = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "timed out") || strings.Contains(got, " | ") {
+		t.Fatalf("compact cause = %q, want no timeout or retained raw trace", got)
+	}
+
+	const generic = "admission: missing reviewer binding"
+	if got := CausaProveedorCompacta(generic); got != generic {
+		t.Fatalf("generic reason = %q, want unchanged", got)
+	}
+}

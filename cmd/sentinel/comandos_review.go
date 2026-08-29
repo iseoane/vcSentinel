@@ -60,7 +60,6 @@ func ejecutarReview(worktree string, args []string) {
 
 	ledger := review.NuevoLedger(gitDir)
 	verificadorModelo := nuevoVerificadorModelo(worktree)
-	detalle := fmt.Sprintf("flags: all=%v chain=%v gate=%v dims=%q", flags.all, flags.chain, flags.gate, flags.dims)
 	exitFinal := 0
 
 	if flags.prune {
@@ -190,12 +189,60 @@ func ejecutarReview(worktree string, args []string) {
 		if exit > exitFinal {
 			exitFinal = exit
 		}
+		detalle := detalleEventoReview(flags, resultado)
 		if err := ops.RegistrarEvento(gitDir, "review", exit, []string{sha}, detalle, worktree); err != nil {
 			fmt.Printf("⚠️ No se pudo registrar el evento: %v\n", err)
 		}
 		registrarCorrecciones(ledger, gitDir, sha, archivos, mensaje, exit, worktree)
 	}
 	os.Exit(exitFinal)
+}
+
+func detalleEventoReview(flags flagsAuditoria, resultado review.ResultadoAuditoria) ops.EventDetail {
+	detalle := ops.EventDetail{
+		"all":   flags.all,
+		"chain": flags.chain,
+		"gate":  flags.gate,
+		"dims":  flags.dims,
+	}
+	if resultado.ContextSkipReason != "" {
+		detalle["context_skip_reason"] = resultado.ContextSkipReason
+	}
+	var fallos []ops.EventDetail
+	for _, dimension := range resultado.Dims {
+		if dimension.Resultado != nil && dimension.Resultado.Verdict != review.VerdictUnavailable {
+			continue
+		}
+		if dimension.Resultado == nil && dimension.Error == nil {
+			continue
+		}
+		bundle, dim, reason := dimension.Bundle, dimension.Dim, ""
+		if dimension.Resultado != nil {
+			if bundle == "" {
+				bundle = dimension.Resultado.Bundle
+			}
+			if dim == "" {
+				dim = dimension.Resultado.Dim
+			}
+			reason = dimension.Resultado.Reason
+		}
+		if strings.TrimSpace(reason) == "" && dimension.Error != nil {
+			reason = dimension.Error.Error()
+		}
+		reason = review.CausaProveedorCompacta(reason)
+		if strings.TrimSpace(reason) == "" {
+			continue
+		}
+		fallos = append(fallos, ops.EventDetail{
+			"bundle":    bundle,
+			"dimension": dim,
+			"reason":    reason,
+		})
+	}
+	if len(fallos) > 0 {
+		detalle["reviewer_failures"] = fallos
+	}
+	return detalle
 }
 
 var nuevoVerificadorModelo = func(worktree string) *modelprobe.Verificador {
@@ -602,7 +649,7 @@ func registrarCorrecciones(ledger *review.Ledger, gitDir, sha string, archivos [
 
 	if len(corregidos) > 0 {
 		_ = ops.RegistrarEvento(gitDir, "fix", 0, []string{sha},
-			"corrige: "+strings.Join(corregidos, ","), worktree)
+			ops.EventDetail{"corrects": corregidos}, worktree)
 		fmt.Printf("  🔧 fix %s marcado como corrección de: %s\n", shaCorto(sha), strings.Join(corregidos, ","))
 	}
 }

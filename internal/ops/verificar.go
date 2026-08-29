@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -221,22 +220,10 @@ func registrarEventoPrVerify(gitDir, worktree string, verif ResultadoVerificacio
 				peor = c.Exit
 			}
 		}
-		detalle, err := json.Marshal(map[string]any{"comandos": comandos})
-		if err != nil {
-			return err
-		}
-		return RegistrarEvento(gitDir, "pr-verify", peor, nil, string(detalle), worktree)
+		return RegistrarEvento(gitDir, "pr-verify", peor, nil, EventDetail{"comandos": comandos}, worktree)
 	case ModoDelegado:
-		detalle, err := json.Marshal(map[string]any{"tested": verif.Tested})
-		if err != nil {
-			return err
-		}
-		return RegistrarEvento(gitDir, "pr-verify", 0, nil, string(detalle), worktree)
+		return RegistrarEvento(gitDir, "pr-verify", 0, nil, EventDetail{"tested": verif.Tested}, worktree)
 	default:
-		detalle, err := json.Marshal(map[string]any{"motivo": verif.Motivo})
-		if err != nil {
-			return err
-		}
-		return RegistrarEvento(gitDir, "pr-verify", 0, nil, string(detalle), worktree)
+		return RegistrarEvento(gitDir, "pr-verify", 0, nil, EventDetail{"motivo": verif.Motivo}, worktree)
 	}
 }

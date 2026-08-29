@@ -84,3 +84,22 @@ func razonConCausa(mensaje string) string {
 	}
 	return prefijoCausaProveedor + strings.Join(causas, "; ") + " | " + mensaje
 }
+
+// CausaProveedorCompacta devuelve la forma segura para un evento operativo:
+// conserva solo las causas que el proveedor imprimió, sin arrastrar la traza
+// completa que puede contener cientos de líneas y el timeout consecuente.
+// Las razones que no tienen una causa de proveedor reconocible se conservan
+// para no ocultar fallos de admisión o de configuración.
+func CausaProveedorCompacta(mensaje string) string {
+	if causas := causasDelProveedor(mensaje); len(causas) > 0 {
+		return prefijoCausaProveedor + strings.Join(causas, "; ")
+	}
+	if !strings.HasPrefix(mensaje, prefijoCausaProveedor) {
+		return mensaje
+	}
+	cabecera := strings.TrimSpace(strings.TrimPrefix(mensaje, prefijoCausaProveedor))
+	if breve, _, ok := strings.Cut(cabecera, " | "); ok {
+		cabecera = strings.TrimSpace(breve)
+	}
+	return prefijoCausaProveedor + recortarCausa(cabecera)
+}

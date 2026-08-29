@@ -286,8 +286,9 @@ func TestPurgeEventosDePRsResueltas(t *testing.T) {
 		t.Fatalf("quedaron %d eventos, esperado 2", len(eventos))
 	}
 	for _, ev := range eventos {
-		if !strings.Contains(ev.Detail, "/pull/11") && !strings.Contains(ev.Detail, "/pull/13") {
-			t.Errorf("sobrevivió un evento indebido: %s", ev.Detail)
+		texto := detailText(t, ev.Detail)
+		if !strings.Contains(texto, "/pull/11") && !strings.Contains(texto, "/pull/13") {
+			t.Errorf("sobrevivió un evento indebido: %s", texto)
 		}
 	}
 
@@ -542,8 +543,8 @@ func TestVerificarRegistraPrVerify(t *testing.T) {
 		if eventos[0].Exit != 1 {
 			t.Errorf("Exit = %d, esperado 1 (el exit code peor)", eventos[0].Exit)
 		}
-		if !strings.Contains(eventos[0].Detail, `"exit":1`) {
-			t.Errorf("el detail no reporta el exit por comando: %s", eventos[0].Detail)
+		if !strings.Contains(detailText(t, eventos[0].Detail), `"exit":1`) {
+			t.Errorf("el detail no reporta el exit por comando: %s", detailText(t, eventos[0].Detail))
 		}
 	})
 
@@ -563,8 +564,8 @@ func TestVerificarRegistraPrVerify(t *testing.T) {
 		if err != nil || len(eventos) != 1 {
 			t.Fatalf("sin evento pr-verify: %v %+v", err, eventos)
 		}
-		if !strings.Contains(eventos[0].Detail, `"tested"`) || !strings.Contains(eventos[0].Detail, `make test`) {
-			t.Errorf("el detail no reporta el contrato tested: %s", eventos[0].Detail)
+		if !strings.Contains(detailText(t, eventos[0].Detail), `"tested"`) || !strings.Contains(detailText(t, eventos[0].Detail), `make test`) {
+			t.Errorf("el detail no reporta el contrato tested: %s", detailText(t, eventos[0].Detail))
 		}
 	})
 
@@ -583,8 +584,8 @@ func TestVerificarRegistraPrVerify(t *testing.T) {
 		if err != nil || len(eventos) != 1 {
 			t.Fatalf("evento pr-verify: %+v", eventos)
 		}
-		if !strings.Contains(eventos[0].Detail, `"motivo":"omitido"`) {
-			t.Errorf("el detail no reporta el motivo: %s", eventos[0].Detail)
+		if !strings.Contains(detailText(t, eventos[0].Detail), `"motivo":"omitido"`) {
+			t.Errorf("el detail no reporta el motivo: %s", detailText(t, eventos[0].Detail))
 		}
 	})
 
@@ -605,4 +606,189 @@ func TestVerificarRegistraPrVerify(t *testing.T) {
 			t.Errorf("sin GitDir no debe crearse events.jsonl: %v", err)
 		}
 	})
+}
+
+func TestRegistrarEventoWritesStructuredObjectDetail(t *testing.T) {
+	dir := t.TempDir()
+	detail := map[string]any{
+		"reason":  "ripgrep execution failed",
+		"unknown": map[string]any{"kept": true},
+	}
+	if err := RegistrarEvento(dir, "review", 4, nil, detail, ""); err != nil {
+		t.Fatalf("RegistrarEvento failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, eventosRel))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	var envelope struct {
+		Detail json.RawMessage `json:"detail"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("event is not valid JSON: %v", err)
+	}
+	if !strings.HasPrefix(string(envelope.Detail), "{") {
+		t.Fatalf("detail = %s, want a JSON object rather than an encoded string", envelope.Detail)
+	}
+	object := map[string]any{}
+	if err := json.Unmarshal(envelope.Detail, &object); err != nil {
+		t.Fatalf("structured detail is not an object: %v", err)
+	}
+	if object["reason"] != "ripgrep execution failed" {
+		t.Errorf("reason = %v, want the producer value", object["reason"])
+	}
+	unknown, ok := object["unknown"].(map[string]any)
+	if !ok || unknown["kept"] != true {
+		t.Errorf("unknown fields = %#v, want them preserved", object["unknown"])
+	}
+}
+
+func TestUltimosEventosReadsMixedLegacyAndStructuredDetails(t *testing.T) {
+	dir := t.TempDir()
+	ruta := filepath.Join(dir, eventosRel)
+	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"at":"2026-01-01T00:00:00Z","cmd":"legacy-json","exit":0,"detail":"{\"legacy\":\"value\",\"unknown\":{\"kept\":true}}"}`,
+		`{"at":"2026-01-01T00:00:01Z","cmd":"legacy-text","exit":4,"detail":"provider_unavailable"}`,
+		`{"at":"2026-01-01T00:00:02Z","cmd":"new-object","exit":0,"detail":{"new":"value","unknown":{"number":7}}}`,
+	}
+	original := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(ruta, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := UltimosEventos(dir, 0)
+	if err != nil {
+		t.Fatalf("UltimosEventos failed: %v", err)
+	}
+	if len(events) != len(lines) {
+		t.Fatalf("events = %d, want %d mixed lines", len(events), len(lines))
+	}
+	// UltimosEventos presents the newest event first; restore the stream order
+	// here to verify that decoding never loses or reorders a historical line.
+	chronological := make([]Evento, len(events))
+	for i := range events {
+		chronological[len(events)-1-i] = events[i]
+	}
+	if chronological[0].Cmd != "legacy-json" || chronological[1].Cmd != "legacy-text" || chronological[2].Cmd != "new-object" {
+		t.Fatalf("commands = %q, %q, %q; want original stream order", chronological[0].Cmd, chronological[1].Cmd, chronological[2].Cmd)
+	}
+	legacyObject := structuredDetail(t, chronological[0].Detail)
+	if legacyObject["legacy"] != "value" {
+		t.Errorf("legacy object detail = %#v, want its fields decoded", legacyObject)
+	}
+	legacyUnknown, ok := legacyObject["unknown"].(map[string]any)
+	if !ok || legacyUnknown["kept"] != true {
+		t.Errorf("legacy unknown fields = %#v, want them preserved", legacyObject["unknown"])
+	}
+	if chronological[1].Detail != "provider_unavailable" {
+		t.Errorf("legacy non-JSON detail = %#v, want the original text", chronological[1].Detail)
+	}
+	newObject := structuredDetail(t, chronological[2].Detail)
+	if newObject["new"] != "value" {
+		t.Errorf("new object detail = %#v, want its fields decoded", newObject)
+	}
+	newUnknown, ok := newObject["unknown"].(map[string]any)
+	if !ok || newUnknown["number"] != float64(7) {
+		t.Errorf("new unknown fields = %#v, want them preserved", newObject["unknown"])
+	}
+
+	after, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != original {
+		t.Fatal("reading mixed events must not rewrite events.jsonl")
+	}
+}
+
+func TestPrVerifyProducerWritesStructuredDetail(t *testing.T) {
+	gitDir := t.TempDir()
+	_, err := Verificar(OpcionesVerificar{
+		GitDir: gitDir,
+		Cfg:    config.Config{TestCommands: []string{"go test ./..."}},
+		Ejecutar: func(string) (int, error) {
+			return 1, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Verificar failed: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(gitDir, eventosRel))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	var envelope struct {
+		Detail json.RawMessage `json:"detail"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("event is not valid JSON: %v", err)
+	}
+	if !strings.HasPrefix(string(envelope.Detail), "{") {
+		t.Fatalf("producer detail = %s, want a JSON object", envelope.Detail)
+	}
+}
+
+func structuredDetail(t *testing.T, detail any) map[string]any {
+	t.Helper()
+	object, ok := detail.(map[string]any)
+	if !ok {
+		t.Fatalf("detail = %#v (%T), want a decoded object", detail, detail)
+	}
+	return object
+}
+
+func detailText(t *testing.T, detail any) string {
+	t.Helper()
+	if text, ok := detail.(string); ok {
+		return text
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	return string(encoded)
+}
+
+func TestRotarYPurgarPreservanBytesDeLineasConservadas(t *testing.T) {
+	dir := t.TempDir()
+	ruta := filepath.Join(dir, eventosRel)
+	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+		t.Fatal(err)
+	}
+	keep := []byte(`{"at":"2026-01-01T00:00:00Z","cmd":"keep","exit":0,"shas":["keep"],"detail":{"unknown":{"kept":true}}}` + "\r\n")
+	remove := []byte(`{"at":"2026-01-01T00:00:01Z","cmd":"remove","exit":0,"shas":["remove"],"detail":{"unknown":{"number":7}}}`)
+	original := append(append([]byte(nil), keep...), remove...)
+	if err := os.WriteFile(ruta, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RotarEventos(dir, 2); err != nil {
+		t.Fatalf("RotarEventos failed: %v", err)
+	}
+	afterRotate, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterRotate) != string(original) {
+		t.Fatalf("rotation changed retained bytes: got %q, want %q", afterRotate, original)
+	}
+
+	eliminadas, err := PurgeEventosDe(dir, []string{"remove"})
+	if err != nil {
+		t.Fatalf("PurgeEventosDe failed: %v", err)
+	}
+	if eliminadas != 1 {
+		t.Fatalf("eliminated = %d, want 1", eliminadas)
+	}
+	afterPurge, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterPurge) != string(keep) {
+		t.Fatalf("purge changed retained bytes: got %q, want %q", afterPurge, keep)
+	}
 }

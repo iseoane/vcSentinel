@@ -135,10 +135,10 @@ func parsearFlagsPrReview(args []string) (flagsPrReview, error) {
 	return flags, nil
 }
 
-// detalleEventoPrReview construye el detail del evento pr-review: string con
-// JSON serializado (esquema de la guía §13).
-func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (string, error) {
-	detalle := map[string]any{
+// detalleEventoPrReview construye el detail estructurado del evento pr-review
+// (esquema de la guía §13).
+func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (ops.EventDetail, error) {
+	detalle := ops.EventDetail{
 		"base":      base,
 		"rama":      res.Rama,
 		"auditadas": len(res.Fichas),
@@ -153,11 +153,31 @@ func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (str
 	if res.OverviewError != "" {
 		detalle["overview_error"] = res.OverviewError
 	}
-	datos, err := json.Marshal(detalle)
-	if err != nil {
-		return "", err
+	if fallos := detallesFallasFichas(res.Fichas); len(fallos) > 0 {
+		detalle["reviewer_failures"] = fallos
 	}
-	return string(datos), nil
+	return detalle, nil
+}
+
+func detallesFallasFichas(fichas []review.Ficha) []ops.EventDetail {
+	var fallos []ops.EventDetail
+	for _, ficha := range fichas {
+		if len(ficha.Revisions) == 0 {
+			continue
+		}
+		ultima := ficha.Revisions[len(ficha.Revisions)-1]
+		for _, dimension := range ultima.Dims {
+			if dimension.Verdict != review.VerdictUnavailable || strings.TrimSpace(dimension.Reason) == "" {
+				continue
+			}
+			fallos = append(fallos, ops.EventDetail{
+				"sha":       ficha.SHA,
+				"dimension": dimension.Dim,
+				"reason":    review.CausaProveedorCompacta(dimension.Reason),
+			})
+		}
+	}
+	return fallos
 }
 
 // textoDecision explica la decisión single/chain en la salida terminal.
@@ -412,8 +432,8 @@ func parsearFlagsPrCreate(args []string) (flagsPrCreate, error) {
 // acta de publicación con pr_url, fallback y chain_pr. Amplía T1.8: force
 // registra si se superó la validación en rojo, y motivo (solo si force) deja
 // constancia explícita de por qué — la excepción nunca queda en silencio.
-func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo string) (string, error) {
-	detalle := map[string]any{
+func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo string) (ops.EventDetail, error) {
+	detalle := ops.EventDetail{
 		"pr_url":   prURL,
 		"fallback": fallback,
 		"chain_pr": chain,
@@ -422,11 +442,7 @@ func detalleEventoPrCreate(prURL string, fallback, chain, force bool, motivo str
 	if force {
 		detalle["motivo"] = motivo
 	}
-	datos, err := json.Marshal(detalle)
-	if err != nil {
-		return "", err
-	}
-	return string(datos), nil
+	return detalle, nil
 }
 
 // resolverActor identifica quién ejecuta el proceso, para la trazabilidad de
@@ -677,7 +693,7 @@ type depsPrCreate struct {
 	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
 	verificar          func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
 	publicar           func(worktree, rutaPlantilla, base string) (string, bool, error)
-	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error
+	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error
 	// obtenerGitCommonDir y registrarDecision cubren T7.5 (informe M3): el
 	// --force que supera una validación en rojo deja de ser una excepción
 	// sin traza. store.NuevoStore exige el git-common-dir (compartido entre

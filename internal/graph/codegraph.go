@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -60,12 +61,18 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	}
 	env := entornoCodeGraph(p.ejecutable)
 	head, err := p.ejecutarConTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
-	if err != nil || strings.TrimSpace(string(head)) != sha {
-		return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("codegraph context skipped: head_mismatch: %w", err)
+	}
+	if strings.TrimSpace(string(head)) != sha {
+		return nil, fmt.Errorf("codegraph context skipped: head_mismatch")
 	}
 	sucio, err := p.ejecutarConTimeout(p.git, []string{"status", "--porcelain"}, env, "")
-	if err != nil || len(bytes.TrimSpace(sucio)) != 0 {
-		return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("codegraph context skipped: dirty_worktree: %w", err)
+	}
+	if len(bytes.TrimSpace(sucio)) != 0 {
+		return nil, fmt.Errorf("codegraph context skipped: dirty_worktree")
 	}
 	estadoRaw, err := p.ejecutarConTimeout(p.ejecutable, []string{"status", "--json", p.raiz}, env, "")
 	var estado struct {
@@ -74,15 +81,39 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 		Pending          *struct{ Added, Modified, Removed int } `json:"pendingChanges"`
 		WorktreeMismatch json.RawMessage                         `json:"worktreeMismatch"`
 	}
-	if err != nil || len(estadoRaw) == 0 || len(estadoRaw) >= p.limite || json.Unmarshal(estadoRaw, &estado) != nil || !estado.Initialized || filepath.Clean(estado.ProjectPath) != p.raiz || estado.Pending == nil || estado.Pending.Added != 0 || estado.Pending.Modified != 0 || estado.Pending.Removed != 0 || string(estado.WorktreeMismatch) != "null" {
-		return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("codegraph context skipped: status_unavailable: %w", err)
+	}
+	if len(estadoRaw) == 0 || len(estadoRaw) >= p.limite {
+		return nil, fmt.Errorf("codegraph context skipped: status_unavailable")
+	}
+	if err := json.Unmarshal(estadoRaw, &estado); err != nil {
+		return nil, fmt.Errorf("codegraph context skipped: status_unavailable: %w", err)
+	}
+	if !estado.Initialized {
+		return nil, fmt.Errorf("codegraph context skipped: uninitialized_index")
+	}
+	if filepath.Clean(estado.ProjectPath) != p.raiz {
+		return nil, fmt.Errorf("codegraph context skipped: project_path_mismatch")
+	}
+	if estado.Pending == nil || estado.Pending.Added != 0 || estado.Pending.Modified != 0 || estado.Pending.Removed != 0 {
+		return nil, fmt.Errorf("codegraph context skipped: pending_changes")
+	}
+	if string(estado.WorktreeMismatch) != "null" {
+		return nil, fmt.Errorf("codegraph context skipped: worktree_mismatch")
 	}
 	salida, err := p.ejecutarConTimeout(p.ejecutable, []string{"affected", "-p", p.raiz, "--stdin", "--json"}, env, strings.Join(validas, "\n")+"\n")
 	var afectado struct {
 		AffectedTests []string `json:"affectedTests"`
 	}
-	if err != nil || len(salida) == 0 || len(salida) >= p.limite || json.Unmarshal(salida, &afectado) != nil {
-		return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable: %w", err)
+	}
+	if len(salida) == 0 || len(salida) >= p.limite {
+		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable")
+	}
+	if err := json.Unmarshal(salida, &afectado); err != nil {
+		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable: %w", err)
 	}
 	tests := rutasSeguras(afectado.AffectedTests, maxReferenciasCodeGraph)
 	refs := make([]review.Reference, 0, len(tests))

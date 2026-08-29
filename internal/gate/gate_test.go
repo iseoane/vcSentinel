@@ -517,3 +517,35 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestTranslateVerdictCarriesCompactReviewerFailureMetadata(t *testing.T) {
+	translated := traducirVeredicto(review.ResultadoAuditoria{
+		ContextSkipReason: "dirty_worktree",
+		Veredicto:         review.VerdictUnavailable,
+		Dims: []review.ResultadoDimension{{
+			Bundle: review.BundleCorrectness,
+			Dim:    review.DimLogic,
+			Resultado: &review.DimensionResult{
+				Dim:     review.DimLogic,
+				Verdict: review.VerdictUnavailable,
+				Reason:  "provider reported: ripgrep execution failed | run restricted reviewer timed out after 10m0s",
+			},
+		}},
+	})
+	if translated.ContextSkipReason != "dirty_worktree" {
+		t.Fatalf("context skip reason = %q, want it exposed on the gate result", translated.ContextSkipReason)
+	}
+	if len(translated.ReviewerFailures) != 1 {
+		t.Fatalf("reviewer failures = %#v, want one compact failure", translated.ReviewerFailures)
+	}
+	failure := translated.ReviewerFailures[0]
+	if failure.Bundle != review.BundleCorrectness || failure.Dimension != review.DimLogic {
+		t.Fatalf("failure identity = %#v, want correctness/logic", failure)
+	}
+	if want := "provider reported: ripgrep execution failed"; failure.Reason != want {
+		t.Fatalf("failure reason = %q, want %q", failure.Reason, want)
+	}
+	if strings.Contains(failure.Reason, "timed out") {
+		t.Fatalf("failure reason = %q, want no timeout trace", failure.Reason)
+	}
+}

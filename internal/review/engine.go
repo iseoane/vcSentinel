@@ -249,6 +249,9 @@ type ResultadoAuditoria struct {
 	// (T6.3). It is a non-destructive view: it never merges or drops the
 	// individual findings in Findings, it only groups references to them.
 	CauseGroups []CauseGroup
+	// ContextSkipReason records why optional review context was not available.
+	// It is observational only and never changes the semantic verdict.
+	ContextSkipReason string `json:"context_skip_reason,omitempty"`
 }
 
 const (
@@ -348,7 +351,10 @@ func caracteristicaPresente(caracteristicas []change.Caracteristica, nombre stri
 func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria) ResultadoAuditoria {
 	resultado := ResultadoAuditoria{SHA: opts.SHA}
 	rutasRevision := rutasRevisionSeguras(opts.RutasContexto)
-	reviewContext := contextoRevisor(opts.ProveedorContexto, opts.SHA, rutasRevision)
+	reviewContext, contextErr := contextoRevisor(opts.ProveedorContexto, opts.SHA, rutasRevision)
+	if contextErr != nil {
+		resultado.ContextSkipReason = contextErr.Error()
+	}
 	if parallel < 1 {
 		parallel = 1
 	}
@@ -1054,19 +1060,22 @@ type ContextProvider interface {
 	Contexto(sha string, rutas []string) ([]Reference, error)
 }
 
-func contextoRevisor(proveedor ContextProvider, sha string, rutas []string) string {
+func contextoRevisor(proveedor ContextProvider, sha string, rutas []string) (string, error) {
 	if proveedor == nil {
-		return ""
+		return "", nil
 	}
 	referencias, err := proveedor.Contexto(sha, rutas)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	datos, err := json.Marshal(referencias)
-	if err != nil || len(referencias) == 0 {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return string(datos)
+	if len(referencias) == 0 {
+		return "", nil
+	}
+	return string(datos), nil
 }
 
 // veredictoGlobal decide el veredicto del commit: block manda, luego question
@@ -1111,6 +1120,9 @@ func (r ResultadoAuditoria) String() string {
 		shaCorto = shaCorto[:8]
 	}
 	lineas = append(lineas, fmt.Sprintf("🔎 Revisión de %s: %s", shaCorto, r.Veredicto))
+	if r.ContextSkipReason != "" {
+		lineas = append(lineas, fmt.Sprintf("  review context skipped: %q", r.ContextSkipReason))
+	}
 	for _, rd := range r.Dims {
 		veredicto := "?"
 		reason := ""

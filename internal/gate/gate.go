@@ -56,9 +56,21 @@ func CodigoSalida(estado string) int {
 // Resultado es la salida de EjecutarGate: el estado final y los mensajes ya
 // redactados para que el comando los imprima tal cual, sin añadir lógica de
 // presentación en cmd/.
+type ReviewerFailure struct {
+	Bundle    string
+	Dimension string
+	Reason    string
+}
+
 type Resultado struct {
 	Estado   string
 	Mensajes []string
+	// ContextSkipReason is observational context-provider evidence. It never
+	// changes the semantic verdict but remains available to operator events.
+	ContextSkipReason string
+	// ReviewerFailures carries compact causes for unavailable dimensions to
+	// operator events without replacing the detailed terminal messages.
+	ReviewerFailures []ReviewerFailure
 	// Err carries a typed error produced by the durable orchestration when a
 	// plan, admission, or settlement seam fails (R9 slice 1). Facade text
 	// travels in Estado/Mensajes; Err exists for callers that need the typed
@@ -161,11 +173,15 @@ func mensajesValidacionFallida(hallazgos []validation.Hallazgo) []string {
 // traducirVeredicto keeps validation and semantic blockers distinct. A refuted
 // semantic critical finding remains visible and requires human review.
 func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
+	contextSkipReason := resultado.ContextSkipReason
+	reviewerFailures := compactReviewerFailures(resultado)
 	switch resultado.Veredicto {
 	case review.VerdictUnavailable:
 		return Resultado{
-			Estado:   EstadoReviewInfrastructureError,
-			Mensajes: unavailableReviewMessages(resultado),
+			Estado:            EstadoReviewInfrastructureError,
+			Mensajes:          unavailableReviewMessages(resultado),
+			ContextSkipReason: contextSkipReason,
+			ReviewerFailures:  reviewerFailures,
 		}
 	case review.VerdictQuestion:
 		mensajes := []string{"❓ La revisión semántica requiere atención humana explícita:"}
@@ -173,7 +189,12 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 			mensajes = append(mensajes, fmt.Sprintf("  ? %s", pregunta.Text))
 		}
 		mensajes = append(mensajes, unavailableDimensionMessages(resultado)...)
-		return Resultado{Estado: EstadoNeedsUserReview, Mensajes: mensajes}
+		return Resultado{
+			Estado:            EstadoNeedsUserReview,
+			Mensajes:          mensajes,
+			ContextSkipReason: contextSkipReason,
+			ReviewerFailures:  reviewerFailures,
+		}
 	case review.VerdictBlock:
 		messages := []string{
 			"❌ La revisión semántica confirmó hallazgos CRITICAL.",
@@ -181,12 +202,27 @@ func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
 		}
 		messages = append(messages, criticalFindingMessages(resultado)...)
 		messages = append(messages, unavailableDimensionMessages(resultado)...)
-		return Resultado{Estado: EstadoCodeReviewFailed, Mensajes: messages}
+		return Resultado{
+			Estado:            EstadoCodeReviewFailed,
+			Mensajes:          messages,
+			ContextSkipReason: contextSkipReason,
+			ReviewerFailures:  reviewerFailures,
+		}
 	default:
 		if tieneHallazgoCriticoRefutado(resultado) {
-			return Resultado{Estado: EstadoNeedsUserReview, Mensajes: []string{"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.", resultado.String()}}
+			return Resultado{
+				Estado:            EstadoNeedsUserReview,
+				Mensajes:          []string{"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.", resultado.String()},
+				ContextSkipReason: contextSkipReason,
+				ReviewerFailures:  reviewerFailures,
+			}
 		}
-		return Resultado{Estado: EstadoPass, Mensajes: []string{"✅ Validación y revisión semántica en verde.", resultado.String()}}
+		return Resultado{
+			Estado:            EstadoPass,
+			Mensajes:          []string{"✅ Validación y revisión semántica en verde.", resultado.String()},
+			ContextSkipReason: contextSkipReason,
+			ReviewerFailures:  reviewerFailures,
+		}
 	}
 }
 
@@ -233,6 +269,41 @@ func unavailableDimensionMessages(auditResult review.ResultadoAuditoria) []strin
 		messages = append(messages, fmt.Sprintf("  - dimension=%q reason=%q class=%s", dimensionName, reason, failureClass(dimension)))
 	}
 	return messages
+}
+
+func compactReviewerFailures(auditResult review.ResultadoAuditoria) []ReviewerFailure {
+	dimensions := unavailableDimensions(auditResult)
+	if len(dimensions) == 0 {
+		return nil
+	}
+	failures := make([]ReviewerFailure, 0, len(dimensions))
+	for _, dimension := range dimensions {
+		dimensionName := dimension.Dim
+		bundleName := dimension.Bundle
+		reason := ""
+		if dimension.Resultado != nil {
+			if dimensionName == "" {
+				dimensionName = dimension.Resultado.Dim
+			}
+			if bundleName == "" {
+				bundleName = dimension.Resultado.Bundle
+			}
+			reason = dimension.Resultado.Reason
+		}
+		if reason == "" && dimension.Error != nil {
+			reason = dimension.Error.Error()
+		}
+		reason = review.CausaProveedorCompacta(reason)
+		if strings.TrimSpace(reason) == "" {
+			continue
+		}
+		failures = append(failures, ReviewerFailure{
+			Bundle:    bundleName,
+			Dimension: dimensionName,
+			Reason:    reason,
+		})
+	}
+	return failures
 }
 
 // failureClass labels an unavailable dimension as an admission failure or an

@@ -126,8 +126,12 @@ func TestDetalleEventoPrReview(t *testing.T) {
 	}
 
 	var crudo map[string]any
-	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
-		t.Fatalf("detail no es JSON válido: %v\n%s", err, detalle)
+	datos, err := json.Marshal(detalle)
+	if err != nil {
+		t.Fatalf("detail no es JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
+		t.Fatalf("detail no es JSON válido: %v\n%s", err, datos)
 	}
 	for clave, esperado := range map[string]any{
 		"base":      "main",
@@ -154,11 +158,49 @@ func TestDetalleEventoPrReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detalleEventoPrReview falló: %v", err)
 	}
-	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
-		t.Fatalf("detail no es JSON válido: %v\n%s", err, detalle)
+	datos, err = json.Marshal(detalle)
+	if err != nil {
+		t.Fatalf("detail no es JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
+		t.Fatalf("detail no es JSON válido: %v\n%s", err, datos)
 	}
 	if crudo["overview_error"] != "el auditor de rama no respondió: boom" {
 		t.Errorf("detail[overview_error] = %v", crudo["overview_error"])
+	}
+}
+
+func TestDetalleEventoReviewCarriesFailureAndContextReasons(t *testing.T) {
+	result := review.ResultadoAuditoria{
+		ContextSkipReason: "codegraph context skipped: dirty_worktree",
+		Dims: []review.ResultadoDimension{{
+			Dim: review.DimLogic,
+			Resultado: &review.DimensionResult{
+				Dim:     review.DimLogic,
+				Verdict: review.VerdictUnavailable,
+				Reason:  "provider reported: ripgrep execution failed | timed out after 600s",
+			},
+		}},
+	}
+	detail := detalleEventoReview(flagsAuditoria{all: true}, result)
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal review detail: %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		t.Fatalf("review detail is not an object: %v", err)
+	}
+	if object["context_skip_reason"] != "codegraph context skipped: dirty_worktree" {
+		t.Errorf("context skip reason = %v, want the provider reason", object["context_skip_reason"])
+	}
+	failures, ok := object["reviewer_failures"].([]any)
+	if !ok || len(failures) != 1 {
+		t.Fatalf("reviewer failures = %#v, want one structured failure", object["reviewer_failures"])
+	}
+	failure, ok := failures[0].(map[string]any)
+	if !ok || failure["reason"] != "provider reported: ripgrep execution failed" {
+		t.Fatalf("failure = %#v, want only the actual compact tool failure cause", failures[0])
 	}
 }
 
@@ -499,7 +541,11 @@ func TestDetalleEventoPrCreate(t *testing.T) {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
 	var crudo map[string]any
-	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
+	datos, err := json.Marshal(detalle)
+	if err != nil {
+		t.Fatalf("detail debe ser JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
 	if crudo["pr_url"] != "https://github.com/x/pr/1" {
@@ -519,7 +565,11 @@ func TestDetalleEventoPrCreateFallbackYChain(t *testing.T) {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
 	var crudo map[string]any
-	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
+	datos, err := json.Marshal(detalle)
+	if err != nil {
+		t.Fatalf("detail debe ser JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
 	if crudo["fallback"] != true || crudo["chain_pr"] != true {
@@ -538,7 +588,11 @@ func TestDetalleEventoPrCreateForceConMotivo(t *testing.T) {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
 	var crudo map[string]any
-	if err := json.Unmarshal([]byte(detalle), &crudo); err != nil {
+	datos, err := json.Marshal(detalle)
+	if err != nil {
+		t.Fatalf("detail debe ser JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
 	if crudo["force"] != true || crudo["motivo"] != "motivo real" {
@@ -655,7 +709,7 @@ func TestEjecutarPrCreateCon_ComparteElVerificadorModeloConLaPlantilla(t *testin
 			return verificarParaPlantillaCon(worktree, gitDir, cfg, verificadorModelo, nil)
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0: %s", codigo, salida.String())
@@ -736,7 +790,7 @@ func TestEjecutarPrCreateConPasaFabricaRefutadorCheap(t *testing.T) {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, want 0: %s", codigo, salida.String())
@@ -781,7 +835,7 @@ func TestEjecutarPrCreateCon_ForceSinReason_ErrorSinTocarNada(t *testing.T) {
 func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing.T) {
 	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
 		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var detalleRegistrado string
+	var detalleRegistrado any
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
 		cargarConfig:   func(string) (config.Config, error) { return config.Config{}, nil },
@@ -797,7 +851,7 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/9", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
 			detalleRegistrado = detalle
 			return nil
 		},
@@ -809,8 +863,12 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
 	}
 	var crudo map[string]any
-	if err := json.Unmarshal([]byte(detalleRegistrado), &crudo); err != nil {
-		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, detalleRegistrado)
+	datos, err := json.Marshal(detalleRegistrado)
+	if err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, datos)
 	}
 	if crudo["force"] != true || crudo["motivo"] != "motivo real" {
 		t.Errorf("el evento debe registrar force y motivo, got %+v", crudo)
@@ -842,7 +900,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/12", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
 			return nil
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
@@ -898,7 +956,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 			sePublico = true
 			return "https://github.com/x/pr/14", false, nil
 		},
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
 			return nil
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
@@ -948,7 +1006,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoPropagaHallazgosDetermini
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/13", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
 			return nil
 		},
 	})
@@ -969,7 +1027,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoPropagaHallazgosDetermini
 func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcurrio(t *testing.T) {
 	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
 		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var detalleRegistrado string
+	var detalleRegistrado any
 	var salida bytes.Buffer
 	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "motivo real"}, depsPrCreate{
 		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
@@ -984,7 +1042,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcu
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/11", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
 			detalleRegistrado = detalle
 			return nil
 		},
@@ -996,8 +1054,12 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcu
 		t.Errorf("sin hallazgos que superar no debe avisar de una validación superada: %s", salida.String())
 	}
 	var crudo map[string]any
-	if err := json.Unmarshal([]byte(detalleRegistrado), &crudo); err != nil {
-		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, detalleRegistrado)
+	datos, err := json.Marshal(detalleRegistrado)
+	if err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v", err)
+	}
+	if err := json.Unmarshal(datos, &crudo); err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, datos)
 	}
 	if crudo["force"] != false {
 		t.Errorf("force debe registrar false: no había nada que forzar, got %+v", crudo)
@@ -1031,7 +1093,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistraDecisionForceBypass(
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/20", false, nil },
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 		obtenerGitCommonDir: func(worktree string) (string, error) {
 			if worktree != "worktree" {
 				t.Errorf("obtenerGitCommonDir worktree = %q, esperado %q", worktree, "worktree")
@@ -1090,7 +1152,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraDecision(t *testi
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 		obtenerGitCommonDir: func(string) (string, error) {
 			t.Fatal("obtenerGitCommonDir no debe llamarse: --force no tuvo ningún efecto real que registrar")
 			return "", nil
@@ -1130,7 +1192,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_GitCommonDirFallaAvisaYSigue
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/22", false, nil },
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 		obtenerGitCommonDir: func(string) (string, error) {
 			return "", errors.New("boom")
 		},
@@ -1169,7 +1231,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistrarDecisionFallaAvisaY
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:            func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/23", false, nil },
-		registrarEvento:     func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento:     func(string, string, int, []string, any, string) error { return nil },
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
 		registrarDecision: func(string, *store.Decision) error {
 			return errors.New("boom")
@@ -1302,7 +1364,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 			body = string(data)
 			return "https://x/pr/1", false, nil
 		},
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 	}
 	res.Propio = &review.RangoPropio{Parent: "layer-a", PublicationBranch: "layer-a"}
 	code := ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
@@ -1420,7 +1482,7 @@ func TestExecutePrCreateWiresTheBlobStore(t *testing.T) {
 		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
-		registrarEvento: func(string, string, int, []string, string, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
 		resolverActor:   func(string) string { return "actor" },
 	}
 	ejecutarPrCreateCon(&bytes.Buffer{}, "wt", nil, deps)
