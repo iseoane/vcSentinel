@@ -37,16 +37,20 @@ func causasDelProveedor(texto string) []string {
 	vistas := map[string]bool{}
 	causas := make([]string, 0, maxCausasProveedor)
 	for _, linea := range strings.Split(limpio, "\n") {
-		indice := strings.Index(linea, marcadorCausaProveedor)
-		if indice < 0 {
+		// El marcador se exige al PRINCIPIO de la línea ya limpia, no en
+		// cualquier posición: "Error: " aparece dentro del código fuente y de
+		// la evidencia que el revisor cita, y buscarlo suelto ascendería ese
+		// texto a causa del fallo.
+		desnuda := strings.TrimSpace(linea)
+		if !strings.HasPrefix(desnuda, marcadorCausaProveedor) {
 			continue
 		}
-		causa := strings.TrimSpace(linea[indice+len(marcadorCausaProveedor):])
+		causa := recortarCausa(strings.TrimSpace(strings.TrimPrefix(desnuda, marcadorCausaProveedor)))
+		// La deduplicación mira el valor YA recortado, que es el que se
+		// publica. Comparar el original y guardar el recorte dejaría pasar
+		// dos veces la misma causa larga y agotaría el cupo con repeticiones.
 		if causa == "" || vistas[causa] {
 			continue
-		}
-		if len(causa) > maxLongitudCausa {
-			causa = causa[:maxLongitudCausa] + "…"
 		}
 		vistas[causa] = true
 		causas = append(causas, causa)
@@ -55,6 +59,16 @@ func causasDelProveedor(texto string) []string {
 		}
 	}
 	return causas
+}
+
+// recortarCausa acota por runas, no por bytes: un corte a mitad de un carácter
+// multibyte produciría texto inválido justo en lo primero que lee el operador.
+func recortarCausa(causa string) string {
+	runas := []rune(causa)
+	if len(runas) <= maxLongitudCausa {
+		return causa
+	}
+	return string(runas[:maxLongitudCausa]) + "…"
 }
 
 // razonConCausa antepone las causas que el proveedor reportó, conservando el

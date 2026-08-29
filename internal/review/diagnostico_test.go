@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // falloRealDelGate es el texto que produjo un gate real: el timeout va
@@ -57,6 +58,40 @@ func TestCausasDelProveedor(t *testing.T) {
 		causas := causasDelProveedor("Error: " + strings.Repeat("x", maxLongitudCausa*3))
 		if len(causas) != 1 || len([]rune(causas[0])) != maxLongitudCausa+1 {
 			t.Fatalf("causa de %d runas, want %d más el marcador de recorte", len([]rune(causas[0])), maxLongitudCausa)
+		}
+	})
+
+	t.Run("una causa multibyte no se parte por la mitad", func(t *testing.T) {
+		// Recortar por bytes rompería el carácter que cruza el límite y el
+		// operador leería texto inválido justo en la cabecera.
+		causas := causasDelProveedor("Error: " + strings.Repeat("ñ", maxLongitudCausa*2))
+		if len(causas) != 1 {
+			t.Fatalf("causas = %q, want one", causas)
+		}
+		if !utf8.ValidString(causas[0]) {
+			t.Fatalf("causa = %q, want valid UTF-8", causas[0])
+		}
+		if runas := []rune(causas[0]); len(runas) != maxLongitudCausa+1 {
+			t.Fatalf("causa de %d runas, want %d más el marcador de recorte", len(runas), maxLongitudCausa)
+		}
+	})
+
+	t.Run("dos causas largas identicas se deduplican", func(t *testing.T) {
+		larga := strings.Repeat("z", maxLongitudCausa*2)
+		texto := "Error: " + larga + "\nError: " + larga + "\nError: distinta\n"
+		causas := causasDelProveedor(texto)
+		if len(causas) != 2 || causas[1] != "distinta" {
+			t.Fatalf("causas = %q, want the long cause once plus the distinct one", causas)
+		}
+	})
+
+	t.Run("el marcador dentro de una linea no es una causa", func(t *testing.T) {
+		// El revisor cita código y evidencia; una línea que MENCIONA el
+		// marcador no es un fallo del proveedor.
+		texto := "→ Read engine.go: return fmt.Errorf(\"Error: %v\", err)\nError: la de verdad\n"
+		causas := causasDelProveedor(texto)
+		if len(causas) != 1 || causas[0] != "la de verdad" {
+			t.Fatalf("causas = %q, want only the line that starts with the marker", causas)
 		}
 	})
 
