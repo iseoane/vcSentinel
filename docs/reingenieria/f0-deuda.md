@@ -633,6 +633,20 @@ Target: a provider-neutral rich result contract that lets one descent serve
 both paths. Doing it inside T9.1b would have rewritten the seam under test
 while its own correctness was still being established.
 
+A fourth item joined the same family when the unavailable reason started
+leading with the cause the provider reported. `internal/review/diagnostico.go`
+reads an agent CLI's unstructured terminal presentation — a line marker plus
+ANSI colouring — from inside the domain layer, with no provider-specific
+extension seam. A provider that formats its failures differently would need a
+change in `internal/review` rather than in its adapter.
+
+It was accepted deliberately. The alternative, a table of which agent prints
+what, ages with every provider and was the coupling this change existed to
+avoid; and leaving the operator with a bare timeout while the real cause sat
+hundreds of lines down was the worse of the two. The durable fix belongs with
+the contract above: once results carry provider-neutral structure, the failure
+cause travels as data instead of being recovered from rendered text.
+
 ### FU-5: the review context provider is too narrow, and F4 is closed
 
 Recorded 2026-08-29 while accepting T9.1b. The reviewer spends its budget
