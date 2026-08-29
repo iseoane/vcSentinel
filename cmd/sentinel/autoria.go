@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -87,6 +88,26 @@ func (a *observedAgent) ReviewWithPolicy(prompt, sha string, paths []string, pol
 		a.authorship.registrar(a.AuditorAgente)
 	}
 	return output, err
+}
+
+// ReviewWithContextResult preserves the transactional ACP result, including
+// partial output and wire observations on post-spawn errors. It intentionally
+// avoids the adapter's process-global effective identity fallback.
+func (a *observedAgent) ReviewWithContextResult(ctx context.Context, prompt, sha string, paths []string) (acpadapter.Result, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if contextual, ok := a.AuditorAgente.(interface {
+		ReviewWithContextResult(context.Context, string, string, []string) (acpadapter.Result, error)
+	}); ok {
+		res, err := contextual.ReviewWithContextResult(ctx, prompt, sha, paths)
+		if err == nil {
+			a.authorship.registrar(a.AuditorAgente)
+		}
+		return res, err
+	}
+	output, err := a.ReviewWithContext(ctx, prompt, sha, paths)
+	return acpadapter.Result{Output: output}, err
 }
 
 func (a *observedAgent) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {

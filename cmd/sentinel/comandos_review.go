@@ -127,7 +127,7 @@ func ejecutarReview(worktree string, args []string) {
 			verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
 			return &observedAgent{AuditorAgente: adapter, authorship: authorship}, profile.Nombre, nil
 		}
-
+		reviewTransport, metricsFinalizer := announcedReviewTransportWithMetrics(cfg, worktree, sha, archivos, os.Stderr)
 		opciones := review.OpcionesAuditoria{
 			SHA:               sha,
 			Mensaje:           mensaje,
@@ -141,7 +141,8 @@ func ejecutarReview(worktree string, args []string) {
 			// review run is announced on stderr (the JSON-safe channel) the
 			// moment it is admitted, with its `runs attach --follow` command,
 			// so an operator can attach while the review is still executing.
-			ReviewTransport: announcedReviewTransport(cfg, worktree, sha, archivos, os.Stderr),
+			ReviewTransportWithEvidence: reviewTransport,
+			FinalizeMetrics:             metricsFinalizer,
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},

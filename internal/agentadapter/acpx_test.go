@@ -447,3 +447,43 @@ func TestEffectiveIdentityJSONTagsMatchAgentadapterConventions(t *testing.T) {
 		t.Fatalf("keys = %v, want the agentadapter conventions agent/model/effort", agentKeys)
 	}
 }
+
+// TestBridgeAttributionReportsOnlyWireObservedIdentity pins the producer rule
+// this phase depends on: attribution reports what the provider actually
+// reported, never the configured declaration. Before any turn nothing was
+// observed, so model and effort stay empty even though both are configured;
+// after a completed turn the model is the one the wire announced. Without
+// this separation a fallback answer would be attributed to the requested
+// model instead of the agent that served it.
+func TestBridgeAttributionReportsOnlyWireObservedIdentity(t *testing.T) {
+	bridge := helperBridge(t, nil)
+	if id := bridge.EffectiveIdentity(); id.Model != "configured-model" || id.Effort != "high" {
+		t.Fatalf("configured echo = %q/%q, want the configured declaration", id.Model, id.Effort)
+	}
+
+	efectivo, ok := bridge.AgenteEfectivo()
+	if !ok {
+		t.Fatal("AgenteEfectivo() reported no identity")
+	}
+	if efectivo.Modelo != "" || efectivo.Esfuerzo != "" {
+		t.Errorf("attribution before any turn = %q/%q, want empty: nothing was observed on the wire", efectivo.Modelo, efectivo.Esfuerzo)
+	}
+	if efectivo.Binario == "" {
+		t.Error("attribution lost the launcher-resolved binary")
+	}
+
+	if _, err := bridge.EjecutarPrompt("say PROBE"); err != nil {
+		t.Fatalf("EjecutarPrompt returned error: %v", err)
+	}
+
+	efectivo, ok = bridge.AgenteEfectivo()
+	if !ok {
+		t.Fatal("AgenteEfectivo() reported no identity after a completed turn")
+	}
+	if efectivo.Modelo != "observed-model-x" {
+		t.Errorf("observed model = %q, want the model announced on the wire", efectivo.Modelo)
+	}
+	if efectivo.Esfuerzo != "" {
+		t.Errorf("observed effort = %q, want empty: ACP reported no effort", efectivo.Esfuerzo)
+	}
+}

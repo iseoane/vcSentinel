@@ -127,10 +127,24 @@ func TestRespondSettlesAwaitingDecisionRunWithResponseEvidence(t *testing.T) {
 	if len(adapter.calls) != 2 || adapter.calls[0] != "" || adapter.calls[1] != answer {
 		t.Fatalf("adapter calls = %q, want [empty, the exact answer]", adapter.calls)
 	}
-	if len(inspection.Outcomes) != 1 ||
-		inspection.Outcomes[0].Class != agentrun.OutcomeSuccess ||
-		inspection.Outcomes[0].InvocationID != string(result.InvocationID) {
-		t.Fatalf("outcomes = %+v, want one success outcome authored by the child invocation", inspection.Outcomes)
+	if len(inspection.Outcomes) != 2 {
+		t.Fatalf("outcomes = %+v, want exactly two ordered outcomes", inspection.Outcomes)
+	}
+	initial := inspection.Outcomes[0]
+	if initial.Class != agentrun.OutcomeAwaitingDecision ||
+		initial.InvocationID != string(rootInvocation) {
+		t.Fatalf("initial outcome = %+v, want awaiting_decision authored by the parent invocation", initial)
+	}
+	if initial.Observation == nil || initial.DurationNanos == nil ||
+		*initial.DurationNanos < 0 ||
+		initial.Observation.DurationNanos == nil ||
+		*initial.Observation.DurationNanos < 0 {
+		t.Fatalf("initial outcome = %+v, want observation with non-negative duration", initial)
+	}
+	final := inspection.Outcomes[1]
+	if final.Class != agentrun.OutcomeSuccess ||
+		final.InvocationID != string(result.InvocationID) {
+		t.Fatalf("final outcome = %+v, want success authored by the response child", final)
 	}
 }
 

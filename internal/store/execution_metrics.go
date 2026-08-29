@@ -37,14 +37,17 @@ type ObservationSource string
 
 const ObservationSourceAdapter ObservationSource = "adapter"
 
-// ObservedExecutionIdentity holds only values actually reported by an evidence
-// source. In particular, an empty Model means no effective model was observed.
+// ObservedExecutionIdentity holds values reported by an evidence source. A
+// requested model and effort, when retained for comparison, are separate from
+// their observed counterparts.
 type ObservedExecutionIdentity struct {
-	InvocationID string            `json:"invocation_id,omitempty"`
-	Agent        string            `json:"agent,omitempty"`
-	Model        string            `json:"model,omitempty"`
-	Effort       string            `json:"effort,omitempty"`
-	Source       ObservationSource `json:"source"`
+	InvocationID    string            `json:"invocation_id,omitempty"`
+	Agent           string            `json:"agent,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	RequestedModel  string            `json:"requested_model,omitempty"`
+	Effort          string            `json:"effort,omitempty"`
+	RequestedEffort string            `json:"requested_effort,omitempty"`
+	Source          ObservationSource `json:"source"`
 }
 
 // ExecutionTiming records known execution durations in nanoseconds. A present
@@ -71,6 +74,7 @@ type AgentTiming struct {
 type ExecutionTokenUsage struct {
 	InputTokens       *int64            `json:"input_tokens,omitempty"`
 	OutputTokens      *int64            `json:"output_tokens,omitempty"`
+	TotalTokens       *int64            `json:"total_tokens,omitempty"`
 	CachedInputTokens *int64            `json:"cached_input_tokens,omitempty"`
 	ReasoningTokens   *int64            `json:"reasoning_tokens,omitempty"`
 	Source            ObservationSource `json:"source"`
@@ -264,7 +268,7 @@ func validateObservedIdentity(identity ObservedExecutionIdentity) error {
 	if identity.Source == "" {
 		return fmt.Errorf("%w: identity source is empty", ErrExecutionMetricsCorrupt)
 	}
-	if identity.InvocationID == "" && identity.Agent == "" && identity.Model == "" && identity.Effort == "" {
+	if identity.InvocationID == "" && identity.Agent == "" && identity.Model == "" && identity.RequestedModel == "" && identity.Effort == "" {
 		return fmt.Errorf("%w: identity has no observed values", ErrExecutionMetricsCorrupt)
 	}
 	if identity.InvocationID != "" && !validRunID(identity.InvocationID) {
@@ -292,12 +296,11 @@ func validateExecutionTiming(timing ExecutionTiming) error {
 	}
 	return nil
 }
-
 func validateExecutionTokenUsage(usage ExecutionTokenUsage) error {
 	if usage.Source == "" {
 		return fmt.Errorf("%w: usage source is empty", ErrExecutionMetricsCorrupt)
 	}
-	values := []*int64{usage.InputTokens, usage.OutputTokens, usage.CachedInputTokens, usage.ReasoningTokens}
+	values := []*int64{usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.CachedInputTokens, usage.ReasoningTokens}
 	for _, value := range values {
 		if value != nil && *value < 0 {
 			return fmt.Errorf("%w: token count is negative", ErrExecutionMetricsCorrupt)

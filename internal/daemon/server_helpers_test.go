@@ -80,7 +80,15 @@ func startTestServer(t *testing.T, controller *execution.Controller) Endpoint {
 	}
 	srv := NewServer(controller, FingerprintRepository(testFingerprintRoot))
 	go func() { _ = srv.Serve(listener) }()
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		// Graceful shutdown drains in-flight dispatches and settles any
+		// detached controller workers before the controller's TempDir cleanup
+		// removes the backing store. Immediate Close alone can leave an
+		// observation/finalization write racing that teardown.
+		if err := srv.Shutdown(); err != nil {
+			srv.Close()
+		}
+	})
 	t.Cleanup(func() { _ = listener.Close() })
 	return ep
 }

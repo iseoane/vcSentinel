@@ -111,8 +111,13 @@ type EventFrame struct {
 	TranscriptSize     int64                   `json:"transcript_size,omitempty"`
 	Agent              string                  `json:"agent,omitempty"`
 	Model              string                  `json:"model,omitempty"`
+	RequestedModel     string                  `json:"requested_model,omitempty"`
 	Effort             string                  `json:"effort,omitempty"`
+	RequestedEffort    string                  `json:"requested_effort,omitempty"`
 	StopReason         string                  `json:"stop_reason,omitempty"`
+	Enforcement        string                  `json:"enforcement,omitempty"`
+	Observation        *AttemptObservation     `json:"observation,omitempty"`
+	DurationNanos      *time.Duration          `json:"duration_ns,omitempty"`
 	From               agentrun.LifecycleState `json:"from"`
 	To                 agentrun.LifecycleState `json:"to"`
 	Decision           agentrun.Decision       `json:"decision"`
@@ -186,8 +191,13 @@ type eventContent struct {
 	TranscriptSize     int64                   `json:"transcript_size,omitempty"`
 	Agent              string                  `json:"agent,omitempty"`
 	Model              string                  `json:"model,omitempty"`
+	RequestedModel     string                  `json:"requested_model,omitempty"`
 	Effort             string                  `json:"effort,omitempty"`
+	RequestedEffort    string                  `json:"requested_effort,omitempty"`
 	StopReason         string                  `json:"stop_reason,omitempty"`
+	Enforcement        string                  `json:"enforcement,omitempty"`
+	Observation        *AttemptObservation     `json:"observation,omitempty"`
+	DurationNanos      *time.Duration          `json:"duration_ns,omitempty"`
 	From               agentrun.LifecycleState `json:"from"`
 	To                 agentrun.LifecycleState `json:"to"`
 	Decision           agentrun.Decision       `json:"decision"`
@@ -278,6 +288,52 @@ func (s *Store) AppendTerminalEvent(runID string, event agentrun.NormalizedEvent
 	return result.receipt, err
 }
 
+// AppendAttemptObservation appends a non-terminal awaiting-decision event
+// carrying the completed physical invocation's observation. The observation
+// is embedded in the hash-linked event; a later terminal settlement for the
+// same invocation remains free to write its immutable outcome sidecar.
+func (s *Store) AppendAttemptObservation(runID string, event agentrun.NormalizedEvent, expectedRevision uint64, observation *AttemptObservation) (EventReceipt, error) {
+	if observation == nil {
+		return EventReceipt{}, fmt.Errorf("%w: attempt observation is empty", ErrAttemptOutcomeCorrupt)
+	}
+	if string(event.RunID()) != runID {
+		return EventReceipt{}, fmt.Errorf("%w: event run id %q does not match target %q", ErrAttemptOutcomeCorrupt, event.RunID(), runID)
+	}
+	if event.To() != agentrun.StateAwaitingDecision || event.TerminalClass() != agentrun.TerminalNone {
+		return EventReceipt{}, fmt.Errorf("%w: attempt observation requires awaiting-decision event", ErrAttemptOutcomeCorrupt)
+	}
+	if err := validateAttemptObservation(observation); err != nil {
+		return EventReceipt{}, fmt.Errorf("%w: %v", ErrAttemptOutcomeCorrupt, err)
+	}
+	outcome := AttemptOutcome{
+		RunID: string(event.RunID()), JobID: string(event.JobID()),
+		InvocationID: string(event.InvocationID()), LineageID: string(event.LineageIdentity()),
+		Class: agentrun.OutcomeAwaitingDecision, At: event.At(),
+		Agent: observation.Agent, Model: observation.Model,
+		RequestedModel: observation.RequestedModel, Effort: observation.Effort,
+		RequestedEffort: observation.RequestedEffort,
+		StopReason:      observation.StopReason, Enforcement: observation.Enforcement,
+		Observation:   cloneAttemptObservation(observation),
+		DurationNanos: cloneDuration(observation.DurationNanos),
+	}
+	directory, err := s.executionDir(runID)
+	if err != nil {
+		return EventReceipt{}, err
+	}
+	if err := ensureExecutionExists(directory); err != nil {
+		return EventReceipt{}, err
+	}
+	var result eventAppendResult
+	err = withExecutionLock(directory, func() error {
+		result, err = s.appendEventLocked(directory, runID, event, expectedRevision, &outcome)
+		return err
+	})
+	if err != nil {
+		return result.receipt, err
+	}
+	return result.receipt, nil
+}
+
 type eventAppendResult struct {
 	receipt   EventReceipt
 	attempted bool
@@ -312,8 +368,13 @@ func (s *Store) appendEventLocked(directory, runID string, event agentrun.Normal
 		frame.TranscriptSize = outcome.TranscriptSize
 		frame.Agent = outcome.Agent
 		frame.Model = outcome.Model
+		frame.RequestedModel = outcome.RequestedModel
 		frame.Effort = outcome.Effort
+		frame.RequestedEffort = outcome.RequestedEffort
 		frame.StopReason = outcome.StopReason
+		frame.Enforcement = outcome.Enforcement
+		frame.Observation = cloneAttemptObservation(outcome.Observation)
+		frame.DurationNanos = cloneDuration(outcome.DurationNanos)
 		frame.ContentHash = hashEventContent(frame.content())
 	}
 	result := eventAppendResult{attempted: true}
@@ -543,8 +604,11 @@ func (e EventFrame) content() eventContent {
 		ParentInvocationID: e.ParentInvocationID, ResponseHash: e.ResponseHash,
 		OutcomeClass: e.OutcomeClass, OutcomeError: e.OutcomeError, OutputHash: e.OutputHash,
 		TranscriptSHA256: e.TranscriptSHA256, TranscriptSize: e.TranscriptSize,
-		Agent: e.Agent, Model: e.Model, Effort: e.Effort, StopReason: e.StopReason,
-		From: e.From, To: e.To, Decision: e.Decision, Terminal: e.Terminal,
+		Agent: e.Agent, Model: e.Model, RequestedModel: e.RequestedModel,
+		Effort: e.Effort, RequestedEffort: e.RequestedEffort, StopReason: e.StopReason, Enforcement: e.Enforcement,
+		Observation:   cloneAttemptObservation(e.Observation),
+		DurationNanos: cloneDuration(e.DurationNanos),
+		From:          e.From, To: e.To, Decision: e.Decision, Terminal: e.Terminal,
 	}
 }
 
@@ -636,8 +700,18 @@ func validateFrame(runID string, frame EventFrame, previous []EventFrame) error 
 		return corruption(runID, expected, "terminal class does not match lifecycle state")
 	}
 	if frame.To.TerminalClass() == agentrun.TerminalNone {
-		if frame.OutcomeClass != "" || frame.OutcomeError != "" || frame.OutputHash != "" {
+		if frame.OutcomeError != "" || frame.OutputHash != "" {
 			return corruption(runID, expected, "terminal evidence is attached to a non-terminal event")
+		}
+		if frame.OutcomeClass != "" && frame.OutcomeClass != agentrun.OutcomeAwaitingDecision {
+			return corruption(runID, expected, "unknown non-terminal outcome evidence")
+		}
+		if frame.OutcomeClass == agentrun.OutcomeAwaitingDecision {
+			if frame.To != agentrun.StateAwaitingDecision || frame.Observation == nil {
+				return corruption(runID, expected, "awaiting outcome observation is incomplete")
+			}
+		} else if frame.Observation != nil || frame.DurationNanos != nil {
+			return corruption(runID, expected, "attempt observation is attached without an awaiting outcome")
 		}
 	} else {
 		class := frame.OutcomeClass
@@ -647,6 +721,12 @@ func validateFrame(runID string, frame EventFrame, previous []EventFrame) error 
 		if !class.IsTerminal() || !outcomeMatchesLifecycle(class, frame.To) {
 			return corruption(runID, expected, "outcome class does not match lifecycle state")
 		}
+	}
+	if err := validateAttemptObservation(frame.Observation); err != nil {
+		return corruption(runID, expected, "invalid attempt observation")
+	}
+	if frame.DurationNanos != nil && *frame.DurationNanos < 0 {
+		return corruption(runID, expected, "negative attempt duration")
 	}
 	if expected == 1 {
 		if frame.PredecessorHash != "" || frame.From != agentrun.StateCreated || frame.ParentInvocationID != "" {

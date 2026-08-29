@@ -89,6 +89,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 // review.durable_routes is on). Shared by ejecutarGate and the cutover tests,
 // so tests exercise the exact production construction.
 func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, worktree, perfil, sha, mensaje, diff string, profile change.ChangeProfile, archivos []string) gate.Opciones {
+	reviewTransport, metricsFinalizer := durableReviewTransportWithMetrics(cfg, worktree, sha, archivos)
 	return gate.Opciones{
 		Perfil:         perfil,
 		RutasCambiadas: archivos,
@@ -105,7 +106,8 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
-			ReviewTransport: durableReviewTransport(cfg, worktree, sha, archivos),
+			ReviewTransportWithEvidence: reviewTransport,
+			FinalizeMetrics:             metricsFinalizer,
 		},
 	}
 }

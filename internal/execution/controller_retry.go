@@ -71,6 +71,11 @@ func (c *Controller) Retry(ctx context.Context, runID agentrun.Identity, expecte
 	if expectedRevision != 0 && expectedRevision != projection.Revision {
 		return Handle{}, fmt.Errorf("%w: expected revision %d, found %d", ErrStaleRevision, expectedRevision, projection.Revision)
 	}
+	if finalized, metricsErr := c.store.ReadExecutionMetrics(string(runID)); metricsErr != nil {
+		return Handle{}, metricsErr
+	} else if finalized != nil {
+		return Handle{}, ErrMetricsFinalized
+	}
 	// The relaunch append guards against the head at append time; an
 	// orphaned-canceled settlement appended below moves that head by one, so
 	// the guard travels with it instead of staying on the read revision.

@@ -37,3 +37,17 @@ func (a *AcpxAdapter) EffectiveIdentity() EffectiveAgent {
 		Effort: a.effort,
 	}
 }
+
+// ObservedIdentity is the attribution surface for completed provider work.
+// Unlike EffectiveIdentity, it never echoes configured model or effort when
+// ACP omitted those values on the wire.
+func (a *AcpxAdapter) ObservedIdentity() EffectiveAgent {
+	model, known := a.observedModel()
+	if !known {
+		model = ""
+	}
+	return EffectiveAgent{
+		Binary: filepath.Base(a.launcher[0]) + ":" + a.agent,
+		Model:  model,
+	}
+}

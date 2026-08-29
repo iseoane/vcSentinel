@@ -56,6 +56,13 @@ func TestRunsRecoverOwnerLossCreatesFreshInvocationEndToEnd(t *testing.T) {
 	if result["state"] != "succeeded" || result["run_id"] != runID {
 		t.Fatalf("recover result = %v, want the resumed run settled successfully", result)
 	}
+	metrics, metricsErr := backing.ReadExecutionMetrics(runID)
+	if metricsErr != nil {
+		t.Fatal(metricsErr)
+	}
+	if metrics == nil || metrics.RunID != runID {
+		t.Fatalf("recover metrics = %+v, want immutable snapshot after eventual success", metrics)
+	}
 
 	// Old-attempt preservation through a fresh inspection: the interrupted
 	// attempt keeps its reconciled canceled outcome and every original frame

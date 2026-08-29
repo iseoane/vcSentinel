@@ -11,17 +11,29 @@ import (
 // lines stay far below this; anything larger is a framing violation.
 const DefaultMaxLineBytes = 1 << 20
 
+// Usage contains only token fields with the ACP terminal payload's recognized
+// numeric shape. Pointer fields preserve an observed zero from an absent value.
+type Usage struct {
+	InputTokens       *int64
+	OutputTokens      *int64
+	TotalTokens       *int64
+	CachedInputTokens *int64
+	ReasoningTokens   *int64
+}
+
 // StreamSummary carries everything the strict scan extracted from one acpx
 // stdout stream: the assembled assistant text, how many framing violations
 // were skipped, the model observed on an initialize result (when the adapter
-// exposes configOptions at all), and the terminal stopReason with its raw
-// usage object. Raw stdout bytes are retained by the caller (Run), not here.
+// exposes configOptions at all), the terminal stopReason, and recognized usage.
+// Raw stdout bytes are retained by the caller (Run), not here.
 type StreamSummary struct {
-	Output        string
-	Violations    int
-	ObservedModel string
-	StopReason    string
-	UsageJSON     string
+	Output         string
+	Violations     int
+	ObservedModel  string
+	ObservedEffort string
+	StopReason     string
+	UsageJSON      string
+	Usage          *Usage
 }
 
 // wireEnvelope is the minimal probe every NDJSON line is decoded against
@@ -30,6 +42,13 @@ type wireEnvelope struct {
 	Method string          `json:"method"`
 	Result json.RawMessage `json:"result"`
 	Params json.RawMessage `json:"params"`
+}
+type usageProbe struct {
+	InputTokens       *int64 `json:"inputTokens"`
+	OutputTokens      *int64 `json:"outputTokens"`
+	TotalTokens       *int64 `json:"totalTokens"`
+	CachedInputTokens *int64 `json:"cachedInputTokens"`
+	ReasoningTokens   *int64 `json:"reasoningTokens"`
 }
 
 // terminalProbe matches any result object carrying a stopReason; usage is
@@ -46,6 +65,7 @@ type configProbe struct {
 	ConfigOptions []struct {
 		ID           string `json:"id"`
 		CurrentValue string `json:"currentValue"`
+		Value        string `json:"value"`
 	} `json:"configOptions"`
 }
 
@@ -104,13 +124,30 @@ func absorbLine(line []byte, summary *StreamSummary, out *bytes.Buffer) {
 			summary.StopReason = terminal.StopReason
 			if len(terminal.Usage) > 0 && string(terminal.Usage) != "null" {
 				summary.UsageJSON = string(terminal.Usage)
+				var usage usageProbe
+				if err := json.Unmarshal(terminal.Usage, &usage); err == nil {
+					summary.Usage = &Usage{
+						InputTokens:       cloneInt64(usage.InputTokens),
+						OutputTokens:      cloneInt64(usage.OutputTokens),
+						TotalTokens:       cloneInt64(usage.TotalTokens),
+						CachedInputTokens: cloneInt64(usage.CachedInputTokens),
+						ReasoningTokens:   cloneInt64(usage.ReasoningTokens),
+					}
+				}
 			}
 		}
 		var cfg configProbe
 		if err := json.Unmarshal(envelope.Result, &cfg); err == nil {
 			for _, option := range cfg.ConfigOptions {
-				if option.ID == "model" && option.CurrentValue != "" {
-					summary.ObservedModel = option.CurrentValue
+				value := option.CurrentValue
+				if value == "" {
+					value = option.Value
+				}
+				switch option.ID {
+				case "model":
+					summary.ObservedModel = value
+				case "effort", "reasoning_effort":
+					summary.ObservedEffort = value
 				}
 			}
 		}
@@ -157,4 +194,11 @@ func readBoundedLine(reader *bufio.Reader, maxLineBytes int) (line []byte, tooLo
 		}
 		return buf.Bytes(), tooLong, nil
 	}
+}
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }

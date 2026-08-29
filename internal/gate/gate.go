@@ -120,6 +120,10 @@ type Opciones struct {
 	// OpcionesRevision.ReviewTransport (engine-level injection seam): there
 	// is no second review execution path.
 	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
+	// DurableReviewTransportFactoryWithEvidence is the preferred factory for
+	// semantic finalization. It preserves parent linkage while returning the
+	// owner callback for the exact physical run.
+	DurableReviewTransportFactoryWithEvidence func(rootRunID agentrun.Identity) (review.ReviewTransportWithEvidence, review.MetricsFinalizer)
 	// DurableReviewChildren reports the review-side child run identities that
 	// were ACTUALLY admitted during the review phase (ticket 11 slice 3).
 	// Review candidate identities are process-salted inside the shared

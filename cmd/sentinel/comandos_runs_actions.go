@@ -18,6 +18,18 @@ func executeRunsStart(out io.Writer, worktree string, args []string) int {
 	return runStartCommand(out, worktree, args, "start")
 }
 
+// finalizeStableRunMetrics persists metrics only when the observed durable
+// head is intrinsically final. Awaiting and retryable terminal heads are
+// intentionally left unfrozen so response/retry/recover can still advance
+// the same RunID.
+func finalizeStableRunMetrics(controller *execution.Controller, projection store.RunProjection) error {
+	if projection.State.TerminalClass() == agentrun.TerminalNone || projection.State.Retryable() {
+		return nil
+	}
+	_, err := controller.FinalizeMetrics(context.Background(), agentrun.Identity(projection.RunID), nil)
+	return err
+}
+
 func runStartCommand(out io.Writer, worktree string, args []string, subcommand string) int {
 	options, err := parseRunOptions(subcommand, args)
 	if err != nil {
@@ -66,6 +78,10 @@ func runStartCommand(out io.Writer, worktree string, args []string, subcommand s
 		fmt.Fprintf(out, "❌ Run %s never reached a stable state: %v\n", handle.RunID, err)
 		return runExitCode(err)
 	}
+	if finalizeErr := finalizeStableRunMetrics(controller, projection); finalizeErr != nil {
+		fmt.Fprintf(out, "❌ Could not finalize metrics for run %s: %v\n", handle.RunID, finalizeErr)
+		return runExitCode(finalizeErr)
+	}
 	return printRunActionResult(out, options.jsonOut, handle, projection.State)
 }
 
@@ -107,6 +123,10 @@ func executeRunsRespond(out io.Writer, worktree string, args []string) int {
 	if waitErr != nil {
 		fmt.Fprintf(out, "❌ Run %s never reached a stable state after respond: %v\n", options.runID, waitErr)
 		return runExitCode(waitErr)
+	}
+	if finalizeErr := finalizeStableRunMetrics(controller, projection); finalizeErr != nil {
+		fmt.Fprintf(out, "❌ Could not finalize metrics for run %s: %v\n", options.runID, finalizeErr)
+		return runExitCode(finalizeErr)
 	}
 	return printApplyResult(out, options.jsonOut, result, &projection.State)
 }
@@ -313,6 +333,10 @@ func executeRunsRetry(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "❌ Run %s never reached a stable state after retry: %v\n", handle.RunID, waitErr)
 		return runExitCode(waitErr)
 	}
+	if finalizeErr := finalizeStableRunMetrics(controller, projection); finalizeErr != nil {
+		fmt.Fprintf(out, "❌ Could not finalize metrics for run %s: %v\n", handle.RunID, finalizeErr)
+		return runExitCode(finalizeErr)
+	}
 	return printRunActionResult(out, options.jsonOut, handle, projection.State)
 }
 
@@ -400,6 +424,10 @@ func executeRunsRecover(out io.Writer, worktree string, args []string) int {
 	if waitErr != nil {
 		fmt.Fprintf(out, "❌ Run %s never reached a stable state after recover: %v\n", handle.RunID, waitErr)
 		return runExitCode(waitErr)
+	}
+	if finalizeErr := finalizeStableRunMetrics(controller, projection); finalizeErr != nil {
+		fmt.Fprintf(out, "❌ Could not finalize metrics for run %s: %v\n", handle.RunID, finalizeErr)
+		return runExitCode(finalizeErr)
 	}
 	return printRunActionResult(out, options.jsonOut, handle, projection.State)
 }

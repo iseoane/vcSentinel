@@ -101,8 +101,18 @@ func (c *Controller) Recover(ctx context.Context, runID agentrun.Identity, expec
 		len(events) > 0 && events[len(events)-1].To == agentrun.StateAwaitingDecision:
 		return c.recoverAwaitingRun(ctx, runID)
 	case projection.State.Retryable():
+		if finalized, metricsErr := c.store.ReadExecutionMetrics(string(runID)); metricsErr != nil {
+			return Handle{}, metricsErr
+		} else if finalized != nil {
+			return Handle{}, ErrMetricsFinalized
+		}
 		return c.Retry(ctx, runID, expectedRevision)
 	case c.orphanedCancellationRelaunch(runID, projection):
+		if finalized, metricsErr := c.store.ReadExecutionMetrics(string(runID)); metricsErr != nil {
+			return Handle{}, metricsErr
+		} else if finalized != nil {
+			return Handle{}, ErrMetricsFinalized
+		}
 		// Ticket 10 slice 3: owner-death-during-cancellation evidence reads
 		// canceled through the R7 reconciliation. The explicit operator
 		// recovery delegates to the same fresh-identity retry contract as

@@ -54,6 +54,78 @@ func TestEjecutarPromptPassthrough(t *testing.T) {
 		t.Errorf("EjecutarPrompt = %q, want normalized chunk text", out)
 	}
 }
+func TestRunRetainsObservedAndConfiguredEffortSeparately(t *testing.T) {
+	a := spawnHelper(t, helperModeOK)
+	result, err := a.Run(context.Background(), "say PROBE")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.ObservedEffort != "wire-high" {
+		t.Fatalf("observed effort = %q, want wire-high from the ACP stream", result.ObservedEffort)
+	}
+	if result.RequestedEffort != "high" {
+		t.Fatalf("requested effort = %q, want configured high", result.RequestedEffort)
+	}
+	if result.AdapterObservation().Effort != "wire-high" ||
+		result.AdapterObservation().RequestedEffort != "high" {
+		t.Fatalf("adapter observation lost effort provenance: %+v", result.AdapterObservation())
+	}
+}
+
+func TestRunErrorAndPreSpawnResultsRetainConfiguredEffort(t *testing.T) {
+	t.Run("terminal provider error", func(t *testing.T) {
+		a := spawnHelper(t, helperModeFailQuiet)
+		result, err := a.Run(context.Background(), "fail")
+		if err == nil {
+			t.Fatal("Run returned nil error for provider failure")
+		}
+		if result.RequestedEffort != "high" || result.ObservedEffort != "" {
+			t.Fatalf("error result effort = observed %q/requested %q, want empty observed and configured high", result.ObservedEffort, result.RequestedEffort)
+		}
+	})
+
+	t.Run("pre-spawn failure", func(t *testing.T) {
+		a, err := NewAcpx(Config{
+			Launcher: []string{filepath.Join(t.TempDir(), "missing-acpx")},
+			Agent:    "claude",
+			Model:    "fallback-model",
+			Effort:   "high",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, runErr := a.Run(context.Background(), "never launched")
+		if runErr == nil {
+			t.Fatal("Run returned nil error for missing launcher")
+		}
+		var outcome *OutcomeError
+		if !errors.As(runErr, &outcome) || outcome.Outcome() != agentrun.OutcomeProcessError {
+			t.Fatalf("pre-spawn error = %T/%v, want typed process error", runErr, runErr)
+		}
+		if result.Agent != "claude" || result.RequestedModel != "fallback-model" ||
+			result.RequestedEffort != "high" || result.ObservedEffort != "" {
+			t.Fatalf("pre-spawn result = %+v, want configured declarations and no observed effort", result)
+		}
+	})
+}
+
+func TestRunTerminalSuccessWithNonZeroExitReturnsProcessFailure(t *testing.T) {
+	a := spawnHelper(t, helperModeEndTurnExit)
+	result, err := a.Run(context.Background(), "say PROBE")
+	if err == nil {
+		t.Fatal("Run returned nil error after non-zero child exit")
+	}
+	var outcome *OutcomeError
+	if !errors.As(err, &outcome) {
+		t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+	}
+	if outcome.Outcome() != agentrun.OutcomeProcessError {
+		t.Fatalf("Outcome() = %q, want process error", outcome.Outcome())
+	}
+	if result.StopReason != "end_turn" || result.Output != "PARTIAL" {
+		t.Fatalf("err=%v result = %+v, want terminal and partial observations preserved", err, result)
+	}
+}
 
 func TestEjecutarPromptMapsNonSuccessToTypedOutcome(t *testing.T) {
 	a := spawnHelper(t, helperModeTrap)

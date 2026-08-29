@@ -273,7 +273,15 @@ func fasesGateDurables(plan GateRunPlan, opts Opciones, rootRunID agentrun.Ident
 
 	opcionesRevision := opts.OpcionesRevision
 	opcionesRevision.FabricaRefutador = opts.FabricaRefutador
-	if opts.DurableReviewTransportFactory != nil {
+	if opts.DurableReviewTransportFactoryWithEvidence != nil {
+		opcionesRevision.ReviewTransport = nil
+		opcionesRevision.ReviewTransportWithEvidence, opcionesRevision.FinalizeMetrics =
+			opts.DurableReviewTransportFactoryWithEvidence(rootRunID)
+	} else if opts.DurableReviewTransportFactory != nil {
+		// The legacy gate factory still owns parent linkage; clear any
+		// standalone rich transport captured in OpcionesRevision to avoid an
+		// unparented duplicate run.
+		opcionesRevision.ReviewTransportWithEvidence = nil
 		opcionesRevision.ReviewTransport = opts.DurableReviewTransportFactory(rootRunID)
 	}
 	resultado := traducirVeredicto(review.AuditarCommit(opts.FabricaAuditor, opts.Parallel, opcionesRevision))

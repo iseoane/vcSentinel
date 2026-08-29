@@ -36,14 +36,19 @@ type AttemptOutcome struct {
 	// succeeded; absence means no transcript exists for this invocation.
 	TranscriptSHA256 string `json:"transcript_sha256,omitempty"`
 	TranscriptSize   int64  `json:"transcript_size,omitempty"`
-	// Agent, Model, Effort, and StopReason are the observed effective
-	// identity of the responder, reported by the adapter only after a
-	// successful request. They are never fabricated: fields the provider did
-	// not expose stay empty.
-	Agent      string `json:"agent,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Effort     string `json:"effort,omitempty"`
-	StopReason string `json:"stop_reason,omitempty"`
+	// Agent, Model, Effort, and StopReason are retained as flattened legacy
+	// provenance fields. Observation is the additive normalized evidence for
+	// this physical invocation; requested declarations remain separate from
+	// observed values.
+	Agent           string              `json:"agent,omitempty"`
+	Model           string              `json:"model,omitempty"`
+	RequestedModel  string              `json:"requested_model,omitempty"`
+	Effort          string              `json:"effort,omitempty"`
+	RequestedEffort string              `json:"requested_effort,omitempty"`
+	StopReason      string              `json:"stop_reason,omitempty"`
+	Observation     *AttemptObservation `json:"observation,omitempty"`
+	DurationNanos   *time.Duration      `json:"duration_ns,omitempty"`
+	Enforcement     string              `json:"enforcement,omitempty"`
 }
 
 // InvocationResponse binds an explicit control response to the child
@@ -114,6 +119,7 @@ func (s *Store) ReadAttemptOutcomes(runID string) ([]AttemptOutcome, error) {
 		return nil, IncompleteEventTailError{RunID: runID}
 	}
 	terminalFrames := terminalEventFrames(log.frames)
+	attemptFrames := attemptEvidenceFrames(log.frames)
 	if len(log.frames) == 0 {
 		// A staged outcome recorded before any lifecycle event (the public
 		// SaveAttemptOutcome contract) stays readable: an empty stream with
@@ -123,13 +129,18 @@ func (s *Store) ReadAttemptOutcomes(runID string) ([]AttemptOutcome, error) {
 		}
 		return legacy, nil
 	}
-	// Event-authoritative runs win over the legacy surface entirely: when
-	// every terminal frame carries its embedded outcome, a missing or corrupt
-	// sidecar must not fail the read. A valid sidecar still carries additive
-	// transcript provenance that predates the event schema, so merge it without
-	// letting it override event-authoritative lifecycle evidence.
-	if terminalFramesHaveEmbeddedEvidence(terminalFrames) {
-		return outcomesFromFrames(terminalFrames, legacy), nil
+	// Event-authoritative runs win over the legacy surface entirely: when every
+	// terminal frame carries embedded outcome evidence, any awaiting observation
+	// frames are authoritative too. A missing or corrupt sidecar must not fail
+	// the read.
+	if terminalFramesHaveEmbeddedEvidence(terminalFrames) && len(attemptFrames) > 0 {
+		return outcomesFromFrames(attemptFrames, legacy), nil
+	}
+
+	if len(attemptFrames) > 0 && len(terminalFrames) == 0 {
+		// An awaiting-decision observation is useful evidence before terminal
+		// settlement; do not hide it behind the legacy sidecar surface.
+		return outcomesFromFrames(attemptFrames, legacy), nil
 	}
 	if legacyErr != nil {
 		if len(terminalFrames) > 0 {
@@ -192,6 +203,12 @@ func validateAttemptOutcome(outcome AttemptOutcome) error {
 	if outcome.At.IsZero() {
 		return fmt.Errorf("%w: outcome timestamp is empty", ErrAttemptOutcomeCorrupt)
 	}
+	if outcome.DurationNanos != nil && *outcome.DurationNanos < 0 {
+		return fmt.Errorf("%w: negative outcome duration", ErrAttemptOutcomeCorrupt)
+	}
+	if err := validateAttemptObservation(outcome.Observation); err != nil {
+		return fmt.Errorf("%w: %v", ErrAttemptOutcomeCorrupt, err)
+	}
 	return nil
 }
 
@@ -226,6 +243,15 @@ func terminalEventFrames(frames []EventFrame) []EventFrame {
 	}
 	return terminal
 }
+func attemptEvidenceFrames(frames []EventFrame) []EventFrame {
+	evidence := make([]EventFrame, 0, len(frames))
+	for _, frame := range frames {
+		if frame.OutcomeClass != "" || frame.Observation != nil {
+			evidence = append(evidence, frame)
+		}
+	}
+	return evidence
+}
 
 func terminalFramesHaveEmbeddedEvidence(frames []EventFrame) bool {
 	if len(frames) == 0 {
@@ -245,6 +271,7 @@ func outcomesFromFrames(frames []EventFrame, legacy []AttemptOutcome) []AttemptO
 		legacyByInvocation[outcome.InvocationID] = outcome
 	}
 	outcomes := make([]AttemptOutcome, 0, len(frames))
+	indexByInvocation := make(map[string]int, len(frames))
 	for _, frame := range frames {
 		class := frame.OutcomeClass
 		if class == "" {
@@ -255,16 +282,76 @@ func outcomesFromFrames(frames []EventFrame, legacy []AttemptOutcome) []AttemptO
 			LineageID: frame.LineageID, Class: class, Error: frame.OutcomeError,
 			OutputHash: frame.OutputHash, At: frame.At,
 			TranscriptSHA256: frame.TranscriptSHA256, TranscriptSize: frame.TranscriptSize,
-			Agent: frame.Agent, Model: frame.Model, Effort: frame.Effort, StopReason: frame.StopReason,
+			Agent: frame.Agent, Model: frame.Model, RequestedModel: frame.RequestedModel,
+			Effort: frame.Effort, RequestedEffort: frame.RequestedEffort,
+			StopReason: frame.StopReason, Enforcement: frame.Enforcement,
+			Observation:   cloneAttemptObservation(frame.Observation),
+			DurationNanos: cloneDuration(frame.DurationNanos),
 		}
 		if frame.OutcomeClass == "" {
 			if legacyOutcome, ok := legacyByInvocation[frame.InvocationID]; ok {
 				outcome = legacyOutcome
+				if outcome.Observation == nil {
+					outcome.Observation = cloneAttemptObservation(frame.Observation)
+				}
+				if outcome.DurationNanos == nil {
+					outcome.DurationNanos = cloneDuration(frame.DurationNanos)
+				}
 			}
 		}
+
+		// Awaiting-decision is an observation boundary, not a second physical
+		// invocation. If that invocation is later settled by abort, fold the
+		// terminal frame over the earlier observation and return one outcome.
+		if previous, ok := indexByInvocation[frame.InvocationID]; ok {
+			current := &outcomes[previous]
+			if current.Class == agentrun.OutcomeAwaitingDecision && class.IsTerminal() {
+				mergeAttemptObservation(&outcome, current)
+				outcomes[previous] = outcome
+				continue
+			}
+			if class == agentrun.OutcomeAwaitingDecision && current.Class.IsTerminal() {
+				mergeAttemptObservation(current, &outcome)
+				continue
+			}
+		}
+		indexByInvocation[frame.InvocationID] = len(outcomes)
 		outcomes = append(outcomes, outcome)
 	}
 	return outcomes
+}
+
+func mergeAttemptObservation(target, source *AttemptOutcome) {
+	if target == nil || source == nil {
+		return
+	}
+	if target.Observation == nil {
+		target.Observation = cloneAttemptObservation(source.Observation)
+	}
+	if target.DurationNanos == nil {
+		target.DurationNanos = cloneDuration(source.DurationNanos)
+	}
+	if target.Agent == "" {
+		target.Agent = source.Agent
+	}
+	if target.Model == "" {
+		target.Model = source.Model
+	}
+	if target.RequestedModel == "" {
+		target.RequestedModel = source.RequestedModel
+	}
+	if target.Effort == "" {
+		target.Effort = source.Effort
+	}
+	if target.RequestedEffort == "" {
+		target.RequestedEffort = source.RequestedEffort
+	}
+	if target.StopReason == "" {
+		target.StopReason = source.StopReason
+	}
+	if target.Enforcement == "" {
+		target.Enforcement = source.Enforcement
+	}
 }
 
 func readAttemptOutcomes(directory, runID string) ([]AttemptOutcome, error) {

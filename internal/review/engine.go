@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
@@ -79,6 +80,18 @@ func (a policyBoundReviewer) ReviewWithContextAndPolicy(ctx context.Context, pro
 	return a.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
 
+// ReviewWithContextAndPolicyResult forwards a rich ACP result through the
+// policy binding. Legacy reviewers remain available through the string method.
+func (a policyBoundReviewer) ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (acpadapter.Result, error) {
+	if reviewer, ok := a.AuditorAgente.(interface {
+		ReviewWithContextResult(context.Context, string, string, []string) (acpadapter.Result, error)
+	}); ok {
+		return reviewer.ReviewWithContextResult(ctx, prompt, sha, paths)
+	}
+	output, err := a.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, a.policy)
+	return acpadapter.Result{Output: output}, err
+}
+
 func (a policyBoundReviewer) ReviewToolPolicy() reviewcontract.ToolPolicy { return a.policy }
 
 // AgenteEfectivo forwards the wrapped agent's effective-responder report so
@@ -125,6 +138,25 @@ var ErrRestrictedRequired = errors.New("semantic review unavailable: restricted 
 // (ticket 07 slice 2b): empty when the transport cannot attribute the call.
 type ReviewTransport func(bundleName, dimension, prompt string, agente AuditorAgente) (string, string, error)
 
+// ReviewEvidence carries the durable identities of one physical reviewer
+// invocation. The legacy ReviewTransport callback still returns only the
+// invocation ID; this richer seam lets semantic finalization reach the real
+// durable run without deriving a run ID.
+type ReviewEvidence struct {
+	RunID        string
+	InvocationID string
+}
+
+// ReviewTransportWithEvidence is the durable transport seam. It preserves
+// evidence identities even when the provider returns a terminal error after
+// producing partial output.
+type ReviewTransportWithEvidence func(bundleName, dimension, prompt string, agente AuditorAgente) (string, ReviewEvidence, error)
+
+// MetricsFinalizer is called once for every physically admitted durable review
+// invocation, after its semantic disposition is known. Empty failureClass
+// means the invocation completed without a semantic failure.
+type MetricsFinalizer func(runID, invocationID, failureClass, detail string) error
+
 // OpcionesAuditoria define un trabajo de auditoría sobre un commit.
 type OpcionesAuditoria struct {
 	SHA                            string
@@ -148,12 +180,17 @@ type OpcionesAuditoria struct {
 	HallazgosDeterministas []Hallazgo
 	// ReviewTransport, when set, routes each dimension's reviewer call through
 	// an alternative execution path such as the durable run controller.
-	// Production wiring always supplies the admitted durable transport
-	// (ticket 13, R11); nil remains only as the engine-level injection seam
-	// for direct-call fixtures and falls back to the restricted direct call
-	// with its transport retry.
+	// Production wiring always supplies the admitted durable transport;
+	// nil remains only as the engine-level injection seam for direct fixtures.
 	ReviewTransport ReviewTransport
-	// NetUnit* relabel the prompt as a NET-unit audit (T8.3); empty label = commit prompt unchanged.
+	// ReviewTransportWithEvidence is the preferred durable seam. ReviewTransport
+	// remains supported for direct fixtures and historical callers.
+	ReviewTransportWithEvidence ReviewTransportWithEvidence
+	// FinalizeMetrics is the owner-side callback for one physical run's final
+	// semantic disposition. It is deliberately provider-neutral to avoid a
+	// review-to-store import cycle.
+	FinalizeMetrics MetricsFinalizer
+	// NetUnit* relabel the prompt as a NET-unit audit (T8.3).
 	NetUnitLabel   string
 	NetUnitHistory string
 }
@@ -385,7 +422,11 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 		run(bundle)
 	}
 	wg.Wait()
-	refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, opts.LeerContenidoSnapshot, opts.ReviewTransport)
+	if opts.ReviewTransportWithEvidence != nil {
+		refutarHallazgosCriticosConEvidencia(resultado.Dims, opts.FabricaRefutador, opts.SHA, opts.LeerContenidoSnapshot, opts.ReviewTransportWithEvidence, opts.FinalizeMetrics)
+	} else {
+		refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, opts.LeerContenidoSnapshot, legacyReviewTransport(opts))
+	}
 	var findings []Hallazgo
 	for _, dimension := range resultado.Dims {
 		if dimension.Resultado != nil {
@@ -423,7 +464,17 @@ type respuestaRefutador struct {
 // surfaces as an error, which preserves the original blocker exactly like any
 // other unavailable refuter answer.
 func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, leerSnapshot SnapshotReader, transport ReviewTransport) {
-	if fabrica == nil {
+	if transport == nil {
+		return
+	}
+	refutarHallazgosCriticosConEvidencia(dimensiones, fabrica, sha, leerSnapshot, func(bundle, dimension, prompt string, agente AuditorAgente) (string, ReviewEvidence, error) {
+		output, invocation, err := transport(bundle, dimension, prompt, agente)
+		return output, ReviewEvidence{InvocationID: invocation}, err
+	}, nil)
+}
+
+func refutarHallazgosCriticosConEvidencia(dimensiones []ResultadoDimension, fabrica FabricaRefutador, sha string, leerSnapshot SnapshotReader, transport ReviewTransportWithEvidence, finalizer MetricsFinalizer) {
+	if fabrica == nil || transport == nil {
 		return
 	}
 	if leerSnapshot == nil {
@@ -454,16 +505,31 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			prompt := construirPromptRefutacion(sha, dimension.Dim, *finding)
 			// Admitted envelope flow: the refuter answer influences verdicts,
 			// so it may never bypass admission.
-			salida, invocacion, err := transport("refutation", dimension.Dim, prompt, bindPolicy(refutador, contract.ToolPolicy))
+			salida, evidence, err := transport("refutation", dimension.Dim, prompt, bindPolicy(refutador, contract.ToolPolicy))
 			if err != nil {
+				var identity metricsEvidenceError
+				if errors.As(err, &identity) {
+					evidence.RunID, evidence.InvocationID, _, _ = identity.MetricsEvidence()
+				}
+				if finalizer != nil && evidence.RunID != "" && evidence.InvocationID != "" {
+					_ = finalizer(evidence.RunID, evidence.InvocationID, "provider_error", err.Error())
+				}
 				continue
 			}
+			invocacion := evidence.InvocationID
+			finalize := func(class, detail string) {
+				if finalizer != nil && evidence.RunID != "" && evidence.InvocationID != "" {
+					_ = finalizer(evidence.RunID, evidence.InvocationID, class, detail)
+				}
+			}
 			var respuesta respuestaRefutador
-			if json.Unmarshal([]byte(salida), &respuesta) != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" {
+			if err := json.Unmarshal([]byte(salida), &respuesta); err != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" {
+				finalize("invalid_output", "refuter response did not satisfy the contract")
 				continue
 			}
 			rango, ok := validarEvidenciaRefutacion(leerSnapshot, sha, *finding, respuesta)
 			if !ok {
+				finalize("invalid_output", "refuter evidence did not match the immutable snapshot")
 				continue
 			}
 			finding.Status = StatusRefuted
@@ -480,6 +546,7 @@ func refutarHallazgosCriticos(dimensiones []ResultadoDimension, fabrica FabricaR
 			// 2b). Prune provenance scanning then naturally protects the
 			// refutation stream.
 			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta, invocacion)
+			finalize("", "")
 		}
 		if puedeDegradarBloque(*dimension.Resultado) {
 			dimension.Resultado.Verdict = VerdictWarn
@@ -594,8 +661,27 @@ func auditWithAgent(agent AuditorAgente, bundle ReviewBundle, dimension string, 
 
 // Review executes one resolved contract and preserves raw provider output or a
 // typed provider execution failure on the returned result for internal
-// diagnosis. A malformed semantic payload gets one corrective retry; provider
-// execution failures remain distinct and are never retried.
+// diagnosis. A malformed semantic payload gets one corrective retry; a
+// settled retryable provider failure gets one bounded retry in a new physical
+// run, while every terminal error remains typed and lossless.
+type metricsEvidenceError interface {
+	MetricsEvidence() (runID, invocationID, class, detail string)
+}
+
+func finalizeInvocation(opts OpcionesAuditoria, runID, invocationID, failureClass, detail string) error {
+	if opts.FinalizeMetrics == nil || runID == "" || invocationID == "" {
+		return nil
+	}
+	return opts.FinalizeMetrics(runID, invocationID, failureClass, detail)
+}
+
+func semanticFailure(err error) (string, string) {
+	var semantic *SemanticOutputError
+	if !errors.As(err, &semantic) {
+		return "", ""
+	}
+	return "invalid_output", semantic.Error()
+}
 func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequest) (*DimensionResult, error) {
 	if err := ctx.Err(); err != nil {
 		failure := &ProviderExecutionFailure{Err: err}
@@ -609,21 +695,71 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		policyReviewer := agent.(policyAwareReviewer)
 		return policyReviewer.ReviewWithPolicy(prompt, opts.SHA, opts.RutasContexto, contract.ToolPolicy)
 	}
+	finalizeProvider := func(runID, invocationID string, err error) error {
+		class, detail := "", ""
+		var evidenceErr metricsEvidenceError
+		if errors.As(err, &evidenceErr) {
+			reportedRun, reportedInvocation, reportedClass, reportedDetail := evidenceErr.MetricsEvidence()
+			if reportedRun != "" {
+				runID = reportedRun
+			}
+			if reportedInvocation != "" {
+				invocationID = reportedInvocation
+			}
+			class, detail = reportedClass, reportedDetail
+		}
+		if detail == "" && err != nil {
+			detail = err.Error()
+		}
+		return finalizeInvocation(opts, runID, invocationID, class, detail)
+	}
+	finalizeSemantic := func(runID, invocationID string, err error) error {
+		class, detail := semanticFailure(err)
+		return finalizeInvocation(opts, runID, invocationID, class, detail)
+	}
 	prompt := buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, "", request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory)
-	output, invocation, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
+	output, invocation, runID, err := invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
 	if err != nil && esFalloTransitorioDeProveedor(err) {
-		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
+		// The first provider failure is already a settled physical run; fold
+		// it before admitting the bounded retry so no attempt disappears from
+		// the durable history.
+		if finalizeErr := finalizeProvider(runID, invocation, err); finalizeErr != nil {
+			err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
+			failure := &ProviderExecutionFailure{Err: err}
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
+		}
+		output, invocation, runID, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt)
 	}
 	if err != nil {
+		finalizeErr := finalizeProvider(runID, invocation, err)
+		if finalizeErr != nil {
+			err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
+		}
 		failure := &ProviderExecutionFailure{Err: err}
 		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 	}
 
 	crudo, err := ParseDimensionResultForContract(output, contract)
 	if shouldRetryFormat(err) {
-		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt+formatRetryInstruction)
-		if err == nil {
+		if finalizeErr := finalizeSemantic(runID, invocation, err); finalizeErr != nil {
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output}, finalizeErr
+		}
+		output, invocation, runID, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, prompt+formatRetryInstruction)
+		if err != nil {
+			if finalizeErr := finalizeProvider(runID, invocation, err); finalizeErr != nil {
+				err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
+			}
+		} else {
 			crudo, err = ParseDimensionResultForContract(output, contract)
+			if err != nil {
+				if finalizeErr := finalizeSemantic(runID, invocation, err); finalizeErr != nil {
+					err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
+				}
+			}
+		}
+	} else if err != nil {
+		if finalizeErr := finalizeSemantic(runID, invocation, err); finalizeErr != nil {
+			err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
 		}
 	}
 	if err != nil {
@@ -634,17 +770,29 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 
 	// Segunda ronda solo si el agente pidió aclaraciones y el usuario respondió.
 	if crudo.Verdict == VerdictQuestion && opts.Respuestas != "" {
-		output, invocation, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
+		if finalizeErr := finalizeInvocation(opts, runID, invocation, "", ""); finalizeErr != nil {
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output}, finalizeErr
+		}
+		output, invocation, runID, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), ejecutar, buildPromptWithContext(bundle, contract, opts.Mensaje, opts.Diff, opts.Respuestas, request.Context, opts.RutasContexto, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
+			if finalizeErr := finalizeProvider(runID, invocation, err); finalizeErr != nil {
+				err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
+			}
 			failure := &ProviderExecutionFailure{Err: err}
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
 		}
 		crudo, err = ParseDimensionResultForContract(output, contract)
 		if err != nil {
+			if finalizeErr := finalizeSemantic(runID, invocation, err); finalizeErr != nil {
+				err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
+			}
 			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
 		}
 		crudo.InvocationID = invocation
 		crudo.RawProviderOutput = output
+	}
+	if finalizeErr := finalizeInvocation(opts, runID, invocation, "", ""); finalizeErr != nil {
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output}, finalizeErr
 	}
 	stamparSourceReview(crudo.Hallazgos)
 	stamparInvocacion(crudo.Hallazgos, invocation)
@@ -795,6 +943,19 @@ func stamparInvocacion(hallazgos []Hallazgo, invocacion string) {
 	}
 }
 
+func legacyReviewTransport(opts OpcionesAuditoria) ReviewTransport {
+	if opts.ReviewTransport != nil {
+		return opts.ReviewTransport
+	}
+	if opts.ReviewTransportWithEvidence == nil {
+		return nil
+	}
+	return func(bundleName, dimension, prompt string, agent AuditorAgente) (string, string, error) {
+		output, evidence, err := opts.ReviewTransportWithEvidence(bundleName, dimension, prompt, agent)
+		return output, evidence.InvocationID, err
+	}
+}
+
 // invokeReview routes one reviewer call through the configured durable
 // transport when present; nil keeps the direct restricted call with its
 // transport retry (engine-level injection seam only: production wiring always
@@ -802,12 +963,29 @@ func stamparInvocacion(hallazgos []Hallazgo, invocacion string) {
 // the identical prompt so parsing stays shared. The middle result is the
 // producing invocation identity: whatever the transport reports, or empty on
 // the direct path.
-func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, string, error) {
-	if opts.ReviewTransport != nil {
-		return opts.ReviewTransport(bundle.Name, dimension, prompt, agente)
+func invokeReview(opts OpcionesAuditoria, bundle ReviewBundle, dimension string, agente AuditorAgente, ejecutar func(string) (string, error), prompt string) (string, string, string, error) {
+	if opts.ReviewTransportWithEvidence != nil {
+		output, evidence, err := opts.ReviewTransportWithEvidence(bundle.Name, dimension, prompt, agente)
+		if err != nil {
+			var identity metricsEvidenceError
+			if errors.As(err, &identity) {
+				runID, invocationID, _, _ := identity.MetricsEvidence()
+				if runID != "" {
+					evidence.RunID = runID
+				}
+				if invocationID != "" {
+					evidence.InvocationID = invocationID
+				}
+			}
+		}
+		return output, evidence.InvocationID, evidence.RunID, err
 	}
-	salida, err := ejecutarConReintento(ejecutar, prompt)
-	return salida, "", err
+	if opts.ReviewTransport != nil {
+		output, invocation, err := opts.ReviewTransport(bundle.Name, dimension, prompt, agente)
+		return output, invocation, "", err
+	}
+	output, err := ejecutarConReintento(ejecutar, prompt)
+	return output, "", "", err
 }
 
 func ejecutarConReintento(ejecutar func(string) (string, error), prompt string) (string, error) {

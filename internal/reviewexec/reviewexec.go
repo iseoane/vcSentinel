@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
@@ -52,6 +53,19 @@ type ContextualReviewer interface {
 	ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error)
 }
 
+// ResultContextualReviewer is the rich provider seam. It preserves the
+// normalized ACP result when a provider returns an outcome error after
+// producing partial output.
+type ResultContextualReviewer interface {
+	ReviewWithContextResult(ctx context.Context, prompt, sha string, paths []string) (acpadapter.Result, error)
+}
+
+// ResultPolicyContextualReviewer is the policy-bound counterpart of the rich
+// provider seam.
+type ResultPolicyContextualReviewer interface {
+	ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error)
+}
+
 // PolicyContextualReviewer is the cancellation-aware semantic-review
 // capability paired with PolicyRestrictedReviewer.
 type PolicyContextualReviewer interface {
@@ -64,8 +78,16 @@ type Classifier func(error) agentrun.OutcomeClass
 
 // DefaultClassifier maps caller cancellation and deadlines to their durable
 // classes and keeps every other concrete provider failure as a plain failure
-// whose text must survive end to end.
+// DefaultClassifier maps an adapter's explicit outcome first, then caller
+// cancellation and deadlines, and keeps every other concrete provider failure
+// as a plain failure whose text must survive end to end.
 func DefaultClassifier(err error) agentrun.OutcomeClass {
+	var reported interface{ Outcome() agentrun.OutcomeClass }
+	if errors.As(err, &reported) {
+		if class := reported.Outcome(); class != "" {
+			return class
+		}
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		return agentrun.OutcomeCancellation
@@ -139,9 +161,8 @@ func (a *ReviewAdapter) OwnedTree() *process.Tree {
 	return nil
 }
 
-// Execute runs exactly one reviewer call. Success returns the raw untrusted
-// provider output; failure returns an AdapterError carrying the classified
-// outcome plus the original provider error, never a generic replacement.
+// Execute runs exactly one reviewer call. Success and failure both preserve
+// any rich provider result so the controller can durably retain observations.
 func (a *ReviewAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ agentrun.InvocationEnvelope, response string) (execution.AdapterResult, error) {
 	prompt := string(job.Request().Prompt())
 	if strings.TrimSpace(response) != "" {
@@ -149,28 +170,75 @@ func (a *ReviewAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ 
 	}
 	var (
 		output string
+		result acpadapter.Result
+		rich   bool
 		err    error
 	)
 	if a.policy != nil {
 		policyReviewer, ok := a.reviewer.(PolicyRestrictedReviewer)
 		if !ok {
-			return execution.AdapterResult{}, execution.NewAdapterError(a.classify(errors.New("reviewexec: policy-aware reviewer is required")), errors.New("reviewexec: policy-aware reviewer is required"))
+			failure := errors.New("reviewexec: policy-aware reviewer is required")
+			return execution.AdapterResult{}, execution.NewAdapterError(a.classify(failure), failure)
 		}
-		if contextual, ok := a.reviewer.(PolicyContextualReviewer); ok {
+		if contextual, ok := a.reviewer.(ResultPolicyContextualReviewer); ok {
+			result, err = contextual.ReviewWithContextAndPolicyResult(ctx, prompt, a.sha, a.paths, *a.policy)
+			rich = true
+		} else if contextual, ok := a.reviewer.(PolicyContextualReviewer); ok {
 			output, err = contextual.ReviewWithContextAndPolicy(ctx, prompt, a.sha, a.paths, *a.policy)
 		} else {
 			output, err = policyReviewer.ReviewWithPolicy(prompt, a.sha, a.paths, *a.policy)
 		}
+	} else if contextual, ok := a.reviewer.(ResultContextualReviewer); ok {
+		result, err = contextual.ReviewWithContextResult(ctx, prompt, a.sha, a.paths)
+		rich = true
 	} else if contextual, ok := a.reviewer.(ContextualReviewer); ok {
 		output, err = contextual.ReviewWithContext(ctx, prompt, a.sha, a.paths)
 	} else {
 		legacy := a.reviewer.(RestrictedReviewer)
 		output, err = legacy.EjecutarRevision(prompt, a.sha, a.paths)
 	}
-	if err != nil {
-		return execution.AdapterResult{}, execution.NewAdapterError(a.classify(err), err)
+	adapted := execution.AdapterResult{Output: output}
+	if rich {
+		adapted = execution.AdapterResult{
+			Output:      result.Output,
+			Observation: observationFromResult(result),
+		}
 	}
-	return execution.AdapterResult{Output: output}, nil
+	if err != nil {
+		return adapted, execution.NewAdapterError(a.classify(err), err)
+	}
+	return adapted, nil
+}
+
+func observationFromResult(result acpadapter.Result) *execution.AdapterObservation {
+	provider := result.AdapterObservation()
+	observation := &execution.AdapterObservation{
+		Agent:           provider.Agent,
+		Model:           provider.Model,
+		RequestedModel:  provider.RequestedModel,
+		Effort:          provider.Effort,
+		RequestedEffort: provider.RequestedEffort,
+		StopReason:      provider.StopReason,
+		Enforcement:     provider.Enforcement,
+	}
+	if provider.Usage != nil {
+		observation.Usage = &execution.AdapterUsage{
+			InputTokens:       cloneInt64(provider.Usage.InputTokens),
+			OutputTokens:      cloneInt64(provider.Usage.OutputTokens),
+			TotalTokens:       cloneInt64(provider.Usage.TotalTokens),
+			CachedInputTokens: cloneInt64(provider.Usage.CachedInputTokens),
+			ReasoningTokens:   cloneInt64(provider.Usage.ReasoningTokens),
+		}
+	}
+	return observation
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 // TranscriptMetadata implements execution.TranscriptReporter: it forwards the

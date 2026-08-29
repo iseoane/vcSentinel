@@ -47,10 +47,10 @@ func (b *AcpxBridge) ObtenerMensajeCommitConDiff(rutasArchivos []string, capa st
 }
 
 // AgenteEfectivo reports who served the last request using the shared
-// attribution vocabulary. It forwards acpadapter.EffectiveIdentity, which
-// never invents model or effort (C1/C8).
+// attribution vocabulary. It forwards only wire-observed ACP identity;
+// configured model/effort declarations are not producer evidence.
 func (b *AcpxBridge) AgenteEfectivo() (AgenteEfectivo, bool) {
-	id := b.EffectiveIdentity()
+	id := b.ObservedIdentity()
 	return AgenteEfectivo{
 		Binario:  id.Binary,
 		Modelo:   id.Model,

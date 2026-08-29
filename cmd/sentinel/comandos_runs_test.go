@@ -434,6 +434,17 @@ func TestRunsStartAdmitsAndCompletesThroughConfiguredAgent(t *testing.T) {
 	if decoded["state"] != "succeeded" {
 		t.Fatalf("start state = %v, want succeeded", decoded["state"])
 	}
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := store.NuevoStore(commonDir).ReadExecutionMetrics(decoded["run_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics == nil || metrics.RunID != decoded["run_id"].(string) {
+		t.Fatalf("start metrics = %+v, want immutable final snapshot", metrics)
+	}
 
 	second, secondCode := captureRunsOutput(t, func(w io.Writer) int {
 		return executeRuns(w, worktree, []string{"start", "--prompt", "do the thing", "--json"})

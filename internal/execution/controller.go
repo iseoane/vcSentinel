@@ -36,12 +36,41 @@ type Adapter interface {
 	Execute(context.Context, agentrun.LogicalJob, agentrun.InvocationEnvelope, string) (AdapterResult, error)
 }
 
+// AdapterUsage contains only token fields whose provider payload was
+// recognized. Pointer fields preserve an observed zero from an absent value.
+type AdapterUsage struct {
+	InputTokens       *int64
+	OutputTokens      *int64
+	TotalTokens       *int64
+	CachedInputTokens *int64
+	ReasoningTokens   *int64
+}
+
+// AdapterObservation is provider-neutral evidence from one physical
+// invocation. RequestedModel and RequestedEffort are kept distinct from
+// Model and Effort: configured declarations are never promoted to observed
+// provider evidence when the wire omits them.
+type AdapterObservation struct {
+	Agent           string
+	Model           string
+	RequestedModel  string
+	Effort          string
+	RequestedEffort string
+	StopReason      string
+	Enforcement     string
+	Usage           *AdapterUsage
+	DurationNanos   *time.Duration
+}
+
 // AdapterResult is untrusted provider output. The controller admits only its
 // hash to the store and returns the raw value through Completion after binding
-// it to the run and invocation identities.
+// it to the run and invocation identities. Observation carries the normalized
+// wire evidence alongside partial output, including when Execute returns an
+// error.
 type AdapterResult struct {
 	Output           string
 	AwaitingDecision bool
+	Observation      *AdapterObservation
 }
 
 // AdapterError lets an adapter classify an operational failure without
@@ -62,7 +91,7 @@ func (e AdapterError) Unwrap() error                  { return e.Err }
 func (e AdapterError) Outcome() agentrun.OutcomeClass { return e.Class }
 
 func NewAdapterError(class agentrun.OutcomeClass, err error) error {
-	return AdapterError{Class: class, Err: err}
+	return &AdapterError{Class: class, Err: err}
 }
 
 type Action string
@@ -189,6 +218,9 @@ type runState struct {
 	done          chan struct{}
 	completion    Completion
 	completionErr error
+	// attemptStarted uses the monotonic component supplied by time.Now. It is
+	// never reconstructed from persisted wall-clock timestamps.
+	attemptStarted time.Time
 	// aborting marks an in-flight bounded escalation between the canceled
 	// worker context and the terminal settlement. While it is set, finish()
 	// drops late adapter results and repeated aborts stay idempotent.
@@ -402,6 +434,12 @@ func (c *Controller) ReadEventPage(ctx context.Context, runID agentrun.Identity,
 }
 
 func (c *Controller) execute(state *runState, ctx context.Context, invocation agentrun.InvocationEnvelope, response string) {
+	// time.Now carries a monotonic component. Persist only the resulting
+	// duration, never a wall-clock-derived interval.
+	started := time.Now()
+	state.mu.Lock()
+	state.attemptStarted = started
+	state.mu.Unlock()
 	// Stamp the escalation policy onto the worker context so the adapter-side
 	// containment watchdog shares one budget AND one kill scope with
 	// controller-authored escalation: in Disabled mode nothing downstream of
@@ -409,17 +447,20 @@ func (c *Controller) execute(state *runState, ctx context.Context, invocation ag
 	result, adapterErr := c.adapter.Execute(
 		process.WithContainmentPolicy(ctx, c.escalation.Grace, !c.escalation.Disabled),
 		state.job, invocation, response)
+	duration := time.Since(started)
+	if result.Observation == nil {
+		result.Observation = &AdapterObservation{}
+	}
+	result.Observation.DurationNanos = &duration
 	c.finish(state, invocation, result, adapterErr)
 }
-
 func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvelope, result AdapterResult, adapterErr error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.doneClosed() || state.aborting {
 		// A settled run keeps its controller-authored terminal evidence. An
-		// in-flight escalation (aborting) owns the settlement too: whatever
-		// the adapter returns after the tree was killed is dropped here so
-		// it can never author a competing outcome.
+		// in-flight escalation owns the settlement too: whatever the adapter
+		// returns after the tree was killed is dropped here.
 		return
 	}
 	class := classify(adapterErr)
@@ -428,7 +469,8 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	}
 	outputHash := hashIfPresent(result.Output)
 	if adapterErr == nil && result.AwaitingDecision {
-		receipt, eventErr := c.appendTransitionLocked(state, invocation, agentrun.StateRunning, agentrun.StateAwaitingDecision, agentrun.DecisionNone)
+		observation := storeObservation(result.Observation)
+		receipt, eventErr := c.appendObservationLocked(state, invocation, observation)
 		if eventErr != nil {
 			c.completeLocked(state, invocation, agentrun.StateRunning, class, result, eventErr.Error(), eventErr, true)
 			return
@@ -437,6 +479,7 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 		state.state = agentrun.StateAwaitingDecision
 		state.running = false
 		state.cancel = nil
+		state.attemptStarted = time.Time{}
 		return
 	}
 
@@ -445,6 +488,7 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 		InvocationID: string(invocation.InvocationID()), LineageID: string(invocation.LineageIdentity()),
 		Class: class, Error: errorText(adapterErr), OutputHash: outputHash,
 	}
+	applyObservation(&outcome, result.Observation)
 	target := terminalState(class)
 	decision := terminalDecision(class)
 	at := c.now().UTC()
@@ -568,6 +612,10 @@ func (c *Controller) appendTransition(state *runState, invocation agentrun.Invoc
 	return nil
 }
 
+func (c *Controller) appendEventLocked(state *runState, event agentrun.NormalizedEvent) (store.EventReceipt, error) {
+	return c.store.AppendEvent(string(event.RunID()), event, state.revision)
+}
+
 func (c *Controller) appendTransitionLocked(state *runState, invocation agentrun.InvocationEnvelope, from, to agentrun.LifecycleState, decision agentrun.Decision) (store.EventReceipt, error) {
 	event, err := agentrun.NewNormalizedEvent(invocation, from, to, decision, c.now())
 	if err != nil {
@@ -575,9 +623,12 @@ func (c *Controller) appendTransitionLocked(state *runState, invocation agentrun
 	}
 	return c.appendEventLocked(state, event)
 }
-
-func (c *Controller) appendEventLocked(state *runState, event agentrun.NormalizedEvent) (store.EventReceipt, error) {
-	return c.store.AppendEvent(string(event.RunID()), event, state.revision)
+func (c *Controller) appendObservationLocked(state *runState, invocation agentrun.InvocationEnvelope, observation *store.AttemptObservation) (store.EventReceipt, error) {
+	event, err := agentrun.NewNormalizedEvent(invocation, state.state, agentrun.StateAwaitingDecision, agentrun.DecisionNone, c.now())
+	if err != nil {
+		return store.EventReceipt{}, err
+	}
+	return c.store.AppendAttemptObservation(string(invocation.RunID()), event, state.revision, observation)
 }
 
 func (c *Controller) completeLocked(state *runState, invocation agentrun.InvocationEnvelope, lifecycle agentrun.LifecycleState, class agentrun.OutcomeClass, result AdapterResult, detail string, completionErr error, retain bool) {
@@ -587,6 +638,7 @@ func (c *Controller) completeLocked(state *runState, invocation agentrun.Invocat
 	}
 	state.completionErr = completionErr
 	state.running = false
+	state.attemptStarted = time.Time{}
 	if state.cancel != nil {
 		state.cancel()
 		state.cancel = nil

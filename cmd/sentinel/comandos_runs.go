@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
@@ -357,17 +358,57 @@ func newPromptRunAdapter(agent agentadapter.AdaptadorPrompt) (promptRunAdapter, 
 	}
 	return promptRunAdapter{delegate: agent}, nil
 }
-
 func (a promptRunAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ agentrun.InvocationEnvelope, response string) (execution.AdapterResult, error) {
 	prompt := string(job.Request().Prompt())
 	if strings.TrimSpace(response) != "" {
 		prompt += "\n\n" + response
+	}
+	if rich, ok := a.delegate.(interface {
+		Run(context.Context, string) (acpadapter.Result, error)
+	}); ok {
+		result, err := rich.Run(ctx, prompt)
+		adapted := execution.AdapterResult{Output: result.Output, Observation: executionObservationFromACP(result)}
+		if err != nil {
+			return adapted, execution.NewAdapterError(classifyOperationalError(err), err)
+		}
+		return adapted, nil
 	}
 	output, err := a.runPrompt(ctx, prompt)
 	if err != nil {
 		return execution.AdapterResult{}, execution.NewAdapterError(classifyOperationalError(err), err)
 	}
 	return execution.AdapterResult{Output: output}, nil
+}
+
+func executionObservationFromACP(result acpadapter.Result) *execution.AdapterObservation {
+	observation := result.AdapterObservation()
+	adapted := &execution.AdapterObservation{
+		Agent:           observation.Agent,
+		Model:           observation.Model,
+		RequestedModel:  observation.RequestedModel,
+		Effort:          observation.Effort,
+		RequestedEffort: observation.RequestedEffort,
+		StopReason:      observation.StopReason,
+		Enforcement:     observation.Enforcement,
+	}
+	if observation.Usage != nil {
+		adapted.Usage = &execution.AdapterUsage{
+			InputTokens:       clonePromptMetric(observation.Usage.InputTokens),
+			OutputTokens:      clonePromptMetric(observation.Usage.OutputTokens),
+			TotalTokens:       clonePromptMetric(observation.Usage.TotalTokens),
+			CachedInputTokens: clonePromptMetric(observation.Usage.CachedInputTokens),
+			ReasoningTokens:   clonePromptMetric(observation.Usage.ReasoningTokens),
+		}
+	}
+	return adapted
+}
+
+func clonePromptMetric(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 // runPrompt prefers the caller-supplied controller context over the legacy
@@ -402,6 +443,12 @@ func (a promptRunAdapter) OwnedTree() *process.Tree {
 }
 
 func classifyOperationalError(err error) agentrun.OutcomeClass {
+	var reported interface{ Outcome() agentrun.OutcomeClass }
+	if errors.As(err, &reported) {
+		if class := reported.Outcome(); class != "" {
+			return class
+		}
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		return agentrun.OutcomeCancellation

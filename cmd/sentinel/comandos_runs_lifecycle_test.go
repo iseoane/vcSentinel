@@ -79,6 +79,13 @@ func TestRunsRetryRelaunchesFailedRunInsideSameIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	metrics, err := store.NuevoStore(commonDir).ReadExecutionMetrics(string(runID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics == nil || metrics.RunID != string(runID) {
+		t.Fatalf("retry metrics = %+v, want immutable snapshot after eventual success", metrics)
+	}
 	fresh := execution.NewController(store.NuevoStore(commonDir), nil)
 	inspection, err := fresh.Inspect(context.Background(), runID)
 	if err != nil {

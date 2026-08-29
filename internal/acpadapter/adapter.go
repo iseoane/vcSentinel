@@ -3,22 +3,23 @@
 // single result. It keeps every ACP concept inside this package boundary:
 // nothing else in the repository learns the wire format.
 //
-// Outcome classification is decided exclusively by the terminal result's
-// stopReason; the child's exit code is never authoritative because real
-// backends exit 0 for both completed and cancelled turns.
+// For terminal protocol results, stopReason determines semantic success,
+// cancellation, and timeout. A non-zero child exit remains authoritative for
+// the operational process-failure outcome, including after a terminal result;
+// cancellation and runtime timeout still take precedence when their contexts
+// are the source of termination.
 package acpadapter
 
 import (
 	"context"
 	"fmt"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 )
 
 // DefaultMaxRuntimeSeconds is the --timeout value used when the adapter is
@@ -166,20 +167,55 @@ type Result struct {
 	// Violations counts framing violations skipped while parsing:
 	// non-JSON lines and lines over the per-line cap. They are never fatal.
 	Violations int
+	// Agent is the configured ACP agent token that produced this result.
+	Agent string
 	// ObservedModel is the model captured from the initialize result
 	// configOptions when the backend exposes it. Empty otherwise.
 	ObservedModel string
+	// RequestedModel is the configured request declaration. It remains
+	// separate from ObservedModel when the provider omits wire identity.
+	RequestedModel string
+	// ObservedEffort is captured only when ACP exposes an effort value on the
+	// wire (typically via configOptions). It is never filled from the request.
+	ObservedEffort string
+	// RequestedEffort is the configured declaration supplied to the adapter.
+	// It remains separate from ObservedEffort when the provider omits it.
+	RequestedEffort string
 	// StopReason is the terminal result stopReason verbatim, or empty when
 	// no terminal result arrived.
 	StopReason string
 	// UsageJSON is the raw usage member of the terminal result, verbatim,
 	// or empty when absent.
 	UsageJSON string
+	// Usage contains only recognized numeric token fields from UsageJSON.
+	Usage *Usage
 	// Enforcement is the validated enforcement declaration of the adapter
 	// that produced this turn (EnforcementNone when nothing was declared).
-	// Every result carries it so upper layers can retain what containment
-	// was promised for the admitted run alongside the wire evidence.
 	Enforcement string
+}
+
+// ResultObservation is the provider-local normalized evidence shape. Upper
+// layers map it into their own provider-neutral contract to avoid package
+// cycles.
+type ResultObservation struct {
+	Agent           string
+	Model           string
+	RequestedModel  string
+	Effort          string
+	RequestedEffort string
+	StopReason      string
+	Enforcement     string
+	Usage           *Usage
+}
+
+func (r Result) AdapterObservation() ResultObservation {
+	return ResultObservation{
+		Agent: r.Agent, Model: r.ObservedModel,
+		RequestedModel: r.RequestedModel, Effort: r.ObservedEffort,
+		RequestedEffort: r.RequestedEffort,
+		StopReason:      r.StopReason, Enforcement: r.Enforcement,
+		Usage: r.Usage,
+	}
 }
 
 // Class returns the agentrun outcome class implied by the result. Only the

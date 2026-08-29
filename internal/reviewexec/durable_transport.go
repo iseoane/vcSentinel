@@ -19,12 +19,23 @@ import (
 // provider failure text so callers preserve the evidence verbatim instead of
 // degrading it into a generic message.
 type TerminalError struct {
-	Identity string
-	Class    agentrun.OutcomeClass
-	Text     string
+	Identity     string
+	RunID        string
+	InvocationID string
+	Class        agentrun.OutcomeClass
+	Text         string
 }
 
 func (e *TerminalError) Error() string { return e.Text }
+
+// MetricsEvidence exposes the exact durable identities to the semantic owner
+// without coupling the review package to this transport implementation.
+func (e *TerminalError) MetricsEvidence() (runID, invocationID, class, detail string) {
+	if e == nil {
+		return "", "", "", ""
+	}
+	return e.RunID, e.InvocationID, string(e.Class), e.Text
+}
 
 // ProviderSettledRetryable declara que este error representa un run que ASENTÓ
 // durablemente, no un fallo de admisión ni una incertidumbre posterior al
@@ -64,11 +75,17 @@ const AdmissionReasonPrefix = "admission: "
 // admission. The raw provider output is discarded with it: a mismatched
 // completion never reaches verdict computation.
 type AdmissionError struct {
-	Identity string
-	Reason   string
+	Identity     string
+	Reason       string
+	RunID        string
+	InvocationID string
 }
 
 func (e *AdmissionError) Error() string { return AdmissionReasonPrefix + e.Reason }
+
+func (e *AdmissionError) MetricsEvidence() (runID, invocationID, class, detail string) {
+	return e.RunID, e.InvocationID, "", e.Error()
+}
 
 // IsAdmissionError reports whether err is (or wraps) an AdmissionError, so
 // callers holding the typed error can distinguish admission failures from
@@ -145,6 +162,18 @@ func NewDurableTransport(backing *store.Store, policy store.RunPolicy, sha strin
 		}
 	}
 	return t
+}
+
+// FinalizeMetricsForDisposition folds the immutable semantic disposition into
+// the same durable run owner that persisted the physical invocation. Semantic
+// owners call this explicit API after deciding not to use Controller.Retry for
+// the physical run, including retryable terminal outcomes.
+func (t *DurableTransport) FinalizeMetricsForDisposition(ctx context.Context, runID string, failures []store.ExecutionFailure) (store.ExecutionMetrics, error) {
+	if t == nil || t.backing == nil {
+		return store.ExecutionMetrics{}, fmt.Errorf("review metrics finalization unavailable")
+	}
+	controller := execution.NewController(t.backing, nil)
+	return controller.FinalizeMetricsForDisposition(ctx, agentrun.Identity(runID), failures)
 }
 
 // WithCancellationEscalation overrides the bounded escalation policy used by
@@ -269,7 +298,7 @@ func (t *DurableTransport) run(reviewer any, identityKey, prompt string, policy 
 		t.observedRun(string(handle.RunID))
 	}
 	if t.admissionEnabled {
-		if err := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); err != nil {
+		if bindingErr := t.validateSnapshotBinding(identityKey, handle.RunID, prompt, candidate); bindingErr != nil {
 			// A binding rejection must not leave the admitted run executing a
 			// provider call whose output can never be trusted. Abort cooperatively
 			// so the durable record settles canceled with the rejection on record;
@@ -278,12 +307,15 @@ func (t *DurableTransport) run(reviewer any, identityKey, prompt string, policy 
 				execution.ControlAction{Kind: execution.ActionAbort}); abortErr != nil {
 				fmt.Fprintf(os.Stderr, "reviewexec: abort after rejected binding for run %s failed: %v\n", handle.RunID, abortErr)
 			}
-			return "", Evidence{}, err
+			return "", Evidence{}, &AdmissionError{
+				Identity: identityKey, Reason: bindingErr.Error(),
+				RunID: string(handle.RunID), InvocationID: string(handle.InvocationID),
+			}
 		}
 	}
 	completion, err := handle.Wait(context.Background())
 	if err != nil {
-		return "", Evidence{}, fmt.Errorf("review run %s observation failed: %w", identityKey, err)
+		return "", Evidence{RunID: string(handle.RunID)}, fmt.Errorf("review run %s observation failed: %w", identityKey, err)
 	}
 	if completion.State == agentrun.StateSucceeded {
 		if !t.admissionEnabled {
@@ -293,7 +325,7 @@ func (t *DurableTransport) run(reviewer any, identityKey, prompt string, policy 
 		}
 		evidence, evidenceErr := t.verifyEvidence(identityKey, handle.RunID, string(completion.InvocationID), completion.Output)
 		if evidenceErr != nil {
-			return "", Evidence{}, evidenceErr
+			return "", Evidence{RunID: string(handle.RunID), JobID: string(completion.JobID), InvocationID: string(completion.InvocationID)}, evidenceErr
 		}
 		return completion.Output, evidence, nil
 	}
@@ -301,7 +333,10 @@ func (t *DurableTransport) run(reviewer any, identityKey, prompt string, policy 
 	if text == "" {
 		text = fmt.Sprintf("review run %s ended %s/%s without evidence", identityKey, completion.State, completion.Outcome)
 	}
-	return "", Evidence{}, &TerminalError{Identity: identityKey, Class: completion.Outcome, Text: text}
+	return "", Evidence{}, &TerminalError{
+		Identity: identityKey, RunID: string(completion.RunID), InvocationID: string(completion.InvocationID),
+		Class: completion.Outcome, Text: text,
+	}
 }
 
 // validateSnapshotBinding validates, fail-fast before waiting, that the just-admitted

@@ -10,12 +10,13 @@ import (
 )
 
 const (
-	helperEnvVar    = "GO_WANT_ACP_HELPER_PROCESS"
-	helperModeEnv   = "ACP_HELPER_MODE"
-	helperModeOK    = "end-turn"
-	helperModeTrap  = "exit0-cancelled"
-	helperModeSleep = "sleep-long"
-	helperModeFlood = "oversized-output"
+	helperEnvVar          = "GO_WANT_ACP_HELPER_PROCESS"
+	helperModeEnv         = "ACP_HELPER_MODE"
+	helperModeOK          = "end-turn"
+	helperModeTrap        = "exit0-cancelled"
+	helperModeSleep       = "sleep-long"
+	helperModeFlood       = "oversized-output"
+	helperModeEndTurnExit = "end-turn-exit"
 
 	// Failure and noisy-cancellation modes pinning the bounded stderr
 	// enrichment of FAILURE/TIMEOUT outcome details.
@@ -87,7 +88,7 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv(helperModeEnv) {
 	case helperModeOK:
 		fmt.Print(strings.Join([]string{
-			`{"jsonrpc":"2.0","id":0,"result":{"configOptions":[{"id":"model","currentValue":"test-model"}]}}`,
+			`{"jsonrpc":"2.0","id":0,"result":{"configOptions":[{"id":"model","currentValue":"test-model"},{"id":"effort","currentValue":"wire-high"}]}}`,
 			`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"HELLO FROM FAKE ACPX"}}}}`,
 			`{"jsonrpc":"2.0","id":7,"result":{"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":2}}}`,
 			"",
@@ -96,6 +97,14 @@ func TestHelperProcess(t *testing.T) {
 		// Both exit codes are 0 live; classification must still be
 		// cancellation because the terminal stopReason says so.
 		fmt.Print(`{"jsonrpc":"2.0","id":8,"result":{"stopReason":"cancelled"}}` + "\n")
+	case helperModeEndTurnExit:
+		// A terminal protocol success does not erase a non-zero provider
+		// process exit; the parent must preserve the partial observation and
+		// classify the operational failure distinctly.
+		fmt.Print(`{"jsonrpc":"2.0","id":0,"result":{"configOptions":[{"id":"model","currentValue":"test-model"}]}}` + "\n")
+		fmt.Print(`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"PARTIAL"}}}}` + "\n")
+		fmt.Print(`{"jsonrpc":"2.0","id":13,"result":{"stopReason":"end_turn"}}` + "\n")
+		os.Exit(23)
 	case helperModeSleep:
 		// Long-running stand-in for a stuck backend: the parent must end
 		// this child through context cancellation plus tree termination,

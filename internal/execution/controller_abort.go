@@ -148,10 +148,25 @@ func (c *Controller) settleCanceled(state *runState, runID agentrun.Identity, fr
 // by design.
 func (c *Controller) settleCanceledLocked(state *runState, runID agentrun.Identity, from agentrun.LifecycleState, detail string) (ApplyResult, error) {
 	at := c.now().UTC()
+	var observation *store.AttemptObservation
+	if (from == agentrun.StateRunning || from == agentrun.StateTerminating) && !state.attemptStarted.IsZero() {
+		// attemptStarted is captured with time.Now's monotonic component. Pair
+		// it only with a real monotonic end; injected wall-clock timestamps
+		// cannot be subtracted from it safely.
+		duration := time.Since(state.attemptStarted)
+		if duration < 0 {
+			duration = 0
+		}
+		observation = &store.AttemptObservation{DurationNanos: &duration}
+	}
+	var durationNanos *time.Duration
+	if observation != nil {
+		durationNanos = cloneDuration(observation.DurationNanos)
+	}
 	outcome := store.AttemptOutcome{
 		RunID: string(runID), JobID: string(state.job.ID()), InvocationID: string(state.invocation.InvocationID()),
 		LineageID: string(state.invocation.LineageIdentity()), Class: agentrun.OutcomeCancellation,
-		Error: detail, At: at,
+		Error: detail, At: at, Observation: observation, DurationNanos: durationNanos,
 	}
 	event, eventErr := agentrun.NewNormalizedEvent(state.invocation, from, agentrun.StateCanceled, agentrun.DecisionAbort, at)
 	if eventErr != nil {

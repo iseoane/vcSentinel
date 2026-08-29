@@ -44,10 +44,7 @@ func (a *AcpxAdapter) EjecutarPromptWithContext(ctx context.Context, prompt stri
 		ctx = context.Background()
 	}
 	res, err := a.Run(ctx, prompt)
-	if err != nil {
-		return "", err
-	}
-	return res.Output, nil
+	return res.Output, err
 }
 
 // EjecutarRevision runs a semantic review under the SAME snapshot discipline
@@ -70,28 +67,30 @@ func (a *AcpxAdapter) EjecutarRevision(prompt, sha string, paths []string) (stri
 // The method name pairs with the legacy EjecutarRevision entry point it
 // extends; it satisfies reviewexec.ContextualReviewer structurally.
 func (a *AcpxAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
+	res, err := a.ReviewWithContextResult(ctx, prompt, sha, paths)
+	return res.Output, err
+}
+
+// ReviewWithContextResult preserves the normalized ACP result, including
+// partial output and wire observations when the provider returns an outcome
+// error after producing them.
+func (a *AcpxAdapter) ReviewWithContextResult(ctx context.Context, prompt, sha string, paths []string) (Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	snapshot, _, cleanup, err := reviewsnapshot.Create("", sha, paths)
 	if err != nil {
-		return "", fmt.Errorf("acpx: create review snapshot: %w", err)
+		return a.declaredResult(), fmt.Errorf("acpx: create review snapshot: %w", err)
 	}
 	defer cleanup()
-	return a.outputOf(a.run(ctx, a.buildArgs(prompt, snapshot)))
+	return a.run(ctx, a.buildArgs(prompt, snapshot))
 }
 
 // outputOf reduces a full Result to its assistant output for the legacy
-// string-returning review contracts. That reduction is the legacy contract,
-// not evidence loss: callers holding *AcpxAdapter get the complete Result —
-// raw stream, observed model, stop reason, usage, and enforcement
-// declaration — through Run, so nothing observed on the wire is discarded
-// before those consumers can retain it durably.
+// string-returning review contracts while preserving partial output on
+// provider outcome errors.
 func (a *AcpxAdapter) outputOf(res Result, err error) (string, error) {
-	if err != nil {
-		return "", err
-	}
-	return res.Output, nil
+	return res.Output, err
 }
 
 // stderrExcerptLimit caps how much stderr text a failure detail may carry.
@@ -128,7 +127,17 @@ func outcomeDetail(class agentrun.OutcomeClass, detail string, stderr *bytes.Buf
 }
 
 // run executes one fully built acpx command line and normalizes its stream.
-//
+// declaredResult preserves configured declarations on every runtime path,
+// including pre-spawn failures where no wire observation exists.
+func (a *AcpxAdapter) declaredResult() Result {
+	return Result{
+		Agent:           a.agent,
+		RequestedModel:  a.model,
+		RequestedEffort: a.effort,
+		Enforcement:     a.enforcement,
+	}
+}
+
 // Ownership (R7): the child is born into an owned process group/job through
 // process.Spawn — exactly like the CLI adapter's reviewer spawn — so the
 // whole npx -> node(acpx) -> npm exec -> node(<agent>-acp) chain stays
@@ -150,7 +159,7 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
-		return Result{}, &OutcomeError{
+		return a.declaredResult(), &OutcomeError{
 			Class:  agentrun.OutcomeProcessError,
 			Detail: fmt.Sprintf("acpx: stdout pipe unavailable: %v", err),
 		}
@@ -168,7 +177,7 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 	if err != nil {
 		stdoutR.Close()
 		stdoutW.Close()
-		return Result{}, &OutcomeError{
+		return a.declaredResult(), &OutcomeError{
 			Class:  agentrun.OutcomeProcessError,
 			Detail: fmt.Sprintf("acpx: launch %q failed: %v", filepath.Base(a.launcher[0]), err),
 		}
@@ -230,13 +239,18 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 
 	stream := ParseStream(bytes.NewReader(raw.Bytes()), DefaultLineCapBytes)
 	res := Result{
-		Output:        stream.Output,
-		RawStream:     raw.String(),
-		Violations:    stream.Violations,
-		ObservedModel: stream.ObservedModel,
-		StopReason:    stream.StopReason,
-		UsageJSON:     stream.UsageJSON,
-		Enforcement:   a.enforcement,
+		Output:          stream.Output,
+		RawStream:       raw.String(),
+		Violations:      stream.Violations,
+		Agent:           a.agent,
+		ObservedModel:   stream.ObservedModel,
+		RequestedModel:  a.model,
+		ObservedEffort:  stream.ObservedEffort,
+		RequestedEffort: a.effort,
+		StopReason:      stream.StopReason,
+		UsageJSON:       stream.UsageJSON,
+		Usage:           stream.Usage,
+		Enforcement:     a.enforcement,
 	}
 	a.recordObserved(stream.ObservedModel)
 
@@ -246,12 +260,24 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 			Class:  agentrun.OutcomeFailure,
 			Detail: outcomeDetail(agentrun.OutcomeFailure, "acpx: output budget exceeded", &stderr),
 		}
+	case parent.Err() != nil:
+		return res, &OutcomeError{
+			Class:  agentrun.OutcomeCancellation,
+			Detail: fmt.Sprintf("acpx: canceled before terminal result (%v)", parent.Err()),
+		}
+	case runCtx.Err() != nil:
+		return res, &OutcomeError{
+			Class:  agentrun.OutcomeTimeout,
+			Detail: outcomeDetail(agentrun.OutcomeTimeout, fmt.Sprintf("acpx: no terminal result before the runtime budget (%v)", runCtx.Err()), &stderr),
+		}
+	case waitErr != nil:
+		return res, &OutcomeError{
+			Class:  agentrun.OutcomeProcessError,
+			Detail: fmt.Sprintf("acpx: child process failed after terminal result: %v", waitErr),
+		}
 	case res.StopReason == "":
 		class := agentrun.OutcomeFailure
 		detail := "acpx: no terminal result"
-		if waitErr != nil {
-			detail = fmt.Sprintf("acpx: no terminal result (child error: %v)", waitErr)
-		}
 		switch {
 		case parent.Err() != nil:
 			class = agentrun.OutcomeCancellation
