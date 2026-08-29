@@ -242,6 +242,46 @@ func TestReviewWithContextCancelYieldsCanceledClass(t *testing.T) {
 	}
 }
 
+// TestReviewWithCallerDeadlineYieldsTimeoutClass separates the two ways a
+// caller context ends. An expired deadline is budget exhaustion, so recording
+// it as a cancellation would file a timeout under the class reserved for a
+// deliberate stop and make the failure metrics describe the wrong event.
+func TestReviewWithCallerDeadlineYieldsTimeoutClass(t *testing.T) {
+	chdirToRepoRoot(t)
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.ChildEnv = append(cfg.ChildEnv,
+			helperModeEnv+"="+helperModeSleep,
+			helperExpectEnv+"=-",
+		)
+	})
+	ctx, cancel := context.WithTimeout(
+		process.WithContainmentGrace(context.Background(), 50*time.Millisecond), 150*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.ReviewWithContext(ctx, "review DEADLINE", headSha(t), []string{reviewFixturePath})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		var oe *OutcomeError
+		if !errors.As(err, &oe) {
+			t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+		}
+		if oe.Outcome() != agentrun.OutcomeTimeout {
+			t.Errorf("Outcome() = %q, want the timeout class for an expired caller deadline", oe.Outcome())
+		}
+		if !strings.Contains(oe.Error(), "context deadline exceeded") {
+			t.Errorf("detail = %q, want it to wrap the context error", oe.Error())
+		}
+	case <-time.After(10 * time.Second):
+		cancel()
+		t.Fatal("ReviewWithContext did not return within the bounded wait")
+	}
+}
+
 // --- output budget -------------------------------------------------------------
 
 func TestMaxOutputBytesCapTriggersFailure(t *testing.T) {

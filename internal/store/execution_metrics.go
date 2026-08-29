@@ -14,6 +14,10 @@ const ExecutionMetricsSchemaVersion uint32 = 1
 var (
 	ErrExecutionMetricsCorrupt            = errors.New("store: corrupt execution metrics")
 	ErrUnsupportedExecutionMetricsVersion = errors.New("store: unsupported execution metrics version")
+	// ErrStaleExecutionRevision reports that the durable head moved between
+	// folding a metrics snapshot and writing it, so the snapshot no longer
+	// describes the run it would freeze.
+	ErrStaleExecutionRevision = errors.New("store: stale execution revision")
 )
 
 // ExecutionMetrics is the versioned, immutable metric snapshot for one durable
@@ -177,6 +181,42 @@ func (s *Store) SaveExecutionMetrics(metrics ExecutionMetrics) error {
 	return writeImmutableRecordOnce(directory, path, data)
 }
 
+// SaveExecutionMetricsForRevision writes the snapshot only while the durable
+// head still stands at expectedRevision. The check shares the lock that guards
+// event appends, so a snapshot folded from evidence a concurrent retry has
+// already superseded is refused instead of freezing a run that moved on.
+func (s *Store) SaveExecutionMetricsForRevision(metrics ExecutionMetrics, expectedRevision uint64) error {
+	if err := validateExecutionMetrics(metrics, metrics.RunID); err != nil {
+		return err
+	}
+	directory, err := s.executionDir(metrics.RunID)
+	if err != nil {
+		return err
+	}
+	path, err := s.executionMetricsPath(metrics.RunID)
+	if err != nil {
+		return err
+	}
+	data, err := marshalRecord(metrics)
+	if err != nil {
+		return err
+	}
+	return writeImmutableRecordOnceGuarded(directory, path, data, func() error {
+		projection, err := s.ReadDerivedProjection(metrics.RunID)
+		if err != nil {
+			return err
+		}
+		found := uint64(0)
+		if projection != nil {
+			found = projection.Revision
+		}
+		if found != expectedRevision {
+			return fmt.Errorf("%w: expected revision %d, found %d", ErrStaleExecutionRevision, expectedRevision, found)
+		}
+		return nil
+	})
+}
+
 // ReadExecutionMetrics returns nil, nil when a durable execution predates the
 // metrics schema. A nil result is absence of evidence, never a zero-valued
 // metric snapshot; callers must preserve that distinction. The retained
@@ -332,6 +372,13 @@ func validateExecutionCost(cost ExecutionCost) error {
 }
 
 func writeImmutableRecordOnce(directory, path string, expected []byte) error {
+	return writeImmutableRecordOnceGuarded(directory, path, expected, nil)
+}
+
+// writeImmutableRecordOnceGuarded runs an optional caller check inside the same
+// lock as the write, so a guard cannot be invalidated between its verdict and
+// the rename.
+func writeImmutableRecordOnceGuarded(directory, path string, expected []byte, guard func() error) error {
 	// The execution directory is the authority for both admission and
 	// retention. Keep the existence check, destination Lstat, and atomic
 	// rename under its cross-process lock so pruning cannot remove the
@@ -339,6 +386,11 @@ func writeImmutableRecordOnce(directory, path string, expected []byte) error {
 	return withExecutionLock(directory, func() error {
 		if err := ensureExecutionExists(directory); err != nil {
 			return err
+		}
+		if guard != nil {
+			if err := guard(); err != nil {
+				return err
+			}
 		}
 		_, err := os.Lstat(path)
 		switch {

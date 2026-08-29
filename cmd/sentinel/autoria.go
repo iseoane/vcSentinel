@@ -90,9 +90,32 @@ func (a *observedAgent) ReviewWithPolicy(prompt, sha string, paths []string, pol
 	return output, err
 }
 
+// ReviewWithContextAndPolicyResult is the rich review seam that carries the
+// resolved tool policy. It prefers a policy-aware rich adapter and otherwise
+// falls back to ReviewWithPolicy, which keeps the ErrRestrictedRequired gate:
+// an agent that cannot review under a policy must be refused here too, not
+// quietly served through a policy-free path.
+func (a *observedAgent) ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if rich, ok := a.AuditorAgente.(interface {
+		ReviewWithContextAndPolicyResult(context.Context, string, string, []string, reviewcontract.ToolPolicy) (acpadapter.Result, error)
+	}); ok {
+		res, err := rich.ReviewWithContextAndPolicyResult(ctx, prompt, sha, paths, policy)
+		if err == nil {
+			a.authorship.registrar(a.AuditorAgente)
+		}
+		return res, err
+	}
+	output, err := a.ReviewWithPolicy(prompt, sha, paths, policy)
+	return acpadapter.Result{Output: output}, err
+}
+
 // ReviewWithContextResult preserves the transactional ACP result, including
 // partial output and wire observations on post-spawn errors. It intentionally
-// avoids the adapter's process-global effective identity fallback.
+// avoids the adapter's process-global effective identity fallback. It carries
+// no tool policy, so the policy binding never routes through it.
 func (a *observedAgent) ReviewWithContextResult(ctx context.Context, prompt, sha string, paths []string) (acpadapter.Result, error) {
 	if ctx == nil {
 		ctx = context.Background()

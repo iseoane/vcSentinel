@@ -80,16 +80,25 @@ func (a policyBoundReviewer) ReviewWithContextAndPolicy(ctx context.Context, pro
 	return a.ReviewWithPolicy(prompt, sha, paths, a.policy)
 }
 
-// ReviewWithContextAndPolicyResult forwards a rich ACP result through the
-// policy binding. Legacy reviewers remain available through the string method.
+// ReviewWithContextAndPolicyResult forwards a rich result through the policy
+// binding. It only ever reaches a method that carries the resolved policy: the
+// policy-free rich seam would silently drop the tool restrictions the bundle
+// resolved, and with them the ErrRestrictedRequired gate that refuses an agent
+// which cannot review under a policy at all. Reviewers without a policy-aware
+// rich method fall back to the enforcing string path.
 func (a policyBoundReviewer) ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (acpadapter.Result, error) {
-	if reviewer, ok := a.AuditorAgente.(interface {
-		ReviewWithContextResult(context.Context, string, string, []string) (acpadapter.Result, error)
-	}); ok {
-		return reviewer.ReviewWithContextResult(ctx, prompt, sha, paths)
+	if reviewer, ok := a.AuditorAgente.(resultPolicyAwareReviewer); ok {
+		return reviewer.ReviewWithContextAndPolicyResult(ctx, prompt, sha, paths, a.policy)
 	}
 	output, err := a.ReviewWithContextAndPolicy(ctx, prompt, sha, paths, a.policy)
 	return acpadapter.Result{Output: output}, err
+}
+
+// resultPolicyAwareReviewer is the rich reviewer seam that accepts the
+// resolved tool policy. It is deliberately the only rich method the policy
+// binding will call.
+type resultPolicyAwareReviewer interface {
+	ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error)
 }
 
 func (a policyBoundReviewer) ReviewToolPolicy() reviewcontract.ToolPolicy { return a.policy }
@@ -517,19 +526,29 @@ func refutarHallazgosCriticosConEvidencia(dimensiones []ResultadoDimension, fabr
 				continue
 			}
 			invocacion := evidence.InvocationID
-			finalize := func(class, detail string) {
-				if finalizer != nil && evidence.RunID != "" && evidence.InvocationID != "" {
-					_ = finalizer(evidence.RunID, evidence.InvocationID, class, detail)
+			finalize := func(class, detail string) error {
+				if finalizer == nil || evidence.RunID == "" || evidence.InvocationID == "" {
+					return nil
 				}
+				return finalizer(evidence.RunID, evidence.InvocationID, class, detail)
 			}
 			var respuesta respuestaRefutador
 			if err := json.Unmarshal([]byte(salida), &respuesta); err != nil || !respuesta.Refuted || strings.TrimSpace(respuesta.Reason) == "" {
-				finalize("invalid_output", "refuter response did not satisfy the contract")
+				// The finding already stands confirmed on this path, so a
+				// failed snapshot costs observability, not correctness.
+				_ = finalize("invalid_output", "refuter response did not satisfy the contract")
 				continue
 			}
 			rango, ok := validarEvidenciaRefutacion(leerSnapshot, sha, *finding, respuesta)
 			if !ok {
-				finalize("invalid_output", "refuter evidence did not match the immutable snapshot")
+				_ = finalize("invalid_output", "refuter evidence did not match the immutable snapshot")
+				continue
+			}
+			// This invocation is about to flip a confirmed CRITICAL, so its
+			// durable evidence must exist before the downgrade is applied.
+			// When the snapshot cannot be written the blocker stands: failing
+			// closed can delay a correct downgrade, never hide a defect.
+			if err := finalize("", ""); err != nil {
 				continue
 			}
 			finding.Status = StatusRefuted
@@ -546,7 +565,6 @@ func refutarHallazgosCriticosConEvidencia(dimensiones []ResultadoDimension, fabr
 			// 2b). Prune provenance scanning then naturally protects the
 			// refutation stream.
 			refutarHallazgoV2(dimension.Resultado.Hallazgos, *finding, respuesta, invocacion)
-			finalize("", "")
 		}
 		if puedeDegradarBloque(*dimension.Resultado) {
 			dimension.Resultado.Verdict = VerdictWarn
@@ -675,12 +693,16 @@ func finalizeInvocation(opts OpcionesAuditoria, runID, invocationID, failureClas
 	return opts.FinalizeMetrics(runID, invocationID, failureClass, detail)
 }
 
+// semanticFailure reports the deterministic output failure exactly as it was
+// classified. Collapsing every class into invalid_output would tell the
+// metrics that a denied tool was malformed output, which is the same
+// conflation the retry policy already refuses to make.
 func semanticFailure(err error) (string, string) {
 	var semantic *SemanticOutputError
 	if !errors.As(err, &semantic) {
 		return "", ""
 	}
-	return "invalid_output", semantic.Error()
+	return string(semantic.Class), semantic.Error()
 }
 func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequest) (*DimensionResult, error) {
 	if err := ctx.Err(); err != nil {

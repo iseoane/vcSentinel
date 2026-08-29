@@ -3,6 +3,7 @@ package acpadapter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -129,6 +130,17 @@ func outcomeDetail(class agentrun.OutcomeClass, detail string, stderr *bytes.Buf
 // run executes one fully built acpx command line and normalizes its stream.
 // declaredResult preserves configured declarations on every runtime path,
 // including pre-spawn failures where no wire observation exists.
+// callerContextOutcome separates the two ways a caller context ends. An
+// expired deadline is a budget exhaustion, so reporting it as a cancellation
+// would file a timeout under the class reserved for a deliberate stop and
+// blur exactly the distinction the surrounding classifier maintains.
+func callerContextOutcome(err error) (agentrun.OutcomeClass, string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return agentrun.OutcomeTimeout, "caller deadline exceeded"
+	}
+	return agentrun.OutcomeCancellation, "canceled"
+}
+
 func (a *AcpxAdapter) declaredResult() Result {
 	return Result{
 		Agent:           a.agent,
@@ -261,9 +273,10 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 			Detail: outcomeDetail(agentrun.OutcomeFailure, "acpx: output budget exceeded", &stderr),
 		}
 	case parent.Err() != nil:
+		class, reason := callerContextOutcome(parent.Err())
 		return res, &OutcomeError{
-			Class:  agentrun.OutcomeCancellation,
-			Detail: fmt.Sprintf("acpx: canceled before terminal result (%v)", parent.Err()),
+			Class:  class,
+			Detail: fmt.Sprintf("acpx: %s before terminal result (%v)", reason, parent.Err()),
 		}
 	case runCtx.Err() != nil:
 		return res, &OutcomeError{
@@ -280,8 +293,9 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 		detail := "acpx: no terminal result"
 		switch {
 		case parent.Err() != nil:
-			class = agentrun.OutcomeCancellation
-			detail = fmt.Sprintf("acpx: canceled before terminal result (%v)", parent.Err())
+			reason := ""
+			class, reason = callerContextOutcome(parent.Err())
+			detail = fmt.Sprintf("acpx: %s before terminal result (%v)", reason, parent.Err())
 		case runCtx.Err() != nil:
 			class = agentrun.OutcomeTimeout
 			detail = outcomeDetail(class, fmt.Sprintf("acpx: no terminal result before the runtime budget (%v)", runCtx.Err()), &stderr)

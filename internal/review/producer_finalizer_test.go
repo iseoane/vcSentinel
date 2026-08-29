@@ -60,8 +60,13 @@ func TestDimensionReviewerFinalizesEachPhysicalRunAfterSemanticDisposition(t *te
 	if len(finalized) != 2 {
 		t.Fatalf("finalized = %+v, want both physical runs finalized", finalized)
 	}
-	if finalized[0].runID != "run-invalid" || finalized[0].invocation != "invocation-invalid" || finalized[0].class != "invalid_output" {
-		t.Fatalf("first finalization = %+v, want invalid-output disposition", finalized[0])
+	// The recorded class is the semantic classification of the failure, not a
+	// blanket invalid_output: "not-json" carries no semantic payload at all,
+	// and a denied tool would arrive under its own class rather than being
+	// filed as malformed output.
+	if finalized[0].runID != "run-invalid" || finalized[0].invocation != "invocation-invalid" ||
+		finalized[0].class != string(review.SemanticOutputMissingPayload) {
+		t.Fatalf("first finalization = %+v, want the %q disposition", finalized[0], review.SemanticOutputMissingPayload)
 	}
 	if finalized[1].runID != "run-valid" || finalized[1].invocation != "invocation-valid" || finalized[1].class != "" {
 		t.Fatalf("second finalization = %+v, want clean semantic success", finalized[1])

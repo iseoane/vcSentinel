@@ -71,7 +71,7 @@ func (c *Controller) finalizeMetrics(ctx context.Context, runID agentrun.Identit
 		}
 		return store.ExecutionMetrics{}, store.ErrImmutableConflict
 	}
-	if err := c.store.SaveExecutionMetrics(metrics); err != nil {
+	if err := c.store.SaveExecutionMetricsForRevision(metrics, projection.Revision); err != nil {
 		if errors.Is(err, store.ErrImmutableConflict) {
 			if existing, readErr := c.store.ReadExecutionMetrics(string(runID)); readErr == nil && existing != nil && reflect.DeepEqual(*existing, metrics) {
 				return *existing, nil

@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 )
 
 func writeExecutionMetricsTestRecord(t *testing.T, store *Store, runID string, data []byte) {
@@ -735,5 +737,61 @@ func TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce(t *testing.T) 
 		t.Fatal(err)
 	} else if !reflect.DeepEqual(got, &winner) {
 		t.Fatalf("persisted metrics = %#v, want exact successful writer snapshot %#v", got, &winner)
+	}
+}
+
+// TestSaveExecutionMetricsForRevisionRefusesAStaleHead pins the guard that
+// keeps a folded snapshot honest: between reading the durable evidence and
+// writing the snapshot, a concurrent retry can move the head. Freezing a run
+// that has already relaunched would record metrics that omit the new attempt
+// and then refuse every later retry, so the write must be refused instead.
+func TestSaveExecutionMetricsForRevisionRefusesAStaleHead(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	job := testJob()
+	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
+		t.Fatal(err)
+	}
+	appendStream(t, s, job, startSequence)
+
+	projection, err := s.ReadDerivedProjection(string(job.RunID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folded := projection.Revision
+
+	invocation, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := agentrun.NewNormalizedEvent(invocation, agentrun.StateRunning, agentrun.StateSucceeded,
+		agentrun.DecisionStart, time.Unix(1700000000, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendEvent(string(job.RunID()), moved, folded); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics := ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: string(job.RunID())}
+	if err := s.SaveExecutionMetricsForRevision(metrics, folded); !errors.Is(err, ErrStaleExecutionRevision) {
+		t.Fatalf("save error = %v, want ErrStaleExecutionRevision", err)
+	}
+	stored, err := s.ReadExecutionMetrics(string(job.RunID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != nil {
+		t.Fatalf("stored metrics = %+v, want none: the refused write must leave nothing behind", stored)
+	}
+
+	current, err := s.ReadDerivedProjection(string(job.RunID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveExecutionMetricsForRevision(metrics, current.Revision); err != nil {
+		t.Fatalf("save at the current revision error = %v", err)
+	}
+	if stored, err := s.ReadExecutionMetrics(string(job.RunID())); err != nil || stored == nil {
+		t.Fatalf("stored = %+v, err = %v; want the snapshot written at the current head", stored, err)
 	}
 }

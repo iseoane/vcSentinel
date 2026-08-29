@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
@@ -1738,5 +1739,138 @@ func TestReintentoDeFallosTransitoriosDelProveedor(t *testing.T) {
 				t.Errorf("veredicto = %q, esperado %q", got, caso.veredictoFin)
 			}
 		})
+	}
+}
+
+// policyFreeRichReviewer offers the rich seam that carries no tool policy and
+// records whether it was reached. It deliberately does not implement
+// ReviewWithPolicy, so an agent that cannot review under a policy is exactly
+// what it represents.
+type policyFreeRichReviewer struct{ called bool }
+
+func (r *policyFreeRichReviewer) EjecutarPrompt(string) (string, error) { return "", nil }
+
+func (r *policyFreeRichReviewer) ReviewWithContextResult(context.Context, string, string, []string) (acpadapter.Result, error) {
+	r.called = true
+	return acpadapter.Result{Output: `{"dim":"logic","verdict":"ok"}`}, nil
+}
+
+// policyCarryingRichReviewer offers the rich seam that accepts the resolved
+// policy and records what it received.
+type policyCarryingRichReviewer struct{ got reviewcontract.ToolPolicy }
+
+func (r *policyCarryingRichReviewer) EjecutarPrompt(string) (string, error) { return "", nil }
+
+func (r *policyCarryingRichReviewer) ReviewWithContextAndPolicyResult(_ context.Context, _, _ string, _ []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error) {
+	r.got = policy
+	return acpadapter.Result{Output: `{"dim":"logic","verdict":"ok"}`}, nil
+}
+
+// TestPolicyBoundRichReviewNeverBypassesTheToolPolicy pins the restriction
+// boundary: the rich result path is preferred by the durable adapter, so a
+// reviewer reached through it must receive the resolved policy. Routing to a
+// policy-free method would drop the tool restrictions AND the refusal that
+// protects an agent which cannot honour them.
+func TestPolicyBoundRichReviewNeverBypassesTheToolPolicy(t *testing.T) {
+	policy := reviewcontract.ToolPolicy{AllowRead: true, AllowSearch: true, RequireImmutableSnapshot: true}
+
+	t.Run("policy-free rich seam is refused, not used", func(t *testing.T) {
+		reviewer := &policyFreeRichReviewer{}
+		_, err := bindPolicy(reviewer, policy).ReviewWithContextAndPolicyResult(
+			context.Background(), "prompt", "sha", []string{"a.go"}, policy)
+		if reviewer.called {
+			t.Fatal("the policy-free rich method was reached; the resolved tool policy was dropped")
+		}
+		if !errors.Is(err, ErrRestrictedRequired) {
+			t.Fatalf("error = %v, want ErrRestrictedRequired for an agent that cannot review under a policy", err)
+		}
+	})
+
+	t.Run("policy-carrying rich seam receives the resolved policy", func(t *testing.T) {
+		reviewer := &policyCarryingRichReviewer{}
+		res, err := bindPolicy(reviewer, policy).ReviewWithContextAndPolicyResult(
+			context.Background(), "prompt", "sha", []string{"a.go"}, reviewcontract.ToolPolicy{})
+		if err != nil {
+			t.Fatalf("rich review error = %v", err)
+		}
+		if res.Output == "" {
+			t.Fatal("rich result lost its output")
+		}
+		if reviewer.got != policy {
+			t.Fatalf("policy = %+v, want the binding's resolved policy %+v", reviewer.got, policy)
+		}
+	})
+}
+
+// TestRefutationWithoutDurableMetricsKeepsTheBlocker pins the ordering that
+// protects a verdict: the refutation is a distinct durable invocation that
+// flips a confirmed CRITICAL, so its snapshot must exist before the downgrade
+// is applied. When the snapshot cannot be recorded the blocker stands, because
+// failing closed can only delay a correct downgrade, never hide a defect.
+func TestRefutationWithoutDurableMetricsKeepsTheBlocker(t *testing.T) {
+	fabrica, _ := fabricaFija([]string{
+		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"bug","source":"review","status":"pending","evidence":"bad()","location":{"file":"a.go","line_start":1}}]}`,
+	})
+	fabricaRefutador, _ := fabricaRefutadorFija([]string{`{"refuted":true,"reason":"bad() is guarded by the final implementation","sha":"abc12345","file":"a.go","evidence":"bad() guarded","line_start":1,"line_end":1}`})
+	directo := transporteDirecto("abc12345")
+	transport := func(bundle, dim, prompt string, agente AuditorAgente) (string, ReviewEvidence, error) {
+		salida, _, err := directo(bundle, dim, prompt, agente)
+		if bundle == "refutation" {
+			return salida, ReviewEvidence{RunID: "run-refutation", InvocationID: "inv-refutation"}, err
+		}
+		return salida, ReviewEvidence{RunID: "run-dimension", InvocationID: "inv-dimension"}, err
+	}
+
+	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: "abc12345", Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransportWithEvidence: transport,
+		FinalizeMetrics: func(runID, _, _, _ string) error {
+			if runID == "run-refutation" {
+				return errors.New("metrics snapshot could not be written")
+			}
+			return nil
+		},
+		LeerContenidoSnapshot: func(string, string) (string, error) { return "bad() guarded", nil },
+	})
+
+	if resultado.Veredicto != VerdictBlock {
+		t.Fatalf("verdict = %q, want %q: an unrecorded refutation must not downgrade", resultado.Veredicto, VerdictBlock)
+	}
+	dimension := resultado.Dims[0].Resultado
+	if dimension.RefutedCritical {
+		t.Fatal("RefutedCritical is set although the refutation left no durable evidence")
+	}
+	if len(dimension.Findings) != 1 || dimension.Findings[0].Status != StatusConfirmed {
+		t.Fatalf("findings = %+v, want the critical finding still confirmed", dimension.Findings)
+	}
+}
+
+// TestSemanticFailureKeepsItsClass pins what the metrics record. Every
+// deterministic output failure carries a class, and the retry policy already
+// treats a denied tool as something other than a format problem, so folding
+// them all into invalid_output would make the aggregate describe a permission
+// failure as malformed output.
+func TestSemanticFailureKeepsItsClass(t *testing.T) {
+	cases := []struct {
+		name  string
+		class SemanticOutputClass
+	}{
+		{name: "denied tool", class: SemanticOutputToolDenied},
+		{name: "malformed output", class: SemanticOutputMalformedJSON},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := newSemanticOutputError(tc.class, ErrJSONLInvalido, "output")
+			got, detail := semanticFailure(err)
+			if got != string(tc.class) {
+				t.Errorf("class = %q, want %q", got, tc.class)
+			}
+			if detail == "" {
+				t.Error("detail is empty; the failure lost its evidence")
+			}
+		})
+	}
+	if class, detail := semanticFailure(errors.New("not semantic")); class != "" || detail != "" {
+		t.Errorf("class/detail = %q/%q, want empty for a non-semantic error", class, detail)
 	}
 }
