@@ -60,6 +60,18 @@ func TestCausasDelProveedor(t *testing.T) {
 		}
 	})
 
+	t.Run("un flujo con finales de linea CRLF da la misma causa", func(t *testing.T) {
+		// Un proveedor lanzado desde Windows termina sus líneas con CRLF. La
+		// causa debe salir idéntica a la de un flujo LF: si el retorno de
+		// carro sobreviviera al recorte, la misma causa contaría como dos
+		// distintas y la razón enriquecida diferiría según el sistema.
+		crlf := "\x1b[91mError: \x1b[0mripgrep execution failed\r\nError: ripgrep execution failed\r\n"
+		causas := causasDelProveedor(crlf)
+		if len(causas) != 1 || causas[0] != "ripgrep execution failed" {
+			t.Fatalf("causas = %q, want the same single cause as an LF stream", causas)
+		}
+	})
+
 	t.Run("un fallo sin causa impresa se deja intacto", func(t *testing.T) {
 		mensaje := "exit status 1"
 		if causas := causasDelProveedor(mensaje); len(causas) != 0 {
