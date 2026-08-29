@@ -244,7 +244,8 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	// directly.
 	engine := readFile(t, root, "internal/review/engine.go")
 	refuteBody := functionBody(t, engine, "func refutarHallazgosCriticos(")
-	if !strings.Contains(refuteBody, `transport("refutation"`) {
+	richRefuteBody := functionBody(t, engine, "func refutarHallazgosCriticosConEvidencia(")
+	if !strings.Contains(refuteBody, `transport("refutation"`) && !strings.Contains(richRefuteBody, `transport("refutation"`) {
 		t.Errorf("refutarHallazgosCriticos must route refutations through the admitted ReviewTransport when one is present")
 	}
 }
