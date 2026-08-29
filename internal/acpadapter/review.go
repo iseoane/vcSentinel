@@ -252,7 +252,7 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 		Usage:           stream.Usage,
 		Enforcement:     a.enforcement,
 	}
-	a.recordObserved(stream.ObservedModel)
+	a.recordObserved(stream.ObservedModel, stream.ObservedEffort)
 
 	switch {
 	case exceeded:

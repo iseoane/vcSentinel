@@ -146,18 +146,30 @@ func TestFoldExecutionMetricsAggregatesByAgentAndPreservesUnknownAttempts(t *tes
 			Usage:         &store.ExecutionTokenUsage{InputTokens: &input, OutputTokens: &output, Source: store.ObservationSourceAdapter},
 		}
 	}
+	thirdDuration := 5 * time.Nanosecond
 	complete := foldExecutionMetrics("run-fold", []store.AttemptOutcome{
 		{InvocationID: "inv-1", Class: agentrun.OutcomeSuccess, Observation: observed("inv-1", "agent-a", firstDuration)},
-		{InvocationID: "inv-2", Class: agentrun.OutcomeSuccess, Observation: observed("inv-2", "agent-a", secondDuration)},
+		{InvocationID: "inv-2", Class: agentrun.OutcomeSuccess, Observation: observed("inv-2", "agent-b", secondDuration)},
+		{InvocationID: "inv-3", Class: agentrun.OutcomeSuccess, Observation: observed("inv-3", "agent-a", thirdDuration)},
 	}, nil)
-	if complete.Timing == nil || complete.Timing.TotalDurationNanos == nil || *complete.Timing.TotalDurationNanos != firstDuration+secondDuration {
-		t.Fatalf("timing = %+v, want sum of both physical attempts", complete.Timing)
+	if complete.Timing == nil || complete.Timing.TotalDurationNanos == nil ||
+		*complete.Timing.TotalDurationNanos != firstDuration+secondDuration+thirdDuration {
+		t.Fatalf("timing = %+v, want sum of every physical attempt", complete.Timing)
 	}
-	if len(complete.Timing.ByAgent) != 1 || complete.Timing.ByAgent[0].Identity.Agent != "agent-a" ||
-		complete.Timing.ByAgent[0].DurationNanos != firstDuration+secondDuration {
-		t.Fatalf("ByAgent = %+v, want summed truthful agent timing", complete.Timing.ByAgent)
+	// Two agents with an interleaved third attempt: an implementation that
+	// collapsed every attempt into one bucket, or that opened a new bucket per
+	// attempt, fails here. A single-agent fixture would let both pass.
+	byAgent := map[string]time.Duration{}
+	for _, row := range complete.Timing.ByAgent {
+		if _, repeated := byAgent[row.Identity.Agent]; repeated {
+			t.Fatalf("ByAgent = %+v, want one row per agent", complete.Timing.ByAgent)
+		}
+		byAgent[row.Identity.Agent] = row.DurationNanos
 	}
-	if complete.Usage == nil || complete.Usage.InputTokens == nil || *complete.Usage.InputTokens != 2*input {
+	if len(byAgent) != 2 || byAgent["agent-a"] != firstDuration+thirdDuration || byAgent["agent-b"] != secondDuration {
+		t.Fatalf("ByAgent = %+v, want per-agent sums a=%v b=%v", complete.Timing.ByAgent, firstDuration+thirdDuration, secondDuration)
+	}
+	if complete.Usage == nil || complete.Usage.InputTokens == nil || *complete.Usage.InputTokens != 3*input {
 		t.Fatalf("usage = %+v, want summed usage", complete.Usage)
 	}
 
@@ -193,8 +205,26 @@ func TestControllerFinalizationPreservesSemanticInvalidOutput(t *testing.T) {
 	}
 }
 
+// blockingObservedAdapter announces that its invocation started, then waits.
+// It lets the test hold the provider call open for a known minimum, so the
+// recorded duration can be asserted against real elapsed time.
+type blockingObservedAdapter struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (a blockingObservedAdapter) Execute(context.Context, agentrun.LogicalJob, agentrun.InvocationEnvelope, string) (AdapterResult, error) {
+	close(a.started)
+	<-a.release
+	return AdapterResult{Output: "observed output", Observation: &AdapterObservation{Agent: "acpx:claude"}}, nil
+}
+
 func TestControllerObservationDurationUsesMonotonicClock(t *testing.T) {
-	adapter := observedAdapter{}
+	const held = 5 * time.Millisecond
+	adapter := blockingObservedAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	// The injected clock never advances. Any duration derived from it would be
+	// exactly zero, so a value at or above the held interval can only come from
+	// a monotonic measurement around the provider call.
 	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, func() time.Time {
 		return time.Unix(1700000000, 0).UTC()
 	})
@@ -202,6 +232,9 @@ func TestControllerObservationDurationUsesMonotonicClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	<-adapter.started
+	time.Sleep(held)
+	close(adapter.release)
 	if _, err := handle.Wait(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -209,8 +242,12 @@ func TestControllerObservationDurationUsesMonotonicClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Outcomes[0].DurationNanos == nil {
+	observed := inspection.Outcomes[0].DurationNanos
+	if observed == nil {
 		t.Fatal("duration missing from terminal attempt observation")
+	}
+	if *observed < held {
+		t.Fatalf("duration = %v, want at least the %v the provider call was held open", *observed, held)
 	}
 }
 

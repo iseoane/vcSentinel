@@ -245,8 +245,14 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	engine := readFile(t, root, "internal/review/engine.go")
 	refuteBody := functionBody(t, engine, "func refutarHallazgosCriticos(")
 	richRefuteBody := functionBody(t, engine, "func refutarHallazgosCriticosConEvidencia(")
-	if !strings.Contains(refuteBody, `transport("refutation"`) && !strings.Contains(richRefuteBody, `transport("refutation"`) {
-		t.Errorf("refutarHallazgosCriticos must route refutations through the admitted ReviewTransport when one is present")
+	if !strings.Contains(richRefuteBody, `transport("refutation"`) {
+		t.Errorf("refutarHallazgosCriticosConEvidencia must route refutations through the admitted ReviewTransport when one is present")
+	}
+	// The legacy entry point no longer issues the call itself: it wraps the
+	// transport and delegates. Requiring the delegation keeps the invariant
+	// exact for both paths instead of letting one satisfy the check for both.
+	if !strings.Contains(refuteBody, "refutarHallazgosCriticosConEvidencia(") {
+		t.Errorf("refutarHallazgosCriticos must delegate to the evidence-carrying refuter instead of reaching a reviewer directly")
 	}
 }
 

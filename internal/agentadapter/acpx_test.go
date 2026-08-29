@@ -60,7 +60,7 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv(acpxHelperModeEnv) {
 	case acpxHelperOK:
 		fmt.Print(strings.Join([]string{
-			`{"jsonrpc":"2.0","id":0,"result":{"configOptions":[{"id":"model","currentValue":"observed-model-x"}]}}`,
+			`{"jsonrpc":"2.0","id":0,"result":{"configOptions":[{"id":"model","currentValue":"observed-model-x"},{"id":"effort","currentValue":"observed-effort-x"}]}}`,
 			`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"BRIDGE PARITY OUTPUT"}}}}`,
 			`{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}`,
 			"",
@@ -483,7 +483,7 @@ func TestBridgeAttributionReportsOnlyWireObservedIdentity(t *testing.T) {
 	if efectivo.Modelo != "observed-model-x" {
 		t.Errorf("observed model = %q, want the model announced on the wire", efectivo.Modelo)
 	}
-	if efectivo.Esfuerzo != "" {
-		t.Errorf("observed effort = %q, want empty: ACP reported no effort", efectivo.Esfuerzo)
+	if efectivo.Esfuerzo != "observed-effort-x" {
+		t.Errorf("observed effort = %q, want the effort announced on the wire, not the configured %q", efectivo.Esfuerzo, "high")
 	}
 }

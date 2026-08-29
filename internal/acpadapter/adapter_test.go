@@ -260,7 +260,7 @@ func TestEffectiveIdentityTable(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.runObserved {
-				a.recordObserved(tc.observed)
+				a.recordObserved(tc.observed, "")
 			}
 			got := a.EffectiveIdentity()
 			if got.Binary != tc.wantBinary {

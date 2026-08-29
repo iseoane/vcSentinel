@@ -445,6 +445,26 @@ func TestRunsStartAdmitsAndCompletesThroughConfiguredAgent(t *testing.T) {
 	if metrics == nil || metrics.RunID != decoded["run_id"].(string) {
 		t.Fatalf("start metrics = %+v, want immutable final snapshot", metrics)
 	}
+	// Presence is not the contract: a snapshot that carried no measurement
+	// would satisfy a nil check while reporting nothing. A successful run must
+	// carry its schema version, a known total duration, the observed responder,
+	// and no failure.
+	if metrics.Version != store.ExecutionMetricsSchemaVersion {
+		t.Fatalf("metrics version = %d, want %d", metrics.Version, store.ExecutionMetricsSchemaVersion)
+	}
+	if len(metrics.Failures) != 0 {
+		t.Fatalf("metrics failures = %+v, want none for a succeeded run", metrics.Failures)
+	}
+	if metrics.Timing == nil || metrics.Timing.TotalDurationNanos == nil || *metrics.Timing.TotalDurationNanos < 0 {
+		t.Fatalf("metrics timing = %+v, want a known non-negative total duration", metrics.Timing)
+	}
+	// A plain CLI delegate exposes no wire identity, so the snapshot records
+	// none. Pinning that absence is the point: the configured model and effort
+	// are a declaration, and the producer must never promote them to observed
+	// evidence just to fill the field.
+	if len(metrics.Identities) != 0 {
+		t.Fatalf("metrics identities = %+v, want none: this delegate reports no observed identity", metrics.Identities)
+	}
 
 	second, secondCode := captureRunsOutput(t, func(w io.Writer) int {
 		return executeRuns(w, worktree, []string{"start", "--prompt", "do the thing", "--json"})

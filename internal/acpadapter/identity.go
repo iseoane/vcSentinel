@@ -42,12 +42,13 @@ func (a *AcpxAdapter) EffectiveIdentity() EffectiveAgent {
 // Unlike EffectiveIdentity, it never echoes configured model or effort when
 // ACP omitted those values on the wire.
 func (a *AcpxAdapter) ObservedIdentity() EffectiveAgent {
-	model, known := a.observedModel()
+	model, effort, known := a.observedRun()
 	if !known {
-		model = ""
+		model, effort = "", ""
 	}
 	return EffectiveAgent{
 		Binary: filepath.Base(a.launcher[0]) + ":" + a.agent,
 		Model:  model,
+		Effort: effort,
 	}
 }

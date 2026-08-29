@@ -80,9 +80,10 @@ type AcpxAdapter struct {
 	maxOutputBytes    int64
 	childEnv          []string
 
-	mu            sync.Mutex
-	lastObserved  string
-	observedKnown bool
+	mu                 sync.Mutex
+	lastObserved       string
+	lastObservedEffort string
+	observedKnown      bool
 
 	// enforcement is the validated enforcement declaration this adapter was
 	// built with (normalized empty -> EnforcementNone at construction).
@@ -323,11 +324,21 @@ func (a *AcpxAdapter) Run(ctx context.Context, prompt string) (Result, error) {
 	return a.run(ctx, a.Args(prompt))
 }
 
-func (a *AcpxAdapter) recordObserved(model string) {
+func (a *AcpxAdapter) recordObserved(model, effort string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.lastObserved = model
+	a.lastObservedEffort = effort
 	a.observedKnown = true
+}
+
+// observedRun returns the model and effort captured during the most recent
+// run. Both come from the same parsed stream, so they share one known flag:
+// either a run has completed and reported what it reported, or none has.
+func (a *AcpxAdapter) observedRun() (model, effort string, known bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.lastObserved, a.lastObservedEffort, a.observedKnown
 }
 
 // observedModel returns the model captured during the most recent run, if
