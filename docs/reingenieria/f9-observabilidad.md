@@ -150,6 +150,31 @@ Reviewer note. Review, gate, and `pr review` resolve their agent through
 `NewAgentAdapterParaMensaje`, so it cannot redirect a review: this candidate
 was audited by the OpenCode reviewer the plan fixes, with no deviation.
 
+Accepted findings (T9.1b, recorded at closure). No CRITICAL remains and every
+blocked ficha is marked corrected. These stay open with their reason:
+
+- The adapter-site assertions are source substring checks, so they cannot prove
+  behaviour. That is the existing repository pattern for pinning a call site
+  that has no reachable seam; the behaviour itself is covered by the store and
+  controller tests.
+- The monotonic-duration test asserts a lower bound over a real interval. Fully
+  controlled timing would require injecting a monotonic source into the
+  controller, which is a design change rather than a test fix.
+- The stale-revision test moves the head before the write instead of exercising
+  a concurrent interleaving. The guarantee comes from running the check inside
+  `withExecutionLock`, and concurrent write-once is already covered by
+  `TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce`; an assertion
+  over the interleaving itself would be non-deterministic.
+- The CLI runs test pins the absence of observed identity. That absence is the
+  contract for a delegate that reports none; a delegate that does report one is
+  covered by the adapter and controller observation tests.
+
+Identity coverage for T9.3a: a run served by a plain CLI adapter contributes no
+observed identity, because the configured model and effort are a declaration
+rather than evidence. Per-model aggregates therefore cover ACP-served runs
+only, and must report the rest as unknown rather than attributing them to the
+configured model.
+
 ### T9.2 — structured append-only events
 
 Write new `detail` values as typed JSON objects. Read legacy strings, new

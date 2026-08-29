@@ -609,3 +609,26 @@ source in the agent execution path:
 Target: revisit when a provider exposes cost, or when validation-scope and
 capability-reuse evidence gains a durable home of its own. Until then T9.3a
 must report zero coverage for the three, never a measured zero.
+
+### FU-4: the T9.1b producer seam carries structural debt
+
+Recorded 2026-08-29 when T9.1b was accepted. Every item below was raised as a
+WARNING by the phase reviewer, verified, and deferred as structural work on the
+seam T9.1b had just built rather than as a defect in it.
+
+- `internal/review/engine.go` now imports `internal/acpadapter` and exposes its
+  result type through the reviewer capability. The domain engine therefore has
+  to change for each provider's result shape, which reverses the intended
+  dependency direction.
+- Metrics finalization crosses into the review domain as a four-string
+  callback, and each command wiring converts it into storage failures
+  separately. The primitive signature leaves ownership and the valid failure
+  values implicit.
+- `observedAgent` now owns two capability descents over the same wrapper: the
+  rich policy-aware one and the older `ReviewWithContextAndPolicy` one. They
+  are maintained independently and can diverge on policy enforcement, context
+  handling, or authorship recording.
+
+Target: a provider-neutral rich result contract that lets one descent serve
+both paths. Doing it inside T9.1b would have rewritten the seam under test
+while its own correctness was still being established.
