@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -95,14 +96,25 @@ func TestParsearFlagsGate(t *testing.T) {
 	})
 
 	t.Run("timeout irrepresentable es error", func(t *testing.T) {
-		// Un valor positivo y parseable pero mayor que el máximo desbordaría
-		// al pasarlo a time.Duration y quedaría negativo.
+		// Por encima del máximo el valor desbordaría time.Duration y quedaría
+		// negativo. En 32 bits ni siquiera llega ahí, porque strconv.Atoi lo
+		// rechaza antes por rango; ambos caminos son un error y eso es lo que
+		// se afirma aquí, sin atarse a la anchura de int de la plataforma.
 		_, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maxSegundosTimeout+1, 10)})
 		if err == nil {
 			t.Fatal("se esperaba error por timeout irrepresentable")
 		}
-		if _, _, timeout, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maxSegundosTimeout, 10)}); err != nil || int64(timeout) != maxSegundosTimeout {
-			t.Errorf("el máximo exacto debe aceptarse, obtuve timeout=%d err=%v", timeout, err)
+
+		// El mayor valor ACEPTABLE depende de la plataforma: donde int es de
+		// 32 bits, la cota de duración queda fuera de alcance y el techo real
+		// es el del propio int. Fijar el valor de 64 bits haría fallar la
+		// suite justo en los objetivos que el arreglo de producción protege.
+		maximo := maxSegundosTimeout
+		if int64(math.MaxInt) < maximo {
+			maximo = int64(math.MaxInt)
+		}
+		if _, _, timeout, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maximo, 10)}); err != nil || int64(timeout) != maximo {
+			t.Errorf("el máximo aceptable debe aceptarse, obtuve timeout=%d err=%v", timeout, err)
 		}
 	})
 
