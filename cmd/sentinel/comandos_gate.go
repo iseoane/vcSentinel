@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"time"
 
@@ -61,9 +62,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 
 	// El override llega DESPUÉS de la carga estricta: --timeout no puede
 	// rescatar un yml inválido, solo ampliar el presupuesto de esta revisión.
-	if timeout > 0 {
-		cfg.Review.Timeout = time.Duration(timeout) * time.Second
-	}
+	cfg = aplicarTimeoutSegundos(cfg, timeout)
 
 	if _, ok := cfg.Validation.Profiles[perfil]; !ok {
 		fmt.Fprintf(w, "❌ El perfil de validación %q no está configurado. Define validation.profiles.%s en vassentinel.yml o indica --profile con un perfil existente.\n", perfil, perfil)
@@ -195,6 +194,12 @@ func registrarEventoGate(worktree, stage, estado string) {
 	_ = ops.RegistrarEvento(gitDir, "gate", gate.CodigoSalida(estado), nil, detalle, worktree)
 }
 
+// maxSegundosTimeout es el mayor valor de --timeout que time.Duration puede
+// representar. Sin este techo un valor positivo y perfectamente parseable
+// desborda al multiplicarlo por time.Second y se convierte en una duración
+// negativa, así que el override se aceptaría sin representar lo pedido.
+const maxSegundosTimeout = int(math.MaxInt64 / int64(time.Second))
+
 // parsearFlagsGate extrae --stage (obligatorio, valores fijos), --profile
 // (opcional, perfilGatePorDefecto si se omite) y --timeout (opcional).
 //
@@ -228,6 +233,9 @@ func parsearFlagsGate(args []string) (stage, perfil string, timeout int, err err
 			segundos, convErr := strconv.Atoi(args[i])
 			if convErr != nil || segundos <= 0 {
 				return "", "", 0, fmt.Errorf("--timeout %q no es un número de segundos positivo", args[i])
+			}
+			if segundos > maxSegundosTimeout {
+				return "", "", 0, fmt.Errorf("--timeout %q excede el máximo representable (%d segundos)", args[i], maxSegundosTimeout)
 			}
 			timeout = segundos
 		default:

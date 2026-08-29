@@ -234,6 +234,18 @@ func aplicarTimeoutFlag(cfg config.Config, flags flagsAuditoria) config.Config {
 	return cfg
 }
 
+// aplicarTimeoutSegundos es el mismo override expresado en segundos, que es
+// como lo recibe el gate. Vive junto a aplicarTimeoutFlag a propósito: un
+// único sitio decide qué campo se sustituye, así que review y gate no pueden
+// divergir en unidad ni en destino.
+func aplicarTimeoutSegundos(cfg config.Config, segundos int) config.Config {
+	if segundos <= 0 {
+		return cfg
+	}
+	cfg.Review.Timeout = time.Duration(segundos) * time.Second
+	return cfg
+}
+
 // purgarHuerfanas borra las fichas de commits que ya no existen en el repo y
 // devuelve los SHAs eliminados. Útil tras rebase/amend/squash.
 func purgarHuerfanas(gitDir string) ([]string, error) {

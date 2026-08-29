@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
 // escribirYmlGateTest escribe un vassentinel.yml per-proyecto para los tests
@@ -18,6 +22,27 @@ func escribirYmlGateTest(t *testing.T, ruta, contenido string) {
 	if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
 		t.Fatalf("no se pudo escribir %s: %v", ruta, err)
 	}
+}
+
+// TestAplicarTimeoutSegundos cubre el otro extremo del flag: que el valor
+// parseado llegue de verdad a review.Timeout, en segundos y en ese campo.
+// Comprobar solo el parser dejaría pasar un override borrado, en la unidad
+// equivocada o escrito en otro campo.
+func TestAplicarTimeoutSegundos(t *testing.T) {
+	base := config.Config{Review: config.ReviewConfig{Timeout: 600 * time.Second}}
+
+	t.Run("sustituye review.timeout en segundos", func(t *testing.T) {
+		got := aplicarTimeoutSegundos(base, 1200)
+		if got.Review.Timeout != 1200*time.Second {
+			t.Errorf("Review.Timeout = %v, esperaba 1200s", got.Review.Timeout)
+		}
+	})
+
+	t.Run("sin override el yml manda", func(t *testing.T) {
+		if got := aplicarTimeoutSegundos(base, 0); got.Review.Timeout != base.Review.Timeout {
+			t.Errorf("Review.Timeout = %v, esperaba el valor del yml %v", got.Review.Timeout, base.Review.Timeout)
+		}
+	})
 }
 
 // TestParsearFlagsGate cubre --stage obligatorio con valores fijos y
@@ -66,6 +91,18 @@ func TestParsearFlagsGate(t *testing.T) {
 		}
 		if timeout != 0 {
 			t.Errorf("timeout = %d, esperaba 0: sin flag el yml manda", timeout)
+		}
+	})
+
+	t.Run("timeout irrepresentable es error", func(t *testing.T) {
+		// Un valor positivo y parseable pero mayor que el máximo desbordaría
+		// al pasarlo a time.Duration y quedaría negativo.
+		_, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.Itoa(maxSegundosTimeout + 1)})
+		if err == nil {
+			t.Fatal("se esperaba error por timeout irrepresentable")
+		}
+		if _, _, timeout, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.Itoa(maxSegundosTimeout)}); err != nil || timeout != maxSegundosTimeout {
+			t.Errorf("el máximo exacto debe aceptarse, obtuve timeout=%d err=%v", timeout, err)
 		}
 	})
 
