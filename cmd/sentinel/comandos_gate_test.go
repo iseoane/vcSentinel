@@ -97,11 +97,11 @@ func TestParsearFlagsGate(t *testing.T) {
 	t.Run("timeout irrepresentable es error", func(t *testing.T) {
 		// Un valor positivo y parseable pero mayor que el máximo desbordaría
 		// al pasarlo a time.Duration y quedaría negativo.
-		_, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.Itoa(maxSegundosTimeout + 1)})
+		_, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maxSegundosTimeout+1, 10)})
 		if err == nil {
 			t.Fatal("se esperaba error por timeout irrepresentable")
 		}
-		if _, _, timeout, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.Itoa(maxSegundosTimeout)}); err != nil || timeout != maxSegundosTimeout {
+		if _, _, timeout, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maxSegundosTimeout, 10)}); err != nil || int64(timeout) != maxSegundosTimeout {
 			t.Errorf("el máximo exacto debe aceptarse, obtuve timeout=%d err=%v", timeout, err)
 		}
 	})

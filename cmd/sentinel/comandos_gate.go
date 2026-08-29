@@ -198,7 +198,13 @@ func registrarEventoGate(worktree, stage, estado string) {
 // representar. Sin este techo un valor positivo y perfectamente parseable
 // desborda al multiplicarlo por time.Second y se convierte en una duración
 // negativa, así que el override se aceptaría sin representar lo pedido.
-const maxSegundosTimeout = int(math.MaxInt64 / int64(time.Second))
+//
+// Es int64 y no int a propósito: el valor no cabe en un int de 32 bits, y
+// declararlo así impedía COMPILAR el paquete entero en esos objetivos aunque
+// time.Duration siguiera siendo int64 y pudiera representarlo. En 32 bits la
+// comprobación resulta inalcanzable —el máximo de un int es menor— y eso es
+// correcto: allí ningún valor parseable puede desbordar.
+const maxSegundosTimeout int64 = math.MaxInt64 / int64(time.Second)
 
 // parsearFlagsGate extrae --stage (obligatorio, valores fijos), --profile
 // (opcional, perfilGatePorDefecto si se omite) y --timeout (opcional).
@@ -234,7 +240,7 @@ func parsearFlagsGate(args []string) (stage, perfil string, timeout int, err err
 			if convErr != nil || segundos <= 0 {
 				return "", "", 0, fmt.Errorf("--timeout %q no es un número de segundos positivo", args[i])
 			}
-			if segundos > maxSegundosTimeout {
+			if int64(segundos) > maxSegundosTimeout {
 				return "", "", 0, fmt.Errorf("--timeout %q excede el máximo representable (%d segundos)", args[i], maxSegundosTimeout)
 			}
 			timeout = segundos
