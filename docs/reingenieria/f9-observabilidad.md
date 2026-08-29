@@ -144,13 +144,11 @@ omission:
 Consequence for T9.3a: report the three as zero coverage, never as a measured
 zero. The producers they would require are recorded as FU-3 in `f0-deuda.md`.
 
-Reviewer deviation (this candidate only). The plan fixes the repository YAML's
-OpenCode reviewer for check, slice, review, gate, and evidence verification.
-That provider was out of quota when this candidate was frozen, so review and
-gate ran under `MY_SUB_AGENT=claude`, which overrides `active_agent` without
-changing the committed configuration. The YAML is unmodified; only this run's
-reviewer identity deviates, and the effective identity stays recorded in the
-durable evidence.
+Reviewer note. Review, gate, and `pr review` resolve their agent through
+`agentadapter.NuevoAdaptadorConPerfil`, which reads `perfil.Binario` and then
+`cfg.ActiveAgent`. `MY_SUB_AGENT` reaches only `NewAgentAdapter` and
+`NewAgentAdapterParaMensaje`, so it cannot redirect a review: this candidate
+was audited by the OpenCode reviewer the plan fixes, with no deviation.
 
 ### T9.2 — structured append-only events
 
