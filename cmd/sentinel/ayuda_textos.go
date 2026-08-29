@@ -108,11 +108,12 @@ Example:
 	textoAyudaGate = `Purpose: run deterministic validation followed by semantic review of HEAD.
 
 Usage:
-  sentinel gate --stage pre-commit|pre-push|pr [--profile X]
+  sentinel gate --stage pre-commit|pre-push|pr [--profile X] [--timeout N]
 
 Flags:
   --stage    Lifecycle stage invoking the gate (required): pre-commit, pre-push, or pr.
   --profile  Validation profile from validation.profiles (default standard). It selects validation configuration, never review configuration.
+  --timeout  Per-call agent timeout override in seconds, for this invocation only. Same meaning as in review: it replaces review.timeout without editing the yml.
 
 Example:
   sentinel gate --stage pre-commit

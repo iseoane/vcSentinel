@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
+	"strconv"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
@@ -42,7 +44,7 @@ const perfilGatePorDefecto = "standard"
 // patrón que ejecutarSlicePlan/ejecutarSliceApply) para poder testear sin
 // terminar el proceso.
 func ejecutarGate(w io.Writer, worktree string, args []string) int {
-	stage, perfil, err := parsearFlagsGate(args)
+	stage, perfil, timeout, err := parsearFlagsGate(args)
 	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
 		return 1
@@ -55,6 +57,12 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		// orquestador, fuera del texto original de T1.7).
 		fmt.Fprintf(w, "❌ Error de configuración: %v\n", err)
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
+	}
+
+	// El override llega DESPUÉS de la carga estricta: --timeout no puede
+	// rescatar un yml inválido, solo ampliar el presupuesto de esta revisión.
+	if timeout > 0 {
+		cfg.Review.Timeout = time.Duration(timeout) * time.Second
 	}
 
 	if _, ok := cfg.Validation.Profiles[perfil]; !ok {
@@ -187,33 +195,50 @@ func registrarEventoGate(worktree, stage, estado string) {
 	_ = ops.RegistrarEvento(gitDir, "gate", gate.CodigoSalida(estado), nil, detalle, worktree)
 }
 
-// parsearFlagsGate extrae --stage (obligatorio, valores fijos) y --profile
-// (opcional, perfilGatePorDefecto si se omite).
-func parsearFlagsGate(args []string) (stage, perfil string, err error) {
+// parsearFlagsGate extrae --stage (obligatorio, valores fijos), --profile
+// (opcional, perfilGatePorDefecto si se omite) y --timeout (opcional).
+//
+// --timeout tiene exactamente la misma semántica que en review: sustituye
+// review.timeout SOLO en esta invocación. El gate ejecuta la misma revisión
+// semántica, así que negarle la palanca obligaba a editar el yml —un cambio
+// global y persistente— para un candidato grande puntual. Ampliar el
+// presupuesto no debilita ninguna puerta: una revisión que iba a bloquear
+// sigue bloqueando, solo llega a terminar.
+func parsearFlagsGate(args []string) (stage, perfil string, timeout int, err error) {
 	perfil = perfilGatePorDefecto
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--stage":
 			i++
 			if i >= len(args) {
-				return "", "", fmt.Errorf("--stage requiere un valor (pre-commit, pre-push o pr)")
+				return "", "", 0, fmt.Errorf("--stage requiere un valor (pre-commit, pre-push o pr)")
 			}
 			stage = args[i]
 		case "--profile":
 			i++
 			if i >= len(args) {
-				return "", "", fmt.Errorf("--profile requiere un valor")
+				return "", "", 0, fmt.Errorf("--profile requiere un valor")
 			}
 			perfil = args[i]
+		case "--timeout":
+			i++
+			if i >= len(args) {
+				return "", "", 0, fmt.Errorf("--timeout requiere un valor en segundos")
+			}
+			segundos, convErr := strconv.Atoi(args[i])
+			if convErr != nil || segundos <= 0 {
+				return "", "", 0, fmt.Errorf("--timeout %q no es un número de segundos positivo", args[i])
+			}
+			timeout = segundos
 		default:
-			return "", "", fmt.Errorf("flag no reconocido: %q (usa --stage y --profile)", args[i])
+			return "", "", 0, fmt.Errorf("flag no reconocido: %q (usa --stage, --profile y --timeout)", args[i])
 		}
 	}
 	if stage == "" {
-		return "", "", fmt.Errorf("--stage es obligatorio (valores: pre-commit, pre-push, pr)")
+		return "", "", 0, fmt.Errorf("--stage es obligatorio (valores: pre-commit, pre-push, pr)")
 	}
 	if !etapasValidasGate[stage] {
-		return "", "", fmt.Errorf("--stage %q no es válido (valores: pre-commit, pre-push, pr)", stage)
+		return "", "", 0, fmt.Errorf("--stage %q no es válido (valores: pre-commit, pre-push, pr)", stage)
 	}
-	return stage, perfil, nil
+	return stage, perfil, timeout, nil
 }

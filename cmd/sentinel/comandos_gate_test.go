@@ -24,7 +24,7 @@ func escribirYmlGateTest(t *testing.T, ruta, contenido string) {
 // --profile opcional con su default.
 func TestParsearFlagsGate(t *testing.T) {
 	t.Run("stage valido sin profile usa el default", func(t *testing.T) {
-		stage, perfil, err := parsearFlagsGate([]string{"--stage", "pre-commit"})
+		stage, perfil, _, err := parsearFlagsGate([]string{"--stage", "pre-commit"})
 		if err != nil {
 			t.Fatalf("no se esperaba error: %v", err)
 		}
@@ -34,7 +34,7 @@ func TestParsearFlagsGate(t *testing.T) {
 	})
 
 	t.Run("stage y profile explicitos", func(t *testing.T) {
-		stage, perfil, err := parsearFlagsGate([]string{"--stage", "pr", "--profile", "custom"})
+		stage, perfil, _, err := parsearFlagsGate([]string{"--stage", "pr", "--profile", "custom"})
 		if err != nil {
 			t.Fatalf("no se esperaba error: %v", err)
 		}
@@ -44,13 +44,44 @@ func TestParsearFlagsGate(t *testing.T) {
 	})
 
 	t.Run("stage ausente es error", func(t *testing.T) {
-		if _, _, err := parsearFlagsGate([]string{}); err == nil {
+		if _, _, _, err := parsearFlagsGate([]string{}); err == nil {
 			t.Fatal("se esperaba error por --stage ausente")
 		}
 	})
 
+	t.Run("timeout valido sustituye review.timeout solo en esta invocacion", func(t *testing.T) {
+		_, _, timeout, err := parsearFlagsGate([]string{"--stage", "pre-push", "--timeout", "1200"})
+		if err != nil {
+			t.Fatalf("no se esperaba error: %v", err)
+		}
+		if timeout != 1200 {
+			t.Errorf("timeout = %d, esperaba 1200", timeout)
+		}
+	})
+
+	t.Run("sin timeout no hay override", func(t *testing.T) {
+		_, _, timeout, err := parsearFlagsGate([]string{"--stage", "pre-push"})
+		if err != nil {
+			t.Fatalf("no se esperaba error: %v", err)
+		}
+		if timeout != 0 {
+			t.Errorf("timeout = %d, esperaba 0: sin flag el yml manda", timeout)
+		}
+	})
+
+	t.Run("timeout no numerico o no positivo es error", func(t *testing.T) {
+		for _, valor := range []string{"abc", "0", "-5"} {
+			if _, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout", valor}); err == nil {
+				t.Errorf("--timeout %q deberia ser error", valor)
+			}
+		}
+		if _, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--timeout"}); err == nil {
+			t.Error("--timeout sin valor deberia ser error")
+		}
+	})
+
 	t.Run("stage no reconocido es error claro", func(t *testing.T) {
-		_, _, err := parsearFlagsGate([]string{"--stage", "no-existe"})
+		_, _, _, err := parsearFlagsGate([]string{"--stage", "no-existe"})
 		if err == nil {
 			t.Fatal("se esperaba error por --stage no reconocido")
 		}
@@ -60,7 +91,7 @@ func TestParsearFlagsGate(t *testing.T) {
 	})
 
 	t.Run("flag no reconocido es error", func(t *testing.T) {
-		if _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--otro"}); err == nil {
+		if _, _, _, err := parsearFlagsGate([]string{"--stage", "pr", "--otro"}); err == nil {
 			t.Fatal("se esperaba error por flag no reconocido")
 		}
 	})
