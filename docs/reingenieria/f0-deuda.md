@@ -632,3 +632,37 @@ seam T9.1b had just built rather than as a defect in it.
 Target: a provider-neutral rich result contract that lets one descent serve
 both paths. Doing it inside T9.1b would have rewritten the seam under test
 while its own correctness was still being established.
+
+### FU-5: the review context provider is too narrow, and F4 is closed
+
+Recorded 2026-08-29 while accepting T9.1b. The reviewer spends its budget
+searching for call sites: the observed queries were shapes like
+`FinalizeMetrics|ReviewTransportWithEvidence|...` and
+`AppendAttemptObservation|AttemptObservation|...`, which all ask the same
+question — where else is this symbol used. `graph.ProveedorCodeGraph` could
+answer it and does not: it returns only `affectedTests`, capped at 32
+references and 32 KB.
+
+This belongs here rather than in F4. F4 closed with evidence at `fc9cb82`, and
+T4.6 is precisely this provider. Two of its recorded constraints are deliberate
+fixes, not oversights, and must not be undone by whoever picks this up:
+
+- The `HEAD == reviewed sha` gate is the correction for the CRITICAL "contexto
+  no ligado al commit" that blocked `627430d` and was fixed in `fc80f96`. The
+  index describes the working tree, so answering about a different commit would
+  be inference. Widening coverage means computing the context over the same
+  immutable review snapshot Sentinel already materializes, never relaxing the
+  check.
+- The 3s independent per-subprocess timeout was an explicit user decision in
+  `5187fb0`. More calls per review need a total budget, not a bigger per-call
+  one.
+
+Prerequisite: T9.2 must first make the provider's six silent skips observable.
+Widening what it returns before knowing how often it is active at all would be
+tuning by intuition, which is what F9 exists to stop.
+
+Scope when it is picked up: new `review.Relation` values for callers and
+callees of the symbols in the diff, sourced from `codegraph callers|callees|
+impact`, with a per-relation share of the existing reference budget so callers
+cannot crowd out affected tests, and every new path validated through
+`rutasSeguras` plus symlink resolution and the containment check.

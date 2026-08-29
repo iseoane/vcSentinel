@@ -190,6 +190,32 @@ go build ./...
 go vet ./...
 ```
 
+Reviewer tool failures must surface as the cause (added while accepting
+T9.1b; T9.2 verifies it). A reviewer whose search tools fail does not fail
+fast: it falls back to reading whole files, exhausts `review.timeout`, and the
+dimension lands as `unavailable class=infrastructure` with the real cause
+buried inside the raw provider stream.
+
+The observed instance: `ripgrep` was absent, so the OpenCode reviewer's `Grep`
+and `Glob` calls returned `ripgrep execution failed`. The `logic` dimension
+then read about twenty files whole and died at the 600s budget, twice, and
+completed only under `--timeout 1200`. The gate has no timeout flag at all, so
+it returned `REVIEW_INFRASTRUCTURE_ERROR` with no operator-visible cause.
+
+This is not a Sentinel dependency: Sentinel never invokes `rg`. It belongs to
+the agent CLI, and the two configured families differ — Claude Code embeds
+ripgrep, OpenCode shells out to an external one. T9.2's structured detail must
+therefore carry the tool failure that actually happened rather than the
+provider's raw text, so the operator reads the cause instead of a timeout.
+
+The same requirement applies to the review context provider. `graph.Proveedor-
+CodeGraph.Contexto` has six distinct `return nil, nil` exits (mismatched HEAD,
+dirty worktree, uninitialized index, mismatched project path, pending changes,
+worktree mismatch) and every one of them is silent. Today nobody can tell
+whether a review received graph context or not, which is the same absence-versus-
+zero conflation this phase forbids everywhere else. T9.2 makes the skip reason
+observable; widening what the provider returns is FU-5, not this phase.
+
 ### T9.3a — deterministic aggregation
 
 Aggregate effective findings, confirmations, refutations, user overrides,
