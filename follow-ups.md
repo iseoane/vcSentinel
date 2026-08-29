@@ -21,6 +21,45 @@ land.
 
 ## P2 — Next (clear value, small effort)
 
+- [ ] **`sentinel doctor` — preflight the environment a review depends on.**
+      A review whose tools are missing does not fail fast: it falls back to
+      the expensive path and dies on the timeout, so the operator reads a
+      budget exhaustion instead of a missing binary. Observed 2026-08-29:
+      `ripgrep` was absent, the OpenCode reviewer's `Grep`/`Glob` returned
+      `ripgrep execution failed`, and two `pre-push` gates burned ten minutes
+      each before anyone knew why.
+
+      Checks, all local: every entry in `agents` plus `active_agent` resolves
+      and answers; the resolved reviewer's search binary resolves; codegraph's
+      binary, `.codegraph`, and the six conditions that silently disable
+      review context (`HEAD == sha`, clean worktree, initialized index,
+      matching `projectPath`, zero pending changes, no worktree mismatch); the
+      `pre-commit` hook points at a stable binary rather than `bin/<version>/`
+      (the T0.0 trap); and the yml loads strictly.
+
+      **Resolve binaries with `exec.LookPath`, never a shell probe.** On the
+      machine where this was found, `command -v rg` succeeded — a shell
+      function re-execing another binary — while the review subprocess, which
+      does a PATH lookup and inherits no shell functions, failed. A doctor
+      written with `which` would have reported a healthy environment while
+      every review kept dying. This single detail is most of the value.
+
+      Advisory only: it reports and exits 0 like `check`, never gates
+      anything, and never installs — it prints the exact command instead.
+      Detecting an installed version is local; comparing it against the
+      latest published one is a network call that changes what the command is,
+      so it belongs behind an explicit `--check-updates` and never by default.
+
+      Note this does NOT contradict the decision in `internal/review/`
+      `diagnostico.go` to avoid a table of which agent needs which binary. On
+      the failure path something already broke and the honest report is
+      whatever the provider said failed; in a doctor the checklist is the
+      deliverable, a human asked for it, and being wrong costs a warning
+      rather than a broken review. Keep the two separate.
+
+      Origin: T9.1b review sessions, where the missing binary surfaced only as
+      an infrastructure timeout.
+
 - [x] **Make `runs attach` discoverable by help** — `attach` is missing from
       the `sentinel runs --help` subcommand list, and `runs attach --help`
       exits with a rejection although the command accepts real flags
