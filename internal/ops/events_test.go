@@ -837,12 +837,52 @@ func TestRecordEventRejectsInvalidDetailBeforeCreatingLog(t *testing.T) {
 	}
 }
 
-func TestRecordEventRejectsNilDetailBeforeCreatingLog(t *testing.T) {
-	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "invalid", 1, nil, nil, ""); err == nil {
-		t.Fatal("RegistrarEvento accepted a nil detail")
+func TestRecordEventWritesObjectDetailsAndOmitsNil(t *testing.T) {
+	tests := []struct {
+		name   string
+		detail EventDetail
+	}{
+		{name: "nil", detail: nil},
+		{name: "empty", detail: EventDetail{}},
+		{name: "non-empty", detail: EventDetail{"reason": "provider_unavailable"}},
 	}
-	if _, err := os.Stat(filepath.Join(dir, eventosRel)); !os.IsNotExist(err) {
-		t.Fatalf("events.jsonl exists after nil detail: %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := RegistrarEvento(dir, "record", 0, nil, tt.detail, ""); err != nil {
+				t.Fatalf("RegistrarEvento failed: %v", err)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(dir, eventosRel))
+			if err != nil {
+				t.Fatalf("read events.jsonl: %v", err)
+			}
+			if strings.Contains(string(raw), `"detail":null`) {
+				t.Fatalf("writer output contains detail:null: %s", raw)
+			}
+
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &envelope); err != nil {
+				t.Fatalf("event is not valid JSONL: %v", err)
+			}
+			rawDetail, present := envelope["detail"]
+			if tt.detail == nil {
+				if present {
+					t.Fatalf("nil detail must be omitted, got %s", rawDetail)
+				}
+				return
+			}
+			if !present {
+				t.Fatal("present detail must be written")
+			}
+			if !strings.HasPrefix(string(rawDetail), "{") {
+				t.Fatalf("detail = %s, want a JSON object", rawDetail)
+			}
+			var object map[string]any
+			if err := json.Unmarshal(rawDetail, &object); err != nil {
+				t.Fatalf("detail is not a JSON object: %v", err)
+			}
+		})
 	}
 }
