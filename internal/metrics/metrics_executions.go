@@ -431,9 +431,53 @@ func mergeTiming(left, right *store.ExecutionTiming) *store.ExecutionTiming {
 			result.TotalDurationNanos = &value
 		}
 	}
-	result.ByCapability = append(append([]store.CapabilityTiming(nil), left.ByCapability...), right.ByCapability...)
-	result.ByAgent = append(append([]store.AgentTiming(nil), left.ByAgent...), right.ByAgent...)
+	result.ByCapability = mergeCapabilityTimings(left.ByCapability, right.ByCapability)
+	result.ByAgent = mergeAgentTimings(left.ByAgent, right.ByAgent)
 	return &result
+}
+func mergeCapabilityTimings(left, right []store.CapabilityTiming) []store.CapabilityTiming {
+	type key struct {
+		capability string
+		duration   int64
+	}
+	byKey := make(map[key]store.CapabilityTiming, len(left)+len(right))
+	for _, timing := range append(append([]store.CapabilityTiming(nil), left...), right...) {
+		byKey[key{capability: timing.CapabilityID, duration: int64(timing.DurationNanos)}] = timing
+	}
+	result := make([]store.CapabilityTiming, 0, len(byKey))
+	for _, timing := range byKey {
+		result = append(result, timing)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CapabilityID != result[j].CapabilityID {
+			return result[i].CapabilityID < result[j].CapabilityID
+		}
+		return result[i].DurationNanos < result[j].DurationNanos
+	})
+	return result
+}
+
+func mergeAgentTimings(left, right []store.AgentTiming) []store.AgentTiming {
+	type key struct {
+		identity string
+		duration int64
+	}
+	byKey := make(map[key]store.AgentTiming, len(left)+len(right))
+	for _, timing := range append(append([]store.AgentTiming(nil), left...), right...) {
+		byKey[key{identity: executionIdentitySortKey(timing.Identity), duration: int64(timing.DurationNanos)}] = timing
+	}
+	result := make([]store.AgentTiming, 0, len(byKey))
+	for _, timing := range byKey {
+		result = append(result, timing)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		leftKey, rightKey := executionIdentitySortKey(result[i].Identity), executionIdentitySortKey(result[j].Identity)
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		return result[i].DurationNanos < result[j].DurationNanos
+	})
+	return result
 }
 
 func mergeUsage(left, right *store.ExecutionTokenUsage) *store.ExecutionTokenUsage {
