@@ -1,30 +1,66 @@
 package metrics
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
 )
 
+type remediationKey struct {
+	LogicalID string
+	Anonymous bool
+	Target    string
+	Dimension string
+	At        time.Time
+	Success   bool
+}
+
+func remediationIdentity(observation RemediationObservation) remediationKey {
+	key := remediationKey{LogicalID: strings.TrimSpace(observation.LogicalID)}
+	if key.LogicalID != "" {
+		return key
+	}
+	key.Anonymous = true
+	key.Target = observation.Target
+	key.Dimension = observation.Dimension
+	key.At = observation.At.UTC()
+	key.Success = observation.Success
+	return key
+}
+func remediationKeyLess(left, right remediationKey) bool {
+	if left.Anonymous != right.Anonymous {
+		return !left.Anonymous
+	}
+	if left.LogicalID != right.LogicalID {
+		return left.LogicalID < right.LogicalID
+	}
+	if left.Target != right.Target {
+		return left.Target < right.Target
+	}
+	if left.Dimension != right.Dimension {
+		return left.Dimension < right.Dimension
+	}
+	if !left.At.Equal(right.At) {
+		return left.At.Before(right.At)
+	}
+	return !left.Success && right.Success
+}
+
 func aggregateRemediations(observations []RemediationObservation) RemediationAggregate {
-	selected := make(map[string]RemediationObservation, len(observations))
+	selected := make(map[remediationKey]RemediationObservation, len(observations))
 	for _, observation := range observations {
-		key := strings.TrimSpace(observation.LogicalID)
-		if key == "" {
-			key = fmt.Sprintf("anonymous:%s:%s:%s:%t", observation.Target, observation.Dimension, observation.At.UTC().Format(time.RFC3339Nano), observation.Success)
-		}
+		key := remediationIdentity(observation)
 		if current, exists := selected[key]; !exists || remediationAfter(observation, current) {
 			selected[key] = observation
 		}
 	}
 	result := RemediationAggregate{}
 	byDimension := make(map[string]*remediationCounter)
-	keys := make([]string, 0, len(selected))
+	keys := make([]remediationKey, 0, len(selected))
 	for key := range selected {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool { return remediationKeyLess(keys[i], keys[j]) })
 	for _, key := range keys {
 		observation := selected[key]
 		result.Attempts++
