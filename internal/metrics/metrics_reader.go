@@ -149,7 +149,7 @@ func readStoredFindings(gitCommonDir string, input *Input) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		data, readErr := os.ReadFile(filepath.Join(directory, entry.Name()))
@@ -180,7 +180,7 @@ func listRetainedMetricIDs(gitCommonDir string) ([]string, error) {
 	}
 	ids := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		ids = append(ids, strings.TrimSuffix(entry.Name(), ".json"))

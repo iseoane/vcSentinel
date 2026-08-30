@@ -23,8 +23,9 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 
 	overrides := make(map[string]struct{})
 	for _, decision := range decisions {
-		if decision.Fingerprint != "" && isUserOverride(decision.Decision) {
-			overrides[decision.Fingerprint] = struct{}{}
+		fingerprint := strings.TrimSpace(decision.Fingerprint)
+		if fingerprint != "" && isUserOverride(decision.Decision) {
+			overrides[fingerprint] = struct{}{}
 		}
 	}
 
@@ -44,7 +45,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		dimension := displayDimension(finding.Dimension)
 		model := displayIdentity(finding.Producer.Modelo)
 		agent := displayIdentity(finding.Producer.Agente)
-		override := status == review.StatusAcceptedByUser || hasFingerprintOverride(overrides, key, finding)
+		override := status != review.StatusRefuted && (status == review.StatusAcceptedByUser || hasFingerprintOverride(overrides, key, finding))
 		knownStatus := status != ""
 
 		result.Observed++
@@ -174,7 +175,7 @@ func findingFingerprint(observation FindingObservation) string {
 	if value := strings.TrimSpace(observation.Finding.Fingerprint); value != "" {
 		return value
 	}
-	return review.Fingerprint(observation.Finding)
+	return strings.TrimSpace(review.Fingerprint(observation.Finding))
 }
 
 func findingObservationAfter(candidate, current FindingObservation) bool {
@@ -208,11 +209,11 @@ func originRank(origin string) int {
 }
 
 func hasFingerprintOverride(overrides map[string]struct{}, key string, finding review.Hallazgo) bool {
-	if _, ok := overrides[key]; ok {
+	if _, ok := overrides[strings.TrimSpace(key)]; ok {
 		return true
 	}
-	if finding.Fingerprint != "" {
-		_, ok := overrides[finding.Fingerprint]
+	if fingerprint := strings.TrimSpace(finding.Fingerprint); fingerprint != "" {
+		_, ok := overrides[fingerprint]
 		return ok
 	}
 	return false
