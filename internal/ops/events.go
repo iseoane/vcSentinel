@@ -80,6 +80,9 @@ const (
 // si el log supera el umbral de tamaño se rota dejando las últimas
 // maxEventosLineas líneas (nunca vacía el historial entero).
 func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail EventDetail, worktree string) error {
+	if detail == nil {
+		return errors.New("event detail must be a JSON object")
+	}
 	ruta := filepath.Join(gitDir, eventosRel)
 	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
 		return err

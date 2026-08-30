@@ -836,3 +836,13 @@ func TestRecordEventRejectsInvalidDetailBeforeCreatingLog(t *testing.T) {
 		t.Fatalf("events.jsonl exists after marshal failure: %v", err)
 	}
 }
+
+func TestRecordEventRejectsNilDetailBeforeCreatingLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := RegistrarEvento(dir, "invalid", 1, nil, nil, ""); err == nil {
+		t.Fatal("RegistrarEvento accepted a nil detail")
+	}
+	if _, err := os.Stat(filepath.Join(dir, eventosRel)); !os.IsNotExist(err) {
+		t.Fatalf("events.jsonl exists after nil detail: %v", err)
+	}
+}
