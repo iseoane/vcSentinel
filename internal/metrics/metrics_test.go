@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"encoding/json"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -253,6 +254,193 @@ func TestReadStoreReadsLedgerEventsAndRetainedMetrics(t *testing.T) {
 	}
 	if len(input.Remediations) != 1 || input.Remediations[0].LogicalID != "remediation-1" {
 		t.Fatalf("remediations = %#v", input.Remediations)
+	}
+}
+
+func TestOverrideRateExcludesRefutedOverrides(t *testing.T) {
+	got := Aggregate(Input{
+		Findings: []FindingObservation{{
+			Fingerprint: "finding",
+			Finding:     review.Hallazgo{Fingerprint: "finding", Status: review.StatusRefuted},
+		}},
+		Decisions: []store.Decision{{Fingerprint: "finding", Decision: "accepted_by_user"}},
+	})
+	if got.Findings.OverrideRate.Numerator > got.Findings.OverrideRate.Denominator {
+		t.Fatalf("override ratio exceeds one: %#v", got.Findings.OverrideRate)
+	}
+	if got.Findings.Overrides != 0 {
+		t.Fatalf("refuted finding counted as an effective override: %#v", got.Findings)
+	}
+}
+
+func TestFindingOverrideFingerprintTrimsWhitespace(t *testing.T) {
+	got := Aggregate(Input{
+		Findings: []FindingObservation{{
+			Fingerprint: "finding",
+			Finding:     review.Hallazgo{Fingerprint: "finding", Status: review.StatusConfirmed},
+		}},
+		Decisions: []store.Decision{{Fingerprint: " finding ", Decision: "accepted_by_user"}},
+	})
+	if got.Findings.Overrides != 1 {
+		t.Fatalf("trimmed decision fingerprint was not matched: %#v", got.Findings)
+	}
+}
+
+func TestAnonymousRemediationKeysAreInjectiveAndNamespaced(t *testing.T) {
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	anonymousA := RemediationObservation{Target: "a:b", Dimension: "c", At: at, Success: true}
+	anonymousB := RemediationObservation{Target: "a", Dimension: "b:c", At: at, Success: true}
+	collidingExplicitID := "anonymous:a:b:c:" + at.Format(time.RFC3339Nano) + ":true"
+	got := Aggregate(Input{Remediations: []RemediationObservation{
+		anonymousA,
+		anonymousB,
+		{LogicalID: collidingExplicitID, Target: "explicit", At: at, Success: false},
+	}})
+	if got.Remediation.Attempts != 3 {
+		t.Fatalf("anonymous remediation identities collided: %#v", got.Remediation)
+	}
+}
+
+func TestMetricSnapshotsMergeComplementaryEvidenceRegardlessOfOrder(t *testing.T) {
+	firstDuration := time.Duration(10)
+	secondDuration := time.Duration(20)
+	inputTokens := int64(5)
+	first := &store.ExecutionMetrics{
+		Version: store.ExecutionMetricsSchemaVersion,
+		RunID:   "run",
+		Timing:  &store.ExecutionTiming{TotalDurationNanos: &firstDuration},
+	}
+	second := &store.ExecutionMetrics{
+		Version: store.ExecutionMetricsSchemaVersion,
+		RunID:   "run",
+		Timing:  &store.ExecutionTiming{TotalDurationNanos: &secondDuration},
+		Usage:   &store.ExecutionTokenUsage{InputTokens: &inputTokens},
+		Cost:    &store.ExecutionCost{AmountMicros: 12, Currency: "USD"},
+	}
+	input := Input{Executions: []ExecutionObservation{
+		{RunID: "run", Metrics: first},
+		{RunID: "run", Metrics: second},
+	}}
+	want := Aggregate(input)
+	input.Executions[0], input.Executions[1] = input.Executions[1], input.Executions[0]
+	got := Aggregate(input)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("metric snapshot order changed aggregate:\n got: %#v\nwant: %#v", got, want)
+	}
+	if got.Executions.Duration.Value == nil || *got.Executions.Duration.Value != 20 {
+		t.Fatalf("merged duration = %#v", got.Executions.Duration)
+	}
+	if got.Executions.InputTokens.Observed != 1 || len(got.Costs) != 1 {
+		t.Fatalf("complementary metrics were discarded: executions=%#v costs=%#v", got.Executions, got.Costs)
+	}
+}
+
+func TestFinalOutcomeTieIsIndependentOfInputOrder(t *testing.T) {
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	failure := store.AttemptOutcome{RunID: "run", At: at, Class: agentrun.OutcomeFailure}
+	timeout := store.AttemptOutcome{RunID: "run", At: at, Class: agentrun.OutcomeTimeout}
+	first, firstOK := finalOutcome([]store.AttemptOutcome{failure, timeout})
+	second, secondOK := finalOutcome([]store.AttemptOutcome{timeout, failure})
+	if !firstOK || !secondOK || first != second {
+		t.Fatalf("equal-time terminal outcomes depend on order: %q/%q", first, second)
+	}
+}
+
+func TestStageCoverageUsesMeasuredRunPopulation(t *testing.T) {
+	firstDuration := time.Duration(10)
+	first := &store.ExecutionMetrics{
+		Version: store.ExecutionMetricsSchemaVersion,
+		RunID:   "run-a",
+		Timing: &store.ExecutionTiming{
+			TotalDurationNanos: &firstDuration,
+			ByCapability:       []store.CapabilityTiming{{CapabilityID: "stage", DurationNanos: 10}},
+		},
+	}
+	second := &store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: "run-b"}
+	got := Aggregate(Input{Executions: []ExecutionObservation{
+		{RunID: "run-a", Metrics: first},
+		{RunID: "run-b", Metrics: second},
+	}})
+	if len(got.Stages) != 1 {
+		t.Fatalf("stages = %#v", got.Stages)
+	}
+	assertCoverage(t, "stage coverage", got.Stages[0].Coverage, 1, 2, 0.5)
+}
+
+func TestMetricsWithoutTerminalOutcomeRemainUnclassified(t *testing.T) {
+	got := Aggregate(Input{Executions: []ExecutionObservation{{
+		RunID: "run",
+		Metrics: &store.ExecutionMetrics{
+			Version: store.ExecutionMetricsSchemaVersion,
+			RunID:   "run",
+		},
+	}}})
+	if got.Executions.SuccessfulRuns != 0 || got.Executions.FailedRuns != 0 {
+		t.Fatalf("nonterminal metrics classified as terminal: %#v", got.Executions)
+	}
+}
+
+func TestNegativeMetricValuesAreUnavailable(t *testing.T) {
+	duration := time.Duration(-1)
+	inputTokens := int64(-2)
+	outputTokens := int64(-3)
+	got := Aggregate(Input{Executions: []ExecutionObservation{{
+		RunID: "run",
+		Metrics: &store.ExecutionMetrics{
+			Version: store.ExecutionMetricsSchemaVersion,
+			RunID:   "run",
+			Timing:  &store.ExecutionTiming{TotalDurationNanos: &duration},
+			Usage:   &store.ExecutionTokenUsage{InputTokens: &inputTokens, OutputTokens: &outputTokens},
+			Cost:    &store.ExecutionCost{AmountMicros: -4, Currency: "USD"},
+		},
+	}}})
+	if got.Executions.Duration.Observed != 0 || got.Executions.InputTokens.Observed != 0 || got.Executions.OutputTokens.Observed != 0 || len(got.Costs) != 0 {
+		t.Fatalf("negative metrics were aggregated: executions=%#v costs=%#v", got.Executions, got.Costs)
+	}
+}
+
+func TestReadStoreIgnoresSymlinkedEvidence(t *testing.T) {
+	commonDir := t.TempDir()
+	outsideDir := t.TempDir()
+	metricData, err := json.Marshal(store.ExecutionMetrics{
+		Version: store.ExecutionMetricsSchemaVersion,
+		RunID:   "linked-run",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricTarget := filepath.Join(outsideDir, "metric.json")
+	if err := os.WriteFile(metricTarget, metricData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	metricsDir := filepath.Join(commonDir, "vas-sentinel", "metrics", "v1")
+	if err := os.MkdirAll(metricsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(metricTarget, filepath.Join(metricsDir, "linked-run.json")); err != nil {
+		t.Fatal(err)
+	}
+	findingData, err := json.Marshal(review.Hallazgo{Fingerprint: "linked-finding", Status: review.StatusConfirmed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	findingTarget := filepath.Join(outsideDir, "finding.json")
+	if err := os.WriteFile(findingTarget, findingData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	findingsDir := filepath.Join(commonDir, "vas-sentinel", "findings")
+	if err := os.MkdirAll(findingsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(findingTarget, filepath.Join(findingsDir, "linked-finding.json")); err != nil {
+		t.Fatal(err)
+	}
+	input, err := ReadStore(commonDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Executions) != 0 || len(input.Findings) != 0 {
+		t.Fatalf("symlinked evidence was followed: %#v", input)
 	}
 }
 
