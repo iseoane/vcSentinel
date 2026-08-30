@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +13,8 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 )
 
 // escribirYmlGateTest escribe un vassentinel.yml per-proyecto para los tests
@@ -202,5 +206,63 @@ func TestEjecutarGate_PerfilNoConfigurado_Exit4(t *testing.T) {
 	}
 	if !strings.Contains(salida.String(), perfilGatePorDefecto) {
 		t.Errorf("la salida debe citar el perfil que falta, obtuve: %q", salida.String())
+	}
+}
+
+func TestGateEventPersistsOnlyOperationalMetadata(t *testing.T) {
+
+	worktree := t.TempDir()
+	if output, err := exec.Command("git", "init", "-q", worktree).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v: %s", err, output)
+	}
+	const rawMessage = "raw provider evidence must remain console-only"
+	var output bytes.Buffer
+	finalizeGateWithDetails(
+		&output,
+		worktree,
+		"pre-push",
+		gate.EstadoReviewInfrastructureError,
+		[]string{rawMessage},
+		"codegraph context skipped: dirty_worktree",
+		[]gate.ReviewerFailure{{
+			Bundle:    "correctness",
+			Dimension: "logic",
+			Reason:    "provider reported: ripgrep execution failed",
+		}},
+	)
+	if !strings.Contains(output.String(), rawMessage) {
+		t.Fatalf("console output = %q, want raw diagnostic", output.String())
+	}
+
+	events, err := ops.UltimosEventos(filepath.Join(worktree, ".git"), 1)
+	if err != nil {
+		t.Fatalf("read gate event: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want one", len(events))
+	}
+	detail, ok := events[0].Detail.(map[string]any)
+	if !ok {
+		t.Fatalf("detail = %#v, want object", events[0].Detail)
+	}
+	if _, exists := detail["messages"]; exists {
+		t.Fatalf("gate event persisted console messages: %#v", detail["messages"])
+	}
+	if strings.Contains(fmt.Sprint(detail), rawMessage) {
+		t.Fatalf("gate event leaked raw console message: %#v", detail)
+	}
+	if detail["context_skip_reason"] != "codegraph context skipped: dirty_worktree" {
+		t.Errorf("context skip reason = %#v", detail["context_skip_reason"])
+	}
+	failures, ok := detail["reviewer_failures"].([]any)
+	if !ok || len(failures) != 1 {
+		t.Fatalf("reviewer failures = %#v, want one", detail["reviewer_failures"])
+	}
+	failure, ok := failures[0].(map[string]any)
+	if !ok {
+		t.Fatalf("reviewer failure = %#v, want object", failures[0])
+	}
+	if failure["bundle"] != "correctness" || failure["dimension"] != "logic" || failure["reason"] != "provider reported: ripgrep execution failed" {
+		t.Fatalf("reviewer failure = %#v", failure)
 	}
 }

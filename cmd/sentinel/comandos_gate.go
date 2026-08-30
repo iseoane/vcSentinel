@@ -174,7 +174,7 @@ func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, message
 	for _, message := range messages {
 		fmt.Fprintln(w, message)
 	}
-	recordGateEventWithDetails(worktree, stage, state, messages, contextSkipReason, reviewerFailures)
+	recordGateEventWithDetails(worktree, stage, state, contextSkipReason, reviewerFailures)
 	return gate.CodigoSalida(state)
 }
 
@@ -189,11 +189,11 @@ func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, message
 // requireInicializado, pero por si acaso el registro es best-effort: no
 // aborta gate por un fallo al registrar su propio evento, y ante la duda no
 // escribe en ningún sitio antes que escribir en el sitio equivocado.
-func registrarEventoGate(worktree, stage, estado string, messages []string) {
-	recordGateEventWithDetails(worktree, stage, estado, messages, "", nil)
+func registrarEventoGate(worktree, stage, state string, _ []string) {
+	recordGateEventWithDetails(worktree, stage, state, "", nil)
 }
 
-func recordGateEventWithDetails(worktree, stage, state string, messages []string, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) {
+func recordGateEventWithDetails(worktree, stage, state, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) {
 	gitDir, err := git.ObtenerGitDirDe(worktree)
 	if err != nil {
 		return
@@ -202,7 +202,6 @@ func recordGateEventWithDetails(worktree, stage, state string, messages []string
 	if contextSkipReason != "" {
 		detail["context_skip_reason"] = contextSkipReason
 	}
-	_ = messages // Console-only presentation may contain raw provider evidence.
 	if len(reviewerFailures) > 0 {
 		failures := make([]ops.EventDetail, 0, len(reviewerFailures))
 		for _, failure := range reviewerFailures {
