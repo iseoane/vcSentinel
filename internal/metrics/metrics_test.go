@@ -479,3 +479,39 @@ func TestMetricSnapshotsDoNotDuplicateTimingEvidence(t *testing.T) {
 		t.Fatalf("duplicate metric snapshots inflated stage samples: %#v", got.Stages)
 	}
 }
+func TestStageFromEventCarriesLogicalRunID(t *testing.T) {
+	stage, ok := stageFromEvent(ops.Evento{Detail: ops.EventDetail{
+		"stage": "stage", "duration_ns": float64(10), "run_id": "run-a",
+	}})
+	if !ok {
+		t.Fatal("stage event was not recognized")
+	}
+	if stage.LogicalRunID != "run-a" {
+		t.Fatalf("stage logical run id = %q, want run-a", stage.LogicalRunID)
+	}
+}
+
+func TestOutcomeIdentityNormalizesEquivalentTimeOffsets(t *testing.T) {
+	utc := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	offset := utc.In(time.FixedZone("offset", 2*60*60))
+	outcome := func(at time.Time) store.AttemptOutcome {
+		return store.AttemptOutcome{RunID: "run", At: at, Class: agentrun.OutcomeFailure}
+	}
+	got := uniqueOutcomes([]ExecutionObservation{{
+		RunID: "run", Outcomes: []store.AttemptOutcome{outcome(utc)},
+	}, {
+		RunID: "run", Outcomes: []store.AttemptOutcome{outcome(offset)},
+	}})
+	if len(got) != 1 {
+		t.Fatalf("equivalent outcome timestamps were not deduplicated: %#v", got)
+	}
+}
+
+func TestMergeCostUsesNumericAmountOrdering(t *testing.T) {
+	left := &store.ExecutionCost{AmountMicros: 99, Currency: "USD"}
+	right := &store.ExecutionCost{AmountMicros: 100, Currency: "USD"}
+	got := mergeCost(left, right)
+	if got == nil || got.AmountMicros != 100 {
+		t.Fatalf("mergeCost chose %v, want numeric maximum 100", got)
+	}
+}

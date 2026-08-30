@@ -215,7 +215,8 @@ func stageFromEvent(event ops.Evento) (StageObservation, bool) {
 	if !ok || stage == "" || duration < 0 {
 		return StageObservation{}, false
 	}
-	return StageObservation{Stage: stage, DurationNanos: duration}, true
+	logicalRunID := strings.TrimSpace(stringField(fields, "logical_run_id", "run_id", "execution_id", "execution_run_id"))
+	return StageObservation{Stage: stage, DurationNanos: duration, LogicalRunID: logicalRunID}, true
 }
 
 func remediationFromEvent(event ops.Evento) (RemediationObservation, bool) {

@@ -532,14 +532,24 @@ func mergeCost(left, right *store.ExecutionCost) *store.ExecutionCost {
 		copy := *left
 		return &copy
 	}
-	leftKey := fmt.Sprintf("%s\x00%d\x00%s\x00%s", left.Currency, left.AmountMicros, left.Provenance.Source, left.Provenance.Reference)
-	rightKey := fmt.Sprintf("%s\x00%d\x00%s\x00%s", right.Currency, right.AmountMicros, right.Provenance.Source, right.Provenance.Reference)
-	if rightKey > leftKey {
+	if costAfter(right, left) {
 		copy := *right
 		return &copy
 	}
 	copy := *left
 	return &copy
+}
+
+func costAfter(candidate, current *store.ExecutionCost) bool {
+	if candidate.Currency != current.Currency {
+		return candidate.Currency > current.Currency
+	}
+	if candidate.AmountMicros != current.AmountMicros {
+		return candidate.AmountMicros > current.AmountMicros
+	}
+	candidateKey := fmt.Sprintf("%s\x00%s", candidate.Provenance.Source, candidate.Provenance.Reference)
+	currentKey := fmt.Sprintf("%s\x00%s", current.Provenance.Source, current.Provenance.Reference)
+	return candidateKey > currentKey
 }
 
 func mergeScope(left, right *store.ExecutionScope) *store.ExecutionScope {
@@ -603,8 +613,13 @@ func mergeFailures(left, right []store.ExecutionFailure) []store.ExecutionFailur
 	})
 	return result
 }
+func canonicalOutcome(outcome store.AttemptOutcome) store.AttemptOutcome {
+	outcome.At = outcome.At.UTC()
+	return outcome
+}
+
 func outcomeSortKey(outcome store.AttemptOutcome) string {
-	data, _ := json.Marshal(outcome)
+	data, _ := json.Marshal(canonicalOutcome(outcome))
 	return string(data)
 }
 
