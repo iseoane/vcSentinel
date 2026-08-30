@@ -1,0 +1,249 @@
+package metrics
+
+import (
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+)
+
+func aggregateFindings(observations []FindingObservation, decisions []store.Decision) FindingsAggregate {
+	byFingerprint := make(map[string]FindingObservation, len(observations))
+	for _, observation := range observations {
+		if observation.Superseded || strings.EqualFold(strings.TrimSpace(observation.Finding.Status), "superseded") {
+			continue
+		}
+		key := findingFingerprint(observation)
+		if current, exists := byFingerprint[key]; !exists || findingObservationAfter(observation, current) {
+			byFingerprint[key] = observation
+		}
+	}
+
+	overrides := make(map[string]struct{})
+	for _, decision := range decisions {
+		if decision.Fingerprint != "" && isUserOverride(decision.Decision) {
+			overrides[decision.Fingerprint] = struct{}{}
+		}
+	}
+
+	keys := make([]string, 0, len(byFingerprint))
+	for key := range byFingerprint {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := FindingsAggregate{}
+	dimensions := make(map[string]*findingCounter)
+	models := make(map[string]*findingCounter)
+	agents := make(map[string]*findingCounter)
+	for _, key := range keys {
+		observation := byFingerprint[key]
+		finding := observation.Finding
+		status := strings.ToLower(strings.TrimSpace(finding.Status))
+		dimension := displayDimension(finding.Dimension)
+		model := displayIdentity(finding.Producer.Modelo)
+		agent := displayIdentity(finding.Producer.Agente)
+		override := status == review.StatusAcceptedByUser || hasFingerprintOverride(overrides, key, finding)
+		knownStatus := status != ""
+
+		result.Observed++
+		if knownStatus {
+			if status == review.StatusRefuted {
+				result.Refuted++
+			}
+			if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
+				result.Confirmed++
+			}
+		}
+		if override {
+			result.Overrides++
+		}
+		if status == review.StatusReopened {
+			result.Reopened++
+		}
+
+		dim := counterFor(dimensions, dimension)
+		dim.Observed++
+		if knownStatus {
+			dim.Known++
+		}
+		if status == review.StatusRefuted {
+			dim.Refuted++
+		}
+		if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
+			dim.Confirmed++
+		}
+		if override {
+			dim.Overrides++
+		}
+		if status == review.StatusReopened {
+			dim.Reopened++
+		}
+
+		modelCounter := counterFor(models, model)
+		modelCounter.Observed++
+		if status == review.StatusRefuted {
+			modelCounter.Refuted++
+		}
+		if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
+			modelCounter.Confirmed++
+		}
+		agentCounter := counterFor(agents, agent)
+		agentCounter.Observed++
+		if status == review.StatusRefuted {
+			agentCounter.Refuted++
+		}
+		if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
+			agentCounter.Confirmed++
+		}
+
+		if status != review.StatusRefuted {
+			result.Effective++
+			dim.Effective++
+		}
+	}
+
+	result.ConfirmationRate = ratio(result.Confirmed, result.Effective, result.Effective, result.Effective)
+	result.RefutationRate = ratio(result.Refuted, result.Observed, result.Observed, result.Observed)
+	result.OverrideRate = ratio(result.Overrides, result.Effective, result.Effective, result.Effective)
+	result.ByDimension = make([]DimensionAggregate, 0, len(dimensions))
+	for name, counter := range dimensions {
+		active := counter.Effective
+		row := DimensionAggregate{
+			Dimension: name, Findings: active, Observed: counter.Observed,
+			Confirmed: counter.Confirmed, Refuted: counter.Refuted,
+			Overrides: counter.Overrides, Reopened: counter.Reopened,
+			ConfirmationRate: ratio(counter.Confirmed, active, active, active),
+			RefutationRate:   ratio(counter.Refuted, counter.Observed, counter.Known, counter.Observed),
+			OverrideRate:     ratio(counter.Overrides, active, active, active),
+		}
+		result.ByDimension = append(result.ByDimension, row)
+	}
+	sort.Slice(result.ByDimension, func(i, j int) bool {
+		return orderingKey(result.ByDimension[i].Dimension) < orderingKey(result.ByDimension[j].Dimension)
+	})
+
+	result.ByModel = make([]ModelAggregate, 0, len(models))
+	for name, counter := range models {
+		result.ByModel = append(result.ByModel, ModelAggregate{
+			Model: name, Observed: counter.Observed, Confirmed: counter.Confirmed,
+			Refuted:        counter.Refuted,
+			RefutationRate: ratio(counter.Refuted, counter.Observed, counter.Observed, counter.Observed),
+		})
+	}
+	sort.Slice(result.ByModel, func(i, j int) bool {
+		return orderingKey(result.ByModel[i].Model) < orderingKey(result.ByModel[j].Model)
+	})
+	result.ByAgent = make([]AgentAggregate, 0, len(agents))
+	for name, counter := range agents {
+		result.ByAgent = append(result.ByAgent, AgentAggregate{
+			Agent: name, Observed: counter.Observed, Confirmed: counter.Confirmed,
+			Refuted:        counter.Refuted,
+			RefutationRate: ratio(counter.Refuted, counter.Observed, counter.Observed, counter.Observed),
+		})
+	}
+	sort.Slice(result.ByAgent, func(i, j int) bool {
+		return orderingKey(result.ByAgent[i].Agent) < orderingKey(result.ByAgent[j].Agent)
+	})
+	return result
+}
+
+type findingCounter struct {
+	Observed  int64
+	Known     int64
+	Effective int64
+	Confirmed int64
+	Refuted   int64
+	Overrides int64
+	Reopened  int64
+}
+
+func counterFor(counters map[string]*findingCounter, key string) *findingCounter {
+	counter := counters[key]
+	if counter == nil {
+		counter = &findingCounter{}
+		counters[key] = counter
+	}
+	return counter
+}
+func findingFingerprint(observation FindingObservation) string {
+	if value := strings.TrimSpace(observation.Fingerprint); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(observation.Finding.Fingerprint); value != "" {
+		return value
+	}
+	return review.Fingerprint(observation.Finding)
+}
+
+func findingObservationAfter(candidate, current FindingObservation) bool {
+	if !candidate.At.Equal(current.At) {
+		return candidate.At.After(current.At)
+	}
+	if candidate.Revision != current.Revision {
+		return candidate.Revision > current.Revision
+	}
+	candidateOrigin := originRank(candidate.Origin)
+	currentOrigin := originRank(current.Origin)
+	if candidateOrigin != currentOrigin {
+		return candidateOrigin > currentOrigin
+	}
+	return findingSortKey(candidate) > findingSortKey(current)
+}
+
+func findingSortKey(observation FindingObservation) string {
+	finding := observation.Finding
+	return strings.Join([]string{observation.Commit, strconv.Itoa(observation.Revision), observation.Origin, finding.Dimension, finding.Status, finding.Producer.Modelo, finding.Producer.Agente, finding.Description, finding.Title}, "\x00")
+}
+
+func originRank(origin string) int {
+	if strings.EqualFold(origin, "store") {
+		return 2
+	}
+	if strings.EqualFold(origin, "ledger") {
+		return 1
+	}
+	return 0
+}
+
+func hasFingerprintOverride(overrides map[string]struct{}, key string, finding review.Hallazgo) bool {
+	if _, ok := overrides[key]; ok {
+		return true
+	}
+	if finding.Fingerprint != "" {
+		_, ok := overrides[finding.Fingerprint]
+		return ok
+	}
+	return false
+}
+
+func isUserOverride(decision string) bool {
+	switch strings.ToLower(strings.TrimSpace(decision)) {
+	case "accept", "accepted", "accepted_by_user", "override", "overridden", "reject", "rejected", "rejected_by_user":
+		return true
+	default:
+		return false
+	}
+}
+
+func displayDimension(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return unknownLabel
+	}
+	return value
+}
+
+func displayIdentity(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return unknownLabel
+	}
+	return value
+}
+
+func orderingKey(value string) string {
+	if value == unknownLabel {
+		return "\xff" + value
+	}
+	return value
+}
