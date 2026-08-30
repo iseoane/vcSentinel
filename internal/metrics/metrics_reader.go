@@ -244,7 +244,7 @@ func remediationFromEvent(event ops.Evento) (RemediationObservation, bool) {
 
 func stringField(fields map[string]any, names ...string) string {
 	for _, name := range names {
-		if value, ok := fields[name].(string); ok {
+		if value, ok := fields[name].(string); ok && strings.TrimSpace(value) != "" {
 			return value
 		}
 	}

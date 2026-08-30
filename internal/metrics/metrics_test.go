@@ -515,3 +515,16 @@ func TestMergeCostUsesNumericAmountOrdering(t *testing.T) {
 		t.Fatalf("mergeCost chose %v, want numeric maximum 100", got)
 	}
 }
+
+func TestStageFromEventSkipsBlankRunAlias(t *testing.T) {
+	stage, ok := stageFromEvent(ops.Evento{Detail: ops.EventDetail{
+		"stage": "stage", "duration_ns": float64(10),
+		"logical_run_id": "   ", "run_id": "run-b",
+	}})
+	if !ok {
+		t.Fatal("stage event was not recognized")
+	}
+	if stage.LogicalRunID != "run-b" {
+		t.Fatalf("stage logical run id = %q, want run-b", stage.LogicalRunID)
+	}
+}
