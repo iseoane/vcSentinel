@@ -12,15 +12,14 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
+var _ func(string, string, int, []string, EventDetail, string) error = RegistrarEvento
+
 func TestRegistrarYLeerEventos(t *testing.T) {
 	dir := t.TempDir()
-
-	if err := RegistrarEvento(dir, "check", 0, nil, "", ""); err != nil {
-		t.Fatalf("RegistrarEvento devolvió error: %v", err)
-	}
-	if err := RegistrarEvento(dir, "review", 4, []string{"abc123"}, "provider_unavailable", filepath.Join("C:", "repo")); err != nil {
-		t.Fatalf("RegistrarEvento devolvió error: %v", err)
-	}
+	writeEventLines(t, dir,
+		`{"at":"2026-01-01T00:00:00Z","cmd":"check","exit":0,"detail":{}}`,
+		`{"at":"2026-01-01T00:00:01Z","cmd":"review","exit":4,"shas":["abc123"],"detail":"provider_unavailable","worktree":"C:\\repo"}`,
+	)
 
 	eventos, err := UltimosEventos(dir, 10)
 	if err != nil {
@@ -44,7 +43,7 @@ func TestRegistrarYLeerEventos(t *testing.T) {
 func TestUltimosEventosLimite(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 5; i++ {
-		if err := RegistrarEvento(dir, "status", 0, nil, "", ""); err != nil {
+		if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -74,7 +73,7 @@ func TestRegistrarMilEventosSinCorrupcion(t *testing.T) {
 	dir := t.TempDir()
 
 	for i := 0; i < 1000; i++ {
-		if err := RegistrarEvento(dir, "check", 0, nil, "", ""); err != nil {
+		if err := RegistrarEvento(dir, "check", 0, nil, EventDetail{}, ""); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
 	}
@@ -91,7 +90,7 @@ func TestRegistrarMilEventosSinCorrupcion(t *testing.T) {
 func TestRotarEventosDejaUltimasLineas(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 5; i++ {
-		if err := RegistrarEvento(dir, "status", 0, nil, "", ""); err != nil {
+		if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -108,7 +107,7 @@ func TestRotarEventosDejaUltimasLineas(t *testing.T) {
 	}
 
 	// El log sigue siendo appendable tras la rotación.
-	if err := RegistrarEvento(dir, "review", 1, nil, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "review", 1, nil, EventDetail{}, ""); err != nil {
 		t.Fatalf("RegistrarEvento tras rotar devolvió error: %v", err)
 	}
 	eventos, err = UltimosEventos(dir, 10)
@@ -129,14 +128,14 @@ func TestRotarEventosSinLogEsNoOp(t *testing.T) {
 
 func TestRotarEventosDescartaLineasCorruptas(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "status", 0, nil, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	ruta := filepath.Join(dir, eventosRel)
 	if err := appendLinea(ruta, "{\"corrupto\""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(dir, "review", 0, nil, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "review", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,13 +167,13 @@ func TestRotarEventosDescartaLineasCorruptas(t *testing.T) {
 
 func TestPurgeEventosDeBorraSoloLosShasPedidos(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "review", 4, []string{"aaa111"}, "provider_unavailable", ""); err != nil {
+	if err := RegistrarEvento(dir, "review", 4, []string{"aaa111"}, EventDetail{"reason": "provider_unavailable"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(dir, "review", 0, []string{"bbb222"}, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "review", 0, []string{"bbb222"}, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(dir, "status", 0, nil, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,14 +198,14 @@ func TestPurgeEventosDeBorraSoloLosShasPedidos(t *testing.T) {
 	}
 
 	// El log sigue siendo appendable tras el purge.
-	if err := RegistrarEvento(dir, "check", 0, nil, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "check", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatalf("RegistrarEvento tras purge devolvió error: %v", err)
 	}
 }
 
 func TestPurgeEventosDeSinShasEsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "review", 0, []string{"aaa111"}, "", ""); err != nil {
+	if err := RegistrarEvento(dir, "review", 0, []string{"aaa111"}, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	eliminadas, err := PurgeEventosDe(dir, nil)
@@ -237,15 +236,26 @@ func appendLinea(ruta, linea string) error {
 	return err
 }
 
+func writeEventLines(t *testing.T, gitDir string, lines ...string) {
+	t.Helper()
+	ruta := filepath.Join(gitDir, eventosRel)
+	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+		t.Fatal(err)
+	}
+	contenido := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // escribirEventoPrCreate anexa un evento pr-create de prueba con número de PR.
 func escribirEventoPrCreate(t *testing.T, gitDir string, numero string, tieneURL bool) {
 	t.Helper()
-	detail := map[string]any{"fallback": !tieneURL, "chain_pr": false}
+	detail := EventDetail{"fallback": !tieneURL, "chain_pr": false}
 	if tieneURL {
 		detail["pr_url"] = "https://github.com/demo/repo/pull/" + numero
 	}
-	datos, _ := json.Marshal(detail)
-	if err := RegistrarEvento(gitDir, "pr-create", 0, nil, string(datos), "C:\\repo"); err != nil {
+	if err := RegistrarEvento(gitDir, "pr-create", 0, nil, detail, "C:\\repo"); err != nil {
 		t.Fatalf("no se pudo registrar el evento: %v", err)
 	}
 }
@@ -293,7 +303,7 @@ func TestPurgeEventosDePRsResueltas(t *testing.T) {
 	}
 
 	// El log sigue siendo appendable tras la purga por PR.
-	if err := RegistrarEvento(gitDir, "pr-review", 0, []string{"zzz999"}, "", ""); err != nil {
+	if err := RegistrarEvento(gitDir, "pr-review", 0, []string{"zzz999"}, EventDetail{}, ""); err != nil {
 		t.Fatalf("RegistrarEvento tras purga por PR devolvió error: %v", err)
 	}
 	eventos, err = UltimosEventos(gitDir, 10)
@@ -463,11 +473,12 @@ func TestEscribirLogTemporalToleraBakResidual(t *testing.T) {
 func TestPurgaDetailCorruptoConservaYNoAborta(t *testing.T) {
 	gitDir := t.TempDir()
 	escribirEventoPrCreate(t, gitDir, "30", true) // MERGED → purgar
-	// Actas corruptas (no JSON de DetallePrCreate).
-	if err := RegistrarEvento(gitDir, "pr-create", 0, nil, "no es json", ""); err != nil {
+	// Actas corruptas (no JSON de DetallePrCreate), seeded as historical JSONL.
+	ruta := filepath.Join(gitDir, eventosRel)
+	if err := appendLinea(ruta, `{"at":"2026-01-01T00:00:01Z","cmd":"pr-create","exit":0,"detail":"no es json"}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(gitDir, "pr-create", 0, nil, `{"pr_url": "incompleta"}`, ""); err != nil {
+	if err := appendLinea(ruta, `{"at":"2026-01-01T00:00:02Z","cmd":"pr-create","exit":0,"detail":"{\"pr_url\": \"incompleta\"}"}`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -610,7 +621,7 @@ func TestVerificarRegistraPrVerify(t *testing.T) {
 
 func TestRecordEventWritesStructuredObjectDetail(t *testing.T) {
 	dir := t.TempDir()
-	detail := map[string]any{
+	detail := EventDetail{
 		"reason":  "ripgrep execution failed",
 		"unknown": map[string]any{"kept": true},
 	}
@@ -818,7 +829,7 @@ func TestRecordEventSeparatesAnUnterminatedLegacyRecord(t *testing.T) {
 
 func TestRecordEventRejectsInvalidDetailBeforeCreatingLog(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "invalid", 1, nil, make(chan int), ""); err == nil {
+	if err := RegistrarEvento(dir, "invalid", 1, nil, EventDetail{"channel": make(chan int)}, ""); err == nil {
 		t.Fatal("RegistrarEvento accepted a detail that JSON cannot encode")
 	}
 	if _, err := os.Stat(filepath.Join(dir, eventosRel)); !os.IsNotExist(err) {

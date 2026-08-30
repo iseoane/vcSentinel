@@ -709,7 +709,7 @@ func TestEjecutarPrCreateCon_ComparteElVerificadorModeloConLaPlantilla(t *testin
 			return verificarParaPlantillaCon(worktree, gitDir, cfg, verificadorModelo, nil)
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0: %s", codigo, salida.String())
@@ -790,7 +790,7 @@ func TestEjecutarPrCreateConPasaFabricaRefutadorCheap(t *testing.T) {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 	})
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, want 0: %s", codigo, salida.String())
@@ -851,7 +851,7 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/9", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error {
 			detalleRegistrado = detalle
 			return nil
 		},
@@ -900,7 +900,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_PropagaHallazgosDeterminista
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/12", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error {
 			return nil
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
@@ -956,7 +956,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_HEADIrresolubleAvisaYSigue(t
 			sePublico = true
 			return "https://github.com/x/pr/14", false, nil
 		},
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error {
 			return nil
 		},
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
@@ -1006,7 +1006,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoPropagaHallazgosDetermini
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/13", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error {
 			return nil
 		},
 	})
@@ -1042,7 +1042,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcu
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/11", false, nil },
-		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error {
+		registrarEvento: func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error {
 			detalleRegistrado = detalle
 			return nil
 		},
@@ -1093,7 +1093,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistraDecisionForceBypass(
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/20", false, nil },
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		obtenerGitCommonDir: func(worktree string) (string, error) {
 			if worktree != "worktree" {
 				t.Errorf("obtenerGitCommonDir worktree = %q, esperado %q", worktree, "worktree")
@@ -1152,7 +1152,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraDecision(t *testi
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		obtenerGitCommonDir: func(string) (string, error) {
 			t.Fatal("obtenerGitCommonDir no debe llamarse: --force no tuvo ningún efecto real que registrar")
 			return "", nil
@@ -1192,7 +1192,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_GitCommonDirFallaAvisaYSigue
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/22", false, nil },
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		obtenerGitCommonDir: func(string) (string, error) {
 			return "", errors.New("boom")
 		},
@@ -1231,7 +1231,7 @@ func TestEjecutarPrCreateCon_ForceConValidacionRoja_RegistrarDecisionFallaAvisaY
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
 		publicar:            func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/23", false, nil },
-		registrarEvento:     func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento:     func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		obtenerGitCommonDir: func(string) (string, error) { return "commondir", nil },
 		registrarDecision: func(string, *store.Decision) error {
 			return errors.New("boom")
@@ -1364,7 +1364,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 			body = string(data)
 			return "https://x/pr/1", false, nil
 		},
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 	}
 	res.Propio = &review.RangoPropio{Parent: "layer-a", PublicationBranch: "layer-a"}
 	code := ejecutarPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
@@ -1482,7 +1482,7 @@ func TestExecutePrCreateWiresTheBlobStore(t *testing.T) {
 		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
 			return review.VerificacionPlantilla{Modo: "omitido"}
 		},
-		registrarEvento: func(string, string, int, []string, any, string) error { return nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		resolverActor:   func(string) string { return "actor" },
 	}
 	ejecutarPrCreateCon(&bytes.Buffer{}, "wt", nil, deps)

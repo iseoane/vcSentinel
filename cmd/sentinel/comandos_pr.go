@@ -693,7 +693,7 @@ type depsPrCreate struct {
 	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
 	verificar          func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
 	publicar           func(worktree, rutaPlantilla, base string) (string, bool, error)
-	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle any, worktree string) error
+	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error
 	// obtenerGitCommonDir y registrarDecision cubren T7.5 (informe M3): el
 	// --force que supera una validación en rojo deja de ser una excepción
 	// sin traza. store.NuevoStore exige el git-common-dir (compartido entre

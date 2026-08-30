@@ -15,8 +15,7 @@ import (
 	"time"
 )
 
-// EventDetail is the structured payload used by newly written operation
-// events. Legacy callers may still provide a string.
+// EventDetail is the structured payload used by operation event writers.
 type EventDetail map[string]any
 
 // Evento es una línea de events.jsonl: el registro append-only de operaciones
@@ -80,7 +79,7 @@ const (
 // fallida devuelve error: el log nunca se descarta en silencio. Tras anexar,
 // si el log supera el umbral de tamaño se rota dejando las últimas
 // maxEventosLineas líneas (nunca vacía el historial entero).
-func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail any, worktree string) error {
+func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail EventDetail, worktree string) error {
 	ruta := filepath.Join(gitDir, eventosRel)
 	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
 		return err
