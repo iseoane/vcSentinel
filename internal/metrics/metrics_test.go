@@ -462,3 +462,20 @@ func executionMetrics(runID string, total, stageA, stageZ, input, output int64, 
 		Reuse: &store.ExecutionReuse{ReusedCapabilityIDs: reused, RecomputedCapabilityIDs: recomputed},
 	}
 }
+func TestMetricSnapshotsDoNotDuplicateTimingEvidence(t *testing.T) {
+	duration := time.Duration(10)
+	metrics := &store.ExecutionMetrics{
+		Version: store.ExecutionMetricsSchemaVersion,
+		RunID:   "run",
+		Timing: &store.ExecutionTiming{
+			ByCapability: []store.CapabilityTiming{{CapabilityID: "stage", DurationNanos: duration}},
+		},
+	}
+	got := Aggregate(Input{Executions: []ExecutionObservation{
+		{RunID: "run", Metrics: metrics},
+		{RunID: "run", Metrics: metrics},
+	}})
+	if len(got.Stages) != 1 || got.Stages[0].Samples != 1 {
+		t.Fatalf("duplicate metric snapshots inflated stage samples: %#v", got.Stages)
+	}
+}
