@@ -54,7 +54,7 @@ func TestProveedorCodeGraphOmiteSHAAnterior(t *testing.T) {
 	}
 }
 
-func TestProveedorCodeGraphExponeRazonesDeOmisiones(t *testing.T) {
+func TestCodeGraphProviderExposesSkipReasons(t *testing.T) {
 	const cleanState = `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`
 	cases := []struct {
 		name   string
@@ -93,14 +93,14 @@ func TestProveedorCodeGraphExponeRazonesDeOmisiones(t *testing.T) {
 			name: "CodeGraph has pending changes",
 			want: "pending_changes",
 			mutate: func(fake *fakeCG) {
-				fake.respuestas[2] = []byte(replaceRoot(`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":1,"modified":0,"removed":0},"worktreeMismatch":null}`, fake.raiz))
+				fake.respuestas[2] = []byte(replaceRoot(`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":1,"modified":0,"removed":0},"worktreeMismatch":null}`, fake.root))
 			},
 		},
 		{
 			name: "CodeGraph worktree mismatches",
 			want: "worktree_mismatch",
 			mutate: func(fake *fakeCG) {
-				fake.respuestas[2] = []byte(replaceRoot(`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":{}}`, fake.raiz))
+				fake.respuestas[2] = []byte(replaceRoot(`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":{}}`, fake.root))
 			},
 		},
 	}
@@ -150,7 +150,7 @@ type llamadaCG struct {
 	env        []string
 }
 type fakeCG struct {
-	raiz       string
+	root       string
 	respuestas [][]byte
 	llamadas   []llamadaCG
 }
@@ -161,7 +161,7 @@ func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *
 	estado = string([]byte(estado))
 	estado = replaceRoot(estado, raiz)
 	p := &ProveedorCodeGraph{raiz: raiz, ejecutable: "codegraph", git: "git", limite: 4096}
-	fake := &fakeCG{raiz: raiz, respuestas: [][]byte{[]byte("head\n"), nil, []byte(estado)}}
+	fake := &fakeCG{root: raiz, respuestas: [][]byte{[]byte("head\n"), nil, []byte(estado)}}
 	p.ejecutar = func(_ context.Context, binario string, args []string, dir string, env []string, stdin string, _ int) ([]byte, error) {
 		fake.llamadas = append(fake.llamadas, llamadaCG{binario, append([]string(nil), args...), dir, stdin, append([]string(nil), env...)})
 		if len(fake.respuestas) == 0 {

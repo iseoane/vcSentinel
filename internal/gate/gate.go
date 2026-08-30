@@ -293,7 +293,7 @@ func compactReviewerFailures(auditResult review.ResultadoAuditoria) []ReviewerFa
 		if reason == "" && dimension.Error != nil {
 			reason = dimension.Error.Error()
 		}
-		reason = review.CausaProveedorCompacta(reason)
+		reason = review.CompactProviderCause(reason)
 		if strings.TrimSpace(reason) == "" {
 			continue
 		}

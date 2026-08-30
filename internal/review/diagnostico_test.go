@@ -125,9 +125,9 @@ func TestCausasDelProveedor(t *testing.T) {
 	})
 }
 
-func TestCausaProveedorCompactaExcluyeTrazaDelEvento(t *testing.T) {
-	enriquecida := razonConCausa(falloRealDelGate)
-	got := CausaProveedorCompacta(enriquecida)
+func TestCompactProviderCauseExcludesEventTrace(t *testing.T) {
+	enriched := razonConCausa(falloRealDelGate)
+	got := CompactProviderCause(enriched)
 	want := prefijoCausaProveedor + "ripgrep execution failed"
 	if got != want {
 		t.Fatalf("compact cause = %q, want %q", got, want)
@@ -137,7 +137,7 @@ func TestCausaProveedorCompactaExcluyeTrazaDelEvento(t *testing.T) {
 	}
 
 	const generic = "admission: missing reviewer binding"
-	if got := CausaProveedorCompacta(generic); got != generic {
+	if got := CompactProviderCause(generic); got != generic {
 		t.Fatalf("generic reason = %q, want unchanged", got)
 	}
 }

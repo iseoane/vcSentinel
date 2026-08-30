@@ -85,11 +85,6 @@ func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail any, wo
 	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
 		return err
 	}
-	archivo, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-
 	linea, err := json.Marshal(Evento{
 		At:       time.Now().UTC(),
 		Cmd:      cmd,
@@ -101,6 +96,26 @@ func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail any, wo
 	if err != nil {
 		return err
 	}
+	archivo, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer archivo.Close()
+	info, err := archivo.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() > 0 {
+		lastByte := []byte{0}
+		if _, err := archivo.ReadAt(lastByte, info.Size()-1); err != nil {
+			return err
+		}
+		if lastByte[0] != '\n' {
+			if _, err := archivo.Write([]byte{'\n'}); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err := archivo.Write(append(linea, '\n')); err != nil {
 		return err
 	}
@@ -108,7 +123,7 @@ func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail any, wo
 		return err
 	}
 
-	info, err := os.Stat(ruta)
+	info, err = os.Stat(ruta)
 	if err != nil {
 		return nil // sin stats no se rota, pero el evento ya quedó escrito
 	}
@@ -118,17 +133,17 @@ func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail any, wo
 	return nil
 }
 
-// recorrerLineasCrudas visits each JSONL record with its original line
-// terminator (if any). Unlike bufio.Scanner, bufio.Reader does not impose a
-// 64 KiB token limit, and retaining the bytes here lets selective rewrites
-// preserve every kept record verbatim.
-func recorrerLineasCrudas(archivo io.Reader, visitar func([]byte) error) error {
-	lector := bufio.NewReader(archivo)
+// visitRawLines visits each JSONL record with its original line terminator (if
+// any). Unlike bufio.Scanner, bufio.Reader does not impose a 64 KiB token
+// limit, and retaining the bytes here lets selective rewrites preserve every
+// kept record verbatim.
+func visitRawLines(reader io.Reader, visit func([]byte) error) error {
+	buffered := bufio.NewReader(reader)
 	for {
-		linea, err := lector.ReadBytes('\n')
-		if len(linea) > 0 {
-			if errVisita := visitar(linea); errVisita != nil {
-				return errVisita
+		line, err := buffered.ReadBytes('\n')
+		if len(line) > 0 {
+			if visitErr := visit(line); visitErr != nil {
+				return visitErr
 			}
 		}
 		if err != nil {
@@ -140,8 +155,8 @@ func recorrerLineasCrudas(archivo io.Reader, visitar func([]byte) error) error {
 	}
 }
 
-func copiarLineaCruda(linea []byte) []byte {
-	return append([]byte(nil), linea...)
+func copyRawLine(line []byte) []byte {
+	return append([]byte(nil), line...)
 }
 
 // DetallePrCreate es el esquema del detail del evento pr-create (§13): la
@@ -182,10 +197,10 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 	}
 
 	var conservadas [][]byte
-	errLectura := recorrerLineasCrudas(archivo, func(linea []byte) error {
+	readErr := visitRawLines(archivo, func(line []byte) error {
 		var ev Evento
-		if json.Unmarshal(linea, &ev) != nil || ev.Cmd != "pr-create" {
-			conservadas = append(conservadas, copiarLineaCruda(linea))
+		if json.Unmarshal(line, &ev) != nil || ev.Cmd != "pr-create" {
+			conservadas = append(conservadas, copyRawLine(line))
 			return nil
 		}
 		purgar, aviso := actaResuelta(ev.Detail, consultarEstado)
@@ -197,12 +212,12 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 		if aviso != "" {
 			res.Avisos = append(res.Avisos, aviso)
 		}
-		conservadas = append(conservadas, copiarLineaCruda(linea))
+		conservadas = append(conservadas, copyRawLine(line))
 		return nil
 	})
 	errCierre := archivo.Close()
-	if errLectura != nil {
-		return res, errLectura
+	if readErr != nil {
+		return res, readErr
 	}
 	if errCierre != nil {
 		return res, errCierre
@@ -211,7 +226,7 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 	if res.Purgadas == 0 {
 		return res, nil
 	}
-	return res, escribirLogTemporalRaw(ruta, conservadas)
+	return res, writeRawTemporaryLog(ruta, conservadas)
 }
 
 // actaResuelta decide si la acta de una PR es una PR resuelta (purgar),
@@ -220,7 +235,7 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 // nunca se destruye por incertidumbre).
 func actaResuelta(detail any, consultarEstado func(int) (string, error)) (bool, string) {
 	var acta DetallePrCreate
-	if err := unmarshalaDetalle(detail, &acta); err != nil {
+	if err := unmarshalDetail(detail, &acta); err != nil {
 		return false, "acta con detail inválido: se conserva"
 	}
 	numero, ok := numeroDePR(acta.PrURL)
@@ -239,7 +254,7 @@ func actaResuelta(detail any, consultarEstado func(int) (string, error)) (bool, 
 	}
 }
 
-func unmarshalaDetalle(detail any, target any) error {
+func unmarshalDetail(detail any, target any) error {
 	if legacy, ok := detail.(string); ok {
 		return json.Unmarshal([]byte(legacy), target)
 	}
@@ -289,51 +304,49 @@ func estadoPRConGH(numero int) (string, error) {
 	return crudo.State, nil
 }
 
-// escribirLogTemporal escribe las líneas (sin terminadores) en un archivo
-// temporal y lo reemplaza de forma atómica y segura sobre el log: NUNCA borra
-// el original antes de tener el nuevo escrito. En Windows un os.Rename sobre
-// un destino existente falla, por lo que el reemplazo es backup → rename →
-// limpieza: ante cualquier fallo el log original se conserva (como .bak o
-// intacto).
+// Writes the lines (without terminators) to a temporary file and atomically
+// and safely replaces the log. It NEVER removes the original before the
+// replacement is written. On Windows, os.Rename over an existing destination
+// fails, so replacement is backup → rename → cleanup: on any failure, the
+// original log remains preserved (as .bak or intact).
 func escribirLogTemporal(ruta string, lineas [][]byte) error {
-	return escribirLogTemporalConTerminadores(ruta, lineas, os.Rename, true)
+	return writeTemporaryLogWithTerminators(ruta, lineas, os.Rename, true)
 }
 
-// escribirLogTemporalRaw reescribe solo después de una selección de líneas
-// conservando exactamente los bytes que se retuvieron, incluidos CRLF y la
-// ausencia de un terminador final.
-func escribirLogTemporalRaw(ruta string, lineas [][]byte) error {
-	return escribirLogTemporalConTerminadores(ruta, lineas, os.Rename, false)
+// writeRawTemporaryLog rewrites only after selecting lines, preserving the
+// retained bytes exactly, including CRLF and a missing final terminator.
+func writeRawTemporaryLog(path string, lines [][]byte) error {
+	return writeTemporaryLogWithTerminators(path, lines, os.Rename, false)
 }
 
 // escribirLogTemporalRenombrando es la variante testeable de
 // escribirLogTemporal: la operación de rename es inyectable para poder
 // ejercitar las rutas de fallo y restauración sin depender del filesystem.
 func escribirLogTemporalRenombrando(ruta string, lineas [][]byte, renombrar func(string, string) error) error {
-	return escribirLogTemporalConTerminadores(ruta, lineas, renombrar, true)
+	return writeTemporaryLogWithTerminators(ruta, lineas, renombrar, true)
 }
 
-func escribirLogTemporalConTerminadores(ruta string, lineas [][]byte, renombrar func(string, string) error, terminarConNuevaLinea bool) error {
-	temp, err := os.CreateTemp(filepath.Dir(ruta), "events-*.tmp")
+func writeTemporaryLogWithTerminators(path string, lines [][]byte, rename func(string, string) error, terminateWithNewline bool) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), "events-*.tmp")
 	if err != nil {
 		return err
 	}
-	rutaTemp := temp.Name()
-	defer os.Remove(rutaTemp)
-	escribir := bufio.NewWriter(temp)
-	for _, linea := range lineas {
-		datos := linea
-		if terminarConNuevaLinea {
-			datos = make([]byte, len(linea)+1)
-			copy(datos, linea)
-			datos[len(linea)] = '\n'
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	writer := bufio.NewWriter(temp)
+	for _, line := range lines {
+		data := line
+		if terminateWithNewline {
+			data = make([]byte, len(line)+1)
+			copy(data, line)
+			data[len(line)] = '\n'
 		}
-		if _, err := escribir.Write(datos); err != nil {
+		if _, err := writer.Write(data); err != nil {
 			temp.Close()
 			return err
 		}
 	}
-	if err := escribir.Flush(); err != nil {
+	if err := writer.Flush(); err != nil {
 		temp.Close()
 		return err
 	}
@@ -341,33 +354,32 @@ func escribirLogTemporalConTerminadores(ruta string, lineas [][]byte, renombrar 
 		return err
 	}
 
-	rutaBak := ruta + ".bak"
-	// Limpiar un .bak residual de una ejecución interrumpida: en Windows
-	// os.Rename falla si el destino ya existe y bloquearía la siguiente
-	// rotación/purga. El .bak residual nunca tiene datos más nuevos que el
-	// propio log, así que eliminarlo no pierde información.
-	if err := os.Remove(rutaBak); err != nil && !errors.Is(err, os.ErrNotExist) {
+	backupPath := path + ".bak"
+	// Remove a stale backup from an interrupted execution. On Windows,
+	// os.Rename fails if the destination exists and would block the next
+	// rotation or purge. A stale backup never has newer data than the log, so
+	// removing it loses no information.
+	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := renombrar(ruta, rutaBak); err != nil {
+	if err := rename(path, backupPath); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		// No había log previo: el temporal pasa a ser el log.
-		return renombrar(rutaTemp, ruta)
+		// No prior log exists: the temporary file becomes the log.
+		return rename(tempPath, path)
 	}
-	if err := renombrar(rutaTemp, ruta); err != nil {
-		// Restaurar el original; si la restauración también falla, el log
-		// queda a salvo como .bak y se informa dónde recuperarlo.
-		if errRest := renombrar(rutaBak, ruta); errRest != nil {
-			return fmt.Errorf("%v (restauración fallida: %v; log de respaldo en %s)", err, errRest, rutaBak)
+	if err := rename(tempPath, path); err != nil {
+		// Restore the original. If restoration also fails, the log remains safe
+		// as .bak and the error reports where it can be recovered.
+		if restoreErr := rename(backupPath, path); restoreErr != nil {
+			return fmt.Errorf("%v (restore failed: %v; backup log at %s)", err, restoreErr, backupPath)
 		}
 		return err
 	}
-	// Limpieza del .bak best-effort: el log ya está correctamente escrito;
-	// un fallo aquí (lock de antivirus, permisos) no debe reportarse como
-	// fallo de la operación.
-	_ = os.Remove(rutaBak)
+	// Best-effort backup cleanup: the log was written successfully, and a
+	// failure here (antivirus lock or permissions) must not fail the operation.
+	_ = os.Remove(backupPath)
 	return nil
 }
 
@@ -397,18 +409,18 @@ func PurgeEventosDe(gitDir string, shas []string) (int, error) {
 
 	var conservadas [][]byte
 	eliminadas := 0
-	errLectura := recorrerLineasCrudas(archivo, func(linea []byte) error {
+	readErr := visitRawLines(archivo, func(line []byte) error {
 		var ev Evento
-		if json.Unmarshal(linea, &ev) == nil && eventosTocanShas(ev.Shas, objetivo) {
+		if json.Unmarshal(line, &ev) == nil && eventosTocanShas(ev.Shas, objetivo) {
 			eliminadas++
 			return nil
 		}
-		conservadas = append(conservadas, copiarLineaCruda(linea))
+		conservadas = append(conservadas, copyRawLine(line))
 		return nil
 	})
 	errCierre := archivo.Close()
-	if errLectura != nil {
-		return eliminadas, errLectura
+	if readErr != nil {
+		return eliminadas, readErr
 	}
 	if errCierre != nil {
 		return eliminadas, errCierre
@@ -417,7 +429,7 @@ func PurgeEventosDe(gitDir string, shas []string) (int, error) {
 	if eliminadas == 0 {
 		return 0, nil
 	}
-	return eliminadas, escribirLogTemporalRaw(ruta, conservadas)
+	return eliminadas, writeRawTemporaryLog(ruta, conservadas)
 }
 
 // eventosTocanShas indica si la lista de SHAs del evento contiene alguno de
@@ -447,17 +459,17 @@ func RotarEventos(gitDir string, n int) error {
 	}
 
 	var lineas [][]byte
-	errLectura := recorrerLineasCrudas(archivo, func(linea []byte) error {
+	readErr := visitRawLines(archivo, func(line []byte) error {
 		var ev Evento
-		if err := json.Unmarshal(linea, &ev); err != nil {
+		if err := json.Unmarshal(line, &ev); err != nil {
 			return nil // línea corrupta: se descarta en la rotación
 		}
-		lineas = append(lineas, copiarLineaCruda(linea))
+		lineas = append(lineas, copyRawLine(line))
 		return nil
 	})
 	errCierre := archivo.Close()
-	if errLectura != nil {
-		return errLectura
+	if readErr != nil {
+		return readErr
 	}
 	if errCierre != nil {
 		return errCierre
@@ -468,7 +480,7 @@ func RotarEventos(gitDir string, n int) error {
 	} else if n <= 0 {
 		lineas = nil
 	}
-	return escribirLogTemporalRaw(ruta, lineas)
+	return writeRawTemporaryLog(ruta, lineas)
 }
 
 // UltimosEventos devuelve los n eventos más recientes del log (el más nuevo
@@ -485,16 +497,16 @@ func UltimosEventos(gitDir string, n int) ([]Evento, error) {
 	defer archivo.Close()
 
 	var eventos []Evento
-	errLectura := recorrerLineasCrudas(archivo, func(linea []byte) error {
+	readErr := visitRawLines(archivo, func(line []byte) error {
 		var ev Evento
-		if err := json.Unmarshal(linea, &ev); err != nil {
+		if err := json.Unmarshal(line, &ev); err != nil {
 			return nil // línea corrupta: se ignora, el resto del log sigue válido
 		}
 		eventos = append(eventos, ev)
 		return nil
 	})
-	if errLectura != nil {
-		return nil, errLectura
+	if readErr != nil {
+		return nil, readErr
 	}
 
 	// Últimos n, más reciente primero.

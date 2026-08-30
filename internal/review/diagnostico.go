@@ -85,21 +85,21 @@ func razonConCausa(mensaje string) string {
 	return prefijoCausaProveedor + strings.Join(causas, "; ") + " | " + mensaje
 }
 
-// CausaProveedorCompacta devuelve la forma segura para un evento operativo:
-// conserva solo las causas que el proveedor imprimió, sin arrastrar la traza
-// completa que puede contener cientos de líneas y el timeout consecuente.
-// Las razones que no tienen una causa de proveedor reconocible se conservan
-// para no ocultar fallos de admisión o de configuración.
-func CausaProveedorCompacta(mensaje string) string {
-	if causas := causasDelProveedor(mensaje); len(causas) > 0 {
-		return prefijoCausaProveedor + strings.Join(causas, "; ")
+// CompactProviderCause returns the safe form for an operational event: it
+// retains only the causes printed by the provider, without carrying the full
+// trace, which can contain hundreds of lines and the resulting timeout.
+// Reasons with no recognizable provider cause are retained so admission or
+// configuration failures are not hidden.
+func CompactProviderCause(message string) string {
+	if causes := causasDelProveedor(message); len(causes) > 0 {
+		return prefijoCausaProveedor + strings.Join(causes, "; ")
 	}
-	if !strings.HasPrefix(mensaje, prefijoCausaProveedor) {
-		return mensaje
+	if !strings.HasPrefix(message, prefijoCausaProveedor) {
+		return message
 	}
-	cabecera := strings.TrimSpace(strings.TrimPrefix(mensaje, prefijoCausaProveedor))
-	if breve, _, ok := strings.Cut(cabecera, " | "); ok {
-		cabecera = strings.TrimSpace(breve)
+	header := strings.TrimSpace(strings.TrimPrefix(message, prefijoCausaProveedor))
+	if short, _, ok := strings.Cut(header, " | "); ok {
+		header = strings.TrimSpace(short)
 	}
-	return prefijoCausaProveedor + recortarCausa(cabecera)
+	return prefijoCausaProveedor + recortarCausa(header)
 }

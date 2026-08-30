@@ -286,9 +286,9 @@ func TestPurgeEventosDePRsResueltas(t *testing.T) {
 		t.Fatalf("quedaron %d eventos, esperado 2", len(eventos))
 	}
 	for _, ev := range eventos {
-		texto := detailText(t, ev.Detail)
-		if !strings.Contains(texto, "/pull/11") && !strings.Contains(texto, "/pull/13") {
-			t.Errorf("sobrevivió un evento indebido: %s", texto)
+		text := detailText(t, ev.Detail)
+		if !strings.Contains(text, "/pull/11") && !strings.Contains(text, "/pull/13") {
+			t.Errorf("sobrevivió un evento indebido: %s", text)
 		}
 	}
 
@@ -608,7 +608,7 @@ func TestVerificarRegistraPrVerify(t *testing.T) {
 	})
 }
 
-func TestRegistrarEventoWritesStructuredObjectDetail(t *testing.T) {
+func TestRecordEventWritesStructuredObjectDetail(t *testing.T) {
 	dir := t.TempDir()
 	detail := map[string]any{
 		"reason":  "ripgrep execution failed",
@@ -644,10 +644,10 @@ func TestRegistrarEventoWritesStructuredObjectDetail(t *testing.T) {
 	}
 }
 
-func TestUltimosEventosReadsMixedLegacyAndStructuredDetails(t *testing.T) {
+func TestLatestEventsReadsMixedLegacyAndStructuredDetails(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := filepath.Join(dir, eventosRel)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
 	lines := []string{
@@ -656,7 +656,7 @@ func TestUltimosEventosReadsMixedLegacyAndStructuredDetails(t *testing.T) {
 		`{"at":"2026-01-01T00:00:02Z","cmd":"new-object","exit":0,"detail":{"new":"value","unknown":{"number":7}}}`,
 	}
 	original := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(ruta, []byte(original), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -696,7 +696,7 @@ func TestUltimosEventosReadsMixedLegacyAndStructuredDetails(t *testing.T) {
 		t.Errorf("new unknown fields = %#v, want them preserved", newObject["unknown"])
 	}
 
-	after, err := os.ReadFile(ruta)
+	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,23 +753,23 @@ func detailText(t *testing.T, detail any) string {
 	return string(encoded)
 }
 
-func TestRotarYPurgarPreservanBytesDeLineasConservadas(t *testing.T) {
+func TestRotateAndPurgePreserveRetainedLineBytes(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := filepath.Join(dir, eventosRel)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
 	keep := []byte(`{"at":"2026-01-01T00:00:00Z","cmd":"keep","exit":0,"shas":["keep"],"detail":{"unknown":{"kept":true}}}` + "\r\n")
 	remove := []byte(`{"at":"2026-01-01T00:00:01Z","cmd":"remove","exit":0,"shas":["remove"],"detail":{"unknown":{"number":7}}}`)
 	original := append(append([]byte(nil), keep...), remove...)
-	if err := os.WriteFile(ruta, original, 0644); err != nil {
+	if err := os.WriteFile(path, original, 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := RotarEventos(dir, 2); err != nil {
 		t.Fatalf("RotarEventos failed: %v", err)
 	}
-	afterRotate, err := os.ReadFile(ruta)
+	afterRotate, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,18 +777,51 @@ func TestRotarYPurgarPreservanBytesDeLineasConservadas(t *testing.T) {
 		t.Fatalf("rotation changed retained bytes: got %q, want %q", afterRotate, original)
 	}
 
-	eliminadas, err := PurgeEventosDe(dir, []string{"remove"})
+	deleted, err := PurgeEventosDe(dir, []string{"remove"})
 	if err != nil {
 		t.Fatalf("PurgeEventosDe failed: %v", err)
 	}
-	if eliminadas != 1 {
-		t.Fatalf("eliminated = %d, want 1", eliminadas)
+	if deleted != 1 {
+		t.Fatalf("eliminated = %d, want 1", deleted)
 	}
-	afterPurge, err := os.ReadFile(ruta)
+	afterPurge, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(afterPurge) != string(keep) {
 		t.Fatalf("purge changed retained bytes: got %q, want %q", afterPurge, keep)
+	}
+}
+
+func TestRecordEventSeparatesAnUnterminatedLegacyRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, eventosRel)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"at":"2026-01-01T00:00:00Z","cmd":"legacy","exit":0,"detail":"text"}`
+	if err := os.WriteFile(path, []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RegistrarEvento(dir, "new", 0, nil, EventDetail{"kind": "object"}, ""); err != nil {
+		t.Fatalf("RegistrarEvento failed: %v", err)
+	}
+	events, err := UltimosEventos(dir, 0)
+	if err != nil {
+		t.Fatalf("UltimosEventos failed: %v", err)
+	}
+	if len(events) != 2 || events[0].Cmd != "new" || events[1].Cmd != "legacy" {
+		t.Fatalf("events = %#v, want separate new and legacy records", events)
+	}
+}
+
+func TestRecordEventRejectsInvalidDetailBeforeCreatingLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := RegistrarEvento(dir, "invalid", 1, nil, make(chan int), ""); err == nil {
+		t.Fatal("RegistrarEvento accepted a detail that JSON cannot encode")
+	}
+	if _, err := os.Stat(filepath.Join(dir, eventosRel)); !os.IsNotExist(err) {
+		t.Fatalf("events.jsonl exists after marshal failure: %v", err)
 	}
 }

@@ -189,7 +189,7 @@ func ejecutarReview(worktree string, args []string) {
 		if exit > exitFinal {
 			exitFinal = exit
 		}
-		detalle := detalleEventoReview(flags, resultado)
+		detalle := reviewEventDetail(flags, resultado)
 		if err := ops.RegistrarEvento(gitDir, "review", exit, []string{sha}, detalle, worktree); err != nil {
 			fmt.Printf("⚠️ No se pudo registrar el evento: %v\n", err)
 		}
@@ -198,18 +198,18 @@ func ejecutarReview(worktree string, args []string) {
 	os.Exit(exitFinal)
 }
 
-func detalleEventoReview(flags flagsAuditoria, resultado review.ResultadoAuditoria) ops.EventDetail {
-	detalle := ops.EventDetail{
+func reviewEventDetail(flags flagsAuditoria, result review.ResultadoAuditoria) ops.EventDetail {
+	detail := ops.EventDetail{
 		"all":   flags.all,
 		"chain": flags.chain,
 		"gate":  flags.gate,
 		"dims":  flags.dims,
 	}
-	if resultado.ContextSkipReason != "" {
-		detalle["context_skip_reason"] = resultado.ContextSkipReason
+	if result.ContextSkipReason != "" {
+		detail["context_skip_reason"] = result.ContextSkipReason
 	}
-	var fallos []ops.EventDetail
-	for _, dimension := range resultado.Dims {
+	var failures []ops.EventDetail
+	for _, dimension := range result.Dims {
 		if dimension.Resultado != nil && dimension.Resultado.Verdict != review.VerdictUnavailable {
 			continue
 		}
@@ -229,20 +229,20 @@ func detalleEventoReview(flags flagsAuditoria, resultado review.ResultadoAuditor
 		if strings.TrimSpace(reason) == "" && dimension.Error != nil {
 			reason = dimension.Error.Error()
 		}
-		reason = review.CausaProveedorCompacta(reason)
+		reason = review.CompactProviderCause(reason)
 		if strings.TrimSpace(reason) == "" {
 			continue
 		}
-		fallos = append(fallos, ops.EventDetail{
+		failures = append(failures, ops.EventDetail{
 			"bundle":    bundle,
 			"dimension": dim,
 			"reason":    reason,
 		})
 	}
-	if len(fallos) > 0 {
-		detalle["reviewer_failures"] = fallos
+	if len(failures) > 0 {
+		detail["reviewer_failures"] = failures
 	}
-	return detalle
+	return detail
 }
 
 var nuevoVerificadorModelo = func(worktree string) *modelprobe.Verificador {

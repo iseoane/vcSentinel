@@ -87,7 +87,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	resultado := gate.EjecutarGate(opciones)
 
 	fmt.Fprintf(w, "🚦 gate [%s] perfil=%s → %s\n", stage, perfil, resultado.Estado)
-	return finalizarGateConDetalles(w, worktree, stage, resultado.Estado, resultado.Mensajes, resultado.ContextSkipReason, resultado.ReviewerFailures)
+	return finalizeGateWithDetails(w, worktree, stage, resultado.Estado, resultado.Mensajes, resultado.ContextSkipReason, resultado.ReviewerFailures)
 }
 
 // buildGateOptions assembles the gate.Opciones the command hands to
@@ -167,15 +167,15 @@ func datosCommitHEAD() (sha, mensaje, diff string, archivos []string, err error)
 // estado final (mecanismo ya existente en internal/ops, mismo patrón que
 // ejecutarReview) y devuelve el exit code exacto de la ficha.
 func finalizarGate(w io.Writer, worktree, stage, estado string, mensajes []string) int {
-	return finalizarGateConDetalles(w, worktree, stage, estado, mensajes, "", nil)
+	return finalizeGateWithDetails(w, worktree, stage, estado, mensajes, "", nil)
 }
 
-func finalizarGateConDetalles(w io.Writer, worktree, stage, estado string, mensajes []string, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) int {
-	for _, m := range mensajes {
-		fmt.Fprintln(w, m)
+func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, messages []string, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) int {
+	for _, message := range messages {
+		fmt.Fprintln(w, message)
 	}
-	registrarEventoGateConDetalles(worktree, stage, estado, mensajes, contextSkipReason, reviewerFailures)
-	return gate.CodigoSalida(estado)
+	recordGateEventWithDetails(worktree, stage, state, messages, contextSkipReason, reviewerFailures)
+	return gate.CodigoSalida(state)
 }
 
 // registrarEventoGate anexa el evento "gate" al log del repositorio SOBRE EL
@@ -189,22 +189,20 @@ func finalizarGateConDetalles(w io.Writer, worktree, stage, estado string, mensa
 // requireInicializado, pero por si acaso el registro es best-effort: no
 // aborta gate por un fallo al registrar su propio evento, y ante la duda no
 // escribe en ningún sitio antes que escribir en el sitio equivocado.
-func registrarEventoGate(worktree, stage, estado string, mensajes []string) {
-	registrarEventoGateConDetalles(worktree, stage, estado, mensajes, "", nil)
+func registrarEventoGate(worktree, stage, estado string, messages []string) {
+	recordGateEventWithDetails(worktree, stage, estado, messages, "", nil)
 }
 
-func registrarEventoGateConDetalles(worktree, stage, estado string, mensajes []string, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) {
+func recordGateEventWithDetails(worktree, stage, state string, messages []string, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) {
 	gitDir, err := git.ObtenerGitDirDe(worktree)
 	if err != nil {
 		return
 	}
-	detalle := ops.EventDetail{"stage": stage, "state": estado}
+	detail := ops.EventDetail{"stage": stage, "state": state}
 	if contextSkipReason != "" {
-		detalle["context_skip_reason"] = contextSkipReason
+		detail["context_skip_reason"] = contextSkipReason
 	}
-	if len(mensajes) > 0 {
-		detalle["messages"] = mensajes
-	}
+	_ = messages // Console-only presentation may contain raw provider evidence.
 	if len(reviewerFailures) > 0 {
 		failures := make([]ops.EventDetail, 0, len(reviewerFailures))
 		for _, failure := range reviewerFailures {
@@ -214,9 +212,9 @@ func registrarEventoGateConDetalles(worktree, stage, estado string, mensajes []s
 				"reason":    failure.Reason,
 			})
 		}
-		detalle["reviewer_failures"] = failures
+		detail["reviewer_failures"] = failures
 	}
-	_ = ops.RegistrarEvento(gitDir, "gate", gate.CodigoSalida(estado), nil, detalle, worktree)
+	_ = ops.RegistrarEvento(gitDir, "gate", gate.CodigoSalida(state), nil, detail, worktree)
 }
 
 // maxSegundosTimeout es el mayor valor de --timeout que time.Duration puede

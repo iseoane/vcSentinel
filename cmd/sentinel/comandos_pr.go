@@ -135,8 +135,8 @@ func parsearFlagsPrReview(args []string) (flagsPrReview, error) {
 	return flags, nil
 }
 
-// detalleEventoPrReview construye el detail estructurado del evento pr-review
-// (esquema de la guía §13).
+// detalleEventoPrReview constructs the structured detail for the pr-review event
+// (guide schema §13).
 func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (ops.EventDetail, error) {
 	detalle := ops.EventDetail{
 		"base":      base,
@@ -148,36 +148,36 @@ func detalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (ops
 		"overview":  res.Overview != nil,
 		"chain_pr":  res.Decision == "chain",
 	}
-	// Un fallo del overview no debe quedar en silencio en el evento: si se
-	// pidió y falló, la decisión chain lleva su causa.
+	// An overview failure must not be silent in the event: if it was requested
+	// and failed, the chain decision carries its cause.
 	if res.OverviewError != "" {
 		detalle["overview_error"] = res.OverviewError
 	}
-	if fallos := detallesFallasFichas(res.Fichas); len(fallos) > 0 {
-		detalle["reviewer_failures"] = fallos
+	if failures := reviewerFailureDetails(res.Fichas); len(failures) > 0 {
+		detalle["reviewer_failures"] = failures
 	}
 	return detalle, nil
 }
 
-func detallesFallasFichas(fichas []review.Ficha) []ops.EventDetail {
-	var fallos []ops.EventDetail
-	for _, ficha := range fichas {
-		if len(ficha.Revisions) == 0 {
+func reviewerFailureDetails(cards []review.Ficha) []ops.EventDetail {
+	var failures []ops.EventDetail
+	for _, card := range cards {
+		if len(card.Revisions) == 0 {
 			continue
 		}
-		ultima := ficha.Revisions[len(ficha.Revisions)-1]
-		for _, dimension := range ultima.Dims {
+		latest := card.Revisions[len(card.Revisions)-1]
+		for _, dimension := range latest.Dims {
 			if dimension.Verdict != review.VerdictUnavailable || strings.TrimSpace(dimension.Reason) == "" {
 				continue
 			}
-			fallos = append(fallos, ops.EventDetail{
-				"sha":       ficha.SHA,
+			failures = append(failures, ops.EventDetail{
+				"sha":       card.SHA,
 				"dimension": dimension.Dim,
-				"reason":    review.CausaProveedorCompacta(dimension.Reason),
+				"reason":    review.CompactProviderCause(dimension.Reason),
 			})
 		}
 	}
-	return fallos
+	return failures
 }
 
 // textoDecision explica la decisión single/chain en la salida terminal.

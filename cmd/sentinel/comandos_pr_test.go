@@ -126,12 +126,12 @@ func TestDetalleEventoPrReview(t *testing.T) {
 	}
 
 	var crudo map[string]any
-	datos, err := json.Marshal(detalle)
+	data, err := json.Marshal(detalle)
 	if err != nil {
 		t.Fatalf("detail no es JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
-		t.Fatalf("detail no es JSON válido: %v\n%s", err, datos)
+	if err := json.Unmarshal(data, &crudo); err != nil {
+		t.Fatalf("detail no es JSON válido: %v\n%s", err, data)
 	}
 	for clave, esperado := range map[string]any{
 		"base":      "main",
@@ -158,19 +158,19 @@ func TestDetalleEventoPrReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detalleEventoPrReview falló: %v", err)
 	}
-	datos, err = json.Marshal(detalle)
+	data, err = json.Marshal(detalle)
 	if err != nil {
 		t.Fatalf("detail no es JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
-		t.Fatalf("detail no es JSON válido: %v\n%s", err, datos)
+	if err := json.Unmarshal(data, &crudo); err != nil {
+		t.Fatalf("detail no es JSON válido: %v\n%s", err, data)
 	}
 	if crudo["overview_error"] != "el auditor de rama no respondió: boom" {
 		t.Errorf("detail[overview_error] = %v", crudo["overview_error"])
 	}
 }
 
-func TestDetalleEventoReviewCarriesFailureAndContextReasons(t *testing.T) {
+func TestReviewEventDetailCarriesFailureAndContextReasons(t *testing.T) {
 	result := review.ResultadoAuditoria{
 		ContextSkipReason: "codegraph context skipped: dirty_worktree",
 		Dims: []review.ResultadoDimension{{
@@ -182,7 +182,7 @@ func TestDetalleEventoReviewCarriesFailureAndContextReasons(t *testing.T) {
 			},
 		}},
 	}
-	detail := detalleEventoReview(flagsAuditoria{all: true}, result)
+	detail := reviewEventDetail(flagsAuditoria{all: true}, result)
 	encoded, err := json.Marshal(detail)
 	if err != nil {
 		t.Fatalf("marshal review detail: %v", err)
@@ -541,11 +541,11 @@ func TestDetalleEventoPrCreate(t *testing.T) {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
 	var crudo map[string]any
-	datos, err := json.Marshal(detalle)
+	data, err := json.Marshal(detalle)
 	if err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
+	if err := json.Unmarshal(data, &crudo); err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
 	if crudo["pr_url"] != "https://github.com/x/pr/1" {
@@ -565,11 +565,11 @@ func TestDetalleEventoPrCreateFallbackYChain(t *testing.T) {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
 	var crudo map[string]any
-	datos, err := json.Marshal(detalle)
+	data, err := json.Marshal(detalle)
 	if err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
+	if err := json.Unmarshal(data, &crudo); err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
 	if crudo["fallback"] != true || crudo["chain_pr"] != true {
@@ -588,11 +588,11 @@ func TestDetalleEventoPrCreateForceConMotivo(t *testing.T) {
 		t.Fatalf("detalle no debería fallar: %v", err)
 	}
 	var crudo map[string]any
-	datos, err := json.Marshal(detalle)
+	data, err := json.Marshal(detalle)
 	if err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
+	if err := json.Unmarshal(data, &crudo); err != nil {
 		t.Fatalf("detail debe ser JSON válido: %v", err)
 	}
 	if crudo["force"] != true || crudo["motivo"] != "motivo real" {
@@ -863,12 +863,12 @@ func TestEjecutarPrCreateCon_ForceConReason_PublicaYRegistraExcepcion(t *testing
 		t.Fatalf("codigo = %d, esperado 0 (--force publica igual)", codigo)
 	}
 	var crudo map[string]any
-	datos, err := json.Marshal(detalleRegistrado)
+	data, err := json.Marshal(detalleRegistrado)
 	if err != nil {
 		t.Fatalf("el detalle del evento debe ser JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
-		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, datos)
+	if err := json.Unmarshal(data, &crudo); err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, data)
 	}
 	if crudo["force"] != true || crudo["motivo"] != "motivo real" {
 		t.Errorf("el evento debe registrar force y motivo, got %+v", crudo)
@@ -1054,12 +1054,12 @@ func TestEjecutarPrCreateCon_ForceConValidacionVerde_NoRegistraExcepcionQueNoOcu
 		t.Errorf("sin hallazgos que superar no debe avisar de una validación superada: %s", salida.String())
 	}
 	var crudo map[string]any
-	datos, err := json.Marshal(detalleRegistrado)
+	data, err := json.Marshal(detalleRegistrado)
 	if err != nil {
 		t.Fatalf("el detalle del evento debe ser JSON válido: %v", err)
 	}
-	if err := json.Unmarshal(datos, &crudo); err != nil {
-		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, datos)
+	if err := json.Unmarshal(data, &crudo); err != nil {
+		t.Fatalf("el detalle del evento debe ser JSON válido: %v\n%s", err, data)
 	}
 	if crudo["force"] != false {
 		t.Errorf("force debe registrar false: no había nada que forzar, got %+v", crudo)
