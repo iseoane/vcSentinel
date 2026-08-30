@@ -257,6 +257,74 @@ func TestReadStoreReadsLedgerEventsAndRetainedMetrics(t *testing.T) {
 	}
 }
 
+func TestAggregateKeepsDistinctAgentTimingIdentities(t *testing.T) {
+	knownIdentity := store.ObservedExecutionIdentity{
+		InvocationID: "worker",
+		Agent:        "\x00agent\x00",
+		Source:       store.ObservationSourceAdapter,
+	}
+	unknownIdentity := store.ObservedExecutionIdentity{
+		InvocationID: "worker\x00\x00agent",
+		Source:       store.ObservationSourceAdapter,
+	}
+	metricsFor := func(version uint32, identity store.ObservedExecutionIdentity) *store.ExecutionMetrics {
+		return &store.ExecutionMetrics{
+			Version:    version,
+			RunID:      "run",
+			Identities: []store.ObservedExecutionIdentity{identity},
+			Timing: &store.ExecutionTiming{ByAgent: []store.AgentTiming{{
+				Identity: identity, DurationNanos: 10,
+			}}},
+		}
+	}
+
+	got := Aggregate(Input{Executions: []ExecutionObservation{
+		{RunID: "run", Metrics: metricsFor(store.ExecutionMetricsSchemaVersion, unknownIdentity)},
+		{RunID: "run", Metrics: metricsFor(store.ExecutionMetricsSchemaVersion+1, knownIdentity)},
+	}})
+	if got.Executions.IdentityCoverage.Observed != 1 {
+		t.Fatalf("distinct agent timing identities were collapsed: %#v", got.Executions.IdentityCoverage)
+	}
+}
+
+func TestReadStoreKeepsDistinctAnonymousRemediationEvents(t *testing.T) {
+	commonDir := t.TempDir()
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	events := []ops.Evento{
+		{At: at, Cmd: "remediate", Exit: 0, Detail: ops.EventDetail{
+			"kind": "remediation", "target": "target-a", "dimension": "logic",
+		}},
+		{At: at, Cmd: "remediate", Exit: 0, Detail: ops.EventDetail{
+			"kind": "remediation", "target": "target-b", "dimension": "security",
+		}},
+	}
+	var data []byte
+	for _, event := range events {
+		line, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal event: %v", err)
+		}
+		data = append(data, line...)
+		data = append(data, '\n')
+	}
+	eventsPath := filepath.Join(commonDir, "vas-sentinel", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(eventsPath), 0755); err != nil {
+		t.Fatalf("create events directory: %v", err)
+	}
+	if err := os.WriteFile(eventsPath, data, 0644); err != nil {
+		t.Fatalf("write events: %v", err)
+	}
+
+	input, err := ReadStore(commonDir)
+	if err != nil {
+		t.Fatalf("read store: %v", err)
+	}
+	got := Aggregate(input)
+	if got.Remediation.Attempts != 2 {
+		t.Fatalf("distinct remediation events were collapsed: %#v", got.Remediation)
+	}
+}
+
 func TestOverrideRateExcludesRefutedOverrides(t *testing.T) {
 	got := Aggregate(Input{
 		Findings: []FindingObservation{{
@@ -463,17 +531,19 @@ func executionMetrics(runID string, total, stageA, stageZ, input, output int64, 
 	}
 }
 func TestMetricSnapshotsDoNotDuplicateTimingEvidence(t *testing.T) {
-	duration := time.Duration(10)
-	metrics := &store.ExecutionMetrics{
-		Version: store.ExecutionMetricsSchemaVersion,
-		RunID:   "run",
-		Timing: &store.ExecutionTiming{
-			ByCapability: []store.CapabilityTiming{{CapabilityID: "stage", DurationNanos: duration}},
-		},
+	metrics := func() *store.ExecutionMetrics {
+		duration := time.Duration(10)
+		return &store.ExecutionMetrics{
+			Version: store.ExecutionMetricsSchemaVersion,
+			RunID:   "run",
+			Timing: &store.ExecutionTiming{
+				ByCapability: []store.CapabilityTiming{{CapabilityID: "stage", DurationNanos: duration}},
+			},
+		}
 	}
 	got := Aggregate(Input{Executions: []ExecutionObservation{
-		{RunID: "run", Metrics: metrics},
-		{RunID: "run", Metrics: metrics},
+		{RunID: "run", Metrics: metrics()},
+		{RunID: "run", Metrics: metrics()},
 	}})
 	if len(got.Stages) != 1 || got.Stages[0].Samples != 1 {
 		t.Fatalf("duplicate metric snapshots inflated stage samples: %#v", got.Stages)

@@ -233,13 +233,28 @@ func remediationFromEvent(event ops.Evento) (RemediationObservation, bool) {
 		success = event.Exit == 0
 	}
 	logicalID := stringField(fields, "logical_id", "remediation_id", "attempt_id", "invocation_id")
+	target := stringField(fields, "fingerprint", "target")
+	dimension := stringField(fields, "dimension")
 	if logicalID == "" {
-		logicalID = "event:" + event.At.UTC().Format(time.RFC3339Nano) + ":" + event.Cmd
+		logicalID = eventRemediationIdentity(event, target, dimension)
 	}
 	return RemediationObservation{
-		Target: stringField(fields, "fingerprint", "target"), LogicalID: logicalID,
-		Dimension: stringField(fields, "dimension"), Success: success, At: event.At,
+		Target: target, LogicalID: logicalID,
+		Dimension: dimension, Success: success, At: event.At,
 	}, true
+}
+
+func eventRemediationIdentity(event ops.Evento, target, dimension string) string {
+	data, _ := json.Marshal(struct {
+		At        string `json:"at"`
+		Cmd       string `json:"cmd"`
+		Target    string `json:"target"`
+		Dimension string `json:"dimension"`
+	}{
+		At: event.At.UTC().Format(time.RFC3339Nano), Cmd: event.Cmd,
+		Target: target, Dimension: dimension,
+	})
+	return "event:" + string(data)
 }
 
 func stringField(fields map[string]any, names ...string) string {

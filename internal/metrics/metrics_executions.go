@@ -371,9 +371,8 @@ func canonicalMetrics(metrics store.ExecutionMetrics) store.ExecutionMetrics {
 }
 
 func executionIdentitySortKey(identity store.ObservedExecutionIdentity) string {
-	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
-		identity.InvocationID, identity.Agent, identity.Model, identity.RequestedModel,
-		identity.Effort, identity.RequestedEffort, identity.Source)
+	data, _ := json.Marshal(identity)
+	return string(data)
 }
 
 func mergeMetrics(left, right store.ExecutionMetrics) store.ExecutionMetrics {
