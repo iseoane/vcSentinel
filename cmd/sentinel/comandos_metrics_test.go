@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -698,5 +699,139 @@ func TestRenderMetricsReportsReopenCountsAsUnknown(t *testing.T) {
 	}
 	if strings.Contains(text, "reopened=0") {
 		t.Fatalf("reopen count was rendered as a measured zero: %s", text)
+	}
+}
+
+// jsonKeyOrder returns one JSON object's keys in their encoded order, which a
+// map decode discards. The metrics contract fixes that order.
+func jsonKeyOrder(t *testing.T, object []byte) []string {
+	t.Helper()
+	decoder := json.NewDecoder(bytes.NewReader(object))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		t.Fatalf("expected a JSON object, read %v (%v)", token, err)
+	}
+	keys := []string{}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			t.Fatalf("cannot read key: %v", err)
+		}
+		name, ok := key.(string)
+		if !ok {
+			t.Fatalf("key %v is not a string", key)
+		}
+		keys = append(keys, name)
+		var discard json.RawMessage
+		if err := decoder.Decode(&discard); err != nil {
+			t.Fatalf("cannot skip the value of %q: %v", name, err)
+		}
+	}
+	return keys
+}
+
+func rawJSONField(t *testing.T, object []byte, key string) []byte {
+	t.Helper()
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(object, &fields); err != nil {
+		t.Fatalf("cannot decode object for %q: %v", key, err)
+	}
+	value, ok := fields[key]
+	if !ok {
+		t.Fatalf("key %q is missing from %s", key, object)
+	}
+	return value
+}
+
+func rawJSONFirstElement(t *testing.T, array []byte) []byte {
+	t.Helper()
+	elements := []json.RawMessage{}
+	if err := json.Unmarshal(array, &elements); err != nil {
+		t.Fatalf("cannot decode array: %v", err)
+	}
+	if len(elements) == 0 {
+		t.Fatalf("array is empty: %s", array)
+	}
+	return elements[0]
+}
+
+// reopenReportForJSON aggregates through the public surface so that the reopen
+// coverage under test is the real one rather than a hand-built value.
+func reopenReportForJSON() metrics.Report {
+	observation := func(fingerprint, status string) metrics.FindingObservation {
+		return metrics.FindingObservation{Fingerprint: fingerprint, Finding: review.Hallazgo{
+			Fingerprint: fingerprint, Dimension: review.DimLogic, Status: status,
+			Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+		}}
+	}
+	return metrics.Aggregate(metrics.Input{Findings: []metrics.FindingObservation{
+		observation("a", review.StatusReopened),
+		observation("b", review.StatusConfirmed),
+	}})
+}
+
+func assertJSONCoverage(t *testing.T, name string, object []byte, observed, total float64) {
+	t.Helper()
+	decoded := decodeMetricsJSON(t, object)
+	if decoded["observed"] != observed || decoded["total"] != total {
+		t.Errorf("%s = %#v, want observed=%v total=%v", name, decoded, observed, total)
+	}
+	if _, ok := decoded["value"]; !ok {
+		t.Errorf("%s carries no value key: %#v", name, decoded)
+	}
+}
+
+func TestMetricsJSONReportsUnobservableReopenCountsAsNull(t *testing.T) {
+	var output bytes.Buffer
+	if err := renderMetricsJSON(&output, reopenReportForJSON()); err != nil {
+		t.Fatal(err)
+	}
+	findings := rawJSONField(t, output.Bytes(), "findings")
+	dimension := rawJSONFirstElement(t, rawJSONField(t, findings, "by_dimension"))
+
+	for name, object := range map[string][]byte{"findings": findings, "dimension": dimension} {
+		assertJSONNull(t, decodeMetricsJSON(t, object), "reopened")
+		assertJSONCoverage(t, name+".reopen_coverage", rawJSONField(t, object, "reopen_coverage"), 0, 2)
+	}
+}
+
+func TestMetricsJSONKeyOrderSurvivesTheReopenCoverageField(t *testing.T) {
+	var output bytes.Buffer
+	if err := renderMetricsJSON(&output, reopenReportForJSON()); err != nil {
+		t.Fatal(err)
+	}
+	if got := jsonKeyOrder(t, output.Bytes()); !reflect.DeepEqual(got, []string{"costs", "executions", "findings", "remediation", "stages"}) {
+		t.Errorf("top-level key order = %v", got)
+	}
+	findings := rawJSONField(t, output.Bytes(), "findings")
+	wantFindings := []string{"by_agent", "by_dimension", "by_model", "confirmation_rate", "confirmed", "effective", "observed", "override_rate", "overrides", "refutation_rate", "refuted", "reopen_coverage", "reopened"}
+	if got := jsonKeyOrder(t, findings); !reflect.DeepEqual(got, wantFindings) {
+		t.Errorf("findings key order = %v, want %v", got, wantFindings)
+	}
+	wantDimension := []string{"confirmation_rate", "confirmed", "dimension", "findings", "observed", "override_rate", "overrides", "refutation_rate", "refuted", "reopen_coverage", "reopened"}
+	if got := jsonKeyOrder(t, rawJSONFirstElement(t, rawJSONField(t, findings, "by_dimension"))); !reflect.DeepEqual(got, wantDimension) {
+		t.Errorf("dimension key order = %v, want %v", got, wantDimension)
+	}
+}
+
+// TestNullableReopenCountFollowsItsCoverage covers the non-null branch. It
+// cannot be reached through metrics.Aggregate: the reopen coverage basis is an
+// unexported field that no production path increments, so ReopenCoverage() can
+// never be Complete() for any aggregate the public surface can produce. Testing
+// the projection directly proves the null is derived from the coverage rather
+// than hardcoded, without reaching into unexported state to fake an aggregate.
+func TestNullableReopenCountFollowsItsCoverage(t *testing.T) {
+	complete, incomplete := metrics.Coverage{Observed: 2, Total: 2}, metrics.Coverage{Observed: 0, Total: 2}
+	completeValue, incompleteValue := 1.0, 0.0
+	complete.Value, incomplete.Value = &completeValue, &incompleteValue
+
+	if got := nullableCount(7, complete); got == nil || *got != 7 {
+		t.Errorf("complete coverage yielded %v, want 7", got)
+	}
+	if got := nullableCount(7, incomplete); got != nil {
+		t.Errorf("incomplete coverage yielded %v, want null", *got)
+	}
+	if got := nullableCount(0, metrics.Coverage{}); got != nil {
+		t.Errorf("absent population yielded %v, want null", *got)
 	}
 }
