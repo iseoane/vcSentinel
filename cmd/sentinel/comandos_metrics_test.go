@@ -679,3 +679,24 @@ func writeCorruptMetrics(t *testing.T, common string) {
 		t.Fatal(err)
 	}
 }
+
+func TestRenderMetricsReportsReopenCountsAsUnknown(t *testing.T) {
+	var output bytes.Buffer
+	report := completeMetricsReport()
+	report.Findings.ByDimension = []metrics.DimensionAggregate{{
+		Dimension: "logic", Observed: 2, Findings: 2,
+		ConfirmationRate: report.Findings.ConfirmationRate,
+		RefutationRate:   report.Findings.ConfirmationRate,
+		OverrideRate:     report.Findings.ConfirmationRate,
+	}}
+	if err := renderMetrics(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "reopened=unknown (coverage 0/") {
+		t.Fatalf("reopen count was rendered as a measured value: %s", text)
+	}
+	if strings.Contains(text, "reopened=0") {
+		t.Fatalf("reopen count was rendered as a measured zero: %s", text)
+	}
+}

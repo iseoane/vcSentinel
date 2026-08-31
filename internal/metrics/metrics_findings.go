@@ -35,6 +35,12 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 	}
 	sort.Strings(keys)
 	result := FindingsAggregate{}
+	// known counts the observations whose Status attribute is present at all,
+	// effectiveKnown the same within the non-refuted population, and
+	// overrideObservable the non-refuted observations whose override attribute
+	// could be resolved. Each is the coverage basis of the rate it feeds; none
+	// may be replaced by that rate's denominator.
+	var known, effectiveKnown, overrideObservable int64
 	dimensions := make(map[string]*findingCounter)
 	models := make(map[string]*findingCounter)
 	agents := make(map[string]*findingCounter)
@@ -50,6 +56,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 
 		result.Observed++
 		if knownStatus {
+			known++
 			if status == review.StatusRefuted {
 				result.Refuted++
 			}
@@ -65,15 +72,20 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		}
 
 		dim := counterFor(dimensions, dimension)
-		dim.Observed++
-		if knownStatus {
-			dim.Known++
-		}
-		if status == review.StatusRefuted {
-			dim.Refuted++
-		}
-		if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
-			dim.Confirmed++
+		modelCounter := counterFor(models, model)
+		agentCounter := counterFor(agents, agent)
+		for _, counter := range []*findingCounter{dim, modelCounter, agentCounter} {
+			counter.Observed++
+			if !knownStatus {
+				continue
+			}
+			counter.Known++
+			if status == review.StatusRefuted {
+				counter.Refuted++
+			}
+			if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
+				counter.Confirmed++
+			}
 		}
 		if override {
 			dim.Overrides++
@@ -82,32 +94,28 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 			dim.Reopened++
 		}
 
-		modelCounter := counterFor(models, model)
-		modelCounter.Observed++
-		if status == review.StatusRefuted {
-			modelCounter.Refuted++
-		}
-		if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
-			modelCounter.Confirmed++
-		}
-		agentCounter := counterFor(agents, agent)
-		agentCounter.Observed++
-		if status == review.StatusRefuted {
-			agentCounter.Refuted++
-		}
-		if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
-			agentCounter.Confirmed++
-		}
-
 		if status != review.StatusRefuted {
 			result.Effective++
+			overrideObservable++
 			dim.Effective++
+			dim.OverrideObservable++
+			if knownStatus {
+				effectiveKnown++
+				dim.EffectiveKnown++
+			}
 		}
 	}
 
-	result.ConfirmationRate = ratio(result.Confirmed, result.Effective, result.Effective, result.Effective)
-	result.RefutationRate = ratio(result.Refuted, result.Observed, result.Observed, result.Observed)
-	result.OverrideRate = ratio(result.Overrides, result.Effective, result.Effective, result.Effective)
+	// Confirmation and refutation both read finding.Status, so their coverage is
+	// the population that carries a status at all. Override reads store.Decision
+	// records instead: metrics_reader.go propagates a LeerDecisiones failure
+	// rather than returning an empty set, so the decisions ledger is either
+	// complete or the whole report fails. Its attribute is therefore genuinely
+	// observable for every member of the effective population, and
+	// overrideObservable records that per observation rather than assuming it.
+	result.ConfirmationRate = ratio(result.Confirmed, result.Effective, effectiveKnown, result.Effective)
+	result.RefutationRate = ratio(result.Refuted, result.Observed, known, result.Observed)
+	result.OverrideRate = ratio(result.Overrides, result.Effective, overrideObservable, result.Effective)
 	result.ByDimension = make([]DimensionAggregate, 0, len(dimensions))
 	for name, counter := range dimensions {
 		active := counter.Effective
@@ -115,9 +123,9 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 			Dimension: name, Findings: active, Observed: counter.Observed,
 			Confirmed: counter.Confirmed, Refuted: counter.Refuted,
 			Overrides: counter.Overrides, Reopened: counter.Reopened,
-			ConfirmationRate: ratio(counter.Confirmed, active, active, active),
+			ConfirmationRate: ratio(counter.Confirmed, active, counter.EffectiveKnown, active),
 			RefutationRate:   ratio(counter.Refuted, counter.Observed, counter.Known, counter.Observed),
-			OverrideRate:     ratio(counter.Overrides, active, active, active),
+			OverrideRate:     ratio(counter.Overrides, active, counter.OverrideObservable, active),
 		}
 		result.ByDimension = append(result.ByDimension, row)
 	}
@@ -130,7 +138,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		result.ByModel = append(result.ByModel, ModelAggregate{
 			Model: name, Observed: counter.Observed, Confirmed: counter.Confirmed,
 			Refuted:        counter.Refuted,
-			RefutationRate: ratio(counter.Refuted, counter.Observed, counter.Observed, counter.Observed),
+			RefutationRate: ratio(counter.Refuted, counter.Observed, counter.Known, counter.Observed),
 		})
 	}
 	sort.Slice(result.ByModel, func(i, j int) bool {
@@ -141,7 +149,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		result.ByAgent = append(result.ByAgent, AgentAggregate{
 			Agent: name, Observed: counter.Observed, Confirmed: counter.Confirmed,
 			Refuted:        counter.Refuted,
-			RefutationRate: ratio(counter.Refuted, counter.Observed, counter.Observed, counter.Observed),
+			RefutationRate: ratio(counter.Refuted, counter.Observed, counter.Known, counter.Observed),
 		})
 	}
 	sort.Slice(result.ByAgent, func(i, j int) bool {
@@ -151,13 +159,15 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 }
 
 type findingCounter struct {
-	Observed  int64
-	Known     int64
-	Effective int64
-	Confirmed int64
-	Refuted   int64
-	Overrides int64
-	Reopened  int64
+	Observed           int64
+	Known              int64
+	Effective          int64
+	EffectiveKnown     int64
+	OverrideObservable int64
+	Confirmed          int64
+	Refuted            int64
+	Overrides          int64
+	Reopened           int64
 }
 
 func counterFor(counters map[string]*findingCounter, key string) *findingCounter {

@@ -84,6 +84,21 @@ type FindingsAggregate struct {
 	ByDimension      []DimensionAggregate
 	ByModel          []ModelAggregate
 	ByAgent          []AgentAggregate
+
+	// reopenObservable counts the findings whose reopen attribute could be
+	// observed at all. Nothing in production ever increments it: Reopened is
+	// derived solely from review.StatusReopened, and internal/review/finding.go
+	// declares that constant without a single writer anywhere in production
+	// code (see FU-6 in docs/reingenieria/f0-deuda.md). A disposition surface
+	// that persists reopen answers is what would start incrementing this.
+	reopenObservable int64
+}
+
+// ReopenCoverage reports the evidence behind Reopened. It is deliberately
+// incomplete while no producer writes review.StatusReopened, so that a
+// structurally impossible zero is never presented as a measured zero.
+func (v FindingsAggregate) ReopenCoverage() Coverage {
+	return coverage(v.reopenObservable, v.Observed)
 }
 
 type DimensionAggregate struct {
@@ -97,6 +112,15 @@ type DimensionAggregate struct {
 	ConfirmationRate Ratio
 	RefutationRate   Ratio
 	OverrideRate     Ratio
+
+	// reopenObservable carries the same absent-writer evidence as the field of
+	// the same name on FindingsAggregate.
+	reopenObservable int64
+}
+
+// ReopenCoverage reports the evidence behind Reopened for one dimension.
+func (v DimensionAggregate) ReopenCoverage() Coverage {
+	return coverage(v.reopenObservable, v.Observed)
 }
 
 type ModelAggregate struct {

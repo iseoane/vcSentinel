@@ -54,10 +54,10 @@ func renderMetrics(out io.Writer, report metrics.Report) error {
 	var text strings.Builder
 	f := report.Findings
 	fmt.Fprintln(&text, "Metrics")
-	fmt.Fprintf(&text, "Findings: observed=%d effective=%d confirmed=%d refuted=%d overrides=%d reopened=%d\n", f.Observed, f.Effective, f.Confirmed, f.Refuted, f.Overrides, f.Reopened)
+	fmt.Fprintf(&text, "Findings: observed=%d effective=%d confirmed=%d refuted=%d overrides=%d reopened=%s\n", f.Observed, f.Effective, f.Confirmed, f.Refuted, f.Overrides, formatCount(f.Reopened, f.ReopenCoverage()))
 	fmt.Fprintf(&text, "  confirmation rate: %s\n  refutation rate: %s\n  override rate: %s\n", formatRatio(f.ConfirmationRate), formatRatio(f.RefutationRate), formatRatio(f.OverrideRate))
 	for _, v := range f.ByDimension {
-		fmt.Fprintf(&text, "  dimension %s: findings=%d confirmed=%d refuted=%d; confirmation=%s; refutation=%s; override=%s\n", v.Dimension, v.Findings, v.Confirmed, v.Refuted, formatRatio(v.ConfirmationRate), formatRatio(v.RefutationRate), formatRatio(v.OverrideRate))
+		fmt.Fprintf(&text, "  dimension %s: findings=%d confirmed=%d refuted=%d reopened=%s; confirmation=%s; refutation=%s; override=%s\n", v.Dimension, v.Findings, v.Confirmed, v.Refuted, formatCount(v.Reopened, v.ReopenCoverage()), formatRatio(v.ConfirmationRate), formatRatio(v.RefutationRate), formatRatio(v.OverrideRate))
 	}
 	for _, v := range f.ByModel {
 		fmt.Fprintf(&text, "  model %s: observed=%d confirmed=%d refuted=%d; refutation=%s\n", v.Model, v.Observed, v.Confirmed, v.Refuted, formatRatio(v.RefutationRate))
@@ -98,6 +98,15 @@ func formatRatio(v metrics.Ratio) string {
 		return fmt.Sprintf("%d/%d (unknown; coverage %s)", v.Numerator, v.Denominator, formatCoverage(v.Coverage))
 	}
 	return fmt.Sprintf("%d/%d (%.2f%%; coverage %s)", v.Numerator, v.Denominator, *v.Value*100, formatCoverage(v.Coverage))
+}
+
+// formatCount presents a count that only means something when its attribute
+// was observable. Without evidence the count is unknown, never a measured zero.
+func formatCount(value int64, cov metrics.Coverage) string {
+	if cov.Observed == 0 {
+		return fmt.Sprintf("unknown (coverage %s)", formatCoverage(cov))
+	}
+	return fmt.Sprintf("%d (coverage %s)", value, formatCoverage(cov))
 }
 
 func formatMeasurement(v metrics.Measurement) string {
