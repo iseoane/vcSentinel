@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +62,130 @@ func (r Revision) HallazgosEfectivos() []Hallazgo {
 		}
 	}
 	return hallazgos
+}
+
+// FindingsWithDispositions returns the effective findings of this revision
+// carrying the lifecycle disposition each one actually recorded. It exists
+// because the two persisted finding shapes hold complementary halves of the
+// same evidence: refutarHallazgosCriticosConEvidencia (engine.go) writes
+// Status onto the raw per-dimension v1 ReviewFinding, while aggregateFindings
+// (aggregation.go) persists the merged v2 set with an empty Status and skips
+// the refuted findings outright. A consumer reading either shape alone sees a
+// disposition-free ledger (FU-7).
+//
+// It is deliberately NOT what HallazgosEfectivos returns, and never replaces
+// it: that method is the single selection point riesgos() and
+// BloqueantesDeRama consume, so changing what it returns would change branch
+// blocking and pr create --force. This one is for observation only. Like the
+// hallazgoDesdeReviewFinding/reviewFindingDesdeHallazgo pair it lives beside,
+// the v1-to-v2 correspondence it applies is a rule of the domain, not of the
+// consumer that happens to need it today.
+//
+// The join is by dimension, file, start line and description, the same key
+// refutarHallazgoV2 (engine.go) already uses to find a v1 finding's v2
+// counterpart. Fingerprints cannot serve: aggregation recomputes them, and
+// the v1 shape has neither Evidence nor Title, the two components Fingerprint
+// hashes besides dimension and location. Merging is honoured rather than
+// guessed at: mergeFindings keeps one whole contributor as the representative
+// of a merged group, so exactly that contributor matches; the siblings it
+// absorbed stay unknown instead of lending their disposition to a finding
+// that may no longer be theirs.
+//
+// Only refuted raw findings with no counterpart are appended, never every
+// undisposed one. Aggregation drops precisely the refuted findings, so this
+// restores exactly what it removed. SupersedeDeterministicFindings
+// (supersede.go) also drops semantic findings, silently and without marking
+// them, so a broader rule would resurrect superseded findings as live
+// observations.
+func (r Revision) FindingsWithDispositions() []Hallazgo {
+	if len(r.AggregatedFindings) == 0 {
+		var findings []Hallazgo
+		for _, dr := range r.Dims {
+			for _, h := range dr.Findings {
+				findings = append(findings, hallazgoConDisposicion(dr.Dim, h))
+			}
+		}
+		return findings
+	}
+
+	dispositions := disposicionesCrudas(r.Dims)
+	findings := make([]Hallazgo, len(r.AggregatedFindings))
+	copy(findings, r.AggregatedFindings)
+	counterparts := make(map[string]struct{}, len(findings))
+	for i := range findings {
+		key := claveDisposicion(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)
+		counterparts[key] = struct{}{}
+		// A status the aggregated finding recorded itself is evidence, not an
+		// absence: it wins over the raw one rather than being overwritten.
+		if findings[i].Status != "" {
+			continue
+		}
+		if status, ok := dispositions[key]; ok {
+			findings[i].Status = status
+		}
+	}
+	for _, dr := range r.Dims {
+		for _, h := range dr.Findings {
+			if h.Status != StatusRefuted {
+				continue
+			}
+			// Keyed on the counterpart, not on whether the status was
+			// adopted: a raw finding whose aggregate kept its own status has
+			// been represented already and must not be observed twice.
+			if _, ok := counterparts[claveDisposicion(dr.Dim, h.File, int(h.Line), h.Description)]; ok {
+				continue
+			}
+			findings = append(findings, hallazgoConDisposicion(dr.Dim, h))
+		}
+	}
+	return findings
+}
+
+// disposicionesCrudas indexes the dispositions the raw per-dimension findings
+// recorded, by the same key FindingsWithDispositions joins on. A key whose
+// findings disagree records no disposition at all: contradictory evidence is
+// not evidence, and picking a winner would invent a lifecycle answer the
+// ledger never gave. Dropping it keeps the result deterministic without
+// needing a precedence order nothing in the domain authorises.
+func disposicionesCrudas(dims []DimensionResult) map[string]string {
+	observadas := make(map[string]map[string]struct{})
+	for _, dr := range dims {
+		for _, h := range dr.Findings {
+			if h.Status == "" {
+				continue
+			}
+			key := claveDisposicion(dr.Dim, h.File, int(h.Line), h.Description)
+			if observadas[key] == nil {
+				observadas[key] = make(map[string]struct{}, 1)
+			}
+			observadas[key][h.Status] = struct{}{}
+		}
+	}
+	dispositions := make(map[string]string, len(observadas))
+	for key, statuses := range observadas {
+		if len(statuses) != 1 {
+			continue
+		}
+		for status := range statuses {
+			dispositions[key] = status
+		}
+	}
+	return dispositions
+}
+
+func claveDisposicion(dimension, archivo string, linea int, descripcion string) string {
+	return empaquetarConLongitud(dimension, archivo, strconv.Itoa(linea), descripcion)
+}
+
+// hallazgoConDisposicion projects a v1 finding exactly like
+// hallazgoDesdeReviewFinding and then restores the Status that projection
+// drops. The drop is correct there: HallazgosEfectivos feeds the blocking
+// gate, which selects on severity and supersede rather than on lifecycle.
+// Here the lifecycle is the whole point.
+func hallazgoConDisposicion(dimension string, h ReviewFinding) Hallazgo {
+	hallazgo := hallazgoDesdeReviewFinding(dimension, h)
+	hallazgo.Status = h.Status
+	return hallazgo
 }
 
 // hallazgoDesdeReviewFinding projects a legacy v1 ReviewFinding onto the v2
