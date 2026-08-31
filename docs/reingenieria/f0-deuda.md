@@ -680,3 +680,44 @@ callees of the symbols in the diff, sourced from `codegraph callers|callees|
 impact`, with a per-relation share of the existing reference budget so callers
 cannot crowd out affected tests, and every new path validated through
 `rutasSeguras` plus symlink resolution and the containment check.
+
+### FU-6: three finding statuses have no production writer
+
+Recorded 2026-08-31 while disposing of T9.1a and auditing T9.3a's aggregates.
+
+`internal/review/finding.go:112-114` declares `StatusAcceptedByUser`,
+`StatusFixed`, and `StatusReopened`. None of the three has a single writer in
+production code. Only `StatusConfirmed` is assigned
+(`internal/review/engine.go:511`, `internal/gate/gate.go:434`,
+`cmd/sentinel/proyeccion_validacion.go:96`) and only `StatusRefuted` is
+assigned (`internal/review/engine.go:569,619`).
+
+Two consequences, each verified separately because they are not the same
+problem:
+
+- A human who rejects a finding's premise has nowhere to record it against the
+  finding. T9.1a's disposition had to be written as prose in
+  `f9-observabilidad.md` because the ledger accepts no machine-readable answer,
+  so the fresh review of `c50d6d5` stands as `block` over an implementation
+  whose premise was verified inert.
+- `FindingsAggregate.Reopened` is structurally zero: it is set only from
+  `StatusReopened`, which nothing writes. `sentinel metrics` can never report a
+  nonzero reopen count, so exit criterion 3 cannot cite it.
+
+`Overrides` is deliberately excluded from that second point. It has a real
+producer: besides `StatusAcceptedByUser`, `aggregateFindings` derives it from
+`store.Decision` records through `isUserOverride`, and `pr --force` writes
+those to `decisions.jsonl` (`cmd/sentinel/comandos_pr.go:827`). This
+repository simply has no `decisions.jsonl` at all, which is consistent with
+`pr create` never having run here. Its zero is therefore an unexercised path,
+not a missing producer, and it is a coverage question for T9.4a rather than
+debt.
+
+This is a missing capability, not a metrics defect: the aggregator reads
+statuses the rest of the system never writes. Fixing it means a disposition
+surface — a way to answer a finding and persist that answer against its stable
+fingerprint — which is new product scope and deliberately outside F9.
+
+Target: pick it up when a disposition surface is designed. Until then T9.3a
+must report reopen coverage as unknown rather than as a measured zero, exactly
+as FU-3 requires for cost, scope, and reuse.
