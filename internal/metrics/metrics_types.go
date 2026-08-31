@@ -184,6 +184,11 @@ type CostAggregate struct {
 	CostPerConfirmed Ratio
 }
 
+// TotalCoverage describes the evidence available for the aggregate cost.
+func (v CostAggregate) TotalCoverage() Coverage {
+	return coverage(v.ObservedRuns, v.TotalRuns)
+}
+
 type StageAggregate struct {
 	Stage    string
 	Samples  int64
@@ -270,7 +275,7 @@ func (r Report) HasIncompleteEvidence() bool {
 		}
 	}
 	for _, v := range r.Costs {
-		if !v.CostPerConfirmed.Known() {
+		if !v.TotalCoverage().Complete() || !v.CostPerConfirmed.Known() {
 			return true
 		}
 	}

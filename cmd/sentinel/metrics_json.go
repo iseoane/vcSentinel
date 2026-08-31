@@ -178,7 +178,7 @@ func newMetricsJSONReport(report metrics.Report) metricsJSONReport {
 
 func newMetricsJSONCost(value metrics.CostAggregate) metricsJSONCost {
 	result := metricsJSONCost{CostPerConfirmed: newMetricsJSONRatio(value.CostPerConfirmed), Currency: value.Currency, ObservedRuns: value.ObservedRuns, TotalRuns: value.TotalRuns}
-	if value.CostPerConfirmed.Coverage.Complete() {
+	if value.TotalCoverage().Complete() {
 		result.TotalMicros = &value.TotalMicros
 	}
 	return result

@@ -108,7 +108,7 @@ func formatMeasurement(v metrics.Measurement) string {
 }
 
 func formatCostTotal(v metrics.CostAggregate) string {
-	if !v.CostPerConfirmed.Coverage.Complete() {
+	if !v.TotalCoverage().Complete() {
 		return "unknown"
 	}
 	return fmt.Sprintf("%d", v.TotalMicros)

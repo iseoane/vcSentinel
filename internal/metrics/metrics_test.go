@@ -192,6 +192,14 @@ func TestEvidenceAvailabilityDistinguishesUnknownPartialAndComplete(t *testing.T
 	}
 }
 
+func TestCostTotalCoverageUsesRunEvidence(t *testing.T) {
+	complete := CostAggregate{ObservedRuns: 2, TotalRuns: 2, CostPerConfirmed: Ratio{Coverage: Coverage{Observed: 1, Total: 2}}}
+	partial := CostAggregate{ObservedRuns: 1, TotalRuns: 2, CostPerConfirmed: Ratio{Coverage: Coverage{Observed: 2, Total: 2}}}
+	if !complete.TotalCoverage().Complete() || partial.TotalCoverage().Complete() {
+		t.Fatalf("cost total coverage ignored run evidence: complete=%#v partial=%#v", complete.TotalCoverage(), partial.TotalCoverage())
+	}
+}
+
 func assertRatio(t *testing.T, name string, got Ratio, numerator, denominator, coverageObserved, coverageTotal int64, value float64) {
 	t.Helper()
 	if got.Numerator != numerator || got.Denominator != denominator {

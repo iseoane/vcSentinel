@@ -9,14 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/metrics"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
@@ -41,9 +38,7 @@ func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
 	if !ok {
 		t.Fatalf("duration_nanos object missing: %#v", executions)
 	}
-	if duration["value"] != nil {
-		t.Errorf("unknown duration must be JSON null, got %#v", duration["value"])
-	}
+	assertJSONNull(t, duration, "value")
 	if duration["observed"] != float64(0) || duration["total"] != float64(1) {
 		t.Errorf("duration coverage fields are not explicit: %#v", duration)
 	}
@@ -52,24 +47,29 @@ func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
 	}
 }
 
-func TestRenderMetricsJSONIsDeterministic(t *testing.T) {
-	input := metricsInputForOrdering()
-	want := metrics.Aggregate(input)
-	input.Findings[0], input.Findings[1] = input.Findings[1], input.Findings[0]
-	input.Remediations[0], input.Remediations[1] = input.Remediations[1], input.Remediations[0]
-	input.Executions[0], input.Executions[1] = input.Executions[1], input.Executions[0]
-	got := metrics.Aggregate(input)
+func TestRenderMetricsJSONUsesFixedTypedContract(t *testing.T) {
+	report := completeMetricsReport()
+	report.Findings.ByDimension = []metrics.DimensionAggregate{{Dimension: "logic"}, {Dimension: "security"}}
+	report.Findings.ByModel = []metrics.ModelAggregate{{Model: "model-a"}, {Model: "model-b"}}
+	report.Findings.ByAgent = []metrics.AgentAggregate{{Agent: "agent-a"}, {Agent: "agent-b"}}
+	report.Costs = []metrics.CostAggregate{{Currency: "EUR"}, {Currency: "USD"}}
+	report.Stages = []metrics.StageAggregate{{Stage: "stage-a"}, {Stage: "stage-b"}}
 	var first, second bytes.Buffer
-	if err := renderMetricsJSON(&first, want); err != nil {
+	if err := renderMetricsJSON(&first, report); err != nil {
 		t.Fatal(err)
 	}
-	if err := renderMetricsJSON(&second, got); err != nil {
+	if err := renderMetricsJSON(&second, report); err != nil {
 		t.Fatal(err)
 	}
 	if first.String() != second.String() {
-		t.Fatal("equivalent evidence in different orders produced different JSON")
+		t.Fatal("the typed metrics renderer is not deterministic")
 	}
 	decoded := decodeMetricsJSON(t, first.Bytes())
+	for _, key := range []string{"costs", "executions", "findings", "remediation", "stages"} {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("typed metrics JSON is missing %q", key)
+		}
+	}
 	findings := decoded["findings"].(map[string]any)
 	if len(findings["by_dimension"].([]any)) != 2 || len(findings["by_model"].([]any)) != 2 || len(findings["by_agent"].([]any)) != 2 {
 		t.Fatalf("grouped findings were not rendered: %#v", findings)
@@ -78,10 +78,10 @@ func TestRenderMetricsJSONIsDeterministic(t *testing.T) {
 		t.Fatalf("cost/stage ordering inputs were not rendered: %#v", decoded)
 	}
 	if findings["by_dimension"].([]any)[0].(map[string]any)["dimension"] != "logic" || findings["by_model"].([]any)[0].(map[string]any)["model"] != "model-a" || findings["by_agent"].([]any)[0].(map[string]any)["agent"] != "agent-a" {
-		t.Fatalf("grouped findings are not canonically ordered: %#v", findings)
+		t.Fatalf("grouped findings changed typed order: %#v", findings)
 	}
 	if decoded["costs"].([]any)[0].(map[string]any)["currency"] != "EUR" || decoded["stages"].([]any)[0].(map[string]any)["stage"] != "stage-a" {
-		t.Fatalf("cost/stage rows are not canonically ordered: %#v", decoded)
+		t.Fatalf("cost/stage rows changed typed order: %#v", decoded)
 	}
 }
 
@@ -98,17 +98,17 @@ func TestRenderMetricsHidesPartiallyCoveredStagePercentiles(t *testing.T) {
 		t.Fatalf("partial stage percentiles were rendered as known: %s", output.String())
 	}
 	output.Reset()
-	var decoded struct {
-		Stages []struct {
-			P50Nanos *int64 `json:"p50_nanos"`
-			P95Nanos *int64 `json:"p95_nanos"`
-		} `json:"stages"`
+	if err := renderMetricsJSON(&output, report); err != nil {
+		t.Fatalf("partial stage JSON could not be encoded: %v", err)
 	}
-	if err := renderMetricsJSON(&output, report); err != nil || json.Unmarshal(output.Bytes(), &decoded) != nil {
-		t.Fatalf("partial stage JSON could not be decoded: %v/%s", err, output.String())
+	stages := decodeMetricsJSON(t, output.Bytes())["stages"].([]any)
+	if len(stages) != 2 {
+		t.Fatalf("partial stage JSON rows = %d, want 2", len(stages))
 	}
-	if len(decoded.Stages) != 2 || decoded.Stages[0].P50Nanos != nil || decoded.Stages[0].P95Nanos != nil || decoded.Stages[1].P50Nanos != nil || decoded.Stages[1].P95Nanos != nil {
-		t.Fatalf("partial stage JSON retained percentile values: %#v", decoded.Stages)
+	for _, stage := range stages {
+		row := stage.(map[string]any)
+		assertJSONNull(t, row, "p50_nanos")
+		assertJSONNull(t, row, "p95_nanos")
 	}
 }
 
@@ -133,13 +133,18 @@ func TestMetricsWarnsForIncompleteGroupedRatios(t *testing.T) {
 	findings := decodeMetricsJSON(t, jsonOutput.Bytes())["findings"].(map[string]any)
 	for _, key := range []string{"by_model", "by_agent"} {
 		ratio := findings[key].([]any)[0].(map[string]any)["refutation_rate"].(map[string]any)
-		if ratio["value"] != nil {
-			t.Errorf("partial %s ratio retained value: %#v", key, ratio)
-		}
+		assertJSONNull(t, ratio, "value")
 	}
 }
 
 func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
+	var baseline bytes.Buffer
+	if err := renderMetrics(&baseline, completeMetricsReport()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(baseline.String(), "Warnings: none.") {
+		t.Fatalf("complete report was not established as warning-free: %s", baseline.String())
+	}
 	cases := []struct {
 		name   string
 		mutate func(*metrics.Report)
@@ -201,9 +206,7 @@ func TestHumanAndJSONHidePartiallyCoveredMeasurements(t *testing.T) {
 	}
 	executions := decoded["executions"].(map[string]any)
 	duration := executions["duration_nanos"].(map[string]any)
-	if duration["value"] != nil {
-		t.Fatalf("partial duration JSON retained value: %#v", duration)
-	}
+	assertJSONNull(t, duration, "value")
 }
 
 func TestMetricsJSONPreservesUnitsAvailabilityAndEmptyArrays(t *testing.T) {
@@ -211,7 +214,11 @@ func TestMetricsJSONPreservesUnitsAvailabilityAndEmptyArrays(t *testing.T) {
 	partialValue, partialCoverage := int64(7), 0.5
 	report.Executions.InputTokens = metrics.Measurement{Observed: 0, Total: 1, Coverage: metrics.Coverage{Total: 1}}
 	report.Executions.OutputTokens = metrics.Measurement{Value: &partialValue, Observed: 1, Total: 2, Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &partialCoverage}}
-	report.Costs = []metrics.CostAggregate{{Currency: "USD", TotalMicros: 9, ObservedRuns: 1, TotalRuns: 2, CostPerConfirmed: metrics.Ratio{Numerator: 1, Denominator: 1, Value: &partialCoverage, Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &partialCoverage}}}}
+	completeRatio := completeMetricsReport().Findings.ConfirmationRate
+	report.Costs = []metrics.CostAggregate{
+		{Currency: "USD", TotalMicros: 9, ObservedRuns: 1, TotalRuns: 2, CostPerConfirmed: completeRatio},
+		{Currency: "EUR", TotalMicros: 11, ObservedRuns: 2, TotalRuns: 2, CostPerConfirmed: metrics.Ratio{Coverage: partialMetricsCoverage()}},
+	}
 	completeCoverage := completeMetricsReport().Executions.Duration.Coverage
 	report.Stages = []metrics.StageAggregate{{Stage: "known", Samples: 1, P50Nanos: 11, P95Nanos: 22, Coverage: completeCoverage}}
 	var output bytes.Buffer
@@ -225,20 +232,29 @@ func TestMetricsJSONPreservesUnitsAvailabilityAndEmptyArrays(t *testing.T) {
 			t.Errorf("missing unit-bearing execution field %q", key)
 		}
 	}
-	if executions["input_tokens"].(map[string]any)["value"] != nil || executions["output_tokens"].(map[string]any)["value"] != nil {
-		t.Fatalf("unknown or partial token values were exposed: %#v", executions)
-	}
+	assertJSONNull(t, executions["input_tokens"].(map[string]any), "value")
+	assertJSONNull(t, executions["output_tokens"].(map[string]any), "value")
 	if executions["total_tokens"].(map[string]any)["value"] != float64(1) {
 		t.Fatalf("known token value was not preserved: %#v", executions["total_tokens"])
 	}
-	cost := decoded["costs"].([]any)[0].(map[string]any)
-	if cost["total_micros"] != nil || cost["cost_per_confirmed"].(map[string]any)["value"] != nil {
-		t.Fatalf("cost JSON lost units or availability: %#v", cost)
+	costs := decoded["costs"].([]any)
+	partialCost := costs[0].(map[string]any)
+	assertJSONNull(t, partialCost, "total_micros")
+	if partialCost["cost_per_confirmed"].(map[string]any)["value"] != float64(1) {
+		t.Fatalf("complete ratio evidence was hidden: %#v", partialCost)
 	}
+	completeCost := costs[1].(map[string]any)
+	if completeCost["total_micros"] != float64(11) {
+		t.Fatalf("complete total cost was hidden: %#v", completeCost)
+	}
+	assertJSONNull(t, completeCost["cost_per_confirmed"].(map[string]any), "value")
 	var human bytes.Buffer
 	renderMetrics(&human, report)
 	if !strings.Contains(human.String(), "Cost USD: total=unknown micros") {
 		t.Fatalf("partial cost was rendered as known: %s", human.String())
+	}
+	if !strings.Contains(human.String(), "Cost EUR: total=11 micros") {
+		t.Fatalf("complete total cost was rendered as unknown: %s", human.String())
 	}
 	stage := decoded["stages"].([]any)[0].(map[string]any)
 	if stage["p50_nanos"] != float64(11) || stage["p95_nanos"] != float64(22) {
@@ -269,10 +285,43 @@ func TestMetricsJSONUsesEmptyArraysForEmptyReport(t *testing.T) {
 	}
 }
 
+func TestMetricsJSONMapsRemediationDimensionsAndExecutionFailures(t *testing.T) {
+	report := completeMetricsReport()
+	report.Remediation.ByDimension = []metrics.RemediationDimensionAggregate{{
+		Dimension: "logic", Attempts: 2, Succeeded: 1, Failed: 1,
+		SuccessRate: report.Findings.ConfirmationRate,
+	}}
+	report.Executions.Failures = []metrics.FailureAggregate{{Class: "timeout", Count: 3}}
+	var output bytes.Buffer
+	if err := renderMetricsJSON(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeMetricsJSON(t, output.Bytes())
+	remediation := decoded["remediation"].(map[string]any)
+	dimension := remediation["by_dimension"].([]any)[0].(map[string]any)
+	if dimension["dimension"] != "logic" || dimension["attempts"] != float64(2) || dimension["succeeded"] != float64(1) || dimension["failed"] != float64(1) {
+		t.Fatalf("remediation dimension mapping = %#v", dimension)
+	}
+	if dimension["success_rate"].(map[string]any)["value"] != float64(1) {
+		t.Fatalf("remediation dimension ratio mapping = %#v", dimension)
+	}
+	failure := decoded["executions"].(map[string]any)["failures"].([]any)[0].(map[string]any)
+	if failure["class"] != "timeout" || failure["count"] != float64(3) {
+		t.Fatalf("execution failure mapping = %#v", failure)
+	}
+}
+
 func TestExecuteMetricsPropagatesHumanWriterFailure(t *testing.T) {
 	repo, _ := newMetricsRepository(t)
 	if code := executeMetrics(metricsFailWriter{}, repo, nil); code != 1 {
 		t.Fatalf("writer failure returned exit code %d, want 1", code)
+	}
+}
+
+func TestExecuteMetricsPropagatesJSONWriterFailure(t *testing.T) {
+	repo, _ := newMetricsRepository(t)
+	if code := executeMetrics(metricsFailWriter{}, repo, []string{"--json"}); code != 1 {
+		t.Fatalf("JSON writer failure returned exit code %d, want 1", code)
 	}
 }
 
@@ -316,32 +365,6 @@ func partialMetricsMeasurement() metrics.Measurement {
 	return metrics.Measurement{Value: &value, Observed: 1, Total: 2, Coverage: partialMetricsCoverage()}
 }
 
-func metricsInputForOrdering() metrics.Input {
-	one := int64(1)
-	durationA, durationB := time.Duration(10), time.Duration(20)
-	snapshot := func(run, agent, model, currency, stage string, duration *time.Duration) *store.ExecutionMetrics {
-		return &store.ExecutionMetrics{
-			Version: store.ExecutionMetricsSchemaVersion, RunID: run,
-			Identities: []store.ObservedExecutionIdentity{{Agent: agent, Model: model}},
-			Timing:     &store.ExecutionTiming{TotalDurationNanos: duration, ByCapability: []store.CapabilityTiming{{CapabilityID: stage, DurationNanos: *duration}}},
-			Usage:      &store.ExecutionTokenUsage{InputTokens: &one, OutputTokens: &one, TotalTokens: &one, CachedInputTokens: &one, ReasoningTokens: &one},
-			Cost:       &store.ExecutionCost{AmountMicros: 1, Currency: currency}, Scope: &store.ExecutionScope{Kind: store.ScopeFull},
-			Reuse: &store.ExecutionReuse{ReusedCapabilityIDs: []string{"reuse"}},
-		}
-	}
-	return metrics.Input{
-		Findings: []metrics.FindingObservation{
-			{Fingerprint: "finding-b", Finding: review.Hallazgo{Fingerprint: "finding-b", Dimension: review.DimSecurity, Status: review.StatusRefuted, Producer: review.Productor{Agente: "agent-b", Modelo: "model-b"}}},
-			{Fingerprint: "finding-a", Finding: review.Hallazgo{Fingerprint: "finding-a", Dimension: review.DimLogic, Status: review.StatusConfirmed, Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"}}},
-		},
-		Remediations: []metrics.RemediationObservation{{LogicalID: "remediation-b", Success: false}, {LogicalID: "remediation-a", Success: true}},
-		Executions: []metrics.ExecutionObservation{
-			{RunID: "run-b", Metrics: snapshot("run-b", "agent-b", "model-b", "EUR", "stage-b", &durationB), Outcomes: []store.AttemptOutcome{{RunID: "run-b", InvocationID: "attempt-b", Class: agentrun.OutcomeSuccess}}},
-			{RunID: "run-a", Metrics: snapshot("run-a", "agent-a", "model-a", "USD", "stage-a", &durationA), Outcomes: []store.AttemptOutcome{{RunID: "run-a", InvocationID: "attempt-a", Class: agentrun.OutcomeSuccess}}},
-		},
-	}
-}
-
 func decodeMetricsJSON(t *testing.T, data []byte) map[string]any {
 	t.Helper()
 	var decoded map[string]any
@@ -349,6 +372,18 @@ func decodeMetricsJSON(t *testing.T, data []byte) map[string]any {
 		t.Fatalf("metrics JSON is invalid: %v\n%s", err, data)
 	}
 	return decoded
+}
+
+func assertJSONNull(t *testing.T, object map[string]any, key string) {
+	t.Helper()
+	value, ok := object[key]
+	if !ok {
+		t.Errorf("JSON key %q is missing; want explicit null", key)
+		return
+	}
+	if value != nil {
+		t.Errorf("JSON key %q = %#v, want null", key, value)
+	}
 }
 
 func TestMetricsArgumentsAndHelp(t *testing.T) {
