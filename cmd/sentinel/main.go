@@ -147,6 +147,9 @@ func main() {
 	case "status":
 		requireInicializado(worktreeActual)
 		ejecutarStatus(worktreeActual, os.Args[2:])
+	case "metrics":
+		requireInicializado(worktreeActual)
+		os.Exit(executeMetrics(os.Stdout, worktreeActual, os.Args[2:]))
 	case "consentimiento-diff":
 		requireInicializado(worktreeActual)
 		os.Exit(ejecutarConsentimientoDiff(os.Stdout, worktreeActual, os.Args[2:]))
@@ -181,7 +184,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'lint', 'rebase', 'status', 'metrics', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
@@ -200,7 +203,7 @@ func requireInicializado(worktreeActual string) {
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | explain | pr | runs | tui | consentimiento-diff | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | lint | rebase | status | metrics | explain | pr | runs | tui | consentimiento-diff | install | upgrade | uninstall]")
 }
 
 // imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
@@ -216,7 +219,7 @@ func construirAyuda() string {
 	var b strings.Builder
 	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
 	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             lint | rebase | status | explain | pr | runs | tui |\n")
+	b.WriteString("             lint | rebase | status | metrics | explain | pr | runs | tui |\n")
 	b.WriteString("             consentimiento-diff | install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcomandos:\n")
 	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
@@ -233,6 +236,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
 	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")
 	imprimirItemAyuda(&b, "", "Con --json emite JSON; con --prune borra fichas huérfanas.")
+	imprimirItemAyuda(&b, "metrics", "Print deterministic local aggregates from the durable store; --json emits machine-readable output with null for unknown measurements.")
 	imprimirItemAyuda(&b, "explain", "Explica el perfil, los detectores, el riesgo y la cohesión de un rango. Uso: explain [base..head] [--json].")
 	imprimirItemAyuda(&b, "pr", "Pull-request operations: pr create publishes through gh; pr review analyzes the branch without publishing. The legacy passthrough was removed.")
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")

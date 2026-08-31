@@ -130,6 +130,7 @@ Example:
 	"review":              textoAyudaReview,
 	"gate":                textoAyudaGate,
 	"status":              textoAyudaStatus,
+	"metrics":             textoAyudaMetrics,
 	"explain":             textoAyudaExplain,
 	"consentimiento-diff": textoAyudaConsentimientoDif,
 	"pr":                  textoAyudaPr,

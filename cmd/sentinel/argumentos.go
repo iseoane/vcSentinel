@@ -61,6 +61,14 @@ func validarArgumentos(subcomando string, extras []string) string {
 			"❌ 'sentinel check' accepts '--json' and '--staged' and received: %s. Run 'sentinel help' to see the correct usage.",
 			strings.Join(extras, " "))
 	}
+	if subcomando == "metrics" {
+		if _, err := parseMetricsArgs(extras); err == nil {
+			return ""
+		}
+		return fmt.Sprintf(
+			"❌ 'sentinel metrics' accepts '--json' and received: %s. Run 'sentinel help metrics' to see the correct usage.",
+			strings.Join(extras, " "))
+	}
 	if subcomando == "slice" {
 		if subcomandosDeSlice[extras[0]] {
 			return ""

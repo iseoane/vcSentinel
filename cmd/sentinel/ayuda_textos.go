@@ -130,6 +130,20 @@ Flags:
 Example:
   sentinel status --json
 `
+	textoAyudaMetrics = `Purpose: print deterministic local aggregates from the durable store.
+
+Usage:
+  sentinel metrics [--json]
+
+Flags:
+  --json   Emit machine-readable aggregates with stable units and null for unknown measurements.
+
+The command reads only the local Git common directory. Corrupt or unreadable
+evidence is reported as an error instead of being treated as an empty store.
+
+Example:
+  sentinel metrics --json
+`
 	textoAyudaExplain = `Purpose: explain the change profile, detected characteristics, risk, and cohesion of a commit range.
 
 Usage:
