@@ -77,8 +77,13 @@ func renderMetrics(out io.Writer, report metrics.Report) error {
 	for _, v := range report.Stages {
 		fmt.Fprintf(&text, "Stage %s: samples=%d p50=%s nanoseconds p95=%s nanoseconds; coverage=%s\n", v.Stage, v.Samples, formatStageValue(v.P50Nanos, v.Coverage), formatStageValue(v.P95Nanos, v.Coverage), formatCoverage(v.Coverage))
 	}
-	if reopen := f.ReopenCoverage(); !reopen.Complete() {
-		fmt.Fprintf(&text, "WARNING: reopen counts are unknown for %d of %d findings because no producer writes the reopened status.\n", reopen.Total-reopen.Observed, reopen.Total)
+	// Report the evidence gap, not a reason for it. A Report carries counts and
+	// coverage and nothing about which producers exist, so any claim here about
+	// why the evidence is missing would be an assertion this layer cannot check
+	// and would go stale the day a producer appears. An absent population has
+	// nothing missing, so it warns about nothing.
+	if reopen := f.ReopenCoverage(); reopen.Total > 0 && !reopen.Complete() {
+		fmt.Fprintf(&text, "WARNING: reopen evidence is missing for %d of %d findings; reopen counts are reported as unknown (coverage %s).\n", reopen.Total-reopen.Observed, reopen.Total, formatCoverage(reopen))
 	}
 	if report.HasIncompleteEvidence() {
 		fmt.Fprintln(&text, "WARNING: insufficient samples or partial evidence; unknown values are shown as unknown and never as zero.")

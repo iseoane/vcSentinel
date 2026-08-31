@@ -78,6 +78,7 @@ type FindingsAggregate struct {
 	Refuted          int64
 	Overrides        int64
 	Reopened         int64
+	ReopenResolved   int64
 	ConfirmationRate Ratio
 	RefutationRate   Ratio
 	OverrideRate     Ratio
@@ -86,18 +87,24 @@ type FindingsAggregate struct {
 	ByAgent          []AgentAggregate
 }
 
-// ReopenCoverage reports the evidence behind Reopened. Only an observation
-// carrying review.StatusReopened resolves the reopen attribute, so that count
-// is the basis. Refutation legitimately uses a wider basis: review.StatusRefuted
-// has a writer, so a confirmed status is genuine evidence that the finding was
-// examined and not refuted. Nothing writes review.StatusReopened
+// ReopenCoverage reports the evidence behind Reopened, out of ReopenResolved:
+// the observations whose reopen attribute some producer actually answered.
+// Observability is modelled separately from the outcome on purpose, so that a
+// population answered in full with no reopens found reads as complete evidence
+// and a measured zero, rather than as no evidence at all.
+//
+// Only review.StatusReopened resolves the attribute today. Refutation uses the
+// wider known-status basis because review.StatusRefuted has a writer, so a
+// confirmed status is real evidence that the finding was examined and not
+// refuted; nothing writes review.StatusReopened
 // (internal/review/finding.go:112-114, and FU-6 in
-// docs/reingenieria/f0-deuda.md), so a confirmed status says nothing at all
-// about whether that finding was reopened. Every store production can build
-// therefore yields a zero basis and an unknown count, while a disposition
-// surface that starts writing the status makes the count reportable.
+// docs/reingenieria/f0-deuda.md), so a confirmed status says nothing about
+// whether that finding was reopened. Every store production can build today
+// therefore resolves nothing and reports an unknown count. A producer that
+// records a negative reopen answer increments ReopenResolved without touching
+// Reopened, and needs no other change here.
 func (v FindingsAggregate) ReopenCoverage() Coverage {
-	return coverage(v.Reopened, v.Observed)
+	return coverage(v.ReopenResolved, v.Observed)
 }
 
 type DimensionAggregate struct {
@@ -108,6 +115,7 @@ type DimensionAggregate struct {
 	Refuted          int64
 	Overrides        int64
 	Reopened         int64
+	ReopenResolved   int64
 	ConfirmationRate Ratio
 	RefutationRate   Ratio
 	OverrideRate     Ratio
@@ -116,7 +124,7 @@ type DimensionAggregate struct {
 // ReopenCoverage reports the evidence behind Reopened for one dimension, on the
 // same basis as FindingsAggregate.ReopenCoverage.
 func (v DimensionAggregate) ReopenCoverage() Coverage {
-	return coverage(v.Reopened, v.Observed)
+	return coverage(v.ReopenResolved, v.Observed)
 }
 
 type ModelAggregate struct {

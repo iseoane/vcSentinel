@@ -807,6 +807,9 @@ func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
 				findings = append(findings, findingWithStatus(string(rune('a'+i)), review.DimLogic, "m1", "a1", status))
 			}
 			got := Aggregate(Input{Findings: findings}).Findings
+			if got.ReopenResolved != tc.observed {
+				t.Errorf("ReopenResolved = %d, want %d", got.ReopenResolved, tc.observed)
+			}
 			for name, cov := range map[string]Coverage{
 				"global":    got.ReopenCoverage(),
 				"dimension": got.ByDimension[0].ReopenCoverage(),
@@ -819,10 +822,13 @@ func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
 	}
 }
 
-// TestReopenCoverageIsEmptyForEveryProductionStore is the FU-6 requirement
-// itself: no production path writes review.StatusReopened, so every store the
-// system can actually produce yields a zero basis and an unknown count.
-func TestReopenCoverageIsEmptyForEveryProductionStore(t *testing.T) {
+// TestReopenCoverageIsEmptyWithoutReopenedObservations pins what an aggregate
+// does when nothing resolves the reopen attribute, which is the shape every
+// store takes today. It does NOT verify FU-6's claim that no production path
+// writes review.StatusReopened: that is a static property of the source, not
+// something an in-memory Input can detect, and it is documented where it is
+// checkable, on FindingsAggregate.ReopenCoverage.
+func TestReopenCoverageIsEmptyWithoutReopenedObservations(t *testing.T) {
 	got := Aggregate(Input{Findings: []FindingObservation{
 		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),
 		findingWithStatus("b", review.DimSecurity, "m2", "a2", ""),
@@ -830,8 +836,31 @@ func TestReopenCoverageIsEmptyForEveryProductionStore(t *testing.T) {
 	if cov := got.ReopenCoverage(); cov.Observed != 0 || cov.Total != 2 || cov.Complete() {
 		t.Errorf("reopen coverage = %#v, want an empty 0/2 basis", cov)
 	}
-	if got.Reopened != 0 {
-		t.Errorf("reopened = %d, want 0 while no producer writes the status", got.Reopened)
+	if got.Reopened != 0 || got.ReopenResolved != 0 {
+		t.Errorf("reopened = %d, resolved = %d, want both 0 without reopen evidence", got.Reopened, got.ReopenResolved)
+	}
+}
+
+// TestReopenCoverageModelsEvidenceIndependentlyOfTheOutcome is the property the
+// review found missing: a population whose reopen attribute was resolved for
+// every member, with no reopens found, must read as complete evidence and a
+// measured zero. A basis derived from the Reopened count cannot express it,
+// because the only way to reach full coverage would be for every finding to
+// have been reopened.
+func TestReopenCoverageModelsEvidenceIndependentlyOfTheOutcome(t *testing.T) {
+	findings := FindingsAggregate{Observed: 4, Reopened: 0, ReopenResolved: 4}
+	if cov := findings.ReopenCoverage(); cov.Observed != 4 || cov.Total != 4 || !cov.Complete() {
+		t.Errorf("findings reopen coverage = %#v, want a complete 4/4", cov)
+	}
+	dimension := DimensionAggregate{Observed: 4, Reopened: 0, ReopenResolved: 4}
+	if cov := dimension.ReopenCoverage(); cov.Observed != 4 || cov.Total != 4 || !cov.Complete() {
+		t.Errorf("dimension reopen coverage = %#v, want a complete 4/4", cov)
+	}
+	// Partial resolution stays partial even when every resolved observation was
+	// a reopen, so the basis never borrows the outcome's magnitude.
+	partial := FindingsAggregate{Observed: 4, Reopened: 3, ReopenResolved: 3}
+	if cov := partial.ReopenCoverage(); cov.Observed != 3 || cov.Total != 4 || cov.Complete() {
+		t.Errorf("partial reopen coverage = %#v, want an incomplete 3/4", cov)
 	}
 }
 

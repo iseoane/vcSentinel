@@ -67,8 +67,14 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		if override {
 			result.Overrides++
 		}
+		// A recorded reopen is the only answer that resolves the attribute
+		// today, so the two counters move together here. They are separate
+		// because a producer that records "examined, not reopened" increments
+		// ReopenResolved alone, which is what lets a fully answered population
+		// report a measured zero instead of no evidence.
 		if status == review.StatusReopened {
 			result.Reopened++
+			result.ReopenResolved++
 		}
 
 		dim := counterFor(dimensions, dimension)
@@ -92,6 +98,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		}
 		if status == review.StatusReopened {
 			dim.Reopened++
+			dim.ReopenResolved++
 		}
 
 		if status != review.StatusRefuted {
@@ -122,7 +129,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		row := DimensionAggregate{
 			Dimension: name, Findings: active, Observed: counter.Observed,
 			Confirmed: counter.Confirmed, Refuted: counter.Refuted,
-			Overrides: counter.Overrides, Reopened: counter.Reopened,
+			Overrides: counter.Overrides, Reopened: counter.Reopened, ReopenResolved: counter.ReopenResolved,
 			ConfirmationRate: ratio(counter.Confirmed, active, counter.EffectiveKnown, active),
 			RefutationRate:   ratio(counter.Refuted, counter.Observed, counter.Known, counter.Observed),
 			OverrideRate:     ratio(counter.Overrides, active, counter.OverrideObservable, active),
@@ -168,6 +175,7 @@ type findingCounter struct {
 	Refuted            int64
 	Overrides          int64
 	Reopened           int64
+	ReopenResolved     int64
 }
 
 func counterFor(counters map[string]*findingCounter, key string) *findingCounter {

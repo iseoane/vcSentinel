@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -202,10 +203,10 @@ func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
 		{"scope coverage", func(r *metrics.Report) { r.Executions.Scope.Coverage = partialMetricsCoverage() }},
 		{"cost ratio", func(r *metrics.Report) { r.Costs = []metrics.CostAggregate{{CostPerConfirmed: partialMetricsRatio()}} }},
 		{"stage coverage", func(r *metrics.Report) { r.Stages = []metrics.StageAggregate{{Coverage: partialMetricsCoverage()}} }},
-		{"reopen coverage", func(r *metrics.Report) { r.Findings.Reopened = 0 }},
+		{"reopen coverage", func(r *metrics.Report) { r.Findings.ReopenResolved = 0 }},
 		{"dimension reopen coverage", func(r *metrics.Report) {
 			v := completeMetricsReport().Findings.ConfirmationRate
-			r.Findings.ByDimension = []metrics.DimensionAggregate{{Observed: 2, Reopened: 1, ConfirmationRate: v, RefutationRate: v, OverrideRate: v}}
+			r.Findings.ByDimension = []metrics.DimensionAggregate{{Observed: 2, Reopened: 1, ReopenResolved: 1, ConfirmationRate: v, RefutationRate: v, OverrideRate: v}}
 		}},
 	}
 	for _, tc := range cases {
@@ -412,7 +413,7 @@ func completeMetricsReport() metrics.Report {
 	return metrics.Report{
 		// Reopened matches Observed so that reopen evidence is complete: the
 		// warning-free branch has to stay reachable through a truthful fixture.
-		Findings:    metrics.FindingsAggregate{Observed: 1, Reopened: 1, ConfirmationRate: ratio, RefutationRate: ratio, OverrideRate: ratio},
+		Findings:    metrics.FindingsAggregate{Observed: 1, Reopened: 1, ReopenResolved: 1, ConfirmationRate: ratio, RefutationRate: ratio, OverrideRate: ratio},
 		Remediation: metrics.RemediationAggregate{Attempts: 1, SuccessRate: ratio},
 		Executions: metrics.ExecutionAggregate{
 			LogicalRuns: 1, SuccessRate: ratio,
@@ -715,18 +716,19 @@ func TestRenderMetricsReportsReopenCountsAsUnknown(t *testing.T) {
 // lower bound, not a measurement. The coverage object still shows the evidence.
 func TestRenderMetricsReopenCountFollowsItsCoverage(t *testing.T) {
 	cases := []struct {
-		name               string
-		observed, reopened int64
-		want               string
+		name                         string
+		observed, reopened, resolved int64
+		want                         string
 	}{
-		{"no evidence", 2, 0, "reopened=unknown (coverage 0/2 (0.00%))"},
-		{"partial evidence", 2, 1, "reopened=unknown (coverage 1/2 (50.00%))"},
-		{"complete evidence", 2, 2, "reopened=2 (coverage 2/2 (100.00%))"},
+		{"no evidence", 2, 0, 0, "reopened=unknown (coverage 0/2 (0.00%))"},
+		{"partial evidence", 2, 1, 1, "reopened=unknown (coverage 1/2 (50.00%))"},
+		{"complete evidence", 2, 2, 2, "reopened=2 (coverage 2/2 (100.00%))"},
+		{"complete evidence without reopens", 2, 0, 2, "reopened=0 (coverage 2/2 (100.00%))"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			report := completeMetricsReport()
-			report.Findings.Observed, report.Findings.Reopened = tc.observed, tc.reopened
+			report.Findings.Observed, report.Findings.Reopened, report.Findings.ReopenResolved = tc.observed, tc.reopened, tc.resolved
 			var output bytes.Buffer
 			if err := renderMetrics(&output, report); err != nil {
 				t.Fatal(err)
@@ -738,22 +740,63 @@ func TestRenderMetricsReopenCountFollowsItsCoverage(t *testing.T) {
 	}
 }
 
-// TestMetricsWarningNamesTheMissingReopenProducer keeps the incomplete-evidence
-// policy honest: a report that prints an unknown reopen count must not also
-// claim there are no warnings, and the warning has to name its cause.
-func TestMetricsWarningNamesTheMissingReopenProducer(t *testing.T) {
-	report := completeMetricsReport()
-	report.Findings.Observed, report.Findings.Reopened = 4, 0
+// TestMetricsWarningReportsOnlyTheReopenEvidenceGap keeps the incomplete-evidence
+// policy honest without letting the renderer assert a cause it cannot derive.
+// The report carries counts and coverage; it carries nothing about which
+// producers exist, so the warning must describe the gap and stop there.
+func TestMetricsWarningReportsOnlyTheReopenEvidenceGap(t *testing.T) {
+	cases := []struct {
+		name                         string
+		observed, resolved           int64
+		wantWarning, wantWarningFree bool
+	}{
+		{name: "no evidence", observed: 4, resolved: 0, wantWarning: true},
+		{name: "partial evidence", observed: 4, resolved: 1, wantWarning: true},
+		{name: "complete evidence", observed: 4, resolved: 4, wantWarningFree: true},
+		{name: "empty population", observed: 0, resolved: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := completeMetricsReport()
+			report.Findings.Observed, report.Findings.ReopenResolved = tc.observed, tc.resolved
+			var output bytes.Buffer
+			if err := renderMetrics(&output, report); err != nil {
+				t.Fatal(err)
+			}
+			text := output.String()
+			if strings.Contains(text, "producer") {
+				t.Errorf("the renderer asserted a producer topology it cannot know: %s", text)
+			}
+			gap := strings.Contains(text, "reopen evidence is missing")
+			if gap != tc.wantWarning {
+				t.Errorf("reopen gap warning = %v, want %v: %s", gap, tc.wantWarning, text)
+			}
+			if tc.wantWarning {
+				want := fmt.Sprintf("reopen evidence is missing for %d of %d findings", tc.observed-tc.resolved, tc.observed)
+				if !strings.Contains(text, want) {
+					t.Errorf("warning does not contain %q: %s", want, text)
+				}
+				if strings.Contains(text, "Warnings: none.") {
+					t.Errorf("an unknown reopen count was reported as warning-free: %s", text)
+				}
+			}
+			if tc.wantWarningFree && !strings.Contains(text, "Warnings: none.") {
+				t.Errorf("complete reopen evidence still warned: %s", text)
+			}
+		})
+	}
+}
+
+// TestMetricsWarningIgnoresAnAbsentPopulation pins the zero-population case on
+// its own: an empty report has nothing missing, so it must not claim that it
+// does, even though its coverage is not complete.
+func TestMetricsWarningIgnoresAnAbsentPopulation(t *testing.T) {
 	var output bytes.Buffer
-	if err := renderMetrics(&output, report); err != nil {
+	if err := renderMetrics(&output, metrics.Report{}); err != nil {
 		t.Fatal(err)
 	}
-	text := output.String()
-	if strings.Contains(text, "Warnings: none.") {
-		t.Fatalf("an unknown reopen count was reported as warning-free: %s", text)
-	}
-	if !strings.Contains(text, "WARNING: reopen counts are unknown for 4 of 4 findings because no producer writes the reopened status.") {
-		t.Fatalf("the reopen warning does not name its cause: %s", text)
+	if text := output.String(); strings.Contains(text, "reopen evidence is missing") {
+		t.Fatalf("an empty report claimed missing reopen evidence: %s", text)
 	}
 }
 
