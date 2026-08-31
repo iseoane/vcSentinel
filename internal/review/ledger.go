@@ -102,18 +102,18 @@ func (r Revision) FindingsWithDispositions() []Hallazgo {
 		var findings []Hallazgo
 		for _, dr := range r.Dims {
 			for _, h := range dr.Findings {
-				findings = append(findings, hallazgoConDisposicion(dr.Dim, h))
+				findings = append(findings, findingWithDisposition(dr.Dim, h))
 			}
 		}
 		return findings
 	}
 
-	dispositions := disposicionesCrudas(r.Dims)
+	dispositions := rawDispositions(r.Dims)
 	findings := make([]Hallazgo, len(r.AggregatedFindings))
 	copy(findings, r.AggregatedFindings)
 	counterparts := make(map[string]struct{}, len(findings))
 	for i := range findings {
-		key := claveDisposicion(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)
+		key := dispositionKey(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)
 		counterparts[key] = struct{}{}
 		// A status the aggregated finding recorded itself is evidence, not an
 		// absence: it wins over the raw one rather than being overwritten.
@@ -132,37 +132,37 @@ func (r Revision) FindingsWithDispositions() []Hallazgo {
 			// Keyed on the counterpart, not on whether the status was
 			// adopted: a raw finding whose aggregate kept its own status has
 			// been represented already and must not be observed twice.
-			if _, ok := counterparts[claveDisposicion(dr.Dim, h.File, int(h.Line), h.Description)]; ok {
+			if _, ok := counterparts[dispositionKey(dr.Dim, h.File, int(h.Line), h.Description)]; ok {
 				continue
 			}
-			findings = append(findings, hallazgoConDisposicion(dr.Dim, h))
+			findings = append(findings, findingWithDisposition(dr.Dim, h))
 		}
 	}
 	return findings
 }
 
-// disposicionesCrudas indexes the dispositions the raw per-dimension findings
+// rawDispositions indexes the dispositions the raw per-dimension findings
 // recorded, by the same key FindingsWithDispositions joins on. A key whose
 // findings disagree records no disposition at all: contradictory evidence is
 // not evidence, and picking a winner would invent a lifecycle answer the
 // ledger never gave. Dropping it keeps the result deterministic without
 // needing a precedence order nothing in the domain authorises.
-func disposicionesCrudas(dims []DimensionResult) map[string]string {
-	observadas := make(map[string]map[string]struct{})
+func rawDispositions(dims []DimensionResult) map[string]string {
+	statusesByKey := make(map[string]map[string]struct{})
 	for _, dr := range dims {
 		for _, h := range dr.Findings {
 			if h.Status == "" {
 				continue
 			}
-			key := claveDisposicion(dr.Dim, h.File, int(h.Line), h.Description)
-			if observadas[key] == nil {
-				observadas[key] = make(map[string]struct{}, 1)
+			key := dispositionKey(dr.Dim, h.File, int(h.Line), h.Description)
+			if statusesByKey[key] == nil {
+				statusesByKey[key] = make(map[string]struct{}, 1)
 			}
-			observadas[key][h.Status] = struct{}{}
+			statusesByKey[key][h.Status] = struct{}{}
 		}
 	}
-	dispositions := make(map[string]string, len(observadas))
-	for key, statuses := range observadas {
+	dispositions := make(map[string]string, len(statusesByKey))
+	for key, statuses := range statusesByKey {
 		if len(statuses) != 1 {
 			continue
 		}
@@ -173,16 +173,16 @@ func disposicionesCrudas(dims []DimensionResult) map[string]string {
 	return dispositions
 }
 
-func claveDisposicion(dimension, archivo string, linea int, descripcion string) string {
-	return empaquetarConLongitud(dimension, archivo, strconv.Itoa(linea), descripcion)
+func dispositionKey(dimension, file string, line int, description string) string {
+	return empaquetarConLongitud(dimension, file, strconv.Itoa(line), description)
 }
 
-// hallazgoConDisposicion projects a v1 finding exactly like
+// findingWithDisposition projects a v1 finding exactly like
 // hallazgoDesdeReviewFinding and then restores the Status that projection
 // drops. The drop is correct there: HallazgosEfectivos feeds the blocking
 // gate, which selects on severity and supersede rather than on lifecycle.
 // Here the lifecycle is the whole point.
-func hallazgoConDisposicion(dimension string, h ReviewFinding) Hallazgo {
+func findingWithDisposition(dimension string, h ReviewFinding) Hallazgo {
 	hallazgo := hallazgoDesdeReviewFinding(dimension, h)
 	hallazgo.Status = h.Status
 	return hallazgo
