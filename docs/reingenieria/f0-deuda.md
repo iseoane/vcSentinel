@@ -721,3 +721,50 @@ fingerprint — which is new product scope and deliberately outside F9.
 Target: pick it up when a disposition surface is designed. Until then T9.3a
 must report reopen coverage as unknown rather than as a measured zero, exactly
 as FU-3 requires for cost, scope, and reuse.
+
+### FU-7: aggregation drops the disposition, so metrics cannot see it
+
+Recorded 2026-08-31 while correcting T9.3a. This is the real obstacle to exit
+criterion 1 of F9, and it is not FU-6: `StatusConfirmed` and `StatusRefuted`
+both have producers, and 85 real dispositions already exist on disk.
+
+Measured on the live ledger:
+
+- 1377 raw findings across every ficha revision. 85 carry a disposition: 84
+  `confirmed` and 1 `refuted`.
+- Those 85 live only in the v1 raw `dims[].findings[]` shape.
+- 74 revisions carry `aggregated_findings`, and all 564 of those aggregated
+  findings have an empty status. The correlation is exact: every revision
+  holding a disposition also holds aggregated findings that drop it.
+- `review.Revision.HallazgosEfectivos` (`internal/review/ledger.go:54-55`)
+  prefers `AggregatedFindings` whenever they are present, and only falls back
+  to converting `Dims`.
+- `internal/metrics/metrics_reader.go:115` reads findings through that method.
+
+So `sentinel metrics` reports zero confirmed and zero refuted at zero coverage
+while 85 dispositions sit in the store.
+
+Upstream cause: `internal/review/engine.go:501-511` assigns `StatusConfirmed`
+to `dimension.Resultado.Findings[i]`, the per-dimension collection, and
+`:569,619` assign `StatusRefuted` there too. The aggregated set — assigned at
+`cmd/sentinel/comandos_review.go:174` and `internal/review/rama.go:332` —
+never receives it. `internal/review/aggregation.go:24` additionally skips
+refuted findings outright.
+
+The repository already knew this and solved it once, in the other direction:
+`cmd/sentinel/comandos_runs_prune.go:80-87` deliberately scans the raw `Dims`
+hallazgos and states that "Aggregation drops refuted findings, so scanning
+AggregatedFindings alone would miss the refuter stream; the raw Dims hallazgos
+close that gap." The metrics reader does exactly what the prune code was
+written to avoid. Use that precedent when picking this up.
+
+Scope when taken: make the disposition reachable from the ledger, either by
+propagating `Status` into `AggregatedFindings` or by having the metrics reader
+consult the raw `Dims` hallazgos for it. Prefer whichever keeps one source of
+truth; do not introduce a third finding shape. Deliberately excluded from the
+T9.3a coverage correction so that candidate stayed one reviewable change, and
+because this one touches the review engine rather than the aggregator.
+
+Priority: before T9.4a. It converts exit criterion 1 from "unknown" into 85
+measurable dispositions across six dimensions, using data that already exists
+and needing no new product surface.
