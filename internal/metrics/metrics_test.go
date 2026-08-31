@@ -798,3 +798,24 @@ func TestReopenCoverageIsUnknownWithoutAProductionWriter(t *testing.T) {
 		}
 	}
 }
+
+// TestDispositionCoverageIsIndependentPerGrouping uses crossing identities so
+// that the dimension, model and agent partitions disagree. Each expected
+// coverage fraction below is distinct, so a counter wired to the wrong grouping
+// cannot satisfy them all.
+func TestDispositionCoverageIsIndependentPerGrouping(t *testing.T) {
+	got := Aggregate(Input{Findings: []FindingObservation{
+		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),
+		findingWithStatus("b", review.DimLogic, "m1", "a1", ""),
+		findingWithStatus("c", review.DimLogic, "m1", "a2", ""),
+		findingWithStatus("d", review.DimSecurity, "m1", "a1", review.StatusRefuted),
+		findingWithStatus("e", review.DimSecurity, "m2", "a2", review.StatusConfirmed),
+	}}).Findings
+
+	assertRatioCoverage(t, "logic refutation", got.ByDimension[0].RefutationRate, 0, 3, 1, 3)
+	assertRatioCoverage(t, "security refutation", got.ByDimension[1].RefutationRate, 1, 2, 2, 2)
+	assertRatioCoverage(t, "m1 refutation", got.ByModel[0].RefutationRate, 1, 4, 2, 4)
+	assertRatioCoverage(t, "m2 refutation", got.ByModel[1].RefutationRate, 0, 1, 1, 1)
+	assertRatioCoverage(t, "a1 refutation", got.ByAgent[0].RefutationRate, 1, 3, 2, 3)
+	assertRatioCoverage(t, "a2 refutation", got.ByAgent[1].RefutationRate, 0, 2, 1, 2)
+}
