@@ -138,9 +138,19 @@ the original review record remains blocked by design.
 
 #### T9.1a disposition — 2026-08-31
 
-The original ficha for `c50d6d5` is no longer in the shared ledger, so the
-block it described had no machine-readable record left to dispose of. A fresh
-authoritative review was run on the merged commit instead:
+The Sentinel review ledger is per worktree, not shared: each linked worktree
+keeps its own under `.git/worktrees/<name>/vas-sentinel/`, so a review run in a
+candidate worktree is invisible from the main checkout even though both share
+one Git common directory. The original ficha for `c50d6d5` therefore still
+exists, at
+`.git/worktrees/f9-t9-1a-luna/vas-sentinel/c50d6d538f72eacae8f62752f5db8aec0d518bfc.json`.
+It carries two revisions ending in `block`, with one CRITICAL `spec` finding
+marked `confirmed` — the relocation premise addressed below — plus three
+warnings. This corrects an earlier claim in this record that the ficha was
+gone; only its location was wrong, and the disposition below is unaffected.
+
+A fresh authoritative review was run on the merged commit from the main
+worktree, which is why a second ficha for the same commit now exists there:
 
 ```text
 bin/0.2.0/sentinel review c50d6d5 --timeout 1200
