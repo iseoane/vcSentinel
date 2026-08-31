@@ -12,7 +12,7 @@ import (
 func aggregateFindings(observations []FindingObservation, decisions []store.Decision) FindingsAggregate {
 	byFingerprint := make(map[string]FindingObservation, len(observations))
 	for _, observation := range observations {
-		if observation.Superseded || strings.EqualFold(strings.TrimSpace(observation.Finding.Status), "superseded") {
+		if observation.Superseded || review.NormalizeStatus(observation.Finding.Status) == "superseded" {
 			continue
 		}
 		key := findingFingerprint(observation)
@@ -47,7 +47,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 	for _, key := range keys {
 		observation := byFingerprint[key]
 		finding := observation.Finding
-		status := strings.ToLower(strings.TrimSpace(finding.Status))
+		status := review.NormalizeStatus(finding.Status)
 		dimension := displayDimension(finding.Dimension)
 		model := displayIdentity(finding.Producer.Modelo)
 		agent := displayIdentity(finding.Producer.Agente)
@@ -214,8 +214,8 @@ func findingObservationAfter(candidate, current FindingObservation) bool {
 	// genuine tie the observation that answers the attribute must win. Stated
 	// here rather than left to findingSortKey, which happens to compare
 	// Status as a string and would resolve it only by accident.
-	candidateDisposed := strings.TrimSpace(candidate.Finding.Status) != ""
-	currentDisposed := strings.TrimSpace(current.Finding.Status) != ""
+	candidateDisposed := review.NormalizeStatus(candidate.Finding.Status) != ""
+	currentDisposed := review.NormalizeStatus(current.Finding.Status) != ""
 	if candidateDisposed != currentDisposed {
 		return candidateDisposed
 	}

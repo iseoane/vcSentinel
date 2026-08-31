@@ -56,17 +56,22 @@ func TestReadLedgerSurfacesConfirmedDispositionOntoAggregatedFindings(t *testing
 		AggregatedFindings: []review.Hallazgo{
 			dispositionAggregate(review.DimLogic, "a.go", 10, "nil dereference", "fp-confirmed"),
 			dispositionAggregate(review.DimLogic, "b.go", 20, "unbounded loop", "fp-unknown"),
+			// Deterministic findings are appended to the aggregated set and
+			// have no raw counterpart, so a reader that consulted only the
+			// raw dims would never observe this one. It is what makes the two
+			// persisted shapes distinguishable in this fixture.
+			dispositionAggregate(review.DimLogic, "c.go", 30, "gofmt drift", "fp-deterministic"),
 		},
 	})
 
 	result := readDispositionFindings(t, commonDir)
-	if result.Observed != 2 || result.Confirmed != 1 || result.Refuted != 0 {
-		t.Fatalf("observed=%d confirmed=%d refuted=%d, want 2/1/0", result.Observed, result.Confirmed, result.Refuted)
+	if result.Observed != 3 || result.Confirmed != 1 || result.Refuted != 0 {
+		t.Fatalf("observed=%d confirmed=%d refuted=%d, want 3/1/0", result.Observed, result.Confirmed, result.Refuted)
 	}
-	if result.ConfirmationRate.Coverage.Observed != 1 || result.ConfirmationRate.Coverage.Total != 2 {
-		t.Fatalf("confirmation coverage = %#v, want 1/2", result.ConfirmationRate.Coverage)
+	if result.ConfirmationRate.Coverage.Observed != 1 || result.ConfirmationRate.Coverage.Total != 3 {
+		t.Fatalf("confirmation coverage = %#v, want 1/3", result.ConfirmationRate.Coverage)
 	}
-	if len(result.ByDimension) != 1 || result.ByDimension[0].Confirmed != 1 {
+	if len(result.ByDimension) != 1 || result.ByDimension[0].Confirmed != 1 || result.ByDimension[0].Observed != 3 {
 		t.Fatalf("by dimension = %#v, want the confirmation attributed to its dimension", result.ByDimension)
 	}
 }
@@ -82,18 +87,19 @@ func TestReadLedgerSurfacesRefutedDispositionAggregationDropped(t *testing.T) {
 		}}},
 		AggregatedFindings: []review.Hallazgo{
 			dispositionAggregate(review.DimSecurity, "b.go", 30, "unchecked input", "fp-confirmed"),
+			dispositionAggregate(review.DimSecurity, "c.go", 40, "weak cipher", "fp-deterministic"),
 		},
 	})
 
 	result := readDispositionFindings(t, commonDir)
-	if result.Observed != 2 || result.Confirmed != 1 || result.Refuted != 1 {
-		t.Fatalf("observed=%d confirmed=%d refuted=%d, want 2/1/1", result.Observed, result.Confirmed, result.Refuted)
+	if result.Observed != 3 || result.Confirmed != 1 || result.Refuted != 1 {
+		t.Fatalf("observed=%d confirmed=%d refuted=%d, want 3/1/1", result.Observed, result.Confirmed, result.Refuted)
 	}
-	if result.Effective != 1 {
-		t.Fatalf("effective = %d, want 1: a refuted finding is observed but not effective", result.Effective)
+	if result.Effective != 2 {
+		t.Fatalf("effective = %d, want 2: a refuted finding is observed but not effective", result.Effective)
 	}
-	if result.RefutationRate.Coverage.Observed != 2 || result.RefutationRate.Coverage.Total != 2 {
-		t.Fatalf("refutation coverage = %#v, want 2/2", result.RefutationRate.Coverage)
+	if result.RefutationRate.Coverage.Observed != 2 || result.RefutationRate.Coverage.Total != 3 {
+		t.Fatalf("refutation coverage = %#v, want 2/3", result.RefutationRate.Coverage)
 	}
 }
 
@@ -143,7 +149,9 @@ func TestReadLedgerDoesNotRemediateARefutedFindingInAFixedRevision(t *testing.T)
 	saveDispositionRevision(t, commonDir, "eee555", review.Revision{
 		At: at, Fixed: true,
 		Dims: []review.DimensionResult{{Dim: review.DimLogic, Findings: []review.ReviewFinding{
-			dispositionRawFinding("a.go", 10, "injected query", review.StatusRefuted),
+			// Deliberately not the canonical token: the guard must interpret
+			// the status, not compare its bytes.
+			dispositionRawFinding("a.go", 10, "injected query", "  REFUTED  "),
 			dispositionRawFinding("b.go", 30, "unchecked input", review.StatusConfirmed),
 		}}},
 		AggregatedFindings: []review.Hallazgo{
@@ -155,8 +163,17 @@ func TestReadLedgerDoesNotRemediateARefutedFindingInAFixedRevision(t *testing.T)
 	if err != nil {
 		t.Fatalf("read store: %v", err)
 	}
+	// Identity, not cardinality: asserting only a count passes just as well
+	// when the refuted finding is remediated and the confirmed one omitted.
 	if len(input.Remediations) != 1 {
-		t.Fatalf("remediations = %#v, want only the non-refuted finding of the fixed revision", input.Remediations)
+		t.Fatalf("remediations = %#v, want exactly the confirmed finding", input.Remediations)
+	}
+	remediation := input.Remediations[0]
+	if remediation.Target != "fp-confirmed" || !remediation.Success || remediation.Dimension != review.DimLogic {
+		t.Fatalf("remediation = %#v, want the confirmed fp-confirmed finding of the fixed revision", remediation)
+	}
+	if remediation.LogicalID != "fixed:fp-confirmed:" {
+		t.Fatalf("remediation logical id = %q, want the fixed identity of fp-confirmed", remediation.LogicalID)
 	}
 }
 
@@ -177,5 +194,58 @@ func TestFindingObservationPrefersTheObservationCarryingAStatus(t *testing.T) {
 	result := aggregateFindings([]FindingObservation{base, disposed}, nil)
 	if result.Observed != 1 || result.Refuted != 1 {
 		t.Fatalf("observed=%d refuted=%d, want 1/1", result.Observed, result.Refuted)
+	}
+}
+
+func TestReadLedgerInterpretsANonCanonicalRefutedStatus(t *testing.T) {
+	commonDir := t.TempDir()
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	saveDispositionRevision(t, commonDir, "fff666", review.Revision{
+		At: at,
+		Dims: []review.DimensionResult{{Dim: review.DimSecurity, Findings: []review.ReviewFinding{
+			dispositionRawFinding("a.go", 10, "injected query", " Refuted "),
+			dispositionRawFinding("b.go", 30, "unchecked input", " CONFIRMED "),
+		}}},
+		AggregatedFindings: []review.Hallazgo{
+			dispositionAggregate(review.DimSecurity, "b.go", 30, "unchecked input", "fp-confirmed"),
+		},
+	})
+
+	result := readDispositionFindings(t, commonDir)
+	if result.Observed != 2 || result.Confirmed != 1 || result.Refuted != 1 {
+		t.Fatalf("observed=%d confirmed=%d refuted=%d, want 2/1/1", result.Observed, result.Confirmed, result.Refuted)
+	}
+	if result.Effective != 1 {
+		t.Fatalf("effective = %d, want 1: the padded refutation must still leave the effective population", result.Effective)
+	}
+}
+
+// The aggregated finding's own status is persisted as the producer wrote it
+// and is never rewritten by the review side, so it reaches the reader
+// uncanonicalised. Every reader-side interpretation must go through
+// review.NormalizeStatus or the two halves disagree about one record: this
+// finding leaves the effective population as refuted while still being
+// counted as remediated by its fixed revision.
+func TestReadLedgerInterpretsAnAggregateOwnNonCanonicalStatus(t *testing.T) {
+	commonDir := t.TempDir()
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	refuted := dispositionAggregate(review.DimLogic, "a.go", 10, "injected query", "fp-refuted")
+	refuted.Status = "  REFUTED  "
+	saveDispositionRevision(t, commonDir, "ggg777", review.Revision{
+		At: at, Fixed: true,
+		Dims:               []review.DimensionResult{{Dim: review.DimLogic}},
+		AggregatedFindings: []review.Hallazgo{refuted},
+	})
+
+	input, err := ReadStore(commonDir)
+	if err != nil {
+		t.Fatalf("read store: %v", err)
+	}
+	if len(input.Remediations) != 0 {
+		t.Fatalf("remediations = %#v, want none: a refuted finding was never a defect to remediate", input.Remediations)
+	}
+	result := aggregateFindings(input.Findings, input.Decisions)
+	if result.Observed != 1 || result.Refuted != 1 || result.Effective != 0 {
+		t.Fatalf("observed=%d refuted=%d effective=%d, want 1/1/0", result.Observed, result.Refuted, result.Effective)
 	}
 }
