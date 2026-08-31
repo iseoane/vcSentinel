@@ -352,14 +352,13 @@ remediation-outcome correction but the commit also strengthens the agent-timing
 regression required by the preceding review. Rewriting history solely to split
 that review-mandated test would add no behavioural correction.
 
-This is an implementation closure, not yet the formal task closure. The
-worktree-specific Sentinel ledger still reports historical blocks for
-`29556b9` and `3196e45` without `fixedIn` values. Their known behavioural
-premises are covered by later code and tests, including `f5cca78`, but the
-ledger has not recorded authoritative correction reviews for those two
-fichas. T9.3a must remain formally open until those records are settled or an
-explicit closure policy accepts the final passing gate as their superseding
-authority.
+This is the formal T9.3a closure. The worktree-specific Sentinel ledger retains
+historical blocks for `29556b9` and `3196e45` without `fixedIn` values because
+the legacy ficha model has no whole-review `obsolete` disposition. Their known
+behavioural premises are covered by later code and tests, including `f5cca78`.
+The final passing gate is the superseding authority for this task, so those
+fichas remain immutable historical evidence but no longer represent active
+findings, deferred work, or T9.5 scope.
 
 ### T9.3b — `sentinel metrics`
 
