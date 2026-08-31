@@ -377,6 +377,29 @@ numerators/denominators, and deterministic ordering. Test empty, historical,
 mixed, and unreadable stores; help exits 0 with empty stderr; undeclared flags
 exit 1. Smoke-test the three executable command forms with `go run`.
 
+T9.3b closed on the `f9-t9-3b` worktree. `f8beca9` introduced the command,
+typed and human renderers, strict arguments, help, store scenarios, and command
+smoke coverage. Its review blocked on inconsistent partial-evidence handling.
+`e0409e1` aligned human and JSON availability, introduced the typed JSON view,
+centralized evidence sufficiency in `metrics.Report`, propagated output errors,
+and strengthened command-level tests. Its review found that total cost evidence
+was still coupled to the independent per-confirmed ratio. `2051311` corrected
+that invariant with `CostAggregate.TotalCoverage`; Sentinel marked both prior
+blocked fichas as fixed. `6ace7d8` and `267b2c3` closed the remaining
+determinism and cost-warning test gaps, and the latter review returned `ok`.
+
+The implementation used `openai/gpt-5.6-luna`; the execution environment did
+not expose a separate agent identity or verified effective reasoning effort.
+All 26 durable review runs reached `succeeded` and each `runs verify` reported
+four intact events. Independent closure checks passed: `go test -count=1 ./...`,
+`go test -race -count=1 ./cmd/sentinel ./internal/metrics`, `go build ./...`,
+`go vet ./...`, `./build.sh`, the human/JSON/help/invalid-flag executable smoke
+checks, and `bin/0.2.0/sentinel check`. The final
+`bin/0.2.0/sentinel gate --stage pre-push --timeout 1200` returned `PASS`.
+The non-blocking scope warning on `2051311` is accepted because those additional
+tests were required by the preceding Sentinel review; rewriting reviewed
+history solely to separate them would add no behavioural correction.
+
 ### T9.4a — observation sufficiency
 
 Before collecting data, freeze minimum duration, logical-run volume,
