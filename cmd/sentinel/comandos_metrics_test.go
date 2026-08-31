@@ -9,11 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/metrics"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
@@ -82,6 +85,34 @@ func TestRenderMetricsJSONUsesFixedTypedContract(t *testing.T) {
 	}
 	if decoded["costs"].([]any)[0].(map[string]any)["currency"] != "EUR" || decoded["stages"].([]any)[0].(map[string]any)["stage"] != "stage-a" {
 		t.Fatalf("cost/stage rows changed typed order: %#v", decoded)
+	}
+}
+
+func TestRenderMetricsJSONIsDeterministicForPermutedAggregateInputs(t *testing.T) {
+	input := metricsInputForOrdering()
+	want := metrics.Aggregate(input)
+	input.Findings[0], input.Findings[1] = input.Findings[1], input.Findings[0]
+	input.Remediations[0], input.Remediations[1] = input.Remediations[1], input.Remediations[0]
+	input.Executions[0], input.Executions[1] = input.Executions[1], input.Executions[0]
+	input.Stages[0], input.Stages[1] = input.Stages[1], input.Stages[0]
+	got := metrics.Aggregate(input)
+	var first, second bytes.Buffer
+	if err := renderMetricsJSON(&first, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderMetricsJSON(&second, got); err != nil {
+		t.Fatal(err)
+	}
+	if first.String() != second.String() {
+		t.Fatal("equivalent aggregate inputs produced different JSON")
+	}
+	decoded := decodeMetricsJSON(t, first.Bytes())
+	findings := decoded["findings"].(map[string]any)
+	if findings["by_dimension"].([]any)[0].(map[string]any)["dimension"] != "logic" || findings["by_model"].([]any)[0].(map[string]any)["model"] != "model-a" || findings["by_agent"].([]any)[0].(map[string]any)["agent"] != "agent-a" {
+		t.Fatalf("grouped findings are not canonically ordered: %#v", findings)
+	}
+	if decoded["costs"].([]any)[0].(map[string]any)["currency"] != "EUR" || decoded["stages"].([]any)[0].(map[string]any)["stage"] != "stage-a" {
+		t.Fatalf("cost/stage rows are not canonically ordered: %#v", decoded)
 	}
 }
 
@@ -181,6 +212,21 @@ func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
 				t.Fatalf("incomplete %s did not trigger warning", tc.name)
 			}
 		})
+	}
+}
+
+func TestMetricsWarnsForPartialCostTotalCoverage(t *testing.T) {
+	report := completeMetricsReport()
+	report.Costs = []metrics.CostAggregate{{
+		Currency: "USD", TotalMicros: 9, ObservedRuns: 1, TotalRuns: 2,
+		CostPerConfirmed: completeMetricsReport().Findings.ConfirmationRate,
+	}}
+	var output bytes.Buffer
+	if err := renderMetrics(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "WARNING: insufficient samples") {
+		t.Fatalf("partial total-cost coverage did not trigger warning: %s", output.String())
 	}
 }
 
@@ -346,6 +392,36 @@ func completeMetricsReport() metrics.Report {
 			TotalTokens: measurement, CachedInputTokens: measurement, ReasoningTokens: measurement,
 			CostCoverage: coverage, IdentityCoverage: coverage,
 			Reuse: metrics.ReuseAggregate{Rate: ratio}, Scope: metrics.ScopeAggregate{Coverage: coverage},
+		},
+	}
+}
+
+func metricsInputForOrdering() metrics.Input {
+	one := int64(1)
+	durationA, durationB := time.Duration(10), time.Duration(20)
+	snapshot := func(run, agent, model, currency string, duration *time.Duration) *store.ExecutionMetrics {
+		return &store.ExecutionMetrics{
+			Version: store.ExecutionMetricsSchemaVersion, RunID: run,
+			Identities: []store.ObservedExecutionIdentity{{Agent: agent, Model: model}},
+			Timing:     &store.ExecutionTiming{TotalDurationNanos: duration},
+			Usage:      &store.ExecutionTokenUsage{InputTokens: &one, OutputTokens: &one, TotalTokens: &one, CachedInputTokens: &one, ReasoningTokens: &one},
+			Cost:       &store.ExecutionCost{AmountMicros: 1, Currency: currency}, Scope: &store.ExecutionScope{Kind: store.ScopeFull},
+			Reuse: &store.ExecutionReuse{ReusedCapabilityIDs: []string{"reuse"}},
+		}
+	}
+	return metrics.Input{
+		Findings: []metrics.FindingObservation{
+			{Fingerprint: "finding-b", Finding: review.Hallazgo{Fingerprint: "finding-b", Dimension: review.DimSecurity, Status: review.StatusRefuted, Producer: review.Productor{Agente: "agent-b", Modelo: "model-b"}}},
+			{Fingerprint: "finding-a", Finding: review.Hallazgo{Fingerprint: "finding-a", Dimension: review.DimLogic, Status: review.StatusConfirmed, Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"}}},
+		},
+		Remediations: []metrics.RemediationObservation{{LogicalID: "remediation-b", Success: false}, {LogicalID: "remediation-a", Success: true}},
+		Executions: []metrics.ExecutionObservation{
+			{RunID: "run-b", Metrics: snapshot("run-b", "agent-b", "model-b", "EUR", &durationB), Outcomes: []store.AttemptOutcome{{RunID: "run-b", InvocationID: "attempt-b", Class: agentrun.OutcomeSuccess}}},
+			{RunID: "run-a", Metrics: snapshot("run-a", "agent-a", "model-a", "USD", &durationA), Outcomes: []store.AttemptOutcome{{RunID: "run-a", InvocationID: "attempt-a", Class: agentrun.OutcomeSuccess}}},
+		},
+		Stages: []metrics.StageObservation{
+			{Stage: "stage-b", DurationNanos: 20, LogicalRunID: "run-b"},
+			{Stage: "stage-a", DurationNanos: 10, LogicalRunID: "run-a"},
 		},
 	}
 }
