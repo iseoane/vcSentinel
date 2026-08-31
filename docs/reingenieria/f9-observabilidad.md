@@ -417,6 +417,97 @@ The final passing gate is the superseding authority for this task, so those
 fichas remain immutable historical evidence but no longer represent active
 findings, deferred work, or T9.5 scope.
 
+#### T9.3a correction — disposition coverage — 2026-08-31
+
+Reopened after closure because the aggregates reported 100% coverage by
+construction. Several `ratio` call sites passed the denominator as their own
+coverage basis, so `coverage()` divided a value by itself. The same store then
+contradicted itself: the global row read
+`refutation rate: 0/831 (0.00%; coverage 831/831 (100.00%))` while its own
+`dimension design` row read `refutation=0/212 (unknown; coverage 0/212
+(0.00%))`, and a group literally named `unknown` claimed full coverage. This is
+the absence-versus-zero conflation the phase forbids, and T9.4a would have
+frozen its thresholds on it.
+
+Landed as `f46e0ad`, merging five commits with `--no-ff` so the reviewed SHAs
+keep the receipts recorded against them:
+
+```text
+545dcd3  fix(metrics): derive finding-disposition coverage from observed evidence
+272a80c  test(metrics): discriminate the three disposition-coverage groupings
+f837dc0  fix(metrics): emit unobservable reopen counts as null with their coverage
+037c2db  fix(metrics): derive reopen coverage from observed reopen evidence
+7b375fd  fix(metrics): model reopen observability independently of the outcome
+```
+
+No `ratio(x, d, d, d)` call remains. Confirmation and refutation now derive
+their basis from the known-status population; per-model and per-agent counters
+gained the `Known` basis they never had. Override keeps full coverage, and that
+is now derived per observation with its evidence named: `LeerDecisiones`
+(`internal/store/decision.go:71-91`) returns `nil, nil` only for an absent
+file, errors on any read failure, and errors on a malformed line rather than
+skipping it, so the decisions ledger is complete or the whole report fails.
+
+The JSON `reopened` field became nullable because the T9.3b contract recorded
+above requires "null unknowns"; emitting `0` for an unobservable value violated
+the contract this phase already wrote.
+
+**How the reopen basis was reached.** Three positions were taken, and the first
+two were falsified by evidence rather than by preference. Two of the three were
+the coordinator's, which is why the route is recorded and not just the
+destination.
+
+| Position | Conflation | Falsified by |
+|---|---|---|
+| Basis always zero | absence with impossibility | an observed reopen rendered `null` |
+| Basis = `Reopened` | observability with outcome | cannot express complete evidence with zero reopens |
+| Independent `ReopenResolved` | neither | — |
+
+**Standing block, recorded rather than resolved.** The review of `7b375fd`
+returned `block` with two CONFIRMED CRITICAL findings, `design` and `logic`,
+both at `internal/metrics/metrics_findings.go:75`. Their shared premise is
+**true and is not refuted**: `ReopenResolved` is incremented only inside the
+`StatusReopened` branch, `FindingObservation` carries no independent resolution
+signal, and therefore `Aggregate` cannot produce a fully resolved population
+with zero reopens. The representable state exists on the DTO and is proven by
+test, but no production input can reach it.
+
+The remedy is out of scope. An input-level resolution signal has no producer,
+so adding one would create a second declared-but-never-written field — exactly
+the debt FU-6 records. FU-3 already fixed this precedent for the same class of
+problem: "Until then T9.3a must report zero coverage for the three, never a
+measured zero." The exported documentation does not overclaim: `ReopenCoverage`
+states that "every store production can build today therefore resolves nothing
+and reports an unknown count", verified through `go doc`.
+
+The block stands in the per-worktree ledger at
+`.git/worktrees/f9-t9-3a-coverage/vas-sentinel/`. No pass was manufactured and
+no correct change was reverted to silence a finding. FU-7 is what makes the
+disposition reachable; until then this correction makes the report truthful,
+which is a smaller claim than making exit criterion 1 answerable.
+
+**Verification**, run by the coordinator on the candidate rather than taken
+from the implementer:
+
+```text
+go build ./...
+go vet ./...
+go test -count=1 ./...     # 38 packages ok, no FAIL
+go run ./cmd/sentinel metrics
+bin/0.2.0/sentinel check    # 0 authored lines
+```
+
+`internal/execution` failed once under full-suite parallel load, then passed in
+isolation and on two later full runs. It spawns real child processes; recorded
+as an observed flake, not as a clean single-pass green.
+
+**Deviation.** The phase plan pins OpenCode `openai/gpt-5.6-luna` at
+`reasoning_effort: max` for every implementation writer. This correction was
+written by a Claude Code subagent because OpenCode was not available in the
+coordinating session. The writer's effective identity is therefore not the one
+the plan requires, and that is recorded here rather than presented as
+compliance.
+
 ### T9.3b — `sentinel metrics`
 
 Support:
