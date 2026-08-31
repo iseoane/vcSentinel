@@ -209,3 +209,75 @@ type Ratio struct {
 	Coverage    Coverage
 	Value       *float64
 }
+
+// Known reports whether the coverage percentage itself is available. A zero
+// percentage is known evidence; a nil value means that no population exists.
+func (v Coverage) Known() bool { return v.Value != nil }
+
+// Complete reports whether every member of the population has evidence.
+func (v Coverage) Complete() bool {
+	return v.Known() && v.Total > 0 && v.Observed >= v.Total
+}
+
+// Known reports whether the ratio can be presented as a measured value.
+func (v Ratio) Known() bool { return v.Value != nil && v.Coverage.Complete() }
+
+// Known reports whether the measurement can be presented as a measured value.
+func (v Measurement) Known() bool { return v.Value != nil && v.Coverage.Complete() }
+
+// HasIncompleteEvidence applies the domain evidence policy to every value the
+// metrics command exposes. It keeps renderers from independently rebuilding
+// the meaning of partial or unavailable observations.
+func (r Report) HasIncompleteEvidence() bool {
+	f, e := r.Findings, r.Executions
+	if f.Observed == 0 || r.Remediation.Attempts == 0 || e.LogicalRuns == 0 {
+		return true
+	}
+	ratios := []Ratio{f.ConfirmationRate, f.RefutationRate, f.OverrideRate, r.Remediation.SuccessRate, e.SuccessRate, e.Reuse.Rate}
+	for _, v := range ratios {
+		if !v.Known() {
+			return true
+		}
+	}
+	for _, v := range f.ByDimension {
+		if !v.ConfirmationRate.Known() || !v.RefutationRate.Known() || !v.OverrideRate.Known() {
+			return true
+		}
+	}
+	for _, v := range f.ByModel {
+		if !v.RefutationRate.Known() {
+			return true
+		}
+	}
+	for _, v := range f.ByAgent {
+		if !v.RefutationRate.Known() {
+			return true
+		}
+	}
+	for _, v := range r.Remediation.ByDimension {
+		if !v.SuccessRate.Known() {
+			return true
+		}
+	}
+	for _, v := range []Measurement{e.Duration, e.InputTokens, e.OutputTokens, e.TotalTokens, e.CachedInputTokens, e.ReasoningTokens} {
+		if !v.Known() {
+			return true
+		}
+	}
+	for _, v := range []Coverage{e.CostCoverage, e.IdentityCoverage, e.Scope.Coverage} {
+		if !v.Complete() {
+			return true
+		}
+	}
+	for _, v := range r.Costs {
+		if !v.CostPerConfirmed.Known() {
+			return true
+		}
+	}
+	for _, v := range r.Stages {
+		if !v.Coverage.Complete() {
+			return true
+		}
+	}
+	return false
+}

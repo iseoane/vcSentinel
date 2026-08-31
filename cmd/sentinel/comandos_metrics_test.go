@@ -3,16 +3,20 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/metrics"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
@@ -22,8 +26,8 @@ func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
 		Duration:     metrics.Measurement{Total: 1, Coverage: metrics.Coverage{Total: 1}},
 	}}
 	var output bytes.Buffer
-	if code := renderMetricsJSON(&output, report); code != 0 {
-		t.Fatalf("renderMetricsJSON exit code = %d", code)
+	if err := renderMetricsJSON(&output, report); err != nil {
+		t.Fatalf("renderMetricsJSON failed: %v", err)
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
@@ -49,14 +53,302 @@ func TestRenderMetricsJSONUsesStableUnitsAndNullForUnknown(t *testing.T) {
 }
 
 func TestRenderMetricsJSONIsDeterministic(t *testing.T) {
-	report := metrics.Report{Costs: []metrics.CostAggregate{{Currency: "USD"}, {Currency: "EUR"}}}
+	input := metricsInputForOrdering()
+	want := metrics.Aggregate(input)
+	input.Findings[0], input.Findings[1] = input.Findings[1], input.Findings[0]
+	input.Remediations[0], input.Remediations[1] = input.Remediations[1], input.Remediations[0]
+	input.Executions[0], input.Executions[1] = input.Executions[1], input.Executions[0]
+	got := metrics.Aggregate(input)
 	var first, second bytes.Buffer
-	if renderMetricsJSON(&first, report) != 0 || renderMetricsJSON(&second, report) != 0 {
-		t.Fatal("renderMetricsJSON failed")
+	if err := renderMetricsJSON(&first, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderMetricsJSON(&second, got); err != nil {
+		t.Fatal(err)
 	}
 	if first.String() != second.String() {
-		t.Fatal("equivalent metrics reports produced different JSON")
+		t.Fatal("equivalent evidence in different orders produced different JSON")
 	}
+	decoded := decodeMetricsJSON(t, first.Bytes())
+	findings := decoded["findings"].(map[string]any)
+	if len(findings["by_dimension"].([]any)) != 2 || len(findings["by_model"].([]any)) != 2 || len(findings["by_agent"].([]any)) != 2 {
+		t.Fatalf("grouped findings were not rendered: %#v", findings)
+	}
+	if len(decoded["costs"].([]any)) != 2 || len(decoded["stages"].([]any)) != 2 {
+		t.Fatalf("cost/stage ordering inputs were not rendered: %#v", decoded)
+	}
+	if findings["by_dimension"].([]any)[0].(map[string]any)["dimension"] != "logic" || findings["by_model"].([]any)[0].(map[string]any)["model"] != "model-a" || findings["by_agent"].([]any)[0].(map[string]any)["agent"] != "agent-a" {
+		t.Fatalf("grouped findings are not canonically ordered: %#v", findings)
+	}
+	if decoded["costs"].([]any)[0].(map[string]any)["currency"] != "EUR" || decoded["stages"].([]any)[0].(map[string]any)["stage"] != "stage-a" {
+		t.Fatalf("cost/stage rows are not canonically ordered: %#v", decoded)
+	}
+}
+
+func TestRenderMetricsHidesPartiallyCoveredStagePercentiles(t *testing.T) {
+	coverageValue := 0.5
+	report := completeMetricsReport()
+	report.Stages = []metrics.StageAggregate{
+		{Stage: "compile", Samples: 2, P50Nanos: 17, P95Nanos: 23, Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &coverageValue}},
+		{Stage: "unknown", Samples: 0, P50Nanos: 31, P95Nanos: 47},
+	}
+	var output bytes.Buffer
+	renderMetrics(&output, report)
+	if !strings.Contains(output.String(), "Stage compile: samples=2 p50=unknown nanoseconds p95=unknown nanoseconds") || !strings.Contains(output.String(), "Stage unknown: samples=0 p50=unknown nanoseconds p95=unknown nanoseconds") {
+		t.Fatalf("partial stage percentiles were rendered as known: %s", output.String())
+	}
+	output.Reset()
+	var decoded struct {
+		Stages []struct {
+			P50Nanos *int64 `json:"p50_nanos"`
+			P95Nanos *int64 `json:"p95_nanos"`
+		} `json:"stages"`
+	}
+	if err := renderMetricsJSON(&output, report); err != nil || json.Unmarshal(output.Bytes(), &decoded) != nil {
+		t.Fatalf("partial stage JSON could not be decoded: %v/%s", err, output.String())
+	}
+	if len(decoded.Stages) != 2 || decoded.Stages[0].P50Nanos != nil || decoded.Stages[0].P95Nanos != nil || decoded.Stages[1].P50Nanos != nil || decoded.Stages[1].P95Nanos != nil {
+		t.Fatalf("partial stage JSON retained percentile values: %#v", decoded.Stages)
+	}
+}
+
+func TestMetricsWarnsForIncompleteGroupedRatios(t *testing.T) {
+	report := completeMetricsReport()
+	coverageValue, ratioValue := 0.5, 0.5
+	partial := metrics.Ratio{
+		Numerator: 1, Denominator: 2, Value: &ratioValue,
+		Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &coverageValue},
+	}
+	report.Findings.ByModel = []metrics.ModelAggregate{{Model: "model", Observed: 2, RefutationRate: partial}}
+	report.Findings.ByAgent = []metrics.AgentAggregate{{Agent: "agent", Observed: 2, RefutationRate: partial}}
+	var output bytes.Buffer
+	renderMetrics(&output, report)
+	if !strings.Contains(output.String(), "WARNING: insufficient samples") {
+		t.Fatalf("incomplete grouped ratios did not trigger warning: %s", output.String())
+	}
+	var jsonOutput bytes.Buffer
+	if err := renderMetricsJSON(&jsonOutput, report); err != nil {
+		t.Fatal(err)
+	}
+	findings := decodeMetricsJSON(t, jsonOutput.Bytes())["findings"].(map[string]any)
+	for _, key := range []string{"by_model", "by_agent"} {
+		ratio := findings[key].([]any)[0].(map[string]any)["refutation_rate"].(map[string]any)
+		if ratio["value"] != nil {
+			t.Errorf("partial %s ratio retained value: %#v", key, ratio)
+		}
+	}
+}
+
+func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*metrics.Report)
+	}{
+		{"global ratio", func(r *metrics.Report) { r.Findings.ConfirmationRate = partialMetricsRatio() }},
+		{"dimension ratio", func(r *metrics.Report) {
+			v := completeMetricsReport().Findings.ConfirmationRate
+			r.Findings.ByDimension = []metrics.DimensionAggregate{{ConfirmationRate: v, RefutationRate: v, OverrideRate: partialMetricsRatio()}}
+		}},
+		{"model ratio", func(r *metrics.Report) {
+			r.Findings.ByModel = []metrics.ModelAggregate{{RefutationRate: partialMetricsRatio()}}
+		}},
+		{"agent ratio", func(r *metrics.Report) {
+			r.Findings.ByAgent = []metrics.AgentAggregate{{RefutationRate: partialMetricsRatio()}}
+		}},
+		{"remediation ratio", func(r *metrics.Report) {
+			r.Remediation.ByDimension = []metrics.RemediationDimensionAggregate{{SuccessRate: partialMetricsRatio()}}
+		}},
+		{"measurement", func(r *metrics.Report) { r.Executions.Duration = partialMetricsMeasurement() }},
+		{"cost coverage", func(r *metrics.Report) { r.Executions.CostCoverage = partialMetricsCoverage() }},
+		{"identity coverage", func(r *metrics.Report) { r.Executions.IdentityCoverage = partialMetricsCoverage() }},
+		{"reuse ratio", func(r *metrics.Report) { r.Executions.Reuse.Rate = partialMetricsRatio() }},
+		{"scope coverage", func(r *metrics.Report) { r.Executions.Scope.Coverage = partialMetricsCoverage() }},
+		{"cost ratio", func(r *metrics.Report) { r.Costs = []metrics.CostAggregate{{CostPerConfirmed: partialMetricsRatio()}} }},
+		{"stage coverage", func(r *metrics.Report) { r.Stages = []metrics.StageAggregate{{Coverage: partialMetricsCoverage()}} }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := completeMetricsReport()
+			tc.mutate(&report)
+			var output bytes.Buffer
+			renderMetrics(&output, report)
+			if !strings.Contains(output.String(), "WARNING: insufficient samples") {
+				t.Fatalf("incomplete %s did not trigger warning", tc.name)
+			}
+		})
+	}
+}
+
+func TestHumanAndJSONHidePartiallyCoveredMeasurements(t *testing.T) {
+	value, coverageValue := int64(42), 0.5
+	report := completeMetricsReport()
+	report.Executions.Duration = metrics.Measurement{
+		Value: &value, Observed: 1, Total: 2,
+		Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &coverageValue},
+	}
+	var human bytes.Buffer
+	renderMetrics(&human, report)
+	if !strings.Contains(human.String(), "duration (nanoseconds): unknown") {
+		t.Fatalf("partial duration was rendered as known: %s", human.String())
+	}
+	var jsonOutput bytes.Buffer
+	if err := renderMetricsJSON(&jsonOutput, report); err != nil {
+		t.Fatalf("partial duration JSON failed: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(jsonOutput.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	executions := decoded["executions"].(map[string]any)
+	duration := executions["duration_nanos"].(map[string]any)
+	if duration["value"] != nil {
+		t.Fatalf("partial duration JSON retained value: %#v", duration)
+	}
+}
+
+func TestMetricsJSONPreservesUnitsAvailabilityAndEmptyArrays(t *testing.T) {
+	report := completeMetricsReport()
+	partialValue, partialCoverage := int64(7), 0.5
+	report.Executions.InputTokens = metrics.Measurement{Observed: 0, Total: 1, Coverage: metrics.Coverage{Total: 1}}
+	report.Executions.OutputTokens = metrics.Measurement{Value: &partialValue, Observed: 1, Total: 2, Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &partialCoverage}}
+	report.Costs = []metrics.CostAggregate{{Currency: "USD", TotalMicros: 9, ObservedRuns: 1, TotalRuns: 2, CostPerConfirmed: metrics.Ratio{Numerator: 1, Denominator: 1, Value: &partialCoverage, Coverage: metrics.Coverage{Observed: 1, Total: 2, Value: &partialCoverage}}}}
+	completeCoverage := completeMetricsReport().Executions.Duration.Coverage
+	report.Stages = []metrics.StageAggregate{{Stage: "known", Samples: 1, P50Nanos: 11, P95Nanos: 22, Coverage: completeCoverage}}
+	var output bytes.Buffer
+	if err := renderMetricsJSON(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeMetricsJSON(t, output.Bytes())
+	executions := decoded["executions"].(map[string]any)
+	for _, key := range []string{"duration_nanos", "input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "reasoning_tokens"} {
+		if _, ok := executions[key]; !ok {
+			t.Errorf("missing unit-bearing execution field %q", key)
+		}
+	}
+	if executions["input_tokens"].(map[string]any)["value"] != nil || executions["output_tokens"].(map[string]any)["value"] != nil {
+		t.Fatalf("unknown or partial token values were exposed: %#v", executions)
+	}
+	if executions["total_tokens"].(map[string]any)["value"] != float64(1) {
+		t.Fatalf("known token value was not preserved: %#v", executions["total_tokens"])
+	}
+	cost := decoded["costs"].([]any)[0].(map[string]any)
+	if cost["total_micros"] != nil || cost["cost_per_confirmed"].(map[string]any)["value"] != nil {
+		t.Fatalf("cost JSON lost units or availability: %#v", cost)
+	}
+	var human bytes.Buffer
+	renderMetrics(&human, report)
+	if !strings.Contains(human.String(), "Cost USD: total=unknown micros") {
+		t.Fatalf("partial cost was rendered as known: %s", human.String())
+	}
+	stage := decoded["stages"].([]any)[0].(map[string]any)
+	if stage["p50_nanos"] != float64(11) || stage["p95_nanos"] != float64(22) {
+		t.Fatalf("known stage percentiles were not preserved: %#v", stage)
+	}
+	for _, key := range []string{"by_agent", "by_dimension", "by_model"} {
+		if values, ok := decoded["findings"].(map[string]any)[key].([]any); !ok || values == nil {
+			t.Errorf("findings %s is not a stable array: %#v", key, decoded["findings"])
+		}
+	}
+}
+
+func TestMetricsJSONUsesEmptyArraysForEmptyReport(t *testing.T) {
+	var output bytes.Buffer
+	if err := renderMetricsJSON(&output, metrics.Report{}); err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeMetricsJSON(t, output.Bytes())
+	for _, path := range [][2]string{{"", "costs"}, {"", "stages"}, {"findings", "by_agent"}, {"findings", "by_dimension"}, {"findings", "by_model"}, {"remediation", "by_dimension"}, {"executions", "failures"}} {
+		container := decoded
+		if path[0] != "" {
+			container = decoded[path[0]].(map[string]any)
+		}
+		values, ok := container[path[1]].([]any)
+		if !ok || values == nil {
+			t.Errorf("JSON %s.%s is not an empty array: %#v", path[0], path[1], container[path[1]])
+		}
+	}
+}
+
+func TestExecuteMetricsPropagatesHumanWriterFailure(t *testing.T) {
+	repo, _ := newMetricsRepository(t)
+	if code := executeMetrics(metricsFailWriter{}, repo, nil); code != 1 {
+		t.Fatalf("writer failure returned exit code %d, want 1", code)
+	}
+}
+
+type metricsFailWriter struct{}
+
+func (metricsFailWriter) Write([]byte) (int, error) { return 0, errors.New("metrics writer failed") }
+
+func completeMetricsReport() metrics.Report {
+	coverage := metrics.Coverage{Observed: 1, Total: 1}
+	coverageValue := 1.0
+	coverage.Value = &coverageValue
+	ratioValue := 1.0
+	ratio := metrics.Ratio{Numerator: 1, Denominator: 1, Value: &ratioValue, Coverage: coverage}
+	measurementValue := int64(1)
+	measurement := metrics.Measurement{Value: &measurementValue, Observed: 1, Total: 1, Coverage: coverage}
+	return metrics.Report{
+		Findings:    metrics.FindingsAggregate{Observed: 1, ConfirmationRate: ratio, RefutationRate: ratio, OverrideRate: ratio},
+		Remediation: metrics.RemediationAggregate{Attempts: 1, SuccessRate: ratio},
+		Executions: metrics.ExecutionAggregate{
+			LogicalRuns: 1, SuccessRate: ratio,
+			Duration: measurement, InputTokens: measurement, OutputTokens: measurement,
+			TotalTokens: measurement, CachedInputTokens: measurement, ReasoningTokens: measurement,
+			CostCoverage: coverage, IdentityCoverage: coverage,
+			Reuse: metrics.ReuseAggregate{Rate: ratio}, Scope: metrics.ScopeAggregate{Coverage: coverage},
+		},
+	}
+}
+
+func partialMetricsCoverage() metrics.Coverage {
+	value := 0.5
+	return metrics.Coverage{Observed: 1, Total: 2, Value: &value}
+}
+
+func partialMetricsRatio() metrics.Ratio {
+	value := 0.5
+	return metrics.Ratio{Numerator: 1, Denominator: 2, Value: &value, Coverage: partialMetricsCoverage()}
+}
+
+func partialMetricsMeasurement() metrics.Measurement {
+	value := int64(42)
+	return metrics.Measurement{Value: &value, Observed: 1, Total: 2, Coverage: partialMetricsCoverage()}
+}
+
+func metricsInputForOrdering() metrics.Input {
+	one := int64(1)
+	durationA, durationB := time.Duration(10), time.Duration(20)
+	snapshot := func(run, agent, model, currency, stage string, duration *time.Duration) *store.ExecutionMetrics {
+		return &store.ExecutionMetrics{
+			Version: store.ExecutionMetricsSchemaVersion, RunID: run,
+			Identities: []store.ObservedExecutionIdentity{{Agent: agent, Model: model}},
+			Timing:     &store.ExecutionTiming{TotalDurationNanos: duration, ByCapability: []store.CapabilityTiming{{CapabilityID: stage, DurationNanos: *duration}}},
+			Usage:      &store.ExecutionTokenUsage{InputTokens: &one, OutputTokens: &one, TotalTokens: &one, CachedInputTokens: &one, ReasoningTokens: &one},
+			Cost:       &store.ExecutionCost{AmountMicros: 1, Currency: currency}, Scope: &store.ExecutionScope{Kind: store.ScopeFull},
+			Reuse: &store.ExecutionReuse{ReusedCapabilityIDs: []string{"reuse"}},
+		}
+	}
+	return metrics.Input{
+		Findings: []metrics.FindingObservation{
+			{Fingerprint: "finding-b", Finding: review.Hallazgo{Fingerprint: "finding-b", Dimension: review.DimSecurity, Status: review.StatusRefuted, Producer: review.Productor{Agente: "agent-b", Modelo: "model-b"}}},
+			{Fingerprint: "finding-a", Finding: review.Hallazgo{Fingerprint: "finding-a", Dimension: review.DimLogic, Status: review.StatusConfirmed, Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"}}},
+		},
+		Remediations: []metrics.RemediationObservation{{LogicalID: "remediation-b", Success: false}, {LogicalID: "remediation-a", Success: true}},
+		Executions: []metrics.ExecutionObservation{
+			{RunID: "run-b", Metrics: snapshot("run-b", "agent-b", "model-b", "EUR", "stage-b", &durationB), Outcomes: []store.AttemptOutcome{{RunID: "run-b", InvocationID: "attempt-b", Class: agentrun.OutcomeSuccess}}},
+			{RunID: "run-a", Metrics: snapshot("run-a", "agent-a", "model-a", "USD", "stage-a", &durationA), Outcomes: []store.AttemptOutcome{{RunID: "run-a", InvocationID: "attempt-a", Class: agentrun.OutcomeSuccess}}},
+		},
+	}
+}
+
+func decodeMetricsJSON(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("metrics JSON is invalid: %v\n%s", err, data)
+	}
+	return decoded
 }
 
 func TestMetricsArgumentsAndHelp(t *testing.T) {
@@ -80,6 +372,89 @@ func TestMetricsArgumentsAndHelp(t *testing.T) {
 		if !gestionarAyuda(&stdout, &stderr, "metrics", []string{flag}) || stdout.Len() == 0 || stderr.Len() != 0 {
 			t.Errorf("metrics %s help streams = %q/%q", flag, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestMetricsSubprocessDispatchAndInitialization(t *testing.T) {
+	repo, _ := newMetricsRepository(t)
+	stdout, stderr, err := runMetricsCLI(t, repo, "metrics")
+	if processExitCode(err) != 1 || !strings.Contains(stdout, "no ha sido inicializado") || stderr != "" {
+		t.Fatalf("uninitialized metrics process = %d/%q/%q", processExitCode(err), stdout, stderr)
+	}
+	initializeMetricsRepository(t, repo)
+	cases := []struct {
+		name, want string
+		args       []string
+		code       int
+	}{
+		{name: "human", args: []string{"metrics"}, want: "Metrics"},
+		{name: "json", args: []string{"metrics", "--json"}, want: "executions"},
+		{name: "metrics-help", args: []string{"metrics", "--help"}, want: "Purpose:"},
+		{name: "topic-help", args: []string{"help", "metrics"}, want: "Usage:"},
+		{name: "invalid", args: []string{"metrics", "--unknown"}, code: 1, want: "accepts '--json'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, err := runMetricsCLI(t, repo, tc.args...)
+			if got := processExitCode(err); got != tc.code {
+				t.Fatalf("process exit code = %d, want %d: %s", got, tc.code, stdout)
+			}
+			if stderr != "" || !strings.Contains(stdout, tc.want) {
+				t.Fatalf("process output = %q/%q, want %q", stdout, stderr, tc.want)
+			}
+			if tc.name == "json" {
+				_ = decodeMetricsJSON(t, []byte(stdout))
+			}
+		})
+	}
+}
+
+func TestMetricsCLIHelper(t *testing.T) {
+	if os.Getenv("VAS_SENTINEL_METRICS_HELPER") != "1" {
+		return
+	}
+	var args []string
+	if err := json.Unmarshal([]byte(os.Getenv("VAS_SENTINEL_METRICS_ARGS")), &args); err != nil {
+		t.Fatal(err)
+	}
+	os.Args = append([]string{"sentinel"}, args...)
+	main()
+}
+
+func runMetricsCLI(t *testing.T, repo string, args ...string) (string, string, error) {
+	t.Helper()
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestMetricsCLIHelper$")
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), "VAS_SENTINEL_METRICS_HELPER=1", "VAS_SENTINEL_METRICS_ARGS="+string(raw))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func processExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
+func initializeMetricsRepository(t *testing.T, repo string) {
+	t.Helper()
+	path := filepath.Join(repo, ".vas_sentinel", "vassentinel.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# test configuration\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -108,6 +483,26 @@ func TestMetricsStoreScenarios(t *testing.T) {
 			}
 			if !strings.Contains(output.String(), tc.text) {
 				t.Errorf("metrics output lacks %q: %s", tc.text, output.String())
+			}
+			if tc.want == 0 {
+				var jsonOutput bytes.Buffer
+				if code := executeMetrics(&jsonOutput, repo, []string{"--json"}); code != 0 {
+					t.Fatalf("metrics JSON exit code = %d: %s", code, jsonOutput.String())
+				}
+				decoded := decodeMetricsJSON(t, jsonOutput.Bytes())
+				for _, key := range []string{"costs", "stages"} {
+					if values, ok := decoded[key].([]any); !ok || values == nil {
+						t.Errorf("JSON %s is not a stable array: %#v", key, decoded[key])
+					}
+				}
+				findings := decoded["findings"].(map[string]any)
+				if tc.name == "historical" && (findings["observed"] != float64(1) || findings["effective"] != float64(1) || findings["confirmed"] != float64(1)) {
+					t.Errorf("historical JSON findings = %#v", findings)
+				}
+				remediation := decoded["remediation"].(map[string]any)
+				if tc.name == "mixed" && (remediation["attempts"] != float64(1) || remediation["succeeded"] != float64(1) || remediation["failed"] != float64(0)) {
+					t.Errorf("mixed JSON remediation = %#v", decoded["remediation"])
+				}
 			}
 		})
 	}

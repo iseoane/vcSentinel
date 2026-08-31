@@ -174,6 +174,24 @@ func TestZeroDenominatorRatioIsUnavailable(t *testing.T) {
 	t.Fatal("zero-denominator ratio exposed NaN or infinity")
 }
 
+func TestEvidenceAvailabilityDistinguishesUnknownPartialAndComplete(t *testing.T) {
+	partialValue := 0.5
+	partial := Coverage{Observed: 1, Total: 2, Value: &partialValue}
+	completeValue := 1.0
+	complete := Coverage{Observed: 2, Total: 2, Value: &completeValue}
+	if !partial.Known() || partial.Complete() || !complete.Complete() || (Coverage{}).Known() {
+		t.Fatalf("coverage availability = partial:%v/%v complete:%v unknown:%v", partial.Known(), partial.Complete(), complete.Known(), (Coverage{}).Known())
+	}
+	ratioValue := 0.5
+	if (Ratio{Value: &ratioValue, Coverage: partial}).Known() || (Ratio{Value: &ratioValue, Coverage: complete}).Known() == false {
+		t.Fatal("ratio availability did not follow coverage completeness")
+	}
+	measurementValue := int64(1)
+	if (Measurement{Value: &measurementValue, Coverage: partial}).Known() || (Measurement{Value: &measurementValue, Coverage: complete}).Known() == false {
+		t.Fatal("measurement availability did not follow coverage completeness")
+	}
+}
+
 func assertRatio(t *testing.T, name string, got Ratio, numerator, denominator, coverageObserved, coverageTotal int64, value float64) {
 	t.Helper()
 	if got.Numerator != numerator || got.Denominator != denominator {
