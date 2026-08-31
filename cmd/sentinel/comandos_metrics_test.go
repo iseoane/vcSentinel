@@ -216,17 +216,37 @@ func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
 }
 
 func TestMetricsWarnsForPartialCostTotalCoverage(t *testing.T) {
-	report := completeMetricsReport()
-	report.Costs = []metrics.CostAggregate{{
-		Currency: "USD", TotalMicros: 9, ObservedRuns: 1, TotalRuns: 2,
-		CostPerConfirmed: completeMetricsReport().Findings.ConfirmationRate,
-	}}
-	var output bytes.Buffer
-	if err := renderMetrics(&output, report); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name         string
+		observedRuns int64
+		warning      bool
+	}{
+		{name: "partial", observedRuns: 1, warning: true},
+		{name: "complete", observedRuns: 2},
 	}
-	if !strings.Contains(output.String(), "WARNING: insufficient samples") {
-		t.Fatalf("partial total-cost coverage did not trigger warning: %s", output.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ratio := completeMetricsReport().Findings.ConfirmationRate
+			report := completeMetricsReport()
+			report.Costs = []metrics.CostAggregate{{
+				Currency: "USD", TotalMicros: 9, ObservedRuns: tc.observedRuns, TotalRuns: 2,
+				CostPerConfirmed: ratio,
+			}}
+			var output bytes.Buffer
+			if err := renderMetrics(&output, report); err != nil {
+				t.Fatal(err)
+			}
+			text := output.String()
+			if tc.warning {
+				if !strings.Contains(text, "WARNING: insufficient samples") {
+					t.Fatalf("partial total-cost coverage did not trigger warning: %s", text)
+				}
+				return
+			}
+			if !strings.Contains(text, "Warnings: none.") || strings.Contains(text, "WARNING: insufficient samples") {
+				t.Fatalf("complete total-cost coverage warning state = %s", text)
+			}
+		})
 	}
 }
 
