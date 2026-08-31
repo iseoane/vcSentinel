@@ -57,20 +57,22 @@ type metricsJSONFindings struct {
 	Overrides        int64                  `json:"overrides"`
 	RefutationRate   metricsJSONRatio       `json:"refutation_rate"`
 	Refuted          int64                  `json:"refuted"`
-	Reopened         int64                  `json:"reopened"`
+	ReopenCoverage   metricsJSONCoverage    `json:"reopen_coverage"`
+	Reopened         *int64                 `json:"reopened"`
 }
 
 type metricsJSONDimension struct {
-	ConfirmationRate metricsJSONRatio `json:"confirmation_rate"`
-	Confirmed        int64            `json:"confirmed"`
-	Dimension        string           `json:"dimension"`
-	Findings         int64            `json:"findings"`
-	Observed         int64            `json:"observed"`
-	OverrideRate     metricsJSONRatio `json:"override_rate"`
-	Overrides        int64            `json:"overrides"`
-	RefutationRate   metricsJSONRatio `json:"refutation_rate"`
-	Refuted          int64            `json:"refuted"`
-	Reopened         int64            `json:"reopened"`
+	ConfirmationRate metricsJSONRatio    `json:"confirmation_rate"`
+	Confirmed        int64               `json:"confirmed"`
+	Dimension        string              `json:"dimension"`
+	Findings         int64               `json:"findings"`
+	Observed         int64               `json:"observed"`
+	OverrideRate     metricsJSONRatio    `json:"override_rate"`
+	Overrides        int64               `json:"overrides"`
+	RefutationRate   metricsJSONRatio    `json:"refutation_rate"`
+	Refuted          int64               `json:"refuted"`
+	ReopenCoverage   metricsJSONCoverage `json:"reopen_coverage"`
+	Reopened         *int64              `json:"reopened"`
 }
 
 type metricsJSONModel struct {
@@ -188,13 +190,14 @@ func newMetricsJSONFindings(value metrics.FindingsAggregate) metricsJSONFindings
 	result := metricsJSONFindings{
 		ByAgent: make([]metricsJSONAgent, len(value.ByAgent)), ByDimension: make([]metricsJSONDimension, len(value.ByDimension)), ByModel: make([]metricsJSONModel, len(value.ByModel)),
 		ConfirmationRate: newMetricsJSONRatio(value.ConfirmationRate), Confirmed: value.Confirmed, Effective: value.Effective, Observed: value.Observed,
-		OverrideRate: newMetricsJSONRatio(value.OverrideRate), Overrides: value.Overrides, RefutationRate: newMetricsJSONRatio(value.RefutationRate), Refuted: value.Refuted, Reopened: value.Reopened,
+		OverrideRate: newMetricsJSONRatio(value.OverrideRate), Overrides: value.Overrides, RefutationRate: newMetricsJSONRatio(value.RefutationRate), Refuted: value.Refuted,
+		ReopenCoverage: newMetricsJSONCoverage(value.ReopenCoverage()), Reopened: nullableCount(value.Reopened, value.ReopenCoverage()),
 	}
 	for i, item := range value.ByAgent {
 		result.ByAgent[i] = metricsJSONAgent{Agent: item.Agent, Confirmed: item.Confirmed, Observed: item.Observed, RefutationRate: newMetricsJSONRatio(item.RefutationRate), Refuted: item.Refuted}
 	}
 	for i, item := range value.ByDimension {
-		result.ByDimension[i] = metricsJSONDimension{ConfirmationRate: newMetricsJSONRatio(item.ConfirmationRate), Confirmed: item.Confirmed, Dimension: item.Dimension, Findings: item.Findings, Observed: item.Observed, OverrideRate: newMetricsJSONRatio(item.OverrideRate), Overrides: item.Overrides, RefutationRate: newMetricsJSONRatio(item.RefutationRate), Refuted: item.Refuted, Reopened: item.Reopened}
+		result.ByDimension[i] = metricsJSONDimension{ConfirmationRate: newMetricsJSONRatio(item.ConfirmationRate), Confirmed: item.Confirmed, Dimension: item.Dimension, Findings: item.Findings, Observed: item.Observed, OverrideRate: newMetricsJSONRatio(item.OverrideRate), Overrides: item.Overrides, RefutationRate: newMetricsJSONRatio(item.RefutationRate), Refuted: item.Refuted, ReopenCoverage: newMetricsJSONCoverage(item.ReopenCoverage()), Reopened: nullableCount(item.Reopened, item.ReopenCoverage())}
 	}
 	for i, item := range value.ByModel {
 		result.ByModel[i] = metricsJSONModel{Confirmed: item.Confirmed, Model: item.Model, Observed: item.Observed, RefutationRate: newMetricsJSONRatio(item.RefutationRate), Refuted: item.Refuted}
@@ -218,6 +221,18 @@ func newMetricsJSONExecutions(value metrics.ExecutionAggregate) metricsJSONExecu
 		result.Failures[i] = metricsJSONFailure{Class: item.Class, Count: item.Count}
 	}
 	return result
+}
+
+// nullableCount projects a count that only means something when its attribute
+// was observable. Without complete evidence the JSON carries null rather than a
+// measured zero, matching the "null unknowns" clause of the metrics contract.
+// The decision is derived from the coverage, so the field starts reporting a
+// real number as soon as a producer supplies that evidence.
+func nullableCount(value int64, cov metrics.Coverage) *int64 {
+	if !cov.Complete() {
+		return nil
+	}
+	return &value
 }
 
 func newMetricsJSONCoverage(value metrics.Coverage) metricsJSONCoverage {

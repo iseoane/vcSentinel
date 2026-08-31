@@ -54,10 +54,10 @@ func renderMetrics(out io.Writer, report metrics.Report) error {
 	var text strings.Builder
 	f := report.Findings
 	fmt.Fprintln(&text, "Metrics")
-	fmt.Fprintf(&text, "Findings: observed=%d effective=%d confirmed=%d refuted=%d overrides=%d reopened=%d\n", f.Observed, f.Effective, f.Confirmed, f.Refuted, f.Overrides, f.Reopened)
+	fmt.Fprintf(&text, "Findings: observed=%d effective=%d confirmed=%d refuted=%d overrides=%d reopened=%s\n", f.Observed, f.Effective, f.Confirmed, f.Refuted, f.Overrides, formatCount(f.Reopened, f.ReopenCoverage()))
 	fmt.Fprintf(&text, "  confirmation rate: %s\n  refutation rate: %s\n  override rate: %s\n", formatRatio(f.ConfirmationRate), formatRatio(f.RefutationRate), formatRatio(f.OverrideRate))
 	for _, v := range f.ByDimension {
-		fmt.Fprintf(&text, "  dimension %s: findings=%d confirmed=%d refuted=%d; confirmation=%s; refutation=%s; override=%s\n", v.Dimension, v.Findings, v.Confirmed, v.Refuted, formatRatio(v.ConfirmationRate), formatRatio(v.RefutationRate), formatRatio(v.OverrideRate))
+		fmt.Fprintf(&text, "  dimension %s: findings=%d confirmed=%d refuted=%d reopened=%s; confirmation=%s; refutation=%s; override=%s\n", v.Dimension, v.Findings, v.Confirmed, v.Refuted, formatCount(v.Reopened, v.ReopenCoverage()), formatRatio(v.ConfirmationRate), formatRatio(v.RefutationRate), formatRatio(v.OverrideRate))
 	}
 	for _, v := range f.ByModel {
 		fmt.Fprintf(&text, "  model %s: observed=%d confirmed=%d refuted=%d; refutation=%s\n", v.Model, v.Observed, v.Confirmed, v.Refuted, formatRatio(v.RefutationRate))
@@ -76,6 +76,14 @@ func renderMetrics(out io.Writer, report metrics.Report) error {
 	}
 	for _, v := range report.Stages {
 		fmt.Fprintf(&text, "Stage %s: samples=%d p50=%s nanoseconds p95=%s nanoseconds; coverage=%s\n", v.Stage, v.Samples, formatStageValue(v.P50Nanos, v.Coverage), formatStageValue(v.P95Nanos, v.Coverage), formatCoverage(v.Coverage))
+	}
+	// Report the evidence gap, not a reason for it. A Report carries counts and
+	// coverage and nothing about which producers exist, so any claim here about
+	// why the evidence is missing would be an assertion this layer cannot check
+	// and would go stale the day a producer appears. An absent population has
+	// nothing missing, so it warns about nothing.
+	if reopen := f.ReopenCoverage(); reopen.Total > 0 && !reopen.Complete() {
+		fmt.Fprintf(&text, "WARNING: reopen evidence is missing for %d of %d findings; reopen counts are reported as unknown (coverage %s).\n", reopen.Total-reopen.Observed, reopen.Total, formatCoverage(reopen))
 	}
 	if report.HasIncompleteEvidence() {
 		fmt.Fprintln(&text, "WARNING: insufficient samples or partial evidence; unknown values are shown as unknown and never as zero.")
@@ -98,6 +106,17 @@ func formatRatio(v metrics.Ratio) string {
 		return fmt.Sprintf("%d/%d (unknown; coverage %s)", v.Numerator, v.Denominator, formatCoverage(v.Coverage))
 	}
 	return fmt.Sprintf("%d/%d (%.2f%%; coverage %s)", v.Numerator, v.Denominator, *v.Value*100, formatCoverage(v.Coverage))
+}
+
+// formatCount presents a count that only means something when its attribute was
+// observable for the whole population. Under partial evidence the count is a
+// lower bound rather than a measurement, so it reads unknown for the same reason
+// a partially covered measurement does; the coverage still shows the evidence.
+func formatCount(value int64, cov metrics.Coverage) string {
+	if !cov.Complete() {
+		return fmt.Sprintf("unknown (coverage %s)", formatCoverage(cov))
+	}
+	return fmt.Sprintf("%d (coverage %s)", value, formatCoverage(cov))
 }
 
 func formatMeasurement(v metrics.Measurement) string {

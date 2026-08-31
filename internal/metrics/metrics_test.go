@@ -666,3 +666,221 @@ func TestStageFromEventSkipsBlankRunAlias(t *testing.T) {
 		t.Fatalf("stage logical run id = %q, want run-b", stage.LogicalRunID)
 	}
 }
+
+// findingWithStatus builds one observation whose only variable attributes are
+// the ones every disposition-coverage assertion depends on.
+func findingWithStatus(fingerprint, dimension, model, agent, status string) FindingObservation {
+	return FindingObservation{Fingerprint: fingerprint, Finding: review.Hallazgo{
+		Fingerprint: fingerprint, Dimension: dimension, Status: status,
+		Producer: review.Productor{Agente: agent, Modelo: model},
+	}}
+}
+
+// mixedStatusInput carries two findings per dimension, model and agent, of
+// which exactly one has a known status. Every disposition coverage must
+// therefore land strictly between zero and one.
+func mixedStatusInput() Input {
+	return Input{Findings: []FindingObservation{
+		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),
+		findingWithStatus("b", review.DimLogic, "m1", "a1", ""),
+		findingWithStatus("c", review.DimSecurity, "m2", "a2", review.StatusRefuted),
+		findingWithStatus("d", review.DimSecurity, "m2", "a2", ""),
+	}}
+}
+
+func assertRatioCoverage(t *testing.T, name string, got Ratio, numerator, denominator, observed, total int64) {
+	t.Helper()
+	if got.Numerator != numerator || got.Denominator != denominator {
+		t.Errorf("%s = %d/%d, want %d/%d", name, got.Numerator, got.Denominator, numerator, denominator)
+	}
+	if got.Coverage.Observed != observed || got.Coverage.Total != total {
+		t.Errorf("%s coverage = %d/%d, want %d/%d", name, got.Coverage.Observed, got.Coverage.Total, observed, total)
+	}
+}
+
+func TestDispositionCoverageIsDerivedFromKnownStatuses(t *testing.T) {
+	got := Aggregate(mixedStatusInput()).Findings
+
+	assertRatioCoverage(t, "global refutation", got.RefutationRate, 1, 4, 2, 4)
+	assertRatioCoverage(t, "global confirmation", got.ConfirmationRate, 1, 3, 1, 3)
+
+	logic, security := got.ByDimension[0], got.ByDimension[1]
+	if logic.Dimension != review.DimLogic || security.Dimension != review.DimSecurity {
+		t.Fatalf("dimension order = %q, %q", logic.Dimension, security.Dimension)
+	}
+	assertRatioCoverage(t, "logic refutation", logic.RefutationRate, 0, 2, 1, 2)
+	assertRatioCoverage(t, "logic confirmation", logic.ConfirmationRate, 1, 2, 1, 2)
+	assertRatioCoverage(t, "security refutation", security.RefutationRate, 1, 2, 1, 2)
+	assertRatioCoverage(t, "security confirmation", security.ConfirmationRate, 0, 1, 0, 1)
+
+	assertRatioCoverage(t, "m1 refutation", got.ByModel[0].RefutationRate, 0, 2, 1, 2)
+	assertRatioCoverage(t, "m2 refutation", got.ByModel[1].RefutationRate, 1, 2, 1, 2)
+	assertRatioCoverage(t, "a1 refutation", got.ByAgent[0].RefutationRate, 0, 2, 1, 2)
+	assertRatioCoverage(t, "a2 refutation", got.ByAgent[1].RefutationRate, 1, 2, 1, 2)
+
+	for name, ratio := range map[string]Ratio{
+		"global refutation": got.RefutationRate, "logic refutation": logic.RefutationRate,
+		"m1 refutation": got.ByModel[0].RefutationRate, "a1 refutation": got.ByAgent[0].RefutationRate,
+	} {
+		if ratio.Known() {
+			t.Errorf("%s = %#v, want unavailable under partial coverage", name, ratio)
+		}
+	}
+}
+
+func TestDispositionCoverageIsZeroWhenNoStatusIsKnown(t *testing.T) {
+	got := Aggregate(Input{Findings: []FindingObservation{
+		findingWithStatus("a", review.DimLogic, "m1", "a1", ""),
+		findingWithStatus("b", review.DimLogic, "m1", "a1", ""),
+	}}).Findings
+
+	cases := map[string]Ratio{
+		"global refutation":   got.RefutationRate,
+		"global confirmation": got.ConfirmationRate,
+		"logic refutation":    got.ByDimension[0].RefutationRate,
+		"logic confirmation":  got.ByDimension[0].ConfirmationRate,
+		"model refutation":    got.ByModel[0].RefutationRate,
+		"agent refutation":    got.ByAgent[0].RefutationRate,
+	}
+	for name, ratio := range cases {
+		if ratio.Coverage.Observed != 0 || ratio.Coverage.Total != 2 {
+			t.Errorf("%s coverage = %d/%d, want 0/2", name, ratio.Coverage.Observed, ratio.Coverage.Total)
+		}
+		if ratio.Known() {
+			t.Errorf("%s = %#v, want unavailable rather than a measured zero", name, ratio)
+		}
+	}
+}
+
+func TestGlobalAndDimensionRefutationCoverageCannotDisagree(t *testing.T) {
+	for _, status := range []string{"", review.StatusConfirmed} {
+		got := Aggregate(Input{Findings: []FindingObservation{
+			findingWithStatus("a", review.DimLogic, "m1", "a1", status),
+			findingWithStatus("b", review.DimLogic, "m1", "a1", status),
+		}}).Findings
+		if len(got.ByDimension) != 1 || len(got.ByModel) != 1 || len(got.ByAgent) != 1 {
+			t.Fatalf("single-dimension store produced %d dimensions", len(got.ByDimension))
+		}
+		for name, group := range map[string]Coverage{
+			"dimension": got.ByDimension[0].RefutationRate.Coverage,
+			"model":     got.ByModel[0].RefutationRate.Coverage,
+			"agent":     got.ByAgent[0].RefutationRate.Coverage,
+		} {
+			if !reflect.DeepEqual(group, got.RefutationRate.Coverage) {
+				t.Errorf("status %q: %s refutation coverage = %#v, global = %#v", status, name, group, got.RefutationRate.Coverage)
+			}
+		}
+	}
+}
+
+func TestOverrideCoverageSpansTheWholeEffectivePopulation(t *testing.T) {
+	got := Aggregate(mixedStatusInput()).Findings
+	assertRatioCoverage(t, "global override", got.OverrideRate, 0, 3, 3, 3)
+	assertRatioCoverage(t, "logic override", got.ByDimension[0].OverrideRate, 0, 2, 2, 2)
+	assertRatioCoverage(t, "security override", got.ByDimension[1].OverrideRate, 0, 1, 1, 1)
+	if !got.OverrideRate.Known() || !got.ByDimension[1].OverrideRate.Known() {
+		t.Fatalf("override rate is unavailable despite a complete decisions ledger: %#v", got.OverrideRate)
+	}
+}
+
+// TestReopenCoverageTracksObservedReopenEvidence pins the basis for the reopen
+// attribute. Unlike refutation, where review.StatusRefuted has a writer and so
+// any known status is evidence either way, nothing writes review.StatusReopened
+// and a confirmed or refuted status therefore says nothing about whether the
+// finding was reopened. Only an observation carrying StatusReopened resolves
+// the attribute, so it alone is the coverage basis.
+func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
+	cases := []struct {
+		name            string
+		statuses        []string
+		observed, total int64
+		complete        bool
+	}{
+		{"no reopen evidence", []string{review.StatusConfirmed, review.StatusRefuted}, 0, 2, false},
+		{"partial reopen evidence", []string{review.StatusReopened, review.StatusConfirmed}, 1, 2, false},
+		{"complete reopen evidence", []string{review.StatusReopened, review.StatusReopened}, 2, 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := make([]FindingObservation, 0, len(tc.statuses))
+			for i, status := range tc.statuses {
+				findings = append(findings, findingWithStatus(string(rune('a'+i)), review.DimLogic, "m1", "a1", status))
+			}
+			got := Aggregate(Input{Findings: findings}).Findings
+			if got.ReopenResolved != tc.observed {
+				t.Errorf("ReopenResolved = %d, want %d", got.ReopenResolved, tc.observed)
+			}
+			for name, cov := range map[string]Coverage{
+				"global":    got.ReopenCoverage(),
+				"dimension": got.ByDimension[0].ReopenCoverage(),
+			} {
+				if cov.Observed != tc.observed || cov.Total != tc.total || cov.Complete() != tc.complete {
+					t.Errorf("%s reopen coverage = %#v, want %d/%d complete=%v", name, cov, tc.observed, tc.total, tc.complete)
+				}
+			}
+		})
+	}
+}
+
+// TestReopenCoverageIsEmptyWithoutReopenedObservations pins what an aggregate
+// does when nothing resolves the reopen attribute, which is the shape every
+// store takes today. It does NOT verify FU-6's claim that no production path
+// writes review.StatusReopened: that is a static property of the source, not
+// something an in-memory Input can detect, and it is documented where it is
+// checkable, on FindingsAggregate.ReopenCoverage.
+func TestReopenCoverageIsEmptyWithoutReopenedObservations(t *testing.T) {
+	got := Aggregate(Input{Findings: []FindingObservation{
+		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),
+		findingWithStatus("b", review.DimSecurity, "m2", "a2", ""),
+	}}).Findings
+	if cov := got.ReopenCoverage(); cov.Observed != 0 || cov.Total != 2 || cov.Complete() {
+		t.Errorf("reopen coverage = %#v, want an empty 0/2 basis", cov)
+	}
+	if got.Reopened != 0 || got.ReopenResolved != 0 {
+		t.Errorf("reopened = %d, resolved = %d, want both 0 without reopen evidence", got.Reopened, got.ReopenResolved)
+	}
+}
+
+// TestReopenCoverageModelsEvidenceIndependentlyOfTheOutcome is the property the
+// review found missing: a population whose reopen attribute was resolved for
+// every member, with no reopens found, must read as complete evidence and a
+// measured zero. A basis derived from the Reopened count cannot express it,
+// because the only way to reach full coverage would be for every finding to
+// have been reopened.
+func TestReopenCoverageModelsEvidenceIndependentlyOfTheOutcome(t *testing.T) {
+	findings := FindingsAggregate{Observed: 4, Reopened: 0, ReopenResolved: 4}
+	if cov := findings.ReopenCoverage(); cov.Observed != 4 || cov.Total != 4 || !cov.Complete() {
+		t.Errorf("findings reopen coverage = %#v, want a complete 4/4", cov)
+	}
+	dimension := DimensionAggregate{Observed: 4, Reopened: 0, ReopenResolved: 4}
+	if cov := dimension.ReopenCoverage(); cov.Observed != 4 || cov.Total != 4 || !cov.Complete() {
+		t.Errorf("dimension reopen coverage = %#v, want a complete 4/4", cov)
+	}
+	// Partial resolution stays partial even when every resolved observation was
+	// a reopen, so the basis never borrows the outcome's magnitude.
+	partial := FindingsAggregate{Observed: 4, Reopened: 3, ReopenResolved: 3}
+	if cov := partial.ReopenCoverage(); cov.Observed != 3 || cov.Total != 4 || cov.Complete() {
+		t.Errorf("partial reopen coverage = %#v, want an incomplete 3/4", cov)
+	}
+}
+
+// TestDispositionCoverageIsIndependentPerGrouping uses crossing identities so
+// that the dimension, model and agent partitions disagree. Each expected
+// coverage fraction below is distinct, so a counter wired to the wrong grouping
+// cannot satisfy them all.
+func TestDispositionCoverageIsIndependentPerGrouping(t *testing.T) {
+	got := Aggregate(Input{Findings: []FindingObservation{
+		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),
+		findingWithStatus("b", review.DimLogic, "m1", "a1", ""),
+		findingWithStatus("c", review.DimLogic, "m1", "a2", ""),
+		findingWithStatus("d", review.DimSecurity, "m1", "a1", review.StatusRefuted),
+		findingWithStatus("e", review.DimSecurity, "m2", "a2", review.StatusConfirmed),
+	}}).Findings
+
+	assertRatioCoverage(t, "logic refutation", got.ByDimension[0].RefutationRate, 0, 3, 1, 3)
+	assertRatioCoverage(t, "security refutation", got.ByDimension[1].RefutationRate, 1, 2, 2, 2)
+	assertRatioCoverage(t, "m1 refutation", got.ByModel[0].RefutationRate, 1, 4, 2, 4)
+	assertRatioCoverage(t, "m2 refutation", got.ByModel[1].RefutationRate, 0, 1, 1, 1)
+	assertRatioCoverage(t, "a1 refutation", got.ByAgent[0].RefutationRate, 1, 3, 2, 3)
+	assertRatioCoverage(t, "a2 refutation", got.ByAgent[1].RefutationRate, 0, 2, 1, 2)
+}
