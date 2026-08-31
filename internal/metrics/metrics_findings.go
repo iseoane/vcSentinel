@@ -208,6 +208,17 @@ func findingObservationAfter(candidate, current FindingObservation) bool {
 	if candidateOrigin != currentOrigin {
 		return candidateOrigin > currentOrigin
 	}
+	// Recorded evidence beats its absence. The same finding can reach the
+	// reader through the aggregated set, which carries no lifecycle status,
+	// and through the raw per-dimension set that recorded one (FU-7); on a
+	// genuine tie the observation that answers the attribute must win. Stated
+	// here rather than left to findingSortKey, which happens to compare
+	// Status as a string and would resolve it only by accident.
+	candidateDisposed := strings.TrimSpace(candidate.Finding.Status) != ""
+	currentDisposed := strings.TrimSpace(current.Finding.Status) != ""
+	if candidateDisposed != currentDisposed {
+		return candidateDisposed
+	}
 	return findingSortKey(candidate) > findingSortKey(current)
 }
 
