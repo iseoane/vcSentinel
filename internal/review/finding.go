@@ -114,6 +114,20 @@ const (
 	StatusReopened       = "reopened"
 )
 
+// NormalizeStatus canonicalises a persisted lifecycle status so every site
+// that interprets one agrees about the same record. The ledger is written by
+// several producers across several schema generations, so a status can arrive
+// padded or in a different case; comparing it raw at one site and normalised
+// at another makes the two halves of a decision disagree about a single
+// finding. It returns the empty string for an absent or whitespace-only
+// status: an unknown disposition, never a present one.
+//
+// This is the single normalisation point for Status. Compare through it on
+// both sides rather than repeating strings.ToLower(strings.TrimSpace(...)).
+func NormalizeStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
+}
+
 // Niveles de confianza para aplicar automáticamente la corrección sugerida
 // de un Hallazgo. safe: aplicable sin revisión; needs_review: aplicable pero
 // un humano debe confirmar; manual: no hay corrección mecánica posible.

@@ -111,13 +111,24 @@ func (r Revision) FindingsWithDispositions() []Hallazgo {
 	dispositions := rawDispositions(r.Dims)
 	findings := make([]Hallazgo, len(r.AggregatedFindings))
 	copy(findings, r.AggregatedFindings)
-	counterparts := make(map[string]struct{}, len(findings))
+	counterparts := make(map[string]int, len(findings))
+	for i := range findings {
+		counterparts[dispositionKey(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)]++
+	}
 	for i := range findings {
 		key := dispositionKey(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)
-		counterparts[key] = struct{}{}
 		// A status the aggregated finding recorded itself is evidence, not an
 		// absence: it wins over the raw one rather than being overwritten.
-		if findings[i].Status != "" {
+		if NormalizeStatus(findings[i].Status) != "" {
+			continue
+		}
+		// Ambiguity is refused rather than guessed at. The key omits Evidence
+		// and Title because the v1 shape carries neither, so two aggregates
+		// can legitimately share it; attributing one raw disposition to both
+		// would mark a finding nobody disposed of, and a security finding
+		// carrying a refutation nobody issued reads as dismissed. Under-report
+		// instead, exactly as contradictory raw statuses are under-reported.
+		if counterparts[key] != 1 {
 			continue
 		}
 		if status, ok := dispositions[key]; ok {
@@ -126,13 +137,14 @@ func (r Revision) FindingsWithDispositions() []Hallazgo {
 	}
 	for _, dr := range r.Dims {
 		for _, h := range dr.Findings {
-			if h.Status != StatusRefuted {
+			if NormalizeStatus(h.Status) != StatusRefuted {
 				continue
 			}
-			// Keyed on the counterpart, not on whether the status was
-			// adopted: a raw finding whose aggregate kept its own status has
-			// been represented already and must not be observed twice.
-			if _, ok := counterparts[dispositionKey(dr.Dim, h.File, int(h.Line), h.Description)]; ok {
+			// Keyed on counterpart presence, not on whether the status was
+			// adopted: a raw finding whose aggregate kept its own status, or
+			// whose key matched several aggregates, is already represented
+			// among them and must not be observed a second time.
+			if counterparts[dispositionKey(dr.Dim, h.File, int(h.Line), h.Description)] > 0 {
 				continue
 			}
 			findings = append(findings, findingWithDisposition(dr.Dim, h))
@@ -151,14 +163,15 @@ func rawDispositions(dims []DimensionResult) map[string]string {
 	statusesByKey := make(map[string]map[string]struct{})
 	for _, dr := range dims {
 		for _, h := range dr.Findings {
-			if h.Status == "" {
+			status := NormalizeStatus(h.Status)
+			if status == "" {
 				continue
 			}
 			key := dispositionKey(dr.Dim, h.File, int(h.Line), h.Description)
 			if statusesByKey[key] == nil {
 				statusesByKey[key] = make(map[string]struct{}, 1)
 			}
-			statusesByKey[key][h.Status] = struct{}{}
+			statusesByKey[key][status] = struct{}{}
 		}
 	}
 	dispositions := make(map[string]string, len(statusesByKey))
@@ -184,7 +197,7 @@ func dispositionKey(dimension, file string, line int, description string) string
 // Here the lifecycle is the whole point.
 func findingWithDisposition(dimension string, h ReviewFinding) Hallazgo {
 	hallazgo := hallazgoDesdeReviewFinding(dimension, h)
-	hallazgo.Status = h.Status
+	hallazgo.Status = NormalizeStatus(h.Status)
 	return hallazgo
 }
 
