@@ -230,6 +230,51 @@ Use a hand-verifiable synthetic store containing two dimensions, two models, a
 confirmed finding, a refutation, an override, a reopen, successful and failed
 remediation, a retry, missing cost, and mixed historical/current data.
 
+#### T9.3a implementation closure — 2026-08-31
+
+The deterministic aggregator is implemented through `ba25dce`. The delivered
+history ends with these corrective commits:
+
+- `f5cca78` — skips blank event aliases so a populated fallback run identity is
+  not hidden.
+- `3247c29` — replaces delimiter-based execution identities with structural,
+  deterministic identities and separates event-derived remediation targets.
+- `ba25dce` — includes the resolved remediation outcome in the fallback
+  identity and directly verifies agent-timing identity preservation in both
+  input orders.
+
+Independent verification of the final candidate passed:
+
+```text
+go build ./...
+go vet ./...
+go test -count=1 ./...
+go test -count=1 -race ./internal/metrics
+go run ./cmd/sentinel check
+bin/0.2.0/sentinel gate --stage pre-push --timeout 1200
+```
+
+The final gate returned `PASS`; the worktree was clean and the guardian
+reported zero authored lines. The two reviews for `3247c29` and `ba25dce`
+created ten durable runs. Every run reached `succeeded`, and every
+`sentinel runs verify` reported four intact events. The review of `3247c29`
+blocked because the first remediation identity omitted the resolved outcome;
+`ba25dce` corrected that block and Sentinel marked it as the correction.
+
+One advisory finding remains accepted: the `ba25dce` subject names the
+remediation-outcome correction but the commit also strengthens the agent-timing
+regression required by the preceding review. Rewriting history solely to split
+that review-mandated test would add no behavioural correction.
+
+This is an implementation closure, not yet the formal task closure. The
+worktree-specific Sentinel ledger still reports historical blocks for
+`29556b9` and `3196e45` without `fixedIn` values. Their known behavioural
+premises are covered by later code and tests, including `f5cca78`, but the
+ledger has not recorded authoritative correction reviews for those two
+fichas. T9.3a must remain formally open until those records are settled or an
+explicit closure policy accepts the final passing gate as their superseding
+authority.
+
 ### T9.3b — `sentinel metrics`
 
 Support:
