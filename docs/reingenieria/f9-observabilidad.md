@@ -111,6 +111,30 @@ go build ./...
 go vet ./...
 ```
 
+#### T9.1a implementation acceptance — 2026-08-29
+
+The selected Luna candidate was delivered through `c50d6d5`:
+
+- `a603377` — introduced the immutable execution-metrics schema and store.
+- `28f3370` — enforced strict write-once behaviour and the corrected schema
+  invariants.
+- `c50d6d5` — moved retained snapshots outside the prunable execution directory
+  and proved byte-identical reads after pruning.
+
+The focused store suite, store race suite, build, and vet commands above passed
+on the final candidate. The user explicitly accepted the clean cutover at
+`metrics/v1/<runID>.json`; the alternative candidate layout had never reached
+`main` or persisted user data, so compatibility code would have preserved an
+unshipped implementation rather than a real external contract.
+
+This is an implementation acceptance, not a formal Sentinel closure. The
+authoritative review of `c50d6d5` retained a `spec` block requesting migration
+from that unmerged candidate layout. Security and design passed; logic and
+tests were advisory. The finding premise was explicitly rejected by the user,
+but the historical ledger was not given a machine-readable disposition that
+converts the block into a pass. The implementation and its checks are accepted;
+the original review record remains blocked by design.
+
 ### T9.1b — producer instrumentation
 
 Map `acpadapter.Result` (`ObservedModel`, `UsageJSON`, `StopReason`,
@@ -175,6 +199,37 @@ rather than evidence. Per-model aggregates therefore cover ACP-served runs
 only, and must report the rest as unknown rather than attributing them to the
 configured model.
 
+#### T9.1b formal closure — 2026-08-29
+
+Producer instrumentation was delivered in eight reviewable commits ending at
+`d970060`:
+
+```text
+e4ccfdf  chore(slice): bypass IA for semantic unit 6bfa6b1bf20aaeec
+304b418  test(adaptersites): also check refutarHallazgosCriticosConEvidencia for transport routing
+91800c2  docs(observability): document T9.1b nil producer coverage for cost, scope, and reuse
+ae84ee2  docs(observability): clarify reviewer agent resolution
+8a5baa0  fix(observability): report observed effort and repair producer test coverage
+42ee955  fix(observability): stop the producer seam from bypassing policy and misfiling failures
+9762fcf  fix(observability): complete the policy descent and the fail-closed refutation
+d970060  docs(backend): document T9.1b technical debt
+```
+
+The correction rounds resolved five CRITICAL and five WARNING findings,
+including retry/finalization ordering, revision-locked metric writes,
+fail-closed refutation evidence, observed effort propagation, policy descent,
+and provider/process failure classification. Every blocked ficha was marked
+corrected. The recorded focused and race tests for the touched packages, build,
+vet, and the repository build script passed. The final
+`sentinel gate --stage pre-push` returned `PASS`, and the durable review runs
+used as acceptance evidence were terminal and verified.
+
+The historical closure summary records the verified runs but does not preserve
+their individual IDs. That missing report detail must not be reconstructed or
+invented. The two accepted design warnings are recorded as FU-4 in
+`f0-deuda.md`; they concern dependency direction and producer-seam shape, not
+incorrect metric values.
+
 ### T9.2 — structured append-only events
 
 Write new `detail` values as typed JSON objects. Read legacy strings, new
@@ -215,6 +270,37 @@ worktree mismatch) and every one of them is silent. Today nobody can tell
 whether a review received graph context or not, which is the same absence-versus-
 zero conflation this phase forbids everywhere else. T9.2 makes the skip reason
 observable; widening what the provider returns is FU-5, not this phase.
+
+#### T9.2 formal closure — 2026-08-30
+
+Structured event details were delivered through three bounded review rounds:
+
+```text
+7f907d8  chore(slice): bypass IA for semantic unit 8bfda61e30aa3740
+6acaeff  fix(ops): preserve safe structured event details
+4d26d9f  fix(gate): isolate persisted operational metadata
+2e0cae5  refactor(gate): remove obsolete event wrapper
+4da56f9  fix(ops): require structured event details
+289aaef  fix(ops): reject nil event details
+e3aac29  fix(ops): omit nil event details
+```
+
+The final contract is object-only for present new details, while readers retain
+legacy strings, mixed ordering, arbitrary historical text, unknown object
+fields, and unterminated final records without rewriting the JSONL history. A
+nil detail preserves the pre-existing omitted-field representation and never
+writes `detail:null`; invalid nested values fail before filesystem mutation.
+
+The full suite, race tests for every affected package, build, vet, and the
+repository build script passed after the correction rounds. Sentinel reviews
+for `2e0cae5`, `289aaef`, and `e3aac29` each produced four durable runs; all
+twelve reached a terminal successful state and verified with intact events.
+Every final pre-push gate returned `PASS`.
+
+The final `e3aac29` review retained one non-blocking specification warning:
+marshalling occurs before directory creation. The ordering is intentional
+because it guarantees invalid details cannot create or mutate the event log.
+No blocked finding remains for T9.2.
 
 ### T9.3a — deterministic aggregation
 
