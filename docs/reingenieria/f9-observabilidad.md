@@ -77,8 +77,9 @@ Required invariants:
   run identities are rejected.
 - Unknown extension fields and future non-empty categorical values remain
   readable when safe; unsupported schema versions return a classified error.
-- The snapshot is immutable and written at most once beside the existing
-  durable execution. Tests must cover the rejected second write.
+- The snapshot is immutable and written at most once per durable execution. It
+  is retained outside `executions/v1/<runID>/` so pruning cannot remove it; see
+  the retention decision below. Tests must cover the rejected second write.
 
 Candidate decision: `f9-t9-1a-luna` is the accepted correction base. Both
 candidates are preserved on `origin`; neither is merged into `main`.
@@ -134,6 +135,52 @@ tests were advisory. The finding premise was explicitly rejected by the user,
 but the historical ledger was not given a machine-readable disposition that
 converts the block into a pass. The implementation and its checks are accepted;
 the original review record remains blocked by design.
+
+#### T9.1a disposition — 2026-08-31
+
+The original ficha for `c50d6d5` is no longer in the shared ledger, so the
+block it described had no machine-readable record left to dispose of. A fresh
+authoritative review was run on the merged commit instead:
+
+```text
+bin/0.2.0/sentinel review c50d6d5 --timeout 1200
+```
+
+Result `block`: `spec`, `logic`, and `design` returned CRITICAL, `security` and
+`tests` returned advisory warnings. All three CRITICAL findings share a single
+premise — that relocating the snapshot to `metrics/v1/<runID>.json` orphans
+snapshots previously persisted at `executions/v1/<runID>/metrics.json`.
+
+That premise is verified inert, and the reason is structural rather than
+circumstantial. At `c50d6d5` the only non-test references to
+`SaveExecutionMetrics` are its own declaration and doc comment: no production
+caller existed. The producers arrived later, in T9.1b, through
+`internal/execution/metrics_finalize.go`, which calls
+`SaveExecutionMetricsForRevision` — a function `c50d6d5` did not have. During
+the entire window in which the legacy layout lived on `main`, no production
+path ever wrote a snapshot, so the relocation could not orphan data that was
+never produced. Observed store state agrees: zero files match
+`executions/v1/*/metrics.json`, and 272 snapshots exist under `metrics/v1/`.
+
+The findings remain literally true about the code — there is no legacy read
+fallback — and the change is not reverted to silence them, because adding a
+fallback would preserve a path that never held data. The earlier user rejection
+of this premise is reaffirmed on this evidence.
+
+Two advisory findings are carried as follow-ups rather than corrected here:
+
+- `security`, `internal/store/execution_metrics.go:150` — a retained snapshot
+  now outlives the pruning of its execution, so `ExecutionFailure.Detail` and
+  usage/cost data persist beyond the execution-data lifecycle. This is the
+  deliberate T9.1a retention decision, but its data-lifecycle consequence must
+  be reconciled with T9.5 rather than assumed benign.
+- `tests`, `internal/store/execution_metrics_test.go:626` — the retention
+  regression test discards the `seedPruneRun` setup error, so a setup failure
+  would surface as a later assertion failure.
+
+T9.1a is therefore an implementation acceptance with a recorded, evidence-backed
+disposition. It is not a Sentinel pass, and this record does not manufacture
+one: the fresh ledger entry for `c50d6d5` stands as `block`.
 
 ### T9.1b — producer instrumentation
 
