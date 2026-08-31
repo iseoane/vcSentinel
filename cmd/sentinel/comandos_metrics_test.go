@@ -202,6 +202,11 @@ func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
 		{"scope coverage", func(r *metrics.Report) { r.Executions.Scope.Coverage = partialMetricsCoverage() }},
 		{"cost ratio", func(r *metrics.Report) { r.Costs = []metrics.CostAggregate{{CostPerConfirmed: partialMetricsRatio()}} }},
 		{"stage coverage", func(r *metrics.Report) { r.Stages = []metrics.StageAggregate{{Coverage: partialMetricsCoverage()}} }},
+		{"reopen coverage", func(r *metrics.Report) { r.Findings.Reopened = 0 }},
+		{"dimension reopen coverage", func(r *metrics.Report) {
+			v := completeMetricsReport().Findings.ConfirmationRate
+			r.Findings.ByDimension = []metrics.DimensionAggregate{{Observed: 2, Reopened: 1, ConfirmationRate: v, RefutationRate: v, OverrideRate: v}}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -405,7 +410,9 @@ func completeMetricsReport() metrics.Report {
 	measurementValue := int64(1)
 	measurement := metrics.Measurement{Value: &measurementValue, Observed: 1, Total: 1, Coverage: coverage}
 	return metrics.Report{
-		Findings:    metrics.FindingsAggregate{Observed: 1, ConfirmationRate: ratio, RefutationRate: ratio, OverrideRate: ratio},
+		// Reopened matches Observed so that reopen evidence is complete: the
+		// warning-free branch has to stay reachable through a truthful fixture.
+		Findings:    metrics.FindingsAggregate{Observed: 1, Reopened: 1, ConfirmationRate: ratio, RefutationRate: ratio, OverrideRate: ratio},
 		Remediation: metrics.RemediationAggregate{Attempts: 1, SuccessRate: ratio},
 		Executions: metrics.ExecutionAggregate{
 			LogicalRuns: 1, SuccessRate: ratio,
@@ -694,11 +701,59 @@ func TestRenderMetricsReportsReopenCountsAsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	if !strings.Contains(text, "reopened=unknown (coverage 0/") {
+	if !strings.Contains(text, "reopened=unknown (coverage 0/2") {
 		t.Fatalf("reopen count was rendered as a measured value: %s", text)
 	}
 	if strings.Contains(text, "reopened=0") {
 		t.Fatalf("reopen count was rendered as a measured zero: %s", text)
+	}
+}
+
+// TestRenderMetricsReopenCountFollowsItsCoverage pins all three states. A
+// partially covered count is unknown for the same reason a partially covered
+// measurement is: with evidence for one of two findings the true total is a
+// lower bound, not a measurement. The coverage object still shows the evidence.
+func TestRenderMetricsReopenCountFollowsItsCoverage(t *testing.T) {
+	cases := []struct {
+		name               string
+		observed, reopened int64
+		want               string
+	}{
+		{"no evidence", 2, 0, "reopened=unknown (coverage 0/2 (0.00%))"},
+		{"partial evidence", 2, 1, "reopened=unknown (coverage 1/2 (50.00%))"},
+		{"complete evidence", 2, 2, "reopened=2 (coverage 2/2 (100.00%))"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := completeMetricsReport()
+			report.Findings.Observed, report.Findings.Reopened = tc.observed, tc.reopened
+			var output bytes.Buffer
+			if err := renderMetrics(&output, report); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), tc.want) {
+				t.Fatalf("reopen rendering does not contain %q: %s", tc.want, output.String())
+			}
+		})
+	}
+}
+
+// TestMetricsWarningNamesTheMissingReopenProducer keeps the incomplete-evidence
+// policy honest: a report that prints an unknown reopen count must not also
+// claim there are no warnings, and the warning has to name its cause.
+func TestMetricsWarningNamesTheMissingReopenProducer(t *testing.T) {
+	report := completeMetricsReport()
+	report.Findings.Observed, report.Findings.Reopened = 4, 0
+	var output bytes.Buffer
+	if err := renderMetrics(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if strings.Contains(text, "Warnings: none.") {
+		t.Fatalf("an unknown reopen count was reported as warning-free: %s", text)
+	}
+	if !strings.Contains(text, "WARNING: reopen counts are unknown for 4 of 4 findings because no producer writes the reopened status.") {
+		t.Fatalf("the reopen warning does not name its cause: %s", text)
 	}
 }
 
@@ -789,9 +844,35 @@ func TestMetricsJSONReportsUnobservableReopenCountsAsNull(t *testing.T) {
 	findings := rawJSONField(t, output.Bytes(), "findings")
 	dimension := rawJSONFirstElement(t, rawJSONField(t, findings, "by_dimension"))
 
+	// One of the two findings carries StatusReopened, so the basis is 1/2:
+	// evidence for one, unknown for the other, and therefore no measured count.
 	for name, object := range map[string][]byte{"findings": findings, "dimension": dimension} {
 		assertJSONNull(t, decodeMetricsJSON(t, object), "reopened")
-		assertJSONCoverage(t, name+".reopen_coverage", rawJSONField(t, object, "reopen_coverage"), 0, 2)
+		assertJSONCoverage(t, name+".reopen_coverage", rawJSONField(t, object, "reopen_coverage"), 1, 2)
+	}
+}
+
+// TestMetricsJSONReportsFullyCoveredReopenCounts covers the non-null branch,
+// which is reachable through the public surface now that the coverage basis is
+// the exported Reopened count.
+func TestMetricsJSONReportsFullyCoveredReopenCounts(t *testing.T) {
+	observation := func(fingerprint string) metrics.FindingObservation {
+		return metrics.FindingObservation{Fingerprint: fingerprint, Finding: review.Hallazgo{
+			Fingerprint: fingerprint, Dimension: review.DimLogic, Status: review.StatusReopened,
+		}}
+	}
+	report := metrics.Aggregate(metrics.Input{Findings: []metrics.FindingObservation{observation("a"), observation("b")}})
+	var output bytes.Buffer
+	if err := renderMetricsJSON(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	findings := rawJSONField(t, output.Bytes(), "findings")
+	dimension := rawJSONFirstElement(t, rawJSONField(t, findings, "by_dimension"))
+	for name, object := range map[string][]byte{"findings": findings, "dimension": dimension} {
+		if got := decodeMetricsJSON(t, object)["reopened"]; got != float64(2) {
+			t.Errorf("%s.reopened = %#v, want 2 under complete evidence", name, got)
+		}
+		assertJSONCoverage(t, name+".reopen_coverage", rawJSONField(t, object, "reopen_coverage"), 2, 2)
 	}
 }
 
@@ -814,12 +895,8 @@ func TestMetricsJSONKeyOrderSurvivesTheReopenCoverageField(t *testing.T) {
 	}
 }
 
-// TestNullableReopenCountFollowsItsCoverage covers the non-null branch. It
-// cannot be reached through metrics.Aggregate: the reopen coverage basis is an
-// unexported field that no production path increments, so ReopenCoverage() can
-// never be Complete() for any aggregate the public surface can produce. Testing
-// the projection directly proves the null is derived from the coverage rather
-// than hardcoded, without reaching into unexported state to fake an aggregate.
+// TestNullableReopenCountFollowsItsCoverage pins the projection itself, so the
+// null stays derived from the coverage rather than hardcoded.
 func TestNullableReopenCountFollowsItsCoverage(t *testing.T) {
 	complete, incomplete := metrics.Coverage{Observed: 2, Total: 2}, metrics.Coverage{Observed: 0, Total: 2}
 	completeValue, incompleteValue := 1.0, 0.0

@@ -84,21 +84,20 @@ type FindingsAggregate struct {
 	ByDimension      []DimensionAggregate
 	ByModel          []ModelAggregate
 	ByAgent          []AgentAggregate
-
-	// reopenObservable counts the findings whose reopen attribute could be
-	// observed at all. Nothing in production ever increments it: Reopened is
-	// derived solely from review.StatusReopened, and internal/review/finding.go
-	// declares that constant without a single writer anywhere in production
-	// code (see FU-6 in docs/reingenieria/f0-deuda.md). A disposition surface
-	// that persists reopen answers is what would start incrementing this.
-	reopenObservable int64
 }
 
-// ReopenCoverage reports the evidence behind Reopened. It is deliberately
-// incomplete while no producer writes review.StatusReopened, so that a
-// structurally impossible zero is never presented as a measured zero.
+// ReopenCoverage reports the evidence behind Reopened. Only an observation
+// carrying review.StatusReopened resolves the reopen attribute, so that count
+// is the basis. Refutation legitimately uses a wider basis: review.StatusRefuted
+// has a writer, so a confirmed status is genuine evidence that the finding was
+// examined and not refuted. Nothing writes review.StatusReopened
+// (internal/review/finding.go:112-114, and FU-6 in
+// docs/reingenieria/f0-deuda.md), so a confirmed status says nothing at all
+// about whether that finding was reopened. Every store production can build
+// therefore yields a zero basis and an unknown count, while a disposition
+// surface that starts writing the status makes the count reportable.
 func (v FindingsAggregate) ReopenCoverage() Coverage {
-	return coverage(v.reopenObservable, v.Observed)
+	return coverage(v.Reopened, v.Observed)
 }
 
 type DimensionAggregate struct {
@@ -112,15 +111,12 @@ type DimensionAggregate struct {
 	ConfirmationRate Ratio
 	RefutationRate   Ratio
 	OverrideRate     Ratio
-
-	// reopenObservable carries the same absent-writer evidence as the field of
-	// the same name on FindingsAggregate.
-	reopenObservable int64
 }
 
-// ReopenCoverage reports the evidence behind Reopened for one dimension.
+// ReopenCoverage reports the evidence behind Reopened for one dimension, on the
+// same basis as FindingsAggregate.ReopenCoverage.
 func (v DimensionAggregate) ReopenCoverage() Coverage {
-	return coverage(v.reopenObservable, v.Observed)
+	return coverage(v.Reopened, v.Observed)
 }
 
 type ModelAggregate struct {
@@ -268,8 +264,11 @@ func (r Report) HasIncompleteEvidence() bool {
 			return true
 		}
 	}
+	if !f.ReopenCoverage().Complete() {
+		return true
+	}
 	for _, v := range f.ByDimension {
-		if !v.ConfirmationRate.Known() || !v.RefutationRate.Known() || !v.OverrideRate.Known() {
+		if !v.ConfirmationRate.Known() || !v.RefutationRate.Known() || !v.OverrideRate.Known() || !v.ReopenCoverage().Complete() {
 			return true
 		}
 	}

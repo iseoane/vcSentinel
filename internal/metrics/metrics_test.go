@@ -783,19 +783,55 @@ func TestOverrideCoverageSpansTheWholeEffectivePopulation(t *testing.T) {
 	}
 }
 
-func TestReopenCoverageIsUnknownWithoutAProductionWriter(t *testing.T) {
-	got := Aggregate(Input{Findings: []FindingObservation{
-		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusReopened),
-		findingWithStatus("b", review.DimLogic, "m1", "a1", review.StatusConfirmed),
-	}}).Findings
+// TestReopenCoverageTracksObservedReopenEvidence pins the basis for the reopen
+// attribute. Unlike refutation, where review.StatusRefuted has a writer and so
+// any known status is evidence either way, nothing writes review.StatusReopened
+// and a confirmed or refuted status therefore says nothing about whether the
+// finding was reopened. Only an observation carrying StatusReopened resolves
+// the attribute, so it alone is the coverage basis.
+func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
+	cases := []struct {
+		name            string
+		statuses        []string
+		observed, total int64
+		complete        bool
+	}{
+		{"no reopen evidence", []string{review.StatusConfirmed, review.StatusRefuted}, 0, 2, false},
+		{"partial reopen evidence", []string{review.StatusReopened, review.StatusConfirmed}, 1, 2, false},
+		{"complete reopen evidence", []string{review.StatusReopened, review.StatusReopened}, 2, 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := make([]FindingObservation, 0, len(tc.statuses))
+			for i, status := range tc.statuses {
+				findings = append(findings, findingWithStatus(string(rune('a'+i)), review.DimLogic, "m1", "a1", status))
+			}
+			got := Aggregate(Input{Findings: findings}).Findings
+			for name, cov := range map[string]Coverage{
+				"global":    got.ReopenCoverage(),
+				"dimension": got.ByDimension[0].ReopenCoverage(),
+			} {
+				if cov.Observed != tc.observed || cov.Total != tc.total || cov.Complete() != tc.complete {
+					t.Errorf("%s reopen coverage = %#v, want %d/%d complete=%v", name, cov, tc.observed, tc.total, tc.complete)
+				}
+			}
+		})
+	}
+}
 
-	for name, cov := range map[string]Coverage{
-		"global":    got.ReopenCoverage(),
-		"dimension": got.ByDimension[0].ReopenCoverage(),
-	} {
-		if cov.Observed != 0 || cov.Total != 2 || cov.Complete() {
-			t.Errorf("%s reopen coverage = %#v, want 0/2 and incomplete", name, cov)
-		}
+// TestReopenCoverageIsEmptyForEveryProductionStore is the FU-6 requirement
+// itself: no production path writes review.StatusReopened, so every store the
+// system can actually produce yields a zero basis and an unknown count.
+func TestReopenCoverageIsEmptyForEveryProductionStore(t *testing.T) {
+	got := Aggregate(Input{Findings: []FindingObservation{
+		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),
+		findingWithStatus("b", review.DimSecurity, "m2", "a2", ""),
+	}}).Findings
+	if cov := got.ReopenCoverage(); cov.Observed != 0 || cov.Total != 2 || cov.Complete() {
+		t.Errorf("reopen coverage = %#v, want an empty 0/2 basis", cov)
+	}
+	if got.Reopened != 0 {
+		t.Errorf("reopened = %d, want 0 while no producer writes the status", got.Reopened)
 	}
 }
 

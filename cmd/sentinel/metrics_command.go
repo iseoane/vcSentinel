@@ -77,6 +77,9 @@ func renderMetrics(out io.Writer, report metrics.Report) error {
 	for _, v := range report.Stages {
 		fmt.Fprintf(&text, "Stage %s: samples=%d p50=%s nanoseconds p95=%s nanoseconds; coverage=%s\n", v.Stage, v.Samples, formatStageValue(v.P50Nanos, v.Coverage), formatStageValue(v.P95Nanos, v.Coverage), formatCoverage(v.Coverage))
 	}
+	if reopen := f.ReopenCoverage(); !reopen.Complete() {
+		fmt.Fprintf(&text, "WARNING: reopen counts are unknown for %d of %d findings because no producer writes the reopened status.\n", reopen.Total-reopen.Observed, reopen.Total)
+	}
 	if report.HasIncompleteEvidence() {
 		fmt.Fprintln(&text, "WARNING: insufficient samples or partial evidence; unknown values are shown as unknown and never as zero.")
 	} else {
@@ -100,10 +103,12 @@ func formatRatio(v metrics.Ratio) string {
 	return fmt.Sprintf("%d/%d (%.2f%%; coverage %s)", v.Numerator, v.Denominator, *v.Value*100, formatCoverage(v.Coverage))
 }
 
-// formatCount presents a count that only means something when its attribute
-// was observable. Without evidence the count is unknown, never a measured zero.
+// formatCount presents a count that only means something when its attribute was
+// observable for the whole population. Under partial evidence the count is a
+// lower bound rather than a measurement, so it reads unknown for the same reason
+// a partially covered measurement does; the coverage still shows the evidence.
 func formatCount(value int64, cov metrics.Coverage) string {
-	if cov.Observed == 0 {
+	if !cov.Complete() {
 		return fmt.Sprintf("unknown (coverage %s)", formatCoverage(cov))
 	}
 	return fmt.Sprintf("%d (coverage %s)", value, formatCoverage(cov))
