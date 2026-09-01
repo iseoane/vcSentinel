@@ -836,3 +836,71 @@ because this one touches the review engine rather than the aggregator.
 Priority: before T9.4a. It converts exit criterion 1 from "unknown" into 85
 measurable dispositions across six dimensions, using data that already exists
 and needing no new product surface.
+
+### FU-8: the executions aggregate counts terminal failures twice
+
+Recorded 2026-09-01 while evaluating T9.4a's failure-class axis.
+
+`internal/execution/metrics_finalize.go:93-99` copies every terminal
+non-success outcome into `ExecutionMetrics.Failures`, converting the
+`agentrun.OutcomeClass` into a `store.FailureClass` of the same name. The
+aggregator then counts the same event twice:
+`internal/metrics/metrics_executions.go:76-81` appends from the outcome stream,
+and `:82-86` appends the snapshot's own `Failures`. `appendFailure`
+(`:671-679`) increments an existing class rather than deduplicating, so nothing
+absorbs the repeat.
+
+Measured on the live store at 2026-09-01T19:49:35Z:
+
+- The 325 metrics snapshots hold `failure` 16 and `timeout` 2.
+- `sentinel metrics --json` reports `failure` 64 and `timeout` 5 against 82
+  failed runs.
+
+The semantic classes are unaffected because they are not `OutcomeClass` values:
+`invalid_output` 44, `schema_invalid` 9, and `missing_semantic_payload` 3 are
+written only by the review transport.
+
+A second, independent problem shares the same field. `executions.failures[]`
+merges two populations — outcome classes over all 850 logical runs and
+producer-reported classes over the 325 runs that have a snapshot — into one
+flat list with no source tag and no coverage field. Even without the double
+count, a reader cannot tell which denominator a class belongs to.
+
+Target: give the aggregate one source per class and a coverage denominator, or
+split the two populations into separate reported sets. Until then T9.4a
+records the failure-class axis as inadmissible for calibration; this is not a
+sample-size problem and no observation window fixes it.
+
+### FU-9: observed identity sits in the event stream where the producer cannot read it
+
+Recorded 2026-09-01 while evaluating T9.4a's model-calibration axis.
+
+`sentinel metrics` reports `identity_coverage` as 0 of 325. A direct scan of
+the store contradicts the impression that no identity was ever recorded: 426 of
+the 850 execution event streams carry a model string in the flattened
+`AttemptOutcome.Agent`, `.Model` and `.Effort` fields — `openai/gpt-5.6-luna`
+273, `openai/gpt-5.6-terra` 107, `claude-sonnet-5` 18, `claude-opus-5` 14, and
+`haiku` 14.
+
+`foldExecutionMetrics` (`internal/execution/metrics_finalize.go:111-119`) builds
+`ObservedExecutionIdentity` only from `outcome.Observation.*`. In those records
+`Observation` carries `duration_ns` alone, so the identity is never appended
+and the snapshot stores none. `ReadAttemptOutcomes`
+(`internal/store/execution_outcomes.go:285-289`) does populate the flattened
+fields on read-back, so the producer reads a different field from the one that
+holds the value.
+
+What is **not** established, and must be settled before any fix: whether those
+flattened values are adapter-observed evidence or a resolved configuration
+declaration. The phase already recorded the governing rule — a run served by a
+plain CLI adapter contributes no observed identity, because the configured
+model and effort are a declaration rather than evidence. If the 426 records are
+declarations, the current zero is correct and deliberate, and the only defect
+is that nothing says so. `AttemptOutcome` keeps `Model` and `RequestedModel`
+separate, which suggests the former is observed, but that is an inference and
+not evidence.
+
+Target: determine the provenance of the flattened fields first, then either
+read them in the producer or record why they must stay unread. T9.4a's verdict
+is unchanged either way, because 0 of 325 blocks model calibration in both
+branches.

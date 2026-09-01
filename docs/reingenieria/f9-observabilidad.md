@@ -637,6 +637,101 @@ from expected operating volume, not invented in this plan. Evaluate the same
 store deterministically. Insufficient evidence blocks T9.4b; never lower the
 threshold after seeing results.
 
+### T9.4a — observation sufficiency verdict — 2026-09-01
+
+**Route.** No prospective observation window was opened. The task requires
+evaluating "the same store deterministically", and three measured facts made a
+waiting period pointless: `sentinel metrics` exposes no time filter, so coverage
+is cumulative and historical unknowns never leave the denominator; the store
+already spans 2026-08-24..2026-09-01 with 850 logical runs at roughly 94 per
+day; and every axis that blocks is blocked by a missing or unreadable producer,
+which no amount of waiting creates.
+
+**Freeze.** The criteria are frozen in
+[`evidence/t9-4a-contract.md`](evidence/t9-4a-contract.md), committed as
+`a1a5803` **before** any axis was evaluated against them, so the freeze is
+auditable in history rather than asserted in prose. The record discloses that
+the baseline was visible when the criteria were set; each criterion is
+therefore justified on grounds independent of the observed values — the tool's
+own evidence policy, a calendar week, or the aggregator's own definitions.
+
+**The decisive threshold is the tool's, not this plan's.** A rate is
+presentable only when `metrics.Ratio.Known()` holds, which requires
+`Coverage.Complete()` (`internal/metrics/metrics_types.go:257`, enforced at
+`cmd/sentinel/metrics_json.go:244`). Below full coverage the command emits
+`null`. Any percentage threshold under 1 would therefore unlock a value the
+tool refuses to render, so no such threshold is admissible.
+
+**Evidence.** [`evidence/t9-4a-metrics.json`](evidence/t9-4a-metrics.json) is
+the verbatim `sentinel metrics --json` output captured at
+2026-09-01T19:49:35Z against a store holding 850 executions, 325 metrics
+snapshots, and 207 fichas. It is an immutable record of that moment, not a
+re-runnable assertion: the store grows, so a later run returns different
+figures. Every number below is derived from that artifact.
+
+#### Verdict
+
+| Axis | Class | Numerator / denominator | Coverage | Verdict |
+|---|---|---|---|---|
+| Execution duration | C | 325 / 325 | 1 | **sufficient**, censored |
+| Success rate | C | 768 / 850 | 1 | sufficient; calibrates no current default |
+| Override rate | C | 0 / 837 | 1 | sufficient; the value is 0 and calibrates nothing |
+| Per-dimension dispositions | B | 78 / 837 | 0.0932 | insufficient |
+| Per-model finding attribution | B | 122 / 838 attributed | below 1 | insufficient |
+| Execution identity | B | 0 / 325 | 0 | insufficient; see FU-9 |
+| Cost and usage | A | 0 / 325 | 0 | no producer (FU-3) |
+| Scope | A | 0 / 325 unknown | 0 | no producer (FU-3) |
+| Reuse | A | 0 / 325 | 0 | no producer (FU-3) |
+| Reopen | A | 0 / 838 | 0 | no writer (FU-6) |
+| Stage latency | A | 0 stages | not applicable | no producer: `timing.by_capability` is empty in all 325 snapshots |
+| Remediation | A | 0 attempts | not applicable | no producer exercised |
+| Failure classes | A | inadmissible | not applicable | double-counted; see FU-8 |
+
+Class A is not "insufficient sample". Recording it that way would imply that
+more observation fixes it, and it does not. Class B means a producer exists but
+its evidence is incomplete, so the tool renders `null`.
+
+The duration and volume thresholds are met and are not the binding constraint:
+the store spans 9 days against a frozen minimum of 7, and holds 850 logical
+runs against a frozen minimum of 500. Retries are not double-counted — 1 run of
+850 carries more than one unique outcome.
+
+#### One axis is sufficient, so T9.4b is not blocked
+
+Execution duration has complete coverage over the 325 measured runs, and one
+premise was verified in the store rather than assumed: 849 of 850 runs carry
+exactly one `invocation_id`, so `ExecutionTiming.TotalDurationNanos` measures a
+single reviewer invocation and maps onto `review.timeout`, which the project
+configuration currently sets to 600 seconds.
+
+The observed distribution is p50 62.2s, p90 334.3s, p95 413.9s, p99 607.3s,
+max 718.7s, mean 116.8s over a 37953.7-second total.
+
+**The censoring caveat T9.4b must carry.** Seven runs exceeded 600 seconds:
+606.4s and 606.7s classified `timeout`, 687.9s classified `unavailable`, and
+607.3s, 649.8s, 659.9s and 718.7s classified **`success`**. A run cannot
+succeed past a budget that applied to it, so those four ran under a different
+effective budget — the phase protocol itself uses `--timeout 1200`. The store
+does not record the effective budget per run, so the sample mixes censoring
+levels. T9.4b may use this distribution, but must treat it as right-censored
+and must not read a quantile as if it were uncensored.
+
+Success rate and override rate also reach complete coverage, but neither
+calibrates a current default: 0.9035 corresponds to no configured threshold,
+and the override rate is 0 over a store that holds no `decisions.jsonl` at all.
+
+#### RED and GREEN for a task that ships no code
+
+T9.4a produces documentation and an evidence artifact, so no production
+behaviour exists for a focused test to exercise. The recorded substitute, agreed
+before the record was written, is that every figure the verdict cites must be
+derivable from the committed artifact. The check parses this section, extracts
+the eleven load-bearing figures from
+[`evidence/t9-4a-metrics.json`](evidence/t9-4a-metrics.json), and fails if any
+is absent or if the artifact describes an empty store. It failed before this
+section existed and passes after it. Exact commands and outcomes are recorded
+with the task's closure evidence.
+
 ### T9.4b — evidence-backed calibration
 
 An allowed change adjusts bundles, severity thresholds, model profiles,
