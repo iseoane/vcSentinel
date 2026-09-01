@@ -112,7 +112,11 @@ func readLedger(gitCommonDir string, input *Input) error {
 			continue
 		}
 		for revisionIndex, revision := range ficha.Revisions {
-			for _, finding := range revision.HallazgosEfectivos() {
+			// FindingsWithDispositions, not HallazgosEfectivos: the latter
+			// is the blocking gate's selection point and reports no
+			// lifecycle status at all, so reading through it measures a
+			// disposition-free ledger (FU-7).
+			for _, finding := range revision.FindingsWithDispositions() {
 				fingerprint := finding.Fingerprint
 				if fingerprint == "" {
 					fingerprint = review.Fingerprint(finding)
@@ -121,13 +125,24 @@ func readLedger(gitCommonDir string, input *Input) error {
 					Fingerprint: fingerprint, Commit: sha, Revision: revisionIndex,
 					At: revision.At, Origin: "ledger", Finding: finding,
 				})
-				if revision.Fixed || finding.Status == review.StatusFixed {
+				// Interpreted through review.NormalizeStatus, never compared
+				// raw: the aggregated finding's status is persisted as its
+				// producer wrote it, so a padded or differently-cased value
+				// would otherwise be excluded from the effective population
+				// by aggregateFindings while still counting as remediated
+				// here — the two halves disagreeing about one record.
+				status := review.NormalizeStatus(finding.Status)
+				// A refuted finding was never a defect, so a revision that
+				// fixed its siblings did not remediate it. Before FU-7 made
+				// the refuted findings reachable this branch could not see
+				// one.
+				if (revision.Fixed && status != review.StatusRefuted) || status == review.StatusFixed {
 					input.Remediations = append(input.Remediations, RemediationObservation{
 						Target: fingerprint, LogicalID: "fixed:" + fingerprint + ":" + ficha.FixedIn,
 						Dimension: finding.Dimension, Success: true, At: revision.At,
 					})
 				}
-				if finding.Status == review.StatusReopened {
+				if status == review.StatusReopened {
 					input.Remediations = append(input.Remediations, RemediationObservation{
 						Target: fingerprint, LogicalID: "reopened:" + fingerprint + ":" + revision.At.UTC().Format(time.RFC3339Nano),
 						Dimension: finding.Dimension, Success: false, At: revision.At,
