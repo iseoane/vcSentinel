@@ -722,6 +722,74 @@ Target: pick it up when a disposition surface is designed. Until then T9.3a
 must report reopen coverage as unknown rather than as a measured zero, exactly
 as FU-3 requires for cost, scope, and reuse.
 
+#### Recording a disposition is not enough to clear a block
+
+Added 2026-09-01, after verifying what actually makes a CRITICAL finding stop
+blocking. The paragraphs above understated the problem: they treat the missing
+writer as the whole gap. It is not.
+
+Three sites decide whether a CRITICAL blocks, and all three use the same
+predicate:
+
+```go
+finding.Severity == SevCritical && finding.Status != StatusRefuted
+```
+
+`internal/gate/gate.go:411`, `internal/review/engine.go:638`, and
+`internal/review/engine.go:647`. Only `StatusRefuted` clears a block, and only
+the automated refuter writes it (`engine.go:569,619`), after
+`validarEvidenciaRefutacion` checks the supplied reason and line range against
+the immutable snapshot.
+
+Two consequences:
+
+- A human has no path to clear a block today. `sentinel review --answer`
+  answers reviewer *questions* and is folded back into the audit; it never
+  touches a finding's `Status`.
+- A disposition surface that only persisted `StatusAcceptedByUser` would record
+  the human's judgement and change nothing: the finding would still block,
+  because none of the three predicates honours that status.
+
+This is the shape of every standing block in F9 — `c50d6d5` (T9.1a), `037c2db`
+and `7b375fd` (T9.3a). In each one the code is correct, the finding's premise
+is refutable with evidence, and there is no channel to say so.
+
+#### Two options, to weigh when this is picked up
+
+**Option A — human refutation through the existing evidence gate.** A person
+supplies a reason and an evidence line range, the same
+`validarEvidenciaRefutacion` validates it against the immutable snapshot, and
+the finding records `StatusRefuted` with provenance marking the refutation as
+human-issued rather than refuter-issued.
+
+- It reuses the gate rather than weakening it: the evidence requirement is
+  unchanged, only the issuer differs.
+- It clears all three standing blocks through one mechanism, because they share
+  one shape.
+- It needs the provenance field so metrics and audits can separate human from
+  automated refutations; without it, `RefutationRate` silently mixes two
+  different things and per-model noise measurement becomes meaningless.
+- Risk to design against explicitly: this is a path to unblock the guardian. It
+  must stay evidence-bound and auditable, never a free override. Reusing
+  `validarEvidenciaRefutacion` is the load-bearing part of this option, not an
+  implementation detail.
+
+**Option B — make each finding's premise false in code.** For `c50d6d5` that
+means adding the legacy read fallback the reviewer asks for; the finding then
+stops applying and the block disappears on re-review.
+
+- It writes dead code for data that never existed: at `c50d6d5` there was no
+  production caller of `SaveExecutionMetrics` at all, and the store holds zero
+  files matching `executions/v1/*/metrics.json`.
+- It does not generalize. Each standing block would need its own bespoke
+  change, and each would preserve a path nothing uses.
+- It was already rejected on the merits for T9.1a, and that rejection was
+  reaffirmed on the "no producer existed" evidence rather than on preference.
+
+Recommendation when picked up: Option A, and **not inside F9**. It is new
+product surface and it touches the gate, so it deserves its own change with its
+own review. F9 closes with its three blocks recorded as they stand.
+
 ### FU-7: aggregation drops the disposition, so metrics cannot see it
 
 Recorded 2026-08-31 while correcting T9.3a. This is the real obstacle to exit
