@@ -725,12 +725,29 @@ and the override rate is 0 over a store that holds no `decisions.jsonl` at all.
 T9.4a produces documentation and an evidence artifact, so no production
 behaviour exists for a focused test to exercise. The recorded substitute, agreed
 before the record was written, is that every figure the verdict cites must be
-derivable from the committed artifact. The check parses this section, extracts
-the eleven load-bearing figures from
+derivable from the committed artifact.
+
+[`evidence/t9-4a-check.py`](evidence/t9-4a-check.py) is that check. It parses
+this section, extracts the eleven load-bearing figures from
 [`evidence/t9-4a-metrics.json`](evidence/t9-4a-metrics.json), and fails if any
-is absent or if the artifact describes an empty store. It failed before this
-section existed and passes after it. Exact commands and outcomes are recorded
-with the task's closure evidence.
+is absent or if the artifact describes an empty store. Both its inputs are
+committed, so it is reproducible by anyone: `python3
+docs/reingenieria/evidence/t9-4a-check.py`. It failed before this section
+existed and passes after it.
+
+#### This verdict itself received no semantic review
+
+Sentinel selected zero dimensions for all four of this task's commits, so the
+analysis below — the frozen thresholds, the axis classification, and the
+`review.timeout` pointer T9.4b will build on — carries no semantic review.
+
+Zero dimensions was the correct scope for a documentation candidate, and
+forcing dimensions with `--dims` is prohibited. But the reason the scope was
+empty is narrower than "Sentinel judged this content low risk": FU-10 records
+that the review planner classifies from paths and symbols alone and never
+reads content, so a documentation candidate cannot reach any risk level above
+`none` whatever it says. A reader of T9.4b should weigh this analysis knowing
+that.
 
 ### T9.4b — evidence-backed calibration
 
