@@ -248,4 +248,50 @@ func TestReadLedgerInterpretsAnAggregateOwnNonCanonicalStatus(t *testing.T) {
 	if result.Observed != 1 || result.Refuted != 1 || result.Effective != 0 {
 		t.Fatalf("observed=%d refuted=%d effective=%d, want 1/1/0", result.Observed, result.Refuted, result.Effective)
 	}
+	// The observation must carry the canonical value, not merely be counted
+	// correctly by a reader that normalizes at every comparison. Asserting
+	// only the counts lets the ledger return a padded status indefinitely.
+	if len(input.Findings) != 1 || input.Findings[0].Finding.Status != review.StatusRefuted {
+		t.Fatalf("observed status = %#v, want the canonical %q", input.Findings, review.StatusRefuted)
+	}
+}
+
+// The Fixed and Reopened remediation branches read a status the same way the
+// refuted guard does. Nothing covered them, so a regression to a direct
+// comparison there would pass the rest of this file.
+func TestReadLedgerEmitsFixedAndReopenedRemediations(t *testing.T) {
+	commonDir := t.TempDir()
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	fixed := dispositionAggregate(review.DimLogic, "a.go", 10, "nil dereference", "fp-fixed")
+	fixed.Status = "  FIXED  "
+	reopened := dispositionAggregate(review.DimLogic, "b.go", 20, "unbounded loop", "fp-reopened")
+	reopened.Status = " Reopened "
+	saveDispositionRevision(t, commonDir, "hhh888", review.Revision{
+		At:                 at,
+		Dims:               []review.DimensionResult{{Dim: review.DimLogic}},
+		AggregatedFindings: []review.Hallazgo{fixed, reopened},
+	})
+
+	input, err := ReadStore(commonDir)
+	if err != nil {
+		t.Fatalf("read store: %v", err)
+	}
+	byTarget := make(map[string]RemediationObservation, len(input.Remediations))
+	for _, remediation := range input.Remediations {
+		byTarget[remediation.Target] = remediation
+	}
+	if len(input.Remediations) != 2 {
+		t.Fatalf("remediations = %#v, want one fixed and one reopened", input.Remediations)
+	}
+	if got := byTarget["fp-fixed"]; got.LogicalID != "fixed:fp-fixed:" || !got.Success || got.Dimension != review.DimLogic {
+		t.Fatalf("fixed remediation = %#v", got)
+	}
+	reopenedObservation := byTarget["fp-reopened"]
+	if reopenedObservation.Success || reopenedObservation.LogicalID == "" {
+		t.Fatalf("reopened remediation = %#v, want an unsuccessful reopen observation", reopenedObservation)
+	}
+	result := aggregateFindings(input.Findings, input.Decisions)
+	if result.Confirmed != 2 || result.Reopened != 1 || result.ReopenResolved != 1 {
+		t.Fatalf("confirmed=%d reopened=%d resolved=%d, want 2/1/1", result.Confirmed, result.Reopened, result.ReopenResolved)
+	}
 }

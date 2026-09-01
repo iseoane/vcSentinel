@@ -304,3 +304,91 @@ func TestNormalizeStatus(t *testing.T) {
 		}
 	}
 }
+
+// The aggregate's own status must be returned canonical, not merely tested
+// for presence in canonical form. Normalizing only the check and then
+// discarding the value leaves one observation API returning two status
+// representations: raw-path findings canonical, aggregate-path findings as
+// persisted. A consumer comparing against StatusRefuted then fails to
+// recognise a padded refutation.
+func TestFindingsWithDispositionsCanonicalisesTheAggregateOwnStatus(t *testing.T) {
+	aggregated := aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference")
+	aggregated.Status = "  REFUTED  "
+	revision := Revision{
+		Dims:               []DimensionResult{{Dim: DimLogic}},
+		AggregatedFindings: []Hallazgo{aggregated},
+	}
+	findings := revision.FindingsWithDispositions()
+	if len(findings) != 1 || findings[0].Status != StatusRefuted {
+		t.Fatalf("findings = %#v, want the aggregate status canonicalised to %q", findings, StatusRefuted)
+	}
+	if revision.AggregatedFindings[0].Status != "  REFUTED  " {
+		t.Fatal("the persisted aggregated finding was mutated in place")
+	}
+}
+
+// Every status this method returns is canonical regardless of which persisted
+// shape it came from, so a consumer never has to normalize again.
+func TestFindingsWithDispositionsReturnsOnlyCanonicalStatuses(t *testing.T) {
+	adopted := aggregatedFinding(DimLogic, "adopted.go", 10, SevCritical, "adopted")
+	own := aggregatedFinding(DimLogic, "own.go", 20, SevCritical, "own")
+	own.Status = " Accepted_By_User "
+	revision := Revision{
+		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
+			rawFinding("adopted.go", 10, SevCritical, "adopted", " CONFIRMED "),
+			rawFinding("appended.go", 30, SevCritical, "appended", " Refuted "),
+		}}},
+		AggregatedFindings: []Hallazgo{adopted, own},
+	}
+	statuses := statusesByKey(revision.FindingsWithDispositions())
+	want := map[string]string{
+		key(DimLogic, "adopted.go", 10, "adopted"):   StatusConfirmed,
+		key(DimLogic, "own.go", 20, "own"):           StatusAcceptedByUser,
+		key(DimLogic, "appended.go", 30, "appended"): StatusRefuted,
+	}
+	for k, expected := range want {
+		if statuses[k] != expected {
+			t.Fatalf("status[%s] = %q, want %q (all: %#v)", k, statuses[k], expected, statuses)
+		}
+	}
+}
+
+// A padded or differently cased refutation with no counterpart must still be
+// recognised as a refutation and appended. Comparing h.Status raw against
+// StatusRefuted would silently drop it.
+func TestFindingsWithDispositionsAppendsANonCanonicalRefutation(t *testing.T) {
+	revision := Revision{
+		Dims: []DimensionResult{{Dim: DimSecurity, Findings: []ReviewFinding{
+			rawFinding("a.go", 10, SevCritical, "injected query", "  REFUTED  "),
+		}}},
+		AggregatedFindings: []Hallazgo{
+			aggregatedFinding(DimSecurity, "b.go", 30, SevCritical, "unchecked input"),
+		},
+	}
+	findings := revision.FindingsWithDispositions()
+	if len(findings) != 2 {
+		t.Fatalf("findings = %d, want 2: the padded refutation must still be appended, %#v", len(findings), findings)
+	}
+	statuses := statusesByKey(findings)
+	if statuses[key(DimSecurity, "a.go", 10, "injected query")] != StatusRefuted {
+		t.Fatalf("statuses = %#v, want the padded refutation appended as %q", statuses, StatusRefuted)
+	}
+}
+
+// Contradiction is detected after normalization, not before: two spellings of
+// one disposition are one disposition, not two contradictory ones.
+func TestFindingsWithDispositionsNormalizesBeforeDetectingContradiction(t *testing.T) {
+	revision := Revision{
+		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
+			rawFinding("a.go", 10, SevCritical, "nil dereference", " confirmed "),
+			rawFinding("a.go", 10, SevCritical, "nil dereference", "CONFIRMED"),
+		}}},
+		AggregatedFindings: []Hallazgo{
+			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
+		},
+	}
+	findings := revision.FindingsWithDispositions()
+	if len(findings) != 1 || findings[0].Status != StatusConfirmed {
+		t.Fatalf("findings = %#v, want one %q: two spellings are one disposition", findings, StatusConfirmed)
+	}
+}

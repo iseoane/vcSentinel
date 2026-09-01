@@ -117,9 +117,16 @@ func (r Revision) FindingsWithDispositions() []Hallazgo {
 	}
 	for i := range findings {
 		key := dispositionKey(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)
+		// Canonicalise the value, do not merely test it in canonical form:
+		// normalizing the check and discarding the result would return the
+		// aggregate's status exactly as persisted while every raw-path
+		// finding comes back canonical, so one observation API would speak
+		// two status representations and a consumer comparing against
+		// StatusRefuted would miss a padded refutation.
+		findings[i].Status = NormalizeStatus(findings[i].Status)
 		// A status the aggregated finding recorded itself is evidence, not an
 		// absence: it wins over the raw one rather than being overwritten.
-		if NormalizeStatus(findings[i].Status) != "" {
+		if findings[i].Status != "" {
 			continue
 		}
 		// Ambiguity is refused rather than guessed at. The key omits Evidence
