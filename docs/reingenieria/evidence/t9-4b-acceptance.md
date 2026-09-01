@@ -54,9 +54,9 @@ this is the evidence a future task would start from.
 
 | ID | Criterion or obligation | Observable check | Owner | Exact evidence | Disposition |
 |---|---|---|---|---|---|
-| C-01 | At least one default changes | The shipped default differs from `main` | Writer | `internal/config/parser.go:180`, 300s → 900s | pending |
-| C-02 | Focused RED before production code | A behaviour-level check fails for the requested default | Writer | Exact command, exit status, observed failure | pending |
-| C-03 | GREEN after production code | The same check passes | Writer | Exact command, exit status, observed success | pending |
+| C-01 | At least one default changes | The shipped default differs from `main` | Writer | `internal/config/parser.go:180`, 300s → 900s, in `68a2910` | met |
+| C-02 | Focused RED before production code | A behaviour-level check fails for the requested default | Writer | `go test -count=1 ./internal/config -run 'TestDefaultsPerfiles\|TestTimeoutInvalidoSeIgnora'` → FAIL, `review defaults = 5m0s/2, expected 900s/2` | met |
+| C-03 | GREEN after production code | The same check passes | Writer | Same command → `ok github.com/ISeoane-Quental/vas.sentinel/internal/config`. Re-run independently by the coordinator | met |
 | C-04 | Change cites a reproducible metric | The metric is re-derivable from the store | Coordinator | `sentinel metrics --json` duration coverage 325/325; committed at T9.4a as `evidence/t9-4a-metrics.json` | met |
 | C-05 | Change cites period, sample, coverage | Named above | Coordinator | 2026-08-29..2026-09-01, n=325, coverage 1 | met |
 | C-06 | Change cites old and new value | Named above | Coordinator | 300s and 600s → 900s | met |
@@ -64,14 +64,45 @@ this is the evidence a future task would start from.
 | C-08 | Change cites risk | Named above | Coordinator | Hung-provider detection delayed by up to 600s | met |
 | C-09 | Change cites rollback | Named above | Coordinator | Restore both values; nothing else accompanies the change | met |
 | C-10 | Correlation is not presented as causality | No causal claim from the per-dimension split | Coordinator | Stated explicitly above | met |
-| C-11 | No test, fixture, golden, or verification asset changed to make the calibration pass | Only assertions that pin the old default value change | Writer | `secciones_test.go:79` and `:178-179` pin 300s and are updated. `validacion_test.go:218,246` is a **capability** timeout that happens to be 300 and must stay untouched | pending |
-| C-12 | Full suite | Repository check | Writer | `go test -count=1 ./...` | pending |
-| C-13 | Race on touched packages | Explicit package list | Writer | `go test -count=1 -race ./internal/config` | pending |
-| C-14 | Build and vet | Repository checks | Writer | `go build ./...`, `go vet ./...` | pending |
-| C-15 | Every task commit reviewed | One ficha per commit | Sentinel | This task ships Go code, so a non-empty dimension set is expected here, unlike T9.4a | pending |
-| C-16 | Staged volume enforced | The enforcing boundary | Sentinel | `sentinel check --staged` before each commit | pending |
-| C-17 | Final gate | Pre-push gate | Sentinel | `sentinel gate --stage pre-push` | pending |
-| C-18 | Durable runs settled and verified | Terminal state plus verification per run | Sentinel | Every emitted run `succeeded` with a `runs verify` result | pending |
-| C-19 | Effective writer identity recorded from execution evidence | Observed, not requested | Coordinator | Recorded from the run evidence, never from the flags passed. FU-9 is exactly this gap | pending |
-| C-20 | Worktree clean, unrelated work untouched | No residue | Coordinator | `git status --short`; the main worktree's `.claude/skills/...` changes stay untouched | pending |
-| C-21 | Language scan | English artifacts, legacy Spanish preserved | Coordinator | Every added line scanned | pending |
+| C-11 | No test, fixture, golden, or verification asset changed to make the calibration pass | Only assertions that pin the old default value change | Writer | Coordinator inspected the staged diff: exactly four paths, and `git diff --cached --name-only \| grep -c validacion_test.go` returns `0` | met |
+| C-12 | Full suite | Repository check | Writer | `go test -count=1 ./...` exit 0, zero `FAIL` lines, re-run independently by the coordinator | met |
+| C-13 | Race on touched packages | Explicit package list | Writer | `go test -count=1 -race ./internal/config` ok 1.059s, re-run independently by the coordinator | met |
+| C-14 | Build and vet | Repository checks | Writer | `go build ./...` and `go vet ./...` both exit 0, re-run independently by the coordinator | met |
+| C-15 | Every task commit reviewed | One ficha per commit | Sentinel | `68a2910` → `warn` over 5 dimensions (security ok, design ok, spec/tests/logic warn). `8d659d7` and `5178e4f` are documentation-only and drew zero dimensions, per FU-10 | met, with the FU-10 limit stated |
+| C-16 | Staged volume enforced | The enforcing boundary | Sentinel | `sentinel check --staged` run immediately before all three commits; every one within budget. The calibration commit reported 6 authored lines | met |
+| C-17 | Final gate | Pre-push gate | Sentinel | `sentinel gate --stage pre-push --timeout 1200`; result recorded in the closure report | met |
+| C-18 | Durable runs settled and verified | Terminal state plus verification per run | Sentinel | The rule that closes: every emitted run is settled and verified. The review of `68a2910` emitted 5 — `60b3d266`, `e668c07f`, `88c1da2b`, `4da3ea24`, `bda1350f` — all `succeeded`, all verified with 4 intact events. A gate run after this row is written cannot appear in it, so the final gate's own runs are named in the closure report | met, regress bounded |
+| C-19 | Effective writer identity recorded from execution evidence | Observed, not requested | Coordinator | Model confirmed as `gpt-5.6-luna` from the execution log; agent deviates to `build`; effort not verifiable. See the deviation section below | met, with two deviations recorded |
+| C-20 | Worktree clean, unrelated work untouched | No residue | Coordinator | `git status --short` empty after delivery. The main worktree still holds `.claude/skills/reingenieria-phase-task/SKILL.md` modified and `references/` untracked; neither was staged, stashed, moved, or committed | met |
+| C-21 | Language scan | English artifacts, legacy Spanish preserved | Coordinator | Every added line across `docs`, `internal` and `.vas_sentinel` scanned for Spanish markers: no hits. The two touched assertion messages moved to English because their lines changed anyway; their untouched neighbours keep legacy Spanish, which is exactly what the policy prescribes | met |
+
+## Findings and dispositions
+
+Sentinel's review of `68a2910` returned `warn` with three findings. Each premise
+was verified in the repository before disposition.
+
+| Finding | Dimension | Premise verified | Disposition |
+|---|---|---|---|
+| Six versus seven runs over 600s across two records | spec | CONFIRMED. `f9-observabilidad.md:710` counted 7 over all 850 logical runs; `:778` counted 6 over the 325 measured runs; neither named its population | fixed in `5178e4f` |
+| The record claimed the project config "currently" sets 600s, which this commit made false | design | CONFIRMED. `f9-observabilidad.md:705` | fixed in `5178e4f` |
+| No test covers the checked-in project override | tests | Premise CONFIRMED — no such test exists. Remedy REJECTED | accepted with reason: every config test writes a temporary fixture, and no test in this repository reads the real `.vas_sentinel/vassentinel.yml`. Pinning an operational setting a user is expected to tune would turn a legitimate retune into a suite failure |
+
+The two fixes landed in a documentation-only commit, which drew zero review
+dimensions for the same FU-10 reason recorded against T9.4a. `registrarCorrecciones`
+did not mark `FixedIn`, which is correct: it links only blocked fichas, and
+`68a2910` is `warn`.
+
+## Deviation from the F9 writer assignment
+
+The plan assigns T9.4b to OpenCode `openai/gpt-5.6-luna` at Max effort. Recorded
+from execution evidence rather than from the flags passed:
+
+- Model: **confirmed**. `modelID=gpt-5.6-luna`, `providerID=openai`, session
+  `ses_fa13ed13affedi9m6FO8n8IGHZ`.
+- Agent: **deviates**. The writer ran as `build`, not the phase's
+  `reingenieria-implementer`, because `opencode run` drives primary agents only
+  and silently falls back when handed a subagent name.
+- Reasoning effort: **not verifiable**. `--variant max` was passed, but no
+  execution record confirms the effort actually applied. This is FU-9's gap
+  appearing in the delegation path itself, and it is recorded rather than
+  asserted.
