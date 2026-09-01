@@ -758,6 +758,37 @@ Correlation is not presented as causality. Missing effective-model evidence or
 insufficient coverage blocks model calibration. Never modify tests, fixtures,
 goldens, or verification assets merely to make a calibration pass.
 
+#### T9.4b record — 2026-09-01
+
+**Metric.** Total duration of one reviewer invocation,
+`ExecutionTiming.TotalDurationNanos`.
+
+**Period.** `2026-08-29..2026-09-01`, the window in which metrics snapshots
+exist.
+
+**Sample and coverage.** 325 measured runs, with complete coverage at `325 / 325`.
+The population is homogeneous: every run is a `review <dimension>` operation;
+no validation run carries a snapshot.
+
+**Calibration.** The old shipped default is `300s` in
+`internal/config/parser.go`, overridden to `600s` by
+`.vas_sentinel/vassentinel.yml`. Both values are changed to `900s`.
+
+**Expected effect.** Exceedance falls from `12.3% (40/325)` at `300s` and
+`1.8% (6/325)` at `600s` to `0% (0/325)` at `900s`.
+
+**Risk.** A genuinely hung provider is detected up to `600s` later than at
+`300s`. Sentinel exists to review work, so killing real review work is the worse
+failure.
+
+**Rollback.** Restore both values. No schema, storage, or contract change
+accompanies this, so a revert is complete.
+
+**Claim boundary.** The claim is that `300s` and `600s` are too low, **not**
+that `900s` is provably sufficient. The store records no per-run timeout
+budget, so the tail is censored at an unknown mix of levels. Any per-dimension
+breakdown is an observation only, not a causal claim about dimensions.
+
 ### T9.5 — event-driven retention
 
 **Why this belongs to F9 and not before it.** This phase already forbids

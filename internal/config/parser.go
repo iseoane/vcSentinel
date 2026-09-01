@@ -177,7 +177,7 @@ func configuracionPorDefecto() Config {
 		AgentOrder: []string{"claude", "opencode"},
 		Profiles:   map[string]ProfileConfig{}, // compat v1: perfiles globales
 		Review: ReviewConfig{
-			Timeout:  300 * time.Second,
+			Timeout:  900 * time.Second,
 			Parallel: 2,
 			// Evidence admission is default-on at cutover (ticket 07): the
 			// rollback seam is setting it to false, never leaving it unset.
