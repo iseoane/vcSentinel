@@ -480,11 +480,18 @@ measured zero." The exported documentation does not overclaim: `ReopenCoverage`
 states that "every store production can build today therefore resolves nothing
 and reports an unknown count", verified through `go doc`.
 
-The block stands in the per-worktree ledger at
-`.git/worktrees/f9-t9-3a-coverage/vas-sentinel/`. No pass was manufactured and
-no correct change was reverted to silence a finding. FU-7 is what makes the
-disposition reachable; until then this correction makes the report truthful,
-which is a smaller claim than making exit criterion 1 answerable.
+Two blocks stand in the per-worktree ledger at
+`.git/worktrees/f9-t9-3a-coverage/vas-sentinel/`, not one. `545dcd3` blocked
+and carries `fixed_in: f837dc0`, so it is resolved. `037c2db` and `7b375fd`
+both stand with no `fixed_in`: the first for the outcome-coupled basis that
+`7b375fd` then replaced, the second for the premise above. `7b375fd`
+superseded `037c2db`'s finding in substance, but Sentinel did not mark it, so
+the record says so rather than claiming a resolution the ledger does not hold.
+
+No pass was manufactured and no correct change was reverted to silence a
+finding. FU-7 is what makes the disposition reachable; until then this
+correction makes the report truthful, which is a smaller claim than making
+exit criterion 1 answerable.
 
 **Verification**, run by the coordinator on the candidate rather than taken
 from the implementer:
@@ -547,6 +554,79 @@ checks, and `bin/0.2.0/sentinel check`. The final
 The non-blocking scope warning on `2051311` is accepted because those additional
 tests were required by the preceding Sentinel review; rewriting reviewed
 history solely to separate them would add no behavioural correction.
+
+#### FU-7 landed — dispositions are reachable — 2026-09-01
+
+`c1655a2` merges six reviewed commits from `f9-fu7-dispositions`. Exit
+criterion 1 is now answerable from the store instead of returning unknown:
+
+| | before | after |
+|---|---|---|
+| observed | 837 | 838 |
+| confirmed | 0 | 78 |
+| refuted | 0 | 1 |
+| confirmation coverage | `0/837 (0.00%)` | `78/837 (9.32%)` |
+
+Per dimension: `spec` 24, `logic` 26 plus the single refutation, `security` 10,
+`design` 10, `tests` 8, `style` 0. The rate values still print `unknown`
+because coverage is partial; that is the T9.3a contract working, not a
+residual failure.
+
+The `observed` delta of one is the single refuted raw finding that
+`aggregation.go:24` drops and that now enters as its own observation. Nothing
+was duplicated.
+
+**How it works.** A new observation-only projection,
+`Revision.FindingsWithDispositions`, joins the two persisted shapes at the read
+boundary on dimension, file, start line and description — the same key
+`refutarHallazgoV2` already uses. `Evidence` and `Title` cannot join them
+because the v1 shape carries neither, which is also why aggregation's
+recomputed fingerprints cannot serve. It follows the precedent
+`cmd/sentinel/comandos_runs_prune.go:80-87` set for the same gap.
+
+**`HallazgosEfectivos` is untouched**, verified byte-identical against
+`2a273f6` after all six commits, with `git diff` reporting zero removed content
+lines in `internal/review/ledger.go`. It gates `riesgos()` and
+`BloqueantesDeRama`, so changing it would change branch blocking and
+`pr create --force`. The projection is for observation only.
+
+**Refusals, chosen over guesses.** A key matching more than one aggregate
+attributes to none; contradictory raw statuses record nothing; absorbed
+siblings stay unknown. Under ambiguity a refuted raw finding is suppressed
+rather than appended, because "no double counting" was a hard invariant while
+"never lose a disposition" was not, and inflating the denominator of every
+ratio is worse damage than under-reporting one disposition. Both refusal paths
+measure zero incidence on the live ledger.
+
+**Losses, recorded rather than hidden.** Of 85 recorded dispositions, 79 are
+counted: two collapse onto one coarse projection fingerprint, and five lose the
+pre-existing global dedupe to a later status-less observation of the same
+fingerprint under the existing `At` then `Revision` precedence. Both are prior
+identity contracts, not regressions introduced here.
+
+**One behaviour change.** The `revision.Fixed` remediation branch now skips
+refuted findings; before, a refuted raw finding in a fixed fallback-path
+revision emitted a `fixed:` remediation. A refuted finding was never a defect.
+Zero live revisions are affected.
+
+**Still broken upstream, deliberately.** `internal/review/aggregation.go:24`
+still drops refuted findings and `internal/review/engine.go:501-511` still
+writes `StatusConfirmed` onto the v1 collection only. FU-7 scoped the fix to
+the read boundary because changing the engine would change what the blocking
+gate sees.
+
+**Review outcome.** Six commits, three rounds. `211ac5c` blocked on a
+half-applied normalization — the canonical status was computed for the presence
+check and discarded, so an aggregate's own status came back as persisted while
+raw-path findings came back canonical. `5f9c6df` corrected it and Sentinel
+marked it `fixed_in`. No block stands for FU-7. The commit message of `5f9c6df`
+additionally claims it fixed a whitespace-only status surviving as present;
+that claim is wrong, since `NormalizeStatus("   ")` is already empty and
+`211ac5c` had fixed that. The message is left as written because amending it
+would change the SHA and invalidate its receipt.
+
+**Deviation.** Same as T9.3a: written by a Claude Code subagent, not the
+OpenCode `openai/gpt-5.6-luna` writer the phase plan pins.
 
 ### T9.4a — observation sufficiency
 
