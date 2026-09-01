@@ -13,7 +13,7 @@ Completed before delegation, 2026-09-01, against branch `f9-t9-4b`.
 | Population | Homogeneous: every one of the 325 is a `review <dimension>` operation. No validation run carries a snapshot |
 | Old value | `internal/config/parser.go:180` ships `Review.Timeout = 300 * time.Second`; `.vas_sentinel/vassentinel.yml` overrides it to `600` |
 | New value | `900` seconds in both places |
-| Expected effect | Exceedance falls from 12.3% (40/325) at 300s and 1.8% (6/325) at 600s to 0% (0/325) at 900s |
+| Expected effect | Among the 325 measured runs, exceedance falls from 12.3% (40/325) at 300s and 1.8% (6/325) at 600s to 0% (0/325) at 900s. Seven runs exceeded 600s across all 850 logical runs; the seventh carries no metrics snapshot and is outside this denominator |
 | Risk | A genuinely hung provider is detected up to 600s later than at 300s. Sentinel exists to review work, so killing real review work is the worse failure |
 | Rollback | Restore both values. No schema, storage, or contract change accompanies this, so a revert is complete |
 

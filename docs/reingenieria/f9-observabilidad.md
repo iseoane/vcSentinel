@@ -701,13 +701,14 @@ runs against a frozen minimum of 500. Retries are not double-counted — 1 run o
 Execution duration has complete coverage over the 325 measured runs, and one
 premise was verified in the store rather than assumed: 849 of 850 runs carry
 exactly one `invocation_id`, so `ExecutionTiming.TotalDurationNanos` measures a
-single reviewer invocation and maps onto `review.timeout`, which the project
-configuration currently sets to 600 seconds.
+single reviewer invocation and maps onto `review.timeout`, which was the
+600-second value in force at the time of the T9.4a evaluation; T9.4b later raised
+it to 900 seconds.
 
 The observed distribution is p50 62.2s, p90 334.3s, p95 413.9s, p99 607.3s,
 max 718.7s, mean 116.8s over a 37953.7-second total.
 
-**The censoring caveat T9.4b must carry.** Seven runs exceeded 600 seconds:
+**The censoring caveat T9.4b must carry.** Seven of the 850 logical runs exceeded 600 seconds:
 606.4s and 606.7s classified `timeout`, 687.9s classified `unavailable`, and
 607.3s, 649.8s, 659.9s and 718.7s classified **`success`**. A run cannot
 succeed past a budget that applied to it, so those four ran under a different
@@ -774,8 +775,11 @@ no validation run carries a snapshot.
 `internal/config/parser.go`, overridden to `600s` by
 `.vas_sentinel/vassentinel.yml`. Both values are changed to `900s`.
 
-**Expected effect.** Exceedance falls from `12.3% (40/325)` at `300s` and
-`1.8% (6/325)` at `600s` to `0% (0/325)` at `900s`.
+**Expected effect.** Among the 325 measured runs, exceedance falls from
+`12.3% (40/325)` at `300s` and `1.8% (6/325)` at `600s` to `0% (0/325)` at
+`900s`. The T9.4a record counts seven runs over 600s because it counts all 850
+logical runs; the seventh carries no metrics snapshot and is therefore outside
+this denominator.
 
 **Risk.** A genuinely hung provider is detected up to `600s` later than at
 `300s`. Sentinel exists to review work, so killing real review work is the worse
