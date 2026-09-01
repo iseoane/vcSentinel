@@ -904,3 +904,46 @@ Target: determine the provenance of the flattened fields first, then either
 read them in the producer or record why they must stay unread. T9.4a's verdict
 is unchanged either way, because 0 of 325 blocks model calibration in both
 branches.
+
+### FU-10: the review planner never sees content, so `explain` and `review` disagree
+
+Recorded 2026-09-01 while settling why three T9.4a documentation commits
+received a review record with zero dimensions.
+
+`change.DetectarCaracteristicas` has exactly two call sites, and they feed it
+different evidence:
+
+- `cmd/sentinel/comandos_explain.go:72` supplies the full
+  `EntradaCaracteristicas`, added lines included.
+- `internal/review/engine.go:333` supplies only `Symbols` and `Rutas`.
+
+Three detectors read added lines and nothing else:
+`detectarSeguridadSensible`, `detectarConcurrencia` and
+`detectarCambioDeComportamiento` (`internal/change/caracteristicas.go:88-124`).
+In the review planner they are therefore starved and always report absent, so
+`security_sensitive`, `concurrency` and `behavior_change` can never raise the
+risk level that `BundlesForRisk` reads. `sentinel explain` and `sentinel
+review` classify the same commit from different evidence, and the review side
+is systematically the weaker one.
+
+Demonstrated on this task's own commits. `780c900` is a documentation commit
+holding a metrics artifact; `sentinel explain a1a5803..780c900` reports
+`high por security_sensitive presente`, while its review recorded zero
+dimensions because the planner evaluated it as `NivelNone`.
+
+That instance is a substring false positive, and saying so matters: the
+detector matches `token` against lines such as `cached_input_tokens`, so
+`explain` was wrong about this commit and the review planner happened to be
+right. The instance is evidence of the divergence, not evidence that the
+planner under-reviewed here.
+
+The structural risk is the reverse case, which no commit in this task
+exercises: a source change that adds credential handling without touching an
+exported symbol is `security_sensitive` to `explain` and invisible to the
+review planner, so no security dimension is ever scheduled for it.
+
+Target: decide which surface is authoritative and feed both the same evidence.
+If content-based detection belongs in review planning, the planner needs the
+added lines; if it does not, `explain` should stop reporting a risk level that
+review will not act on. Do not fix this by widening one detector: the defect is
+that one derivation runs on two different inputs.
