@@ -1184,6 +1184,21 @@ it caused in correction attribution.
 The list of gitDir call sites above is therefore historical. Only the prune
 paths still enumerate per-checkout ledgers, and they do so deliberately.
 
+**What that costs, so a later observation is recognised and not investigated.**
+Nothing older is migrated. Measured on this repository at 2026-09-02, by listing
+`<common-dir>/worktrees/*` and counting `*.json` under each `vas-sentinel`: 18
+administrative directories, of which 12 are branch worktrees and the rest are
+review snapshots; 12 hold a `vas-sentinel` directory, 11 of those are non-empty,
+and they hold 65 fichas. Those records are no longer read by `review`, `status`
+or `pr`, so inside one of those worktrees `review --all` treats its already
+audited commits as pending and audits them again, and a branch analysis there no
+longer sees the verdicts it recorded before the change. Nothing is deleted:
+`runs prune`, `status --prune` and `review --prune` still enumerate every
+per-checkout ledger, so no execution stream loses its provenance.
+
+This is a consequence of a decision, not debt, which is why it lives here and
+not as its own entry.
+
 The decision was taken on 2026-09-02: reviews write to the shared location from
 the start, and T9.5 collects from there at publication. Nothing older is
 migrated, because 52 of the 65 fichas then sitting in per-checkout ledgers were
@@ -1406,31 +1421,3 @@ the two commits are even on the same line of history.
 Priority: before the ledger holds fichas from several concurrent branches for
 long. It falsely clears blocks, which is the failure mode this register exists
 to keep visible.
-
-### FU-18: pre-existing worktree fichas became invisible, by decision
-
-Recorded 2026-09-02 alongside FU-17, from the same review.
-
-Anchoring `review`, `status` and `pr` on the common directory means the fichas
-already sitting in per-checkout ledgers are no longer read by those commands.
-The migration policy of this change is that nothing older is migrated: the bulk
-of those records is already published, and T9.5 removes published ones anyway.
-`runs prune`, `status --prune` and `review --prune` still enumerate every
-per-checkout ledger, so no execution stream loses its provenance and nothing is
-deleted.
-
-Measured on this repository at 2026-09-02, by listing `<common-dir>/worktrees/*`
-and counting `*.json` under each `vas-sentinel`: 18 administrative directories,
-of which 12 are branch worktrees and the rest are review snapshots; 12 hold a
-`vas-sentinel` directory, 11 of those are non-empty, and they hold 65 fichas in
-total. FU-12 recorded thirteen on the same date, so one worktree has gone since;
-the counts describe different moments, not a contradiction.
-
-The cost is recorded rather than hidden: inside one of those worktrees,
-`review --all` now treats its already-audited commits as pending and audits them
-again, and a branch analysis there no longer sees the verdicts it recorded
-before the change.
-
-Not a target. It is the accepted consequence of the migration policy above, and
-it is written here so a later observation of re-auditing is recognised instead
-of investigated as a new defect.

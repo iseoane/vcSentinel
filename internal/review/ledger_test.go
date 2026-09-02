@@ -814,7 +814,13 @@ func escribirRevisionesHijo(t *testing.T, dir, escritor string) {
 // pass proves nothing: two goroutines rarely interleave inside a window this
 // small, so an unlocked implementation passes a single run. Measured — the
 // single-run versions of both tests below stayed green with the lock removed.
-// Replaying on a fresh ledger turns a rare interleaving into a certain one.
+//
+// Replaying is probabilistic and this comment does not pretend otherwise. What
+// is not a guess is the calibration: with each lock removed in turn, the
+// MarcarCorregida race failed on attempt 0 and the AdoptarFicha race on attempt
+// 19, both far inside three hundred. The cross-process contract, which no
+// number of goroutines can establish, is pinned separately by
+// TestGuardarRevisionEntreProcesos.
 const repeticionesCarrera = 300
 
 // enCarrera runs primera and segunda concurrently behind one start gate and

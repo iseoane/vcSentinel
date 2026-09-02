@@ -398,10 +398,13 @@ func (l *Ledger) conFichaBloqueada(sha string, fn func() error) (err error) {
 				os.Remove(ruta)
 				return fmt.Errorf("locking the review ficha of %s: %w", sha, errCerrar)
 			}
-			// Released through defer so a panic inside fn cannot leak the lock,
-			// and the removal failure is reported rather than discarded: a lock
-			// left behind makes every later writer of this SHA wait the full
-			// timeout and then fail, which is not something to learn later.
+			// Released through defer so a panic inside fn cannot leak the lock.
+			// The removal failure is reported rather than discarded, because a
+			// lock left behind makes every later writer of this SHA wait the
+			// full timeout and then fail — but ONLY when fn itself succeeded.
+			// When fn already failed its error is the one the caller needs, and
+			// replacing it with a cleanup complaint would hide the real cause;
+			// the stale lock still surfaces on the next writer, with its path.
 			defer func() {
 				// An already-absent lock is a released lock: someone removed it
 				// out of protocol, which is not this call's failure.
@@ -631,6 +634,13 @@ func (l *Ledger) guardarFicha(ficha *Ficha) error {
 	// concurrent reader saw a live record as absent, which AnalizarRama reads
 	// as "never audited". Narrowing that window to the platform that needs it
 	// costs nothing.
+	//
+	// Not covered by a test, deliberately. Observing the window needs a reader
+	// running inside another process's rename, and the only seam that would
+	// expose it is a hook in this function — which would be a test scaffold in
+	// the write path of every ficha. The behaviour it protects is pinned
+	// indirectly: MarcarCorregida's guard reads the directory rather than the
+	// ficha precisely because that window existed, and its comment says so.
 	if runtime.GOOS == "windows" {
 		if err := os.Remove(destino); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

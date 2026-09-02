@@ -432,6 +432,12 @@ func ejecutarStatus(worktree string, args []string) {
 	// and keeps a documented fallback for when the common directory cannot be
 	// resolved; building the shared ledger first turned that same resolution
 	// failure into an exit, so the fallback became unreachable.
+	//
+	// No test pins this order, and that gap is recorded rather than glossed:
+	// reaching it needs ObtenerGitCommonDir to fail while the checkout's own
+	// gitDir still resolves, and neither this command nor purgarHuerfanasPorLedger
+	// takes that resolver as a seam. Adding one is the fix; until then, moving
+	// the shared ledger above this block silently restores the regression.
 	if flags.prune {
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
 		if err != nil {
