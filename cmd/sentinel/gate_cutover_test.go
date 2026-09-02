@@ -110,7 +110,9 @@ func construirOpcionesCutover(t *testing.T, worktree, stage, ymlExtra string, au
 	}
 
 	verificador := nuevoVerificadorModelo(worktree)
-	opciones := buildGateOptions(cfg, verificador, worktree, perfilGatePorDefecto, sha, mensaje, diff, "", profile, archivos)
+	opciones := buildGateOptions(cfg, verificador, worktree, perfilGatePorDefecto, EvidenciaGate{
+		SHA: sha, Mensaje: mensaje, Diff: diff, Perfil: profile, Archivos: archivos,
+	})
 	sink := applyDurableCutover(&opciones, cfg, worktree, stage, sha, archivos)
 	opciones.FabricaAuditor = func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
 		return &agenteRevisionFijo{salida: auditorSalida}, "logic", nil

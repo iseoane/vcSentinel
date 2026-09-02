@@ -24,6 +24,24 @@ import (
 // ejecutarReview audita uno o más commits contra el motor y guarda la ficha en
 // el ledger. Códigos de salida (guía §9): 0 ok/warn, 1 block, 3 questions,
 // 4 provider_unavailable. Con --gate, además, cualquier CRITICAL salta a 1.
+// planDeRevision decide los bundles a auditar y, solo cuando hacen falta, lee la
+// evidencia que la derivación necesita.
+//
+// El orden importa: unas dimensiones explícitas sustituyen el plan derivado por
+// completo, así que leer .gitattributes antes de mirar dims abortaba una
+// ejecución cuyos bundles ya había elegido quien llama. leerAtributos se inyecta
+// para que ese salto sea comprobable sin ejecutar una revisión entera.
+func planDeRevision(dims []string, profile change.ChangeProfile, archivos []string, diff string, leerAtributos func() (string, error)) ([]review.ReviewBundle, error) {
+	if len(dims) > 0 {
+		return []review.ReviewBundle{{Name: "requested", Dimensions: dims, Priority: review.PriorityRequired, Cost: 1}}, nil
+	}
+	atributos, err := leerAtributos()
+	if err != nil {
+		return nil, err
+	}
+	return review.PlanForProfile(profile, archivos, diff, atributos).Bundles, nil
+}
+
 func ejecutarReview(worktree string, args []string) {
 	flags, err := parsearFlagsAuditoria(args)
 	if err != nil {
@@ -108,20 +126,10 @@ func ejecutarReview(worktree string, args []string) {
 			fmt.Printf("⚠️ %s: no se pudo derivar el perfil de cambio: %v\n", sha[:8], err)
 			os.Exit(1)
 		}
-		// Explicit --dims replaces the derived plan outright, so the evidence
-		// the derivation needs is only read when it is going to be used: an
-		// unreadable .gitattributes must not abort a run whose bundles the
-		// caller already chose.
-		var plan review.ReviewPlan
-		bundles := []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: review.PriorityRequired, Cost: 1}}
-		if len(flags.dims) == 0 {
-			atributos, err := git.Attributes(sha)
-			if err != nil {
-				fmt.Printf("⚠️ %s: no se pudieron leer los atributos: %v\n", sha[:8], err)
-				os.Exit(1)
-			}
-			plan = review.PlanForProfile(profile, archivos, diff, atributos)
-			bundles = plan.Bundles
+		bundles, err := planDeRevision(flags.dims, profile, archivos, diff, func() (string, error) { return git.Attributes(sha) })
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudieron leer los atributos: %v\n", sha[:8], err)
+			os.Exit(1)
 		}
 
 		// El recolector anota qué agente atendió cada dimensión para que la

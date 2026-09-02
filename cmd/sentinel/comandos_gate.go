@@ -85,14 +85,17 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	// the attributes now decide route classification and therefore whether the
 	// security and concurrency bundles are scheduled at all. Continuing with
 	// empty evidence would let the gate succeed on an under-classified plan.
-	atributos, err := git.Attributes(sha)
+	atributos, err := leerAtributosGate(sha)
 	if err != nil {
 		fmt.Fprintf(w, "❌ No se pudieron leer los atributos de %s: %v\n", sha, err)
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
 	}
 
 	verificador := nuevoVerificadorModelo(worktree)
-	opciones := buildGateOptions(cfg, verificador, worktree, perfil, sha, mensaje, diff, atributos, profile, archivos)
+	opciones := buildGateOptions(cfg, verificador, worktree, perfil, EvidenciaGate{
+		SHA: sha, Mensaje: mensaje, Diff: diff, Gitattributes: atributos,
+		Perfil: profile, Archivos: archivos,
+	})
 	applyDurableCutover(&opciones, cfg, worktree, stage, sha, archivos)
 
 	resultado := gate.EjecutarGate(opciones)
@@ -106,7 +109,22 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 // reviewer seams, and the per-commit review transport (nil unless
 // review.durable_routes is on). Shared by ejecutarGate and the cutover tests,
 // so tests exercise the exact production construction.
-func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, worktree, perfil, sha, mensaje, diff, gitattributes string, profile change.ChangeProfile, archivos []string) gate.Opciones {
+// EvidenciaGate agrupa lo que el gate deriva de HEAD. Es una struct y no una
+// lista de parámetros porque eran seis cadenas adyacentes: un argumento
+// olvidado, desplazado o intercambiado compilaba igual, y una de ellas decide
+// si se programa la revisión de seguridad. El compilador ya no lo permite.
+type EvidenciaGate struct {
+	SHA           string
+	Mensaje       string
+	Diff          string
+	Gitattributes string
+	Perfil        change.ChangeProfile
+	Archivos      []string
+}
+
+func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, worktree, perfil string, evidencia EvidenciaGate) gate.Opciones {
+	sha, mensaje, diff, gitattributes := evidencia.SHA, evidencia.Mensaje, evidencia.Diff, evidencia.Gitattributes
+	profile, archivos := evidencia.Perfil, evidencia.Archivos
 	reviewTransport, metricsFinalizer := durableReviewTransportWithMetrics(cfg, worktree, sha, archivos)
 	return gate.Opciones{
 		Perfil:         perfil,
@@ -150,6 +168,11 @@ func fabricaAuditorGate(cfg config.Config, verificador *modelprobe.Verificador) 
 		return adapter, profile.Nombre, nil
 	}
 }
+
+// leerAtributosGate es la costura de lectura de .gitattributes del gate: una
+// variable para que el test pueda ejercitar la rama de fallo cerrado, que es la
+// que decide si el gate sigue con un plan infravalorado.
+var leerAtributosGate = git.Attributes
 
 // datosCommitHEAD resuelve el SHA de HEAD y lee su mensaje/diff/archivos:
 // gate audita siempre HEAD (a diferencia de 'review', que admite un target

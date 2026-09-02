@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -264,5 +265,82 @@ func TestGateEventPersistsOnlyOperationalMetadata(t *testing.T) {
 	}
 	if failure["bundle"] != "correctness" || failure["dimension"] != "logic" || failure["reason"] != "provider reported: ripgrep execution failed" {
 		t.Fatalf("reviewer failure = %#v", failure)
+	}
+}
+
+// TestEjecutarGateFallaCerradoSinAtributos exercises the fail-closed path that
+// the review of ce8316d found untested, and it is the one that matters: the
+// repository attributes decide route classification and therefore whether the
+// security and concurrency bundles are scheduled at all, so a gate that
+// continued with empty evidence would succeed on an under-classified plan.
+//
+// git.Attributes already returns "" with no error when the tree has no
+// .gitattributes, so reaching this branch always means a real read failure.
+func TestEjecutarGateFallaCerradoSinAtributos(t *testing.T) {
+	worktree := t.TempDir()
+	correr := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = worktree
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		if salida, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, salida)
+		}
+	}
+	correr("init", "-q", "-b", "main")
+	correr("config", "core.hooksPath", "")
+
+	// A configured validation profile and a real HEAD are both required: the
+	// gate stops before the attribute read without them, and a test that never
+	// reaches the branch it names proves nothing.
+	if err := os.MkdirAll(filepath.Join(worktree, ".vas_sentinel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configuracion := "validation:\n  capabilities:\n    format:\n      command: \"true\"\n  profiles:\n    standard: [format]\n"
+	if err := os.WriteFile(filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), []byte(configuracion), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	correr("add", "-A")
+	correr("commit", "-qm", "first")
+
+	previo, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktree); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(previo) })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	original := leerAtributosGate
+	t.Cleanup(func() { leerAtributosGate = original })
+	llamado := false
+	leerAtributosGate = func(string) (string, error) {
+		llamado = true
+		return "", errors.New("simulated attribute read failure")
+	}
+
+	var salida bytes.Buffer
+	exit := ejecutarGate(&salida, worktree, []string{"--stage", "pre-commit"})
+
+	// The gate stops before this seam when configuration is missing, so a run
+	// that never reached it would prove nothing about the fail-closed branch.
+	if !llamado {
+		t.Fatalf("the gate never reached the attribute read, so this test proves nothing about the fail-closed branch; output: %q", salida.String())
+	}
+	if exit == 0 {
+		t.Errorf("gate exited 0 after an attribute read failure; it must not succeed on an under-classified plan. Output: %q", salida.String())
+	}
+	if !strings.Contains(salida.String(), "atributos") {
+		t.Errorf("the output must name the attribute failure, got: %q", salida.String())
 	}
 }

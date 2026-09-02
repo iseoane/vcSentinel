@@ -2,56 +2,38 @@ package git
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestDiffCommitForcesStablePrefixes covers what the plan tests cannot: they
-// feed PlanForProfile a hand-written diff, so an incorrect flag here would
-// leave them green while the production planner is starved. The planner
+// TestDiffCommitForcesStablePrefixes covers what the review-plan tests cannot:
+// they feed the plan derivation a hand-written diff, so an incorrect flag here
+// would leave them green while the production planner is starved. The planner
 // recognises a path by its "b/" prefix, and diff.noprefix or a custom prefix
 // changes that header, losing every added line with no error.
+//
+// It uses prepararRepoTemp, the package fixture, which changes the process
+// working directory because the helpers under test operate on it. That is the
+// documented convention here and the reason this package must not use
+// t.Parallel(); no test in it does.
 func TestDiffCommitForcesStablePrefixes(t *testing.T) {
-	dir := t.TempDir()
-	entorno := []string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + dir,
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-	}
-	correr := func(args ...string) {
+	repo := prepararRepoTemp(t)
+	_ = repo
+
+	escribirYCommitear := func(contenido, mensaje string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir, cmd.Env = dir, entorno
-		if salida, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, salida)
-		}
-	}
-	escribir := func(nombre, contenido string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, nombre), []byte(contenido), 0o644); err != nil {
+		if err := os.WriteFile("a.txt", []byte(contenido), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if salida, err := ejecutarGitSalida("add", "a.txt"); err != nil {
+			t.Fatalf("add: %v (%s)", err, salida)
+		}
+		if salida, err := ejecutarGitSalida("commit", "-qm", mensaje); err != nil {
+			t.Fatalf("commit: %v (%s)", err, salida)
+		}
 	}
-
-	correr("init", "-q", "-b", "main")
-	escribir("a.txt", "one\n")
-	correr("add", "a.txt")
-	correr("commit", "-qm", "first")
-	escribir("a.txt", "one\ntwo\n")
-	correr("add", "a.txt")
-	correr("commit", "-qm", "second")
-
-	previo, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chdir(previo) })
+	escribirYCommitear("one\n", "first")
+	escribirYCommitear("one\ntwo\n", "second")
 
 	for _, caso := range []struct{ nombre, clave, valor string }{
 		{"no configuration", "", ""},
@@ -60,8 +42,10 @@ func TestDiffCommitForcesStablePrefixes(t *testing.T) {
 	} {
 		t.Run(caso.nombre, func(t *testing.T) {
 			if caso.clave != "" {
-				correr("config", caso.clave, caso.valor)
-				defer correr("config", "--unset", caso.clave)
+				if salida, err := ejecutarGitSalida("config", caso.clave, caso.valor); err != nil {
+					t.Fatalf("config: %v (%s)", err, salida)
+				}
+				defer ejecutarGitSalida("config", "--unset", caso.clave)
 			}
 			commit, err := DiffCommit("HEAD")
 			if err != nil {
