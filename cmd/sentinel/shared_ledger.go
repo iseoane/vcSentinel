@@ -16,14 +16,16 @@ import (
 // that only because its two paths coincide. A linked worktree's gitDir is
 // <common-dir>/worktrees/<name>, so a review run there filed its record inside
 // the administrative directory `git worktree remove` deletes, and delegating
-// work to a writer in a dedicated worktree is the mandated workflow here. Five
-// review records were destroyed that way while the code they approved stayed
-// on main.
+// work to a writer in a dedicated worktree is the mandated workflow here, so
+// that was the normal path. FU-12 in docs/reingenieria/f0-deuda.md records the
+// measurement, including a review whose ficha landed in
+// .git/worktrees/fu10-ticket-04/vas-sentinel/.
 //
 // Fichas already written under a per-checkout ledger are not migrated and are
-// not read from here. They stay where they are, `runs prune` still reads them
-// so no execution stream loses its provenance, and the commands above simply
-// no longer see them.
+// not read from here. They stay where they are, `runs prune`, `status --prune`
+// and `review --prune` still enumerate every per-checkout ledger so no
+// execution stream loses its provenance, and the commands above simply no
+// longer see them.
 //
 // ObtenerGitCommonDir also isolates the Git environment, which ObtenerGitDirDe
 // does not. Sentinel runs inside its own pre-commit hook, where Git exports

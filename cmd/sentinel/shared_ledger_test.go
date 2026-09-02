@@ -22,8 +22,12 @@ import (
 func TestSharedReviewLedgerAnchorsOnTheCommonDirectory(t *testing.T) {
 	repo := repoGitTemporal(t)
 	enlazado := filepath.Join(t.TempDir(), "linked")
+	// repoGitTemporal already skips when git is absent, so a failure here is a
+	// real setup failure — permissions, a branch collision, a broken repository
+	// — and must fail. Skipping on any error would let this regression check
+	// never run and still report success.
 	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", "-b", "linked", enlazado).CombinedOutput(); err != nil {
-		t.Skipf("git worktree add is unavailable: %v\n%s", err, out)
+		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -51,5 +55,18 @@ func TestSharedReviewLedgerAnchorsOnTheCommonDirectory(t *testing.T) {
 	porCheckout := review.NuevoLedger(gitDirEnlazado).RutaFicha(sha)
 	if deEnlazado.RutaFicha(sha) == porCheckout {
 		t.Errorf("the shared ledger resolved the per-checkout path %s, which `git worktree remove` deletes", porCheckout)
+	}
+
+	// The expected path is named, not merely distinguished from the wrong one:
+	// the two assertions above also pass for a fixed or global path that agrees
+	// with itself and differs from this checkout.
+	commonDir, err := git.ObtenerGitCommonDir(enlazado)
+	if err != nil {
+		t.Fatalf("resolving the common directory: %v", err)
+	}
+	esperada := review.NuevoLedger(commonDir).RutaFicha(sha)
+	if deEnlazado.RutaFicha(sha) != esperada {
+		t.Errorf("the shared ledger resolved %s, want %s under the Git common directory",
+			deEnlazado.RutaFicha(sha), esperada)
 	}
 }

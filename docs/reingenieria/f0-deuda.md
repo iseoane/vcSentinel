@@ -1370,3 +1370,52 @@ regular-file shape is pinned everywhere; the `Lstat` guard is pinned only where
 the running platform lets the test create a symlink. There is no portable
 non-symlink shape that makes `Lstat` succeed while `ReadDir` answers
 `ErrNotExist`, so this is recorded rather than closed.
+
+### FU-17: a fix in one worktree can clear a block recorded in another
+
+Recorded 2026-09-02, from a finding against the commit that anchored the review
+ledger on the Git common directory.
+
+`registrarCorrecciones` (`cmd/sentinel/comandos_review.go`) walks every ficha in
+the ledger and marks as corrected any whose last verdict is `block` and whose
+findings name a file the `fix(` commit touches. There is no ancestry check and
+no branch scope: file-name overlap is the whole test.
+
+That logic did not change. Its reach did. The ledger used to hold only the
+fichas of the checkout that wrote them, so a `fix(` in a worktree could only
+clear that worktree's blocks. Now every checkout reads one ledger, so a `fix(`
+commit on one branch can clear a block recorded on an unrelated branch because
+both touched, say, `internal/review/ledger.go`.
+
+Sharing the ledger is correct and is not the thing to revert: the alternative
+was fichas dying with `git worktree remove`. What is missing is the scope the
+attribution never had to carry while the ledger was accidentally partitioned.
+
+Target: restrict correction attribution to commits reachable from the audited
+one, or persist enough scope in the ficha to tell two branches apart. Do not fix
+it by narrowing the file match; the defect is that a correction is attributed
+without asking whether the two commits are even on the same line of history.
+
+Priority: before the ledger holds fichas from several concurrent branches for
+long. It falsely clears blocks, which is the failure mode this register exists
+to keep visible.
+
+### FU-18: pre-existing worktree fichas became invisible, by decision
+
+Recorded 2026-09-02 alongside FU-17, from the same review.
+
+Anchoring `review`, `status` and `pr` on the common directory means the 65
+fichas sitting in the 12 linked worktrees are no longer read by those commands.
+The user decided this explicitly: nothing older is migrated, and T9.5 removes
+the published ones anyway. `runs prune`, `status --prune` and `review --prune`
+still enumerate every per-checkout ledger, so no execution stream loses its
+provenance and nothing is deleted.
+
+The cost is recorded rather than hidden: inside one of those worktrees,
+`review --all` now treats its already-audited commits as pending and audits them
+again, and a branch analysis there no longer sees the verdicts it recorded
+before the change.
+
+Not a target. It is the accepted consequence of a decision, and it is written
+here so a later observation of re-auditing is recognised instead of investigated
+as a new defect.
