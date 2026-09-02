@@ -282,9 +282,17 @@ func TestEjecutarGateFallaCerradoSinAtributos(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = worktree
-		cmd.Env = append(os.Environ(),
+		// Built from empty, not appended to os.Environ: appending keeps
+		// GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_*/VALUE_* pairs, which
+		// override the neutralisation the other variables state, and keeps a
+		// global commit.gpgSign or hook that would break setup on some hosts.
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_CONFIG_NOSYSTEM=1",
+		}
 		if salida, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v (%s)", args, err, salida)
 		}
@@ -337,8 +345,12 @@ func TestEjecutarGateFallaCerradoSinAtributos(t *testing.T) {
 	if !llamado {
 		t.Fatalf("the gate never reached the attribute read, so this test proves nothing about the fail-closed branch; output: %q", salida.String())
 	}
-	if exit == 0 {
-		t.Errorf("gate exited 0 after an attribute read failure; it must not succeed on an under-classified plan. Output: %q", salida.String())
+	// The exact code matters: accepting any non-zero would pass if the attribute
+	// failure were misreported as a validation or review failure, which would
+	// send the operator looking in the wrong place.
+	quiere := gate.CodigoSalida(gate.EstadoReviewInfrastructureError)
+	if exit != quiere {
+		t.Errorf("gate exited %d after an attribute read failure, want %d (review infrastructure error). Output: %q", exit, quiere, salida.String())
 	}
 	if !strings.Contains(salida.String(), "atributos") {
 		t.Errorf("the output must name the attribute failure, got: %q", salida.String())

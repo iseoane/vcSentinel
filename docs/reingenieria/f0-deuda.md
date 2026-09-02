@@ -1088,3 +1088,41 @@ injection surface.
 
 Priority: not blocking. No path in this repository triggers it today, so it is a
 correctness gap waiting for a filename rather than an active fault.
+
+### FU-14: half the detectors classify without the repository attributes
+
+Recorded 2026-09-02 while writing the ticket 05 regression that proves a
+successful `.gitattributes` read reaches the plan derivation. The test failed
+first for a reason worth keeping: marking a path `linguist-generated` removed
+`security_sensitive` and added `generated_code`, but left `behavior_change`
+present.
+
+`internal/change/caracteristicas.go` classifies paths through two different
+functions and never says why:
+
+- `Clasificar(ruta, reglas, e.Gitattributes)` honours the attributes. Used by
+  `admiteEvidenciaDeContenido` (line 80) and `detectarCodigoGenerado` (line 204).
+- `ClasificarPorRuta(ruta, reglas)` ignores them. Used by
+  `detectarCambioDeComportamiento` (line 151), `detectarCoberturaDeTests`
+  (line 166), and `contieneClase` (line 248), which is what `ci_cd` and
+  `infrastructure` read.
+
+So a path a repository declares generated is generated for the content
+detectors and still source for behaviour change, still counted when deciding
+whether a package has test coverage, and still classifiable as CI or
+infrastructure. A repository that marks a large generated tree
+`linguist-generated` gets `behavior_change` present on every regeneration, which
+is `elevated` at least, and `high` whenever the symbol graph is incomplete.
+
+The split is not obviously wrong in every case: `linguist-generated` is a
+presentation attribute about diff and language statistics, and one could argue
+behaviour changed even in generated output. But the two groups were not chosen,
+they diverged, and nothing records a rule.
+
+Target: decide once whether `linguist-generated` participates in classification
+at all, then use one function everywhere. If some detectors must stay
+attribute-blind, name them and say why at the call site. This entry exists
+because the answer must be recorded, not because one side is obviously right.
+
+Priority: not blocking. It changes classification for repositories that use the
+attribute; this one does not mark any tree generated today.
