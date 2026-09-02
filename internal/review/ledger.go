@@ -408,21 +408,29 @@ func (l *Ledger) EliminarFicha(sha string) error {
 // con los SHAs que sí llegó a eliminar. El caso del commit reescrito por
 // amend queda cubierto por TestLedgerPurgarHuerfanasDangling.
 func (l *Ledger) PurgarHuerfanas() ([]string, error) {
-	return l.PurgarHuerfanasCon(git.ContenidoEnAlgunRef)
+	return l.PurgarHuerfanasCon(func(sha string) (bool, error) {
+		return git.ContenidoEnAlgunRef(sha), nil
+	})
 }
 
 // PurgarHuerfanasCon es PurgarHuerfanas con el criterio de existencia
 // inyectado. Un llamador que purgue los ledgers de varios checkouts debe pasar
 // un criterio anclado al repositorio correcto: clasificar con el directorio de
 // trabajo del proceso convierte cada ficha viva de otro checkout en huérfana.
-func (l *Ledger) PurgarHuerfanasCon(existe func(sha string) bool) ([]string, error) {
+func (l *Ledger) PurgarHuerfanasCon(existe func(sha string) (bool, error)) ([]string, error) {
 	shas, err := l.ListarFichas()
 	if err != nil {
 		return nil, err
 	}
 	eliminados := []string{}
 	for _, sha := range shas {
-		if existe(sha) {
+		presente, err := existe(sha)
+		if err != nil {
+			// Abortar con lo ya borrado: preguntar y no poder responder nunca
+			// autoriza un borrado.
+			return eliminados, err
+		}
+		if presente {
 			continue
 		}
 		if err := l.EliminarFicha(sha); err != nil {

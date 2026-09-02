@@ -291,7 +291,7 @@ func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, err
 	if err := git.RepositorioUsable(worktree); err != nil {
 		return nil, err
 	}
-	existe := func(sha string) bool { return git.ContenidoEnAlgunRefDe(worktree, sha) }
+	existe := func(sha string) (bool, error) { return git.ContenidoEnAlgunRefDe(worktree, sha) }
 
 	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {

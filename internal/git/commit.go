@@ -198,17 +198,29 @@ func ContenidoEnAlgunRef(sha string) bool {
 // purgue los ledgers de varios checkouts a la vez y clasifique con el CWD
 // borraría fichas vivas en cuanto el proceso corriera desde otro repositorio,
 // porque un SHA legítimo de este repo no aparece en los refs de aquel.
-func ContenidoEnAlgunRefDe(worktree, sha string) bool {
+func ContenidoEnAlgunRefDe(worktree, sha string) (bool, error) {
+	// NINGÚN fallo se lee como ausencia. Es la propiedad que faltaba: mientras
+	// un error significaba "no está", cada variable de entorno que pudiera
+	// romper la consulta —un almacén de objetos ajeno, un repositorio
+	// redirigido— se convertía en un borrado de fichas vivas, y taparlas una a
+	// una solo cambiaba qué fallo llegaba a la regla equivocada.
+	//
+	// rev-parse separa los dos casos por código de salida: 1 es "este objeto no
+	// existe", que es el huérfano legítimo, y cualquier otro es un fallo real
+	// que debe abortar la purga en vez de decidirla.
+	if _, err := gitEn(worktree, "rev-parse", "--verify", "--quiet", sha+"^{commit}"); err != nil {
+		var salida *exec.ExitError
+		if errors.As(err, &salida) && salida.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("resolving %s in %s: %w", sha, worktree, err)
+	}
+	// El objeto existe, así que aquí un error ya no puede ser "no está".
 	salida, err := gitEn(worktree, "branch", "-a", "--contains", sha)
 	if err != nil {
-		// Un objeto desconocido hace fallar a `branch --contains`, y ése es
-		// precisamente el caso huérfano. Que un fallo signifique "no está" solo
-		// es admisible porque el llamador validó antes el repositorio con
-		// RepositorioUsable: sin esa comprobación, cualquier invocación rota
-		// borraría fichas vivas.
-		return false
+		return false, fmt.Errorf("checking containment of %s in %s: %w", sha, worktree, err)
 	}
-	return strings.TrimSpace(salida) != ""
+	return strings.TrimSpace(salida) != "", nil
 }
 
 // RepositorioUsable confirma que worktree resuelve a un repositorio Git. Un
@@ -218,6 +230,16 @@ func ContenidoEnAlgunRefDe(worktree, sha string) bool {
 func RepositorioUsable(worktree string) error {
 	if _, err := gitEn(worktree, "rev-parse", "--git-dir"); err != nil {
 		return fmt.Errorf("%s is not a usable git repository: %w", worktree, err)
+	}
+	// HEAD es el ancla, y hace falta porque el código de salida NO basta. Con
+	// un GIT_OBJECT_DIRECTORY que existe pero no contiene los objetos del
+	// repositorio, `rev-parse --verify --quiet <sha>` sale con 1, exactamente
+	// igual que un objeto de verdad desconocido: el repositorio se resuelve y
+	// sus objetos no. Un repositorio que no puede resolver su propio HEAD no
+	// está en condiciones de decidir si un commit sigue vivo, y sin esta
+	// comprobación respondería "no existe" a todos y vaciaría los ledgers.
+	if _, err := gitEn(worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+		return fmt.Errorf("%s cannot resolve its own HEAD, so it cannot answer whether a commit is still live: %w", worktree, err)
 	}
 	return nil
 }

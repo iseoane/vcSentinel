@@ -558,3 +558,40 @@ func TestPurgarHuerfanasNoMezclaRepositorios(t *testing.T) {
 			objetivo, ajeno, ficha, err)
 	}
 }
+
+// TestPurgarHuerfanasNoBorraCuandoNoPuedePreguntar is the property the previous
+// four rounds kept missing one hole at a time. While any command failure meant
+// "absent", every environment variable that could break the query became a
+// deletion of live records, and closing them one by one only changed which
+// failure reached the wrong rule.
+//
+// An unrelated object store is the case the review named: rev-parse and the
+// common-dir lookup both still succeed, so the repository looks perfectly
+// usable, and only the object read fails. The purge must refuse to decide
+// rather than decide wrongly.
+func TestPurgarHuerfanasNoBorraCuandoNoPuedePreguntar(t *testing.T) {
+	worktree := repoConWorktreeEnlazado(t)
+	gitDir, err := git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viva := revisionDeWorktree(t, worktree, "HEAD")
+	if err := review.NuevoLedger(gitDir).GuardarRevision(viva, "live", "b", "m", review.Revision{At: time.Now(), Result: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// An empty object store: the repository resolves, its objects do not.
+	vacio := filepath.Join(t.TempDir(), "sin-objetos")
+	if err := os.MkdirAll(vacio, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_OBJECT_DIRECTORY", vacio)
+
+	_, err = purgarHuerfanas(worktree, gitDir)
+	if err == nil {
+		t.Errorf("purgarHuerfanas() returned no error while it could not read the repository's objects; a question it cannot answer must never authorise a deletion")
+	}
+	if ficha, lerr := review.NuevoLedger(gitDir).LeerFicha(viva); lerr != nil || ficha == nil {
+		t.Errorf("the ficha of a live commit was deleted because the object store was unreadable (ficha=%v, err=%v)", ficha, lerr)
+	}
+}
