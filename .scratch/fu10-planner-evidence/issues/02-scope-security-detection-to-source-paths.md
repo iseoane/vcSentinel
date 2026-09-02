@@ -7,7 +7,7 @@ credential handling still reports it.
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent.
+**Status:** complete.
 
 ## Why this shape
 
@@ -42,20 +42,54 @@ marks the characteristic present regardless of what its content says.
 
 **Acceptance criteria:**
 
-- [ ] A focused RED test exists before the production change, and it fails for
+- [x] A focused RED test exists before the production change, and it fails for
       the stated reason rather than for a missing symbol.
-- [ ] A documentation-class file whose added lines contain `cached_input_tokens`
+- [x] A documentation-class file whose added lines contain `cached_input_tokens`
       no longer marks `security_sensitive` present.
-- [ ] A generated-class file whose added lines contain a security key no longer
+- [x] A generated-class file whose added lines contain a security key no longer
       marks it present.
-- [ ] A source-class file whose added lines contain `accessToken` or
+- [x] A source-class file whose added lines contain `accessToken` or
       `authToken` still marks it present.
-- [ ] A config-class file whose added lines contain a security key still marks
+- [x] A config-class file whose added lines contain a security key still marks
       it present, proving the narrowing is a deny-list and not source-only.
-- [ ] Detection driven by sensitive path patterns is unchanged and proved
+- [x] Detection driven by sensitive path patterns is unchanged and proved
       unchanged by test.
-- [ ] `sentinel explain` on `a1a5803..780c900` no longer reports
+- [x] `sentinel explain` on `a1a5803..780c900` no longer reports
       `high por security_sensitive presente`.
-- [ ] `go build ./...`, `go vet ./...`, the focused package tests, and the full
+- [x] `go build ./...`, `go vet ./...`, the focused package tests, and the full
       suite pass, with the exact commands and outcomes recorded.
-- [ ] `sentinel review` of the commit completes with no unresolved finding.
+- [x] `sentinel review` of the commit completes with no unresolved finding.
+
+## Evidence
+
+- RED first: the new detector tests failed on the three prose and generated
+  cases and passed on the two positive ones, so the test was not green by
+  inversion. `go test ./internal/change -run TestSecuritySensitive`.
+- GREEN after the change: `go test ./internal/change` passes.
+- `go build ./...`, `go vet ./...`, and `go test ./...` all pass.
+- `sentinel explain a1a5803..780c900` now reports
+  `none por kind=documentation sin caracteristicas de riesgo`. Before the change
+  it reported `high por security_sensitive presente`.
+- The word-boundary decision was measured, not assumed. Against the real key
+  list, `\btoken\b` rejects `cached_input_tokens` and `accessToken` and
+  `refreshTokens`, and accepts `token = os.Getenv(...)` and `"auth":`.
+- Path classification was measured before the change:
+  `docs/reingenieria/evidence/t9-4a-metrics.json` classifies as `docs`, and it
+  is the only file in `780c900`.
+- Guardian: 78 authored lines, `PEQUENO`. The staged candidate warned about two
+  cohesion clusters (code plus this ticket's rationale correction); the warning
+  is read-only and the rationale belongs with the change it justifies.
+- Implementation commit: `ab3acee`.
+- `sentinel review ab3acee` scheduled five dimensions and returned `warn`:
+  `security warn`, and `spec`, `tests`, `logic`, `design` all `ok`. Its single
+  WARNING is recorded and dispositioned as FU-11 in the debt ficha; the premise
+  holds but the remedy is a new capability, so the change was not reverted.
+- The reviewer ran without CodeGraph context (`dirty_worktree` at invocation
+  time). The finding quotes the real code and was verified independently
+  against it.
+
+## Follow-ups
+
+- FU-11: no signal survives the class filter for a credential committed into
+  prose. Recorded in the debt ficha with target and reason. Does not block
+  tickets 03 to 06.

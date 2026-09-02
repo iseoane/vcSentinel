@@ -947,3 +947,47 @@ If content-based detection belongs in review planning, the planner needs the
 added lines; if it does not, `explain` should stop reporting a risk level that
 review will not act on. Do not fix this by widening one detector: the defect is
 that one derivation runs on two different inputs.
+
+### FU-11: no signal survives the class filter for a credential committed into prose
+
+Recorded 2026-09-02 while closing ticket 02 of the FU-10 sequence, from the
+`security` WARNING that `sentinel review ab3acee` raised against its own
+change (confidence 0.9, `internal/change/caracteristicas.go:111`).
+
+The premise holds. `detectarSeguridadSensible` now ignores added lines in
+`ClaseDocs` and `ClaseGenerated` paths, so a real credential pasted into a
+runbook reports `security_sensitive=absent` unless the path happens to match
+`PatronesSensibles`. The path-pattern check is the only independent signal
+left for those classes.
+
+Two limits narrow the exposure the reviewer described, and both were checked
+against `ReglasPorDefecto`:
+
+- "Generated configuration" barely arises by default. `**/*.json`, `**/*.yaml`,
+  `**/*.yml` and `**/*.toml` are `ClaseConfig`, which the filter does **not**
+  exclude, so they are still scanned. The default `ClaseGenerated` globs are
+  `**/*.pb.go`, `**/*_gen.go`, `**/*.lock` and `go.sum`. Injected `Reglas` can
+  still classify anything as generated, so the branch is real, just narrow.
+- Documentation is the genuine residual, and it is the class the filter was
+  added for.
+
+Not treated as a regression, deliberately. Before `ab3acee` this detector was
+not secret detection: it matched the substring `auth` anywhere in any added
+line, which is what raised a documentation commit to `high` in the first place
+(FU-10). Removing a substring match over prose loses no working capability;
+the repository has never had a secret scanner.
+
+The remedy the reviewer proposes — high-confidence credential-value patterns
+that survive the class filter, or a separate exposed-secret signal independent
+of path class — is a new capability, not a repair. It needs its own decision
+about what counts as a credential value, its own false-positive budget, and its
+own product surface. Folding it into a detector-narrowing commit would have
+been exactly the "widen one detector" move FU-10 forbids.
+
+Target: decide whether Sentinel owns exposed-secret detection at all. If it
+does, the signal must be independent of `security_sensitive`, because the two
+answer different questions: one schedules a review, the other reports an
+incident. If it does not, say so in the ficha and stop treating the substring
+heuristic as if it were a scanner.
+
+Priority: after the FU-10 sequence closes. It does not block tickets 03 to 06.
