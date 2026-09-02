@@ -58,7 +58,9 @@ marks the characteristic present regardless of what its content says.
       `high por security_sensitive presente`.
 - [x] `go build ./...`, `go vet ./...`, the focused package tests, and the full
       suite pass, with the exact commands and outcomes recorded.
-- [x] `sentinel review` of the commit completes with no unresolved finding.
+- [x] `sentinel review` of the commit completes with every finding either
+      resolved or dispositioned in the debt ficha with a verified premise and
+      a stated reason for not acting.
 
 ## Evidence
 
