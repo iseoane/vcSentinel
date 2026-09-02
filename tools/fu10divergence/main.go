@@ -67,13 +67,17 @@ func main() {
 	ref := flag.String("ref", "HEAD", "tip to walk back from")
 	flag.Parse()
 
-	shas, merges, err := commitsSinMerge(*ref, *ventana)
+	// Resolve the tip to a SHA before walking, and walk from that SHA: reading
+	// the identity afterwards would let a ref that moves in between label the
+	// report with a tip it never measured.
+	tip, err := git("rev-parse", *ref)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	tip = strings.TrimSpace(tip)
 
-	sha, err := git("rev-parse", *ref)
+	shas, merges, err := commitsSinMerge(tip, *ventana)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -81,7 +85,7 @@ func main() {
 
 	out := informe{
 		Ref:            *ref,
-		RefSHA:         strings.TrimSpace(sha),
+		RefSHA:         tip,
 		Requested:      len(shas),
 		MergesExcluded: merges,
 		// Bundle scheduling dedupes by bundle name, not by dimension, so at
@@ -139,7 +143,10 @@ func medir(sha string) (medida, error) {
 	if err != nil {
 		return medida{}, err
 	}
-	gitattributes, _ := git("show", sha+":.gitattributes")
+	gitattributes, err := leerGitattributes(sha)
+	if err != nil {
+		return medida{}, err
+	}
 
 	plan := review.PlanForProfile(perfil, rutas)
 
@@ -150,7 +157,10 @@ func medir(sha string) (medida, error) {
 	riesgoCompartido := risk.Evaluar(perfil, compartidas)
 	bundlesCompartidos := review.BundlesForRisk(riesgoCompartido, compartidas)
 
-	asunto, _ := git("show", "-s", "--format=%s", sha)
+	asunto, err := git("show", "-s", "--format=%s", sha)
+	if err != nil {
+		return medida{}, fmt.Errorf("reading the subject of %s: %w", sha, err)
+	}
 	invPlanner, dimPlanner := contar(plan.Bundles)
 	invCompartido, dimCompartido := contar(bundlesCompartidos)
 
@@ -171,6 +181,7 @@ func medir(sha string) (medida, error) {
 // AuditarCommit deduplica por nombre de bundle, no por dimensión, así que una
 // dimensión programada por dos bundles se audita dos veces.
 func contar(bundles []review.ReviewBundle) (invocaciones int, dimensiones []string) {
+	dimensiones = []string{} // an empty plan must serialize as [], not null
 	for _, bundle := range bundles {
 		invocaciones += len(bundle.Dimensions)
 		dimensiones = append(dimensiones, bundle.Dimensions...)
@@ -288,6 +299,20 @@ func lineasAnadidas(sha string, rutas []string) (map[string][]string, error) {
 		}
 	}
 	return resultado, nil
+}
+
+// leerGitattributes distingue ausencia de fallo: `git show <sha>:.gitattributes`
+// falla igual en ambos casos, y tratar un fallo de lectura como "no hay
+// atributos" degradaría la evidencia en silencio.
+func leerGitattributes(sha string) (string, error) {
+	if _, err := git("cat-file", "-e", sha+":.gitattributes"); err != nil {
+		return "", nil // absent in this tree, which is the common case
+	}
+	contenido, err := git("show", sha+":.gitattributes")
+	if err != nil {
+		return "", fmt.Errorf("reading .gitattributes at %s: %w", sha, err)
+	}
+	return contenido, nil
 }
 
 func git(args ...string) (string, error) {

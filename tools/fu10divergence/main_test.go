@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -35,11 +36,20 @@ func TestContarKeepsDuplicateDimensions(t *testing.T) {
 }
 
 // TestContarOnNoBundles pins the none-risk arm: no bundle means no invocation,
-// which is the state every documentation commit is in today.
+// which is the state every documentation commit is in today. The empty plan
+// must serialize as [] and not null, because the artifact is read by script and
+// a null there forces every consumer to special-case it.
 func TestContarOnNoBundles(t *testing.T) {
 	invocaciones, dimensiones := contar(nil)
 	if invocaciones != 0 || len(dimensiones) != 0 {
 		t.Errorf("empty plan = (%d, %v), want (0, [])", invocaciones, dimensiones)
+	}
+	codificado, err := json.Marshal(dimensiones)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(codificado) != "[]" {
+		t.Errorf("empty plan serializes as %s, want []", codificado)
 	}
 }
 
