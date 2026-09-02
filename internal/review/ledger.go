@@ -265,6 +265,13 @@ type Ficha struct {
 // Ledger da acceso a las fichas por SHA dentro del common-dir de Git.
 type Ledger struct {
 	dir string
+	// borrarBloqueo libera el archivo de bloqueo. Es un campo, no una llamada
+	// directa, porque la rama de fallo decide si una mutación ya hecha se
+	// reporta o se pierde y no hay forma de provocarla desde la API pública:
+	// ocurre dentro de la sección crítica. Per-Ledger and not a package
+	// variable, so a fixture that injects a failure cannot reach another
+	// instance or another test running beside it.
+	borrarBloqueo func(string) error
 }
 
 // NuevoLedger crea un ledger anclado a <gitDir>/vas-sentinel. No crea el
@@ -278,7 +285,7 @@ type Ledger struct {
 // exception is `runs prune`, which enumerates every per-checkout ledger on
 // purpose so no execution stream loses its provenance.
 func NuevoLedger(gitDir string) *Ledger {
-	return &Ledger{dir: filepath.Join(gitDir, "vas-sentinel")}
+	return &Ledger{dir: filepath.Join(gitDir, "vas-sentinel"), borrarBloqueo: os.Remove}
 }
 
 // RutaFicha devuelve la ruta del archivo de la ficha de un SHA.
@@ -353,17 +360,15 @@ const esperaMaximaBloqueoFicha = 30 * time.Second
 const intervaloReintentoBloqueoFicha = 25 * time.Millisecond
 
 // ErrBloqueoNoLiberado marks the one failure that must not be read as "the
-// mutation did not happen": the protected operation SUCCEEDED and only its lock
-// file could not be removed. A caller that records what it changed needs to
-// tell the two apart, because a deletion reported as a failure leaves the ficha
-// gone and its events pointing at it.
-var ErrBloqueoNoLiberado = errors.New("the review ficha was written but its lock could not be released")
-
-// borrarBloqueo libera el archivo de bloqueo. Es una variable, no una llamada
-// directa, por la misma razón que leerAtributosGate en cmd/sentinel: la rama de
-// fallo decide si un borrado ya hecho se reporta o se pierde, y no hay forma de
-// provocarla desde la API pública porque ocurre dentro de la sección crítica.
-var borrarBloqueo = os.Remove
+// mutation did not happen": the protected operation COMPLETED, and only the
+// lock protocol around it broke. It says nothing about which mutation ran, so
+// it is equally correct for a write, for a deletion, and for a callback that
+// decided to change nothing — what a caller may infer is exactly that the
+// operation reached its own end.
+//
+// The distinction has to exist because a deletion reported as a plain failure
+// leaves the ficha gone and its events pointing at it.
+var ErrBloqueoNoLiberado = errors.New("the review ficha operation completed but its lock protocol broke")
 
 // conFichaBloqueada ejecuta fn manteniendo un bloqueo exclusivo sobre la ficha
 // de un SHA.
@@ -406,13 +411,20 @@ func (l *Ledger) conFichaBloqueada(sha string, fn func() error) (err error) {
 			// replacing it with a cleanup complaint would hide the real cause;
 			// the stale lock still surfaces on the next writer, with its path.
 			defer func() {
-				// An already-absent lock is a released lock: someone removed it
-				// out of protocol, which is not this call's failure.
-				errBorrar := borrarBloqueo(ruta)
-				if errBorrar == nil || errors.Is(errBorrar, os.ErrNotExist) || err != nil {
+				errBorrar := l.borrarBloqueo(ruta)
+				if errBorrar == nil || err != nil {
 					return
 				}
-				err = fmt.Errorf("%w (%s of %s): %v", ErrBloqueoNoLiberado, ruta, sha, errBorrar)
+				// An already-absent lock is NOT quietly fine. Nothing else in
+				// this package removes it, so its disappearance means mutual
+				// exclusion was broken while fn ran and another writer may have
+				// entered: reporting success there would hide a lost update
+				// behind the one signal that could have revealed it.
+				//
+				// The cause is wrapped, not formatted: a caller inspecting the
+				// filesystem failure with errors.Is or errors.As is exactly the
+				// caller this error exists for.
+				err = fmt.Errorf("%w (%s of %s): %w", ErrBloqueoNoLiberado, ruta, sha, errBorrar)
 			}()
 			return fn()
 		}

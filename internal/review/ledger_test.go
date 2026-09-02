@@ -961,13 +961,12 @@ func TestPurgarHuerfanasReportaLaFichaBorradaAunqueFalleElBloqueo(t *testing.T) 
 
 	// Installed AFTER seeding: the seed writes under the same lock, and failing
 	// its release would abort the fixture instead of exercising the purge.
-	original := borrarBloqueo
+	original := ledger.borrarBloqueo
 	fallo := errors.New("the lock file could not be removed")
-	borrarBloqueo = func(ruta string) error {
+	ledger.borrarBloqueo = func(ruta string) error {
 		_ = original(ruta) // still released, so the fixture leaks nothing
 		return fallo
 	}
-	t.Cleanup(func() { borrarBloqueo = original })
 
 	eliminados, err := ledger.PurgarHuerfanas(func(string) (bool, error) {
 		return false, nil // orphan: the purge must delete it
@@ -992,12 +991,11 @@ func TestPurgarHuerfanasReportaLaFichaBorradaAunqueFalleElBloqueo(t *testing.T) 
 func TestGuardarRevisionNoOcultaElBloqueoNoLiberado(t *testing.T) {
 	ledger := NuevoLedger(t.TempDir())
 	const sha = "5555555555555555555555555555555555555555"
-	original := borrarBloqueo
-	borrarBloqueo = func(ruta string) error {
+	original := ledger.borrarBloqueo
+	ledger.borrarBloqueo = func(ruta string) error {
 		_ = original(ruta)
 		return errors.New("the lock file could not be removed")
 	}
-	t.Cleanup(func() { borrarBloqueo = original })
 
 	err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
 	if !errors.Is(err, ErrBloqueoNoLiberado) {
@@ -1028,5 +1026,35 @@ func TestMarcarCorregidaFallaConUnLedgerColgante(t *testing.T) {
 	err := NuevoLedger(gitDir).MarcarCorregida("6666666666666666666666666666666666666666", "elfix")
 	if err == nil {
 		t.Fatalf("MarcarCorregida() error = nil; want a failure: a ledger path pointing nowhere is a broken ledger, not one that never stored a ficha, and reporting success drops the correction")
+	}
+}
+
+// TestBloqueoDesaparecidoNoSeReportaComoExito covers the case that used to be
+// swallowed: nothing in this package removes a lock but its own holder, so a
+// lock that is already gone when the release runs means mutual exclusion broke
+// while the operation was running and another writer may have entered.
+// Reporting that as a clean release hid a possible lost update behind the one
+// signal that could have revealed it.
+func TestBloqueoDesaparecidoNoSeReportaComoExito(t *testing.T) {
+	ledger := NuevoLedger(t.TempDir())
+	const sha = "7777777777777777777777777777777777777777"
+	original := ledger.borrarBloqueo
+	ledger.borrarBloqueo = func(ruta string) error {
+		if err := original(ruta); err != nil {
+			return err
+		}
+		// Second removal: reproduces "the lock was already gone" exactly as the
+		// filesystem reports it, without racing anything.
+		return original(ruta)
+	}
+
+	err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
+	if !errors.Is(err, ErrBloqueoNoLiberado) {
+		t.Fatalf("GuardarRevision() error = %v, want one wrapping ErrBloqueoNoLiberado", err)
+	}
+	// The cause travels wrapped, not formatted: a caller that needs to know the
+	// lock vanished rather than resisted removal is the caller this error is for.
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("GuardarRevision() error = %v, want the underlying filesystem cause inspectable with errors.Is", err)
 	}
 }
