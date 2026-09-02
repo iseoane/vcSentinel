@@ -76,8 +76,8 @@ func TestDefaultsPerfiles(t *testing.T) {
 			}
 		}
 	}
-	if cfg.Review.Timeout != 300*time.Second || cfg.Review.Parallel != 2 {
-		t.Errorf("defaults review = %v/%d, esperado 300s/2", cfg.Review.Timeout, cfg.Review.Parallel)
+	if cfg.Review.Timeout != 900*time.Second || cfg.Review.Parallel != 2 {
+		t.Errorf("review defaults = %v/%d, expected 900s/2", cfg.Review.Timeout, cfg.Review.Parallel)
 	}
 }
 
@@ -175,8 +175,8 @@ func TestTimeoutInvalidoSeIgnora(t *testing.T) {
 		"review:\n  timeout: \"mucho\"\n  parallel: 0\n")
 
 	cfg := CargarConfiguracionLocal(worktree)
-	if cfg.Review.Timeout != 300*time.Second {
-		t.Errorf("Timeout = %v, esperado default 300s", cfg.Review.Timeout)
+	if cfg.Review.Timeout != 900*time.Second {
+		t.Errorf("Timeout = %v, expected default 900s", cfg.Review.Timeout)
 	}
 	if cfg.Review.Parallel != 2 {
 		t.Errorf("Parallel = %d, esperado default 2", cfg.Review.Parallel)
