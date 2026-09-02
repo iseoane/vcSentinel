@@ -2066,6 +2066,12 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 			t.Fatalf("%s = absent without attributes; the fixture no longer exercises the split", nombre)
 		}
 	}
+	// Without the attribute the path is ordinary source. Omitting this would let
+	// an implementation that always emits generated_code pass while
+	// misclassifying every source change.
+	if caracteristicaPresente(sin.Characteristics, "generated_code") {
+		t.Fatalf("generated_code = present without attributes; the attribute is not what produces it")
+	}
 
 	con := PlanForProfile(profile, paths, diff, "internal/api/wire.go linguist-generated\n")
 	if caracteristicaPresente(con.Characteristics, "security_sensitive") {
@@ -2076,5 +2082,15 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	}
 	if !caracteristicaPresente(con.Characteristics, "behavior_change") {
 		t.Error("behavior_change no longer survives linguist-generated. That is FU-14 being resolved: update the debt entry and this characterisation together, do not delete the assertion")
+	}
+	// The characteristic is only half of what FU-14 costs. Asserting it alone
+	// would let a regression that stops translating behavior_change into
+	// scheduled work pass unnoticed, and the scheduling is the part that spends
+	// agent invocations.
+	if len(con.Bundles) == 0 {
+		t.Errorf("a generated path with a surviving behavior_change scheduled nothing; risk was %q (%s)", con.Risk.Nivel, con.Risk.Explicacion)
+	}
+	if !hasBundle(con.Bundles, BundleCorrectness) {
+		t.Errorf("scheduled bundles %+v do not include %q", con.Bundles, BundleCorrectness)
 	}
 }
