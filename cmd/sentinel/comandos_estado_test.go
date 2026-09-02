@@ -596,19 +596,17 @@ func TestPurgarHuerfanasNoBorraCuandoNoPuedePreguntar(t *testing.T) {
 	}
 }
 
-// TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar pins the half of the
-// partial-result contract the outer function could not fix on its own. The
-// per-ledger loop deletes fichas directory by directory, so when one of them
-// fails the earlier ones are already gone. Returning nil there dropped them:
-// purgarHuerfanasConEventos cleans events from that very list, so the events of
-// the deleted fichas survived pointing at records the command had removed, and
-// the operator was told only that the purge failed.
+// repoConLedgerIrrompible builds the fixture both partial-result tests need: a
+// repository with a linked worktree, one orphan ficha in the common directory
+// that the purge can delete, and one in the worktree whose path is a non-empty
+// directory, which is listed like any ficha and refuses to be removed.
 //
-// The failure is staged with a file shape rather than a permission bit, which
-// is a no-op under root: a ficha whose path is a non-empty directory is listed
-// like any other and refuses to be removed.
-func TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar(t *testing.T) {
-	worktree := t.TempDir()
+// The failure is a file shape and not a permission bit, which is a no-op under
+// root. It returns the worktree, the main gitDir and the SHA that must survive
+// in the result.
+func repoConLedgerIrrompible(t *testing.T) (worktree, gitDirPrincipal, borrable string) {
+	t.Helper()
+	worktree = t.TempDir()
 	correr := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
@@ -631,7 +629,8 @@ func TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar(t *testing.T) {
 	enlazado := filepath.Join(t.TempDir(), "linked")
 	correr("worktree", "add", "-q", "--detach", enlazado)
 
-	gitDirPrincipal, err := git.ObtenerGitDirDe(worktree)
+	var err error
+	gitDirPrincipal, err = git.ObtenerGitDirDe(worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,16 +641,27 @@ func TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar(t *testing.T) {
 
 	// The common directory is visited first, so this one is deleted before the
 	// loop reaches the ledger it cannot purge.
-	const borrable = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	borrable = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if err := review.NuevoLedger(gitDirPrincipal).GuardarRevision(borrable, "fixture", "b", "m",
 		review.Revision{At: time.Now(), Result: review.VerdictOK}); err != nil {
 		t.Fatal(err)
 	}
-	const irremovible = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	ruta := review.NuevoLedger(gitDirEnlazado).RutaFicha(irremovible)
+	ruta := review.NuevoLedger(gitDirEnlazado).RutaFicha("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err := os.MkdirAll(filepath.Join(ruta, "ocupado"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return worktree, gitDirPrincipal, borrable
+}
+
+// TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar pins the half of the
+// partial-result contract the outer function could not fix on its own. The
+// per-ledger loop deletes fichas directory by directory, so when one of them
+// fails the earlier ones are already gone. Returning nil there dropped them:
+// purgarHuerfanasConEventos cleans events from that very list, so the events of
+// the deleted fichas survived pointing at records the command had removed, and
+// the operator was told only that the purge failed.
+func TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar(t *testing.T) {
+	worktree, gitDirPrincipal, borrable := repoConLedgerIrrompible(t)
 
 	porDirectorio, err := purgarHuerfanasPorLedger(worktree, gitDirPrincipal)
 	if err == nil {
@@ -663,5 +673,21 @@ func TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar(t *testing.T) {
 	}
 	if ficha, lerr := review.NuevoLedger(gitDirPrincipal).LeerFicha(borrable); lerr != nil || ficha != nil {
 		t.Errorf("the ficha reported as deleted is still readable (ficha=%v, err=%v); the fixture no longer exercises the case", ficha, lerr)
+	}
+}
+
+// TestPurgarHuerfanasDevuelveLoYaBorradoAlFallar holds the sibling facade to the
+// same contract. Two facades over one primitive that disagree about what a
+// failure returns are a trap: the safe one reads as proof that the other is
+// safe too, and this one flattens the very map the other returns.
+func TestPurgarHuerfanasDevuelveLoYaBorradoAlFallar(t *testing.T) {
+	worktree, gitDirPrincipal, borrable := repoConLedgerIrrompible(t)
+
+	eliminados, err := purgarHuerfanas(worktree, gitDirPrincipal)
+	if err == nil {
+		t.Fatalf("purgarHuerfanas() error = nil; want the ledger it could not purge reported")
+	}
+	if !slices.Contains(eliminados, borrable) {
+		t.Errorf("purgarHuerfanas() = %v, want it to contain %q, which it deleted before the failure", eliminados, borrable)
 	}
 }

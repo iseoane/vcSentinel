@@ -262,15 +262,16 @@ func aplicarTimeoutSegundos(cfg config.Config, segundos int) config.Config {
 // ledgers. Decidir qué conservar mirando trece y borrar en uno deja la
 // contabilidad de la cascada mal (FU-12).
 func purgarHuerfanas(worktree, gitDir string) ([]string, error) {
-	porDirectorio, err := purgarHuerfanasPorLedger(worktree, gitDir)
-	if err != nil {
-		return nil, err
-	}
+	porDirectorio, errEnumeracion := purgarHuerfanasPorLedger(worktree, gitDir)
+	// Same partial-result contract as purgarHuerfanasConEventos, and stated
+	// here rather than left implicit: two facades over one primitive that
+	// disagree about what a failure returns are a trap, because the safe one
+	// reads as proof that the other is safe too.
 	eliminados := []string{}
 	for _, dir := range slices.Sorted(maps.Keys(porDirectorio)) {
 		eliminados = append(eliminados, porDirectorio[dir]...)
 	}
-	return eliminados, nil
+	return eliminados, errEnumeracion
 }
 
 // purgarHuerfanasPorLedger purga cada ledger del repositorio y devuelve los
@@ -337,9 +338,6 @@ func purgarHuerfanasConEventos(worktree, gitDir string) ([]string, error) {
 	// ledgers could not be enumerated, so returning nil here dropped the SHAs
 	// it had already removed: their events survived pointing at fichas the
 	// command had silently deleted, and the operator was told only "it failed".
-	if porDirectorio == nil {
-		return nil, errEnumeracion
-	}
 	eliminados := []string{}
 	// Los eventos se limpian en el MISMO directorio en el que estaba la ficha.
 	// events.jsonl vive por gitDir igual que el ledger, así que borrar las
@@ -371,6 +369,33 @@ func limpiarEventos(dir string, purgados []string) error {
 		return fmt.Errorf("fichas purgadas pero falló limpiar sus eventos en %s: %w", dir, err)
 	}
 	return nil
+}
+
+// ejecutarPurgaYReportar corre la purga de --prune y presenta su resultado. Los
+// dos manejadores que la ofrecen, status y review, comparten esta función en vez
+// de repetir la política: la distinción entre un resultado vacío y uno parcial
+// decide si se imprime una conclusión verificada, y dos copias de esa regla se
+// desincronizan en cuanto una se toca.
+//
+// Devuelve el exit code en vez de llamar a os.Exit para que la decisión siga
+// siendo del llamador.
+func ejecutarPurgaYReportar(worktree, gitDir string, jsonOut bool) int {
+	eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
+	if err != nil {
+		// Only what the purge actually deleted is reported, and only if it
+		// deleted anything. reportarPurga's empty case prints a VERIFIED
+		// conclusion — "no orphans exist, every SHA is reachable" — and a purge
+		// that failed never established that. Its JSON form says the same with
+		// an empty list. The failure goes to stderr so --json still emits at
+		// most one parseable object on stdout.
+		if len(eliminados) > 0 {
+			reportarPurga(gitDir, eliminados, jsonOut, worktree)
+		}
+		fmt.Fprintf(os.Stderr, "? No se pudieron purgar todas las fichas huérfanas: %v\n", err)
+		return 1
+	}
+	reportarPurga(gitDir, eliminados, jsonOut, worktree)
+	return 0
 }
 
 // reportarPurga muestra el resultado de purgarHuerfanasConEventos en texto o
@@ -439,22 +464,7 @@ func ejecutarStatus(worktree string, args []string) {
 	// takes that resolver as a seam. Adding one is the fix; until then, moving
 	// the shared ledger above this block silently restores the regression.
 	if flags.prune {
-		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
-		if err != nil {
-			// Only what the purge actually deleted is reported, and only if it
-			// deleted anything. reportarPurga's empty case prints a VERIFIED
-			// conclusion — "no orphans exist, every SHA is reachable" — and a
-			// purge that failed never established that. Its JSON form says the
-			// same with an empty list. The failure goes to stderr so --json
-			// still emits at most one parseable object on stdout.
-			if len(eliminados) > 0 {
-				reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
-			}
-			fmt.Fprintf(os.Stderr, "? No se pudieron purgar todas las fichas huérfanas: %v\n", err)
-			os.Exit(1)
-		}
-		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
-		os.Exit(0)
+		os.Exit(ejecutarPurgaYReportar(worktree, gitDir, flags.jsonOut))
 	}
 
 	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
