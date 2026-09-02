@@ -152,3 +152,49 @@ func TestDetectarCaracteristicasIncluyeTodosLosDetectores(t *testing.T) {
 		t.Fatalf("características = %d, quiere 10", len(got))
 	}
 }
+
+// TestSecuritySensitiveIgnoresProseAndGeneratedContent pins the false positive
+// FU-10 demonstrates. The detector scanned the added lines of every path, so a
+// metrics artifact under docs/ holding "cached_input_tokens" raised the
+// characteristic and, through it, a high risk level for a documentation-only
+// commit. Documentation is prose and generated files are output, so neither is
+// evidence of credential handling. Config and infrastructure paths are not
+// excluded: they genuinely can hold credentials, so the narrowing is a
+// deny-list rather than an allow-list of source alone.
+func TestSecuritySensitiveIgnoresProseAndGeneratedContent(t *testing.T) {
+	casos := []struct {
+		name string
+		path string
+		line string
+		want EstadoCaracteristica
+	}{
+		{"documentation artifact", "docs/reingenieria/evidence/t9-4a-metrics.json", `  "cached_input_tokens": 12,`, CaracteristicaAusente},
+		{"markdown prose", "docs/guia.md", "the reviewer receives an auth token", CaracteristicaAusente},
+		{"generated file", "internal/api/service.pb.go", "type TokenRequest struct {", CaracteristicaAusente},
+		{"source identifier", "internal/session/session.go", "\taccessToken := os.Getenv(\"X\")", CaracteristicaPresente},
+		{"config key", "config/app.json", `  "password": "changeme",`, CaracteristicaPresente},
+	}
+	for _, caso := range casos {
+		entrada := EntradaCaracteristicas{
+			Rutas:          []string{caso.path},
+			LineasAnadidas: map[string][]string{caso.path: {caso.line}},
+		}
+		if got := detectarSeguridadSensible(entrada).Estado; got != caso.want {
+			t.Errorf("%s (%s) = %q, want %q", caso.name, caso.path, got, caso.want)
+		}
+	}
+}
+
+// TestSecuritySensitivePathPatternsSurviveTheClassFilter keeps the two inputs
+// independent: a declared sensitive path marks the characteristic present
+// whatever its class and whatever its content says.
+func TestSecuritySensitivePathPatternsSurviveTheClassFilter(t *testing.T) {
+	entrada := EntradaCaracteristicas{
+		Rutas:             []string{"docs/auth/notas.md"},
+		LineasAnadidas:    map[string][]string{"docs/auth/notas.md": {"nothing interesting here"}},
+		PatronesSensibles: []string{"**/auth/**"},
+	}
+	if got := detectarSeguridadSensible(entrada).Estado; got != CaracteristicaPresente {
+		t.Errorf("declared sensitive path = %q, want %q", got, CaracteristicaPresente)
+	}
+}

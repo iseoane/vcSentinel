@@ -52,6 +52,25 @@ var marcasConcurrencia = []*regexp.Regexp{
 	regexp.MustCompile(`\bcontext\.`),
 }
 
+// clasesSinEvidenciaDeContenido lists the path classes whose added text is not
+// evidence of credential handling: documentation is prose and generated files
+// are output. Before this filter detectarSeguridadSensible read the lines of
+// EVERY path, so a metrics artifact under docs/ holding "cached_input_tokens"
+// marked security_sensitive and raised a documentation commit to high risk
+// (FU-10).
+//
+// It is a deny-list and not an allow-list on purpose: config and infra paths
+// genuinely can hold credentials, and admitting only ClaseSource would lose
+// them. For a risk detector, excluding less is the conservative direction.
+//
+// A word boundary is not the fix here: \btoken\b rejects cached_input_tokens,
+// but it also rejects accessToken and refreshTokens, which is how credential
+// identifiers are actually spelled in Go.
+var clasesSinEvidenciaDeContenido = map[string]bool{
+	ClaseDocs:      true,
+	ClaseGenerated: true,
+}
+
 // reglasDe devuelve entrada.Reglas si se inyectaron, o los defaults si no:
 // mismo criterio en todo detector que necesite clasificar rutas.
 func reglasDe(e EntradaCaracteristicas) []Regla {
@@ -87,7 +106,11 @@ func detectarBaseDeDatos(e EntradaCaracteristicas) Caracteristica {
 }
 func detectarSeguridadSensible(e EntradaCaracteristicas) Caracteristica {
 	claves := []string{"auth", "token", "crypto", "password", "secret"}
-	presente := rutasCoinciden(e.Rutas, e.PatronesSensibles) || algunaLinea(e.LineasAnadidas, func(linea string) bool {
+	reglas := reglasDe(e)
+	presente := rutasCoinciden(e.Rutas, e.PatronesSensibles) || algunaLineaDeRuta(e.LineasAnadidas, func(ruta, linea string) bool {
+		if clasesSinEvidenciaDeContenido[Clasificar(ruta, reglas, e.Gitattributes)] {
+			return false
+		}
 		linea = strings.ToLower(linea)
 		for _, clave := range claves {
 			if strings.Contains(linea, clave) {
@@ -226,9 +249,15 @@ func rutasCoinciden(rutas, patrones []string) bool {
 	return false
 }
 func algunaLinea(lineas map[string][]string, cumple func(string) bool) bool {
-	for _, archivo := range lineas {
+	return algunaLineaDeRuta(lineas, func(_, linea string) bool { return cumple(linea) })
+}
+
+// algunaLineaDeRuta keeps the path alongside the line: a detector that
+// classifies by path cannot use algunaLinea, which discards the map key.
+func algunaLineaDeRuta(lineas map[string][]string, cumple func(ruta, linea string) bool) bool {
+	for ruta, archivo := range lineas {
 		for _, linea := range archivo {
-			if cumple(linea) {
+			if cumple(ruta, linea) {
 				return true
 			}
 		}
