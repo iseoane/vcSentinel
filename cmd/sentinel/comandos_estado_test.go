@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"os"
 	"os/exec"
@@ -302,6 +303,39 @@ func TestAplicarTimeoutFlag(t *testing.T) {
 // would decide what to keep by consulting thirteen ledgers and then delete from
 // one, which leaks every ficha a delegated writer produced and makes the
 // cascade's own accounting wrong.
+// repoConWorktreeEnlazado builds a repository with one commit and one linked
+// worktree named "linked", as a sibling of the main checkout, and returns the
+// main checkout.
+func repoConWorktreeEnlazado(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+	worktree := filepath.Join(base, "main")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	correr := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + base,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	correr("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	correr("add", "a.txt")
+	correr("commit", "-qm", "first")
+	correr("worktree", "add", "-q", "--detach", filepath.Join(base, "linked"))
+	return worktree
+}
+
 func TestPurgarHuerfanasAlcanzaLosLedgersDeWorktree(t *testing.T) {
 	worktree := t.TempDir()
 	correr := func(args ...string) {
@@ -351,20 +385,9 @@ func TestPurgarHuerfanasAlcanzaLosLedgersDeWorktree(t *testing.T) {
 		}
 	}
 
-	// PurgarHuerfanas resolves orphanhood with git.ContenidoEnAlgunRef, which
-	// runs git in the process working directory like the rest of internal/git.
-	// Without this the live SHA would look orphaned too, because it does not
-	// exist in whatever repository the test binary happens to run from, and the
-	// discriminating half of this test would prove nothing.
-	previo, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(worktree); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chdir(previo) })
-
+	// No working-directory change: orphanhood is now resolved against worktree
+	// itself. That the live SHA survives while the test binary runs from an
+	// unrelated repository is precisely the property under test.
 	eliminados, err := purgarHuerfanas(worktree, gitDirPrincipal)
 	if err != nil {
 		t.Fatalf("purgarHuerfanas() error = %v", err)
@@ -393,4 +416,60 @@ func revisionDeWorktree(t *testing.T, worktree, revision string) string {
 		t.Fatalf("rev-parse %s: %v", revision, err)
 	}
 	return strings.TrimSpace(string(salida))
+}
+
+// TestPurgarHuerfanasLimpiaLosEventosDondeEstabanSusFichas pins the pairing the
+// review found broken. events.jsonl lives per gitDir exactly as the ledger
+// does, so purging fichas across every checkout while cleaning events in one
+// leaves entries pointing at deleted SHAs precisely where the command reports
+// having cleaned them.
+func TestPurgarHuerfanasLimpiaLosEventosDondeEstabanSusFichas(t *testing.T) {
+	worktree := repoConWorktreeEnlazado(t)
+	gitDirPrincipal, err := git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enlazado := filepath.Join(worktree, "..", "linked")
+	gitDirEnlazado, err := git.ObtenerGitDirDe(enlazado)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	huerfana := "0123456789abcdef0123456789abcdef01234567"
+	viva := revisionDeWorktree(t, worktree, "HEAD")
+	if err := review.NuevoLedger(gitDirEnlazado).GuardarRevision(huerfana, "gone", "b", "m", review.Revision{At: time.Now(), Result: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	// One event per SHA in the linked worktree's own stream.
+	for _, sha := range []string{huerfana, viva} {
+		if err := ops.RegistrarEvento(gitDirEnlazado, "review", 0, []string{sha}, ops.EventDetail{}, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := purgarHuerfanasConEventos(worktree, gitDirPrincipal); err != nil {
+		t.Fatalf("purgarHuerfanasConEventos() error = %v", err)
+	}
+
+	eventos, err := ops.UltimosEventos(gitDirEnlazado, 100)
+	if err != nil {
+		t.Fatalf("UltimosEventos: %v", err)
+	}
+	var quedanHuerfano, quedanVivo bool
+	for _, evento := range eventos {
+		for _, sha := range evento.Shas {
+			if sha == huerfana {
+				quedanHuerfano = true
+			}
+			if sha == viva {
+				quedanVivo = true
+			}
+		}
+	}
+	if quedanHuerfano {
+		t.Errorf("the event of the purged ficha survives in the linked worktree stream; the command reports having cleaned it")
+	}
+	if !quedanVivo {
+		t.Errorf("the event of a live commit was deleted; the purge is removing by reach and not by orphanhood")
+	}
 }

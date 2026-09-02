@@ -3,6 +3,7 @@ package git
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -187,6 +188,22 @@ func ContenidoEnAlgunRef(sha string) bool {
 		return false
 	}
 	return strings.TrimSpace(salida) != ""
+}
+
+// ContenidoEnAlgunRefDe responde lo mismo pero contra el repositorio de
+// worktree en vez de contra el directorio de trabajo del proceso.
+//
+// La diferencia importa donde la respuesta decide un borrado. Un llamador que
+// purgue los ledgers de varios checkouts a la vez y clasifique con el CWD
+// borraría fichas vivas en cuanto el proceso corriera desde otro repositorio,
+// porque un SHA legítimo de este repo no aparece en los refs de aquel.
+func ContenidoEnAlgunRefDe(worktree, sha string) bool {
+	cmd := exec.Command("git", "-C", worktree, "branch", "-a", "--contains", sha)
+	salida, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(salida)) != ""
 }
 
 // UpstreamOMain devuelve el ref base para auditar cadenas de commits: el

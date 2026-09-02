@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"runtime"
@@ -261,35 +262,55 @@ func aplicarTimeoutSegundos(cfg config.Config, segundos int) config.Config {
 // ledgers. Decidir qué conservar mirando trece y borrar en uno deja la
 // contabilidad de la cascada mal (FU-12).
 func purgarHuerfanas(worktree, gitDir string) ([]string, error) {
+	porDirectorio, err := purgarHuerfanasPorLedger(worktree, gitDir)
+	if err != nil {
+		return nil, err
+	}
+	eliminados := []string{}
+	for _, dir := range slices.Sorted(maps.Keys(porDirectorio)) {
+		eliminados = append(eliminados, porDirectorio[dir]...)
+	}
+	return eliminados, nil
+}
+
+// purgarHuerfanasPorLedger purga cada ledger del repositorio y devuelve los
+// SHAs eliminados AGRUPADOS POR DIRECTORIO. La agrupación no es un detalle: los
+// eventos también viven por gitDir, así que borrar la ficha de un checkout y
+// sus eventos de otro deja registros huérfanos exactamente donde el comando
+// afirma haberlos limpiado.
+//
+// La existencia se resuelve contra worktree, no contra el directorio de trabajo
+// del proceso. Con un único ledger la diferencia era invisible porque ambos
+// coincidían; al recorrer todos los ledgers del repositorio, clasificar con el
+// CWD borraría fichas vivas en cuanto el proceso corriera desde otro sitio.
+func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, error) {
+	existe := func(sha string) bool { return git.ContenidoEnAlgunRefDe(worktree, sha) }
+
 	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {
-		// Sin common dir no se puede enumerar: se purga el ledger propio, que
-		// es lo que este gitDir garantiza, y el fallo viaja al llamador.
-		eliminados, perr := review.NuevoLedger(gitDir).PurgarHuerfanas()
+		purgados, perr := review.NuevoLedger(gitDir).PurgarHuerfanasCon(existe)
 		if perr != nil {
 			return nil, perr
 		}
-		return eliminados, fmt.Errorf("linked worktree ledgers were not purged: %w", err)
+		return map[string][]string{gitDir: purgados}, fmt.Errorf("linked worktree ledgers were not purged: %w", err)
 	}
 	directorios, err := directoriosLedgerV1(gitCommonDir)
 	if err != nil {
 		return nil, err
 	}
-	// El gitDir del checkout principal coincide con el common dir, así que
-	// enumerarlo evita purgarlo dos veces; un worktree enlazado no está en la
-	// lista si nunca escribió ficha, y entonces se añade aquí.
 	if !slices.Contains(directorios, gitDir) {
 		directorios = append(directorios, gitDir)
 	}
-	eliminados := []string{}
+
+	porDirectorio := map[string][]string{}
 	for _, dir := range directorios {
-		purgados, err := review.NuevoLedger(dir).PurgarHuerfanas()
+		purgados, err := review.NuevoLedger(dir).PurgarHuerfanasCon(existe)
 		if err != nil {
 			return nil, fmt.Errorf("purging the ledger at %s: %w", dir, err)
 		}
-		eliminados = append(eliminados, purgados...)
+		porDirectorio[dir] = purgados
 	}
-	return eliminados, nil
+	return porDirectorio, nil
 }
 
 // purgarHuerfanasConEventos purga las fichas huérfanas y, por cada SHA
@@ -297,12 +318,25 @@ func purgarHuerfanas(worktree, gitDir string) ([]string, error) {
 // commits que siguen vivos se conservan siempre. Un fallo en la limpieza de
 // eventos devuelve error pero las fichas ya purgadas no se restauran.
 func purgarHuerfanasConEventos(worktree, gitDir string) ([]string, error) {
-	eliminados, err := purgarHuerfanas(worktree, gitDir)
-	if err != nil || len(eliminados) == 0 {
-		return eliminados, err
+	porDirectorio, err := purgarHuerfanasPorLedger(worktree, gitDir)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := ops.PurgeEventosDe(gitDir, eliminados); err != nil {
-		return eliminados, fmt.Errorf("fichas purgadas pero falló limpiar sus eventos: %w", err)
+	eliminados := []string{}
+	// Los eventos se limpian en el MISMO directorio en el que estaba la ficha.
+	// events.jsonl vive por gitDir igual que el ledger, así que borrar las
+	// fichas de todos los checkouts y los eventos de uno solo dejaría eventos
+	// apuntando a SHAs eliminados justo donde el comando dice haberlos
+	// limpiado.
+	for _, dir := range slices.Sorted(maps.Keys(porDirectorio)) {
+		purgados := porDirectorio[dir]
+		eliminados = append(eliminados, purgados...)
+		if len(purgados) == 0 {
+			continue
+		}
+		if _, err := ops.PurgeEventosDe(dir, purgados); err != nil {
+			return eliminados, fmt.Errorf("fichas purgadas pero falló limpiar sus eventos en %s: %w", dir, err)
+		}
 	}
 	return eliminados, nil
 }

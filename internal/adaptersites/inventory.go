@@ -270,6 +270,8 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "go install/GOPATH/PATH installer plumbing."},
 		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Anchor: "cmd := exec.Command(\"powershell\", \"-NoProfile\", \"-Command\", comando)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "PATH cleanup plumbing."},
+		{Path: "internal/git/commit.go", Symbol: "ContenidoEnAlgunRefDe", Anchor: "cmd := exec.Command(\"git\", \"-C\", worktree, \"branch\", \"-a\", \"--contains\", sha)", Marker: "exec.Command",
+			Class: ClassInfra, Reason: "Read-only ref containment probe scoped to an explicit worktree instead of the process working directory. Git plumbing behind the orphan-ficha purge, which decides deletions and must classify against the repository it is purging; consults no agent."},
 		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Anchor: "cmd := exec.Command(binarioActual, \"--version\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Binary version probe for upgrades."},
 		{Path: "tools/release/main.go", Symbol: "release tooling", Anchor: "cmd := exec.Command(\"gh\", \"release\", \"view\", \"--json\", \"tagName\", \"--jq\", \".tagName\")", Marker: "exec.Command",
