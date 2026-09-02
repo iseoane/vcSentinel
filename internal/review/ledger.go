@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -371,21 +372,32 @@ const intervaloReintentoBloqueoFicha = 25 * time.Millisecond
 // wait then fails naming the path so an operator can remove it. That is
 // deliberate: stealing a lock after a timeout would guess that the holder is
 // dead, and guessing wrong reintroduces the lost update this prevents.
-func (l *Ledger) conFichaBloqueada(sha string, fn func() error) error {
+func (l *Ledger) conFichaBloqueada(sha string, fn func() error) (err error) {
 	if err := os.MkdirAll(l.dir, 0755); err != nil {
 		return err
 	}
 	ruta := l.RutaFicha(sha) + ".lock"
 	limite := time.Now().Add(esperaMaximaBloqueoFicha)
 	for {
-		lock, err := os.OpenFile(ruta, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-		if err == nil {
-			lock.Close()
-			defer os.Remove(ruta)
+		lock, errAbrir := os.OpenFile(ruta, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if errAbrir == nil {
+			if errCerrar := lock.Close(); errCerrar != nil {
+				os.Remove(ruta)
+				return fmt.Errorf("locking the review ficha of %s: %w", sha, errCerrar)
+			}
+			// Released through defer so a panic inside fn cannot leak the lock,
+			// and the removal failure is reported rather than discarded: a lock
+			// left behind makes every later writer of this SHA wait the full
+			// timeout and then fail, which is not something to learn later.
+			defer func() {
+				if errBorrar := os.Remove(ruta); errBorrar != nil && err == nil {
+					err = fmt.Errorf("the review ficha of %s was written but its lock could not be released; delete %s: %w", sha, ruta, errBorrar)
+				}
+			}()
 			return fn()
 		}
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("locking the review ficha of %s: %w", sha, err)
+		if !errors.Is(errAbrir, os.ErrExist) {
+			return fmt.Errorf("locking the review ficha of %s: %w", sha, errAbrir)
 		}
 		if time.Now().After(limite) {
 			return fmt.Errorf("the review ficha of %s stayed locked for %s; if no sentinel process is running, delete %s",
@@ -432,6 +444,16 @@ func (l *Ledger) guardarRevisionBloqueada(sha, mensaje, bucket, modelo string, r
 // commit fixedIn (trazabilidad hallazgo → corrección). No sobreescribe un
 // FixedIn ya existente: la primera corrección gana.
 func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
+	// Checked on the DIRECTORY, not on the ficha. The goal is only to keep a
+	// ledger that has never stored anything from having its directory created
+	// by a call that is a documented no-op, and this call runs for every earlier
+	// commit of every fix( commit. Testing the ficha itself instead would be a
+	// correctness bug: guardarFicha deletes the destination before renaming over
+	// it, so an unlocked existence check lands in that window and reports a live
+	// ficha as absent — measured, it silently dropped the correction.
+	if _, err := os.Stat(l.dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	// Under the ficha's lock: "the first correction wins" is decided by reading
 	// FixedIn and then writing it, so two unserialized callers can both read it
 	// empty and the second one wins instead.
@@ -535,7 +557,10 @@ func (l *Ledger) PurgarHuerfanas(existe func(sha string) (bool, error)) ([]strin
 		if presente {
 			continue
 		}
-		if err := l.EliminarFicha(sha); err != nil {
+		// Deletion takes the same per-SHA lock as every mutation. Without it the
+		// purge could remove a ficha while a locked GuardarRevision was writing
+		// it, so a revision that reported success would simply not exist.
+		if err := l.conFichaBloqueada(sha, func() error { return l.EliminarFicha(sha) }); err != nil {
 			return eliminados, err
 		}
 		eliminados = append(eliminados, sha)
@@ -569,8 +594,16 @@ func (l *Ledger) guardarFicha(ficha *Ficha) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Remove(destino); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	// The destination is removed ONLY on Windows, which refuses to rename over
+	// an existing file. Elsewhere rename replaces it atomically, and deleting
+	// first opened a window in which the ficha did not exist at all: a
+	// concurrent reader saw a live record as absent, which AnalizarRama reads
+	// as "never audited". Narrowing that window to the platform that needs it
+	// costs nothing.
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(destino); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	return os.Rename(rutaTemp, destino)
 }

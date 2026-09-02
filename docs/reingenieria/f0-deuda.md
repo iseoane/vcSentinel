@@ -1172,12 +1172,17 @@ error, the ledger aborts and reports what it had already removed, and
 separate an unreadable object store from a genuinely unknown object. The
 residual case that survives is recorded as FU-15 rather than mistaken for fixed.
 
-**Still open.** `cmd/sentinel/comandos_pr.go` still builds the v1 ledger from its
-own gitDir, so a branch analysis run in the main checkout cannot see fichas
-written in a worktree and can under-report blocking findings. It destroys
-nothing, which is why it was not folded into a prune fix: `AnalizarRama` both
-reads and adopts, so where it writes is a decision rather than a mechanical
-change.
+**Closed 2026-09-02.** `review`, `status` and `pr` now build the ledger through
+`sharedReviewLedger` (`cmd/sentinel/shared_ledger.go`), which anchors on the Git
+common directory, so a review run in a linked worktree no longer files its
+record where `git worktree remove` deletes it. The decision the entry left open
+— where `AnalizarRama`'s adopted copy lands, since it both reads and writes — is
+that it lands in the shared ledger too: one location for reads and writes, and
+nothing older migrated. FU-18 records the cost of that, and FU-17 the widening
+it caused in correction attribution.
+
+The list of gitDir call sites above is therefore historical. Only the prune
+paths still enumerate per-checkout ledgers, and they do so deliberately.
 
 The decision was taken on 2026-09-02: reviews write to the shared location from
 the start, and T9.5 collects from there at publication. Nothing older is
@@ -1391,10 +1396,12 @@ Sharing the ledger is correct and is not the thing to revert: the alternative
 was fichas dying with `git worktree remove`. What is missing is the scope the
 attribution never had to carry while the ledger was accidentally partitioned.
 
-Target: restrict correction attribution to commits reachable from the audited
-one, or persist enough scope in the ficha to tell two branches apart. Do not fix
-it by narrowing the file match; the defect is that a correction is attributed
-without asking whether the two commits are even on the same line of history.
+Target: restrict correction attribution to fichas whose audited commit is an
+ancestor of the `fix(` commit — `git merge-base --is-ancestor <audited> <fix>`,
+in that order, because the fix comes after what it corrects — or persist enough
+scope in the ficha to tell two branches apart. Do not fix it by narrowing the
+file match; the defect is that a correction is attributed without asking whether
+the two commits are even on the same line of history.
 
 Priority: before the ledger holds fichas from several concurrent branches for
 long. It falsely clears blocks, which is the failure mode this register exists
@@ -1404,18 +1411,26 @@ to keep visible.
 
 Recorded 2026-09-02 alongside FU-17, from the same review.
 
-Anchoring `review`, `status` and `pr` on the common directory means the 65
-fichas sitting in the 12 linked worktrees are no longer read by those commands.
-The user decided this explicitly: nothing older is migrated, and T9.5 removes
-the published ones anyway. `runs prune`, `status --prune` and `review --prune`
-still enumerate every per-checkout ledger, so no execution stream loses its
-provenance and nothing is deleted.
+Anchoring `review`, `status` and `pr` on the common directory means the fichas
+already sitting in per-checkout ledgers are no longer read by those commands.
+The migration policy of this change is that nothing older is migrated: the bulk
+of those records is already published, and T9.5 removes published ones anyway.
+`runs prune`, `status --prune` and `review --prune` still enumerate every
+per-checkout ledger, so no execution stream loses its provenance and nothing is
+deleted.
+
+Measured on this repository at 2026-09-02, by listing `<common-dir>/worktrees/*`
+and counting `*.json` under each `vas-sentinel`: 18 administrative directories,
+of which 12 are branch worktrees and the rest are review snapshots; 12 hold a
+`vas-sentinel` directory, 11 of those are non-empty, and they hold 65 fichas in
+total. FU-12 recorded thirteen on the same date, so one worktree has gone since;
+the counts describe different moments, not a contradiction.
 
 The cost is recorded rather than hidden: inside one of those worktrees,
 `review --all` now treats its already-audited commits as pending and audits them
 again, and a branch analysis there no longer sees the verdicts it recorded
 before the change.
 
-Not a target. It is the accepted consequence of a decision, and it is written
-here so a later observation of re-auditing is recognised instead of investigated
-as a new defect.
+Not a target. It is the accepted consequence of the migration policy above, and
+it is written here so a later observation of re-auditing is recognised instead
+of investigated as a new defect.

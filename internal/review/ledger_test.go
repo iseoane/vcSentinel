@@ -622,8 +622,12 @@ func TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty(t *testing.T) {
 	}
 }
 
-// TestGuardarRevisionConcurrenteNoPierdeRevisiones pins the contract the shared
-// ledger made load bearing. Anchoring review, status and pr on the Git common
+// TestGuardarRevisionConcurrenteNoPierdeRevisiones is the in-process half of the
+// contract. TestGuardarRevisionEntreProcesos is the half that matters, because
+// a process-local mutex would satisfy this one and still lose revisions across
+// checkouts; this stays because it fails in milliseconds and names the writer.
+//
+// It pins the contract the shared ledger made load bearing. Anchoring review, status and pr on the Git common
 // directory means two checkouts now audit into the SAME ficha file, and
 // GuardarRevision is a read-append-rename cycle: without serialization each
 // writer reads the same ficha, appends its own revision and replaces the other,
@@ -713,5 +717,215 @@ func TestListarFichasIgnoraElArchivoDeBloqueo(t *testing.T) {
 	}
 	if !slices.Equal(shas, []string{sha}) {
 		t.Errorf("ListarFichas() = %v, want exactly %v: a stale lock file was reported as a ficha", shas, []string{sha})
+	}
+}
+
+// escritoresEntreProcesos y rondasPorEscritor dimensionan el test entre
+// procesos: several rounds per writer widen the window in which two processes
+// are inside the read-append-write of the same ficha, which a single round
+// each does not reliably produce.
+const (
+	escritoresEntreProcesos = 6
+	rondasPorEscritor       = 4
+)
+
+// TestGuardarRevisionEntreProcesos proves what the goroutine test cannot: the
+// serialization holds between separate PROCESSES. That is the real shape of the
+// contract, because the shared ledger exists so that two checkouts — two
+// `sentinel review` invocations — write into one ficha. A mutex inside one
+// process would keep the goroutine test green while every cross-checkout write
+// still overwrote another.
+//
+// Each child re-executes this same test binary with the fixture directory in
+// the environment, which is the standard way to get real processes out of `go
+// test` without a second binary to build and keep in sync.
+func TestGuardarRevisionEntreProcesos(t *testing.T) {
+	if dir := os.Getenv("VAS_SENTINEL_TEST_LEDGER_DIR"); dir != "" {
+		escribirRevisionesHijo(t, dir, os.Getenv("VAS_SENTINEL_TEST_WRITER"))
+		return
+	}
+
+	dir := t.TempDir()
+	const sha = "ffffffffffffffffffffffffffffffffffffffff"
+	// Seeded from the parent so the children only ever append: creating the
+	// ficha concurrently would test a different thing.
+	if err := NuevoLedger(dir).GuardarRevision(sha, "fixture", "b", "m",
+		Revision{At: time.Now(), Result: VerdictOK, Agent: "seed"}); err != nil {
+		t.Fatal(err)
+	}
+
+	hijos := make([]*exec.Cmd, 0, escritoresEntreProcesos)
+	for i := 0; i < escritoresEntreProcesos; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestGuardarRevisionEntreProcesos$", "-test.v")
+		cmd.Env = append(os.Environ(),
+			"VAS_SENTINEL_TEST_LEDGER_DIR="+dir,
+			fmt.Sprintf("VAS_SENTINEL_TEST_WRITER=writer-%d", i))
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("starting writer %d: %v", i, err)
+		}
+		hijos = append(hijos, cmd)
+	}
+	for i, cmd := range hijos {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("writer %d failed: %v", i, err)
+		}
+	}
+
+	ficha, err := NuevoLedger(dir).LeerFicha(sha)
+	if err != nil {
+		t.Fatalf("LeerFicha() error = %v", err)
+	}
+	esperadas := 1 + escritoresEntreProcesos*rondasPorEscritor
+	if ficha == nil || len(ficha.Revisions) != esperadas {
+		t.Fatalf("the ficha holds %d revisions, want %d: a write from one process replaced another process's revision",
+			len(ficha.Revisions), esperadas)
+	}
+	porEscritor := map[string]int{}
+	for _, rev := range ficha.Revisions {
+		porEscritor[rev.Agent]++
+	}
+	for i := 0; i < escritoresEntreProcesos; i++ {
+		nombre := fmt.Sprintf("writer-%d", i)
+		if porEscritor[nombre] != rondasPorEscritor {
+			t.Errorf("%s left %d revisions, want %d: %v", nombre, porEscritor[nombre], rondasPorEscritor, porEscritor)
+		}
+	}
+}
+
+// escribirRevisionesHijo is the child half of TestGuardarRevisionEntreProcesos.
+// It appends its rounds and reports failure through the process exit status,
+// which is what the parent's cmd.Wait observes.
+func escribirRevisionesHijo(t *testing.T, dir, escritor string) {
+	t.Helper()
+	ledger := NuevoLedger(dir)
+	const sha = "ffffffffffffffffffffffffffffffffffffffff"
+	for i := 0; i < rondasPorEscritor; i++ {
+		if err := ledger.GuardarRevision(sha, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictOK, Agent: escritor}); err != nil {
+			t.Fatalf("%s round %d: %v", escritor, i, err)
+		}
+	}
+}
+
+// repeticionesCarrera is how many times a two-goroutine race is replayed. One
+// pass proves nothing: two goroutines rarely interleave inside a window this
+// small, so an unlocked implementation passes a single run. Measured — the
+// single-run versions of both tests below stayed green with the lock removed.
+// Replaying on a fresh ledger turns a rare interleaving into a certain one.
+const repeticionesCarrera = 300
+
+// enCarrera runs primera and segunda concurrently behind one start gate and
+// waits for both. It exists so the two tests below race the same way and the
+// repetition lives in one place.
+func enCarrera(primera, segunda func()) {
+	var arranque, hechos sync.WaitGroup
+	arranque.Add(1)
+	hechos.Add(2)
+	for _, fn := range []func(){primera, segunda} {
+		go func(fn func()) {
+			defer hechos.Done()
+			arranque.Wait()
+			fn()
+		}(fn)
+	}
+	arranque.Done()
+	hechos.Wait()
+}
+
+// TestMarcarCorregidaConcurrenteConGuardarRevision covers MarcarCorregida's
+// lock against the property that is actually observable.
+//
+// Racing eight MarcarCorregida calls against each other proves nothing: they
+// all read FixedIn empty, the last whole-ficha rename wins, and the result is
+// one attribution either way, so such a test passes with the lock removed —
+// measured. What the lock really protects is the read-modify-write against a
+// CONCURRENT APPEND: MarcarCorregida rewrites the whole ficha, so an
+// unserialized GuardarRevision can be discarded by it, or discard its FixedIn.
+//
+// With the lock, either order ends in the same state, and it is asserted
+// exactly: both revisions present AND the correction recorded.
+func TestMarcarCorregidaConcurrenteConGuardarRevision(t *testing.T) {
+	const sha = "1111111111111111111111111111111111111111"
+	for intento := 0; intento < repeticionesCarrera; intento++ {
+		ledger := NuevoLedger(t.TempDir())
+		if err := ledger.GuardarRevision(sha, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictBlock, Agent: "inicial"}); err != nil {
+			t.Fatal(err)
+		}
+		enCarrera(func() {
+			if err := ledger.MarcarCorregida(sha, "elfix"); err != nil {
+				t.Errorf("MarcarCorregida() error = %v", err)
+			}
+		}, func() {
+			if err := ledger.GuardarRevision(sha, "fixture", "b", "m",
+				Revision{At: time.Now(), Result: VerdictOK, Agent: "reauditoria"}); err != nil {
+				t.Errorf("GuardarRevision() error = %v", err)
+			}
+		})
+
+		ficha, err := ledger.LeerFicha(sha)
+		if err != nil || ficha == nil {
+			t.Fatalf("attempt %d: LeerFicha() = %v, %v", intento, ficha, err)
+		}
+		if ficha.FixedIn != "elfix" {
+			t.Fatalf("attempt %d: FixedIn = %q, want \"elfix\": the concurrent append replaced the ficha the correction had just written", intento, ficha.FixedIn)
+		}
+		if len(ficha.Revisions) != 2 {
+			t.Fatalf("attempt %d: the ficha holds %d revisions, want 2: the correction replaced the ficha a concurrent audit had just appended to", intento, len(ficha.Revisions))
+		}
+	}
+}
+
+// TestAdoptarFichaConcurrenteConGuardarRevision covers the destination side of
+// AdoptarFicha's lock. Adoption REPLACES the ficha of the SHA it writes, so an
+// unserialized adoption racing an append to that same SHA discards the appended
+// revision — and the rebase path that calls it runs inside branch analysis,
+// which is exactly where another commit's audit may be writing.
+//
+// Both orders are legal and both are accepted, because which one happens is a
+// race. What the lock guarantees is that ONE of the two whole states is
+// reached, never a ficha missing both writers' work.
+func TestAdoptarFichaConcurrenteConGuardarRevision(t *testing.T) {
+	const origen = "2222222222222222222222222222222222222222"
+	const destino = "3333333333333333333333333333333333333333"
+	for intento := 0; intento < repeticionesCarrera; intento++ {
+		ledger := NuevoLedger(t.TempDir())
+		if err := ledger.GuardarRevision(origen, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictOK, Agent: "origen"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ledger.GuardarRevision(destino, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictOK, Agent: "destino"}); err != nil {
+			t.Fatal(err)
+		}
+		enCarrera(func() {
+			if err := ledger.AdoptarFicha(origen, destino); err != nil {
+				t.Errorf("AdoptarFicha() error = %v", err)
+			}
+		}, func() {
+			if err := ledger.GuardarRevision(destino, "fixture", "b", "m",
+				Revision{At: time.Now(), Result: VerdictOK, Agent: "tardio"}); err != nil {
+				t.Errorf("GuardarRevision() error = %v", err)
+			}
+		})
+
+		ficha, err := ledger.LeerFicha(destino)
+		if err != nil || ficha == nil {
+			t.Fatalf("attempt %d: LeerFicha() = %v, %v", intento, ficha, err)
+		}
+		autores := make([]string, 0, len(ficha.Revisions))
+		for _, rev := range ficha.Revisions {
+			autores = append(autores, rev.Agent)
+		}
+		// Adoption last copies the origin over the destination, so exactly the
+		// origin's revision remains. Adoption first is then appended to, leaving
+		// the origin's revision plus the late one. Anything else means one
+		// writer overwrote a ficha the other had already replaced.
+		adopcionUltima := slices.Equal(autores, []string{"origen"})
+		adopcionPrimera := slices.Equal(autores, []string{"origen", "tardio"})
+		if !adopcionUltima && !adopcionPrimera {
+			t.Fatalf("attempt %d: the destination ficha holds %v, want either [origen] or [origen tardio]: the adoption and the append overlapped instead of taking turns",
+				intento, autores)
+		}
 	}
 }

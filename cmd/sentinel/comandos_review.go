@@ -84,11 +84,14 @@ func ejecutarReview(worktree string, args []string) {
 			os.Exit(1)
 		}
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
+		// Reported BEFORE the error, for the reason given at the status call
+		// site: a half-finished purge is when the list of deleted SHAs matters
+		// most, and returning only the error hid it.
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		if err != nil {
-			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
+			fmt.Fprintf(os.Stderr, "? No se pudieron purgar todas las fichas huérfanas: %v\n", err)
 			os.Exit(1)
 		}
-		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
 	}
 

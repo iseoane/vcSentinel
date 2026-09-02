@@ -325,9 +325,14 @@ func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, err
 // commits que siguen vivos se conservan siempre. Un fallo en la limpieza de
 // eventos devuelve error pero las fichas ya purgadas no se restauran.
 func purgarHuerfanasConEventos(worktree, gitDir string) ([]string, error) {
-	porDirectorio, err := purgarHuerfanasPorLedger(worktree, gitDir)
-	if err != nil {
-		return nil, err
+	porDirectorio, errEnumeracion := purgarHuerfanasPorLedger(worktree, gitDir)
+	// A partial result travels WITH its error. The common-directory fallback
+	// deletes this checkout's fichas and only then reports that the linked
+	// ledgers could not be enumerated, so returning nil here dropped the SHAs
+	// it had already removed: their events survived pointing at fichas the
+	// command had silently deleted, and the operator was told only "it failed".
+	if porDirectorio == nil {
+		return nil, errEnumeracion
 	}
 	eliminados := []string{}
 	// Los eventos se limpian en el MISMO directorio en el que estaba la ficha.
@@ -345,7 +350,7 @@ func purgarHuerfanasConEventos(worktree, gitDir string) ([]string, error) {
 			return eliminados, fmt.Errorf("fichas purgadas pero falló limpiar sus eventos en %s: %w", dir, err)
 		}
 	}
-	return eliminados, nil
+	return eliminados, errEnumeracion
 }
 
 // reportarPurga muestra el resultado de purgarHuerfanasConEventos en texto o
@@ -409,11 +414,15 @@ func ejecutarStatus(worktree string, args []string) {
 	// failure into an exit, so the fallback became unreachable.
 	if flags.prune {
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
+		// Reported BEFORE the error is raised: what the purge already deleted is
+		// the operator's only record of it, and a purge that fails halfway is
+		// exactly when that record matters. The failure goes to stderr so
+		// --json keeps emitting one parseable object on stdout.
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		if err != nil {
-			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
+			fmt.Fprintf(os.Stderr, "? No se pudieron purgar todas las fichas huérfanas: %v\n", err)
 			os.Exit(1)
 		}
-		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
 	}
 
