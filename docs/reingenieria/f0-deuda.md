@@ -998,16 +998,35 @@ Recorded 2026-09-02 while reviewing ticket 04 of the FU-10 sequence, from the
 observation that its review record could not be found where every other record
 lives.
 
-`AGENTS.md` states that `internal/store` persists units, runs, findings, commit
-indexes, decisions, and blob indexes in `<git-common-dir>/vas-sentinel`. The
-hook installation already follows that rule, obtaining the path through
-`git rev-parse --git-common-dir` so a repository and its linked worktrees share
-one store.
+**Corrected 2026-09-02, after inspecting the code rather than inferring from
+the symptom.** The first version of this entry called the per-worktree location
+a defect contradicting `AGENTS.md`. That framing was wrong and is replaced.
 
-Reviews do not. `sentinel review b7ac0cf`, run from the worktree
-`fu10-ticket-04`, wrote its ficha to
-`.git/worktrees/fu10-ticket-04/vas-sentinel/`, which is `--git-dir`, not
-`--git-common-dir`. From that worktree the two paths are different:
+`internal/store/migracion.go:44-75` documents the per-worktree layout as the
+deliberate v1 shape: the v1 review ledger is anchored at the checkout's
+**gitDir**, so the main checkout writes to `<gitCommonDir>/vas-sentinel` only
+because its gitDir and gitCommonDir coincide, while a linked worktree writes to
+`<gitCommonDir>/worktrees/<name>/vas-sentinel`. `MigrarDesdeV1` exists precisely
+to consolidate all of them into the shared v2 store. The `AGENTS.md` sentence
+describes `internal/store`, the v2 store, which does use the common dir.
+
+The real defect is narrower and sharper: **the writers and one reader disagree,
+and the consolidation is never invoked.**
+
+- `MigrarDesdeV1` has no production call site. It is defined and never used, so
+  nothing ever merges the worktree ledgers into the shared store.
+- `cmd/sentinel/comandos_review.go:61,713`, `comandos_estado.go:252,324` and
+  `comandos_pr.go:274,744` build the v1 ledger from **gitDir**.
+- `cmd/sentinel/comandos_runs_prune.go:97` builds it from **gitCommonDir**.
+
+So `sentinel runs prune` scans a ledger that a review run from a worktree never
+wrote to. Its own code comments explain that it deliberately reads the raw
+`Dims` hallazgos to catch the refuter stream; it is reading the right shape in
+the wrong directory.
+
+The observation that prompted this entry stands. `sentinel review b7ac0cf`, run
+from the worktree `fu10-ticket-04`, wrote its ficha to
+`.git/worktrees/fu10-ticket-04/vas-sentinel/`. From that worktree:
 
 - `git rev-parse --git-dir` → `.git/worktrees/fu10-ticket-04`
 - `git rev-parse --git-common-dir` → `.git`
@@ -1029,11 +1048,16 @@ T9.4b among them — excluded whatever the writer worktrees held. Those verdicts
 are not invalidated, because they were about calibrating review timeouts rather
 than about total volume, but the denominators were narrower than they read.
 
-Target: settle whether the store is per-repository or per-worktree, then make
-every writer agree. If it is per-repository, as `AGENTS.md` states and the hook
-already assumes, the review write path must resolve `--git-common-dir` like the
-rest of the store. Do not reconcile by copying fichas between directories: the
-ledger is append-only and a hand-merged history is worse than a split one.
+Target: make the readers agree with the writers, or invoke the consolidation
+that already exists. Either the v1 ledger is per-gitDir and `runs prune` must
+read every worktree directory the way `MigrarDesdeV1` globs them, or the fichas
+are consolidated into the shared v2 store and the readers move there. Do not
+reconcile by copying fichas between directories by hand: the ledger is
+append-only and a hand-merged history is worse than a split one.
 
-Priority: before the next delegated ticket closes, because the FU-10 sequence
-merges worktree-reviewed commits into `main` and their receipts stay behind.
+Priority: **before T9.5.** That task builds an event-driven retention cascade
+over `internal/review/ledger.go` and `internal/store/execution_prune.go`, and
+its stated invariant is that nothing is deleted before its snapshot exists. A
+cascade written against one directory while the fichas are written to thirteen
+others cannot hold that invariant, and delegating T9.5 to a worktree writer
+would make its own evidence invisible to it.
