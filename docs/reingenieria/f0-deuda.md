@@ -1293,3 +1293,37 @@ collect it either.
 
 Priority: not blocking. It is a narrower failure than the four this sequence
 closed, and unlike them it is recorded rather than mistaken for fixed.
+
+### FU-16: the ledger listing reports an unreadable directory as an empty one
+
+Recorded 2026-09-02, immediately after FU-12's purge closed, from noticing that
+`review.Ledger.ListarFichas` enumerates with `filepath.Glob`. That is the same
+call whose failure semantics cost FU-12 six review rounds: `Glob` reports only
+`ErrBadPattern` and swallows the I/O errors it hits reading directories, so a
+static pattern over an unreadable ledger directory returns an empty list and a
+nil error.
+
+Measured: over a directory made unreadable, `filepath.Glob` returns 0 matches
+and `err == nil`.
+
+**The direction of the damage differs by caller, and only one of them is safe.**
+
+- `PurgarHuerfanas` lists fewer fichas, so it deletes fewer. That leaks orphans
+  and destroys nothing.
+- `collectProvenanceReferences`, through `anotarReferenciasDeLedger`, lists
+  fewer fichas, so it collects fewer referenced invocation identities, so
+  `sentinel runs prune` treats their execution streams as unreferenced and
+  deletes them. That is destruction, and it is precisely what that function's
+  own contract forbids: "Any read failure fails closed — a prune must never run
+  while provenance is unreadable, because that is exactly how referenced
+  streams get destroyed."
+
+So FU-12's fix taught the collector to visit every ledger directory, and this
+one can still report any of them as empty without saying so.
+
+Target: enumerate with `os.ReadDir` and propagate the error, exactly as
+`directoriosLedgerV1` already does one level up. `ListarFichas` already returns
+`([]string, error)`, so no caller signature changes.
+
+Priority: before anything else that deletes. It is the same defect as FU-12 one
+layer down, in the function that decides what a prune may destroy.
