@@ -35,8 +35,8 @@ type medida struct {
 	SharedRisk         string   `json:"shared_risk"`
 	PlannerInvocations int      `json:"planner_invocations"`
 	SharedInvocations  int      `json:"shared_invocations"`
-	PlannerDimensions  int      `json:"planner_distinct_dimensions"`
-	SharedDimensions   int      `json:"shared_distinct_dimensions"`
+	PlannerDimensions  []string `json:"planner_dimensions"`
+	SharedDimensions   []string `json:"shared_dimensions"`
 	UnlockedFeatures   []string `json:"unlocked_characteristics,omitempty"`
 	RiskChanged        bool     `json:"risk_changed"`
 }
@@ -49,7 +49,11 @@ type estrato struct {
 }
 
 type informe struct {
+	Ref                string             `json:"ref"`
+	RefSHA             string             `json:"ref_sha"`
 	Window             int                `json:"window"`
+	Requested          int                `json:"requested"`
+	Failed             int                `json:"failed"`
 	MergesExcluded     int                `json:"merges_excluded"`
 	CountingConvention string             `json:"counting_convention"`
 	Strata             map[string]estrato `json:"strata"`
@@ -69,8 +73,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	sha, err := git("rev-parse", *ref)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	out := informe{
-		Window:         len(shas),
+		Ref:            *ref,
+		RefSHA:         strings.TrimSpace(sha),
+		Requested:      len(shas),
 		MergesExcluded: merges,
 		// Bundle scheduling dedupes by bundle name, not by dimension, so at
 		// high risk `spec` is scheduled by both the correctness and the
@@ -83,7 +95,11 @@ func main() {
 	for _, sha := range shas {
 		m, err := medir(sha)
 		if err != nil {
+			// An evidence harness must not present a short measurement as a
+			// complete one: record the failure, keep going so the operator sees
+			// every broken commit at once, and refuse to exit successfully.
 			fmt.Fprintf(os.Stderr, "%s: %v\n", sha[:8], err)
+			out.Failed++
 			continue
 		}
 		out.Commits = append(out.Commits, m)
@@ -95,11 +111,17 @@ func main() {
 		}
 	}
 
+	out.Window = len(out.Commits)
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	resumir(os.Stderr, out)
+	if out.Failed > 0 {
+		fmt.Fprintf(os.Stderr, "\nINCOMPLETE: %d of %d commits could not be measured; the aggregates above cover %d\n",
+			out.Failed, out.Requested, out.Window)
+		os.Exit(1)
+	}
 }
 
 func medir(sha string) (medida, error) {
@@ -144,18 +166,17 @@ func medir(sha string) (medida, error) {
 	}, nil
 }
 
-// contar devuelve invocaciones de agente y dimensiones distintas. La primera es
-// la cifra de coste: AuditarCommit deduplica por nombre de bundle, no por
-// dimensión.
-func contar(bundles []review.ReviewBundle) (invocaciones, distintas int) {
-	vistas := map[string]bool{}
+// contar devuelve las invocaciones de agente y la lista de dimensiones tal y
+// como se programan, con repeticiones. Las repeticiones son el punto:
+// AuditarCommit deduplica por nombre de bundle, no por dimensión, así que una
+// dimensión programada por dos bundles se audita dos veces.
+func contar(bundles []review.ReviewBundle) (invocaciones int, dimensiones []string) {
 	for _, bundle := range bundles {
 		invocaciones += len(bundle.Dimensions)
-		for _, dim := range bundle.Dimensions {
-			vistas[dim] = true
-		}
+		dimensiones = append(dimensiones, bundle.Dimensions...)
 	}
-	return invocaciones, len(vistas)
+	sort.Strings(dimensiones)
+	return invocaciones, dimensiones
 }
 
 func desbloqueadas(planner, compartidas []change.Caracteristica) []string {
@@ -214,22 +235,28 @@ func commitsSinMerge(ref string, n int) ([]string, int, error) {
 	// the padding, not the merges.
 	cuenta, err := git("rev-list", "--count", "--min-parents=2", lista[len(lista)-1]+".."+ref)
 	if err != nil {
-		return lista, 0, nil
+		return nil, 0, fmt.Errorf("counting merges in the window: %w", err)
 	}
 	merges := 0
-	fmt.Sscanf(strings.TrimSpace(cuenta), "%d", &merges)
+	if _, err := fmt.Sscanf(strings.TrimSpace(cuenta), "%d", &merges); err != nil {
+		return nil, 0, fmt.Errorf("unreadable merge count %q: %w", strings.TrimSpace(cuenta), err)
+	}
 	return lista, merges, nil
 }
 
+// rutasDe reads the changed paths NUL-delimited: Git quotes and escapes paths
+// holding spaces or non-ASCII bytes in its default line output, and a quoted
+// path fed back to a pathspec silently matches nothing. --root makes a root
+// commit report its files instead of none.
 func rutasDe(sha string) ([]string, error) {
-	salida, err := git("diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--first-parent", sha)
+	salida, err := git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", sha)
 	if err != nil {
 		return nil, err
 	}
 	var rutas []string
-	for _, linea := range strings.Split(salida, "\n") {
-		if linea = strings.TrimSpace(linea); linea != "" {
-			rutas = append(rutas, linea)
+	for _, ruta := range strings.Split(salida, "\x00") {
+		if ruta != "" {
+			rutas = append(rutas, ruta)
 		}
 	}
 	return rutas, nil
@@ -237,12 +264,17 @@ func rutasDe(sha string) ([]string, error) {
 
 // lineasAnadidas replica la lectura por ruta que hace explain hoy. El parser en
 // memoria que la sustituye es trabajo del ticket 04.
+//
+// It reads through `git show` rather than a two-dot diff so a root commit,
+// which has no `sha^`, reports its files as wholly added instead of failing. A
+// path that cannot be read is an error: silently contributing no lines would
+// understate the characteristics and bias the measurement toward the planner.
 func lineasAnadidas(sha string, rutas []string) (map[string][]string, error) {
 	resultado := make(map[string][]string)
 	for _, ruta := range rutas {
-		salida, err := git("diff", "--no-color", "--unified=0", sha+"^", sha, "--", ":(literal)"+ruta)
+		salida, err := git("show", "--no-color", "--unified=0", "--format=", sha, "--", ":(literal)"+ruta)
 		if err != nil {
-			continue // root commits and unreadable paths contribute no lines
+			return nil, fmt.Errorf("reading added lines of %s in %s: %w", ruta, sha, err)
 		}
 		enHunk := false
 		for _, linea := range strings.Split(salida, "\n") {
@@ -264,7 +296,9 @@ func git(args ...string) (string, error) {
 }
 
 func resumir(w *os.File, out informe) {
-	fmt.Fprintf(w, "\nwindow=%d non-merge commits (%d merges excluded)\n", out.Window, out.MergesExcluded)
+	fmt.Fprintf(w, "\n%s (%s)\n", out.Ref, out.RefSHA)
+	fmt.Fprintf(w, "window=%d of %d non-merge commits measured, %d failed (%d merges excluded)\n",
+		out.Window, out.Requested, out.Failed, out.MergesExcluded)
 	fmt.Fprintf(w, "counting: %s\n\n", out.CountingConvention)
 	fmt.Fprintf(w, "%-16s %8s %14s %12s %12s\n", "stratum", "commits", "risk changed", "inv today", "inv shared")
 	claves := make([]string, 0, len(out.Strata))

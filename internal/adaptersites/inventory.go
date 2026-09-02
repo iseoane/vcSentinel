@@ -274,6 +274,8 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Binary version probe for upgrades."},
 		{Path: "tools/release/main.go", Symbol: "release tooling", Anchor: "cmd := exec.Command(\"gh\", \"release\", \"view\", \"--json\", \"tagName\", \"--jq\", \".tagName\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Release asset tooling outside the sentinel runtime."},
+		{Path: "tools/fu10divergence/main.go", Symbol: "divergence measurement harness", Anchor: "salida, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
+			Class: ClassInfra, Reason: "Read-only Git plumbing for the FU-10 divergence measurement (ticket 03): rev-list, diff-tree and show against existing commits. Analysis tooling outside the sentinel runtime; consults no agent and mutates nothing."},
 	}
 }
 
