@@ -10,15 +10,25 @@ import (
 
 // TestArgumentosDiffExplainForcePrefixesAgainstRealGit answers the review
 // finding against b7ac0cf and 0269350 with Git itself rather than with a
-// fabricated diff. The parser recognises a path by its b/ prefix, and three
-// separate configuration settings change that header: diff.noprefix removes it,
-// diff.mnemonicPrefix can substitute c/, i/ or w/, and diff.srcPrefix with
-// diff.dstPrefix replace it outright. A header the parser does not recognise
-// loses its added lines silently, which starves every content-reading detector.
+// fabricated diff. The parser recognises a path by its b/ prefix, and a header
+// it does not recognise loses its added lines silently, which starves every
+// content-reading detector.
 //
-// The assertion is that the explicit flags win over each of those settings. It
-// uses argumentosDiffExplain, so the test cannot drift from the invocation the
-// command actually issues.
+// Two of the three settings genuinely bite, and only those two prove anything
+// here. Without the forced flags, diff.noprefix yields "+++ a.txt" and
+// diff.srcPrefix with diff.dstPrefix yields "+++ Y/a.txt"; with them the header
+// stays "+++ b/a.txt".
+//
+// diff.mnemonicPrefix is different and its case is deliberately vacuous: this
+// command diffs one commit against another, and for a commit-to-commit range
+// Git keeps a/ and b/ whether the setting is on or not, so that subtest passes
+// with or without the flags. It stays as a cheap guard in case a future caller
+// diffs the index or the worktree, where mnemonic prefixes do substitute c/, i/
+// and w/ — ticket 05 reaches those callers. It is not evidence that the flags
+// override it, and must not be read as such.
+//
+// The assertion uses argumentosDiffExplain, so the test cannot drift from the
+// invocation the command actually issues.
 func TestArgumentosDiffExplainForcePrefixesAgainstRealGit(t *testing.T) {
 	dir := t.TempDir()
 	entorno := []string{
@@ -60,7 +70,8 @@ func TestArgumentosDiffExplainForcePrefixesAgainstRealGit(t *testing.T) {
 	}{
 		{"no configuration", nil},
 		{"diff.noprefix", [][2]string{{"diff.noprefix", "true"}}},
-		{"diff.mnemonicPrefix", [][2]string{{"diff.mnemonicPrefix", "true"}}},
+		// Vacuous for a commit-to-commit range; see the doc comment above.
+		{"diff.mnemonicPrefix (guard only)", [][2]string{{"diff.mnemonicPrefix", "true"}}},
 		{"diff.srcPrefix and diff.dstPrefix", [][2]string{{"diff.srcPrefix", "X/"}, {"diff.dstPrefix", "Y/"}}},
 	}
 	for _, caso := range casos {
