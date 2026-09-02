@@ -14,20 +14,21 @@ import (
 // it does not recognise loses its added lines silently, which starves every
 // content-reading detector.
 //
-// Two of the three settings genuinely bite, and only those two prove anything
-// here. Without the forced flags, diff.noprefix yields "+++ a.txt" and
-// diff.srcPrefix with diff.dstPrefix yields "+++ Y/a.txt"; with them the header
-// stays "+++ b/a.txt".
+// Each case runs the diff twice, once without the forced flags and once with
+// them, and asserts both headers. Asserting only the forced one would prove the
+// header is right without proving the flags are what makes it right, and would
+// leave every comparative claim resting on prose.
 //
-// diff.mnemonicPrefix is different and its case is deliberately vacuous: this
-// command diffs one commit against another, and for a commit-to-commit range
-// Git keeps a/ and b/ whether the setting is on or not, so that subtest passes
-// with or without the flags. It stays as a cheap guard in case a future caller
-// diffs the index or the worktree, where mnemonic prefixes do substitute c/, i/
-// and w/ — ticket 05 reaches those callers. It is not evidence that the flags
-// override it, and must not be read as such.
+// What the two runs establish: diff.noprefix and the diff.srcPrefix and
+// diff.dstPrefix pair each change the unforced header, so the flags are load
+// bearing. diff.mnemonicPrefix does not, because this command diffs one commit
+// against another and Git keeps a/ and b/ for a commit-to-commit range whether
+// the setting is on or not. That case is a guard for a future caller diffing
+// the index or the worktree, where mnemonic prefixes do substitute c/, i/ and
+// w/ — ticket 05 reaches those callers — and the test now proves it is a guard
+// rather than claiming it.
 //
-// The assertion uses argumentosDiffExplain, so the test cannot drift from the
+// The forced run uses argumentosDiffExplain, so the test cannot drift from the
 // invocation the command actually issues.
 func TestArgumentosDiffExplainForcePrefixesAgainstRealGit(t *testing.T) {
 	dir := t.TempDir()
@@ -64,15 +65,17 @@ func TestArgumentosDiffExplainForcePrefixesAgainstRealGit(t *testing.T) {
 	correr("add", "a.txt")
 	correr("commit", "-qm", "second")
 
+	const forzada = "+++ b/a.txt"
 	casos := []struct {
-		nombre string
-		config [][2]string
+		nombre       string
+		config       [][2]string
+		sinForzar    string // the header this setting produces when the flags are absent
+		esGuardaSola bool   // true when the setting cannot change a commit-to-commit header
 	}{
-		{"no configuration", nil},
-		{"diff.noprefix", [][2]string{{"diff.noprefix", "true"}}},
-		// Vacuous for a commit-to-commit range; see the doc comment above.
-		{"diff.mnemonicPrefix (guard only)", [][2]string{{"diff.mnemonicPrefix", "true"}}},
-		{"diff.srcPrefix and diff.dstPrefix", [][2]string{{"diff.srcPrefix", "X/"}, {"diff.dstPrefix", "Y/"}}},
+		{nombre: "no configuration", sinForzar: forzada, esGuardaSola: true},
+		{nombre: "diff.noprefix", config: [][2]string{{"diff.noprefix", "true"}}, sinForzar: "+++ a.txt"},
+		{nombre: "diff.mnemonicPrefix", config: [][2]string{{"diff.mnemonicPrefix", "true"}}, sinForzar: forzada, esGuardaSola: true},
+		{nombre: "diff.srcPrefix and diff.dstPrefix", config: [][2]string{{"diff.srcPrefix", "X/"}, {"diff.dstPrefix", "Y/"}}, sinForzar: "+++ Y/a.txt"},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nombre, func(t *testing.T) {
@@ -85,18 +88,31 @@ func TestArgumentosDiffExplainForcePrefixesAgainstRealGit(t *testing.T) {
 				}
 			}()
 
-			salida := correr(argumentosDiffExplain("HEAD^..HEAD")...)
-			var cabecera string
-			for _, linea := range strings.Split(salida, "\n") {
-				if strings.HasPrefix(linea, "+++ ") {
-					cabecera = linea
-					break
-				}
+			if got := cabeceraPostimagen(correr("diff", "--no-color", "--unified=0", "-M", "HEAD^..HEAD")); got != caso.sinForzar {
+				t.Errorf("unforced header under %s = %q, want %q", caso.nombre, got, caso.sinForzar)
 			}
-			if cabecera != "+++ b/a.txt" {
-				t.Errorf("post-image header = %q, want %q; the forced prefixes did not override %s",
-					cabecera, "+++ b/a.txt", caso.nombre)
+			if got := cabeceraPostimagen(correr(argumentosDiffExplain("HEAD^..HEAD")...)); got != forzada {
+				t.Errorf("forced header under %s = %q, want %q; the flags did not override the setting",
+					caso.nombre, got, forzada)
+			}
+			// Stated rather than left implicit: a case whose unforced header is
+			// already correct proves nothing about the flags, and is kept only
+			// so a future caller that can break it fails here.
+			if caso.esGuardaSola != (caso.sinForzar == forzada) {
+				t.Errorf("%s is marked guard-only=%t but its unforced header is %q",
+					caso.nombre, caso.esGuardaSola, caso.sinForzar)
 			}
 		})
 	}
+}
+
+// cabeceraPostimagen returns the first +++ header of a diff, or the empty string
+// when there is none.
+func cabeceraPostimagen(diff string) string {
+	for _, linea := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(linea, "+++ ") {
+			return linea
+		}
+	}
+	return ""
 }
