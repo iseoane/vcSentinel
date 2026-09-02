@@ -50,35 +50,64 @@ func TestPlanDeRevisionPropagaElFalloSinDims(t *testing.T) {
 // regression that read the attributes and then discarded them would keep both
 // of them green while the derivation classified from empty evidence.
 //
-// The observable is the scheduled plan itself. The added line is a comment, so
-// it carries a security keyword and no executable change: without attributes
-// the content makes the change high risk and schedules a full plan, and marking
-// the path generated removes the only risk characteristic, leaving nothing to
-// schedule. Only the attributes can move it.
+// Both rows mark the same path linguist-generated and differ only in whether
+// the added line is code. That is deliberate, and it is what the attribute
+// alone cannot do: FU-14 records that behavior_change classifies through
+// ClasificarPorRuta and never sees the attributes, so a generated path adding
+// real code still reports it. Reading only the comment row invites the
+// conclusion that the attribute silences the whole plan, which it does not.
+//
+// The comment row is therefore the one that proves the attribute arrived:
+// security_sensitive is its only risk characteristic, and only the attribute
+// can remove it. The code row pins FU-14's behaviour so that resolving it fails
+// here rather than silently.
 func TestPlanDeRevisionUsaLosAtributosLeidos(t *testing.T) {
 	profile := change.ChangeProfile{Kind: "generated", Symbols: change.ChangeSymbols{Modified: 1, Complete: true}}
 	paths := []string{"internal/api/wire.go"}
-	diff := "diff --git a/internal/api/wire.go b/internal/api/wire.go\n" +
+	cabecera := "diff --git a/internal/api/wire.go b/internal/api/wire.go\n" +
 		"--- a/internal/api/wire.go\n" +
 		"+++ b/internal/api/wire.go\n" +
-		"@@ -1,0 +2,1 @@\n" +
-		"+\t// the caller rotates its accessToken here\n"
+		"@@ -1,0 +2,1 @@\n"
+	generado := func() (string, error) { return "internal/api/wire.go linguist-generated\n", nil }
+	sinAtributos := func() (string, error) { return "", nil }
 
-	sinAtributos, err := planDeRevision(nil, profile, paths, diff, func() (string, error) { return "", nil })
-	if err != nil {
-		t.Fatalf("planDeRevision: %v", err)
+	casos := []struct {
+		nombre       string
+		linea        string
+		conAtributos int // bundles once the path is declared generated
+		razon        string
+	}{
+		{
+			nombre: "comment only", linea: "+\t// the caller rotates its accessToken here",
+			conAtributos: 0,
+			razon:        "security_sensitive is the only risk characteristic and the attribute removes it",
+		},
+		{
+			nombre: "executable line", linea: "+\taccessToken := os.Getenv(\"SERVICE_TOKEN\")",
+			conAtributos: 3,
+			razon:        "behavior_change survives the attribute; see FU-14",
+		},
 	}
-	if len(sinAtributos) == 0 {
-		t.Fatalf("without attributes the content must still schedule a plan; got none")
-	}
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			diff := cabecera + caso.linea + "\n"
 
-	conAtributos, err := planDeRevision(nil, profile, paths, diff, func() (string, error) {
-		return "internal/api/wire.go linguist-generated\n", nil
-	})
-	if err != nil {
-		t.Fatalf("planDeRevision: %v", err)
-	}
-	if len(conAtributos) != 0 {
-		t.Errorf("marking the path generated still scheduled %d bundles; the attributes never reached the derivation", len(conAtributos))
+			base, err := planDeRevision(nil, profile, paths, diff, sinAtributos)
+			if err != nil {
+				t.Fatalf("planDeRevision: %v", err)
+			}
+			if len(base) == 0 {
+				t.Fatalf("without attributes the content must schedule a plan; got none")
+			}
+
+			got, err := planDeRevision(nil, profile, paths, diff, generado)
+			if err != nil {
+				t.Fatalf("planDeRevision: %v", err)
+			}
+			if len(got) != caso.conAtributos {
+				t.Errorf("declaring the path generated scheduled %d bundles, want %d (%s); against %d without attributes",
+					len(got), caso.conAtributos, caso.razon, len(base))
+			}
+		})
 	}
 }

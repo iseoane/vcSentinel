@@ -1170,3 +1170,12 @@ because the answer must be recorded, not because one side is obviously right.
 
 Priority: not blocking. It changes classification for repositories that use the
 attribute; this one does not mark any tree generated today.
+
+Pinned by test so resolving it cannot pass unnoticed:
+`TestPlanDeRevisionUsaLosAtributosLeidos` in `cmd/sentinel` carries both rows.
+A `linguist-generated` path whose added line is a comment schedules nothing,
+because `security_sensitive` was its only risk characteristic and the attribute
+removes it; the same path adding an executable line still schedules three
+bundles, because `behavior_change` never sees the attribute. Two review
+dimensions read the single-row version of that test as contradicting this entry,
+so the two cases now sit side by side rather than being explained in prose.
