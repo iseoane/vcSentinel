@@ -331,3 +331,54 @@ func TestCollectProvenanceReferencesIncludesLinkedWorktreeLedgers(t *testing.T) 
 			references, invocacionEnlazada, gitDirEnlazado)
 	}
 }
+
+// TestDirectoriosLedgerV1FallaCerradoSiNoPuedeEnumerar is the oracle for the
+// reason this enumeration does not use filepath.Glob. Glob reports only
+// ErrBadPattern and swallows the I/O errors it hits reading directories, so a
+// static pattern over an unreadable worktrees directory returns an empty list
+// and a nil error, which reads exactly like a repository with no linked
+// worktrees. Provenance would then be silently partial and a prune would
+// destroy the streams this guard exists to protect.
+func TestDirectoriosLedgerV1FallaCerradoSiNoPuedeEnumerar(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so an unreadable directory cannot be staged")
+	}
+	commonDir := t.TempDir()
+	raiz := filepath.Join(commonDir, "worktrees")
+	if err := os.MkdirAll(filepath.Join(raiz, "linked", "vas-sentinel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// It must find the ledger while the directory is readable, or the negative
+	// case below would pass for the wrong reason.
+	directorios, err := directoriosLedgerV1(commonDir)
+	if err != nil {
+		t.Fatalf("directoriosLedgerV1() error = %v", err)
+	}
+	if len(directorios) != 2 {
+		t.Fatalf("directoriosLedgerV1() = %v, want the common dir and one linked worktree", directorios)
+	}
+
+	if err := os.Chmod(raiz, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(raiz, 0o755) })
+
+	if _, err := directoriosLedgerV1(commonDir); err == nil {
+		t.Error("an unreadable worktrees directory returned no error; provenance would be silently partial and a prune would destroy referenced streams")
+	}
+}
+
+// TestDirectoriosLedgerV1SinWorktrees pins the ordinary case: a repository with
+// no linked worktrees has no worktrees directory at all, which is an absence
+// and not a failure.
+func TestDirectoriosLedgerV1SinWorktrees(t *testing.T) {
+	commonDir := t.TempDir()
+	directorios, err := directoriosLedgerV1(commonDir)
+	if err != nil {
+		t.Fatalf("directoriosLedgerV1() error = %v", err)
+	}
+	if len(directorios) != 1 || directorios[0] != commonDir {
+		t.Errorf("directoriosLedgerV1() = %v, want only the common directory", directorios)
+	}
+}

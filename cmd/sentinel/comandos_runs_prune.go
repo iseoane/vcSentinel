@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -119,16 +122,43 @@ func collectProvenanceReferences(worktree string, backing *store.Store) (map[str
 // a dedicated worktree is the mandated workflow here, so that was the normal
 // path (FU-12).
 //
-// The glob mirrors MigrarDesdeV1, which already enumerates them this way, and
-// avoids invoking `git worktree list` and parsing its output.
+// Enumerated with os.ReadDir and NOT with filepath.Glob, even though
+// MigrarDesdeV1 globs the same layout. filepath.Glob reports only
+// ErrBadPattern and silently swallows the I/O errors it hits while reading
+// directories, so a static pattern over an unreadable `worktrees` directory
+// returns an empty list and a nil error. That is indistinguishable from a
+// repository with no linked worktrees, and it would fail open in the one place
+// whose whole contract is to fail closed. The glob is harmless in the migration
+// because missing a directory there only defers work that a later run repeats;
+// here it destroys.
+//
+// An absent `worktrees` directory is the ordinary case for a repository with no
+// linked worktrees and is not a failure. Anything else is.
 func directoriosLedgerV1(gitCommonDir string) ([]string, error) {
 	directorios := []string{gitCommonDir}
-	enlazados, err := filepath.Glob(filepath.Join(gitCommonDir, "worktrees", "*", "vas-sentinel"))
-	if err != nil {
-		return nil, err
+	raiz := filepath.Join(gitCommonDir, "worktrees")
+	entradas, err := os.ReadDir(raiz)
+	if errors.Is(err, fs.ErrNotExist) {
+		return directorios, nil
 	}
-	for _, dir := range enlazados {
-		directorios = append(directorios, filepath.Dir(dir))
+	if err != nil {
+		return nil, fmt.Errorf("enumerating linked worktree ledgers in %s: %w", raiz, err)
+	}
+	for _, entrada := range entradas {
+		if !entrada.IsDir() {
+			continue
+		}
+		gitDir := filepath.Join(raiz, entrada.Name())
+		info, err := os.Stat(filepath.Join(gitDir, "vas-sentinel"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // that worktree never wrote a ficha
+		}
+		if err != nil {
+			return nil, fmt.Errorf("checking the ledger of linked worktree %s: %w", entrada.Name(), err)
+		}
+		if info.IsDir() {
+			directorios = append(directorios, gitDir)
+		}
 	}
 	return directorios, nil
 }
