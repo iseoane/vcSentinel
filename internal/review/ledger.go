@@ -352,6 +352,19 @@ const esperaMaximaBloqueoFicha = 30 * time.Second
 // costs nothing and keeps an uncontended second writer from stalling.
 const intervaloReintentoBloqueoFicha = 25 * time.Millisecond
 
+// ErrBloqueoNoLiberado marks the one failure that must not be read as "the
+// mutation did not happen": the protected operation SUCCEEDED and only its lock
+// file could not be removed. A caller that records what it changed needs to
+// tell the two apart, because a deletion reported as a failure leaves the ficha
+// gone and its events pointing at it.
+var ErrBloqueoNoLiberado = errors.New("the review ficha was written but its lock could not be released")
+
+// borrarBloqueo libera el archivo de bloqueo. Es una variable, no una llamada
+// directa, por la misma razón que leerAtributosGate en cmd/sentinel: la rama de
+// fallo decide si un borrado ya hecho se reporta o se pierde, y no hay forma de
+// provocarla desde la API pública porque ocurre dentro de la sección crítica.
+var borrarBloqueo = os.Remove
+
 // conFichaBloqueada ejecuta fn manteniendo un bloqueo exclusivo sobre la ficha
 // de un SHA.
 //
@@ -390,9 +403,13 @@ func (l *Ledger) conFichaBloqueada(sha string, fn func() error) (err error) {
 			// left behind makes every later writer of this SHA wait the full
 			// timeout and then fail, which is not something to learn later.
 			defer func() {
-				if errBorrar := os.Remove(ruta); errBorrar != nil && err == nil {
-					err = fmt.Errorf("the review ficha of %s was written but its lock could not be released; delete %s: %w", sha, ruta, errBorrar)
+				// An already-absent lock is a released lock: someone removed it
+				// out of protocol, which is not this call's failure.
+				errBorrar := borrarBloqueo(ruta)
+				if errBorrar == nil || errors.Is(errBorrar, os.ErrNotExist) || err != nil {
+					return
 				}
+				err = fmt.Errorf("%w (%s of %s): %v", ErrBloqueoNoLiberado, ruta, sha, errBorrar)
 			}()
 			return fn()
 		}
@@ -561,6 +578,12 @@ func (l *Ledger) PurgarHuerfanas(existe func(sha string) (bool, error)) ([]strin
 		// purge could remove a ficha while a locked GuardarRevision was writing
 		// it, so a revision that reported success would simply not exist.
 		if err := l.conFichaBloqueada(sha, func() error { return l.EliminarFicha(sha) }); err != nil {
+			// ErrBloqueoNoLiberado means the ficha IS deleted and only the lock
+			// survived. Recording it before aborting is what lets the caller
+			// clean its events, which are purged from this very list.
+			if errors.Is(err, ErrBloqueoNoLiberado) {
+				eliminados = append(eliminados, sha)
+			}
 			return eliminados, err
 		}
 		eliminados = append(eliminados, sha)

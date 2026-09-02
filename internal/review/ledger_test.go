@@ -929,3 +929,74 @@ func TestAdoptarFichaConcurrenteConGuardarRevision(t *testing.T) {
 		}
 	}
 }
+
+// TestPurgarHuerfanasReportaLaFichaBorradaAunqueFalleElBloqueo covers the seam
+// between two things this ledger learned in the same change: deletion runs
+// under the per-SHA lock, and a lock that cannot be released is reported
+// instead of discarded. Together they had a hole. The deferred release turned a
+// SUCCESSFUL deletion into an error, and the purge returned before recording
+// the SHA, so the ficha was gone while the caller was told nothing was deleted
+// — and events are cleaned from that very list, so they survived pointing at a
+// ficha the command had just removed.
+//
+// The release failure is injected through borrarBloqueo. There is no file shape
+// that reaches it: the lock only exists inside the critical section, and any
+// shape staged before it makes the acquisition fail instead, which is a
+// different branch.
+func TestPurgarHuerfanasReportaLaFichaBorradaAunqueFalleElBloqueo(t *testing.T) {
+	ledger := NuevoLedger(t.TempDir())
+	const sha = "4444444444444444444444444444444444444444"
+	if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Installed AFTER seeding: the seed writes under the same lock, and failing
+	// its release would abort the fixture instead of exercising the purge.
+	original := borrarBloqueo
+	fallo := errors.New("the lock file could not be removed")
+	borrarBloqueo = func(ruta string) error {
+		_ = original(ruta) // still released, so the fixture leaks nothing
+		return fallo
+	}
+	t.Cleanup(func() { borrarBloqueo = original })
+
+	eliminados, err := ledger.PurgarHuerfanas(func(string) (bool, error) {
+		return false, nil // orphan: the purge must delete it
+	})
+
+	if !errors.Is(err, ErrBloqueoNoLiberado) {
+		t.Fatalf("PurgarHuerfanas() error = %v, want one wrapping ErrBloqueoNoLiberado", err)
+	}
+	if ficha, lerr := ledger.LeerFicha(sha); lerr != nil || ficha != nil {
+		t.Fatalf("the ficha was not deleted (ficha=%v, err=%v); the fixture no longer exercises the case", ficha, lerr)
+	}
+	if !slices.Contains(eliminados, sha) {
+		t.Errorf("PurgarHuerfanas() = %v, want it to report %q: the ficha is deleted, and its events are cleaned from this very list",
+			eliminados, sha)
+	}
+}
+
+// TestGuardarRevisionNoOcultaElBloqueoNoLiberado holds the other half of that
+// distinction: a mutation whose lock leaked must still say so. Reporting the
+// write as clean would leave every later writer of this SHA waiting the full
+// timeout with nothing explaining why.
+func TestGuardarRevisionNoOcultaElBloqueoNoLiberado(t *testing.T) {
+	ledger := NuevoLedger(t.TempDir())
+	const sha = "5555555555555555555555555555555555555555"
+	original := borrarBloqueo
+	borrarBloqueo = func(ruta string) error {
+		_ = original(ruta)
+		return errors.New("the lock file could not be removed")
+	}
+	t.Cleanup(func() { borrarBloqueo = original })
+
+	err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
+	if !errors.Is(err, ErrBloqueoNoLiberado) {
+		t.Fatalf("GuardarRevision() error = %v, want one wrapping ErrBloqueoNoLiberado", err)
+	}
+	// The revision is on disk regardless: the failure is about the lock, not
+	// the write, and a caller that retried would append it twice.
+	if ficha, lerr := ledger.LeerFicha(sha); lerr != nil || ficha == nil || len(ficha.Revisions) != 1 {
+		t.Errorf("LeerFicha() = %v, %v; want the revision persisted despite the lock failure", ficha, lerr)
+	}
+}
