@@ -198,3 +198,35 @@ func TestSecuritySensitivePathPatternsSurviveTheClassFilter(t *testing.T) {
 		t.Errorf("declared sensitive path = %q, want %q", got, CaracteristicaPresente)
 	}
 }
+
+// TestConcurrencyIgnoresProseAndGeneratedContent applies to the concurrency
+// detector the filter ticket 02 gave the security one. The divergence
+// measurement found the gap: 17 of 52 prose-only commits were unlocked by
+// concurrency alone, because this repository's reengineering fichas discuss Go
+// concurrency constantly and every document mentioning context. read as a
+// concurrent change. The word-boundary guard already on these marks is a
+// different fix for a different problem: it stops miscontext. matching inside a
+// longer identifier, and does nothing about a sentence in a Markdown file.
+func TestConcurrencyIgnoresProseAndGeneratedContent(t *testing.T) {
+	casos := []struct {
+		name string
+		path string
+		line string
+		want EstadoCaracteristica
+	}{
+		{"markdown prose", "docs/reingenieria/f9-observabilidad.md", "the producer reads context.Background() on every attempt", CaracteristicaAusente},
+		{"generated file", "internal/api/service.pb.go", "\tresults chan *Reply", CaracteristicaAusente},
+		{"source goroutine", "internal/worker/worker.go", "\tgo ejecutar()", CaracteristicaPresente},
+		{"source context", "internal/worker/worker.go", "\tctx := context.Background()", CaracteristicaPresente},
+		{"config key", "deploy/values.yaml", "  channel: sync.enabled", CaracteristicaPresente},
+	}
+	for _, caso := range casos {
+		entrada := EntradaCaracteristicas{
+			Rutas:          []string{caso.path},
+			LineasAnadidas: map[string][]string{caso.path: {caso.line}},
+		}
+		if got := detectarConcurrencia(entrada).Estado; got != caso.want {
+			t.Errorf("%s (%s) = %q, want %q", caso.name, caso.path, got, caso.want)
+		}
+	}
+}

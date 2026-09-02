@@ -53,11 +53,12 @@ var marcasConcurrencia = []*regexp.Regexp{
 }
 
 // clasesSinEvidenciaDeContenido lists the path classes whose added text is not
-// evidence of credential handling: documentation is prose and generated files
-// are output. Before this filter detectarSeguridadSensible read the lines of
-// EVERY path, so a metrics artifact under docs/ holding "cached_input_tokens"
-// marked security_sensitive and raised a documentation commit to high risk
-// (FU-10).
+// evidence of anything a detector should act on: documentation is prose and
+// generated files are output. Before this filter detectarSeguridadSensible and
+// detectarConcurrencia read the lines of EVERY path, so a metrics artifact
+// under docs/ holding "cached_input_tokens" marked security_sensitive, and any
+// ficha discussing context.Background() marked concurrency. Both raised
+// documentation commits above their real risk (FU-10, ticket 03b).
 //
 // It is a deny-list and not an allow-list on purpose: config and infra paths
 // genuinely can hold credentials, and admitting only ClaseSource would lose
@@ -69,6 +70,14 @@ var marcasConcurrencia = []*regexp.Regexp{
 var clasesSinEvidenciaDeContenido = map[string]bool{
 	ClaseDocs:      true,
 	ClaseGenerated: true,
+}
+
+// admiteEvidenciaDeContenido reports whether the added lines of ruta may be
+// read as evidence at all. One helper for every content-reading detector: two
+// detectors excluding the same classes through two mechanisms is how the FU-10
+// defect started.
+func admiteEvidenciaDeContenido(e EntradaCaracteristicas, reglas []Regla, ruta string) bool {
+	return !clasesSinEvidenciaDeContenido[Clasificar(ruta, reglas, e.Gitattributes)]
 }
 
 // reglasDe devuelve entrada.Reglas si se inyectaron, o los defaults si no:
@@ -108,7 +117,7 @@ func detectarSeguridadSensible(e EntradaCaracteristicas) Caracteristica {
 	claves := []string{"auth", "token", "crypto", "password", "secret"}
 	reglas := reglasDe(e)
 	presente := rutasCoinciden(e.Rutas, e.PatronesSensibles) || algunaLineaDeRuta(e.LineasAnadidas, func(ruta, linea string) bool {
-		if clasesSinEvidenciaDeContenido[Clasificar(ruta, reglas, e.Gitattributes)] {
+		if !admiteEvidenciaDeContenido(e, reglas, ruta) {
 			return false
 		}
 		linea = strings.ToLower(linea)
@@ -122,7 +131,11 @@ func detectarSeguridadSensible(e EntradaCaracteristicas) Caracteristica {
 	return resultadoHeuristico("security_sensitive", presente)
 }
 func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
-	presente := algunaLinea(e.LineasAnadidas, func(linea string) bool {
+	reglas := reglasDe(e)
+	presente := algunaLineaDeRuta(e.LineasAnadidas, func(ruta, linea string) bool {
+		if !admiteEvidenciaDeContenido(e, reglas, ruta) {
+			return false
+		}
 		for _, marca := range marcasConcurrencia {
 			if marca.MatchString(linea) {
 				return true
