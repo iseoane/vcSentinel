@@ -1231,6 +1231,30 @@ injection surface.
 Priority: not blocking. No path in this repository triggers it today, so it is a
 correctness gap waiting for a filename rather than an active fault.
 
+#### Resolved 2026-09-02
+
+`internal/review/net_pr.go` passes the complete changed-path list to
+`PlanForProfile`. `rutasRevisionSeguras` is untouched and still feeds
+`RutasContexto`, the transport factory and `git.ReadPathAtRevision`, which are
+the surfaces that interpolate those names. The two uses wanted different lists
+and now get them.
+
+Measured rather than argued: `PlanForProfile` over `infra/main[1].tf` reports
+`infrastructure` **present** with the complete list and **absent** with the
+sanitised one, which is exactly the route evidence the entry predicted was
+being lost.
+
+Pinned by `TestNetReviewClasificaConLaListaCompletaDeRutas`, over a real
+repository and the real net-review path. Square brackets, not wildcards: they
+are legal in filenames on Linux and Windows alike, so the fixture exercises the
+gap on both.
+
+The first version of that test asserted only that the prompt contained the word
+`infrastructure`, and it passed against the unfixed code — every characteristic
+is named in the evidence whether present or absent. It asserts the state now.
+That is recorded because it is the third time in this sequence a test passed for
+the wrong reason, and the assertion, not the fixture, was the weak part.
+
 ### FU-14: half the detectors classify without the repository attributes
 
 Recorded 2026-09-02 while writing the ticket 05 regression that proves a

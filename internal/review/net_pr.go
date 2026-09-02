@@ -152,7 +152,19 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	if aerr != nil {
 		return nil, fmt.Errorf("net range attributes: %w", aerr)
 	}
-	plan := PlanForProfile(profile, safePaths, netDiff, netAtributos)
+	// The COMPLETE path list, not safePaths. rutasRevisionSeguras drops any name
+	// containing *?[]{}!, a control character or a leading dash, which is right
+	// for the surfaces that interpolate those names into reviewer prompts and
+	// Git arguments — and wrong here. Classification only matches globs against
+	// strings and has no such exposure, so the sanitised list silently removed
+	// route evidence: measured, infra/main[1].tf classifies as infrastructure
+	// present with the complete list and absent with the sanitised one (FU-13).
+	//
+	// Widening the sanitiser would have traded this coverage gap for an
+	// injection surface. The two uses want different lists, and they now get
+	// them: safePaths still feeds RutasContexto, the transport factory and
+	// git.ReadPathAtRevision below.
+	plan := PlanForProfile(profile, paths, netDiff, netAtributos)
 	evidence, merr := json.Marshal(map[string]any{"profile": profile, "risk": plan.Risk, "characteristics": plan.Characteristics, "validation": o.Validation})
 	if merr != nil {
 		return nil, fmt.Errorf("marshal net evidence: %w", merr)

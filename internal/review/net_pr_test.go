@@ -207,3 +207,41 @@ func TestStackedNetReviewUsesOwnRange(t *testing.T) {
 		t.Errorf("net start = %v/%v, want own-diff start %s (not base %s)", err, res.Net, stack.shaA, stack.baseSHA)
 	}
 }
+
+// TestNetReviewClasificaConLaListaCompletaDeRutas closes FU-13. The net range
+// derived its plan from the SANITISED path list. rutasRevisionSeguras drops any
+// path containing *?[]{}!, a control character or a leading dash, which is
+// correct for the surfaces that interpolate those names into reviewer prompts
+// and Git arguments — and wrong for classification, which only matches globs
+// against strings and has no such exposure.
+//
+// A repository holding one of those names classified its net range from an
+// incomplete list and silently lost route evidence. The fixture uses square
+// brackets on purpose: they are legal in filenames on both Linux and Windows,
+// unlike the wildcard characters, so this exercises the gap everywhere.
+func TestNetReviewClasificaConLaListaCompletaDeRutas(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	if err := os.MkdirAll("infra", 0755); err != nil {
+		t.Fatal(err)
+	}
+	commitEnRama(t, "infra/main[1].tf", "resource \"null_resource\" \"x\" {}\n")
+
+	stub := &historyStub{auditorStub: auditorStub{auditOutput: auditOutputOK}}
+	res, err := AnalizarRama(NuevoLedger(gitDir), OpcionesRama{
+		Fabrica: fabricaStub(stub), Parallel: 1,
+		NetReview: &NetReviewOptions{Intention: "Add infrastructure", Validation: "lint-ok"},
+	})
+	if err != nil || res.Net == nil {
+		t.Fatalf("net review failed: %v %+v", err, res)
+	}
+
+	// The STATE is asserted, not the word. Every characteristic is named in the
+	// evidence whether present or absent, so searching for "infrastructure"
+	// passes with the sanitised list too — measured, that first version of this
+	// test proved nothing.
+	prompt := stub.prompts[len(stub.prompts)-1]
+	const presente = `{"name":"infrastructure","state":"present"}`
+	if !strings.Contains(prompt, presente) {
+		t.Errorf("the net evidence does not report infrastructure as present for infra/main[1].tf; the sanitised list dropped the only path that carries it:\n%s", prompt)
+	}
+}
