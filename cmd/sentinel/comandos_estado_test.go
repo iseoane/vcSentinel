@@ -5,6 +5,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -690,4 +691,131 @@ func TestPurgarHuerfanasDevuelveLoYaBorradoAlFallar(t *testing.T) {
 	if !slices.Contains(eliminados, borrable) {
 		t.Errorf("purgarHuerfanas() = %v, want it to contain %q, which it deleted before the failure", eliminados, borrable)
 	}
+}
+
+// TestPurgarHuerfanasConEventosDevuelveLoYaBorradoAlFallar closes the last
+// facade over the partial-result contract. The two below it were pinned first,
+// but this is the one both commands actually call, and it is where the deleted
+// SHAs turn into the list whose events get cleaned.
+func TestPurgarHuerfanasConEventosDevuelveLoYaBorradoAlFallar(t *testing.T) {
+	worktree, gitDirPrincipal, borrable := repoConLedgerIrrompible(t)
+
+	eliminados, err := purgarHuerfanasConEventos(worktree, gitDirPrincipal)
+	if err == nil {
+		t.Fatalf("purgarHuerfanasConEventos() error = nil; want the ledger it could not purge reported")
+	}
+	if !slices.Contains(eliminados, borrable) {
+		t.Errorf("purgarHuerfanasConEventos() = %v, want it to contain %q, whose events are cleaned from this very list", eliminados, borrable)
+	}
+}
+
+// TestEjecutarPurgaYReportarNoAfirmaLoQueNoComprobo covers the policy both
+// command facades share: after a failure the purge must not print a VERIFIED
+// conclusion. reportarPurga's empty case says "no orphans exist, every SHA is
+// reachable", which a failed purge never established, and its JSON form says
+// the same with an empty list.
+//
+// stdout is captured through a pipe because that claim is the whole point: an
+// exit code alone would not distinguish a silent failure from one that printed
+// a false all-clear.
+func TestEjecutarPurgaYReportarNoAfirmaLoQueNoComprobo(t *testing.T) {
+	worktree, gitDirPrincipal, borrable := repoConLedgerIrrompible(t)
+
+	original := os.Stdout
+	lectura, escritura, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = escritura
+	codigo := ejecutarPurgaYReportar(worktree, gitDirPrincipal, false)
+	os.Stdout = original
+	if cerr := escritura.Close(); cerr != nil {
+		t.Fatal(cerr)
+	}
+	var salida strings.Builder
+	if _, cerr := io.Copy(&salida, lectura); cerr != nil {
+		t.Fatal(cerr)
+	}
+
+	if codigo != 1 {
+		t.Errorf("ejecutarPurgaYReportar() = %d, want 1: the purge could not finish", codigo)
+	}
+	if strings.Contains(salida.String(), "no hay fichas huérfanas") {
+		t.Errorf("stdout claimed there are no orphans after a failed purge: %q", salida.String())
+	}
+	// What it DID delete is still reported, because that list is the operator's
+	// only record of what is already gone.
+	if !strings.Contains(salida.String(), borrable) {
+		t.Errorf("stdout = %q, want it to name %q, which the purge deleted before failing", salida.String(), borrable)
+	}
+}
+
+// TestEjecutarPurgaYReportarCallaCuandoNoBorroNada is the other half, and the
+// one that actually distinguishes the policy from "always report". When the
+// purge fails before deleting anything, the result is empty, and reportarPurga
+// turns an empty result into the claim that no orphans exist. Printing that is
+// the original defect: a conclusion asserted from a check that never ran.
+func TestEjecutarPurgaYReportarCallaCuandoNoBorroNada(t *testing.T) {
+	worktree, gitDirPrincipal := repoConElPrimerLedgerIrrompible(t)
+
+	original := os.Stdout
+	lectura, escritura, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = escritura
+	codigo := ejecutarPurgaYReportar(worktree, gitDirPrincipal, false)
+	os.Stdout = original
+	if cerr := escritura.Close(); cerr != nil {
+		t.Fatal(cerr)
+	}
+	var salida strings.Builder
+	if _, cerr := io.Copy(&salida, lectura); cerr != nil {
+		t.Fatal(cerr)
+	}
+
+	if codigo != 1 {
+		t.Errorf("ejecutarPurgaYReportar() = %d, want 1: the purge could not finish", codigo)
+	}
+	if salida.String() != "" {
+		t.Errorf("stdout = %q, want nothing: the purge deleted no ficha and verified no SHA, so it has nothing to report",
+			salida.String())
+	}
+}
+
+// repoConElPrimerLedgerIrrompible stages the failure in the FIRST ledger the
+// purge visits, the common directory, so it aborts before deleting anything.
+func repoConElPrimerLedgerIrrompible(t *testing.T) (worktree, gitDirPrincipal string) {
+	t.Helper()
+	worktree = t.TempDir()
+	correr := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	correr("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	correr("add", "a.txt")
+	correr("commit", "-qm", "first")
+
+	var err error
+	gitDirPrincipal, err = git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruta := review.NuevoLedger(gitDirPrincipal).RutaFicha("cccccccccccccccccccccccccccccccccccccccc")
+	if err := os.MkdirAll(filepath.Join(ruta, "ocupado"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return worktree, gitDirPrincipal
 }
