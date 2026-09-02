@@ -68,7 +68,7 @@ this is the evidence a future task would start from.
 | C-12 | Full suite | Repository check | Writer | `go test -count=1 ./...` exit 0, zero `FAIL` lines, re-run independently by the coordinator | met |
 | C-13 | Race on touched packages | Explicit package list | Writer | `go test -count=1 -race ./internal/config` ok 1.059s, re-run independently by the coordinator | met |
 | C-14 | Build and vet | Repository checks | Writer | `go build ./...` and `go vet ./...` both exit 0, re-run independently by the coordinator | met |
-| C-15 | Every task commit reviewed | One ficha per commit | Sentinel | `68a2910` → `warn` over 5 dimensions (security ok, design ok, spec/tests/logic warn). `8d659d7` and `5178e4f` are documentation-only and drew zero dimensions, per FU-10 | met, with the FU-10 limit stated |
+| C-15 | Every task commit reviewed | One ficha per commit | Sentinel | `68a2910` → `warn` over 5 dimensions (security ok, design ok, spec/tests/logic warn). `8d659d7` and `5178e4f` are documentation-only and drew zero dimensions, per FU-10. **Re-read 2026-09-02: both still derive `none` under the resolved planner, so the zero scope was correct on its merits and not only a limit** | met; the FU-10 limit no longer applies |
 | C-16 | Staged volume enforced | The enforcing boundary | Sentinel | `sentinel check --staged` run immediately before all three commits; every one within budget. The calibration commit reported 6 authored lines | met |
 | C-17 | Final gate | Pre-push gate | Sentinel | `sentinel gate --stage pre-push --timeout 1200`; result recorded in the closure report | met |
 | C-18 | Durable runs settled and verified | Terminal state plus verification per run | Sentinel | The rule that closes: every emitted run is settled and verified. The review of `68a2910` emitted 5 — `60b3d266`, `e668c07f`, `88c1da2b`, `4da3ea24`, `bda1350f` — all `succeeded`, all verified with 4 intact events. A gate run after this row is written cannot appear in it, so the final gate's own runs are named in the closure report | met, regress bounded |
@@ -88,7 +88,10 @@ was verified in the repository before disposition.
 | No test covers the checked-in project override | tests | Premise CONFIRMED — no such test exists. Remedy REJECTED | accepted with reason: every config test writes a temporary fixture, and no test in this repository reads the real `.vas_sentinel/vassentinel.yml`. Pinning an operational setting a user is expected to tune would turn a legitimate retune into a suite failure |
 
 The two fixes landed in a documentation-only commit, which drew zero review
-dimensions for the same FU-10 reason recorded against T9.4a. `registrarCorrecciones`
+dimensions for the same FU-10 reason recorded against T9.4a. **Re-read
+2026-09-02: FU-10 is resolved and that commit still derives `none` with the
+planner reading content, so the empty scope reflects the change and not a
+blind spot.** `registrarCorrecciones`
 did not mark `FixedIn`, which is correct: it links only blocked fichas, and
 `68a2910` is `warn`.
 

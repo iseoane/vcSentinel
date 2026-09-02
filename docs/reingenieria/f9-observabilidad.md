@@ -750,6 +750,15 @@ reads content, so a documentation candidate cannot reach any risk level above
 `none` whatever it says. A reader of T9.4b should weigh this analysis knowing
 that.
 
+**Update 2026-09-02, after FU-10 was resolved.** The caveat above no longer
+applies to work done after that date, and the paragraph is kept as written
+because it was true when T9.4a ran. The planner now receives the same evidence
+as `explain`, so a documentation candidate reaching `none` today does mean
+Sentinel judged its content low risk. The outcome for these four commits is
+unchanged and was measured rather than assumed: every one of them still derives
+`none` under the full evidence. The narrower reading applies only to the review
+scope recorded at the time, not to the conclusion.
+
 ### T9.4b — evidence-backed calibration
 
 An allowed change adjusts bundles, severity thresholds, model profiles,

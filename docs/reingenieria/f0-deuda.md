@@ -948,6 +948,50 @@ added lines; if it does not, `explain` should stop reporting a risk level that
 review will not act on. Do not fix this by widening one detector: the defect is
 that one derivation runs on two different inputs.
 
+#### Resolved 2026-09-02
+
+The planner is authoritative and now receives the same evidence. Both surfaces
+derive their detector input from one constructor, so there is no longer a way to
+classify a change from a narrower set of facts than `explain` uses.
+
+**The decision and what it cost.** Measurement decided it rather than
+preference: over 120 non-merge commits, feeding the planner costs 20% more agent
+invocations on source-bearing commits, 304 to 364, and 40 of 69 of them were
+classified below `explain` before the change. The full method, the pinned
+artifact and the reproducing command are in
+`evidence/fu10-divergence.md`. No risk-rule adjustment was needed; what looked
+like a rule problem was a detector-input problem.
+
+**The demonstrated instance was a false positive, and that matters for how this
+entry is read.** `sentinel explain a1a5803..780c900` reported
+`high por security_sensitive presente` for a documentation commit because the
+substring `token` matched inside `cached_input_tokens`. `explain` was wrong
+about that commit and the planner happened to be right. It is evidence of the
+divergence, never evidence that the planner under-reviewed there. The structural
+risk was always the reverse case, which no commit in the phase exercised: a
+source change adding credential handling without touching an exported symbol.
+That case is now the headline regression test, and it failed on behaviour before
+the fix.
+
+**Two detectors were narrowed first, and neither is the widening this entry
+forbids.** `detectarSeguridadSensible` and `detectarConcurrencia` both read the
+added lines of every path with no class filter. Documentation and generated
+paths are now excluded from content evidence, through one shared helper rather
+than two mechanisms. The discriminator is the path class, not the lexeme: word
+boundaries were measured and rejected, because `\btoken\b` rejects
+`cached_input_tokens` but also `accessToken` and `refreshTokens`. The
+concurrency narrowing was found by the measurement rather than predicted, and
+without it the migration would have imported a prose false positive that nearly
+tripled the review cost of documentation commits.
+
+**The prose guard holds, measured rather than assumed.** Every documentation
+commit that the T9.4a and T9.4b records cite still derives `none` under the full
+evidence, `780c900` included. `sentinel review 0845ce8`, a documentation commit
+made after the migration, drew zero dimensions end to end.
+
+Delivered as tickets 01 to 06 in `.scratch/fu10-planner-evidence/issues/`.
+Follow-ups opened along the way and still open: FU-11, FU-13 and FU-14.
+
 ### FU-11: no signal survives the class filter for a credential committed into prose
 
 Recorded 2026-09-02 while closing ticket 02 of the FU-10 sequence, from the
