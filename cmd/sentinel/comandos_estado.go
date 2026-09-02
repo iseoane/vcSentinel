@@ -352,11 +352,25 @@ func purgarHuerfanasConEventos(worktree, gitDir string) ([]string, error) {
 		if len(purgados) == 0 {
 			continue
 		}
-		if _, err := ops.PurgeEventosDe(dir, purgados); err != nil {
-			return eliminados, fmt.Errorf("fichas purgadas pero falló limpiar sus eventos en %s: %w", dir, err)
+		if err := limpiarEventos(dir, purgados); err != nil {
+			// Joined, not replaced. errEnumeracion says some ledgers were never
+			// enumerated at all; overwriting it with the event failure left the
+			// operator believing the purge had reached every ledger and only
+			// stumbled on cleanup.
+			return eliminados, errors.Join(errEnumeracion, err)
 		}
 	}
 	return eliminados, errEnumeracion
+}
+
+// limpiarEventos borra del events.jsonl de un gitDir las líneas de los SHAs
+// purgados. Extraído para que el punto de fallo tenga un nombre en el error
+// combinado que devuelve purgarHuerfanasConEventos.
+func limpiarEventos(dir string, purgados []string) error {
+	if _, err := ops.PurgeEventosDe(dir, purgados); err != nil {
+		return fmt.Errorf("fichas purgadas pero falló limpiar sus eventos en %s: %w", dir, err)
+	}
+	return nil
 }
 
 // reportarPurga muestra el resultado de purgarHuerfanasConEventos en texto o
