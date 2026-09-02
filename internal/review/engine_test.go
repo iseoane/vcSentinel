@@ -2083,14 +2083,16 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	if !caracteristicaPresente(con.Characteristics, "behavior_change") {
 		t.Error("behavior_change no longer survives linguist-generated. That is FU-14 being resolved: update the debt entry and this characterisation together, do not delete the assertion")
 	}
-	// The characteristic is only half of what FU-14 costs. Asserting it alone
-	// would let a regression that stops translating behavior_change into
-	// scheduled work pass unnoticed, and the scheduling is the part that spends
-	// agent invocations.
+	// The characteristic is only half of what FU-14 costs; the scheduling is the
+	// half that spends agent invocations. The oracle is the risk explanation
+	// rather than the presence of a bundle: BundleCorrectness is scheduled at
+	// every level above none, so asserting it would be satisfied by any risk
+	// source and would not tie the scheduled work to behavior_change at all.
 	if len(con.Bundles) == 0 {
-		t.Errorf("a generated path with a surviving behavior_change scheduled nothing; risk was %q (%s)", con.Risk.Nivel, con.Risk.Explicacion)
+		t.Fatalf("a generated path with a surviving behavior_change scheduled nothing; risk was %q (%s)", con.Risk.Nivel, con.Risk.Explicacion)
 	}
-	if !hasBundle(con.Bundles, BundleCorrectness) {
-		t.Errorf("scheduled bundles %+v do not include %q", con.Bundles, BundleCorrectness)
+	if !strings.Contains(con.Risk.Explicacion, "behavior_change") {
+		t.Errorf("risk %q was decided by %q, which does not name behavior_change; the scheduled work is no longer attributable to the characteristic this entry is about",
+			con.Risk.Nivel, con.Risk.Explicacion)
 	}
 }
