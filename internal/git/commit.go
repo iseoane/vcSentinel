@@ -238,16 +238,25 @@ func gitEn(worktree string, args ...string) (string, error) {
 	return string(salida), err
 }
 
+// entornoSinSeleccionDeRepositorio quita SOLO lo que elige repositorio o
+// restringe qué refs se ven. Deliberadamente NO toca GIT_OBJECT_DIRECTORY ni
+// GIT_ALTERNATE_OBJECT_DIRECTORIES: ésas dicen dónde están los objetos, no cuál
+// es el repositorio, y quitarlas rompería un repositorio cuyos objetos viven
+// donde el entorno indica. `branch --contains` fallaría para commits
+// perfectamente alcanzables y el fallo se leería como "huérfano".
+//
+// La comparación ignora mayúsculas porque en Windows los nombres de variable no
+// distinguen caso: un `git_dir` en minúsculas sobreviviría a un filtro
+// sensible al caso y volvería a anular "-C".
 func entornoSinSeleccionDeRepositorio() []string {
-	redirigen := []string{
-		"GIT_DIR=", "GIT_WORK_TREE=", "GIT_COMMON_DIR=", "GIT_INDEX_FILE=",
-		"GIT_OBJECT_DIRECTORY=", "GIT_ALTERNATE_OBJECT_DIRECTORIES=", "GIT_NAMESPACE=",
-	}
-	limpio := make([]string, 0, len(os.Environ()))
-	for _, variable := range os.Environ() {
+	seleccionan := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE"}
+	entorno := os.Environ()
+	limpio := make([]string, 0, len(entorno))
+	for _, variable := range entorno {
+		nombre, _, _ := strings.Cut(variable, "=")
 		descartar := false
-		for _, prefijo := range redirigen {
-			if strings.HasPrefix(variable, prefijo) {
+		for _, seleccion := range seleccionan {
+			if strings.EqualFold(nombre, seleccion) {
 				descartar = true
 				break
 			}
@@ -257,6 +266,15 @@ func entornoSinSeleccionDeRepositorio() []string {
 		}
 	}
 	return limpio
+}
+
+// GitEnAislado ejecuta git contra worktree con el mismo entorno saneado que usa
+// la sonda de alcance. Existe para que todo lo que participa en una decisión de
+// borrado mire el MISMO repositorio: sanear solo una de las dos consultas
+// mezcla identidades, y clasificar los ledgers de un repositorio contra los
+// refs de otro borra fichas vivas.
+func GitEnAislado(worktree string, args ...string) (string, error) {
+	return gitEn(worktree, args...)
 }
 
 // UpstreamOMain devuelve el ref base para auditar cadenas de commits: el

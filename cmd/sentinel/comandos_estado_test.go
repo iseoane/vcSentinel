@@ -521,3 +521,40 @@ func TestPurgarHuerfanasIgnoraGitDirDelEntorno(t *testing.T) {
 		t.Errorf("the ficha of a live commit was deleted (ficha=%v, err=%v)", ficha, err)
 	}
 }
+
+// TestPurgarHuerfanasNoMezclaRepositorios pins the defect that sanitizing half
+// the purge introduced. Containment was queried against the requested worktree
+// while ledger discovery still inherited an ambient GIT_DIR, so with GIT_DIR
+// naming repository B its ledgers were enumerated and then classified against
+// repository A's refs. Every live ficha in B reads as orphaned there. Half a
+// fix was worse than none, because inconsistency deletes across repositories
+// while consistency merely looks at the wrong one.
+func TestPurgarHuerfanasNoMezclaRepositorios(t *testing.T) {
+	objetivo := repoConWorktreeEnlazado(t)
+	gitDirObjetivo, err := git.ObtenerGitDirDe(objetivo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ajeno := repoConWorktreeEnlazado(t)
+	gitDirAjeno, err := git.ObtenerGitDirDe(ajeno)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A live ficha in the OTHER repository, which the purge must never reach.
+	vivaAjena := revisionDeWorktree(t, ajeno, "HEAD")
+	if err := review.NuevoLedger(gitDirAjeno).GuardarRevision(vivaAjena, "live elsewhere", "b", "m", review.Revision{At: time.Now(), Result: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GIT_DIR", gitDirAjeno)
+
+	if _, err := purgarHuerfanas(objetivo, gitDirObjetivo); err != nil {
+		t.Fatalf("purgarHuerfanas() error = %v", err)
+	}
+
+	if ficha, err := review.NuevoLedger(gitDirAjeno).LeerFicha(vivaAjena); err != nil || ficha == nil {
+		t.Errorf("purging %q deleted a live ficha belonging to the unrelated repository %q (ficha=%v, err=%v); ledger discovery and containment were resolving different repositories",
+			objetivo, ajeno, ficha, err)
+	}
+}

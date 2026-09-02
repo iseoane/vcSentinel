@@ -242,8 +242,8 @@ func Sites() []Site {
 		// --- non-agent infrastructure ----------------------------------------
 		{Path: "internal/change/perfil.go", Symbol: "change profiling", Anchor: "salida, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git diff/tree-hash plumbing for change profiles."},
-		{Path: "internal/git/gitdir.go", Symbol: "ObtenerGitCommonDir", Anchor: "cmd := exec.Command(\"git\", \"-C\", path, \"rev-parse\", \"--git-common-dir\")", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "Git common-dir discovery backing the shared durable store location."},
+		{Path: "internal/git/gitdir.go", Symbol: "ObtenerGitDirDe", Anchor: "cmd := exec.Command(\"git\", \"-C\", path, \"rev-parse\", \"--absolute-git-dir\")", Marker: "exec.Command",
+			Class: ClassInfra, Reason: "Per-checkout gitDir discovery. ObtenerGitCommonDir no longer spawns here: it routes through git.GitEnAislado so that ledger discovery and the reachability probe behind the orphan purge resolve the same repository, which an ambient GIT_DIR would otherwise split."},
 		{Path: "internal/git/parent.go", Symbol: "git command runner", Anchor: "cmd := exec.Command(command, args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Generic git plumbing."},
 		{Path: "internal/git/plan.go", Symbol: "slice commit plumbing", Anchor: "if salida, err := exec.Command(\"git\", argsAdd...).CombinedOutput(); err != nil {", Marker: "exec.Command",

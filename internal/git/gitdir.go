@@ -51,13 +51,16 @@ func ObtenerGitDirDe(path string) (string, error) {
 // repositorio (como los hooks), que Git solo lee del common-dir y no del
 // directorio privado de cada worktree enlazado.
 func ObtenerGitCommonDir(path string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--git-common-dir")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
+	// Aislado igual que la sonda de alcance. Con un GIT_DIR ambiente, esta
+	// consulta seleccionaba otro repositorio, se enumeraban SUS ledgers y luego
+	// se clasificaban contra los refs de path: fichas vivas de un repositorio
+	// borradas por ser huérfanas en otro. Sanear solo una de las dos consultas
+	// es peor que no sanear ninguna, porque parte la identidad.
+	salida, err := GitEnAislado(path, "rev-parse", "--git-common-dir")
+	if err != nil {
 		return "", err
 	}
-	dir := strings.TrimSpace(out.String())
+	dir := strings.TrimSpace(salida)
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(path, dir)
 	}
