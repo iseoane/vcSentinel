@@ -1,10 +1,12 @@
 package review
 
 import (
+	"errors"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -480,5 +482,48 @@ func TestLedgerMarcarCorregidaSinFichaEsNoOp(t *testing.T) {
 	ledger := NuevoLedger(dir)
 	if err := ledger.MarcarCorregida("noexiste", "bbb222"); err != nil {
 		t.Fatalf("MarcarCorregida sobre SHA sin ficha devolvió error: %v", err)
+	}
+}
+
+// TestPurgarHuerfanasAbortaCuandoElCriterioFalla pins the ledger's own half of
+// the contract, which the migrated tests do not reach: they wrap a helper that
+// converts every git error into false and then force a nil error, so a
+// regression that swallowed query failures would still pass there.
+//
+// The contract is that a question the purge cannot answer never authorises a
+// deletion, and that what was already removed is reported rather than lost, so
+// the caller knows the ledger is half-purged instead of assuming nothing
+// happened.
+func TestPurgarHuerfanasAbortaCuandoElCriterioFalla(t *testing.T) {
+	ledger := NuevoLedger(t.TempDir())
+	huerfana := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	ilegible := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	for _, sha := range []string{huerfana, ilegible} {
+		if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: "ok"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fallo := errors.New("the object store cannot be read")
+	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) {
+		if sha == ilegible {
+			return false, fallo
+		}
+		return false, nil
+	})
+
+	if !errors.Is(err, fallo) {
+		t.Fatalf("PurgarHuerfanas() error = %v, want the predicate's failure; a query that cannot be answered must not authorise a deletion", err)
+	}
+	if ficha, lerr := ledger.LeerFicha(ilegible); lerr != nil || ficha == nil {
+		t.Errorf("the ficha whose existence could not be resolved was deleted (ficha=%v, err=%v)", ficha, lerr)
+	}
+	// Whatever was already removed must come back with the error: the ledger is
+	// half-purged, and a caller told only "it failed" would believe otherwise.
+	if !slices.Contains(eliminados, huerfana) {
+		t.Errorf("PurgarHuerfanas() = %v, want it to report %q, which it had already deleted before aborting", eliminados, huerfana)
+	}
+	if ficha, lerr := ledger.LeerFicha(huerfana); lerr != nil || ficha != nil {
+		t.Errorf("the genuinely orphaned ficha was not deleted before the abort (ficha=%v, err=%v)", ficha, lerr)
 	}
 }

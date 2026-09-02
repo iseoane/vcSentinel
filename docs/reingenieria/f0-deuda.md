@@ -1133,13 +1133,56 @@ wrote a ficha". Both are the same shape: a silent absence standing in for a real
 fault, in the one function whose whole purpose is to refuse to act on partial
 knowledge.
 
-**Still open.** Only the destructive reader is fixed. `cmd/sentinel/comandos_pr.go`
-still builds the v1 ledger from its own gitDir, so a branch analysis run in the
-main checkout cannot see fichas written in a worktree and can under-report
-blocking findings. `cmd/sentinel/comandos_estado.go` has the same gap, where it
-only hides records from `status`. Neither destroys anything, which is why they
-were not folded into a prune fix: `AnalizarRama` takes a single `*Ledger`, and
-changing that is a different-sized change than this one.
+#### The purge, closed 2026-09-02
+
+`status --prune` purged the invoking checkout's ledger alone while T9.5 builds
+its retention cascade on that same primitive together with
+`collectProvenanceReferences`, which by then enumerated every ledger. A cascade
+assembled from both would have decided what to keep by consulting thirteen
+ledgers and deleted from one.
+
+It now walks every ledger, cleans each checkout's events where its own fichas
+were, resolves reachability against the repository being purged rather than the
+process working directory, and refuses to decide at all when it cannot ask.
+
+Six review rounds, and the shape of every one was the same: a query failure read
+as a commit that no longer exists. Worth recording because the individual fixes
+were each correct and each insufficient.
+
+- `filepath.Glob` reports only `ErrBadPattern` and swallows its I/O errors, so
+  an unreadable directory read as "no linked worktrees".
+- `os.Stat` follows symlinks, so a dangling ledger link read as "never wrote a
+  ficha".
+- `GIT_DIR` takes priority over `-C`, so an ambient value redirected the
+  reachability query away from the repository being purged.
+- Sanitising only that query and not ledger discovery split the identity, which
+  is worse than sanitising neither: it deleted live fichas across repositories.
+- Scrubbing the object-store variables broke repositories whose objects live
+  where the environment points, and preserving them let an unrelated store fail
+  the query. Both true, which was the signal that the rule underneath was the
+  defect.
+- The exported default purge kept wrapping the old boolean helper, so the
+  convenient path retained the behaviour the fix claimed to remove. It had no
+  production callers and was deleted rather than patched.
+
+The property, stated once instead of approximated six times: **a question the
+purge cannot answer never authorises a deletion.** The predicate returns an
+error, the ledger aborts and reports what it had already removed, and
+`RepositorioUsable` anchors on `HEAD^{commit}` because exit codes alone do not
+separate an unreadable object store from a genuinely unknown object. The
+residual case that survives is recorded as FU-15 rather than mistaken for fixed.
+
+**Still open.** `cmd/sentinel/comandos_pr.go` still builds the v1 ledger from its
+own gitDir, so a branch analysis run in the main checkout cannot see fichas
+written in a worktree and can under-report blocking findings. It destroys
+nothing, which is why it was not folded into a prune fix: `AnalizarRama` both
+reads and adopts, so where it writes is a decision rather than a mechanical
+change.
+
+The decision was taken on 2026-09-02: reviews write to the shared location from
+the start, and T9.5 collects from there at publication. Nothing older is
+migrated, because 52 of the 65 fichas then sitting in per-checkout ledgers were
+already published and T9.5 removes them anyway.
 
 ### FU-13: net range planning classifies from the sanitised path list
 
