@@ -3,6 +3,7 @@ package git
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -198,12 +199,64 @@ func ContenidoEnAlgunRef(sha string) bool {
 // borraría fichas vivas en cuanto el proceso corriera desde otro repositorio,
 // porque un SHA legítimo de este repo no aparece en los refs de aquel.
 func ContenidoEnAlgunRefDe(worktree, sha string) bool {
-	cmd := exec.Command("git", "-C", worktree, "branch", "-a", "--contains", sha)
-	salida, err := cmd.Output()
+	salida, err := gitEn(worktree, "branch", "-a", "--contains", sha)
 	if err != nil {
+		// Un objeto desconocido hace fallar a `branch --contains`, y ése es
+		// precisamente el caso huérfano. Que un fallo signifique "no está" solo
+		// es admisible porque el llamador validó antes el repositorio con
+		// RepositorioUsable: sin esa comprobación, cualquier invocación rota
+		// borraría fichas vivas.
 		return false
 	}
-	return strings.TrimSpace(string(salida)) != ""
+	return strings.TrimSpace(salida) != ""
+}
+
+// RepositorioUsable confirma que worktree resuelve a un repositorio Git. Un
+// borrado guiado por ContenidoEnAlgunRefDe debe llamarla una vez antes de
+// clasificar nada: es lo que separa "este commit ya no está" de "no he podido
+// preguntar".
+func RepositorioUsable(worktree string) error {
+	if _, err := gitEn(worktree, "rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("%s is not a usable git repository: %w", worktree, err)
+	}
+	return nil
+}
+
+// gitEn ejecuta git contra worktree con el entorno despojado de las variables
+// que seleccionan repositorio.
+//
+// No es precaución teórica: GIT_DIR TIENE PRIORIDAD SOBRE "-C". Con GIT_DIR
+// apuntando a otro sitio, `git -C <ruta> rev-parse --git-dir` responde por el
+// repositorio de GIT_DIR, no por el de la ruta. Sentinel corre dentro de su
+// propio hook de pre-commit, que es exactamente un contexto donde Git exporta
+// esas variables, así que una consulta que decide borrados no puede confiar en
+// "-C" sin limpiarlas.
+func gitEn(worktree string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+	cmd.Env = entornoSinSeleccionDeRepositorio()
+	salida, err := cmd.Output()
+	return string(salida), err
+}
+
+func entornoSinSeleccionDeRepositorio() []string {
+	redirigen := []string{
+		"GIT_DIR=", "GIT_WORK_TREE=", "GIT_COMMON_DIR=", "GIT_INDEX_FILE=",
+		"GIT_OBJECT_DIRECTORY=", "GIT_ALTERNATE_OBJECT_DIRECTORIES=", "GIT_NAMESPACE=",
+	}
+	limpio := make([]string, 0, len(os.Environ()))
+	for _, variable := range os.Environ() {
+		descartar := false
+		for _, prefijo := range redirigen {
+			if strings.HasPrefix(variable, prefijo) {
+				descartar = true
+				break
+			}
+		}
+		if !descartar {
+			limpio = append(limpio, variable)
+		}
+	}
+	return limpio
 }
 
 // UpstreamOMain devuelve el ref base para auditar cadenas de commits: el

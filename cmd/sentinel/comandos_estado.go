@@ -284,6 +284,13 @@ func purgarHuerfanas(worktree, gitDir string) ([]string, error) {
 // coincidían; al recorrer todos los ledgers del repositorio, clasificar con el
 // CWD borraría fichas vivas en cuanto el proceso corriera desde otro sitio.
 func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, error) {
+	// Se valida el repositorio UNA vez, antes de clasificar nada. A partir de
+	// ahí un fallo por SHA solo puede significar objeto desconocido, que es el
+	// caso huérfano; sin esta comprobación, una invocación rota se leería como
+	// "ninguno de estos commits existe" y vaciaría los ledgers.
+	if err := git.RepositorioUsable(worktree); err != nil {
+		return nil, err
+	}
 	existe := func(sha string) bool { return git.ContenidoEnAlgunRefDe(worktree, sha) }
 
 	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)

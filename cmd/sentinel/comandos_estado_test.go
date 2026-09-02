@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -10,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -306,6 +308,13 @@ func TestAplicarTimeoutFlag(t *testing.T) {
 // repoConWorktreeEnlazado builds a repository with one commit and one linked
 // worktree named "linked", as a sibling of the main checkout, and returns the
 // main checkout.
+// contenidoUnicoDeRepo evita que dos repositorios de prueba creados en el mismo
+// segundo, con el mismo árbol, mensaje e identidad, produzcan commits
+// byte-idénticos y por tanto el MISMO SHA. Sin esto un test que dice "este
+// commit no existe en el otro repositorio" puede estar mintiendo, y pasar por
+// ese motivo en vez de por el que declara.
+var contenidoUnicoDeRepo atomic.Int64
+
 func repoConWorktreeEnlazado(t *testing.T) string {
 	t.Helper()
 	base := t.TempDir()
@@ -327,7 +336,8 @@ func repoConWorktreeEnlazado(t *testing.T) string {
 		}
 	}
 	correr("init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+	contenido := fmt.Sprintf("repo %d\n", contenidoUnicoDeRepo.Add(1))
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte(contenido), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	correr("add", "a.txt")
@@ -471,5 +481,43 @@ func TestPurgarHuerfanasLimpiaLosEventosDondeEstabanSusFichas(t *testing.T) {
 	}
 	if !quedanVivo {
 		t.Errorf("the event of a live commit was deleted; the purge is removing by reach and not by orphanhood")
+	}
+}
+
+// TestPurgarHuerfanasIgnoraGitDirDelEntorno pins the CRITICAL that blocked the
+// previous commit. GIT_DIR takes priority over "-C": with it set, a
+// worktree-scoped query answers for the repository GIT_DIR names instead.
+// Sentinel runs inside its own pre-commit hook, which is exactly a context
+// where Git exports these variables, so a query that decides deletions cannot
+// trust "-C" without clearing them. Redirected, every live commit of the target
+// repository looks orphaned and the purge empties the ledgers.
+func TestPurgarHuerfanasIgnoraGitDirDelEntorno(t *testing.T) {
+	worktree := repoConWorktreeEnlazado(t)
+	gitDirPrincipal, err := git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viva := revisionDeWorktree(t, worktree, "HEAD")
+	if err := review.NuevoLedger(gitDirPrincipal).GuardarRevision(viva, "live", "b", "m", review.Revision{At: time.Now(), Result: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// An unrelated repository, which knows nothing about the SHA above.
+	ajeno := repoConWorktreeEnlazado(t)
+	gitDirAjeno, err := git.ObtenerGitDirDe(ajeno)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", gitDirAjeno)
+
+	eliminados, err := purgarHuerfanas(worktree, gitDirPrincipal)
+	if err != nil {
+		t.Fatalf("purgarHuerfanas() error = %v", err)
+	}
+	if slices.Contains(eliminados, viva) {
+		t.Errorf("purgarHuerfanas() deleted %q while GIT_DIR pointed at an unrelated repository; the containment query was redirected away from the worktree it was told to purge", viva)
+	}
+	if ficha, err := review.NuevoLedger(gitDirPrincipal).LeerFicha(viva); err != nil || ficha == nil {
+		t.Errorf("the ficha of a live commit was deleted (ficha=%v, err=%v)", ficha, err)
 	}
 }
