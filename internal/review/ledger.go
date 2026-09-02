@@ -296,14 +296,38 @@ func (l *Ledger) LeerFicha(sha string) (*Ficha, error) {
 
 // ListarFichas devuelve los SHAs con ficha de auditoría guardada, en orden
 // alfabético. No lee el contenido: para eso se usa LeerFicha por SHA.
+//
+// Enumerated with os.ReadDir and NOT with filepath.Glob. Glob reports only
+// ErrBadPattern and swallows every I/O error it meets while reading a
+// directory, so a static pattern over an unreadable ledger returned an empty
+// list and a nil error. That is indistinguishable from a ledger holding no
+// fichas, and it fails open in the callers whose whole contract is to fail
+// closed: collectProvenanceReferences decides from this list which execution
+// streams a prune may destroy, and PurgarHuerfanas decides which fichas it may
+// delete (FU-16).
+//
+// Absence is separated from breakage with Lstat before the read. NuevoLedger
+// does not create the directory — the first saved revision does — so a ledger
+// nobody has written to yet genuinely holds no fichas. But os.ReadDir resolves
+// symlinks, so it answers ErrNotExist for a ledger path pointing nowhere too,
+// and only Lstat tells the two apart.
 func (l *Ledger) ListarFichas() ([]string, error) {
-	coincidencias, err := filepath.Glob(filepath.Join(l.dir, "*.json"))
-	if err != nil {
-		return nil, err
+	if _, err := os.Lstat(l.dir); errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil // no revision was ever saved in this checkout
+	} else if err != nil {
+		return nil, fmt.Errorf("checking the review ledger path %s: %w", l.dir, err)
 	}
-	shas := make([]string, 0, len(coincidencias))
-	for _, ruta := range coincidencias {
-		shas = append(shas, strings.TrimSuffix(filepath.Base(ruta), ".json"))
+	entradas, err := os.ReadDir(l.dir)
+	if err != nil {
+		return nil, fmt.Errorf("enumerating the review ledger in %s: %w", l.dir, err)
+	}
+	shas := make([]string, 0, len(entradas))
+	for _, entrada := range entradas {
+		nombre := entrada.Name()
+		if !strings.HasSuffix(nombre, ".json") {
+			continue // temp files from guardarFicha, and anything else
+		}
+		shas = append(shas, strings.TrimSuffix(nombre, ".json"))
 	}
 	sort.Strings(shas)
 	return shas, nil

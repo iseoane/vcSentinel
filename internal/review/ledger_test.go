@@ -547,3 +547,70 @@ func TestPurgarHuerfanasAbortaCuandoElCriterioFalla(t *testing.T) {
 		t.Errorf("a ficha ordered after the failure was deleted anyway (ficha=%v, err=%v); the purge continued past a question it could not answer", ficha, lerr)
 	}
 }
+
+// TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead pins FU-16. The
+// listing enumerated with filepath.Glob, which reports only ErrBadPattern and
+// swallows every I/O error it meets while reading a directory, so an
+// unreadable ledger came back as an empty list and a nil error. The callers
+// that decide what a prune may destroy read that as "this ledger cites
+// nothing": collectProvenanceReferences, through anotarReferenciasDeLedger,
+// then treats the execution streams those fichas reference as unreferenced and
+// deletes them, which is exactly what its own contract forbids.
+//
+// The fault is staged with a file shape and not with a permission bit. A mode
+// change is a no-op under root, so a permission-based fixture would pass
+// without exercising anything.
+func TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
+	gitDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gitDir, "vas-sentinel"), []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	shas, err := NuevoLedger(gitDir).ListarFichas()
+	if err == nil {
+		t.Fatalf("ListarFichas() = %v, nil; want an error: a ledger that cannot be enumerated must never be reported as one holding no fichas", shas)
+	}
+	if len(shas) != 0 {
+		t.Errorf("ListarFichas() returned %v next to its error, want no SHAs", shas)
+	}
+}
+
+// TestListarFichasFailsOnADanglingLedgerSymlink covers the shape that reports
+// the same ErrNotExist as a ledger nobody ever wrote: os.ReadDir resolves the
+// link and cannot separate a broken one from an absent path. Only absence is a
+// real answer, so the distinction has to be made before the read.
+//
+// It matters on the destructive path in particular: directoriosLedgerV1 guards
+// every linked worktree with Lstat before Stat, but appends the common
+// directory unconditionally, so a broken link there reaches this listing with
+// no check in front of it.
+func TestListarFichasFailsOnADanglingLedgerSymlink(t *testing.T) {
+	gitDir := t.TempDir()
+	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
+		t.Skipf("this platform refuses to create a symlink without extra privileges: %v", err)
+	}
+
+	shas, err := NuevoLedger(gitDir).ListarFichas()
+	if err == nil {
+		t.Fatalf("ListarFichas() = %v, nil; want an error: a ledger path pointing nowhere is a broken ledger, not an empty one", shas)
+	}
+	if len(shas) != 0 {
+		t.Errorf("ListarFichas() returned %v next to its error, want no SHAs", shas)
+	}
+}
+
+// TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty holds the other side of
+// FU-16 down. NuevoLedger does not create the directory — the first saved
+// revision does — so its absence is a real answer and not a failure. A fix that
+// propagated every ReadDir error would break `sentinel status`, the metrics
+// reader and the prune's own provenance scan on any repository that never saved
+// a review.
+func TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty(t *testing.T) {
+	shas, err := NuevoLedger(t.TempDir()).ListarFichas()
+	if err != nil {
+		t.Fatalf("ListarFichas() error = %v, want nil: a ledger nobody has written to yet holds no fichas", err)
+	}
+	if len(shas) != 0 {
+		t.Errorf("ListarFichas() = %v, want no SHAs", shas)
+	}
+}

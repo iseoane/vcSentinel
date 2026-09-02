@@ -1327,3 +1327,34 @@ Target: enumerate with `os.ReadDir` and propagate the error, exactly as
 
 Priority: before anything else that deletes. It is the same defect as FU-12 one
 layer down, in the function that decides what a prune may destroy.
+
+#### Resolved 2026-09-02
+
+`ListarFichas` enumerates with `os.ReadDir` and propagates the error. No caller
+signature changed, and every caller already propagated: the destructive ones —
+`anotarReferenciasDeLedger` and `PurgarHuerfanas` — now fail closed on a ledger
+they cannot enumerate instead of reading it as one that cites nothing.
+
+**Absence still had to stay a real answer, and one shape reports it falsely.**
+`NuevoLedger` does not create the directory; the first saved revision does. So a
+repository that never ran a review has no ledger directory, and propagating
+every `ReadDir` error would break `sentinel status`, the metrics reader and the
+prune's own provenance scan everywhere. But `os.ReadDir` resolves symlinks, so a
+ledger path pointing nowhere answers `ErrNotExist` exactly like an absent one.
+The listing therefore separates the two with `Lstat` before the read, as
+`directoriosLedgerV1` does one level up.
+
+That distinction is not defensive. `directoriosLedgerV1` guards every linked
+worktree with `Lstat` before `Stat`, but appends the common directory
+unconditionally, so a broken link at `<common-dir>/vas-sentinel` reaches this
+listing with no check in front of it and lands straight on
+`collectProvenanceReferences`.
+
+**Staged with a file shape, not a permission bit.** A mode change is a no-op
+under root, so a permission-based fixture passes without exercising anything.
+`filepath.Glob` over a regular file at the ledger path returns zero matches and
+a nil error; `os.ReadDir` reports `not a directory`. Both fault shapes are
+pinned by `TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead` and
+`TestListarFichasFailsOnADanglingLedgerSymlink`, and the absent directory by
+`TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty`, which fails any fix that
+turns absence into an error. The first two failed on behaviour before the fix.
