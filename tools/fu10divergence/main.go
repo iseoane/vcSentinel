@@ -148,7 +148,10 @@ func medir(sha string) (medida, error) {
 		return medida{}, err
 	}
 
-	plan := review.PlanForProfile(perfil, rutas)
+	// Empty evidence reproduces the starved planner this tool was written to
+	// measure. Ticket 05 removed that arm from production; the tool keeps it so
+	// the recorded artifact stays reproducible.
+	plan := review.PlanForProfile(perfil, rutas, "", "")
 
 	compartidas := change.DetectarCaracteristicas(change.EntradaCaracteristicas{
 		Symbols: perfil.Symbols, Rutas: rutas, LineasAnadidas: lineas,

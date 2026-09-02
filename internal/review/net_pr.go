@@ -144,7 +144,15 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	if err != nil {
 		return nil, fmt.Errorf("net change profile: %w", err)
 	}
-	plan := PlanForProfile(profile, safePaths)
+	netDiff, derr := git.DiffRango(from, to)
+	if derr != nil {
+		return nil, fmt.Errorf("net range diff: %w", derr)
+	}
+	netAtributos, aerr := git.Attributes(to)
+	if aerr != nil {
+		return nil, fmt.Errorf("net range attributes: %w", aerr)
+	}
+	plan := PlanForProfile(profile, safePaths, netDiff, netAtributos)
 	evidence, merr := json.Marshal(map[string]any{"profile": profile, "risk": plan.Risk, "characteristics": plan.Characteristics, "validation": o.Validation})
 	if merr != nil {
 		return nil, fmt.Errorf("marshal net evidence: %w", merr)

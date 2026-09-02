@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -809,7 +810,7 @@ func TestPlanForProfileUsesCompleteRiskSignals(t *testing.T) {
 		Kind:    "dependency",
 		Symbols: change.ChangeSymbols{Complete: true},
 	}
-	plan := PlanForProfile(profile, []string{"internal/backend/auth.go", "vassentinel.yml"})
+	plan := PlanForProfile(profile, []string{"internal/backend/auth.go", "vassentinel.yml"}, "", "")
 	if plan.Risk.Nivel != risk.NivelHigh || !hasBundle(plan.Bundles, BundleSecurity) {
 		t.Fatalf("plan = %+v, expected high risk with security coverage", plan)
 	}
@@ -1927,5 +1928,87 @@ func TestRefutationWithoutDurableIdentityKeepsTheBlocker(t *testing.T) {
 	}
 	if resultado.Dims[0].Resultado.RefutedCritical {
 		t.Fatal("RefutedCritical is set although the refutation could not be recorded")
+	}
+}
+
+// TestPlanForProfileSchedulesSecurityForCredentialHandling is the structural
+// hole FU-10 records, and the reverse of the case that exposed it. A source
+// change that adds credential handling without touching an exported symbol is
+// security_sensitive to `sentinel explain` and, before this change, invisible
+// to the review planner: the planner received only symbols and paths, so the
+// three detectors that read added lines could never report present and no
+// security dimension was ever scheduled for it.
+func TestPlanForProfileSchedulesSecurityForCredentialHandling(t *testing.T) {
+	profile := change.ChangeProfile{
+		Kind:    "bugfix",
+		Symbols: change.ChangeSymbols{Modified: 1, Complete: true},
+	}
+	paths := []string{"internal/session/session.go"}
+	diff := "diff --git a/internal/session/session.go b/internal/session/session.go\n" +
+		"--- a/internal/session/session.go\n" +
+		"+++ b/internal/session/session.go\n" +
+		"@@ -10,0 +11,2 @@\n" +
+		"+\taccessToken := os.Getenv(\"SERVICE_TOKEN\")\n" +
+		"+\treturn authorize(accessToken)\n"
+
+	plan := PlanForProfile(profile, paths, diff, "")
+
+	if !caracteristicaPresente(plan.Characteristics, "security_sensitive") {
+		t.Fatalf("security_sensitive = absent for a credential-handling change; characteristics: %+v", plan.Characteristics)
+	}
+	var dimensions []string
+	for _, bundle := range plan.Bundles {
+		dimensions = append(dimensions, bundle.Dimensions...)
+	}
+	if !slices.Contains(dimensions, DimSecurity) {
+		t.Errorf("scheduled dimensions %v do not include %q; risk was %q (%s)",
+			dimensions, DimSecurity, plan.Risk.Nivel, plan.Risk.Explicacion)
+	}
+}
+
+// TestPlanForProfileReadsTheContentDetectors pins that all three detectors that
+// read added lines can now report present in a review plan. Before this change
+// each of them was structurally unreachable from the planner, so three risk
+// rules could never fire.
+func TestPlanForProfileReadsTheContentDetectors(t *testing.T) {
+	profile := change.ChangeProfile{Kind: "feature", Symbols: change.ChangeSymbols{Modified: 1, Complete: true}}
+	paths := []string{"internal/worker/worker.go"}
+	diff := "diff --git a/internal/worker/worker.go b/internal/worker/worker.go\n" +
+		"--- a/internal/worker/worker.go\n" +
+		"+++ b/internal/worker/worker.go\n" +
+		"@@ -1,0 +2,3 @@\n" +
+		"+\tctx := context.Background()\n" +
+		"+\tsecret := load()\n" +
+		"+\tgo run(ctx, secret)\n"
+
+	plan := PlanForProfile(profile, paths, diff, "")
+	for _, nombre := range []string{"security_sensitive", "concurrency", "behavior_change"} {
+		if !caracteristicaPresente(plan.Characteristics, nombre) {
+			t.Errorf("%s = absent; the planner did not read the added lines", nombre)
+		}
+	}
+}
+
+// TestPlanForProfileStillSchedulesNothingForProse guards the other direction.
+// Feeding the planner content must not turn every commit into a full review:
+// a documentation change with no risk characteristic still schedules no
+// dimension, which is what the two detector narrowings of tickets 02 and 03b
+// preserve.
+func TestPlanForProfileStillSchedulesNothingForProse(t *testing.T) {
+	profile := change.ChangeProfile{Kind: "documentation", Symbols: change.ChangeSymbols{Complete: true}}
+	paths := []string{"docs/reingenieria/f9-observabilidad.md"}
+	diff := "diff --git a/docs/reingenieria/f9-observabilidad.md b/docs/reingenieria/f9-observabilidad.md\n" +
+		"--- a/docs/reingenieria/f9-observabilidad.md\n" +
+		"+++ b/docs/reingenieria/f9-observabilidad.md\n" +
+		"@@ -1,0 +2,2 @@\n" +
+		"+the producer reads context.Background() on every attempt\n" +
+		"+and records the auth token it observed\n"
+
+	plan := PlanForProfile(profile, paths, diff, "")
+	if plan.Risk.Nivel != risk.NivelNone {
+		t.Errorf("prose risk = %q (%s), want %q", plan.Risk.Nivel, plan.Risk.Explicacion, risk.NivelNone)
+	}
+	if len(plan.Bundles) != 0 {
+		t.Errorf("prose scheduled %d bundles, want none", len(plan.Bundles))
 	}
 }

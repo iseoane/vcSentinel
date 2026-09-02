@@ -302,6 +302,10 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 	if err != nil {
 		return err
 	}
+	atributos, err := git.Attributes(sha)
+	if err != nil {
+		return err
+	}
 	var transporte ReviewTransport
 	if opts.ReviewTransportFactory != nil {
 		transporte = opts.ReviewTransportFactory(sha, archivos)
@@ -310,7 +314,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		SHA:                    sha,
 		Mensaje:                mensaje,
 		Diff:                   diff,
-		Bundles:                PlanForProfile(profile, archivos).Bundles,
+		Bundles:                PlanForProfile(profile, archivos, diff, atributos).Bundles,
 		Respuestas:             opts.Respuestas,
 		PerfilOverride:         opts.PerfilOverride,
 		RutasContexto:          archivos,

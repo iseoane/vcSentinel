@@ -16,11 +16,33 @@ func MensajeCommit(sha string) (string, error) {
 	return strings.TrimSpace(salida), nil
 }
 
+// prefijosEstables fija los prefijos de cabecera del diff. No es cosmético: el
+// planner de revisión parsea estas salidas para extraer las líneas añadidas y
+// reconoce la ruta por su prefijo "b/". diff.noprefix, diff.mnemonicPrefix y
+// diff.srcPrefix/dstPrefix cambian ese formato, y una cabecera que el parser no
+// reconoce pierde sus líneas sin error, dejando ciegos a los detectores que
+// leen contenido. Forzarlos aquí impide que la configuración del usuario
+// reintroduzca la divergencia que FU-10 registra.
+var prefijosEstables = []string{"--src-prefix=a/", "--dst-prefix=b/"}
+
 // DiffCommit devuelve el diff completo de un commit (sin el mensaje), con
 // archivos nuevos, modificados y renombrados. Funciona también para el primer
 // commit del repositorio (root commit).
 func DiffCommit(sha string) (string, error) {
-	salida, err := ejecutarGitSalida("show", "--format=", "--no-color", sha, "--")
+	args := append([]string{"show", "--format=", "--no-color"}, prefijosEstables...)
+	salida, err := ejecutarGitSalida(append(args, sha, "--")...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(salida, "\n"), nil
+}
+
+// DiffRango devuelve el diff de base..head con los mismos prefijos estables que
+// DiffCommit, para los llamadores que razonan sobre un rango en vez de sobre un
+// commit.
+func DiffRango(base, head string) (string, error) {
+	args := append([]string{"diff", "--no-color"}, prefijosEstables...)
+	salida, err := ejecutarGitSalida(append(args, base+".."+head, "--")...)
 	if err != nil {
 		return "", err
 	}
@@ -187,4 +209,27 @@ func RemotoDeRama(rama string) string {
 		return ""
 	}
 	return strings.TrimSpace(salida)
+}
+
+// Attributes devuelve el contenido de .gitattributes en revision, o cadena
+// vacía si el árbol no lo tiene.
+//
+// Ausencia y fallo se distinguen con ls-tree: `git show <rev>:.gitattributes`
+// y `git cat-file -e` salen con código no cero tanto si la ruta no está como
+// si el repositorio o el objeto no se pueden leer, así que cualquiera de los
+// dos convertiría un fallo real en "no hay atributos". Una ruta ausente es
+// salida vacía con código cero.
+func Attributes(revision string) (string, error) {
+	listado, err := ejecutarGitSalida("ls-tree", "--name-only", revision, "--", ".gitattributes")
+	if err != nil {
+		return "", fmt.Errorf("looking for .gitattributes at %s: %w", revision, err)
+	}
+	if strings.TrimSpace(listado) == "" {
+		return "", nil
+	}
+	contenido, err := ejecutarGitSalida("show", revision+":.gitattributes")
+	if err != nil {
+		return "", fmt.Errorf("reading .gitattributes at %s: %w", revision, err)
+	}
+	return contenido, nil
 }

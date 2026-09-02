@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"strconv"
 	"time"
 
@@ -111,12 +112,26 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		FabricaRefutador: fabricaRefutadorGate(cfg, verificador),
 		Parallel:         cfg.Review.Parallel,
 		OpcionesRevision: review.OpcionesAuditoria{
-			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos).Bundles,
+			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, atributosGate(sha)).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
 		},
 	}
+}
+
+// atributosGate lee .gitattributes en sha para que el planner clasifique con la
+// misma evidencia que `sentinel explain`. Una lectura fallida degrada a cadena
+// vacía en vez de abortar el gate: los atributos solo afinan la clasificación
+// por clase de ruta, y perder el gate entero por ellos sería desproporcionado.
+// La degradación es visible en stderr, nunca silenciosa.
+func atributosGate(sha string) string {
+	atributos, err := git.Attributes(sha)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vas-sentinel: no se pudieron leer los atributos de %s, se clasifica sin ellos: %v\n", sha, err)
+		return ""
+	}
+	return atributos
 }
 
 // fabricaRefutadorGate resolves the explicit cheap profile separately from the

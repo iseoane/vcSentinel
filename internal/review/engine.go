@@ -328,9 +328,13 @@ func BundlesForRisk(resultado risk.Resultado, caracteristicas []change.Caracteri
 	}
 }
 
-// PlanForProfile derives deterministic risk bundles from a complete change profile.
-func PlanForProfile(profile change.ChangeProfile, paths []string) ReviewPlan {
-	characteristics := change.DetectarCaracteristicas(change.EntradaCaracteristicas{Symbols: profile.Symbols, Rutas: paths})
+// PlanForProfile derives deterministic risk bundles from a complete change
+// profile and the same evidence `sentinel explain` uses. The diff and the
+// repository attributes are required rather than optional: supplying only
+// symbols and paths starves the three detectors that read added lines, which is
+// the divergence FU-10 records.
+func PlanForProfile(profile change.ChangeProfile, paths []string, unifiedDiff, gitattributes string) ReviewPlan {
+	characteristics := change.DetectarCaracteristicas(change.NewCharacteristicsInput(profile, paths, unifiedDiff, gitattributes))
 	riskProfile := risk.Evaluar(profile, characteristics)
 	return ReviewPlan{Risk: riskProfile, Characteristics: characteristics, Bundles: BundlesForRisk(riskProfile, characteristics)}
 }

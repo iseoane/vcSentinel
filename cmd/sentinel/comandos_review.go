@@ -108,7 +108,12 @@ func ejecutarReview(worktree string, args []string) {
 			fmt.Printf("⚠️ %s: no se pudo derivar el perfil de cambio: %v\n", sha[:8], err)
 			os.Exit(1)
 		}
-		plan := review.PlanForProfile(profile, archivos)
+		atributos, err := git.Attributes(sha)
+		if err != nil {
+			fmt.Printf("⚠️ %s: no se pudieron leer los atributos: %v\n", sha[:8], err)
+			os.Exit(1)
+		}
+		plan := review.PlanForProfile(profile, archivos, diff, atributos)
 		bundles := plan.Bundles
 		if len(flags.dims) > 0 {
 			bundles = []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: review.PriorityRequired, Cost: 1}}
