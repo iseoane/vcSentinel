@@ -3,9 +3,10 @@
 // sequence decides from a number rather than a preference.
 //
 // Both arms share one change profile per commit. Only the detector input
-// varies: the planner arm is today's production plan derivation, and the shared
-// arm is the input `explain` assembles. That assembly is duplicated here on
-// purpose; ticket 04 is what makes it shared.
+// varies: the planner arm reproduces the starved derivation as it stood before
+// ticket 05, and the shared arm is the input `explain` assembles. Since 51cc5f7
+// production behaves like the shared arm, so this tool measures the historical
+// gap rather than a live one.
 package main
 
 import (
@@ -148,9 +149,11 @@ func medir(sha string) (medida, error) {
 		return medida{}, err
 	}
 
-	// Empty evidence reproduces the starved planner this tool was written to
-	// measure. Ticket 05 removed that arm from production; the tool keeps it so
-	// the recorded artifact stays reproducible.
+	// Empty evidence reproduces the planner as it behaved BEFORE ticket 05, not
+	// as it behaves now: production callers supply the diff and the attributes
+	// since 51cc5f7. The arm is kept starved on purpose so the recorded
+	// artifact stays reproducible; read it as the historical baseline the
+	// measurement compared against, never as current behaviour.
 	plan := review.PlanForProfile(perfil, rutas, "", "")
 
 	compartidas := change.DetectarCaracteristicas(change.EntradaCaracteristicas{

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"strconv"
 	"time"
 
@@ -81,8 +80,19 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
 	}
 
+	// Fail closed. git.Attributes already returns "" with no error when the
+	// tree has no .gitattributes, so an error here is a real read failure, and
+	// the attributes now decide route classification and therefore whether the
+	// security and concurrency bundles are scheduled at all. Continuing with
+	// empty evidence would let the gate succeed on an under-classified plan.
+	atributos, err := git.Attributes(sha)
+	if err != nil {
+		fmt.Fprintf(w, "❌ No se pudieron leer los atributos de %s: %v\n", sha, err)
+		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
+	}
+
 	verificador := nuevoVerificadorModelo(worktree)
-	opciones := buildGateOptions(cfg, verificador, worktree, perfil, sha, mensaje, diff, profile, archivos)
+	opciones := buildGateOptions(cfg, verificador, worktree, perfil, sha, mensaje, diff, atributos, profile, archivos)
 	applyDurableCutover(&opciones, cfg, worktree, stage, sha, archivos)
 
 	resultado := gate.EjecutarGate(opciones)
@@ -96,7 +106,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 // reviewer seams, and the per-commit review transport (nil unless
 // review.durable_routes is on). Shared by ejecutarGate and the cutover tests,
 // so tests exercise the exact production construction.
-func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, worktree, perfil, sha, mensaje, diff string, profile change.ChangeProfile, archivos []string) gate.Opciones {
+func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, worktree, perfil, sha, mensaje, diff, gitattributes string, profile change.ChangeProfile, archivos []string) gate.Opciones {
 	reviewTransport, metricsFinalizer := durableReviewTransportWithMetrics(cfg, worktree, sha, archivos)
 	return gate.Opciones{
 		Perfil:         perfil,
@@ -112,26 +122,12 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		FabricaRefutador: fabricaRefutadorGate(cfg, verificador),
 		Parallel:         cfg.Review.Parallel,
 		OpcionesRevision: review.OpcionesAuditoria{
-			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, atributosGate(sha)).Bundles,
+			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, gitattributes).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
 		},
 	}
-}
-
-// atributosGate lee .gitattributes en sha para que el planner clasifique con la
-// misma evidencia que `sentinel explain`. Una lectura fallida degrada a cadena
-// vacía en vez de abortar el gate: los atributos solo afinan la clasificación
-// por clase de ruta, y perder el gate entero por ellos sería desproporcionado.
-// La degradación es visible en stderr, nunca silenciosa.
-func atributosGate(sha string) string {
-	atributos, err := git.Attributes(sha)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "vas-sentinel: no se pudieron leer los atributos de %s, se clasifica sin ellos: %v\n", sha, err)
-		return ""
-	}
-	return atributos
 }
 
 // fabricaRefutadorGate resolves the explicit cheap profile separately from the

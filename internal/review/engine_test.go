@@ -2012,3 +2012,32 @@ func TestPlanForProfileStillSchedulesNothingForProse(t *testing.T) {
 		t.Errorf("prose scheduled %d bundles, want none", len(plan.Bundles))
 	}
 }
+
+// TestPlanForProfileClassifiesWithRepositoryAttributes closes the gap that the
+// other plan tests leave: every one of them passes empty attributes, so a
+// regression in attribute loading or in the classification that reads them
+// would stay green. linguist-generated marks a path as generated whatever its
+// name, and generated paths are exactly the ones whose added text the content
+// detectors must ignore.
+func TestPlanForProfileClassifiesWithRepositoryAttributes(t *testing.T) {
+	profile := change.ChangeProfile{Kind: "feature", Symbols: change.ChangeSymbols{Modified: 1, Complete: true}}
+	paths := []string{"internal/api/wire.go"}
+	diff := "diff --git a/internal/api/wire.go b/internal/api/wire.go\n" +
+		"--- a/internal/api/wire.go\n" +
+		"+++ b/internal/api/wire.go\n" +
+		"@@ -1,0 +2,1 @@\n" +
+		"+\taccessToken := os.Getenv(\"SERVICE_TOKEN\")\n"
+
+	sinAtributos := PlanForProfile(profile, paths, diff, "")
+	if !caracteristicaPresente(sinAtributos.Characteristics, "security_sensitive") {
+		t.Fatalf("without attributes the path is source and its content must count: %+v", sinAtributos.Characteristics)
+	}
+
+	conAtributos := PlanForProfile(profile, paths, diff, "internal/api/wire.go linguist-generated\n")
+	if caracteristicaPresente(conAtributos.Characteristics, "security_sensitive") {
+		t.Errorf("linguist-generated path still contributed content evidence; the attributes never reached the classifier")
+	}
+	if !caracteristicaPresente(conAtributos.Characteristics, "generated_code") {
+		t.Errorf("generated_code = absent for a linguist-generated path; the attributes never reached the classifier")
+	}
+}

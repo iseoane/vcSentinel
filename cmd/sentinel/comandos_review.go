@@ -108,15 +108,20 @@ func ejecutarReview(worktree string, args []string) {
 			fmt.Printf("⚠️ %s: no se pudo derivar el perfil de cambio: %v\n", sha[:8], err)
 			os.Exit(1)
 		}
-		atributos, err := git.Attributes(sha)
-		if err != nil {
-			fmt.Printf("⚠️ %s: no se pudieron leer los atributos: %v\n", sha[:8], err)
-			os.Exit(1)
-		}
-		plan := review.PlanForProfile(profile, archivos, diff, atributos)
-		bundles := plan.Bundles
-		if len(flags.dims) > 0 {
-			bundles = []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: review.PriorityRequired, Cost: 1}}
+		// Explicit --dims replaces the derived plan outright, so the evidence
+		// the derivation needs is only read when it is going to be used: an
+		// unreadable .gitattributes must not abort a run whose bundles the
+		// caller already chose.
+		var plan review.ReviewPlan
+		bundles := []review.ReviewBundle{{Name: "requested", Dimensions: flags.dims, Priority: review.PriorityRequired, Cost: 1}}
+		if len(flags.dims) == 0 {
+			atributos, err := git.Attributes(sha)
+			if err != nil {
+				fmt.Printf("⚠️ %s: no se pudieron leer los atributos: %v\n", sha[:8], err)
+				os.Exit(1)
+			}
+			plan = review.PlanForProfile(profile, archivos, diff, atributos)
+			bundles = plan.Bundles
 		}
 
 		// El recolector anota qué agente atendió cada dimensión para que la
