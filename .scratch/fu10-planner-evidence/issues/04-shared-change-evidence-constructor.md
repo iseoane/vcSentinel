@@ -78,3 +78,37 @@ starved planner, which is the defect this sequence exists to remove.
 - [ ] `sentinel review` of the commit completes with every finding either
       resolved or dispositioned with a verified premise and a stated reason for
       not acting.
+
+## Acceptance matrix
+
+Completed before delegation. No row is unowned or unmeasurable.
+
+| ID | Criterion or obligation | Observable check | Owner | Evidence | Disposition |
+|---|---|---|---|---|---|
+| C-01 | One exported constructor in the change package builds the detector input | A single function takes profile, paths, diff text and `.gitattributes` content and returns the detector input | Writer | Focused test naming the constructor | pending |
+| C-02 | Added lines parsed in memory | No subprocess per path anywhere in the constructor path | Writer | Focused parser test plus absence of any exec call in the new code | pending |
+| C-03 | Focused RED before production code | The parser test fails for the requested behaviour, not for a missing symbol | Writer | Exact command, exit status, observed failure | pending |
+| C-04 | GREEN after production code | Same focused checks pass | Writer | Exact commands and outcomes | pending |
+| C-05 | Quoted paths survive | A path with a space or a non-ASCII byte keys the map by its real name | Writer | Focused test | pending |
+| C-06 | Root commits and pure additions | `/dev/null` on the old side yields the whole file as added | Writer | Focused test | pending |
+| C-07 | Renames and mode-only changes | A header with no hunk contributes no lines and no error | Writer | Focused test | pending |
+| C-08 | Binary files | A binary body contributes no lines rather than garbage | Writer | Focused test | pending |
+| C-09 | No-newline marker | `\ No newline at end of file` is counted as neither added nor removed | Writer | Focused test | pending |
+| C-10 | Header sequences inside added lines | An added line beginning `+++` or containing `@@` is not read as a new file header | Writer | Focused test | pending |
+| C-11 | Sensitive-path patterns leave the CLI command | The literal lives with the detectors | Writer | Grep of the command file plus a constructor test | pending |
+| C-12 | `explain` output identical | Same range, same bytes, before and after | Coordinator | `sentinel explain` on at least three commits of differing kind, diffed | pending |
+| C-13 | Review planner untouched | The plan derivation and its four consumers are unchanged | Coordinator | Diff inspection of the task-only change | pending |
+| C-14 | Adapter-site inventory | Any new file that shells out is registered | Writer | `go test ./internal/adaptersites` | pending |
+| C-15 | Build, vet, full suite | All pass | Writer, confirmed by coordinator | Exact commands and outcomes | pending |
+| C-16 | Staged volume within budget | Each commit under the 400-line review budget | Coordinator | `sentinel check --staged` output per commit | pending |
+| C-17 | Sentinel review of every task commit | A review record exists per commit | Sentinel | Review verdict and findings per SHA | pending |
+| C-18 | Findings resolved or dispositioned | No block carried forward; every warning has a verified premise and a stated reason | Coordinator, verdict by Sentinel | Per-finding disposition | pending |
+| C-19 | Language scan | Every new or changed artifact is English; legacy Spanish preserved | Coordinator | Scan scope and outcome | pending |
+| C-20 | Worktree clean, unrelated paths untouched | Task paths only | Coordinator | `git status` and the named untouched paths | pending |
+| C-21 | Final gate | Recorded with its exact command and outcome | Sentinel | `sentinel gate` result | pending |
+
+**Owned paths:** the change package, the explain command, and their tests. Every
+other path is out of scope, the review planner explicitly so.
+
+**Worktree:** `/home/iseoane/0-workspace/vas.sentinel-worktrees/fu10-ticket-04`
+on branch `fu10/ticket-04`, branched from `f9a913e`.
