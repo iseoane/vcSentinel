@@ -415,11 +415,13 @@ func (l *Ledger) conFichaBloqueada(sha string, fn func() error) (err error) {
 				if errBorrar == nil || err != nil {
 					return
 				}
-				// An already-absent lock is NOT quietly fine. Nothing else in
-				// this package removes it, so its disappearance means mutual
-				// exclusion was broken while fn ran and another writer may have
-				// entered: reporting success there would hide a lost update
-				// behind the one signal that could have revealed it.
+				// An already-absent lock is NOT quietly fine. Once fn starts,
+				// this deferred call is the only remover left — the failed-Close
+				// branch above removes the lock too, but it returns without ever
+				// running fn — so finding it gone means mutual exclusion broke
+				// while fn ran and another writer may have entered. Reporting
+				// success there would hide a lost update behind the one signal
+				// that could have revealed it.
 				//
 				// The cause is wrapped, not formatted: a caller inspecting the
 				// filesystem failure with errors.Is or errors.As is exactly the

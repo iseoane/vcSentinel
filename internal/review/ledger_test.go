@@ -1057,4 +1057,12 @@ func TestBloqueoDesaparecidoNoSeReportaComoExito(t *testing.T) {
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("GuardarRevision() error = %v, want the underlying filesystem cause inspectable with errors.Is", err)
 	}
+	// The wording is asserted, not just the identity. This error is returned for
+	// deletions and for callbacks that changed nothing, so a message claiming a
+	// write is wrong for most of its callers — and errors.Is alone would keep
+	// passing with the old text.
+	if strings.Contains(ErrBloqueoNoLiberado.Error(), "written") {
+		t.Errorf("ErrBloqueoNoLiberado = %q; it is returned for deletions and no-ops, so it must not claim the ficha was written",
+			ErrBloqueoNoLiberado.Error())
+	}
 }
