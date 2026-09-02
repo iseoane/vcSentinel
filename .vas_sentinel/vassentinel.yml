@@ -37,7 +37,7 @@ agents:
 review:
   codegraph_context: true
   timeout: 900
-  parallel: 2
+  parallel: 5
 validation:
   capabilities:
     format:
