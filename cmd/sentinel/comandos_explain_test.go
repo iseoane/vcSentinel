@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -18,12 +17,14 @@ func TestEjecutarExplainJSONExponePerfilDetectoresRiesgoYCohesion(t *testing.T) 
 		Symbols: change.ChangeSymbols{ExportedTouched: 1, Complete: true}, Modules: []string{"internal/auth"},
 		FileClasses: map[string]int{"source": 1, "docs": 1},
 	}
+	diffReads := 0
 	lector := func(args ...string) (string, error) {
 		comando := strings.Join(args, " ")
 		switch {
 		case strings.Contains(comando, "diff --name-only"):
 			return "internal/auth/login.go\x00docs/guia.md\x00", nil
 		case strings.Contains(comando, "diff --no-color --unified=0"):
+			diffReads++
 			return "diff --git a/internal/auth/login.go b/internal/auth/login.go\n+++ b/internal/auth/login.go\n@@ -0,0 +1 @@\n+func ValidateToken() {}\ndiff --git a/docs/guia.md b/docs/guia.md\n+++ b/docs/guia.md\n@@ -0,0 +1 @@\n+guia\n", nil
 		case strings.HasPrefix(comando, "show "):
 			return "", fmt.Errorf("sin .gitattributes")
@@ -39,6 +40,9 @@ func TestEjecutarExplainJSONExponePerfilDetectoresRiesgoYCohesion(t *testing.T) 
 		func(base, head string) (change.ChangeProfile, error) { return perfil, nil }, lector)
 	if err != nil {
 		t.Fatalf("ejecutarExplainCon devolvió error: %v", err)
+	}
+	if diffReads != 1 {
+		t.Fatalf("unified diff reads = %d, want 1", diffReads)
 	}
 
 	var got struct {
@@ -80,31 +84,5 @@ func TestParsearExplainRechazaComponentesQueParecenOpciones(t *testing.T) {
 				t.Fatalf("parsearExplain aceptó el rango peligroso %q", rango)
 			}
 		})
-	}
-}
-
-func TestLineasAnadidasExplainUsaRutasNulasYSepardorGit(t *testing.T) {
-	rutas := []string{"dir/ruta rara\t.go", "-opcion.go"}
-	lector := func(args ...string) (string, error) {
-		if len(args) < 3 || args[len(args)-2] != "--" {
-			t.Fatalf("git diff no separó opciones de ruta: %v", args)
-		}
-		pathspec := args[len(args)-1]
-		ruta, esLiteral := strings.CutPrefix(pathspec, ":(literal)")
-		if !esLiteral {
-			t.Fatalf("git diff no forzó pathspec literal (magia de ':' sin desactivar): %v", pathspec)
-		}
-		return "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -0,0 +1,2 @@\n+++ b/no-es-cabecera\n+contenido de " + ruta + "\n", nil
-	}
-
-	lineas, err := lineasAnadidasExplain(lector, "BASE..HEAD", rutas)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, ruta := range rutas {
-		esperado := []string{"++ b/no-es-cabecera", "contenido de " + ruta}
-		if got := lineas[ruta]; !reflect.DeepEqual(got, esperado) {
-			t.Fatalf("líneas de %q = %q, esperado %q", ruta, got, esperado)
-		}
 	}
 }
