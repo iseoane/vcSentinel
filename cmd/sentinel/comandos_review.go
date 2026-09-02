@@ -84,14 +84,20 @@ func ejecutarReview(worktree string, args []string) {
 			os.Exit(1)
 		}
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
-		// Reported BEFORE the error, for the reason given at the status call
-		// site: a half-finished purge is when the list of deleted SHAs matters
-		// most, and returning only the error hid it.
-		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		if err != nil {
+			// Only what the purge actually deleted is reported, and only if it
+			// deleted anything. reportarPurga's empty case prints a VERIFIED
+			// conclusion — "no orphans exist, every SHA is reachable" — and a
+			// purge that failed never established that. Its JSON form says the
+			// same with an empty list. The failure goes to stderr so --json
+			// still emits at most one parseable object on stdout.
+			if len(eliminados) > 0 {
+				reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
+			}
 			fmt.Fprintf(os.Stderr, "? No se pudieron purgar todas las fichas huérfanas: %v\n", err)
 			os.Exit(1)
 		}
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
 	}
 

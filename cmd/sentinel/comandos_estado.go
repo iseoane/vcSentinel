@@ -414,15 +414,20 @@ func ejecutarStatus(worktree string, args []string) {
 	// failure into an exit, so the fallback became unreachable.
 	if flags.prune {
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
-		// Reported BEFORE the error is raised: what the purge already deleted is
-		// the operator's only record of it, and a purge that fails halfway is
-		// exactly when that record matters. The failure goes to stderr so
-		// --json keeps emitting one parseable object on stdout.
-		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		if err != nil {
+			// Only what the purge actually deleted is reported, and only if it
+			// deleted anything. reportarPurga's empty case prints a VERIFIED
+			// conclusion — "no orphans exist, every SHA is reachable" — and a
+			// purge that failed never established that. Its JSON form says the
+			// same with an empty list. The failure goes to stderr so --json
+			// still emits at most one parseable object on stdout.
+			if len(eliminados) > 0 {
+				reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
+			}
 			fmt.Fprintf(os.Stderr, "? No se pudieron purgar todas las fichas huérfanas: %v\n", err)
 			os.Exit(1)
 		}
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
 	}
 
