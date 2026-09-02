@@ -2041,3 +2041,40 @@ func TestPlanForProfileClassifiesWithRepositoryAttributes(t *testing.T) {
 		t.Errorf("generated_code = absent for a linguist-generated path; the attributes never reached the classifier")
 	}
 }
+
+// TestPlanForProfileHonoursAttributesPerDetector characterises FU-14 where the
+// characteristics are observable, so the oracle is the characteristic itself
+// rather than a bundle count that three unrelated bundles would satisfy.
+//
+// The same path, the same executable added line, and the same attribute: only
+// the detectors differ. security_sensitive and generated_code classify through
+// Clasificar and honour linguist-generated; behavior_change classifies through
+// ClasificarPorRuta and never sees it. Resolving FU-14 must fail here rather
+// than pass unnoticed.
+func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
+	profile := change.ChangeProfile{Kind: "generated", Symbols: change.ChangeSymbols{Modified: 1, Complete: true}}
+	paths := []string{"internal/api/wire.go"}
+	diff := "diff --git a/internal/api/wire.go b/internal/api/wire.go\n" +
+		"--- a/internal/api/wire.go\n" +
+		"+++ b/internal/api/wire.go\n" +
+		"@@ -1,0 +2,1 @@\n" +
+		"+\taccessToken := os.Getenv(\"SERVICE_TOKEN\")\n"
+
+	sin := PlanForProfile(profile, paths, diff, "")
+	for _, nombre := range []string{"security_sensitive", "behavior_change"} {
+		if !caracteristicaPresente(sin.Characteristics, nombre) {
+			t.Fatalf("%s = absent without attributes; the fixture no longer exercises the split", nombre)
+		}
+	}
+
+	con := PlanForProfile(profile, paths, diff, "internal/api/wire.go linguist-generated\n")
+	if caracteristicaPresente(con.Characteristics, "security_sensitive") {
+		t.Error("security_sensitive survived linguist-generated; it classifies through Clasificar and must honour the attribute")
+	}
+	if !caracteristicaPresente(con.Characteristics, "generated_code") {
+		t.Error("generated_code = absent for a linguist-generated path")
+	}
+	if !caracteristicaPresente(con.Characteristics, "behavior_change") {
+		t.Error("behavior_change no longer survives linguist-generated. That is FU-14 being resolved: update the debt entry and this characterisation together, do not delete the assertion")
+	}
+}
