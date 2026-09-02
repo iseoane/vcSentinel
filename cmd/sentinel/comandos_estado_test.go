@@ -595,3 +595,73 @@ func TestPurgarHuerfanasNoBorraCuandoNoPuedePreguntar(t *testing.T) {
 		t.Errorf("the ficha of a live commit was deleted because the object store was unreadable (ficha=%v, err=%v)", ficha, lerr)
 	}
 }
+
+// TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar pins the half of the
+// partial-result contract the outer function could not fix on its own. The
+// per-ledger loop deletes fichas directory by directory, so when one of them
+// fails the earlier ones are already gone. Returning nil there dropped them:
+// purgarHuerfanasConEventos cleans events from that very list, so the events of
+// the deleted fichas survived pointing at records the command had removed, and
+// the operator was told only that the purge failed.
+//
+// The failure is staged with a file shape rather than a permission bit, which
+// is a no-op under root: a ficha whose path is a non-empty directory is listed
+// like any other and refuses to be removed.
+func TestPurgarHuerfanasPorLedgerDevuelveLoYaBorradoAlFallar(t *testing.T) {
+	worktree := t.TempDir()
+	correr := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	correr("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	correr("add", "a.txt")
+	correr("commit", "-qm", "first")
+	enlazado := filepath.Join(t.TempDir(), "linked")
+	correr("worktree", "add", "-q", "--detach", enlazado)
+
+	gitDirPrincipal, err := git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDirEnlazado, err := git.ObtenerGitDirDe(enlazado)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The common directory is visited first, so this one is deleted before the
+	// loop reaches the ledger it cannot purge.
+	const borrable = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := review.NuevoLedger(gitDirPrincipal).GuardarRevision(borrable, "fixture", "b", "m",
+		review.Revision{At: time.Now(), Result: review.VerdictOK}); err != nil {
+		t.Fatal(err)
+	}
+	const irremovible = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	ruta := review.NuevoLedger(gitDirEnlazado).RutaFicha(irremovible)
+	if err := os.MkdirAll(filepath.Join(ruta, "ocupado"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	porDirectorio, err := purgarHuerfanasPorLedger(worktree, gitDirPrincipal)
+	if err == nil {
+		t.Fatalf("purgarHuerfanasPorLedger() error = nil; want the ledger it could not purge reported")
+	}
+	if !slices.Contains(porDirectorio[gitDirPrincipal], borrable) {
+		t.Errorf("purgarHuerfanasPorLedger() = %v, want %q under %q: it was deleted before the failure, and its events are cleaned from this very result",
+			porDirectorio, borrable, gitDirPrincipal)
+	}
+	if ficha, lerr := review.NuevoLedger(gitDirPrincipal).LeerFicha(borrable); lerr != nil || ficha != nil {
+		t.Errorf("the ficha reported as deleted is still readable (ficha=%v, err=%v); the fixture no longer exercises the case", ficha, lerr)
+	}
+}

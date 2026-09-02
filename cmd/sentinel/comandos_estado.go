@@ -312,10 +312,16 @@ func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, err
 	porDirectorio := map[string][]string{}
 	for _, dir := range directorios {
 		purgados, err := review.NuevoLedger(dir).PurgarHuerfanas(existe)
-		if err != nil {
-			return nil, fmt.Errorf("purging the ledger at %s: %w", dir, err)
-		}
+		// Recorded BEFORE the error is examined, and the accumulated map is
+		// returned WITH it. PurgarHuerfanas hands back what it had already
+		// deleted alongside its failure, and by the time one ledger fails the
+		// earlier ones are already purged. Discarding that left those fichas
+		// gone with their events intact, because events are cleaned from this
+		// very result.
 		porDirectorio[dir] = purgados
+		if err != nil {
+			return porDirectorio, fmt.Errorf("purging the ledger at %s: %w", dir, err)
+		}
 	}
 	return porDirectorio, nil
 }
