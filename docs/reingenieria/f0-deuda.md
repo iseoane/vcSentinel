@@ -1036,6 +1036,31 @@ heuristic as if it were a scanner.
 
 Priority: after the FU-10 sequence closes. It does not block tickets 03 to 06.
 
+#### Decided 2026-09-02, not yet implemented
+
+**The product question is answered: yes, Sentinel owns exposed-secret
+detection, and the signal is independent of `security_sensitive`.** The two
+answer different questions — one schedules a review, the other reports an
+incident — so a credential in prose must not depend on whether prose can carry
+review-scheduling evidence. That is why the class filter removing content
+evidence from documentation and generated paths, which is correct for its own
+purpose, must not be the thing that decides this.
+
+What remains is implementation, and it is a work unit rather than a repair: a
+credential found in a documentation path has no surface to be reported through
+today. `security_sensitive` schedules a security dimension; an incident needs to
+be stated outright, at the point of the change, whether or not a review runs.
+
+Target: a deterministic finding, produced without an agent and independent of
+the change profile, that names the path and the matched shape and is reported
+even when the review plan schedules nothing. Do not implement it by widening
+`detectarSeguridadSensible`, which FU-10 measured and narrowed on purpose: that
+would put an incident report back inside the mechanism that decides review cost,
+and the two must not share a switch.
+
+Open as implementation work. The question this entry was recorded to ask is
+closed.
+
 ### FU-12: reviews run in a linked worktree never join the repository ledger
 
 Recorded 2026-09-02 while reviewing ticket 04 of the FU-10 sequence, from the
