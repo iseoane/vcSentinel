@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -246,5 +248,86 @@ func TestRunsPruneHumanOutputListsEveryDecision(t *testing.T) {
 		if !strings.Contains(out.String(), fragment) {
 			t.Fatalf("human output missing %q: %s", fragment, out.String())
 		}
+	}
+}
+
+// TestCollectProvenanceReferencesIncludesLinkedWorktreeLedgers is FU-12 stated
+// as an oracle rather than as prose. The collector exists so that a prune never
+// destroys an execution stream that review evidence still cites, and its own
+// contract is to fail closed when provenance is unreadable, "because that is
+// exactly how referenced streams get destroyed".
+//
+// A ficha written from a linked worktree is not an unreadable read. It is an
+// absent one. review.NuevoLedger is anchored at the checkout's gitDir, so the
+// main checkout writes to <gitCommonDir>/vas-sentinel only because its two
+// paths coincide, while a linked worktree writes to
+// <gitCommonDir>/worktrees/<name>/vas-sentinel. The collector reads the common
+// directory alone, so the identity below is cited by real review evidence and
+// invisible to the guard, and the stream it protects is prunable.
+//
+// Delegating implementation to a writer in a dedicated worktree is the
+// mandated workflow here, so this is the normal path and not an edge case.
+func TestCollectProvenanceReferencesIncludesLinkedWorktreeLedgers(t *testing.T) {
+	worktree := newPruneTestRepo(t)
+	backing := pruneRepoStore(t, worktree)
+
+	// A commit is required before a linked worktree can be added.
+	correr := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	correr("add", "a.txt")
+	correr("commit", "-qm", "first")
+
+	enlazado := filepath.Join(t.TempDir(), "linked")
+	correr("worktree", "add", "-q", "--detach", enlazado)
+
+	// The ledger the linked worktree writes to, obtained the way the review
+	// command obtains it: from its own gitDir, not from the common directory.
+	gitDirEnlazado, err := git.ObtenerGitDirDe(enlazado)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gitDirEnlazado == commonDir {
+		t.Fatalf("the linked worktree shares the common directory (%q); the fixture no longer exercises the split", commonDir)
+	}
+
+	invocacionEnlazada := "inv-producer-from-linked-worktree"
+	ledger := review.NuevoLedger(gitDirEnlazado)
+	if err := ledger.GuardarRevision("fixtursha00000000000000000000000000000002", "fixture", "bucket", "model", review.Revision{
+		At:     time.Now(),
+		Result: "warn",
+		Dims: []review.DimensionResult{{
+			Dim:          "logic",
+			Verdict:      "warn",
+			InvocationID: invocacionEnlazada,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	references, refsErr := collectProvenanceReferences(worktree, backing)
+	if refsErr != nil {
+		t.Fatalf("collectProvenanceReferences() error = %v", refsErr)
+	}
+	if !references[invocacionEnlazada] {
+		t.Fatalf("collectProvenanceReferences() = %v, missing %q cited by a ficha in the linked worktree ledger %q; a prune would destroy the stream it protects",
+			references, invocacionEnlazada, gitDirEnlazado)
 	}
 }

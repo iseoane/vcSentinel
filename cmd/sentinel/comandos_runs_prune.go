@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,15 +95,56 @@ func collectProvenanceReferences(worktree string, backing *store.Store) (map[str
 	if err != nil {
 		return nil, err
 	}
-	ledger := review.NuevoLedger(gitCommonDir)
-	shas, err := ledger.ListarFichas()
+	directorios, err := directoriosLedgerV1(gitCommonDir)
 	if err != nil {
 		return nil, err
+	}
+	for _, gitDir := range directorios {
+		if err := anotarReferenciasDeLedger(review.NuevoLedger(gitDir), references); err != nil {
+			return nil, err
+		}
+	}
+	return references, nil
+}
+
+// directoriosLedgerV1 enumerates every gitDir whose v1 review ledger belongs to
+// this repository: the common directory, plus one per linked worktree.
+//
+// review.NuevoLedger anchors on the checkout's gitDir, so the main checkout
+// writes to <gitCommonDir>/vas-sentinel only because its two paths coincide,
+// while a linked worktree writes to <gitCommonDir>/worktrees/<name>/vas-sentinel.
+// Reading the common directory alone made a ficha written from a worktree
+// absent rather than unreadable, so the fail-closed guard above never fired and
+// a prune could destroy the very streams it protects. Delegating to a writer in
+// a dedicated worktree is the mandated workflow here, so that was the normal
+// path (FU-12).
+//
+// The glob mirrors MigrarDesdeV1, which already enumerates them this way, and
+// avoids invoking `git worktree list` and parsing its output.
+func directoriosLedgerV1(gitCommonDir string) ([]string, error) {
+	directorios := []string{gitCommonDir}
+	enlazados, err := filepath.Glob(filepath.Join(gitCommonDir, "worktrees", "*", "vas-sentinel"))
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range enlazados {
+		directorios = append(directorios, filepath.Dir(dir))
+	}
+	return directorios, nil
+}
+
+// anotarReferenciasDeLedger accumulates into references every invocation the
+// fichas of one ledger cite. Any unreadable ficha fails closed: a prune must
+// never run while provenance is only partly known.
+func anotarReferenciasDeLedger(ledger *review.Ledger, references map[string]bool) error {
+	shas, err := ledger.ListarFichas()
+	if err != nil {
+		return err
 	}
 	for _, sha := range shas {
 		ficha, err := ledger.LeerFicha(sha)
 		if err != nil {
-			return nil, fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, err)
+			return fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, err)
 		}
 		if ficha == nil {
 			continue
@@ -125,5 +167,5 @@ func collectProvenanceReferences(worktree string, backing *store.Store) (map[str
 			}
 		}
 	}
-	return references, nil
+	return nil
 }
