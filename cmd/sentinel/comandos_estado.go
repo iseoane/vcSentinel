@@ -295,7 +295,7 @@ func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, err
 
 	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
 	if err != nil {
-		purgados, perr := review.NuevoLedger(gitDir).PurgarHuerfanasCon(existe)
+		purgados, perr := review.NuevoLedger(gitDir).PurgarHuerfanas(existe)
 		if perr != nil {
 			return nil, perr
 		}
@@ -311,7 +311,7 @@ func purgarHuerfanasPorLedger(worktree, gitDir string) (map[string][]string, err
 
 	porDirectorio := map[string][]string{}
 	for _, dir := range directorios {
-		purgados, err := review.NuevoLedger(dir).PurgarHuerfanasCon(existe)
+		purgados, err := review.NuevoLedger(dir).PurgarHuerfanas(existe)
 		if err != nil {
 			return nil, fmt.Errorf("purging the ledger at %s: %w", dir, err)
 		}

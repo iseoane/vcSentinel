@@ -1213,3 +1213,40 @@ attribute. `security_sensitive` and `generated_code` honour
 `linguist-generated`; `behavior_change` does not. Resolving this entry makes
 that test fail, and its message says to update both together rather than delete
 the assertion.
+
+### FU-15: a corrupt object is indistinguishable from a collected one
+
+Recorded 2026-09-02 while closing FU-12's purge path, from a finding that is
+correct and that this repository cannot cheaply resolve.
+
+`git.ContenidoEnAlgunRefDe` resolves a ledger SHA before asking about
+containment, and reads `rev-parse --verify --quiet` exit code 1 as "this object
+no longer exists", which authorises deleting its ficha. That code also appears
+when the object is present in the repository but unreadable in the object store
+while `HEAD` remains readable, so a live ficha can still be deleted in that
+narrow case.
+
+What is already defended, and why this residue is narrow:
+
+- A wholesale unreadable object store is caught. `RepositorioUsable` anchors on
+  `HEAD^{commit}`, which fails there, so the purge refuses to decide anything.
+- The ordinary orphan, after a rebase or an amend, does not reach this branch at
+  all: the old commit object still exists and unreachability is decided by
+  `branch -a --contains`, where an error is an error and only an empty result
+  means unreferenced.
+- Every other query failure now aborts the purge instead of authorising a
+  deletion.
+
+So the remaining exposure needs object-level corruption that leaves `HEAD`
+intact, in a repository whose ledger holds a ficha for the damaged commit.
+
+Target: decide whether a purge may ever run against a repository it has not
+verified. Distinguishing a collected object from a corrupt one needs
+`git fsck`-level verification, which is disproportionate per purge and per SHA.
+The cheaper alternative is to stop reading exit 1 as absence at all, which
+closes the hole completely and leaks the fichas of commits collected by `gc`
+forever, because a rebased-away commit never publishes and T9.5 would never
+collect it either.
+
+Priority: not blocking. It is a narrower failure than the four this sequence
+closed, and unlike them it is recorded rather than mistaken for fixed.

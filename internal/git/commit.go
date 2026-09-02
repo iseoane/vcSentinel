@@ -211,6 +211,13 @@ func ContenidoEnAlgunRefDe(worktree, sha string) (bool, error) {
 	if _, err := gitEn(worktree, "rev-parse", "--verify", "--quiet", sha+"^{commit}"); err != nil {
 		var salida *exec.ExitError
 		if errors.As(err, &salida) && salida.ExitCode() == 1 {
+			// LÍMITE CONOCIDO, no descuido (FU-15): un objeto ilegible mientras
+			// HEAD sigue legible produce este mismo código. Distinguir
+			// "recolectado por gc" de "corrupto en el almacén" exigiría
+			// verificación a nivel fsck en cada purga, desproporcionado aquí.
+			// Se acepta porque el caso normal de huérfana tras rebase o amend
+			// no pasa por aquí: ahí el objeto todavía existe y lo decide
+			// `branch --contains`, que sí distingue error de vacío.
 			return false, nil
 		}
 		return false, fmt.Errorf("resolving %s in %s: %w", sha, worktree, err)

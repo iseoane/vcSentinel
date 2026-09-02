@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
 // Revision es una auditoría concreta de un SHA. El array revisions[] es
@@ -407,17 +405,15 @@ func (l *Ledger) EliminarFicha(sha string) error {
 // lista de SHAs eliminados; si algo falla a mitad, devuelve el error junto
 // con los SHAs que sí llegó a eliminar. El caso del commit reescrito por
 // amend queda cubierto por TestLedgerPurgarHuerfanasDangling.
-func (l *Ledger) PurgarHuerfanas() ([]string, error) {
-	return l.PurgarHuerfanasCon(func(sha string) (bool, error) {
-		return git.ContenidoEnAlgunRef(sha), nil
-	})
-}
 
-// PurgarHuerfanasCon es PurgarHuerfanas con el criterio de existencia
-// inyectado. Un llamador que purgue los ledgers de varios checkouts debe pasar
-// un criterio anclado al repositorio correcto: clasificar con el directorio de
-// trabajo del proceso convierte cada ficha viva de otro checkout en huérfana.
-func (l *Ledger) PurgarHuerfanasCon(existe func(sha string) (bool, error)) ([]string, error) {
+// El criterio de existencia se inyecta y DEBE poder fallar. No hay variante sin
+// él a propósito: la que había envolvía un ayudante que convertía cualquier
+// error de git en "no está", así que el camino cómodo era justo el que borraba
+// fichas vivas ante una consulta rota. Un llamador que purgue los ledgers de
+// varios checkouts debe además anclar el criterio al repositorio correcto:
+// clasificar con el directorio de trabajo del proceso convierte cada ficha viva
+// de otro checkout en huérfana.
+func (l *Ledger) PurgarHuerfanas(existe func(sha string) (bool, error)) ([]string, error) {
 	shas, err := l.ListarFichas()
 	if err != nil {
 		return nil, err

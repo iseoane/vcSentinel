@@ -1,6 +1,7 @@
 package review
 
 import (
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,7 +245,7 @@ func TestLedgerPurgarHuerfanas(t *testing.T) {
 
 	// Sin un repositorio Git detrás, cat-file falla y ambas fichas son
 	// huérfanas: el purge debe vaciar el ledger.
-	eliminados, err := ledger.PurgarHuerfanas()
+	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) { return git.ContenidoEnAlgunRef(sha), nil })
 	if err != nil {
 		t.Fatalf("PurgarHuerfanas devolvió error: %v", err)
 	}
@@ -312,7 +313,7 @@ func TestLedgerPurgarHuerfanasDangling(t *testing.T) {
 		}
 	}
 
-	eliminados, err := ledger.PurgarHuerfanas()
+	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) { return git.ContenidoEnAlgunRef(sha), nil })
 	if err != nil {
 		t.Fatalf("PurgarHuerfanas devolvió error: %v", err)
 	}
