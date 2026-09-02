@@ -16,23 +16,32 @@ type repositorio struct {
 	dir string
 }
 
-// correr runs every Git command through one entry point with the host
-// configuration neutralised. Setting up the fixture in an isolated environment
-// and then issuing later commands with the ambient one would leave the test
-// coupled to whatever the developer or CI has configured; a global
-// commit.gpgSign, hook, or filter would be enough to break it.
+// correr runs every Git command through one entry point with a built-from-empty
+// environment. Appending to os.Environ() would not isolate anything: it keeps
+// GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_*/VALUE_* pairs, which override the
+// very neutralisation the other variables state, and it keeps GIT_TRACE, whose
+// diagnostics would land in the output this returns.
+//
+// Only stdout is returned, because callers use the result as an exact revision
+// or object ID: folding stderr into it would corrupt the identifier rather than
+// fail loudly.
 func (r repositorio) correr(args ...string) string {
 	r.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + r.dir,
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1")
-	salida, err := cmd.CombinedOutput()
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+	var errores strings.Builder
+	cmd.Stderr = &errores
+	salida, err := cmd.Output()
 	if err != nil {
-		r.t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, salida)
+		r.t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, errores.String())
 	}
 	return strings.TrimSpace(string(salida))
 }
@@ -118,9 +127,18 @@ func TestLeerGitattributesDistinguishesAbsenceFromFailure(t *testing.T) {
 
 		sha := r.correr("rev-parse", "HEAD")
 		blob := r.correr("rev-parse", "HEAD:.gitattributes")
+
+		// The fixture is freshly created and never repacked, so the blob is
+		// loose by construction. Skipping on a removal failure would let this
+		// test report success without ever exercising the path it exists for,
+		// which is the same silent-emptiness failure the harness itself guards
+		// against. It fails instead.
 		suelto := filepath.Join(r.dir, ".git", "objects", blob[:2], blob[2:])
+		if _, err := os.Stat(suelto); err != nil {
+			t.Fatalf("the blob is not loose in the fixture, so the corruption cannot be staged: %v", err)
+		}
 		if err := os.Remove(suelto); err != nil {
-			t.Skipf("the blob is not a loose object in this Git version: %v", err)
+			t.Fatalf("removing the loose blob: %v", err)
 		}
 
 		if _, err := leerGitattributes(sha); err == nil {
