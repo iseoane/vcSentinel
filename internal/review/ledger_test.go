@@ -1000,3 +1000,24 @@ func TestGuardarRevisionNoOcultaElBloqueoNoLiberado(t *testing.T) {
 		t.Errorf("LeerFicha() = %v, %v; want the revision persisted despite the lock failure", ficha, lerr)
 	}
 }
+
+// TestMarcarCorregidaFallaConUnLedgerColgante is FU-16 one more time, in the
+// guard added to keep MarcarCorregida a pure no-op for a ledger that has never
+// stored anything. os.Stat resolves symlinks, so a ledger path pointing nowhere
+// answers ErrNotExist exactly like an absent one, and the correction was
+// dropped in silence — on a repository whose ledger is broken, which is when
+// losing the record of a fix matters most.
+//
+// The listing three hundred lines above already separates the two with Lstat.
+// This is the same separation in the same file.
+func TestMarcarCorregidaFallaConUnLedgerColgante(t *testing.T) {
+	gitDir := t.TempDir()
+	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
+		t.Skipf("this platform refuses to create a symlink without extra privileges: %v", err)
+	}
+
+	err := NuevoLedger(gitDir).MarcarCorregida("6666666666666666666666666666666666666666", "elfix")
+	if err == nil {
+		t.Fatalf("MarcarCorregida() error = nil; want a failure: a ledger path pointing nowhere is a broken ledger, not one that never stored a ficha, and reporting success drops the correction")
+	}
+}

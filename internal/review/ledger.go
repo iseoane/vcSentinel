@@ -461,14 +461,22 @@ func (l *Ledger) guardarRevisionBloqueada(sha, mensaje, bucket, modelo string, r
 // commit fixedIn (trazabilidad hallazgo → corrección). No sobreescribe un
 // FixedIn ya existente: la primera corrección gana.
 func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
-	// Checked on the DIRECTORY, not on the ficha. The goal is only to keep a
-	// ledger that has never stored anything from having its directory created
-	// by a call that is a documented no-op, and this call runs for every earlier
-	// commit of every fix( commit. Testing the ficha itself instead would be a
-	// correctness bug: guardarFicha deletes the destination before renaming over
-	// it, so an unlocked existence check lands in that window and reports a live
-	// ficha as absent — measured, it silently dropped the correction.
-	if _, err := os.Stat(l.dir); errors.Is(err, os.ErrNotExist) {
+	// Checked on the DIRECTORY, not on the ficha, and with Lstat. Two separate
+	// reasons, both learned the hard way in this file.
+	//
+	// The directory rather than the ficha: guardarFicha deletes the destination
+	// before renaming over it, so an unlocked check on the ficha lands in that
+	// window and reports a live record as absent. Measured — it dropped the
+	// correction in silence. The guard exists only to keep a ledger that never
+	// stored anything from having its directory created by a call that is a
+	// documented no-op, and this one runs for every earlier commit of every
+	// fix( commit.
+	//
+	// Lstat rather than Stat: Stat resolves symlinks, so a ledger path pointing
+	// nowhere answers ErrNotExist exactly like an absent one. That is FU-16, and
+	// ListarFichas separates the two the same way. A broken ledger must fail,
+	// not silently skip the correction.
+	if _, err := os.Lstat(l.dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	// Under the ficha's lock: "the first correction wins" is decided by reading
