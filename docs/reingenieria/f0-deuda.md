@@ -991,3 +991,49 @@ incident. If it does not, say so in the ficha and stop treating the substring
 heuristic as if it were a scanner.
 
 Priority: after the FU-10 sequence closes. It does not block tickets 03 to 06.
+
+### FU-12: reviews run in a linked worktree never join the repository ledger
+
+Recorded 2026-09-02 while reviewing ticket 04 of the FU-10 sequence, from the
+observation that its review record could not be found where every other record
+lives.
+
+`AGENTS.md` states that `internal/store` persists units, runs, findings, commit
+indexes, decisions, and blob indexes in `<git-common-dir>/vas-sentinel`. The
+hook installation already follows that rule, obtaining the path through
+`git rev-parse --git-common-dir` so a repository and its linked worktrees share
+one store.
+
+Reviews do not. `sentinel review b7ac0cf`, run from the worktree
+`fu10-ticket-04`, wrote its ficha to
+`.git/worktrees/fu10-ticket-04/vas-sentinel/`, which is `--git-dir`, not
+`--git-common-dir`. From that worktree the two paths are different:
+
+- `git rev-parse --git-dir` → `.git/worktrees/fu10-ticket-04`
+- `git rev-parse --git-common-dir` → `.git`
+
+Measured on this repository at 2026-09-02: **thirteen** linked worktrees each
+hold their own private `vas-sentinel` directory, one per writer worktree used
+across phase F9. Every review performed inside a delegated worktree is therefore
+invisible from the main worktree.
+
+That matters because delegating to a writer in a dedicated worktree is the
+mandated workflow, so this is the normal path and not an edge case. After the
+branch merges, `sentinel status`, the gate, and `sentinel metrics` in the main
+worktree cannot see the receipts that approved the merged commits. A gate that
+validates a receipt for a commit reviewed in a worktree finds nothing.
+
+It also puts a bound on earlier measurements. Any count taken from the main
+worktree — the 325 metrics snapshots and 850 logical runs recorded for T9.4a and
+T9.4b among them — excluded whatever the writer worktrees held. Those verdicts
+are not invalidated, because they were about calibrating review timeouts rather
+than about total volume, but the denominators were narrower than they read.
+
+Target: settle whether the store is per-repository or per-worktree, then make
+every writer agree. If it is per-repository, as `AGENTS.md` states and the hook
+already assumes, the review write path must resolve `--git-common-dir` like the
+rest of the store. Do not reconcile by copying fichas between directories: the
+ledger is append-only and a hand-merged history is worse than a split one.
+
+Priority: before the next delegated ticket closes, because the FU-10 sequence
+merges worktree-reviewed commits into `main` and their receipts stay behind.
