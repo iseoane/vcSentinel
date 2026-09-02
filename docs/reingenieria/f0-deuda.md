@@ -1061,3 +1061,30 @@ its stated invariant is that nothing is deleted before its snapshot exists. A
 cascade written against one directory while the fichas are written to thirteen
 others cannot hold that invariant, and delegating T9.5 to a worktree writer
 would make its own evidence invisible to it.
+
+### FU-13: net range planning classifies from the sanitised path list
+
+Recorded 2026-09-02 from a finding against ticket 05 of the FU-10 sequence. The
+premise is confirmed and the defect is pre-existing: it is not introduced by
+that ticket, which only changed which evidence the derivation receives.
+
+`internal/review/net_pr.go` passes `safePaths` to the plan derivation.
+`rutasRevisionSeguras` (`internal/review/engine.go:673-684`) drops any path
+containing `*?[]{}!`, a control character, or a leading `-`. Those characters are
+legal in tracked filenames, so a repository holding one classifies its net range
+from an incomplete path list and can miss route-based `database`,
+`security_sensitive`, `cross_module`, `ci_cd` and `infrastructure` evidence.
+
+The sanitiser exists for a different reason: those paths are interpolated into
+reviewer prompts and shell-adjacent contexts, where a wildcard or a leading dash
+is a real hazard. Classification has no such exposure — it matches globs against
+strings — so the two uses want different lists.
+
+Target: give classification the complete changed-path list and keep the
+sanitised list for the surfaces that interpolate it. Do not widen
+`rutasRevisionSeguras`: the sanitising is correct for its own consumers, and
+loosening it to serve the classifier would trade a coverage gap for an
+injection surface.
+
+Priority: not blocking. No path in this repository triggers it today, so it is a
+correctness gap waiting for a filename rather than an active fault.
