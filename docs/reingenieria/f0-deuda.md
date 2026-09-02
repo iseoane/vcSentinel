@@ -1106,6 +1106,41 @@ cascade written against one directory while the fichas are written to thirteen
 others cannot hold that invariant, and delegating T9.5 to a worktree writer
 would make its own evidence invisible to it.
 
+#### Partly resolved 2026-09-02: the destructive reader
+
+The severity recorded above understated it. `collectProvenanceReferences` in
+`cmd/sentinel/comandos_runs_prune.go` is what keeps `runs prune` from deleting
+an execution stream that review evidence still cites, and its contract is to
+fail closed when provenance is unreadable, "because that is exactly how
+referenced streams get destroyed". Reading only the common directory made a
+ficha written from a worktree **absent** rather than unreadable, so the guard
+never fired. Measured on this repository when the fix landed: 222 fichas in the
+common directory and 65 in linked worktrees, every one of the 65 invisible to
+the guard and its cited streams therefore prunable.
+
+Fixed in `b59778b`, `190cf55` and `29367b2`. The collector now enumerates the
+common directory plus one gitDir per linked worktree.
+
+Two attempts were needed and the reason is worth keeping, because it is the same
+mistake twice. The first enumerated with `filepath.Glob`, copied from
+`MigrarDesdeV1`: `Glob` reports only `ErrBadPattern` and swallows its I/O
+errors, so an unreadable `worktrees` directory returned an empty list and a nil
+error, indistinguishable from a repository with no linked worktrees. The glob is
+harmless in the migration, where missing a directory defers work a later run
+repeats, and destructive here. The second used `os.Stat`, which follows
+symlinks, so a dangling ledger link reported `ErrNotExist` and read as "never
+wrote a ficha". Both are the same shape: a silent absence standing in for a real
+fault, in the one function whose whole purpose is to refuse to act on partial
+knowledge.
+
+**Still open.** Only the destructive reader is fixed. `cmd/sentinel/comandos_pr.go`
+still builds the v1 ledger from its own gitDir, so a branch analysis run in the
+main checkout cannot see fichas written in a worktree and can under-report
+blocking findings. `cmd/sentinel/comandos_estado.go` has the same gap, where it
+only hides records from `status`. Neither destroys anything, which is why they
+were not folded into a prune fix: `AnalizarRama` takes a single `*Ledger`, and
+changing that is a different-sized change than this one.
+
 ### FU-13: net range planning classifies from the sanitised path list
 
 Recorded 2026-09-02 from a finding against ticket 05 of the FU-10 sequence. The
