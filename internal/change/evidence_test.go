@@ -167,3 +167,18 @@ func TestNewCharacteristicsInputParsesColorlessDiff(t *testing.T) {
 		t.Fatalf("added lines from colorless diff = %q, want %q", got, []string{"plain line"})
 	}
 }
+
+func TestNewCharacteristicsInputKeepsPathStartingWithB(t *testing.T) {
+	path := "b/cmd/sentinel/x.go"
+	diff := `diff --git a/b/cmd/sentinel/x.go b/b/cmd/sentinel/x.go
+--- a/b/cmd/sentinel/x.go
++++ b/b/cmd/sentinel/x.go
+@@ -0,0 +1 @@
++func Added() {}
+`
+
+	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
+	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, []string{"func Added() {}"}) {
+		t.Fatalf("added lines for path starting with b/ = %q, want %q", got, []string{"func Added() {}"})
+	}
+}

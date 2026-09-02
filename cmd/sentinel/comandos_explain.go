@@ -64,7 +64,7 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	if err != nil {
 		return err
 	}
-	diff, err := lector("diff", "--no-color", "--unified=0", "-M", rango)
+	diff, err := lector("diff", "--no-color", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", "-M", rango)
 	if err != nil {
 		return fmt.Errorf("could not read unified diff for %s: %w", rango, err)
 	}
