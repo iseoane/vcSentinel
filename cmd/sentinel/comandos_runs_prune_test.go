@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -332,53 +333,108 @@ func TestCollectProvenanceReferencesIncludesLinkedWorktreeLedgers(t *testing.T) 
 	}
 }
 
-// TestDirectoriosLedgerV1FallaCerradoSiNoPuedeEnumerar is the oracle for the
-// reason this enumeration does not use filepath.Glob. Glob reports only
-// ErrBadPattern and swallows the I/O errors it hits reading directories, so a
-// static pattern over an unreadable worktrees directory returns an empty list
-// and a nil error, which reads exactly like a repository with no linked
-// worktrees. Provenance would then be silently partial and a prune would
-// destroy the streams this guard exists to protect.
-func TestDirectoriosLedgerV1FallaCerradoSiNoPuedeEnumerar(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions, so an unreadable directory cannot be staged")
+// TestDirectoriosLedgerV1FallaCerrado is the oracle for every way this
+// enumeration can be told less than the truth. Each case is staged with file
+// shapes rather than permissions, so none of it is skipped when tests run as
+// root and privileged CI cannot lose the coverage.
+//
+// The class of defect is one silent absence standing in for a real problem.
+// filepath.Glob reports only ErrBadPattern and swallows its I/O errors, so an
+// unreadable directory reads as "no linked worktrees". os.Stat follows
+// symlinks, so a dangling ledger link reports ErrNotExist and reads as "never
+// wrote a ficha". A regular file where the ledger belongs fails an IsDir check
+// with nothing to show for it. Any of the three leaves provenance partial, and
+// the prune this feeds destroys what it cannot see.
+func TestDirectoriosLedgerV1FallaCerrado(t *testing.T) {
+	casos := []struct {
+		nombre string
+		montar func(t *testing.T, commonDir string)
+		quiere string
+	}{
+		{
+			nombre: "the worktrees path is not a directory",
+			montar: func(t *testing.T, commonDir string) {
+				if err := os.WriteFile(filepath.Join(commonDir, "worktrees"), []byte("not a directory\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			quiere: "enumerating",
+		},
+		{
+			nombre: "the ledger path is a regular file",
+			montar: func(t *testing.T, commonDir string) {
+				gitDir := filepath.Join(commonDir, "worktrees", "linked")
+				if err := os.MkdirAll(gitDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(gitDir, "vas-sentinel"), []byte("not a ledger\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			quiere: "not a directory",
+		},
+		{
+			nombre: "the ledger path is a dangling symlink",
+			montar: func(t *testing.T, commonDir string) {
+				gitDir := filepath.Join(commonDir, "worktrees", "linked")
+				if err := os.MkdirAll(gitDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(commonDir, "gone"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
+					t.Skipf("symlinks unavailable on this platform: %v", err)
+				}
+			},
+			quiere: "cannot be resolved",
+		},
 	}
-	commonDir := t.TempDir()
-	raiz := filepath.Join(commonDir, "worktrees")
-	if err := os.MkdirAll(filepath.Join(raiz, "linked", "vas-sentinel"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// It must find the ledger while the directory is readable, or the negative
-	// case below would pass for the wrong reason.
-	directorios, err := directoriosLedgerV1(commonDir)
-	if err != nil {
-		t.Fatalf("directoriosLedgerV1() error = %v", err)
-	}
-	if len(directorios) != 2 {
-		t.Fatalf("directoriosLedgerV1() = %v, want the common dir and one linked worktree", directorios)
-	}
-
-	if err := os.Chmod(raiz, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(raiz, 0o755) })
-
-	if _, err := directoriosLedgerV1(commonDir); err == nil {
-		t.Error("an unreadable worktrees directory returned no error; provenance would be silently partial and a prune would destroy referenced streams")
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			commonDir := t.TempDir()
+			caso.montar(t, commonDir)
+			_, err := directoriosLedgerV1(commonDir)
+			if err == nil {
+				t.Fatalf("enumeration returned no error; provenance would be silently partial and a prune would destroy referenced streams")
+			}
+			if !strings.Contains(err.Error(), caso.quiere) {
+				t.Errorf("error = %q, want it to mention %q so the operator can tell which path is wrong", err, caso.quiere)
+			}
+		})
 	}
 }
 
-// TestDirectoriosLedgerV1SinWorktrees pins the ordinary case: a repository with
-// no linked worktrees has no worktrees directory at all, which is an absence
-// and not a failure.
-func TestDirectoriosLedgerV1SinWorktrees(t *testing.T) {
-	commonDir := t.TempDir()
-	directorios, err := directoriosLedgerV1(commonDir)
-	if err != nil {
-		t.Fatalf("directoriosLedgerV1() error = %v", err)
-	}
-	if len(directorios) != 1 || directorios[0] != commonDir {
-		t.Errorf("directoriosLedgerV1() = %v, want only the common directory", directorios)
-	}
+// TestDirectoriosLedgerV1EncuentraLosLedgersReales is the positive half. Without
+// it every fail-closed case above could pass while the function found nothing at
+// all, which is the failure they exist to prevent. It also pins the two
+// absences that are ordinary: a repository with no linked worktrees, and a
+// linked worktree that never ran a review.
+func TestDirectoriosLedgerV1EncuentraLosLedgersReales(t *testing.T) {
+	t.Run("no linked worktrees", func(t *testing.T) {
+		commonDir := t.TempDir()
+		directorios, err := directoriosLedgerV1(commonDir)
+		if err != nil {
+			t.Fatalf("directoriosLedgerV1() error = %v", err)
+		}
+		if !slices.Equal(directorios, []string{commonDir}) {
+			t.Errorf("directoriosLedgerV1() = %v, want only the common directory", directorios)
+		}
+	})
+
+	t.Run("one with a ledger and one without", func(t *testing.T) {
+		commonDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(commonDir, "worktrees", "con-fichas", "vas-sentinel"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(commonDir, "worktrees", "sin-fichas"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		directorios, err := directoriosLedgerV1(commonDir)
+		if err != nil {
+			t.Fatalf("directoriosLedgerV1() error = %v", err)
+		}
+		quiere := []string{commonDir, filepath.Join(commonDir, "worktrees", "con-fichas")}
+		if !slices.Equal(directorios, quiere) {
+			t.Errorf("directoriosLedgerV1() = %v, want %v", directorios, quiere)
+		}
+	})
 }

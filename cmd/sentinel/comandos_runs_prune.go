@@ -146,19 +146,30 @@ func directoriosLedgerV1(gitCommonDir string) ([]string, error) {
 	}
 	for _, entrada := range entradas {
 		if !entrada.IsDir() {
-			continue
+			continue // not a worktree administrative directory
 		}
 		gitDir := filepath.Join(raiz, entrada.Name())
-		info, err := os.Stat(filepath.Join(gitDir, "vas-sentinel"))
-		if errors.Is(err, fs.ErrNotExist) {
+		ruta := filepath.Join(gitDir, "vas-sentinel")
+
+		// Absence and malformation are separated with Lstat before Stat. Stat
+		// alone follows symlinks, so a dangling ledger symlink reports
+		// ErrNotExist and would be skipped as "never wrote a ficha", and a
+		// regular file in its place would fail an IsDir check silently. Either
+		// would hide provenance behind the same silent-absence hole this
+		// function was just rewritten to close.
+		if _, err := os.Lstat(ruta); errors.Is(err, fs.ErrNotExist) {
 			continue // that worktree never wrote a ficha
+		} else if err != nil {
+			return nil, fmt.Errorf("checking the ledger path of linked worktree %s: %w", entrada.Name(), err)
 		}
+		info, err := os.Stat(ruta)
 		if err != nil {
-			return nil, fmt.Errorf("checking the ledger of linked worktree %s: %w", entrada.Name(), err)
+			return nil, fmt.Errorf("the ledger path of linked worktree %s exists but cannot be resolved: %w", entrada.Name(), err)
 		}
-		if info.IsDir() {
-			directorios = append(directorios, gitDir)
+		if !info.IsDir() {
+			return nil, fmt.Errorf("the ledger path of linked worktree %s is not a directory", entrada.Name())
 		}
+		directorios = append(directorios, gitDir)
 	}
 	return directorios, nil
 }
