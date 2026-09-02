@@ -534,8 +534,11 @@ func TestPurgarHuerfanasAbortaCuandoElCriterioFalla(t *testing.T) {
 	}
 	// Whatever was already removed must come back with the error: the ledger is
 	// half-purged, and a caller told only "it failed" would believe otherwise.
-	if !slices.Contains(eliminados, huerfana) {
-		t.Errorf("PurgarHuerfanas() = %v, want it to report %q, which it had already deleted before aborting", eliminados, huerfana)
+	// The whole list is asserted, not just membership: a purge that reported the
+	// SHA it could not resolve, or one ordered after it, as deleted would satisfy
+	// a containment check while lying about what it destroyed.
+	if !slices.Equal(eliminados, []string{huerfana}) {
+		t.Errorf("PurgarHuerfanas() = %v, want exactly %v: only the ficha it had already deleted before aborting", eliminados, []string{huerfana})
 	}
 	if ficha, lerr := ledger.LeerFicha(huerfana); lerr != nil || ficha != nil {
 		t.Errorf("the genuinely orphaned ficha was not deleted before the abort (ficha=%v, err=%v)", ficha, lerr)
