@@ -402,15 +402,11 @@ func ejecutarStatus(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
-	// gitDir stays for the purge and the event log, which enumerate every
-	// per-checkout ledger on purpose.
-	ledger, err := sharedReviewLedger(worktree)
-	if err != nil {
-		fmt.Printf("❌ %v\n", err)
-		os.Exit(1)
-	}
-
+	// --prune runs BEFORE the shared ledger is built, and that order is load
+	// bearing. purgarHuerfanasConEventos enumerates every per-checkout ledger
+	// and keeps a documented fallback for when the common directory cannot be
+	// resolved; building the shared ledger first turned that same resolution
+	// failure into an exit, so the fallback became unreachable.
 	if flags.prune {
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
 		if err != nil {
@@ -419,6 +415,15 @@ func ejecutarStatus(worktree string, args []string) {
 		}
 		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
 		os.Exit(0)
+	}
+
+	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
+	// gitDir stays for the purge above and the event log, which enumerate every
+	// per-checkout ledger on purpose.
+	ledger, err := sharedReviewLedger(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
 	}
 
 	shas, err := ledger.ListarFichas()

@@ -65,6 +65,33 @@ func ejecutarReview(worktree string, args []string) {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
+	// --prune runs BEFORE the shared ledger is built, and that order is load
+	// bearing. Purging enumerates every per-checkout ledger and keeps a
+	// documented fallback for when the common directory cannot be resolved;
+	// building the shared ledger first turned that same resolution failure into
+	// an exit, so the fallback became unreachable.
+	if flags.prune {
+		// --prune es un modo standalone: combinarlo con targets o flags de
+		// auditoría sería ignorarlos en silencio (cf. flagsNoAplicablesAStatus).
+		// Sin targets: parsearFlagsAuditoria ya no rellena "HEAD" por defecto
+		// (B17), así que "solo --prune" se detecta por targets VACÍO, no por
+		// targets == ["HEAD"].
+		soloPrune := len(flags.targets) == 0 &&
+			len(flags.dims) == 0 && !flags.all && !flags.chain && !flags.gate &&
+			flags.profile == "" && flags.answer == "" && flags.timeout == 0
+		if !soloPrune {
+			fmt.Println("? review --prune no se combina con targets ni flags de auditoría (--dims/--all/--chain/--gate/--profile/--answer/--timeout).")
+			os.Exit(1)
+		}
+		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
+		if err != nil {
+			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
+			os.Exit(1)
+		}
+		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
+		os.Exit(0)
+	}
+
 	// The ledger is anchored on the common directory, not on gitDir: see
 	// sharedReviewLedger. gitDir stays for the operational event log, which is
 	// per-checkout on purpose.
@@ -87,27 +114,6 @@ func ejecutarReview(worktree string, args []string) {
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	exitFinal := 0
 
-	if flags.prune {
-		// --prune es un modo standalone: combinarlo con targets o flags de
-		// auditoría sería ignorarlos en silencio (cf. flagsNoAplicablesAStatus).
-		// Sin targets: parsearFlagsAuditoria ya no rellena "HEAD" por defecto
-		// (B17), así que "solo --prune" se detecta por targets VACÍO, no por
-		// targets == ["HEAD"].
-		soloPrune := len(flags.targets) == 0 &&
-			len(flags.dims) == 0 && !flags.all && !flags.chain && !flags.gate &&
-			flags.profile == "" && flags.answer == "" && flags.timeout == 0
-		if !soloPrune {
-			fmt.Println("? review --prune no se combina con targets ni flags de auditoría (--dims/--all/--chain/--gate/--profile/--answer/--timeout).")
-			os.Exit(1)
-		}
-		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
-		if err != nil {
-			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
-			os.Exit(1)
-		}
-		reportarPurga(gitDir, eliminados, flags.jsonOut, worktree)
-		os.Exit(0)
-	}
 	total := len(shas)
 
 	for idx, sha := range shas {

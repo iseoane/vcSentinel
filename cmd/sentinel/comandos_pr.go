@@ -266,19 +266,24 @@ func ejecutarPrReview(worktree string, args []string) {
 		return adapter, profile.Nombre, nil
 	}
 
-	opciones, err := opcionesRamaPrReview(cfg, verificadorModelo, worktree, flags, fabrica)
-	if err != nil {
-		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
-	}
-	base := opciones.Base
 	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
 	// AnalizarRama also WRITES here, through GuardarRevision and AdoptarFicha,
 	// so this is where a rebase-adopted copy lands too.
+	//
+	// Resolved BEFORE the branch options, which warn-and-continue when the same
+	// common directory cannot be resolved: reporting that content reuse is
+	// degraded and then dying on the identical lookup told the operator the run
+	// would continue when it could not.
 	ledger, err := sharedReviewLedger(worktree)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
+	opciones, err := opcionesRamaPrReview(cfg, verificadorModelo, worktree, flags, fabrica)
+	if err != nil {
+		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
+	}
+	base := opciones.Base
 	res, err := review.AnalizarRama(ledger, opciones)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
