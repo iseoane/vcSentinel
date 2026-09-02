@@ -9,7 +9,7 @@ real code.
 **Blocks:** 04. Migrating the planner before this lands would import the false
 positive wholesale.
 
-**Status:** ready-for-agent.
+**Status:** complete.
 
 ## Why this exists
 
@@ -42,22 +42,38 @@ detector's own class check runs first.
 
 **Acceptance criteria:**
 
-- [ ] A focused RED test exists before the production change and fails for the
+- [x] A focused RED test exists before the production change and fails for the
       stated reason.
-- [ ] A Markdown file whose added lines contain `context.Background()` no longer
+- [x] A Markdown file whose added lines contain `context.Background()` no longer
       marks `concurrency` present.
-- [ ] A generated file whose added lines contain `chan ` no longer marks it
+- [x] A generated file whose added lines contain `chan ` no longer marks it
       present.
-- [ ] A source file whose added lines contain `go ejecutar()` or `context.`
+- [x] A source file whose added lines contain `go ejecutar()` or `context.`
       still marks it present, and the existing Spanish-word false-positive
       guard still holds.
-- [ ] A config-class file still marks it present, keeping the deny-list
+- [x] A config-class file still marks it present, keeping the deny-list
       behaviour consistent with the security detector.
-- [ ] The exclusion reuses the class list ticket 02 introduced; no second
+- [x] The exclusion reuses the class list ticket 02 introduced; no second
       deny-list is created.
-- [ ] `go build ./...`, `go vet ./...`, focused tests, and the full suite pass,
+- [x] `go build ./...`, `go vet ./...`, focused tests, and the full suite pass,
       with the exact commands and outcomes recorded.
-- [ ] The divergence harness is re-run and the corrected source-bearing delta is
+- [x] The divergence harness is re-run and the corrected source-bearing delta is
       recorded in the evidence document, replacing the 358 figure.
-- [ ] `sentinel review` of the commit completes with every finding either
+- [x] `sentinel review` of the commit completes with every finding either
       resolved or dispositioned with a verified premise and a stated reason.
+
+## Evidence
+
+- RED first: `go test ./internal/change -run TestConcurrency` failed on the
+  Markdown and generated cases and passed on the three positive ones, so the
+  test was not green by inversion.
+- GREEN after the change: `go test ./internal/change` passes, including the
+  pre-existing Spanish-word false-positive guard.
+- Both detectors now exclude through one helper over the existing class list.
+  No second deny-list was created.
+- Re-measurement with the corrected harness: prose-only commits move from
+  43 to 119 invocations before this change and 43 to 49 after it. Source-bearing
+  commits are 300 to 360; the earlier 358 figure is replaced in the evidence
+  document.
+- `go build ./...`, `go vet ./...`, and the full suite pass.
+- Implementation commit: `4c1d5b3`.

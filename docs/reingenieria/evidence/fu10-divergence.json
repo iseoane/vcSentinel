@@ -1,12 +1,16 @@
 {
+  "ref": "HEAD",
+  "ref_sha": "4c1d5b3e07da411c6389f78dc9e2e815cecfd27d",
   "window": 120,
+  "requested": 120,
+  "failed": 0,
   "merges_excluded": 5,
   "counting_convention": "agent invocations: the sum of bundle dimensions, without deduplicating a dimension scheduled by two bundles",
   "strata": {
     "bugfix": {
       "commits": 32,
       "risk_changed": 14,
-      "planner_invocations": 142,
+      "planner_invocations": 141,
       "shared_invocations": 161
     },
     "configuration": {
@@ -16,16 +20,16 @@
       "shared_invocations": 13
     },
     "documentation": {
-      "commits": 44,
-      "risk_changed": 17,
-      "planner_invocations": 25,
-      "shared_invocations": 100
+      "commits": 45,
+      "risk_changed": 4,
+      "planner_invocations": 30,
+      "shared_invocations": 36
     },
     "feature": {
-      "commits": 15,
+      "commits": 14,
       "risk_changed": 10,
-      "planner_invocations": 67,
-      "shared_invocations": 77
+      "planner_invocations": 63,
+      "shared_invocations": 73
     },
     "refactor": {
       "commits": 16,
@@ -42,32 +46,133 @@
   },
   "source_bearing_headline": {
     "commits": 68,
-    "risk_changed": 39,
+    "risk_changed": 40,
     "planner_invocations": 300,
-    "shared_invocations": 358
+    "shared_invocations": 360
   },
   "prose_only": {
     "commits": 52,
-    "risk_changed": 17,
+    "risk_changed": 3,
     "planner_invocations": 43,
-    "shared_invocations": 119
+    "shared_invocations": 49
   },
   "commits": [
+    {
+      "sha": "4c1d5b3e07da411c6389f78dc9e2e815cecfd27d",
+      "subject": "fix(change): stop reading prose as evidence of concurrency",
+      "kind": "bugfix",
+      "source_bearing": true,
+      "planner_risk": "standard",
+      "shared_risk": "high",
+      "planner_invocations": 4,
+      "shared_invocations": 6,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "unlocked_characteristics": [
+        "behavior_change",
+        "concurrency",
+        "security_sensitive"
+      ],
+      "risk_changed": true
+    },
+    {
+      "sha": "f3bb97e2ed1e471ee63b26cde1469621f2497d3a",
+      "subject": "fix(tools): make the divergence harness fail closed and record what it scheduled",
+      "kind": "bugfix",
+      "source_bearing": true,
+      "planner_risk": "elevated",
+      "shared_risk": "high",
+      "planner_invocations": 5,
+      "shared_invocations": 7,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
+      "unlocked_characteristics": [
+        "behavior_change",
+        "concurrency"
+      ],
+      "risk_changed": true
+    },
+    {
+      "sha": "b0f2413aaf9cbb4c3ff6073f02ebc6ef35eed6af",
+      "subject": "docs(fu10): add ticket 03b to narrow the concurrency detector",
+      "kind": "documentation",
+      "source_bearing": false,
+      "planner_risk": "none",
+      "shared_risk": "none",
+      "planner_invocations": 0,
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
+    },
+    {
+      "sha": "3d3a5b2b3fbd8d85b854cd8509fe0ebddc266cb3",
+      "subject": "feat(tools): measure what feeding the review planner real evidence costs",
+      "kind": "documentation",
+      "source_bearing": true,
+      "planner_risk": "elevated",
+      "shared_risk": "high",
+      "planner_invocations": 5,
+      "shared_invocations": 6,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
+      "unlocked_characteristics": [
+        "behavior_change",
+        "security_sensitive"
+      ],
+      "risk_changed": true
+    },
     {
       "sha": "d0645695e0affbfe8d26326a8f922ef9d40ee99c",
       "subject": "docs(fu10): pin the measurement method before ticket 03 runs",
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "9d75929375a0d5ec48de33bf3f2887ec80d59557",
@@ -78,10 +183,19 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
       ],
       "risk_changed": false
     },
@@ -94,8 +208,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -108,15 +235,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "ac296d2e4655d51dfa3f866a67aede182fa250d3",
@@ -124,15 +248,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "a2003161179a763d0330d6073c3f5c637410bd7c",
@@ -140,15 +261,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "5178e4f994da8682cddaa1f4b2a73574dc69c22d",
@@ -159,8 +277,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -172,8 +290,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -185,15 +315,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "95e8e0b29617430caa50c90e18255a12f0bab8a1",
@@ -204,8 +331,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -214,15 +341,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "8bf77ad994475f853f43b25bebf632fd5c0c8897",
@@ -233,8 +357,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -246,8 +370,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -259,8 +383,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -272,8 +396,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -285,8 +409,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -298,8 +422,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -311,8 +435,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -327,8 +463,19 @@
       "shared_risk": "high",
       "planner_invocations": 3,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -345,8 +492,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -362,8 +521,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -378,8 +545,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -394,8 +569,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -408,15 +596,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "7b375fd1ef8b2f87af75ad96c1f62b1ca4ac5e09",
@@ -427,8 +612,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -444,8 +643,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -457,8 +656,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -473,8 +684,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -486,8 +697,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -503,8 +725,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -516,8 +746,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -533,8 +777,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -546,8 +790,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -556,15 +800,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "267b2c3af1a95c60e71bd1fa2c1be005a1a617a8",
@@ -575,8 +816,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -588,8 +837,18 @@
       "shared_risk": "high",
       "planner_invocations": 3,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "security_sensitive"
       ],
@@ -604,8 +863,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -621,8 +893,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -638,8 +923,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -655,8 +951,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -668,8 +964,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -678,15 +974,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "ba25dce29409f4c580f2f0d9f6e7f7832f8ef3d6",
@@ -697,8 +990,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -713,8 +1016,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -729,8 +1042,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -745,8 +1068,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -761,8 +1094,19 @@
       "shared_risk": "elevated",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -777,8 +1121,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -790,8 +1142,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -806,8 +1169,18 @@
       "shared_risk": "high",
       "planner_invocations": 3,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -823,8 +1196,18 @@
       "shared_risk": "high",
       "planner_invocations": 3,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "security_sensitive"
       ],
@@ -839,8 +1222,18 @@
       "shared_risk": "high",
       "planner_invocations": 3,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "security_sensitive"
       ],
@@ -855,8 +1248,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -871,8 +1276,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -888,8 +1306,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -905,8 +1334,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -921,8 +1361,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -937,8 +1388,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -954,8 +1418,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -970,8 +1444,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -986,8 +1470,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1003,8 +1501,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1016,8 +1524,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1032,8 +1550,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1050,8 +1582,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1068,8 +1614,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1081,8 +1627,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1094,8 +1650,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1107,8 +1673,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1120,8 +1686,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1133,8 +1699,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1146,8 +1712,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1159,8 +1733,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1175,8 +1759,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1191,8 +1785,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1207,8 +1811,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1220,8 +1832,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1236,8 +1858,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1252,8 +1884,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1265,8 +1897,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1278,8 +1910,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1296,8 +1942,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1314,8 +1974,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1332,8 +2006,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1345,8 +2019,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1358,8 +2032,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1371,8 +2053,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1389,8 +2085,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1407,8 +2117,19 @@
       "shared_risk": "elevated",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1424,8 +2145,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -1441,8 +2175,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -1458,8 +2205,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1471,8 +2218,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1487,8 +2247,18 @@
       "shared_risk": "elevated",
       "planner_invocations": 3,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1504,8 +2274,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1522,8 +2306,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1538,8 +2334,20 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1555,8 +2363,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
     },
     {
@@ -1565,15 +2373,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "a70fd1660463304b4bf59b6522016e5217eb1de6",
@@ -1584,8 +2389,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1601,8 +2418,18 @@
       "shared_risk": "standard",
       "planner_invocations": 4,
       "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1617,8 +2444,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1633,8 +2472,18 @@
       "shared_risk": "elevated",
       "planner_invocations": 3,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1649,8 +2498,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1666,8 +2527,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1683,8 +2556,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "risk_changed": false
     },
     {
@@ -1693,15 +2574,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "db212cf651da138b30085e120aa977f48f9c2806",
@@ -1712,8 +2590,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -1729,8 +2618,19 @@
       "shared_risk": "high",
       "planner_invocations": 4,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -1746,8 +2646,21 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "security_sensitive"
@@ -1763,8 +2676,16 @@
       "shared_risk": "low",
       "planner_invocations": 3,
       "shared_invocations": 3,
-      "planner_distinct_dimensions": 3,
-      "shared_distinct_dimensions": 3,
+      "planner_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "logic",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change"
       ],
@@ -1779,8 +2700,22 @@
       "shared_risk": "high",
       "planner_invocations": 5,
       "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "logic",
+        "security",
+        "spec",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency",
@@ -1794,15 +2729,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "1481939a30362c3e977d945e629de106a57d7a8c",
@@ -1813,8 +2745,20 @@
       "shared_risk": "elevated",
       "planner_invocations": 5,
       "shared_invocations": 5,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
       "unlocked_characteristics": [
         "behavior_change",
         "concurrency"
@@ -1827,15 +2771,12 @@
       "kind": "documentation",
       "source_bearing": false,
       "planner_risk": "none",
-      "shared_risk": "elevated",
+      "shared_risk": "none",
       "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
+      "shared_invocations": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
+      "risk_changed": false
     },
     {
       "sha": "9a2880d7bc03d4c3bed1b58c30eb8385bca3238e",
@@ -1846,76 +2787,9 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 0,
+      "planner_dimensions": null,
+      "shared_dimensions": null,
       "risk_changed": false
-    },
-    {
-      "sha": "98b72dc6ce25434bf5c2b125c548277580b737c1",
-      "subject": "fix(adaptersites): prove the anchor pin and stop anchoring prose",
-      "kind": "bugfix",
-      "source_bearing": true,
-      "planner_risk": "elevated",
-      "shared_risk": "high",
-      "planner_invocations": 5,
-      "shared_invocations": 6,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "behavior_change",
-        "security_sensitive"
-      ],
-      "risk_changed": true
-    },
-    {
-      "sha": "452dea7f33a1d4952dab1dcd04885824d4b3bb94",
-      "subject": "test(pr): cover the production blob-store wiring of both PR commands",
-      "kind": "feature",
-      "source_bearing": true,
-      "planner_risk": "standard",
-      "shared_risk": "standard",
-      "planner_invocations": 4,
-      "shared_invocations": 4,
-      "planner_distinct_dimensions": 4,
-      "shared_distinct_dimensions": 4,
-      "unlocked_characteristics": [
-        "behavior_change"
-      ],
-      "risk_changed": false
-    },
-    {
-      "sha": "ef63bf7520bee957bc2aae42524898bac12ef975",
-      "subject": "fix(adaptersites): pin inventory entries to source text, not line numbers",
-      "kind": "bugfix",
-      "source_bearing": true,
-      "planner_risk": "elevated",
-      "shared_risk": "high",
-      "planner_invocations": 5,
-      "shared_invocations": 7,
-      "planner_distinct_dimensions": 5,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "behavior_change",
-        "concurrency",
-        "security_sensitive"
-      ],
-      "risk_changed": true
-    },
-    {
-      "sha": "79f7bab8dfd1f6a406b79ee1492ce142d44f2013",
-      "subject": "docs(reingenieria): close F8 with phase-gate evidence",
-      "kind": "documentation",
-      "source_bearing": false,
-      "planner_risk": "none",
-      "shared_risk": "elevated",
-      "planner_invocations": 0,
-      "shared_invocations": 5,
-      "planner_distinct_dimensions": 0,
-      "shared_distinct_dimensions": 5,
-      "unlocked_characteristics": [
-        "concurrency"
-      ],
-      "risk_changed": true
     }
   ]
 }

@@ -100,11 +100,13 @@ this ticket does not depend on it.
   and method in `fu10-divergence.md` beside it.
 - Window: 120 non-merge commits from `HEAD`; 5 merges inside the window were
   excluded.
-- Headline, source-bearing commits: 68 commits, 39 change risk level, 300 to 358
-  agent invocations, +19%.
-- Prose-only commits: 52 commits, 17 change risk level, 43 to 119 invocations.
-  That stratum is a defect, not a cost: 17 are unlocked by `concurrency` alone,
-  which reads the added lines of every path with no class filter.
+- Headline, source-bearing commits: 68 commits, 40 change risk level, 300 to 360
+  agent invocations, +20%, after ticket 03b. The first run read 300 to 358 with
+  the concurrency false positive still present.
+- Prose-only commits: 52 commits, 43 to 119 invocations on the first run. That
+  stratum was a defect, not a cost: 17 were unlocked by `concurrency` alone,
+  which read the added lines of every path with no class filter. After ticket
+  03b it moves 43 to 49 over 3 commits.
 - `profile.Kind` proved a poor stratifier and is reported only as a secondary
   breakdown: `ab3acee` changes two Go files and classifies as
   `kind=documentation`. The headline splits on whether any path classifies as
@@ -120,4 +122,4 @@ this ticket does not depend on it.
 
 - Ticket 03b narrows the concurrency detector the same way ticket 02 narrowed
   the security one. It blocks ticket 04.
-- The 358 figure must be recomputed after 03b lands.
+- Done: the 358 figure was recomputed after 03b and replaced with 360.
