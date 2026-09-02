@@ -402,7 +402,14 @@ func ejecutarStatus(worktree string, args []string) {
 		os.Exit(1)
 	}
 
-	ledger := review.NuevoLedger(gitDir)
+	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
+	// gitDir stays for the purge and the event log, which enumerate every
+	// per-checkout ledger on purpose.
+	ledger, err := sharedReviewLedger(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
 
 	if flags.prune {
 		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)

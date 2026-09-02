@@ -268,6 +268,14 @@ type Ledger struct {
 
 // NuevoLedger crea un ledger anclado a <gitDir>/vas-sentinel. No crea el
 // directorio: eso ocurre en la primera escritura.
+//
+// It files fichas under whatever directory it is given and imposes no choice,
+// exactly like store.NuevoStore. Callers that read or write review evidence
+// must pass the Git common directory so linked worktrees share one ledger;
+// passing a per-checkout gitDir files the record where `git worktree remove`
+// destroys it. In cmd/sentinel that choice lives in sharedReviewLedger. The
+// exception is `runs prune`, which enumerates every per-checkout ledger on
+// purpose so no execution stream loses its provenance.
 func NuevoLedger(gitDir string) *Ledger {
 	return &Ledger{dir: filepath.Join(gitDir, "vas-sentinel")}
 }

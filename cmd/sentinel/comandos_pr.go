@@ -271,7 +271,14 @@ func ejecutarPrReview(worktree string, args []string) {
 		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
 	}
 	base := opciones.Base
-	ledger := review.NuevoLedger(gitDir)
+	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
+	// AnalizarRama also WRITES here, through GuardarRevision and AdoptarFicha,
+	// so this is where a rebase-adopted copy lands too.
+	ledger, err := sharedReviewLedger(worktree)
+	if err != nil {
+		fmt.Printf("? %v\n", err)
+		os.Exit(1)
+	}
 	res, err := review.AnalizarRama(ledger, opciones)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
@@ -690,10 +697,13 @@ type depsPrCreate struct {
 	obtenerGitDir      func() (string, error)
 	obtenerSHAHead     func() (string, error)
 	ejecutarValidacion func(perfil string, alcance []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error)
-	analizarRama       func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error)
-	verificar          func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
-	publicar           func(worktree, rutaPlantilla, base string) (string, bool, error)
-	registrarEvento    func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error
+	// analizarRama receives the WORKTREE, not a gitDir: where the review
+	// ledger is anchored is a production decision that lives in
+	// sharedReviewLedger, not something the caller picks per invocation.
+	analizarRama    func(worktree string, opts review.OpcionesRama) (*review.ResultadoRama, error)
+	verificar       func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla
+	publicar        func(worktree, rutaPlantilla, base string) (string, bool, error)
+	registrarEvento func(gitDir, tipo string, exit int, shas []string, detalle ops.EventDetail, worktree string) error
 	// obtenerGitCommonDir y registrarDecision cubren T7.5 (informe M3): el
 	// --force que supera una validación en rojo deja de ser una excepción
 	// sin traza. store.NuevoStore exige el git-common-dir (compartido entre
@@ -740,8 +750,12 @@ func depsPrCreateReales() depsPrCreate {
 		obtenerGitDir:      git.ObtenerGitDir,
 		obtenerSHAHead:     git.SHAHead,
 		ejecutarValidacion: validation.EjecutarPerfilSobreCandidato,
-		analizarRama: func(gitDir string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
-			return review.AnalizarRama(review.NuevoLedger(gitDir), opts)
+		analizarRama: func(worktree string, opts review.OpcionesRama) (*review.ResultadoRama, error) {
+			ledger, err := sharedReviewLedger(worktree)
+			if err != nil {
+				return nil, err
+			}
+			return review.AnalizarRama(ledger, opts)
 		},
 		verificar: func(worktree, gitDir string, cfg config.Config, verificadorModelo *modelprobe.Verificador) review.VerificacionPlantilla {
 			return verificarParaPlantillaCon(worktree, gitDir, cfg, verificadorModelo, ops.Verificar)
@@ -873,7 +887,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 			fmt.Fprintf(w, "⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
 		}
 	}
-	res, err := deps.analizarRama(gitDir, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
+	res, err := deps.analizarRama(worktree, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:                      base,
 		SoloPendientes:            false,
 		Overview:                  true,

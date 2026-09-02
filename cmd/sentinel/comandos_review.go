@@ -65,8 +65,16 @@ func ejecutarReview(worktree string, args []string) {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
+	// The ledger is anchored on the common directory, not on gitDir: see
+	// sharedReviewLedger. gitDir stays for the operational event log, which is
+	// per-checkout on purpose.
+	ledger, err := sharedReviewLedger(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
 
-	shas, err := resolverShasAuditoria(gitDir, flags)
+	shas, err := resolverShasAuditoria(ledger, flags)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
@@ -76,7 +84,6 @@ func ejecutarReview(worktree string, args []string) {
 		return
 	}
 
-	ledger := review.NuevoLedger(gitDir)
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	exitFinal := 0
 
@@ -698,11 +705,13 @@ func fixTocaHallazgos(archivosFix map[string]bool, dims []review.DimensionResult
 // de commits pedida (default HEAD), la cadena desde el base (--chain) o todos
 // los commits sin ficha (--all). --chain/--all no se combinan con targets
 // explícitos: no tiene sentido mezclar dos criterios de selección.
-// resolverShasAuditoria recibe el gitDir ya resuelto por el llamante en vez de
-// resolverlo de nuevo: era la segunda resolución del mismo dato y la hacía
+// resolverShasAuditoria recibe el ledger ya construido por el llamante en vez
+// de resolverlo de nuevo: era la segunda resolución del mismo dato y la hacía
 // desde el cwd, así que --all leía el ledger del repositorio equivocado cuando
-// el worktree no era el directorio de trabajo.
-func resolverShasAuditoria(gitDir string, flags flagsAuditoria) ([]string, error) {
+// el worktree no era el directorio de trabajo. It now receives the ledger
+// itself rather than a directory, so --all cannot resolve a different anchor
+// than the one the audit writes to.
+func resolverShasAuditoria(ledger *review.Ledger, flags flagsAuditoria) ([]string, error) {
 	// Default a HEAD vive aquí, no en parsearFlagsAuditoria (B17): es la
 	// única función que necesita un target por defecto (status no tiene
 	// concepto de target). flags se recibe por valor: mutar targets aquí no
@@ -728,7 +737,6 @@ func resolverShasAuditoria(gitDir string, flags flagsAuditoria) ([]string, error
 		if err != nil {
 			return nil, err
 		}
-		ledger := review.NuevoLedger(gitDir)
 		auditados, err := ledger.ListarFichas()
 		if err != nil {
 			return nil, err
