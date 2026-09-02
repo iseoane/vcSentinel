@@ -64,7 +64,7 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	if err != nil {
 		return err
 	}
-	diff, err := lector("diff", "--no-color", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", "-M", rango)
+	diff, err := lector(argumentosDiffExplain(rango)...)
 	if err != nil {
 		return fmt.Errorf("could not read unified diff for %s: %w", rango, err)
 	}
@@ -121,6 +121,16 @@ func parsearExplain(args []string) (base, head string, jsonOut bool, err error) 
 		return "", "", false, fmt.Errorf("rango inválido %q: usa <base>..<head>", rango)
 	}
 	return base, head, jsonOut, nil
+}
+
+// argumentosDiffExplain pins the diff invocation the added-line parser depends
+// on. The prefixes are forced rather than left to configuration: diff.noprefix,
+// diff.mnemonicPrefix and diff.srcPrefix/dstPrefix each change the header
+// format, and a header the parser does not recognise loses its added lines with
+// no error. Exposed as one function so the test that exercises real Git cannot
+// drift from the invocation it claims to cover.
+func argumentosDiffExplain(rango string) []string {
+	return []string{"diff", "--no-color", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", "-M", rango}
 }
 
 func rutasExplain(lector change.LectorGit, rango string) ([]string, error) {
