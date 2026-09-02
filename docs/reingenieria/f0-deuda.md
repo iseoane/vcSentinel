@@ -1365,7 +1365,8 @@ read as claiming otherwise.** Measured by removing the `Lstat` guard and leaving
 `os.ReadDir` answers `ENOTDIR` there rather than `ErrNotExist`. Only the
 dangling-symlink test fails, so it alone pins the discriminator — and it skips
 itself where the platform refuses to create a symlink without extra privileges,
-which on Windows is the ordinary case. The regular-file shape is pinned
-everywhere; the `Lstat` guard is pinned only on POSIX. There is no portable
+which on Windows without the symlink privilege is the ordinary case. The
+regular-file shape is pinned everywhere; the `Lstat` guard is pinned only where
+the running platform lets the test create a symlink. There is no portable
 non-symlink shape that makes `Lstat` succeed while `ReadDir` answers
 `ErrNotExist`, so this is recorded rather than closed.
