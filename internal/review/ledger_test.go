@@ -775,8 +775,11 @@ func TestGuardarRevisionEntreProcesos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LeerFicha() error = %v", err)
 	}
+	if ficha == nil {
+		t.Fatal("the ficha does not exist after the concurrent writers finished")
+	}
 	esperadas := 1 + escritoresEntreProcesos*rondasPorEscritor
-	if ficha == nil || len(ficha.Revisions) != esperadas {
+	if len(ficha.Revisions) != esperadas {
 		t.Fatalf("the ficha holds %d revisions, want %d: a write from one process replaced another process's revision",
 			len(ficha.Revisions), esperadas)
 	}
