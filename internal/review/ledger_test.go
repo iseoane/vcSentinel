@@ -584,6 +584,11 @@ func TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
 // every linked worktree with Lstat before Stat, but appends the common
 // directory unconditionally, so a broken link there reaches this listing with
 // no check in front of it.
+// This test is the only one that pins the Lstat guard, and the skip below is
+// therefore a real coverage limit rather than a formality: removing the guard
+// and keeping ReadDir's own ErrNotExist check leaves the regular-file test green,
+// because ReadDir answers ENOTDIR there. Measured, and recorded under FU-16 in
+// docs/reingenieria/f0-deuda.md.
 func TestListarFichasFailsOnADanglingLedgerSymlink(t *testing.T) {
 	gitDir := t.TempDir()
 	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {

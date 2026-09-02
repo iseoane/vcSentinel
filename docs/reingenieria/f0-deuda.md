@@ -1358,3 +1358,14 @@ pinned by `TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead` and
 `TestListarFichasFailsOnADanglingLedgerSymlink`, and the absent directory by
 `TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty`, which fails any fix that
 turns absence into an error. The first two failed on behaviour before the fix.
+
+**One half of the coverage is platform-conditional, and the entry should not be
+read as claiming otherwise.** Measured by removing the `Lstat` guard and leaving
+`ReadDir`'s own `ErrNotExist` check: the regular-file test still passes, because
+`os.ReadDir` answers `ENOTDIR` there rather than `ErrNotExist`. Only the
+dangling-symlink test fails, so it alone pins the discriminator — and it skips
+itself where the platform refuses to create a symlink without extra privileges,
+which on Windows is the ordinary case. The regular-file shape is pinned
+everywhere; the `Lstat` guard is pinned only on POSIX. There is no portable
+non-symlink shape that makes `Lstat` succeed while `ReadDir` answers
+`ErrNotExist`, so this is recorded rather than closed.
