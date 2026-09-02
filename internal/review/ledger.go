@@ -341,11 +341,73 @@ func (l *Ledger) ListarFichas() ([]string, error) {
 	return shas, nil
 }
 
+// esperaMaximaBloqueoFicha bounds how long a writer waits for another
+// process's lock. A review that cannot persist safely fails loudly: dropping a
+// revision in silence is the exact failure this lock exists to prevent.
+const esperaMaximaBloqueoFicha = 30 * time.Second
+
+// intervaloReintentoBloqueoFicha is the poll interval while waiting. The
+// critical section is one read, one marshal and one rename, so a short poll
+// costs nothing and keeps an uncontended second writer from stalling.
+const intervaloReintentoBloqueoFicha = 25 * time.Millisecond
+
+// conFichaBloqueada ejecuta fn manteniendo un bloqueo exclusivo sobre la ficha
+// de un SHA.
+//
+// The ledger became repository-wide when review, status and pr moved their
+// anchor to the Git common directory, so two checkouts now audit into the same
+// ficha file. Every mutation here is a read-append-rename cycle, and without
+// serialization each writer reads the same ficha, appends its own revision and
+// replaces the other: a clean result can erase a blocking one, and `review
+// --all` then reads that SHA as audited so the lost verdict never resurfaces.
+// Measured: eight concurrent writers left one revision of eight.
+//
+// The lock is a file created with O_EXCL, which is atomic on POSIX and on
+// Windows. It is advisory and only between sentinel processes; nothing stops an
+// editor from rewriting a ficha by hand. Its name ends in .lock and not .json,
+// so ListarFichas never reports it as a SHA.
+//
+// A process killed inside the critical section leaves its lock behind, and the
+// wait then fails naming the path so an operator can remove it. That is
+// deliberate: stealing a lock after a timeout would guess that the holder is
+// dead, and guessing wrong reintroduces the lost update this prevents.
+func (l *Ledger) conFichaBloqueada(sha string, fn func() error) error {
+	if err := os.MkdirAll(l.dir, 0755); err != nil {
+		return err
+	}
+	ruta := l.RutaFicha(sha) + ".lock"
+	limite := time.Now().Add(esperaMaximaBloqueoFicha)
+	for {
+		lock, err := os.OpenFile(ruta, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err == nil {
+			lock.Close()
+			defer os.Remove(ruta)
+			return fn()
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("locking the review ficha of %s: %w", sha, err)
+		}
+		if time.Now().After(limite) {
+			return fmt.Errorf("the review ficha of %s stayed locked for %s; if no sentinel process is running, delete %s",
+				sha, esperaMaximaBloqueoFicha, ruta)
+		}
+		time.Sleep(intervaloReintentoBloqueoFicha)
+	}
+}
+
 // GuardarRevision añade una revisión a la ficha del SHA (creándola si es la
 // primera) y la persiste con escritura atómica temp + rename. En Windows el
 // destino existente se borra antes del rename porque el sistema no permite
 // sobrescribir con os.Rename.
+//
+// The whole read-append-write runs under the ficha's lock: revisions[] is
+// append-only, and two unserialized writers make that a claim rather than a
+// fact.
 func (l *Ledger) GuardarRevision(sha, mensaje, bucket, modelo string, revision Revision) error {
+	return l.conFichaBloqueada(sha, func() error { return l.guardarRevisionBloqueada(sha, mensaje, bucket, modelo, revision) })
+}
+
+func (l *Ledger) guardarRevisionBloqueada(sha, mensaje, bucket, modelo string, revision Revision) error {
 	ficha, err := l.LeerFicha(sha)
 	if err != nil {
 		return err
@@ -370,15 +432,20 @@ func (l *Ledger) GuardarRevision(sha, mensaje, bucket, modelo string, revision R
 // commit fixedIn (trazabilidad hallazgo → corrección). No sobreescribe un
 // FixedIn ya existente: la primera corrección gana.
 func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
-	ficha, err := l.LeerFicha(sha)
-	if err != nil {
-		return err
-	}
-	if ficha == nil || ficha.FixedIn != "" {
-		return nil
-	}
-	ficha.FixedIn = fixedIn
-	return l.guardarFicha(ficha)
+	// Under the ficha's lock: "the first correction wins" is decided by reading
+	// FixedIn and then writing it, so two unserialized callers can both read it
+	// empty and the second one wins instead.
+	return l.conFichaBloqueada(sha, func() error {
+		ficha, err := l.LeerFicha(sha)
+		if err != nil {
+			return err
+		}
+		if ficha == nil || ficha.FixedIn != "" {
+			return nil
+		}
+		ficha.FixedIn = fixedIn
+		return l.guardarFicha(ficha)
+	})
 }
 
 // AdoptarFicha copia la ficha de desde bajo el SHA hacia. Es el fix de T2.7
@@ -401,24 +468,31 @@ func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
 // nuevo (no se comparte el subyacente de la ficha origen) por higiene de
 // aliasing, no porque Revision se mute después de guardarse.
 func (l *Ledger) AdoptarFicha(desde, hacia string) error {
-	origen, err := l.LeerFicha(desde)
-	if err != nil {
-		return err
-	}
-	if origen == nil {
-		return fmt.Errorf("ledger: no hay ficha en %s para adoptar hacia %s", desde, hacia)
-	}
-	revisiones := make([]Revision, len(origen.Revisions))
-	copy(revisiones, origen.Revisions)
-	adoptada := &Ficha{
-		SHA:       hacia,
-		Message:   origen.Message,
-		Bucket:    origen.Bucket,
-		Model:     origen.Model,
-		FixedIn:   origen.FixedIn,
-		Revisions: revisiones,
-	}
-	return l.guardarFicha(adoptada)
+	// Locked on hacia, which is the ficha this writes. Locking desde too would
+	// be a second lock in a fixed-order pair and buys nothing: the source is
+	// only read, and a concurrent append to it either lands in the copy or does
+	// not, whereas an unserialized adoption can overwrite a revision another
+	// writer just appended to the destination.
+	return l.conFichaBloqueada(hacia, func() error {
+		origen, err := l.LeerFicha(desde)
+		if err != nil {
+			return err
+		}
+		if origen == nil {
+			return fmt.Errorf("ledger: no hay ficha en %s para adoptar hacia %s", desde, hacia)
+		}
+		revisiones := make([]Revision, len(origen.Revisions))
+		copy(revisiones, origen.Revisions)
+		adoptada := &Ficha{
+			SHA:       hacia,
+			Message:   origen.Message,
+			Bucket:    origen.Bucket,
+			Model:     origen.Model,
+			FixedIn:   origen.FixedIn,
+			Revisions: revisiones,
+		}
+		return l.guardarFicha(adoptada)
+	})
 }
 
 // EliminarFicha borra la ficha de un SHA. No devuelve error si no existe:

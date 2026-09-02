@@ -2,12 +2,14 @@ package review
 
 import (
 	"errors"
+	"fmt"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -617,5 +619,99 @@ func TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty(t *testing.T) {
 	}
 	if len(shas) != 0 {
 		t.Errorf("ListarFichas() = %v, want no SHAs", shas)
+	}
+}
+
+// TestGuardarRevisionConcurrenteNoPierdeRevisiones pins the contract the shared
+// ledger made load bearing. Anchoring review, status and pr on the Git common
+// directory means two checkouts now audit into the SAME ficha file, and
+// GuardarRevision is a read-append-rename cycle: without serialization each
+// writer reads the same ficha, appends its own revision and replaces the other,
+// so a clean result can erase a blocking one. `review --all` then reads that
+// SHA as audited and the lost verdict never resurfaces.
+//
+// The revisions array is documented as append-only. This asserts that
+// literally: every concurrent writer's revision must survive.
+func TestGuardarRevisionConcurrenteNoPierdeRevisiones(t *testing.T) {
+	ledger := NuevoLedger(t.TempDir())
+	const sha = "dddddddddddddddddddddddddddddddddddddddd"
+	const escritores = 8
+
+	// A start gate rather than staggered launches: the lost update needs the
+	// reads to overlap, and goroutines started in a loop tend not to.
+	var listos, arranque, hechos sync.WaitGroup
+	listos.Add(escritores)
+	hechos.Add(escritores)
+	arranque.Add(1)
+	errores := make(chan error, escritores)
+	for i := 0; i < escritores; i++ {
+		go func(i int) {
+			defer hechos.Done()
+			listos.Done()
+			arranque.Wait()
+			errores <- ledger.GuardarRevision(sha, "fixture", "b", "m",
+				Revision{At: time.Now(), Result: VerdictOK, Agent: fmt.Sprintf("writer-%d", i)})
+		}(i)
+	}
+	listos.Wait()
+	arranque.Done()
+	hechos.Wait()
+	close(errores)
+	for err := range errores {
+		if err != nil {
+			t.Fatalf("GuardarRevision() error = %v", err)
+		}
+	}
+
+	ficha, err := ledger.LeerFicha(sha)
+	if err != nil {
+		t.Fatalf("LeerFicha() error = %v", err)
+	}
+	if ficha == nil {
+		t.Fatal("no ficha exists after eight concurrent writes")
+	}
+	if len(ficha.Revisions) != escritores {
+		t.Fatalf("the ficha holds %d revisions, want %d: one concurrent write replaced another writer's revision",
+			len(ficha.Revisions), escritores)
+	}
+	// Named agents, so the failure says WHICH writer was lost instead of only
+	// that the count is short.
+	vistos := map[string]bool{}
+	for _, rev := range ficha.Revisions {
+		vistos[rev.Agent] = true
+	}
+	for i := 0; i < escritores; i++ {
+		if !vistos[fmt.Sprintf("writer-%d", i)] {
+			t.Errorf("writer-%d's revision is not in the ficha: %v", i, vistos)
+		}
+	}
+}
+
+// TestListarFichasIgnoraElArchivoDeBloqueo covers the seam between the two
+// things this ledger learned recently: enumeration reports every *.json entry,
+// and mutations now leave a <sha>.json.lock file for as long as they hold the
+// ficha. A process killed inside the critical section leaves that file behind
+// for good, and a listing that reported it would hand callers a SHA ending in
+// ".json" — which LeerFicha then reads as a missing ficha, and PurgarHuerfanas
+// as an orphan to delete.
+func TestListarFichasIgnoraElArchivoDeBloqueo(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NuevoLedger(dir)
+	const sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
+		t.Fatal(err)
+	}
+	// Staged as the leftover of a killed writer, which is the only way this
+	// file outlives the call that made it.
+	if err := os.WriteFile(ledger.RutaFicha(sha)+".lock", nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	shas, err := ledger.ListarFichas()
+	if err != nil {
+		t.Fatalf("ListarFichas() error = %v", err)
+	}
+	if !slices.Equal(shas, []string{sha}) {
+		t.Errorf("ListarFichas() = %v, want exactly %v: a stale lock file was reported as a ficha", shas, []string{sha})
 	}
 }
