@@ -2080,19 +2080,22 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	if !caracteristicaPresente(con.Characteristics, "generated_code") {
 		t.Error("generated_code = absent for a linguist-generated path")
 	}
-	if !caracteristicaPresente(con.Characteristics, "behavior_change") {
-		t.Error("behavior_change no longer survives linguist-generated. That is FU-14 being resolved: update the debt entry and this characterisation together, do not delete the assertion")
+	// FU-14 resolved 2026-09-02: the attribute now participates in the WHOLE
+	// classification, so behavior_change honours it too. It used to survive,
+	// which meant every regeneration of a declared-generated tree was at least
+	// elevated. The two halves of the split are gone and this asserts the rule
+	// that replaced them.
+	if caracteristicaPresente(con.Characteristics, "behavior_change") {
+		t.Error("behavior_change survived linguist-generated; a tree the repository declares generated is generated for every detector, not only the content ones (FU-14)")
 	}
-	// The characteristic is only half of what FU-14 costs; the scheduling is the
-	// half that spends agent invocations. The oracle is the risk explanation
-	// rather than the presence of a bundle: BundleCorrectness is scheduled at
-	// every level above none, so asserting it would be satisfied by any risk
-	// source and would not tie the scheduled work to behavior_change at all.
-	if len(con.Bundles) == 0 {
-		t.Fatalf("a generated path with a surviving behavior_change scheduled nothing; risk was %q (%s)", con.Risk.Nivel, con.Risk.Explicacion)
-	}
-	if !strings.Contains(con.Risk.Explicacion, "behavior_change") {
-		t.Errorf("risk %q was decided by %q, which does not name behavior_change; the scheduled work is no longer attributable to the characteristic this entry is about",
+	// The characteristic is only half of what the rule costs; the scheduling is
+	// the half that spends agent invocations. Naming behavior_change in the risk
+	// explanation is what used to tie the two together, so its ABSENCE from the
+	// explanation is what pins the resolution: whatever risk this path now
+	// carries, it is no longer decided by a characteristic the repository said
+	// does not apply.
+	if strings.Contains(con.Risk.Explicacion, "behavior_change") {
+		t.Errorf("risk %q is still explained by %q; a declared-generated path must not schedule work through behavior_change any more",
 			con.Risk.Nivel, con.Risk.Explicacion)
 	}
 }

@@ -145,10 +145,23 @@ func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
 	})
 	return resultadoHeuristico("concurrency", presente)
 }
+
+// Todos los detectores clasifican con Clasificar, que honra
+// `linguist-generated`, y ninguno con ClasificarPorRuta (FU-14). Los dos grupos
+// no se eligieron, divergieron: un árbol declarado generado era generado para
+// los detectores de contenido y seguía siendo fuente para el cambio de
+// comportamiento, para la cobertura de tests y para ci_cd/infrastructure, así
+// que cada regeneración marcaba `behavior_change` presente, que es `elevated`
+// como mínimo.
+//
+// La regla, decidida y registrada: si el repositorio declara un árbol generado,
+// lo es para toda la clasificación. ClasificarPorRuta sigue existiendo para los
+// llamadores que no tienen atributos que ofrecer, no como la mitad silenciosa
+// de una divergencia.
 func detectarCambioDeComportamiento(e EntradaCaracteristicas) Caracteristica {
 	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
-		if ClasificarPorRuta(ruta, reglas) != ClaseSource {
+		if Clasificar(ruta, reglas, e.Gitattributes) != ClaseSource {
 			continue
 		}
 		for _, linea := range lineasDeRuta(e.LineasAnadidas, ruta) {
@@ -163,7 +176,7 @@ func detectarCoberturaDeTests(e EntradaCaracteristicas) Caracteristica {
 	paquetes, pruebas := map[string]bool{}, map[string]bool{}
 	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
-		clase := ClasificarPorRuta(ruta, reglas)
+		clase := Clasificar(ruta, reglas, e.Gitattributes)
 		if clase != ClaseSource && clase != ClaseTest {
 			continue
 		}
@@ -245,7 +258,7 @@ func estado(presente bool) EstadoCaracteristica {
 func contieneClase(e EntradaCaracteristicas, clase string) bool {
 	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
-		if ClasificarPorRuta(ruta, reglas) == clase {
+		if Clasificar(ruta, reglas, e.Gitattributes) == clase {
 			return true
 		}
 	}

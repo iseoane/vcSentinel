@@ -1289,6 +1289,7 @@ Target: decide once whether `linguist-generated` participates in classification
 at all, then use one function everywhere. If some detectors must stay
 attribute-blind, name them and say why at the call site. This entry exists
 because the answer must be recorded, not because one side is obviously right.
+The answer is recorded below.
 
 Priority: not blocking. It changes classification for repositories that use the
 attribute; this one does not mark any tree generated today.
@@ -1300,6 +1301,32 @@ attribute. `security_sensitive` and `generated_code` honour
 `linguist-generated`; `behavior_change` does not. Resolving this entry makes
 that test fail, and its message says to update both together rather than delete
 the assertion.
+
+#### Resolved 2026-09-02
+
+**The decision, which is what this entry existed for: if the repository declares
+a tree generated, it is generated for the whole classification.** Every detector
+now classifies through `Clasificar`; none uses `ClasificarPorRuta`, which stays
+for callers that have no attributes to offer rather than as the silent half of a
+divergence. `detectarCambioDeComportamiento`, `detectarCoberturaDeTests` and
+`contieneClase` — the last one being what `ci_cd` and `infrastructure` read —
+changed.
+
+The argument that decided it: the cost of being wrong is asymmetric. Honouring
+the attribute everywhere means a repository that marks a tree generated stops
+paying `elevated` risk on every regeneration, and the way back is to remove the
+marking. Ignoring it in half the detectors means the repository states something
+about its own code and Sentinel disagrees silently, with nothing recording why.
+The counter-argument in this entry still stands — `linguist-generated` is a
+presentation attribute and behaviour can change in generated output — and it is
+answered rather than dismissed: the repository is the authority on what its
+generated trees are, and it can stop declaring one at any time.
+
+The characterisation was updated with the code, as the test's own message
+demanded. Its oracle flipped rather than being deleted: `behavior_change` must
+now be ABSENT under the attribute, and the risk explanation must NOT name it,
+because naming it was what tied the scheduled work to the characteristic this
+entry is about.
 
 ### FU-15: a corrupt object is indistinguishable from a collected one
 
