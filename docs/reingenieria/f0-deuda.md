@@ -1178,8 +1178,8 @@ common directory, so a review run in a linked worktree no longer files its
 record where `git worktree remove` deletes it. The decision the entry left open
 — where `AnalizarRama`'s adopted copy lands, since it both reads and writes — is
 that it lands in the shared ledger too: one location for reads and writes, and
-nothing older migrated. FU-18 records the cost of that, and FU-17 the widening
-it caused in correction attribution.
+nothing older migrated. What that costs is recorded below, and FU-17 records the
+widening it caused in correction attribution.
 
 The list of gitDir call sites above is therefore historical. Only the prune
 paths still enumerate per-checkout ledgers, and they do so deliberately.
