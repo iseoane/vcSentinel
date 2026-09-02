@@ -306,6 +306,24 @@ func GitEnAislado(worktree string, args ...string) (string, error) {
 	return gitEn(worktree, args...)
 }
 
+// EsAncestroDe indica si ancestro es alcanzable desde descendiente, es decir si
+// los dos están en la misma línea de historia y en ese orden.
+//
+// Los códigos de salida de `merge-base --is-ancestor` separan los dos casos: 0
+// es sí, 1 es no, y cualquier otro es un fallo real. Ninguno de esos fallos se
+// lee como "no": una consulta que no se puede responder nunca decide, que aquí
+// significa nunca atribuir una corrección a un commit de otra rama.
+func EsAncestroDe(worktree, ancestro, descendiente string) (bool, error) {
+	if _, err := gitEn(worktree, "merge-base", "--is-ancestor", ancestro, descendiente); err != nil {
+		var salida *exec.ExitError
+		if errors.As(err, &salida) && salida.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking whether %s is an ancestor of %s in %s: %w", ancestro, descendiente, worktree, err)
+	}
+	return true, nil
+}
+
 // UpstreamOMain devuelve el ref base para auditar cadenas de commits: el
 // upstream si existe; si no, la rama main local; si no, master.
 func UpstreamOMain() (string, error) {

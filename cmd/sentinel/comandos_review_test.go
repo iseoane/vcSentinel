@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -200,8 +201,19 @@ func TestRevisionCorrigeBlockPrevio(t *testing.T) {
 }
 
 func TestRegistrarCorreccionesMarcaFicha(t *testing.T) {
-	dir := t.TempDir()
-	ledger := review.NuevoLedger(dir)
+	// Real repository with real commits. The fixture used fabricated SHAs and a
+	// directory that is not a repository, which stopped being enough when
+	// attribution started requiring the audited commit to be an ancestor of the
+	// fix (FU-17). The rules it covers — the fix must touch a file named in the
+	// findings, and a fix that itself blocks attributes nothing — are unchanged.
+	repo, commit := repoConCommitsReales(t)
+	gitDir, err := git.ObtenerGitDirDe(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := review.NuevoLedger(gitDir)
+
+	bloqueado := commit("internal/a.go", "package a\n", "feat(x): con bug")
 
 	// Ficha previa en block con hallazgo en internal/a.go.
 	rev := review.Revision{
@@ -214,30 +226,33 @@ func TestRegistrarCorreccionesMarcaFicha(t *testing.T) {
 			}},
 		}},
 	}
-	if err := ledger.GuardarRevision("aaa111", "feat(x): con bug", "backend", "m", rev); err != nil {
+	if err := ledger.GuardarRevision(bloqueado, "feat(x): con bug", "backend", "m", rev); err != nil {
 		t.Fatal(err)
 	}
 
 	// Un fix que toca internal/a.go sale sin críticos: debe marcar la ficha.
-	registrarCorrecciones(ledger, dir, "bbb222", []string{"internal/a.go"}, "fix(x): arregla", 0, "worktree")
-	ficha, err := ledger.LeerFicha("aaa111")
+	arreglo := commit("internal/a.go", "package a // fixed\n", "fix(x): arregla")
+	registrarCorrecciones(ledger, gitDir, arreglo, []string{"internal/a.go"}, "fix(x): arregla", 0, repo)
+	ficha, err := ledger.LeerFicha(bloqueado)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ficha.FixedIn != "bbb222" {
-		t.Errorf("FixedIn = %q, esperado bbb222", ficha.FixedIn)
+	if ficha.FixedIn != arreglo {
+		t.Errorf("FixedIn = %q, esperado %q", ficha.FixedIn, arreglo)
 	}
 
 	// Un fix que NO toca los archivos del hallazgo no marca nada.
-	if err := ledger.GuardarRevision("ccc333", "feat(y): otro", "backend", "m",
+	otro := commit("internal/b.go", "package b\n", "feat(y): otro")
+	if err := ledger.GuardarRevision(otro, "feat(y): otro", "backend", "m",
 		review.Revision{At: time.Now().UTC(), Result: review.VerdictBlock,
 			Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictBlock,
 				Findings: []review.ReviewFinding{{Severity: review.SevCritical, File: "internal/b.go", Line: 1, Description: "otro"}}}}},
 	); err != nil {
 		t.Fatal(err)
 	}
-	registrarCorrecciones(ledger, dir, "ddd444", []string{"internal/a.go"}, "fix(y): arregla", 0, "worktree")
-	ficha, err = ledger.LeerFicha("ccc333")
+	ajeno := commit("internal/a.go", "package a // otra cosa\n", "fix(y): arregla")
+	registrarCorrecciones(ledger, gitDir, ajeno, []string{"internal/a.go"}, "fix(y): arregla", 0, repo)
+	ficha, err = ledger.LeerFicha(otro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,13 +261,52 @@ func TestRegistrarCorreccionesMarcaFicha(t *testing.T) {
 	}
 
 	// Un commit que sale en block nunca registra correcciones.
-	registrarCorrecciones(ledger, dir, "eee555", []string{"internal/a.go"}, "fix(z): intento", 1, "worktree")
-	ficha, err = ledger.LeerFicha("ccc333")
+	enBlock := commit("internal/b.go", "package b // intento\n", "fix(z): intento")
+	registrarCorrecciones(ledger, gitDir, enBlock, []string{"internal/b.go"}, "fix(z): intento", 1, repo)
+	ficha, err = ledger.LeerFicha(otro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ficha.FixedIn != "" {
 		t.Errorf("FixedIn = %q, esperado vacío (el fix salió en block)", ficha.FixedIn)
+	}
+}
+
+// repoConCommitsReales devuelve un repositorio Git y una función que escribe un
+// archivo, lo commitea y devuelve su SHA. Existe porque la atribución de
+// correcciones ya no se puede probar con SHAs inventados: exige ancestría real
+// entre el commit auditado y el fix.
+func repoConCommitsReales(t *testing.T) (string, func(ruta, contenido, mensaje string) string) {
+	t.Helper()
+	repo := t.TempDir()
+	correr := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + repo,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	correr("init", "-q", "-b", "main")
+	return repo, func(ruta, contenido, mensaje string) string {
+		t.Helper()
+		completa := filepath.Join(repo, ruta)
+		if err := os.MkdirAll(filepath.Dir(completa), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(completa, []byte(contenido), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		correr("add", ruta)
+		correr("commit", "-qm", mensaje)
+		return correr("rev-parse", "HEAD")
 	}
 }
 
@@ -916,5 +970,90 @@ func TestResolveQuestionAnswers(t *testing.T) {
 				t.Errorf("prose = %q, want %q", prose, tt.wantProse)
 			}
 		})
+	}
+}
+
+// TestRegistrarCorreccionesNoCruzaRamas closes FU-17. Correction attribution
+// tested only whether the fix touched a file named in the ficha's findings.
+// While each checkout had its own ledger that was bounded by accident; once
+// review, status and pr shared one ledger per repository, a fix( commit on one
+// branch could clear a block recorded on an unrelated branch because both
+// happened to touch the same file.
+//
+// The fixture is two real branches from one root, both changing the same path,
+// so the only thing that can separate them is ancestry.
+func TestRegistrarCorreccionesNoCruzaRamas(t *testing.T) {
+	worktree := t.TempDir()
+	correr := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	escribirYCommitear := func(contenido, mensaje string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(worktree, "x.go"), []byte(contenido), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		correr("add", "x.go")
+		correr("commit", "-qm", mensaje)
+		return correr("rev-parse", "HEAD")
+	}
+	correr("init", "-q", "-b", "main")
+	escribirYCommitear("package x\n", "feat(x): root")
+	raiz := correr("rev-parse", "HEAD")
+
+	// The audited commit, blocked, on main.
+	auditado := escribirYCommitear("package x // audited\n", "feat(x): audited")
+
+	// The fix, on a branch that forked BEFORE the audited commit. It touches the
+	// same file, so only ancestry tells the two apart.
+	correr("checkout", "-q", "-b", "otra", raiz)
+	fix := escribirYCommitear("package x // unrelated fix\n", "fix(x): unrelated")
+
+	gitDir, err := git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := review.NuevoLedger(gitDir)
+	if err := ledger.GuardarRevision(auditado, "feat(x): audited", "b", "m", review.Revision{
+		At: time.Now(), Result: review.VerdictBlock,
+		Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictBlock,
+			Findings: []review.ReviewFinding{{File: "x.go", Severity: "CRITICAL", Description: "d"}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	registrarCorrecciones(ledger, gitDir, fix, []string{"x.go"}, "fix(x): unrelated", 0, worktree)
+
+	ficha, err := ledger.LeerFicha(auditado)
+	if err != nil || ficha == nil {
+		t.Fatalf("LeerFicha() = %v, %v", ficha, err)
+	}
+	if ficha.FixedIn != "" {
+		t.Errorf("FixedIn = %q; a fix on a branch that does not contain the audited commit cleared its block because both touched x.go", ficha.FixedIn)
+	}
+
+	// The same fix, made on the audited commit's own line of history, must still
+	// clear it: the check must not have simply disabled attribution.
+	correr("checkout", "-q", "main")
+	descendiente := escribirYCommitear("package x // real fix\n", "fix(x): real")
+	registrarCorrecciones(ledger, gitDir, descendiente, []string{"x.go"}, "fix(x): real", 0, worktree)
+
+	ficha, err = ledger.LeerFicha(auditado)
+	if err != nil || ficha == nil {
+		t.Fatalf("LeerFicha() = %v, %v", ficha, err)
+	}
+	if ficha.FixedIn != descendiente {
+		t.Errorf("FixedIn = %q, want %q: a fix descending from the audited commit must still clear its block", ficha.FixedIn, descendiente)
 	}
 }

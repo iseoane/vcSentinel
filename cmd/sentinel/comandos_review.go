@@ -667,6 +667,21 @@ func registrarCorrecciones(ledger *review.Ledger, gitDir, sha string, archivos [
 		if !fixTocaHallazgos(archivosFix, ultima.Dims) {
 			continue
 		}
+		// The audited commit must be an ancestor of the fix, in that order: a
+		// fix comes after what it corrects. File-name overlap was the whole
+		// test until the ledger became repository-wide, and then a fix( commit
+		// on one branch could clear a block recorded on an unrelated branch
+		// because both happened to touch the same file (FU-17).
+		//
+		// A query that cannot be answered attributes nothing. That is the safe
+		// direction here — the ficha keeps its block and a later fix can still
+		// clear it — and it matches the rest of this function, which is
+		// best-effort and already returns silently when the ledger cannot be
+		// listed.
+		mismaHistoria, err := git.EsAncestroDe(worktree, shaPrev, sha)
+		if err != nil || !mismaHistoria {
+			continue
+		}
 		if err := ledger.MarcarCorregida(shaPrev, sha); err == nil {
 			corregidos = append(corregidos, shaPrev)
 		}

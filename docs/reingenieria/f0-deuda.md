@@ -1421,3 +1421,23 @@ the two commits are even on the same line of history.
 Priority: before the ledger holds fichas from several concurrent branches for
 long. It falsely clears blocks, which is the failure mode this register exists
 to keep visible.
+
+#### Resolved 2026-09-02
+
+`registrarCorrecciones` now requires the audited commit to be an ancestor of the
+`fix(` commit, through `git.EsAncestroDe`, which is `merge-base --is-ancestor`
+in that order because a fix comes after what it corrects. File-name overlap
+alone no longer attributes anything.
+
+`EsAncestroDe` separates the cases by exit code — 0 yes, 1 no, anything else a
+real failure — and no failure is read as "no". A query that cannot be answered
+attributes nothing, which is the safe direction here: the ficha keeps its block
+and a later fix can still clear it.
+
+Pinned by `TestRegistrarCorreccionesNoCruzaRamas` in `cmd/sentinel`, which
+builds two real branches from one root that both change the same path, so
+ancestry is the only thing that can separate them. It asserts both directions,
+and it was calibrated against both mutations: removing the check clears the
+block across branches, and reversing the argument order stops a genuine
+descendant from clearing it — which is the exact error this entry's own target
+line contained before it was corrected.
