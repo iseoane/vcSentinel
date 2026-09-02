@@ -496,21 +496,35 @@ func TestLedgerMarcarCorregidaSinFichaEsNoOp(t *testing.T) {
 // happened.
 func TestPurgarHuerfanasAbortaCuandoElCriterioFalla(t *testing.T) {
 	ledger := NuevoLedger(t.TempDir())
+	// ListarFichas sorts, so these names fix the traversal order: the orphan is
+	// visited first, the unresolvable one second, and the third exists only to
+	// prove the purge stopped. Without it an implementation could return the
+	// failure, preserve the SHA it could not resolve, and delete everything
+	// after it while satisfying every other assertion.
 	huerfana := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	ilegible := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	for _, sha := range []string{huerfana, ilegible} {
+	posterior := "cccccccccccccccccccccccccccccccccccccccc"
+	for _, sha := range []string{huerfana, ilegible, posterior} {
 		if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
+	// The order the predicate is actually asked in is recorded, so a change in
+	// traversal fails here instead of quietly weakening the test.
+	var consultados []string
 	fallo := errors.New("the object store cannot be read")
 	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) {
+		consultados = append(consultados, sha)
 		if sha == ilegible {
 			return false, fallo
 		}
 		return false, nil
 	})
+	if !slices.Equal(consultados, []string{huerfana, ilegible}) {
+		t.Fatalf("the predicate was asked for %v, want exactly %v; the purge did not stop at the failure",
+			consultados, []string{huerfana, ilegible})
+	}
 
 	if !errors.Is(err, fallo) {
 		t.Fatalf("PurgarHuerfanas() error = %v, want the predicate's failure; a query that cannot be answered must not authorise a deletion", err)
@@ -525,5 +539,8 @@ func TestPurgarHuerfanasAbortaCuandoElCriterioFalla(t *testing.T) {
 	}
 	if ficha, lerr := ledger.LeerFicha(huerfana); lerr != nil || ficha != nil {
 		t.Errorf("the genuinely orphaned ficha was not deleted before the abort (ficha=%v, err=%v)", ficha, lerr)
+	}
+	if ficha, lerr := ledger.LeerFicha(posterior); lerr != nil || ficha == nil {
+		t.Errorf("a ficha ordered after the failure was deleted anyway (ficha=%v, err=%v); the purge continued past a question it could not answer", ficha, lerr)
 	}
 }
