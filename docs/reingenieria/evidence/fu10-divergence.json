@@ -1,6 +1,6 @@
 {
-  "ref": "HEAD",
-  "ref_sha": "4c1d5b3e07da411c6389f78dc9e2e815cecfd27d",
+  "ref": "fce2da5",
+  "ref_sha": "fce2da5b34f27be3b252285df530eabc3d48b698",
   "window": 120,
   "requested": 120,
   "failed": 0,
@@ -8,10 +8,10 @@
   "counting_convention": "agent invocations: the sum of bundle dimensions, without deduplicating a dimension scheduled by two bundles",
   "strata": {
     "bugfix": {
-      "commits": 32,
+      "commits": 33,
       "risk_changed": 14,
-      "planner_invocations": 141,
-      "shared_invocations": 161
+      "planner_invocations": 145,
+      "shared_invocations": 165
     },
     "configuration": {
       "commits": 3,
@@ -20,10 +20,10 @@
       "shared_invocations": 13
     },
     "documentation": {
-      "commits": 45,
+      "commits": 44,
       "risk_changed": 4,
-      "planner_invocations": 30,
-      "shared_invocations": 36
+      "planner_invocations": 35,
+      "shared_invocations": 41
     },
     "feature": {
       "commits": 14,
@@ -45,18 +45,69 @@
     }
   },
   "source_bearing_headline": {
-    "commits": 68,
+    "commits": 69,
     "risk_changed": 40,
-    "planner_invocations": 300,
-    "shared_invocations": 360
+    "planner_invocations": 304,
+    "shared_invocations": 364
   },
   "prose_only": {
-    "commits": 52,
+    "commits": 51,
     "risk_changed": 3,
-    "planner_invocations": 43,
-    "shared_invocations": 49
+    "planner_invocations": 48,
+    "shared_invocations": 54
   },
   "commits": [
+    {
+      "sha": "fce2da5b34f27be3b252285df530eabc3d48b698",
+      "subject": "fix(tools): stop the divergence harness losing evidence to discarded errors",
+      "kind": "bugfix",
+      "source_bearing": true,
+      "planner_risk": "standard",
+      "shared_risk": "standard",
+      "planner_invocations": 4,
+      "shared_invocations": 4,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "spec",
+        "tests"
+      ],
+      "unlocked_characteristics": [
+        "behavior_change"
+      ],
+      "risk_changed": false
+    },
+    {
+      "sha": "107dbe59a339210dfdf276cb696824392880b78c",
+      "subject": "docs(fu10): re-measure the divergence after narrowing the concurrency detector",
+      "kind": "documentation",
+      "source_bearing": false,
+      "planner_risk": "elevated",
+      "shared_risk": "elevated",
+      "planner_invocations": 5,
+      "shared_invocations": 5,
+      "planner_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "shared_dimensions": [
+        "design",
+        "logic",
+        "security",
+        "spec",
+        "tests"
+      ],
+      "risk_changed": false
+    },
     {
       "sha": "4c1d5b3e07da411c6389f78dc9e2e815cecfd27d",
       "subject": "fix(change): stop reading prose as evidence of concurrency",
@@ -127,8 +178,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -170,8 +221,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -238,8 +289,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -251,8 +302,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -264,8 +315,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -277,8 +328,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -318,8 +369,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -331,8 +382,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -344,8 +395,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -357,8 +408,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -370,8 +421,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -383,8 +434,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -396,8 +447,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -409,8 +460,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -422,8 +473,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -599,8 +650,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -643,8 +694,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -684,8 +735,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -777,8 +828,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -790,8 +841,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -803,8 +854,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -951,8 +1002,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -964,8 +1015,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -977,8 +1028,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -1614,8 +1665,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -1673,8 +1724,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -1686,8 +1737,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -1699,8 +1750,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -1884,8 +1935,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -1897,8 +1948,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2006,8 +2057,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2019,8 +2070,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2205,8 +2256,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2363,8 +2414,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2376,8 +2427,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2577,8 +2628,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2732,8 +2783,8 @@
       "shared_risk": "none",
       "planner_invocations": 0,
       "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
+      "planner_dimensions": [],
+      "shared_dimensions": [],
       "risk_changed": false
     },
     {
@@ -2763,32 +2814,6 @@
         "behavior_change",
         "concurrency"
       ],
-      "risk_changed": false
-    },
-    {
-      "sha": "469cab0b7baa320e5e66b6bc7b0816991163bfed",
-      "subject": "docs(reingenieria): note the F8 post-closure follow-up",
-      "kind": "documentation",
-      "source_bearing": false,
-      "planner_risk": "none",
-      "shared_risk": "none",
-      "planner_invocations": 0,
-      "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
-      "risk_changed": false
-    },
-    {
-      "sha": "9a2880d7bc03d4c3bed1b58c30eb8385bca3238e",
-      "subject": "docs(reingenieria): record the closed F8 residual limits",
-      "kind": "documentation",
-      "source_bearing": false,
-      "planner_risk": "none",
-      "shared_risk": "none",
-      "planner_invocations": 0,
-      "shared_invocations": 0,
-      "planner_dimensions": null,
-      "shared_dimensions": null,
       "risk_changed": false
     }
   ]

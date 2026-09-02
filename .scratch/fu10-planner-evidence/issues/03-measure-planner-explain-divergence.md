@@ -95,18 +95,20 @@ this ticket does not depend on it.
 
 ## Evidence
 
-- Harness: `tools/fu10divergence`, run as `go run ./tools/fu10divergence -n 120`.
+- Harness: `tools/fu10divergence`, reproduced with
+  `go run ./tools/fu10divergence -ref fce2da5 -n 120`. The tip is pinned because
+  the window slides with every new commit.
 - Artifact: `docs/reingenieria/evidence/fu10-divergence.json`, with the verdict
   and method in `fu10-divergence.md` beside it.
 - Window: 120 non-merge commits from `HEAD`; 5 merges inside the window were
   excluded.
-- Headline, source-bearing commits: 68 commits, 40 change risk level, 300 to 360
-  agent invocations, +20%, after ticket 03b. The first run read 300 to 358 with
-  the concurrency false positive still present.
+- Headline, source-bearing commits at the pinned tip: 69 commits, 40 change risk
+  level, 304 to 364 agent invocations, +20%, after ticket 03b. The first run read
+  300 to 358 with the concurrency false positive still present.
 - Prose-only commits: 52 commits, 43 to 119 invocations on the first run. That
   stratum was a defect, not a cost: 17 were unlocked by `concurrency` alone,
   which read the added lines of every path with no class filter. After ticket
-  03b it moves 43 to 49 over 3 commits.
+  03b it moves 48 to 54 over 3 commits at the pinned tip.
 - `profile.Kind` proved a poor stratifier and is reported only as a secondary
   breakdown: `ab3acee` changes two Go files and classifies as
   `kind=documentation`. The headline splits on whether any path classifies as

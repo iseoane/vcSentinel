@@ -71,9 +71,9 @@ detector's own class check runs first.
   pre-existing Spanish-word false-positive guard.
 - Both detectors now exclude through one helper over the existing class list.
   No second deny-list was created.
-- Re-measurement with the corrected harness: prose-only commits move from
-  43 to 119 invocations before this change and 43 to 49 after it. Source-bearing
-  commits are 300 to 360; the earlier 358 figure is replaced in the evidence
-  document.
+- Re-measurement with the corrected harness, pinned at `fce2da5`: prose-only
+  commits moved 43 to 119 before this change and move 48 to 54 after it.
+  Source-bearing commits are 304 to 364; the earlier 358 figure is replaced in
+  the evidence document.
 - `go build ./...`, `go vet ./...`, and the full suite pass.
 - Implementation commit: `4c1d5b3`.

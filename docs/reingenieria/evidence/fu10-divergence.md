@@ -1,8 +1,13 @@
 # FU-10: what feeding the review planner the same evidence costs
 
-Ticket 03 of the FU-10 sequence, re-measured after ticket 03b. Produced by
-`go run ./tools/fu10divergence -n 120`; the raw per-commit record is
-`fu10-divergence.json`.
+Ticket 03 of the FU-10 sequence, re-measured after ticket 03b. Reproduce with:
+
+    go run ./tools/fu10divergence -ref fce2da5 -n 120
+
+The tip is pinned so the artifact stays reproducible: the window moves with
+every new commit, and an unpinned run would not reproduce these figures. The raw
+per-commit record is `fu10-divergence.json`, which carries the resolved tip, the
+measured window, and the failure count.
 
 ## What was measured
 
@@ -37,11 +42,13 @@ here.
 
 | Stratum | Commits | Risk level changes | Invocations today | Invocations shared | Delta |
 |---|---|---|---|---|---|
-| Source-bearing | 68 | 40 | 300 | 360 | +20% |
-| Prose-only | 52 | 3 | 43 | 49 | +14% |
+| Source-bearing | 69 | 40 | 304 | 364 | +20% |
+| Prose-only | 51 | 3 | 48 | 54 | +13% |
 
 Characteristics unlocked by the shared evidence, across the whole window:
-`behavior_change` 67, `security_sensitive` 30, `concurrency` 23.
+`behavior_change` 67, `security_sensitive` 30, `concurrency` 23. The strata
+totals shift by a commit or two between pinned tips as the window slides; the
++20% headline does not.
 
 `profile.Kind` is a poor stratifier here and is reported in the JSON only as a
 secondary breakdown: a commit changing two Go files alongside several documents
@@ -59,7 +66,8 @@ jump. 17 of those 52 commits were unlocked by `concurrency` alone:
 `detectarConcurrencia` read the added lines of every path with no class filter,
 so every ficha in this repository mentioning `context.Background()` read as a
 concurrent change. That was a defect, not a cost, and ticket 03b removed it
-before the planner migrates. The stratum now moves 43 to 49.
+before the planner migrates. The stratum now moves 48 to 54 over a comparable
+window.
 
 ## Verdict
 
@@ -68,7 +76,7 @@ invocations, and it buys the structural hole FU-10 names: today
 `security_sensitive`, `concurrency` and `behavior_change` can never be present
 in a review plan, so three risk rules never fire and a source change adding
 credential handling without touching an exported symbol schedules no security
-review at all. 40 of 68 source-bearing commits are currently classified at a
+review at all. 40 of 69 source-bearing commits are currently classified at a
 lower risk level by review than by `explain`.
 
 **No risk-rule adjustment is required.** The rules behave as designed once fed
