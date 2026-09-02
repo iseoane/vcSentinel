@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -248,16 +249,55 @@ func aplicarTimeoutSegundos(cfg config.Config, segundos int) config.Config {
 
 // purgarHuerfanas borra las fichas de commits que ya no existen en el repo y
 // devuelve los SHAs eliminados. Útil tras rebase/amend/squash.
-func purgarHuerfanas(gitDir string) ([]string, error) {
-	return review.NuevoLedger(gitDir).PurgarHuerfanas()
+//
+// Purga TODOS los ledgers del repositorio, no solo el del checkout actual. El
+// ledger v1 se ancla en el gitDir, así que una revisión hecha desde un worktree
+// enlazado escribe en <gitCommonDir>/worktrees/<nombre>/vas-sentinel, y
+// delegar en un writer con worktree dedicado es el flujo habitual aquí. Purgar
+// solo el propio dejaba huérfanas todas esas fichas.
+//
+// Importa más allá de la higiene: T9.5 construye su cascada de retención sobre
+// esta primitiva y sobre collectProvenanceReferences, que ya enumera todos los
+// ledgers. Decidir qué conservar mirando trece y borrar en uno deja la
+// contabilidad de la cascada mal (FU-12).
+func purgarHuerfanas(worktree, gitDir string) ([]string, error) {
+	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		// Sin common dir no se puede enumerar: se purga el ledger propio, que
+		// es lo que este gitDir garantiza, y el fallo viaja al llamador.
+		eliminados, perr := review.NuevoLedger(gitDir).PurgarHuerfanas()
+		if perr != nil {
+			return nil, perr
+		}
+		return eliminados, fmt.Errorf("linked worktree ledgers were not purged: %w", err)
+	}
+	directorios, err := directoriosLedgerV1(gitCommonDir)
+	if err != nil {
+		return nil, err
+	}
+	// El gitDir del checkout principal coincide con el common dir, así que
+	// enumerarlo evita purgarlo dos veces; un worktree enlazado no está en la
+	// lista si nunca escribió ficha, y entonces se añade aquí.
+	if !slices.Contains(directorios, gitDir) {
+		directorios = append(directorios, gitDir)
+	}
+	eliminados := []string{}
+	for _, dir := range directorios {
+		purgados, err := review.NuevoLedger(dir).PurgarHuerfanas()
+		if err != nil {
+			return nil, fmt.Errorf("purging the ledger at %s: %w", dir, err)
+		}
+		eliminados = append(eliminados, purgados...)
+	}
+	return eliminados, nil
 }
 
 // purgarHuerfanasConEventos purga las fichas huérfanas y, por cada SHA
 // eliminado, borra también sus líneas del events.jsonl: los eventos de
 // commits que siguen vivos se conservan siempre. Un fallo en la limpieza de
 // eventos devuelve error pero las fichas ya purgadas no se restauran.
-func purgarHuerfanasConEventos(gitDir string) ([]string, error) {
-	eliminados, err := purgarHuerfanas(gitDir)
+func purgarHuerfanasConEventos(worktree, gitDir string) ([]string, error) {
+	eliminados, err := purgarHuerfanas(worktree, gitDir)
 	if err != nil || len(eliminados) == 0 {
 		return eliminados, err
 	}
@@ -324,7 +364,7 @@ func ejecutarStatus(worktree string, args []string) {
 	ledger := review.NuevoLedger(gitDir)
 
 	if flags.prune {
-		eliminados, err := purgarHuerfanasConEventos(gitDir)
+		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
 		if err != nil {
 			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
 			os.Exit(1)

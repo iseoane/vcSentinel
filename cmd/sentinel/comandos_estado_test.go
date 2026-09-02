@@ -1,10 +1,13 @@
 package main
 
 import (
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -287,4 +290,107 @@ func TestAplicarTimeoutFlag(t *testing.T) {
 	if base.Review.Timeout != 600*time.Second {
 		t.Errorf("aplicarTimeoutFlag mutó la config original: %v", base.Review.Timeout)
 	}
+}
+
+// TestPurgarHuerfanasAlcanzaLosLedgersDeWorktree is the second half of FU-12,
+// and the reason it must land before T9.5 rather than after.
+//
+// PurgarHuerfanas is a deletion primitive, and T9.5 builds its retention
+// cascade on it together with collectProvenanceReferences. That collector was
+// already taught to enumerate every ledger in the repository; this one still
+// purged the current checkout's ledger alone. A cascade assembled from the two
+// would decide what to keep by consulting thirteen ledgers and then delete from
+// one, which leaks every ficha a delegated writer produced and makes the
+// cascade's own accounting wrong.
+func TestPurgarHuerfanasAlcanzaLosLedgersDeWorktree(t *testing.T) {
+	worktree := t.TempDir()
+	correr := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	correr("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	correr("add", "a.txt")
+	correr("commit", "-qm", "first")
+
+	enlazado := filepath.Join(t.TempDir(), "linked")
+	correr("worktree", "add", "-q", "--detach", enlazado)
+
+	gitDirPrincipal, err := git.ObtenerGitDirDe(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitDirEnlazado, err := git.ObtenerGitDirDe(enlazado)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two fichas in the linked worktree's ledger: one for a SHA the repository
+	// does not contain, one for its real HEAD. Both are needed. Without the
+	// live one the test would pass against a purge that simply deleted
+	// everything it found, which is the opposite failure.
+	huerfana := "0123456789abcdef0123456789abcdef01234567"
+	viva := revisionDeWorktree(t, worktree, "HEAD")
+	ledgerEnlazado := review.NuevoLedger(gitDirEnlazado)
+	for _, sha := range []string{huerfana, viva} {
+		if err := ledgerEnlazado.GuardarRevision(sha, "fixture", "bucket", "model", review.Revision{
+			At: time.Now(), Result: "ok",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// PurgarHuerfanas resolves orphanhood with git.ContenidoEnAlgunRef, which
+	// runs git in the process working directory like the rest of internal/git.
+	// Without this the live SHA would look orphaned too, because it does not
+	// exist in whatever repository the test binary happens to run from, and the
+	// discriminating half of this test would prove nothing.
+	previo, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktree); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(previo) })
+
+	eliminados, err := purgarHuerfanas(worktree, gitDirPrincipal)
+	if err != nil {
+		t.Fatalf("purgarHuerfanas() error = %v", err)
+	}
+	if !slices.Contains(eliminados, huerfana) {
+		t.Fatalf("purgarHuerfanas() = %v, missing the orphan %q held in the linked worktree ledger %q; T9.5 would decide from every ledger and delete from one",
+			eliminados, huerfana, gitDirEnlazado)
+	}
+	if ficha, err := ledgerEnlazado.LeerFicha(huerfana); err != nil || ficha != nil {
+		t.Errorf("the orphan ficha survives in the linked worktree ledger (ficha=%v, err=%v)", ficha, err)
+	}
+	if slices.Contains(eliminados, viva) {
+		t.Errorf("purgarHuerfanas() deleted %q, whose commit exists; it is purging by reach and not by orphanhood", viva)
+	}
+	if ficha, err := ledgerEnlazado.LeerFicha(viva); err != nil || ficha == nil {
+		t.Errorf("the ficha of a live commit was deleted from the linked worktree ledger (ficha=%v, err=%v)", ficha, err)
+	}
+}
+
+// revisionDeWorktree resolves a revision inside worktree without depending on
+// the process working directory.
+func revisionDeWorktree(t *testing.T, worktree, revision string) string {
+	t.Helper()
+	salida, err := exec.Command("git", "-C", worktree, "rev-parse", revision).Output()
+	if err != nil {
+		t.Fatalf("rev-parse %s: %v", revision, err)
+	}
+	return strings.TrimSpace(string(salida))
 }

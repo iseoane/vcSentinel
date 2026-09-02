@@ -93,7 +93,7 @@ func ejecutarReview(worktree string, args []string) {
 			fmt.Println("? review --prune no se combina con targets ni flags de auditoría (--dims/--all/--chain/--gate/--profile/--answer/--timeout).")
 			os.Exit(1)
 		}
-		eliminados, err := purgarHuerfanasConEventos(gitDir)
+		eliminados, err := purgarHuerfanasConEventos(worktree, gitDir)
 		if err != nil {
 			fmt.Printf("? No se pudieron purgar fichas huérfanas: %v\n", err)
 			os.Exit(1)
