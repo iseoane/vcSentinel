@@ -6,7 +6,7 @@ measurement rather than on preference.
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent.
+**Status:** complete.
 
 ## Why this gates the fix
 
@@ -68,27 +68,56 @@ this ticket does not depend on it.
 
 **Acceptance criteria:**
 
-- [ ] For at least the last 50 commits on `main`, the artifact records per
+- [x] For at least the last 50 commits on `main`, the artifact records per
       commit: the `explain`-side risk level, the planner-side risk level, the
       dimensions the planner schedules today, and the dimensions it would
       schedule with the shared evidence.
-- [ ] Both sides are computed through the real code path, not re-derived by
+- [x] Both sides are computed through the real code path, not re-derived by
       hand or by eye, from a single change profile per commit.
-- [ ] Merge commits are excluded and the exclusion is stated.
-- [ ] The aggregate is stratified by change kind, with the source-bearing
+- [x] Merge commits are excluded and the exclusion is stated.
+- [x] The aggregate is stratified by change kind, with the source-bearing
       stratum as the headline.
-- [ ] The harness that produced the artifact is committed with it, following
+- [x] The harness that produced the artifact is committed with it, following
       the precedent already set by the T9.4a evidence artifacts.
-- [ ] The artifact states the aggregate: how many commits change risk level,
+- [x] The artifact states the aggregate: how many commits change risk level,
       and the total delta in scheduled agent invocations, with the counting
       convention named.
-- [ ] The artifact records that bundle scheduling dedupes by bundle and not by
+- [x] The artifact records that bundle scheduling dedupes by bundle and not by
       dimension, and what that does to the count at high risk.
-- [ ] `go build ./...` and `go vet ./...` cover the harness.
-- [ ] The artifact states a verdict — feed the planner, or stop `explain`
+- [x] `go build ./...` and `go vet ./...` cover the harness.
+- [x] The artifact states a verdict — feed the planner, or stop `explain`
       reporting a risk level review will not act on — with the reason.
-- [ ] If the verdict is to feed the planner, the artifact states explicitly
+- [x] If the verdict is to feed the planner, the artifact states explicitly
       whether the risk rules also need adjusting, and defers that to its own
       change rather than folding it in.
-- [ ] Tickets 04 through 06 are re-read against the verdict before 04 starts;
+- [x] Tickets 04 through 06 are re-read against the verdict before 04 starts;
       they assume the planner is fed.
+
+## Evidence
+
+- Harness: `tools/fu10divergence`, run as `go run ./tools/fu10divergence -n 120`.
+- Artifact: `docs/reingenieria/evidence/fu10-divergence.json`, with the verdict
+  and method in `fu10-divergence.md` beside it.
+- Window: 120 non-merge commits from `HEAD`; 5 merges inside the window were
+  excluded.
+- Headline, source-bearing commits: 68 commits, 39 change risk level, 300 to 358
+  agent invocations, +19%.
+- Prose-only commits: 52 commits, 17 change risk level, 43 to 119 invocations.
+  That stratum is a defect, not a cost: 17 are unlocked by `concurrency` alone,
+  which reads the added lines of every path with no class filter.
+- `profile.Kind` proved a poor stratifier and is reported only as a secondary
+  breakdown: `ab3acee` changes two Go files and classifies as
+  `kind=documentation`. The headline splits on whether any path classifies as
+  `ClaseSource`.
+- Bundle scheduling dedupes by bundle name and not by dimension, so `spec` and
+  `logic` can each launch two agent invocations at high risk. The count uses
+  invocations and says so.
+- `go build ./...` and `go vet ./...` cover the harness.
+- Verdict: feed the planner, with ticket 03b as a blocking precondition and a
+  re-measurement before ticket 05. No risk-rule adjustment required.
+
+## Follow-ups
+
+- Ticket 03b narrows the concurrency detector the same way ticket 02 narrowed
+  the security one. It blocks ticket 04.
+- The 358 figure must be recomputed after 03b lands.
