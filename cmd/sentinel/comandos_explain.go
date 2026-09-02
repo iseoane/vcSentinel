@@ -64,15 +64,13 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	if err != nil {
 		return err
 	}
-	lineas, err := lineasAnadidasExplain(lector, rango, rutas)
+	diff, err := lector(argumentosDiffExplain(rango)...)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not read unified diff for %s: %w", rango, err)
 	}
 	gitattributes, _ := lector("show", head+":.gitattributes")
-	caracteristicas := change.DetectarCaracteristicas(change.EntradaCaracteristicas{
-		Symbols: perfilCambio.Symbols, Rutas: rutas, LineasAnadidas: lineas, Gitattributes: gitattributes,
-		PatronesSensibles: []string{"**/auth/**", "**/*auth*.go", "**/security/**"},
-	})
+	entrada := change.NewCharacteristicsInput(perfilCambio, rutas, diff, gitattributes)
+	caracteristicas := change.DetectarCaracteristicas(entrada)
 	resultadoRiesgo := risk.Evaluar(perfilCambio, caracteristicas)
 	cohesion, err := change.Cohesion(rutas, lector)
 	if err != nil {
@@ -125,6 +123,16 @@ func parsearExplain(args []string) (base, head string, jsonOut bool, err error) 
 	return base, head, jsonOut, nil
 }
 
+// argumentosDiffExplain pins the diff invocation the added-line parser depends
+// on. The prefixes are forced rather than left to configuration: diff.noprefix,
+// diff.mnemonicPrefix and diff.srcPrefix/dstPrefix each change the header
+// format, and a header the parser does not recognise loses its added lines with
+// no error. Exposed as one function so the test that exercises real Git cannot
+// drift from the invocation it claims to cover.
+func argumentosDiffExplain(rango string) []string {
+	return []string{"diff", "--no-color", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", "-M", rango}
+}
+
 func rutasExplain(lector change.LectorGit, rango string) ([]string, error) {
 	salida, err := lector("diff", "--name-only", "-z", "-M", rango)
 	if err != nil {
@@ -137,27 +145,6 @@ func rutasExplain(lector change.LectorGit, rango string) ([]string, error) {
 		}
 	}
 	return rutas, nil
-}
-
-func lineasAnadidasExplain(lector change.LectorGit, rango string, rutas []string) (map[string][]string, error) {
-	resultado := make(map[string][]string)
-	for _, ruta := range rutas {
-		salida, err := lector("diff", "--no-color", "--unified=0", rango, "--", ":(literal)"+ruta)
-		if err != nil {
-			return nil, fmt.Errorf("no se pudieron leer las líneas añadidas de %s en %s: %w", rango, ruta, err)
-		}
-		enHunk := false
-		for _, linea := range strings.Split(salida, "\n") {
-			if strings.HasPrefix(linea, "@@") {
-				enHunk = true
-				continue
-			}
-			if enHunk && strings.HasPrefix(linea, "+") {
-				resultado[ruta] = append(resultado[ruta], strings.TrimPrefix(linea, "+"))
-			}
-		}
-	}
-	return resultado, nil
 }
 
 func ejecutarGitParaChange(args ...string) (string, error) {
