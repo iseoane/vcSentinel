@@ -301,11 +301,20 @@ func lineasAnadidas(sha string, rutas []string) (map[string][]string, error) {
 	return resultado, nil
 }
 
-// leerGitattributes distingue ausencia de fallo: `git show <sha>:.gitattributes`
-// falla igual en ambos casos, y tratar un fallo de lectura como "no hay
-// atributos" degradaría la evidencia en silencio.
+// leerGitattributes distingue ausencia de fallo. Ni `git show
+// <sha>:.gitattributes` ni `git cat-file -e` sirven para eso: ambos salen con
+// código no cero tanto si la ruta no está como si el repositorio o el objeto no
+// se pueden leer, así que cualquiera de los dos convertiría un fallo real en
+// "no hay atributos" y degradaría la evidencia en silencio.
+//
+// `git ls-tree` sí los separa: una ruta ausente es salida vacía con código
+// cero, y solo un fallo real sale con código no cero.
 func leerGitattributes(sha string) (string, error) {
-	if _, err := git("cat-file", "-e", sha+":.gitattributes"); err != nil {
+	listado, err := git("ls-tree", "--name-only", sha, "--", ".gitattributes")
+	if err != nil {
+		return "", fmt.Errorf("looking for .gitattributes at %s: %w", sha, err)
+	}
+	if strings.TrimSpace(listado) == "" {
 		return "", nil // absent in this tree, which is the common case
 	}
 	contenido, err := git("show", sha+":.gitattributes")
