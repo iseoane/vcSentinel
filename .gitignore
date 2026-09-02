@@ -1,4 +1,7 @@
 .codegraph/
 .atl/
 bin/
-sentinel.exe
+# `go build ./cmd/sentinel` escribe el ejecutable en la raíz, no en bin/.
+# Anclados con barra: sin ella ignorarían también el paquete cmd/sentinel/.
+/sentinel
+/sentinel.exe
