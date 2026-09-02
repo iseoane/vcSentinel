@@ -5,7 +5,7 @@ used by `explain`. After this ticket `explain` behaves exactly as before, but
 the evidence it feeds the detectors is assembled by shared code rather than
 inline in a CLI command.
 
-**Blocked by:** 03.
+**Blocked by:** 03, 03b.
 
 **Status:** ready-for-agent.
 
