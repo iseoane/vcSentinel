@@ -1,4 +1,7 @@
 {
+  "enabledPlugins": {
+    "codex@openai-codex": false
+  },
   "extraKnownMarketplaces": {
     "openai-codex": {
       "source": {
@@ -6,8 +9,5 @@
         "repo": "openai/codex-plugin-cc"
       }
     }
-  },
-  "enabledPlugins": {
-    "codex@openai-codex": true
   }
 }
