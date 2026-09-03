@@ -70,8 +70,6 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 			result.SuccessfulRuns++
 		case terminal:
 			result.FailedRuns++
-		case len(outcomes) == 0 && metricsSnapshot != nil && len(metricsSnapshot.Failures) > 0:
-			result.FailedRuns++
 		case len(outcomes) == 0 && metricsSnapshot != nil:
 			// T9.5: the snapshot decides only when it is the sole surviving
 			// evidence. A snapshot exists only for terminal runs
@@ -83,14 +81,23 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 			// arms): a stale failure snapshot must not overrule an attempt
 			// that settled afterwards, and an in-flight run must never read
 			// as successful.
-			result.SuccessfulRuns++
+			if len(metricsSnapshot.Failures) > 0 {
+				result.FailedRuns++
+			} else {
+				result.SuccessfulRuns++
+			}
 		}
 		for _, outcome := range outcomes {
 			if outcome.Class.IsTerminal() && outcome.Class != agentrun.OutcomeSuccess {
 				result.Failures = appendFailure(result.Failures, string(outcome.Class))
 			}
 		}
-		if metricsSnapshot != nil {
+		// Snapshot failure classes join the breakdown only when the snapshot
+		// itself decides the run (sole evidence, above): with live outcomes
+		// the stream's own terminal failures already counted, and an
+		// in-flight group must not publish a stale snapshot's classes
+		// alongside zero counters.
+		if metricsSnapshot != nil && len(outcomes) == 0 {
 			for _, failure := range metricsSnapshot.Failures {
 				if failure.Class != "" {
 					result.Failures = appendFailure(result.Failures, string(failure.Class))

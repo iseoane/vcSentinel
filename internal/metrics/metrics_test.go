@@ -493,26 +493,34 @@ func TestLiveOutcomesOutrankTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestRetainedOnlySnapshotDecidesWithoutOutcomes exercises the T9.5
-// snapshot-fallback arms directly: with no outcomes left, a clean snapshot
-// counts terminal success and a failing snapshot counts terminal failure
-// with its class. This is the arm TestLiveOutcomesOutrankTheSnapshot
-// cannot reach (live terminal outcomes take the earlier arms).
-func TestRetainedOnlySnapshotDecidesWithoutOutcomes(t *testing.T) {
-	got := Aggregate(Input{Executions: []ExecutionObservation{
-		{RunID: "retained-clean", Metrics: &store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: "retained-clean"}},
-		{RunID: "retained-failed", Metrics: &store.ExecutionMetrics{
-			Version:  store.ExecutionMetricsSchemaVersion,
-			RunID:    "retained-failed",
-			Failures: []store.ExecutionFailure{{Class: store.FailureInvalidOutput}},
-		}},
-	}})
-	executions := got.Executions
-	if executions.LogicalRuns != 2 || executions.MeasuredRuns != 2 {
-		t.Fatalf("logical=%d measured=%d, want 2/2", executions.LogicalRuns, executions.MeasuredRuns)
+// TestLiveNonTerminalOutcomesStayUnclassified proves the T9.5 gate: with a
+// live (non-terminal) outcome present, a snapshot — clean or failing —
+// decides nothing. No counter moves and no stale failure class publishes;
+// the run is still in flight and its measurement is unknown, never the
+// snapshot's.
+func TestLiveNonTerminalOutcomesStayUnclassified(t *testing.T) {
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	clean := &store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: "live"}
+	failing := &store.ExecutionMetrics{
+		Version:  store.ExecutionMetricsSchemaVersion,
+		RunID:    "live",
+		Failures: []store.ExecutionFailure{{Class: store.FailureInvalidOutput}},
 	}
-	if executions.SuccessfulRuns != 1 || executions.FailedRuns != 1 {
-		t.Fatalf("successful=%d failed=%d, want 1/1", executions.SuccessfulRuns, executions.FailedRuns)
+	for name, snapshot := range map[string]*store.ExecutionMetrics{"clean": clean, "failing": failing} {
+		t.Run(name, func(t *testing.T) {
+			got := Aggregate(Input{Executions: []ExecutionObservation{{
+				RunID:    "live",
+				Metrics:  snapshot,
+				Outcomes: []store.AttemptOutcome{{RunID: "live", At: at, Class: agentrun.OutcomeAwaitingDecision}},
+			}}})
+			executions := got.Executions
+			if executions.SuccessfulRuns != 0 || executions.FailedRuns != 0 {
+				t.Fatalf("successful=%d failed=%d, want 0/0 for an in-flight run", executions.SuccessfulRuns, executions.FailedRuns)
+			}
+			if len(executions.Failures) != 0 {
+				t.Fatalf("failures = %+v, want none: a stale snapshot must not publish classes for a live run", executions.Failures)
+			}
+		})
 	}
 }
 
