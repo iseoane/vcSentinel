@@ -22,6 +22,11 @@ func TestPruneExecutionsAppliesRetentionGuards(t *testing.T) {
 	cutoff := time.Now().Add(-24 * time.Hour)
 
 	oldRun, _ := seedPruneRun(t, s, "old-terminal", "", pruneTerminalSuccess(), pruneAncientTime)
+	// The prunable row must be measurable: since T9.5 a terminal-old run
+	// without a metrics snapshot is kept, so the fixture carries one.
+	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: oldRun}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	recentRun, _ := seedPruneRun(t, s, "recent-terminal", "", pruneTerminalSuccess(), time.Now())
 	runningRun, _ := seedPruneRun(t, s, "still-running", "", pruneRunningHead(), pruneAncientTime)
 
@@ -143,6 +148,11 @@ func TestPruneExecutionsKeepsProvenanceReferencedStreams(t *testing.T) {
 	s := NuevoStore(t.TempDir())
 	referencedRun, frames := seedPruneRun(t, s, "referenced", "", pruneTerminalSuccess(), pruneAncientTime)
 	freeRun, _ := seedPruneRun(t, s, "unreferenced", "", pruneTerminalSuccess(), pruneAncientTime)
+	// The prunable row must be measurable: since T9.5 a run without a
+	// snapshot is kept regardless of references.
+	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: freeRun}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	references := map[string]bool{frames[0].InvocationID: true}
 
 	report, err := s.PruneExecutions(time.Now().Add(-24*time.Hour), references)
@@ -216,6 +226,11 @@ func TestReferencedInvocationIDsEmptyAndCorrupt(t *testing.T) {
 func TestPruneExecutionsProtectsParentOfSurvivingRun(t *testing.T) {
 	s := NuevoStore(t.TempDir())
 	parentRun, _ := seedPruneRun(t, s, "gate-root", "", pruneTerminalSuccess(), pruneAncientTime)
+	// The parent must clear every earlier guard for the linkage guard to
+	// be what keeps it: since T9.5 that includes a metrics snapshot.
+	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: parentRun}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	childRun, _ := seedPruneRun(t, s, "review-child", parentRun, pruneTerminalSuccess(), time.Now())
 
 	report, err := s.PruneExecutions(time.Now().Add(-24*time.Hour), nil)
@@ -236,7 +251,12 @@ func TestPruneExecutionsProtectsParentOfSurvivingRun(t *testing.T) {
 // nothing.
 func TestPruneExecutionsIsIdempotent(t *testing.T) {
 	s := NuevoStore(t.TempDir())
-	seedPruneRun(t, s, "first-pass", "", pruneTerminalSuccess(), pruneAncientTime)
+	firstRun, _ := seedPruneRun(t, s, "first-pass", "", pruneTerminalSuccess(), pruneAncientTime)
+	// The removable row must be measurable, or the first pass keeps it
+	// under the T9.5 snapshot guard and there is no second-pass contrast.
+	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: firstRun}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	survivor, _ := seedPruneRun(t, s, "survivor", "", pruneRunningHead(), pruneAncientTime)
 
 	first, err := s.PruneExecutions(time.Now().Add(-24*time.Hour), nil)
@@ -289,8 +309,9 @@ func TestPruneReasonConstantsMatchDocumentedContract(t *testing.T) {
 		"PruneReasonNonTerminal":         PruneReasonNonTerminal,
 		"PruneReasonCorruptTail":         PruneReasonCorruptTail,
 		"PruneReasonIncompleteAdmission": PruneReasonIncompleteAdmission,
+		"PruneReasonNoMetricsSnapshot":   PruneReasonNoMetricsSnapshot,
+		"PruneReasonMultiAttempt":        PruneReasonMultiAttempt,
 		"PruneReasonOrphanedCanceled":    PruneReasonOrphanedCanceled,
-		"PruneReasonRemovalRemnant":      PruneReasonRemovalRemnant,
 		"PruneReasonUnreadableFmt":       PruneReasonUnreadableFmt,
 		"PruneReasonCorruptFmt":          PruneReasonCorruptFmt,
 		"PruneReasonProvenanceFmt":       PruneReasonProvenanceFmt,
@@ -305,6 +326,8 @@ func TestPruneReasonConstantsMatchDocumentedContract(t *testing.T) {
 		"PruneReasonNonTerminal":         "non-terminal",
 		"PruneReasonCorruptTail":         "corrupt: incomplete final event tail",
 		"PruneReasonIncompleteAdmission": "incomplete or corrupt admission record",
+		"PruneReasonNoMetricsSnapshot":   "awaiting metrics snapshot",
+		"PruneReasonMultiAttempt":        "multiple attempts: retry evidence lives only in the event stream",
 		"PruneReasonOrphanedCanceled":    "orphaned-canceled recovery evidence",
 		"PruneReasonRemovalRemnant":      "prunable-remnant",
 		"PruneReasonUnreadableFmt":       "unreadable: %v",

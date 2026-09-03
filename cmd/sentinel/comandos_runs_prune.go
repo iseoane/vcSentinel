@@ -187,26 +187,36 @@ func anotarReferenciasDeLedger(ledger *review.Ledger, references map[string]bool
 		if err != nil {
 			return fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, err)
 		}
-		if ficha == nil {
-			continue
-		}
-		for _, rev := range ficha.Revisions {
-			for _, dim := range rev.Dims {
-				if dim.InvocationID != "" {
-					references[dim.InvocationID] = true
-				}
-				for _, hallazgo := range dim.Hallazgos {
-					if hallazgo.InvocationID != "" {
-						references[hallazgo.InvocationID] = true
-					}
-				}
+		anotarReferenciasDeFicha(ficha, references)
+	}
+	return nil
+}
+
+// anotarReferenciasDeFicha accumulates into references every invocation one
+// ficha cites: per-dimension producer invocations, raw v2 hallazgo
+// invocations (including refutation-downgraded ones), and aggregated
+// findings. A nil ficha cites nothing. Shared by the full collector and by
+// retention, which skips published fichas before reaching it, so both count
+// the same identities for the fichas they keep.
+func anotarReferenciasDeFicha(ficha *review.Ficha, references map[string]bool) {
+	if ficha == nil {
+		return
+	}
+	for _, rev := range ficha.Revisions {
+		for _, dim := range rev.Dims {
+			if dim.InvocationID != "" {
+				references[dim.InvocationID] = true
 			}
-			for _, hallazgo := range rev.AggregatedFindings {
+			for _, hallazgo := range dim.Hallazgos {
 				if hallazgo.InvocationID != "" {
 					references[hallazgo.InvocationID] = true
 				}
 			}
 		}
+		for _, hallazgo := range rev.AggregatedFindings {
+			if hallazgo.InvocationID != "" {
+				references[hallazgo.InvocationID] = true
+			}
+		}
 	}
-	return nil
 }

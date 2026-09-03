@@ -24,6 +24,11 @@ import (
 //   - its last event predates the cutoff;
 //   - none of its invocation identities is referenced as review provenance
 //     by the caller-supplied reference set;
+//   - its immutable metrics snapshot exists (a missing snapshot is absence
+//     of evidence, never a zero: T9.5 never deletes before measurement
+//     survives);
+//   - it settled in a single attempt (retry multiplicity lives only in the
+//     event stream, which the snapshot does not record);
 //   - it is not the parent linkage target of any surviving run.
 //
 // The single exception is a crash-interrupted removal: a directory holding
@@ -58,6 +63,17 @@ const (
 	// admission record is missing or undecodable while real event bytes
 	// remain present.
 	PruneReasonIncompleteAdmission = "incomplete or corrupt admission record"
+	// PruneReasonNoMetricsSnapshot keeps a run whose immutable metrics
+	// snapshot has not been written. T9.5 collects execution detail only
+	// when the measurement survives it: a missing snapshot is absence of
+	// evidence, never a zero, so the stream stays until its snapshot
+	// exists.
+	PruneReasonNoMetricsSnapshot = "awaiting metrics snapshot"
+	// PruneReasonMultiAttempt keeps a run settled in more than one attempt.
+	// The snapshot records no attempt multiplicity, so the retried-runs
+	// aggregate reads it only from the event stream: deleting the stream
+	// would move a measurement retention promises to leave untouched.
+	PruneReasonMultiAttempt = "multiple attempts: retry evidence lives only in the event stream"
 	// PruneReasonOrphanedCanceled keeps owner-death recovery evidence.
 	PruneReasonOrphanedCanceled = "orphaned-canceled recovery evidence"
 	// PruneReasonRemovalRemnant reports the successful removal of a
@@ -259,7 +275,43 @@ func (s *Store) classifyForPrune(runID string, cutoff time.Time, referencedInvoc
 			return kept(fmt.Sprintf(PruneReasonProvenanceFmt, frame.InvocationID))
 		}
 	}
+	// T9.5 collection guards: pruning must be invisible to measurement. A
+	// missing snapshot keeps the execution — absence is unknown, never
+	// zero — and a run settled in more than one attempt keeps its stream,
+	// because the snapshot records no attempt multiplicity and the
+	// retried-runs aggregate reads it only from these bytes. A snapshot
+	// that cannot be read keeps the run too: an undecidable measurement
+	// never authorizes a deletion.
+	snapshot, snapshotErr := s.ReadExecutionMetrics(runID)
+	if snapshotErr != nil {
+		return kept(fmt.Sprintf(PruneReasonUnreadableFmt, snapshotErr))
+	}
+	if snapshot == nil {
+		return kept(PruneReasonNoMetricsSnapshot)
+	}
+	if terminalInvocationCount(log.frames) > 1 {
+		return kept(PruneReasonMultiAttempt)
+	}
 	return prunableRun{runID: runID, parentRunID: survivorLink, prunable: true}
+}
+
+// terminalInvocationCount counts distinct invocation identities among
+// terminal frames: one per settled attempt. An empty identity never
+// collapses into another attempt: an unattributable terminal frame keeps
+// the run, because assuming single-attempt would delete retry evidence on
+// a guess.
+func terminalInvocationCount(frames []EventFrame) int {
+	seen := map[string]bool{}
+	for _, frame := range frames {
+		if frame.To.TerminalClass() == agentrun.TerminalNone {
+			continue
+		}
+		if frame.InvocationID == "" {
+			return 2
+		}
+		seen[frame.InvocationID] = true
+	}
+	return len(seen)
 }
 
 // isRemovalRemnant reports whether a directory holds ONLY its cross-process

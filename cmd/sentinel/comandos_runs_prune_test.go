@@ -107,6 +107,11 @@ func TestRunsPruneRemovesOnlyOldTerminalUnreferenced(t *testing.T) {
 	worktree := newPruneTestRepo(t)
 	backing := pruneRepoStore(t, worktree)
 	oldRun, _ := seedPruneTerminalRun(t, backing, "candidate:old-terminal", time.Unix(1000000000, 0).UTC())
+	// The prunable row must be measurable: since T9.5 a run without a
+	// snapshot is kept regardless of age or references.
+	if err := backing.SaveExecutionMetrics(store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: oldRun}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	recentRun, _ := seedPruneTerminalRun(t, backing, "candidate:recent-terminal", time.Now())
 
 	var out bytes.Buffer
@@ -231,7 +236,7 @@ func TestCollectProvenanceReferencesIncludesRefutedFindingInvocations(t *testing
 func TestRunsPruneHumanOutputListsEveryDecision(t *testing.T) {
 	worktree := newPruneTestRepo(t)
 	backing := pruneRepoStore(t, worktree)
-	appendReconciledFixtureStream(t, backing, "candidate:human-old", []struct {
+	runID := appendReconciledFixtureStream(t, backing, "candidate:human-old", []struct {
 		from     agentrun.LifecycleState
 		to       agentrun.LifecycleState
 		decision agentrun.Decision
@@ -240,7 +245,11 @@ func TestRunsPruneHumanOutputListsEveryDecision(t *testing.T) {
 		to:       agentrun.StateSucceeded,
 		decision: agentrun.DecisionComplete,
 	}})
-
+	// The examined row must be measurable, or the report pins the T9.5
+	// snapshot guard instead of the human rendering it exists to prove.
+	if err := backing.SaveExecutionMetrics(store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: string(runID)}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	var out bytes.Buffer
 	if code := executeRunsPrune(&out, worktree, []string{"--older-than", "720h"}); code != runExitSuccess {
 		t.Fatalf("exit = %d (output: %s)", code, out.String())

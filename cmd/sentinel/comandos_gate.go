@@ -209,6 +209,13 @@ func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, message
 		fmt.Fprintln(w, message)
 	}
 	recordGateEventWithDetails(worktree, stage, state, contextSkipReason, reviewerFailures)
+	if stage == "pre-push" {
+		// T9.5 event-driven retention: the push publishes the work, so the
+		// in-flight execution detail is collectible now. Best-effort by
+		// contract: it reports to the same writer and never alters the
+		// exit code computed below.
+		intentarRetencionTrasPublicacion(w, worktree)
+	}
 	return gate.CodigoSalida(state)
 }
 

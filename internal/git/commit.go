@@ -324,6 +324,21 @@ func EsAncestroDe(worktree, ancestro, descendiente string) (bool, error) {
 	return true, nil
 }
 
+// PublicadoEnRemoto reports whether sha is an ancestor of origin/main in
+// worktree's repository: the T9.5 publication boundary. A published commit's
+// in-flight detail (review dimensions, corrections, guarantees) has no
+// operational reader left, so retention may collect its execution streams.
+//
+// Any query failure is an error, never a negative. merge-base answers 1
+// only when both refs resolve and are unrelated; an unknown or unreadable
+// object fails differently (FU-15), and a missing origin/main fails as
+// well. Reading any of those as "unpublished" would either leak published
+// detail forever or, worse, authorize collection on an unanswerable query.
+// Callers treat the error as fail-closed and skip retention for that run.
+func PublicadoEnRemoto(worktree, sha string) (bool, error) {
+	return EsAncestroDe(worktree, sha, "origin/main")
+}
+
 // UpstreamOMain devuelve el ref base para auditar cadenas de commits: el
 // upstream si existe; si no, la rama main local; si no, master.
 func UpstreamOMain() (string, error) {

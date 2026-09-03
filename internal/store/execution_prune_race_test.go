@@ -30,6 +30,11 @@ func setRaceWindowHook(t *testing.T, hook func(s *Store)) {
 func TestPruneExecutionsRefusesReferencePersistedBetweenClassifyAndLock(t *testing.T) {
 	s := NuevoStore(t.TempDir())
 	runID, frames := seedPruneRun(t, s, "late-reference", "", pruneTerminalSuccess(), pruneAncientTime)
+	// The run must clear classification — including the T9.5 snapshot
+	// guard — or the race hook it exists to exercise never fires.
+	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: runID}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	references := map[string]bool{}
 
 	setRaceWindowHook(t, func(s *Store) {
@@ -56,7 +61,11 @@ func TestPruneExecutionsRefusesReferencePersistedBetweenClassifyAndLock(t *testi
 func TestPruneExecutionsRefusesChildPersistedBetweenClassifyAndLock(t *testing.T) {
 	s := NuevoStore(t.TempDir())
 	parentRun, _ := seedPruneRun(t, s, "gate-root", "", pruneTerminalSuccess(), pruneAncientTime)
-
+	// The root must clear classification — including the T9.5 snapshot
+	// guard — or the late-child hook it exists to exercise never fires.
+	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: parentRun}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 	setRaceWindowHook(t, func(s *Store) {
 		job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 			agentrun.Candidate("candidate:late-child"), agentrun.Prompt("late-child"), nil))

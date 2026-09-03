@@ -215,6 +215,10 @@ func ejecutarRebase() {
 	}
 	fmt.Println(salida)
 	fmt.Printf("✅ %s rebaseada sobre %s.\n", rama, upstream)
+	// T9.5 event-driven retention: the fetch + rebase just moved the remote
+	// boundary, so published execution detail is collectible now.
+	// Best-effort by contract: it never fails the rebase that succeeded.
+	intentarRetencionTrasPublicacion(os.Stdout, ".")
 }
 
 // flagsNoAplicablesAStatus indica si los flags parseados no aplican a status
