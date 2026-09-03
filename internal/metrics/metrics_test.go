@@ -491,6 +491,16 @@ func TestLiveOutcomesOutrankTheSnapshot(t *testing.T) {
 	if got.Executions.SuccessfulRuns != 1 || got.Executions.FailedRuns != 0 {
 		t.Fatalf("live success outcome overruled by a stale snapshot: %#v", got.Executions)
 	}
+	// The breakdown keeps the historical fold for settled groups: the
+	// snapshot's granular class still publishes even though the counters
+	// follow the live outcome. That success-with-a-failure-class shape is
+	// the FU-8 double-source population, pinned here so no "cleanup"
+	// moves it silently — fixing it is FU-8's work, not this commit's.
+	if len(got.Executions.Failures) != 1 ||
+		got.Executions.Failures[0].Class != string(store.FailureInvalidOutput) ||
+		got.Executions.Failures[0].Count != 1 {
+		t.Fatalf("live-group breakdown = %+v, want the historical snapshot fold [{invalid_output 1}]", got.Executions.Failures)
+	}
 }
 
 // TestLiveNonTerminalOutcomesStayUnclassified proves the T9.5 gate: with a

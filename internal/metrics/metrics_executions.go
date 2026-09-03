@@ -92,12 +92,15 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 				result.Failures = appendFailure(result.Failures, string(outcome.Class))
 			}
 		}
-		// Snapshot failure classes join the breakdown only when the snapshot
-		// itself decides the run (sole evidence, above): with live outcomes
-		// the stream's own terminal failures already counted, and an
-		// in-flight group must not publish a stale snapshot's classes
-		// alongside zero counters.
-		if metricsSnapshot != nil && len(outcomes) == 0 {
+		// Snapshot failure classes join the breakdown except for in-flight
+		// groups (outcomes present, none terminal): there the snapshot is a
+		// stale record of a superseded attempt and must not publish classes
+		// alongside zero counters. Everywhere else the historical fold stands
+		// untouched — including its known double counting of outcome-derived
+		// classes and stale semantic classes for retried-then-settled runs.
+		// Both are FU-8's recorded target, and "fixing" either here would
+		// move the very aggregates retention promises to leave byte-identical.
+		if metricsSnapshot != nil && (terminal || len(outcomes) == 0) {
 			for _, failure := range metricsSnapshot.Failures {
 				if failure.Class != "" {
 					result.Failures = appendFailure(result.Failures, string(failure.Class))
