@@ -466,6 +466,7 @@ func TestStageCoverageUsesMeasuredRunPopulation(t *testing.T) {
 	if len(got.Stages) != 1 {
 		t.Fatalf("stages = %#v", got.Stages)
 	}
+	assertCoverage(t, "stage coverage", got.Stages[0].Coverage, 1, 2, 0.5)
 }
 
 // TestLiveOutcomesOutrankTheSnapshot proves the precedence the T9.5
@@ -489,6 +490,29 @@ func TestLiveOutcomesOutrankTheSnapshot(t *testing.T) {
 	}}})
 	if got.Executions.SuccessfulRuns != 1 || got.Executions.FailedRuns != 0 {
 		t.Fatalf("live success outcome overruled by a stale snapshot: %#v", got.Executions)
+	}
+}
+
+// TestRetainedOnlySnapshotDecidesWithoutOutcomes exercises the T9.5
+// snapshot-fallback arms directly: with no outcomes left, a clean snapshot
+// counts terminal success and a failing snapshot counts terminal failure
+// with its class. This is the arm TestLiveOutcomesOutrankTheSnapshot
+// cannot reach (live terminal outcomes take the earlier arms).
+func TestRetainedOnlySnapshotDecidesWithoutOutcomes(t *testing.T) {
+	got := Aggregate(Input{Executions: []ExecutionObservation{
+		{RunID: "retained-clean", Metrics: &store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: "retained-clean"}},
+		{RunID: "retained-failed", Metrics: &store.ExecutionMetrics{
+			Version:  store.ExecutionMetricsSchemaVersion,
+			RunID:    "retained-failed",
+			Failures: []store.ExecutionFailure{{Class: store.FailureInvalidOutput}},
+		}},
+	}})
+	executions := got.Executions
+	if executions.LogicalRuns != 2 || executions.MeasuredRuns != 2 {
+		t.Fatalf("logical=%d measured=%d, want 2/2", executions.LogicalRuns, executions.MeasuredRuns)
+	}
+	if executions.SuccessfulRuns != 1 || executions.FailedRuns != 1 {
+		t.Fatalf("successful=%d failed=%d, want 1/1", executions.SuccessfulRuns, executions.FailedRuns)
 	}
 }
 

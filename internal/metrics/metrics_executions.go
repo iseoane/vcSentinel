@@ -70,16 +70,19 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 			result.SuccessfulRuns++
 		case terminal:
 			result.FailedRuns++
-		case metricsSnapshot != nil && len(metricsSnapshot.Failures) > 0:
+		case len(outcomes) == 0 && metricsSnapshot != nil && len(metricsSnapshot.Failures) > 0:
 			result.FailedRuns++
-		case metricsSnapshot != nil:
-			// T9.5: a snapshot exists only for terminal runs (finalization
-			// refuses anything else with ErrMetricsNotFinal), and every
-			// terminal non-success is folded into Failures. A retained-only
-			// snapshot without failures is therefore the terminal-success
-			// evidence its collected stream used to carry: without this arm
-			// retention would move SuccessfulRuns while collecting exactly
-			// what it promises to leave untouched.
+		case len(outcomes) == 0 && metricsSnapshot != nil:
+			// T9.5: the snapshot decides only when it is the sole surviving
+			// evidence. A snapshot exists only for terminal runs
+			// (finalization refuses anything else with ErrMetricsNotFinal),
+			// and every terminal non-success is folded into Failures — so a
+			// retained-only snapshot without failures is the
+			// terminal-success evidence its collected stream used to carry.
+			// With live outcomes present the stream still decides (first two
+			// arms): a stale failure snapshot must not overrule an attempt
+			// that settled afterwards, and an in-flight run must never read
+			// as successful.
 			result.SuccessfulRuns++
 		}
 		for _, outcome := range outcomes {

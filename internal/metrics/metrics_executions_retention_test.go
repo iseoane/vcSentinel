@@ -47,19 +47,22 @@ func TestAggregateCountsRetainedOnlyFailureSnapshot(t *testing.T) {
 		},
 	}}})
 	executions := report.Executions
+	if executions.LogicalRuns != 1 || executions.MeasuredRuns != 1 {
+		t.Fatalf("logical=%d measured=%d, want 1/1", executions.LogicalRuns, executions.MeasuredRuns)
+	}
 	if executions.FailedRuns != 1 {
 		t.Fatalf("failed=%d, want 1 for a retained-only snapshot with failures", executions.FailedRuns)
 	}
 	if executions.SuccessfulRuns != 0 {
 		t.Fatalf("successful=%d, want 0", executions.SuccessfulRuns)
 	}
-	found := false
-	for _, failure := range executions.Failures {
-		if failure.Class == string(store.FailureInvalidOutput) && failure.Count == 1 {
-			found = true
-		}
+	// Exclusive: exactly one failure entry, the snapshot's class counted
+	// once. Extra or duplicated entries would still satisfy a
+	// contains-check while moving the reported measurement.
+	if len(executions.Failures) != 1 {
+		t.Fatalf("failures = %+v, want exactly one entry", executions.Failures)
 	}
-	if !found {
-		t.Fatalf("failure class %q not counted once: %+v", store.FailureInvalidOutput, executions.Failures)
+	if executions.Failures[0].Class != string(store.FailureInvalidOutput) || executions.Failures[0].Count != 1 {
+		t.Fatalf("failures = %+v, want {invalid_output 1}", executions.Failures)
 	}
 }
