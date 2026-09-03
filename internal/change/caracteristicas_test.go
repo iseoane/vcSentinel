@@ -145,16 +145,23 @@ func TestDetectorSecurityYConcurrencyDeclaranHeuristica(t *testing.T) {
 // detectarBaseDeDatos usa una forma de fixture parecida pero no pasa por aquí:
 // clasifica por sufijo y por e.PatronesData, sin reglasDe.
 func TestDetectoresUsanReglasInyectadas(t *testing.T) {
-	reglasCI := []Regla{{Clase: ClaseCI, Patrones: []string{"pipelines/**"}}}
-	comprobarInyeccion(t, detectarCICD, "ci_cd", "pipelines/build.yaml", reglasCI)
-
-	// La misma comprobación para infraestructura. Los dos detectores resuelven
-	// sus reglas por separado desde que contieneClase dejó de recibir la entrada
-	// completa, así que una regresión en uno ya no la caza el otro: es la misma
-	// asimetría que TestAtributosNoApaganLaDeteccionDeInfraestructura cerró para
-	// los atributos.
-	reglasInfra := []Regla{{Clase: ClaseInfra, Patrones: []string{"despliegue/**"}}}
-	comprobarInyeccion(t, detectarInfraestructura, "infrastructure", "despliegue/stack.yaml", reglasInfra)
+	// Subtests, no dos llamadas seguidas: el guard usa t.Fatalf, que corta la
+	// función de test entera. Encadenadas, un fixture caducado en ci_cd dejaría
+	// infraestructura sin ejecutar y el informe diría que solo falló uno — la
+	// misma asimetría que este test existe para cerrar, un nivel más arriba.
+	for _, caso := range []struct {
+		nombre   string
+		detector func(EntradaCaracteristicas) Caracteristica
+		ruta     string
+		reglas   []Regla
+	}{
+		{"ci_cd", detectarCICD, "pipelines/build.yaml", []Regla{{Clase: ClaseCI, Patrones: []string{"pipelines/**"}}}},
+		{"infrastructure", detectarInfraestructura, "despliegue/stack.yaml", []Regla{{Clase: ClaseInfra, Patrones: []string{"despliegue/**"}}}},
+	} {
+		t.Run(caso.nombre, func(t *testing.T) {
+			comprobarInyeccion(t, caso.detector, caso.nombre, caso.ruta, caso.reglas)
+		})
+	}
 }
 
 // comprobarInyeccion verifica que un detector honra las reglas inyectadas, y no
