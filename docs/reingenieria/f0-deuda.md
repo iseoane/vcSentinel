@@ -871,6 +871,27 @@ split the two populations into separate reported sets. Until then T9.4a
 records the failure-class axis as inadmissible for calibration; this is not a
 sample-size problem and no observation window fixes it.
 
+#### Partial close 2026-09-03 (T9.5)
+
+The first problem — the same failure counted twice — is fixed in
+`aggregateExecutions`: snapshot classes already counted from live terminal
+outcomes are skipped (`outcomeClassCounted`), so each class has one source
+per run. Live failure breakdowns drop to their true values once (measured
+on the live store: `failure` 213→123, `timeout` 5→3; every semantic class
+byte-identical — `invalid_output` 101, `schema_invalid` 31,
+`missing_semantic_payload` 27, `provider_error` 2, `cancellation` 28,
+`unavailable` 9 — which is the proof the skip removes only duplicates).
+This changes what `sentinel metrics` reports for measured failed runs; the
+T9.4a-era figures quoted above predate the fix. What made the fix mandatory
+here rather than optional: T9.5's acceptance is byte-identical metrics
+before and after retention, and a collected failed run contributes its
+snapshot alone — without the skip, every collected failure moved the
+breakdown from two counts to one.
+
+What stays open: the second problem (merged populations with no source tag
+or coverage denominator) is untouched, and the failure-class axis remains
+inadmissible for calibration until it lands.
+
 ### FU-9: observed identity sits in the event stream where the producer cannot read it
 
 Recorded 2026-09-01 while evaluating T9.4a's model-calibration axis.

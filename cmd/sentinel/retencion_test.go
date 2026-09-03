@@ -12,17 +12,19 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/metrics"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/metrics"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 func retencionGit(t *testing.T, dir string, args ...string) string {
@@ -75,6 +77,10 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	runPublished, invPublished := seedMeasured("candidate:published")
 	runUnpublished, invUnpublished := seedMeasured("candidate:unpublished")
 	runUnmeasured, invUnmeasured := seedPruneTerminalRun(t, backing, "candidate:unmeasured", ancient)
+	// A failed published run with a faithful finalize fold (the outcome
+	// cast plus one semantic class): the breakdown must survive
+	// collection exactly, which is what catches double counting.
+	runFailed, invFailed := seedPruneFailedRun(t, backing, ancient)
 
 	ledger := review.NuevoLedger(commonDir)
 	guardarFicha := func(sha, invocation string) {
@@ -109,6 +115,7 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	guardarFicha(shaPublished, invPublished)
 	guardarFicha(shaUnpublished, invUnpublished)
 	guardarFicha(shaPublished, invUnmeasured)
+	guardarFicha(shaPublished, invFailed)
 
 	metricsBefore, err := metrics.AggregateStore(commonDir)
 	if err != nil {
@@ -118,7 +125,7 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metricsBefore.Findings.Observed == 0 || metricsBefore.Findings.Confirmed == 0 || metricsBefore.Executions.MeasuredRuns != 2 {
+	if metricsBefore.Findings.Observed == 0 || metricsBefore.Findings.Confirmed == 0 || metricsBefore.Executions.MeasuredRuns != 3 {
 		t.Fatalf("fixture is evidence-free (findings=%d confirmed=%d measured=%d): the invariance check would pass vacuously",
 			metricsBefore.Findings.Observed, metricsBefore.Findings.Confirmed, metricsBefore.Executions.MeasuredRuns)
 	}
@@ -133,8 +140,8 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	if len(undecidable) != 0 {
 		t.Fatalf("undecidable = %v, want none: every fixture SHA resolves", undecidable)
 	}
-	if report.Pruned != 1 {
-		t.Fatalf("pruned = %d, want 1 (only the measured published run): %+v", report.Pruned, report.Decisions)
+	if report.Pruned != 2 {
+		t.Fatalf("pruned = %d, want 2 (the measured published runs): %+v", report.Pruned, report.Decisions)
 	}
 
 	stillThere := func(runID string) bool {
@@ -153,14 +160,19 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	if stillThere(runPublished) {
 		t.Fatalf("measured published run %s was not collected", runPublished)
 	}
+	if stillThere(runFailed) {
+		t.Fatalf("measured published failed run %s was not collected", runFailed)
+	}
 	if !stillThere(runUnpublished) {
 		t.Fatalf("unpublished run %s was collected", runUnpublished)
 	}
 	if !stillThere(runUnmeasured) {
 		t.Fatalf("unmeasured published run %s was collected without a snapshot", runUnmeasured)
 	}
-	if snapshot, err := backing.ReadExecutionMetrics(runPublished); err != nil || snapshot == nil {
-		t.Fatalf("snapshot of collected run must survive: got=%v err=%v", snapshot, err)
+	for _, collected := range []string{runPublished, runFailed} {
+		if snapshot, err := backing.ReadExecutionMetrics(collected); err != nil || snapshot == nil {
+			t.Fatalf("snapshot of collected run %s must survive: got=%v err=%v", collected, snapshot, err)
+		}
 	}
 	for _, sha := range []string{shaPublished, shaUnpublished} {
 		if ficha, err := ledger.LeerFicha(sha[:40]); err != nil || ficha == nil {
@@ -421,4 +433,55 @@ func TestRetentionSkipNoteReachesTheCallerWriter(t *testing.T) {
 	if !strings.Contains(out.String(), "retention skipped") {
 		t.Fatalf("skip note missing from caller writer: %q", out.String())
 	}
+}
+
+// seedPruneFailedRun admits a run through the real CreateRun/AppendEvent
+// machinery and settles its single attempt as failed, with a metrics
+// snapshot faithful to what finalization would fold for it: the outcome
+// cast plus one semantic class. It returns the run and invocation
+// identities, the latter being what review provenance records cite.
+func seedPruneFailedRun(t *testing.T, backing *store.Store, start time.Time) (string, string) {
+	t.Helper()
+	job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
+		agentrun.Candidate("candidate:failed"), agentrun.Prompt("prune fixture"), nil))
+	if err := backing.CreateRun(job, store.RunPolicy{ID: "policy:prune"}); err != nil {
+		t.Fatal(err)
+	}
+	runID := string(job.RunID())
+	invocation, err := agentrun.NewRootInvocation(job, 1, agentrun.DecisionStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transitions := []struct {
+		from     agentrun.LifecycleState
+		to       agentrun.LifecycleState
+		decision agentrun.Decision
+	}{
+		{agentrun.StateCreated, agentrun.StateQueued, agentrun.DecisionStart},
+		{agentrun.StateQueued, agentrun.StateAdmitted, agentrun.DecisionStart},
+		{agentrun.StateAdmitted, agentrun.StateRunning, agentrun.DecisionStart},
+		{agentrun.StateRunning, agentrun.StateFailed, agentrun.DecisionNone},
+	}
+	for revision, transition := range transitions {
+		event, eventErr := agentrun.NewNormalizedEvent(invocation,
+			transition.from, transition.to, transition.decision, start.Add(time.Duration(revision)*time.Second))
+		if eventErr != nil {
+			t.Fatal(eventErr)
+		}
+		if _, appendErr := backing.AppendEvent(runID, event, uint64(revision)); appendErr != nil {
+			t.Fatal(appendErr)
+		}
+	}
+	snapshot := store.ExecutionMetrics{
+		Version: store.ExecutionMetricsSchemaVersion,
+		RunID:   runID,
+		Failures: []store.ExecutionFailure{
+			{InvocationID: invocation.InvocationID().String(), Class: store.FailureClass(agentrun.OutcomeFailure)},
+			{InvocationID: invocation.InvocationID().String(), Class: store.FailureInvalidOutput},
+		},
+	}
+	if err := backing.SaveExecutionMetrics(snapshot); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
+	return runID, invocation.InvocationID().String()
 }

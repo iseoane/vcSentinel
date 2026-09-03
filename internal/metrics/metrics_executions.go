@@ -95,14 +95,18 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 		// Snapshot failure classes join the breakdown except for in-flight
 		// groups (outcomes present, none terminal): there the snapshot is a
 		// stale record of a superseded attempt and must not publish classes
-		// alongside zero counters. Everywhere else the historical fold stands
-		// untouched — including its known double counting of outcome-derived
-		// classes and stale semantic classes for retried-then-settled runs.
-		// Both are FU-8's recorded target, and "fixing" either here would
-		// move the very aggregates retention promises to leave byte-identical.
+		// alongside zero counters. Classes the live stream already counted
+		// are skipped as well: the outcomes loop above appends every terminal
+		// non-success class, and the snapshot folds those same outcomes back
+		// under an equal name, so appending both counts one failure twice
+		// (FU-8's double source). Semantic-only classes never match a live
+		// outcome and always survive. Retained-only snapshots have no live
+		// outcomes, so they publish whole — which is exactly what makes
+		// collection invisible: the collected stream's classes equal the
+		// snapshot's, one for one.
 		if metricsSnapshot != nil && (terminal || len(outcomes) == 0) {
 			for _, failure := range metricsSnapshot.Failures {
-				if failure.Class != "" {
+				if failure.Class != "" && !outcomeClassCounted(outcomes, failure.Class) {
 					result.Failures = appendFailure(result.Failures, string(failure.Class))
 				}
 			}
@@ -688,6 +692,20 @@ func finalOutcome(outcomes []store.AttemptOutcome) (agentrun.OutcomeClass, bool)
 		}
 	}
 	return "", false
+}
+
+// outcomeClassCounted reports whether the live stream already counted the
+// class: the outcomes loop appends every terminal non-success class, so a
+// snapshot class equal to one of those is the same failure folded back,
+// not a second one. Success outcomes count nothing and match nothing.
+func outcomeClassCounted(outcomes []store.AttemptOutcome, class store.FailureClass) bool {
+	for _, outcome := range outcomes {
+		if outcome.Class.IsTerminal() && outcome.Class != agentrun.OutcomeSuccess &&
+			string(outcome.Class) == string(class) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendFailure(failures []FailureAggregate, class string) []FailureAggregate {
