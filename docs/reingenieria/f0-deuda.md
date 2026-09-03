@@ -1548,3 +1548,36 @@ and it was calibrated against both mutations: removing the check clears the
 block across branches, and reversing the argument order stops a genuine
 descendant from clearing it — which is the exact error this entry's own target
 line contained before it was corrected.
+
+### FU-19: an unparseable finding silently downgrades a block to "unavailable"
+
+Recorded 2026-09-03, from a `spec` dimension that reported `unavailable` with
+`reason="semantic review output schema_invalid"`.
+
+The reviewer had produced a CRITICAL finding. Its `line` field carried
+`"17-19, 23-48"` — a range as text, for a diff whose problem spans several
+hunks — where the schema expects a number. The whole output was rejected, so the
+finding never reached the ficha, and the dimension came back as if it had not
+run.
+
+**That is this register's own recurring shape: a failure that reads as an
+absence.** `unavailable` says "this dimension has zero coverage", which the
+operator is told never to accept as a pass. Here it meant the opposite of zero
+coverage: the reviewer had an answer and it was `block`. An operator re-running
+the dimension gets the same rejection, so the finding is unreachable by retry
+and the only way to see it is to read the raw reason string, where it survives
+truncated.
+
+Measured: the substance was recovered from
+`revisions[-1].dims[].reason`, which quotes the raw payload up to a length cap.
+
+Target: parse what can be parsed. A finding whose `line` cannot be read is still
+a finding — with an unknown line, not with no existence. Rejecting the whole
+payload for one malformed field trades a cosmetic defect for a lost verdict.
+Decide separately whether `line` should accept a range, which is what a reviewer
+naturally reports for a multi-hunk problem.
+
+Priority: before trusting `unavailable` to mean what it says. It is currently
+two different states wearing one name — "the reviewer never answered" and "the
+reviewer answered and we dropped it" — and only the first is safe to retry.
+
