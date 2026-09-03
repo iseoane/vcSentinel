@@ -135,6 +135,10 @@ func TestDetectorSecurityYConcurrencyDeclaranHeuristica(t *testing.T) {
 // este fix, detectarCICD (vía contieneClase) ignoraba EntradaCaracteristicas
 // y llamaba siempre a ReglasPorDefecto(), así que una regla de usuario nunca
 // podía cambiar la clasificación.
+//
+// Cubre los DOS detectores que pasan por contieneClase. Desde que el helper
+// recibe rutas y reglas en vez de la entrada completa, cada uno resuelve las
+// suyas, y una regresión en uno dejó de estar cubierta por el otro.
 func TestDetectoresUsanReglasInyectadas(t *testing.T) {
 	reglasPersonalizadas := []Regla{{Clase: ClaseCI, Patrones: []string{"pipelines/**"}}}
 	entrada := EntradaCaracteristicas{Rutas: []string{"pipelines/build.yaml"}, Reglas: reglasPersonalizadas}
@@ -143,6 +147,20 @@ func TestDetectoresUsanReglasInyectadas(t *testing.T) {
 	}
 	if got := detectarCICD(EntradaCaracteristicas{Rutas: []string{"pipelines/build.yaml"}}).Estado; got != CaracteristicaAusente {
 		t.Errorf("ci_cd sin la regla inyectada (solo defaults) = %q, quiere ausente", got)
+	}
+
+	// La misma comprobación para infraestructura. Los dos detectores resuelven
+	// sus reglas por separado desde que contieneClase dejó de recibir la entrada
+	// completa, así que una regresión en uno ya no la caza el otro: es la misma
+	// asimetría que TestAtributosNoApaganLaDeteccionDeInfraestructura cerró para
+	// los atributos.
+	reglasInfra := []Regla{{Clase: ClaseInfra, Patrones: []string{"despliegue/**"}}}
+	conRegla := EntradaCaracteristicas{Rutas: []string{"despliegue/stack.yaml"}, Reglas: reglasInfra}
+	if got := detectarInfraestructura(conRegla).Estado; got != CaracteristicaPresente {
+		t.Errorf("infrastructure con regla inyectada = %q, quiere presente", got)
+	}
+	if got := detectarInfraestructura(EntradaCaracteristicas{Rutas: []string{"despliegue/stack.yaml"}}).Estado; got != CaracteristicaAusente {
+		t.Errorf("infrastructure sin la regla inyectada (solo defaults) = %q, quiere ausente", got)
 	}
 }
 
