@@ -6,6 +6,8 @@
 package store
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,13 +35,13 @@ func TestPruneExecutionsKeepsRunsWithoutMetricsSnapshot(t *testing.T) {
 	}
 }
 
-// TestPruneExecutionsKeepsMultiAttemptRuns proves retry evidence is never
-// collected through the snapshot: the schema records no attempt
-// multiplicity, so deleting the stream would move the retried-runs
-// aggregate. The fixture pins both halves: two reconciled outcomes (so the
-// guard, not the snapshot absence, is what keeps it) and a saved snapshot.
-func TestPruneExecutionsKeepsMultiAttemptRuns(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+// seedPruneRetryRun admits a run through the controller's retry shape:
+// first attempt fails terminally, a DecisionRetry event relaunches attempt
+// two, which succeeds. It returns the run identity; the fixture always
+// carries two reconciled outcomes, pinned below so a silent fixture change
+// cannot turn the multi-attempt guards it exercises into dead coverage.
+func seedPruneRetryRun(t *testing.T, s *Store) string {
+	t.Helper()
 	job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 		agentrun.Candidate("candidate:retried"), agentrun.Prompt("retried"), nil))
 	if err := s.CreateRun(job, RunPolicy{ID: "policy:prune"}); err != nil {
@@ -84,6 +86,17 @@ func TestPruneExecutionsKeepsMultiAttemptRuns(t *testing.T) {
 	if len(outcomes) != 2 {
 		t.Fatalf("fixture run %s has %d outcomes, want 2 attempts", runID, len(outcomes))
 	}
+	return runID
+}
+
+// TestPruneExecutionsKeepsMultiAttemptRuns proves retry evidence is never
+// collected through the snapshot: the schema records no attempt
+// multiplicity, so deleting the stream would move the retried-runs
+// aggregate. The saved snapshot isolates the guard: snapshot absence would
+// keep the run for the wrong reason.
+func TestPruneExecutionsKeepsMultiAttemptRuns(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	runID := seedPruneRetryRun(t, s)
 	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: runID}); err != nil {
 		t.Fatalf("SaveExecutionMetrics() error = %v", err)
 	}
@@ -95,6 +108,27 @@ func TestPruneExecutionsKeepsMultiAttemptRuns(t *testing.T) {
 	assertKept(t, report, runID, "attempt")
 	if !executionDirectoryExists(t, s, runID) {
 		t.Fatalf("multi-attempt run %s was removed", runID)
+	}
+}
+
+// TestRemoveExecutionDirectoryRefusesMultiAttemptUnderLock proves the
+// locked re-verification closes the classify→delete window for retries: a
+// second attempt settling after classification still refuses the deletion
+// with a typed refusal instead of destroying retry evidence.
+func TestRemoveExecutionDirectoryRefusesMultiAttemptUnderLock(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	runID := seedPruneRetryRun(t, s)
+
+	err := s.removeExecutionDirectory(runID, nil)
+	var refusal pruneInLockRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("removeExecutionDirectory error = %v, want a typed in-lock refusal", err)
+	}
+	if !strings.Contains(refusal.reason, "attempt") {
+		t.Fatalf("refusal reason = %q, want the multi-attempt guard", refusal.reason)
+	}
+	if !executionDirectoryExists(t, s, runID) {
+		t.Fatalf("refused removal deleted the record anyway")
 	}
 }
 

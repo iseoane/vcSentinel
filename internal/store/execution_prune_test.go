@@ -317,6 +317,7 @@ func TestPruneReasonConstantsMatchDocumentedContract(t *testing.T) {
 		"PruneReasonProvenanceFmt":       PruneReasonProvenanceFmt,
 		"PruneReasonParentOfSurvivorFmt": PruneReasonParentOfSurvivorFmt,
 		"PruneReasonRemovalFailedFmt":    PruneReasonRemovalFailedFmt,
+		"PruneReasonRemovalRemnant":      PruneReasonRemovalRemnant,
 	}
 	expected := map[string]string{
 		"PruneActionPruned":              "pruned",

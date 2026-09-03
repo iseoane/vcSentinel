@@ -277,11 +277,13 @@ func (s *Store) classifyForPrune(runID string, cutoff time.Time, referencedInvoc
 	}
 	// T9.5 collection guards: pruning must be invisible to measurement. A
 	// missing snapshot keeps the execution — absence is unknown, never
-	// zero — and a run settled in more than one attempt keeps its stream,
-	// because the snapshot records no attempt multiplicity and the
-	// retried-runs aggregate reads it only from these bytes. A snapshot
-	// that cannot be read keeps the run too: an undecidable measurement
-	// never authorizes a deletion.
+	// zero — and a run settled in more than one attempt keeps its stream.
+	// The attempt count comes from ReadAttemptOutcomes, the same reconciled
+	// source the metrics aggregator groups by: the snapshot records no
+	// attempt multiplicity, so the retried-runs aggregate reads it only
+	// from these bytes. A snapshot or outcome set that cannot be read
+	// keeps the run too: an undecidable measurement never authorizes a
+	// deletion.
 	snapshot, snapshotErr := s.ReadExecutionMetrics(runID)
 	if snapshotErr != nil {
 		return kept(fmt.Sprintf(PruneReasonUnreadableFmt, snapshotErr))
@@ -289,27 +291,28 @@ func (s *Store) classifyForPrune(runID string, cutoff time.Time, referencedInvoc
 	if snapshot == nil {
 		return kept(PruneReasonNoMetricsSnapshot)
 	}
-	if terminalInvocationCount(log.frames) > 1 {
+	outcomes, outcomesErr := s.ReadAttemptOutcomes(runID)
+	if outcomesErr != nil {
+		return kept(fmt.Sprintf(PruneReasonUnreadableFmt, outcomesErr))
+	}
+	if attemptCount(outcomes) > 1 {
 		return kept(PruneReasonMultiAttempt)
 	}
 	return prunableRun{runID: runID, parentRunID: survivorLink, prunable: true}
 }
 
-// terminalInvocationCount counts distinct invocation identities among
-// terminal frames: one per settled attempt. An empty identity never
-// collapses into another attempt: an unattributable terminal frame keeps
-// the run, because assuming single-attempt would delete retry evidence on
-// a guess.
-func terminalInvocationCount(frames []EventFrame) int {
+// attemptCount counts distinct settled attempts in reconciled outcomes by
+// invocation identity: the same per-invocation population the metrics
+// aggregator deduplicates into logical runs. An empty identity never
+// collapses into another attempt: an unattributable outcome keeps the run,
+// because assuming single-attempt would delete retry evidence on a guess.
+func attemptCount(outcomes []AttemptOutcome) int {
 	seen := map[string]bool{}
-	for _, frame := range frames {
-		if frame.To.TerminalClass() == agentrun.TerminalNone {
-			continue
-		}
-		if frame.InvocationID == "" {
+	for _, outcome := range outcomes {
+		if outcome.InvocationID == "" {
 			return 2
 		}
-		seen[frame.InvocationID] = true
+		seen[outcome.InvocationID] = true
 	}
 	return len(seen)
 }
@@ -373,15 +376,16 @@ func (s *Store) removeExecutionRemnant(runID string) error {
 }
 
 // removeExecutionDirectory deletes one whole execution record under its
-// cross-process event lock. The locked section re-verifies the stream AND
-// the provenance guards (ticket 13 hardening pool, JD-R10 W1): a reference
-// persisted between classification and lock, or a child run that appeared
-// naming this record as parent, refuses the deletion with a typed refusal
-// instead of destroying evidence. It then removes every child except the
-// lock file itself; the lock file and the directory are removed after
-// releasing the lock, because Windows refuses to rename or delete paths
-// under an open handle. A failure anywhere leaves whatever was not yet
-// deleted in place and reports the error.
+// cross-process event lock. The locked section re-verifies the stream, the
+// provenance guards, and the T9.5 attempt guard (ticket 13 hardening pool,
+// JD-R10 W1): a reference persisted between classification and lock, a
+// child run that appeared naming this record as parent, or a retry attempt
+// that settled inside the classify→delete window refuses the deletion with
+// a typed refusal instead of destroying evidence. It then removes every
+// child except the lock file itself; the lock file and the directory are
+// removed after releasing the lock, because Windows refuses to rename or
+// delete paths under an open handle. A failure anywhere leaves whatever was
+// not yet deleted in place and reports the error.
 func (s *Store) removeExecutionDirectory(runID string, referencedInvocations map[string]bool) error {
 	directory, err := s.executionDir(runID)
 	if err != nil {
@@ -415,6 +419,23 @@ func (s *Store) removeExecutionDirectory(runID string, referencedInvocations map
 			return pruneInLockRefusal{
 				reason: fmt.Sprintf(PruneReasonParentOfSurvivorFmt, child),
 			}
+		}
+		// The classify→delete window can also complete a retry: a run
+		// classified as single-attempt may settle a second attempt after
+		// classification, and the terminal re-check above goes green again
+		// once it does. Re-derive the attempt count from the same
+		// reconciled outcomes the classifier used and refuse on growth.
+		// The snapshot needs no re-check: snapshots are write-once
+		// immutable with no deletion path, so classify-time presence is
+		// stable across this window, while attempts can still appear.
+		lockedOutcomes, lockedOutcomesErr := s.ReadAttemptOutcomes(runID)
+		if lockedOutcomesErr != nil {
+			return pruneInLockRefusal{
+				reason: fmt.Sprintf(PruneReasonUnreadableFmt, lockedOutcomesErr),
+			}
+		}
+		if attemptCount(lockedOutcomes) > 1 {
+			return pruneInLockRefusal{reason: PruneReasonMultiAttempt}
 		}
 		entries, readErr := os.ReadDir(directory)
 		if readErr != nil {
