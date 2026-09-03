@@ -155,9 +155,14 @@ func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
 // como mínimo.
 //
 // La regla, decidida y registrada: si el repositorio declara un árbol generado,
-// lo es para toda la clasificación. ClasificarPorRuta sigue existiendo para los
-// llamadores que no tienen atributos que ofrecer, no como la mitad silenciosa
-// de una divergencia.
+// lo es para la clasificación que razona sobre el código, es decir para
+// admiteEvidenciaDeContenido, detectarCodigoGenerado,
+// detectarCambioDeComportamiento y detectarCoberturaDeTests.
+//
+// La única excepción, nombrada aquí y justificada en su punto de llamada, es
+// contieneClase: ci_cd e infrastructure preguntan qué superficie toca el cambio,
+// no si es fuente, y honrar ahí el atributo le daría al repositorio auditado un
+// interruptor para apagar la detección de su propio CI.
 func detectarCambioDeComportamiento(e EntradaCaracteristicas) Caracteristica {
 	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
@@ -255,10 +260,22 @@ func estado(presente bool) EstadoCaracteristica {
 	}
 	return CaracteristicaAusente
 }
+
+// contieneClase clasifica POR RUTA a propósito, sin honrar los atributos, y es
+// la única excepción a la regla de FU-14. Sus dos consumidores, detectarCICD y
+// detectarInfraestructura, no preguntan "¿es esto código fuente cuyo
+// comportamiento importa?" sino "¿toca este cambio esa superficie?", y un
+// workflow es un workflow aunque lo genere una herramienta.
+//
+// Medido: con `.github/workflows/deploy.yml linguist-generated`, honrar el
+// atributo hacía que ci_cd pasara de presente a ausente. Eso convierte una marca
+// de presentación en un interruptor con el que el repositorio auditado apaga la
+// detección de su propio CI e infraestructura, que es justo lo que no puede
+// depender de una declaración del sujeto.
 func contieneClase(e EntradaCaracteristicas, clase string) bool {
 	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
-		if Clasificar(ruta, reglas, e.Gitattributes) == clase {
+		if ClasificarPorRuta(ruta, reglas) == clase {
 			return true
 		}
 	}

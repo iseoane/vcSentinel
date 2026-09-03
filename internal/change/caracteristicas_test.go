@@ -230,3 +230,48 @@ func TestConcurrencyIgnoresProseAndGeneratedContent(t *testing.T) {
 		}
 	}
 }
+
+// TestAtributosNoApaganLaDeteccionDeCI pins the one exception to FU-14's rule,
+// and it is a security boundary rather than a style choice.
+//
+// Every detector that reasons about the code honours `linguist-generated`,
+// because a repository declaring a tree generated is stating something true
+// about its own source. contieneClase does not, and its two consumers are why:
+// ci_cd and infrastructure ask which surface a change touches, not whether it
+// is source. A workflow is a workflow even when a tool wrote it.
+//
+// Measured before the exception existed: marking the workflow generated turned
+// ci_cd from present to absent, which handed the audited repository a switch for
+// the detection of its own CI.
+func TestAtributosNoApaganLaDeteccionDeCI(t *testing.T) {
+	const workflow = ".github/workflows/deploy.yml"
+	e := EntradaCaracteristicas{Rutas: []string{workflow}}
+	if !contieneClase(e, ClaseCI) {
+		t.Fatalf("%s is not classified as CI without attributes; the fixture no longer exercises the case", workflow)
+	}
+
+	e.Gitattributes = workflow + " linguist-generated\n"
+	if !contieneClase(e, ClaseCI) {
+		t.Errorf("%s stopped being CI once the repository marked it linguist-generated; a repository must not be able to switch off the detection of its own CI surface", workflow)
+	}
+}
+
+// TestAtributosApaganElCambioDeComportamiento holds the other side, so the
+// exception above cannot quietly become the rule. A declared-generated source
+// path must stop counting as behaviour change: that is FU-14 itself, and it is
+// what stops every regeneration of such a tree from being elevated risk.
+func TestAtributosApaganElCambioDeComportamiento(t *testing.T) {
+	const generado = "internal/api/wire.go"
+	e := EntradaCaracteristicas{
+		Rutas:          []string{generado},
+		LineasAnadidas: map[string][]string{generado: {"\taccessToken := os.Getenv(\"SERVICE_TOKEN\")"}},
+	}
+	if detectarCambioDeComportamiento(e).Estado != CaracteristicaPresente {
+		t.Fatalf("%s is not a behaviour change without attributes; the fixture no longer exercises the case", generado)
+	}
+
+	e.Gitattributes = generado + " linguist-generated\n"
+	if estado := detectarCambioDeComportamiento(e).Estado; estado != CaracteristicaAusente {
+		t.Errorf("behavior_change = %q for a declared-generated path, want %q", estado, CaracteristicaAusente)
+	}
+}

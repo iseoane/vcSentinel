@@ -2047,10 +2047,16 @@ func TestPlanForProfileClassifiesWithRepositoryAttributes(t *testing.T) {
 // rather than a bundle count that three unrelated bundles would satisfy.
 //
 // The same path, the same executable added line, and the same attribute: only
-// the detectors differ. security_sensitive and generated_code classify through
-// Clasificar and honour linguist-generated; behavior_change classifies through
-// ClasificarPorRuta and never sees it. Resolving FU-14 must fail here rather
-// than pass unnoticed.
+// the detectors differ. FU-14 was resolved 2026-09-03 and the rule is now that
+// a tree the repository declares generated is generated for every detector that
+// reasons about the CODE — security_sensitive, generated_code, behavior_change
+// and test coverage.
+//
+// contieneClase, which is what ci_cd and infrastructure read, is the one named
+// exception and classifies by path only: those ask which surface a change
+// touches, not whether it is source, and honouring the attribute there let the
+// audited repository switch off the detection of its own CI. That half is
+// pinned in internal/change, next to the code it constrains.
 func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	profile := change.ChangeProfile{Kind: "generated", Symbols: change.ChangeSymbols{Modified: 1, Complete: true}}
 	paths := []string{"internal/api/wire.go"}
@@ -2085,17 +2091,41 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	// which meant every regeneration of a declared-generated tree was at least
 	// elevated. The two halves of the split are gone and this asserts the rule
 	// that replaced them.
-	if caracteristicaPresente(con.Characteristics, "behavior_change") {
-		t.Error("behavior_change survived linguist-generated; a tree the repository declares generated is generated for every detector, not only the content ones (FU-14)")
+	// ABSENT, asserted exactly. caracteristicaPresente only answers "is it
+	// present", so !caracteristicaPresente is satisfied by `indeterminate` too —
+	// and the entry claims absent, which is a stronger and different statement.
+	if estado := estadoCaracteristica(con.Characteristics, "behavior_change"); estado != change.CaracteristicaAusente {
+		t.Errorf("behavior_change = %q under linguist-generated, want %q; a tree the repository declares generated is not source for the detectors that reason about code (FU-14)",
+			estado, change.CaracteristicaAusente)
 	}
 	// The characteristic is only half of what the rule costs; the scheduling is
-	// the half that spends agent invocations. Naming behavior_change in the risk
-	// explanation is what used to tie the two together, so its ABSENCE from the
-	// explanation is what pins the resolution: whatever risk this path now
-	// carries, it is no longer decided by a characteristic the repository said
-	// does not apply.
+	// the half that spends agent invocations. Both directions are asserted,
+	// because a negative substring check alone is satisfied vacuously: an
+	// implementation that returned an empty explanation, or none at all, would
+	// pass it while telling us nothing.
+	if con.Risk.Explicacion == "" {
+		t.Fatal("risk carries no explanation, so the negative assertion below would pass without observing anything")
+	}
 	if strings.Contains(con.Risk.Explicacion, "behavior_change") {
 		t.Errorf("risk %q is still explained by %q; a declared-generated path must not schedule work through behavior_change any more",
 			con.Risk.Nivel, con.Risk.Explicacion)
 	}
+	// The positive side, kept from the version this replaced: the path still
+	// carries generated_code, so the attribute reached the classifier at all and
+	// the assertions above are not passing because nothing was classified.
+	if !caracteristicaPresente(con.Characteristics, "generated_code") {
+		t.Fatal("generated_code = absent, so the attribute never reached the classifier and every assertion above is vacuous")
+	}
+}
+
+// estadoCaracteristica devuelve el estado exacto de una característica, que es
+// lo que distingue `absent` de `indeterminate`. caracteristicaPresente colapsa
+// los dos en "no presente", y hay aserciones que necesitan la diferencia.
+func estadoCaracteristica(caracteristicas []change.Caracteristica, nombre string) change.EstadoCaracteristica {
+	for _, caracteristica := range caracteristicas {
+		if caracteristica.Nombre == nombre {
+			return caracteristica.Estado
+		}
+	}
+	return ""
 }

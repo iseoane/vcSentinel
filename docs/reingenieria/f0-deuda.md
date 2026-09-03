@@ -1349,9 +1349,29 @@ generated trees are, and it can stop declaring one at any time.
 
 The characterisation was updated with the code, as the test's own message
 demanded. Its oracle flipped rather than being deleted: `behavior_change` must
-now be ABSENT under the attribute, and the risk explanation must NOT name it,
-because naming it was what tied the scheduled work to the characteristic this
-entry is about.
+now be ABSENT under the attribute — the exact state, not merely "not present",
+which `indeterminate` also satisfies — and the risk explanation must NOT name
+it, because naming it was what tied the scheduled work to the characteristic
+this entry is about. A positive assertion sits beside both, because a pair of
+negative checks passes vacuously against an implementation that classified
+nothing at all.
+
+**One named exception, added 2026-09-03 after the review measured what the
+uniform rule cost.** `contieneClase`, which is what `ci_cd` and `infrastructure`
+read, keeps classifying by path alone. Those two ask which surface a change
+touches rather than whether it is source, and a workflow is a workflow even when
+a tool wrote it. Measured under the uniform rule: marking
+`.github/workflows/deploy.yml` as `linguist-generated` turned `ci_cd` from
+present to absent, which handed the audited repository a switch for the
+detection of its own CI. A classification that decides how much review a change
+gets must not be disableable by a declaration from its subject.
+
+That is the shape this entry's own target anticipated — "if some detectors must
+stay attribute-blind, name them and say why at the call site" — and it is why
+the exception is documented where `contieneClase` is defined and pinned by
+`TestAtributosNoApaganLaDeteccionDeCI` next to it, with
+`TestAtributosApaganElCambioDeComportamiento` holding the other side so the
+exception cannot quietly become the rule.
 
 ### FU-15: a corrupt object is indistinguishable from a collected one
 
