@@ -88,7 +88,7 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 			}
 		}
 		for _, outcome := range outcomes {
-			if outcome.Class.IsTerminal() && outcome.Class != agentrun.OutcomeSuccess {
+			if countsForBreakdown(outcome.Class) {
 				result.Failures = appendFailure(result.Failures, string(outcome.Class))
 			}
 		}
@@ -700,8 +700,7 @@ func finalOutcome(outcomes []store.AttemptOutcome) (agentrun.OutcomeClass, bool)
 // not a second one. Success outcomes count nothing and match nothing.
 func outcomeClassCounted(outcomes []store.AttemptOutcome, class store.FailureClass) bool {
 	for _, outcome := range outcomes {
-		if outcome.Class.IsTerminal() && outcome.Class != agentrun.OutcomeSuccess &&
-			string(outcome.Class) == string(class) {
+		if countsForBreakdown(outcome.Class) && string(outcome.Class) == string(class) {
 			return true
 		}
 	}
@@ -716,6 +715,14 @@ func appendFailure(failures []FailureAggregate, class string) []FailureAggregate
 		}
 	}
 	return append(failures, FailureAggregate{Class: class, Count: 1})
+}
+
+// countsForBreakdown reports whether an outcome class contributes its name
+// to the failure breakdown: terminal and not success. Single home for the
+// rule the aggregation loop and outcomeClassCounted both apply, so the two
+// cannot drift into counting different populations.
+func countsForBreakdown(class agentrun.OutcomeClass) bool {
+	return class.IsTerminal() && class != agentrun.OutcomeSuccess
 }
 
 func percentile(values []int64, p float64) int64 {
