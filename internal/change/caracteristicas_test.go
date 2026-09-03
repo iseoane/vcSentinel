@@ -136,22 +136,17 @@ func TestDetectorSecurityYConcurrencyDeclaranHeuristica(t *testing.T) {
 // y llamaba siempre a ReglasPorDefecto(), así que una regla de usuario nunca
 // podía cambiar la clasificación.
 //
-// Cubre detectarCICD y detectarInfraestructura, que son los dos ÚNICOS
-// llamantes de contieneClase (caracteristicas.go:244 y 247). Desde que el helper
-// recibe rutas y reglas en vez de la entrada completa, cada uno resuelve las
-// suyas, y una regresión en uno dejó de estar cubierta por el otro.
+// Cubre detectarCICD y detectarInfraestructura, los llamantes de contieneClase.
+// Desde que el helper recibe rutas y reglas en vez de la entrada completa, cada
+// uno resuelve las suyas, y una regresión en uno dejó de estar cubierta por el
+// otro. Un tercer llamante que apareciera sin caso aquí reabriría esa asimetría;
+// no hay nada que lo detecte automáticamente.
 //
 // detectarBaseDeDatos usa una forma de fixture parecida pero no pasa por aquí:
 // clasifica por sufijo y por e.PatronesData, sin reglasDe.
 func TestDetectoresUsanReglasInyectadas(t *testing.T) {
-	reglasPersonalizadas := []Regla{{Clase: ClaseCI, Patrones: []string{"pipelines/**"}}}
-	entrada := EntradaCaracteristicas{Rutas: []string{"pipelines/build.yaml"}, Reglas: reglasPersonalizadas}
-	if got := detectarCICD(entrada).Estado; got != CaracteristicaPresente {
-		t.Errorf("ci_cd con regla inyectada = %q, quiere presente", got)
-	}
-	if got := detectarCICD(EntradaCaracteristicas{Rutas: []string{"pipelines/build.yaml"}}).Estado; got != CaracteristicaAusente {
-		t.Errorf("ci_cd sin la regla inyectada (solo defaults) = %q, quiere ausente", got)
-	}
+	reglasCI := []Regla{{Clase: ClaseCI, Patrones: []string{"pipelines/**"}}}
+	comprobarInyeccion(t, detectarCICD, "ci_cd", "pipelines/build.yaml", reglasCI)
 
 	// La misma comprobación para infraestructura. Los dos detectores resuelven
 	// sus reglas por separado desde que contieneClase dejó de recibir la entrada
@@ -159,17 +154,25 @@ func TestDetectoresUsanReglasInyectadas(t *testing.T) {
 	// asimetría que TestAtributosNoApaganLaDeteccionDeInfraestructura cerró para
 	// los atributos.
 	reglasInfra := []Regla{{Clase: ClaseInfra, Patrones: []string{"despliegue/**"}}}
-	sinRegla := EntradaCaracteristicas{Rutas: []string{"despliegue/stack.yaml"}}
-	// Guard antes del caso positivo, como en los tests de atributos de este
-	// fichero: si las reglas por defecto crecieran para cubrir "despliegue/**",
-	// el positivo pasaría sin que la inyección hiciera nada, y el negativo
-	// fallaría diciendo solo "quiere ausente" en vez de que el fixture caducó.
-	if got := detectarInfraestructura(sinRegla).Estado; got != CaracteristicaAusente {
-		t.Fatalf("los defaults ya clasifican despliegue/stack.yaml como infraestructura (%q); el fixture ya no distingue la inyección de reglas", got)
+	comprobarInyeccion(t, detectarInfraestructura, "infrastructure", "despliegue/stack.yaml", reglasInfra)
+}
+
+// comprobarInyeccion verifica que un detector honra las reglas inyectadas, y no
+// solo que la ruta del fixture no coincide por casualidad con ningún default.
+//
+// El guard va ANTES del caso positivo. Si las reglas por defecto crecieran para
+// cubrir la ruta, el positivo pasaría sin que la inyección hiciera nada y el
+// negativo fallaría diciendo "quiere ausente" en vez de que el fixture caducó.
+// Es la misma convención de fixture-guard que usan los tests de atributos de
+// este fichero, y está aquí para que las dos mitades la compartan: aplicarla a
+// una sola dejaba abierta la asimetría que este test cerró.
+func comprobarInyeccion(t *testing.T, detector func(EntradaCaracteristicas) Caracteristica, nombre, ruta string, reglas []Regla) {
+	t.Helper()
+	if got := detector(EntradaCaracteristicas{Rutas: []string{ruta}}).Estado; got != CaracteristicaAusente {
+		t.Fatalf("%s: los defaults ya clasifican %s (%q); el fixture ya no distingue la inyección de reglas", nombre, ruta, got)
 	}
-	conRegla := EntradaCaracteristicas{Rutas: sinRegla.Rutas, Reglas: reglasInfra}
-	if got := detectarInfraestructura(conRegla).Estado; got != CaracteristicaPresente {
-		t.Errorf("infrastructure con regla inyectada = %q, quiere presente", got)
+	if got := detector(EntradaCaracteristicas{Rutas: []string{ruta}, Reglas: reglas}).Estado; got != CaracteristicaPresente {
+		t.Errorf("%s con regla inyectada = %q, quiere %q", nombre, got, CaracteristicaPresente)
 	}
 }
 
