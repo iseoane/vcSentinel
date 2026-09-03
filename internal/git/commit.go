@@ -329,6 +329,13 @@ func EsAncestroDe(worktree, ancestro, descendiente string) (bool, error) {
 // in-flight detail (review dimensions, corrections, guarantees) has no
 // operational reader left, so retention may collect its execution streams.
 //
+// The remote base branch is pinned by the phase contract, not derived per
+// repository: the phase verified that a PR-merged trigger never fires here
+// (no pr-create events exist) and that a local-main trigger retires records
+// before gate can read them. origin/main is the only boundary that holds
+// for both flows. Repositories on another default branch skip retention
+// with a visible one-line note rather than a silent misfire.
+//
 // Any query failure is an error, never a negative. merge-base answers 1
 // only when both refs resolve and are unrelated; an unknown or unreadable
 // object fails differently (FU-15), and a missing origin/main fails as

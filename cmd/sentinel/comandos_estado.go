@@ -218,6 +218,9 @@ func ejecutarRebase() {
 	// T9.5 event-driven retention: the fetch + rebase just moved the remote
 	// boundary, so published execution detail is collectible now.
 	// Best-effort by contract: it never fails the rebase that succeeded.
+	// "." is the same repository every git call in this function already
+	// queries: main dispatches all commands (including gate's worktree
+	// parameter) from the process working directory.
 	intentarRetencionTrasPublicacion(os.Stdout, ".")
 }
 

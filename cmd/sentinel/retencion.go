@@ -1,18 +1,26 @@
 // Event-driven execution retention (T9.5).
 //
-// Once a commit is published — an ancestor of origin/main — or has vanished
-// from every ref, its execution streams are in-flight detail with no
-// operational reader left: review dimensions were corrected, the work
-// shipped with its guarantees. Retention collects those streams so the
-// store stops growing with every review.
+// Once a commit is published — an ancestor of origin/main — its execution
+// streams are in-flight detail with no operational reader left: review
+// dimensions were corrected, the work shipped with its guarantees.
+// Retention collects those streams so the store stops growing with every
+// review.
+//
+// Commits that vanished from every ref (rebase/amend/squash, then gc) flow
+// through the existing two-step path, not through this pass: `status
+// --prune` already deletes their fichas and events, and the next retention
+// pass collects their now-uncited runs. Treating an unresolvable object as
+// "vanished" here would reopen FU-15 (a corrupt object reads exactly like a
+// collected one while HEAD stays readable), so an undecidable publication
+// keeps that record's protection instead.
 //
 // What it collects, and what it deliberately does not:
 //
 //   - Execution streams whose invocations no unpublished review record
 //     cites, through the same provenance collector `runs prune` uses, minus
 //     the published fichas. The store's own guards decide each run:
-//     terminal, old enough, measured (its metrics snapshot exists),
-//     single-attempt. Anything else stays with its stable reason.
+//     terminal, measured (its metrics snapshot exists), single-attempt.
+//     Anything else stays with its stable reason.
 //   - Review fichas stay. Findings, dispositions, and remediation evidence
 //     live in the ficha and feed `sentinel metrics`; deleting them would
 //     move the aggregates retention promises to leave untouched. Fichas are
@@ -28,13 +36,12 @@
 //
 // Retention is best-effort and never blocks the operation that triggered
 // it (rebase, gate --stage pre-push): any failure skips the pass with a
-// one-line note on stderr.
+// one-line note on the caller's writer.
 package main
 
 import (
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -48,15 +55,16 @@ import (
 // whose records were treated as published. Any failure fails closed —
 // nothing is deleted on an unanswerable query.
 func retenerDetallePublicado(worktree string) (store.PruneReport, []string, error) {
-	backing, err := buildRunsStore(worktree)
-	if err != nil {
-		return store.PruneReport{}, nil, err
-	}
 	// Classify nothing against a repository that cannot answer: without
 	// this anchor every publication query could read as "unpublished" and
 	// keep everything, or worse, a redirected repository could answer for
-	// commits it does not own.
+	// commits it does not own. The anchor comes before the store is even
+	// opened, so no decision input exists yet when it fails.
 	if err := git.RepositorioUsable(worktree); err != nil {
+		return store.PruneReport{}, nil, err
+	}
+	backing, err := buildRunsStore(worktree)
+	if err != nil {
 		return store.PruneReport{}, nil, err
 	}
 	references, published, err := collectUnpublishedProvenanceReferences(worktree, backing)
@@ -70,16 +78,12 @@ func retenerDetallePublicado(worktree string) (store.PruneReport, []string, erro
 	return report, published, nil
 }
 
-// collectUnpublishedProvenanceReferences merges every invocation identity
-// that UNPUBLISHED review evidence still cites: persisted finding blobs and
-// the fichas of every ledger whose commit is not an ancestor of
-// origin/main. Invocations cited only by published fichas lose their
-// protection, which is what makes their streams collectible; everything
-// else keeps the exact fail-closed semantics of
-// collectProvenanceReferences. Fichas whose publication cannot be decided
-// abort the collection: an unanswerable query never silently keeps, and
-// never silently releases, a stream.
-func collectUnpublishedProvenanceReferences(worktree string, backing *store.Store) (map[string]bool, []string, error) {
+// provenanceLedgerSource opens the shared provenance inputs every collector
+// needs: invocation identities cited by persisted finding blobs, plus every
+// v1 ledger directory in the repository. One bootstrap for both collectors
+// so their universes cannot drift: deciding what to keep from one ledger
+// set while another collector reads a different one is the FU-12 failure.
+func provenanceLedgerSource(worktree string, backing *store.Store) (map[string]bool, []string, error) {
 	references, err := backing.ReferencedInvocationIDs()
 	if err != nil {
 		return nil, nil, err
@@ -89,6 +93,32 @@ func collectUnpublishedProvenanceReferences(worktree string, backing *store.Stor
 		return nil, nil, err
 	}
 	directorios, err := directoriosLedgerV1(gitCommonDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return references, directorios, nil
+}
+
+// collectUnpublishedProvenanceReferences merges every invocation identity
+// that UNPUBLISHED review evidence still cites: persisted finding blobs and
+// the fichas of every ledger whose commit is not an ancestor of
+// origin/main. Invocations cited only by published fichas lose their
+// protection, which is what makes their streams collectible; everything
+// else keeps the exact fail-closed semantics of
+// collectProvenanceReferences.
+//
+// One undecidable ficha never vetoes the pass: its references stay
+// annotated (nothing it cites is released on a guess) and collection
+// continues with the rest. Aborting everything on one unresolvable object
+// would let a single damaged record disable retention on every push.
+//
+// Linked worktrees resolve through the same shared refs and object store:
+// publication is a property of the commit graph, not of the checkout that
+// asks, so one worktree parameter classifies every ledger's fichas
+// identically. That sharing is what makes per-ledger enumeration safe here
+// instead of per-checkout classification (the FU-12 trap in reverse).
+func collectUnpublishedProvenanceReferences(worktree string, backing *store.Store) (map[string]bool, []string, error) {
+	references, directorios, err := provenanceLedgerSource(worktree, backing)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -102,7 +132,16 @@ func collectUnpublishedProvenanceReferences(worktree string, backing *store.Stor
 		for _, sha := range shas {
 			esPublicado, err := git.PublicadoEnRemoto(worktree, sha)
 			if err != nil {
-				return nil, nil, fmt.Errorf("cannot decide publication of review record %s: %w", sha, err)
+				// Undecidable publication keeps this record's
+				// protection: annotate it as unpublished and move on.
+				// See the FU-15 note on PublicadoEnRemoto for why an
+				// error is never read as "vanished".
+				ficha, fichaErr := ledger.LeerFicha(sha)
+				if fichaErr != nil {
+					return nil, nil, fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, fichaErr)
+				}
+				anotarReferenciasDeFicha(ficha, references)
+				continue
 			}
 			if esPublicado {
 				published = append(published, sha)
@@ -119,12 +158,14 @@ func collectUnpublishedProvenanceReferences(worktree string, backing *store.Stor
 }
 
 // intentarRetencionTrasPublicacion runs one retention pass without ever
-// failing the operation that triggered it. A skipped pass is a note on
-// stderr; a pass that collected nothing is silent; a pass that collected
+// failing the operation that triggered it. A skipped pass reports one line
+// on out; a pass that collected nothing is silent; a pass that collected
+// streams reports one line on out. Every line goes to the caller's writer,
+// never around it.
 func intentarRetencionTrasPublicacion(out io.Writer, worktree string) {
 	report, published, err := retenerDetallePublicado(worktree)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "retention skipped: %v\n", err)
+		fmt.Fprintf(out, "retention skipped: %v\n", err)
 		return
 	}
 	if report.Pruned == 0 {

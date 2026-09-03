@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -181,5 +182,62 @@ func TestRetencionSkipsUndecidableRepositories(t *testing.T) {
 	worktree := t.TempDir()
 	if _, _, err := retenerDetallePublicado(worktree); err == nil {
 		t.Fatal("retention outside a repository must fail closed, not collect nothing with success")
+	}
+}
+
+// TestGateTriggersRetentionOnlyOnPrePush pins the trigger boundary: the
+// retention pass runs after a pre-push gate decision and never for other
+// stages. The fixture run is uncited and measured, so the only thing that
+// can keep it under pre-commit is the stage gate itself.
+func TestGateTriggersRetentionOnlyOnPrePush(t *testing.T) {
+	worktree := t.TempDir()
+	retencionGit(t, worktree, "init", "-q", "-b", "main")
+	retencionGit(t, worktree, "config", "user.email", "retencion@test")
+	retencionGit(t, worktree, "config", "user.name", "retencion")
+	retencionGit(t, worktree, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("a\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	retencionGit(t, worktree, "add", "a.txt")
+	retencionGit(t, worktree, "commit", "-q", "-m", "base")
+	retencionGit(t, worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+	backing := pruneRepoStore(t, worktree)
+	runID, _ := seedPruneTerminalRun(t, backing, "candidate:trigger", time.Unix(1000000000, 0).UTC())
+	if err := backing.SaveExecutionMetrics(store.ExecutionMetrics{Version: store.ExecutionMetricsSchemaVersion, RunID: runID}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
+	listed := func() bool {
+		t.Helper()
+		ids, err := backing.ListExecutionIDs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range ids {
+			if id == runID {
+				return true
+			}
+		}
+		return false
+	}
+
+	var out bytes.Buffer
+	if code := finalizeGateWithDetails(&out, worktree, "pre-commit", "PASS", nil, "", nil); code != 0 {
+		t.Fatalf("pre-commit gate exit = %d, want 0", code)
+	}
+	if !listed() {
+		t.Fatal("pre-commit gate collected execution detail: retention must trigger on pre-push only")
+	}
+	if code := finalizeGateWithDetails(&out, worktree, "pre-push", "PASS", nil, "", nil); code != 0 {
+		t.Fatalf("pre-push gate exit = %d, want 0", code)
+	}
+	if listed() {
+		t.Fatalf("pre-push gate did not collect the uncited measured run %s", runID)
+	}
+	if !strings.Contains(out.String(), "retention: collected 1 execution stream(s)") {
+		t.Fatalf("pre-push gate output missing the retention line: %q", out.String())
+	}
+	if snapshot, err := backing.ReadExecutionMetrics(runID); err != nil || snapshot == nil {
+		t.Fatalf("snapshot of the collected run must survive: got=%v err=%v", snapshot, err)
 	}
 }

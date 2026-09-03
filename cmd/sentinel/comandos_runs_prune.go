@@ -3,16 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
 // runsPruneOutput is the stable JSON shape of `runs prune`. Decisions reuses
@@ -90,15 +88,7 @@ func executeRunsPrune(out io.Writer, worktree string, args []string) int {
 // fails closed — a prune must never run while provenance is unreadable,
 // because that is exactly how referenced streams get destroyed.
 func collectProvenanceReferences(worktree string, backing *store.Store) (map[string]bool, error) {
-	references, err := backing.ReferencedInvocationIDs()
-	if err != nil {
-		return nil, err
-	}
-	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
-	if err != nil {
-		return nil, err
-	}
-	directorios, err := directoriosLedgerV1(gitCommonDir)
+	references, directorios, err := provenanceLedgerSource(worktree, backing)
 	if err != nil {
 		return nil, err
 	}
