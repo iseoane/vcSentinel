@@ -236,9 +236,13 @@ func TestConcurrencyIgnoresProseAndGeneratedContent(t *testing.T) {
 //
 // Every detector that reasons about the code honours `linguist-generated`,
 // because a repository declaring a tree generated is stating something true
-// about its own source. contieneClase does not, and its two consumers are why:
-// ci_cd and infrastructure ask which surface a change touches, not whether it
-// is source. A workflow is a workflow even when a tool wrote it.
+// about its own source. ci_cd and infrastructure do not, because they ask which
+// surface a change touches rather than whether it is source: a workflow is a
+// workflow even when a tool wrote it.
+//
+// Asserted through detectarCICD, not through the contieneClase helper it calls.
+// The helper is an implementation detail, and a rewrite that classified inside
+// the detector would keep a helper-level test green while reopening the hole.
 //
 // Measured before the exception existed: marking the workflow generated turned
 // ci_cd from present to absent, which handed the audited repository a switch for
@@ -246,13 +250,33 @@ func TestConcurrencyIgnoresProseAndGeneratedContent(t *testing.T) {
 func TestAtributosNoApaganLaDeteccionDeCI(t *testing.T) {
 	const workflow = ".github/workflows/deploy.yml"
 	e := EntradaCaracteristicas{Rutas: []string{workflow}}
-	if !contieneClase(e, ClaseCI) {
+	if detectarCICD(e).Estado != CaracteristicaPresente {
 		t.Fatalf("%s is not classified as CI without attributes; the fixture no longer exercises the case", workflow)
 	}
 
 	e.Gitattributes = workflow + " linguist-generated\n"
-	if !contieneClase(e, ClaseCI) {
-		t.Errorf("%s stopped being CI once the repository marked it linguist-generated; a repository must not be able to switch off the detection of its own CI surface", workflow)
+	if estado := detectarCICD(e).Estado; estado != CaracteristicaPresente {
+		t.Errorf("ci_cd = %q once the repository marked %s linguist-generated, want %q; a repository must not be able to switch off the detection of its own CI surface",
+			estado, workflow, CaracteristicaPresente)
+	}
+}
+
+// TestAtributosNoApaganLaDeteccionDeInfraestructura is the other half of the
+// same exception. The comment at contieneClase and the debt entry both justify
+// it by "ci_cd e infrastructure", and only ci_cd was exercised: infrastructure
+// reaches contieneClase through the same call, so a change that broke one and
+// not the other would have gone unnoticed.
+func TestAtributosNoApaganLaDeteccionDeInfraestructura(t *testing.T) {
+	const terraform = "infra/main.tf"
+	e := EntradaCaracteristicas{Rutas: []string{terraform}}
+	if detectarInfraestructura(e).Estado != CaracteristicaPresente {
+		t.Fatalf("%s is not classified as infrastructure without attributes; the fixture no longer exercises the case", terraform)
+	}
+
+	e.Gitattributes = terraform + " linguist-generated\n"
+	if estado := detectarInfraestructura(e).Estado; estado != CaracteristicaPresente {
+		t.Errorf("infrastructure = %q once the repository marked %s linguist-generated, want %q; a repository must not be able to switch off the detection of its own infrastructure surface",
+			estado, terraform, CaracteristicaPresente)
 	}
 }
 

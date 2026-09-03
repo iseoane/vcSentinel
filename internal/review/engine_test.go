@@ -2083,8 +2083,12 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	if caracteristicaPresente(con.Characteristics, "security_sensitive") {
 		t.Error("security_sensitive survived linguist-generated; it classifies through Clasificar and must honour the attribute")
 	}
+	// This one is also what stops everything below it from passing vacuously: if
+	// the attribute never reached the classifier, generated_code is absent and
+	// the negative assertions would all hold while observing nothing. Fatal, not
+	// Error, for that reason.
 	if !caracteristicaPresente(con.Characteristics, "generated_code") {
-		t.Error("generated_code = absent for a linguist-generated path")
+		t.Fatal("generated_code = absent for a linguist-generated path; the attribute never reached the classifier, so every assertion below is vacuous")
 	}
 	// FU-14 resolved 2026-09-02: the attribute now participates in the WHOLE
 	// classification, so behavior_change honours it too. It used to survive,
@@ -2094,7 +2098,11 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 	// ABSENT, asserted exactly. caracteristicaPresente only answers "is it
 	// present", so !caracteristicaPresente is satisfied by `indeterminate` too —
 	// and the entry claims absent, which is a stronger and different statement.
-	if estado := estadoCaracteristica(con.Characteristics, "behavior_change"); estado != change.CaracteristicaAusente {
+	estado, presente := estadoCaracteristica(con.Characteristics, "behavior_change")
+	if !presente {
+		t.Fatalf("behavior_change is not reported at all under linguist-generated; the entry claims it is absent, which is a different statement")
+	}
+	if estado != change.CaracteristicaAusente {
 		t.Errorf("behavior_change = %q under linguist-generated, want %q; a tree the repository declares generated is not source for the detectors that reason about code (FU-14)",
 			estado, change.CaracteristicaAusente)
 	}
@@ -2110,22 +2118,21 @@ func TestPlanForProfileHonoursAttributesPerDetector(t *testing.T) {
 		t.Errorf("risk %q is still explained by %q; a declared-generated path must not schedule work through behavior_change any more",
 			con.Risk.Nivel, con.Risk.Explicacion)
 	}
-	// The positive side, kept from the version this replaced: the path still
-	// carries generated_code, so the attribute reached the classifier at all and
-	// the assertions above are not passing because nothing was classified.
-	if !caracteristicaPresente(con.Characteristics, "generated_code") {
-		t.Fatal("generated_code = absent, so the attribute never reached the classifier and every assertion above is vacuous")
-	}
 }
 
 // estadoCaracteristica devuelve el estado exacto de una característica, que es
 // lo que distingue `absent` de `indeterminate`. caracteristicaPresente colapsa
 // los dos en "no presente", y hay aserciones que necesitan la diferencia.
-func estadoCaracteristica(caracteristicas []change.Caracteristica, nombre string) change.EstadoCaracteristica {
+//
+// El segundo valor separa "no está en la lista" de "está y su estado es vacío".
+// Devolver "" para ambos los confundía, y el mensaje de error de una
+// característica ausente salía como una cadena vacía en vez de decir que no
+// estaba.
+func estadoCaracteristica(caracteristicas []change.Caracteristica, nombre string) (change.EstadoCaracteristica, bool) {
 	for _, caracteristica := range caracteristicas {
 		if caracteristica.Nombre == nombre {
-			return caracteristica.Estado
+			return caracteristica.Estado, true
 		}
 	}
-	return ""
+	return "", false
 }

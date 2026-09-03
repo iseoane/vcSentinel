@@ -241,10 +241,10 @@ func detectarCodigoGenerado(e EntradaCaracteristicas) Caracteristica {
 	return resultado("generated_code", algunaLinea(e.LineasAnadidas, marcador))
 }
 func detectarCICD(e EntradaCaracteristicas) Caracteristica {
-	return resultado("ci_cd", contieneClase(e, ClaseCI))
+	return resultado("ci_cd", contieneClase(e.Rutas, reglasDe(e), ClaseCI))
 }
 func detectarInfraestructura(e EntradaCaracteristicas) Caracteristica {
-	return resultado("infrastructure", contieneClase(e, ClaseInfra))
+	return resultado("infrastructure", contieneClase(e.Rutas, reglasDe(e), ClaseInfra))
 }
 func resultado(nombre string, presente bool) Caracteristica {
 	return Caracteristica{Nombre: nombre, Estado: estado(presente)}
@@ -276,11 +276,14 @@ func estado(presente bool) EstadoCaracteristica {
 // Medido: con `.github/workflows/deploy.yml linguist-generated`, honrar el
 // atributo hacía que ci_cd pasara de presente a ausente. Eso convierte una marca
 // de presentación en un interruptor con el que el repositorio auditado apaga la
-// detección de su propio CI e infraestructura, que es justo lo que no puede
-// depender de una declaración del sujeto.
-func contieneClase(e EntradaCaracteristicas, clase string) bool {
-	reglas := reglasDe(e)
-	for _, ruta := range e.Rutas {
+// detección de su propio CI e infraestructura.
+//
+// Recibe las rutas y las reglas, NO la EntradaCaracteristicas completa. La
+// excepción deja así de ser una promesa en un comentario: sin `e` a mano, esta
+// función no tiene los atributos que no debe mirar, y honrarlos exigiría cambiar
+// la firma a propósito en vez de añadir un tercer argumento sin pensarlo.
+func contieneClase(rutas []string, reglas []Regla, clase string) bool {
+	for _, ruta := range rutas {
 		if ClasificarPorRuta(ruta, reglas) == clase {
 			return true
 		}
