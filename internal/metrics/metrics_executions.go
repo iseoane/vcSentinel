@@ -72,6 +72,15 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 			result.FailedRuns++
 		case metricsSnapshot != nil && len(metricsSnapshot.Failures) > 0:
 			result.FailedRuns++
+		case metricsSnapshot != nil:
+			// T9.5: a snapshot exists only for terminal runs (finalization
+			// refuses anything else with ErrMetricsNotFinal), and every
+			// terminal non-success is folded into Failures. A retained-only
+			// snapshot without failures is therefore the terminal-success
+			// evidence its collected stream used to carry: without this arm
+			// retention would move SuccessfulRuns while collecting exactly
+			// what it promises to leave untouched.
+			result.SuccessfulRuns++
 		}
 		for _, outcome := range outcomes {
 			if outcome.Class.IsTerminal() && outcome.Class != agentrun.OutcomeSuccess {

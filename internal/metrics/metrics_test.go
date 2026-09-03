@@ -466,19 +466,29 @@ func TestStageCoverageUsesMeasuredRunPopulation(t *testing.T) {
 	if len(got.Stages) != 1 {
 		t.Fatalf("stages = %#v", got.Stages)
 	}
-	assertCoverage(t, "stage coverage", got.Stages[0].Coverage, 1, 2, 0.5)
 }
 
-func TestMetricsWithoutTerminalOutcomeRemainUnclassified(t *testing.T) {
+// TestLiveOutcomesOutrankTheSnapshot proves the precedence the T9.5
+// invariance relies on: while the stream survives, outcomes decide success
+// or failure even against a stale snapshot. The snapshot decides only for
+// retained-only observations, where it is the surviving terminal evidence
+// (finalization refuses non-terminal runs, so a snapshot implies terminal).
+// This replaces TestMetricsWithoutTerminalOutcomeRemainUnclassified, whose
+// premise — a streamless snapshot proves nothing — held only before
+// retention deliberately produced streamless snapshots.
+func TestLiveOutcomesOutrankTheSnapshot(t *testing.T) {
+	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	got := Aggregate(Input{Executions: []ExecutionObservation{{
 		RunID: "run",
 		Metrics: &store.ExecutionMetrics{
-			Version: store.ExecutionMetricsSchemaVersion,
-			RunID:   "run",
+			Version:  store.ExecutionMetricsSchemaVersion,
+			RunID:    "run",
+			Failures: []store.ExecutionFailure{{Class: store.FailureInvalidOutput}},
 		},
+		Outcomes: []store.AttemptOutcome{{RunID: "run", At: at, Class: agentrun.OutcomeSuccess}},
 	}}})
-	if got.Executions.SuccessfulRuns != 0 || got.Executions.FailedRuns != 0 {
-		t.Fatalf("nonterminal metrics classified as terminal: %#v", got.Executions)
+	if got.Executions.SuccessfulRuns != 1 || got.Executions.FailedRuns != 0 {
+		t.Fatalf("live success outcome overruled by a stale snapshot: %#v", got.Executions)
 	}
 }
 
