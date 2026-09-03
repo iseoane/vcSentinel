@@ -51,31 +51,32 @@ import (
 
 // retenerDetallePublicado collects the execution streams of published
 // commits: terminal runs no unpublished review record cites, provided their
-// metrics snapshot survives them. It returns the prune report and the SHAs
-// whose records were treated as published. Any failure fails closed —
+// metrics snapshot survives them. It returns the prune report, the SHAs
+// treated as published, and the SHAs kept as undecidable because their
+// publication could not be answered. Any hard failure fails closed —
 // nothing is deleted on an unanswerable query.
-func retenerDetallePublicado(worktree string) (store.PruneReport, []string, error) {
+func retenerDetallePublicado(worktree string) (store.PruneReport, []string, []string, error) {
 	// Classify nothing against a repository that cannot answer: without
 	// this anchor every publication query could read as "unpublished" and
 	// keep everything, or worse, a redirected repository could answer for
 	// commits it does not own. The anchor comes before the store is even
 	// opened, so no decision input exists yet when it fails.
 	if err := git.RepositorioUsable(worktree); err != nil {
-		return store.PruneReport{}, nil, err
+		return store.PruneReport{}, nil, nil, err
 	}
 	backing, err := buildRunsStore(worktree)
 	if err != nil {
-		return store.PruneReport{}, nil, err
+		return store.PruneReport{}, nil, nil, err
 	}
-	references, published, err := collectUnpublishedProvenanceReferences(worktree, backing)
+	references, published, undecidable, err := collectUnpublishedProvenanceReferences(worktree, backing)
 	if err != nil {
-		return store.PruneReport{}, nil, err
+		return store.PruneReport{}, nil, nil, err
 	}
 	report, err := backing.PruneExecutions(time.Now(), references)
 	if err != nil {
-		return store.PruneReport{}, published, err
+		return store.PruneReport{}, published, undecidable, err
 	}
-	return report, published, nil
+	return report, published, undecidable, nil
 }
 
 // provenanceLedgerSource opens the shared provenance inputs every collector
@@ -117,29 +118,38 @@ func provenanceLedgerSource(worktree string, backing *store.Store) (map[string]b
 // asks, so one worktree parameter classifies every ledger's fichas
 // identically. That sharing is what makes per-ledger enumeration safe here
 // instead of per-checkout classification (the FU-12 trap in reverse).
-func collectUnpublishedProvenanceReferences(worktree string, backing *store.Store) (map[string]bool, []string, error) {
+func collectUnpublishedProvenanceReferences(worktree string, backing *store.Store) (map[string]bool, []string, []string, error) {
 	references, directorios, err := provenanceLedgerSource(worktree, backing)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	var published []string
+	var published, undecidable []string
 	for _, gitDir := range directorios {
 		ledger := review.NuevoLedger(gitDir)
 		shas, err := ledger.ListarFichas()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, sha := range shas {
+			// Every ficha is read before any branch: readability is
+			// decided uniformly, so a corrupt published record aborts
+			// exactly like a corrupt unpublished one instead of
+			// slipping through the branch that never cites it.
+			ficha, err := ledger.LeerFicha(sha)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, err)
+			}
 			esPublicado, err := git.PublicadoEnRemoto(worktree, sha)
 			if err != nil {
 				// Undecidable publication keeps this record's
-				// protection: annotate it as unpublished and move on.
-				// See the FU-15 note on PublicadoEnRemoto for why an
-				// error is never read as "vanished".
-				ficha, fichaErr := ledger.LeerFicha(sha)
-				if fichaErr != nil {
-					return nil, nil, fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, fichaErr)
-				}
+				// protection: annotate it as unpublished and move on,
+				// but record it. A systemic cause (no origin/main
+				// anywhere) would otherwise protect every record with
+				// no visible trace — the silent total skip. The
+				// reporter turns this list into a note the operator
+				// can see. See the FU-15 note on PublicadoEnRemoto
+				// for why an error is never read as "vanished".
+				undecidable = append(undecidable, sha)
 				anotarReferenciasDeFicha(ficha, references)
 				continue
 			}
@@ -147,30 +157,32 @@ func collectUnpublishedProvenanceReferences(worktree string, backing *store.Stor
 				published = append(published, sha)
 				continue
 			}
-			ficha, err := ledger.LeerFicha(sha)
-			if err != nil {
-				return nil, nil, fmt.Errorf("review ledger ficha %s is unreadable: %v", sha, err)
-			}
 			anotarReferenciasDeFicha(ficha, references)
 		}
 	}
-	return references, published, nil
+	return references, published, undecidable, nil
 }
 
 // intentarRetencionTrasPublicacion runs one retention pass without ever
 // failing the operation that triggered it. A skipped pass reports one line
-// on out; a pass that collected nothing is silent; a pass that collected
-// streams reports one line on out. Every line goes to the caller's writer,
-// never around it.
+// on out; a pass that collected nothing is silent unless records were kept
+// as undecidable, which always reports; a pass that collected streams
+// reports one line on out. Every line goes to the caller's writer, never
+// around it.
 func intentarRetencionTrasPublicacion(out io.Writer, worktree string) {
-	report, published, err := retenerDetallePublicado(worktree)
+	report, published, undecidable, err := retenerDetallePublicado(worktree)
 	if err != nil {
 		fmt.Fprintf(out, "retention skipped: %v\n", err)
 		return
 	}
-	if report.Pruned == 0 {
+	if report.Pruned == 0 && len(undecidable) == 0 {
 		return
 	}
-	fmt.Fprintf(out, "retention: collected %d execution stream(s) for %d published commit(s); review records and metrics snapshots kept.\n",
-		report.Pruned, len(published))
+	if report.Pruned > 0 {
+		fmt.Fprintf(out, "retention: collected %d execution stream(s) for %d published commit(s); review records and metrics snapshots kept.\n",
+			report.Pruned, len(published))
+	}
+	if len(undecidable) > 0 {
+		fmt.Fprintf(out, "retention: %d review record(s) kept as undecidable (publication unknown).\n", len(undecidable))
+	}
 }
