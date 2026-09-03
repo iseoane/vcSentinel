@@ -1607,3 +1607,26 @@ a rewrite.
 
 The reviewer caught it and its finding was accurate. It arrived as
 `unavailable`/`schema_invalid` rather than as the `block` it was, which is FU-19.
+
+
+### Correction to `5bd7c16`'s commit message
+
+Recorded 2026-09-03. `5bd7c16` says `chore(slice): bypass IA for semantic
+unit 7462656338f84aa7` and its diff implements the T9.5 event-driven
+retention cascade: the `PublicadoEnRemoto` publication predicate
+(`internal/git`), snapshot and single-attempt collection guards with
+in-lock re-verification (`internal/store`), the retained-only snapshot
+rule (`internal/metrics`), the unpublished-provenance collector with
+best-effort triggers on rebase and pre-push gate (`cmd/sentinel`), and
+the RED/GREEN/acceptance tests pinning each half.
+
+The message is the slice planner's deterministic fallback vocabulary, not
+a description a human wrote: the review adapter was unavailable for
+message generation, so the plan named its own mechanism (planner-side
+bypass of AI subdivision for one semantic unit) instead of the change.
+`chore` understates a feature; the unit hash identifies the plan, not the
+work.
+
+Corrected here rather than by rewriting, for the same reason as
+`926649b` above: the commit already carries review records keyed by its
+SHA, and this repository has lost review evidence to rewrites before.

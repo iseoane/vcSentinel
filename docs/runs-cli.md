@@ -162,10 +162,10 @@ zero value.
 
 ## Retention and purge policy for executions
 
-Nothing in sentinel ever purges durable execution records automatically.
-Retention is append-only evidence by default, and shrinking it is always an
-explicit operator action:
-
+The store itself never purges on its own: no timer, no background pass.
+Shrinking it happens through two operator-visible paths that share the
+same guards and the same report shape. Retention is append-only evidence
+by default:
 - **What purges:** `sentinel runs prune --older-than <duration>` removes a
   whole per-run directory under `executions/v1/<run_id>/` only when ALL of
   the following hold:
@@ -211,6 +211,16 @@ explicit operator action:
   (`internal/ops`, surfaced by `status --prune`) is a separate, selective
   purge keyed by commit SHA, never by age; execution pruning never touches
   it, and ops purging never touches executions.
+- **Event-driven retention (T9.5):** after a successful `rebase` and after
+  every `gate --stage pre-push` decision, sentinel runs one best-effort
+  retention pass with no age cutoff (`now`) and provenance limited to
+  UNPUBLISHED review records: streams cited only by published commits
+  (ancestors of `origin/main`) become collectible under the identical
+  guards above — terminal, measured, single-attempt, unreferenced. Review
+  fichas, the ops event log, and metrics snapshots are never touched by
+  either path, so `sentinel metrics` is byte-identical before and after.
+  A skipped pass reports one line and never fails the operation that
+  triggered it.
 
 ## Compatibility and migration policy
 
