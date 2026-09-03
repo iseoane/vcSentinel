@@ -158,7 +158,7 @@ zero value.
 | prune report | `decisions` | array of decision | always | One entry per examined record; empty array, never null. |
 | decision (`decisions[]`) | `run_id` | string | always | Examined run identity. |
 | decision | `action` | string | always | `pruned` or `kept`. |
-| decision | `reason` | string | always | `pruned`, or a stable retention reason: `terminal-recent`, `non-terminal`, `corrupt: …`, `unreadable: …`, `incomplete or corrupt admission record`, `orphaned-canceled recovery evidence`, `review provenance references invocation <id>`, `parent of surviving run <id>`, `removal failed: …`. A successful removal of a crash-interrupted leftover reports `prunable-remnant` instead of plain `pruned`. |
+| decision | `reason` | string | always | `pruned`, or a stable retention reason: `terminal-recent`, `non-terminal`, `corrupt: …`, `unreadable: …`, `incomplete or corrupt admission record`, `awaiting metrics snapshot`, `multiple attempts: retry evidence lives only in the event stream`, `orphaned-canceled recovery evidence`, `review provenance references invocation <id>`, `parent of surviving run <id>`, `removal failed: …`. A successful removal of a crash-interrupted leftover reports `prunable-remnant` instead of plain `pruned`. |
 
 ## Retention and purge policy for executions
 
@@ -176,6 +176,11 @@ explicit operator action:
   - none of its invocation identities is cited as review provenance by any
     persisted finding blob or review ledger ficha (per-dimension results or
     aggregated findings);
+  - its immutable metrics snapshot exists — a missing snapshot is absence
+    of evidence, never a zero, so the stream stays until measurement
+    survives it (T9.5);
+  - it settled in a single attempt — retry multiplicity lives only in the
+    event stream, which the snapshot does not record (T9.5);
   - it is not the parent linkage target (`parent_run_id`) of any surviving
     run — a gate root referenced by a live child survives even when it is
     itself old and terminal.
