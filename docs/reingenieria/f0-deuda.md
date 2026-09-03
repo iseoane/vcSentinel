@@ -1581,3 +1581,29 @@ Priority: before trusting `unavailable` to mean what it says. It is currently
 two different states wearing one name — "the reviewer never answered" and "the
 reviewer answered and we dropped it" — and only the first is safe to retry.
 
+
+### Correction to `926649b`'s commit message
+
+Recorded 2026-09-03. `926649b` says "switch the reviewer back to opencode" and
+its diff does more than that. Staged with an explicit path but without reading
+the whole diff first, so the message describes one hunk of five.
+
+What it actually changed in `.vas_sentinel/vassentinel.yml`:
+
+- `active_agent`: `claude` → `opencode`, which is what the message describes.
+- `agents.claude.profiles.deep`: `claude-opus-5`/`medium` →
+  `claude-sonnet-5`/`xhigh`.
+- `agents.opencode`: every profile moved from `gpt-5.6-terra`/`gpt-5.6-luna` to
+  `openai/muse-spark-1.3-contributor-free`, with different efforts, so the four
+  levels now differ only by effort and no longer by model.
+- The previous `opencode` block survives as fourteen commented-out lines. It is
+  dead configuration, kept deliberately: it is the route back to the earlier
+  models, and deleting it would destroy the record of what to restore.
+
+The changes are the operator's and stand; the message was mine and was wrong.
+Corrected here rather than by rewriting: `926649b` already carries a review
+record keyed by its SHA, and this repository has twice lost review evidence to
+a rewrite.
+
+The reviewer caught it and its finding was accurate. It arrived as
+`unavailable`/`schema_invalid` rather than as the `block` it was, which is FU-19.
