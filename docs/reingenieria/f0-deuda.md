@@ -1329,13 +1329,19 @@ the assertion.
 
 #### Resolved 2026-09-02
 
-**The decision, which is what this entry existed for: if the repository declares
-a tree generated, it is generated for the whole classification.** Every detector
-now classifies through `Clasificar`; none uses `ClasificarPorRuta`, which stays
-for callers that have no attributes to offer rather than as the silent half of a
-divergence. `detectarCambioDeComportamiento`, `detectarCoberturaDeTests` and
-`contieneClase` — the last one being what `ci_cd` and `infrastructure` read —
-changed.
+**The decision, which is what this entry existed for: which classifier a
+detector uses is chosen by the question that detector answers, and the choice is
+written down.** A detector reasoning about the NATURE of the code uses
+`Clasificar` and honours `linguist-generated`, because there the repository is
+declaring something true about its own source: `admiteEvidenciaDeContenido`,
+`detectarCodigoGenerado`, `detectarCambioDeComportamiento` and
+`detectarCoberturaDeTests`. A detector reasoning about WHICH SURFACE the change
+touches uses `ClasificarPorRuta` and does not: that is `contieneClase`, and only
+it, which feeds `ci_cd` and `infrastructure`.
+
+`detectarCambioDeComportamiento` and `detectarCoberturaDeTests` moved to
+`Clasificar`; `contieneClase` stayed on `ClasificarPorRuta`, now for a stated
+reason rather than by accident.
 
 The argument that decided it: the cost of being wrong is asymmetric. Honouring
 the attribute everywhere means a repository that marks a tree generated stops
@@ -1363,8 +1369,13 @@ touches rather than whether it is source, and a workflow is a workflow even when
 a tool wrote it. Measured under the uniform rule: marking
 `.github/workflows/deploy.yml` as `linguist-generated` turned `ci_cd` from
 present to absent, which handed the audited repository a switch for the
-detection of its own CI. A classification that decides how much review a change
-gets must not be disableable by a declaration from its subject.
+detection of its own CI.
+
+The criterion is deliberately NOT "a classification that decides how much review
+a change gets must not depend on a declaration from its subject". That proves
+too much: `behavior_change` also decides how much review a change gets, and it
+honours the attribute on purpose. The criterion is which question the detector
+answers.
 
 That is the shape this entry's own target anticipated — "if some detectors must
 stay attribute-blind, name them and say why at the call site" — and it is why

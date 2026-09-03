@@ -146,23 +146,29 @@ func detectarConcurrencia(e EntradaCaracteristicas) Caracteristica {
 	return resultadoHeuristico("concurrency", presente)
 }
 
-// Todos los detectores clasifican con Clasificar, que honra
-// `linguist-generated`, y ninguno con ClasificarPorRuta (FU-14). Los dos grupos
-// no se eligieron, divergieron: un árbol declarado generado era generado para
-// los detectores de contenido y seguía siendo fuente para el cambio de
-// comportamiento, para la cobertura de tests y para ci_cd/infrastructure, así
-// que cada regeneración marcaba `behavior_change` presente, que es `elevated`
-// como mínimo.
+// Qué función de clasificación usa cada detector ya no es un accidente (FU-14).
+// Antes lo era: un árbol declarado generado era generado para los detectores de
+// contenido y seguía siendo fuente para el cambio de comportamiento, para la
+// cobertura de tests y para ci_cd/infrastructure, así que cada regeneración
+// marcaba `behavior_change` presente, que es `elevated` como mínimo. Los dos
+// grupos no se eligieron, divergieron.
 //
-// La regla, decidida y registrada: si el repositorio declara un árbol generado,
-// lo es para la clasificación que razona sobre el código, es decir para
+// La regla, decidida y registrada: un detector que razona sobre la NATURALEZA
+// del código usa Clasificar y honra `linguist-generated`, porque ahí el
+// repositorio declara algo cierto sobre su propia fuente. Son
 // admiteEvidenciaDeContenido, detectarCodigoGenerado,
 // detectarCambioDeComportamiento y detectarCoberturaDeTests.
 //
-// La única excepción, nombrada aquí y justificada en su punto de llamada, es
-// contieneClase: ci_cd e infrastructure preguntan qué superficie toca el cambio,
-// no si es fuente, y honrar ahí el atributo le daría al repositorio auditado un
-// interruptor para apagar la detección de su propio CI.
+// Un detector que razona sobre QUÉ SUPERFICIE toca el cambio usa
+// ClasificarPorRuta y no lo honra. Es contieneClase, y solo contieneClase, que
+// alimenta ci_cd e infrastructure: un workflow es un workflow aunque lo genere
+// una herramienta, y honrar ahí el atributo le daría al repositorio auditado un
+// interruptor para apagar la detección de su propio CI. La razón completa, con
+// la medición, está en su punto de llamada.
+//
+// El criterio NO es "decide cuánta revisión recibe el cambio". Eso probaría
+// demasiado: behavior_change también lo decide y sí honra el atributo. Es qué
+// pregunta responde el detector.
 func detectarCambioDeComportamiento(e EntradaCaracteristicas) Caracteristica {
 	reglas := reglasDe(e)
 	for _, ruta := range e.Rutas {
