@@ -1058,8 +1058,8 @@ even when the review plan schedules nothing. Do not implement it by widening
 would put an incident report back inside the mechanism that decides review cost,
 and the two must not share a switch.
 
-Open as implementation work. The question this entry was recorded to ask is
-closed.
+Open as implementation work, tracked in `follow-ups.md` under P2. The question
+this entry was recorded to ask is closed.
 
 ### FU-12: reviews run in a linked worktree never join the repository ledger
 

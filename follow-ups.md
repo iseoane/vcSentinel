@@ -72,6 +72,28 @@ All three P2 items landed in `8d7c2ed` (merged as `b4405f3`): shared
 failure/timeout details now carry a bounded stderr excerpt across all three
 failure routes; `spawnHelper` simplified. See Resolved below.
 
+- [ ] **Exposed-credential detection, independent of `security_sensitive`.**
+      Decided 2026-09-02 (FU-11 in `docs/reingenieria/f0-deuda.md`): Sentinel
+      does own this, and the signal must not depend on the change profile.
+      A credential in prose reports an incident; `security_sensitive` schedules
+      a review. Two different questions, and today the second one answers for
+      both — so a credential committed into documentation produces no signal at
+      all, because the class filter correctly removes content evidence from
+      documentation paths.
+
+      Shape: a deterministic finding, produced without an agent, naming the path
+      and the matched shape, reported even when the review plan schedules
+      nothing. Not a review dimension, because a review that does not run must
+      not swallow it.
+
+      Do NOT implement it by widening `detectarSeguridadSensible`. FU-10
+      measured and narrowed that detector on purpose; widening it would put an
+      incident report back inside the mechanism that decides review cost, and
+      the two must not share a switch.
+
+      Its own work unit, not a repair: the reporting surface does not exist yet.
+      No blocking dependencies.
+
 ## P3 — Conditional / gated
 
 - [ ] **Windows validation of the acpx spawn chain** (`npx → node
