@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -106,6 +107,9 @@ type refuteDeps struct {
 	// test sets it to land a concurrent revision, proving a stale
 	// refutation fails closed. Production leaves it nil.
 	beforeLockedAppend func()
+	// withLockedFicha permits tests to reproduce a lock cleanup failure after
+	// a callback already persisted its independent disposition record.
+	withLockedFicha func(string, func(*review.Ficha) error) error
 }
 
 // resolveRefuteDeps wires the production seams for one worktree: the shared
@@ -145,12 +149,12 @@ func loadDispositionsForWorktree(worktree string) ([]review.FindingDisposition, 
 }
 
 // runRefutation records one evidence-bound human refutation. Every failure
-// is closed without persisting anything: a missing review record, a missing
-// or ambiguous fingerprint, an already-cleared finding, a range the
-// refutation gate rejects, an unreadable snapshot, a review record that
-// changed between resolution and append, and a corrupt dispositions log all
-// abort before the append. Persisted revisions are never mutated; the answer
-// lands in the separate append-only log.
+// before append is closed without persisting anything: a missing review
+// record, a missing or ambiguous fingerprint, an already-cleared finding, a
+// range the refutation gate rejects, an unreadable snapshot, a review record
+// that changed between resolution and append, or a corrupt dispositions log.
+// A ficha lock cleanup error after append is returned with the completed
+// disposition so the caller can report success without inviting a duplicate.
 func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposition, error) {
 	if deps == nil || deps.ledger == nil || deps.store == nil || deps.snapshot == nil {
 		return nil, fmt.Errorf("refute: missing dependencies")
@@ -222,7 +226,11 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 	if deps.beforeLockedAppend != nil {
 		deps.beforeLockedAppend()
 	}
-	if err := deps.ledger.WithLockedFicha(sha, func(current *review.Ficha) error {
+	withLockedFicha := deps.ledger.WithLockedFicha
+	if deps.withLockedFicha != nil {
+		withLockedFicha = deps.withLockedFicha
+	}
+	if err := withLockedFicha(sha, func(current *review.Ficha) error {
 		fresh, err := json.Marshal(current)
 		if err != nil {
 			return fmt.Errorf("refute: reading the review record: %w", err)
@@ -248,14 +256,17 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 		}
 		return nil
 	}); err != nil {
+		if errors.Is(err, review.ErrBloqueoNoLiberado) {
+			return disposition, fmt.Errorf("refute: disposition recorded but ficha lock cleanup failed: %w", err)
+		}
 		return nil, err
 	}
 	return disposition, nil
 }
 
 // ejecutarRefute implements `sentinel refute`: parse, resolve, record.
-// Exit 0 records one disposition; exit 1 reports the reason and persists
-// nothing.
+// Exit 0 records one disposition, including the completed-but-warning case
+// where only the ficha lock cleanup failed after persistence.
 func ejecutarRefute(w io.Writer, worktree string, args []string) int {
 	opts, err := parseRefuteArgs(args)
 	if err != nil {
@@ -268,12 +279,23 @@ func ejecutarRefute(w io.Writer, worktree string, args []string) int {
 		return 1
 	}
 	disposition, err := runRefutation(deps, opts)
-	if err != nil {
+	if err != nil && !errors.Is(err, review.ErrBloqueoNoLiberado) {
 		fmt.Fprintf(w, "❌ %v\n", err)
+		return 1
+	}
+	return reportRefutationResult(w, disposition, err)
+}
+
+func reportRefutationResult(w io.Writer, disposition *review.FindingDisposition, completionWarning error) int {
+	if disposition == nil {
+		fmt.Fprintf(w, "❌ %v\n", completionWarning)
 		return 1
 	}
 	fmt.Fprintf(w, "✅ Human refutation recorded for finding %q on %s (%s lines %d-%d, range %s).\n",
 		disposition.Fingerprint, disposition.SHA, disposition.Path,
 		disposition.LineStart, disposition.LineEnd, disposition.RangeHash)
+	if completionWarning != nil {
+		fmt.Fprintf(w, "⚠️  The refutation is recorded, but ficha lock cleanup failed: %v\n", completionWarning)
+	}
 	return 0
 }

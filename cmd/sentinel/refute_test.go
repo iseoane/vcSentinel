@@ -473,3 +473,42 @@ func TestEjecutarRefuteRejectsOutOfSnapshotRange(t *testing.T) {
 		t.Fatalf("dispositions = %+v, want no append after invalid range", records)
 	}
 }
+
+// FU-6: a lock cleanup failure after the append is a completed refutation,
+// not a failed mutation callers should retry. The command must preserve that
+// result and report success with the lock warning.
+func TestRunRefutationPreservesCompletedAppendAfterLockCleanupFailure(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	deps.withLockedFicha = func(sha string, fn func(*review.Ficha) error) error {
+		if err := ledger.WithLockedFicha(sha, fn); err != nil {
+			return err
+		}
+		return review.ErrBloqueoNoLiberado
+	}
+
+	disposition, err := runRefutation(deps, refuteValidOptions())
+	if disposition == nil || disposition.Fingerprint != "fp-target" {
+		t.Fatalf("completed refutation was discarded: disposition=%+v err=%v", disposition, err)
+	}
+	if !errors.Is(err, review.ErrBloqueoNoLiberado) {
+		t.Fatalf("cleanup failure = %v, want ErrBloqueoNoLiberado", err)
+	}
+	records, readErr := st.ReadDispositions()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(records) != 1 {
+		t.Fatalf("dispositions = %+v, want one completed append", records)
+	}
+
+	var output bytes.Buffer
+	if exit := reportRefutationResult(&output, disposition, err); exit != 0 {
+		t.Fatalf("completed refutation exit = %d, want 0; output: %q", exit, output.String())
+	}
+	if !strings.Contains(output.String(), "recorded") || !strings.Contains(output.String(), "lock cleanup") {
+		t.Fatalf("completed refutation output = %q, want success and cleanup warning", output.String())
+	}
+}
