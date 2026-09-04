@@ -193,7 +193,36 @@ func estaPendiente(ficha Ficha) bool {
 // incondicional que podía tomar control de la ficha sin haber comprobado
 // severidad primero.
 func riesgos(fichas []Ficha) []string {
+	return riesgosWithDispositions(fichas, nil)
+}
+
+func riesgosWithDispositions(fichas []Ficha, dispositions []FindingDisposition) []string {
 	var lineas []string
+	for _, candidate := range effectiveBranchFindings(fichas, dispositions) {
+		h := candidate.finding
+		if h.Severity != SevWarning && !IsBlocking(h.Severity, h.Status) {
+			continue
+		}
+		sha := candidate.sha
+		if len(sha) > 7 {
+			sha = sha[:7]
+		}
+		lineas = append(lineas, renderMergedFinding(sha, h))
+	}
+	return lineas
+}
+
+type branchFinding struct {
+	sha     string
+	finding Hallazgo
+}
+
+// effectiveBranchFindings is the one branch-level projection for consumers
+// that need an individual finding rather than only its legacy v1 rendering.
+// It keeps SHA-scoped disposition overlaying and pending-ficha selection out
+// of renderer and gate call sites.
+func effectiveBranchFindings(fichas []Ficha, dispositions []FindingDisposition) []branchFinding {
+	var out []branchFinding
 	for _, ficha := range fichas {
 		if !estaPendiente(ficha) {
 			continue
@@ -202,18 +231,11 @@ func riesgos(fichas []Ficha) []string {
 		if !ok {
 			continue
 		}
-		sha := ficha.SHA
-		if len(sha) > 7 {
-			sha = sha[:7]
-		}
-		for _, h := range ultima.HallazgosEfectivos() {
-			if h.Severity != SevCritical && h.Severity != SevWarning {
-				continue
-			}
-			lineas = append(lineas, renderMergedFinding(sha, h))
+		for _, h := range ApplyDispositions(ultima.FindingsWithDispositions(), FilterDispositionsForSHA(dispositions, ficha.SHA)) {
+			out = append(out, branchFinding{sha: ficha.SHA, finding: h})
 		}
 	}
-	return lineas
+	return out
 }
 
 // mergedFindingSourceLabel distinguishes a merged Hallazgo's origin for
@@ -586,25 +608,21 @@ func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 // external answers.
 func BloqueantesDeRamaWithDispositions(fichas []Ficha, dispositions []FindingDisposition) []ReviewFinding {
 	var bloqueantes []ReviewFinding
-	for _, ficha := range fichas {
-		if !estaPendiente(ficha) {
-			continue
-		}
-		ultima, ok := ultimaRevision(ficha)
-		if !ok {
-			continue
-		}
-		findings := ApplyDispositions(ultima.FindingsWithDispositions(), FilterDispositionsForSHA(dispositions, ficha.SHA))
-		for _, h := range findings {
-			if IsBlocking(h.Severity, h.Status) {
-				bloqueantes = append(bloqueantes, reviewFindingDesdeHallazgo(h))
-			}
+	for _, candidate := range effectiveBranchFindings(fichas, dispositions) {
+		if IsBlocking(candidate.finding.Severity, candidate.finding.Status) {
+			bloqueantes = append(bloqueantes, reviewFindingDesdeHallazgo(candidate.finding))
 		}
 	}
 	return bloqueantes
 }
 
 func RenderBranchPRTemplate(res *ResultadoRama, verificacion VerificacionPlantilla, version string) string {
+	return RenderBranchPRTemplateWithDispositions(res, verificacion, version, nil)
+}
+
+// RenderBranchPRTemplateWithDispositions renders a PR template from the
+// same effective finding projection used by the branch blockers.
+func RenderBranchPRTemplateWithDispositions(res *ResultadoRama, verificacion VerificacionPlantilla, version string, dispositions []FindingDisposition) string {
 	var b strings.Builder
 	b.WriteString(VerdictLine(res) + "\n\n")
 
@@ -628,7 +646,7 @@ func RenderBranchPRTemplate(res *ResultadoRama, verificacion VerificacionPlantil
 	b.WriteString("## Riesgos\n")
 	var pending []string
 	if res.Net == nil {
-		pending = riesgos(res.Fichas)
+		pending = riesgosWithDispositions(res.Fichas, dispositions)
 	} else {
 		for _, h := range res.Net.Audit.Findings {
 			if h.Severity == SevCritical || h.Severity == SevWarning {

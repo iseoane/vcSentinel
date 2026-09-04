@@ -651,6 +651,29 @@ func TestRiesgosFiltersAdvisoryFromAggregatedFindings(t *testing.T) {
 	}
 }
 
+// FU-6: PR risk rendering uses the same effective disposition projection as
+// branch blocking, so a human-refuted CRITICAL cannot remain in the template.
+func TestRenderBranchPRTemplateWithDispositionsHidesRefutedCritical(t *testing.T) {
+	ficha := fichaAyuda("abc12345", "fix(auth): explain false positive", "m", Revision{
+		At:     time.Now().UTC(),
+		Result: VerdictBlock,
+		AggregatedFindings: []Hallazgo{{
+			Dimension: DimSecurity, Severity: SevCritical, Status: StatusConfirmed,
+			Fingerprint: "fp-critical", Description: "refuted critical",
+			Location: Ubicacion{Archivo: "auth.go", LineaInicio: 12},
+		}},
+	})
+	res := &ResultadoRama{Fichas: []Ficha{ficha}}
+	dispositions := []FindingDisposition{{
+		SHA: "abc12345", Fingerprint: "fp-critical", Status: StatusRefuted,
+	}}
+
+	body := RenderBranchPRTemplateWithDispositions(res, VerificacionPlantilla{Modo: "omitido"}, "0.2.0", dispositions)
+	if strings.Contains(body, "refuted critical") {
+		t.Fatalf("PR template still renders the refuted critical:\n%s", body)
+	}
+}
+
 // TestRenderMergedFindingOmitsEmptyLocation: a Hallazgo without a resolved
 // location must not render the placeholder "(:0)" — the location suffix is
 // omitted entirely instead (T6.5 review finding: logic ADVISORY). This same

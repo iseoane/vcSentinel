@@ -674,10 +674,8 @@ func publicarPRCon(worktree, rutaPlantilla, base string, opciones opcionesPublic
 // función que ya no bloquea no puede seguir llamándose "gate...Block" sin
 // mentir sobre lo que hace.
 func avisoSemantico(fichas []review.Ficha) (avisar bool, bloqueantes []review.ReviewFinding) {
-	if review.VeredictoDeRama(fichas) != review.VerdictBlock {
-		return false, nil
-	}
-	return true, review.BloqueantesDeRama(fichas)
+	bloqueantes = review.BloqueantesDeRama(fichas)
+	return len(bloqueantes) > 0, bloqueantes
 }
 
 // avisoSemanticoWithDispositions is avisoSemantico overlaid with the
@@ -685,10 +683,8 @@ func avisoSemantico(fichas []review.Ficha) (avisar bool, bloqueantes []review.Re
 // finding from the branch blockers shown here exactly as in the engine and
 // the gate.
 func avisoSemanticoWithDispositions(fichas []review.Ficha, dispositions []review.FindingDisposition) (avisar bool, bloqueantes []review.ReviewFinding) {
-	if review.VeredictoDeRama(fichas) != review.VerdictBlock {
-		return false, nil
-	}
-	return true, review.BloqueantesDeRamaWithDispositions(fichas, dispositions)
+	bloqueantes = review.BloqueantesDeRamaWithDispositions(fichas, dispositions)
+	return len(bloqueantes) > 0, bloqueantes
 }
 
 // comandosDeValidacion traduce las ValidationRun de internal/validation a
@@ -926,13 +922,12 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	// Standing human answers overlay the branch blockers (FU-6). This display
-	// is advisory, so an unreadable log degrades to no overlay instead of
-	// aborting the review; the stale side errs toward showing more blockers,
-	// never fewer.
-	var branchDispositions []review.FindingDisposition
-	if loaded, err := loadDispositionsForWorktree(worktree); err == nil {
-		branchDispositions = loaded
+	// Standing human answers drive every rendered and advisory finding. A
+	// corrupt log fails closed rather than pretending no human answered.
+	branchDispositions, err := loadDispositionsForWorktree(worktree)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 
 	if len(res.Fichas) == 0 {
@@ -970,7 +965,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		publishBase = res.Propio.PublicationBranch
 	}
 
-	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
+	cuerpo := review.RenderBranchPRTemplateWithDispositions(res, verificacion, version, branchDispositions)
 	escribir := deps.escribirPlantilla
 	if escribir == nil {
 		escribir = escribirPlantillaPR

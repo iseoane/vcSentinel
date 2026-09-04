@@ -289,6 +289,32 @@ func TestAvisoSemanticoConBlockAvisaYListaCriticos(t *testing.T) {
 	}
 }
 
+// FU-6: the static revision verdict can remain block after a human answer,
+// but the advisory warning must follow the effective blockers rather than
+// printing an empty critical warning.
+func TestAvisoSemanticoWithDispositionsSkipsFullyRefutedBlock(t *testing.T) {
+	fichas := []review.Ficha{{
+		SHA: "abc1234",
+		Revisions: []review.Revision{{
+			Result: review.VerdictBlock,
+			AggregatedFindings: []review.Hallazgo{{
+				Dimension: review.DimSecurity, Severity: review.SevCritical,
+				Status: review.StatusConfirmed, Fingerprint: "fp-critical",
+				Description: "refuted critical",
+				Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+			}},
+		}},
+	}}
+	dispositions := []review.FindingDisposition{{
+		SHA: "abc1234", Fingerprint: "fp-critical", Status: review.StatusRefuted,
+	}}
+
+	avisar, bloqueantes := avisoSemanticoWithDispositions(fichas, dispositions)
+	if avisar || len(bloqueantes) != 0 {
+		t.Fatalf("effective refutation = aviso %t, blockers %+v; want no advisory", avisar, bloqueantes)
+	}
+}
+
 func TestCopiarPortapapelesSinHerramienta(t *testing.T) {
 	err := copiarPortapapelesCon("cuerpo",
 		func(string) bool { return false },
