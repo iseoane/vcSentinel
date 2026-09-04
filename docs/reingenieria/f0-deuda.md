@@ -1669,3 +1669,36 @@ work.
 Corrected here rather than by rewriting, for the same reason as
 `926649b` above: the commit already carries review records keyed by its
 SHA, and this repository has lost review evidence to rewrites before.
+
+
+### FU-20: semantic failures on success-terminal runs contradict the stream
+
+Recorded 2026-09-04 during T9.5 retention, from measuring a one-time
+success→failed reclassification of ~140-180 pre-existing runs on the
+first collecting pass.
+
+The review engine's corrective-retry shape (`internal/review/engine.go`,
+`finalizeInvocation`) records semantic failure classes
+(`invalid_output`, `schema_invalid`, …) for an invocation whose reconciled
+outcome is terminal success. Finalization folds both into the snapshot,
+so the record pairs a success stream with a failing snapshot. While the
+stream survives the aggregator follows it (success); once retention
+collects the stream the snapshot alone reads failed. The T9.5 agreement
+guard (`PruneReasonContradiction`) keeps such runs from now on —
+agreement, not mere presence, authorizes collection — so nothing further
+moves. The already-reclassified runs stay as-is: their streams are gone,
+their snapshots remain, and only the success/failed counters moved (the
+failure breakdown already published those same semantic classes).
+
+What is genuinely open, and why it is a producer question rather than a
+retention one: should a semantic failure ever attach to a success-terminal
+run, or should it force the outcome to failure at the source? If the
+former is legitimate (recovered within the attempt), the contradiction is
+real evidence and keeping those runs forever is correct but leaks slowly.
+If the latter, the producer should never write the shape and the guard
+becomes dead-but-harmless. Deciding needs the review-transport owners,
+not the retention path.
+
+Trigger: revisit when contradicted runs accumulate (watch the
+`snapshot contradicts terminal success` keep reason in prune reports) or
+when the review transport next changes its finalization.
