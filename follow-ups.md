@@ -60,6 +60,26 @@ land.
       Origin: T9.1b review sessions, where the missing binary surfaced only as
       an infrastructure timeout.
 
+- [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
+      audit sends the same commit message, diff, allowed paths, and CodeGraph
+      context to isolated `opencode run --pure` invocations, while producing
+      short outputs. Today the dimension-specific contract comes before the
+      diff and each invocation creates its own snapshot and tool permissions,
+      so the rendered prompt prefix cannot be shared.
+
+      Preserve the review contract while making one immutable snapshot per
+      audit and rendering a stable evidence envelope first: anti-injection
+      rules, commit message, diff, permitted paths, and CodeGraph context.
+      Append the dimension contract and output schema as a suffix. Reuse a
+      provider cache only within a group with the same model, reasoning effort,
+      and tool definitions; never assume cache sharing across `cheap`,
+      `normal`, and `deep` profiles. Add a stable cache key derived from the
+      audited SHA if OpenCode exposes it.
+
+      Measure input tokens, cached-token reads, latency, and review-equivalence
+      before selecting this design. Do not cache model outputs or reduce
+      dimension coverage. Origin: FU-6 review-token investigation, 2026-09-04.
+
 - [x] **Make `runs attach` discoverable by help** — `attach` is missing from
       the `sentinel runs --help` subcommand list, and `runs attach --help`
       exits with a rejection although the command accepts real flags
