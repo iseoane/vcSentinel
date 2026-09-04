@@ -279,34 +279,62 @@ func TestApplyDispositionToResultPairsBothShapes(t *testing.T) {
 	}
 }
 
-// FU-6: a v1-only audit carries no fingerprint input, so the recorded
-// fallback identity bridges the standing answer onto the fresh finding.
-func TestApplyDispositionToResultBridgesV1OnlyAudits(t *testing.T) {
+// FU-6 fix: without an exact fingerprint match nothing is disposed, even
+// when v2 findings are present. The recorded location identity is audit
+// metadata, never a match key.
+func TestApplyDispositionToResultIgnoresLocationWithoutFingerprint(t *testing.T) {
 	result := &DimensionResult{
 		Dim:     DimLogic,
 		Verdict: VerdictBlock,
 		Findings: []ReviewFinding{
 			{File: "a.go", Line: 2, Severity: SevCritical, Description: "bug", Status: StatusConfirmed},
-			{File: "b.go", Line: 30, Severity: SevCritical, Description: "other", Status: StatusConfirmed},
+		},
+		Hallazgos: []Hallazgo{
+			{
+				Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+				Description: "bug", Fingerprint: "fp-live",
+				Location: Ubicacion{Archivo: "a.go", LineaInicio: 2},
+			},
 		},
 	}
 	disp := FindingDisposition{
-		SHA: "abc12345", Fingerprint: "fp-recorded", Status: StatusRefuted,
+		SHA: "abc12345", Fingerprint: "fp-stale", Status: StatusRefuted,
 		Reason: "verified safe", Path: "a.go", LineStart: 1, LineEnd: 3,
 		Evidence: "criticalCall()", RangeHash: "1f49",
 		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
 		TargetDimension: DimLogic, TargetLine: 2, TargetDescription: "bug",
 	}
 
-	if !ApplyDispositionToResult(result, disp) {
-		t.Fatal("expected the fallback identity to clear the finding")
+	if ApplyDispositionToResult(result, disp) {
+		t.Fatal("a stale fingerprint cleared a live finding at the same location")
 	}
-	if result.Findings[0].Status != StatusRefuted {
-		t.Fatalf("target = %+v, want refuted", result.Findings[0])
+	if !IsBlocking(result.Findings[0].Severity, result.Findings[0].Status) {
+		t.Fatalf("v1 = %+v, must keep blocking", result.Findings[0])
 	}
-	if !IsBlocking(result.Findings[1].Severity, result.Findings[1].Status) {
-		t.Fatalf("unrelated = %+v, must keep blocking", result.Findings[1])
+	if !IsBlocking(result.Hallazgos[0].Severity, result.Hallazgos[0].Status) {
+		t.Fatalf("v2 = %+v, must keep blocking", result.Hallazgos[0])
 	}
+}
+
+// FU-6 fix: the engine applies standing human answers by exact fingerprint
+// through a probe audit first: the recorded fingerprint is the effective
+// fingerprint of the live v2 finding, never a location guess.
+func auditFixtureTargetFingerprint(t *testing.T, sha, agentJSON string, refuterResponses []string, description string) string {
+	t.Helper()
+	fabrica, _ := fabricaFija([]string{agentJSON})
+	fabricaRefutador, _ := fabricaRefutadorFija(refuterResponses)
+	probe := AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
+		ReviewTransport:       transporteDirecto(sha),
+		LeerContenidoSnapshot: func(string, string) (string, error) { return "x\n", nil },
+	})
+	for _, h := range probe.Dims[0].Resultado.Hallazgos {
+		if h.Description == description {
+			return EffectiveFingerprint(h)
+		}
+	}
+	t.Fatalf("fixture yields no v2 finding described %q", description)
+	return ""
 }
 
 // FU-6: the engine applies standing human answers after the automated
@@ -314,23 +342,23 @@ func TestApplyDispositionToResultBridgesV1OnlyAudits(t *testing.T) {
 // finding is cleared.
 func TestAuditarCommitAppliesStandingHumanDispositions(t *testing.T) {
 	const sha = "abc12345"
-	fabrica, _ := fabricaFija([]string{
-		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":2,"severity":"CRITICAL","description":"bug"},{"dimension":"logic","file":"b.go","line":30,"severity":"CRITICAL","description":"other"}]}`,
-	})
+	const agentJSON = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":2,"severity":"CRITICAL","description":"bug"},{"dimension":"logic","file":"b.go","line":30,"severity":"CRITICAL","description":"other"}]}`
 	// The automated refuter declines, so without the human answer both
 	// findings would stand confirmed and the verdict would stay block.
-	fabricaRefutador, _ := fabricaRefutadorFija([]string{
+	declines := []string{
 		`{"refuted":false,"reason":"cannot confirm safety","sha":"abc12345","file":"a.go","evidence":"","line_start":0,"line_end":0}`,
 		`{"refuted":false,"reason":"cannot confirm safety","sha":"abc12345","file":"b.go","evidence":"","line_start":0,"line_end":0}`,
-	})
+	}
+	fingerprint := auditFixtureTargetFingerprint(t, sha, agentJSON, declines, "bug")
 	dispositions := []FindingDisposition{{
-		SHA: sha, Fingerprint: "fp-recorded", Status: StatusRefuted,
+		SHA: sha, Fingerprint: fingerprint, Status: StatusRefuted,
 		Reason: "verified safe by hand", Path: "a.go", LineStart: 1, LineEnd: 3,
 		Evidence: "criticalCall()", RangeHash: "1f49",
 		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
-		TargetDimension: DimLogic, TargetLine: 2, TargetDescription: "bug",
 	}}
 
+	fabrica, _ := fabricaFija([]string{agentJSON})
+	fabricaRefutador, _ := fabricaRefutadorFija(declines)
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
 		ReviewTransport:       transporteDirecto(sha),
@@ -355,20 +383,20 @@ func TestAuditarCommitAppliesStandingHumanDispositions(t *testing.T) {
 // attention again.
 func TestAuditarCommitDowngradesWhenHumanAnswersClearEveryBlocker(t *testing.T) {
 	const sha = "abc12345"
-	fabrica, _ := fabricaFija([]string{
-		`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":2,"severity":"CRITICAL","description":"bug"}]}`,
-	})
-	fabricaRefutador, _ := fabricaRefutadorFija([]string{
+	const agentJSON = `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":2,"severity":"CRITICAL","description":"bug"}]}`
+	declines := []string{
 		`{"refuted":false,"reason":"cannot confirm safety","sha":"abc12345","file":"a.go","evidence":"","line_start":0,"line_end":0}`,
-	})
+	}
+	fingerprint := auditFixtureTargetFingerprint(t, sha, agentJSON, declines, "bug")
 	dispositions := []FindingDisposition{{
-		SHA: sha, Fingerprint: "fp-recorded", Status: StatusRefuted,
+		SHA: sha, Fingerprint: fingerprint, Status: StatusRefuted,
 		Reason: "verified safe by hand", Path: "a.go", LineStart: 1, LineEnd: 3,
 		Evidence: "criticalCall()", RangeHash: "1f49",
 		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
-		TargetDimension: DimLogic, TargetLine: 2, TargetDescription: "bug",
 	}}
 
+	fabrica, _ := fabricaFija([]string{agentJSON})
+	fabricaRefutador, _ := fabricaRefutadorFija(declines)
 	resultado := AuditarCommit(fabrica, 1, OpcionesAuditoria{
 		SHA: sha, Bundles: bundlesPrueba(DimLogic), FabricaRefutador: fabricaRefutador,
 		ReviewTransport:       transporteDirecto(sha),
@@ -450,5 +478,32 @@ func TestBloqueantesDeRamaSeesTheSameEffectiveDisposition(t *testing.T) {
 	cleared := BloqueantesDeRamaWithDispositions([]Ficha{overlayFicha}, overlay)
 	if len(cleared) != 1 || cleared[0].File != "other.go" {
 		t.Fatalf("cleared = %+v, want exactly the unrelated finding blocking", cleared)
+	}
+}
+
+// FU-6 fix: a disposition applies by unique SHA + fingerprint match only.
+// A different fingerprint never clears a finding, even when dimension,
+// path, line, and description all coincide: location is not identity.
+func TestApplyDispositionToResultRequiresExactFingerprintMatch(t *testing.T) {
+	result := &DimensionResult{
+		Dim:     DimLogic,
+		Verdict: VerdictBlock,
+		Findings: []ReviewFinding{
+			{File: "a.go", Line: 2, Severity: SevCritical, Description: "bug", Status: StatusConfirmed},
+		},
+	}
+	disp := FindingDisposition{
+		SHA: "abc12345", Fingerprint: "fp-unrelated", Status: StatusRefuted,
+		Reason: "verified safe", Path: "a.go", LineStart: 1, LineEnd: 3,
+		Evidence: "criticalCall()", RangeHash: "1f49",
+		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		TargetDimension: DimLogic, TargetLine: 2, TargetDescription: "bug",
+	}
+
+	if ApplyDispositionToResult(result, disp) {
+		t.Fatal("a non-matching fingerprint cleared the finding through the location fallback")
+	}
+	if !IsBlocking(result.Findings[0].Severity, result.Findings[0].Status) {
+		t.Fatalf("finding = %+v, must keep blocking without an exact fingerprint match", result.Findings[0])
 	}
 }

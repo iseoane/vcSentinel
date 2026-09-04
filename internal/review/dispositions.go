@@ -31,9 +31,9 @@ const (
 // log and are overlaid onto effective findings by ApplyDispositions.
 //
 // TargetDimension/TargetLine/TargetDescription record the finding's v1
-// identity at record time. They are the fallback match key when a fresh
-// audit rewords the evidence or title the stable fingerprint hashes, which
-// changes the fingerprint while the defect stays in the same place.
+// identity at record time as audit metadata only. They never match: a
+// disposition applies by unique SHA + fingerprint, and anything else fails
+// closed.
 type FindingDisposition struct {
 	SHA               string    `json:"sha"`
 	Fingerprint       string    `json:"fingerprint"`
@@ -91,15 +91,6 @@ func FilterDispositionsForSHA(dispositions []FindingDisposition, sha string) []F
 		}
 	}
 	return out
-}
-
-// fallbackKey returns the v1 identity this disposition recorded for its
-// target, or "" when the record carries none.
-func (d FindingDisposition) fallbackKey() string {
-	if d.TargetDimension == "" && d.Path == "" && d.TargetLine == 0 && d.TargetDescription == "" {
-		return ""
-	}
-	return dispositionKey(d.TargetDimension, d.Path, d.TargetLine, d.TargetDescription)
 }
 
 // ApplyDispositions overlays append-only dispositions onto effective
@@ -179,11 +170,13 @@ func applyToReviewFinding(f *ReviewFinding, d FindingDisposition) {
 
 // ApplyDispositionToResult overlays one disposition onto a fresh dimension
 // result, across both finding shapes, and reports whether it newly cleared
-// a blocking CRITICAL finding. The v2 findings match by stable fingerprint;
-// the v1 findings match by the fallback identity the disposition recorded,
-// which also covers v1-only audits whose shape carries no fingerprint input.
-// Each matched side pairs its counterpart by dimension, file, line, and
-// description, the same key the automated refuter already uses.
+// a blocking CRITICAL finding. Matching is by unique stable fingerprint
+// only: a v2 finding whose effective fingerprint equals the recorded one is
+// flipped, and its v1 counterpart (same dimension, file, line, and
+// description, the key the automated refuter already uses) follows, so the
+// engine verdict and the persisted revision agree. A fingerprint that
+// matches nothing clears nothing: v1-only shapes carry no fingerprint input
+// and are never disposed by heuristic, they fail closed.
 func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) bool {
 	if result == nil {
 		return false
@@ -217,21 +210,6 @@ func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) 
 			f := &result.Findings[j]
 			if f.File == h.Location.Archivo && int(f.Line) == h.Location.LineaInicio && f.Description == h.Description {
 				flipV1(f)
-			}
-		}
-	}
-	if key := disp.fallbackKey(); key != "" {
-		for j := range result.Findings {
-			f := &result.Findings[j]
-			if dispositionKey(result.Dim, f.File, int(f.Line), f.Description) != key {
-				continue
-			}
-			flipV1(f)
-			for i := range result.Hallazgos {
-				h := &result.Hallazgos[i]
-				if h.Dimension == result.Dim && h.Location.Archivo == f.File && h.Location.LineaInicio == int(f.Line) && h.Description == f.Description {
-					flipV2(h)
-				}
 			}
 		}
 	}
