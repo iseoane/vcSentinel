@@ -78,6 +78,21 @@ func TestEjecutarReview_ClaveDesconocidaEnYml_Exit1ConLinea(t *testing.T) {
 	}
 }
 
+// FU-6: review must fail before scheduling an audit when the shared
+// disposition history is corrupt. Continuing would silently discard an
+// answer that changes the effective finding lifecycle.
+func TestEjecutarReviewFailsClosedOnCorruptHumanDisposition(t *testing.T) {
+	worktree := worktreeWithCorruptHumanDisposition(t)
+
+	output, exit := ejecutarComoSubproceso(t, "ejecutarReview", worktree, t.TempDir())
+	if exit != 1 {
+		t.Fatalf("review exit = %d, want 1; output: %q", exit, output)
+	}
+	if !strings.Contains(output, "reading human dispositions") {
+		t.Fatalf("review did not report the disposition read failure: %q", output)
+	}
+}
+
 // TestParsearRespuestasAuditoria cubre T7.6: extraer respuestas dirigidas
 // "id=texto" de --answer sin romper el uso existente (prosa libre, incluso
 // con comas literales, debe reconstruirse byte a byte cuando no hay ningún

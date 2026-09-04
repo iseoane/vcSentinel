@@ -428,3 +428,48 @@ func TestRunRefutationRefusesCorruptOrRepeatedDisposition(t *testing.T) {
 		}
 	})
 }
+
+// FU-6: the command boundary rejects an out-of-snapshot range in a real Git
+// repository and leaves the append-only log untouched.
+func TestEjecutarRefuteRejectsOutOfSnapshotRange(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uses a temporary Git repository")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	repo := t.TempDir()
+	runRefuteGit(t, repo, "init")
+	runRefuteGit(t, repo, "config", "user.email", "refute@example.test")
+	runRefuteGit(t, repo, "config", "user.name", "Refute Test")
+	if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte(refuteSnapshotContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runRefuteGit(t, repo, "add", "a.go")
+	runRefuteGit(t, repo, "commit", "-m", "audited commit")
+	sha := strings.TrimSpace(runRefuteGit(t, repo, "rev-parse", "HEAD"))
+	commonDir, err := git.ObtenerGitCommonDir(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := review.NuevoLedger(commonDir)
+	if err := ledger.GuardarRevision(sha, "audited commit", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if exit := ejecutarRefute(&output, repo, []string{
+		"--sha", sha, "--fingerprint", "fp-target",
+		"--reason", "the committed implementation is safe",
+		"--line-start", "4", "--line-end", "4",
+	}); exit != 1 {
+		t.Fatalf("refute exit = %d, want 1; output: %q", exit, output.String())
+	}
+	records, err := store.NuevoStore(commonDir).ReadDispositions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dispositions = %+v, want no append after invalid range", records)
+	}
+}
