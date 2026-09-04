@@ -350,3 +350,33 @@ func TestGateEscalationHonoursHumanRefutations(t *testing.T) {
 		t.Fatal("an accepted CRITICAL must still escalate")
 	}
 }
+
+// FU-6 race fix: a re-audit landing between fingerprint resolution and the
+// dispositions append must fail the refutation closed. The seam lands a
+// concurrent revision that retires the resolved fingerprint; the command
+// must persist nothing and report the record changed.
+func TestRunRefutationRefusesConcurrentRevision(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	deps.beforeLockedAppend = func() {
+		next := refuteFichaFixture()
+		next.AggregatedFindings[0].Fingerprint = "fp-retired"
+		next.AggregatedFindings[0].Description = "rewritten premise"
+		if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", next); err != nil {
+			t.Errorf("concurrent revision: %v", err)
+		}
+	}
+
+	if _, err := runRefutation(deps, refuteValidOptions()); err == nil {
+		t.Fatal("a refutation resolved against a superseded revision was accepted")
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatalf("read dispositions: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dispositions = %+v, want nothing persisted for a stale resolution", records)
+	}
+}

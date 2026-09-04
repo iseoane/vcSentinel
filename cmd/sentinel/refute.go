@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -99,6 +101,11 @@ type refuteDeps struct {
 	store    *store.Store
 	snapshot review.SnapshotReader
 	now      func() time.Time
+	// beforeLockedAppend is a test-only seam run after the finding is
+	// resolved and validated but before the locked compare-and-append. A
+	// test sets it to land a concurrent revision, proving a stale
+	// refutation fails closed. Production leaves it nil.
+	beforeLockedAppend func()
 }
 
 // resolveRefuteDeps wires the production seams for one worktree: the shared
@@ -140,9 +147,10 @@ func loadDispositionsForWorktree(worktree string) ([]review.FindingDisposition, 
 // runRefutation records one evidence-bound human refutation. Every failure
 // is closed without persisting anything: a missing review record, a missing
 // or ambiguous fingerprint, an already-cleared finding, a range the
-// refutation gate rejects, an unreadable snapshot, and a corrupt
-// dispositions log all abort before the append. Persisted revisions are
-// never mutated; the answer lands in the separate append-only log.
+// refutation gate rejects, an unreadable snapshot, a review record that
+// changed between resolution and append, and a corrupt dispositions log all
+// abort before the append. Persisted revisions are never mutated; the answer
+// lands in the separate append-only log.
 func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposition, error) {
 	if deps == nil || deps.ledger == nil || deps.store == nil || deps.snapshot == nil {
 		return nil, fmt.Errorf("refute: missing dependencies")
@@ -200,8 +208,34 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 		TargetLine:        target.Location.LineaInicio,
 		TargetDescription: target.Description,
 	}
-	if err := deps.store.AppendDisposition(disposition); err != nil {
-		return nil, fmt.Errorf("refute: persisting the disposition: %w", err)
+	// Compare-and-append against the authoritative record: the fingerprint
+	// above was resolved against a ficha read before any lock, and a
+	// concurrent re-audit may have retired it since. The expected bytes are
+	// snapshotted here and re-checked under the same ficha lock the
+	// revision writer holds; any difference fails closed with nothing
+	// persisted. The store append itself runs inside the lock so no writer
+	// can slip between the re-check and the write.
+	expected, err := json.Marshal(ficha)
+	if err != nil {
+		return nil, fmt.Errorf("refute: reading the review record: %w", err)
+	}
+	if deps.beforeLockedAppend != nil {
+		deps.beforeLockedAppend()
+	}
+	if err := deps.ledger.WithLockedFicha(sha, func(current *review.Ficha) error {
+		fresh, err := json.Marshal(current)
+		if err != nil {
+			return fmt.Errorf("refute: reading the review record: %w", err)
+		}
+		if !bytes.Equal(fresh, expected) {
+			return fmt.Errorf("refute: the review record changed during refutation; re-resolve the finding and retry")
+		}
+		if err := deps.store.AppendDisposition(disposition); err != nil {
+			return fmt.Errorf("refute: persisting the disposition: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return disposition, nil
 }
