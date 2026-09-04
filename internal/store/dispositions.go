@@ -25,28 +25,9 @@ const dispositionsFile = "dispositions.jsonl"
 // is normalised in place before writing: surrounding whitespace is trimmed,
 // the status is canonicalised, and a missing timestamp defaults to now.
 func (s *Store) AppendDisposition(d *review.FindingDisposition) error {
-	if d == nil {
-		return errors.New("store: nil finding disposition")
-	}
-	record := *d
-	record.SHA = strings.TrimSpace(record.SHA)
-	record.Fingerprint = strings.TrimSpace(record.Fingerprint)
-	record.Status = review.NormalizeStatus(record.Status)
-	record.Actor = strings.TrimSpace(record.Actor)
-	record.Source = strings.TrimSpace(record.Source)
-	if record.SHA == "" {
-		return errors.New("store: finding disposition without reviewed SHA")
-	}
-	if record.Fingerprint == "" {
-		return errors.New("store: finding disposition without fingerprint")
-	}
-	switch record.Status {
-	case review.StatusRefuted, review.StatusAcceptedByUser, review.StatusFixed, review.StatusReopened:
-	default:
-		return fmt.Errorf("store: finding disposition with unknown status %q", d.Status)
-	}
-	if record.Actor == "" {
-		return errors.New("store: finding disposition without actor")
+	record, err := normalizeAndValidateDisposition(d)
+	if err != nil {
+		return err
 	}
 	if record.At.IsZero() {
 		record.At = time.Now().UTC()
@@ -70,6 +51,40 @@ func (s *Store) AppendDisposition(d *review.FindingDisposition) error {
 	return nil
 }
 
+// normalizeAndValidateDisposition is the single persisted-schema boundary
+// for the append-only human disposition log. Reads use it too: accepting a
+// line here only on write would let corrupted history create a disposition
+// that projections could interpret as a real human answer.
+func normalizeAndValidateDisposition(d *review.FindingDisposition) (review.FindingDisposition, error) {
+	if d == nil {
+		return review.FindingDisposition{}, errors.New("store: nil finding disposition")
+	}
+	record := *d
+	record.SHA = strings.TrimSpace(record.SHA)
+	record.Fingerprint = strings.TrimSpace(record.Fingerprint)
+	record.Status = review.NormalizeStatus(record.Status)
+	record.Actor = strings.TrimSpace(record.Actor)
+	record.Source = strings.TrimSpace(record.Source)
+	if record.SHA == "" {
+		return review.FindingDisposition{}, errors.New("store: finding disposition without reviewed SHA")
+	}
+	if record.Fingerprint == "" {
+		return review.FindingDisposition{}, errors.New("store: finding disposition without fingerprint")
+	}
+	switch record.Status {
+	case review.StatusRefuted, review.StatusAcceptedByUser, review.StatusFixed, review.StatusReopened:
+	default:
+		return review.FindingDisposition{}, fmt.Errorf("store: finding disposition with unknown status %q", d.Status)
+	}
+	if record.Actor != review.RefutationActorHuman {
+		return review.FindingDisposition{}, fmt.Errorf("store: finding disposition with non-human actor %q", d.Actor)
+	}
+	if record.Source != review.DispositionSourceHuman {
+		return review.FindingDisposition{}, fmt.Errorf("store: finding disposition with non-human source %q", d.Source)
+	}
+	return record, nil
+}
+
 // ReadDispositions returns every recorded disposition in write order. A log
 // that was never written returns (nil, nil); a corrupt line is an explicit
 // error, never a silent skip: every consumer of these answers fails closed.
@@ -90,10 +105,11 @@ func (s *Store) ReadDispositions() ([]review.FindingDisposition, error) {
 		if err := json.Unmarshal([]byte(linea), &d); err != nil {
 			return nil, fmt.Errorf("store: corrupt finding disposition on line %d: %w", i+1, err)
 		}
-		if strings.TrimSpace(d.SHA) == "" || strings.TrimSpace(d.Fingerprint) == "" || review.NormalizeStatus(d.Status) == "" {
-			return nil, fmt.Errorf("store: corrupt finding disposition on line %d: missing sha, fingerprint, or status", i+1)
+		record, err := normalizeAndValidateDisposition(&d)
+		if err != nil {
+			return nil, fmt.Errorf("store: corrupt finding disposition on line %d: %w", i+1, err)
 		}
-		out = append(out, d)
+		out = append(out, record)
 	}
 	return out, nil
 }

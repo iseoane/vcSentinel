@@ -380,3 +380,51 @@ func TestRunRefutationRefusesConcurrentRevision(t *testing.T) {
 		t.Fatalf("dispositions = %+v, want nothing persisted for a stale resolution", records)
 	}
 }
+
+// FU-6: corrupt history and an already-effective refutation both fail before
+// append. A second answer must not accumulate against a finding no longer
+// blocking.
+func TestRunRefutationRefusesCorruptOrRepeatedDisposition(t *testing.T) {
+	t.Run("corrupt log", func(t *testing.T) {
+		deps, ledger, _ := refuteTestDeps(t, nil)
+		if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+			t.Fatalf("save revision: %v", err)
+		}
+		path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RutaFicha("abc12345"))), "vas-sentinel", "dispositions.jsonl")
+		const corrupt = `{"sha":"abc12345","fingerprint":"fp-target","status":"ignored","actor":"human","source":"human"}` + "\n"
+		if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := runRefutation(deps, refuteValidOptions()); err == nil {
+			t.Fatal("refutation appended despite corrupt disposition history")
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != corrupt {
+			t.Fatalf("corrupt log changed after failed refutation: %q", got)
+		}
+	})
+
+	t.Run("already refuted", func(t *testing.T) {
+		deps, ledger, st := refuteTestDeps(t, nil)
+		if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+			t.Fatalf("save revision: %v", err)
+		}
+		if _, err := runRefutation(deps, refuteValidOptions()); err != nil {
+			t.Fatalf("first refutation: %v", err)
+		}
+		if _, err := runRefutation(deps, refuteValidOptions()); err == nil {
+			t.Fatal("repeated refutation was appended")
+		}
+		records, err := st.ReadDispositions()
+		if err != nil {
+			t.Fatalf("read dispositions: %v", err)
+		}
+		if len(records) != 1 {
+			t.Fatalf("dispositions = %+v, want one record after duplicate", records)
+		}
+	})
+}

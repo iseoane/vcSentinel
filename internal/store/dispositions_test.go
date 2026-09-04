@@ -90,6 +90,35 @@ func TestReadDispositionsRejectsCorruptPersistence(t *testing.T) {
 	}
 }
 
+// FU-6: a line that AppendDisposition would reject must never be consumed
+// later as a valid human answer. Otherwise malformed history could clear a
+// live blocker during projection.
+func TestReadDispositionsUsesTheWriteSchema(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"unknown status", `{"sha":"a","fingerprint":"b","status":"ignored","actor":"human","source":"human"}`},
+		{"missing actor", `{"sha":"a","fingerprint":"b","status":"refuted","source":"human"}`},
+		{"missing source", `{"sha":"a","fingerprint":"b","status":"refuted","actor":"human"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "vas-sentinel", "dispositions.jsonl")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.line+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NuevoStore(dir).ReadDispositions(); err == nil {
+				t.Fatal("record rejected on append was accepted on read")
+			}
+		})
+	}
+}
+
 // FU-6: appending validates the address, vocabulary, and provenance instead
 // of persisting a record no consumer could interpret.
 func TestAppendDispositionRejectsInvalidRecords(t *testing.T) {

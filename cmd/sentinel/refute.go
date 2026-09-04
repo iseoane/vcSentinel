@@ -230,6 +230,19 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 		if !bytes.Equal(fresh, expected) {
 			return fmt.Errorf("refute: the review record changed during refutation; re-resolve the finding and retry")
 		}
+		dispositions, err := deps.store.ReadDispositions()
+		if err != nil {
+			return fmt.Errorf("refute: reading dispositions before append: %w", err)
+		}
+		currentRevision := current.Revisions[len(current.Revisions)-1]
+		effectiveTarget, err := review.ResolveDispositionTargetWithDispositions(
+			currentRevision, fingerprint, review.FilterDispositionsForSHA(dispositions, sha))
+		if err != nil {
+			return fmt.Errorf("refute: %w", err)
+		}
+		if !review.IsBlocking(effectiveTarget.Severity, effectiveTarget.Status) {
+			return fmt.Errorf("refute: finding %q does not block (status %q)", fingerprint, effectiveTarget.Status)
+		}
 		if err := deps.store.AppendDisposition(disposition); err != nil {
 			return fmt.Errorf("refute: persisting the disposition: %w", err)
 		}

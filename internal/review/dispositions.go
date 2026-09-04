@@ -221,12 +221,24 @@ func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) 
 // ambiguous one are both errors: the caller must fail closed without
 // persisting anything.
 func ResolveDispositionTarget(revision Revision, fingerprint string) (Hallazgo, error) {
+	return resolveDispositionTarget(revision.FindingsWithDispositions(), fingerprint)
+}
+
+// ResolveDispositionTargetWithDispositions resolves a fingerprint after
+// applying the authoritative append-only human answers. It keeps target
+// identity and the effective lifecycle in one projection, so a second human
+// refutation cannot be appended after the first one already cleared it.
+func ResolveDispositionTargetWithDispositions(revision Revision, fingerprint string, dispositions []FindingDisposition) (Hallazgo, error) {
+	return resolveDispositionTarget(ApplyDispositions(revision.FindingsWithDispositions(), dispositions), fingerprint)
+}
+
+func resolveDispositionTarget(findings []Hallazgo, fingerprint string) (Hallazgo, error) {
 	fp := strings.TrimSpace(fingerprint)
 	if fp == "" {
 		return Hallazgo{}, errors.New("the finding fingerprint is empty")
 	}
 	var matches []Hallazgo
-	for _, h := range revision.FindingsWithDispositions() {
+	for _, h := range findings {
 		if EffectiveFingerprint(h) == fp {
 			matches = append(matches, h)
 		}
