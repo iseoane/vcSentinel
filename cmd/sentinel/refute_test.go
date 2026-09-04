@@ -550,3 +550,32 @@ func TestEjecutarRefuteReportsCompletedAppendWithLockCleanupWarning(t *testing.T
 		t.Fatalf("dispositions = %+v, want one completed append", records)
 	}
 }
+
+// FU-6: a ficha lock failure before the callback runs is a hard failure, not
+// a completed append. The sentinel alone carries no completion signal, so the
+// command must return an empty outcome, surface the sentinel as an error, and
+// persist nothing.
+func TestRunRefutationRejectsLockErrorBeforeAppend(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	deps.withLockedFicha = func(string, func(*review.Ficha) error) error {
+		return review.ErrBloqueoNoLiberado
+	}
+
+	outcome, err := runRefutation(deps, refuteValidOptions())
+	if err == nil || !errors.Is(err, review.ErrBloqueoNoLiberado) {
+		t.Fatalf("err = %v, want a hard error wrapping ErrBloqueoNoLiberado", err)
+	}
+	if outcome.disposition != nil || outcome.completionWarning != nil {
+		t.Fatalf("outcome = %+v, want an empty outcome on a pre-append lock failure", outcome)
+	}
+	records, readErr := st.ReadDispositions()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dispositions = %+v, want zero persisted dispositions", records)
+	}
+}
