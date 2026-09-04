@@ -1,5 +1,5 @@
 version: "2.0"
-active_agent: "claude"
+active_agent: "opencode"
 commit_language: "en"
 # Solicita generación semántica externa; no representa consentimiento personal.
 request_external_agent_diff: true
@@ -34,17 +34,17 @@ agents:
 #        reasoning_effort: "xhigh"
 #      commit:
 #        reasoning_effort: "low"
-    model: "openai/muse-spark-1.3-contributor-free"
+    model: "opencode/muse-spark-1.3-contributor-free"
     reasoning_effort: "high"
     profiles:
       cheap:
-        model: "openai/muse-spark-1.3-contributor-free"
+        model: "opencode/muse-spark-1.3-contributor-free"
         reasoning_effort: "medium"
       normal:
-        model: "openai/muse-spark-1.3-contributor-free"
+        model: "opencode/muse-spark-1.3-contributor-free"
         reasoning_effort: "high"
       deep:
-        model: "openai/muse-spark-1.3-contributor-free"
+        model: "opencode/muse-spark-1.3-contributor-free"
         reasoning_effort: "xhigh"
       commit:
         reasoning_effort: "low"
