@@ -802,6 +802,19 @@ that `900s` is provably sufficient. The store records no per-run timeout
 budget, so the tail is censored at an unknown mix of levels. Any per-dimension
 breakdown is an observation only, not a causal claim about dimensions.
 
+**Retention does not disturb this record (checked 2026-09-04).** T9.5's first
+collecting pass moved the success and failure counters, so this calibration was
+re-examined against it. It is unaffected, for two reasons that hold by
+construction rather than by luck. Its axis is
+`ExecutionTiming.TotalDurationNanos`, which lives in the metrics snapshot, and
+retention never collects a snapshot. Its denominator is measured runs, which
+grew from `325` to `919` with `duration_nanos` coverage at `919 / 919`: the
+measured population expanded, so nothing was removed from underneath it. The
+counters that did move are success and failure, which this record never uses.
+Multi-attempt runs keep their streams under `PruneReasonMultiAttempt`, so
+`retried_runs` is not silently deflated either. Re-running the calibration over
+the same period reproduces it.
+
 ### T9.5 — event-driven retention
 
 **Why this belongs to F9 and not before it.** This phase already forbids
