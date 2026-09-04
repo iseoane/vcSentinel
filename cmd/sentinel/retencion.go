@@ -19,8 +19,9 @@
 //   - Execution streams whose invocations no unpublished review record
 //     cites, through the same provenance collector `runs prune` uses, minus
 //     the published fichas. The store's own guards decide each run:
-//     terminal, measured (its metrics snapshot exists), single-attempt.
-//     Anything else stays with its stable reason.
+//     terminal, measured (its metrics snapshot exists and agrees with
+//     its terminal outcomes), single-attempt. Anything else stays with
+//     its stable reason.
 //   - Review fichas stay. Findings, dispositions, and remediation evidence
 //     live in the ficha and feed `sentinel metrics`; deleting them would
 //     move the aggregates retention promises to leave untouched. Fichas are

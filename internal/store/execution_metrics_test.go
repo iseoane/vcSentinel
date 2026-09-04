@@ -625,7 +625,11 @@ func TestSaveExecutionMetricsRejectsSavingsForFullScope(t *testing.T) {
 
 func TestPruneExecutionsRetainsReadableExecutionMetrics(t *testing.T) {
 	store := NuevoStore(t.TempDir())
-	runID, _ := seedPruneRun(t, store, "metrics-retention", "", pruneTerminalSuccess(), pruneAncientTime)
+	// Agreeing pair: a failure-terminal stream with a failing snapshot.
+	// A success stream with this snapshot would be contradictory (kept
+	// under the T9.5 agreement guard), which is not what this test
+	// proves — it proves the snapshot survives collection byte-identical.
+	runID, _ := seedPruneRun(t, store, "metrics-retention", "", pruneTerminalFailure(), pruneAncientTime)
 	metrics := ExecutionMetrics{
 		Version: ExecutionMetricsSchemaVersion,
 		RunID:   runID,

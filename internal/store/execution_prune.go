@@ -29,6 +29,9 @@ import (
 //     survives);
 //   - it settled in a single attempt (retry multiplicity lives only in the
 //     event stream, which the snapshot does not record);
+//   - its snapshot agrees with its terminal outcomes (terminal success
+//     beside snapshot failures keeps the stream: collecting it would flip
+//     the run from success to failed);
 //   - it is not the parent linkage target of any surviving run.
 //
 // The single exception is a crash-interrupted removal: a directory holding
@@ -74,6 +77,11 @@ const (
 	// aggregate reads it only from the event stream: deleting the stream
 	// would move a measurement retention promises to leave untouched.
 	PruneReasonMultiAttempt = "multiple attempts: retry evidence lives only in the event stream"
+	// PruneReasonContradiction keeps a run whose snapshot disagrees with
+	// its terminal outcomes: terminal success beside snapshot failures.
+	// Collecting it would flip the run from success to failed, so
+	// agreement — not mere presence — is the collection bar.
+	PruneReasonContradiction = "snapshot contradicts terminal success"
 	// PruneReasonOrphanedCanceled keeps owner-death recovery evidence.
 	PruneReasonOrphanedCanceled = "orphaned-canceled recovery evidence"
 	// PruneReasonRemovalRemnant reports the successful removal of a
@@ -298,7 +306,30 @@ func (s *Store) classifyForPrune(runID string, cutoff time.Time, referencedInvoc
 	if attemptCount(outcomes) > 1 {
 		return kept(PruneReasonMultiAttempt)
 	}
+	if snapshotContradictsStream(outcomes, snapshot) {
+		return kept(PruneReasonContradiction)
+	}
 	return prunableRun{runID: runID, parentRunID: survivorLink, prunable: true}
+}
+
+// snapshotContradictsStream reports whether the snapshot disagrees with the
+// terminal outcomes about the run's verdict: terminal success beside
+// snapshot failures. The aggregator follows live outcomes while the stream
+// survives and the snapshot once it is gone, so collecting here would flip
+// the run from success to failed. The review engine's corrective-retry
+// shape produces exactly this evidence (semantic failure recorded, attempt
+// ultimately succeeding), which is why presence alone cannot authorize
+// collection.
+func snapshotContradictsStream(outcomes []AttemptOutcome, snapshot *ExecutionMetrics) bool {
+	if snapshot == nil || len(snapshot.Failures) == 0 {
+		return false
+	}
+	for _, outcome := range outcomes {
+		if outcome.Class.IsTerminal() && outcome.Class == agentrun.OutcomeSuccess {
+			return true
+		}
+	}
+	return false
 }
 
 // attemptCount counts distinct settled attempts in reconciled outcomes by

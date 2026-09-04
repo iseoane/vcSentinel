@@ -37,6 +37,15 @@ func pruneTerminalSuccess() []pruneTransition {
 	}
 }
 
+func pruneTerminalFailure() []pruneTransition {
+	return []pruneTransition{
+		{agentrun.StateCreated, agentrun.StateQueued, agentrun.DecisionStart},
+		{agentrun.StateQueued, agentrun.StateAdmitted, agentrun.DecisionStart},
+		{agentrun.StateAdmitted, agentrun.StateRunning, agentrun.DecisionStart},
+		{agentrun.StateRunning, agentrun.StateFailed, agentrun.DecisionNone},
+	}
+}
+
 func pruneRunningHead() []pruneTransition {
 	return pruneTerminalSuccess()[:3]
 }

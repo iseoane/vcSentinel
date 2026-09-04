@@ -81,6 +81,17 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	// cast plus one semantic class): the breakdown must survive
 	// collection exactly, which is what catches double counting.
 	runFailed, invFailed := seedPruneFailedRun(t, backing, ancient)
+	// A contradictory published run: terminal success with a failing
+	// snapshot (the corrective-retry shape). Agreement, not mere
+	// presence, authorizes collection, so this one stays.
+	runContradicted, invContradicted := seedPruneTerminalRun(t, backing, "candidate:contradicted", ancient)
+	if err := backing.SaveExecutionMetrics(store.ExecutionMetrics{
+		Version:  store.ExecutionMetricsSchemaVersion,
+		RunID:    runContradicted,
+		Failures: []store.ExecutionFailure{{Class: store.FailureInvalidOutput}},
+	}); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
 
 	ledger := review.NuevoLedger(commonDir)
 	guardarFicha := func(sha, invocation string) {
@@ -116,6 +127,7 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	guardarFicha(shaUnpublished, invUnpublished)
 	guardarFicha(shaPublished, invUnmeasured)
 	guardarFicha(shaPublished, invFailed)
+	guardarFicha(shaPublished, invContradicted)
 
 	metricsBefore, err := metrics.AggregateStore(commonDir)
 	if err != nil {
@@ -125,7 +137,7 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metricsBefore.Findings.Observed == 0 || metricsBefore.Findings.Confirmed == 0 || metricsBefore.Executions.MeasuredRuns != 3 {
+	if metricsBefore.Findings.Observed == 0 || metricsBefore.Findings.Confirmed == 0 || metricsBefore.Executions.MeasuredRuns != 4 {
 		t.Fatalf("fixture is evidence-free (findings=%d confirmed=%d measured=%d): the invariance check would pass vacuously",
 			metricsBefore.Findings.Observed, metricsBefore.Findings.Confirmed, metricsBefore.Executions.MeasuredRuns)
 	}
@@ -168,6 +180,9 @@ func TestRetencionCollectsPublishedRunsAndKeepsMeasurementIdentical(t *testing.T
 	}
 	if !stillThere(runUnmeasured) {
 		t.Fatalf("unmeasured published run %s was collected without a snapshot", runUnmeasured)
+	}
+	if !stillThere(runContradicted) {
+		t.Fatalf("contradicted published run %s was collected despite disagreeing evidence", runContradicted)
 	}
 	for _, collected := range []string{runPublished, runFailed} {
 		if snapshot, err := backing.ReadExecutionMetrics(collected); err != nil || snapshot == nil {

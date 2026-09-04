@@ -156,3 +156,34 @@ func TestPruneExecutionsStillCollectsSnapshottedSingleAttemptRuns(t *testing.T) 
 		t.Fatalf("snapshot must survive collection: got=%v err=%v", got, err)
 	}
 }
+
+// TestPruneExecutionsKeepsContradictorySnapshots proves collection needs
+// agreement, not just presence: a terminal-success stream with a failing
+// snapshot would flip the run's verdict from success to failed on
+// collection, so the stream stays. The fixture mirrors the review engine's
+// corrective-retry shape (semantic failure recorded, attempt ultimately
+// succeeding) with a saved snapshot carrying the failure.
+func TestPruneExecutionsKeepsContradictorySnapshots(t *testing.T) {
+	s := NuevoStore(t.TempDir())
+	runID, _ := seedPruneRun(t, s, "contradicted", "", pruneTerminalSuccess(), pruneAncientTime)
+	snapshot := ExecutionMetrics{
+		Version: ExecutionMetricsSchemaVersion,
+		RunID:   runID,
+		Failures: []ExecutionFailure{{
+			Class:  FailureInvalidOutput,
+			Detail: "recovered later in the same attempt",
+		}},
+	}
+	if err := s.SaveExecutionMetrics(snapshot); err != nil {
+		t.Fatalf("SaveExecutionMetrics() error = %v", err)
+	}
+
+	report, err := s.PruneExecutions(time.Now().Add(-24*time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertKept(t, report, runID, "contradict")
+	if !executionDirectoryExists(t, s, runID) {
+		t.Fatalf("contradicted run %s was removed", runID)
+	}
+}
