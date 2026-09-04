@@ -308,6 +308,47 @@ func TestApplyDispositionToResultPairsBothShapes(t *testing.T) {
 	}
 }
 
+// FU-6: a disposition may only clear one v2 identity. If a malformed review
+// emits the same fingerprint twice, applying it to every match would turn an
+// ambiguous human answer into multiple unblocks.
+func TestApplyDispositionToResultRejectsAmbiguousFingerprint(t *testing.T) {
+	result := &DimensionResult{
+		Dim:     DimLogic,
+		Verdict: VerdictBlock,
+		Findings: []ReviewFinding{
+			{File: "a.go", Line: 2, Severity: SevCritical, Description: "first", Status: StatusConfirmed},
+			{File: "b.go", Line: 3, Severity: SevCritical, Description: "second", Status: StatusConfirmed},
+		},
+		Hallazgos: []Hallazgo{
+			{
+				Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+				Description: "first", Fingerprint: "fp-ambiguous",
+				Location: Ubicacion{Archivo: "a.go", LineaInicio: 2},
+			},
+			{
+				Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+				Description: "second", Fingerprint: "fp-ambiguous",
+				Location: Ubicacion{Archivo: "b.go", LineaInicio: 3},
+			},
+		},
+	}
+	disp := FindingDisposition{Fingerprint: "fp-ambiguous", Status: StatusRefuted}
+
+	if ApplyDispositionToResult(result, disp) {
+		t.Fatal("ambiguous fingerprint reported a cleared finding")
+	}
+	for i, h := range result.Hallazgos {
+		if !IsBlocking(h.Severity, h.Status) {
+			t.Fatalf("v2 finding %d = %+v, must stay blocking", i, h)
+		}
+	}
+	for i, f := range result.Findings {
+		if !IsBlocking(f.Severity, f.Status) {
+			t.Fatalf("v1 finding %d = %+v, must stay blocking", i, f)
+		}
+	}
+}
+
 // FU-6 fix: without an exact fingerprint match nothing is disposed, even
 // when v2 findings are present. The recorded location identity is audit
 // metadata, never a match key.

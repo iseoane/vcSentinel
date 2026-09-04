@@ -200,17 +200,25 @@ func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) 
 			cleared = true
 		}
 	}
+	match := -1
 	for i := range result.Hallazgos {
-		h := &result.Hallazgos[i]
-		if EffectiveFingerprint(*h) != fp {
+		if EffectiveFingerprint(result.Hallazgos[i]) != fp {
 			continue
 		}
-		flipV2(h)
-		for j := range result.Findings {
-			f := &result.Findings[j]
-			if f.File == h.Location.Archivo && int(f.Line) == h.Location.LineaInicio && f.Description == h.Description {
-				flipV1(f)
-			}
+		if match >= 0 {
+			return false
+		}
+		match = i
+	}
+	if match < 0 {
+		return false
+	}
+	h := &result.Hallazgos[match]
+	flipV2(h)
+	for j := range result.Findings {
+		f := &result.Findings[j]
+		if f.File == h.Location.Archivo && int(f.Line) == h.Location.LineaInicio && f.Description == h.Description {
+			flipV1(f)
 		}
 	}
 	return cleared
