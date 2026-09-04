@@ -1570,6 +1570,24 @@ block across branches, and reversing the argument order stops a genuine
 descendant from clearing it — which is the exact error this entry's own target
 line contained before it was corrected.
 
+#### Same-branch staleness, observed 2026-09-04 (T9.5)
+
+The ancestry gate stops cross-branch clearing but not same-branch
+staleness: `7552565` (`fix(store)` on the T9.5 branch) was recorded as
+the correction of `c50d6d5` (T9.1a, merged 2026-08-29) because the old
+commit is an ancestor and the file sets overlap
+(`internal/store/execution_metrics_test.go` among them). Topically the
+two are unrelated — the T9.1a block concerns snapshot relocation, the
+fix concerns collection agreement — and the T9.1a block already carried
+its evidence-backed disposition (implementation acceptance, 2026-08-31),
+so nothing was pending on it. Impact here is nil beyond misleading
+archaeology, and it is recorded rather than repaired: attribution cannot
+tell topicality from ancestry plus file overlap, and any narrower rule
+(e.g. finding-text matching) would be easier to game than the current
+one. The lesson for readers of `fixed_in`: it means "a later commit
+touched these files and passed review", not "this finding's premise was
+re-tested".
+
 ### FU-19: an unparseable finding silently downgrades a block to "unavailable"
 
 Recorded 2026-09-03, from a `spec` dimension that reported `unavailable` with
