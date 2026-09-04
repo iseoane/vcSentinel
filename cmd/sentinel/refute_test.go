@@ -114,10 +114,14 @@ func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 		t.Fatalf("read ficha: %v", err)
 	}
 
-	disposition, err := runRefutation(deps, refuteValidOptions())
+	outcome, err := runRefutation(deps, refuteValidOptions())
 	if err != nil {
 		t.Fatalf("refutation rejected: %v", err)
 	}
+	if outcome.completionWarning != nil {
+		t.Fatalf("completion warning = %v, want nil", outcome.completionWarning)
+	}
+	disposition := outcome.disposition
 	if disposition.SHA != "abc12345" || disposition.Fingerprint != "fp-target" {
 		t.Fatalf("address = %q/%q, want sha/fingerprint", disposition.SHA, disposition.Fingerprint)
 	}
@@ -489,12 +493,15 @@ func TestRunRefutationPreservesCompletedAppendAfterLockCleanupFailure(t *testing
 		return review.ErrBloqueoNoLiberado
 	}
 
-	disposition, err := runRefutation(deps, refuteValidOptions())
-	if disposition == nil || disposition.Fingerprint != "fp-target" {
-		t.Fatalf("completed refutation was discarded: disposition=%+v err=%v", disposition, err)
+	outcome, err := runRefutation(deps, refuteValidOptions())
+	if outcome.disposition == nil || outcome.disposition.Fingerprint != "fp-target" {
+		t.Fatalf("completed refutation was discarded: outcome=%+v err=%v", outcome, err)
 	}
-	if !errors.Is(err, review.ErrBloqueoNoLiberado) {
-		t.Fatalf("cleanup failure = %v, want ErrBloqueoNoLiberado", err)
+	if !errors.Is(outcome.completionWarning, review.ErrBloqueoNoLiberado) {
+		t.Fatalf("cleanup failure = %v, want ErrBloqueoNoLiberado", outcome.completionWarning)
+	}
+	if err != nil {
+		t.Fatalf("completed refutation failed: %v", err)
 	}
 	records, readErr := st.ReadDispositions()
 	if readErr != nil {
@@ -503,12 +510,43 @@ func TestRunRefutationPreservesCompletedAppendAfterLockCleanupFailure(t *testing
 	if len(records) != 1 {
 		t.Fatalf("dispositions = %+v, want one completed append", records)
 	}
+}
+
+// FU-6: the command boundary preserves a completed append when only cleanup
+// fails: it exits successfully, confirms the record, and warns about cleanup.
+func TestEjecutarRefuteReportsCompletedAppendWithLockCleanupWarning(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	deps.withLockedFicha = func(sha string, fn func(*review.Ficha) error) error {
+		if err := ledger.WithLockedFicha(sha, fn); err != nil {
+			return err
+		}
+		return review.ErrBloqueoNoLiberado
+	}
+	previousResolver := refuteDepsResolver
+	refuteDepsResolver = func(string) (*refuteDeps, error) {
+		return deps, nil
+	}
+	t.Cleanup(func() { refuteDepsResolver = previousResolver })
 
 	var output bytes.Buffer
-	if exit := reportRefutationResult(&output, disposition, err); exit != 0 {
+	if exit := ejecutarRefute(&output, t.TempDir(), []string{
+		"--sha", "abc12345", "--fingerprint", "fp-target",
+		"--reason", "the committed implementation is safe",
+		"--line-start", "2", "--line-end", "2",
+	}); exit != 0 {
 		t.Fatalf("completed refutation exit = %d, want 0; output: %q", exit, output.String())
 	}
 	if !strings.Contains(output.String(), "recorded") || !strings.Contains(output.String(), "lock cleanup") {
 		t.Fatalf("completed refutation output = %q, want success and cleanup warning", output.String())
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("dispositions = %+v, want one completed append", records)
 	}
 }

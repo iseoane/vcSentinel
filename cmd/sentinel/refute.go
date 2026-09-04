@@ -112,6 +112,13 @@ type refuteDeps struct {
 	withLockedFicha func(string, func(*review.Ficha) error) error
 }
 
+// refuteOutcome separates a completed append from a hard refutation failure.
+// A completion warning means the disposition is durable and must not be retried.
+type refuteOutcome struct {
+	disposition       *review.FindingDisposition
+	completionWarning error
+}
+
 // resolveRefuteDeps wires the production seams for one worktree: the shared
 // common-dir ledger and store plus a snapshot reader bound to this
 // repository's immutable Git objects.
@@ -131,6 +138,10 @@ func resolveRefuteDeps(worktree string) (*refuteDeps, error) {
 		now:      time.Now,
 	}, nil
 }
+
+// refuteDepsResolver is replaceable only so command-boundary tests can use
+// controlled dependencies. Production resolution remains resolveRefuteDeps.
+var refuteDepsResolver = resolveRefuteDeps
 
 // loadDispositionsForWorktree reads the append-only human answers for the
 // review and gate commands. A corrupt log is an error, never an empty set:
@@ -153,11 +164,11 @@ func loadDispositionsForWorktree(worktree string) ([]review.FindingDisposition, 
 // record, a missing or ambiguous fingerprint, an already-cleared finding, a
 // range the refutation gate rejects, an unreadable snapshot, a review record
 // that changed between resolution and append, or a corrupt dispositions log.
-// A ficha lock cleanup error after append is returned with the completed
-// disposition so the caller can report success without inviting a duplicate.
-func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposition, error) {
+// A ficha lock cleanup error after a completed append is returned as a
+// completion warning; all other errors are hard failures.
+func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) {
 	if deps == nil || deps.ledger == nil || deps.store == nil || deps.snapshot == nil {
-		return nil, fmt.Errorf("refute: missing dependencies")
+		return refuteOutcome{}, fmt.Errorf("refute: missing dependencies")
 	}
 	now := time.Now
 	if deps.now != nil {
@@ -167,24 +178,24 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 	fingerprint := strings.TrimSpace(opts.fingerprint)
 	reason := strings.TrimSpace(opts.reason)
 	if sha == "" || fingerprint == "" || reason == "" {
-		return nil, fmt.Errorf("refute: --sha, --fingerprint, and --reason are required")
+		return refuteOutcome{}, fmt.Errorf("refute: --sha, --fingerprint, and --reason are required")
 	}
 	if strings.HasPrefix(sha, "-") {
-		return nil, fmt.Errorf("refute: invalid reviewed SHA")
+		return refuteOutcome{}, fmt.Errorf("refute: invalid reviewed SHA")
 	}
 	ficha, err := deps.ledger.LeerFicha(sha)
 	if err != nil {
-		return nil, fmt.Errorf("refute: reading the review record: %w", err)
+		return refuteOutcome{}, fmt.Errorf("refute: reading the review record: %w", err)
 	}
 	if ficha == nil || len(ficha.Revisions) == 0 {
-		return nil, fmt.Errorf("refute: no review record for SHA %q", sha)
+		return refuteOutcome{}, fmt.Errorf("refute: no review record for SHA %q", sha)
 	}
 	target, err := review.ResolveDispositionTarget(ficha.Revisions[len(ficha.Revisions)-1], fingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("refute: %w", err)
+		return refuteOutcome{}, fmt.Errorf("refute: %w", err)
 	}
 	if !review.IsBlocking(target.Severity, target.Status) {
-		return nil, fmt.Errorf("refute: finding %q does not block (status %q)", fingerprint, target.Status)
+		return refuteOutcome{}, fmt.Errorf("refute: finding %q does not block (status %q)", fingerprint, target.Status)
 	}
 	// The evidence path derives exclusively from the addressed finding: the
 	// caller supplies no path, so a refutation cannot be redirected at a
@@ -193,7 +204,7 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 		deps.snapshot, sha, target.Location.Archivo, target.Location.LineaInicio,
 		reason, target.Location.Archivo, opts.lineStart, opts.lineEnd)
 	if err != nil {
-		return nil, fmt.Errorf("refute: %w", err)
+		return refuteOutcome{}, fmt.Errorf("refute: %w", err)
 	}
 	disposition := &review.FindingDisposition{
 		SHA:               sha,
@@ -221,7 +232,7 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 	// can slip between the re-check and the write.
 	expected, err := json.Marshal(ficha)
 	if err != nil {
-		return nil, fmt.Errorf("refute: reading the review record: %w", err)
+		return refuteOutcome{}, fmt.Errorf("refute: reading the review record: %w", err)
 	}
 	if deps.beforeLockedAppend != nil {
 		deps.beforeLockedAppend()
@@ -230,6 +241,7 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 	if deps.withLockedFicha != nil {
 		withLockedFicha = deps.withLockedFicha
 	}
+	completed := false
 	if err := withLockedFicha(sha, func(current *review.Ficha) error {
 		fresh, err := json.Marshal(current)
 		if err != nil {
@@ -254,14 +266,18 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 		if err := deps.store.AppendDisposition(disposition); err != nil {
 			return fmt.Errorf("refute: persisting the disposition: %w", err)
 		}
+		completed = true
 		return nil
 	}); err != nil {
-		if errors.Is(err, review.ErrBloqueoNoLiberado) {
-			return disposition, fmt.Errorf("refute: disposition recorded but ficha lock cleanup failed: %w", err)
+		if completed && errors.Is(err, review.ErrBloqueoNoLiberado) {
+			return refuteOutcome{
+				disposition:       disposition,
+				completionWarning: fmt.Errorf("refute: disposition recorded but ficha lock cleanup failed: %w", err),
+			}, nil
 		}
-		return nil, err
+		return refuteOutcome{}, err
 	}
-	return disposition, nil
+	return refuteOutcome{disposition: disposition}, nil
 }
 
 // ejecutarRefute implements `sentinel refute`: parse, resolve, record.
@@ -273,29 +289,30 @@ func ejecutarRefute(w io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(w, "❌ %v\n", err)
 		return 1
 	}
-	deps, err := resolveRefuteDeps(worktree)
+	deps, err := refuteDepsResolver(worktree)
 	if err != nil {
 		fmt.Fprintf(w, "❌ Cannot resolve the review ledger: %v\n", err)
 		return 1
 	}
-	disposition, err := runRefutation(deps, opts)
-	if err != nil && !errors.Is(err, review.ErrBloqueoNoLiberado) {
+	outcome, err := runRefutation(deps, opts)
+	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
 		return 1
 	}
-	return reportRefutationResult(w, disposition, err)
+	return reportRefutationResult(w, outcome)
 }
 
-func reportRefutationResult(w io.Writer, disposition *review.FindingDisposition, completionWarning error) int {
-	if disposition == nil {
-		fmt.Fprintf(w, "❌ %v\n", completionWarning)
+func reportRefutationResult(w io.Writer, outcome refuteOutcome) int {
+	if outcome.disposition == nil {
+		fmt.Fprintln(w, "❌ refute completed without a disposition")
 		return 1
 	}
+	disposition := outcome.disposition
 	fmt.Fprintf(w, "✅ Human refutation recorded for finding %q on %s (%s lines %d-%d, range %s).\n",
 		disposition.Fingerprint, disposition.SHA, disposition.Path,
 		disposition.LineStart, disposition.LineEnd, disposition.RangeHash)
-	if completionWarning != nil {
-		fmt.Fprintf(w, "⚠️  The refutation is recorded, but ficha lock cleanup failed: %v\n", completionWarning)
+	if outcome.completionWarning != nil {
+		fmt.Fprintf(w, "⚠️  The refutation is recorded, but ficha lock cleanup failed: %v\n", outcome.completionWarning)
 	}
 	return 0
 }
