@@ -232,6 +232,35 @@ func TestValidateHumanRefutationRangeRejectsShortEvidence(t *testing.T) {
 	}
 }
 
+// FU-6: untrusted CLI ranges must be rejected before slicing the immutable
+// snapshot. Inverted or out-of-bounds starts used to panic here instead of
+// failing closed.
+func TestValidateHumanRefutationRangeRejectsInvalidBoundsWithoutPanic(t *testing.T) {
+	reader := func(string, string) (string, error) {
+		return "const safe = true\ncriticalCall()\n", nil
+	}
+	cases := []struct {
+		name       string
+		lineStart  int
+		lineEnd    int
+	}{
+		{"inverted", 2, 1},
+		{"start beyond file", 4, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Fatalf("ValidateHumanRefutationRange panicked: %v", recovered)
+				}
+			}()
+			if _, _, _, err := ValidateHumanRefutationRange(reader, "abc12345", "a.go", 2, "safe premise", "a.go", tc.lineStart, tc.lineEnd); err == nil {
+				t.Fatal("invalid bounds were accepted")
+			}
+		})
+	}
+}
+
 // FU-6: the dimension-level application pairs both shapes. A v2 finding
 // matches by fingerprint and drags its v1 counterpart along, so the engine
 // verdict (read from both shapes) and the persisted revision agree.

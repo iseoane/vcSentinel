@@ -276,7 +276,7 @@ func ValidateHumanRefutationRange(leer SnapshotReader, sha, findingFile string, 
 		return "", "", "", fmt.Errorf("reading the audited snapshot: %w", err)
 	}
 	lines := strings.Split(content, "\n")
-	if lineStart < 1 || lineEnd > len(lines) {
+	if lineStart < 1 || lineEnd < lineStart || lineEnd > len(lines) {
 		return "", "", "", fmt.Errorf("the evidence range %d-%d is outside the audited file", lineStart, lineEnd)
 	}
 	extract := strings.Join(lines[lineStart-1:lineEnd], "\n")
