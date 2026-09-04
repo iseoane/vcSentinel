@@ -105,6 +105,15 @@ func ejecutarReview(worktree string, args []string) {
 		return
 	}
 
+	// Standing human answers apply to every re-audit below. A corrupt
+	// dispositions log fails closed here: auditing as if no human ever
+	// answered would re-report findings a person already refuted.
+	dispositions, err := loadDispositionsForWorktree(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+
 	verificadorModelo := nuevoVerificadorModelo(worktree)
 	exitFinal := 0
 
@@ -167,6 +176,9 @@ func ejecutarReview(worktree string, args []string) {
 			// so an operator can attach while the review is still executing.
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
+			// Standing human answers recorded against this SHA win over a
+			// fresh agent verdict for the same fingerprint (FU-6).
+			Dispositions: review.FilterDispositionsForSHA(dispositions, sha),
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},
@@ -796,13 +808,20 @@ func codigoSalidaVeredicto(veredicto string) int {
 }
 
 // tieneHallazgosCriticos indica si alguna dimensión reportó CRITICAL.
+// Decided by the shared IsBlocking rule (FU-6), like every other blocking
+// consumer: a refuted or fixed finding no longer escalates the --gate exit.
 func tieneHallazgosCriticos(resultado review.ResultadoAuditoria) bool {
 	for _, rd := range resultado.Dims {
 		if rd.Resultado == nil {
 			continue
 		}
 		for _, hallazgo := range rd.Resultado.Findings {
-			if hallazgo.Severity == review.SevCritical {
+			if review.IsBlocking(hallazgo.Severity, hallazgo.Status) {
+				return true
+			}
+		}
+		for _, hallazgo := range rd.Resultado.Hallazgos {
+			if review.IsBlocking(hallazgo.Severity, hallazgo.Status) {
 				return true
 			}
 		}

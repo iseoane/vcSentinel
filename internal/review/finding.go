@@ -93,6 +93,11 @@ type ReviewFinding struct {
 	RefutationLineStart int    `json:"refutation_line_start,omitempty"`
 	RefutationLineEnd   int    `json:"refutation_line_end,omitempty"`
 	RefutationRangeHash string `json:"refutation_range_hash,omitempty"`
+	// RefutationActor records who issued the refutation: RefutationActorRefuter
+	// for the automated refuter, RefutationActorHuman for a person answering
+	// through the refute command. Empty on records written before FU-6, which
+	// only the automated path could produce.
+	RefutationActor string `json:"refutation_actor,omitempty"`
 }
 
 // Fuentes posibles de un Hallazgo (finding v2): de qué produjo el hallazgo.
@@ -198,6 +203,12 @@ type Hallazgo struct {
 	RefutationLineStart int                 `json:"refutation_line_start,omitempty"`
 	RefutationLineEnd   int                 `json:"refutation_line_end,omitempty"`
 	RefutationRangeHash string              `json:"refutation_range_hash,omitempty"`
+	// RefutationActor records who issued the refutation: RefutationActorRefuter
+	// for the automated refuter, RefutationActorHuman for a person answering
+	// through the refute command. Empty on records written before FU-6, which
+	// only the automated path could produce. Deliberately excluded from
+	// Fingerprint like InvocationID: the answer does not change the defect.
+	RefutationActor string `json:"refutation_actor,omitempty"`
 	// InvocationID is the durable invocation provenance bound at finalization
 	// when the producing transport reports one (ticket 07 slice 2b). Empty on
 	// the legacy direct path. Deliberately excluded from Fingerprint: two

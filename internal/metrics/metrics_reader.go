@@ -103,6 +103,13 @@ func readLedger(gitCommonDir string, input *Input) error {
 	if err != nil {
 		return fmt.Errorf("metrics: list review fichas: %w", err)
 	}
+	// Standing human answers are overlaid through the same domain projection
+	// every other consumer uses. A corrupt dispositions log fails the whole
+	// report rather than measuring a population with missing answers.
+	dispositions, err := store.NuevoStore(gitCommonDir).ReadDispositions()
+	if err != nil {
+		return fmt.Errorf("metrics: read dispositions: %w", err)
+	}
 	for _, sha := range shas {
 		ficha, readErr := ledger.LeerFicha(sha)
 		if readErr != nil {
@@ -116,7 +123,8 @@ func readLedger(gitCommonDir string, input *Input) error {
 			// is the blocking gate's selection point and reports no
 			// lifecycle status at all, so reading through it measures a
 			// disposition-free ledger (FU-7).
-			for _, finding := range revision.FindingsWithDispositions() {
+			findings := review.ApplyDispositions(revision.FindingsWithDispositions(), review.FilterDispositionsForSHA(dispositions, sha))
+			for _, finding := range findings {
 				fingerprint := finding.Fingerprint
 				if fingerprint == "" {
 					fingerprint = review.Fingerprint(finding)

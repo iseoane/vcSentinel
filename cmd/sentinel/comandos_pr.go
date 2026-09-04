@@ -680,6 +680,17 @@ func avisoSemantico(fichas []review.Ficha) (avisar bool, bloqueantes []review.Re
 	return true, review.BloqueantesDeRama(fichas)
 }
 
+// avisoSemanticoWithDispositions is avisoSemantico overlaid with the
+// standing human answers (FU-6): a valid human refutation clears its
+// finding from the branch blockers shown here exactly as in the engine and
+// the gate.
+func avisoSemanticoWithDispositions(fichas []review.Ficha, dispositions []review.FindingDisposition) (avisar bool, bloqueantes []review.ReviewFinding) {
+	if review.VeredictoDeRama(fichas) != review.VerdictBlock {
+		return false, nil
+	}
+	return true, review.BloqueantesDeRamaWithDispositions(fichas, dispositions)
+}
+
 // comandosDeValidacion traduce las ValidationRun de internal/validation a
 // ComandoVerificado para la plantilla: misma forma de evidencia (comando +
 // exit code real), por eso se reusa el tipo en vez de duplicarlo — lo que
@@ -915,6 +926,14 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
+	// Standing human answers overlay the branch blockers (FU-6). This display
+	// is advisory, so an unreadable log degrades to no overlay instead of
+	// aborting the review; the stale side errs toward showing more blockers,
+	// never fewer.
+	var branchDispositions []review.FindingDisposition
+	if loaded, err := loadDispositionsForWorktree(worktree); err == nil {
+		branchDispositions = loaded
+	}
 
 	if len(res.Fichas) == 0 {
 		fmt.Fprintln(w, "_No hay commits auditados en la rama._")
@@ -924,7 +943,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	// The net audit is the advisory authority when present.
 	if res.Net != nil {
 		fmt.Fprintln(w, review.VerdictLine(res))
-	} else if avisar, bloqueantes := avisoSemantico(res.Fichas); avisar {
+	} else if avisar, bloqueantes := avisoSemanticoWithDispositions(res.Fichas, branchDispositions); avisar {
 		fmt.Fprintln(w, "⚠️  AVISO: veredicto de auditoría semántica = block (no bloquea la publicación, advisory).")
 		for _, h := range bloqueantes {
 			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)

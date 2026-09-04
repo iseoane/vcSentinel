@@ -567,7 +567,24 @@ func seccionValidacion(cmds []ComandoVerificado) string {
 // (avisoSemantico en cmd/sentinel/comandos_pr.go) solo usa Severity/File/
 // Line/Description, así que cambiar la firma pública era más invasivo de lo
 // necesario para arreglar el bug real.
+//
+// FU-6: the selection moved from HallazgosEfectivos to the effective
+// disposition view (FindingsWithDispositions plus the standing human answers,
+// decided by the shared IsBlocking rule), so this gate, the engine, and the
+// gate package agree about the same record. A CRITICAL finding the ledger
+// already records as refuted or fixed no longer blocks here.
 func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
+	return BloqueantesDeRamaWithDispositions(fichas, nil)
+}
+
+// BloqueantesDeRamaWithDispositions returns the branch blockers after
+// overlaying the append-only human dispositions recorded against each
+// ficha's SHA. It observes the same effective disposition as the engine and
+// the gate: FindingsWithDispositions restores the lifecycle each revision
+// recorded, ApplyDispositions overlays the standing human answers, and the
+// shared IsBlocking rule decides. BloqueantesDeRama delegates with no
+// external answers.
+func BloqueantesDeRamaWithDispositions(fichas []Ficha, dispositions []FindingDisposition) []ReviewFinding {
 	var bloqueantes []ReviewFinding
 	for _, ficha := range fichas {
 		if !estaPendiente(ficha) {
@@ -577,8 +594,9 @@ func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
 		if !ok {
 			continue
 		}
-		for _, h := range ultima.HallazgosEfectivos() {
-			if h.Severity == SevCritical {
+		findings := ApplyDispositions(ultima.FindingsWithDispositions(), FilterDispositionsForSHA(dispositions, ficha.SHA))
+		for _, h := range findings {
+			if IsBlocking(h.Severity, h.Status) {
 				bloqueantes = append(bloqueantes, reviewFindingDesdeHallazgo(h))
 			}
 		}

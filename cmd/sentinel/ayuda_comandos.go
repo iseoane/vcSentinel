@@ -128,6 +128,7 @@ Example:
 	"slice plan":          textoAyudaSlicePlan,
 	"slice apply":         textoAyudaSliceApply,
 	"review":              textoAyudaReview,
+	"refute":              textoAyudaRefute,
 	"gate":                textoAyudaGate,
 	"status":              textoAyudaStatus,
 	"metrics":             textoAyudaMetrics,
