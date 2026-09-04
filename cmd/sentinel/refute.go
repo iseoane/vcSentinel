@@ -21,7 +21,6 @@ type refuteOptions struct {
 	sha         string
 	fingerprint string
 	reason      string
-	file        string
 	lineStart   int
 	lineEnd     int
 }
@@ -48,12 +47,6 @@ func parseRefuteArgs(args []string) (refuteOptions, error) {
 				return opts, fmt.Errorf("--reason requires a value (why the finding's premise is false)")
 			}
 			opts.reason = args[i]
-		case "--file":
-			i++
-			if i >= len(args) {
-				return opts, fmt.Errorf("--file requires a value (the evidence path inside the audited commit)")
-			}
-			opts.file = args[i]
 		case "--line-start":
 			i++
 			if i >= len(args) {
@@ -75,7 +68,7 @@ func parseRefuteArgs(args []string) (refuteOptions, error) {
 			}
 			opts.lineEnd = n
 		default:
-			return opts, fmt.Errorf("unknown flag %q (usage: sentinel refute --sha SHA --fingerprint FP --reason TEXT --file PATH --line-start N --line-end M)", args[i])
+			return opts, fmt.Errorf("unknown flag %q (usage: sentinel refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M)", args[i])
 		}
 	}
 	if strings.TrimSpace(opts.sha) == "" {
@@ -86,9 +79,6 @@ func parseRefuteArgs(args []string) (refuteOptions, error) {
 	}
 	if strings.TrimSpace(opts.reason) == "" {
 		return opts, fmt.Errorf("missing required --reason (why the finding's premise is false)")
-	}
-	if strings.TrimSpace(opts.file) == "" {
-		return opts, fmt.Errorf("missing required --file (the evidence path inside the audited commit)")
 	}
 	if opts.lineStart <= 0 {
 		return opts, fmt.Errorf("missing required --line-start (first evidence line, 1-based)")
@@ -184,9 +174,12 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (*review.FindingDisposi
 	if !review.IsBlocking(target.Severity, target.Status) {
 		return nil, fmt.Errorf("refute: finding %q does not block (status %q)", fingerprint, target.Status)
 	}
+	// The evidence path derives exclusively from the addressed finding: the
+	// caller supplies no path, so a refutation cannot be redirected at a
+	// file the finding never cited.
 	safePath, evidence, rangeHash, err := review.ValidateHumanRefutationRange(
 		deps.snapshot, sha, target.Location.Archivo, target.Location.LineaInicio,
-		reason, opts.file, opts.lineStart, opts.lineEnd)
+		reason, target.Location.Archivo, opts.lineStart, opts.lineEnd)
 	if err != nil {
 		return nil, fmt.Errorf("refute: %w", err)
 	}

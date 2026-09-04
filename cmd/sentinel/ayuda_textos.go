@@ -108,16 +108,16 @@ Example:
 	textoAyudaRefute = `Purpose: record an evidence-bound human refutation of one reviewed finding.
 
 Usage:
-  sentinel refute --sha SHA --fingerprint FP --reason TEXT --file PATH --line-start N --line-end M
+  sentinel refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M
 
 Flags:
   --sha          Reviewed commit SHA holding the finding (required, exact).
   --fingerprint  Stable fingerprint of the finding to answer (required, exact).
   --reason       Why the finding's premise is false (required, non-empty).
-  --file         Evidence path inside the audited commit (required).
   --line-start   First evidence line, 1-based (required).
   --line-end     Last evidence line, 1-based; at most 20 lines per range (required).
 
+The evidence path is taken from the finding itself, never from the caller.
 The evidence is read from the audited Git object and must match the snapshot
 exactly; the finding's line must sit inside the range. A missing or ambiguous
 fingerprint, an unsafe path, and a corrupt dispositions log all fail closed
@@ -127,7 +127,7 @@ refutation clears only its matching finding; accepted_by_user never clears a
 block, fixed clears it, and reopened blocks again.
 
 Example:
-  sentinel refute --sha abc12345 --fingerprint 1f4902c8 --reason "the committed implementation is safe" --file a.go --line-start 2 --line-end 2
+  sentinel refute --sha abc12345 --fingerprint 1f4902c8 --reason "the committed implementation is safe" --line-start 2 --line-end 2
 `
 	textoAyudaGate = `Purpose: run deterministic validation followed by semantic review of HEAD.
 

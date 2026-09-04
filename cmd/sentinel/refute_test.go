@@ -19,7 +19,7 @@ import (
 // missing or malformed argument fails with usage, never with a partial
 // record.
 func TestParseRefuteArgsRejectsBadInput(t *testing.T) {
-	valid := []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-start", "2", "--line-end", "2"}
+	valid := []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-start", "2", "--line-end", "2"}
 	if _, err := parseRefuteArgs(valid); err != nil {
 		t.Fatalf("valid args rejected: %v", err)
 	}
@@ -28,16 +28,15 @@ func TestParseRefuteArgsRejectsBadInput(t *testing.T) {
 		args []string
 	}{
 		{"no args", nil},
-		{"missing sha", []string{"--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-start", "2", "--line-end", "2"}},
-		{"missing fingerprint", []string{"--sha", "abc123", "--reason", "safe", "--file", "a.go", "--line-start", "2", "--line-end", "2"}},
-		{"missing reason", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--file", "a.go", "--line-start", "2", "--line-end", "2"}},
-		{"missing file", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-start", "2", "--line-end", "2"}},
-		{"missing line-start", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-end", "2"}},
-		{"missing line-end", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-start", "2"}},
-		{"reversed range", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-start", "3", "--line-end", "2"}},
-		{"zero line-start", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-start", "0", "--line-end", "2"}},
-		{"non-numeric lines", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--file", "a.go", "--line-start", "x", "--line-end", "2"}},
-		{"unknown flag", append(append([]string{}, valid...), "--force")},
+		{"missing sha", []string{"--fingerprint", "fp-1", "--reason", "safe", "--line-start", "2", "--line-end", "2"}},
+		{"missing fingerprint", []string{"--sha", "abc123", "--reason", "safe", "--line-start", "2", "--line-end", "2"}},
+		{"missing reason", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--line-start", "2", "--line-end", "2"}},
+		{"missing line-start", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-end", "2"}},
+		{"missing line-end", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-start", "2"}},
+		{"reversed range", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-start", "3", "--line-end", "2"}},
+		{"zero line-start", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-start", "0", "--line-end", "2"}},
+		{"non-numeric lines", []string{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "safe", "--line-start", "x", "--line-end", "2"}},
+		{"removed --file flag", append(append([]string{}, valid...), "--file", "a.go")},
 		{"dangling value", []string{"--sha"}},
 	}
 	for _, tc := range cases {
@@ -99,7 +98,7 @@ func refuteFichaFixture() review.Revision {
 func refuteValidOptions() refuteOptions {
 	return refuteOptions{
 		sha: "abc12345", fingerprint: "fp-target", reason: "the committed implementation is safe",
-		file: "a.go", lineStart: 2, lineEnd: 2,
+		lineStart: 2, lineEnd: 2,
 	}
 }
 
@@ -166,6 +165,8 @@ func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
 	ambiguous.AggregatedFindings[1].Fingerprint = "fp-target"
 	cleared := refuteFichaFixture()
 	cleared.AggregatedFindings[0].Status = review.StatusRefuted
+	unsafe := refuteFichaFixture()
+	unsafe.AggregatedFindings[0].Location.Archivo = "../evil.go"
 	cases := []struct {
 		name     string
 		revision *review.Revision
@@ -186,8 +187,8 @@ func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
 			func(*refuteOptions) {},
 		},
 		{
-			"unsafe path", &[]review.Revision{refuteFichaFixture()}[0], nil,
-			func(o *refuteOptions) { o.file = "../a.go" },
+			"unsafe stored path", &[]review.Revision{unsafe}[0], nil,
+			func(*refuteOptions) {},
 		},
 		{
 			"range outside finding", &[]review.Revision{refuteFichaFixture()}[0], nil,
@@ -290,7 +291,7 @@ func TestRefuteReadsEvidenceFromTheAuditedGitObject(t *testing.T) {
 	args := []string{
 		"--sha", sha, "--fingerprint", "fp-target",
 		"--reason", "the committed implementation is safe",
-		"--file", "a.go", "--line-start", "2", "--line-end", "2",
+		"--line-start", "2", "--line-end", "2",
 	}
 	if code := ejecutarRefute(&buf, repo, args); code != 0 {
 		t.Fatalf("exit = %d, want 0 (output %q)", code, buf.String())
