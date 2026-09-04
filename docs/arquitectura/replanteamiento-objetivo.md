@@ -1391,6 +1391,27 @@ ninguna requiere reescritura.
 - `sentinel metrics` con las agregaciones de §24.
 - **Solo entonces** se ajustan bundles, umbrales y perfiles — con datos.
 
+**Delivered 2026-09-04** (T9.0-T9.5, detail in
+[`docs/reingenieria/f9-observabilidad.md`](../reingenieria/f9-observabilidad.md)).
+What actually shipped, and what did not:
+
+- `sentinel metrics` answers from local storage over the durable-run store.
+  Duration and success/failure are observed; **cost, tokens and scope stay
+  `null`** because no adapter reports them yet. Absence is rendered as unknown,
+  never as zero — that distinction is the phase's central rule.
+- One default was calibrated from evidence: `review.timeout` `300s`/`600s` to
+  `900s`, from 325 measured runs, carrying its right-censoring caveat. It is
+  the only axis the data supported.
+- T9.5 retention collects the execution streams of published commits, keeping
+  fichas, events and every metrics snapshot. It deviates from its original
+  acceptance clause, which required deleting fichas too; that clause was
+  unsatisfiable together with byte-identical measurement, and the deviation is
+  ratified in the phase document.
+- One measurement discontinuity exists: on 2026-09-04 the first retention pass
+  moved the success and failure counters once, irreversibly. **Series spanning
+  that date are not comparable.** The calibrated default above predates it and
+  is unaffected.
+
 ### Fases transversales, en paralelo y sin bloquear
 
 - **Política de repositorio**: sustituir el parser artesanal por `yaml.v3` con

@@ -90,6 +90,7 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `lint` | Run configured `lint_commands`. |
 | `rebase` | Fetch and rebase against upstream after confirmation. |
 | `status` | Show volume, audit records, and recent events. Supports `--json` and `--prune`. |
+| `metrics` | Print deterministic local aggregates from the durable store: duration, success and failure. Supports `--json`. Unknown measurements render as `null`, never zero; cost, tokens and scope stay unknown until an adapter reports them. Unreadable evidence is an error, not an empty store. |
 | `explain` | Explain a commit range's change profile, detected characteristics, risk, and cohesion. Supports `--json`. |
 | `consentimiento-diff` | Grant, revoke, or show local consent for external diffs. |
 | `runs` | Operate durable runs: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, `prune`. Exit codes are contract, not convention: `1` usage, `2` run not found, `3` stale revision, `4` invalid state, `5` infrastructure failure. See `docs/runs-cli.md`. |
