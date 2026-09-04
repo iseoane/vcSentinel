@@ -837,6 +837,27 @@ Priority: before T9.4a. It converts exit criterion 1 from "unknown" into 85
 measurable dispositions across six dimensions, using data that already exists
 and needing no new product surface.
 
+#### Landed 2026-09-01
+
+`c1655a2` merges six reviewed commits from `f9-fu7-dispositions`, ahead of
+T9.4a as this entry required. Exit criterion 1 of F9 is answerable from the
+store: confirmed `0 → 78`, refuted `0 → 1`, confirmation coverage
+`0/837 (0.00%) → 78/837 (9.32%)`. The `observed` delta of one is the single
+refuted raw finding that `aggregation.go:24` drops and that now enters as its
+own observation; nothing was duplicated.
+
+The chosen shape is the one this entry preferred: no third finding shape. A
+read-side observation-only projection, `Revision.FindingsWithDispositions`,
+joins the two persisted shapes, so the raw `Dims` hallazgos remain the single
+source of truth for a disposition — the same precedent
+`comandos_runs_prune.go:80-87` set. Full record, including the per-dimension
+breakdown, in [`f9-observabilidad.md`](f9-observabilidad.md) under
+"FU-7 landed — dispositions are reachable".
+
+This entry stayed open in the register for three days after the work landed.
+The rate values still print `unknown` because coverage is partial, which is the
+T9.3a contract working rather than a residual failure.
+
 ### FU-8: the executions aggregate counts terminal failures twice
 
 Recorded 2026-09-01 while evaluating T9.4a's failure-class axis.

@@ -24,8 +24,34 @@ propia guía §10 admite que es una decisión de coste, no de calidad.
 
 ## Opening revalidation and execution plan
 
-**Phase status**: Open. T9.0 defines the execution contract; it does not close
-F9 or accept any implementation candidate.
+**Phase status**: **Closed 2026-09-04 at `65c9edd`.** T9.0 through T9.5 are
+closed and merged to `main`; the phase branches and worktrees are retired. The
+opening text below is kept as written: T9.0 defined the execution contract and
+did not itself close F9 or accept any candidate.
+
+Closed against the four exit criteria above, with what each one actually
+delivered rather than a flat pass:
+
+1. **Partially met, and the gap is structural.** `sentinel metrics` answers
+   which dimension contributes confirmed findings (78 confirmed, 1 refuted,
+   coverage `78/837`). It cannot answer which model generates noise (FU-9:
+   identity coverage `0/325`) or what a confirmed finding costs (FU-3: no cost
+   producer). Both are class A — no amount of further observation fixes them,
+   only a producer does.
+2. **Met.** Every aggregate reads the local Git common directory. No external
+   telemetry, and unreadable evidence is an error rather than an empty store.
+3. **Met, once.** `review.timeout` moved from `300s`/`600s` to `900s` on 325
+   measured runs, carrying its right-censoring caveat. Execution duration was
+   the only axis the data supported; T9.4a records why each other axis was
+   inadmissible.
+4. **Met from the agreement guard onwards, and broken once before it.** See the
+   discontinuity recorded under "Final verification and closure": the first
+   collecting pass moved the success and failure counters on 2026-09-04.
+
+Three review blocks stand recorded rather than cleared (`c50d6d5`, `037c2db`,
+`7b375fd`), because no production writer emits `StatusRefuted` and a human
+therefore has no path to clear one. That is FU-6, deliberately scoped outside
+this phase.
 
 ### Authority and execution policy
 
