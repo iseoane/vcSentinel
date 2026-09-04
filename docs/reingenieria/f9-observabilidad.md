@@ -60,7 +60,7 @@ F9 or accept any implementation candidate.
 | T9.3b — CLI | T9.3a | OpenCode `openai/gpt-5.6-luna` / Max | `cmd/sentinel` and `internal/metrics` | `sentinel metrics`, `--json`, and help expose local aggregates with stable units and null unknowns. |
 | T9.4a — observation window | T9.3b | OpenCode `openai/gpt-5.6-luna` / Max; user/orchestrator operates it | Metrics output and this phase record | Sufficiency thresholds are frozen before collection; insufficient data blocks calibration without moving the thresholds. |
 | T9.4b — calibration | Sufficient T9.4a result | OpenCode `openai/gpt-5.6-luna` / Max | Only defaults justified by evidence | At least one default change cites reproducible metric, period, sample, old/new value, expected effect, risk, and rollback. |
-| T9.5 — event-driven retention | Accepted T9.1b; reconciled with T9.2 | OpenCode `openai/gpt-5.6-luna` / Max | `internal/review/ledger.go`, `internal/store/execution_prune.go`, `internal/ops/events.go`, `internal/git`, `cmd/sentinel` triggers | One cascade deletes in-flight detail for published or vanished commits; every metrics snapshot survives; nothing is deleted before its snapshot exists; aggregates are unchanged. |
+| T9.5 — event-driven retention | Accepted T9.1b; reconciled with T9.2 | Implemented directly by the coordinator: both subagent routes hit an exhausted provider | `internal/store/execution_prune.go`, `internal/metrics`, `internal/git`, `cmd/sentinel/retencion.go` triggers (`internal/review/ledger.go` and `internal/ops/events.go` deliberately untouched) | Retention collects the execution streams of published commits; fichas, events and every metrics snapshot survive; nothing is collected before its snapshot exists or while that snapshot disagrees with its stream; aggregates are unchanged from the agreement guard onwards. |
 | Phase closure | All exit criteria | `task` Medium for documentation only | This file, `README.md`, architecture deviations, optional debt pool | F9 closes only after local metrics, historical compatibility, one evidence-backed calibration, and final verification. |
 
 ### T9.1a — durable metrics schema
@@ -832,8 +832,9 @@ exactly with the end of the in-flight window.
 
 ```
 commit no longer exists (rebase/amend/squash)  ─┐
-commit published in the remote base branch     ─┴─► ficha ─► its events ─► its runs
-                                                    (the metrics snapshot survives)
+commit published in the remote base branch     ─┴─► its execution streams
+                                                    (ficha, events and the
+                                                     metrics snapshot survive)
 ```
 
 The deletion primitives already exist and are covered by tests:
@@ -856,18 +857,43 @@ real operation.
   once, because afterwards it no longer exists. No running counter is needed and
   none may be introduced — that would be the parallel ledger this phase forbids.
 - Local, unpublished work is never touched.
-- The events half must be reconciled with T9.2 before wiring: that slice forbids
-  rewriting historical `events.jsonl`, and `PurgeEventosDePRsResueltas` — dead
-  code today, with zero callers — rewrites the file. Either T9.2's append-only
-  contract admits compaction explicitly, or the events stay and only the ficha
-  and runs are collected.
+- The events half was reconciled with T9.2 as required, and resolved the way
+  that slice's append-only contract demands: the events stay. Retention never
+  rewrites historical `events.jsonl`, and `PurgeEventosDePRsResueltas` keeps its
+  zero callers.
+- Agreement, not mere presence, authorizes collection. A run whose snapshot
+  contradicts its terminal outcome keeps its stream, because collecting it would
+  hand the aggregator a snapshot that reads differently from the stream it
+  replaced. See FU-20 for the producer-side question this guard defers.
 
 **Acceptance.** Tests prove that an unpublished commit keeps everything; that a
-published commit loses ficha, events and runs while its snapshot remains; that
-an execution without a snapshot is never deleted; and that the aggregate
-`sentinel metrics` reports over the surviving window is byte-identical before
-and after retention runs. That last property is the real guarantee: retention
-must be invisible to measurement.
+published commit loses its execution streams while its ficha, its events and
+its metrics snapshot remain; that an execution without a snapshot is never
+deleted; that an execution whose snapshot contradicts its stream is never
+deleted; and that the aggregate `sentinel metrics` reports over the surviving
+window is byte-identical before and after retention runs. That last property is
+the real guarantee: retention must be invisible to measurement.
+
+**Ratified deviation (2026-09-04): the ficha and the event log stay.** The
+clause above originally required a published commit to lose its ficha and
+events too. That is unsatisfiable together with byte-identical measurement, and
+this phase resolves the contradiction in favour of measurement, which the
+paragraph itself names the real guarantee:
+
+- `sentinel metrics` reads findings, dispositions and remediation evidence
+  directly from the fichas (`internal/metrics/metrics_reader.go`, `readLedger`).
+  Deleting a published ficha would move `Findings.Observed` and
+  `Findings.Confirmed` on the spot. Fichas are kilobytes; the growth this slice
+  exists to stop is execution streams.
+- The event log stays under the reconciliation this section already demanded:
+  T9.2 forbids rewriting historical `events.jsonl`, and stage/remediation
+  aggregates read it. Retention is the admitted compaction for execution
+  directories only.
+
+Vanished commits keep the existing two-step path: `status --prune` deletes their
+fichas and events, and the next retention pass collects their now-uncited runs.
+An undecidable publication keeps the record's protection rather than reading as
+vanished, which would reopen FU-15.
 
 Checks:
 
@@ -901,6 +927,16 @@ historical data remains readable, observed identity is truthful, success and
 failure paths are covered, at least one default is calibrated from a
 pre-declared sufficient sample, and retention collects published detail without
 moving a single aggregate.
+
+That last criterion holds for every pass from the agreement guard onwards, and
+it did not hold for the first one. On 2026-09-04 the first collecting pass
+moved the success and failure counters once (~150 runs out of success, ~180
+into failure) on pre-existing records whose snapshot already disagreed with
+their stream. The movement is irreversible and not re-derivable: the streams
+that carried the other reading are gone. **Series from before and after
+2026-09-04 are therefore not comparable**, and any calibration that spans that
+date must state it. `PruneReasonContradiction` closes the hole for every later
+pass; FU-20 carries the producer-side question underneath it.
 
 Then retire the phase's branches and worktrees, and not before: every slice
 produces its own candidate branch, and deleting one mid-phase loses the context
