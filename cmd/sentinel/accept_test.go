@@ -54,6 +54,9 @@ func TestRunAcceptancePersistsWithoutClearing(t *testing.T) {
 	if d.Fingerprint != "fp-target" || d.SHA != "abc12345" || d.Path != "a.go" {
 		t.Fatalf("disposition address = %+v, want the finding identity", d)
 	}
+	if d.TargetSeverity != review.SevCritical {
+		t.Fatalf("persisted target severity = %q, want %q", d.TargetSeverity, review.SevCritical)
+	}
 	if d.Actor != review.RefutationActorHuman || d.Source != review.DispositionSourceHuman {
 		t.Fatalf("disposition provenance = %+v, want human provenance", d)
 	}

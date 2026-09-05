@@ -109,10 +109,11 @@ func FilterDispositionsForSHA(dispositions []FindingDisposition, sha string) []F
 //
 // A standing disposition is refused when the re-audited finding is MORE
 // severe than the severity recorded on it: the escalated finding keeps its
-// recorded status, which keeps it blocking and keeps it listed — unrefuted
-// — in every blocker surface operators already read. Records without a
-// recorded severity keep applying (apply-as-unknown), preserving today's
-// behaviour for answers written before the field existed.
+// re-audited status, so whatever blocking it already carried survives
+// (IsBlocking blocks CRITICAL only) and it keeps appearing, unrefuted, in
+// the surfaces operators already read. Records without a recorded severity
+// keep applying (apply-as-unknown), preserving today's behaviour for
+// answers written before the field existed.
 //
 // A human disposition cites no durable invocation, so applying one clears
 // InvocationID: metrics must never attribute a human decision to an agent
@@ -160,12 +161,13 @@ func ApplyDispositions(findings []Hallazgo, dispositions []FindingDisposition) [
 // deliberately answered.
 //
 // Visibility: a refusal is operator-visible the smallest way the codebase
-// already offers — the finding keeps its recorded status, so it stays
-// blocking and keeps appearing, unrefuted, in every blocker surface
-// operators already read: the audit verdict and exit code, the gate, the
-// branch blocker lists, and the PR template. Nothing is stamped, no status
-// is rewritten, no revision is mutated: the refusal is the absence of the
-// answer, not a new record.
+// already offers — the finding keeps its re-audited status, so whatever
+// blocking it already had survives (IsBlocking blocks CRITICAL only; a
+// refused WARNING, say, stays non-blocking) and it keeps appearing,
+// unrefuted, in the surfaces operators already read: the audit verdict and
+// exit code, the gate, the branch blocker lists, and the PR template.
+// Nothing is stamped, no status is rewritten, no revision is mutated: the
+// refusal is the absence of the answer, not a new record.
 func dispositionRefusedOnEscalation(d FindingDisposition, severity string) bool {
 	recorded := strings.TrimSpace(d.TargetSeverity)
 	if recorded == "" {
@@ -226,7 +228,8 @@ func applyToReviewFinding(f *ReviewFinding, d FindingDisposition) {
 // Like ApplyDispositions, a standing disposition is refused when the
 // re-audited finding is MORE severe than the severity recorded on it: the
 // refusal clears nothing and reports false, so the escalated finding keeps
-// blocking in both shapes and the dimension verdict stays block.
+// whatever status it carried in both shapes — a blocking one stays blocking
+// and the dimension verdict stays block.
 func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) bool {
 	if result == nil {
 		return false

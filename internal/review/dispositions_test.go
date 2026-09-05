@@ -146,6 +146,16 @@ func TestApplyDispositionsRefusesEscalatedSeverity(t *testing.T) {
 			t.Fatalf("status = %q, want the standing refutation applied at equal severity", got[0].Status)
 		}
 	})
+	t.Run("de-escalated severity still applies", func(t *testing.T) {
+		lower := target
+		lower.Severity = SevWarning
+		answer := standing
+		answer.TargetSeverity = SevCritical
+		got := ApplyDispositions([]Hallazgo{lower}, []FindingDisposition{answer})
+		if got[0].Status != StatusRefuted {
+			t.Fatalf("status = %q, want the standing refutation applied when the re-audit de-escalates", got[0].Status)
+		}
+	})
 	t.Run("legacy record without recorded severity still applies", func(t *testing.T) {
 		legacy := standing
 		legacy.TargetSeverity = ""
