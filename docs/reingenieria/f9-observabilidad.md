@@ -711,7 +711,7 @@ figures. Every number below is derived from that artifact.
 | Reopen | A | 0 / 838 | 0 | no writer (FU-6) |
 | Stage latency | A | 0 stages | not applicable | no producer: `timing.by_capability` is empty in all 325 snapshots |
 | Remediation | A | 0 attempts | not applicable | no producer exercised |
-| Failure classes | A | inadmissible | not applicable | double-counted; see FU-8 |
+| Failure classes | A | admissible with source denominator (FU-8 landed 2026-09-05) | per-row coverage | outcome classes calibrate over logical runs (`coverage 1`); semantic classes calibrate only over measured runs (`measured/logical`); the 2026-09-01 artifact above stays inadmissible as recorded |
 
 Class A is not "insufficient sample". Recording it that way would imply that
 more observation fixes it, and it does not. Class B means a producer exists but

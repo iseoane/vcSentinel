@@ -225,6 +225,28 @@ by default:
   A skipped pass reports one line and never fails the operation that
   triggered it.
 
+## `sentinel metrics --json` executions failures shape
+
+`executions.failures[]` reports one row per failure class with its source population and evidence denominator, so outcome and semantic classes are never confused:
+
+| Field | Type | Presence | Semantics |
+| --- | --- | --- | --- |
+| `failures[].class` | string | always | Failure class name. |
+| `failures[].count` | number | always | Runs contributing this class under the deduplication rule (`outcomeClassCounted`). |
+| `failures[].source` | string | always | `outcome` for terminal non-success attempt outcomes (`failure`, `unavailable`, `timeout`, `cancellation`, `process_error`), observed over every logical run; `semantic` for producer-reported snapshot classes (`invalid_output`, `schema_invalid`, `missing_semantic_payload`, `malformed_json`, `provider_error`, `tool_denied`, and any future class), observed only over measured runs. |
+| `failures[].coverage` | object | always | Evidence denominator for this row: `outcome` rows carry `observed == total == logical_runs` (`value: 1`); `semantic` rows carry `observed == measured_runs`, `total == logical_runs`. `value` is `null` when `total` is zero, never `0` for unknown. |
+
+Example (live store, 2026-09-05: `logical_runs: 1940`, `measured_runs: 1294`):
+
+```json
+[
+  {\"class\": \"failure\", \"count\": 307, \"source\": \"outcome\", \"coverage\": {\"observed\": 1940, \"total\": 1940, \"value\": 1}},
+  {\"class\": \"invalid_output\", \"count\": 121, \"source\": \"semantic\", \"coverage\": {\"observed\": 1294, \"total\": 1940, \"value\": 0.667}}
+]
+```
+
+Counts are unchanged by this enrichment; only the source tag and denominator are new. Retention keeps metrics byte-identical because both totals are themselves retention-invariant.
+
 ## Compatibility and migration policy
 
 Persisted shapes across R1–R10 changed additively only:

@@ -1056,9 +1056,15 @@ before and after retention, and a collected failed run contributes its
 snapshot alone — without the skip, every collected failure moved the
 breakdown from two counts to one.
 
-What stays open: the second problem (merged populations with no source tag
-or coverage denominator) is untouched, and the failure-class axis remains
-inadmissible for calibration until it lands.
+#### Landed 2026-09-05 (FU-8 open half)
+
+Chose per-class source tag plus coverage denominator (option A): `FailureAggregate` gains `Source` (`outcome` for `failure`, `unavailable`, `timeout`, `cancellation`, `process_error`; `semantic` for every other present and future class) and `Coverage` (`outcome` rows cover `LogicalRuns`/`LogicalRuns`; `semantic` rows cover `MeasuredRuns`/`LogicalRuns`). Counts are unchanged; enrichment runs as a post-pass over the final totals, so T9.5 byte-identical retention holds and the existing invariance tests pass unmodified. `sentinel metrics --json` exposes both fields per row; unknown coverage still renders as `null`, never `0`.
+
+Live store before/after (1940 logical, 1294 measured, 519 failed; counts identical, shape enriched): `failure 307 outcome 1940/1940`, `cancellation 30 outcome`, `timeout 12 outcome`, `unavailable 10 outcome`, `invalid_output 121 semantic 1294/1940`, `missing_semantic_payload 46 semantic`, `schema_invalid 32 semantic`, `malformed_json 2 semantic`, `provider_error 2 semantic`.
+
+Rejected the split-populations shape (two reported sets): it would break the T9.5 exclusive-one-entry retention assertion, force every consumer to rejoin the halves by class to answer how many runs failed, and still require a denominator on each half. One self-describing list preserves stable ordering and additive evolution.
+
+Deviation: none. `review.Fingerprint` inputs, the append-only ledger, and `review.IsBlocking` are untouched.
 
 ### FU-9: observed identity sits in the event stream where the producer cannot read it
 
