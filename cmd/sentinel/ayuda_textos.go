@@ -212,6 +212,24 @@ evidence is reported as an error instead of being treated as an empty store.
 Example:
   sentinel metrics --json
 `
+	textoAyudaDoctor = `Purpose: preflight the local environment a review depends on, so a missing tool fails fast here instead of surfacing as a review timeout.
+
+Usage:
+  sentinel doctor [--check-updates]
+
+Flags:
+  --check-updates   Compare the installed version against the latest published release. A network call, off by default.
+
+Advisory only: reports and exits 0 like check. It never gates anything and
+never installs — every warning prints the exact command to run instead.
+Binaries resolve with exec.LookPath, never a shell probe. Each configured
+agent must resolve and answer a minimal real prompt; the reviewer's search
+binary, the codegraph binary, index, and six context gates, and the
+pre-commit hook target are checked the same way.
+
+Example:
+  sentinel doctor
+`
 	textoAyudaExplain = `Purpose: explain the change profile, detected characteristics, risk, and cohesion of a commit range.
 
 Usage:

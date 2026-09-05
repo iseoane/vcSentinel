@@ -134,6 +134,7 @@ Example:
 	"gate":                textoAyudaGate,
 	"status":              textoAyudaStatus,
 	"metrics":             textoAyudaMetrics,
+	"doctor":              textoAyudaDoctor,
 	"explain":             textoAyudaExplain,
 	"consentimiento-diff": textoAyudaConsentimientoDif,
 	"pr":                  textoAyudaPr,

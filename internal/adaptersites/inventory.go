@@ -148,6 +148,8 @@ func Sites() []Site {
 			Class: ClassShared, Reason: "Observer decorator over the configured auditor: it delegates to the wrapped adapter after recording the effective agent. Used identically by the admitted transport path and the gated legacy path; spawns nothing itself."},
 		{Path: "cmd/sentinel/comandos_estado.go", Symbol: "ejecutarEnShell", Anchor: "cmd = exec.Command(\"cmd\", \"/C\", comando)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Deterministic shell runner for configured lint/test/build commands; never consults an agent."},
+		{Path: "cmd/sentinel/comandos_doctor.go", Symbol: "productionDoctorEnv probe", Anchor: "return ad.EjecutarPrompt(prompt)", Marker: "EjecutarPrompt(",
+			Class: ClassHelper, Reason: "Human-invoked advisory preflight probe: one fixed one-word prompt per configured agent with a 60s budget. The answer renders WARN/ok rows in an exit-0 report and never feeds a review verdict or gate outcome."},
 		{Path: "cmd/sentinel/comandos_explain.go", Symbol: "explain range plumbing", Anchor: "salida, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the change-profile explainer."},
 		{Path: "cmd/sentinel/comandos_pr.go", Symbol: "pr/clipboard helpers", Anchor: "cmd := exec.Command(\"gh\", args...)", Marker: "exec.Command",

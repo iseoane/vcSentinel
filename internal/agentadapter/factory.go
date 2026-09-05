@@ -120,6 +120,22 @@ func construirAdaptadorAgente(cfg config.Config, nombre, perfil string, timeout 
 	return construirFamilia(cfg, nombre, configAgente(cfg, nombre, perfil), timeout)
 }
 
+// ProbeAdapterFor builds the prompt-capable adapter for one configured agent
+// entry with the given per-call budget, selecting the family its kind
+// declares through the single family switch. Doctor is its only reader: a
+// short budget keeps the preflight fast while still sending a real prompt.
+func ProbeAdapterFor(cfg config.Config, nombre string, timeout time.Duration) (AdaptadorPrompt, error) {
+	ad, err := construirAdaptadorAgente(cfg, nombre, "", timeout)
+	if err != nil {
+		return nil, err
+	}
+	prompt, ok := ad.(AdaptadorPrompt)
+	if !ok {
+		return nil, fmt.Errorf("agent %q: adapter %T cannot answer prompts", nombre, ad)
+	}
+	return prompt, nil
+}
+
 // construirFamilia is the ONLY place that selects the adapter family for one
 // agent entry: every factory path (named profile, auto chain, resolved
 // profile chain, review-profile resolution) converges here, so introducing a

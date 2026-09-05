@@ -159,6 +159,9 @@ func main() {
 	case "metrics":
 		requireInicializado(worktreeActual)
 		os.Exit(executeMetrics(os.Stdout, worktreeActual, os.Args[2:]))
+	case "doctor":
+		requireInicializado(worktreeActual)
+		os.Exit(ejecutarDoctor(os.Stdout, worktreeActual, version, os.Args[2:]))
 	case "consentimiento-diff":
 		requireInicializado(worktreeActual)
 		os.Exit(ejecutarConsentimientoDiff(os.Stdout, worktreeActual, os.Args[2:]))
@@ -192,8 +195,7 @@ func main() {
 			fmt.Printf("❌ Error en la desinstalación: %v\n", err)
 			os.Exit(1)
 		}
-	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'gate', 'lint', 'rebase', 'status', 'metrics', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'gate', 'lint', 'rebase', 'status', 'metrics', 'doctor', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
@@ -253,6 +255,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")
 	imprimirItemAyuda(&b, "", "Con --json emite JSON; con --prune borra fichas huérfanas.")
 	imprimirItemAyuda(&b, "metrics", "Print deterministic local aggregates from the durable store; --json emits machine-readable output with null for unknown measurements.")
+	imprimirItemAyuda(&b, "doctor", "Preflight the review environment: agents, search binary, codegraph gates, hook. Advisory, exits 0. Flag: --check-updates.")
 	imprimirItemAyuda(&b, "explain", "Explica el perfil, los detectores, el riesgo y la cohesión de un rango. Uso: explain [base..head] [--json].")
 	imprimirItemAyuda(&b, "pr", "Pull-request operations: pr create publishes through gh; pr review analyzes the branch without publishing. The legacy passthrough was removed.")
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")

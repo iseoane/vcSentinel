@@ -17,7 +17,7 @@ import (
 var ayudaClavesEsperadas = []string{
 	"version", "help", "init", "uninit", "check",
 	"slice", "slice plan", "slice apply",
-	"review", "gate", "lint", "rebase", "status", "explain",
+	"review", "gate", "lint", "rebase", "status", "metrics", "doctor", "explain",
 	"consentimiento-diff",
 	"pr", "pr create", "pr review",
 	"install", "upgrade", "uninstall",
