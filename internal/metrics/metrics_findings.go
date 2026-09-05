@@ -85,6 +85,18 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 			if !knownStatus {
 				continue
 			}
+			// FU-6 defect 3: a human-issued refutation credits the model
+			// and agent no refutation (below) and answers a question the
+			// producer was never wrong about, so it leaves their Known
+			// noise basis too. The numerator is human-refutation-free, so
+			// keeping the finding in the denominator would report a
+			// measured 0.00 no automated behaviour can influence. The
+			// dimension keeps the full basis: the refutation is of record
+			// there. A refuted status can never enter the Confirmed
+			// branch, so skipping Known alone changes nothing else.
+			if counter != dim && status == review.StatusRefuted && finding.RefutationActor == review.RefutationActorHuman {
+				continue
+			}
 			counter.Known++
 			if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
 				counter.Confirmed++
@@ -95,8 +107,9 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 			// A human-issued refutation is still a refutation of record for
 			// the finding and its dimension, but it credits no agent
 			// invocation (FU-6): the producing model and agent keep the
-			// observation above, never the refutation, so per-model noise
-			// measurement stays automated-only.
+			// observation above, never the refutation nor its answer in
+			// their Known noise basis, so per-model noise measurement
+			// stays automated-only.
 			if finding.RefutationActor != review.RefutationActorHuman {
 				modelCounter.Refuted++
 				agentCounter.Refuted++

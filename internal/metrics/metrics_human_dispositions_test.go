@@ -61,6 +61,71 @@ func TestAggregateFindingsDoesNotCreditHumanRefutationsToAgents(t *testing.T) {
 	}
 }
 
+// FU-6 defect 3: the model and agent refutation noise basis must exclude a
+// human-refuted finding entirely. The numerator already skips it, so leaving
+// the finding in the Known basis presents a measured 0.00 no automated
+// behaviour can ever influence: the human answer, not the producer, moves
+// the rate. Excluding it leaves the rate unmeasured (coverage incomplete,
+// Known() false) rather than a confident zero; the observation stays
+// attributed (Observed) and the dimension keeps the full basis and the
+// refutation of record.
+func TestAggregateFindingsHumanRefutationLeavesTheModelNoiseBasis(t *testing.T) {
+	at := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	observation := FindingObservation{
+		Fingerprint: "f-human", At: at,
+		Finding: review.Hallazgo{
+			Dimension:        review.DimLogic,
+			Status:           review.StatusRefuted,
+			Producer:         review.Productor{Agente: "agent-a", Modelo: "model-a"},
+			RefutationActor:  review.RefutationActorHuman,
+			RefutationReason: "verified safe",
+		},
+	}
+
+	got := Aggregate(Input{Findings: []FindingObservation{observation}}).Findings
+
+	if got.Refuted != 1 {
+		t.Fatalf("refuted = %d, want the human refutation of record", got.Refuted)
+	}
+	byModel := map[string]ModelAggregate{}
+	for _, row := range got.ByModel {
+		byModel[row.Model] = row
+	}
+	row, ok := byModel["model-a"]
+	if !ok {
+		t.Fatalf("models = %+v, want model-a observed", got.ByModel)
+	}
+	if row.Observed != 1 {
+		t.Fatalf("model-a observed = %d, want the production still attributed", row.Observed)
+	}
+	if row.RefutationRate.Coverage.Observed != 0 || row.RefutationRate.Known() {
+		t.Fatalf("model-a refutation rate = %+v, want the human answer outside the noise basis", row.RefutationRate)
+	}
+	byAgent := map[string]AgentAggregate{}
+	for _, r := range got.ByAgent {
+		byAgent[r.Agent] = r
+	}
+	agentRow := byAgent["agent-a"]
+	if agentRow.Observed != 1 {
+		t.Fatalf("agent-a observed = %d, want the production still attributed", agentRow.Observed)
+	}
+	if agentRow.RefutationRate.Coverage.Observed != 0 || agentRow.RefutationRate.Known() {
+		t.Fatalf("agent-a refutation rate = %+v, want the human answer outside the noise basis", agentRow.RefutationRate)
+	}
+	var dimRow *DimensionAggregate
+	for i, r := range got.ByDimension {
+		if r.Dimension == review.DimLogic {
+			dimRow = &got.ByDimension[i]
+		}
+	}
+	if dimRow == nil {
+		t.Fatalf("dimensions = %+v, want logic observed", got.ByDimension)
+	}
+	if dimRow.Refuted != 1 || dimRow.RefutationRate.Denominator != 1 || dimRow.RefutationRate.Value == nil || *dimRow.RefutationRate.Value != 1 {
+		t.Fatalf("logic refutation = %+v, want the dimension to keep the full basis and the refutation of record", dimRow.RefutationRate)
+	}
+}
+
 // FU-6: the metrics reader observes standing human answers through the same
 // domain projection as every other consumer: a refutation recorded after
 // the audit still clears the finding in the aggregates.
