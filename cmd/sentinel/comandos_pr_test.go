@@ -412,6 +412,44 @@ func TestDepsPrCreateReales_WiresDispositionLoader(t *testing.T) {
 	}
 }
 
+// FU-6: positive anchor for the suppression test above: an unrefuted block
+// must render the semantic warning with the AVISO token, so a change that
+// drops the token fails here instead of silently vacating the negative
+// assertion.
+func TestEjecutarPrCreateCon_AvisoSemanticoMencionaAviso(t *testing.T) {
+	fichaBlock := review.Ficha{SHA: "abc1234", Revisions: []review.Revision{{
+		Result: review.VerdictBlock,
+		AggregatedFindings: []review.Hallazgo{{
+			Dimension: review.DimSecurity, Severity: review.SevCritical,
+			Status: review.StatusConfirmed, Fingerprint: "fp-1",
+			Description: "unrefuted critical",
+			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+		}},
+	}}}
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el aviso es advisory, no bloquea): %s", codigo, salida.String())
+	}
+	if !strings.Contains(salida.String(), "AVISO") {
+		t.Errorf("el aviso semántico debe mencionar AVISO, got %q", salida.String())
+	}
+}
+
 func TestCopiarPortapapelesSinHerramienta(t *testing.T) {
 	err := copiarPortapapelesCon("cuerpo",
 		func(string) bool { return false },
