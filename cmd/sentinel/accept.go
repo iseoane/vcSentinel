@@ -114,6 +114,7 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 		TargetDimension:   target.Dimension,
 		TargetLine:        target.Location.LineaInicio,
 		TargetDescription: target.Description,
+		TargetSeverity:    target.Severity,
 	}
 	// Compare-and-append against the authoritative record, mirroring
 	// runRefutation: the fingerprint above was resolved against a ficha read

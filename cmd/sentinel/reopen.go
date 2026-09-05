@@ -155,6 +155,7 @@ func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 		TargetDimension:   target.Dimension,
 		TargetLine:        target.Location.LineaInicio,
 		TargetDescription: target.Description,
+		TargetSeverity:    target.Severity,
 	}
 	// Compare-and-append against the authoritative record, mirroring
 	// runRefutation: the effective precondition below is evaluated under the
