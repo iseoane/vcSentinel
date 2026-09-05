@@ -810,15 +810,20 @@ and writers for `accepted_by_user`/`fixed`/`reopened` beyond the projection
 semantics pinned for them.
 #### Unit A (2026-09-05)
 
-Standing answers now carry into fresh net re-audits: `OpcionesRama` carries
-the range dispositions, `runNetReview` selects answers recorded against
+Standing answers now carry into fresh net re-audits: `NetReviewOptions`
+carries the range dispositions (moved there from `OpcionesRama` after a
+design warning: the branch scope never consumed the field, so it was a
+misleading courier). `runNetReview` selects answers recorded against
 in-range commits whose evidence still holds at the head (normalized
-containment across the whole file, so a moved line still carries and removed
-evidence re-reports), and clones them to the head SHA as engine input so the
-single SHA-bound overlay, aggregation, and verdict downgrade stay in one
-place. Head-bound answers keep the original path; anything unverifiable is
-dropped rather than cleared. `pr review` and `pr create` both fail closed
-on a corrupt log before spending review tokens.
+containment through the shared `contieneEvidenciaNormalizada` helper, so a
+moved line still carries and removed evidence re-reports), then
+`mergeNetDispositionsForEngine` joins them with the head answers: head wins
+by fingerprint, empty fingerprints are dropped, and the rest are cloned to
+the head SHA as engine input so the single SHA-bound overlay, aggregation,
+and verdict downgrade stay in one place. Anything unverifiable is dropped
+rather than cleared. `pr review` and `pr create` both fail closed on a
+corrupt log before spending review tokens (`aplicarDisposicionesPrReview`
+covers the pr-review branch with the same tested seam pr-create already had).
 #### Unit B (2026-09-05)
 
 The remaining two writers landed as their own commands, not as one change
@@ -832,6 +837,26 @@ ancestry, not defect identity, so emitting `StatusFixed` from it would invent
 precision the data does not carry; `FixedIn` stays the separate branch-level
 record. `StatusReopened` now has a production writer, so reopen coverage is
 measurable where answers exist.
+
+#### Review corrections on units A and B (2026-09-05)
+
+Every finding below arrived as a Sentinel WARNING/ADVISORY (never a block)
+and was answered before close. Fixed: head-precedence at the merge (a stale
+intermediate answer could override a fresher head answer); the empty-carried
+drop (RED-first test, then guard); the pr-review tested seam with identity
+and nil-net assertions; accept corrupt-log and lock-cleanup coverage;
+reopen fixed-status reopen, non-numeric line parsing, and an isolated
+unsafe-path refusal test; completed command enumerations (including the
+pre-existing `gate` gap); stale reopen-coverage comments; the shared
+disposition test fixture adopted at every site. Recorded without code
+change: range scoping from fichas (a disposition needs its review record to
+exist, so the gap is unreachable and fail-safe); the refute/accept/reopen
+scaffold triplication (deliberate: the compare-and-append path stays
+untouched while it hardens); reopen gate ordering (fail-closed either way);
+the 20-line cap (enforced by the shared gate, help claim backed);
+`validarArgumentos` (parser-owned commands pass through; smoke-tested
+end to end); the SinNet snapshot artifact (helper in production since the
+earlier fix commit).
 #### Merge closure (2026-09-05, `811b9f1`)
 
 Merged `--no-ff` as `feat(review): evidence-bound human finding refutation
