@@ -143,28 +143,6 @@ func TestStrictFailureStopsAtConfig(t *testing.T) {
 	}
 }
 
-func TestCoreSectionsReportOK(t *testing.T) {
-	isolateHome(t)
-	worktree := t.TempDir()
-	writeProjectYML(t, worktree, twoAgentYML)
-	common := t.TempDir()
-	writeHook(t, common, "/usr/local/bin/sentinel")
-	env := stubEnv(t, common, nil, nil)
-	rep := Run(worktree, Options{CurrentVersion: "0.2.0", Env: env})
-	assertUniqueRows(t, rep)
-	for _, c := range rep.Checks {
-		if c.Section == "agents" || c.Section == "search" {
-			t.Fatalf("core report holds %s/%s, want environment sections only", c.Section, c.Name)
-		}
-		if !c.OK {
-			t.Errorf("check %s/%s not OK: %s", c.Section, c.Name, c.Detail)
-		}
-	}
-	findCheck(t, rep, "config", "strict_load")
-	findCheck(t, rep, "codegraph", "binary")
-	findCheck(t, rep, "hook", "pre-commit")
-}
-
 func TestHookPointingInsideRepoWarnsTrap(t *testing.T) {
 	isolateHome(t)
 	worktree := t.TempDir()

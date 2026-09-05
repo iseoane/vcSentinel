@@ -137,6 +137,19 @@ func Run(worktreePath string, opts Options) Report {
 	}
 	add("config", "strict_load", true, fmt.Sprintf("yml loads strictly (%d agents, active_agent %q)", len(cfg.Agents), cfg.ActiveAgent), "")
 
+	for _, name := range cfg.AgentOrder {
+		agent, known := cfg.Agents[name]
+		if !known {
+			continue
+		}
+		checkOneAgent(name, agent, opts, add)
+	}
+	if resolved, detail := resolveActive(cfg); resolved == "" {
+		add("agents", "active_agent", false, detail, "install one configured agent binary so it resolves on PATH (doctor never installs)")
+	} else {
+		add("agents", "active_agent", true, detail, "")
+	}
+	checkSearch(cfg, add)
 	for _, cond := range opts.Env.Codegraph(worktreePath) {
 		add("codegraph", cond.Name, cond.OK, cond.Detail, codegraphRemedy(cond))
 	}
