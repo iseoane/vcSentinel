@@ -1139,6 +1139,18 @@ Consequence: wiring the flattened fields through would launder 374
 declarations into reported observations — the exact absence-as-evidence
 error. No behavior change; T9.4a's verdict stands in both branches.
 
+Addendum 2026-09-06: this verdict does not mean observed identity is
+unobtainable for CLI adapters. `internal/modelprobe` already exists —
+"verifies the model that an agent reports for a session" — and is wired into
+production at `internal/app/pr/create.go:63`, `wiring.go:37,41`,
+`publish.go:101-103`, `review.go:103`, and `cmd/sentinel/comandos_gate.go:135,163`,
+feeding `ModeloVerificado` (`internal/review/finding.go:167`). That prober asks
+the agent itself and records the verified model, which would turn a declaration
+into verified evidence. Wiring it to execution metrics is an OPEN design
+decision with a cost (one extra prompt per review), not an impossibility — and
+it is recorded separately as a follow-up because the ledger shows it has never
+yet produced a verified model.
+
 ### FU-10: the review planner never sees content, so `explain` and `review` disagree
 
 Recorded 2026-09-01 while settling why three T9.4a documentation commits

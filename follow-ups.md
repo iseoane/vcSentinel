@@ -99,6 +99,25 @@ land.
       matching parent git; `.git/info/exclude` verified working unaided.
       Live proof: `doctor` reports `worktree_clean: worktree clean` with the
       file present, and a real `Contexto` run reaches past the dirty gate.
+      Probe-cost decision (2026-09-06, `fix/doctor-probe`): the per-agent
+      probe stays UNCONDITIONAL — no flag, no `--version` fallback. A green
+      `--version` with a misconfigured model tells the operator nothing, and
+      the check that prevents ten-minute timeouts must not silently stop
+      running. Cost is one minimal one-word prompt per configured agent per
+      run; do not "optimize" this into a version check. A probe that exceeds
+      its 60s budget now reports `ProbeTimeout` (slow or wedged agent) with
+      its own remedy, separate from provider-reported errors.
+
+- [ ] **Model prober wired but never verifying.** `internal/modelprobe`
+      ("verifies the model that an agent reports for a session") is wired into
+      production (`internal/app/pr/create.go:63`, `wiring.go:37,41`,
+      `publish.go:101-103`, `review.go:103`,
+      `cmd/sentinel/comandos_gate.go:135,163`) feeding `ModeloVerificado`
+      (`internal/review/finding.go:167`) — yet the live ledger holds zero
+      `model_verified:true` (325 review files scanned 2026-09-06; the only
+      true hits repo-wide are fixture copies under `snapshots/`). Open
+      question, not investigated: is the prober never invoked on those paths,
+      or invoked and always failing? Origin: FU-9 review.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph
