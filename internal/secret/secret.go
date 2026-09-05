@@ -54,7 +54,7 @@ var patterns = []struct {
 	{shapeGitHubToken, regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]{20,}`)},
 	{shapeGitHubToken, regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`)},
 	{shapeSlackToken, regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`)},
-	{shapeStripeLive, regexp.MustCompile(`[sr]k-live-[A-Za-z0-9]{10,}`)},
+	{shapeStripeLive, regexp.MustCompile(`[sr]k_live_[A-Za-z0-9]{10,}`)},
 	{shapeGoogleAPIKey, regexp.MustCompile(`AIza[0-9A-Za-z_\-]{35}`)},
 	{shapeSendGridKey, regexp.MustCompile(`SG\.[A-Za-z0-9_\-]{22,}\.[A-Za-z0-9_\-]{10,}`)},
 	{shapePEMBlock, regexp.MustCompile(`-----BEGIN (?:RSA )?PRIVATE KEY-----`)},

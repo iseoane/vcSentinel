@@ -14,8 +14,8 @@ const (
 	exampleGHPToken   = "ghp_EXAMPLE1234567890abcdefghijEXAMPLE"     // synthetic
 	exampleGitHubPat  = "github_pat_EXAMPLE1234567890abcdefghij"     // synthetic
 	exampleSlackToken = "xoxb-EXAMPLE-1234567890abcdef"              // synthetic
-	exampleStripeSK   = "sk-live-EXAMPLE1234567890"                  // synthetic
-	exampleStripeRK   = "rk-live-EXAMPLE1234567890"                  // synthetic
+	exampleStripeSK   = "sk_live_EXAMPLE1234567890"                  // synthetic
+	exampleStripeRK   = "rk_live_EXAMPLE1234567890"                  // synthetic
 	exampleGoogleKey  = "AIzaSyDEXAMPLE1234567890abcdefghijKLMNO"    // synthetic
 	exampleSendGrid   = "SG.EXAMPLE0123456789abcdefghij.EXAMPLE0123" // synthetic
 )
