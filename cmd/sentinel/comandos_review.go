@@ -163,7 +163,7 @@ func ejecutarReview(worktree string, args []string) {
 			if err != nil {
 				return nil, profile.Nombre, err
 			}
-			verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+			verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
 			return &observedAgent{AuditorAgente: adapter, authorship: authorship}, profile.Nombre, nil
 		}
 		reviewTransport, metricsFinalizer := announcedReviewTransportWithMetrics(cfg, worktree, sha, archivos, os.Stderr)
@@ -654,7 +654,7 @@ func fabricaRefutador(cfg config.Config, verificador *modelprobe.Verificador) re
 		if err != nil {
 			return nil, perfil.Nombre, err
 		}
-		verificador.Verificar(perfil.Nombre, perfil.Modelo, adapter)
+		verificador.Verify(perfil.Nombre, perfil.Modelo, adapter)
 		return adapter, perfil.Nombre, nil
 	}
 }

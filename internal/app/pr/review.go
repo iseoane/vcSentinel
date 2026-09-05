@@ -168,7 +168,7 @@ func EjecutarPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
 		if err != nil {
 			return nil, profile.Nombre, err
 		}
-		verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+		verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
 		return adapter, profile.Nombre, nil
 	}
 

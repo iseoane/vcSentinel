@@ -33,7 +33,7 @@ func (agenteModeloConfiguradoNoDisponible) ModeloConfigurado() (string, bool) {
 	return "openai/gpt-5.6-terra", false
 }
 
-func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
+func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 	tests := []struct {
 		name     string
 		profile  string
@@ -59,6 +59,13 @@ func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
 			agent:    agenteModeloFalso{modelo: "  openai/gpt-5.6-terra\t"},
+			stored: &store.Profile{
+				Name:          "normal",
+				Status:        store.ProfileVerified,
+				Event:         "model_match",
+				ExpectedModel: "openai/gpt-5.6-terra",
+				ActualModel:   "openai/gpt-5.6-terra",
+			},
 		},
 		{
 			name:     "mismatch with trailing LF is recorded",
@@ -133,7 +140,7 @@ func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
 			s := store.NuevoStore(t.TempDir())
 			v := NuevoVerificador(s)
 
-			v.Verificar(tt.profile, tt.expected, tt.agent)
+			v.Verify(tt.profile, tt.expected, tt.agent)
 
 			profile, err := s.LeerPerfil(tt.profile)
 			if err != nil {
@@ -155,7 +162,7 @@ func TestVerificadorRegistraSoloDesajustesConModelosValidos(t *testing.T) {
 	}
 }
 
-func TestModeloReportadoValidoAceptaLiteralDe128Caracteres(t *testing.T) {
+func TestReportedModelAccepts128CharLiteral(t *testing.T) {
 	modelo, ok := modeloReportadoValido("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if !ok {
 		t.Fatal("modeloReportadoValido rejected a 128 character identifier")
@@ -165,19 +172,25 @@ func TestModeloReportadoValidoAceptaLiteralDe128Caracteres(t *testing.T) {
 	}
 }
 
-func TestVerificadorSoloSondeaUnaVezPorPerfil(t *testing.T) {
+func TestVerifierProbesOncePerProfile(t *testing.T) {
 	s := store.NuevoStore(t.TempDir())
 	v := NuevoVerificador(s)
-	agent := agenteModeloFalso{modelo: "openai/gpt-5.6-terra"}
+	agent := &countingAgent{modelo: "openai/gpt-5.6-terra"}
 
-	v.Verificar("normal", "openai/gpt-5.6-terra", agent)
-	v.Verificar("normal", "openai/gpt-5.6-sol", agent)
+	first := v.Verify("normal", "openai/gpt-5.6-terra", agent)
+	second := v.Verify("normal", "openai/gpt-5.6-sol", agent)
 
+	if agent.calls != 1 {
+		t.Fatalf("probe calls = %d, want exactly 1 per profile per session", agent.calls)
+	}
+	if first != OutcomeMatched || second != OutcomeMatched {
+		t.Errorf("outcomes = %q, %q: want the stored first outcome twice", first, second)
+	}
 	profile, err := s.LeerPerfil("normal")
 	if err != nil {
 		t.Fatalf("LeerPerfil: %v", err)
 	}
-	if profile != nil {
-		t.Errorf("profile = %+v, want nil", profile)
+	if profile == nil || profile.Status != store.ProfileVerified {
+		t.Errorf("profile = %+v, want the verified match record", profile)
 	}
 }

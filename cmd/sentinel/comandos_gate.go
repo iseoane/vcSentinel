@@ -187,7 +187,7 @@ func fabricaAuditorGate(cfg config.Config, verificador *modelprobe.Verificador) 
 		if err != nil {
 			return nil, profile.Nombre, err
 		}
-		verificador.Verificar(profile.Nombre, profile.Modelo, adapter)
+		verificador.Verify(profile.Nombre, profile.Modelo, adapter)
 		return adapter, profile.Nombre, nil
 	}
 }

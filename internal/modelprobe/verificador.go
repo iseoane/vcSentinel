@@ -23,27 +23,72 @@ type ReportaModeloConfigurado interface {
 	ModeloConfigurado() (string, bool)
 }
 
-// Verificador runs at most one probe per configured profile in a session.
+// Outcome is the typed result of one model probe. Only OutcomeMatched lets
+// a consumer claim the model as verified; every other outcome keeps the
+// honest default of unverified.
+type Outcome string
+
+const (
+	// OutcomeMatched: probed and the reported identifier equals the expected one.
+	OutcomeMatched Outcome = "matched"
+	// OutcomeMismatch: probed with a parseable reply that differs.
+	OutcomeMismatch Outcome = "mismatch"
+	// OutcomeProbeError: the probe prompt itself failed.
+	OutcomeProbeError Outcome = "probe_error"
+	// OutcomeUnparseable: the reply fails modeloReportadoValido.
+	OutcomeUnparseable Outcome = "unparseable"
+	// OutcomeSkipped: nothing to probe (empty profile, nil agent or store)
+	// or no expected model resolvable.
+	OutcomeSkipped Outcome = "skipped"
+)
+
+// Verificador runs at most one probe per configured profile in a session,
+// retaining each outcome for later queries.
 type Verificador struct {
 	store       *store.Store
-	verificados sync.Map
+	verificados sync.Map // profile name -> Outcome
 }
 
 func NuevoVerificador(s *store.Store) *Verificador {
 	return &Verificador{store: s}
 }
 
-// Verificar records a mismatch without affecting the caller's review request.
-func (v *Verificador) Verificar(perfil, esperado string, agente Agente) {
+// Verify probes the agent for its model and records the outcome without
+// affecting the caller's review request: a probe that errors never fails a
+// review, a gate, or a PR flow. It probes at most once per profile per
+// session; a repeated call returns the stored first outcome.
+//
+// A match writes a positive profile record (status verified), giving the
+// mismatch signal a counterpart and making store.LeerPerfil useful. A
+// mismatch keeps writing the unverified record. Every other outcome
+// records nothing.
+func (v *Verificador) Verify(perfil, esperado string, agente Agente) Outcome {
 	if perfil == "" || agente == nil || v.store == nil {
-		return
+		return OutcomeSkipped
 	}
-	if _, loaded := v.verificados.LoadOrStore(perfil, struct{}{}); loaded {
-		return
+	if outcome, loaded := v.verificados.LoadOrStore(perfil, OutcomeSkipped); loaded {
+		if previous, ok := outcome.(Outcome); ok {
+			return previous
+		}
+		return OutcomeSkipped
 	}
+	outcome := v.probe(perfil, esperado, agente)
+	v.verificados.Store(perfil, outcome)
+	return outcome
+}
+
+// Verified reports whether the profile was probed and matched in this
+// session. Anything else — mismatch, error, unparseable reply, or never
+// probed — is false.
+func (v *Verificador) Verified(perfil string) bool {
+	outcome, ok := v.verificados.Load(perfil)
+	return ok && outcome == OutcomeMatched
+}
+
+func (v *Verificador) probe(perfil, esperado string, agente Agente) Outcome {
 	actual, err := agente.EjecutarPrompt(promptModelo)
 	if err != nil {
-		return
+		return OutcomeProbeError
 	}
 	if esperado == "" {
 		if reporta, ok := agente.(ReportaModeloConfigurado); ok {
@@ -53,8 +98,21 @@ func (v *Verificador) Verificar(perfil, esperado string, agente Agente) {
 		}
 	}
 	actual, ok := modeloReportadoValido(actual)
-	if esperado == "" || !ok || actual == esperado {
-		return
+	if esperado == "" || !ok {
+		if esperado == "" {
+			return OutcomeSkipped
+		}
+		return OutcomeUnparseable
+	}
+	if actual == esperado {
+		_ = v.store.GuardarPerfil(&store.Profile{
+			Name:          perfil,
+			Status:        store.ProfileVerified,
+			Event:         "model_match",
+			ExpectedModel: esperado,
+			ActualModel:   actual,
+		})
+		return OutcomeMatched
 	}
 	_ = v.store.GuardarPerfil(&store.Profile{
 		Name:          perfil,
@@ -63,6 +121,7 @@ func (v *Verificador) Verificar(perfil, esperado string, agente Agente) {
 		ExpectedModel: esperado,
 		ActualModel:   actual,
 	})
+	return OutcomeMismatch
 }
 
 func modeloReportadoValido(modelo string) (string, bool) {

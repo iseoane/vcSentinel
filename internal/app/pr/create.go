@@ -188,7 +188,7 @@ func EjecutarPrCreateCon(w io.Writer, worktree string, flags FlagsPrCreate, deps
 		if err != nil {
 			return nil, profile.Nombre, err
 		}
-		verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+		verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
 		return adapter, profile.Nombre, nil
 	}
 

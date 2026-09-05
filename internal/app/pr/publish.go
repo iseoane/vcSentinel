@@ -117,7 +117,7 @@ func VerificarParaPlantillaCon(worktree, gitDir string, cfg config.Config, verif
 	if verificadorModelo == nil {
 		verificadorModelo = nuevoVerificadorModelo(worktree)
 	}
-	verificadorModelo.Verificar(perfil.Nombre, perfil.Modelo, adapter)
+	verificadorModelo.Verify(perfil.Nombre, perfil.Modelo, adapter)
 	verif, err := verificar(ops.OpcionesVerificar{
 		Worktree: worktree,
 		GitDir:   gitDir,
