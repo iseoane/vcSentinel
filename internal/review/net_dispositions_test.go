@@ -248,3 +248,22 @@ func TestMergeNetDispositionsForEnginePrefersHead(t *testing.T) {
 		t.Fatalf("merged empty = %+v, want nothing", got)
 	}
 }
+
+// Empty carried fingerprints never reach the engine input, even if an
+// upstream caller forgets the pre-filter: an empty fingerprint matches
+// nothing by identity, so cloning it can only smuggle ambiguity.
+func TestMergeNetDispositionsForEngineDropsEmptyCarried(t *testing.T) {
+	mk := func(sha, fp, status string) FindingDisposition {
+		return FindingDisposition{
+			SHA: sha, Fingerprint: fp, Status: status, Reason: "r",
+			Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		}
+	}
+	got := mergeNetDispositionsForEngine(
+		[]FindingDisposition{mk("head", "fp-keep", StatusReopened)},
+		[]FindingDisposition{mk("mid", "", StatusRefuted), mk("mid", "  ", StatusRefuted)},
+		"head")
+	if len(got) != 1 || got[0].Fingerprint != "fp-keep" {
+		t.Fatalf("merged = %+v, want only the head answer", got)
+	}
+}

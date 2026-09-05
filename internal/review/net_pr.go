@@ -236,7 +236,11 @@ func mergeNetDispositionsForEngine(head, carried []FindingDisposition, to string
 		}
 	}
 	for _, disp := range carried {
-		if _, ok := answered[strings.TrimSpace(disp.Fingerprint)]; ok {
+		fp := strings.TrimSpace(disp.Fingerprint)
+		if fp == "" {
+			continue
+		}
+		if _, ok := answered[fp]; ok {
 			continue
 		}
 		clone := disp
