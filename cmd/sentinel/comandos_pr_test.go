@@ -479,8 +479,13 @@ func TestAplicarDisposicionesPrReviewLlevaRespuestasAlNet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loader error: %v", err)
 	}
-	if opciones.NetReview == nil || len(opciones.NetReview.Dispositions) != 1 {
-		t.Fatalf("net dispositions = %+v, want the standing answers", opciones.NetReview)
+	got := opciones.NetReview
+	if got == nil || len(got.Dispositions) != 1 {
+		t.Fatalf("net dispositions = %+v, want the standing answers", got)
+	}
+	d := got.Dispositions[0]
+	if d.Fingerprint != "fp-carry" || d.Status != review.StatusRefuted || d.Actor != review.RefutationActorHuman {
+		t.Fatalf("net disposition = %+v, want the recorded answer identity, not a count", d)
 	}
 }
 
@@ -490,6 +495,21 @@ func TestAplicarDisposicionesPrReviewFallaConLogCorrupto(t *testing.T) {
 		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("disposiciones corruptas") })
 	if err == nil {
 		t.Fatal("corrupt log was swallowed: pr review would audit as if no human answered")
+	}
+}
+
+// A nil net review (no net audit requested) leaves the options untouched and
+// still reports a loader failure: the helper never invents a net input and
+// never hides a corrupt log.
+func TestAplicarDisposicionesPrReviewSinNet(t *testing.T) {
+	opciones, err := aplicarDisposicionesPrReview(review.OpcionesRama{}, "worktree",
+		func(string) ([]review.FindingDisposition, error) { return nil, nil })
+	if err != nil || opciones.NetReview != nil {
+		t.Fatalf("opciones = %+v, err = %v; want untouched options", opciones, err)
+	}
+	if _, err := aplicarDisposicionesPrReview(review.OpcionesRama{}, "worktree",
+		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("disposiciones corruptas") }); err == nil {
+		t.Fatal("corrupt log was swallowed without a net review")
 	}
 }
 

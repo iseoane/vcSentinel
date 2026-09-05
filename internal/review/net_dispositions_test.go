@@ -219,3 +219,32 @@ func TestRunNetReviewHeadAnswerWinsOverCarried(t *testing.T) {
 		}
 	}
 }
+
+// The merge keeps every head answer, clones carried answers to the head SHA,
+// and drops carried answers whose fingerprint the head already answered.
+func TestMergeNetDispositionsForEnginePrefersHead(t *testing.T) {
+	mk := func(sha, fp, status string) FindingDisposition {
+		return FindingDisposition{
+			SHA: sha, Fingerprint: fp, Status: status, Reason: "r",
+			Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		}
+	}
+	head := []FindingDisposition{mk("head", "fp-shared", StatusReopened)}
+	carried := []FindingDisposition{
+		mk("mid", "fp-shared", StatusRefuted),
+		mk("mid", "fp-carried", StatusRefuted),
+	}
+	got := mergeNetDispositionsForEngine(head, carried, "head")
+	if len(got) != 2 {
+		t.Fatalf("merged = %+v, want head plus the non-shadowed carry", got)
+	}
+	if got[0].Fingerprint != "fp-shared" || got[0].Status != StatusReopened || got[0].SHA != "head" {
+		t.Fatalf("merged[0] = %+v, want the head answer untouched", got[0])
+	}
+	if got[1].Fingerprint != "fp-carried" || got[1].SHA != "head" {
+		t.Fatalf("merged[1] = %+v, want the carried answer cloned to the head", got[1])
+	}
+	if got := mergeNetDispositionsForEngine(nil, nil, "head"); len(got) != 0 {
+		t.Fatalf("merged empty = %+v, want nothing", got)
+	}
+}

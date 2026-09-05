@@ -197,28 +197,13 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	// cloned to the head SHA for the engine input so the single SHA-bound
 	// overlay, aggregation, and verdict downgrade stay in one place. The
 	// clone is engine input only; the persisted log keeps the origin SHA.
-	// Head precedence is by fingerprint: a carried answer whose fingerprint
-	// already has a head-SHA answer is dropped, so a stale intermediate
-	// answer can never override the fresher head answer inside the engine's
-	// last-wins overlay.
 	var rangeDispositions []FindingDisposition
 	if o != nil {
 		rangeDispositions = o.Dispositions
 	}
-	headDispositions := FilterDispositionsForSHA(rangeDispositions, to)
-	carried := carriedNetDispositions(rangeDispositions, revisions, to)
-	engineDispositions := headDispositions
-outer:
-	for _, disp := range carried {
-		for _, hd := range headDispositions {
-			if strings.TrimSpace(hd.Fingerprint) == strings.TrimSpace(disp.Fingerprint) {
-				continue outer
-			}
-		}
-		clone := disp
-		clone.SHA = to
-		engineDispositions = append(engineDispositions, clone)
-	}
+	engineDispositions := mergeNetDispositionsForEngine(
+		FilterDispositionsForSHA(rangeDispositions, to),
+		carriedNetDispositions(rangeDispositions, revisions, to), to)
 	audit := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
 		SHA: to, Mensaje: strings.TrimSpace(o.Intention), Diff: diff,
 		Bundles: plan.Bundles, RutasContexto: safePaths,
@@ -231,6 +216,31 @@ outer:
 		Dispositions:           engineDispositions,
 	})
 	return &NetReview{From: from, To: to, Context: history, Audit: audit}, nil
+}
+
+// mergeNetDispositionsForEngine joins head-SHA answers with carried
+// intermediate answers into the single SHA-bound engine input. Head
+// precedence is by fingerprint: a carried answer whose fingerprint already
+// has a head-SHA answer is dropped, so a stale intermediate answer can never
+// override the fresher head answer inside the engine's last-wins overlay.
+func mergeNetDispositionsForEngine(head, carried []FindingDisposition, to string) []FindingDisposition {
+	out := make([]FindingDisposition, 0, len(head)+len(carried))
+	out = append(out, head...)
+	answered := make(map[string]struct{}, len(head))
+	for _, hd := range head {
+		if fp := strings.TrimSpace(hd.Fingerprint); fp != "" {
+			answered[fp] = struct{}{}
+		}
+	}
+	for _, disp := range carried {
+		if _, ok := answered[strings.TrimSpace(disp.Fingerprint)]; ok {
+			continue
+		}
+		clone := disp
+		clone.SHA = to
+		out = append(out, clone)
+	}
+	return out
 }
 
 // carriedNetDispositions selects the standing human answers recorded against
