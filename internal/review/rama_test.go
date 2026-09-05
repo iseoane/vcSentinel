@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
@@ -565,5 +566,63 @@ func TestAuditarCommitRamaRoutesThroughPerCommitTransport(t *testing.T) {
 	}
 	if len(factoryPaths) != 1 || factoryPaths[0] != "transport.go" {
 		t.Fatalf("factory paths = %v, want the audited commit's immutable paths", factoryPaths)
+	}
+}
+func TestBranchAuditStampsVerifiedModelFromVerifier(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	sha := commitEnRama(t, "feat.txt", "1\n2\n3\n4\n5\n")
+	ledger := NuevoLedger(gitDir)
+	fabrica := fabricaEfectivaFija(`{"dim":"logic","verdict":"warn","findings":[{"file":"feat.txt","line":1,"severity":"WARNING","description":"ignored error","confidence":0.6}]}`)
+
+	res, err := AnalizarRama(ledger, OpcionesRama{
+		Fabrica:       fabrica,
+		Parallel:      1,
+		ModelVerifier: modelVerifierStub{verified: map[string]bool{"normal": true}},
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed: %v", err)
+	}
+	if len(res.Fichas) != 1 || res.Fichas[0].SHA != sha {
+		t.Fatalf("fichas = %v, want [%s]", res.Fichas, sha)
+	}
+	persistida, err := ledger.LeerFicha(sha)
+	if err != nil || persistida == nil {
+		t.Fatalf("persisted ficha missing: %v", err)
+	}
+	findings := persistida.Revisions[0].AggregatedFindings
+	if len(findings) != 1 {
+		t.Fatalf("findings = %#v, expected one", findings)
+	}
+	if !findings[0].Producer.ModeloVerificado {
+		t.Error("ModeloVerificado = false with a matching verifier: the branch flow must consult it")
+	}
+}
+
+func TestBranchAuditLeavesModelUnverifiedWithoutVerifier(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	sha := commitEnRama(t, "feat.txt", "1\n2\n3\n4\n5\n")
+	ledger := NuevoLedger(gitDir)
+	fabrica := fabricaEfectivaFija(`{"dim":"logic","verdict":"warn","findings":[{"file":"feat.txt","line":1,"severity":"WARNING","description":"ignored error","confidence":0.6}]}`)
+
+	res, err := AnalizarRama(ledger, OpcionesRama{Fabrica: fabrica, Parallel: 1})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed: %v", err)
+	}
+	if len(res.Fichas) != 1 || res.Fichas[0].SHA != sha {
+		t.Fatalf("fichas = %v, want [%s]", res.Fichas, sha)
+	}
+	if res.Fichas[0].Revisions[0].AggregatedFindings[0].Producer.ModeloVerificado {
+		t.Error("ModeloVerificado = true without a verifier: false is the honest default")
+	}
+}
+
+func fabricaEfectivaFija(respuesta string) FabricaAuditor {
+	agente := agenteEfectivoFake{
+		respuesta: respuesta,
+		efectivo:  agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"},
+		definido:  true,
+	}
+	return func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return agente, "normal", nil
 	}
 }

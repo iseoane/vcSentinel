@@ -227,6 +227,7 @@ func EjecutarPrCreateCon(w io.Writer, worktree string, flags FlagsPrCreate, deps
 		Parallel:                  cfg.Review.Parallel,
 		Store:                     blobStore,
 		ReviewTransportFactory:    wiring.TransportFactory(cfg, worktree),
+		ModelVerifier:             verificadorModelo,
 		NetReview:                 &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs)), Dispositions: branchDispositions},
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, wiring.ShaCorto(sha))

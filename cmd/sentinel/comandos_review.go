@@ -185,6 +185,9 @@ func ejecutarReview(worktree string, args []string) {
 			// Standing human answers recorded against this SHA win over a
 			// fresh agent verdict for the same fingerprint (FU-6).
 			Dispositions: review.FilterDispositionsForSHA(dispositions, sha),
+			// The prober already ran inside the auditor factory above;
+			// the engine consults it here without importing it.
+			ModelVerifier: verificadorModelo,
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},

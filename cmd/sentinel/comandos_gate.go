@@ -164,6 +164,7 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, gitattributes).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
+			ModelVerifier:               verificador,
 			HallazgosDeterministas:      secretFindings,
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
