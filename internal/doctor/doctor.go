@@ -202,12 +202,43 @@ func checkHook(worktreePath string, opts Options, add func(string, string, bool,
 		add("hook", "pre-commit", false, "hook content is not the sentinel shape", "run sentinel init to reinstall the hook")
 		return
 	}
-	root := filepath.ToSlash(worktreePath)
-	if target == root || strings.HasPrefix(target, root+"/") {
-		add("hook", "pre-commit", false, fmt.Sprintf("hook points at %s inside the repository: bin/<version>/ changes every release (the T0.0 trap), leaving a stale hook behind", target), "reinstall the hook from a stable binary with sentinel init")
+	if isVersionedBinTarget(target) {
+		add("hook", "pre-commit", false, fmt.Sprintf("hook points at %s under bin/<version>/, which changes every release (the T0.0 trap), leaving a stale hook behind", target), "reinstall the hook from a stable binary with sentinel init")
 		return
 	}
 	add("hook", "pre-commit", true, fmt.Sprintf("hook points at stable binary %s", target), "")
+}
+
+// isVersionedBinTarget reports the T0.0 trap shape: a hook binary installed
+// as <anything>/bin/<version>/sentinel, where the version directory changes
+// on every release. Installed locations (GOPATH/bin, /usr/local/bin,
+// ~/.vas_sentinel/bin) have a non-version parent and are stable.
+func isVersionedBinTarget(target string) bool {
+	parts := strings.Split(strings.Trim(target, "/"), "/")
+	if len(parts) < 3 {
+		return false
+	}
+	parent, grandparent := parts[len(parts)-2], parts[len(parts)-3]
+	return grandparent == "bin" && looksLikeVersion(parent)
+}
+
+// looksLikeVersion accepts dot-separated all-numeric segments such as 0.2.0.
+func looksLikeVersion(segment string) bool {
+	parts := strings.Split(segment, ".")
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // hookTarget extracts the quoted binary path from the generated hook shape:

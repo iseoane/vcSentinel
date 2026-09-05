@@ -143,7 +143,7 @@ func TestStrictFailureStopsAtConfig(t *testing.T) {
 	}
 }
 
-func TestHookPointingInsideRepoWarnsTrap(t *testing.T) {
+func TestHookPointingAtVersionedBinWarnsTrap(t *testing.T) {
 	isolateHome(t)
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
@@ -156,6 +156,40 @@ func TestHookPointingInsideRepoWarnsTrap(t *testing.T) {
 		t.Errorf("hook OK while pointing at bin/<version>/")
 	} else if !strings.Contains(got.Detail, "bin/") || !strings.Contains(got.Remedy, "sentinel init") {
 		t.Errorf("hook finding = %+v, want the T0.0 trap plus the init command", got)
+	}
+}
+
+func TestHookInsideRepoWithoutVersionIsStable(t *testing.T) {
+	isolateHome(t)
+	worktree := t.TempDir()
+	writeProjectYML(t, worktree, twoAgentYML)
+	common := t.TempDir()
+	writeHook(t, common, filepath.Join(worktree, "tools", "sentinel"))
+	stageBinaries(t, "claude", "opencode", "rg")
+	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
+	if got := findCheck(t, Run(worktree, Options{Env: env}), "hook", "pre-commit"); !got.OK {
+		t.Errorf("hook not OK on a non-versioned in-repo target: %s", got.Detail)
+	}
+}
+
+func TestIsVersionedBinTarget(t *testing.T) {
+	cases := []struct {
+		target string
+		want   bool
+	}{
+		{"/repo/bin/0.2.0/sentinel", true},
+		{"/repo/bin/0.2.0/sentinel.exe", true},
+		{"/usr/local/bin/sentinel", false},
+		{"/home/user/go/bin/sentinel", false},
+		{"/home/user/.vas_sentinel/bin/sentinel", false},
+		{"/repo/tools/sentinel", false},
+		{"sentinel", false},
+		{"/repo/bin/latest/sentinel", false},
+	}
+	for _, tc := range cases {
+		if got := isVersionedBinTarget(tc.target); got != tc.want {
+			t.Errorf("isVersionedBinTarget(%q) = %v, want %v", tc.target, got, tc.want)
+		}
 	}
 }
 func TestMissingHookPrintsInitCommand(t *testing.T) {
