@@ -16,6 +16,10 @@ type Condition struct {
 	Name   string
 	OK     bool
 	Detail string
+	// Unknown marks a condition its prober never observed: a missing
+	// prerequisite or an unrunnable status call. Unknown is not failure —
+	// no remedy applies, because no observed cause exists to address.
+	Unknown bool
 }
 
 // Preflight condition names, in evaluation order. The six review-time gates
@@ -50,7 +54,7 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	fail := func(detail string) []Condition {
 		conds := make([]Condition, 0, len(names))
 		for _, name := range names {
-			conds = append(conds, Condition{Name: name, Detail: detail})
+			conds = append(conds, Condition{Name: name, Detail: detail, Unknown: true})
 		}
 		return conds
 	}
@@ -111,21 +115,11 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	}
 	if err != nil || len(statusRaw) == 0 || len(statusRaw) >= p.limite {
 		detail := fmt.Sprintf("codegraph status unavailable: %v", err)
-		return append(conds,
-			Condition{Name: CondIndexInitialized, Detail: detail},
-			Condition{Name: CondProjectPath, Detail: detail},
-			Condition{Name: CondPendingChanges, Detail: detail},
-			Condition{Name: CondWorktreeMatch, Detail: detail},
-		)
+		return append(conds, unknownStatuses(detail)...)
 	}
 	if err := json.Unmarshal(statusRaw, &status); err != nil {
 		detail := fmt.Sprintf("codegraph status unparsable: %v", err)
-		return append(conds,
-			Condition{Name: CondIndexInitialized, Detail: detail},
-			Condition{Name: CondProjectPath, Detail: detail},
-			Condition{Name: CondPendingChanges, Detail: detail},
-			Condition{Name: CondWorktreeMatch, Detail: detail},
-		)
+		return append(conds, unknownStatuses(detail)...)
 	}
 
 	if !status.Initialized {
@@ -158,7 +152,19 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 func skipped(names []string, reason string) []Condition {
 	conds := make([]Condition, 0, len(names))
 	for _, name := range names {
-		conds = append(conds, Condition{Name: name, Detail: reason})
+		conds = append(conds, Condition{Name: name, Detail: reason, Unknown: true})
+	}
+	return conds
+}
+
+// unknownStatuses builds the four status-derived rows sharing one
+// unobserved cause. Unavailable (the prober would not run) and unparsable
+// (it ran but answered garbage) stay distinguishable through the detail:
+// they need different operator actions.
+func unknownStatuses(detail string) []Condition {
+	conds := make([]Condition, 0, 4)
+	for _, name := range []string{CondIndexInitialized, CondProjectPath, CondPendingChanges, CondWorktreeMatch} {
+		conds = append(conds, Condition{Name: name, Detail: detail, Unknown: true})
 	}
 	return conds
 }

@@ -28,13 +28,15 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/setup"
 )
 
-// Check is one preflight finding. OK checks carry no remedy.
+// Check is one preflight finding. OK checks carry no remedy, and unknown
+// checks (a prober that never ran) carry neither a verdict nor a remedy.
 type Check struct {
 	Section string
 	Name    string
 	OK      bool
 	Detail  string
 	Remedy  string
+	Unknown bool
 }
 
 // Report is the full advisory preflight result. It is always produced;
@@ -43,11 +45,23 @@ type Report struct {
 	Checks []Check
 }
 
-// WarnCount counts the checks needing operator attention.
+// WarnCount counts the failed checks needing operator attention. Unknown
+// checks are not failures and stay out of this count.
 func (r Report) WarnCount() int {
 	n := 0
 	for _, c := range r.Checks {
-		if !c.OK {
+		if !c.OK && !c.Unknown {
+			n++
+		}
+	}
+	return n
+}
+
+// UnknownCount counts the checks no prober observed.
+func (r Report) UnknownCount() int {
+	n := 0
+	for _, c := range r.Checks {
+		if c.Unknown {
 			n++
 		}
 	}
@@ -66,7 +80,9 @@ func (r Report) Text() string {
 			fmt.Fprintf(&b, "\n[%s]\n", section)
 		}
 		mark := "ok"
-		if !c.OK {
+		if c.Unknown {
+			mark = "UNKNOWN"
+		} else if !c.OK {
 			mark = "WARN"
 		}
 		fmt.Fprintf(&b, "  %s %s: %s\n", mark, c.Name, c.Detail)
@@ -74,7 +90,7 @@ func (r Report) Text() string {
 			fmt.Fprintf(&b, "       remedy: %s\n", c.Remedy)
 		}
 	}
-	fmt.Fprintf(&b, "\nWARN: %d\n", r.WarnCount())
+	fmt.Fprintf(&b, "\nWARN: %d\nUNKNOWN: %d\n", r.WarnCount(), r.UnknownCount())
 	return b.String()
 }
 
@@ -152,6 +168,7 @@ func Run(worktreePath string, opts Options) Report {
 	checkSearch(cfg, add)
 	for _, cond := range opts.Env.Codegraph(worktreePath) {
 		add("codegraph", cond.Name, cond.OK, cond.Detail, codegraphRemedy(cond))
+		rep.Checks[len(rep.Checks)-1].Unknown = cond.Unknown
 	}
 	checkHook(worktreePath, opts, add)
 	if opts.CheckUpdates {
@@ -161,7 +178,7 @@ func Run(worktreePath string, opts Options) Report {
 }
 
 func codegraphRemedy(cond graph.Condition) string {
-	if cond.OK {
+	if cond.OK || cond.Unknown {
 		return ""
 	}
 	switch cond.Name {

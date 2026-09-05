@@ -254,3 +254,28 @@ func TestCompareVersions(t *testing.T) {
 		}
 	}
 }
+func TestCodegraphUnknownHasNoRemedy(t *testing.T) {
+	cond := graph.Condition{Name: graph.CondIndexInitialized, Detail: "codegraph status unavailable: exit status 127", Unknown: true}
+	if got := codegraphRemedy(cond); got != "" {
+		t.Errorf("remedy = %q for an unobserved condition, want none", got)
+	}
+}
+
+func TestTextRendersUnknownDistinctFromFailure(t *testing.T) {
+	rep := Report{Checks: []Check{
+		{Section: "codegraph", Name: "index_initialized", Detail: "codegraph status unavailable: exit status 127", Unknown: true},
+		{Section: "hook", Name: "pre-commit", Detail: "no pre-commit hook installed", Remedy: "run sentinel init to install the hook"},
+	}}
+	if n := rep.WarnCount(); n != 1 {
+		t.Errorf("WarnCount = %d, want 1 (unknown is not a failure)", n)
+	}
+	if n := rep.UnknownCount(); n != 1 {
+		t.Errorf("UnknownCount = %d, want 1", n)
+	}
+	text := rep.Text()
+	for _, want := range []string{"UNKNOWN index_initialized", "WARN pre-commit", "WARN: 1", "UNKNOWN: 1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("report misses %q:\n%s", want, text)
+		}
+	}
+}

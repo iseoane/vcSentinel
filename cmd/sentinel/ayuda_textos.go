@@ -225,7 +225,8 @@ never installs — every warning prints the exact command to run instead.
 Binaries resolve with exec.LookPath, never a shell probe. Each configured
 agent must resolve and answer a minimal real prompt; the reviewer's search
 binary, the codegraph binary, index, and six context gates, and the
-pre-commit hook target are checked the same way.
+pre-commit hook target are checked the same way. A condition whose prober did
+not run renders as UNKNOWN with no remedy — never as a failure.
 
 Example:
   sentinel doctor

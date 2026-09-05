@@ -202,3 +202,87 @@ func TestPreflightHeadAndWorktreeStayOKWhenStatusFails(t *testing.T) {
 		}
 	}
 }
+func TestPreflightStatusUnavailableMarksFourUnknown(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".codegraph"), 0o755)
+	respuestas := [][]byte{[]byte("abc123\n"), []byte(""), nil}
+	ejecutar := func(_ context.Context, _ string, _ []string, _ string, _ []string, _ string, _ int) ([]byte, error) {
+		salida := respuestas[0]
+		respuestas = respuestas[1:]
+		if salida == nil {
+			return nil, errors.New("exit status 127")
+		}
+		return salida, nil
+	}
+	conds := Preflight(root, lookupOK(root), ejecutar)
+	for _, name := range []string{"index_initialized", "project_path", "pending_changes", "worktree_match"} {
+		got := conditionByName(t, conds, name)
+		if got.OK {
+			t.Errorf("condition %q OK without a status answer", name)
+		}
+		if !got.Unknown {
+			t.Errorf("condition %q is failed, want unknown: the prober never ran", name)
+		}
+		if !strings.Contains(got.Detail, "unavailable") {
+			t.Errorf("condition %q detail = %q, want the unavailable cause", name, got.Detail)
+		}
+	}
+}
+
+func TestPreflightStatusUnparsableMarksFourUnknownDistinct(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".codegraph"), 0o755)
+	conds := Preflight(root, lookupOK(root), preflightHealthyExecutor("abc123\n", "", "not json"))
+	for _, name := range []string{"index_initialized", "project_path", "pending_changes", "worktree_match"} {
+		got := conditionByName(t, conds, name)
+		if got.OK || !got.Unknown {
+			t.Errorf("condition %q = %+v, want unknown", name, got)
+		}
+		if !strings.Contains(got.Detail, "unparsable") {
+			t.Errorf("condition %q detail = %q, want it distinct from unavailable", name, got.Detail)
+		}
+	}
+}
+
+func TestPreflightSkippedRowsAreUnknown(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".codegraph"), 0o755)
+	conds := Preflight(root, func(name string) (string, error) {
+		if name == "codegraph" {
+			return "", errors.New("not found")
+		}
+		return name, nil
+	}, preflightHealthyExecutor("abc123\n", "", "{}"))
+	for _, name := range []string{"head", "worktree_clean", "index_initialized", "project_path", "pending_changes", "worktree_match"} {
+		if got := conditionByName(t, conds, name); !got.Unknown {
+			t.Errorf("condition %q is failed, want unknown: skipped by a missing prerequisite", name)
+		}
+	}
+}
+func TestPreflightCountsPorcelainVariants(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".codegraph"), 0o755)
+	slash := filepath.ToSlash(root)
+	healthy := func(porcelain string) string {
+		state := strings.ReplaceAll(`{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`, "ROOT", slash)
+		conds := Preflight(root, lookupOK(root), preflightHealthyExecutor("abc123\n", porcelain, state))
+		return conditionByName(t, conds, "worktree_clean").Detail
+	}
+	cases := []struct {
+		name      string
+		porcelain string
+		want      string
+	}{
+		{"quoted names and dirs count once each", " M tracked.txt\n?? \"sp ace.txt\"\n?? sub/\n", "3 dirty entries"},
+		{"rename counts once", "R  old.go -> new.go\n", "1 dirty entries"},
+		{"missing trailing newline still counts", " M a.go", "1 dirty entries"},
+		{"empty stays clean", "", "worktree clean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := healthy(tc.porcelain); !strings.Contains(got, tc.want) {
+				t.Errorf("detail = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
