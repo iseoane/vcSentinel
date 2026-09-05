@@ -159,6 +159,9 @@ func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 	if len(records) != 1 || records[0].Fingerprint != "fp-target" {
 		t.Fatalf("dispositions = %+v, want one append-only record", records)
 	}
+	if records[0].TargetSeverity != review.SevCritical {
+		t.Fatalf("persisted target severity = %q, want %q", records[0].TargetSeverity, review.SevCritical)
+	}
 }
 
 // FU-6: every failure closes without persisting anything: missing review

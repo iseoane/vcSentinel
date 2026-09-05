@@ -61,6 +61,9 @@ func TestRunReopenPersistsAndReblocks(t *testing.T) {
 	if d.Status != review.StatusReopened || d.Fingerprint != "fp-target" || d.SHA != "abc12345" {
 		t.Fatalf("disposition = %+v, want the human reopen", d)
 	}
+	if d.TargetSeverity != review.SevCritical {
+		t.Fatalf("persisted target severity = %q, want %q", d.TargetSeverity, review.SevCritical)
+	}
 	if d.Actor != review.RefutationActorHuman || d.Source != review.DispositionSourceHuman {
 		t.Fatalf("disposition provenance = %+v, want human provenance", d)
 	}
