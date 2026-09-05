@@ -188,6 +188,31 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 	}
 }
 
+// The unsafe-path refusal comes from the evidence gate, not from any other
+// precondition: the error names the unsafe path. Without this assertion the
+// table case above would also pass if the gate were missing entirely (the
+// locked precondition rejects a blocking finding anyway), so it would pin
+// nothing about the path check.
+func TestRunReopenUnsafePathFailsAtTheGate(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	evadido := refuteFichaFixture()
+	evadido.AggregatedFindings[0].Location.Archivo = "../evil.go"
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", evadido); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	_, err := runReopen(deps, reopenValidOptions())
+	if err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("err = %v, want the evidence-gate unsafe-path refusal", err)
+	}
+	records, rerr := st.ReadDispositions()
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dispositions = %+v, want nothing persisted", records)
+	}
+}
+
 // A corrupt dispositions log fails the reopen without persisting anything:
 // revalidating the cleared state against a partial answer set could reopen
 // the wrong finding.
