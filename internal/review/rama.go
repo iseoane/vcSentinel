@@ -95,6 +95,12 @@ type OpcionesRama struct {
 	// significa que no se aplican a ningún commit: fail-safe explícito en vez
 	// de asumir que siempre es el último elemento de shas.
 	HallazgosDeterministasSHA string
+	// DeterministicFindingsFactory, when set, produces per-commit
+	// deterministic findings from that commit's files and diff. Unlike
+	// HallazgosDeterministas, which carries one validated commit's gate
+	// result, this runs for every audited commit in the range. Results are
+	// appended to the findings already scheduled, never replacing them.
+	DeterministicFindingsFactory func(sha string, archivos []string, diff string) []Hallazgo
 	// OwnDiff (T8.2, internal input) activates stacked own-diff semantics:
 	// only merge_base(parent, HEAD)..HEAD is reviewed and findings from
 	// already-audited context commits come back as read-only inherited
@@ -282,6 +288,18 @@ func hallazgosDeterministasParaCommit(sha, shaValidado string, hallazgos []Halla
 	return hallazgos
 }
 
+// deterministasCommit gathers the deterministic findings for one audited
+// commit: the gate findings bound to exactly this SHA plus, when set, the
+// per-commit factory output for this commit's files and diff. A fresh slice
+// every time: appending must never grow the shared options backing array.
+func deterministasCommit(opts OpcionesRama, sha string, archivos []string, diff string) []Hallazgo {
+	out := append([]Hallazgo(nil), hallazgosDeterministasParaCommit(sha, opts.HallazgosDeterministasSHA, opts.HallazgosDeterministas)...)
+	if opts.DeterministicFindingsFactory != nil {
+		out = append(out, opts.DeterministicFindingsFactory(sha, archivos, diff)...)
+	}
+	return out
+}
+
 // auditarCommitRama audita un commit pendiente con el motor y persiste la
 // revisión en el ledger con bucket "pr" (origen: análisis de rama).
 func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
@@ -320,7 +338,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		RutasContexto:          archivos,
 		OnDimension:            opts.OnDimension,
 		FabricaRefutador:       opts.FabricaRefutador,
-		HallazgosDeterministas: opts.HallazgosDeterministas,
+		HallazgosDeterministas: deterministasCommit(opts, sha, archivos, diff),
 		ReviewTransport:        transporte,
 	})
 

@@ -245,3 +245,38 @@ func TestNetReviewClasificaConLaListaCompletaDeRutas(t *testing.T) {
 		t.Errorf("the net evidence does not report infrastructure as present for infra/main[1].tf; the sanitised list dropped the only path that carries it:\n%s", prompt)
 	}
 }
+
+func TestNetAuditIncludesFactoryFindingsAlongsideGateFindings(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	if err := os.MkdirAll("docs", 0755); err != nil {
+		t.Fatal(err)
+	}
+	to := commitEnRama(t, "docs/runbook.md", "token = \""+credentialDiffMarker+"1234567890abcdef\"\n")
+	gateFinding := Hallazgo{Source: SourceValidation, Dimension: DimStyle, Severity: SevWarning, Title: "gate validation", Location: Ubicacion{Archivo: "docs/runbook.md", LineaInicio: 1}}
+	gateFinding.Fingerprint = Fingerprint(gateFinding)
+
+	res, err := AnalizarRama(NuevoLedger(gitDir), OpcionesRama{
+		Fabrica:                      fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+		Parallel:                     1,
+		HallazgosDeterministas:       []Hallazgo{gateFinding},
+		HallazgosDeterministasSHA:    to,
+		DeterministicFindingsFactory: credentialFactoryStub(),
+		NetReview:                    &NetReviewOptions{Intention: "Add runbook", Validation: "none"},
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed: %v", err)
+	}
+	if res.Net == nil {
+		t.Fatal("net audit did not run")
+	}
+	titles := map[string]bool{}
+	for _, h := range res.Net.Audit.Findings {
+		titles[h.Title] = true
+	}
+	if !titles["gate validation"] || !titles["exposed credential (github_token)"] {
+		t.Errorf("net findings = %v, want gate and factory findings appended", titles)
+	}
+	if res.Net.Audit.Veredicto != VerdictOK {
+		t.Errorf("net verdict = %q, want ok: deterministic findings never vote", res.Net.Audit.Veredicto)
+	}
+}
