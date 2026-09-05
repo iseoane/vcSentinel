@@ -198,9 +198,25 @@ type ScopeAggregate struct {
 	Coverage Coverage
 }
 
+// FailureAggregate is one row of the failure breakdown. Source tags the
+// population that produced the class: "outcome" for a terminal non-success
+// attempt outcome, which the live stream observes for every logical run, or
+// "semantic" for a producer-reported snapshot failure, which exists only
+// where metrics were measured. Coverage carries that row's evidence
+// denominator (LogicalRuns for outcome rows, MeasuredRuns over LogicalRuns
+// for semantic rows) so each row is self-describing.
+//
+// The per-class tag (option A) was chosen over splitting the breakdown into
+// two population-specific lists: T9.5 retention invariance asserts exactly
+// one exclusive entry per failure class, a split would break that assertion,
+// consumers would have to join the lists back together by class, and each
+// half would still need its own denominator — all of which this shape
+// carries directly on the row.
 type FailureAggregate struct {
-	Class string
-	Count int64
+	Class    string
+	Count    int64
+	Source   string
+	Coverage Coverage
 }
 
 type CostAggregate struct {

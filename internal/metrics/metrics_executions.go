@@ -214,6 +214,18 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 	result.CachedInputTokens.Coverage = coverage(result.CachedInputTokens.Observed, result.CachedInputTokens.Total)
 	result.ReasoningTokens.Coverage = coverage(result.ReasoningTokens.Observed, result.ReasoningTokens.Total)
 	result.Scope.Coverage = coverage(result.Scope.Full+result.Scope.Affected, result.MeasuredRuns)
+	// FU-8: every failure row carries its source population and the evidence
+	// denominator behind its count, set before the sort so rows leave the
+	// function complete. Outcome rows are observed for every logical run;
+	// semantic rows exist only where a metrics snapshot was measured.
+	for i := range result.Failures {
+		result.Failures[i].Source = failureSourceClass(result.Failures[i].Class)
+		if result.Failures[i].Source == "outcome" {
+			result.Failures[i].Coverage = coverage(result.LogicalRuns, result.LogicalRuns)
+		} else {
+			result.Failures[i].Coverage = coverage(result.MeasuredRuns, result.LogicalRuns)
+		}
+	}
 	sort.Slice(result.Failures, func(i, j int) bool { return result.Failures[i].Class < result.Failures[j].Class })
 
 	for _, sample := range suppliedStages {
@@ -723,6 +735,25 @@ func appendFailure(failures []FailureAggregate, class string) []FailureAggregate
 // cannot drift into counting different populations.
 func countsForBreakdown(class agentrun.OutcomeClass) bool {
 	return class.IsTerminal() && class != agentrun.OutcomeSuccess
+}
+
+// failureSourceClass classifies a failure class by the population that
+// produced it. The terminal non-success outcome classes come from the live
+// attempt stream; every other class — producer-reported snapshot failures,
+// present and future — comes from the measured snapshot population. Keeping
+// the helper total means an unrecognized future class tags as "semantic"
+// instead of claiming an outcome population it was never seen in.
+func failureSourceClass(class string) string {
+	switch class {
+	case string(agentrun.OutcomeFailure),
+		string(agentrun.OutcomeUnavailable),
+		string(agentrun.OutcomeTimeout),
+		string(agentrun.OutcomeCancellation),
+		string(agentrun.OutcomeProcessError):
+		return "outcome"
+	default:
+		return "semantic"
+	}
 }
 
 func percentile(values []int64, p float64) int64 {
