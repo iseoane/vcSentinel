@@ -871,8 +871,14 @@ existing `severityRank`). The guard lives in `applyToHallazgo` /
 `applyToReviewFinding`, so every application path inherits it, and a refusal
 stamps nothing: the finding keeps its status quo in every blocker surface
 operators already read. Pre-`TargetSeverity` records keep applying
-(apply-as-unknown) so no historical refutation re-opens. The `severityRank`
-totality question closed with ingestion evidence: `procesarFindings`
+(apply-as-unknown) so no historical refutation re-opens. That choice is
+safe beyond preserving behaviour: the only disposition status that moves a
+finding from blocking to non-blocking is `refuted`, its sole writer (the
+refute command) gate-enforces a blocking — hence CRITICAL — target, and
+CRITICAL is the rank maximum, so no legacy clearing record can ever meet a
+strictly more severe re-audit. `accepted_by_user` never clears and
+`reopened` re-blocks, so neither can suppress a block however applied. The
+`severityRank` totality question closed with ingestion evidence: `procesarFindings`
 normalizes every engine-emitted severity at the single parse point, so no
 unranked value reaches the guard. De-escalation and equal severity still
 apply, pinned by named subtests, as do the `TargetSeverity` write-time pins
