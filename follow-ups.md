@@ -29,7 +29,12 @@ land.
       `internal/secret` scanner plus WARNING findings through
       `HallazgosDeterministas` in `review`/`gate` and a section in
       `explain`. Non-blocking; values never persisted. Full record in
-      FU-11. Residual: `pr`-review branch flow not yet attached.
+      FU-11.
+
+      Residual closed 2026-09-05 on `feat/credential-branch-flow`:
+      per-commit factory plus net-range coverage in `AnalizarRama`,
+      populated by `pr review` and `pr create`; live proof on a
+      zero-dimension branch showed the incident with verdict `ok`.
 
 ## P2 — Next (clear value, small effort)
 
