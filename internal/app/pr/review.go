@@ -114,6 +114,9 @@ func OpcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador
 		Parallel:               cfg.Review.Parallel,
 		Store:                  blobStore,
 		ReviewTransportFactory: wiring.TransportFactory(cfg, worktree),
+		// FU-11 residual: exposed-credential incidents ride every audited
+		// commit through the per-commit deterministic channel.
+		DeterministicFindingsFactory: SecretFindingsFactory(),
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, wiring.ShaCorto(sha))
 		},

@@ -227,7 +227,10 @@ func EjecutarPrCreateCon(w io.Writer, worktree string, flags FlagsPrCreate, deps
 		Parallel:                  cfg.Review.Parallel,
 		Store:                     blobStore,
 		ReviewTransportFactory:    wiring.TransportFactory(cfg, worktree),
-		NetReview:                 &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs)), Dispositions: branchDispositions},
+		// FU-11 residual: exposed-credential incidents ride every audited
+		// commit through the per-commit deterministic channel.
+		DeterministicFindingsFactory: SecretFindingsFactory(),
+		NetReview:                    &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs)), Dispositions: branchDispositions},
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, wiring.ShaCorto(sha))
 		},
