@@ -857,6 +857,50 @@ the 20-line cap (enforced by the shared gate, help claim backed);
 `validarArgumentos` (parser-owned commands pass through; smoke-tested
 end to end); the SinNet snapshot artifact (helper in production since the
 earlier fix commit).
+#### Post-merge defects 1-3 (2026-09-05)
+
+Three defects found reviewing FU-6, fixed test-first on dedicated branches
+and merged `--no-ff`. The core design held: fingerprint-only matching,
+append-only `dispositions.jsonl`, unchanged `IsBlocking` and `Fingerprint`
+inputs, no revision mutation, no third finding shape.
+
+Defect 1, escalation inheritance: a standing refutation is now refused when
+the re-audited finding is MORE severe than the recorded `TargetSeverity`
+(audit metadata beside `TargetDimension`, never a match key; ordered by the
+existing `severityRank`). The guard lives in `applyToHallazgo` /
+`applyToReviewFinding`, so every application path inherits it, and a refusal
+stamps nothing: the finding keeps its status quo in every blocker surface
+operators already read. Pre-`TargetSeverity` records keep applying
+(apply-as-unknown) so no historical refutation re-opens. The `severityRank`
+totality question closed with ingestion evidence: `procesarFindings`
+normalizes every engine-emitted severity at the single parse point, so no
+unranked value reaches the guard. De-escalation and equal severity still
+apply, pinned by named subtests, as do the `TargetSeverity` write-time pins
+on the refute/accept/reopen persistence paths.
+
+Defect 2, line-less findings: the human gate pins the validation line to the
+evidence range start when `LineaInicio <= 0`, waiving only containment. File
+pin, 20-line window, exact extract match against the audited Git object,
+12-character minimum, and range hash still apply byte for byte, so the gate
+stays fail-closed; `reopen` gains the path through the shared gate with zero
+changes. Ingestion-side fix rejected: it would mutate append-only ledger
+records and change the finding contract. Accepted trade-off: a file-scoped
+finding is cleared by evidence anywhere in the cited file — inherent to a
+finding with no line to bind to.
+
+Defect 3, model noise basis: a human-refuted finding now leaves the model
+and agent `Known` basis entirely, so the rate is computed over a population
+its numerator can reach; a purely human-refuted population reports no
+evidence instead of a measured 0.00. Dimension counters are byte-identical
+(`dim.Refuted` still counts human refutations, of record there). Rule of
+thumb: any aggregate whose numerator is restricted to one actor must exclude
+the other actor's records from its denominator.
+
+Follow-up: an escalated refusal is currently indistinguishable from no
+answer at all (deliberate — the refusal is the absence of the answer, not a
+record). A refusal marker (audit-metadata field or metric) would let an
+operator seeing a confirmed CRITICAL blocker know a human already answered
+it at a lower severity and should re-refute at the escalated severity.
 #### Merge closure (2026-09-05, `811b9f1`)
 
 Merged `--no-ff` as `feat(review): evidence-bound human finding refutation
