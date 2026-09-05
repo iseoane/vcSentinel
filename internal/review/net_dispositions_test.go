@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+// mkDisposition builds a human-answered disposition fixture for the net
+// carry-over tests.
+func mkDisposition(sha, fp, status string) FindingDisposition {
+	return FindingDisposition{
+		SHA: sha, Fingerprint: fp, Status: status, Reason: "r",
+		Path: "a.go", Evidence: "// evidence line: guardian check",
+		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+	}
+}
+
 // carriedNetDispositions scopes by range and excludes the head itself: the
 // engine already applied head-bound answers SHA-bound, so carrying them again
 // would double-count the downgrade path.
@@ -17,20 +27,12 @@ func TestCarriedNetDispositionsScopesByRangeAndHead(t *testing.T) {
 	if head != shaB {
 		t.Fatalf("head = %q, want the second commit %q", head, shaB)
 	}
-	mk := func(sha, fp string) FindingDisposition {
-		return FindingDisposition{
-			SHA: sha, Fingerprint: fp, Status: StatusRefuted,
-			Reason: "verified safe", Path: "a.go",
-			Evidence: "// evidence line: guardian check",
-			Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
-		}
-	}
 	revisions := []Ficha{{SHA: shaA}, {SHA: shaB}}
 	got := carriedNetDispositions([]FindingDisposition{
-		mk(shaA, "fp-in-range"),
-		mk(shaB, "fp-at-head"),
-		mk("outside-range", "fp-outside"),
-		mk(shaA, ""),
+		mkDisposition(shaA, "fp-in-range", StatusRefuted),
+		mkDisposition(shaB, "fp-at-head", StatusRefuted),
+		mkDisposition("outside-range", "fp-outside", StatusRefuted),
+		mkDisposition(shaA, "", StatusRefuted),
 	}, revisions, shaB)
 	if len(got) != 1 || got[0].Fingerprint != "fp-in-range" {
 		t.Fatalf("carried = %+v, want only the in-range non-head fingerprint", got)
@@ -223,16 +225,10 @@ func TestRunNetReviewHeadAnswerWinsOverCarried(t *testing.T) {
 // The merge keeps every head answer, clones carried answers to the head SHA,
 // and drops carried answers whose fingerprint the head already answered.
 func TestMergeNetDispositionsForEnginePrefersHead(t *testing.T) {
-	mk := func(sha, fp, status string) FindingDisposition {
-		return FindingDisposition{
-			SHA: sha, Fingerprint: fp, Status: status, Reason: "r",
-			Actor: RefutationActorHuman, Source: DispositionSourceHuman,
-		}
-	}
-	head := []FindingDisposition{mk("head", "fp-shared", StatusReopened)}
+	head := []FindingDisposition{mkDisposition("head", "fp-shared", StatusReopened)}
 	carried := []FindingDisposition{
-		mk("mid", "fp-shared", StatusRefuted),
-		mk("mid", "fp-carried", StatusRefuted),
+		mkDisposition("mid", "fp-shared", StatusRefuted),
+		mkDisposition("mid", "fp-carried", StatusRefuted),
 	}
 	got := mergeNetDispositionsForEngine(head, carried, "head")
 	if len(got) != 2 {
@@ -253,15 +249,9 @@ func TestMergeNetDispositionsForEnginePrefersHead(t *testing.T) {
 // upstream caller forgets the pre-filter: an empty fingerprint matches
 // nothing by identity, so cloning it can only smuggle ambiguity.
 func TestMergeNetDispositionsForEngineDropsEmptyCarried(t *testing.T) {
-	mk := func(sha, fp, status string) FindingDisposition {
-		return FindingDisposition{
-			SHA: sha, Fingerprint: fp, Status: status, Reason: "r",
-			Actor: RefutationActorHuman, Source: DispositionSourceHuman,
-		}
-	}
 	got := mergeNetDispositionsForEngine(
-		[]FindingDisposition{mk("head", "fp-keep", StatusReopened)},
-		[]FindingDisposition{mk("mid", "", StatusRefuted), mk("mid", "  ", StatusRefuted)},
+		[]FindingDisposition{mkDisposition("head", "fp-keep", StatusReopened)},
+		[]FindingDisposition{mkDisposition("mid", "", StatusRefuted), mkDisposition("mid", "  ", StatusRefuted)},
 		"head")
 	if len(got) != 1 || got[0].Fingerprint != "fp-keep" {
 		t.Fatalf("merged = %+v, want only the head answer", got)
