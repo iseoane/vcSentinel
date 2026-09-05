@@ -18,6 +18,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
@@ -152,7 +153,7 @@ func ejecutarReview(worktree string, args []string) {
 		// security_sensitive and of the scheduled bundles. It lands in
 		// resultado.Findings through HallazgosDeterministas, so it is
 		// reported even when the plan schedules no dimension.
-		secretFindings, secretAdvisories := secretFindingsAndAdvisories(archivos, diff)
+		secretFindings, secretAdvisories := secret.SecretFindingsAndAdvisories(archivos, diff)
 
 		// El recolector anota qué agente atendió cada dimensión para que la
 		// ficha registre el autor real y no el perfil pedido (H4/T0.2).

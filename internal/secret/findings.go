@@ -1,14 +1,13 @@
-package main
+package secret
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
 )
 
-// projectSecretIncidents converts exposed-credential incidents into
+// ProjectSecretIncidents converts exposed-credential incidents into
 // deterministic review findings (FU-11).
 //
 // The projection is deliberately NOT a review dimension: Dimension stays
@@ -18,7 +17,7 @@ import (
 // shared review.IsBlocking rule never blocks on it: the incident reports,
 // it does not gate. Evidence stays empty on purpose: persisting the matched
 // value in the ledger would make the exposure permanent.
-func projectSecretIncidents(incidents []secret.Incident) []review.Hallazgo {
+func ProjectSecretIncidents(incidents []Incident) []review.Hallazgo {
 	findings := make([]review.Hallazgo, 0, len(incidents))
 	for _, incident := range incidents {
 		finding := review.Hallazgo{
@@ -37,20 +36,20 @@ func projectSecretIncidents(incidents []secret.Incident) []review.Hallazgo {
 	return findings
 }
 
-// secretFindingsAndAdvisories runs the credential scan over one commit's files
+// SecretFindingsAndAdvisories runs the credential scan over one commit's files
 // and diff and returns both the deterministic findings for the audit result
 // and the console advisory lines. Both stay empty when there is nothing to
 // report and nothing the scanner could not read.
-func secretFindingsAndAdvisories(archivos []string, diff string) ([]review.Hallazgo, []string) {
-	incidents, unreadable := secret.Scan(archivos, diff)
-	return projectSecretIncidents(incidents), secretAdvisories(incidents, unreadable)
+func SecretFindingsAndAdvisories(archivos []string, diff string) ([]review.Hallazgo, []string) {
+	incidents, unreadable := Scan(archivos, diff)
+	return ProjectSecretIncidents(incidents), SecretAdvisories(incidents, unreadable)
 }
 
-// secretAdvisories renders the console advisory for a credential scan: one line
+// SecretAdvisories renders the console advisory for a credential scan: one line
 // per incident plus one line naming paths the scanner could not read.
 // Empty input renders nothing: absence is data, never a "clean" verdict and
 // never a zero count. No line ever carries a matched value.
-func secretAdvisories(incidents []secret.Incident, unreadable []string) []string {
+func SecretAdvisories(incidents []Incident, unreadable []string) []string {
 	var advisories []string
 	for _, incident := range incidents {
 		advisories = append(advisories, fmt.Sprintf("  ⚠️ exposed credential: %s", incident.String()))

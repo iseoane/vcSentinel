@@ -17,6 +17,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -114,7 +115,7 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	// FU-11: the credential incident surfaces next to the gate result on
 	// every path, including when validation short-circuits or the review
 	// plan schedules nothing. Advisory only: Estado and Mensajes untouched.
-	_, secretAdvisories := secretFindingsAndAdvisories(archivos, diff)
+	_, secretAdvisories := secret.SecretFindingsAndAdvisories(archivos, diff)
 	for _, advisory := range secretAdvisories {
 		fmt.Fprintln(w, advisory)
 	}
@@ -147,7 +148,7 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 	// semantic review without scheduling any dimension and without touching
 	// the gate verdict. Console surfacing happens in ejecutarGate, which
 	// prints the advisory next to the gate result without changing it.
-	secretFindings, _ := secretFindingsAndAdvisories(archivos, diff)
+	secretFindings, _ := secret.SecretFindingsAndAdvisories(archivos, diff)
 	return gate.Opciones{
 		Perfil:         perfil,
 		RutasCambiadas: archivos,
