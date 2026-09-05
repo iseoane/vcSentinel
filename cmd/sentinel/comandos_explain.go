@@ -10,6 +10,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
 )
 
 type caracteristicaExplicada struct {
@@ -22,7 +23,12 @@ type caracteristicaExplicada struct {
 type salidaExplain struct {
 	Profile         change.ChangeProfile      `json:"profile"`
 	Characteristics []caracteristicaExplicada `json:"characteristics"`
-	Risk            struct {
+	// FU-11: deterministic exposed-credential incidents, independent of the
+	// change profile. Omitted when empty: absence is data, never verdict.
+	ExposedCredentials []exposedCredential `json:"exposed_credentials,omitempty"`
+	// Paths the credential scanner could not read. Omitted when empty.
+	CredentialScanUnknown []string `json:"credential_scan_unknown,omitempty"`
+	Risk                  struct {
 		Level   risk.Nivel `json:"level"`
 		Explain string     `json:"explain"`
 	} `json:"risk"`
@@ -31,6 +37,14 @@ type salidaExplain struct {
 		Score          float64 `json:"score"`
 		SuggestedSplit bool    `json:"suggested_split"`
 	} `json:"cohesion"`
+}
+
+// exposedCredential names the path, shape and added-line location of one
+// credential match. It never carries the matched value.
+type exposedCredential struct {
+	Path  string `json:"path"`
+	Shape string `json:"shape"`
+	Line  int    `json:"line"`
 }
 
 var detectoresExplain = map[string]string{
@@ -78,6 +92,16 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	}
 
 	resultado := salidaExplain{Profile: perfilCambio}
+	// FU-11: credential scan over the same diff, independent of the change
+	// profile and of every class filter. No agent involved.
+	secretIncidents, secretScanUnreadable := secret.Scan(rutas, diff)
+	for _, incident := range secretIncidents {
+		resultado.ExposedCredentials = append(resultado.ExposedCredentials, exposedCredential{
+			Path: incident.Path, Shape: incident.Shape, Line: incident.Line,
+		})
+	}
+	resultado.CredentialScanUnknown = secretScanUnreadable
+
 	for _, caracteristica := range caracteristicas {
 		resultado.Characteristics = append(resultado.Characteristics, caracteristicaExplicada{
 			Name: caracteristica.Nombre, State: caracteristica.Estado,
@@ -100,6 +124,12 @@ func ejecutarExplainCon(salida io.Writer, args []string, perfil func(string, str
 	}
 	fmt.Fprintf(salida, "Riesgo: %s — %s\n", resultado.Risk.Level, resultado.Risk.Explain)
 	fmt.Fprintf(salida, "Cohesión: clusters=%d score=%.2f suggested_split=%t\n", resultado.Cohesion.Clusters, resultado.Cohesion.Score, resultado.Cohesion.SuggestedSplit)
+	for _, incident := range resultado.ExposedCredentials {
+		fmt.Fprintf(salida, "  ⚠️ exposed credential: %s:%d %s (value withheld)\n", incident.Path, incident.Line, incident.Shape)
+	}
+	if len(resultado.CredentialScanUnknown) > 0 {
+		fmt.Fprintf(salida, "  ⚠️ credential scan unavailable for: %s\n", strings.Join(resultado.CredentialScanUnknown, ", "))
+	}
 	return nil
 }
 

@@ -6,7 +6,7 @@ land.
 
 ## P1 — Now (protect verification trust and core business)
 
-- [ ] **Exposed-credential detection, independent of `security_sensitive`.**
+- [x] **Exposed-credential detection, independent of `security_sensitive`.**
       Decided 2026-09-02 (FU-11 in `docs/reingenieria/f0-deuda.md`): Sentinel
       does own this, and the signal must not depend on the change profile.
       A credential in prose reports an incident; `security_sensitive` schedules
@@ -25,8 +25,11 @@ land.
       incident report back inside the mechanism that decides review cost, and
       the two must not share a switch.
 
-      Its own work unit, not a repair: the reporting surface does not exist yet.
-      No blocking dependencies.
+      Landed 2026-09-05 on `feat/exposed-credential-detection` (unpushed):
+      `internal/secret` scanner plus WARNING findings through
+      `HallazgosDeterministas` in `review`/`gate` and a section in
+      `explain`. Non-blocking; values never persisted. Full record in
+      FU-11. Residual: `pr`-review branch flow not yet attached.
 
 ## P2 — Next (clear value, small effort)
 
