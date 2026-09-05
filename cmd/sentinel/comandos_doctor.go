@@ -53,7 +53,11 @@ func ejecutarDoctorCon(w io.Writer, worktreePath, currentVersion string, checkUp
 }
 
 // productionDoctorEnv wires the live probe: each configured agent answers
-// the minimal prompt through the adapter built for its kind.
+// the minimal prompt through the adapter built for its kind. A call still
+// running when the budget expires is a ProbeTimeout, not the adapter's error:
+// provider refusals arrive fast, so anything slower than the bound means the
+// agent is slow or wedged. The late answer is discarded; the adapter's own
+// internal budget bounds the abandoned call.
 func productionDoctorEnv(worktreePath string) doctor.Env {
 	return doctor.Env{
 		Probe: func(agent, prompt string) (string, error) {
@@ -62,7 +66,21 @@ func productionDoctorEnv(worktreePath string) doctor.Env {
 			if err != nil {
 				return "", err
 			}
-			return ad.EjecutarPrompt(prompt)
+			type outcome struct {
+				answer string
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				answer, err := ad.EjecutarPrompt(prompt)
+				done <- outcome{answer, err}
+			}()
+			select {
+			case r := <-done:
+				return r.answer, r.err
+			case <-time.After(doctorProbeBudget):
+				return "", &doctor.ProbeTimeout{Agent: agent, Budget: doctorProbeBudget}
+			}
 		},
 	}
 }

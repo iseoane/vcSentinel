@@ -1,10 +1,12 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
@@ -14,6 +16,21 @@ import (
 // authentication, network, or model failure surfaces the provider's own
 // error instead of a later review timeout.
 const probePrompt = "Reply with exactly: ok"
+
+// ProbeTimeout reports that the agent did not answer the probe prompt within
+// the probe's own budget. It is not a provider refusal: authentication,
+// network, and model errors arrive as ordinary errors through the adapter,
+// usually fast. A call still running when the budget expires means the agent
+// is slow or wedged, and the remedy must say that instead of sending the
+// operator to check credentials.
+type ProbeTimeout struct {
+	Agent  string
+	Budget time.Duration
+}
+
+func (e *ProbeTimeout) Error() string {
+	return fmt.Sprintf("%s did not answer the probe prompt within %s", e.Agent, e.Budget)
+}
 
 // resolves reports whether the agent's launch path exists on PATH, per
 // family: the CLI binary itself, or the npx/node spawn chain for acpx.
@@ -48,6 +65,11 @@ func checkOneAgent(name string, agent config.AgentConfig, opts Options, add func
 	add("agents", name+" resolves", true, fmt.Sprintf("%s resolves on PATH", describeTarget(name, agent)), "")
 	answer, err := opts.Env.Probe(name, probePrompt)
 	if err != nil {
+		var timeout *ProbeTimeout
+		if errors.As(err, &timeout) {
+			add("agents", name+" answers", false, fmt.Sprintf("%s did not answer the probe prompt within %s (the probe's own budget, not a provider refusal)", name, timeout.Budget), fmt.Sprintf("raise the probe bound if %s is slow, or check whether the agent process is wedged; doctor never changes credentials", name))
+			return
+		}
 		add("agents", name+" answers", false, fmt.Sprintf("%s does not answer the probe prompt: %v", name, err), fmt.Sprintf("resolve the provider-reported failure for %s (authentication, network, or model access); doctor never changes credentials", name))
 		return
 	}

@@ -4,9 +4,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
+
+const probeBudgetForTest = 60 * time.Second
 
 const acpxFirstYML = `version: "2.0"
 active_agent: "auto"
@@ -169,5 +172,26 @@ func TestNeedsExternalSearch(t *testing.T) {
 				t.Errorf("why = %q, want %q", why, tc.whyHas)
 			}
 		})
+	}
+}
+
+func TestProbeTimeoutIsNotAProviderFailure(t *testing.T) {
+	isolateHome(t)
+	worktree := t.TempDir()
+	writeProjectYML(t, worktree, twoAgentYML)
+	common := t.TempDir()
+	writeHook(t, common, "/usr/local/bin/sentinel")
+	stageBinaries(t, "claude", "opencode", "rg")
+	env := stubEnv(t, common, map[string]string{"claude": "ok"},
+		map[string]error{"opencode": &ProbeTimeout{Agent: "opencode", Budget: probeBudgetForTest}})
+	rep := Run(worktree, Options{Env: env})
+	if got := findCheck(t, rep, "agents", "opencode answers"); got.OK {
+		t.Errorf("opencode answers OK on a probe timeout")
+	} else if !strings.Contains(got.Detail, "within") {
+		t.Errorf("answers detail = %q, want the timeout bound", got.Detail)
+	} else if strings.Contains(got.Remedy, "authentication") {
+		t.Errorf("timeout remedy = %q, must not send the operator to credentials", got.Remedy)
+	} else if !strings.Contains(got.Remedy, "wedged") {
+		t.Errorf("timeout remedy = %q, want the wedged-agent guidance", got.Remedy)
 	}
 }
