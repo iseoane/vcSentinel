@@ -167,3 +167,38 @@ func TestPreflightHeadFailureStillProbesWorktree(t *testing.T) {
 		t.Errorf("executor ran %d times, want 3 (rev-parse, porcelain, status)", llamadas)
 	}
 }
+func TestPreflightBinaryStaysOKWhenIndexMissing(t *testing.T) {
+	root := t.TempDir()
+	conds := Preflight(root, lookupOK(root), preflightHealthyExecutor("abc123\n", "", "{}"))
+	if got := conditionByName(t, conds, "binary"); !got.OK {
+		t.Errorf("binary not OK while the binary resolves: %s", got.Detail)
+	}
+	if got := conditionByName(t, conds, "index_dir"); got.OK {
+		t.Errorf("index_dir OK without a .codegraph directory")
+	}
+}
+
+func TestPreflightHeadAndWorktreeStayOKWhenStatusFails(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".codegraph"), 0o755)
+	respuestas := [][]byte{[]byte("abc123\n"), []byte(""), nil}
+	ejecutar := func(_ context.Context, _ string, _ []string, _ string, _ []string, _ string, _ int) ([]byte, error) {
+		salida := respuestas[0]
+		respuestas = respuestas[1:]
+		if salida == nil {
+			return nil, errors.New("codegraph status failed")
+		}
+		return salida, nil
+	}
+	conds := Preflight(root, lookupOK(root), ejecutar)
+	for _, name := range []string{"binary", "index_dir", "head", "worktree_clean"} {
+		if got := conditionByName(t, conds, name); !got.OK {
+			t.Errorf("condition %q not OK when only codegraph status failed: %s", name, got.Detail)
+		}
+	}
+	for _, name := range []string{"index_initialized", "project_path", "pending_changes", "worktree_match"} {
+		if got := conditionByName(t, conds, name); got.OK {
+			t.Errorf("condition %q OK without a codegraph status answer", name)
+		}
+	}
+}

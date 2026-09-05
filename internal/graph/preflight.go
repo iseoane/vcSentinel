@@ -66,13 +66,13 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 		conds = append(conds, Condition{Name: CondBinary, Detail: "codegraph not found on PATH"})
 		return append(conds, skipped(names[1:], "skipped: codegraph binary not found")...)
 	}
-	conds = append(conds, Condition{Name: CondBinary, Detail: binary})
+	conds = append(conds, Condition{Name: CondBinary, OK: true, Detail: binary})
 
 	if info, err := os.Stat(filepath.Join(canonical, ".codegraph")); err != nil || !info.IsDir() {
 		conds = append(conds, Condition{Name: CondIndexDir, Detail: "no .codegraph index directory under " + canonical})
 		return append(conds, skipped(names[2:], "skipped: no .codegraph index directory")...)
 	}
-	conds = append(conds, Condition{Name: CondIndexDir, Detail: filepath.Join(canonical, ".codegraph")})
+	conds = append(conds, Condition{Name: CondIndexDir, OK: true, Detail: filepath.Join(canonical, ".codegraph")})
 
 	gitBin, err := lookup("git")
 	if err != nil {
@@ -90,7 +90,7 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	if err != nil || sha == "" {
 		conds = append(conds, Condition{Name: CondHead, Detail: fmt.Sprintf("HEAD does not resolve: %v", err)})
 	} else {
-		conds = append(conds, Condition{Name: CondHead, Detail: fmt.Sprintf("HEAD resolves to %s (each review compares it against the audited commit)", sha)})
+		conds = append(conds, Condition{Name: CondHead, OK: true, Detail: fmt.Sprintf("HEAD resolves to %s (each review compares it against the audited commit)", sha)})
 	}
 
 	dirty, err := p.ejecutarConTimeout(p.git, []string{"status", "--porcelain"}, env, "")
@@ -99,7 +99,7 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	} else if lines := len(strings.Split(strings.TrimSpace(string(dirty)), "\n")); len(bytes.TrimSpace(dirty)) != 0 {
 		conds = append(conds, Condition{Name: CondWorktreeClean, Detail: fmt.Sprintf("worktree has %d dirty entries", lines)})
 	} else {
-		conds = append(conds, Condition{Name: CondWorktreeClean, Detail: "worktree clean"})
+		conds = append(conds, Condition{Name: CondWorktreeClean, OK: true, Detail: "worktree clean"})
 	}
 
 	statusRaw, err := p.ejecutarConTimeout(p.ejecutable, []string{"status", "--json", p.raiz}, env, "")
@@ -131,12 +131,12 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	if !status.Initialized {
 		conds = append(conds, Condition{Name: CondIndexInitialized, Detail: "codegraph index not initialized"})
 	} else {
-		conds = append(conds, Condition{Name: CondIndexInitialized, Detail: "codegraph index initialized"})
+		conds = append(conds, Condition{Name: CondIndexInitialized, OK: true, Detail: "codegraph index initialized"})
 	}
 	if filepath.Clean(status.ProjectPath) != p.raiz {
 		conds = append(conds, Condition{Name: CondProjectPath, Detail: fmt.Sprintf("projectPath %q does not match %s", status.ProjectPath, p.raiz)})
 	} else {
-		conds = append(conds, Condition{Name: CondProjectPath, Detail: "projectPath matches worktree"})
+		conds = append(conds, Condition{Name: CondProjectPath, OK: true, Detail: "projectPath matches worktree"})
 	}
 	switch {
 	case status.Pending == nil:
@@ -151,7 +151,6 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	} else {
 		conds = append(conds, Condition{Name: CondWorktreeMatch, OK: true, Detail: "no worktree mismatch"})
 	}
-	markOK(conds)
 	return conds
 }
 
@@ -162,27 +161,4 @@ func skipped(names []string, reason string) []Condition {
 		conds = append(conds, Condition{Name: name, Detail: reason})
 	}
 	return conds
-}
-
-// markOK flags the binary, index, head, worktree-clean, initialized and
-// project rows OK unless their detail reports a failure. Pending and
-// worktree-match set OK at construction because only their exact pass shape
-// counts.
-func markOK(conds []Condition) {
-	for i := range conds {
-		switch conds[i].Name {
-		case CondBinary:
-			conds[i].OK = !strings.Contains(conds[i].Detail, "not found")
-		case CondIndexDir:
-			conds[i].OK = !strings.HasPrefix(conds[i].Detail, "no .codegraph")
-		case CondHead:
-			conds[i].OK = strings.HasPrefix(conds[i].Detail, "HEAD resolves")
-		case CondWorktreeClean:
-			conds[i].OK = conds[i].Detail == "worktree clean"
-		case CondIndexInitialized:
-			conds[i].OK = conds[i].Detail == "codegraph index initialized"
-		case CondProjectPath:
-			conds[i].OK = conds[i].Detail == "projectPath matches worktree"
-		}
-	}
 }
