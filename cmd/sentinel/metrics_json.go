@@ -141,8 +141,10 @@ type metricsJSONScope struct {
 }
 
 type metricsJSONFailure struct {
-	Class string `json:"class"`
-	Count int64  `json:"count"`
+	Class    string              `json:"class"`
+	Count    int64               `json:"count"`
+	Source   string              `json:"source"`
+	Coverage metricsJSONCoverage `json:"coverage"`
 }
 
 type metricsJSONCost struct {
@@ -218,7 +220,7 @@ func newMetricsJSONExecutions(value metrics.ExecutionAggregate) metricsJSONExecu
 		CachedInputTokens: newMetricsJSONMeasurement(value.CachedInputTokens), CostCoverage: newMetricsJSONCoverage(value.CostCoverage), DurationNanos: newMetricsJSONMeasurement(value.Duration), FailedRuns: value.FailedRuns, Failures: make([]metricsJSONFailure, len(value.Failures)), IdentityCoverage: newMetricsJSONCoverage(value.IdentityCoverage), InputTokens: newMetricsJSONMeasurement(value.InputTokens), LogicalRuns: value.LogicalRuns, MeasuredRuns: value.MeasuredRuns, OutputTokens: newMetricsJSONMeasurement(value.OutputTokens), ReasoningTokens: newMetricsJSONMeasurement(value.ReasoningTokens), Reuse: metricsJSONReuse{Rate: newMetricsJSONRatio(value.Reuse.Rate), Recomputed: value.Reuse.Recomputed, Reused: value.Reuse.Reused}, RetriedRuns: value.RetriedRuns, Scope: metricsJSONScope{Affected: value.Scope.Affected, Coverage: newMetricsJSONCoverage(value.Scope.Coverage), Full: value.Scope.Full, Unknown: value.Scope.Unknown}, SuccessRate: newMetricsJSONRatio(value.SuccessRate), SuccessfulRuns: value.SuccessfulRuns, TotalTokens: newMetricsJSONMeasurement(value.TotalTokens),
 	}
 	for i, item := range value.Failures {
-		result.Failures[i] = metricsJSONFailure{Class: item.Class, Count: item.Count}
+		result.Failures[i] = metricsJSONFailure{Class: item.Class, Count: item.Count, Source: item.Source, Coverage: newMetricsJSONCoverage(item.Coverage)}
 	}
 	return result
 }
