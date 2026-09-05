@@ -87,11 +87,6 @@ land.
       does not reach the `runs` subcommand dispatcher. Origin: D3 / ticket 17
       follow-up found while auditing help surfaces post-A2.
 
-All three P2 items landed in `8d7c2ed` (merged as `b4405f3`): shared
-`process.ContainAfterCancellation` replaced both watchdog copies; acpx
-failure/timeout details now carry a bounded stderr excerpt across all three
-failure routes; `spawnHelper` simplified. See Resolved below.
-
 - [ ] **Exposed-credential detection, independent of `security_sensitive`.**
       Decided 2026-09-02 (FU-11 in `docs/reingenieria/f0-deuda.md`): Sentinel
       does own this, and the signal must not depend on the change profile.

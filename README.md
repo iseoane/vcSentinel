@@ -20,12 +20,18 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 | `sentinel uninit` | Revierte `init` en este repositorio: retira la regla de volumen, borra la config per-proyecto y elimina el hook (solo si sigue siendo el que instaló VAS Sentinel). |
 | `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub, con fallback a `go install` si la release no está disponible. |
 | `sentinel review` | Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha en el ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--timeout N` `--prune` `--json`. `--timeout` sobrescribe `review.timeout` solo en esa invocación (segundos). |
+| `sentinel refute` | Record an evidence-bound human refutation of one reviewed finding (clears only its block). Usage: `--sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
+| `sentinel accept` | Record a human acceptance of one reviewed finding (documents judgement, never clears the block). Usage: `--sha SHA --fingerprint FP --reason TEXT`. |
+| `sentinel reopen` | Record an evidence-bound human reopen of one cleared finding (blocks again). Usage: `--sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
 | `sentinel lint` | Ejecuta los comandos definidos en `lint_commands` de la configuración. |
 | `sentinel rebase` | Actualiza la rama con `fetch` + `rebase` contra su upstream (pide confirmación). |
 | `sentinel status` | Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con `--json` emite JSON; con `--prune` borra fichas huérfanas. |
 | `sentinel metrics` | Prints deterministic local aggregates from the durable store (duration, success and failure). Reads only the local Git common directory. Unknown measurements render as `null`, never as zero, and unreadable evidence is an error rather than an empty store. Cost, tokens and scope stay unknown until an adapter reports them. Flag: `--json`. |
 | `sentinel pr` | Crea un pull request con `gh`; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a `gh pr create`. |
 | `sentinel pr review` | Analiza la rama sin publicar: matriz de fichas y decisión single/chain. Flags: `--base X` `--only-unaudited` `--overview` `--json`. |
+| `sentinel explain` | Explain the change profile, detected characteristics, risk, and cohesion of a commit range. Usage: `[<base>..<head>] [--json]`. |
+| `sentinel consentimiento-diff` | Manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent). Usage: `otorgar\|revocar\|estado`. |
+| `sentinel tui` | Open the full-screen control center over the repository registry snapshot, refreshed live while the session is open. |
 | `sentinel uninstall` | Elimina el binario y la configuración global (`~/.vas_sentinel/`). |
 | `sentinel version` / `sentinel --version` | Muestra la versión instalada. |
 | `sentinel help` / `sentinel --help` | Muestra la ayuda completa. |

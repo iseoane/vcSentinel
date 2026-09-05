@@ -86,6 +86,9 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `slice plan` | Propose reviewable selections without committing. `--json` exits `3` when decisions are pending. |
 | `slice apply` | Apply approved selections with `--plan` and `--answers`. |
 | `review` | Audit a commit by dimension and save its review record. |
+| `refute` | Record an evidence-bound human refutation of one reviewed finding (clears only its block). Usage: `refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
+| `accept` | Record a human acceptance of one reviewed finding (documents judgement, never clears the block). Usage: `accept --sha SHA --fingerprint FP --reason TEXT`. |
+| `reopen` | Record an evidence-bound human reopen of one cleared finding (blocks again). Usage: `reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
 | `gate` | Validate then semantically review `HEAD`; requires `--stage pre-commit|pre-push|pr` and accepts `--profile`. |
 | `lint` | Run configured `lint_commands`. |
 | `rebase` | Fetch and rebase against upstream after confirmation. |
