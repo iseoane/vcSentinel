@@ -158,13 +158,61 @@ func rutasSeguras(rutas []string, max int) []string {
 }
 
 func entornoCodeGraph(ejecutable string) []string {
-	env := []string{"PATH=" + filepath.Dir(ejecutable)}
+	dirs := []string{filepath.Dir(ejecutable)}
+	// An npm-style launcher is a shebang script (#!/usr/bin/env node), so the
+	// tool directory alone leaves the kernel unable to resolve its
+	// interpreter and every invocation dies with exit 127. Appending the
+	// interpreter's directory is the minimum that makes such a launcher
+	// runnable. Containment is preserved: both entries are constructed here,
+	// the interpreter lookup runs in the parent, and no parent variable
+	// reaches the child — from its side exactly two explicit directories are
+	// reachable, never the caller's environment.
+	if dir := directorioInterprete(ejecutable); dir != "" && dir != dirs[0] {
+		dirs = append(dirs, dir)
+	}
+	env := []string{"PATH=" + strings.Join(dirs, string(os.PathListSeparator))}
 	for _, nombre := range []string{"SystemRoot", "TEMP", "TMP", "TMPDIR"} {
 		if valor := os.Getenv(nombre); valor != "" {
 			env = append(env, nombre+"="+valor)
 		}
 	}
 	return env
+}
+
+// directorioInterprete returns the directory of the interpreter named by the
+// executable's shebang line, or "" when there is none or it cannot be
+// resolved. Only the first line is read: a shebang longer than the kernel
+// limit could never execute anyway.
+func directorioInterprete(ejecutable string) string {
+	raw, err := os.ReadFile(ejecutable)
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(string(raw), "\n")
+	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
+	if !strings.HasPrefix(line, "#!") || len(fields) == 0 {
+		return ""
+	}
+	program := fields[0]
+	if filepath.Base(program) == "env" {
+		program = ""
+		for _, field := range fields[1:] {
+			if !strings.HasPrefix(field, "-") {
+				program = field
+				break
+			}
+		}
+		if program == "" {
+			return ""
+		}
+	}
+	if resolved, err := exec.LookPath(program); err == nil {
+		return filepath.Dir(resolved)
+	}
+	if strings.ContainsRune(program, os.PathSeparator) {
+		return filepath.Dir(program)
+	}
+	return ""
 }
 
 type escritorLimitado struct {
