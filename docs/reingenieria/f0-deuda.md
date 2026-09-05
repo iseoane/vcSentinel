@@ -1788,6 +1788,16 @@ Priority: before trusting `unavailable` to mean what it says. It is currently
 two different states wearing one name — "the reviewer never answered" and "the
 reviewer answered and we dropped it" — and only the first is safe to retry.
 
+#### Landed 2026-09-05
+
+Parse what can be parsed: `findingCrudo` now decodes `line` through tolerant `lineaCruda` — a JSON number or numeric string keeps parsing exactly as before; any other value sets `Line=0` (unknown, the line-less convention) and preserves the raw text in additive `ReviewFinding.LineRaw` (`json:"line_raw,omitempty"`), with a `line %q in %s normalized to unknown line` normalization. The CRITICAL still drives `veredictoFinal` to `block` line-independently, so the recorded `spec` case now blocks instead of reporting `unavailable`/`schema_invalid`. Verified before relying on both safeties: FU-6 defect 2 still routes `LineaInicio<=0` through file-scoped evidence (`ValidateHumanRefutationRange`, tests pass untouched), and `IsBlocking` does not consult the line (untouched, shared rule test passes).
+
+Decision on ranges: NO range semantics. The persisted shape holds a single `Linea` int, so extracting a first line from `"17-19, 23-48"` would invent precision and misdirect the evidence window; unknown is already answerable by a human through the file-scoped gate. Single-number forms work unchanged. `Linea` itself stays strict for the persisted reload path — only the agent-input path is tolerant — and `LineRaw` is deliberately never a `Fingerprint` input, so existing records marshal byte-identically and no standing disposition is rekeyed.
+
+Replaces the truncated `dims[].reason` quoting for this class: the raw value now survives verbatim in the persisted ficha (`dims[].line_raw`) plus the in-memory normalization, instead of a capped excerpt. Other schema rejections (unknown dimension, invalid verdict without findings) still reject as before; only `line` is tolerant.
+
+Deviation: normalization wording uses English per language policy while sibling legacy normalizations stay Spanish; no behavior impact.
+
 
 ### Correction to `926649b`'s commit message
 
