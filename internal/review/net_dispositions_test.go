@@ -95,12 +95,7 @@ func TestRunNetReviewCarriesStandingRefutation(t *testing.T) {
 	}
 	var dispositions []FindingDisposition
 	for fp := range fps {
-		dispositions = append(dispositions, FindingDisposition{
-			SHA: shaA, Fingerprint: fp, Status: StatusRefuted,
-			Reason: "verified safe by hand", Path: "a.go",
-			Evidence: "// evidence line: guardian check",
-			Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
-		})
+		dispositions = append(dispositions, mkDisposition(shaA, fp, StatusRefuted))
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
 	carried, err := runNetReview(&NetReviewOptions{Intention: "carry e2e", Dispositions: dispositions}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1}, from, to, revisions)
@@ -148,12 +143,7 @@ func TestRunNetReviewCarriesIntermediateRefutation(t *testing.T) {
 	}
 	var dispositions []FindingDisposition
 	for fp := range fps {
-		dispositions = append(dispositions, FindingDisposition{
-			SHA: shaA, Fingerprint: fp, Status: StatusRefuted,
-			Reason: "verified safe by hand", Path: "a.go",
-			Evidence: "// evidence line: guardian check",
-			Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
-		})
+		dispositions = append(dispositions, mkDisposition(shaA, fp, StatusRefuted))
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
 	carried, err := runNetReview(&NetReviewOptions{Intention: "carry intermediate", Dispositions: dispositions}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1}, from, to, revisions)
@@ -197,18 +187,8 @@ func TestRunNetReviewHeadAnswerWinsOverCarried(t *testing.T) {
 	var dispositions []FindingDisposition
 	for fp := range fps {
 		dispositions = append(dispositions,
-			FindingDisposition{
-				SHA: shaA, Fingerprint: fp, Status: StatusRefuted,
-				Reason: "verified safe by hand", Path: "a.go",
-				Evidence: "// evidence line: guardian check",
-				Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
-			},
-			FindingDisposition{
-				SHA: head, Fingerprint: fp, Status: StatusReopened,
-				Reason: "regressed on this path", Path: "a.go",
-				Evidence: "// evidence line: guardian check",
-				Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
-			})
+			mkDisposition(shaA, fp, StatusRefuted),
+			mkDisposition(head, fp, StatusReopened))
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
 	carried, err := runNetReview(&NetReviewOptions{Intention: "precedence", Dispositions: dispositions}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1}, from, to, revisions)
