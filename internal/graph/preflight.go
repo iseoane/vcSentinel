@@ -86,7 +86,7 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 		)
 		return append(conds, skipped(names[4:], "skipped: git not found on PATH")...)
 	}
-	p := &ProveedorCodeGraph{raiz: canonical, ejecutable: binary, git: gitBin, limite: limiteContextoCodeGraph, ejecutar: run}
+	p := &ProveedorCodeGraph{raiz: canonical, ejecutable: binary, git: gitBin, limite: limiteContextoCodeGraph, ejecutar: run, excludes: buscarExcludesGlobal}
 	env := entornoCodeGraph(binary)
 
 	head, err := p.ejecutarConTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
@@ -97,7 +97,7 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 		conds = append(conds, Condition{Name: CondHead, OK: true, Detail: fmt.Sprintf("HEAD resolves to %s (each review compares it against the audited commit)", sha)})
 	}
 
-	dirty, err := p.ejecutarConTimeout(p.git, []string{"status", "--porcelain"}, env, "")
+	dirty, err := p.ejecutarConTimeout(p.git, argsEstadoPorcelain(p.excludes, p.git), env, "")
 	if err != nil {
 		conds = append(conds, Condition{Name: CondWorktreeClean, Detail: fmt.Sprintf("git status failed: %v", err)})
 	} else if lines := len(strings.Split(strings.TrimSpace(string(dirty)), "\n")); len(bytes.TrimSpace(dirty)) != 0 {

@@ -256,6 +256,8 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Git diff and volume measurement plumbing."},
 		{Path: "internal/graph/codegraph.go", Symbol: "codegraph CLI client", Anchor: "cmd := exec.CommandContext(ctx, ejecutable, args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "CodeGraph enrichment binary; metadata only, never a provider agent."},
+		{Path: "internal/graph/excludes.go", Symbol: "excludes resolver", Anchor: "salida, err := exec.Command(gitBin, \"config\", \"--get\", \"core.excludesFile\").Output()", Marker: "exec.Command",
+			Class: ClassInfra, Reason: "Parent-side read of the user's excludes setting; resolves a path, never invokes a provider agent."},
 		{Path: "internal/graph/native.go", Symbol: "native graph plumbing", Anchor: "cmd := exec.Command(\"git\", append([]string{\"-c\", \"core.attributesFile=\" + os.DevNull, \"-c\", \"diff.external=\", \"-C\", directorio}, args...)...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the native graph analyzer."},
 		{Path: "internal/inventory/inventory.go", Symbol: "execRunner.run", Anchor: "cmd := exec.Command(\"git\", args...)", Marker: "exec.Command",

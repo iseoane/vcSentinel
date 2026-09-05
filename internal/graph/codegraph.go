@@ -26,6 +26,10 @@ type ProveedorCodeGraph struct {
 	raiz, ejecutable, git string
 	limite                int
 	ejecutar              ejecutorCodeGraph
+	// excludes resolves the parent-side global excludes file to pass the
+	// sanitized child explicitly. Nil means no file: the status call goes
+	// out unchanged.
+	excludes func(string) string
 }
 
 func DetectarProveedorCodeGraph(raiz string) review.ContextProvider {
@@ -49,7 +53,7 @@ func detectarProveedorCodeGraph(raiz string, lookup func(string) (string, error)
 	if err != nil {
 		return nil
 	}
-	return &ProveedorCodeGraph{raiz: canonica, ejecutable: binario, git: git, limite: limiteContextoCodeGraph, ejecutar: ejecutar}
+	return &ProveedorCodeGraph{raiz: canonica, ejecutable: binario, git: git, limite: limiteContextoCodeGraph, ejecutar: ejecutar, excludes: buscarExcludesGlobal}
 }
 
 func (p *ProveedorCodeGraph) Nombre() string { return "codegraph" }
@@ -67,7 +71,7 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	if strings.TrimSpace(string(head)) != sha {
 		return nil, fmt.Errorf("codegraph context skipped: head_mismatch")
 	}
-	sucio, err := p.ejecutarConTimeout(p.git, []string{"status", "--porcelain"}, env, "")
+	sucio, err := p.ejecutarConTimeout(p.git, argsEstadoPorcelain(p.excludes, p.git), env, "")
 	if err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: dirty_worktree: %w", err)
 	}
