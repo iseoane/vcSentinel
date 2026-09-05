@@ -1324,6 +1324,49 @@ and the two must not share a switch.
 Open as implementation work, tracked in `follow-ups.md` under P2. The question
 this entry was recorded to ask is closed.
 
+#### Landed 2026-09-05 (branch `feat/exposed-credential-detection`, unpushed)
+
+Three commits: `15bfb6e` (new `internal/secret` scanner), `a2d4824`
+(projection plus `review`/`gate`/`explain` wiring), `bb7db5d` (Stripe
+shape correction). Guardian: the 776-line scanner atom exceeded the
+400-line budget and is not splittable by diff atoms (impl plus its
+TDD tests); owner-authorized bypass recorded in that commit body.
+The 239-line wiring and 3-line fix went through the gate normally.
+
+Decisions as specified: seven structured shapes, no entropy;
+surfaces are `review`/`gate` (deterministic WARNING findings via
+`HallazgosDeterministas`, `Dimension` empty, `Evidence` empty) plus
+`explain` (text and JSON section); non-blocking (`IsBlocking`,
+gate `Estado`/exit and review verdict untouched);
+unreadable-or-absent paths render as unknown advisory, never as
+clean and never as zero. `detectarSeguridadSensible`,
+`review.Fingerprint` inputs, the append-only ledger and
+`review.IsBlocking` are unchanged. No child processes, no
+environment reads. Live proof: a docs probe commit reported
+`github_token` with risk `none` (zero bundles scheduled).
+
+Review commit-by-commit: `15bfb6e` went to `block` on a TRUE
+semantic finding (the hyphenated Stripe shape missed real
+`sk_live_` keys), corrected by `bb7db5d`, which reviewed `ok` and
+was recorded as the correction. `a2d4824` reviewed `warn` with no
+criticals. Credential incidents stayed WARNING/pending throughout
+and never moved a verdict. `Evidence` verified empty in the
+fichas: no value reaches the ledger.
+
+Verification: `go build ./...`, `go vet ./...`,
+`go test -count=1 ./...`, race on `internal/secret` plus
+`cmd/sentinel`, `./build.sh`, `sentinel check` (0 lines) and
+`sentinel doctor` (exit 0; codegraph WARN is worktree-local, hook
+WARN is the pre-existing T0.0 trap) — all green. Full suite took
+~30s, not the documented ~3min. One self-inflicted deviation: a
+`git reset --hard` to drop a smoke probe also wiped the
+uncommitted wiring; it was redone and the private history
+rebuilt with `reset --soft` before committing. Nothing pushed.
+
+Residual follow-up: the `pr`-review branch flow (`AnalizarRama`)
+does not attach these incidents yet; `review`, `gate` and
+`explain` cover this unit.
+
 ### FU-12: reviews run in a linked worktree never join the repository ledger
 
 Recorded 2026-09-02 while reviewing ticket 04 of the FU-10 sequence, from the
