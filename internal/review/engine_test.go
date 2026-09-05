@@ -555,7 +555,7 @@ func TestStamparProductorEfectivoPreservesOriginalProducerWhenUnavailable(t *tes
 				}}},
 			}}
 
-			stamparProductorEfectivo(hallazgos, tt.agente)
+			stamparProductorEfectivo(hallazgos, tt.agente, nil, "")
 
 			if got := hallazgos[0].Producer; got != original {
 				t.Errorf("producer = %#v, expected original %#v", got, original)
@@ -580,7 +580,7 @@ func TestStamparProductorEfectivoNormalizesEvidenceSetProducers(t *testing.T) {
 	stamparProductorEfectivo(hallazgos, agenteEfectivoFake{
 		efectivo: agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"},
 		definido: true,
-	})
+	}, nil, "")
 
 	if got := hallazgos[0].Producer; got != trusted {
 		t.Errorf("producer = %#v, expected %#v", got, trusted)
@@ -2135,4 +2135,81 @@ func estadoCaracteristica(caracteristicas []change.Caracteristica, nombre string
 		}
 	}
 	return "", false
+}
+
+type modelVerifierStub struct {
+	verified map[string]bool
+}
+
+func (m modelVerifierStub) Verified(profile string) bool {
+	return m.verified[profile]
+}
+
+const verifiedFindingOutput = `{"dim":"logic","verdict":"warn","findings":[{"file":"config.go","line":12,"severity":"WARNING","description":"ignored error","confidence":0.6}]}`
+
+func auditWithVerifiedProfile(t *testing.T, verifier ModelVerifier) ResultadoAuditoria {
+	t.Helper()
+	agente := agenteEfectivoFake{
+		respuesta: verifiedFindingOutput,
+		efectivo:  agentadapter.AgenteEfectivo{Binario: "opencode", Modelo: "gpt-5.6-terra", Esfuerzo: "high"},
+		definido:  true,
+	}
+	fabrica := func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+		return agente, "normal", nil
+	}
+	return AuditarCommit(fabrica, 1, OpcionesAuditoria{
+		SHA:           "abc12345",
+		Bundles:       bundlesPrueba(DimLogic),
+		ModelVerifier: verifier,
+	})
+}
+
+func TestAuditarCommitStampsVerifiedModelWhenVerifierMatches(t *testing.T) {
+	resultado := auditWithVerifiedProfile(t, modelVerifierStub{verified: map[string]bool{"normal": true}})
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("findings = %#v, expected one", resultado.Findings)
+	}
+	producer := resultado.Findings[0].Producer
+	if !producer.ModeloVerificado {
+		t.Errorf("producer = %#v, want ModeloVerificado true for the verified profile", producer)
+	}
+	if producer.Modelo != "gpt-5.6-terra" {
+		t.Errorf("producer = %#v, want the effective model preserved", producer)
+	}
+}
+
+func TestAuditarCommitLeavesModelUnverifiedWithoutVerifier(t *testing.T) {
+	resultado := auditWithVerifiedProfile(t, nil)
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("findings = %#v, expected one", resultado.Findings)
+	}
+	if resultado.Findings[0].Producer.ModeloVerificado {
+		t.Error("ModeloVerificado = true without a verifier: false is the honest default")
+	}
+}
+
+func TestAuditarCommitLeavesModelUnverifiedOnMismatch(t *testing.T) {
+	resultado := auditWithVerifiedProfile(t, modelVerifierStub{verified: map[string]bool{"normal": false}})
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("findings = %#v, expected one", resultado.Findings)
+	}
+	if resultado.Findings[0].Producer.ModeloVerificado {
+		t.Error("ModeloVerificado = true on mismatch, want false")
+	}
+}
+
+func TestVerifiedModelSurvivesLedgerRoundTrip(t *testing.T) {
+	resultado := auditWithVerifiedProfile(t, modelVerifierStub{verified: map[string]bool{"normal": true}})
+	ledger := NuevoLedger(t.TempDir())
+	revision := Revision{At: time.Now().UTC(), Result: resultado.Veredicto, AggregatedFindings: resultado.Findings}
+	if err := ledger.GuardarRevision("abc12345", "feat(x): verified model", "", "default", revision); err != nil {
+		t.Fatalf("GuardarRevision: %v", err)
+	}
+	raw, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(raw), `"model_verified": true`) {
+		t.Error("persisted ficha JSON carries no model_verified:true")
+	}
 }
