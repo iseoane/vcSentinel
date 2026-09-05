@@ -738,6 +738,11 @@ type depsPrCreate struct {
 	// resolveBlobStore shells out to git, which depsPrCreate exists to avoid;
 	// nil means no reuse, the behaviour before this wiring.
 	blobStore func(worktree string) (review.StoreBlobs, error)
+	// leerDisposiciones reads the standing human answers for the advisory
+	// overlay. It is a seam because loadDispositionsForWorktree resolves
+	// the real git common dir, which depsPrCreate exists to avoid; nil
+	// means no standing answers, the fixture every older test builds.
+	leerDisposiciones func(worktree string) ([]review.FindingDisposition, error)
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -781,6 +786,7 @@ func depsPrCreateReales() depsPrCreate {
 		resolverActor:     resolverActor,
 		escribirPlantilla: escribirPlantillaPR,
 		blobStore:         resolveBlobStore,
+		leerDisposiciones: loadDispositionsForWorktree,
 	}
 }
 
@@ -924,10 +930,16 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	}
 	// Standing human answers drive every rendered and advisory finding. A
 	// corrupt log fails closed rather than pretending no human answered.
-	branchDispositions, err := loadDispositionsForWorktree(worktree)
-	if err != nil {
-		fmt.Fprintf(w, "? %v\n", err)
-		return 1
+	// A nil seam means no standing answers, the fixture older tests build;
+	// production always wires the real loader through depsPrCreateReales.
+	var branchDispositions []review.FindingDisposition
+	if deps.leerDisposiciones != nil {
+		var err error
+		branchDispositions, err = deps.leerDisposiciones(worktree)
+		if err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
 	}
 
 	if len(res.Fichas) == 0 {

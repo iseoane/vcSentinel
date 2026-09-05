@@ -240,9 +240,9 @@ func TestValidateHumanRefutationRangeRejectsInvalidBoundsWithoutPanic(t *testing
 		return "const safe = true\ncriticalCall()\n", nil
 	}
 	cases := []struct {
-		name       string
-		lineStart  int
-		lineEnd    int
+		name      string
+		lineStart int
+		lineEnd   int
 	}{
 		{"inverted", 2, 1},
 		{"start beyond file", 4, 1},

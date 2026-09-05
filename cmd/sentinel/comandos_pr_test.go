@@ -315,6 +315,48 @@ func TestAvisoSemanticoWithDispositionsSkipsFullyRefutedBlock(t *testing.T) {
 	}
 }
 
+// FU-6: ejecutarPrCreateCon must read standing human answers through the
+// leerDisposiciones seam, never through the real git common dir: these
+// fixtures run with a fake worktree, so a direct production call would
+// fail and turn every publish green-path red.
+func TestEjecutarPrCreateCon_LeeDisposicionesDelSeam(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		leerDisposiciones: func(worktree string) ([]review.FindingDisposition, error) {
+			if worktree != "worktree" {
+				t.Errorf("leerDisposiciones worktree = %q, esperado %q", worktree, "worktree")
+			}
+			return nil, errors.New("disposiciones corruptas")
+		},
+	})
+	if codigo != 1 {
+		t.Fatalf("codigo = %d, esperado 1 (el log corrupto falla cerrado)", codigo)
+	}
+}
+
+// FU-6: the production deps must wire the real disposition loader, or pr
+// create would publish as if no human ever answered.
+func TestDepsPrCreateReales_WiresDispositionLoader(t *testing.T) {
+	if depsPrCreateReales().leerDisposiciones == nil {
+		t.Fatal("depsPrCreateReales debe cablear leerDisposiciones")
+	}
+}
+
 func TestCopiarPortapapelesSinHerramienta(t *testing.T) {
 	err := copiarPortapapelesCon("cuerpo",
 		func(string) bool { return false },
