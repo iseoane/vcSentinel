@@ -315,6 +315,41 @@ func TestAvisoSemanticoWithDispositionsSkipsFullyRefutedBlock(t *testing.T) {
 	}
 }
 
+// fichaBloqueanteFp1 builds a single block ficha whose only critical carries
+// fingerprint fp-1: the shared fixture for the FU-6 advisory-overlay tests.
+func fichaBloqueanteFp1(status string) review.Ficha {
+	return review.Ficha{SHA: "abc1234", Revisions: []review.Revision{{
+		Result: review.VerdictBlock,
+		AggregatedFindings: []review.Hallazgo{{
+			Dimension: review.DimSecurity, Severity: review.SevCritical,
+			Status: status, Fingerprint: "fp-1",
+			Description: "critical fp-1",
+			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+		}},
+	}}}
+}
+
+// depsPrCreateRamaVerde builds a green-validation single-ficha fixture; leer
+// carries the standing human answers (nil means none recorded).
+func depsPrCreateRamaVerde(ficha review.Ficha, leer func(string) ([]review.FindingDisposition, error)) depsPrCreate {
+	return depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{ficha}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:          func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
+		registrarEvento:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		leerDisposiciones: leer,
+	}
+}
+
 // FU-6: ejecutarPrCreateCon must read standing human answers through the
 // leerDisposiciones seam, never through the real git common dir: these
 // fixtures run with a fake worktree, so a direct production call would
@@ -323,27 +358,13 @@ func TestEjecutarPrCreateCon_LeeDisposicionesDelSeam(t *testing.T) {
 	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
 		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
 	var salida bytes.Buffer
-	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
-		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
-			return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
-			return review.VerificacionPlantilla{Modo: "omitido"}
-		},
-		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		leerDisposiciones: func(worktree string) ([]review.FindingDisposition, error) {
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"},
+		depsPrCreateRamaVerde(fichaOK, func(worktree string) ([]review.FindingDisposition, error) {
 			if worktree != "worktree" {
 				t.Errorf("leerDisposiciones worktree = %q, esperado %q", worktree, "worktree")
 			}
 			return nil, errors.New("disposiciones corruptas")
-		},
-	})
+		}))
 	if codigo != 1 {
 		t.Fatalf("codigo = %d, esperado 1 (el log corrupto falla cerrado)", codigo)
 	}
@@ -359,36 +380,14 @@ func TestEjecutarPrCreateCon_LeeDisposicionesDelSeam(t *testing.T) {
 // ficha whose only critical is human-refuted publishes without the
 // semantic warning.
 func TestEjecutarPrCreateCon_DisposicionInyectadaSuprimeAviso(t *testing.T) {
-	fichaBlock := review.Ficha{SHA: "abc1234", Revisions: []review.Revision{{
-		Result: review.VerdictBlock,
-		AggregatedFindings: []review.Hallazgo{{
-			Dimension: review.DimSecurity, Severity: review.SevCritical,
-			Status: review.StatusConfirmed, Fingerprint: "fp-1",
-			Description: "critical refuted by the injected answer",
-			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
-		}},
-	}}}
 	var salida bytes.Buffer
-	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
-		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
-			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
-			return review.VerificacionPlantilla{Modo: "omitido"}
-		},
-		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		leerDisposiciones: func(string) ([]review.FindingDisposition, error) {
-			return []review.FindingDisposition{{
-				SHA: "abc1234", Fingerprint: "fp-1", Status: review.StatusRefuted,
-			}}, nil
-		},
-	})
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"},
+		depsPrCreateRamaVerde(fichaBloqueanteFp1(review.StatusConfirmed),
+			func(string) ([]review.FindingDisposition, error) {
+				return []review.FindingDisposition{{
+					SHA: "abc1234", Fingerprint: "fp-1", Status: review.StatusRefuted,
+				}}, nil
+			}))
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (el bloqueante refutado no avisa ni bloquea): %s", codigo, salida.String())
 	}
@@ -417,31 +416,10 @@ func TestDepsPrCreateReales_WiresDispositionLoader(t *testing.T) {
 // drops the token fails here instead of silently vacating the negative
 // assertion.
 func TestEjecutarPrCreateCon_AvisoSemanticoMencionaAviso(t *testing.T) {
-	fichaBlock := review.Ficha{SHA: "abc1234", Revisions: []review.Revision{{
-		Result: review.VerdictBlock,
-		AggregatedFindings: []review.Hallazgo{{
-			Dimension: review.DimSecurity, Severity: review.SevCritical,
-			Status: review.StatusConfirmed, Fingerprint: "fp-1",
-			Description: "unrefuted critical",
-			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
-		}},
-	}}}
+	fichaBlock := fichaBloqueanteFp1(review.StatusConfirmed)
 	var salida bytes.Buffer
-	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
-		obtenerGitDir: func() (string, error) { return "gitdir", nil },
-		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
-			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
-			return review.VerificacionPlantilla{Modo: "omitido"}
-		},
-		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-	})
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"},
+		depsPrCreateRamaVerde(fichaBlock, nil))
 	if codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0 (el aviso es advisory, no bloquea): %s", codigo, salida.String())
 	}
