@@ -68,6 +68,14 @@ land.
       fixes print an exact command (`sentinel init`, `sentinel upgrade`) —
       third-party tools report the failed `exec.LookPath` plus what must
       resolve, since their install commands are environment-specific.
+      Follow-up fix (2026-09-06, `fix/graph-shebang`): the npm codegraph
+      launcher is a `#!/usr/bin/env node` script, so the sanitized child PATH
+      (tool directory only) failed shebang resolution with exit 127 on every
+      invocation — review-context enrichment was silently skipping in
+      production, and the doctor only made it visible. The child PATH now
+      also carries the interpreter's directory (parsed from the shebang,
+      resolved in the parent); no parent variables are inherited. Verified
+      live: all eight codegraph rows report real values with a real index.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph
