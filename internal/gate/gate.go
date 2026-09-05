@@ -406,9 +406,10 @@ func effectiveCriticalFindings(auditResult review.ResultadoAuditoria) []review.H
 
 	var effective []review.Hallazgo
 	for _, finding := range findings {
-		// Empty status is the legacy default for parsed v2 findings; every status
-		// other than refuted is still effective under the existing gate rules.
-		if finding.Severity == review.SevCritical && finding.Status != review.StatusRefuted {
+		// The shared FU-6 blocking rule: engine, gate, and BloqueantesDeRama
+		// agree about the same record, so a human-refuted or fixed CRITICAL
+		// finding stops being effective here exactly as elsewhere.
+		if review.IsBlocking(finding.Severity, finding.Status) {
 			effective = append(effective, finding)
 		}
 	}

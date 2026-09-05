@@ -83,6 +83,47 @@ func ejecutarComoSubproceso(t *testing.T, fn, worktree, home string) (salida str
 	return buf.String(), exitErr.ExitCode()
 }
 
+func worktreeWithCorruptHumanDisposition(t *testing.T) string {
+	t.Helper()
+	worktree := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = worktree
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, output)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "sentinel@example.test")
+	run("config", "user.name", "Sentinel Test")
+	if err := os.MkdirAll(filepath.Join(worktree, ".vas_sentinel"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const configYAML = "validation:\n  capabilities:\n    format:\n      command: \"true\"\n  profiles:\n    standard: [format]\n"
+	if err := os.WriteFile(filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "a.go"), []byte("package fixture\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-qm", "fixture")
+	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(commonDir, "vas-sentinel", "dispositions.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const corrupt = `{"sha":"deadbeef","fingerprint":"fp","status":"unknown","actor":"human","source":"human"}` + "\n"
+	if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return worktree
+}
+
 // escribirYmlConClaveDesconocida escribe un vassentinel.yml per-proyecto con
 // una clave fuera del esquema, para los tests de propagación de error de F1.
 func escribirYmlConClaveDesconocida(t *testing.T, worktree string) {

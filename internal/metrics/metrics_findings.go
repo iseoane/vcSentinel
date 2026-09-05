@@ -86,11 +86,20 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 				continue
 			}
 			counter.Known++
-			if status == review.StatusRefuted {
-				counter.Refuted++
-			}
 			if status == review.StatusConfirmed || status == review.StatusFixed || status == review.StatusReopened {
 				counter.Confirmed++
+			}
+		}
+		if knownStatus && status == review.StatusRefuted {
+			dim.Refuted++
+			// A human-issued refutation is still a refutation of record for
+			// the finding and its dimension, but it credits no agent
+			// invocation (FU-6): the producing model and agent keep the
+			// observation above, never the refutation, so per-model noise
+			// measurement stays automated-only.
+			if finding.RefutationActor != review.RefutationActorHuman {
+				modelCounter.Refuted++
+				agentCounter.Refuted++
 			}
 		}
 		if override {

@@ -135,6 +135,9 @@ func main() {
 	case "review":
 		requireInicializado(worktreeActual)
 		ejecutarReview(worktreeActual, os.Args[2:])
+	case "refute":
+		requireInicializado(worktreeActual)
+		os.Exit(ejecutarRefute(os.Stdout, worktreeActual, os.Args[2:]))
 	case "gate":
 		requireInicializado(worktreeActual)
 		os.Exit(ejecutarGate(os.Stdout, worktreeActual, os.Args[2:]))
@@ -232,6 +235,8 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "", "slice apply --plan X --answers Y ejecuta un plan ya aprobado.")
 	imprimirItemAyuda(&b, "review", "Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha.")
 	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
+	imprimirItemAyuda(&b, "refute", "Record an evidence-bound human refutation of one reviewed finding (clears only its block).")
+	imprimirItemAyuda(&b, "", "Usage: refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
 	imprimirItemAyuda(&b, "lint", "Ejecuta los comandos de lint_commands de la configuración.")
 	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
 	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")

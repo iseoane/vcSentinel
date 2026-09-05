@@ -199,6 +199,12 @@ type OpcionesAuditoria struct {
 	// semantic disposition. It is deliberately provider-neutral to avoid a
 	// review-to-store import cycle.
 	FinalizeMetrics MetricsFinalizer
+	// Dispositions carries the append-only human answers recorded against
+	// this SHA (FU-6). They apply after the automated refutation, so a
+	// standing human answer wins over a fresh agent verdict for the same
+	// fingerprint. Empty by default: callers without human answers behave
+	// exactly as before.
+	Dispositions []FindingDisposition
 	// NetUnit* relabel the prompt as a NET-unit audit (T8.3).
 	NetUnitLabel   string
 	NetUnitHistory string
@@ -449,6 +455,11 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 	} else {
 		refutarHallazgosCriticos(resultado.Dims, opts.FabricaRefutador, opts.SHA, opts.LeerContenidoSnapshot, legacyReviewTransport(opts))
 	}
+	// Standing human answers apply after the automated refutation, so the
+	// same fingerprint a person already answered never blocks again on a
+	// re-audit (FU-6). Revisions stay append-only: this mutates only the
+	// fresh result, never a persisted revision.
+	applyHumanDispositions(resultado.Dims, opts.SHA, opts.Dispositions)
 	var findings []Hallazgo
 	for _, dimension := range resultado.Dims {
 		if dimension.Resultado != nil {
@@ -576,6 +587,9 @@ func refutarHallazgosCriticosConEvidencia(dimensiones []ResultadoDimension, fabr
 			finding.RefutationLineStart = respuesta.LineStart
 			finding.RefutationLineEnd = respuesta.LineEnd
 			finding.RefutationRangeHash = rango
+			// Automated provenance: audits and metrics separate this from a
+			// human-issued refutation through RefutationActor (FU-6).
+			finding.RefutationActor = RefutationActorRefuter
 			dimension.Resultado.RefutedCritical = true
 			// Ticket 13 hardening pool (R10 L1): the admitted refutation is a
 			// distinct durable invocation that flipped a verdict, so its
@@ -626,6 +640,8 @@ func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta re
 		hallazgo.RefutationLineStart = respuesta.LineStart
 		hallazgo.RefutationLineEnd = respuesta.LineEnd
 		hallazgo.RefutationRangeHash = finding.RefutationRangeHash
+		// Automated provenance, mirroring the v1 finding above (FU-6).
+		hallazgo.RefutationActor = RefutationActorRefuter
 		// Parity with the dimension transports: the admitted refutation
 		// invocation becomes the finding's recorded provenance (ticket 13,
 		// R10 L1). An empty identity keeps serialized shapes stable for
@@ -639,7 +655,7 @@ func refutarHallazgoV2(hallazgos []Hallazgo, finding ReviewFinding, respuesta re
 
 func tieneCriticalConfirmado(findings []ReviewFinding) bool {
 	for _, finding := range findings {
-		if finding.Severity == SevCritical && finding.Status != StatusRefuted {
+		if IsBlocking(finding.Severity, finding.Status) {
 			return true
 		}
 	}
@@ -648,7 +664,7 @@ func tieneCriticalConfirmado(findings []ReviewFinding) bool {
 
 func tieneHallazgoCriticalConfirmado(hallazgos []Hallazgo) bool {
 	for _, hallazgo := range hallazgos {
-		if hallazgo.Severity == SevCritical && hallazgo.Status != StatusRefuted {
+		if IsBlocking(hallazgo.Severity, hallazgo.Status) {
 			return true
 		}
 	}
@@ -661,6 +677,55 @@ func puedeDegradarBloque(resultado DimensionResult) bool {
 		strings.TrimSpace(resultado.Reason) == "" &&
 		!tieneCriticalConfirmado(resultado.Findings) &&
 		!tieneHallazgoCriticalConfirmado(resultado.Hallazgos)
+}
+
+// applyHumanDispositions overlays the append-only human answers recorded
+// against this SHA onto the fresh dimension results. A disposition that
+// newly clears the last blocking CRITICAL of a block verdict downgrades it
+// to warn, mirroring puedeDegradarBloque but without setting RefutedCritical:
+// that flag reports an automated refutation needing human review, while a
+// human-issued answer already is the human review, so the gate must pass it
+// instead of asking for attention again.
+func applyHumanDispositions(dimensiones []ResultadoDimension, sha string, dispositions []FindingDisposition) {
+	if len(dispositions) == 0 {
+		return
+	}
+	for i := range dimensiones {
+		dimension := &dimensiones[i]
+		if dimension.Resultado == nil {
+			continue
+		}
+		cleared := false
+		for _, disp := range dispositions {
+			if disp.SHA != sha {
+				continue
+			}
+			if ApplyDispositionToResult(dimension.Resultado, disp) {
+				cleared = true
+			}
+		}
+		if cleared && dimension.Resultado.Verdict == VerdictBlock &&
+			strings.TrimSpace(dimension.Resultado.Reason) == "" &&
+			!hasBlockingFinding(dimension.Resultado) {
+			dimension.Resultado.Verdict = VerdictWarn
+		}
+	}
+}
+
+// hasBlockingFinding reports whether a dimension result still holds a
+// finding that blocks release under the shared rule.
+func hasBlockingFinding(resultado *DimensionResult) bool {
+	for i := range resultado.Findings {
+		if IsBlocking(resultado.Findings[i].Severity, resultado.Findings[i].Status) {
+			return true
+		}
+	}
+	for i := range resultado.Hallazgos {
+		if IsBlocking(resultado.Hallazgos[i].Severity, resultado.Hallazgos[i].Status) {
+			return true
+		}
+	}
+	return false
 }
 
 // RutasRevisionSeguras exposes the engine's reviewer-path sanitizer so

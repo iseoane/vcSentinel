@@ -356,3 +356,30 @@ func TestEjecutarGateFallaCerradoSinAtributos(t *testing.T) {
 		t.Errorf("the output must name the attribute failure, got: %q", salida.String())
 	}
 }
+
+// FU-6: the gate must surface corrupt human-answer history as review
+// infrastructure failure rather than running without the disposition overlay.
+func TestEjecutarGateFailsClosedOnCorruptHumanDisposition(t *testing.T) {
+	worktree := worktreeWithCorruptHumanDisposition(t)
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktree); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(previous) })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	var output bytes.Buffer
+	exit := ejecutarGate(&output, worktree, []string{"--stage", "pre-commit"})
+	want := gate.CodigoSalida(gate.EstadoReviewInfrastructureError)
+	if exit != want {
+		t.Fatalf("gate exit = %d, want %d; output: %q", exit, want, output.String())
+	}
+	if !strings.Contains(output.String(), "reading human dispositions") {
+		t.Fatalf("gate did not report the disposition read failure: %q", output.String())
+	}
+}

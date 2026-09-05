@@ -790,6 +790,25 @@ Recommendation when picked up: Option A, and **not inside F9**. It is new
 product surface and it touches the gate, so it deserves its own change with its
 own review. F9 closes with its three blocks recorded as they stand.
 
+#### Resolution (Option A, 2026-09-04)
+
+Picked up as its own change per the recommendation above. `sentinel refute`
+records an evidence-bound human refutation addressed by reviewed SHA plus
+stable fingerprint, with a reason and an immutable snapshot line range
+checked by the existing `validarEvidenciaRefutacion` gate (SHA echo, safe
+path, range bounds, finding containment, exact snapshot evidence, range
+hash). Answers persist append-only in `dispositions.jsonl`, separate from
+the immutable review revisions, and apply through the single
+`ApplyDispositions` projection. One shared `IsBlocking` rule now serves the
+engine, the gate, and `BloqueantesDeRama`: human `refuted` and `fixed`
+clear a block, `accepted_by_user` never does, and `reopened` blocks again.
+Human and automated provenance stay distinguishable through
+`RefutationActor`, and per-model/agent aggregates credit no human decision
+to an agent invocation. Out of scope on purpose: threading standing answers
+through fresh branch re-audits (`pr review` re-reports before the overlay),
+and writers for `accepted_by_user`/`fixed`/`reopened` beyond the projection
+semantics pinned for them.
+
 ### FU-7: aggregation drops the disposition, so metrics cannot see it
 
 Recorded 2026-08-31 while correcting T9.3a. This is the real obstacle to exit

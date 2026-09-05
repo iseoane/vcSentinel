@@ -674,10 +674,17 @@ func publicarPRCon(worktree, rutaPlantilla, base string, opciones opcionesPublic
 // función que ya no bloquea no puede seguir llamándose "gate...Block" sin
 // mentir sobre lo que hace.
 func avisoSemantico(fichas []review.Ficha) (avisar bool, bloqueantes []review.ReviewFinding) {
-	if review.VeredictoDeRama(fichas) != review.VerdictBlock {
-		return false, nil
-	}
-	return true, review.BloqueantesDeRama(fichas)
+	bloqueantes = review.BloqueantesDeRama(fichas)
+	return len(bloqueantes) > 0, bloqueantes
+}
+
+// avisoSemanticoWithDispositions is avisoSemantico overlaid with the
+// standing human answers (FU-6): a valid human refutation clears its
+// finding from the branch blockers shown here exactly as in the engine and
+// the gate.
+func avisoSemanticoWithDispositions(fichas []review.Ficha, dispositions []review.FindingDisposition) (avisar bool, bloqueantes []review.ReviewFinding) {
+	bloqueantes = review.BloqueantesDeRamaWithDispositions(fichas, dispositions)
+	return len(bloqueantes) > 0, bloqueantes
 }
 
 // comandosDeValidacion traduce las ValidationRun de internal/validation a
@@ -731,6 +738,11 @@ type depsPrCreate struct {
 	// resolveBlobStore shells out to git, which depsPrCreate exists to avoid;
 	// nil means no reuse, the behaviour before this wiring.
 	blobStore func(worktree string) (review.StoreBlobs, error)
+	// leerDisposiciones reads the standing human answers for the advisory
+	// overlay. It is a seam because loadDispositionsForWorktree resolves
+	// the real git common dir, which depsPrCreate exists to avoid; nil
+	// means no standing answers, the fixture every older test builds.
+	leerDisposiciones func(worktree string) ([]review.FindingDisposition, error)
 }
 
 // ejecutarPrCreate implementa pr create (T1.8): valida ANTES de auditar (si
@@ -774,6 +786,7 @@ func depsPrCreateReales() depsPrCreate {
 		resolverActor:     resolverActor,
 		escribirPlantilla: escribirPlantillaPR,
 		blobStore:         resolveBlobStore,
+		leerDisposiciones: loadDispositionsForWorktree,
 	}
 }
 
@@ -915,6 +928,19 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
+	// Standing human answers drive every rendered and advisory finding. A
+	// corrupt log fails closed rather than pretending no human answered.
+	// A nil seam means no standing answers, the fixture older tests build;
+	// production always wires the real loader through depsPrCreateReales.
+	var branchDispositions []review.FindingDisposition
+	if deps.leerDisposiciones != nil {
+		var err error
+		branchDispositions, err = deps.leerDisposiciones(worktree)
+		if err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
+	}
 
 	if len(res.Fichas) == 0 {
 		fmt.Fprintln(w, "_No hay commits auditados en la rama._")
@@ -924,7 +950,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	// The net audit is the advisory authority when present.
 	if res.Net != nil {
 		fmt.Fprintln(w, review.VerdictLine(res))
-	} else if avisar, bloqueantes := avisoSemantico(res.Fichas); avisar {
+	} else if avisar, bloqueantes := avisoSemanticoWithDispositions(res.Fichas, branchDispositions); avisar {
 		fmt.Fprintln(w, "⚠️  AVISO: veredicto de auditoría semántica = block (no bloquea la publicación, advisory).")
 		for _, h := range bloqueantes {
 			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
@@ -951,7 +977,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		publishBase = res.Propio.PublicationBranch
 	}
 
-	cuerpo := review.RenderBranchPRTemplate(res, verificacion, version)
+	cuerpo := review.RenderBranchPRTemplateWithDispositions(res, verificacion, version, branchDispositions)
 	escribir := deps.escribirPlantilla
 	if escribir == nil {
 		escribir = escribirPlantillaPR

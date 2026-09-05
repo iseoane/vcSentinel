@@ -96,6 +96,16 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 		SHA: sha, Mensaje: mensaje, Diff: diff, Gitattributes: atributos,
 		Perfil: profile, Archivos: archivos,
 	})
+	// Standing human answers recorded against HEAD apply to the semantic
+	// review below. A corrupt dispositions log fails closed as
+	// infrastructure: gating as if no human ever answered would re-block on
+	// a refuted finding.
+	if dispositions, err := loadDispositionsForWorktree(worktree); err != nil {
+		fmt.Fprintf(w, "❌ %v\n", err)
+		return finalizarGate(w, worktree, stage, gate.EstadoReviewInfrastructureError, nil)
+	} else {
+		opciones.OpcionesRevision.Dispositions = review.FilterDispositionsForSHA(dispositions, sha)
+	}
 	applyDurableCutover(&opciones, cfg, worktree, stage, sha, archivos)
 
 	resultado := gate.EjecutarGate(opciones)

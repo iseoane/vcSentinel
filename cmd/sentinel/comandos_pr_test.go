@@ -289,6 +289,145 @@ func TestAvisoSemanticoConBlockAvisaYListaCriticos(t *testing.T) {
 	}
 }
 
+// FU-6: the static revision verdict can remain block after a human answer,
+// but the advisory warning must follow the effective blockers rather than
+// printing an empty critical warning.
+func TestAvisoSemanticoWithDispositionsSkipsFullyRefutedBlock(t *testing.T) {
+	fichas := []review.Ficha{{
+		SHA: "abc1234",
+		Revisions: []review.Revision{{
+			Result: review.VerdictBlock,
+			AggregatedFindings: []review.Hallazgo{{
+				Dimension: review.DimSecurity, Severity: review.SevCritical,
+				Status: review.StatusConfirmed, Fingerprint: "fp-critical",
+				Description: "refuted critical",
+				Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+			}},
+		}},
+	}}
+	dispositions := []review.FindingDisposition{{
+		SHA: "abc1234", Fingerprint: "fp-critical", Status: review.StatusRefuted,
+	}}
+
+	avisar, bloqueantes := avisoSemanticoWithDispositions(fichas, dispositions)
+	if avisar || len(bloqueantes) != 0 {
+		t.Fatalf("effective refutation = aviso %t, blockers %+v; want no advisory", avisar, bloqueantes)
+	}
+}
+
+// fichaBloqueanteFp1 builds a single block ficha whose only critical carries
+// fingerprint fp-1: the shared fixture for the FU-6 advisory-overlay tests.
+func fichaBloqueanteFp1(status string) review.Ficha {
+	return review.Ficha{SHA: "abc1234", Revisions: []review.Revision{{
+		Result: review.VerdictBlock,
+		AggregatedFindings: []review.Hallazgo{{
+			Dimension: review.DimSecurity, Severity: review.SevCritical,
+			Status: status, Fingerprint: "fp-1",
+			Description: "critical fp-1",
+			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+		}},
+	}}}
+}
+
+// depsPrCreateRamaVerde builds a green-validation single-ficha fixture; leer
+// carries the standing human answers (nil means none recorded).
+func depsPrCreateRamaVerde(ficha review.Ficha, leer func(string) ([]review.FindingDisposition, error)) depsPrCreate {
+	return depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{ficha}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:          func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
+		registrarEvento:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		leerDisposiciones: leer,
+	}
+}
+
+// FU-6: ejecutarPrCreateCon must read standing human answers through the
+// leerDisposiciones seam, never through the real git common dir: these
+// fixtures run with a fake worktree, so a direct production call would
+// fail and turn every publish green-path red.
+func TestEjecutarPrCreateCon_LeeDisposicionesDelSeam(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"},
+		depsPrCreateRamaVerde(fichaOK, func(worktree string) ([]review.FindingDisposition, error) {
+			if worktree != "worktree" {
+				t.Errorf("leerDisposiciones worktree = %q, esperado %q", worktree, "worktree")
+			}
+			return nil, errors.New("disposiciones corruptas")
+		}))
+	if codigo != 1 {
+		t.Fatalf("codigo = %d, esperado 1 (el log corrupto falla cerrado)", codigo)
+	}
+	// The injected message must reach the output: later failure paths
+	// (template write, publish) also exit 1, so the code alone cannot
+	// tell the corrupt-log refusal apart from a downstream failure.
+	if !strings.Contains(salida.String(), "disposiciones corruptas") {
+		t.Errorf("la salida debe mostrar el error inyectado del seam, got %q", salida.String())
+	}
+}
+
+// FU-6: injected standing answers must drive the advisory overlay: a block
+// ficha whose only critical is human-refuted publishes without the
+// semantic warning.
+func TestEjecutarPrCreateCon_DisposicionInyectadaSuprimeAviso(t *testing.T) {
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"},
+		depsPrCreateRamaVerde(fichaBloqueanteFp1(review.StatusConfirmed),
+			func(string) ([]review.FindingDisposition, error) {
+				return []review.FindingDisposition{{
+					SHA: "abc1234", Fingerprint: "fp-1", Status: review.StatusRefuted,
+				}}, nil
+			}))
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el bloqueante refutado no avisa ni bloquea): %s", codigo, salida.String())
+	}
+	if strings.Contains(salida.String(), "AVISO") {
+		t.Errorf("el bloqueante refutado no debe avisar: %s", salida.String())
+	}
+}
+
+// FU-6: the production deps must wire the real disposition loader, or pr
+// create would publish as if no human ever answered.
+func TestDepsPrCreateReales_WiresDispositionLoader(t *testing.T) {
+	leer := depsPrCreateReales().leerDisposiciones
+	if leer == nil {
+		t.Fatal("depsPrCreateReales debe cablear leerDisposiciones")
+	}
+	// Identity, not just presence: the wired loader resolves the real git
+	// common dir, so a bogus worktree must fail rather than report no
+	// standing answers.
+	if _, err := leer(filepath.Join(t.TempDir(), "no-existe")); err == nil {
+		t.Error("el loader cableado debe fallar con un worktree inexistente, no devolver vacío")
+	}
+}
+
+// FU-6: positive anchor for the suppression test above: an unrefuted block
+// must render the semantic warning with the AVISO token, so a change that
+// drops the token fails here instead of silently vacating the negative
+// assertion.
+func TestEjecutarPrCreateCon_AvisoSemanticoMencionaAviso(t *testing.T) {
+	fichaBlock := fichaBloqueanteFp1(review.StatusConfirmed)
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"},
+		depsPrCreateRamaVerde(fichaBlock, nil))
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el aviso es advisory, no bloquea): %s", codigo, salida.String())
+	}
+	if !strings.Contains(salida.String(), "AVISO") {
+		t.Errorf("el aviso semántico debe mencionar AVISO, got %q", salida.String())
+	}
+}
+
 func TestCopiarPortapapelesSinHerramienta(t *testing.T) {
 	err := copiarPortapapelesCon("cuerpo",
 		func(string) bool { return false },

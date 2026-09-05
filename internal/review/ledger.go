@@ -453,6 +453,27 @@ func (l *Ledger) GuardarRevision(sha, mensaje, bucket, modelo string, revision R
 	return l.conFichaBloqueada(sha, func() error { return l.guardarRevisionBloqueada(sha, mensaje, bucket, modelo, revision) })
 }
 
+// WithLockedFicha runs fn while holding this SHA's exclusive ficha lock,
+// handing it the authoritative current record. It is the compare-and-append
+// seam for writers that persist outside the ficha file itself (FU-6 human
+// dispositions): resolving against a ficha read before the lock and then
+// appending after it lets a concurrent re-audit change the revision in
+// between, so the writer must re-read under the same lock the revision
+// writer holds and refuse on any difference. It reuses conFichaBloqueada,
+// never a second lock.
+func (l *Ledger) WithLockedFicha(sha string, fn func(*Ficha) error) error {
+	return l.conFichaBloqueada(sha, func() error {
+		ficha, err := l.LeerFicha(sha)
+		if err != nil {
+			return err
+		}
+		if ficha == nil {
+			return fmt.Errorf("ledger: no review record for %s", sha)
+		}
+		return fn(ficha)
+	})
+}
+
 func (l *Ledger) guardarRevisionBloqueada(sha, mensaje, bucket, modelo string, revision Revision) error {
 	ficha, err := l.LeerFicha(sha)
 	if err != nil {
