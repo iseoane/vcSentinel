@@ -185,14 +185,18 @@ func entornoCodeGraph(ejecutable string) []string {
 
 // directorioInterprete returns the directory of the interpreter named by the
 // executable's shebang line, or "" when there is none or it cannot be
-// resolved. Only the first line is read: a shebang longer than the kernel
-// limit could never execute anyway.
+// resolved. Only a 256-byte prefix is read: a shebang is capped at 127 bytes
+// on Linux and a few hundred elsewhere, so a first line that does not fit
+// could never execute anyway.
 func directorioInterprete(ejecutable string) string {
-	raw, err := os.ReadFile(ejecutable)
+	archivo, err := os.Open(ejecutable)
 	if err != nil {
 		return ""
 	}
-	line, _, _ := strings.Cut(string(raw), "\n")
+	defer archivo.Close()
+	var prefijo [256]byte
+	n, _ := io.ReadFull(archivo, prefijo[:])
+	line, _, _ := strings.Cut(string(prefijo[:n]), "\n")
 	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
 	if !strings.HasPrefix(line, "#!") || len(fields) == 0 {
 		return ""

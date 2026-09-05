@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -177,4 +178,44 @@ func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *
 func replaceRoot(s, root string) string {
 	b := []byte(s)
 	return string(bytes.ReplaceAll(b, []byte("ROOT"), []byte(filepath.ToSlash(root))))
+}
+
+func TestDirectorioInterpreteLeeSoloElPrefijo(t *testing.T) {
+	dir := t.TempDir()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not on PATH")
+	}
+	shebang := "#!" + sh + "\n"
+	grande := append([]byte(shebang), bytes.Repeat([]byte{0}, 4<<20)...)
+	escribir := func(nombre string, contenido []byte) string {
+		t.Helper()
+		ruta := filepath.Join(dir, nombre)
+		if err := os.WriteFile(ruta, contenido, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return ruta
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH")
+	}
+	casos := map[string]struct {
+		ruta string
+		want string
+	}{
+		"shebang directo":      {escribir("a", []byte(shebang)), filepath.Dir(sh)},
+		"shebang tras binario": {escribir("b", grande), filepath.Dir(sh)},
+		"sin shebang":          {escribir("c", []byte("\x7fELF....")), ""},
+		"env con banderas":     {escribir("d", []byte("#!/usr/bin/env -S node --flag\n")), filepath.Dir(node)},
+		"inexistente":          {filepath.Join(dir, "ausente"), ""},
+		"directorio":           {dir, ""},
+	}
+	for nombre, tc := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			if got := directorioInterprete(tc.ruta); got != tc.want {
+				t.Errorf("directorioInterprete = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
