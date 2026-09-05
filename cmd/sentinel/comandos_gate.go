@@ -111,6 +111,13 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	resultado := gate.EjecutarGate(opciones)
 
 	fmt.Fprintf(w, "🚦 gate [%s] perfil=%s → %s\n", stage, perfil, resultado.Estado)
+	// FU-11: the credential incident surfaces next to the gate result on
+	// every path, including when validation short-circuits or the review
+	// plan schedules nothing. Advisory only: Estado and Mensajes untouched.
+	_, avisosSecreto := hallazgosYavisosSecreto(archivos, diff)
+	for _, aviso := range avisosSecreto {
+		fmt.Fprintln(w, aviso)
+	}
 	return finalizeGateWithDetails(w, worktree, stage, resultado.Estado, resultado.Mensajes, resultado.ContextSkipReason, resultado.ReviewerFailures)
 }
 
@@ -136,6 +143,11 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 	sha, mensaje, diff, gitattributes := evidencia.SHA, evidencia.Mensaje, evidencia.Diff, evidencia.Gitattributes
 	profile, archivos := evidencia.Perfil, evidencia.Archivos
 	reviewTransport, metricsFinalizer := durableReviewTransportWithMetrics(cfg, worktree, sha, archivos)
+	// FU-11: deterministic exposed-credential incidents ride along in the
+	// semantic review without scheduling any dimension and without touching
+	// the gate verdict. Console surfacing happens in ejecutarGate, which
+	// prints the advisory next to the gate result without changing it.
+	hallazgosSecreto, _ := hallazgosYavisosSecreto(archivos, diff)
 	return gate.Opciones{
 		Perfil:         perfil,
 		RutasCambiadas: archivos,
@@ -152,6 +164,7 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, gitattributes).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
+			HallazgosDeterministas:      hallazgosSecreto,
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
 		},
