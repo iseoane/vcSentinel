@@ -342,7 +342,25 @@ func ValidateHumanRefutationRange(leer SnapshotReader, sha, findingFile string, 
 		Refuted: true, Reason: reason, SHA: sha, File: safe[0],
 		LineStart: lineStart, LineEnd: lineEnd, Evidence: extract,
 	}
-	hash, ok := validarEvidenciaRefutacion(leer, sha, ReviewFinding{File: findingFile, Line: Linea(findingLine)}, respuesta)
+	// FU-6 defect 2: a finding with no line (Location.LineaInicio <= 0, the
+	// convention for deterministic findings citing a bare file path, e.g.
+	// `gofmt -l`) can never satisfy the shared gate's containment requirement
+	// (finding.Line >= LineStart >= 1), so no human answer could ever clear
+	// it and no unrefutable CRITICAL may remain. Option (a), file-scoped
+	// evidence: the validation line is pinned to the evidence range start,
+	// waiving only containment, which is meaningless without a line. Every
+	// other gate check still applies byte for byte — the evidence file must
+	// be the finding's cited file, the 20-line window holds, and the extract
+	// must match the audited Git object exactly under the 12-character
+	// minimum with its range hash — so the gate stays fail-closed. Option
+	// (b) (a line required at ingestion plus a migration) was rejected: it
+	// would mutate append-only ledger records and change the finding
+	// contract, both frozen by FU-6.
+	validationLine := findingLine
+	if validationLine <= 0 {
+		validationLine = lineStart
+	}
+	hash, ok := validarEvidenciaRefutacion(leer, sha, ReviewFinding{File: findingFile, Line: Linea(validationLine)}, respuesta)
 	if !ok {
 		return "", "", "", errors.New("the evidence range does not satisfy the refutation gate for this finding")
 	}

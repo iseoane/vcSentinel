@@ -161,6 +161,66 @@ func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 	}
 }
 
+// FU-6 defect 2: a finding without a line (LineaInicio == 0, e.g. a
+// deterministic check citing a bare file path) could never be refuted: the
+// shared gate requires the finding line inside the evidence range. The
+// command accepts a file-scoped range instead; the extract must still match
+// the audited Git object exactly, so the gate stays fail-closed.
+func TestRunRefutationAcceptsLinelessFinding(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	ficha := refuteFichaFixture()
+	ficha.AggregatedFindings[0].Location.LineaInicio = 0
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", ficha); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	opts := refuteValidOptions()
+	opts.lineStart, opts.lineEnd = 1, 1
+	outcome, err := runRefutation(deps, opts)
+	if err != nil {
+		t.Fatalf("line-less finding rejected a valid file-scoped evidence range: %v", err)
+	}
+	disposition := outcome.disposition
+	if disposition.TargetLine != 0 || disposition.Path != "a.go" || disposition.LineStart != 1 || disposition.LineEnd != 1 {
+		t.Fatalf("range = %+v, want the file-scoped range on a.go", disposition)
+	}
+	if disposition.Evidence != "const unrelated = true" {
+		t.Fatalf("evidence = %q, want the exact snapshot extract", disposition.Evidence)
+	}
+	if want := "fc5d94369ff09844867f729602ecd2ed2a50239fffe6d789181680f58cd2f257"; disposition.RangeHash != want {
+		t.Fatalf("hash = %q, want the exact range hash", disposition.RangeHash)
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatalf("read dispositions: %v", err)
+	}
+	if len(records) != 1 || records[0].Fingerprint != "fp-target" || records[0].Status != review.StatusRefuted {
+		t.Fatalf("dispositions = %+v, want one append-only record", records)
+	}
+}
+
+// FU-6 defect 2: the line-less path still fails closed: an extract without
+// evidence content is rejected and nothing is persisted.
+func TestRunRefutationLinelessStillFailsClosed(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	ficha := refuteFichaFixture()
+	ficha.AggregatedFindings[0].Location.LineaInicio = 0
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", ficha); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	opts := refuteValidOptions()
+	opts.lineStart, opts.lineEnd = 3, 3 // the empty tail line below the snapshot content
+	if _, err := runRefutation(deps, opts); err == nil {
+		t.Fatal("empty evidence was accepted for a line-less finding")
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatalf("read dispositions: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dispositions = %+v, want nothing persisted", records)
+	}
+}
+
 // FU-6: every failure closes without persisting anything: missing review
 // record, missing or ambiguous fingerprint, already-cleared finding, unsafe
 // path, range outside the gate, and unreadable snapshot.
