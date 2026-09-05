@@ -808,7 +808,30 @@ to an agent invocation. Out of scope on purpose: threading standing answers
 through fresh branch re-audits (`pr review` re-reports before the overlay),
 and writers for `accepted_by_user`/`fixed`/`reopened` beyond the projection
 semantics pinned for them.
+#### Unit A (2026-09-05)
 
+Standing answers now carry into fresh net re-audits: `OpcionesRama` carries
+the range dispositions, `runNetReview` selects answers recorded against
+in-range commits whose evidence still holds at the head (normalized
+containment across the whole file, so a moved line still carries and removed
+evidence re-reports), and clones them to the head SHA as engine input so the
+single SHA-bound overlay, aggregation, and verdict downgrade stay in one
+place. Head-bound answers keep the original path; anything unverifiable is
+dropped rather than cleared. `pr review` and `pr create` both fail closed
+on a corrupt log before spending review tokens.
+#### Unit B (2026-09-05)
+
+The remaining two writers landed as their own commands, not as one change
+with the carry-over (unit A): `sentinel accept` records `accepted_by_user`
+with a reason and no evidence range — judgement, never an unblock — and
+`sentinel reopen` records `reopened` through the same evidence gate as
+refutation, on its own path because it targets the non-blocking finding
+`refute` refuses. `fixed` deliberately gained no per-fingerprint writer: the
+correction attribution (`registrarCorrecciones`) matches by file overlap plus
+ancestry, not defect identity, so emitting `StatusFixed` from it would invent
+precision the data does not carry; `FixedIn` stays the separate branch-level
+record. `StatusReopened` now has a production writer, so reopen coverage is
+measurable where answers exist.
 #### Merge closure (2026-09-05, `811b9f1`)
 
 Merged `--no-ff` as `feat(review): evidence-bound human finding refutation
