@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -183,5 +185,62 @@ func TestEjecutarAcceptRejectsBadArgs(t *testing.T) {
 	var buf bytes.Buffer
 	if code := ejecutarAccept(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
 		t.Fatalf("code = %d, want 1 for bad args", code)
+	}
+}
+
+// A corrupt dispositions log fails the acceptance without persisting
+// anything: answering against a partial history could acknowledge the wrong
+// finding.
+func TestRunAcceptanceRefusesCorruptHistory(t *testing.T) {
+	deps, ledger, _ := refuteTestDeps(t, nil)
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RutaFicha("abc12345"))), "vas-sentinel", "dispositions.jsonl")
+	const corrupt = `{"sha":"abc12345","fingerprint":"fp-target","status":"ignored","actor":"human","source":"human"}` + "\n"
+	if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runAcceptance(deps, acceptValidOptions()); err == nil {
+		t.Fatal("acceptance appended despite corrupt disposition history")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != corrupt {
+		t.Fatalf("corrupt log changed after failed acceptance: %q", got)
+	}
+}
+
+// A lock cleanup failure after the append is a completed acceptance, not a
+// failed mutation callers should retry.
+func TestRunAcceptancePreservesCompletedAppendAfterLockCleanupFailure(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	deps.withLockedFicha = func(sha string, fn func(*review.Ficha) error) error {
+		if err := ledger.WithLockedFicha(sha, fn); err != nil {
+			return err
+		}
+		return review.ErrBloqueoNoLiberado
+	}
+	outcome, err := runAcceptance(deps, acceptValidOptions())
+	if outcome.disposition == nil || outcome.disposition.Status != review.StatusAcceptedByUser {
+		t.Fatalf("completed acceptance was discarded: outcome=%+v err=%v", outcome, err)
+	}
+	if !errors.Is(outcome.completionWarning, review.ErrBloqueoNoLiberado) {
+		t.Fatalf("cleanup failure = %v, want ErrBloqueoNoLiberado", outcome.completionWarning)
+	}
+	if err != nil {
+		t.Fatalf("completed acceptance failed: %v", err)
+	}
+	records, readErr := st.ReadDispositions()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(records) != 1 {
+		t.Fatalf("dispositions = %+v, want one completed append", records)
 	}
 }

@@ -13,6 +13,13 @@ import (
 type NetReviewOptions struct {
 	Intention  string // PR title/description supplied by the caller
 	Validation string // supplied full-validation evidence, carried as structured net evidence
+	// Dispositions carries the append-only human answers recorded against
+	// the commits in range (FU-6 follow-up unit A). Only the net review
+	// carries them across SHAs, by exact fingerprint plus evidence
+	// revalidation at the head; per-commit audits stay SHA-bound and never
+	// read this field. Empty by default: callers without human answers
+	// behave exactly as before.
+	Dispositions []FindingDisposition
 }
 
 // HistoricalFinding: untrusted per-commit context — never merged into net Findings, never blocking; ArchiveReason non-empty = archived.
@@ -190,9 +197,24 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	// cloned to the head SHA for the engine input so the single SHA-bound
 	// overlay, aggregation, and verdict downgrade stay in one place. The
 	// clone is engine input only; the persisted log keeps the origin SHA.
-	carried := carriedNetDispositions(opts.Dispositions, revisions, to)
-	engineDispositions := FilterDispositionsForSHA(opts.Dispositions, to)
+	// Head precedence is by fingerprint: a carried answer whose fingerprint
+	// already has a head-SHA answer is dropped, so a stale intermediate
+	// answer can never override the fresher head answer inside the engine's
+	// last-wins overlay.
+	var rangeDispositions []FindingDisposition
+	if o != nil {
+		rangeDispositions = o.Dispositions
+	}
+	headDispositions := FilterDispositionsForSHA(rangeDispositions, to)
+	carried := carriedNetDispositions(rangeDispositions, revisions, to)
+	engineDispositions := headDispositions
+outer:
 	for _, disp := range carried {
+		for _, hd := range headDispositions {
+			if strings.TrimSpace(hd.Fingerprint) == strings.TrimSpace(disp.Fingerprint) {
+				continue outer
+			}
+		}
 		clone := disp
 		clone.SHA = to
 		engineDispositions = append(engineDispositions, clone)
@@ -270,7 +292,7 @@ func dispositionEvidenceHoldsAtHead(disp FindingDisposition, head string) bool {
 	if err != nil || !present {
 		return false
 	}
-	return strings.Contains(normalizarParaComparar(content), normalizarParaComparar(evidence))
+	return contieneEvidenciaNormalizada(content, evidence)
 }
 
 const netAxes = `Evaluate explicitly beyond any per-commit review:

@@ -101,7 +101,7 @@ func TestRunNetReviewCarriesStandingRefutation(t *testing.T) {
 		})
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
-	carried, err := runNetReview(&NetReviewOptions{Intention: "carry e2e"}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1, Dispositions: dispositions}, from, to, revisions)
+	carried, err := runNetReview(&NetReviewOptions{Intention: "carry e2e", Dispositions: dispositions}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1}, from, to, revisions)
 	if err != nil {
 		t.Fatalf("net review with dispositions: %v", err)
 	}
@@ -154,13 +154,68 @@ func TestRunNetReviewCarriesIntermediateRefutation(t *testing.T) {
 		})
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
-	carried, err := runNetReview(&NetReviewOptions{Intention: "carry intermediate"}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1, Dispositions: dispositions}, from, to, revisions)
+	carried, err := runNetReview(&NetReviewOptions{Intention: "carry intermediate", Dispositions: dispositions}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1}, from, to, revisions)
 	if err != nil {
 		t.Fatalf("net review with dispositions: %v", err)
 	}
 	for _, h := range carried.Audit.Findings {
 		if IsBlocking(h.Severity, h.Status) {
 			t.Fatalf("carried intermediate finding still blocks: %+v", h)
+		}
+	}
+}
+
+// Head precedence: when the same fingerprint is answered at both the head
+// and an intermediate commit, the head answer wins. Without it the engine
+// would receive the head answer plus the carried clone (both SHA-bound to
+// the head) and its last-wins overlay would let the stale intermediate
+// answer override the fresher head answer.
+func TestRunNetReviewHeadAnswerWinsOverCarried(t *testing.T) {
+	prepararRepoRama(t)
+	shaA := commitEnRama(t, "a.go", "package a\n\n// evidence line: guardian check\n")
+	head := commitEnRama(t, "b.go", "package b\n")
+	from := strings.TrimSpace(gitSalida(t, "merge-base", "main", "HEAD"))
+	to := head
+	revisions := []Ficha{{SHA: shaA}, {SHA: head}}
+	const netBlock = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"block\",\"findings\":[{\"dimension\":\"logic\",\"file\":\"a.go\",\"line\":3,\"severity\":\"CRITICAL\",\"description\":\"guardian defect\",\"evidence\":\"// evidence line: guardian check\",\"confidence\":\"high\"}]}\nEND_REVIEW\n"
+	stub := &answeringStub{marker: "Pull request intention:", output: netBlock}
+	plain, err := runNetReview(&NetReviewOptions{Intention: "precedence"}, OpcionesRama{Fabrica: fabricaStub(stub), Parallel: 1}, from, to, revisions)
+	if err != nil {
+		t.Fatalf("net review without dispositions: %v", err)
+	}
+	fps := map[string]struct{}{}
+	for _, h := range plain.Audit.Findings {
+		if fp := strings.TrimSpace(EffectiveFingerprint(h)); fp != "" {
+			fps[fp] = struct{}{}
+		}
+	}
+	if len(fps) == 0 {
+		t.Fatalf("net findings carry no fingerprint: %+v", plain.Audit.Findings)
+	}
+	var dispositions []FindingDisposition
+	for fp := range fps {
+		dispositions = append(dispositions,
+			FindingDisposition{
+				SHA: shaA, Fingerprint: fp, Status: StatusRefuted,
+				Reason: "verified safe by hand", Path: "a.go",
+				Evidence: "// evidence line: guardian check",
+				Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
+			},
+			FindingDisposition{
+				SHA: head, Fingerprint: fp, Status: StatusReopened,
+				Reason: "regressed on this path", Path: "a.go",
+				Evidence: "// evidence line: guardian check",
+				Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
+			})
+	}
+	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
+	carried, err := runNetReview(&NetReviewOptions{Intention: "precedence", Dispositions: dispositions}, OpcionesRama{Fabrica: fabricaStub(stubCarried), Parallel: 1}, from, to, revisions)
+	if err != nil {
+		t.Fatalf("net review with dispositions: %v", err)
+	}
+	for _, h := range carried.Audit.Findings {
+		if !IsBlocking(h.Severity, h.Status) {
+			t.Fatalf("stale intermediate answer overrode the head reopen: %+v", h)
 		}
 	}
 }

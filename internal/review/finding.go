@@ -290,7 +290,7 @@ func motivoDescarteEvidencia(h Hallazgo, leerContenido func(archivo string) (str
 	if err != nil {
 		return MotivoArchivoNoResuelto
 	}
-	if !strings.Contains(normalizarParaComparar(contenido), normalizarParaComparar(h.Evidence)) {
+	if !contieneEvidenciaNormalizada(contenido, h.Evidence) {
 		return MotivoEvidenciaNoEncontrada
 	}
 	return ""
@@ -307,6 +307,15 @@ func normalizarParaComparar(s string) string {
 		lineas[i] = strings.TrimSpace(linea)
 	}
 	return strings.Join(lineas, "\n")
+}
+
+// contieneEvidenciaNormalizada reports whether the recorded evidence still
+// appears in the file content under the same normalization the fingerprint
+// uses. The search spans the whole file, so a moved line still matches while
+// removed evidence does not. Single home for the containment check shared by
+// the ledger stale-evidence discard and the net carry-over revalidation.
+func contieneEvidenciaNormalizada(contenido, evidencia string) bool {
+	return strings.Contains(normalizarParaComparar(contenido), normalizarParaComparar(evidencia))
 }
 
 // Fingerprint calcula una huella estable de un Hallazgo (finding v2) para

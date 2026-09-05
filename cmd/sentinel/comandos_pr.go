@@ -231,6 +231,23 @@ func opcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador
 	}), avisoStore
 }
 
+// aplicarDisposicionesPrReview loads the standing human answers and sets
+// them on the net review input for the cross-SHA carry-over. A corrupt log
+// is an error: pr review must fail closed before spending review tokens
+// rather than audit as if no human answered. The loader is a seam so tests
+// drive this without git. A nil net review (no net audit requested) leaves
+// the options untouched and still reports a loader failure.
+func aplicarDisposicionesPrReview(opciones review.OpcionesRama, worktree string, cargar func(string) ([]review.FindingDisposition, error)) (review.OpcionesRama, error) {
+	dispositions, err := cargar(worktree)
+	if err != nil {
+		return opciones, err
+	}
+	if opciones.NetReview != nil {
+		opciones.NetReview.Dispositions = dispositions
+	}
+	return opciones, nil
+}
+
 // ejecutarPrReview analiza la rama contra la base y muestra la matriz de
 // auditoría, el resumen y la decisión single/chain. Es dry-run: no publica
 // nada. Registra el evento pr-review al terminar.
@@ -285,11 +302,11 @@ func ejecutarPrReview(worktree string, args []string) {
 	}
 	// Standing human answers carry into the net audit (FU-6 unit A). A
 	// corrupt log fails closed rather than auditing as if no human answered.
-	if dispositions, derr := loadDispositionsForWorktree(worktree); derr != nil {
+	var derr error
+	opciones, derr = aplicarDisposicionesPrReview(opciones, worktree, loadDispositionsForWorktree)
+	if derr != nil {
 		fmt.Printf("? %v\n", derr)
 		os.Exit(1)
-	} else {
-		opciones.Dispositions = dispositions
 	}
 	base := opciones.Base
 	res, err := review.AnalizarRama(ledger, opciones)
@@ -937,15 +954,14 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		Parallel:                  cfg.Review.Parallel,
 		Store:                     blobStore,
 		ReviewTransportFactory:    reviewTransportFactory(cfg, worktree),
-		Dispositions:              branchDispositions,
+		NetReview:                 &review.NetReviewOptions{Intention: honestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs)), Dispositions: branchDispositions},
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		},
 		OnDimension: func(dim string) {
 			fmt.Fprintf(w, "  ⏳ %s …\n", dim)
 		},
-		OwnDiff:   stackOwnDiff(flags.parent, flags.chainPR),
-		NetReview: &review.NetReviewOptions{Intention: honestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs))},
+		OwnDiff: stackOwnDiff(flags.parent, flags.chainPR),
 	}))
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)

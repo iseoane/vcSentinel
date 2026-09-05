@@ -437,8 +437,8 @@ func TestEjecutarPrCreateCon_PasaDisposicionesARama(t *testing.T) {
 	if codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, deps); codigo != 0 {
 		t.Fatalf("codigo = %d, esperado 0: %s", codigo, salida.String())
 	}
-	if len(got.Dispositions) != 1 || got.Dispositions[0].Fingerprint != "fp-carry" {
-		t.Fatalf("opciones.Dispositions = %+v, want the standing answers for the net carry", got.Dispositions)
+	if got.NetReview == nil || len(got.NetReview.Dispositions) != 1 || got.NetReview.Dispositions[0].Fingerprint != "fp-carry" {
+		t.Fatalf("opciones.NetReview.Dispositions = %+v, want the standing answers for the net carry", got.NetReview)
 	}
 }
 
@@ -461,6 +461,35 @@ func TestEjecutarPrCreateCon_LogCorruptoNoAuditaRama(t *testing.T) {
 	}
 	if analizada {
 		t.Fatal("la rama no debe auditarse con el log corrupto: cero tokens")
+	}
+}
+
+// Unit A: the pr-review dispositions wiring reaches the net input so the
+// cross-SHA carry-over observes standing answers, and a corrupt log aborts
+// before the branch analysis spends review tokens.
+func TestAplicarDisposicionesPrReviewLlevaRespuestasAlNet(t *testing.T) {
+	disposiciones := []review.FindingDisposition{{
+		SHA: "abc1234", Fingerprint: "fp-carry", Status: review.StatusRefuted,
+		Reason: "verified safe", Actor: review.RefutationActorHuman, Source: review.DispositionSourceHuman,
+	}}
+	opciones, err := aplicarDisposicionesPrReview(
+		review.OpcionesRama{NetReview: &review.NetReviewOptions{Intention: "x"}},
+		"worktree",
+		func(string) ([]review.FindingDisposition, error) { return disposiciones, nil })
+	if err != nil {
+		t.Fatalf("loader error: %v", err)
+	}
+	if opciones.NetReview == nil || len(opciones.NetReview.Dispositions) != 1 {
+		t.Fatalf("net dispositions = %+v, want the standing answers", opciones.NetReview)
+	}
+}
+
+func TestAplicarDisposicionesPrReviewFallaConLogCorrupto(t *testing.T) {
+	intacta := review.OpcionesRama{NetReview: &review.NetReviewOptions{Intention: "x"}}
+	_, err := aplicarDisposicionesPrReview(intacta, "worktree",
+		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("disposiciones corruptas") })
+	if err == nil {
+		t.Fatal("corrupt log was swallowed: pr review would audit as if no human answered")
 	}
 }
 

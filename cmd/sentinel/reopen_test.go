@@ -247,12 +247,35 @@ func TestParseReopenArgsRejectsBadInput(t *testing.T) {
 		{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "x"},
 		{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "x", "--line-start", "2"},
 		{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "x", "--line-start", "3", "--line-end", "2"},
+		{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "x", "--line-start", "0", "--line-end", "2"},
+		{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "x", "--line-start", "dos", "--line-end", "2"},
 		{"--sha", "abc123", "--fingerprint", "fp-1", "--reason", "x", "--line-start", "2", "--line-end", "2", "--bogus", "y"},
 		{},
 	} {
 		if _, err := parseReopenArgs(args); err == nil {
 			t.Fatalf("invalid args were accepted: %v", args)
 		}
+	}
+}
+
+// A fixed finding can be reopened too: the gate is the cleared state, and a
+// fix that did not hold is exactly what reopen exists to report.
+func TestRunReopenReopensFixedFinding(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	fixed := refuteFichaFixture()
+	fixed.AggregatedFindings[0].Status = review.StatusFixed
+	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", fixed); err != nil {
+		t.Fatalf("save revision: %v", err)
+	}
+	if _, err := runReopen(deps, reopenValidOptions()); err != nil {
+		t.Fatalf("reopen of fixed finding rejected: %v", err)
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Status != review.StatusReopened {
+		t.Fatalf("dispositions = %+v, want one reopen", records)
 	}
 }
 
