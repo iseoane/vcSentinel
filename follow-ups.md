@@ -6,18 +6,27 @@ land.
 
 ## P1 — Now (protect verification trust and core business)
 
-- [ ] **Admission upgrade via native sandboxes** — codex reviews admitted with
-      `mode=read-only` stamped at session admission (verified write
-      containment, new exit code 5 on denied ops); claude via project sandbox
-      settings incl. `denyRead`; opencode stays grant-by-design declared.
-      Converts today's biggest containment gap into real enforcement for the
-      dominant use case (reviews). No blocking dependencies. Origin: 16 +
-      live probes.
-      Live-probed instance (2026-08-26): OpenCode `grep`/`glob` permission
-      rules match search expressions, not searched paths, so an injected
-      prompt inside committed content can point them at arbitrary host paths;
-      `read` is exactly confined (ask-fallback contract), and Claude confines
-      `Grep`/`Glob` by path, so the channel is adapter-specific.
+- [ ] **Exposed-credential detection, independent of `security_sensitive`.**
+      Decided 2026-09-02 (FU-11 in `docs/reingenieria/f0-deuda.md`): Sentinel
+      does own this, and the signal must not depend on the change profile.
+      A credential in prose reports an incident; `security_sensitive` schedules
+      a review. Two different questions, and today the second one answers for
+      both — so a credential committed into documentation produces no signal at
+      all, because the class filter correctly removes content evidence from
+      documentation paths.
+
+      Shape: a deterministic finding, produced without an agent, naming the path
+      and the matched shape, reported even when the review plan schedules
+      nothing. Not a review dimension, because a review that does not run must
+      not swallow it.
+
+      Do NOT implement it by widening `detectarSeguridadSensible`. FU-10
+      measured and narrowed that detector on purpose; widening it would put an
+      incident report back inside the mechanism that decides review cost, and
+      the two must not share a switch.
+
+      Its own work unit, not a repair: the reporting surface does not exist yet.
+      No blocking dependencies.
 
 ## P2 — Next (clear value, small effort)
 
@@ -146,28 +155,6 @@ land.
       does not reach the `runs` subcommand dispatcher. Origin: D3 / ticket 17
       follow-up found while auditing help surfaces post-A2.
 
-- [ ] **Exposed-credential detection, independent of `security_sensitive`.**
-      Decided 2026-09-02 (FU-11 in `docs/reingenieria/f0-deuda.md`): Sentinel
-      does own this, and the signal must not depend on the change profile.
-      A credential in prose reports an incident; `security_sensitive` schedules
-      a review. Two different questions, and today the second one answers for
-      both — so a credential committed into documentation produces no signal at
-      all, because the class filter correctly removes content evidence from
-      documentation paths.
-
-      Shape: a deterministic finding, produced without an agent, naming the path
-      and the matched shape, reported even when the review plan schedules
-      nothing. Not a review dimension, because a review that does not run must
-      not swallow it.
-
-      Do NOT implement it by widening `detectarSeguridadSensible`. FU-10
-      measured and narrowed that detector on purpose; widening it would put an
-      incident report back inside the mechanism that decides review cost, and
-      the two must not share a switch.
-
-      Its own work unit, not a repair: the reporting surface does not exist yet.
-      No blocking dependencies.
-
 ## P3 — Conditional / gated
 
 - [ ] **Windows validation of the acpx spawn chain** (`npx → node
@@ -201,6 +188,28 @@ No current trigger or use case; revisited only if circumstances change.
       partition reconnect, hostile-network tests. GATED on D4 landing AND an
       approved threat model; R10 dependency already satisfied. Origin:
       roadmap D5.
+
+- [ ] **Admission upgrade via native sandboxes** — codex reviews admitted with
+      `mode=read-only` stamped at session admission (verified write
+      containment, new exit code 5 on denied ops); claude via project sandbox
+      settings incl. `denyRead`; opencode stays grant-by-design declared.
+      Converts today's biggest containment gap into real enforcement for the
+      dominant use case (reviews). No blocking dependencies. Origin: 16 +
+      live probes.
+      Live-probed instance (2026-08-26): OpenCode `grep`/`glob` permission
+      rules match search expressions, not searched paths, so an injected
+      prompt inside committed content can point them at arbitrary host paths;
+      `read` is exactly confined (ask-fallback contract), and Claude confines
+      `Grep`/`Glob` by path, so the channel is adapter-specific.
+
+      **Deferred 2026-09-06.** Reclassified from P1 to parked: the enforcement
+      it asks for is adapter-native, so it cannot be built here — it can only
+      be requested from each adapter and verified. GATED on an adapter
+      exposing a path-scoped search permission. The gap stays documented and
+      unmitigated: an injected prompt inside committed content can still point
+      OpenCode's `grep`/`glob` at arbitrary host paths. Trigger to revisit: an
+      adapter ships path-scoped search rules, or reviews start running on
+      untrusted third-party content.
 
 ## Resolved
 
