@@ -553,6 +553,17 @@ violates the AGENTS.md language policy for new artifacts:
 Scope: sweep + update every test that pins those literals. Coordinate with
 FU-2 because both touch the same files.
 
+#### Accepted, not repaired (2026-09-05)
+
+Parked by decision. The coordination this entry waits for is gone: FU-2 was
+accepted as recorded-not-repaired the same day, so nothing is holding the sweep
+back except priority. It is policy debt with no functional consequence — the
+strings are correct, only in the wrong language — and it can be done in pieces
+at any time.
+
+Trigger to revisit: any unit that already opens one of the listed files, or a
+decision to make the policy externally visible.
+
 ### FU-2: oversized files split (>500-line guardian threshold)
 
 Pre-existing debt recorded with guardian bypasses across multiple units:
@@ -655,6 +666,17 @@ seam T9.1b had just built rather than as a defect in it.
 Target: a provider-neutral rich result contract that lets one descent serve
 both paths. Doing it inside T9.1b would have rewritten the seam under test
 while its own correctness was still being established.
+
+#### Accepted, not repaired (2026-09-05)
+
+Parked by decision. Nothing is broken: the seam works, and the debt is that the
+domain engine has to change for each provider's result shape, which reverses the
+intended dependency direction. That cost is paid only when a provider is added.
+
+Restructuring now would rewrite the most delicate piece of the system for no
+observable benefit. Trigger to revisit: the unit that adds a third adapter kind
+does this restructuring as part of its own work, rather than paying for it
+twice.
 
 A fourth item joined the same family when the unavailable reason started
 leading with the cause the provider reported. `internal/review/diagnostico.go`
