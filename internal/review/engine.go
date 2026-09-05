@@ -1022,6 +1022,12 @@ func stamparSourceReview(hallazgos []Hallazgo) {
 }
 
 func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente, verifier ModelVerifier, profile string) {
+	// No model-claimed true survives this function: the flag is cleared on
+	// every finding first, then set only from the outside verifier below.
+	// Otherwise a model injecting producer.model_verified:true into its
+	// JSON would land a false true in the ledger on any path where the
+	// effective identity is unavailable and the stamp returns early.
+	limpiarModeloVerificado(hallazgos)
 	reporta, ok := agente.(agentadapter.ReportaAgenteEfectivo)
 	if !ok {
 		return
@@ -1053,6 +1059,21 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente, verifi
 			evidencias[j] = evidencia
 		}
 		hallazgos[i].EvidenceSet = &FindingEvidenceSet{Values: evidencias}
+	}
+}
+
+// limpiarModeloVerificado drops a model-claimed verified flag from every
+// producer in play, keeping every other field. The stamp below is the only
+// writer of true, and only from the outside verifier.
+func limpiarModeloVerificado(hallazgos []Hallazgo) {
+	for i := range hallazgos {
+		hallazgos[i].Producer.ModeloVerificado = false
+		if hallazgos[i].EvidenceSet == nil {
+			continue
+		}
+		for j := range hallazgos[i].EvidenceSet.Values {
+			hallazgos[i].EvidenceSet.Values[j].Producer.ModeloVerificado = false
+		}
 	}
 }
 

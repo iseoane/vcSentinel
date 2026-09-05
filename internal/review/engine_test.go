@@ -537,8 +537,10 @@ func TestAuditarConAgenteStampsSourceReviewEvenIfModelClaimsOtherwise(t *testing
 	}
 }
 
-func TestStamparProductorEfectivoPreservesOriginalProducerWhenUnavailable(t *testing.T) {
-	original := Productor{Agente: "reported", Binario: "reported", Modelo: "reported-model", Esfuerzo: "low", ModeloVerificado: true}
+func TestProducerStampClearsModelClaimedVerifiedWhenUnavailable(t *testing.T) {
+	claimed := Productor{Agente: "reported", Binario: "reported", Modelo: "reported-model", Esfuerzo: "low", ModeloVerificado: true}
+	cleared := claimed
+	cleared.ModeloVerificado = false
 	for _, tt := range []struct {
 		name   string
 		agente AuditorAgente
@@ -549,21 +551,38 @@ func TestStamparProductorEfectivoPreservesOriginalProducerWhenUnavailable(t *tes
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			hallazgos := []Hallazgo{{
-				Producer: original,
+				Producer: claimed,
 				EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{{
-					Producer: original, Evidence: "reported evidence", Confidence: 0.6,
+					Producer: claimed, Evidence: "reported evidence", Confidence: 0.6,
 				}}},
 			}}
 
 			stamparProductorEfectivo(hallazgos, tt.agente, nil, "")
 
-			if got := hallazgos[0].Producer; got != original {
-				t.Errorf("producer = %#v, expected original %#v", got, original)
+			if got := hallazgos[0].Producer; got != cleared {
+				t.Errorf("producer = %#v, expected claim cleared to %#v", got, cleared)
 			}
-			if got := hallazgos[0].EvidenceSet.Values[0].Producer; got != original {
-				t.Errorf("evidence producer = %#v, expected original %#v", got, original)
+			if got := hallazgos[0].EvidenceSet.Values[0].Producer; got != cleared {
+				t.Errorf("evidence producer = %#v, expected claim cleared to %#v", got, cleared)
 			}
 		})
+	}
+}
+
+func TestProducerStampClearsClaimEvenWithMatchingVerifier(t *testing.T) {
+	// Without an effective identity the verified claim is unanchored: the
+	// verifier may confirm the profile while no one can say who served
+	// the answer, so the flag stays false and only the claim is dropped.
+	claimed := Productor{Agente: "reported", ModeloVerificado: true}
+	hallazgos := []Hallazgo{{Producer: claimed}}
+
+	stamparProductorEfectivo(hallazgos, &agenteFake{}, modelVerifierStub{verified: map[string]bool{"normal": true}}, "normal")
+
+	if hallazgos[0].Producer.ModeloVerificado {
+		t.Error("ModeloVerificado survived without effective identity despite a matching verifier")
+	}
+	if hallazgos[0].Producer.Agente != "reported" {
+		t.Errorf("producer = %#v, want every other field preserved", hallazgos[0].Producer)
 	}
 }
 
