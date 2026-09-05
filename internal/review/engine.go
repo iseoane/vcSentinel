@@ -1027,7 +1027,7 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente, verifi
 	// Otherwise a model injecting producer.model_verified:true into its
 	// JSON would land a false true in the ledger on any path where the
 	// effective identity is unavailable and the stamp returns early.
-	limpiarModeloVerificado(hallazgos)
+	clearModelVerified(hallazgos)
 	reporta, ok := agente.(agentadapter.ReportaAgenteEfectivo)
 	if !ok {
 		return
@@ -1062,10 +1062,10 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente, verifi
 	}
 }
 
-// limpiarModeloVerificado drops a model-claimed verified flag from every
+// clearModelVerified drops a model-claimed verified flag from every
 // producer in play, keeping every other field. The stamp below is the only
 // writer of true, and only from the outside verifier.
-func limpiarModeloVerificado(hallazgos []Hallazgo) {
+func clearModelVerified(hallazgos []Hallazgo) {
 	for i := range hallazgos {
 		hallazgos[i].Producer.ModeloVerificado = false
 		if hallazgos[i].EvidenceSet == nil {
