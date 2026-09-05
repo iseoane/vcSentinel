@@ -19,13 +19,11 @@ primera tarea de F1 que rompa el build deja el repositorio sin poder commitear.
 
 ## T0.0 — Blindar el guardián *(manual, no delegable)*
 
-
 |             |                       |
 | ----------- | --------------------- |
 | Ejecuta     | Usuario / orquestador |
 | Presupuesto | 0 líneas de código    |
 | Depende de  | —                     |
-
 
 **Objetivo**: que el hook `pre-commit` deje de apuntar al binario en desarrollo.
 
@@ -48,12 +46,10 @@ build.bat                    → no altera el comportamiento del hook
 
 ## T0.1 — Fragmentar y commitear el trabajo pendiente *(manual)*
 
-
 |            |                       |
 | ---------- | --------------------- |
 | Ejecuta    | Usuario / orquestador |
 | Depende de | T0.0                  |
-
 
 702 líneas pendientes con las correcciones B1/B2/B3/B9 y su documentación.
 
@@ -69,14 +65,12 @@ build.bat                    → no altera el comportamiento del hook
 
 ## T0.2 — H4: registrar el agente y el modelo que realmente respondieron
 
-
 |             |                                                                      |
 | ----------- | -------------------------------------------------------------------- |
 | Agente      | sonnet / xhigh                                                       |
 | Presupuesto | ≤ 200 líneas                                                         |
 | Depende de  | T0.1                                                                 |
 | Commit      | `fix(review): registrar el agente efectivo en la ficha de auditoria` |
-
 
 **Contexto**
 
@@ -109,14 +103,12 @@ atómica de `guardarFicha`.
 
 ## T0.3 — H6: leer el token de GitHub sin eco de terminal
 
-
 |             |                                                              |
 | ----------- | ------------------------------------------------------------ |
 | Agente      | sonnet / xhigh                                               |
 | Presupuesto | ≤ 120 líneas                                                 |
 | Depende de  | T0.1                                                         |
 | Commit      | `fix(setup): leer el token de GitHub sin eco en el terminal` |
-
 
 **Contexto**
 
@@ -140,14 +132,12 @@ por la salida estándar.
 
 ## T0.4 — B4/O2: unificar umbrales y semántica de «líneas»
 
-
 |             |                                                                   |
 | ----------- | ----------------------------------------------------------------- |
 | Agente      | sonnet / xhigh                                                    |
 | Presupuesto | ≤ 180 líneas                                                      |
 | Depende de  | T0.1                                                              |
 | Commit      | `refactor(git): umbrales compartidos y semantica unica de lineas` |
-
 
 **Contexto**
 
@@ -179,14 +169,12 @@ por la salida estándar.
 
 ## T0.5 — H1/B6: rechazar argumentos desconocidos
 
-
 |             |                                                                           |
 | ----------- | ------------------------------------------------------------------------- |
 | Agente      | sonnet / xhigh                                                            |
 | Presupuesto | ≤ 150 líneas                                                              |
 | Depende de  | T0.1                                                                      |
 | Commit      | `fix(cli): rechazar argumentos desconocidos en los subcomandos sin flags` |
-
 
 **Contexto**
 
@@ -209,14 +197,12 @@ comportamiento deseado.
 
 ## T0.6 — Actualizar la documentación del proyecto
 
-
 |             |                                                                 |
 | ----------- | --------------------------------------------------------------- |
 | Agente      | sonnet / xhigh                                                  |
 | Presupuesto | ≤ 200 líneas                                                    |
 | Depende de  | T0.2 … T0.5                                                     |
 | Commit      | `docs: actualizar CLAUDE.md y AGENTS.md a la aplicacion actual` |
-
 
 **Contexto**
 
@@ -586,6 +572,37 @@ files twice.
 Moved PR orchestration from `cmd/sentinel/comandos_pr.go` (1045 lines) into new `internal/app/pr` (`review.go` 303, `create.go` 350, `publish.go` 151, `wiring.go` 79); `cmd/sentinel/comandos_pr.go` is now 480 thin lines (flag parsing plus dispatch). Pure mechanical movement, no logic change; existing pr tests pass unmodified. Hazard cleared before moving: 21 live block fichas cite `internal/git/snapshot.go`, `cmd/sentinel/comandos_runs.go`, and siblings — zero cite `comandos_pr.go` — and no `dispositions.jsonl` exists, so the move orphans no live block and no standing disposition. `review.Fingerprint` inputs, the ledger, and `review.IsBlocking` are untouched.
 
 Deliberately untouched (11 files still over 500): `internal/review/engine.go`, `cmd/sentinel/main.go`, `internal/review/finding.go`, `internal/store/execution_events.go`, `cmd/sentinel/comandos_review.go`, `internal/metrics/metrics_executions.go`, `internal/tui/art/overview.go`, `internal/config/parser.go`, `internal/review/ledger.go`, `internal/review/renderer.go`, `internal/tui/control/control.go`. A partial, verified split is the correct outcome; the rest stays for future one-subcommand units per C6.
+
+#### Accepted, not repaired (2026-09-05)
+
+The remaining oversized files stay as they are. This is a decision, not a
+pause: the split is mechanical and carries no design risk, but it is the only
+item in this register whose cost is large and whose benefit is entirely
+internal, so it does not earn priority over work with a correctness or security
+consequence.
+
+Corrected count: 22 production files exceed 500 lines, not the 11 listed above.
+That list named only the files the pr unit deliberately left behind, and it was
+never the full inventory. The worst are `internal/review/engine.go` (1245) and
+`cmd/sentinel/main.go` (1179).
+
+The blocker anyone resuming this must clear first. `review.Fingerprint` hashes
+Symbol-or-File and NO finding in this repository populates `Simbolo` (measured:
+0 of 1174), so every fingerprint falls back to the file path. Moving code out of
+a file changes the fingerprint of every finding anchored to it, and live blocks
+on that file become unaddressable: still in the ledger, no longer referenceable,
+impossible to refute because `refute --fingerprint` needs the exact value. The
+pr split was safe only because zero live block fichas cited `comandos_pr.go` —
+that was luck, not procedure.
+
+Measured 2026-09-05 for the two obvious next candidates:
+`cmd/sentinel/comandos_review.go` — 19 fichas cite it, 11 findings confirmed +
+CRITICAL and 1 CRITICAL with no status, all twelve blocking under
+`review.IsBlocking`. `cmd/sentinel/main.go` — 99 fichas cite it.
+
+Trigger to revisit: a file's size actually obstructs a change someone needs to
+make, or the fingerprint gains a symbol component that survives a move. Resume
+with a file carrying few live blocks, never with `main.go`.
 
 ---
 
@@ -1139,7 +1156,7 @@ Consequence: wiring the flattened fields through would launder 374
 declarations into reported observations — the exact absence-as-evidence
 error. No behavior change; T9.4a's verdict stands in both branches.
 
-Addendum 2026-09-06: this verdict does not mean observed identity is
+Addendum 2026-09-05: this verdict does not mean observed identity is
 unobtainable for CLI adapters. `internal/modelprobe` already exists —
 "verifies the model that an agent reports for a session" — and is wired into
 production at `internal/app/pr/create.go:63`, `wiring.go:37,41`,
@@ -1667,6 +1684,17 @@ collect it either.
 Priority: not blocking. It is a narrower failure than the four this sequence
 closed, and unlike them it is recorded rather than mistaken for fixed.
 
+#### Accepted, not repaired (2026-09-05)
+
+The residue stands, unfixed and understood. Both available fixes cost more than
+the defect: `git fsck`-level verification is disproportionate per purge and per
+SHA, and refusing to read exit 1 as absence leaks the fichas of gc-collected
+commits forever. The exposure needs object-level corruption that leaves `HEAD`
+readable, in a repository whose ledger holds a ficha for the damaged commit.
+
+Trigger to revisit: an observed instance, or a cheaper way to distinguish a
+collected object from a corrupt one.
+
 ### FU-16: the ledger listing reports an unreadable directory as an empty one
 
 Recorded 2026-09-02, immediately after FU-12's purge closed, from noticing that
@@ -1855,7 +1883,6 @@ Replaces the truncated `dims[].reason` quoting for this class: the raw value now
 
 Deviation: normalization wording uses English per language policy while sibling legacy normalizations stay Spanish; no behavior impact.
 
-
 ### Correction to `926649b`'s commit message
 
 Recorded 2026-09-03. `926649b` says "switch the reviewer back to opencode" and
@@ -1882,7 +1909,6 @@ a rewrite.
 The reviewer caught it and its finding was accurate. It arrived as
 `unavailable`/`schema_invalid` rather than as the `block` it was, which is FU-19.
 
-
 ### Correction to `5bd7c16`'s commit message
 
 Recorded 2026-09-03. `5bd7c16` says `chore(slice): bypass IA for semantic
@@ -1904,7 +1930,6 @@ work.
 Corrected here rather than by rewriting, for the same reason as
 `926649b` above: the commit already carries review records keyed by its
 SHA, and this repository has lost review evidence to rewrites before.
-
 
 ### FU-20: semantic failures on success-terminal runs contradict the stream
 
@@ -1937,3 +1962,15 @@ not the retention path.
 Trigger: revisit when contradicted runs accumulate (watch the
 `snapshot contradicts terminal success` keep reason in prune reports) or
 when the review transport next changes its finalization.
+
+#### Accepted, not repaired (2026-09-05)
+
+Nothing further moves: the T9.5 agreement guard (`PruneReasonContradiction`)
+already stops collection of contradicted runs, so the defect no longer
+accumulates. What stays open is a producer question, and answering it belongs to
+the review-transport owners rather than to this register.
+
+Trigger to revisit is unchanged: contradicted runs accumulating (watch the
+`snapshot contradicts terminal success` keep reason in prune reports), or the
+review transport changing its finalization.
+

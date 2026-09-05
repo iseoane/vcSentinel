@@ -77,7 +77,7 @@ land.
       fixes print an exact command (`sentinel init`, `sentinel upgrade`) —
       third-party tools report the failed `exec.LookPath` plus what must
       resolve, since their install commands are environment-specific.
-      Follow-up fix (2026-09-06, `fix/graph-shebang`): the npm codegraph
+      Follow-up fix (2026-09-05, `fix/graph-shebang`): the npm codegraph
       launcher is a `#!/usr/bin/env node` script, so the sanitized child PATH
       (tool directory only) failed shebang resolution with exit 127 on every
       invocation — review-context enrichment was silently skipping in
@@ -85,7 +85,7 @@ land.
       also carries the interpreter's directory (parsed from the shebang,
       resolved in the parent); no parent variables are inherited. Verified
       live: all eight codegraph rows report real values with a real index.
-      Follow-up fix (2026-09-06, `fix/doctor-unknown`): an unrunnable
+      Follow-up fix (2026-09-05, `fix/doctor-unknown`): an unrunnable
       `codegraph status` rendered as four failed conditions with four wrong
       remedies. Unprobed conditions are now UNKNOWN with no remedy
       (`Condition.Unknown`; unavailable vs unparsable stay distinct in the
@@ -96,7 +96,7 @@ land.
       review share that env, so the preflight predicts what review sees. A
       shell can disagree only through global excludes (HOME is unset in the
       child); inheriting them would break containment, so nothing changed.
-      Follow-up fix (2026-09-06, `fix/graph-excludes`): the predicted
+      Follow-up fix (2026-09-05, `fix/graph-excludes`): the predicted
       divergence above was the live defect — the child saw
       `.claude/settings.local.json` (ignored only by the XDG default
       `~/.config/git/ignore`) as untracked and the dirty-worktree gate
@@ -108,7 +108,7 @@ land.
       matching parent git; `.git/info/exclude` verified working unaided.
       Live proof: `doctor` reports `worktree_clean: worktree clean` with the
       file present, and a real `Contexto` run reaches past the dirty gate.
-      Probe-cost decision (2026-09-06, `fix/doctor-probe`): the per-agent
+      Probe-cost decision (2026-09-05, `fix/doctor-probe`): the per-agent
       probe stays UNCONDITIONAL — no flag, no `--version` fallback. A green
       `--version` with a misconfigured model tells the operator nothing, and
       the check that prevents ten-minute timeouts must not silently stop
@@ -123,7 +123,7 @@ land.
       `publish.go:101-103`, `review.go:103`,
       `cmd/sentinel/comandos_gate.go:135,163`) feeding `ModeloVerificado`
       (`internal/review/finding.go:167`) — yet the live ledger holds zero
-      `model_verified:true` (325 review files scanned 2026-09-06; the only
+      `model_verified:true` (325 review files scanned 2026-09-05; the only
       true hits repo-wide are fixture copies under `snapshots/`). Open
       question, not investigated: is the prober never invoked on those paths,
       or invoked and always failing? Origin: FU-9 review.
@@ -202,7 +202,7 @@ No current trigger or use case; revisited only if circumstances change.
       `read` is exactly confined (ask-fallback contract), and Claude confines
       `Grep`/`Glob` by path, so the channel is adapter-specific.
 
-      **Deferred 2026-09-06.** Reclassified from P1 to parked: the enforcement
+      **Deferred 2026-09-05.** Reclassified from P1 to parked: the enforcement
       it asks for is adapter-native, so it cannot be built here — it can only
       be requested from each adapter and verified. GATED on an adapter
       exposing a path-scoped search permission. The gap stays documented and
