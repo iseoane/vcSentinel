@@ -223,6 +223,9 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 // precedence is by fingerprint: a carried answer whose fingerprint already
 // has a head-SHA answer is dropped, so a stale intermediate answer can never
 // override the fresher head answer inside the engine's last-wins overlay.
+// The empty-fingerprint guard below is defense in depth only:
+// carriedNetDispositions already drops empty-fingerprint carries, so in
+// production every carried fingerprint is non-empty on entry here.
 func mergeNetDispositionsForEngine(head, carried []FindingDisposition, to string) []FindingDisposition {
 	out := make([]FindingDisposition, 0, len(head)+len(carried))
 	out = append(out, head...)
