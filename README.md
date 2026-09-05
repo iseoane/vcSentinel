@@ -12,7 +12,7 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 
 | Comando | Qué hace |
 |---|---|
-| `sentinel check` | Audita el volumen de líneas del worktree: `PEQUENO`, `PUNTO_OPTIMO` (200–400) o `CRÍTICO` (>400, exit 1). |
+| `sentinel check` | Audita el volumen de líneas del worktree: `PEQUENO`, `PUNTO_OPTIMO` (200–400) o `CRÍTICO` (>400). Es advisory y sale con exit 0; el límite lo impone `sentinel check --staged`, que rechaza con exit 1 más de 400 líneas authored en stage. |
 | `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
 | `sentinel slice plan` | Propone el plan **sin commitear nada**. Con `--json` emite el plan completo; exit 3 si hay decisiones que solo tú puedes responder. |
 | `sentinel slice apply` | Ejecuta un plan ya aprobado: `--plan plan.json --answers respuestas.json`. |
