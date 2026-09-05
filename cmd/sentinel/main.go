@@ -193,7 +193,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'lint', 'rebase', 'status', 'metrics', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'gate', 'lint', 'rebase', 'status', 'metrics', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
 		os.Exit(1)
 	}
 }
@@ -212,7 +212,7 @@ func requireInicializado(worktreeActual string) {
 
 func imprimirUso() {
 	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | refute | accept | reopen | lint | rebase | status | metrics | explain | pr | runs | tui | consentimiento-diff | install | upgrade | uninstall]")
+	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | refute | accept | reopen | gate | lint | rebase | status | metrics | explain | pr | runs | tui | consentimiento-diff | install | upgrade | uninstall]")
 }
 
 // imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
@@ -228,8 +228,8 @@ func construirAyuda() string {
 	var b strings.Builder
 	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
 	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             refute | accept | reopen | lint | rebase | status | metrics |\n")
-	b.WriteString("             explain | pr | runs | tui | consentimiento-diff |\n")
+	b.WriteString("             refute | accept | reopen | gate | lint | rebase | status |\n")
+	b.WriteString("             metrics | explain | pr | runs | tui | consentimiento-diff |\n")
 	b.WriteString("             install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcomandos:\n")
 	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
