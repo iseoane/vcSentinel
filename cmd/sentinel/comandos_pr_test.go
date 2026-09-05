@@ -347,13 +347,68 @@ func TestEjecutarPrCreateCon_LeeDisposicionesDelSeam(t *testing.T) {
 	if codigo != 1 {
 		t.Fatalf("codigo = %d, esperado 1 (el log corrupto falla cerrado)", codigo)
 	}
+	// The injected message must reach the output: later failure paths
+	// (template write, publish) also exit 1, so the code alone cannot
+	// tell the corrupt-log refusal apart from a downstream failure.
+	if !strings.Contains(salida.String(), "disposiciones corruptas") {
+		t.Errorf("la salida debe mostrar el error inyectado del seam, got %q", salida.String())
+	}
+}
+
+// FU-6: injected standing answers must drive the advisory overlay: a block
+// ficha whose only critical is human-refuted publishes without the
+// semantic warning.
+func TestEjecutarPrCreateCon_DisposicionInyectadaSuprimeAviso(t *testing.T) {
+	fichaBlock := review.Ficha{SHA: "abc1234", Revisions: []review.Revision{{
+		Result: review.VerdictBlock,
+		AggregatedFindings: []review.Hallazgo{{
+			Dimension: review.DimSecurity, Severity: review.SevCritical,
+			Status: review.StatusConfirmed, Fingerprint: "fp-1",
+			Description: "critical refuted by the injected answer",
+			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+		}},
+	}}}
+	var salida bytes.Buffer
+	codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
+		cargarConfig:  func(string) (config.Config, error) { return config.Config{}, nil },
+		obtenerGitDir: func() (string, error) { return "gitdir", nil },
+		ejecutarValidacion: func(string, []string, validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analizarRama: func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+			return &review.ResultadoRama{Fichas: []review.Ficha{fichaBlock}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+		},
+		verificar: func(string, string, config.Config, *modelprobe.Verificador) review.VerificacionPlantilla {
+			return review.VerificacionPlantilla{Modo: "omitido"}
+		},
+		publicar:        func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
+		registrarEvento: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		leerDisposiciones: func(string) ([]review.FindingDisposition, error) {
+			return []review.FindingDisposition{{
+				SHA: "abc1234", Fingerprint: "fp-1", Status: review.StatusRefuted,
+			}}, nil
+		},
+	})
+	if codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0 (el bloqueante refutado no avisa ni bloquea): %s", codigo, salida.String())
+	}
+	if strings.Contains(salida.String(), "AVISO") {
+		t.Errorf("el bloqueante refutado no debe avisar: %s", salida.String())
+	}
 }
 
 // FU-6: the production deps must wire the real disposition loader, or pr
 // create would publish as if no human ever answered.
 func TestDepsPrCreateReales_WiresDispositionLoader(t *testing.T) {
-	if depsPrCreateReales().leerDisposiciones == nil {
+	leer := depsPrCreateReales().leerDisposiciones
+	if leer == nil {
 		t.Fatal("depsPrCreateReales debe cablear leerDisposiciones")
+	}
+	// Identity, not just presence: the wired loader resolves the real git
+	// common dir, so a bogus worktree must fail rather than report no
+	// standing answers.
+	if _, err := leer(filepath.Join(t.TempDir(), "no-existe")); err == nil {
+		t.Error("el loader cableado debe fallar con un worktree inexistente, no devolver vacío")
 	}
 }
 
