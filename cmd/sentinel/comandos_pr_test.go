@@ -411,6 +411,59 @@ func TestDepsPrCreateReales_WiresDispositionLoader(t *testing.T) {
 	}
 }
 
+// Unit A: standing answers must reach the branch analysis so the net audit
+// can carry them across SHAs, not only drive the advisory overlay after it.
+func TestEjecutarPrCreateCon_PasaDisposicionesARama(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	disposiciones := []review.FindingDisposition{{
+		SHA: "abc1234", Fingerprint: "fp-carry", Status: review.StatusRefuted,
+		Reason: "verified safe", Actor: review.RefutationActorHuman, Source: review.DispositionSourceHuman,
+	}}
+	var got review.OpcionesRama
+	deps := depsPrCreateRamaVerde(fichaOK, func(string) ([]review.FindingDisposition, error) {
+		return disposiciones, nil
+	})
+	deps.analizarRama = func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+		return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+	}
+	// Capture the options the command hands to the analysis.
+	orig := deps.analizarRama
+	deps.analizarRama = func(worktree string, o review.OpcionesRama) (*review.ResultadoRama, error) {
+		got = o
+		return orig(worktree, o)
+	}
+	var salida bytes.Buffer
+	if codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, deps); codigo != 0 {
+		t.Fatalf("codigo = %d, esperado 0: %s", codigo, salida.String())
+	}
+	if len(got.Dispositions) != 1 || got.Dispositions[0].Fingerprint != "fp-carry" {
+		t.Fatalf("opciones.Dispositions = %+v, want the standing answers for the net carry", got.Dispositions)
+	}
+}
+
+// Unit A: a corrupt dispositions log must fail before the branch analysis
+// spends review tokens, not after it.
+func TestEjecutarPrCreateCon_LogCorruptoNoAuditaRama(t *testing.T) {
+	fichaOK := fichaCreateAyuda("abc1234", review.VerdictOK,
+		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
+	analizada := false
+	deps := depsPrCreateRamaVerde(fichaOK, func(string) ([]review.FindingDisposition, error) {
+		return nil, errors.New("disposiciones corruptas")
+	})
+	deps.analizarRama = func(string, review.OpcionesRama) (*review.ResultadoRama, error) {
+		analizada = true
+		return &review.ResultadoRama{Fichas: []review.Ficha{fichaOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
+	}
+	var salida bytes.Buffer
+	if codigo := ejecutarPrCreateCon(&salida, "worktree", []string{"--force", "--reason", "x"}, deps); codigo != 1 {
+		t.Fatalf("codigo = %d, esperado 1 (log corrupto falla cerrado)", codigo)
+	}
+	if analizada {
+		t.Fatal("la rama no debe auditarse con el log corrupto: cero tokens")
+	}
+}
+
 // FU-6: positive anchor for the suppression test above: an unrefuted block
 // must render the semantic warning with the AVISO token, so a change that
 // drops the token fails here instead of silently vacating the negative

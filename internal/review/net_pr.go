@@ -184,7 +184,20 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	if opts.ReviewTransportFactory != nil {
 		transport = opts.ReviewTransportFactory(to, safePaths)
 	}
-	return &NetReview{From: from, To: to, Context: history, Audit: AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
+	// Standing answers recorded against the head apply SHA-bound inside the
+	// engine. Answers recorded against intermediate commits carry by exact
+	// fingerprint plus evidence revalidation at the head (below): they are
+	// cloned to the head SHA for the engine input so the single SHA-bound
+	// overlay, aggregation, and verdict downgrade stay in one place. The
+	// clone is engine input only; the persisted log keeps the origin SHA.
+	carried := carriedNetDispositions(opts.Dispositions, revisions, to)
+	engineDispositions := FilterDispositionsForSHA(opts.Dispositions, to)
+	for _, disp := range carried {
+		clone := disp
+		clone.SHA = to
+		engineDispositions = append(engineDispositions, clone)
+	}
+	audit := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
 		SHA: to, Mensaje: strings.TrimSpace(o.Intention), Diff: diff,
 		Bundles: plan.Bundles, RutasContexto: safePaths,
 		Respuestas: opts.Respuestas, PerfilOverride: opts.PerfilOverride,
@@ -193,7 +206,71 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 		ReviewTransport:        transport,
 		NetUnitLabel:           "pull request (ONE NET diff " + from + ".." + to + ")",
 		NetUnitHistory:         framed.String(),
-	})}, nil
+		Dispositions:           engineDispositions,
+	})
+	return &NetReview{From: from, To: to, Context: history, Audit: audit}, nil
+}
+
+// carriedNetDispositions selects the standing human answers recorded against
+// the commits in range that may clear a fresh net finding at the head.
+// Matching is by exact stable fingerprint only; a disposition whose
+// fingerprint matches nothing clears nothing, and an ambiguous one clears
+// nothing (ApplyDispositionToResult enforces both inside the engine). Only
+// answers whose evidence still holds at the head are carried: the file must
+// resolve through the same safe-path sanitizer, read at the head, and still
+// contain the recorded evidence under the same normalization the fingerprint
+// uses. Anything unverifiable is dropped, so the net re-reports instead of
+// clearing on incomplete knowledge. Dispositions recorded directly against
+// the head are excluded: the engine already applies them SHA-bound.
+func carriedNetDispositions(dispositions []FindingDisposition, revisions []Ficha, head string) []FindingDisposition {
+	if len(dispositions) == 0 {
+		return nil
+	}
+	inRange := make(map[string]struct{}, len(revisions))
+	for _, record := range revisions {
+		if strings.TrimSpace(record.SHA) != "" {
+			inRange[record.SHA] = struct{}{}
+		}
+	}
+	var out []FindingDisposition
+	for _, disp := range dispositions {
+		if strings.TrimSpace(disp.Fingerprint) == "" {
+			continue
+		}
+		if _, ok := inRange[disp.SHA]; !ok {
+			continue
+		}
+		if disp.SHA == head {
+			continue
+		}
+		if !dispositionEvidenceHoldsAtHead(disp, head) {
+			continue
+		}
+		out = append(out, disp)
+	}
+	return out
+}
+
+// dispositionEvidenceHoldsAtHead revalidates one recorded answer against the
+// net head snapshot. It mirrors the evidence-containment check the ledger
+// uses to discard stale evidence (motivoDescarteEvidencia): normalized
+// recorded evidence must still appear in the normalized file content at the
+// head. A moved line still carries because the search spans the whole file;
+// removed evidence, a deleted file, or an unreadable snapshot does not.
+func dispositionEvidenceHoldsAtHead(disp FindingDisposition, head string) bool {
+	path := strings.TrimSpace(disp.Path)
+	evidence := strings.TrimSpace(disp.Evidence)
+	if path == "" || evidence == "" {
+		return false
+	}
+	if len(RutasRevisionSeguras([]string{path})) != 1 {
+		return false
+	}
+	content, present, err := git.ReadPathAtRevision(head, path)
+	if err != nil || !present {
+		return false
+	}
+	return strings.Contains(normalizarParaComparar(content), normalizarParaComparar(evidence))
 }
 
 const netAxes = `Evaluate explicitly beyond any per-commit review:

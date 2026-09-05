@@ -95,6 +95,12 @@ type OpcionesRama struct {
 	// significa que no se aplican a ningún commit: fail-safe explícito en vez
 	// de asumir que siempre es el último elemento de shas.
 	HallazgosDeterministasSHA string
+	// Dispositions carries the append-only human answers recorded against the
+	// commits in range (FU-6 follow-up unit A). Per-commit audits stay
+	// SHA-bound; only the net review carries them across SHAs, by exact
+	// fingerprint plus evidence revalidation at the net head. Empty by
+	// default: callers without human answers behave exactly as before.
+	Dispositions []FindingDisposition
 	// OwnDiff (T8.2, internal input) activates stacked own-diff semantics:
 	// only merge_base(parent, HEAD)..HEAD is reviewed and findings from
 	// already-audited context commits come back as read-only inherited

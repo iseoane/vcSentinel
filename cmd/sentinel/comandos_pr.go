@@ -283,6 +283,14 @@ func ejecutarPrReview(worktree string, args []string) {
 	if err != nil {
 		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
 	}
+	// Standing human answers carry into the net audit (FU-6 unit A). A
+	// corrupt log fails closed rather than auditing as if no human answered.
+	if dispositions, derr := loadDispositionsForWorktree(worktree); derr != nil {
+		fmt.Printf("? %v\n", derr)
+		os.Exit(1)
+	} else {
+		opciones.Dispositions = dispositions
+	}
 	base := opciones.Base
 	res, err := review.AnalizarRama(ledger, opciones)
 	if err != nil {
@@ -905,6 +913,20 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 			fmt.Fprintf(w, "⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
 		}
 	}
+	// Standing human answers drive every rendered and advisory finding, and
+	// carry into the net audit (FU-6 unit A). A corrupt log fails closed
+	// before spending review tokens rather than auditing as if no human
+	// answered. A nil seam means no standing answers, the fixture older
+	// tests build; production always wires the real loader.
+	var branchDispositions []review.FindingDisposition
+	if deps.leerDisposiciones != nil {
+		var err error
+		branchDispositions, err = deps.leerDisposiciones(worktree)
+		if err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
+	}
 	res, err := deps.analizarRama(worktree, opcionesRamaConRefutador(cfg, verificadorModelo, review.OpcionesRama{
 		Base:                      base,
 		SoloPendientes:            false,
@@ -915,6 +937,7 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 		Parallel:                  cfg.Review.Parallel,
 		Store:                     blobStore,
 		ReviewTransportFactory:    reviewTransportFactory(cfg, worktree),
+		Dispositions:              branchDispositions,
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, shaCorto(sha))
 		},
@@ -927,19 +950,6 @@ func ejecutarPrCreateCon(w io.Writer, worktree string, args []string, deps depsP
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
-	}
-	// Standing human answers drive every rendered and advisory finding. A
-	// corrupt log fails closed rather than pretending no human answered.
-	// A nil seam means no standing answers, the fixture older tests build;
-	// production always wires the real loader through depsPrCreateReales.
-	var branchDispositions []review.FindingDisposition
-	if deps.leerDisposiciones != nil {
-		var err error
-		branchDispositions, err = deps.leerDisposiciones(worktree)
-		if err != nil {
-			fmt.Fprintf(w, "? %v\n", err)
-			return 1
-		}
 	}
 
 	if len(res.Fichas) == 0 {
