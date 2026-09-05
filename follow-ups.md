@@ -76,6 +76,17 @@ land.
       also carries the interpreter's directory (parsed from the shebang,
       resolved in the parent); no parent variables are inherited. Verified
       live: all eight codegraph rows report real values with a real index.
+      Follow-up fix (2026-09-06, `fix/doctor-unknown`): an unrunnable
+      `codegraph status` rendered as four failed conditions with four wrong
+      remedies. Unprobed conditions are now UNKNOWN with no remedy
+      (`Condition.Unknown`; unavailable vs unparsable stay distinct in the
+      detail; skipped prerequisites are unknown too; `WarnCount` excludes
+      them and the summary prints both counts). Dirty-count audit: the
+      counter reports exactly what `git status --porcelain` emits under the
+      sanitized env — repo-ignored paths never surface, and doctor and
+      review share that env, so the preflight predicts what review sees. A
+      shell can disagree only through global excludes (HOME is unset in the
+      child); inheriting them would break containment, so nothing changed.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph
