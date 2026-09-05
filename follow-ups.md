@@ -21,7 +21,7 @@ land.
 
 ## P2 — Next (clear value, small effort)
 
-- [ ] **`sentinel doctor` — preflight the environment a review depends on.**
+- [x] **`sentinel doctor` — preflight the environment a review depends on.**
       A review whose tools are missing does not fail fast: it falls back to
       the expensive path and dies on the timeout, so the operator reads a
       budget exhaustion instead of a missing binary. Observed 2026-08-29:
@@ -59,6 +59,15 @@ land.
 
       Origin: T9.1b review sessions, where the missing binary surfaced only as
       an infrastructure timeout.
+      Landed in `feat/doctor` (2026-09-05): `internal/graph.Preflight` (binary,
+      `.codegraph`, six context gates), `internal/doctor` (strict yml, per-agent
+      resolves plus a minimal real probe prompt per kind at 60s, rg relevance,
+      hook T0.0 trap, opt-in `--check-updates`), `sentinel doctor` wiring.
+      Deviations: "answers" is a real one-word prompt, not `--version` (a
+      starting binary proves nothing about auth/model); only sentinel-owned
+      fixes print an exact command (`sentinel init`, `sentinel upgrade`) —
+      third-party tools report the failed `exec.LookPath` plus what must
+      resolve, since their install commands are environment-specific.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph

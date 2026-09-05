@@ -27,6 +27,7 @@ Guardián local determinista en Go que evita la acumulación masiva de cambios e
 | `sentinel rebase` | Actualiza la rama con `fetch` + `rebase` contra su upstream (pide confirmación). |
 | `sentinel status` | Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con `--json` emite JSON; con `--prune` borra fichas huérfanas. |
 | `sentinel metrics` | Prints deterministic local aggregates from the durable store (duration, success and failure). Reads only the local Git common directory. Unknown measurements render as `null`, never as zero, and unreadable evidence is an error rather than an empty store. Cost, tokens and scope stay unknown until an adapter reports them. Flag: `--json`. |
+| `sentinel doctor` | Preflight the local environment a review depends on (agents, search binary, codegraph gates, hook). Advisory, exits 0 like `check`. Flag: `--check-updates`. |
 | `sentinel pr` | Crea un pull request con `gh`; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a `gh pr create`. |
 | `sentinel pr review` | Analiza la rama sin publicar: matriz de fichas y decisión single/chain. Flags: `--base X` `--only-unaudited` `--overview` `--json`. |
 | `sentinel explain` | Explain the change profile, detected characteristics, risk, and cohesion of a commit range. Usage: `[<base>..<head>] [--json]`. |

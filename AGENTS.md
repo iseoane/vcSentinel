@@ -94,6 +94,7 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `rebase` | Fetch and rebase against upstream after confirmation. |
 | `status` | Show volume, audit records, and recent events. Supports `--json` and `--prune`. |
 | `metrics` | Print deterministic local aggregates from the durable store: duration, success and failure. Supports `--json`. Unknown measurements render as `null`, never zero; cost, tokens and scope stay unknown until an adapter reports them. Unreadable evidence is an error, not an empty store. |
+| `doctor` | Preflight the review environment: agents, search binary, codegraph gates, hook. Advisory, exits `0`. Flag: `--check-updates`. |
 | `explain` | Explain a commit range's change profile, detected characteristics, risk, and cohesion. Supports `--json`. |
 | `consentimiento-diff` | Grant, revoke, or show local consent for external diffs. |
 | `runs` | Operate durable runs: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, `prune`. Exit codes are contract, not convention: `1` usage, `2` run not found, `3` stale revision, `4` invalid state, `5` infrastructure failure. See `docs/runs-cli.md`. |
@@ -116,6 +117,7 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
 - `pr review`: chooses single versus chained review using `review.LimiteDecisionChain`, which equals the guardian limit of 400 lines. Configured lint, test, and build commands run deterministically without consulting an agent.
 - `tui`: renders the global registry snapshot (`~/.vas_sentinel/repositories.json`) live at a 2-second interval through `internal/tui/control` and the approved art layout. When no daemon is live for the current repository it spawns one detached child and owns it for the session; foreign daemons are never stopped. The activity pane renders repository and durable-run state, supports filtered repository/worktree/run navigation, and dispatches abort/retry only for the visible session-repository run. It shows up to 20 worktree children and 10 recent runs per repository.
+- `doctor`: reports the review-environment preflight and exits `0` like `check`. It never gates anything and never installs — warnings print the command to run instead. Binaries resolve with `exec.LookPath`, never a shell probe. Each configured agent must resolve and answer a minimal real prompt within 60s; version comparison against the published release stays behind `--check-updates`.
 - `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook that enforces staged volume.
 
 ## Configuration
