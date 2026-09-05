@@ -96,13 +96,12 @@ type FindingsAggregate struct {
 // Only review.StatusReopened resolves the attribute today. Refutation uses the
 // wider known-status basis because review.StatusRefuted has a writer, so a
 // confirmed status is real evidence that the finding was examined and not
-// refuted; nothing writes review.StatusReopened
-// (internal/review/finding.go:112-114, and FU-6 in
-// docs/reingenieria/f0-deuda.md), so a confirmed status says nothing about
-// whether that finding was reopened. Every store production can build today
-// therefore resolves nothing and reports an unknown count. A producer that
-// records a negative reopen answer increments ReopenResolved without touching
-// Reopened, and needs no other change here.
+// refuted; review.StatusReopened is written by `sentinel reopen`
+// (cmd/sentinel/reopen.go, FU-6 unit B), so a confirmed status says nothing
+// about whether that finding was reopened. Every store production without a
+// reopened observation therefore resolves nothing and reports an unknown
+// count. A producer that records a negative reopen answer increments
+// ReopenResolved without touching Reopened, and needs no other change here.
 func (v FindingsAggregate) ReopenCoverage() Coverage {
 	return coverage(v.ReopenResolved, v.Observed)
 }

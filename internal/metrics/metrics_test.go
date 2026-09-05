@@ -836,11 +836,12 @@ func TestOverrideCoverageSpansTheWholeEffectivePopulation(t *testing.T) {
 }
 
 // TestReopenCoverageTracksObservedReopenEvidence pins the basis for the reopen
-// attribute. Unlike refutation, where review.StatusRefuted has a writer and so
-// any known status is evidence either way, nothing writes review.StatusReopened
-// and a confirmed or refuted status therefore says nothing about whether the
-// finding was reopened. Only an observation carrying StatusReopened resolves
-// the attribute, so it alone is the coverage basis.
+// attribute. Unlike refutation, where review.StatusRefuted has writers and so
+// any known status is evidence either way, review.StatusReopened is written
+// only by `sentinel reopen` (FU-6 unit B) and a confirmed or refuted status
+// therefore says nothing about whether the finding was reopened. Only an
+// observation carrying StatusReopened resolves the attribute, so it alone is
+// the coverage basis.
 func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
 	cases := []struct {
 		name            string

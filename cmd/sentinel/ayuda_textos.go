@@ -129,6 +129,50 @@ block, fixed clears it, and reopened blocks again.
 Example:
   sentinel refute --sha abc12345 --fingerprint 1f4902c8 --reason "the committed implementation is safe" --line-start 2 --line-end 2
 `
+	textoAyudaAccept = `Purpose: record a human acceptance of one reviewed finding.
+
+Usage:
+  sentinel accept --sha SHA --fingerprint FP --reason TEXT
+
+Flags:
+  --sha          Reviewed commit SHA holding the finding (required, exact).
+  --fingerprint  Stable fingerprint of the finding to answer (required, exact).
+  --reason       Why the risk is acknowledged (required, non-empty).
+
+Acceptance documents judgement without clearing the block: the finding keeps
+blocking under the shared rule, exactly as before. Only an unanswered finding
+(pending, confirmed, or legacy status-less) can be accepted; an already
+answered one, an unsafe path, and a corrupt dispositions log all fail closed
+without persisting anything. The answer is appended to the separate
+dispositions log: persisted review revisions are never mutated.
+
+Example:
+  sentinel accept --sha abc12345 --fingerprint 1f4902c8 --reason "residual risk acknowledged for this release"
+`
+	textoAyudaReopen = `Purpose: record an evidence-bound human reopen of one cleared finding.
+
+Usage:
+  sentinel reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M
+
+Flags:
+  --sha          Reviewed commit SHA holding the finding (required, exact).
+  --fingerprint  Stable fingerprint of the finding to answer (required, exact).
+  --reason       Why the finding applies again (required, non-empty).
+  --line-start   First evidence line, 1-based (required).
+  --line-end     Last evidence line, 1-based; at most 20 lines per range (required).
+
+The evidence path is taken from the finding itself, never from the caller.
+The evidence is read from the audited Git object and must match the snapshot
+exactly; the finding's line must sit inside the range. Only a cleared finding
+(refuted or fixed) can be reopened; a still-blocking finding has nothing to
+reopen. A missing or ambiguous fingerprint, an unsafe path, and a corrupt
+dispositions log all fail closed without persisting anything. The answer is
+appended to the separate dispositions log: persisted review revisions are
+never mutated. A reopened finding blocks again under the shared rule.
+
+Example:
+  sentinel reopen --sha abc12345 --fingerprint 1f4902c8 --reason "the guard is bypassed on this path" --line-start 2 --line-end 2
+`
 	textoAyudaGate = `Purpose: run deterministic validation followed by semantic review of HEAD.
 
 Usage:

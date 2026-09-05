@@ -138,6 +138,12 @@ func main() {
 	case "refute":
 		requireInicializado(worktreeActual)
 		os.Exit(ejecutarRefute(os.Stdout, worktreeActual, os.Args[2:]))
+	case "accept":
+		requireInicializado(worktreeActual)
+		os.Exit(ejecutarAccept(os.Stdout, worktreeActual, os.Args[2:]))
+	case "reopen":
+		requireInicializado(worktreeActual)
+		os.Exit(ejecutarReopen(os.Stdout, worktreeActual, os.Args[2:]))
 	case "gate":
 		requireInicializado(worktreeActual)
 		os.Exit(ejecutarGate(os.Stdout, worktreeActual, os.Args[2:]))
@@ -237,6 +243,10 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
 	imprimirItemAyuda(&b, "refute", "Record an evidence-bound human refutation of one reviewed finding (clears only its block).")
 	imprimirItemAyuda(&b, "", "Usage: refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
+	imprimirItemAyuda(&b, "accept", "Record a human acceptance of one reviewed finding (documents judgement, never clears the block).")
+	imprimirItemAyuda(&b, "", "Usage: accept --sha SHA --fingerprint FP --reason TEXT.")
+	imprimirItemAyuda(&b, "reopen", "Record an evidence-bound human reopen of one cleared finding (blocks again).")
+	imprimirItemAyuda(&b, "", "Usage: reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
 	imprimirItemAyuda(&b, "lint", "Ejecuta los comandos de lint_commands de la configuración.")
 	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
 	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")

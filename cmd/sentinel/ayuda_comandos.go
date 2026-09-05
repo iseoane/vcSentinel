@@ -129,6 +129,8 @@ Example:
 	"slice apply":         textoAyudaSliceApply,
 	"review":              textoAyudaReview,
 	"refute":              textoAyudaRefute,
+	"accept":              textoAyudaAccept,
+	"reopen":              textoAyudaReopen,
 	"gate":                textoAyudaGate,
 	"status":              textoAyudaStatus,
 	"metrics":             textoAyudaMetrics,
