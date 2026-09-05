@@ -114,9 +114,9 @@ func ejecutarGate(w io.Writer, worktree string, args []string) int {
 	// FU-11: the credential incident surfaces next to the gate result on
 	// every path, including when validation short-circuits or the review
 	// plan schedules nothing. Advisory only: Estado and Mensajes untouched.
-	_, avisosSecreto := hallazgosYavisosSecreto(archivos, diff)
-	for _, aviso := range avisosSecreto {
-		fmt.Fprintln(w, aviso)
+	_, secretAdvisories := secretFindingsAndAdvisories(archivos, diff)
+	for _, advisory := range secretAdvisories {
+		fmt.Fprintln(w, advisory)
 	}
 	return finalizeGateWithDetails(w, worktree, stage, resultado.Estado, resultado.Mensajes, resultado.ContextSkipReason, resultado.ReviewerFailures)
 }
@@ -147,7 +147,7 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 	// semantic review without scheduling any dimension and without touching
 	// the gate verdict. Console surfacing happens in ejecutarGate, which
 	// prints the advisory next to the gate result without changing it.
-	hallazgosSecreto, _ := hallazgosYavisosSecreto(archivos, diff)
+	secretFindings, _ := secretFindingsAndAdvisories(archivos, diff)
 	return gate.Opciones{
 		Perfil:         perfil,
 		RutasCambiadas: archivos,
@@ -164,7 +164,7 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, gitattributes).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
-			HallazgosDeterministas:      hallazgosSecreto,
+			HallazgosDeterministas:      secretFindings,
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
 		},

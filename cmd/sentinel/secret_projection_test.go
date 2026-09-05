@@ -8,15 +8,15 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
 )
 
-func TestProyectarIncidentesSecretoVacio(t *testing.T) {
-	if got := proyectarIncidentesSecreto(nil); len(got) != 0 {
-		t.Fatalf("proyectarIncidentesSecreto(nil) = %#v, expected empty", got)
+func TestProjectSecretIncidentsEmpty(t *testing.T) {
+	if got := projectSecretIncidents(nil); len(got) != 0 {
+		t.Fatalf("projectSecretIncidents(nil) = %#v, expected empty", got)
 	}
 }
 
-func TestProyectarIncidentesSecretoEsDeterministaYSinDimension(t *testing.T) {
-	incidentes := []secret.Incident{{Path: "docs/runbook.md", Shape: "github_token", Line: 12}}
-	got := proyectarIncidentesSecreto(incidentes)
+func TestProjectSecretIncidentsDeterministicWithoutDimension(t *testing.T) {
+	incidents := []secret.Incident{{Path: "docs/runbook.md", Shape: "github_token", Line: 12}}
+	got := projectSecretIncidents(incidents)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, expected 1", len(got))
 	}
@@ -50,22 +50,22 @@ func TestProyectarIncidentesSecretoEsDeterministaYSinDimension(t *testing.T) {
 	}
 }
 
-func TestProyectarIncidentesSecretoNuncaExponeElValor(t *testing.T) {
-	valor := "ghp_" + strings.Repeat("A", 24)
-	_ = valor
-	got := proyectarIncidentesSecreto([]secret.Incident{{Path: "notes.md", Shape: "github_token", Line: 3}})
-	for _, campo := range []string{got[0].Title, got[0].Description, got[0].Evidence} {
-		if strings.Contains(campo, "ghp_") {
-			t.Errorf("field %q carries a credential-looking value", campo)
+func TestProjectSecretIncidentsNeverExposesValue(t *testing.T) {
+	value := "ghp_" + strings.Repeat("A", 24)
+	_ = value
+	got := projectSecretIncidents([]secret.Incident{{Path: "notes.md", Shape: "github_token", Line: 3}})
+	for _, field := range []string{got[0].Title, got[0].Description, got[0].Evidence} {
+		if strings.Contains(field, "ghp_") {
+			t.Errorf("field %q carries a credential-looking value", field)
 		}
 	}
-	if esperado := "exposed credential (github_token)"; got[0].Title != esperado {
-		t.Errorf("Title = %q, expected %q", got[0].Title, esperado)
+	if expected := "exposed credential (github_token)"; got[0].Title != expected {
+		t.Errorf("Title = %q, expected %q", got[0].Title, expected)
 	}
 }
 
-func TestProyectarIncidentesSecretoHuellasDistintasPorForma(t *testing.T) {
-	got := proyectarIncidentesSecreto([]secret.Incident{
+func TestProjectSecretIncidentsDistinctFingerprintsPerShape(t *testing.T) {
+	got := projectSecretIncidents([]secret.Incident{
 		{Path: "a.md", Shape: "github_token", Line: 1},
 		{Path: "a.md", Shape: "pem_block", Line: 9},
 	})
@@ -77,35 +77,35 @@ func TestProyectarIncidentesSecretoHuellasDistintasPorForma(t *testing.T) {
 	}
 }
 
-func TestAvisosSecretoVacios(t *testing.T) {
-	if got := avisosSecreto(nil, nil); len(got) != 0 {
-		t.Fatalf("avisosSecreto(nil, nil) = %#v, expected no output on absence", got)
+func TestSecretAdvisoriesEmpty(t *testing.T) {
+	if got := secretAdvisories(nil, nil); len(got) != 0 {
+		t.Fatalf("secretAdvisories(nil, nil) = %#v, expected no output on absence", got)
 	}
 }
 
-func TestAvisosSecretoNombraRutaYForma(t *testing.T) {
-	got := avisosSecreto([]secret.Incident{{Path: "docs/runbook.md", Shape: "pem_block", Line: 7}}, nil)
+func TestSecretAdvisoriesNamePathAndShape(t *testing.T) {
+	got := secretAdvisories([]secret.Incident{{Path: "docs/runbook.md", Shape: "pem_block", Line: 7}}, nil)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, expected 1", len(got))
 	}
 	for _, want := range []string{"docs/runbook.md", "7", "pem_block"} {
 		if !strings.Contains(got[0], want) {
-			t.Errorf("aviso %q does not name %q", got[0], want)
+			t.Errorf("advisory %q does not name %q", got[0], want)
 		}
 	}
 }
 
-func TestAvisosSecretoDesconocidoNoEsLimpio(t *testing.T) {
-	got := avisosSecreto(nil, []string{"assets/logo.png"})
+func TestSecretAdvisoriesUnknownIsNotClean(t *testing.T) {
+	got := secretAdvisories(nil, []string{"assets/logo.png"})
 	if len(got) != 1 {
 		t.Fatalf("len = %d, expected 1", len(got))
 	}
 	if !strings.Contains(got[0], "assets/logo.png") {
-		t.Errorf("aviso %q does not name the unreadable path", got[0])
+		t.Errorf("advisory %q does not name the unreadable path", got[0])
 	}
 	for _, word := range []string{"clean", "limpio", "0 credentials", "no credentials"} {
 		if strings.Contains(strings.ToLower(got[0]), word) {
-			t.Errorf("aviso %q renders absence as a verdict", got[0])
+			t.Errorf("advisory %q renders absence as a verdict", got[0])
 		}
 	}
 }

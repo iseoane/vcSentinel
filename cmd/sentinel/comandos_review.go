@@ -152,7 +152,7 @@ func ejecutarReview(worktree string, args []string) {
 		// security_sensitive and of the scheduled bundles. It lands in
 		// resultado.Findings through HallazgosDeterministas, so it is
 		// reported even when the plan schedules no dimension.
-		hallazgosSecreto, avisosSecreto := hallazgosYavisosSecreto(archivos, diff)
+		secretFindings, secretAdvisories := secretFindingsAndAdvisories(archivos, diff)
 
 		// El recolector anota qué agente atendió cada dimensión para que la
 		// ficha registre el autor real y no el perfil pedido (H4/T0.2).
@@ -190,7 +190,7 @@ func ejecutarReview(worktree string, args []string) {
 			},
 			// FU-11: deterministic credential incidents ride along without
 			// scheduling any dimension and without touching the verdict.
-			HallazgosDeterministas: hallazgosSecreto,
+			HallazgosDeterministas: secretFindings,
 		}
 		resultado := review.AuditarCommit(fabrica, cfg.Review.Parallel, opcionesAuditoriaConRefutador(opciones, cfg, verificadorModelo))
 
@@ -224,8 +224,8 @@ func ejecutarReview(worktree string, args []string) {
 		}
 
 		fmt.Print(resultado.String())
-		for _, aviso := range avisosSecreto {
-			fmt.Println(aviso)
+		for _, advisory := range secretAdvisories {
+			fmt.Println(advisory)
 		}
 		if fixed {
 			fmt.Printf("  ✅ revisión anterior en block corregida por esta revisión\n")
