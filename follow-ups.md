@@ -87,6 +87,18 @@ land.
       review share that env, so the preflight predicts what review sees. A
       shell can disagree only through global excludes (HOME is unset in the
       child); inheriting them would break containment, so nothing changed.
+      Follow-up fix (2026-09-06, `fix/graph-excludes`): the predicted
+      divergence above was the live defect — the child saw
+      `.claude/settings.local.json` (ignored only by the XDG default
+      `~/.config/git/ignore`) as untracked and the dirty-worktree gate
+      skipped context on every review. The parent now resolves the effective
+      global excludes file (configured `core.excludesFile` with `~` expanded,
+      else the XDG default) and passes it as an explicit `-c` to both status
+      calls (`Contexto` gate and preflight); no parent variable reaches the
+      child. Missing/unresolvable/unconfigured all resolve to no argument,
+      matching parent git; `.git/info/exclude` verified working unaided.
+      Live proof: `doctor` reports `worktree_clean: worktree clean` with the
+      file present, and a real `Contexto` run reaches past the dirty gate.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph
