@@ -164,7 +164,7 @@ func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 	}
 }
 
-// FU-6 defect 2: a finding without a line (LineaInicio == 0, e.g. a
+// FU-6 defect 2: a finding without a line (LineaInicio <= 0, e.g. a
 // deterministic check citing a bare file path) could never be refuted: the
 // shared gate requires the finding line inside the evidence range. The
 // command accepts a file-scoped range instead; the extract must still match
