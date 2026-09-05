@@ -173,6 +173,17 @@ func obtenerUltimaRelease() (ReleaseInfo, error) {
 	return release, nil
 }
 
+// LatestReleaseTag reports the latest published release tag (for example
+// "v0.2.0"). It performs a network call: its only reader is doctor
+// --check-updates, which is off by default.
+func LatestReleaseTag() (string, error) {
+	release, err := obtenerUltimaRelease()
+	if err != nil {
+		return "", err
+	}
+	return release.TagName, nil
+}
+
 func elegirAssetParaSO(assets []ReleaseAsset) (ReleaseAsset, error) {
 	return elegirAssetParaSistema(runtime.GOOS, runtime.GOARCH, assets)
 }
