@@ -48,12 +48,7 @@ func TestCarriedNetDispositionsRequiresEvidenceAtHead(t *testing.T) {
 	commitEnRama(t, "b.go", "package b\n")
 	head := strings.TrimSpace(gitSalida(t, "rev-parse", "HEAD"))
 	revisions := []Ficha{{SHA: shaA}, {SHA: head}}
-	disp := FindingDisposition{
-		SHA: shaA, Fingerprint: "fp-evidence", Status: StatusRefuted,
-		Reason: "verified safe", Path: "a.go",
-		Evidence: "// evidence line: guardian check",
-		Actor:    RefutationActorHuman, Source: DispositionSourceHuman,
-	}
+	disp := mkDisposition(shaA, "fp-evidence", StatusRefuted)
 	if got := carriedNetDispositions([]FindingDisposition{disp}, revisions, head); len(got) != 1 {
 		t.Fatalf("carried with evidence present = %+v, want the disposition", got)
 	}
