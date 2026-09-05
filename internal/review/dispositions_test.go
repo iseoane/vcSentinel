@@ -103,6 +103,91 @@ func TestApplyDispositionsRefusesAmbiguousFingerprints(t *testing.T) {
 	}
 }
 
+// FU-6 defect 1: a standing disposition records the severity the human
+// answered as audit metadata, and the application layer treats it as a
+// severity ceiling. The same fingerprint re-audited at a MORE severe
+// severity must still block: the recorded answer answered the finding as it
+// was recorded, not the escalated one. Equal severity still applies, and
+// legacy records without a recorded severity keep applying
+// (apply-as-unknown) so no historical refutation is retroactively
+// un-answered.
+func TestApplyDispositionsRefusesEscalatedSeverity(t *testing.T) {
+	target := Hallazgo{
+		Dimension: DimSecurity, Severity: SevCritical, Status: StatusConfirmed,
+		Description: "injected query", Fingerprint: "fp-escalated",
+		Location: Ubicacion{Archivo: "a.go", LineaInicio: 10},
+	}
+	standing := FindingDisposition{
+		SHA: "abc123", Fingerprint: "fp-escalated", Status: StatusRefuted,
+		Reason: "verified safe", Path: "a.go", LineStart: 9, LineEnd: 11,
+		Evidence: "safe call", RangeHash: "deadbeef",
+		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		TargetSeverity: SevWarning,
+	}
+
+	t.Run("same fingerprint with escalated severity still blocks", func(t *testing.T) {
+		got := ApplyDispositions([]Hallazgo{target}, []FindingDisposition{standing})
+		if got[0].Status != StatusConfirmed {
+			t.Fatalf("status = %q, want the escalated finding left untouched", got[0].Status)
+		}
+		if !IsBlocking(got[0].Severity, got[0].Status) {
+			t.Fatalf("finding = %+v, an escalated finding must keep blocking", got[0])
+		}
+		if got[0].RefutationActor != "" || got[0].RefutationReason != "" {
+			t.Fatalf("refutation = %q/%q, a refused disposition must not stamp anything", got[0].RefutationActor, got[0].RefutationReason)
+		}
+	})
+	t.Run("equal severity still applies", func(t *testing.T) {
+		equal := target
+		equal.Severity = SevWarning
+		got := ApplyDispositions([]Hallazgo{equal}, []FindingDisposition{standing})
+		if got[0].Status != StatusRefuted {
+			t.Fatalf("status = %q, want the standing refutation applied at equal severity", got[0].Status)
+		}
+	})
+	t.Run("legacy record without recorded severity still applies", func(t *testing.T) {
+		legacy := standing
+		legacy.TargetSeverity = ""
+		got := ApplyDispositions([]Hallazgo{target}, []FindingDisposition{legacy})
+		if got[0].Status != StatusRefuted {
+			t.Fatalf("status = %q, want apply-as-unknown for legacy records", got[0].Status)
+		}
+	})
+}
+
+// FU-6 defect 1 through the engine overlay entry point: a standing
+// refutation against a re-audited finding that escalated past its recorded
+// severity reports nothing cleared, and both finding shapes keep blocking.
+func TestApplyDispositionToResultRefusesEscalatedSeverity(t *testing.T) {
+	result := &DimensionResult{
+		Dim:     DimLogic,
+		Verdict: VerdictBlock,
+		Findings: []ReviewFinding{
+			{File: "a.go", Line: 2, Severity: SevCritical, Description: "bug", Status: StatusConfirmed},
+		},
+		Hallazgos: []Hallazgo{{
+			Severity: SevCritical, Status: StatusConfirmed,
+			Description: "bug", Fingerprint: "fp-escalated",
+			Location: Ubicacion{Archivo: "a.go", LineaInicio: 2},
+		}},
+	}
+	disp := FindingDisposition{
+		Fingerprint: "fp-escalated", Status: StatusRefuted, Reason: "verified safe",
+		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		TargetSeverity: SevWarning,
+	}
+
+	if ApplyDispositionToResult(result, disp) {
+		t.Fatal("an escalated finding must not be reported as cleared")
+	}
+	if !IsBlocking(result.Hallazgos[0].Severity, result.Hallazgos[0].Status) {
+		t.Fatalf("v2 finding = %+v, an escalated finding must keep blocking", result.Hallazgos[0])
+	}
+	if !IsBlocking(result.Findings[0].Severity, result.Findings[0].Status) {
+		t.Fatalf("v1 counterpart = %+v, an escalated finding must keep blocking", result.Findings[0])
+	}
+}
+
 // FU-6: addressing is by reviewed revision plus stable fingerprint. A missing
 // fingerprint and an ambiguous one both fail closed without persisting.
 func TestResolveDispositionTargetRejectsMissingAndAmbiguous(t *testing.T) {

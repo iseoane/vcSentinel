@@ -33,7 +33,9 @@ const (
 // TargetDimension/TargetLine/TargetDescription record the finding's v1
 // identity at record time as audit metadata only. They never match: a
 // disposition applies by unique SHA + fingerprint, and anything else fails
-// closed.
+// closed. TargetSeverity records the severity the human answered; it never
+// matches either, but the application layer reads it as a ceiling (see
+// dispositionRefusedOnEscalation).
 type FindingDisposition struct {
 	SHA               string    `json:"sha"`
 	Fingerprint       string    `json:"fingerprint"`
@@ -50,6 +52,7 @@ type FindingDisposition struct {
 	TargetDimension   string    `json:"target_dimension,omitempty"`
 	TargetLine        int       `json:"target_line,omitempty"`
 	TargetDescription string    `json:"target_description,omitempty"`
+	TargetSeverity    string    `json:"target_severity,omitempty"`
 }
 
 // IsBlocking is the single blocking rule shared by the review engine, the
@@ -104,6 +107,13 @@ func FilterDispositionsForSHA(dispositions []FindingDisposition, sha string) []F
 // identities fail closed and the findings keep blocking. The last record
 // wins per fingerprint; the log order is the authority.
 //
+// A standing disposition is refused when the re-audited finding is MORE
+// severe than the severity recorded on it: the escalated finding keeps its
+// recorded status, which keeps it blocking and keeps it listed — unrefuted
+// — in every blocker surface operators already read. Records without a
+// recorded severity keep applying (apply-as-unknown), preserving today's
+// behaviour for answers written before the field existed.
+//
 // A human disposition cites no durable invocation, so applying one clears
 // InvocationID: metrics must never attribute a human decision to an agent
 // invocation. The finding's producer is preserved: who generated the
@@ -137,8 +147,39 @@ func ApplyDispositions(findings []Hallazgo, dispositions []FindingDisposition) [
 	return out
 }
 
-// applyToHallazgo stamps one disposition onto one finding.
+// dispositionRefusedOnEscalation reports whether a standing disposition
+// must be refused because the re-audited finding is MORE severe than the
+// severity the human answered at record time. TargetSeverity is a ceiling,
+// not a match key: the human answered the finding as it was, and a re-audit
+// that escalates it presents a worse defect no standing answer may clear.
+//
+// Legacy records written before TargetSeverity existed carry no recorded
+// severity. The documented choice is apply-as-unknown: they keep applying,
+// preserving today's behaviour, because refusing them would retroactively
+// re-open every historical refutation and re-block releases humans
+// deliberately answered.
+//
+// Visibility: a refusal is operator-visible the smallest way the codebase
+// already offers — the finding keeps its recorded status, so it stays
+// blocking and keeps appearing, unrefuted, in every blocker surface
+// operators already read: the audit verdict and exit code, the gate, the
+// branch blocker lists, and the PR template. Nothing is stamped, no status
+// is rewritten, no revision is mutated: the refusal is the absence of the
+// answer, not a new record.
+func dispositionRefusedOnEscalation(d FindingDisposition, severity string) bool {
+	recorded := strings.TrimSpace(d.TargetSeverity)
+	if recorded == "" {
+		return false
+	}
+	return severityRank(severity) > severityRank(recorded)
+}
+
+// applyToHallazgo stamps one disposition onto one finding. A standing
+// disposition refused on escalation leaves the finding untouched.
 func applyToHallazgo(h *Hallazgo, d FindingDisposition) {
+	if dispositionRefusedOnEscalation(d, h.Severity) {
+		return
+	}
 	h.Status = NormalizeStatus(d.Status)
 	h.RefutationReason = d.Reason
 	h.RefutationEvidence = d.Evidence
@@ -154,7 +195,11 @@ func applyToHallazgo(h *Hallazgo, d FindingDisposition) {
 }
 
 // applyToReviewFinding stamps one disposition onto one legacy v1 finding.
+// A standing disposition refused on escalation leaves the finding untouched.
 func applyToReviewFinding(f *ReviewFinding, d FindingDisposition) {
+	if dispositionRefusedOnEscalation(d, f.Severity) {
+		return
+	}
 	f.Status = NormalizeStatus(d.Status)
 	f.RefutationReason = d.Reason
 	f.RefutationEvidence = d.Evidence
@@ -177,6 +222,11 @@ func applyToReviewFinding(f *ReviewFinding, d FindingDisposition) {
 // engine verdict and the persisted revision agree. A fingerprint that
 // matches nothing clears nothing: v1-only shapes carry no fingerprint input
 // and are never disposed by heuristic, they fail closed.
+//
+// Like ApplyDispositions, a standing disposition is refused when the
+// re-audited finding is MORE severe than the severity recorded on it: the
+// refusal clears nothing and reports false, so the escalated finding keeps
+// blocking in both shapes and the dimension verdict stays block.
 func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) bool {
 	if result == nil {
 		return false

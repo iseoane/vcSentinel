@@ -222,6 +222,7 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) 
 		TargetDimension:   target.Dimension,
 		TargetLine:        target.Location.LineaInicio,
 		TargetDescription: target.Description,
+		TargetSeverity:    target.Severity,
 	}
 	// Compare-and-append against the authoritative record: the fingerprint
 	// above was resolved against a ficha read before any lock, and a
