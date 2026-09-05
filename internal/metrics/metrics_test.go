@@ -876,11 +876,11 @@ func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
 }
 
 // TestReopenCoverageIsEmptyWithoutReopenedObservations pins what an aggregate
-// does when nothing resolves the reopen attribute, which is the shape every
-// store takes today. It does NOT verify FU-6's claim that no production path
-// writes review.StatusReopened: that is a static property of the source, not
-// something an in-memory Input can detect, and it is documented where it is
-// checkable, on FindingsAggregate.ReopenCoverage.
+// does when nothing resolves the reopen attribute, which is the shape of a
+// store with no reopened observation. It does NOT verify FU-6 unit B's writer
+// claim (`sentinel reopen` writes review.StatusReopened): that is a static
+// property of the source, not something an in-memory Input can detect, and
+// it is documented where it is checkable, on FindingsAggregate.ReopenCoverage.
 func TestReopenCoverageIsEmptyWithoutReopenedObservations(t *testing.T) {
 	got := Aggregate(Input{Findings: []FindingObservation{
 		findingWithStatus("a", review.DimLogic, "m1", "a1", review.StatusConfirmed),

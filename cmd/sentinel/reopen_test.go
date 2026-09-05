@@ -102,6 +102,8 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 	blocking := refuteFichaFixture()
 	ambiguous := refuteFichaFixture()
 	ambiguous.AggregatedFindings[1].Fingerprint = "fp-target"
+	evadido := refuteFichaFixture()
+	evadido.AggregatedFindings[0].Location.Archivo = "../evil.go"
 	cases := []struct {
 		name     string
 		revision *review.Revision
@@ -120,6 +122,10 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 		},
 		{
 			"ambiguous fingerprint", &[]review.Revision{ambiguous}[0], nil,
+			func(*reopenOptions) {}, nil,
+		},
+		{
+			"unsafe finding path", &[]review.Revision{evadido}[0], nil,
 			func(*reopenOptions) {}, nil,
 		},
 		{
