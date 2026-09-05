@@ -1,7 +1,6 @@
 package review
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -42,12 +41,19 @@ func TestParsearDimensionResultLineaNumero(t *testing.T) {
 	}
 }
 
-// TestParsearDimensionResultLineaNoNumerica: un string que no es número, o un
-// JSON de otro tipo, sigue siendo una línea inválida (se descarta) — nunca un
-// panic ni un número inventado.
+// TestParsearDimensionResultLineaNoNumerica: a non-numeric string, or any
+// other JSON type, no longer discards the finding (FU-19): the line stays 0
+// (unknown, the line-less convention) and the raw text is preserved in
+// LineRaw — never a panic nor an invented number.
 func TestParsearDimensionResultLineaNoNumerica(t *testing.T) {
-	_, err := ParseDimensionResult(`{"dim":"spec","verdict":"FAIL","findings":[{"dimension":"spec","file":"a.go","line":"L126-130","severity":"CRITICAL","description":"d"}]}`)
-	if !errors.Is(err, ErrJSONLInvalido) {
-		t.Errorf("se esperaba ErrJSONLInvalido (línea descartada), obtenido %v", err)
+	resultado, err := ParseDimensionResult(`{"dim":"spec","verdict":"FAIL","findings":[{"dimension":"spec","file":"a.go","line":"L126-130","severity":"CRITICAL","description":"d"}]}`)
+	if err != nil {
+		t.Fatalf("a non-numeric line must not discard the whole payload: %v", err)
+	}
+	if len(resultado.Findings) != 1 || resultado.Findings[0].Line != 0 {
+		t.Fatalf("findings = %+v, want 1 finding with unknown line", resultado.Findings)
+	}
+	if resultado.Findings[0].LineRaw != "L126-130" {
+		t.Errorf("line_raw = %q, want the preserved raw text", resultado.Findings[0].LineRaw)
 	}
 }

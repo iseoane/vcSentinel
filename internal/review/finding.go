@@ -53,9 +53,12 @@ var veredictosValidos = map[string]bool{
 // ambos para que un string numérico no descarte el hallazgo completo.
 type Linea int
 
-// UnmarshalJSON acepta tanto un número JSON como un string numérico. Un
-// string no numérico (p. ej. "L126-130") produce error para que la línea
-// JSONL se descarte como inválida.
+// UnmarshalJSON accepts a JSON number or a numeric string. A non-numeric
+// string returns an error: Linea is the PERSISTED shape and stays strict
+// (the ledger must not silence a corrupted line on reload). Agent-input
+// tolerance — any non-numeric value leaves the line at 0 and preserves the
+// raw text in LineRaw — lives in lineaCruda (FU-19), which findingCrudo uses
+// when parsing.
 func (l *Linea) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '"' {
 		var s string
@@ -80,9 +83,19 @@ func (l *Linea) UnmarshalJSON(b []byte) error {
 // ReviewFinding es un hallazgo concreto del agente sobre una línea de un
 // archivo del commit auditado.
 type ReviewFinding struct {
-	Dimension           string `json:"dimension"`
-	File                string `json:"file"`
-	Line                Linea  `json:"line"`
+	Dimension string `json:"dimension"`
+	File      string `json:"file"`
+	Line      Linea  `json:"line"`
+	// LineRaw preserves the raw "line" text an agent emitted when it was not
+	// a number (e.g. the range "17-19, 23-48"). FU-19 keeps such a finding
+	// with Line=0 (unknown) instead of discarding it, and persists the raw
+	// text here so the operator can read what the agent actually cited:
+	// Advertencias is memory-only (json:"-"), this field survives in the
+	// ficha. Deliberately never a Fingerprint input: it is untrusted
+	// provider formatting, and the fingerprint must stay line-independent.
+	// Empty unless the parse fell back to unknown, so existing persisted
+	// records marshal byte-identically.
+	LineRaw             string `json:"line_raw,omitempty"`
 	Severity            string `json:"severity"`
 	Description         string `json:"description"`
 	Suggestion          string `json:"suggestion"`
@@ -414,6 +427,52 @@ type DimensionResult struct {
 	ExecutionFailure *ProviderExecutionFailure `json:"-"`
 }
 
+// lineaCruda decodes the "line" field of one raw finding tolerantly (FU-19).
+// A JSON number and a numeric string keep parsing to Linea exactly as before
+// (same trimming Linea.UnmarshalJSON applies); ANY other JSON value — range
+// text ("17-19, 23-48"), a word, an array — is not an error: it leaves
+// the line at 0, the unknown-line convention deterministic file-scoped
+// findings already use, and keeps the raw text so aReviewFinding can persist
+// it on ReviewFinding.LineRaw. JSON null never reaches UnmarshalJSON for an
+// addressable struct field, so it behaves as an absent line (zero value) —
+// already the unknown-line result, with nothing raw to preserve.
+//
+// Decision (FU-19): NO range semantics. The persisted shape holds a single
+// Linea int, so inventing first-line precision from "17-19, 23-48" would
+// misdirect the evidence window while pretending the line is known; unknown
+// (0) is already answerable through the file-scoped refutation gate (FU-6
+// defect 2). Strictness stays on Linea itself: the persisted shape still
+// fails loudly on a corrupted line instead of silently zeroing it — only the
+// agent-input path is tolerant.
+type lineaCruda struct {
+	numero Linea
+	cruda  string // raw JSON text, set only when the value was not numeric
+}
+
+func (l *lineaCruda) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			l.numero = Linea(n)
+			return nil
+		}
+		l.numero = 0
+		l.cruda = s
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err == nil {
+		l.numero = Linea(n)
+		return nil
+	}
+	l.numero = 0
+	l.cruda = string(b)
+	return nil
+}
+
 // findingCrudo decodifica un elemento del array "findings" de una línea
 // JSONL (o del objeto multilínea) aceptando a la vez los campos v1
 // (ReviewFinding, siempre presentes hoy) y los campos exclusivos de v2
@@ -428,12 +487,12 @@ type DimensionResult struct {
 // finding trae forma v2 sin exigir que el agente mande todos los campos v2
 // a la vez.
 type findingCrudo struct {
-	Dimension   string `json:"dimension"`
-	File        string `json:"file"`
-	Line        Linea  `json:"line"`
-	Severity    string `json:"severity"`
-	Description string `json:"description"`
-	Suggestion  string `json:"suggestion"`
+	Dimension   string     `json:"dimension"`
+	File        string     `json:"file"`
+	Line        lineaCruda `json:"line"`
+	Severity    string     `json:"severity"`
+	Description string     `json:"description"`
+	Suggestion  string     `json:"suggestion"`
 
 	ID             *string          `json:"id"`
 	Source         *string          `json:"source"`
@@ -503,7 +562,8 @@ func (f findingCrudo) aReviewFinding() ReviewFinding {
 	return ReviewFinding{
 		Dimension:   f.Dimension,
 		File:        f.File,
-		Line:        f.Line,
+		Line:        f.Line.numero,
+		LineRaw:     f.Line.cruda,
 		Severity:    f.Severity,
 		Description: f.Description,
 		Suggestion:  f.Suggestion,
@@ -517,7 +577,7 @@ func (f findingCrudo) aReviewFinding() ReviewFinding {
 // que Fingerprint no colisione hallazgos de archivos distintos bajo una
 // ubicación vacía.
 func (f findingCrudo) aHallazgo(dimensionLinea string) Hallazgo {
-	ubicacion := Ubicacion{Archivo: f.File, LineaInicio: int(f.Line)}
+	ubicacion := Ubicacion{Archivo: f.File, LineaInicio: int(f.Line.numero)}
 	// Guard por VACÍO, no solo por nil: un "location": {} explícito en el
 	// JSON produce un *Ubicacion no nil pero sin Archivo ni Simbolo, así que
 	// mirar solo f.Location != nil dejaría pasar una ubicación vacía y
@@ -579,9 +639,13 @@ func procesarFindings(crudos []findingCrudo, dimensionLinea string, normalizacio
 	findingsV1 := make([]ReviewFinding, 0, len(crudos))
 	var hallazgosV2 []Hallazgo
 	for _, f := range crudos {
+		if f.Line.cruda != "" {
+			*normalizaciones = append(*normalizaciones,
+				fmt.Sprintf("line %q in %s normalized to unknown line", f.Line.cruda, f.File))
+		}
 		if f.Severity != SevCritical && f.Severity != SevWarning && f.Severity != SevAdvisory {
 			*normalizaciones = append(*normalizaciones,
-				fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", f.Severity, f.File, f.Line))
+				fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", f.Severity, f.File, int(f.Line.numero)))
 			f.Severity = SevAdvisory
 		}
 		findingsV1 = append(findingsV1, f.aReviewFinding())
