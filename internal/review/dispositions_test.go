@@ -2,6 +2,7 @@ package review
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -341,6 +342,80 @@ func TestValidateHumanRefutationRangeRejectsInvalidBoundsWithoutPanic(t *testing
 			}()
 			if _, _, _, err := ValidateHumanRefutationRange(reader, "abc12345", "a.go", 2, "safe premise", "a.go", tc.lineStart, tc.lineEnd); err == nil {
 				t.Fatal("invalid bounds were accepted")
+			}
+		})
+	}
+}
+
+// FU-6 defect 2: a finding without a line (Location.LineaInicio <= 0, the
+// convention for deterministic findings citing a bare file path, e.g.
+// `gofmt -l`) could never be refuted: the shared gate requires the finding
+// line to fall inside the evidence range. The human path scopes the evidence
+// to the audited file instead: the extract must still match the committed
+// object exactly, so the gate stays fail-closed.
+func TestValidateHumanRefutationRangeAcceptsFileScopedEvidenceForLinelessFindings(t *testing.T) {
+	const sha = "abc12345"
+	reader := func(gotSHA, file string) (string, error) {
+		if gotSHA != sha {
+			return "", errors.New("unknown commit")
+		}
+		if file != "a.go" {
+			return "", errors.New("unknown file")
+		}
+		return "const unrelated = true\ncriticalCall()\n", nil
+	}
+	for _, findingLine := range []int{0, -3} {
+		safePath, evidence, hash, err := ValidateHumanRefutationRange(reader, sha, "a.go", findingLine, "the committed implementation is safe", "a.go", 2, 2)
+		if err != nil {
+			t.Fatalf("line-less finding (line %d) rejected a valid file-scoped evidence range: %v", findingLine, err)
+		}
+		if safePath != "a.go" {
+			t.Fatalf("path = %q, want the sanitized evidence path", safePath)
+		}
+		if evidence != "criticalCall()" {
+			t.Fatalf("evidence = %q, want the exact snapshot extract", evidence)
+		}
+		if want := "1f4902c8f5b87a9dc694f279ef8bd2e6d491934eb00169644a05462d7f11b34f"; hash != want {
+			t.Fatalf("hash = %q, want %q", hash, want)
+		}
+	}
+}
+
+// FU-6 defect 2: the file-scoped path for line-less findings keeps every
+// other gate check: the evidence stays pinned to the finding's cited file,
+// the 20-line window, the file bounds, and the 12-character minimum.
+func TestValidateHumanRefutationRangeLinelessStillFailsClosed(t *testing.T) {
+	const sha = "abc12345"
+	reader := func(gotSHA, file string) (string, error) {
+		if gotSHA != sha {
+			return "", errors.New("unknown commit")
+		}
+		switch file {
+		case "a.go":
+			return "const unrelated = true\ncriticalCall()\n", nil
+		case "b.go":
+			return "package other\n", nil
+		case "long.go":
+			return strings.Repeat("x := 1\n", 25), nil
+		}
+		return "", errors.New("unknown file")
+	}
+	cases := []struct {
+		name      string
+		file      string
+		lineStart int
+		lineEnd   int
+	}{
+		{"other file", "b.go", 1, 1},
+		{"traversal path", "../a.go", 1, 1},
+		{"oversized range", "long.go", 1, 21},
+		{"range outside file", "a.go", 2, 4},
+		{"empty extract", "a.go", 3, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, _, err := ValidateHumanRefutationRange(reader, sha, "a.go", 0, "the committed implementation is safe", tc.file, tc.lineStart, tc.lineEnd); err == nil {
+				t.Fatal("invalid evidence was accepted for a line-less finding")
 			}
 		})
 	}
