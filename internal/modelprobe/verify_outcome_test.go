@@ -2,6 +2,7 @@ package modelprobe
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
@@ -113,5 +114,44 @@ func TestVerifySecondCallReturnsStoredOutcomeWithoutReprobing(t *testing.T) {
 	}
 	if !v.Verified("normal") {
 		t.Error("Verified(normal) = false, want the stored matched outcome")
+	}
+}
+
+type blockingAgent struct {
+	release chan struct{}
+	modelo  string
+	calls   int
+}
+
+func (a *blockingAgent) EjecutarPrompt(string) (string, error) {
+	a.calls++
+	<-a.release
+	return a.modelo, nil
+}
+
+func TestVerifyConcurrentCallersShareOneProbe(t *testing.T) {
+	s := store.NuevoStore(t.TempDir())
+	v := NuevoVerificador(s)
+	agent := &blockingAgent{release: make(chan struct{}), modelo: "openai/gpt-5.6-sol"}
+
+	first := make(chan Outcome, 1)
+	go func() { first <- v.Verify("normal", "openai/gpt-5.6-sol", agent) }()
+	runtime.Gosched()
+	second := make(chan Outcome, 1)
+	go func() { second <- v.Verify("normal", "openai/gpt-5.6-sol", agent) }()
+	runtime.Gosched()
+	close(agent.release)
+
+	if got := <-first; got != OutcomeMatched {
+		t.Errorf("first outcome = %q, want %q", got, OutcomeMatched)
+	}
+	if got := <-second; got != OutcomeMatched {
+		t.Errorf("second outcome = %q, want the shared matched outcome, not a placeholder", got)
+	}
+	if agent.calls != 1 {
+		t.Errorf("probe calls = %d, want exactly 1", agent.calls)
+	}
+	if !v.Verified("normal") {
+		t.Error("Verified(normal) = false after a shared matched probe")
 	}
 }

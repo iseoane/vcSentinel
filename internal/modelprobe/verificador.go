@@ -43,10 +43,21 @@ const (
 )
 
 // Verificador runs at most one probe per configured profile in a session,
-// retaining each outcome for later queries.
+// retaining each outcome for later queries. Concurrent callers for the same
+// profile wait for the in-flight probe instead of reading a placeholder:
+// dimensions audit in parallel and stamp right after probing, so returning
+// early would stamp siblings with whatever happened to be stored mid-flight.
 type Verificador struct {
 	store       *store.Store
-	verificados sync.Map // profile name -> Outcome
+	verificados sync.Map // profile name -> *probeCall
+}
+
+// probeCall is one session's single probe for a profile. done closes when
+// outcome is final; readers after close see the outcome via the
+// close-happens-before guarantee, so no further synchronization is needed.
+type probeCall struct {
+	done    chan struct{}
+	outcome Outcome
 }
 
 func NuevoVerificador(s *store.Store) *Verificador {
@@ -66,23 +77,39 @@ func (v *Verificador) Verify(perfil, esperado string, agente Agente) Outcome {
 	if perfil == "" || agente == nil || v.store == nil {
 		return OutcomeSkipped
 	}
-	if outcome, loaded := v.verificados.LoadOrStore(perfil, OutcomeSkipped); loaded {
-		if previous, ok := outcome.(Outcome); ok {
-			return previous
+	call := &probeCall{done: make(chan struct{})}
+	actual, loaded := v.verificados.LoadOrStore(perfil, call)
+	if loaded {
+		previous, ok := actual.(*probeCall)
+		if !ok {
+			return OutcomeSkipped
 		}
-		return OutcomeSkipped
+		<-previous.done
+		return previous.outcome
 	}
-	outcome := v.probe(perfil, esperado, agente)
-	v.verificados.Store(perfil, outcome)
-	return outcome
+	call.outcome = v.probe(perfil, esperado, agente)
+	close(call.done)
+	return call.outcome
 }
 
 // Verified reports whether the profile was probed and matched in this
-// session. Anything else — mismatch, error, unparseable reply, or never
-// probed — is false.
+// session. Anything else — mismatch, error, unparseable reply, in-flight
+// probe, or never probed — is false.
 func (v *Verificador) Verified(perfil string) bool {
-	outcome, ok := v.verificados.Load(perfil)
-	return ok && outcome == OutcomeMatched
+	raw, ok := v.verificados.Load(perfil)
+	if !ok {
+		return false
+	}
+	call, ok := raw.(*probeCall)
+	if !ok {
+		return false
+	}
+	select {
+	case <-call.done:
+		return call.outcome == OutcomeMatched
+	default:
+		return false
+	}
 }
 
 func (v *Verificador) probe(perfil, esperado string, agente Agente) Outcome {
