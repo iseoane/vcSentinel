@@ -1190,6 +1190,17 @@ decision with a cost (one extra prompt per review), not an impossibility — and
 it is recorded separately as a follow-up because the ledger shows it has never
 yet produced a verified model.
 
+Addendum 2026-09-06: the follow-up question is investigated (branch
+`investigate/modelprobe-verification`, read-and-trace, no code
+changed; full answer in `follow-ups.md`). The prober IS invoked —
+three live `profiles/*.json` mismatch records prove it — but
+`model_verified:true` is unreachable by construction: `Verificar`
+returns void and only records mismatches, and
+`stamparProductorEfectivo` never stamps the flag. A fix needs
+verified semantics plus outcome plumbing (~150-250 lines); the
+risk is writing false `true` claims into the ledger. Stopped for
+a decision.
+
 ### FU-10: the review planner never sees content, so `explain` and `review` disagree
 
 Recorded 2026-09-01 while settling why three T9.4a documentation commits

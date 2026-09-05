@@ -126,10 +126,40 @@ land.
       `publish.go:101-103`, `review.go:103`,
       `cmd/sentinel/comandos_gate.go:135,163`) feeding `ModeloVerificado`
       (`internal/review/finding.go:167`) — yet the live ledger holds zero
-      `model_verified:true` (325 review files scanned 2026-09-05; the only
-      true hits repo-wide are fixture copies under `snapshots/`). Open
-      question, not investigated: is the prober never invoked on those paths,
-      or invoked and always failing? Origin: FU-9 review.
+      `model_verified:true` (325 review files scanned 2026-09-05, 328 on
+      2026-09-06 with the same result; the only true hits repo-wide are
+      fixture copies under `snapshots/`).
+
+      Investigated 2026-09-06 (branch `investigate/modelprobe-verification`,
+      read-and-trace, no code changed). Answer: NEITHER — the prober IS
+      invoked and IS working, but `model_verified:true` is unreachable by
+      construction. `Verificador.Verificar`
+      (`internal/modelprobe/verificador.go:37`) returns void: on match,
+      probe error, or unparseable answer it returns silently, and only on
+      mismatch does it write `profiles/<name>.json` with status
+      `unverified`. Three such live mismatch records exist
+      (`cheap`/`normal`/`deep`), which proves invocation with a real
+      store, a answered probe, and a parseable reply. Nothing ever sets
+      `Productor.ModeloVerificado=true`: `stamparProductorEfectivo`
+      (`internal/review/engine.go:1019-1024`) stamps agent, binary, model
+      and effort only, and repo-wide grep finds no other setter — the
+      ledger field asks a question no producer answers. Additionally,
+      `store.LeerPerfil` has no production caller, so even the mismatch
+      signal is currently write-only.
+
+      Context for the decision, not a defect to fix here: the three
+      mismatch records show configured-vs-serving drift (profiles declare
+      `opencode-go/glm-5.3-flash` / `muse-spark-1.3-contributor`, the
+      agent reports `openai/gpt-5.6-sol`). A fix must define verified
+      semantics (probe error/unparseable/mismatch stays false;
+      probed-and-matched becomes true), plumb the outcome out of the
+      void `Verificar` (or consult `LeerPerfil` at stamp time), decide
+      whether a match writes a positive profile record, and keep all
+      328 historical files at false. Rough cost: 150-250 lines plus
+      tests; the risk is writing false `true` claims into the durable
+      ledger, which is worse than the current honest `false`.
+      STOPPED for a decision: no implementation in this unit.
+      Origin: FU-9 review.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph
