@@ -581,6 +581,12 @@ Split by cohesion (the engine's orchestration/adapters/tests precedent from
 R9 applies). Do the FU-1 string sweep in the same pass to avoid touching these
 files twice.
 
+#### Partial split 2026-09-05 (FU-2/C6, pr subcommand only)
+
+Moved PR orchestration from `cmd/sentinel/comandos_pr.go` (1045 lines) into new `internal/app/pr` (`review.go` 303, `create.go` 350, `publish.go` 151, `wiring.go` 79); `cmd/sentinel/comandos_pr.go` is now 480 thin lines (flag parsing plus dispatch). Pure mechanical movement, no logic change; existing pr tests pass unmodified. Hazard cleared before moving: 21 live block fichas cite `internal/git/snapshot.go`, `cmd/sentinel/comandos_runs.go`, and siblings — zero cite `comandos_pr.go` — and no `dispositions.jsonl` exists, so the move orphans no live block and no standing disposition. `review.Fingerprint` inputs, the ledger, and `review.IsBlocking` are untouched.
+
+Deliberately untouched (11 files still over 500): `internal/review/engine.go`, `cmd/sentinel/main.go`, `internal/review/finding.go`, `internal/store/execution_events.go`, `cmd/sentinel/comandos_review.go`, `internal/metrics/metrics_executions.go`, `internal/tui/art/overview.go`, `internal/config/parser.go`, `internal/review/ledger.go`, `internal/review/renderer.go`, `internal/tui/control/control.go`. A partial, verified split is the correct outcome; the rest stays for future one-subcommand units per C6.
+
 ---
 
 ## Follow-up pool — F9 observability (T9.1b)
