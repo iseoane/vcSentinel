@@ -108,6 +108,15 @@ func foldExecutionMetrics(runID string, outcomes []store.AttemptOutcome, semanti
 			continue
 		}
 		observed = append(observed, *outcome.Observation)
+		// Identity reads outcome.Observation only, never the flattened
+		// outcome Agent/Model/Effort beside it. Provenance differs per
+		// adapter kind (FU-9): a CLI adapter's transcript annotation carries
+		// its resolved configuration (agentadapter.CLIAdapter.AgenteEfectivo
+		// reports the construction config), so those flattened values are
+		// declarations, not evidence. An acpx adapter reports wire-only
+		// identity, which already lands in Observation when the provider
+		// announces it — the flattened copy adds nothing. Reading the
+		// flattened fields would launder declarations into observations.
 		identity := store.ObservedExecutionIdentity{
 			InvocationID:    outcome.InvocationID,
 			Agent:           outcome.Observation.Agent,

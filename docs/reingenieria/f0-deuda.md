@@ -1106,6 +1106,39 @@ read them in the producer or record why they must stay unread. T9.4a's verdict
 is unchanged either way, because 0 of 325 blocks model calibration in both
 branches.
 
+Settled 2026-09-05: **declarations.** The flattened values must stay unread;
+the current zero is correct and the only defect was that nothing said so
+(now stated at the read site in `foldExecutionMetrics`).
+
+Write-path evidence per adapter kind:
+
+- CLI (`opencode`, `claude`): `CLIAdapter.AgenteEfectivo` returns the
+  construction config by explicit design
+  (`internal/agentadapter/efectivo.go:39-42`). `captureTranscript`
+  (`internal/execution/controller_transcripts.go:49-55`) copies that report
+  into the outcome sidecar's flattened `Agent`/`Model`/`Effort` on every
+  successful review with output. CLI adapters produce no rich result, so
+  `Observation` stays duration-only (`controller.go:451-454`). Flattened
+  model therefore ⟺ configured model, never a wire observation.
+- acpx: `AgenteEfectivo` returns wire-only `ObservedIdentity`
+  (`internal/agentadapter/acpx.go:52-53`, "declarations are not producer
+  evidence"; empty pre-turn pinned in `acpx_test.go:468-469`). Wire values
+  flow split into observed/requested (`internal/acpadapter/review.go:257-261`),
+  so genuine wire identity already reaches `Observation` — the flattened copy
+  adds nothing.
+
+Store evidence (live scan, read-only): of 865 outcome sidecars, 374 carry a
+flattened model — 316 with `agent: opencode`, 58 with `agent: claude`, zero
+acpx. Values are config slugs (`opencode-go/muse-spark-1.3-contributor`,
+bare `haiku`); 211 have `observation: {duration_ns}` only, 163 have no
+observation at all, and **zero** sidecars carry `observation.model`. The
+tell is structural: transcript-written records carry `Model` with
+`requested_model: null`, while a genuine observation pair carries both.
+
+Consequence: wiring the flattened fields through would launder 374
+declarations into reported observations — the exact absence-as-evidence
+error. No behavior change; T9.4a's verdict stands in both branches.
+
 ### FU-10: the review planner never sees content, so `explain` and `review` disagree
 
 Recorded 2026-09-01 while settling why three T9.4a documentation commits
