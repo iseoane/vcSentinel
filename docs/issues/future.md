@@ -3,14 +3,32 @@
 Each item names the condition that brings it forward. Nothing here is
 forgotten; everything here waits on something stated.
 
-## Shared note: token observability (blocks two items)
+## Shared note: token observability (updated 2026-09-06)
 
-Tokens are the missing measurement behind both FU-3 (cost attribution, in
-`actionable.md`) and the shared-evidence cache (also in `actionable.md`):
-no adapter reports token usage or price on the wire, identity coverage
-measured 0 of 325 in the FU-9 store scan, and any value written without a
-producer would be invented. Neither item can start until an adapter
-reports token evidence. This is said once here and referenced from both.
+Tokens used to be the missing measurement behind FU-3 (cost attribution,
+in `actionable.md`) and the shared-evidence cache (also in
+`actionable.md`): no adapter reported token usage or price on the wire,
+identity coverage measured 0 of 325 in the FU-9 store scan, and any value
+written without a producer would be invented.
+
+That is no longer true for tokens. All three adapter paths now report
+token usage on the wire and carry it into the durable metrics: ACP/acpx
+from the terminal result's usage member; direct opencode (`--format json`)
+as input, output, total, cached-read and reasoning tokens summed over
+every step_finish event; direct claude (`--output-format json`) as input,
+output, cached-read and reasoning tokens, with Total always nil because
+the wire carries no total member. Both direct paths retain the raw usage
+evidence on the result (`UsageJSON`).
+
+FU-3 stays blocked, narrowed to price, scope and reuse. Price has an
+observed carrier on both direct wires (claude's `total_cost_usd`,
+opencode's per-step `cost`) but deliberately no Usage destination and no
+pricing table — the F9 precedent: a recorded determination that the value
+stays nil with provenance, not a gap to fill by estimate. Scope and reuse
+remain sourceless. The shared-evidence cache item's token prerequisite is
+satisfied by the producers above; its remaining closing conditions
+(snapshot, cache key, equivalence measurement) are its own, in
+`actionable.md`.
 
 ## D4: remote host contract
 
