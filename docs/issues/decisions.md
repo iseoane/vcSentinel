@@ -126,6 +126,29 @@ configured; the prompt still travels via stdin. Pinned by
 to main in `0878378`. Existing `model_mismatch` profile records stay as
 honest history.
 
+### Gate collects first-parent diff for merge commits (decided and landed 2026-09-06)
+
+`gate --stage pre-push` on merge `ae804a5` collected an empty diff and
+landed `NEEDS_USER_REVIEW` for no content reason: `git show` emits an
+empty combined diff on clean merges. `git.DiffCommit` and
+`git.ArchivosDeCommit` now diff against the first parent when `rev-list
+--parents` reports more than one parent (`internal/git/commit.go`,
+new private `isMergeCommit`); non-merge paths are byte-identical, and all
+existing callers (`comandos_gate.go`, `comandos_review.go`,
+`review/rama.go`) are covered without changes. Pinned by
+`TestDiffCommitOnMergeReturnsFirstParentDiff` and
+`TestCommitFilesOnMergeListsBranchFiles`
+(`internal/git/commit_test.go`), including negative first-parent
+assertions and the two-parent guard owned by the shared helper. Landed as
+`30fe12a` (fix), `058bc94` plus `660fc91` (review-driven test
+hardening), fast-forwarded to main. Review verdicts: `warn` on `30fe12a`
+(four non-blocking findings, all addressed) and `warn` on `058bc94`
+(one ADVISORY, addressed by `660fc91`). Deliberate non-fixes: one extra
+local `rev-list` subprocess per audited commit (negligible; merging
+detection and diff into one call would add shallower indirection), and
+new English comments beside Spanish legacy blocks (the standing English
+rule outweighs matching the file).
+
 
 ## Closed FUs (from the former `f0-deuda.md`)
 
