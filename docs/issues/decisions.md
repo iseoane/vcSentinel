@@ -194,6 +194,8 @@ question the purge cannot answer never authorises a deletion. Deliberate
 cost, not debt: 65 old worktree fichas stay where they are, still
 enumerated by prune paths but no longer read by review/status/pr.
 
+Migration half resolved 2026-09-06: `MigrarDesdeV1` had no production caller (tests only) and its output type `CompatV1` / `IndiceCommit.V1` had no reader, so the whole family was removed (`85ef280`: `internal/store/migracion.go` and its test, the `V1` field on `IndiceCommit`, and the one production comment naming it). Anchoring closed the write-loss half; deletion closed the dead-code half. The 65 old fichas stay put under the deliberate cost above.
+
 ### FU-13: net planning classifies from the complete path list (resolved 2026-09-02)
 
 Sanitised paths dropped legal filenames and with them route-based

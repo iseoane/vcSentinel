@@ -5,35 +5,18 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Verify whether FU-12 is already resolved
+## 1. Fix the model probe to request the configured model
 
-Sits first: small, and it settles a resolved-or-not question in one reading.
-
-- Question: the FU-12 defect states `MigrarDesdeV1` has no production call
-  site and the v1 writers use `gitDir`, but `AGENTS.md` describes
-  `sharedReviewLedger` anchoring on the common directory.
-- References, both verified 2026-09-06: `internal/store/migracion.go:58`
-  defines `MigrarDesdeV1` with no production caller (callers: tests only);
-  `cmd/sentinel/shared_ledger.go:33` anchors `review`, `status` and `pr`
-  on the Git common directory. The writers half of the defect is fixed;
-  the migration half is dead code.
-- Closing: one reading that records whether the ledger anchoring closes
-  the defect, and files or removes the dead migration accordingly. Do not
-  resolve it by assumption here.
-- Blocks: nothing.
-
-## 2. Fix the model probe to request the configured model
-
-Sits second: small, root-caused and unblocked — every review until then stamps an honestly-unverified model.
+Sits first: small, root-caused and unblocked — every review until then stamps an honestly-unverified model.
 
 - Wrong: `modelprobe.Verify` reaches the agent through `CLIAdapter.EjecutarPrompt` → bare `opencode run` with no `--model` flag (`internal/agentadapter/cli.go:578`), so it always measures the OpenCode default (`openai/gpt-5.6-sol`) instead of the configured profile model; `reviewCommand` passes `--model` (`cli.go:400-401`), so audits run on the right models while verification always mismatches.
 - Evidence: probe-artifact decision in `decisions.md` (2026-09-06); both configured models answer under their own identifier with `--model`, verified live the same day.
 - Closing: the probe requests the configured model on the probe invocation (or routes through the same model-resolving construction as review), with a test pinning that the probe command carries `--model`. Existing mismatch records stay as honest history.
 - Blocks: nothing.
 
-## 3. Cache shared audit evidence across review dimensions
+## 2. Cache shared audit evidence across review dimensions
 
-Sits third: designed but gated on the token measurement below — starting
+Sits second: designed but gated on the token measurement below — starting
 it now means designing blind on cache value.
 
 - Wrong: a five-dimension audit sends the same commit message, diff,
@@ -53,9 +36,9 @@ it now means designing blind on cache value.
   outputs or reduce dimension coverage.
 - Blocked on: the shared token-observability note in `future.md`.
 
-## 4. Give cost, scope and reuse a producer (FU-3)
+## 3. Give cost, scope and reuse a producer (FU-3)
 
-Sits fourth: blocked on the same missing measurement as item 3, with no
+Sits third: blocked on the same missing measurement as item 2, with no
 observable source in the agent path today.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -72,9 +55,9 @@ observable source in the agent path today.
   a deliberately nil value with provenance is a determination, not a gap).
 - Blocked on: the shared token-observability note in `future.md`.
 
-## 5. Validate the acpx spawn chain on native Windows
+## 4. Validate the acpx spawn chain on native Windows
 
-Sits fifth: conditional work — no action while Debian is the deployment
+Sits fourth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
@@ -84,7 +67,7 @@ platform.
 - Closing: a confirmation run on native Windows, or no action at all.
 - Starts only if: production runs on Windows.
 
-## 6. Teach the gate to collect merge-commit diffs
+## 5. Teach the gate to collect merge-commit diffs
 
 Sits last: new, small, and every future merge replays it — the FU-5 merge
 landed NEEDS_USER_REVIEW for no content reason.
