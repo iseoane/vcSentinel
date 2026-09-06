@@ -67,7 +67,7 @@ type regla struct {
 }
 
 // reglasDeRiesgo implementa, en cualquier orden, las alternativas de cada
-// nivel del informe (docs/arquitectura/replanteamiento-objetivo.md, §9.2):
+// nivel del informe (docs/design/replanteamiento-objetivo.md, §9.2):
 // Evaluar no asume prioridad por posición, calcula el máximo real al final.
 //
 // Symbols.Complete habilita las reglas F4 de completitud. El análisis semver de

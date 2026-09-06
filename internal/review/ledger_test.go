@@ -590,7 +590,7 @@ func TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
 // therefore a real coverage limit rather than a formality: removing the guard
 // and keeping ReadDir's own ErrNotExist check leaves the regular-file test green,
 // because ReadDir answers ENOTDIR there. Measured, and recorded under FU-16 in
-// docs/reingenieria/f0-deuda.md.
+// docs/issues/decisions.md (FU-16 entry).
 func TestListarFichasFailsOnADanglingLedgerSymlink(t *testing.T) {
 	gitDir := t.TempDir()
 	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {

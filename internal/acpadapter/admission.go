@@ -8,7 +8,7 @@ import (
 // Enforcement declares which backend is expected to guarantee the
 // restriction capabilities (FilesystemRead/Write, Network, ChildAgents)
 // that an acpx-based run may demand. It implements capability admission
-// constraint C6 (docs/arquitectura/acpx-capability-mapping.md): restrictions
+// constraint C6 (docs/design/acpx-capability-mapping.md): restrictions
 // are only honest when a declared backend can actually enforce them on the
 // current platform; otherwise the run must be grant-by-design.
 const (

@@ -68,9 +68,9 @@ Code and scripts MUST behave the same on Windows and Debian:
 
 Durable runs/Control Center are layered on the same common directory: `internal/agentrun` + `internal/reviewcontract` are contracts, `internal/execution` is the controller over `internal/store` event stream with `internal/planning`, `internal/acpadapter`, `internal/reviewexec`, `internal/reviewsnapshot`, `internal/remediation`, `internal/process`; observation flows `internal/registry`+`internal/inventory`+`internal/presence`→`internal/overview`, `internal/attach`→`internal/tui`; `internal/daemon` owns the daemon, `internal/validation` the gate checks.
 
-Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Reengineering phase work (phases F0-F9, tasks TN.M) must load `.claude/skills/reingenieria-phase-task/SKILL.md` first.
+Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Implementation work done through a delegated writer must load `.claude/skills/implementation-task/SKILL.md` first.
 
-Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arquitectura/replanteamiento-objetivo.md), [`docs/reingenieria/`](docs/reingenieria/), and [`docs/runs-cli.md`](docs/runs-cli.md) for the `runs` flag and exit-code contract.
+Reference documents: [`docs/design/replanteamiento-objetivo.md`](docs/design/replanteamiento-objetivo.md), [`docs/design/agent-execution-control-options.md`](docs/design/agent-execution-control-options.md), [`docs/design/acpx-capability-mapping.md`](docs/design/acpx-capability-mapping.md), [`docs/design/acpx-production-adapter.md`](docs/design/acpx-production-adapter.md), and [`docs/design/runs-cli.md`](docs/design/runs-cli.md) for the `runs` flag and exit-code contract. Open work and past decisions live in [`docs/issues/`](docs/issues/).
 
 ## Commands
 
@@ -97,7 +97,7 @@ Reference documents: [`docs/arquitectura/replanteamiento-objetivo.md`](docs/arqu
 | `doctor` | Preflight the review environment: agents, search binary, codegraph gates, hook. Advisory, exits `0`. Flag: `--check-updates`. |
 | `explain` | Explain a commit range's change profile, detected characteristics, risk, and cohesion. Supports `--json`. |
 | `consentimiento-diff` | Grant, revoke, or show local consent for external diffs. |
-| `runs` | Operate durable runs: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, `prune`. Exit codes are contract, not convention: `1` usage, `2` run not found, `3` stale revision, `4` invalid state, `5` infrastructure failure. See `docs/runs-cli.md`. |
+|`runs`|Operate durable runs: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, `prune`. Exit codes are contract, not convention: `1` usage, `2` run not found, `3` stale revision, `4` invalid state, `5` infrastructure failure. See `docs/design/runs-cli.md`.|
 | `tui` | Open the full-screen control center over the repository registry; starts and owns this repository's daemon for the session and stops it gracefully on exit. |
 | `pr` | Create a pull request through `gh`; `pr review` analyzes the unpublished branch. |
 | `install` / `upgrade` / `uninstall` | Manage the installed binary. |

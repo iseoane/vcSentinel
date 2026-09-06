@@ -297,7 +297,7 @@ func TestPruneExecutionsKeepsIncompleteAdmissionRecord(t *testing.T) {
 }
 
 // TestPruneReasonConstantsMatchDocumentedContract pins every exported prune
-// constant to its documented literal: docs/runs-cli.md quotes these strings
+// constant to its documented literal: docs/design/runs-cli.md quotes these strings
 // verbatim in the prune-decision tables, so any drift on either side must
 // fail here first.
 func TestPruneReasonConstantsMatchDocumentedContract(t *testing.T) {
@@ -345,7 +345,7 @@ func TestPruneReasonConstantsMatchDocumentedContract(t *testing.T) {
 			t.Fatalf("constant %s has no pinned expectation; add it to both maps", name)
 		}
 		if got != want {
-			t.Errorf("constant %s = %q, want documented literal %q (update docs/runs-cli.md together)", name, got, want)
+			t.Errorf("constant %s = %q, want documented literal %q (update docs/design/runs-cli.md together)", name, got, want)
 		}
 	}
 }

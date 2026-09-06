@@ -17,7 +17,7 @@ import (
 // <common-dir>/worktrees/<name>, so a review run there filed its record inside
 // the administrative directory `git worktree remove` deletes, and delegating
 // work to a writer in a dedicated worktree is the mandated workflow here, so
-// that was the normal path. FU-12 in docs/reingenieria/f0-deuda.md records the
+// that was the normal path. FU-12 in docs/issues/decisions.md records the
 // measurement, including a review whose ficha landed in
 // .git/worktrees/fu10-ticket-04/vas-sentinel/.
 //

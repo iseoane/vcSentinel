@@ -44,7 +44,7 @@ import (
 // a surviving record.
 
 // Stable operator-facing strings emitted by prune decisions. They are part
-// of the machine-readable contract documented in docs/runs-cli.md; the
+// of the machine-readable contract documented in docs/design/runs-cli.md; the
 // doc-pin test keeps them and the documentation table in lockstep.
 const (
 	PruneActionPruned = "pruned"
@@ -91,7 +91,7 @@ const (
 )
 
 // Format-string retention reasons; the verb supplies dynamic evidence after
-// the stable prefix quoted in docs/runs-cli.md.
+// the stable prefix quoted in docs/design/runs-cli.md.
 const (
 	PruneReasonUnreadableFmt       = "unreadable: %v"
 	PruneReasonCorruptFmt          = "corrupt: %v"

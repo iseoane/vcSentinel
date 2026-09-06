@@ -1392,7 +1392,7 @@ ninguna requiere reescritura.
 - **Solo entonces** se ajustan bundles, umbrales y perfiles — con datos.
 
 **Delivered 2026-09-04** (T9.0-T9.5, detail in
-[`docs/reingenieria/f9-observabilidad.md`](../reingenieria/f9-observabilidad.md)).
+[`docs/issues/decisions.md`](../issues/decisions.md)).
 What actually shipped, and what did not:
 
 - `sentinel metrics` answers from local storage over the durable-run store.
@@ -1817,7 +1817,7 @@ tampoco son revisables de una sentada, y merecen un aviso; pero frenar el
 guardián por ellas es fricción sin seguridad a cambio.
 
 Implementado de forma anticipada (`internal/git/clases.go`) porque bloqueaba la
-propia redacción de este informe. Ver `docs/reingenieria/f0-deuda.md` → **T0.8**.
+propia redacción de este informe. Ver `internal/git/clases.go` (antes `docs/reingenieria/f0-deuda.md` → **T0.8**, consolidated into `docs/issues/`).
 La versión configurable por repositorio y la retirada de `ClasificarCapa`
 corresponden a F3-T3.1.
 
