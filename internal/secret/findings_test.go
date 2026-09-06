@@ -1,22 +1,21 @@
-package main
+package secret
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
 )
 
 func TestProjectSecretIncidentsEmpty(t *testing.T) {
-	if got := projectSecretIncidents(nil); len(got) != 0 {
-		t.Fatalf("projectSecretIncidents(nil) = %#v, expected empty", got)
+	if got := ProjectSecretIncidents(nil); len(got) != 0 {
+		t.Fatalf("ProjectSecretIncidents(nil) = %#v, expected empty", got)
 	}
 }
 
 func TestProjectSecretIncidentsDeterministicWithoutDimension(t *testing.T) {
-	incidents := []secret.Incident{{Path: "docs/runbook.md", Shape: "github_token", Line: 12}}
-	got := projectSecretIncidents(incidents)
+	incidents := []Incident{{Path: "docs/runbook.md", Shape: "github_token", Line: 12}}
+	got := ProjectSecretIncidents(incidents)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, expected 1", len(got))
 	}
@@ -53,7 +52,7 @@ func TestProjectSecretIncidentsDeterministicWithoutDimension(t *testing.T) {
 func TestProjectSecretIncidentsNeverExposesValue(t *testing.T) {
 	value := "ghp_" + strings.Repeat("A", 24)
 	_ = value
-	got := projectSecretIncidents([]secret.Incident{{Path: "notes.md", Shape: "github_token", Line: 3}})
+	got := ProjectSecretIncidents([]Incident{{Path: "notes.md", Shape: "github_token", Line: 3}})
 	for _, field := range []string{got[0].Title, got[0].Description, got[0].Evidence} {
 		if strings.Contains(field, "ghp_") {
 			t.Errorf("field %q carries a credential-looking value", field)
@@ -65,7 +64,7 @@ func TestProjectSecretIncidentsNeverExposesValue(t *testing.T) {
 }
 
 func TestProjectSecretIncidentsDistinctFingerprintsPerShape(t *testing.T) {
-	got := projectSecretIncidents([]secret.Incident{
+	got := ProjectSecretIncidents([]Incident{
 		{Path: "a.md", Shape: "github_token", Line: 1},
 		{Path: "a.md", Shape: "pem_block", Line: 9},
 	})
@@ -78,13 +77,13 @@ func TestProjectSecretIncidentsDistinctFingerprintsPerShape(t *testing.T) {
 }
 
 func TestSecretAdvisoriesEmpty(t *testing.T) {
-	if got := secretAdvisories(nil, nil); len(got) != 0 {
-		t.Fatalf("secretAdvisories(nil, nil) = %#v, expected no output on absence", got)
+	if got := SecretAdvisories(nil, nil); len(got) != 0 {
+		t.Fatalf("SecretAdvisories(nil, nil) = %#v, expected no output on absence", got)
 	}
 }
 
 func TestSecretAdvisoriesNamePathAndShape(t *testing.T) {
-	got := secretAdvisories([]secret.Incident{{Path: "docs/runbook.md", Shape: "pem_block", Line: 7}}, nil)
+	got := SecretAdvisories([]Incident{{Path: "docs/runbook.md", Shape: "pem_block", Line: 7}}, nil)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, expected 1", len(got))
 	}
@@ -96,7 +95,7 @@ func TestSecretAdvisoriesNamePathAndShape(t *testing.T) {
 }
 
 func TestSecretAdvisoriesUnknownIsNotClean(t *testing.T) {
-	got := secretAdvisories(nil, []string{"assets/logo.png"})
+	got := SecretAdvisories(nil, []string{"assets/logo.png"})
 	if len(got) != 1 {
 		t.Fatalf("len = %d, expected 1", len(got))
 	}

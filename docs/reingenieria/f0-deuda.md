@@ -1400,6 +1400,30 @@ Residual follow-up: the `pr`-review branch flow (`AnalizarRama`)
 does not attach these incidents yet; `review`, `gate` and
 `explain` cover this unit.
 
+#### Residual closed 2026-09-05 (branch `feat/credential-branch-flow`)
+
+The projection moved to `internal/secret` (shared; `cmd/sentinel`
+keeps no copy) and `AnalizarRama` gained
+`OpcionesRama.DeterministicFindingsFactory`, invoked per audited
+commit and for the net range as head, appending to the gate
+findings. Both `pr review` and `pr create` populate it. Incidents
+stay WARNING, dimensionless, voteless, with empty evidence.
+
+The `rama.go:207` vs `:323` question is answered: not a defect.
+Line 207 filters the gate findings into the per-commit copy and
+line 323 forwards that already-filtered copy, so the
+single-commit contract holds on both paths. Nothing to repair,
+no follow-up opened.
+
+Live proof on a throwaway docs branch: the per-commit audit
+scheduled zero dimensions and still printed the advisory (once
+per commit, once for the net range — same wording, both
+legitimate surfaces); the ficha holds the WARNING/pending
+finding with empty evidence, verdict `ok`, decision single.
+Nothing about the verdict, the decision, or any exit code moved.
+The throwaway branch is deleted; its proof ficha remains in the
+shared ledger as an orphan, which the append-only log tolerates.
+
 ### FU-12: reviews run in a linked worktree never join the repository ledger
 
 Recorded 2026-09-02 while reviewing ticket 04 of the FU-10 sequence, from the

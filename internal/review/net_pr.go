@@ -209,7 +209,7 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 		Bundles: plan.Bundles, RutasContexto: safePaths,
 		Respuestas: opts.Respuestas, PerfilOverride: opts.PerfilOverride,
 		OnDimension: opts.OnDimension, FabricaRefutador: opts.FabricaRefutador,
-		HallazgosDeterministas: hallazgosDeterministasParaCommit(to, opts.HallazgosDeterministasSHA, opts.HallazgosDeterministas),
+		HallazgosDeterministas: deterministasCommit(opts, to, paths, diff),
 		ReviewTransport:        transport,
 		NetUnitLabel:           "pull request (ONE NET diff " + from + ".." + to + ")",
 		NetUnitHistory:         framed.String(),

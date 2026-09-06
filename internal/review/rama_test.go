@@ -567,3 +567,180 @@ func TestAuditarCommitRamaRoutesThroughPerCommitTransport(t *testing.T) {
 		t.Fatalf("factory paths = %v, want the audited commit's immutable paths", factoryPaths)
 	}
 }
+
+// credentialFindingFixture is a canned deterministic credential incident with
+// the Unit A shape: validation source, empty dimension, WARNING, empty
+// evidence. The review-package tests cannot import internal/secret (it
+// imports this package), so the factory is stubbed and the real projection
+// is covered in its own package plus the app wiring test.
+func credentialFindingFixture() Hallazgo {
+	h := Hallazgo{
+		Source:      SourceValidation,
+		Severity:    SevWarning,
+		Confidence:  0.9,
+		Status:      StatusPending,
+		Title:       "exposed credential (github_token)",
+		Description: "docs/runbook.md:2 matches github_token (value withheld)",
+		Location:    Ubicacion{Archivo: "docs/runbook.md", LineaInicio: 2},
+	}
+	h.Fingerprint = Fingerprint(h)
+	return h
+}
+
+const credentialDiffMarker = "ghp_EXAMPLECREDENTIAL"
+
+func credentialFactoryStub() func(string, []string, string) []Hallazgo {
+	return func(_ string, _ []string, diff string) []Hallazgo {
+		if strings.Contains(diff, credentialDiffMarker) {
+			return []Hallazgo{credentialFindingFixture()}
+		}
+		return nil
+	}
+}
+
+func aggregatedByTitle(ficha Ficha, title string) []Hallazgo {
+	var out []Hallazgo
+	for _, revision := range ficha.Revisions {
+		for _, h := range revision.AggregatedFindings {
+			if h.Title == title {
+				out = append(out, h)
+			}
+		}
+	}
+	return out
+}
+
+func buildTwoCommitBranch(t *testing.T) (gitDir, cleanSHA, credSHA string) {
+	t.Helper()
+	gitDir = prepararRepoRama(t)
+	if err := os.MkdirAll("docs", 0755); err != nil {
+		t.Fatal(err)
+	}
+	cleanSHA = commitEnRama(t, "app.txt", "1\n2\n3\n4\n5\n")
+	credSHA = commitEnRama(t, "docs/runbook.md", "deploy:\n  token = \""+credentialDiffMarker+"1234567890abcdef\"\n")
+	return gitDir, cleanSHA, credSHA
+}
+
+func TestBranchFindingsFactoryIsPerCommit(t *testing.T) {
+	gitDir, cleanSHA, credSHA := buildTwoCommitBranch(t)
+	ledger := NuevoLedger(gitDir)
+	stub := &auditorStub{auditOutput: auditOutputOK}
+
+	res, err := AnalizarRama(ledger, OpcionesRama{
+		Fabrica:                      fabricaStub(stub),
+		Parallel:                     1,
+		DeterministicFindingsFactory: credentialFactoryStub(),
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed: %v", err)
+	}
+	if len(res.Fichas) != 2 {
+		t.Fatalf("fichas = %d, want 2", len(res.Fichas))
+	}
+	if got := aggregatedByTitle(res.Fichas[0], "exposed credential (github_token)"); len(got) != 0 {
+		t.Errorf("clean commit carries %d credential findings, want none", len(got))
+	}
+	credFicha, err := ledger.LeerFicha(credSHA)
+	if err != nil || credFicha == nil {
+		t.Fatalf("persisted credential ficha missing: %v", err)
+	}
+	got := aggregatedByTitle(*credFicha, "exposed credential (github_token)")
+	if len(got) != 1 {
+		t.Fatalf("credential commit carries %d findings, want 1", len(got))
+	}
+	if got[0].Evidence != "" {
+		t.Errorf("Evidence = %q, want empty: the value must never persist", got[0].Evidence)
+	}
+	if got[0].Severity != SevWarning || got[0].Status != StatusPending || got[0].Dimension != "" {
+		t.Errorf("finding = %+v, want WARNING/pending/dimensionless", got[0])
+	}
+	_ = cleanSHA
+}
+
+func TestBranchFindingsFactoryLeavesVerdictAndDecisionUntouched(t *testing.T) {
+	run := func(t *testing.T, factory func(string, []string, string) []Hallazgo) (results []string, decision string) {
+		t.Helper()
+		gitDir, _, _ := buildTwoCommitBranch(t)
+		ledger := NuevoLedger(gitDir)
+		res, err := AnalizarRama(ledger, OpcionesRama{
+			Fabrica:                      fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+			Parallel:                     1,
+			DeterministicFindingsFactory: factory,
+		})
+		if err != nil {
+			t.Fatalf("AnalizarRama failed: %v", err)
+		}
+		for _, ficha := range res.Fichas {
+			results = append(results, ficha.Revisions[0].Result)
+		}
+		return results, res.Decision
+	}
+
+	plainResults, plainDecision := run(t, nil)
+	wiredResults, wiredDecision := run(t, credentialFactoryStub())
+	if strings.Join(plainResults, ",") != strings.Join(wiredResults, ",") {
+		t.Errorf("verdicts without factory %v != with factory %v", plainResults, wiredResults)
+	}
+	if plainDecision != wiredDecision {
+		t.Errorf("decision without factory %q != with factory %q", plainDecision, wiredDecision)
+	}
+}
+
+func TestBranchFindingsFactoryAppendsGateFindings(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	if err := os.MkdirAll("docs", 0755); err != nil {
+		t.Fatal(err)
+	}
+	sha := commitEnRama(t, "docs/runbook.md", "token = \""+credentialDiffMarker+"1234567890abcdef\"\n")
+	ledger := NuevoLedger(gitDir)
+	gateFinding := Hallazgo{Source: SourceValidation, Dimension: DimStyle, Severity: SevWarning, Title: "gate validation", Location: Ubicacion{Archivo: "docs/runbook.md", LineaInicio: 1}}
+	gateFinding.Fingerprint = Fingerprint(gateFinding)
+
+	res, err := AnalizarRama(ledger, OpcionesRama{
+		Fabrica:                      fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+		Parallel:                     1,
+		HallazgosDeterministas:       []Hallazgo{gateFinding},
+		HallazgosDeterministasSHA:    sha,
+		DeterministicFindingsFactory: credentialFactoryStub(),
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed: %v", err)
+	}
+	if len(res.Fichas) != 1 {
+		t.Fatalf("fichas = %d, want 1", len(res.Fichas))
+	}
+	titles := map[string]bool{}
+	for _, h := range res.Fichas[0].Revisions[0].AggregatedFindings {
+		titles[h.Title] = true
+	}
+	if !titles["gate validation"] || !titles["exposed credential (github_token)"] {
+		t.Errorf("titles = %v, want both the gate finding and the factory finding", titles)
+	}
+}
+
+func TestBranchFindingsFactoryBinaryCommitIsSafe(t *testing.T) {
+	gitDir := prepararRepoRama(t)
+	payload := append([]byte("PNG\x00\x01\x02binary"), []byte(strings.Repeat("x", 200))...)
+	if err := os.WriteFile("logo.png", payload, 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitEjecutar(t, "add", "logo.png")
+	gitEjecutar(t, "commit", "-m", "feat(logo): binary asset")
+	sha := strings.TrimSpace(gitSalida(t, "rev-parse", "HEAD"))
+	ledger := NuevoLedger(gitDir)
+
+	res, err := AnalizarRama(ledger, OpcionesRama{
+		Fabrica:                      fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+		Parallel:                     1,
+		DeterministicFindingsFactory: credentialFactoryStub(),
+	})
+	if err != nil {
+		t.Fatalf("AnalizarRama failed on a binary commit: %v", err)
+	}
+	if len(res.Fichas) != 1 || res.Fichas[0].SHA != sha {
+		t.Fatalf("fichas = %v, want [%s]", res.Fichas, sha)
+	}
+	if got := aggregatedByTitle(res.Fichas[0], "exposed credential (github_token)"); len(got) != 0 {
+		t.Errorf("binary commit carries %d credential findings, want none and no error", len(got))
+	}
+}
