@@ -574,13 +574,24 @@ func scopeCredentialToProvider(raw, model string) string {
 // comandoPrompt devuelve los argumentos de invocación según el binario y si el
 // prompt viaja por stdin: opencode usa el subcomando "run" y claude "-p", ambos
 // leyendo el prompt de stdin (sin límite de longitud); cualquier otro binario
-// recibe el prompt como argumento de "-p" (comportamiento anterior).
+// recibe el prompt como argumento de "-p" (comportamiento anterior). Si hay un
+// modelo configurado se añade "--model <modelo>", igual que en las invocaciones
+// de revisión: las variables de entorno (OPENCODE_MODEL, CLAUDE_CODE_MODEL) no
+// bastan para que el binario resuelva el modelo deseado.
 func (c *CLIAdapter) comandoPrompt(prompt string) ([]string, bool) {
 	if c.esOpenCode() {
-		return []string{"run"}, true
+		args := []string{"run"}
+		if c.Config.Model != "" {
+			args = append(args, "--model", c.Config.Model)
+		}
+		return args, true
 	}
 	if c.esClaude() {
-		return []string{"-p"}, true
+		args := []string{"-p"}
+		if c.Config.Model != "" {
+			args = append(args, "--model", c.Config.Model)
+		}
+		return args, true
 	}
 	return []string{"-p", prompt}, false
 }
