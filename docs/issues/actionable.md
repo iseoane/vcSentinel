@@ -5,28 +5,9 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Settle configured-vs-serving model drift in opencode profiles
+## 1. Verify whether FU-12 is already resolved
 
-Sits first: new, and it undermines verification trust — while drift stands,
-`model_verified` stays honestly `false` on every review.
-
-- Wrong: live `profiles/*.json` mismatch records show configured models
-  (`opencode-go/glm-5.3-flash` on `cheap`,
-  `opencode-go/muse-spark-1.3-contributor` on `normal`/`deep`) do not match
-  the serving agent (`openai/gpt-5.6-sol`, recorded 2026-09-05, observed
-  live the same day). Unit D (branch `feat/reachable-model-verified`,
-  merged) makes the drift visible rather than resolving it.
-- Evidence: former `follow-ups.md` P2 item (git history); live profile
-  records under the store.
-- Closing: a recorded decision stating which side is wrong (stale config
-  vs unexpected serving model) and the corrected configuration.
-- Do not change any profile configuration as part of investigating: the
-  investigation is the task.
-- Blocks: nothing.
-
-## 2. Verify whether FU-12 is already resolved
-
-Sits second: small, and it settles a resolved-or-not question in one reading.
+Sits first: small, and it settles a resolved-or-not question in one reading.
 
 - Question: the FU-12 defect states `MigrarDesdeV1` has no production call
   site and the v1 writers use `gitDir`, but `AGENTS.md` describes
@@ -39,6 +20,15 @@ Sits second: small, and it settles a resolved-or-not question in one reading.
 - Closing: one reading that records whether the ledger anchoring closes
   the defect, and files or removes the dead migration accordingly. Do not
   resolve it by assumption here.
+- Blocks: nothing.
+
+## 2. Fix the model probe to request the configured model
+
+Sits second: small, root-caused and unblocked — every review until then stamps an honestly-unverified model.
+
+- Wrong: `modelprobe.Verify` reaches the agent through `CLIAdapter.EjecutarPrompt` → bare `opencode run` with no `--model` flag (`internal/agentadapter/cli.go:578`), so it always measures the OpenCode default (`openai/gpt-5.6-sol`) instead of the configured profile model; `reviewCommand` passes `--model` (`cli.go:400-401`), so audits run on the right models while verification always mismatches.
+- Evidence: probe-artifact decision in `decisions.md` (2026-09-06); both configured models answer under their own identifier with `--model`, verified live the same day.
+- Closing: the probe requests the configured model on the probe invocation (or routes through the same model-resolving construction as review), with a test pinning that the probe command carries `--model`. Existing mismatch records stay as honest history.
 - Blocks: nothing.
 
 ## 3. Cache shared audit evidence across review dimensions
