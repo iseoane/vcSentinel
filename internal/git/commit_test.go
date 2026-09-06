@@ -371,6 +371,9 @@ func TestDiffCommitOnMergeReturnsFirstParentDiff(t *testing.T) {
 	if !strings.Contains(diff, "feature.go") || !strings.Contains(diff, "+package feature") {
 		t.Errorf("merge diff should show the merged-branch change (feature.go), got: %q", diff)
 	}
+	if strings.Contains(diff, "base v2") {
+		t.Errorf("merge diff must not include the first parent's own change (base v2), got: %q", diff)
+	}
 }
 
 func TestCommitFilesOnMergeListsBranchFiles(t *testing.T) {
@@ -385,17 +388,17 @@ func TestCommitFilesOnMergeListsBranchFiles(t *testing.T) {
 	t.Chdir(dir)
 
 	head, _ := SHAHead()
+	// Verify HEAD really is a two-parent merge commit: if the repo setup
+	// changes, the test must fail here instead of misleading us.
+	if parents := strings.Fields(ejecutarGit(t, dir, "rev-list", "--parents", "-n", "1", head)); len(parents) != 3 {
+		t.Fatalf("HEAD should be a two-parent merge commit, rev-list gave %d fields", len(parents))
+	}
+
 	archivos, err := ArchivosDeCommit(head)
 	if err != nil {
 		t.Fatalf("ArchivosDeCommit returned an error: %v", err)
 	}
-	foundFeature := false
-	for _, archivo := range archivos {
-		if archivo == "feature.go" {
-			foundFeature = true
-		}
-	}
-	if !foundFeature {
-		t.Errorf("merge ArchivosDeCommit should list feature.go, got: %+v", archivos)
+	if len(archivos) != 1 || archivos[0] != "feature.go" {
+		t.Errorf("merge ArchivosDeCommit should list exactly feature.go, got: %+v", archivos)
 	}
 }
