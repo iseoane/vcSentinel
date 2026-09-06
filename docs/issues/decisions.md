@@ -80,6 +80,36 @@ convention — carried here as recorded positions, not as landed work:
   unticketed capability-policy runtime work; the enforcement declaration
   itself is already durably recorded via admission capabilities.
 
+### Configured-vs-serving model drift is a probe artifact (decided 2026-09-06)
+
+(a) The configured models are valid and serve correctly. With an explicit
+`--model`, both `opencode-go/glm-5.3-flash` (profile `cheap`) and
+`opencode-go/muse-spark-1.3-contributor` (profiles `normal` and `deep`,
+configured in `.vas_sentinel/vassentinel.yml:37-50`) answered under their
+own identifier live on 2026-09-06.
+(b) The mismatch records are false positives caused by the probe path.
+The Verify probe reaches the agent through `CLIAdapter.EjecutarPrompt`
+(`internal/agentadapter/cli.go:63`) → `ejecutarComando`
+(`internal/agentadapter/cli.go:118`) → `ejecutarComandoConTimeout`
+(`internal/agentadapter/cli.go:284`) → `comandoPrompt`
+(`internal/agentadapter/cli.go:578`), which emits bare `opencode run`
+with no `--model` flag. The probe
+(`internal/modelprobe/verificador.go:115-152`) therefore always measures
+the OpenCode default (`openai/gpt-5.6-sol`) instead of the configured
+profile model and records `model_mismatch` against it: the store records
+`.git/vas-sentinel/profiles/cheap.json`, `normal.json` and `deep.json`
+all show `model_mismatch` of the configured models versus
+`openai/gpt-5.6-sol` (recorded 2026-09-05). Semantic review serving is
+unaffected: `reviewCommand` passes `--model` when a model is configured
+(`internal/agentadapter/cli.go:400-401`), so audits run on the
+configured models.
+(c) Corrected configuration: none. The current `vassentinel.yml` values
+stand; no configuration edit was made and none is needed.
+(d) The correction owed is code, not configuration: the probe must
+request the configured model (pass `--model` on the probe invocation).
+Filed as a follow-up for a code unit and explicitly not done in this
+docs-only decision.
+
 ## Closed FUs (from the former `f0-deuda.md`)
 
 ### FU-5: widened review context provider (resolved 2026-09-06)

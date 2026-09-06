@@ -5,28 +5,9 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Settle configured-vs-serving model drift in opencode profiles
+## 1. Verify whether FU-12 is already resolved
 
-Sits first: new, and it undermines verification trust — while drift stands,
-`model_verified` stays honestly `false` on every review.
-
-- Wrong: live `profiles/*.json` mismatch records show configured models
-  (`opencode-go/glm-5.3-flash` on `cheap`,
-  `opencode-go/muse-spark-1.3-contributor` on `normal`/`deep`) do not match
-  the serving agent (`openai/gpt-5.6-sol`, recorded 2026-09-05, observed
-  live the same day). Unit D (branch `feat/reachable-model-verified`,
-  merged) makes the drift visible rather than resolving it.
-- Evidence: former `follow-ups.md` P2 item (git history); live profile
-  records under the store.
-- Closing: a recorded decision stating which side is wrong (stale config
-  vs unexpected serving model) and the corrected configuration.
-- Do not change any profile configuration as part of investigating: the
-  investigation is the task.
-- Blocks: nothing.
-
-## 2. Verify whether FU-12 is already resolved
-
-Sits second: small, and it settles a resolved-or-not question in one reading.
+Sits first: small, and it settles a resolved-or-not question in one reading.
 
 - Question: the FU-12 defect states `MigrarDesdeV1` has no production call
   site and the v1 writers use `gitDir`, but `AGENTS.md` describes
@@ -41,9 +22,9 @@ Sits second: small, and it settles a resolved-or-not question in one reading.
   resolve it by assumption here.
 - Blocks: nothing.
 
-## 3. Cache shared audit evidence across review dimensions
+## 2. Cache shared audit evidence across review dimensions
 
-Sits third: designed but gated on the token measurement below — starting
+Sits second: designed but gated on the token measurement below — starting
 it now means designing blind on cache value.
 
 - Wrong: a five-dimension audit sends the same commit message, diff,
@@ -63,9 +44,9 @@ it now means designing blind on cache value.
   outputs or reduce dimension coverage.
 - Blocked on: the shared token-observability note in `future.md`.
 
-## 4. Give cost, scope and reuse a producer (FU-3)
+## 3. Give cost, scope and reuse a producer (FU-3)
 
-Sits fourth: blocked on the same missing measurement as item 3, with no
+Sits third: blocked on the same missing measurement as item 2, with no
 observable source in the agent path today.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -82,9 +63,9 @@ observable source in the agent path today.
   a deliberately nil value with provenance is a determination, not a gap).
 - Blocked on: the shared token-observability note in `future.md`.
 
-## 5. Validate the acpx spawn chain on native Windows
+## 4. Validate the acpx spawn chain on native Windows
 
-Sits fifth: conditional work — no action while Debian is the deployment
+Sits fourth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
@@ -94,7 +75,7 @@ platform.
 - Closing: a confirmation run on native Windows, or no action at all.
 - Starts only if: production runs on Windows.
 
-## 6. Teach the gate to collect merge-commit diffs
+## 5. Teach the gate to collect merge-commit diffs
 
 Sits last: new, small, and every future merge replays it — the FU-5 merge
 landed NEEDS_USER_REVIEW for no content reason.
