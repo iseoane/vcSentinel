@@ -68,7 +68,7 @@ Code and scripts MUST behave the same on Windows and Debian:
 
 Durable runs/Control Center are layered on the same common directory: `internal/agentrun` + `internal/reviewcontract` are contracts, `internal/execution` is the controller over `internal/store` event stream with `internal/planning`, `internal/acpadapter`, `internal/reviewexec`, `internal/reviewsnapshot`, `internal/remediation`, `internal/process`; observation flows `internal/registry`+`internal/inventory`+`internal/presence`→`internal/overview`, `internal/attach`→`internal/tui`; `internal/daemon` owns the daemon, `internal/validation` the gate checks.
 
-Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification.
+Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Implementation work done through a delegated writer must load `.claude/skills/implementation-task/SKILL.md` first.
 
 Reference documents: [`docs/design/replanteamiento-objetivo.md`](docs/design/replanteamiento-objetivo.md), [`docs/design/agent-execution-control-options.md`](docs/design/agent-execution-control-options.md), [`docs/design/acpx-capability-mapping.md`](docs/design/acpx-capability-mapping.md), [`docs/design/acpx-production-adapter.md`](docs/design/acpx-production-adapter.md), and [`docs/design/runs-cli.md`](docs/design/runs-cli.md) for the `runs` flag and exit-code contract. Open work and past decisions live in [`docs/issues/`](docs/issues/).
 

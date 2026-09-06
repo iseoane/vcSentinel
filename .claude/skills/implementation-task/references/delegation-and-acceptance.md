@@ -1,6 +1,6 @@
 # Delegation and acceptance checkpoints
 
-Use this reference with `SKILL.md`. Repository-wide delegation, testing, and language policy remains authoritative in [AGENTS.md](../../../../AGENTS.md) and [CLAUDE.md](../../../../CLAUDE.md); these checkpoints add only phase-task evidence requirements.
+Use this reference with `SKILL.md`. Repository-wide delegation, testing, and language policy remains authoritative in [AGENTS.md](../../../../AGENTS.md) and [CLAUDE.md](../../../../CLAUDE.md); these checkpoints add only task evidence requirements.
 
 ## Contract matrix
 
@@ -20,8 +20,7 @@ Minimum rows cover: every task criterion; owned paths and worktree; writer RED/G
 Copy this checkpoint into the writer prompt and fill placeholders only. Do not weaken, reorder, or omit the required lines.
 
 ```text
-GENTLE_AI_PHASE_WRITER_CHECKPOINT
-Task: <task id>
+SENTINEL_WRITER_CHECKPOINT
 Scope: <task-owned paths and acceptance criteria>
 Worktree: <dedicated worktree path>
 LANGUAGE: Write every new or modified technical artifact, commit message, finding disposition, follow-up, and handoff in English. Preserve legacy Spanish unless translation is explicitly in scope.
