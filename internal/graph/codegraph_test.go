@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,9 +167,9 @@ func TestProveedorCodeGraphContextoWidenedRelations(t *testing.T) {
 	refs, err := p.Contexto("head", []string{"servicio.go"})
 	want := []review.Reference{
 		{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph},
-		{Path: "servicio.go", Relation: review.Relation("caller"), Reason: review.ReasonCodeGraph},
-		{Path: "ayuda.go", Relation: review.Relation("callee"), Reason: review.ReasonCodeGraph},
-		{Path: "impacto.go", Relation: review.Relation("impact"), Reason: review.ReasonCodeGraph},
+		{Path: "servicio.go", Relation: review.RelationCaller, Reason: review.ReasonCodeGraph},
+		{Path: "ayuda.go", Relation: review.RelationCallee, Reason: review.ReasonCodeGraph},
+		{Path: "impacto.go", Relation: review.RelationImpact, Reason: review.ReasonCodeGraph},
 	}
 	if err != nil || !reflect.DeepEqual(refs, want) {
 		t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
@@ -187,6 +188,142 @@ func TestProveedorCodeGraphContextoWidenedRelations(t *testing.T) {
 		}
 	}
 }
+
+// TestProveedorCodeGraphAffectedTestsFullBudget pins the affectedTests
+// budget: every deterministically-validated candidate up to
+// maxReferenciasCodeGraph is returned — the pre-widen recall.
+func TestProveedorCodeGraphAffectedTestsFullBudget(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	candidates := make([]string, 0, maxReferenciasCodeGraph+1)
+	for i := range maxReferenciasCodeGraph + 1 {
+		candidates = append(candidates, fmt.Sprintf("t%02d_test.go", i))
+	}
+	for _, file := range candidates {
+		if err := os.WriteFile(filepath.Join(p.raiz, file), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`{"affectedTests":[`)
+	for i, file := range candidates {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "%q", file)
+	}
+	b.WriteString(`]}`)
+	fake.respuestas = append(fake.respuestas, []byte(b.String()))
+	refs, err := p.Contexto("head", []string{"a.go"})
+	want := make([]review.Reference, 0, maxReferenciasCodeGraph)
+	for i := range maxReferenciasCodeGraph {
+		want = append(want, review.Reference{Path: fmt.Sprintf("t%02d_test.go", i), Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("affected refs = %d items (err %v), want the full %d-item budget", len(refs), err, len(want))
+	}
+}
+
+// TestProveedorCodeGraphDegradesWhenQueriesFail guards the additive
+// contract: a failing git show, or one relation query erroring, answering
+// empty, or answering malformed JSON, never errors and never regresses the
+// affectedTests result.
+func TestProveedorCodeGraphDegradesWhenQueriesFail(t *testing.T) {
+	estado := `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`
+	affected := []byte(`{"changedFiles":["a.go"],"affectedTests":["a_test.go"],"totalDependentsTraversed":1}`)
+	want := []review.Reference{{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}
+
+	t.Run("git show fails", func(t *testing.T) {
+		p, fake := proveedorConRespuestas(t, estado)
+		if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fake.respuestas = append(fake.respuestas, affected)
+		// Call 4 is the `git show` feeding symbol derivation.
+		fake.failures = map[int]error{4: errors.New("git show failed")}
+		refs, err := p.Contexto("head", []string{"a.go"})
+		if err != nil || !reflect.DeepEqual(refs, want) {
+			t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
+		}
+	})
+
+	t.Run("relation responses degrade", func(t *testing.T) {
+		p, fake := proveedorConRespuestas(t, estado)
+		if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		diff := []byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+func Servicio() {}\n")
+		fake.respuestas = append(fake.respuestas, affected, diff, []byte{}, []byte("{malformed"))
+		// Calls 5-7 are the callers/callees/impact queries: callers fails,
+		// callees answers empty, impact answers malformed JSON.
+		fake.failures = map[int]error{5: errors.New("callers failed")}
+		refs, err := p.Contexto("head", []string{"a.go"})
+		if err != nil || !reflect.DeepEqual(refs, want) {
+			t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
+		}
+		if len(fake.llamadas) != 8 {
+			t.Fatalf("calls = %d, want 8: four gate calls, git show, three relation queries", len(fake.llamadas))
+		}
+		for i, wantArgs := range [][]string{
+			{"callers", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+			{"callees", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+			{"impact", "-p", p.raiz, "-d", "2", "--json", "Servicio"},
+		} {
+			if !reflect.DeepEqual(fake.llamadas[i+5].args, wantArgs) {
+				t.Fatalf("call %d args = %v, want %v", i+5, fake.llamadas[i+5].args, wantArgs)
+			}
+		}
+	})
+}
+
+// TestProveedorCodeGraphAdditiveRelationTruncated pins the per-relation
+// budget: one relation's candidates are validated first — invalid graph
+// paths cannot starve the budget — then capped at perRelationBudget
+// sorted, deduplicated paths.
+func TestProveedorCodeGraphAdditiveRelationTruncated(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validPaths := make([]string, 0, 10)
+	for i := 1; i <= 10; i++ {
+		validPaths = append(validPaths, fmt.Sprintf("c%02d.go", i))
+	}
+	for _, file := range validPaths {
+		if err := os.WriteFile(filepath.Join(p.raiz, file), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The graph answers 13 caller entries: one path escaping the root, one
+	// nonexistent, one duplicate, ten valid files — more than the
+	// per-relation budget of 8.
+	entries := append([]string{"../escape.go", "a_fantasma.go", "c01.go", "c01.go"}, validPaths[1:]...)
+	var b strings.Builder
+	b.WriteString(`{"symbol":"Servicio","callers":[`)
+	for i, file := range entries {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"name":"N%02d","kind":"function","filePath":%q,"startLine":%d}`, i, file, i)
+	}
+	b.WriteString(`]}`)
+	fake.respuestas = append(fake.respuestas,
+		[]byte(`{"changedFiles":["a.go"],"affectedTests":["a_test.go"],"totalDependentsTraversed":1}`),
+		[]byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+func Servicio() {}\n"),
+		[]byte(b.String()),
+	)
+	refs, err := p.Contexto("head", []string{"a.go"})
+	want := []review.Reference{{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}
+	for i := 1; i <= perRelationBudget; i++ {
+		want = append(want, review.Reference{Path: fmt.Sprintf("c%02d.go", i), Relation: review.RelationCaller, Reason: review.ReasonCodeGraph})
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = %d items (err %v), want %d: %v", len(refs), err, len(want), want)
+	}
+	if bound := maxReferenciasCodeGraph + 3*perRelationBudget; len(refs) > bound {
+		t.Fatalf("refs = %d items, exceeds the %d bound (affected + 3 relations)", len(refs), bound)
+	}
+}
+
 type llamadaCG struct {
 	binario    string
 	args       []string
@@ -196,7 +333,10 @@ type llamadaCG struct {
 type fakeCG struct {
 	root       string
 	respuestas [][]byte
-	llamadas   []llamadaCG
+	// failures keys injected subprocess failures by absolute call index
+	// (0 = rev-parse); a failed call consumes no scripted response.
+	failures map[int]error
+	llamadas []llamadaCG
 }
 
 func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *fakeCG) {
@@ -208,6 +348,9 @@ func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *
 	fake := &fakeCG{root: raiz, respuestas: [][]byte{[]byte("head\n"), nil, []byte(estado)}}
 	p.ejecutar = func(_ context.Context, binario string, args []string, dir string, env []string, stdin string, _ int) ([]byte, error) {
 		fake.llamadas = append(fake.llamadas, llamadaCG{binario, append([]string(nil), args...), dir, stdin, append([]string(nil), env...)})
+		if err, ok := fake.failures[len(fake.llamadas)-1]; ok {
+			return nil, err
+		}
 		if len(fake.respuestas) == 0 {
 			return nil, errors.New("unexpected command")
 		}

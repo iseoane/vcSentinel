@@ -22,20 +22,23 @@ import (
 const limiteContextoCodeGraph = 32 << 10
 const maxReferenciasCodeGraph = 32
 
-// presupuestoPorRelacion splits the 32-reference total across the four
+// perRelationBudget splits the 32-reference total across the four
 // relations (affectedTests, callers, callees, impact); the new relations
 // share the existing budget, they never raise it.
-const presupuestoPorRelacion = maxReferenciasCodeGraph / 4
+const perRelationBudget = maxReferenciasCodeGraph / 4
 
-// limiteEntradasCodeGraph asks each callers/callees query for up to 16
+// codeGraphEntryLimit asks each callers/callees query for up to 16
 // entries — twice the per-relation budget — so several entries naming the
 // same file still leave room to fill the budget after per-path
 // deduplication.
-const limiteEntradasCodeGraph = presupuestoPorRelacion * 2
+const codeGraphEntryLimit = perRelationBudget * 2
 
-// maxSimbolosCodeGraph caps the symbols derived from the audited diff, so a
+// maxCodeGraphSymbols caps the symbols derived from the audited diff, so a
 // large commit costs a bounded number of additive subprocess calls.
-const maxSimbolosCodeGraph = 8
+const maxCodeGraphSymbols = 8
+
+// impactQueryDepth bounds the impact walk at two hops: one hop reaches only direct dependents, deeper walks explode the subprocess cost.
+const impactQueryDepth = 2
 
 // reAddedFuncDecl matches an added diff line declaring a top-level Go
 // function or method; the symbol name is capture group 1. Indented nested
@@ -144,7 +147,7 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	if err := json.Unmarshal(salida, &afectado); err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable: %w", err)
 	}
-	tests := rutasSeguras(afectado.AffectedTests, presupuestoPorRelacion)
+	tests := rutasSeguras(afectado.AffectedTests, maxReferenciasCodeGraph)
 	refs := make([]review.Reference, 0, len(tests))
 	for _, ruta := range tests {
 		if p.validatedPath(ruta) {
@@ -212,11 +215,11 @@ func entriesFor(respuesta relationResponse, relation review.Relation) []graphEnt
 func relationQueryArgs(relation review.Relation, root, symbol string) []string {
 	switch relation {
 	case review.RelationCaller:
-		return []string{"callers", "-p", root, "-l", strconv.Itoa(limiteEntradasCodeGraph), "--json", symbol}
+		return []string{"callers", "-p", root, "-l", strconv.Itoa(codeGraphEntryLimit), "--json", symbol}
 	case review.RelationCallee:
-		return []string{"callees", "-p", root, "-l", strconv.Itoa(limiteEntradasCodeGraph), "--json", symbol}
+		return []string{"callees", "-p", root, "-l", strconv.Itoa(codeGraphEntryLimit), "--json", symbol}
 	case review.RelationImpact:
-		return []string{"impact", "-p", root, "-d", "2", "--json", symbol}
+		return []string{"impact", "-p", root, "-d", strconv.Itoa(impactQueryDepth), "--json", symbol}
 	}
 	return nil
 }
@@ -252,10 +255,20 @@ func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths 
 		}
 	}
 	for _, relation := range additiveRelations {
-		for _, ruta := range rutasSeguras(candidates[relation], presupuestoPorRelacion) {
+		// Validated over the full over-fetch before capping, so invalid
+		// graph paths cannot starve the budget with valid references.
+		validated := make([]string, 0, len(candidates[relation]))
+		for _, ruta := range rutasSeguras(candidates[relation], 0) {
 			if p.validatedPath(ruta) {
-				refs = append(refs, review.Reference{Path: ruta, Relation: relation, Reason: review.ReasonCodeGraph})
+				validated = append(validated, ruta)
 			}
+		}
+		if len(validated) > perRelationBudget {
+			validated = validated[:perRelationBudget]
+		}
+		// Same path under different relations is intentional: each relation is a distinct reviewer signal.
+		for _, ruta := range validated {
+			refs = append(refs, review.Reference{Path: ruta, Relation: relation, Reason: review.ReasonCodeGraph})
 		}
 	}
 	return refs
@@ -264,7 +277,7 @@ func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths 
 // diffSymbols derives candidate symbols deterministically from the audited
 // commit: `git show <sha> --format= -- <validated input paths>` restricted to
 // those paths, harvesting the names of added top-level function, method, and
-// type declarations, sorted and capped at maxSimbolosCodeGraph. A failing
+// type declarations, sorted and capped at maxCodeGraphSymbols. A failing
 // call, an oversized output, or a diff without Go declarations (non-Go
 // files, no matches) yields nil so the provider keeps its affected-only
 // result without error.
@@ -276,8 +289,8 @@ func (p *ProveedorCodeGraph) diffSymbols(env []string, sha string, paths []strin
 	if err != nil || len(output) == 0 || len(output) >= p.limite {
 		return nil
 	}
-	names := make([]string, 0, maxSimbolosCodeGraph)
-	seen := make(map[string]bool, maxSimbolosCodeGraph)
+	names := make([]string, 0, maxCodeGraphSymbols)
+	seen := make(map[string]bool, maxCodeGraphSymbols)
 	for _, line := range strings.Split(string(output), "\n") {
 		name := ""
 		if m := reAddedFuncDecl.FindStringSubmatch(line); m != nil {
@@ -291,8 +304,8 @@ func (p *ProveedorCodeGraph) diffSymbols(env []string, sha string, paths []strin
 		}
 	}
 	sort.Strings(names)
-	if len(names) > maxSimbolosCodeGraph {
-		names = names[:maxSimbolosCodeGraph]
+	if len(names) > maxCodeGraphSymbols {
+		names = names[:maxCodeGraphSymbols]
 	}
 	return names
 }
