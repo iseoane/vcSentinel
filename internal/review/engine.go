@@ -1156,6 +1156,9 @@ type Reason string
 
 const (
 	RelationAffectedTest Relation = "affected_test"
+	RelationCaller       Relation = "caller"
+	RelationCallee       Relation = "callee"
+	RelationImpact       Relation = "impact"
 	ReasonCodeGraph      Reason   = "codegraph_dependency"
 )
 

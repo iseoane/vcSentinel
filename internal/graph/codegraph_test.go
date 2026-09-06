@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,6 +145,256 @@ func TestProveedorCodeGraphAffectedEstructuradoYAcotado(t *testing.T) {
 	}
 }
 
+func TestProveedorCodeGraphContextoWidenedRelations(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	// Materialize every path the widened relations may name, so validation
+	// keeps them; "../escape.go" is dropped by sanitization and "fantasma.go"
+	// by resolution (it does not exist inside the root).
+	for _, ruta := range []string{"a_test.go", "servicio.go", "ayuda.go", "impacto.go"} {
+		if err := os.WriteFile(filepath.Join(p.raiz, ruta), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake.respuestas = append(fake.respuestas,
+		[]byte(`{"changedFiles":["servicio.go"],"affectedTests":["a_test.go"],"totalDependentsTraversed":1}`),
+		// Audited diff restricted to the input paths: one added function and
+		// one added type share the name "Servicio", collapsing to one symbol.
+		[]byte("diff --git a/servicio.go b/servicio.go\nindex 0000000..1111111 100644\n--- a/servicio.go\n+++ b/servicio.go\n@@ -0,0 +1,2 @@\n+func Servicio() {}\n+type Servicio struct {}\n"),
+		[]byte(`{"symbol":"Servicio","callers":[{"name":"Principal","kind":"function","filePath":"servicio.go","startLine":10},{"name":"Escape","kind":"function","filePath":"../escape.go","startLine":1},{"name":"Ausente","kind":"function","filePath":"fantasma.go","startLine":2}]}`),
+		[]byte(`{"symbol":"Servicio","callees":[{"name":"ayuda","kind":"function","filePath":"ayuda.go","startLine":3}]}`),
+		[]byte(`{"symbol":"Servicio","depth":2,"nodeCount":3,"edgeCount":2,"affected":[{"name":"Principal","kind":"function","filePath":"impacto.go","startLine":42}]}`),
+	)
+	refs, err := p.Contexto("head", []string{"servicio.go"})
+	want := []review.Reference{
+		{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph},
+		{Path: "servicio.go", Relation: review.RelationCaller, Reason: review.ReasonCodeGraph},
+		{Path: "ayuda.go", Relation: review.RelationCallee, Reason: review.ReasonCodeGraph},
+		{Path: "impacto.go", Relation: review.RelationImpact, Reason: review.ReasonCodeGraph},
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
+	}
+	// Pin the additive subprocess shapes: the audited diff restricted to the
+	// validated input paths, then one query per relation per derived symbol.
+	wantArgs := [][]string{
+		{"show", "head", "--format=", "--", "servicio.go"},
+		{"callers", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+		{"callees", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+		{"impact", "-p", p.raiz, "-d", "2", "--json", "Servicio"},
+	}
+	for i, args := range wantArgs {
+		if !reflect.DeepEqual(fake.llamadas[i+4].args, args) {
+			t.Fatalf("call %d args = %v, want %v", i+4, fake.llamadas[i+4].args, args)
+		}
+	}
+}
+
+// TestProveedorCodeGraphAffectedTestsFullBudget pins the affectedTests
+// budget: every deterministically-validated candidate is returned. The
+// fixture (33 candidates) and the expectation (exactly 32 refs) are literal,
+// so a regression of maxReferenciasCodeGraph fails here instead of silently
+// reshaping both sides of the assertion.
+func TestProveedorCodeGraphAffectedTestsFullBudget(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	candidates := make([]string, 0, 33)
+	for i := range 33 {
+		candidates = append(candidates, fmt.Sprintf("t%02d_test.go", i))
+	}
+	for _, file := range candidates {
+		if err := os.WriteFile(filepath.Join(p.raiz, file), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`{"affectedTests":[`)
+	for i, file := range candidates {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "%q", file)
+	}
+	b.WriteString(`]}`)
+	fake.respuestas = append(fake.respuestas, []byte(b.String()))
+	refs, err := p.Contexto("head", []string{"a.go"})
+	want := make([]review.Reference, 0, 32)
+	for i := range 32 {
+		want = append(want, review.Reference{Path: fmt.Sprintf("t%02d_test.go", i), Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("affected refs = %d items (err %v), want the full %d-item budget", len(refs), err, len(want))
+	}
+}
+
+// TestProveedorCodeGraphDegradesWhenQueriesFail guards the additive
+// contract: a failing git show, or one relation query erroring, answering
+// empty, or answering malformed JSON, never errors and never regresses the
+// affectedTests result.
+func TestProveedorCodeGraphDegradesWhenQueriesFail(t *testing.T) {
+	estado := `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`
+	affected := []byte(`{"changedFiles":["a.go"],"affectedTests":["a_test.go"],"totalDependentsTraversed":1}`)
+	want := []review.Reference{{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}
+
+	t.Run("git show fails", func(t *testing.T) {
+		p, fake := proveedorConRespuestas(t, estado)
+		if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fake.respuestas = append(fake.respuestas, affected)
+		// Call 4 is the `git show` feeding symbol derivation.
+		fake.failures = map[int]error{4: errors.New("git show failed")}
+		refs, err := p.Contexto("head", []string{"a.go"})
+		if err != nil || !reflect.DeepEqual(refs, want) {
+			t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
+		}
+	})
+
+	t.Run("relation responses degrade", func(t *testing.T) {
+		p, fake := proveedorConRespuestas(t, estado)
+		if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		diff := []byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+func Servicio() {}\n")
+		fake.respuestas = append(fake.respuestas, affected, diff, []byte{}, []byte("{malformed"))
+		// Calls 5-7 are the callers/callees/impact queries: callers fails,
+		// callees answers empty, impact answers malformed JSON.
+		fake.failures = map[int]error{5: errors.New("callers failed")}
+		refs, err := p.Contexto("head", []string{"a.go"})
+		if err != nil || !reflect.DeepEqual(refs, want) {
+			t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
+		}
+		if len(fake.llamadas) != 8 {
+			t.Fatalf("calls = %d, want 8: four gate calls, git show, three relation queries", len(fake.llamadas))
+		}
+		for i, wantArgs := range [][]string{
+			{"callers", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+			{"callees", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+			{"impact", "-p", p.raiz, "-d", "2", "--json", "Servicio"},
+		} {
+			if !reflect.DeepEqual(fake.llamadas[i+5].args, wantArgs) {
+				t.Fatalf("call %d args = %v, want %v", i+5, fake.llamadas[i+5].args, wantArgs)
+			}
+		}
+	})
+}
+
+// TestProveedorCodeGraphAdditiveRelationTruncated pins the per-relation
+// budget: one relation's candidates are validated first — invalid graph
+// paths cannot starve the budget — then capped at 8 sorted, deduplicated
+// paths. The cap in the expectation is the literal 8, so a regression of
+// perRelationBudget fails here instead of reshaping both sides.
+func TestProveedorCodeGraphAdditiveRelationTruncated(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validPaths := make([]string, 0, 10)
+	for i := 1; i <= 10; i++ {
+		validPaths = append(validPaths, fmt.Sprintf("c%02d.go", i))
+	}
+	for _, file := range validPaths {
+		if err := os.WriteFile(filepath.Join(p.raiz, file), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The graph answers 13 caller entries: one path escaping the root, one
+	// nonexistent, one duplicate, ten valid files — more than the
+	// per-relation budget of 8.
+	entries := append([]string{"../escape.go", "a_fantasma.go", "c01.go", "c01.go"}, validPaths[1:]...)
+	var b strings.Builder
+	b.WriteString(`{"symbol":"Servicio","callers":[`)
+	for i, file := range entries {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"name":"N%02d","kind":"function","filePath":%q,"startLine":%d}`, i, file, i)
+	}
+	b.WriteString(`]}`)
+	fake.respuestas = append(fake.respuestas,
+		[]byte(`{"changedFiles":["a.go"],"affectedTests":["a_test.go"],"totalDependentsTraversed":1}`),
+		[]byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+func Servicio() {}\n"),
+		[]byte(b.String()),
+	)
+	refs, err := p.Contexto("head", []string{"a.go"})
+	want := []review.Reference{{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}
+	for i := 1; i <= 8; i++ {
+		want = append(want, review.Reference{Path: fmt.Sprintf("c%02d.go", i), Relation: review.RelationCaller, Reason: review.ReasonCodeGraph})
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = %d items (err %v), want %d: %v", len(refs), err, len(want), want)
+	}
+}
+
+// TestProveedorCodeGraphTotalBoundOverfill fills every budget at once: a
+// full affectedTests budget of 32 plus more valid candidates than the
+// per-relation cap on all three additive relations. The result must land
+// exactly on maxTotalRefs — the total the two-tier budget promises — with
+// each relation contributing its capped 8.
+func TestProveedorCodeGraphTotalBoundOverfill(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	tests := make([]string, 0, 32)
+	for i := range 32 {
+		tests = append(tests, fmt.Sprintf("t%02d_test.go", i))
+	}
+	valid := make([]string, 0, 10)
+	for i := 1; i <= 10; i++ {
+		valid = append(valid, fmt.Sprintf("v%02d.go", i))
+	}
+	for _, file := range append(append([]string(nil), tests...), valid...) {
+		if err := os.WriteFile(filepath.Join(p.raiz, file), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`{"affectedTests":[`)
+	for i, file := range tests {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "%q", file)
+	}
+	b.WriteString(`]}`)
+	fake.respuestas = append(fake.respuestas, []byte(b.String()),
+		[]byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+func Servicio() {}\n"),
+	)
+	// One overfull response per additive relation; the impact response
+	// reports its entries under the "affected" key.
+	for _, key := range []string{"callers", "callees", "affected"} {
+		var rb strings.Builder
+		fmt.Fprintf(&rb, `{"symbol":"Servicio","%s":[`, key)
+		for i, file := range valid {
+			if i > 0 {
+				rb.WriteString(",")
+			}
+			fmt.Fprintf(&rb, `{"name":"N%02d","kind":"function","filePath":%q,"startLine":%d}`, i, file, i)
+		}
+		rb.WriteString(`]}`)
+		fake.respuestas = append(fake.respuestas, []byte(rb.String()))
+	}
+	refs, err := p.Contexto("head", []string{"a.go"})
+	want := make([]review.Reference, 0, maxTotalRefs)
+	for i := range 32 {
+		want = append(want, review.Reference{Path: fmt.Sprintf("t%02d_test.go", i), Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
+	}
+	for _, relation := range additiveRelations {
+		for i := 1; i <= 8; i++ {
+			want = append(want, review.Reference{Path: fmt.Sprintf("v%02d.go", i), Relation: relation, Reason: review.ReasonCodeGraph})
+		}
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = (%v, %v), want exactly %d: 32 affectedTests plus the capped 8 of each additive relation", refs, err, maxTotalRefs)
+	}
+}
+
+// TestRelationWireValuesPinned pins the wire values of the additive
+// relations: they reach the emitted reference payload consumed by
+// downstream reviewers, so renaming the Go constants must not silently
+// change what lands there.
+func TestRelationWireValuesPinned(t *testing.T) {
+	if review.RelationCaller != "caller" || review.RelationCallee != "callee" || review.RelationImpact != "impact" {
+		t.Fatalf("additive relation wire values changed: caller=%q callee=%q impact=%q, want \"caller\", \"callee\", \"impact\"", review.RelationCaller, review.RelationCallee, review.RelationImpact)
+	}
+}
+
 type llamadaCG struct {
 	binario    string
 	args       []string
@@ -153,7 +404,10 @@ type llamadaCG struct {
 type fakeCG struct {
 	root       string
 	respuestas [][]byte
-	llamadas   []llamadaCG
+	// failures keys injected subprocess failures by absolute call index
+	// (0 = rev-parse); a failed call consumes no scripted response.
+	failures map[int]error
+	llamadas []llamadaCG
 }
 
 func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *fakeCG) {
@@ -165,6 +419,9 @@ func proveedorConRespuestas(t *testing.T, estado string) (*ProveedorCodeGraph, *
 	fake := &fakeCG{root: raiz, respuestas: [][]byte{[]byte("head\n"), nil, []byte(estado)}}
 	p.ejecutar = func(_ context.Context, binario string, args []string, dir string, env []string, stdin string, _ int) ([]byte, error) {
 		fake.llamadas = append(fake.llamadas, llamadaCG{binario, append([]string(nil), args...), dir, stdin, append([]string(nil), env...)})
+		if err, ok := fake.failures[len(fake.llamadas)-1]; ok {
+			return nil, err
+		}
 		if len(fake.respuestas) == 0 {
 			return nil, errors.New("unexpected command")
 		}
