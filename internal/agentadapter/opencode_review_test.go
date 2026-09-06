@@ -1,13 +1,17 @@
 package agentadapter
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
 // The redacted probe fixture reproduces OpenCode 1.18.29's `--format json`
@@ -165,5 +169,110 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 				t.Errorf("StopReason = %q, want %q", scan.StopReason, tc.wantStop)
 			}
 		})
+	}
+}
+
+// TestOpenCodeReviewScanRejectsBrokenFraming keeps the review scanner on the
+// same fail-closed JSONL discipline as the commit-message extractor: a
+// malformed stream must abort the review instead of leaking raw NDJSON (or a
+// silently truncated answer) as the review text.
+func TestOpenCodeReviewScanRejectsBrokenFraming(t *testing.T) {
+	cases := []struct {
+		name   string
+		stream string
+		want   string
+	}{
+		{name: "empty stream", stream: "", want: "vacia"},
+		{name: "blank intermediate line", stream: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n", want: "linea vacia"},
+		{name: "malformed json", stream: "{\"type\":\"text\"\n", want: "salida JSONL invalida"},
+		{name: "concatenated objects on one line", stream: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n", want: "salida JSONL invalida"},
+		{name: "usage is not an object", stream: "{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\",\"tokens\":5}}\n", want: "usage"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scan, err := scanOpenCodeReview(strings.NewReader(tc.stream))
+			if err == nil {
+				t.Fatalf("scanOpenCodeReview() = %+v, expected a framing error", scan)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, expected it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestOpenCodeReviewScanRejectsOversizedLine mirrors the commit extractor's
+// explicit 1 MiB per-line cap.
+func TestOpenCodeReviewScanRejectsOversizedLine(t *testing.T) {
+	stream := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024))
+	if _, err := scanOpenCodeReview(strings.NewReader(stream)); err == nil {
+		t.Fatal("accepted a JSONL line above the explicit per-line cap")
+	}
+}
+
+// TestOpenCodeReviewResultReportsWireObservations drives the rich
+// ReviewWithContextResult surface end to end against a fake opencode binary
+// replaying the redacted probe fixture: the review invocation must request
+// --format json, the extracted review text must replace the raw NDJSON
+// stream, the wire observations must land in acpadapter.Result, and the
+// configured declarations must ride in Requested* while Observed* stays
+// empty (the OpenCode event stream provides no wire identity). The legacy
+// string contract must answer with the same observable text.
+func TestOpenCodeReviewResultReportsWireObservations(t *testing.T) {
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
+	adapter := CLIAdapter{
+		BinaryName: compilarAgenteConNombre(t, "opencode"),
+		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
+		Timeout:    10 * time.Second,
+	}
+
+	result, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContextResult() error = %v", err)
+	}
+	if result.Output != probeReviewText {
+		t.Errorf("Output = %q, want the probe review text", result.Output)
+	}
+	if !reflect.DeepEqual(result.Usage, probeUsage) {
+		t.Errorf("Usage = %+v, want %+v", result.Usage, probeUsage)
+	}
+	if result.UsageJSON != probeUsageJSON {
+		t.Errorf("UsageJSON = %q, want %q", result.UsageJSON, probeUsageJSON)
+	}
+	if result.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want end_turn", result.StopReason)
+	}
+	if result.RequestedModel != "opencode-go/glm-5.3-flash" || result.RequestedEffort != "" {
+		t.Errorf("declarations = %q/%q, want the configured model with the unset effort echoed", result.RequestedModel, result.RequestedEffort)
+	}
+	if result.ObservedModel != "" || result.ObservedEffort != "" {
+		t.Errorf("observed identity = %q/%q, want empty (the event stream provides none)", result.ObservedModel, result.ObservedEffort)
+	}
+	captura := leerCapturaAgente(t, capturaRuta)
+	args := captura.Args
+	if len(args) < 2 || !reflect.DeepEqual(args[len(args)-2:], []string{"--format", "json"}) {
+		t.Errorf("args = %v, want the review invocation to end with --format json", args)
+	}
+	dirIndex := -1
+	for i, arg := range args {
+		if arg == "--dir" {
+			dirIndex = i
+			break
+		}
+	}
+	// The child's cwd stays the caller's: for OpenCode the immutable snapshot
+	// travels as the --dir value, which must never be the repository itself.
+	if dirIndex == -1 || dirIndex+1 >= len(args) || mismaRuta(args[dirIndex+1], captura.Dir) {
+		t.Errorf("args = %v, want --dir bound to an isolated snapshot directory (child cwd %q)", args, captura.Dir)
+	}
+	output, err := adapter.ReviewWithContext(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContext() error = %v", err)
+	}
+	if output != probeReviewText {
+		t.Errorf("ReviewWithContext() = %q, want the identical extracted review text", output)
 	}
 }

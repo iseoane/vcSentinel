@@ -73,7 +73,7 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	if expected := []string{"run", "--pure", "--agent", "reviewer", "--model", "openai/gpt-5.6-terra", "--dir", snapshot}; !reflect.DeepEqual(args, expected) {
+	if expected := []string{"run", "--pure", "--agent", "reviewer", "--model", "openai/gpt-5.6-terra", "--dir", snapshot, "--format", "json"}; !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
 
@@ -202,7 +202,7 @@ func TestReviewCommandOpenCodeOmitsEmptyModelConfiguration(t *testing.T) {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	if expected := []string{"run", "--pure", "--agent", "reviewer", "--dir", snapshot}; !reflect.DeepEqual(args, expected) {
+	if expected := []string{"run", "--pure", "--agent", "reviewer", "--dir", snapshot, "--format", "json"}; !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
 

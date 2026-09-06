@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
@@ -34,7 +35,27 @@ func (c *CLIAdapter) ReviewWithContextAndPolicy(ctx context.Context, prompt, sha
 	return c.reviewWithContextPolicy(ctx, prompt, sha, paths, policy)
 }
 
-func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+// ReviewWithContextResult runs the same restricted review as
+// ReviewWithContext and preserves the provider observations the run
+// produced, so durable execution records can attribute token usage and
+// outcome classes the way the ACP family already does. It satisfies
+// reviewexec.ResultContextualReviewer structurally.
+func (c *CLIAdapter) ReviewWithContextResult(ctx context.Context, prompt, sha string, paths []string) (acpadapter.Result, error) {
+	return c.reviewWithContextResultPolicy(ctx, prompt, sha, paths, reviewcontract.DefaultToolPolicy())
+}
+
+// ReviewWithContextAndPolicyResult is the policy-bound counterpart of
+// ReviewWithContextResult: the resolved dimension policy travels with the
+// cancellation context, and the wire observations come back with both. It
+// satisfies reviewexec.ResultPolicyContextualReviewer structurally.
+func (c *CLIAdapter) ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error) {
+	return c.reviewWithContextResultPolicy(ctx, prompt, sha, paths, policy)
+}
+
+// reviewWithContextResultPolicy is the single rich review flow. The string
+// contracts project it down to its answer text, so every surface observes
+// byte-identical text from the same run and the same scanner.
+func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -42,13 +63,54 @@ func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha st
 	if timeout <= 0 {
 		timeout = TimeoutComando
 	}
+	result := c.declaredResult()
 	snapshot, safePaths, cleanup, err := createReviewSnapshot("", sha, paths)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	defer cleanup()
 	request := ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls, ToolPolicy: policy}
-	return c.ejecutarRevision(ctx, request, timeout)
+	run, err := c.ejecutarRevision(ctx, request, timeout)
+	if err != nil {
+		return result, err
+	}
+	result.Output = run.output
+	result.Usage = run.usage
+	result.UsageJSON = run.usageJSON
+	result.StopReason = run.stopReason
+	return result, nil
+}
+
+// declaredResult carries the configured request declarations on every
+// runtime path, including pre-spawn failures, mirroring acpadapter's
+// discipline. Configured model/effort are request evidence, never wire
+// observations: they travel in the Requested* fields, and Observed* stays
+// empty because the OpenCode event stream exposes no wire identity.
+func (c *CLIAdapter) declaredResult() acpadapter.Result {
+	return acpadapter.Result{
+		RequestedModel:  c.Config.Model,
+		RequestedEffort: c.Config.ReasoningEffort,
+	}
+}
+
+// reviewWithContextPolicy keeps the legacy string contract: one restricted
+// review, answer text only, empty output on error. It is the rich flow
+// projected down, so the string and rich surfaces share both the scanner and
+// the single TrimSpace text boundary.
+func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
+	result, err := c.reviewWithContextResultPolicy(ctx, prompt, sha, paths, policy)
+	return result.Output, err
+}
+
+// reviewExecution is the rich observation of one restricted review run: the
+// observable answer text plus, on OpenCode, the wire observations the
+// --format json event stream carries. Non-OpenCode providers answer in plain
+// text and populate the output alone.
+type reviewExecution struct {
+	output     string
+	usage      *acpadapter.Usage
+	usageJSON  string
+	stopReason string
 }
 
 // ejecutarRevision spawns the restricted reviewer under a combined budget:
@@ -56,14 +118,16 @@ func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha st
 // a provider that never answers. The child is born into an owned process
 // tree, and the containment watchdog guarantees that even without the
 // controller's escalation the tree never outlives its context by more than
-// the shared grace budget plus a fixed margin.
-func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequest, timeout time.Duration) (string, error) {
+// the shared grace budget plus a fixed margin. The returned observation
+// adds the extracted answer text and — for OpenCode — the wire usage and
+// terminal stop reason the --format json stream reports.
+func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequest, timeout time.Duration) (reviewExecution, error) {
 	ctx, cancelar := context.WithTimeout(parent, timeout)
 	defer cancelar()
 
 	args, restrictions, err := c.reviewCommand(request)
 	if err != nil {
-		return "", err
+		return reviewExecution{}, err
 	}
 	env := os.Environ()
 	dir := ""
@@ -80,7 +144,7 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 
 	spawn, err := startOwnedCommand(ctx, c.BinaryName, args, env, dir, request.Prompt)
 	if err != nil {
-		return "", err
+		return reviewExecution{}, err
 	}
 	c.activeTree.Store(spawn.tree)
 	defer c.activeTree.Store(nil)
@@ -103,16 +167,33 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 				motivo = "canceled"
 			}
 			if detail != "" {
-				return "", fmt.Errorf("run restricted reviewer %s: %w: %s", motivo, errors.Join(waitErr, ctxErr), detail)
+				return reviewExecution{}, fmt.Errorf("run restricted reviewer %s: %w: %s", motivo, errors.Join(waitErr, ctxErr), detail)
 			}
-			return "", fmt.Errorf("run restricted reviewer %s: %w", motivo, errors.Join(waitErr, ctxErr))
+			return reviewExecution{}, fmt.Errorf("run restricted reviewer %s: %w", motivo, errors.Join(waitErr, ctxErr))
 		}
 		if detail != "" {
-			return "", fmt.Errorf("run restricted reviewer: %w: %s", waitErr, detail)
+			return reviewExecution{}, fmt.Errorf("run restricted reviewer: %w: %s", waitErr, detail)
 		}
-		return "", waitErr
+		return reviewExecution{}, waitErr
 	}
-	return strings.TrimSpace(spawn.stdout.String()), nil
+	raw := spawn.stdout.String()
+	if !c.esOpenCode() {
+		// claude and generic providers answer in plain text; there is no
+		// event stream to scan.
+		return reviewExecution{output: strings.TrimSpace(raw)}, nil
+	}
+	scan, err := scanOpenCodeReview(strings.NewReader(raw))
+	if err != nil {
+		return reviewExecution{}, err
+	}
+	// Single TrimSpace at the stdout->answer boundary, byte-identical to the
+	// plain-text providers' treatment of their captured stdout.
+	return reviewExecution{
+		output:     strings.TrimSpace(scan.Output),
+		usage:      scan.Usage,
+		usageJSON:  scan.UsageJSON,
+		stopReason: scan.StopReason,
+	}, nil
 }
 
 // ownedCommand carries one started child with its ownership handle and

@@ -401,6 +401,13 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		args = append(args, "--model", c.Config.Model)
 	}
 	args = append(args, "--dir", request.SnapshotDir)
+	// --format json switches stdout from the human-rendered answer to the
+	// NDJSON event stream scanOpenCodeReview normalizes: same observable
+	// answer (the ordered text parts, trimmed once), plus the wire usage and
+	// the terminal stop reason. Probed live against OpenCode 1.18.29 with the
+	// production reviewer invocation; the redacted capture is tracked as
+	// testdata/opencode/usage-probe.ndjson.
+	args = append(args, "--format", "json")
 	return args, map[string]string{"OPENCODE_CONFIG_CONTENT": string(encoded)}, nil
 }
 
