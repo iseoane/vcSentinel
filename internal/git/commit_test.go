@@ -343,6 +343,11 @@ func prepareRepoWithMerge(t *testing.T) string {
 	}
 	ejecutarGit(t, dir, "commit", "-qam", "chore(m): master change")
 	ejecutarGit(t, dir, "merge", "-q", "--no-ff", "feat", "-m", "merge: two parents")
+	// Verify HEAD really is a two-parent merge commit: if the repo setup
+	// changes, the tests must fail here instead of misleading us.
+	if parents := strings.Fields(ejecutarGit(t, dir, "rev-list", "--parents", "-n", "1", "HEAD")); len(parents) != 3 {
+		t.Fatalf("HEAD should be a two-parent merge commit, rev-list gave %d fields", len(parents))
+	}
 	return dir
 }
 
@@ -358,11 +363,6 @@ func TestDiffCommitOnMergeReturnsFirstParentDiff(t *testing.T) {
 	t.Chdir(dir)
 
 	head, _ := SHAHead()
-	// Verify HEAD really is a two-parent merge commit: if the repo setup
-	// changes, the test must fail here instead of misleading us.
-	if parents := strings.Fields(ejecutarGit(t, dir, "rev-list", "--parents", "-n", "1", head)); len(parents) != 3 {
-		t.Fatalf("HEAD should be a two-parent merge commit, rev-list gave %d fields", len(parents))
-	}
 
 	diff, err := DiffCommit(head)
 	if err != nil {
@@ -388,11 +388,6 @@ func TestCommitFilesOnMergeListsBranchFiles(t *testing.T) {
 	t.Chdir(dir)
 
 	head, _ := SHAHead()
-	// Verify HEAD really is a two-parent merge commit: if the repo setup
-	// changes, the test must fail here instead of misleading us.
-	if parents := strings.Fields(ejecutarGit(t, dir, "rev-list", "--parents", "-n", "1", head)); len(parents) != 3 {
-		t.Fatalf("HEAD should be a two-parent merge commit, rev-list gave %d fields", len(parents))
-	}
 
 	archivos, err := ArchivosDeCommit(head)
 	if err != nil {
