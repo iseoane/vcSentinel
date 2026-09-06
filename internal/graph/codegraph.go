@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,29 @@ import (
 
 const limiteContextoCodeGraph = 32 << 10
 const maxReferenciasCodeGraph = 32
+
+// presupuestoPorRelacion splits the 32-reference total across the four
+// relations (affectedTests, callers, callees, impact); the new relations
+// share the existing budget, they never raise it.
+const presupuestoPorRelacion = maxReferenciasCodeGraph / 4
+
+// limiteEntradasCodeGraph asks each callers/callees query for up to 16
+// entries — twice the per-relation budget — so several entries naming the
+// same file still leave room to fill the budget after per-path
+// deduplication.
+const limiteEntradasCodeGraph = presupuestoPorRelacion * 2
+
+// maxSimbolosCodeGraph caps the symbols derived from the audited diff, so a
+// large commit costs a bounded number of additive subprocess calls.
+const maxSimbolosCodeGraph = 8
+
+// reAddedFuncDecl matches an added diff line declaring a top-level Go
+// function or method; the symbol name is capture group 1. Indented nested
+// declarations never match: a top-level line starts right after the '+'.
+var reAddedFuncDecl = regexp.MustCompile(`^\+func\s+(?:\([^)]*\)\s+)?(\w+)`)
+
+// reAddedTypeDecl matches an added diff line declaring a top-level Go type.
+var reAddedTypeDecl = regexp.MustCompile(`^\+type\s+(\w+)`)
 
 type ejecutorCodeGraph func(context.Context, string, []string, string, []string, string, int) ([]byte, error)
 
@@ -119,16 +144,157 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	if err := json.Unmarshal(salida, &afectado); err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable: %w", err)
 	}
-	tests := rutasSeguras(afectado.AffectedTests, maxReferenciasCodeGraph)
+	tests := rutasSeguras(afectado.AffectedTests, presupuestoPorRelacion)
 	refs := make([]review.Reference, 0, len(tests))
 	for _, ruta := range tests {
-		resuelta, err := filepath.EvalSymlinks(filepath.Join(p.raiz, filepath.FromSlash(ruta)))
-		relativa, relErr := filepath.Rel(p.raiz, resuelta)
-		if info, statErr := os.Stat(resuelta); err == nil && relErr == nil && statErr == nil && info.Mode().IsRegular() && relativa != ".." && !strings.HasPrefix(relativa, ".."+string(filepath.Separator)) {
+		if p.validatedPath(ruta) {
 			refs = append(refs, review.Reference{Path: ruta, Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
 		}
 	}
-	return refs, nil
+	return p.widenWithRelations(env, sha, validas, refs), nil
+}
+
+// validatedPath is the shared gate for every untrusted path that may become
+// a reference: already sanitized by rutasSeguras, it must resolve (through
+// EvalSymlinks) to a regular file contained under p.raiz.
+func (p *ProveedorCodeGraph) validatedPath(ruta string) bool {
+	resuelta, err := filepath.EvalSymlinks(filepath.Join(p.raiz, filepath.FromSlash(ruta)))
+	if err != nil {
+		return false
+	}
+	relativa, relErr := filepath.Rel(p.raiz, resuelta)
+	if relErr != nil {
+		return false
+	}
+	info, statErr := os.Stat(resuelta)
+	if statErr != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return relativa != ".." && !strings.HasPrefix(relativa, ".."+string(filepath.Separator))
+}
+
+// graphEntry is one entry of a callers/callees/impact --json response; the
+// filePath is repo-relative and untrusted until validatedPath approves it.
+type graphEntry struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	FilePath  string `json:"filePath"`
+	StartLine int    `json:"startLine"`
+}
+
+// relationResponse mirrors the JSON shapes of `codegraph callers|callees|impact
+// --json`: callers and callees report their entries under the matching key,
+// impact reports them under "affected".
+type relationResponse struct {
+	Callers  []graphEntry `json:"callers"`
+	Callees  []graphEntry `json:"callees"`
+	Affected []graphEntry `json:"affected"`
+}
+
+// entriesFor selects the entry list a relation reads from the shared shape.
+func entriesFor(respuesta relationResponse, relation review.Relation) []graphEntry {
+	switch relation {
+	case review.RelationCaller:
+		return respuesta.Callers
+	case review.RelationCallee:
+		return respuesta.Callees
+	case review.RelationImpact:
+		return respuesta.Affected
+	}
+	return nil
+}
+
+// relationQueryArgs builds the codegraph CLI invocation for one additive
+// relation, matching the probed shapes:
+//
+//	callers|callees -p <root> -l <n> --json <symbol>
+//	impact -p <root> -d <depth> --json <symbol>
+func relationQueryArgs(relation review.Relation, root, symbol string) []string {
+	switch relation {
+	case review.RelationCaller:
+		return []string{"callers", "-p", root, "-l", strconv.Itoa(limiteEntradasCodeGraph), "--json", symbol}
+	case review.RelationCallee:
+		return []string{"callees", "-p", root, "-l", strconv.Itoa(limiteEntradasCodeGraph), "--json", symbol}
+	case review.RelationImpact:
+		return []string{"impact", "-p", root, "-d", "2", "--json", symbol}
+	}
+	return nil
+}
+
+// additiveRelations enumerates the relations widened beyond affectedTests, in
+// the deterministic order their references are appended.
+var additiveRelations = []review.Relation{review.RelationCaller, review.RelationCallee, review.RelationImpact}
+
+// widenWithRelations adds caller/callee/impact references for the symbols
+// derived from the audited diff. Every failure — symbol derivation, one
+// query, an empty, oversized, or malformed response — degrades to that piece
+// contributing nothing: additive context never errors and never regresses the
+// affectedTests result it extends.
+func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths []string, refs []review.Reference) []review.Reference {
+	symbols := p.diffSymbols(env, sha, paths)
+	if len(symbols) == 0 {
+		return refs
+	}
+	candidates := map[review.Relation][]string{}
+	for _, symbol := range symbols {
+		for _, relation := range additiveRelations {
+			output, err := p.ejecutarConTimeout(p.ejecutable, relationQueryArgs(relation, p.raiz, symbol), env, "")
+			if err != nil || len(output) == 0 || len(output) >= p.limite {
+				continue
+			}
+			var respuesta relationResponse
+			if json.Unmarshal(output, &respuesta) != nil {
+				continue
+			}
+			for _, entry := range entriesFor(respuesta, relation) {
+				candidates[relation] = append(candidates[relation], entry.FilePath)
+			}
+		}
+	}
+	for _, relation := range additiveRelations {
+		for _, ruta := range rutasSeguras(candidates[relation], presupuestoPorRelacion) {
+			if p.validatedPath(ruta) {
+				refs = append(refs, review.Reference{Path: ruta, Relation: relation, Reason: review.ReasonCodeGraph})
+			}
+		}
+	}
+	return refs
+}
+
+// diffSymbols derives candidate symbols deterministically from the audited
+// commit: `git show <sha> --format= -- <validated input paths>` restricted to
+// those paths, harvesting the names of added top-level function, method, and
+// type declarations, sorted and capped at maxSimbolosCodeGraph. A failing
+// call, an oversized output, or a diff without Go declarations (non-Go
+// files, no matches) yields nil so the provider keeps its affected-only
+// result without error.
+func (p *ProveedorCodeGraph) diffSymbols(env []string, sha string, paths []string) []string {
+	args := make([]string, 0, len(paths)+5)
+	args = append(args, "show", sha, "--format=", "--")
+	args = append(args, paths...)
+	output, err := p.ejecutarConTimeout(p.git, args, env, "")
+	if err != nil || len(output) == 0 || len(output) >= p.limite {
+		return nil
+	}
+	names := make([]string, 0, maxSimbolosCodeGraph)
+	seen := make(map[string]bool, maxSimbolosCodeGraph)
+	for _, line := range strings.Split(string(output), "\n") {
+		name := ""
+		if m := reAddedFuncDecl.FindStringSubmatch(line); m != nil {
+			name = m[1]
+		} else if m := reAddedTypeDecl.FindStringSubmatch(line); m != nil {
+			name = m[1]
+		}
+		if name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) > maxSimbolosCodeGraph {
+		names = names[:maxSimbolosCodeGraph]
+	}
+	return names
 }
 
 // ejecutarConTimeout da a cada subproceso su propio presupuesto de 3s, para

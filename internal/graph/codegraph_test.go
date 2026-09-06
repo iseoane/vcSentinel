@@ -144,6 +144,49 @@ func TestProveedorCodeGraphAffectedEstructuradoYAcotado(t *testing.T) {
 	}
 }
 
+func TestProveedorCodeGraphContextoWidenedRelations(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	// Materialize every path the widened relations may name, so validation
+	// keeps them; "../escape.go" is dropped by sanitization and "fantasma.go"
+	// by resolution (it does not exist inside the root).
+	for _, ruta := range []string{"a_test.go", "servicio.go", "ayuda.go", "impacto.go"} {
+		if err := os.WriteFile(filepath.Join(p.raiz, ruta), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake.respuestas = append(fake.respuestas,
+		[]byte(`{"changedFiles":["servicio.go"],"affectedTests":["a_test.go"],"totalDependentsTraversed":1}`),
+		// Audited diff restricted to the input paths: one added function and
+		// one added type share the name "Servicio", collapsing to one symbol.
+		[]byte("diff --git a/servicio.go b/servicio.go\nindex 0000000..1111111 100644\n--- a/servicio.go\n+++ b/servicio.go\n@@ -0,0 +1,2 @@\n+func Servicio() {}\n+type Servicio struct {}\n"),
+		[]byte(`{"symbol":"Servicio","callers":[{"name":"Principal","kind":"function","filePath":"servicio.go","startLine":10},{"name":"Escape","kind":"function","filePath":"../escape.go","startLine":1},{"name":"Ausente","kind":"function","filePath":"fantasma.go","startLine":2}]}`),
+		[]byte(`{"symbol":"Servicio","callees":[{"name":"ayuda","kind":"function","filePath":"ayuda.go","startLine":3}]}`),
+		[]byte(`{"symbol":"Servicio","depth":2,"nodeCount":3,"edgeCount":2,"affected":[{"name":"Principal","kind":"function","filePath":"impacto.go","startLine":42}]}`),
+	)
+	refs, err := p.Contexto("head", []string{"servicio.go"})
+	want := []review.Reference{
+		{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph},
+		{Path: "servicio.go", Relation: review.Relation("caller"), Reason: review.ReasonCodeGraph},
+		{Path: "ayuda.go", Relation: review.Relation("callee"), Reason: review.ReasonCodeGraph},
+		{Path: "impacto.go", Relation: review.Relation("impact"), Reason: review.ReasonCodeGraph},
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = (%v, %v), want %v", refs, err, want)
+	}
+	// Pin the additive subprocess shapes: the audited diff restricted to the
+	// validated input paths, then one query per relation per derived symbol.
+	wantArgs := [][]string{
+		{"show", "head", "--format=", "--", "servicio.go"},
+		{"callers", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+		{"callees", "-p", p.raiz, "-l", "16", "--json", "Servicio"},
+		{"impact", "-p", p.raiz, "-d", "2", "--json", "Servicio"},
+	}
+	for i, args := range wantArgs {
+		if !reflect.DeepEqual(fake.llamadas[i+4].args, args) {
+			t.Fatalf("call %d args = %v, want %v", i+4, fake.llamadas[i+4].args, args)
+		}
+	}
+}
 type llamadaCG struct {
 	binario    string
 	args       []string
