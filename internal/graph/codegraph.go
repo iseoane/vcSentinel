@@ -22,10 +22,17 @@ import (
 const limiteContextoCodeGraph = 32 << 10
 const maxReferenciasCodeGraph = 32
 
-// perRelationBudget splits the 32-reference total across the four
-// relations (affectedTests, callers, callees, impact); the new relations
-// share the existing budget, they never raise it.
+// perRelationBudget caps each additive relation (callers, callees, impact)
+// at 8 references. It does not split maxReferenciasCodeGraph: affectedTests
+// consumes the full maxReferenciasCodeGraph on its own, and each additive
+// relation adds up to perRelationBudget on top, bounding the total at
+// maxTotalRefs (32 + 3*8 = 56).
 const perRelationBudget = maxReferenciasCodeGraph / 4
+
+// maxTotalRefs bounds the total references a codegraph context returns:
+// maxReferenciasCodeGraph affectedTests plus one perRelationBudget for each
+// of the three additive relations.
+const maxTotalRefs = maxReferenciasCodeGraph + 3*perRelationBudget
 
 // codeGraphEntryLimit asks each callers/callees query for up to 16
 // entries — twice the per-relation budget — so several entries naming the
@@ -37,7 +44,10 @@ const codeGraphEntryLimit = perRelationBudget * 2
 // large commit costs a bounded number of additive subprocess calls.
 const maxCodeGraphSymbols = 8
 
-// impactQueryDepth bounds the impact walk at two hops: one hop reaches only direct dependents, deeper walks explode the subprocess cost.
+// impactQueryDepth bounds the graph traversal of each impact query at two
+// hops: one hop reaches only direct dependents. It limits the cost of that
+// single query, not the subprocess count — that is already bounded by
+// maxCodeGraphSymbols x len(additiveRelations).
 const impactQueryDepth = 2
 
 // reAddedFuncDecl matches an added diff line declaring a top-level Go

@@ -190,12 +190,14 @@ func TestProveedorCodeGraphContextoWidenedRelations(t *testing.T) {
 }
 
 // TestProveedorCodeGraphAffectedTestsFullBudget pins the affectedTests
-// budget: every deterministically-validated candidate up to
-// maxReferenciasCodeGraph is returned — the pre-widen recall.
+// budget: every deterministically-validated candidate is returned. The
+// fixture (33 candidates) and the expectation (exactly 32 refs) are literal,
+// so a regression of maxReferenciasCodeGraph fails here instead of silently
+// reshaping both sides of the assertion.
 func TestProveedorCodeGraphAffectedTestsFullBudget(t *testing.T) {
 	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
-	candidates := make([]string, 0, maxReferenciasCodeGraph+1)
-	for i := range maxReferenciasCodeGraph + 1 {
+	candidates := make([]string, 0, 33)
+	for i := range 33 {
 		candidates = append(candidates, fmt.Sprintf("t%02d_test.go", i))
 	}
 	for _, file := range candidates {
@@ -214,8 +216,8 @@ func TestProveedorCodeGraphAffectedTestsFullBudget(t *testing.T) {
 	b.WriteString(`]}`)
 	fake.respuestas = append(fake.respuestas, []byte(b.String()))
 	refs, err := p.Contexto("head", []string{"a.go"})
-	want := make([]review.Reference, 0, maxReferenciasCodeGraph)
-	for i := range maxReferenciasCodeGraph {
+	want := make([]review.Reference, 0, 32)
+	for i := range 32 {
 		want = append(want, review.Reference{Path: fmt.Sprintf("t%02d_test.go", i), Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
 	}
 	if err != nil || !reflect.DeepEqual(refs, want) {
@@ -277,8 +279,9 @@ func TestProveedorCodeGraphDegradesWhenQueriesFail(t *testing.T) {
 
 // TestProveedorCodeGraphAdditiveRelationTruncated pins the per-relation
 // budget: one relation's candidates are validated first — invalid graph
-// paths cannot starve the budget — then capped at perRelationBudget
-// sorted, deduplicated paths.
+// paths cannot starve the budget — then capped at 8 sorted, deduplicated
+// paths. The cap in the expectation is the literal 8, so a regression of
+// perRelationBudget fails here instead of reshaping both sides.
 func TestProveedorCodeGraphAdditiveRelationTruncated(t *testing.T) {
 	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
 	if err := os.WriteFile(filepath.Join(p.raiz, "a_test.go"), []byte("package x"), 0o600); err != nil {
@@ -313,14 +316,82 @@ func TestProveedorCodeGraphAdditiveRelationTruncated(t *testing.T) {
 	)
 	refs, err := p.Contexto("head", []string{"a.go"})
 	want := []review.Reference{{Path: "a_test.go", Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph}}
-	for i := 1; i <= perRelationBudget; i++ {
+	for i := 1; i <= 8; i++ {
 		want = append(want, review.Reference{Path: fmt.Sprintf("c%02d.go", i), Relation: review.RelationCaller, Reason: review.ReasonCodeGraph})
 	}
 	if err != nil || !reflect.DeepEqual(refs, want) {
 		t.Fatalf("refs = %d items (err %v), want %d: %v", len(refs), err, len(want), want)
 	}
-	if bound := maxReferenciasCodeGraph + 3*perRelationBudget; len(refs) > bound {
-		t.Fatalf("refs = %d items, exceeds the %d bound (affected + 3 relations)", len(refs), bound)
+}
+
+// TestProveedorCodeGraphTotalBoundOverfill fills every budget at once: a
+// full affectedTests budget of 32 plus more valid candidates than the
+// per-relation cap on all three additive relations. The result must land
+// exactly on maxTotalRefs — the total the two-tier budget promises — with
+// each relation contributing its capped 8.
+func TestProveedorCodeGraphTotalBoundOverfill(t *testing.T) {
+	p, fake := proveedorConRespuestas(t, `{"initialized":true,"projectPath":"ROOT","pendingChanges":{"added":0,"modified":0,"removed":0},"worktreeMismatch":null}`)
+	tests := make([]string, 0, 32)
+	for i := range 32 {
+		tests = append(tests, fmt.Sprintf("t%02d_test.go", i))
+	}
+	valid := make([]string, 0, 10)
+	for i := 1; i <= 10; i++ {
+		valid = append(valid, fmt.Sprintf("v%02d.go", i))
+	}
+	for _, file := range append(append([]string(nil), tests...), valid...) {
+		if err := os.WriteFile(filepath.Join(p.raiz, file), []byte("package x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`{"affectedTests":[`)
+	for i, file := range tests {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "%q", file)
+	}
+	b.WriteString(`]}`)
+	fake.respuestas = append(fake.respuestas, []byte(b.String()),
+		[]byte("diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1 @@\n+func Servicio() {}\n"),
+	)
+	// One overfull response per additive relation; the impact response
+	// reports its entries under the "affected" key.
+	for _, key := range []string{"callers", "callees", "affected"} {
+		var rb strings.Builder
+		fmt.Fprintf(&rb, `{"symbol":"Servicio","%s":[`, key)
+		for i, file := range valid {
+			if i > 0 {
+				rb.WriteString(",")
+			}
+			fmt.Fprintf(&rb, `{"name":"N%02d","kind":"function","filePath":%q,"startLine":%d}`, i, file, i)
+		}
+		rb.WriteString(`]}`)
+		fake.respuestas = append(fake.respuestas, []byte(rb.String()))
+	}
+	refs, err := p.Contexto("head", []string{"a.go"})
+	want := make([]review.Reference, 0, maxTotalRefs)
+	for i := range 32 {
+		want = append(want, review.Reference{Path: fmt.Sprintf("t%02d_test.go", i), Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
+	}
+	for _, relation := range additiveRelations {
+		for i := 1; i <= 8; i++ {
+			want = append(want, review.Reference{Path: fmt.Sprintf("v%02d.go", i), Relation: relation, Reason: review.ReasonCodeGraph})
+		}
+	}
+	if err != nil || !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = (%v, %v), want exactly %d: 32 affectedTests plus the capped 8 of each additive relation", refs, err, maxTotalRefs)
+	}
+}
+
+// TestRelationWireValuesPinned pins the wire values of the additive
+// relations: they reach the emitted reference payload consumed by
+// downstream reviewers, so renaming the Go constants must not silently
+// change what lands there.
+func TestRelationWireValuesPinned(t *testing.T) {
+	if review.RelationCaller != "caller" || review.RelationCallee != "callee" || review.RelationImpact != "impact" {
+		t.Fatalf("additive relation wire values changed: caller=%q callee=%q impact=%q, want \"caller\", \"callee\", \"impact\"", review.RelationCaller, review.RelationCallee, review.RelationImpact)
 	}
 }
 
