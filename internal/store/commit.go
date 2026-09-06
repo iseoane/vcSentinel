@@ -6,9 +6,7 @@ import "errors"
 // deliberadamente ligero, solo qué fingerprints de review.Hallazgo tocan a
 // ese SHA (el contenido completo de cada hallazgo vive en
 // findings/<fingerprint>.json). Message queda como contexto opcional para no
-// tener que releer el commit de git al inspeccionar el índice. V1 (T2.6) es
-// opcional y solo se rellena cuando el índice viene de migrar una ficha v1
-// (review.Ficha, ledger pre-T2.6): ver CompatV1 en migracion.go. Blobs (T2.7)
+// tener que releer el commit de git al inspeccionar el índice. Blobs (T2.7)
 // es opcional y mapea archivo→blob de ese commit: es la base del índice
 // invertido blobs/<blob>.json (ver blob.go) que permite reconocer, tras un
 // rebase que cambia el SHA sin tocar contenido, que un archivo ya se revisó.
@@ -19,7 +17,6 @@ type IndiceCommit struct {
 	Message      string            `json:"message,omitempty"`
 	Fingerprints []string          `json:"fingerprints"`
 	Blobs        map[string]string `json:"blobs,omitempty"`
-	V1           *CompatV1         `json:"v1_compat,omitempty"`
 }
 
 // GuardarIndiceCommit persiste idx en commits/<sha>.json y, si idx.Blobs no
@@ -47,7 +44,7 @@ func (s *Store) LeerIndiceCommit(sha string) (*IndiceCommit, error) {
 }
 
 // RegistrarBlobsCommit guarda (o amplía) el IndiceCommit de sha con los
-// blobs de sus archivos, preservando los Fingerprints/V1 que ya tuviera: sin
+// blobs de sus archivos, preservando los Fingerprints que ya tuviera: sin
 // este merge, una segunda llamada sobre el mismo sha (por ejemplo, reintentar
 // un análisis de rama) podría pisar hallazgos ya registrados. Pensada para el
 // caller que audita un commit y solo conoce sus blobs, no fingerprints v2

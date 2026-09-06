@@ -112,15 +112,14 @@ func collectProvenanceReferences(worktree string, backing *store.Store) (map[str
 // a dedicated worktree is the mandated workflow here, so that was the normal
 // path (FU-12).
 //
-// Enumerated with os.ReadDir and NOT with filepath.Glob, even though
-// MigrarDesdeV1 globs the same layout. filepath.Glob reports only
-// ErrBadPattern and silently swallows the I/O errors it hits while reading
-// directories, so a static pattern over an unreadable `worktrees` directory
-// returns an empty list and a nil error. That is indistinguishable from a
-// repository with no linked worktrees, and it would fail open in the one place
-// whose whole contract is to fail closed. The glob is harmless in the migration
-// because missing a directory there only defers work that a later run repeats;
-// here it destroys.
+// Enumerated with os.ReadDir and NOT with filepath.Glob. filepath.Glob
+// reports only ErrBadPattern and silently swallows the I/O errors it hits
+// while reading directories, so a static pattern over an unreadable
+// `worktrees` directory returns an empty list and a nil error. That is
+// indistinguishable from a repository with no linked worktrees, and it would
+// fail open in the one place whose whole contract is to fail closed. A glob
+// that misses a directory only defers work a later run can repeat; here it
+// destroys.
 //
 // An absent `worktrees` directory is the ordinary case for a repository with no
 // linked worktrees and is not a failure. Anything else is.
