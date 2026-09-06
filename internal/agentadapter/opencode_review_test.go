@@ -163,27 +163,27 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 		{
 			name:    "empty stream fails closed",
 			stream:  "",
-			wantErr: "vacia",
+			wantErr: "empty opencode JSONL output",
 		},
 		{
 			name:    "blank intermediate line fails closed",
 			stream:  "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n",
-			wantErr: "linea vacia",
+			wantErr: "empty line",
 		},
 		{
 			name:    "malformed json line fails closed",
 			stream:  "{\"type\":\"text\"\n",
-			wantErr: "salida JSONL invalida",
+			wantErr: "invalid opencode JSONL output",
 		},
 		{
 			name:    "concatenated objects on one line fail closed",
 			stream:  "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n",
-			wantErr: "salida JSONL invalida",
+			wantErr: "invalid opencode JSONL output",
 		},
 		{
 			name:    "oversized line fails closed",
 			stream:  fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024)),
-			wantErr: "salida JSONL invalida",
+			wantErr: "invalid opencode JSONL output",
 		},
 		{
 			name:    "usage member that is not an object fails closed",

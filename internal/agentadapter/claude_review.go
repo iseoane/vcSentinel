@@ -81,18 +81,18 @@ type claudeUsageProbe struct {
 func scanClaudeReview(stream io.Reader) (claudeReviewScan, error) {
 	raw, err := io.ReadAll(stream)
 	if err != nil {
-		return claudeReviewScan{}, fmt.Errorf("salida ilegible de claude: %w", err)
+		return claudeReviewScan{}, fmt.Errorf("unreadable claude output: %w", err)
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return claudeReviewScan{}, fmt.Errorf("salida vacia de claude")
+		return claudeReviewScan{}, fmt.Errorf("empty claude output")
 	}
 	var result claudeResultProbe
 	if err := json.Unmarshal(trimmed, &result); err != nil {
-		return claudeReviewScan{}, fmt.Errorf("salida JSON invalida de claude: %w", err)
+		return claudeReviewScan{}, fmt.Errorf("invalid claude JSON output: %w", err)
 	}
 	if result.IsError {
-		return claudeReviewScan{}, fmt.Errorf("claude reporto un resultado de error (subtype %q)", result.Subtype)
+		return claudeReviewScan{}, fmt.Errorf("claude reported an error result (subtype %q)", result.Subtype)
 	}
 	scan := claudeReviewScan{
 		Output:     result.Result,
@@ -102,7 +102,7 @@ func scanClaudeReview(stream io.Reader) (claudeReviewScan, error) {
 		scan.UsageJSON = string(result.Usage)
 		var usage claudeUsageProbe
 		if err := json.Unmarshal(result.Usage, &usage); err != nil {
-			return claudeReviewScan{}, fmt.Errorf("salida JSON invalida de claude: usage: %w", err)
+			return claudeReviewScan{}, fmt.Errorf("invalid claude JSON output: usage member: %w", err)
 		}
 		scan.Usage = &acpadapter.Usage{
 			InputTokens:       usage.InputTokens,

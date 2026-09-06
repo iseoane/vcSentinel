@@ -119,22 +119,22 @@ func TestClaudeReviewUsage(t *testing.T) {
 		{
 			name:    "empty stream fails closed",
 			stream:  "",
-			wantErr: "vacia",
+			wantErr: "empty claude output",
 		},
 		{
 			name:    "whitespace-only stream fails closed",
 			stream:  "  \n ",
-			wantErr: "vacia",
+			wantErr: "empty claude output",
 		},
 		{
 			name:    "malformed json fails closed",
 			stream:  `{"type":"result"`,
-			wantErr: "salida JSON invalida",
+			wantErr: "invalid claude JSON output",
 		},
 		{
 			name:    "error result fails closed",
 			stream:  `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}`,
-			wantErr: "resultado de error",
+			wantErr: "error result",
 		},
 		{
 			name:     "explicit null usage yields nil usage and empty raw member",
@@ -221,7 +221,7 @@ func TestClaudeReviewTextParityWithPlainTextBaseline(t *testing.T) {
 func TestClaudeReviewResultReportsWireObservations(t *testing.T) {
 	repoCwd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+		t.Fatalf("could not get the current directory: %v", err)
 	}
 	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
 	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)

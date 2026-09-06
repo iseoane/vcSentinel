@@ -159,12 +159,12 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(bytes.TrimSpace(line)) == 0 {
-			return opencodeReviewScan{}, fmt.Errorf("salida JSONL invalida de opencode: linea vacia")
+			return opencodeReviewScan{}, fmt.Errorf("invalid opencode JSONL output: empty line")
 		}
 		events++
 		var event opencodeReviewEvent
 		if err := json.Unmarshal(line, &event); err != nil {
-			return opencodeReviewScan{}, fmt.Errorf("salida JSONL invalida de opencode: %w", err)
+			return opencodeReviewScan{}, fmt.Errorf("invalid opencode JSONL output: %w", err)
 		}
 		if event.Type == "text" {
 			texts.WriteString(event.Part.Text)
@@ -181,15 +181,15 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 		usageJSON.WriteByte('\n')
 		var tokens opencodeUsageTokens
 		if err := json.Unmarshal(event.Part.Tokens, &tokens); err != nil {
-			return opencodeReviewScan{}, fmt.Errorf("salida JSONL invalida de opencode: usage de step_finish: %w", err)
+			return opencodeReviewScan{}, fmt.Errorf("invalid opencode JSONL output: step_finish usage member: %w", err)
 		}
 		sum.add(tokens)
 	}
 	if err := scanner.Err(); err != nil {
-		return opencodeReviewScan{}, fmt.Errorf("salida JSONL invalida de opencode: %w", err)
+		return opencodeReviewScan{}, fmt.Errorf("invalid opencode JSONL output: %w", err)
 	}
 	if events == 0 {
-		return opencodeReviewScan{}, fmt.Errorf("salida JSONL vacia de opencode")
+		return opencodeReviewScan{}, fmt.Errorf("empty opencode JSONL output")
 	}
 	scan.Output = texts.String()
 	scan.Usage = sum.usage()
