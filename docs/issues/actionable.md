@@ -84,7 +84,7 @@ observable source in the agent path today.
 
 ## 5. Validate the acpx spawn chain on native Windows
 
-Sits last: conditional work — no action while Debian is the deployment
+Sits fifth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
@@ -93,3 +93,21 @@ platform.
   live probes.
 - Closing: a confirmation run on native Windows, or no action at all.
 - Starts only if: production runs on Windows.
+
+## 6. Teach the gate to collect merge-commit diffs
+
+Sits last: new, small, and every future merge replays it — the FU-5 merge
+landed NEEDS_USER_REVIEW for no content reason.
+
+- Wrong: `gate --stage pre-push` on merge `ae804a5` (parents `f0e25c4` plus
+  `a6f8c9d`) collected an empty diff: no review ficha was recorded and the
+  reviewer asked `Is the diff empty due to collection failure`, while
+  `git diff HEAD^1 HEAD` shows the full branch content (+454/-5 across 3
+  files). Exit `2` (`NEEDS_USER_REVIEW`).
+- Evidence: observed 2026-09-06 landing FU-5; the first-parent range
+  reviews (`91a3c3d`, `fe97ca1`, `a6f8c9d`) plus gate PASS at branch tip
+  `a6f8c9d` carry the actual coverage.
+- Closing: the gate collects the first-parent diff for merge commits (or
+  reports the merge range explicitly), with a test pinning a two-parent
+  HEAD.
+- Blocks: nothing.
