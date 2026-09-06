@@ -5,6 +5,7 @@ import "errors"
 const (
 	subdirProfiles    = "profiles"
 	ProfileUnverified = "unverified"
+	ProfileVerified   = "verified"
 )
 
 // Profile records whether a configured profile has been verified by its agent.

@@ -188,7 +188,7 @@ func EjecutarPrCreateCon(w io.Writer, worktree string, flags FlagsPrCreate, deps
 		if err != nil {
 			return nil, profile.Nombre, err
 		}
-		verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+		verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
 		return adapter, profile.Nombre, nil
 	}
 
@@ -230,6 +230,7 @@ func EjecutarPrCreateCon(w io.Writer, worktree string, flags FlagsPrCreate, deps
 		// FU-11 residual: exposed-credential incidents ride every audited
 		// commit through the per-commit deterministic channel.
 		DeterministicFindingsFactory: SecretFindingsFactory(),
+		ModelVerifier:                verificadorModelo,
 		NetReview:                    &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(comandosDeValidacion(runs)), Dispositions: branchDispositions},
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditar %s\n", idx+1, total, wiring.ShaCorto(sha))

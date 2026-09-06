@@ -164,7 +164,7 @@ func ejecutarReview(worktree string, args []string) {
 			if err != nil {
 				return nil, profile.Nombre, err
 			}
-			verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+			verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
 			return &observedAgent{AuditorAgente: adapter, authorship: authorship}, profile.Nombre, nil
 		}
 		reviewTransport, metricsFinalizer := announcedReviewTransportWithMetrics(cfg, worktree, sha, archivos, os.Stderr)
@@ -186,6 +186,9 @@ func ejecutarReview(worktree string, args []string) {
 			// Standing human answers recorded against this SHA win over a
 			// fresh agent verdict for the same fingerprint (FU-6).
 			Dispositions: review.FilterDispositionsForSHA(dispositions, sha),
+			// The prober already ran inside the auditor factory above;
+			// the engine consults it here without importing it.
+			ModelVerifier: verificadorModelo,
 			OnDimension: func(dim string) {
 				fmt.Printf("  ⏳ %s …\n", dim)
 			},
@@ -655,7 +658,7 @@ func fabricaRefutador(cfg config.Config, verificador *modelprobe.Verificador) re
 		if err != nil {
 			return nil, perfil.Nombre, err
 		}
-		verificador.Verificar(perfil.Nombre, perfil.Modelo, adapter)
+		verificador.Verify(perfil.Nombre, perfil.Modelo, adapter)
 		return adapter, perfil.Nombre, nil
 	}
 }

@@ -125,17 +125,17 @@ land.
       its 60s budget now reports `ProbeTimeout` (slow or wedged agent) with
       its own remedy, separate from provider-reported errors.
 
-- [ ] **Model prober wired but never verifying.** `internal/modelprobe`
+- [x] **Model prober wired but never verifying.** `internal/modelprobe`
       ("verifies the model that an agent reports for a session") is wired into
       production (`internal/app/pr/create.go:63`, `wiring.go:37,41`,
       `publish.go:101-103`, `review.go:103`,
       `cmd/sentinel/comandos_gate.go:135,163`) feeding `ModeloVerificado`
       (`internal/review/finding.go:167`) — yet the live ledger holds zero
-      `model_verified:true` (325 review files scanned 2026-09-05, 328 on
-      2026-09-06 with the same result; the only true hits repo-wide are
+      `model_verified:true` (325 review files scanned 2026-09-05, 328 the
+      same day with the same result; the only true hits repo-wide are
       fixture copies under `snapshots/`).
 
-      Investigated 2026-09-06 (branch `investigate/modelprobe-verification`,
+      Investigated 2026-09-05 (branch `investigate/modelprobe-verification`,
       read-and-trace, no code changed). Answer: NEITHER — the prober IS
       invoked and IS working, but `model_verified:true` is unreachable by
       construction. `Verificador.Verificar`
@@ -152,19 +152,37 @@ land.
       `store.LeerPerfil` has no production caller, so even the mismatch
       signal is currently write-only.
 
-      Context for the decision, not a defect to fix here: the three
-      mismatch records show configured-vs-serving drift (profiles declare
-      `opencode-go/glm-5.3-flash` / `muse-spark-1.3-contributor`, the
-      agent reports `openai/gpt-5.6-sol`). A fix must define verified
-      semantics (probe error/unparseable/mismatch stays false;
-      probed-and-matched becomes true), plumb the outcome out of the
-      void `Verificar` (or consult `LeerPerfil` at stamp time), decide
-      whether a match writes a positive profile record, and keep all
-      328 historical files at false. Rough cost: 150-250 lines plus
-      tests; the risk is writing false `true` claims into the durable
-      ledger, which is worse than the current honest `false`.
-      STOPPED for a decision: no implementation in this unit.
+      Decided 2026-09-05: make it reachable. Landed on
+      `feat/reachable-model-verified`: `Verify` returns a typed
+      `Outcome` (matched, mismatch, probe error, unparseable,
+      skipped) and retains it per profile; a match writes a positive
+      profile record (status verified, event model_match); the engine
+      consults a minimal `ModelVerifier` interface at stamp time with
+      the dimension's resolved profile, never importing the prober.
+      Concurrent dimensions sharing one profile wait for the single
+      in-flight probe (live proof caught siblings stamping off a
+      placeholder). `false` stays the honest default everywhere:
+      error, unparseable, mismatch, unprobed, unknown profile.
+      Live proof: a real review with an aligned profile wrote
+      `model_verified:true` into the ficha; with drifted profiles it
+      stays `false` with fresh mismatch records. Ledger after the
+      change: 330 files, exactly one carrying `true` (the throwaway
+      proof commit); all 328 historical files untouched at `false`.
+      Datestamps corrected: the investigation entries said
+      2026-09-06, the work happened 2026-09-05.
       Origin: FU-9 review.
+
+- [ ] **Configured-vs-serving model drift in opencode profiles.** The live
+      `profiles/*.json` mismatch records show the configured models do not
+      match the serving agent: profiles declare
+      `opencode-go/glm-5.3-flash` (`cheap`) and
+      `opencode-go/muse-spark-1.3-contributor` (`normal`, `deep`), while
+      the agent reports `openai/gpt-5.6-sol` (recorded 2026-09-05, observed
+      again live the same day). Unit D makes this drift visible — the
+      prober records it and `model_verified` stays honestly `false` —
+      rather than resolving it. Do not change any profile configuration
+      here: deciding which side is wrong (stale config vs unexpected
+      serving model) is its own investigation. Origin: Unit D live proof.
 
 - [ ] **Cache shared audit evidence across review dimensions.** A five-dimension
       audit sends the same commit message, diff, allowed paths, and CodeGraph

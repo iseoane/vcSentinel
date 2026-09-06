@@ -108,6 +108,11 @@ type OpcionesRama struct {
 	OwnDiff *OwnDiffOptions
 	// NetReview (T8.3, internal opt-in; CLI: T8.4) audits the net range via the engine seams.
 	NetReview *NetReviewOptions
+	// ModelVerifier answers whether a profile's model was verified by its
+	// own agent. auditarCommitRama and the net audit forward it to the
+	// engine, which stamps findings without importing a concrete prober.
+	// Nil keeps the honest default: nothing verified.
+	ModelVerifier ModelVerifier
 }
 
 // ResultadoOverview es la respuesta de la llamada Spec de rama: coherencia
@@ -339,6 +344,7 @@ func auditarCommitRama(ledger *Ledger, sha string, opts OpcionesRama) error {
 		OnDimension:            opts.OnDimension,
 		FabricaRefutador:       opts.FabricaRefutador,
 		HallazgosDeterministas: deterministasCommit(opts, sha, archivos, diff),
+		ModelVerifier:          opts.ModelVerifier,
 		ReviewTransport:        transporte,
 	})
 

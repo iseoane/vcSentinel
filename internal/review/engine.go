@@ -205,6 +205,11 @@ type OpcionesAuditoria struct {
 	// fingerprint. Empty by default: callers without human answers behave
 	// exactly as before.
 	Dispositions []FindingDisposition
+	// ModelVerifier answers whether a profile's model was verified by its
+	// own agent. The engine consults it at stamp time; it never imports a
+	// concrete prober — *modelprobe.Verificador satisfies this from the
+	// outside. Nil keeps the honest default: nothing verified.
+	ModelVerifier ModelVerifier
 	// NetUnit* relabel the prompt as a NET-unit audit (T8.3).
 	NetUnitLabel   string
 	NetUnitHistory string
@@ -238,6 +243,16 @@ type DimensionReviewRequest struct {
 	Contract reviewcontract.DimensionContract
 	Options  OpcionesAuditoria
 	Context  string
+	// Profile is the resolved profile name the auditor factory reported
+	// for this dimension. The engine queries Options.ModelVerifier with
+	// it at stamp time; empty means unknown and stamps unverified.
+	Profile string
+}
+
+// ModelVerifier answers whether the named profile was probed and matched
+// in this session. Only a true answer stamps ModeloVerificado.
+type ModelVerifier interface {
+	Verified(profile string) bool
 }
 
 // DimensionReviewer owns prompt construction and semantic answer validation.
@@ -395,7 +410,6 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 				if opts.OnDimension != nil {
 					opts.OnDimension(dimension)
 				}
-
 				rd := ResultadoDimension{Bundle: bundle.Name, Dim: dimension}
 				contract, contractErr := reviewcontract.Lookup(dimension)
 				if contractErr != nil {
@@ -410,7 +424,7 @@ func AuditarCommit(fabrica FabricaAuditor, parallel int, opts OpcionesAuditoria)
 					} else {
 						options := opts
 						options.RutasContexto = rutasRevision
-						rd.Resultado, rd.Error = (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agent, Bundle: bundle, Contract: contract, Options: options, Context: reviewContext})
+						rd.Resultado, rd.Error = (DimensionReviewer{}).Review(context.Background(), DimensionReviewRequest{Agent: agent, Bundle: bundle, Contract: contract, Options: options, Context: reviewContext, Profile: profile})
 					}
 				}
 				rd.Resultado.Bundle = bundle.Name
@@ -902,7 +916,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	}
 	stamparSourceReview(crudo.Hallazgos)
 	stamparInvocacion(crudo.Hallazgos, invocation)
-	stamparProductorEfectivo(crudo.Hallazgos, agent)
+	stamparProductorEfectivo(crudo.Hallazgos, agent, opts.ModelVerifier, request.Profile)
 	return crudo, nil
 }
 
@@ -1007,7 +1021,13 @@ func stamparSourceReview(hallazgos []Hallazgo) {
 	}
 }
 
-func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
+func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente, verifier ModelVerifier, profile string) {
+	// No model-claimed true survives this function: the flag is cleared on
+	// every finding first, then set only from the outside verifier below.
+	// Otherwise a model injecting producer.model_verified:true into its
+	// JSON would land a false true in the ledger on any path where the
+	// effective identity is unavailable and the stamp returns early.
+	clearModelVerified(hallazgos)
 	reporta, ok := agente.(agentadapter.ReportaAgenteEfectivo)
 	if !ok {
 		return
@@ -1016,11 +1036,17 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 	if !ok || efectivo.Vacio() {
 		return
 	}
+	// ModeloVerificado is true only when an outside verifier confirms this
+	// profile was probed and matched. A nil verifier, an unknown profile,
+	// and any non-match keep the honest default of false — including over
+	// a model-claimed true, which the authority stamp overwrites.
+	verificado := verifier != nil && verifier.Verified(profile)
 	productor := Productor{
-		Agente:   efectivo.Binario,
-		Binario:  efectivo.Binario,
-		Modelo:   efectivo.Modelo,
-		Esfuerzo: efectivo.Esfuerzo,
+		Agente:           efectivo.Binario,
+		Binario:          efectivo.Binario,
+		Modelo:           efectivo.Modelo,
+		Esfuerzo:         efectivo.Esfuerzo,
+		ModeloVerificado: verificado,
 	}
 	for i := range hallazgos {
 		hallazgos[i].Producer = productor
@@ -1033,6 +1059,21 @@ func stamparProductorEfectivo(hallazgos []Hallazgo, agente AuditorAgente) {
 			evidencias[j] = evidencia
 		}
 		hallazgos[i].EvidenceSet = &FindingEvidenceSet{Values: evidencias}
+	}
+}
+
+// clearModelVerified drops a model-claimed verified flag from every
+// producer in play, keeping every other field. The stamp below is the only
+// writer of true, and only from the outside verifier.
+func clearModelVerified(hallazgos []Hallazgo) {
+	for i := range hallazgos {
+		hallazgos[i].Producer.ModeloVerificado = false
+		if hallazgos[i].EvidenceSet == nil {
+			continue
+		}
+		for j := range hallazgos[i].EvidenceSet.Values {
+			hallazgos[i].EvidenceSet.Values[j].Producer.ModeloVerificado = false
+		}
 	}
 }
 

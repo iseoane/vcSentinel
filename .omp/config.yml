@@ -1,8 +1,8 @@
 modelRoles:
   plan: openai-codex/gpt-5.6-sol:medium
-  default: openai-codex/gpt-5.6-sol:low
-  designer: openai-codex/gpt-5.6-sol:auto
-  tiny: openai-codex/gpt-5.6-sol
-  advisor: openai-codex/gpt-5.6-sol:auto
-  task: openai-codex/gpt-5.6-luna:auto
-  slow: openai-codex/gpt-5.6-terra:xhigh
+  default: null
+  designer: null
+  tiny: null
+  advisor: null
+  task: null
+  slow: null

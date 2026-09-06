@@ -117,6 +117,7 @@ func OpcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador
 		// FU-11 residual: exposed-credential incidents ride every audited
 		// commit through the per-commit deterministic channel.
 		DeterministicFindingsFactory: SecretFindingsFactory(),
+		ModelVerifier:                verificador,
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, wiring.ShaCorto(sha))
 		},
@@ -171,7 +172,7 @@ func EjecutarPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
 		if err != nil {
 			return nil, profile.Nombre, err
 		}
-		verificadorModelo.Verificar(profile.Nombre, profile.Modelo, adapter)
+		verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
 		return adapter, profile.Nombre, nil
 	}
 

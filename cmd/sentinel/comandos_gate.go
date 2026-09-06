@@ -165,6 +165,7 @@ func buildGateOptions(cfg config.Config, verificador *modelprobe.Verificador, wo
 		OpcionesRevision: review.OpcionesAuditoria{
 			SHA: sha, Mensaje: mensaje, Diff: diff, Bundles: review.PlanForProfile(profile, archivos, diff, gitattributes).Bundles,
 			ProveedorContexto: proveedorContextoReview(cfg, worktree), RutasContexto: archivos,
+			ModelVerifier:               verificador,
 			HallazgosDeterministas:      secretFindings,
 			ReviewTransportWithEvidence: reviewTransport,
 			FinalizeMetrics:             metricsFinalizer,
@@ -188,7 +189,7 @@ func fabricaAuditorGate(cfg config.Config, verificador *modelprobe.Verificador) 
 		if err != nil {
 			return nil, profile.Nombre, err
 		}
-		verificador.Verificar(profile.Nombre, profile.Modelo, adapter)
+		verificador.Verify(profile.Nombre, profile.Modelo, adapter)
 		return adapter, profile.Nombre, nil
 	}
 }
