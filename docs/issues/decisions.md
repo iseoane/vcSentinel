@@ -82,6 +82,33 @@ convention — carried here as recorded positions, not as landed work:
 
 ## Closed FUs (from the former `f0-deuda.md`)
 
+### FU-5: widened review context provider (resolved 2026-09-06)
+
+The reviewer burned its budget searching for call sites the provider
+could answer: `graph.ProveedorCodeGraph` returned only `affectedTests`.
+It now also answers `caller`/`callee`/`impact` relations
+(`review.RelationCaller/RelationCallee/RelationImpact`), with symbols
+derived from the audited diff (added top-level Go declarations, sorted,
+capped at 8) and every path behind `rutasSeguras` plus symlink and
+containment validation. Landed on `feat/fu5-widen-context-provider`
+(`91a3c3d`, `fe97ca1`, `a6f8c9d`; final gate PASS).
+
+- Additive relations stack on top of the `affectedTests` budget instead
+  of sharing it: 32 + 3x8 = 56 references. Conscious deviation from the
+  item's original per-relation-share text: the first implementation cut
+  affected-only recall from 32 to 8 and Sentinel blocked it as a
+  regression.
+- Bounded cost: up to 8 symbols x 3 relations, each subprocess on its
+  own 3s budget.
+- Both non-negotiable constraints intact: the `HEAD == sha` gate (the
+  fix for the CRITICAL that blocked `627430d`) and the 3s
+  per-subprocess timeout (explicit user decision in `5187fb0`).
+- Degradation: every additive failure contributes zero references and
+  never regresses `affectedTests`.
+- Recorded evidence gap: three runs admitted by the `91a3c3d` review
+  were pruned by retention before the settlement sweep; their verdicts
+  stand in the ledger. Pruning, not corruption.
+
 ### FU-6: evidence-bound human dispositions (resolved 2026-09-04, merged 2026-09-05 as `811b9f1`)
 
 Three finding statuses had no production writer and only refutation

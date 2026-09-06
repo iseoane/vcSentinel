@@ -5,30 +5,9 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Widen the review context provider (FU-5)
+## 1. Settle configured-vs-serving model drift in opencode profiles
 
-Sits first: its prerequisite is met, its scope is written, and every review
-pays the price of the narrow provider today.
-
-- Wrong: `graph.ProveedorCodeGraph` answers only `affectedTests`, capped at
-  32 references and 32 KB, so the reviewer burns its budget searching for
-  call sites the provider could answer.
-- Evidence: FU-5 entry in the former `docs/reingenieria/f0-deuda.md`
-  (git history); F4 closed with evidence at `fc9cb82`.
-- Closing: the provider answers `callers`/`callees`/`impact` relations with
-  a per-relation budget share, behind `rutasSeguras` plus symlink and
-  containment validation.
-- Constraints carried across, not negotiable: the `HEAD == reviewed sha`
-  gate is the deliberate correction for the CRITICAL that blocked `627430d`
-  (fixed in `fc80f96`) and must not be relaxed; the 3s per-subprocess
-  timeout was an explicit user decision in `5187fb0`. The T9.2 prerequisite
-  (six silent skips observable) is satisfied: T9.2 closed in F9
-  (`65c9edd`).
-- Blocks: nothing.
-
-## 2. Settle configured-vs-serving model drift in opencode profiles
-
-Sits second: new, and it undermines verification trust — while drift stands,
+Sits first: new, and it undermines verification trust — while drift stands,
 `model_verified` stays honestly `false` on every review.
 
 - Wrong: live `profiles/*.json` mismatch records show configured models
@@ -45,9 +24,9 @@ Sits second: new, and it undermines verification trust — while drift stands,
   investigation is the task.
 - Blocks: nothing.
 
-## 3. Verify whether FU-12 is already resolved
+## 2. Verify whether FU-12 is already resolved
 
-Sits third: small, and it settles a resolved-or-not question in one reading.
+Sits second: small, and it settles a resolved-or-not question in one reading.
 
 - Question: the FU-12 defect states `MigrarDesdeV1` has no production call
   site and the v1 writers use `gitDir`, but `AGENTS.md` describes
@@ -62,9 +41,9 @@ Sits third: small, and it settles a resolved-or-not question in one reading.
   resolve it by assumption here.
 - Blocks: nothing.
 
-## 4. Cache shared audit evidence across review dimensions
+## 3. Cache shared audit evidence across review dimensions
 
-Sits fourth: designed but gated on the token measurement below — starting
+Sits third: designed but gated on the token measurement below — starting
 it now means designing blind on cache value.
 
 - Wrong: a five-dimension audit sends the same commit message, diff,
@@ -84,9 +63,9 @@ it now means designing blind on cache value.
   outputs or reduce dimension coverage.
 - Blocked on: the shared token-observability note in `future.md`.
 
-## 5. Give cost, scope and reuse a producer (FU-3)
+## 4. Give cost, scope and reuse a producer (FU-3)
 
-Sits fifth: blocked on the same missing measurement as item 4, with no
+Sits fourth: blocked on the same missing measurement as item 3, with no
 observable source in the agent path today.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -103,7 +82,7 @@ observable source in the agent path today.
   a deliberately nil value with provenance is a determination, not a gap).
 - Blocked on: the shared token-observability note in `future.md`.
 
-## 6. Validate the acpx spawn chain on native Windows
+## 5. Validate the acpx spawn chain on native Windows
 
 Sits last: conditional work — no action while Debian is the deployment
 platform.
