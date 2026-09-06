@@ -110,6 +110,23 @@ request the configured model (pass `--model` on the probe invocation).
 Filed as a follow-up for a code unit and explicitly not done in this
 docs-only decision.
 
+### Probe requests the configured model (decided and landed 2026-09-06)
+
+Follow-on to the probe-artifact decision above: the owed code correction
+landed. `comandoPrompt` appends `--model <configured>` when `Config.Model`
+is set, mirroring `reviewCommand`, so the Verify probe measures the
+configured profile model instead of the provider default
+(`internal/agentadapter/cli.go`). No flag is added when no model is
+configured; the prompt still travels via stdin. Pinned by
+`TestPromptProbeRequestsConfiguredModelOpenCode`,
+`TestPromptProbeRequestsConfiguredModelClaude` and
+`TestPromptProbeWithoutModelAddsNoFlag`
+(`internal/agentadapter/cli_probe_model_test.go`). Landed as `1504cb8`
+(plus `79b776e` for English artifacts and precise parity wording), merged
+to main in `0878378`. Existing `model_mismatch` profile records stay as
+honest history.
+
+
 ## Closed FUs (from the former `f0-deuda.md`)
 
 ### FU-5: widened review context provider (resolved 2026-09-06)
