@@ -571,13 +571,15 @@ func scopeCredentialToProvider(raw, model string) string {
 	return string(scoped)
 }
 
-// comandoPrompt devuelve los argumentos de invocación según el binario y si el
-// prompt viaja por stdin: opencode usa el subcomando "run" y claude "-p", ambos
-// leyendo el prompt de stdin (sin límite de longitud); cualquier otro binario
-// recibe el prompt como argumento de "-p" (comportamiento anterior). Si hay un
-// modelo configurado se añade "--model <modelo>", igual que en las invocaciones
-// de revisión: las variables de entorno (OPENCODE_MODEL, CLAUDE_CODE_MODEL) no
-// bastan para que el binario resuelva el modelo deseado.
+// comandoPrompt builds the invocation arguments based on the binary and
+// whether the prompt travels via stdin: opencode uses the "run" subcommand and
+// claude "-p", both reading the prompt from stdin (no length limit); any other
+// binary receives the prompt as the "-p" argument (previous behavior). When a
+// model is configured, "--model <model>" is appended, matching the model-flag
+// part of the review invocations: environment variables (OPENCODE_MODEL,
+// CLAUDE_CODE_MODEL) alone are not enough for the binary to resolve the
+// desired model. The identity probe keeps the default reasoning effort;
+// effort propagation is out of scope for the probe.
 func (c *CLIAdapter) comandoPrompt(prompt string) ([]string, bool) {
 	if c.esOpenCode() {
 		args := []string{"run"}

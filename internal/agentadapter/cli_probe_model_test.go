@@ -8,110 +8,110 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-// Tests de comportamiento para la vía de sondeo de modelo (EjecutarPrompt):
-// la invocación del probe debe solicitar el modelo configurado con --model,
-// igual que reviewCommand, porque las variables de entorno (OPENCODE_MODEL)
-// no bastan con OpenCode real. Se usa el binario falso de testdata/sleeper
-// para capturar los argumentos sin invocar un agente real.
+// Behavior tests for the model probe path (EjecutarPrompt): the probe
+// invocation must request the configured model via --model, just like
+// reviewCommand, because environment variables (OPENCODE_MODEL) are not
+// enough with real OpenCode. The fake testdata/sleeper binary captures the
+// arguments without invoking a real agent.
 
-func argsConModelo(t *testing.T, captura capturaAgente, modeloEsperado string) {
-	indice := -1
+func argsWithModel(t *testing.T, capture capturaAgente, expectedModel string) {
+	index := -1
 	t.Helper()
-	for i, arg := range captura.Args {
+	for i, arg := range capture.Args {
 		if arg == "--model" {
-			indice = i
+			index = i
 			break
 		}
 	}
-	if indice == -1 {
-		t.Fatalf("la invocación del probe no pide modelo: args = %v, esperado --model %s", captura.Args, modeloEsperado)
+	if index == -1 {
+		t.Fatalf("probe invocation does not request a model: args = %v, expected --model %s", capture.Args, expectedModel)
 	}
-	if indice+1 >= len(captura.Args) {
-		t.Fatalf("--model va sin valor: args = %v", captura.Args)
+	if index+1 >= len(capture.Args) {
+		t.Fatalf("--model has no value: args = %v", capture.Args)
 	}
-	if captura.Args[indice+1] != modeloEsperado {
-		t.Fatalf("modelo solicitado = %q, esperado %q (args = %v)", captura.Args[indice+1], modeloEsperado, captura.Args)
+	if capture.Args[index+1] != expectedModel {
+		t.Fatalf("requested model = %q, expected %q (args = %v)", capture.Args[index+1], expectedModel, capture.Args)
 	}
 }
 
-func TestEjecutarPromptProbePideModeloConfiguradoOpenCode(t *testing.T) {
-	const modelo = "opencode-go/glm-5.3-flash"
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+func TestPromptProbeRequestsConfiguredModelOpenCode(t *testing.T) {
+	const model = "opencode-go/glm-5.3-flash"
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	adapter := CLIAdapter{
 		BinaryName: compilarAgenteConNombre(t, "opencode"),
-		Config:     config.AgentConfig{Model: modelo, ReasoningEffort: "low"},
+		Config:     config.AgentConfig{Model: model, ReasoningEffort: "low"},
 		Timeout:    10 * time.Second,
 	}
 
-	salida, err := adapter.EjecutarPrompt("¿qué modelo eres?")
+	output, err := adapter.EjecutarPrompt("¿qué modelo eres?")
 	if err != nil {
-		t.Fatalf("EjecutarPrompt devolvió error: %v", err)
+		t.Fatalf("EjecutarPrompt returned an error: %v", err)
 	}
-	if salida != "¿qué modelo eres?" {
-		t.Fatalf("salida = %q, esperado el eco del prompt por stdin", salida)
+	if output != "¿qué modelo eres?" {
+		t.Fatalf("output = %q, expected the prompt echoed via stdin", output)
 	}
 
-	captura := leerCapturaAgente(t, capturaRuta)
-	if len(captura.Args) == 0 || captura.Args[0] != "run" {
-		t.Fatalf("args = %v, esperado que empiece por el subcomando run", captura.Args)
+	capture := leerCapturaAgente(t, capturePath)
+	if len(capture.Args) == 0 || capture.Args[0] != "run" {
+		t.Fatalf("args = %v, expected it to start with the run subcommand", capture.Args)
 	}
-	argsConModelo(t, captura, modelo)
-	if captura.Stdin != "¿qué modelo eres?" {
-		t.Fatalf("stdin = %q, esperado el prompt completo (transporte por stdin intacto)", captura.Stdin)
+	argsWithModel(t, capture, model)
+	if capture.Stdin != "¿qué modelo eres?" {
+		t.Fatalf("stdin = %q, expected the full prompt (stdin transport intact)", capture.Stdin)
 	}
 }
 
-func TestEjecutarPromptProbePideModeloConfiguradoClaude(t *testing.T) {
-	const modelo = "claude-sonnet-5"
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+func TestPromptProbeRequestsConfiguredModelClaude(t *testing.T) {
+	const model = "claude-sonnet-5"
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	adapter := CLIAdapter{
 		BinaryName: compilarAgenteConNombre(t, "claude"),
-		Config:     config.AgentConfig{Model: modelo, ReasoningEffort: "high"},
+		Config:     config.AgentConfig{Model: model, ReasoningEffort: "high"},
 		Timeout:    10 * time.Second,
 	}
 
-	salida, err := adapter.EjecutarPrompt("¿qué modelo eres?")
+	output, err := adapter.EjecutarPrompt("¿qué modelo eres?")
 	if err != nil {
-		t.Fatalf("EjecutarPrompt devolvió error: %v", err)
+		t.Fatalf("EjecutarPrompt returned an error: %v", err)
 	}
-	if salida != "¿qué modelo eres?" {
-		t.Fatalf("salida = %q, esperado el eco del prompt por stdin", salida)
+	if output != "¿qué modelo eres?" {
+		t.Fatalf("output = %q, expected the prompt echoed via stdin", output)
 	}
 
-	captura := leerCapturaAgente(t, capturaRuta)
-	if len(captura.Args) == 0 || captura.Args[0] != "-p" {
-		t.Fatalf("args = %v, esperado que empiecen por -p", captura.Args)
+	capture := leerCapturaAgente(t, capturePath)
+	if len(capture.Args) == 0 || capture.Args[0] != "-p" {
+		t.Fatalf("args = %v, expected them to start with -p", capture.Args)
 	}
-	argsConModelo(t, captura, modelo)
-	if captura.Stdin != "¿qué modelo eres?" {
-		t.Fatalf("stdin = %q, esperado el prompt completo (transporte por stdin intacto)", captura.Stdin)
+	argsWithModel(t, capture, model)
+	if capture.Stdin != "¿qué modelo eres?" {
+		t.Fatalf("stdin = %q, expected the full prompt (stdin transport intact)", capture.Stdin)
 	}
 }
 
-func TestEjecutarPromptProbeSinModeloNoAnadeBandera(t *testing.T) {
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+func TestPromptProbeWithoutModelAddsNoFlag(t *testing.T) {
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	adapter := CLIAdapter{
 		BinaryName: compilarAgenteConNombre(t, "opencode"),
 		Timeout:    10 * time.Second,
 	}
 
 	if _, err := adapter.EjecutarPrompt("prompt"); err != nil {
-		t.Fatalf("EjecutarPrompt devolvió error: %v", err)
+		t.Fatalf("EjecutarPrompt returned an error: %v", err)
 	}
 
-	captura := leerCapturaAgente(t, capturaRuta)
-	for _, arg := range captura.Args {
+	capture := leerCapturaAgente(t, capturePath)
+	for _, arg := range capture.Args {
 		if arg == "--model" {
-			t.Fatalf("sin modelo configurado la invocación no debe llevar --model: args = %v", captura.Args)
+			t.Fatalf("without a configured model the invocation must not carry --model: args = %v", capture.Args)
 		}
 	}
-	if len(captura.Args) == 0 || captura.Args[0] != "run" {
-		t.Fatalf("args = %v, esperado que empiece por run", captura.Args)
+	if len(capture.Args) == 0 || capture.Args[0] != "run" {
+		t.Fatalf("args = %v, expected it to start with run", capture.Args)
 	}
-	if captura.Stdin != "prompt" {
-		t.Fatalf("stdin = %q, esperado el prompt completo", captura.Stdin)
+	if capture.Stdin != "prompt" {
+		t.Fatalf("stdin = %q, expected the full prompt", capture.Stdin)
 	}
 }
