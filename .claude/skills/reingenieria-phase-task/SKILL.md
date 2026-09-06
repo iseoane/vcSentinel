@@ -47,5 +47,5 @@ Return the task id, worktree, commits, exact Sentinel binary, writer identity/mo
 - [Sentinel operations and report details](references/sentinel-operations.md)
 - [Phase fichas and deferred follow-ups](../../../docs/reingenieria/)
 - [Repository task/slice rules](../../../AGENTS.md) and [repository instructions](../../../CLAUDE.md)
-- [Durable-run operator surface](../../../docs/runs-cli.md)
+- [Durable-run operator surface](../../../docs/design/runs-cli.md)
 - Every command's `-h`/`--help` output is authoritative.

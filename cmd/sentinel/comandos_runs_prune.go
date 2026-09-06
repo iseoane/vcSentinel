@@ -15,7 +15,7 @@ import (
 
 // runsPruneOutput is the stable JSON shape of `runs prune`. Decisions reuses
 // the store's PruneDecision contract; reasons are the stable retention
-// strings documented in docs/runs-cli.md.
+// strings documented in docs/design/runs-cli.md.
 type runsPruneOutput struct {
 	Cutoff    time.Time             `json:"cutoff"`
 	Examined  int                   `json:"examined"`

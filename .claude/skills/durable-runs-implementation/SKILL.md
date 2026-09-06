@@ -47,8 +47,8 @@ rollback boundary, accepted follow-ups, and any unrelated files preserved.
 
 ## References
 
-- `docs/arquitectura/run-control-implementation-plan.md`
-- `docs/arquitectura/agent-execution-control-options.md`
+- `docs/design/agent-execution-control-options.md`
+- `docs/issues/` (open work and past decisions; the former run-control roadmap is consolidated there)
 - `.scratch/durable-runs/issues/`
 - `references/unit-skill-matrix.md`
 - `AGENTS.md`

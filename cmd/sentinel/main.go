@@ -261,7 +261,7 @@ func construirAyuda() string {
 	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
 	imprimirItemAyuda(&b, "", "pr review flags: --base X --parent X --only-unaudited --overview --json.")
 	imprimirItemAyuda(&b, "", "        create --base X --parent X --chain-pr --force --reason \"...\".")
-	imprimirItemAyuda(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/runs-cli.md for flags, JSON shapes, and exit codes.")
+	imprimirItemAyuda(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/design/runs-cli.md for flags, JSON shapes, and exit codes.")
 	imprimirItemAyuda(&b, "tui", "Open the full-screen control center (starts/stops this repository's daemon for the session).")
 	imprimirItemAyuda(&b, "consentimiento-diff", "Gestiona el grant local por usuario y repositorio: otorgar, revocar o estado.")
 	imprimirItemAyuda(&b, "install", "Descarga e instala la última release publicada desde GitHub.")

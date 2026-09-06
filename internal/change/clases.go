@@ -11,7 +11,7 @@ import (
 )
 
 // Clases reconocidas por el contrato de file_classes (ver
-// docs/arquitectura/replanteamiento-objetivo.md, sección 8).
+// docs/design/replanteamiento-objetivo.md, sección 8).
 const (
 	ClaseSource    = "source"
 	ClaseTest      = "test"

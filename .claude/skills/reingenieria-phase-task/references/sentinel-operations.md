@@ -1,6 +1,6 @@
 # Sentinel operations and evidence
 
-Use this reference for the phase-task Sentinel lifecycle. [AGENTS.md](../../../../AGENTS.md), [CLAUDE.md](../../../../CLAUDE.md), [durable-run docs](../../../../docs/runs-cli.md), and each command's `-h`/`--help` output remain authoritative. Do not guess flags.
+Use this reference for the phase-task Sentinel lifecycle. [AGENTS.md](../../../../AGENTS.md), [CLAUDE.md](../../../../CLAUDE.md), [durable-run docs](../../../../docs/design/runs-cli.md), and each command's `-h`/`--help` output remain authoritative. Do not guess flags.
 
 ## Command surface (post-R11)
 

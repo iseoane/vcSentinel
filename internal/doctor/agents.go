@@ -115,7 +115,7 @@ func resolveActive(cfg config.Config) (string, string) {
 
 // needsExternalSearch reports whether any configured reviewer shells out to
 // an external ripgrep: Claude Code embeds it, OpenCode does not
-// (docs/reingenieria/f9-observabilidad.md). acpx runtimes with a non-claude
+// (docs/issues/decisions.md, `sentinel doctor` entry). acpx runtimes with a non-claude
 // token cannot be judged statically, so they count as needing it: a wrong
 // warning is cheaper than a ten-minute timeout.
 func needsExternalSearch(cfg config.Config) (bool, string) {
