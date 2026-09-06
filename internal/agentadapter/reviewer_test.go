@@ -524,7 +524,7 @@ func TestReviewCommandClaudeBuildsSnapshotBoundArgs(t *testing.T) {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
 
-	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--model", "claude-sonnet-5", "--effort", "high"}
+	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--model", "claude-sonnet-5", "--effort", "high", "--output-format", "json"}
 	if !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
@@ -543,7 +543,7 @@ func TestReviewCommandClaudeExeIsDetected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
-	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write"}
+	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--output-format", "json"}
 	if !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
@@ -557,7 +557,7 @@ func TestReviewCommandClaudeOmitsEmptyModelConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reviewCommand() error = %v", err)
 	}
-	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write"}
+	expected := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--output-format", "json"}
 	if !reflect.DeepEqual(args, expected) {
 		t.Fatalf("args = %v, expected %v", args, expected)
 	}
@@ -577,6 +577,10 @@ func TestReviewCommandClaudeRequiresSnapshotDirectory(t *testing.T) {
 func TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
 	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	// The fake claude must answer in the format the production invocation now
+	// requests: one result object the rich path scans. The echoed prompt
+	// would fail the parser's fail-closed JSON check.
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
 	snapshotDir := t.TempDir()
 	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 10 * time.Second}
 
@@ -591,7 +595,7 @@ func TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 		t.Fatalf("stdin = %q, expected the review prompt", captura.Stdin)
 	}
 	snapshotPattern := filepath.ToSlash(filepath.Join(snapshotDir, "**"))
-	wantArgs := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write"}
+	wantArgs := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--output-format", "json"}
 	if !reflect.DeepEqual(captura.Args, wantArgs) {
 		t.Fatalf("args = %v, expected restricted snapshot-bound invocation %v", captura.Args, wantArgs)
 	}

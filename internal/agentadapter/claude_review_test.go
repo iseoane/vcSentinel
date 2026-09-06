@@ -1,13 +1,16 @@
 package agentadapter
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
 // The redacted probe fixture reproduces Claude Code 2.1.263's
@@ -173,5 +176,69 @@ func TestClaudeReviewUsage(t *testing.T) {
 				t.Errorf("StopReason = %q, want %q", scan.StopReason, tc.wantStop)
 			}
 		})
+	}
+}
+
+// TestClaudeReviewResultReportsWireObservations drives the rich
+// ReviewWithContextResult surface end to end against a fake claude binary
+// replaying the redacted probe fixture: the review invocation must request
+// --output-format json, the child must run inside the immutable snapshot
+// directory (claude has no --dir flag), the wire observations must land in
+// acpadapter.Result with configured declarations in Requested* and empty
+// Observed* (the result object exposes no top-level identity), and the
+// legacy string contract must answer with the identical extracted text.
+func TestClaudeReviewResultReportsWireObservations(t *testing.T) {
+	repoCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+	}
+	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
+	adapter := CLIAdapter{
+		BinaryName: compilarAgenteConNombre(t, "claude"),
+		Config:     config.AgentConfig{Model: "claude-haiku-4-5"},
+		Timeout:    10 * time.Second,
+	}
+
+	result, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContextResult() error = %v", err)
+	}
+	if result.Output != "OK" {
+		t.Errorf("Output = %q, want the probe review text", result.Output)
+	}
+	if !reflect.DeepEqual(result.Usage, claudeUsage) {
+		t.Errorf("Usage = %+v, want %+v", result.Usage, claudeUsage)
+	}
+	if result.UsageJSON != claudeUsageJSON {
+		t.Errorf("UsageJSON = %q, want the verbatim usage member", result.UsageJSON)
+	}
+	if result.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want end_turn", result.StopReason)
+	}
+	if result.RequestedModel != "claude-haiku-4-5" || result.RequestedEffort != "" {
+		t.Errorf("declarations = %q/%q, want the configured model with the unset effort echoed", result.RequestedModel, result.RequestedEffort)
+	}
+	if result.ObservedModel != "" || result.ObservedEffort != "" {
+		t.Errorf("observed identity = %q/%q, want empty (the result object exposes none)", result.ObservedModel, result.ObservedEffort)
+	}
+
+	captura := leerCapturaAgente(t, capturaRuta)
+	if len(captura.Args) < 2 || !reflect.DeepEqual(captura.Args[len(captura.Args)-2:], []string{"--output-format", "json"}) {
+		t.Errorf("args = %v, want the review invocation to end with --output-format json", captura.Args)
+	}
+	// Claude has no --dir flag: the snapshot is the child's working directory
+	// and must never be the audited repository itself.
+	if mismaRuta(captura.Dir, repoCwd) {
+		t.Errorf("cmd.Dir = %q, expected the isolated snapshot directory, not the repository", captura.Dir)
+	}
+
+	output, err := adapter.ReviewWithContext(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContext() error = %v", err)
+	}
+	if output != "OK" {
+		t.Errorf("ReviewWithContext() = %q, want the identical extracted review text", output)
 	}
 }

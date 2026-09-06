@@ -348,6 +348,14 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		if c.Config.ReasoningEffort != "" {
 			args = append(args, "--effort", c.Config.ReasoningEffort)
 		}
+		// --output-format json switches stdout from the human-rendered answer
+		// to a single result object that scanClaudeReview normalizes: the same
+		// observable answer (probe-verified text parity), plus the wire usage
+		// and the terminal stop reason. The flag is valid with --print, which
+		// "-p" is. Probed live against Claude Code 2.1.263 with the production
+		// reviewer invocation; the redacted capture is tracked as
+		// testdata/claude/usage-probe.json.
+		args = append(args, "--output-format", "json")
 		return args, nil, nil
 	}
 	if !c.esOpenCode() {

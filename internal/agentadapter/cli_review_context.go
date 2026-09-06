@@ -103,8 +103,9 @@ func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha st
 }
 
 // reviewExecution is the rich observation of one restricted review run: the
-// observable answer text plus, on OpenCode, the wire observations the
-// --format json event stream carries. Non-OpenCode providers answer in plain
+// observable answer text plus the wire observations the provider's output
+// format carries — the OpenCode --format json event stream and the Claude
+// Code --output-format json result object. Generic providers answer in plain
 // text and populate the output alone.
 type reviewExecution struct {
 	output     string
@@ -177,23 +178,35 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 		return reviewExecution{}, waitErr
 	}
 	raw := spawn.stdout.String()
-	if !c.esOpenCode() {
-		// claude and generic providers answer in plain text; there is no
-		// event stream to scan.
+	switch {
+	case c.esOpenCode():
+		scan, err := scanOpenCodeReview(strings.NewReader(raw))
+		if err != nil {
+			return reviewExecution{}, err
+		}
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason), nil
+	case c.esClaude():
+		scan, err := scanClaudeReview(strings.NewReader(raw))
+		if err != nil {
+			return reviewExecution{}, err
+		}
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason), nil
+	default:
+		// generic providers answer in plain text; there is nothing to scan.
 		return reviewExecution{output: strings.TrimSpace(raw)}, nil
 	}
-	scan, err := scanOpenCodeReview(strings.NewReader(raw))
-	if err != nil {
-		return reviewExecution{}, err
-	}
-	// Single TrimSpace at the stdout->answer boundary, byte-identical to the
-	// plain-text providers' treatment of their captured stdout.
+}
+
+// reviewExecutionFromScan projects a provider scan onto the rich review
+// observation. The single TrimSpace lives here so every provider's
+// stdout->answer boundary behaves byte-identically.
+func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string) reviewExecution {
 	return reviewExecution{
-		output:     strings.TrimSpace(scan.Output),
-		usage:      scan.Usage,
-		usageJSON:  scan.UsageJSON,
-		stopReason: scan.StopReason,
-	}, nil
+		output:     strings.TrimSpace(output),
+		usage:      usage,
+		usageJSON:  usageJSON,
+		stopReason: stopReason,
+	}
 }
 
 // ownedCommand carries one started child with its ownership handle and
