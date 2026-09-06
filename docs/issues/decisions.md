@@ -149,6 +149,28 @@ detection and diff into one call would add shallower indirection), and
 new English comments beside Spanish legacy blocks (the standing English
 rule outweighs matching the file).
 
+### Direct adapters report token usage; cache design now measurable (decided and landed 2026-09-06)
+
+Actionable item 1 ("Cache shared audit evidence") was blocked on the
+shared token-observability note: no adapter reported usage, so cache value
+could not be measured. That prerequisite has landed on
+`feat/medicion-adaptadores-directos`: direct OpenCode reviews parse
+`--format json` step_finish tokens
+(`internal/agentadapter/opencode_review.go`), direct Claude reviews parse
+`--output-format json` result usage (`internal/agentadapter/claude_review.go`),
+both feeding the existing `reviewexec` to metrics plumbing with absent
+fields as nil, raw usage retained, review text byte-identical, and
+requested/observed identity kept separate. ACP/acpx already reported
+terminal usage. Live proof: one cheap logic review recorded
+input/output/cached observations with a valid `runs verify`; final gate
+PASS.
+
+Deliberately not done: the cache design itself — shared snapshot, stable
+evidence envelope, prompt reorder, cache key. It stays in `actionable.md`
+as unblocked work, to be selected with measured input-token, cached-read,
+latency and review-equivalence numbers. Cost stays unmapped on purpose
+(F9 precedent); FU-3 narrows to price, scope and reuse.
+
 
 ## Closed FUs (from the former `f0-deuda.md`)
 
