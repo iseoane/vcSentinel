@@ -12,6 +12,7 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
 // The redacted probe fixture reproduces OpenCode 1.18.29's `--format json`
@@ -59,6 +60,17 @@ func loadOpenCodeProbeFixture(t *testing.T) string {
 	return string(raw)
 }
 
+// Compile-time proof of the structural match cli_review_context.go claims:
+// *CLIAdapter satisfies reviewexec's rich reviewer contracts. The signatures
+// mirror reviewexec.ResultContextualReviewer and
+// reviewexec.ResultPolicyContextualReviewer; they are restated here because
+// importing reviewexec from a test would still cycle through the package
+// under test's import graph.
+var _ interface {
+	ReviewWithContextResult(ctx context.Context, prompt, sha string, paths []string) (acpadapter.Result, error)
+	ReviewWithContextAndPolicyResult(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (acpadapter.Result, error)
+} = (*CLIAdapter)(nil)
+
 // TestOpenCodeReviewUsage pins the review-stream contract of the dedicated
 // opencode event parser: the observable answer is the ordered concatenation
 // of every type=text part text, usage is the sum over every step_finish
@@ -67,6 +79,10 @@ func loadOpenCodeProbeFixture(t *testing.T) string {
 // else verbatim so Classify fails it by default). A stream that never reports
 // tokens yields a nil Usage — absent must never become zeros — while observed
 // zeros survive as non-nil pointers.
+// Broken framing — an empty stream, blank or oversized lines, malformed
+// JSON, or an unparseable usage member — aborts the scan with an error
+// instead of leaking raw NDJSON (or a silently truncated answer) as the
+// review text.
 func TestOpenCodeReviewUsage(t *testing.T) {
 	fixture := loadOpenCodeProbeFixture(t)
 	cases := []struct {
@@ -76,6 +92,7 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 		wantUsage     *acpadapter.Usage
 		wantUsageJSON string
 		wantStop      string
+		wantErr       string
 	}{
 		{
 			name:          "redacted probe fixture",
@@ -143,11 +160,50 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 			wantText: "orphan answer",
 			wantStop: "",
 		},
+		{
+			name:    "empty stream fails closed",
+			stream:  "",
+			wantErr: "vacia",
+		},
+		{
+			name:    "blank intermediate line fails closed",
+			stream:  "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n",
+			wantErr: "linea vacia",
+		},
+		{
+			name:    "malformed json line fails closed",
+			stream:  "{\"type\":\"text\"\n",
+			wantErr: "salida JSONL invalida",
+		},
+		{
+			name:    "concatenated objects on one line fail closed",
+			stream:  "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n",
+			wantErr: "salida JSONL invalida",
+		},
+		{
+			name:    "oversized line fails closed",
+			stream:  fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024)),
+			wantErr: "salida JSONL invalida",
+		},
+		{
+			name:    "usage member that is not an object fails closed",
+			stream:  "{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\",\"tokens\":5}}\n",
+			wantErr: "usage",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			scan, err := scanOpenCodeReview(strings.NewReader(tc.stream))
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("scanOpenCodeReview() = %+v, expected an error mentioning %q", scan, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %q, expected it to mention %q", err, tc.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("scanOpenCodeReview() error = %v", err)
 			}
@@ -169,45 +225,6 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 				t.Errorf("StopReason = %q, want %q", scan.StopReason, tc.wantStop)
 			}
 		})
-	}
-}
-
-// TestOpenCodeReviewScanRejectsBrokenFraming keeps the review scanner on the
-// same fail-closed JSONL discipline as the commit-message extractor: a
-// malformed stream must abort the review instead of leaking raw NDJSON (or a
-// silently truncated answer) as the review text.
-func TestOpenCodeReviewScanRejectsBrokenFraming(t *testing.T) {
-	cases := []struct {
-		name   string
-		stream string
-		want   string
-	}{
-		{name: "empty stream", stream: "", want: "vacia"},
-		{name: "blank intermediate line", stream: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n", want: "linea vacia"},
-		{name: "malformed json", stream: "{\"type\":\"text\"\n", want: "salida JSONL invalida"},
-		{name: "concatenated objects on one line", stream: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"x\"}}\n", want: "salida JSONL invalida"},
-		{name: "usage is not an object", stream: "{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\",\"tokens\":5}}\n", want: "usage"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			scan, err := scanOpenCodeReview(strings.NewReader(tc.stream))
-			if err == nil {
-				t.Fatalf("scanOpenCodeReview() = %+v, expected a framing error", scan)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %q, expected it to mention %q", err, tc.want)
-			}
-		})
-	}
-}
-
-// TestOpenCodeReviewScanRejectsOversizedLine mirrors the commit extractor's
-// explicit 1 MiB per-line cap.
-func TestOpenCodeReviewScanRejectsOversizedLine(t *testing.T) {
-	stream := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024))
-	if _, err := scanOpenCodeReview(strings.NewReader(stream)); err == nil {
-		t.Fatal("accepted a JSONL line above the explicit per-line cap")
 	}
 }
 
