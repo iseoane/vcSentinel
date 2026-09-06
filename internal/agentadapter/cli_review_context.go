@@ -85,7 +85,8 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 // runtime path, including pre-spawn failures, mirroring acpadapter's
 // discipline. Configured model/effort are request evidence, never wire
 // observations: they travel in the Requested* fields, and Observed* stays
-// empty because the OpenCode event stream exposes no wire identity.
+// empty because neither the OpenCode event stream nor the Claude result
+// object exposes a wire identity.
 func (c *CLIAdapter) declaredResult() acpadapter.Result {
 	return acpadapter.Result{
 		RequestedModel:  c.Config.Model,
@@ -120,8 +121,8 @@ type reviewExecution struct {
 // tree, and the containment watchdog guarantees that even without the
 // controller's escalation the tree never outlives its context by more than
 // the shared grace budget plus a fixed margin. The returned observation
-// adds the extracted answer text and — for OpenCode — the wire usage and
-// terminal stop reason the --format json stream reports.
+// adds the extracted answer text and — for OpenCode and Claude — the wire
+// usage and terminal stop reason the provider's output format reports.
 func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequest, timeout time.Duration) (reviewExecution, error) {
 	ctx, cancelar := context.WithTimeout(parent, timeout)
 	defer cancelar()

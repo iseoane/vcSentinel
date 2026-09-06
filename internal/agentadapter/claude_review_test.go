@@ -136,6 +136,17 @@ func TestClaudeReviewUsage(t *testing.T) {
 			stream:  `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}`,
 			wantErr: "resultado de error",
 		},
+		{
+			name:     "explicit null usage yields nil usage and empty raw member",
+			stream:   `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"quiet","usage":null}`,
+			wantText: "quiet",
+			wantStop: "end_turn",
+		},
+		{
+			name:    "malformed inner usage member fails closed",
+			stream:  `{"type":"result","subtype":"success","result":"x","usage":5}`,
+			wantErr: "usage",
+		},
 	}
 
 	for _, tc := range cases {
@@ -179,11 +190,31 @@ func TestClaudeReviewUsage(t *testing.T) {
 	}
 }
 
+// TestClaudeReviewTextParityWithPlainTextBaseline grounds the text-parity
+// claim in the probe's paired captures: the same review answer captured in
+// plain-text mode ("OK\n") and in --output-format json mode (result "OK").
+// The adapter's single boundary TrimSpace makes the two surfaces identical.
+func TestClaudeReviewTextParityWithPlainTextBaseline(t *testing.T) {
+	baseline, err := os.ReadFile(filepath.Join("testdata", "claude", "usage-probe.baseline.txt"))
+	if err != nil {
+		t.Fatalf("read plain-text baseline: %v", err)
+	}
+	scan, err := scanClaudeReview(strings.NewReader(loadClaudeProbeFixture(t)))
+	if err != nil {
+		t.Fatalf("scanClaudeReview() error = %v", err)
+	}
+	if got, want := strings.TrimSpace(scan.Output), strings.TrimSpace(string(baseline)); got != want {
+		t.Errorf("text parity broken: json result = %q, plain-text output = %q", got, want)
+	}
+}
+
 // TestClaudeReviewResultReportsWireObservations drives the rich
 // ReviewWithContextResult surface end to end against a fake claude binary
 // replaying the redacted probe fixture: the review invocation must request
-// --output-format json, the child must run inside the immutable snapshot
-// directory (claude has no --dir flag), the wire observations must land in
+// --output-format json, the child must not run in the audited repository
+// (claude runs with the snapshot as its cwd; the positive cwd==snapshot
+// assertion lives in reviewer_test.go's TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd),
+// the wire observations must land in
 // acpadapter.Result with configured declarations in Requested* and empty
 // Observed* (the result object exposes no top-level identity), and the
 // legacy string contract must answer with the identical extracted text.
@@ -228,8 +259,9 @@ func TestClaudeReviewResultReportsWireObservations(t *testing.T) {
 	if len(captura.Args) < 2 || !reflect.DeepEqual(captura.Args[len(captura.Args)-2:], []string{"--output-format", "json"}) {
 		t.Errorf("args = %v, want the review invocation to end with --output-format json", captura.Args)
 	}
-	// Claude has no --dir flag: the snapshot is the child's working directory
-	// and must never be the audited repository itself.
+	// Claude has no --dir flag; this asserts only that the child did NOT run
+	// in the audited repository. The positive cwd==snapshot assertion lives
+	// in reviewer_test.go's TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd.
 	if mismaRuta(captura.Dir, repoCwd) {
 		t.Errorf("cmd.Dir = %q, expected the isolated snapshot directory, not the repository", captura.Dir)
 	}
