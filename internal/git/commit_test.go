@@ -324,3 +324,78 @@ func TestUpstreamOMainEligeMain(t *testing.T) {
 		t.Errorf("UpstreamOMain = %q, esperado main", base)
 	}
 }
+
+// prepareRepoWithMerge builds a repo with a real two-parent merge commit:
+// master changes base.txt and a feat branch adds feature.go; the --no-ff
+// merge joins them without conflict.
+func prepareRepoWithMerge(t *testing.T) string {
+	t.Helper()
+	dir := prepararRepositorioPrueba(t, map[string]string{"base.txt": "base\n"})
+	ejecutarGit(t, dir, "checkout", "-q", "-b", "feat")
+	if err := os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package feature\n"), 0644); err != nil {
+		t.Fatalf("could not create feature.go: %v", err)
+	}
+	ejecutarGit(t, dir, "add", "feature.go")
+	ejecutarGit(t, dir, "commit", "-q", "-m", "feat(f): branch change")
+	ejecutarGit(t, dir, "checkout", "-q", "master")
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base v2\n"), 0644); err != nil {
+		t.Fatalf("could not modify base.txt: %v", err)
+	}
+	ejecutarGit(t, dir, "commit", "-qam", "chore(m): master change")
+	ejecutarGit(t, dir, "merge", "-q", "--no-ff", "feat", "-m", "merge: two parents")
+	return dir
+}
+
+func TestDiffCommitOnMergeReturnsFirstParentDiff(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real git repository integration in -short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available on PATH")
+	}
+
+	dir := prepareRepoWithMerge(t)
+	t.Chdir(dir)
+
+	head, _ := SHAHead()
+	// Verify HEAD really is a two-parent merge commit: if the repo setup
+	// changes, the test must fail here instead of misleading us.
+	if parents := strings.Fields(ejecutarGit(t, dir, "rev-list", "--parents", "-n", "1", head)); len(parents) != 3 {
+		t.Fatalf("HEAD should be a two-parent merge commit, rev-list gave %d fields", len(parents))
+	}
+
+	diff, err := DiffCommit(head)
+	if err != nil {
+		t.Fatalf("DiffCommit returned an error: %v", err)
+	}
+	if !strings.Contains(diff, "feature.go") || !strings.Contains(diff, "+package feature") {
+		t.Errorf("merge diff should show the merged-branch change (feature.go), got: %q", diff)
+	}
+}
+
+func TestCommitFilesOnMergeListsBranchFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real git repository integration in -short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available on PATH")
+	}
+
+	dir := prepareRepoWithMerge(t)
+	t.Chdir(dir)
+
+	head, _ := SHAHead()
+	archivos, err := ArchivosDeCommit(head)
+	if err != nil {
+		t.Fatalf("ArchivosDeCommit returned an error: %v", err)
+	}
+	foundFeature := false
+	for _, archivo := range archivos {
+		if archivo == "feature.go" {
+			foundFeature = true
+		}
+	}
+	if !foundFeature {
+		t.Errorf("merge ArchivosDeCommit should list feature.go, got: %+v", archivos)
+	}
+}

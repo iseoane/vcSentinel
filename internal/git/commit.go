@@ -30,13 +30,38 @@ var prefijosEstables = []string{"--src-prefix=a/", "--dst-prefix=b/"}
 // DiffCommit devuelve el diff completo de un commit (sin el mensaje), con
 // archivos nuevos, modificados y renombrados. Funciona también para el primer
 // commit del repositorio (root commit).
+// For a merge commit (two or more parents) it diffs against the first
+// parent: `git show` emits a combined diff that stays empty on clean
+// merges, and an audit reading that diff would see the merge as touching
+// nothing.
 func DiffCommit(sha string) (string, error) {
-	args := append([]string{"show", "--format=", "--no-color"}, prefijosEstables...)
-	salida, err := ejecutarGitSalida(append(args, sha, "--")...)
+	isMerge, err := isMergeCommit(sha)
+	if err != nil {
+		return "", err
+	}
+	var salida string
+	if isMerge {
+		args := append([]string{"diff", "--no-color"}, prefijosEstables...)
+		salida, err = ejecutarGitSalida(append(args, sha+"^1", sha, "--")...)
+	} else {
+		args := append([]string{"show", "--format=", "--no-color"}, prefijosEstables...)
+		salida, err = ejecutarGitSalida(append(args, sha, "--")...)
+	}
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimRight(salida, "\n"), nil
+}
+
+// isMergeCommit reports whether the SHA points at a commit with more than one
+// parent. `rev-list --parents -n 1` prints "sha parent [parent...]", so three
+// or more fields betray a merge.
+func isMergeCommit(sha string) (bool, error) {
+	salida, err := ejecutarGitSalida("rev-list", "--parents", "-n", "1", sha)
+	if err != nil {
+		return false, err
+	}
+	return len(strings.Fields(salida)) > 2, nil
 }
 
 // DiffRango devuelve el diff de base..head con los mismos prefijos estables que
@@ -109,8 +134,20 @@ func RamaActual() (string, error) {
 
 // ArchivosDeCommit devuelve las rutas de los archivos que toca un commit,
 // útiles para deducir el saco (capa) de la auditoría.
+//
+// Like DiffCommit, on a merge it lists the diff against the first parent:
+// `git show --name-only` also emits an empty list on clean merges.
 func ArchivosDeCommit(sha string) ([]string, error) {
-	salida, err := ejecutarGitSalida("show", "--name-only", "--format=", sha, "--")
+	isMerge, err := isMergeCommit(sha)
+	if err != nil {
+		return nil, err
+	}
+	var salida string
+	if isMerge {
+		salida, err = ejecutarGitSalida("diff", "--name-only", sha+"^1", sha, "--")
+	} else {
+		salida, err = ejecutarGitSalida("show", "--name-only", "--format=", sha, "--")
+	}
 	if err != nil {
 		return nil, err
 	}
