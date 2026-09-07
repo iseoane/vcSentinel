@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -57,5 +59,42 @@ func TestRunDoctorIsAdvisory(t *testing.T) {
 	text := out.String()
 	if !strings.Contains(text, "WARN") || !strings.Contains(text, "remedy") {
 		t.Errorf("report misses warnings or remedies:\n%s", text)
+	}
+}
+
+// TestRunDoctorWithPrintsProgressBeforeProbe pins the wiring: the
+// announcement for each long step reaches the writer before the blocking
+// call starts, so the operator sees motion during the 60s probes. The stub
+// probe snapshots the writer at probe time; a missing announcement means
+// the operator stared at silence.
+func TestRunDoctorWithPrintsProgressBeforeProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // keep the host's global agents out of the run
+	worktree := t.TempDir()
+	dir := filepath.Join(worktree, ".vas_sentinel")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yml := "version: \"2.0\"\nactive_agent: \"auto\"\nagents:\n  claude:\n    model: \"claude-5-sonnet\"\n    reasoning_effort: \"high\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "vassentinel.yml"), []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	env := stubDoctorEnv(t)
+	seenAtProbe := ""
+	env.Probe = func(agent, prompt string) (string, error) {
+		if seenAtProbe == "" { // snapshot the first probe (declaration order)
+			seenAtProbe = out.String()
+		}
+		return "", errors.New("probe refused")
+	}
+	out.Reset()
+	if code := runDoctorWith(&out, worktree, "0.2.0", false, env); code != 0 {
+		t.Fatalf("exit = %d, want 0 (advisory)", code)
+	}
+	if seenAtProbe != "probing claude…\n" {
+		t.Fatalf("writer held %q when the probe started, want the flushed announcement", seenAtProbe)
+	}
+	if !strings.Contains(out.String(), "probing claude…\n") {
+		t.Fatalf("output misses the announcement:\n%s", out.String())
 	}
 }
