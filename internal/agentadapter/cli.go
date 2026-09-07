@@ -56,7 +56,17 @@ type ReviewRequest struct {
 	ToolPolicy   reviewcontract.ToolPolicy
 }
 
-const defaultReviewToolCalls = 8
+// defaultReviewToolCalls is the OpenCode agent-configuration "Steps" turn
+// budget applied to a restricted review when the caller supplies none. It is
+// PROVISIONAL: raised from 8 to 16 because 21% of durable review outcomes
+// that record a stop reason ended "tool-calls" (the reviewer exhausted its
+// 8-turn budget before returning a verdict, admitted as a healthy completion
+// until agentadapter.TruncatedTurnError started rejecting it). Item 1 of
+// docs/issues/actionable.md tracks calibrating this value from measured
+// data instead of a guess. The Claude branch of reviewCommand intentionally
+// ignores this value: its own comment there explains there is no confirmed
+// flag to cap Claude Code's turn count.
+const defaultReviewToolCalls = 16
 
 // RunPrompt runs the binary with an arbitrary prompt and returns the output.
 // It is the audit engine's public path to the agent.

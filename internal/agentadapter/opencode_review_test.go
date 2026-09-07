@@ -228,6 +228,24 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 	}
 }
 
+// TestOpenCodeReviewStepsCountsStepFinishEvents pins the unit of the OpenCode
+// "Steps" turn budget: one step_finish event is one model turn, and a single
+// turn can contain several tool_use events (the probe fixture's second turn
+// runs a tool before answering), so counting tool_use would overcount the
+// budget the provider actually enforces. Applied to the redacted probe
+// fixture (two turns: one tool step, one final answer step) the count must
+// be 2.
+func TestOpenCodeReviewStepsCountsStepFinishEvents(t *testing.T) {
+	fixture := loadOpenCodeProbeFixture(t)
+	scan, err := scanOpenCodeReview(strings.NewReader(fixture))
+	if err != nil {
+		t.Fatalf("scanOpenCodeReview() error = %v", err)
+	}
+	if scan.Steps != 2 {
+		t.Errorf("Steps = %d, want 2 (one per step_finish event in the probe fixture)", scan.Steps)
+	}
+}
+
 // TestOpenCodeReviewResultReportsWireObservations drives the rich
 // ReviewWithContextResult surface end to end against a fake opencode binary
 // replaying the redacted probe fixture: the review invocation must request

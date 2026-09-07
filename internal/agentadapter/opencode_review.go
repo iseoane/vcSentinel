@@ -49,6 +49,15 @@ type opencodeReviewScan struct {
 	// class). An empty reason means no terminal event was observed and is
 	// never fabricated.
 	StopReason string
+	// Steps counts the step_finish events observed in the stream. That is
+	// the unit OpenCode's "Steps" agent-configuration budget actually
+	// enforces: it is a MODEL TURN budget, not a tool-call budget. The probe
+	// fixture (testdata/opencode/usage-probe.ndjson) proves the distinction:
+	// its first turn runs TWO tool_use events before its step_finish, and its
+	// second turn answers with text, so one step_finish pairs with several
+	// tool events and counting tool_use would overcount the budget the
+	// provider actually spends. That fixture consumes 2 turns, not 3.
+	Steps int
 }
 
 // opencodeReviewEvent probes one NDJSON line of the review stream. The
@@ -155,6 +164,7 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 		texts      strings.Builder
 		lastReason string
 		events     int
+		steps      int
 	)
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -174,6 +184,7 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 			continue
 		}
 		lastReason = event.Part.Reason
+		steps++
 		if len(event.Part.Tokens) == 0 || string(event.Part.Tokens) == "null" {
 			continue
 		}
@@ -195,6 +206,7 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 	scan.Usage = sum.usage()
 	scan.UsageJSON = strings.TrimSuffix(usageJSON.String(), "\n")
 	scan.StopReason = mapOpenCodeStopReason(lastReason)
+	scan.Steps = steps
 	return scan, nil
 }
 

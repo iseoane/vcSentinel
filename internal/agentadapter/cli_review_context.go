@@ -78,7 +78,38 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 	result.Usage = run.usage
 	result.UsageJSON = run.usageJSON
 	result.StopReason = run.stopReason
+	// A stop reason other than a completed turn ("end_turn"), a cancellation
+	// (already handled by the caller's context plumbing), or the absence of
+	// one at all (generic plain-text providers report no stop reason)
+	// means the provider ended the process without finishing its turn — most
+	// commonly OpenCode's "tool-calls" when the reviewer exhausts its Steps
+	// budget mid-turn. The wire evidence above still lands on result; only
+	// the answer text is untrustworthy, so the error carries no output of
+	// its own and the caller must not parse run.output as a verdict.
+	if run.stopReason != "" && run.stopReason != "end_turn" && run.stopReason != "cancelled" {
+		return result, &TruncatedTurnError{StopReason: run.stopReason, Steps: run.steps}
+	}
 	return result, nil
+}
+
+// TruncatedTurnError reports that the restricted reviewer's process ended
+// before completing its turn: the provider exhausted its turn budget (for
+// example OpenCode's "Steps" agent configuration) and stopped mid-answer
+// instead of returning a verdict. It is non-retryable — see
+// internal/review's permanentProviderFailures — because repeating the same
+// prompt against the same turn budget reproduces the truncation exactly.
+type TruncatedTurnError struct {
+	// StopReason is the provider's terminal stop reason, already translated
+	// onto the acpadapter vocabulary (see mapOpenCodeStopReason).
+	StopReason string
+	// Steps is the number of model turns the run consumed before it was cut
+	// off, as counted by the provider's stream scanner (opencodeReviewScan.Steps
+	// for OpenCode). Zero when the provider format carries no turn count.
+	Steps int
+}
+
+func (e *TruncatedTurnError) Error() string {
+	return fmt.Sprintf("review turn truncated after %d turn(s) (stop reason: %s): the reviewer exhausted its turn budget before returning a verdict", e.Steps, e.StopReason)
 }
 
 // declaredResult carries the configured request declarations on every
@@ -113,6 +144,7 @@ type reviewExecution struct {
 	usage      *acpadapter.Usage
 	usageJSON  string
 	stopReason string
+	steps      int
 }
 
 // runBoundedReview spawns the restricted reviewer under a combined budget:
@@ -185,13 +217,17 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 		if err != nil {
 			return reviewExecution{}, err
 		}
-		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason), nil
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, scan.Steps), nil
 	case c.isClaude():
 		scan, err := scanClaudeReview(strings.NewReader(raw))
 		if err != nil {
 			return reviewExecution{}, err
 		}
-		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason), nil
+		// Claude Code exposes no per-turn step count comparable to OpenCode's
+		// Steps budget (reviewCommand's own comment: there is no confirmed
+		// flag to cap or observe it), so steps stays zero here rather than
+		// inventing one.
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, 0), nil
 	default:
 		// generic providers answer in plain text; there is nothing to scan.
 		return reviewExecution{output: strings.TrimSpace(raw)}, nil
@@ -201,12 +237,13 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 // reviewExecutionFromScan projects a provider scan onto the rich review
 // observation. The single TrimSpace lives here so every provider's
 // stdout->answer boundary behaves byte-identically.
-func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string) reviewExecution {
+func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string, steps int) reviewExecution {
 	return reviewExecution{
 		output:     strings.TrimSpace(output),
 		usage:      usage,
 		usageJSON:  usageJSON,
 		stopReason: stopReason,
+		steps:      steps,
 	}
 }
 

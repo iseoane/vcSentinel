@@ -810,7 +810,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		if finalizeErr := finalizeProvider(runID, invocation, err); finalizeErr != nil {
 			err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
 			failure := &ProviderExecutionFailure{Err: err}
-			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure, InvocationID: invocation}, failure
 		}
 		output, invocation, runID, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), run, prompt)
 	}
@@ -820,13 +820,13 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 			err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
 		}
 		failure := &ProviderExecutionFailure{Err: err}
-		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure, InvocationID: invocation}, failure
 	}
 
 	parsed, err := ParseDimensionResultForContract(output, contract)
 	if shouldRetryFormat(err) {
 		if finalizeErr := finalizeSemantic(runID, invocation, err); finalizeErr != nil {
-			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output}, finalizeErr
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output, InvocationID: invocation}, finalizeErr
 		}
 		output, invocation, runID, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), run, prompt+formatRetryInstruction)
 		if err != nil {
@@ -847,7 +847,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 		}
 	}
 	if err != nil {
-		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output, InvocationID: invocation}, err
 	}
 	parsed.InvocationID = invocation
 	parsed.RawProviderOutput = output
@@ -855,7 +855,7 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 	// Second round only when the agent asked clarifying questions and the user answered.
 	if parsed.Verdict == VerdictQuestion && opts.Answers != "" {
 		if finalizeErr := finalizeInvocation(opts, runID, invocation, "", ""); finalizeErr != nil {
-			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output}, finalizeErr
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output, InvocationID: invocation}, finalizeErr
 		}
 		output, invocation, runID, err = invokeReview(opts, bundle, contract.Name, bindPolicy(agent, contract.ToolPolicy), run, buildPromptWithContext(bundle, contract, opts.Message, opts.Diff, opts.Answers, request.Context, opts.ContextPaths, opts.NetUnitLabel, opts.NetUnitHistory))
 		if err != nil {
@@ -863,20 +863,20 @@ func (DimensionReviewer) Review(ctx context.Context, request DimensionReviewRequ
 				err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
 			}
 			failure := &ProviderExecutionFailure{Err: err}
-			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure}, failure
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: failure.Error(), ExecutionFailure: failure, InvocationID: invocation}, failure
 		}
 		parsed, err = ParseDimensionResultForContract(output, contract)
 		if err != nil {
 			if finalizeErr := finalizeSemantic(runID, invocation, err); finalizeErr != nil {
 				err = fmt.Errorf("review metrics finalization failed: %w", finalizeErr)
 			}
-			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output}, err
+			return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: err.Error(), RawProviderOutput: output, InvocationID: invocation}, err
 		}
 		parsed.InvocationID = invocation
 		parsed.RawProviderOutput = output
 	}
 	if finalizeErr := finalizeInvocation(opts, runID, invocation, "", ""); finalizeErr != nil {
-		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output}, finalizeErr
+		return &DimensionResult{Dim: contract.Name, Verdict: VerdictUnavailable, Reason: finalizeErr.Error(), RawProviderOutput: output, InvocationID: invocation}, finalizeErr
 	}
 	// Authority stamp: the prompt never asks the model for provenance, so a
 	// model-claimed "source" is overridden here, exactly as the aggregate
@@ -897,6 +897,11 @@ var permanentProviderFailures = []string{
 	// The required tool policy does not exist for that provider: reviewCommand
 	// rejects it before launching anything.
 	"not configured for this provider",
+	// The reviewer exhausted its provider turn budget before returning a
+	// verdict (agentadapter.TruncatedTurnError, e.g. OpenCode's Steps).
+	// Repeating the same prompt against the same turn budget reproduces the
+	// truncation exactly, so a retry only spends a second full invocation.
+	"review turn truncated",
 }
 
 // settledProviderRetryable is implemented by the error a transport returns

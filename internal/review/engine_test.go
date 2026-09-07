@@ -1550,6 +1550,37 @@ func TestReviewTransportErrorBecomesUnavailableWithConcreteReason(t *testing.T) 
 	}
 }
 
+// TestReviewTransportErrorKeepsInvocationIDWhenReported pins the fix for a
+// gap that made a failed dimension untraceable to its durable run: an
+// unavailable DimensionResult must carry the invocation id the transport
+// reported for that failed attempt, exactly like a successful sibling
+// dimension in the same record does, so a truncated or failed run can be
+// traced back to its evidence instead of vanishing.
+func TestReviewTransportErrorKeepsInvocationIDWhenReported(t *testing.T) {
+	fake := &fakeAgent{}
+	transport := func(_, _, _ string, _ AgentReviewer) (string, string, error) {
+		return "", "inv-truncated-1", errors.New("run ended failure: review turn truncated after 8 turn(s) (stop reason: tool-calls): the reviewer exhausted its turn budget before returning a verdict")
+	}
+	bundles := []ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: PriorityRequired}}
+	result := AuditCommit(func(_ ReviewBundle, _ string) (AgentReviewer, string, error) {
+		return fake, "normal", nil
+	}, 1, AuditOptions{
+		SHA:             "sha-transport-invocation",
+		Bundles:         bundles,
+		ReviewTransport: transport,
+	})
+	if len(result.Dims) != 1 || result.Dims[0].Result == nil {
+		t.Fatalf("result = %+v, want one dimension result", result)
+	}
+	dim := result.Dims[0].Result
+	if dim.Verdict != VerdictUnavailable {
+		t.Fatalf("verdict = %q, want unavailable", dim.Verdict)
+	}
+	if dim.InvocationID != "inv-truncated-1" {
+		t.Errorf("InvocationID = %q, want the invocation the transport reported for the failed attempt", dim.InvocationID)
+	}
+}
+
 type effectiveReporterFake struct {
 	fakeAgent
 	effective agentadapter.EffectiveAgent
@@ -1762,6 +1793,16 @@ func TestRetriesProviderTransientFailures(t *testing.T) {
 		{
 			name:         "misconfigured model: permanent even though settled",
 			firstErr:     &settledError{text: `run ended failure: "claude-opus" is not a model this version of Claude Code recognizes`, retryable: true},
+			calls:        1,
+			finalVerdict: VerdictUnavailable,
+		},
+		{
+			// A truncated turn (the reviewer exhausted its provider turn
+			// budget, e.g. OpenCode's Steps) reproduces identically on retry:
+			// the same prompt against the same budget runs out the same way,
+			// so retrying only spends a second full invocation.
+			name:         "truncated turn: permanent even though settled",
+			firstErr:     &settledError{text: "run ended failure: review turn truncated after 8 turn(s) (stop reason: tool-calls): the reviewer exhausted its turn budget before returning a verdict", retryable: true},
 			calls:        1,
 			finalVerdict: VerdictUnavailable,
 		},
