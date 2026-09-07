@@ -47,7 +47,9 @@ func runDoctorWith(w io.Writer, worktreePath, currentVersion string, checkUpdate
 	if env.Probe == nil {
 		env.Probe = productionDoctorEnv(worktreePath).Probe
 	}
-	rep := doctor.Run(worktreePath, doctor.Options{CurrentVersion: currentVersion, CheckUpdates: checkUpdates, Env: env})
+	rep := doctor.Run(worktreePath, doctor.Options{CurrentVersion: currentVersion, CheckUpdates: checkUpdates, Env: env, Progress: func(msg string) {
+		fmt.Fprintln(w, msg)
+	}})
 	fmt.Fprint(w, rep.Text())
 	return 0
 }
