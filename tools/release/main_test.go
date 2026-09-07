@@ -2,31 +2,31 @@ package main
 
 import "testing"
 
-func TestVersionMenorOIgual(t *testing.T) {
+func TestVersionLessThanOrEqual(t *testing.T) {
 	tests := []struct {
-		nombre    string
-		nueva     string
-		publicada string
-		esperado  bool
+		name      string
+		newVer    string
+		published string
+		expected  bool
 	}{
-		{"inferior mayor bloquea", "0.2.0", "0.3.0", true},
-		{"igual bloquea", "0.1.0", "0.1.0", true},
-		{"superior menor permite", "0.3.0", "0.2.0", false},
-		{"inferior menor bloquea", "0.1.5", "0.2.0", true},
-		{"igual menor bloquea", "0.1.0", "0.1.0", true},
-		{"superior patch permite", "0.1.1", "0.1.0", false},
-		{"con prefijo v se normaliza", "v0.2.0", "0.1.0", false},
-		{"publicada con v se normaliza", "0.1.0", "v0.2.0", true},
-		{"componentes cortos se rellenan con cero", "1.2", "1.2.0", true},
-		{"componentes cortos superiores permiten", "1.3", "1.2.9", false},
-		{"sufijo no numérico cuenta como cero", "0.1.0-beta", "0.1.0", true},
+		{"lower greater blocks", "0.2.0", "0.3.0", true},
+		{"equal blocks", "0.1.0", "0.1.0", true},
+		{"higher lower allows", "0.3.0", "0.2.0", false},
+		{"lower minor blocks", "0.1.5", "0.2.0", true},
+		{"equal minor blocks", "0.1.0", "0.1.0", true},
+		{"higher patch allows", "0.1.1", "0.1.0", false},
+		{"v prefix normalizes", "v0.2.0", "0.1.0", false},
+		{"published with v normalizes", "0.1.0", "v0.2.0", true},
+		{"short components zero-pad", "1.2", "1.2.0", true},
+		{"higher short components allow", "1.3", "1.2.9", false},
+		{"non-numeric suffix counts as zero", "0.1.0-beta", "0.1.0", true},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			got := versionMenorOIgual(tt.nueva, tt.publicada)
-			if got != tt.esperado {
-				t.Errorf("versionMenorOIgual(%q, %q) = %v, esperado %v", tt.nueva, tt.publicada, got, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			got := versionLessOrEqual(tt.newVer, tt.published)
+			if got != tt.expected {
+				t.Errorf("versionLessOrEqual(%q, %q) = %v, want %v", tt.newVer, tt.published, got, tt.expected)
 			}
 		})
 	}

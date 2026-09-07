@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const nombreArchivoRelease = "release.yml"
+const releaseFileName = "release.yml"
 
 type asset struct {
 	goos   string
@@ -16,100 +16,102 @@ type asset struct {
 }
 
 func main() {
-	if err := generarAssets(); err != nil {
+	if err := generateAssets(); err != nil {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func generarAssets() error {
-	version, assets, err := leerRelease(nombreArchivoRelease)
+func generateAssets() error {
+	version, assets, err := readRelease(releaseFileName)
 	if err != nil {
 		return err
 	}
 
-	if err := comprobarVersionPublicada(version); err != nil {
+	if err := checkPublishedVersion(version); err != nil {
 		return err
 	}
 
-	directorioSalida := filepath.Join("bin", version)
-	if err := os.MkdirAll(directorioSalida, 0755); err != nil {
-		return fmt.Errorf("no se pudo crear el directorio %s: %w", directorioSalida, err)
+	outputDir := filepath.Join("bin", version)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("could not create the directory %s: %w", outputDir, err)
 	}
 
-	nombres := make([]string, 0, len(assets))
+	names := make([]string, 0, len(assets))
 	for _, a := range assets {
-		nombre := "sentinel-" + a.goos + "-" + a.goarch
+		name := "sentinel-" + a.goos + "-" + a.goarch
 		if a.goos == "windows" {
-			nombre += ".exe"
+			name += ".exe"
 		}
-		nombres = append(nombres, nombre)
+		names = append(names, name)
 	}
 
 	for i, a := range assets {
-		fmt.Printf("🔨 Compilando sentinel-%s-%s ...\n", a.goos, a.goarch)
-		if err := compilar(version, a, nombres[i]); err != nil {
+		fmt.Printf("🔨 Building sentinel-%s-%s ...\n", a.goos, a.goarch)
+		if err := buildAsset(version, a, names[i]); err != nil {
 			return err
 		}
 	}
 
-	fmt.Printf("✅ Assets generados en bin/%s/: %s\n", version, strings.Join(nombres, ", "))
+	fmt.Printf("✅ Assets generated in bin/%s/: %s\n", version, strings.Join(names, ", "))
 	return nil
 }
 
-// comprobarVersionPublicada aborta la generación de assets cuando la versión de
-// release.yml ya está publicada o es inferior a la última publicada. Consulta el
-// tag de la última release con gh CLI; si no hay release previa (primera
-// publicación) o gh no está disponible, permite continuar.
-func comprobarVersionPublicada(version string) error {
-	tag, err := obtenerTagPublicado()
+// checkPublishedVersion aborts asset generation when the release.yml version
+// is already published or older than the latest published one. It queries the
+// latest release tag with the gh CLI; if there is no previous release (first
+// publication) or gh is unavailable, it allows continuing.
+func checkPublishedVersion(version string) error {
+	tag, err := getPublishedTag()
 	if err != nil {
-		fmt.Printf("⚠️ No se pudo consultar la última release publicada: %v\n", err)
+		fmt.Printf("⚠️ Could not query the latest published release: %v\n", err)
 		return nil
 	}
 	if tag == "" {
 		return nil
 	}
 
-	publicada := strings.TrimPrefix(strings.TrimSpace(tag), "v")
-	if versionMenorOIgual(version, publicada) {
+	published := strings.TrimPrefix(strings.TrimSpace(tag), "v")
+	if versionLessOrEqual(version, published) {
 		return fmt.Errorf(
-			"la versión %q no es superior a la ya publicada (%s). Debes incrementar la versión en %s antes de publicar",
-			version, publicada, nombreArchivoRelease,
+			"the version %q is not higher than the already published one (%s). You must bump the version in %s before publishing",
+			version, published, releaseFileName,
 		)
 	}
-	fmt.Printf("✅ La versión %s es superior a la publicada (%s).", version, publicada)
+	fmt.Printf("✅ The version %s is higher than the published one (%s).", version, published)
 	return nil
 }
 
-// obtenerTagPublicado devuelve el tag_name de la última release vía gh CLI
-// (reutiliza la sesión autenticada de gh). Devuelve cadena vacía si aún no hay
-// ninguna release publicada.
-func obtenerTagPublicado() (string, error) {
+// getPublishedTag returns the tag_name of the latest release via gh CLI
+// (reuses gh's authenticated session). Returns an empty string if no release
+// has been published yet.
+func getPublishedTag() (string, error) {
 	cmd := exec.Command("gh", "release", "view", "--json", "tagName", "--jq", ".tagName")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		salida := strings.TrimSpace(string(out))
-		if strings.Contains(salida, "not found") || strings.Contains(salida, "Not Found") {
+		output := strings.TrimSpace(string(out))
+		if strings.Contains(output, "not found") || strings.Contains(output, "Not Found") {
 			return "", nil
 		}
-		return "", fmt.Errorf("gh release view falló: %v (salida: %s)", err, salida)
+		return "", fmt.Errorf("gh release view failed: %v (output: %s)", err, output)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-// versionMenorOIgual compara dos versiones semver (major.minor.patch). Devuelve
-// true si nueva <= publicada. Si alguna no tiene formato numérico reconocible,
-// compara por longitud y lexicográficamente para no bloquear versiones raras.
-func versionMenorOIgual(nueva string, publicada string) bool {
-	n := versionComponentes(nueva)
-	p := versionComponentes(publicada)
-	limite := len(n)
-	if len(p) > limite {
-		limite = len(p)
+// versionLessOrEqual compares two semver versions (major.minor.patch). It
+// returns true if new <= published. If either one lacks a recognizable
+// numeric format, it compares by length and lexicographically to avoid
+// blocking unusual versions.
+func versionLessOrEqual(newVersion string, publishedVersion string) bool {
+	n := versionComponents(newVersion)
+	p := versionComponents(publishedVersion)
+	limit := len(n)
+	if len(p) > limit {
+		limit = len(p)
 	}
-	for i := 0; i < limite; i++ {
-		var ni, pi int
+	ni, pi := 0, 0
+	for i := range limit {
+		ni, pi = 0, 0
 		if i < len(n) {
 			ni = n[i]
 		}
@@ -126,85 +128,86 @@ func versionMenorOIgual(nueva string, publicada string) bool {
 	return true
 }
 
-// versionComponentes convierte "1.2.3" (o "v1.2.3-beta") en [1, 2, 3] ignorando
-// prefijos "v" y sufijos no numéricos. Componentes no numéricos cuentan como 0.
-func versionComponentes(v string) []int {
-	partes := strings.Split(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".")
-	componentes := make([]int, 0, len(partes))
-	for _, parte := range partes {
+// versionComponents converts "1.2.3" (or "v1.2.3-beta") into [1, 2, 3],
+// ignoring "v" prefixes and non-numeric suffixes. Non-numeric components
+// count as 0.
+func versionComponents(v string) []int {
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".")
+	components := make([]int, 0, len(parts))
+	for _, part := range parts {
 		num := 0
-		for _, r := range parte {
+		for _, r := range part {
 			if r < '0' || r > '9' {
 				break
 			}
 			num = num*10 + int(r-'0')
 		}
-		componentes = append(componentes, num)
+		components = append(components, num)
 	}
-	return componentes
+	return components
 }
 
-func compilar(version string, a asset, nombre string) error {
-	salida := filepath.Join("bin", version, nombre)
+func buildAsset(version string, a asset, name string) error {
+	outputPath := filepath.Join("bin", version, name)
 	cmd := exec.Command("go", "build",
 		"-ldflags", fmt.Sprintf("-s -w -X main.version=%s", version),
-		"-o", salida,
+		"-o", outputPath,
 		"./cmd/sentinel/main.go",
 	)
 	cmd.Env = append(os.Environ(), "GOOS="+a.goos, "GOARCH="+a.goarch)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("falló la compilación de sentinel-%s-%s: %w\n%s", a.goos, a.goarch, err, output)
+		return fmt.Errorf("building sentinel-%s-%s failed: %w\n%s", a.goos, a.goarch, err, output)
 	}
 	return nil
 }
 
-func leerRelease(ruta string) (string, []asset, error) {
-	contenido, err := os.ReadFile(ruta)
+func readRelease(path string) (string, []asset, error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil, fmt.Errorf("no se encontró %s en el directorio actual. Ejecuta este comando desde la raíz del repositorio", ruta)
+			return "", nil, fmt.Errorf("%s was not found in the current directory. Run this command from the repository root", path)
 		}
-		return "", nil, fmt.Errorf("no se pudo leer %s: %w", ruta, err)
+		return "", nil, fmt.Errorf("could not read %s: %w", path, err)
 	}
 
 	var version string
 	var assets []asset
-	var goosPendiente string
+	var pendingGoos string
 
-	for _, linea := range strings.Split(string(contenido), "\n") {
-		linea = strings.TrimSpace(linea)
-		if linea == "" {
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(linea, "version:") {
-			version = extraerValor(linea)
+		if strings.HasPrefix(line, "version:") {
+			version = extractValue(line)
 			continue
 		}
-		if strings.HasPrefix(linea, "- goos:") {
-			goosPendiente = extraerValor(strings.TrimSpace(strings.TrimPrefix(linea, "-")))
+		if strings.HasPrefix(line, "- goos:") {
+			pendingGoos = extractValue(strings.TrimSpace(strings.TrimPrefix(line, "-")))
 			continue
 		}
-		if strings.HasPrefix(linea, "goarch:") && goosPendiente != "" {
-			assets = append(assets, asset{goos: goosPendiente, goarch: extraerValor(linea)})
-			goosPendiente = ""
+		if strings.HasPrefix(line, "goarch:") && pendingGoos != "" {
+			assets = append(assets, asset{goos: pendingGoos, goarch: extractValue(line)})
+			pendingGoos = ""
 		}
 	}
 
 	if version == "" {
-		return "", nil, fmt.Errorf("no se encontró la clave \"version\" en %s", ruta)
+		return "", nil, fmt.Errorf("the \"version\" key was not found in %s", path)
 	}
 	if len(assets) == 0 {
-		return "", nil, fmt.Errorf("no se definieron assets (bloques \"goos\"/\"goarch\") en %s", ruta)
+		return "", nil, fmt.Errorf("no assets were defined (\"goos\"/\"goarch\" blocks) in %s", path)
 	}
 
 	return version, assets, nil
 }
 
-func extraerValor(linea string) string {
-	_, valor, _ := strings.Cut(linea, ":")
-	valor = strings.TrimSpace(valor)
-	valor = strings.Trim(valor, `"'`)
-	return valor
+func extractValue(line string) string {
+	_, value, _ := strings.Cut(line, ":")
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'`)
+	return value
 }
