@@ -27,7 +27,7 @@ const (
 // destination. The mapping is deterministic and derived only from the
 // finding's contract (internal/review), never from an agent's judgment call
 // made at routing time.
-func Route(finding review.Hallazgo) (Destination, error) {
+func Route(finding review.Finding) (Destination, error) {
 	switch finding.Fixable {
 	case review.FixableSafe:
 		return DestinationAgent, nil

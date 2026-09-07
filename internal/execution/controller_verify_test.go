@@ -14,7 +14,7 @@ func TestVerifyConfirmsIntactStreamsAndDetectsCorruption(t *testing.T) {
 	newVerifiedController := func(t *testing.T, adapter Adapter) (*Controller, agentrun.Identity, string) {
 		t.Helper()
 		storeRoot := t.TempDir()
-		controller := NewControllerWithClock(store.NuevoStore(storeRoot), adapter, fixedClock())
+		controller := NewControllerWithClock(store.NewStore(storeRoot), adapter, fixedClock())
 		return controller, startAndWaitTerminal(t, controller, "verify"), storeRoot
 	}
 
@@ -31,7 +31,7 @@ func TestVerifyConfirmsIntactStreamsAndDetectsCorruption(t *testing.T) {
 
 	t.Run("respond continuation keeps lineage boundaries consistent", func(t *testing.T) {
 		storeRoot := t.TempDir()
-		controller := NewControllerWithClock(store.NuevoStore(storeRoot), &responseAdapter{}, fixedClock())
+		controller := NewControllerWithClock(store.NewStore(storeRoot), &responseAdapter{}, fixedClock())
 		handle, err := controller.Start(context.Background(), testRequest("verify-lineage"), testPolicy())
 		if err != nil {
 			t.Fatal(err)
@@ -95,7 +95,7 @@ func TestVerifyConfirmsIntactStreamsAndDetectsCorruption(t *testing.T) {
 	}
 
 	t.Run("missing execution record reports why it cannot verify", func(t *testing.T) {
-		controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
+		controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
 		verification, err := controller.Verify(context.Background(), agentrun.Identity("never-admitted"))
 		if err != nil || verification.Valid || verification.Reason == "" {
 			t.Fatalf("verification = %+v, %v; want invalid with a reason", verification, err)

@@ -37,7 +37,7 @@ func (*transcriptConflictAdapter) TranscriptMetadata() TranscriptIdentity {
 
 func TestControllerRemovesTranscriptWhenTerminalPersistenceFails(t *testing.T) {
 	at := fixedClock()()
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	adapter := &transcriptConflictAdapter{backing: backing, at: at}
 	controller := NewControllerWithClock(backing, adapter, func() time.Time { return at })
 

@@ -21,7 +21,7 @@ import (
 
 func admissionTransport(t *testing.T) (*DurableTransport, *store.Store) {
 	t.Helper()
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	return NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "admission-sha", []string{"a.go"}), backing
 }
 
@@ -157,7 +157,7 @@ type silentReviewer struct{ name string }
 
 func (r silentReviewer) ReviewerName() string { return r.name }
 
-func (silentReviewer) EjecutarRevision(string, string, []string) (string, error) { return "", nil }
+func (silentReviewer) RunReview(string, string, []string) (string, error) { return "", nil }
 
 func TestVerifyEvidenceAdmitsEmptyOutputAgainstEmptyDurableHash(t *testing.T) {
 	transport, _ := admissionTransport(t)

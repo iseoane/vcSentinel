@@ -62,7 +62,7 @@ func blockingAdapter(release <-chan struct{}) funcAdapter {
 
 func newTestController(t *testing.T, adapter execution.Adapter) *execution.Controller {
 	t.Helper()
-	return execution.NewController(store.NuevoStore(t.TempDir()), adapter)
+	return execution.NewController(store.NewStore(t.TempDir()), adapter)
 }
 
 // startTestServer binds the platform default endpoint for a fresh daemon

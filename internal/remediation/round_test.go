@@ -14,9 +14,9 @@ func TestRunSingleRoundNeverLaunchesASecondRound(t *testing.T) {
 	// present: the round must come back as ResultNeedsUserReview WITHOUT
 	// ever calling either dependency a second time. RunSingleRound has no
 	// loop construct to retry against a fresh attempt; this test is the
-	// ficha's literal acceptance criterion for that hard single-round limit.
-	before := []review.Hallazgo{
-		{Fingerprint: "fp-critical", Severity: review.SevCritical, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 10}},
+	// spec's literal acceptance criterion for that hard single-round limit.
+	before := []review.Finding{
+		{Fingerprint: "fp-critical", Severity: review.SevCritical, Location: review.Location{File: "a.go", LineStart: 10}},
 	}
 
 	var revalidateCalls, reReviewCalls int
@@ -24,7 +24,7 @@ func TestRunSingleRoundNeverLaunchesASecondRound(t *testing.T) {
 		revalidateCalls++
 		return true, nil // still blocked after the fix
 	}
-	reReview := func(touched []string) ([]review.Hallazgo, error) {
+	reReview := func(touched []string) ([]review.Finding, error) {
 		reReviewCalls++
 		return before, nil // the CRITICAL finding is still there, unresolved
 	}
@@ -45,17 +45,17 @@ func TestRunSingleRoundNeverLaunchesASecondRound(t *testing.T) {
 }
 
 func TestRunSingleRoundFingerprintArithmetic(t *testing.T) {
-	still := review.Hallazgo{Fingerprint: "fp-still", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
-	resolved := review.Hallazgo{Fingerprint: "fp-resolved", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 20}}
-	introduced := review.Hallazgo{Fingerprint: "fp-new", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 30}}
+	still := review.Finding{Fingerprint: "fp-still", Severity: review.SevWarning, Location: review.Location{File: "a.go", LineStart: 5}}
+	resolved := review.Finding{Fingerprint: "fp-resolved", Severity: review.SevWarning, Location: review.Location{File: "a.go", LineStart: 20}}
+	introduced := review.Finding{Fingerprint: "fp-new", Severity: review.SevWarning, Location: review.Location{File: "a.go", LineStart: 30}}
 
-	before := []review.Hallazgo{still, resolved}
+	before := []review.Finding{still, resolved}
 
 	revalidate := func(string, []string) (bool, error) { return false, nil }
-	reReview := func([]string) ([]review.Hallazgo, error) {
+	reReview := func([]string) ([]review.Finding, error) {
 		// resolved's fingerprint is gone (the fix resolved it); introduced's
 		// fingerprint was never in before (the fix introduced it new).
-		return []review.Hallazgo{still, introduced}, nil
+		return []review.Finding{still, introduced}, nil
 	}
 
 	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
@@ -83,17 +83,17 @@ func TestRunSingleRoundSwallowedByLocatedDistinction(t *testing.T) {
 	// its own margin window, silently swallowing any unlocated finding
 	// sharing that file: a real fix attempt for f1 could have been rejected
 	// as "out of scope" indistinguishably from a fix that just didn't work.
-	f1 := review.Hallazgo{Fingerprint: "fp-unlocated-shared", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "shared.go"}}
-	f2 := review.Hallazgo{Fingerprint: "fp-located", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "shared.go", LineaInicio: 5}}
+	f1 := review.Finding{Fingerprint: "fp-unlocated-shared", Severity: review.SevWarning, Location: review.Location{File: "shared.go"}}
+	f2 := review.Finding{Fingerprint: "fp-located", Severity: review.SevWarning, Location: review.Location{File: "shared.go", LineStart: 5}}
 	// f3 has no location either, but nothing else in before shares its file:
 	// no located sibling exists that could have swallowed a fix for it.
-	f3 := review.Hallazgo{Fingerprint: "fp-unlocated-alone", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "alone.go"}}
+	f3 := review.Finding{Fingerprint: "fp-unlocated-alone", Severity: review.SevWarning, Location: review.Location{File: "alone.go"}}
 
-	before := []review.Hallazgo{f1, f2, f3}
+	before := []review.Finding{f1, f2, f3}
 
 	revalidate := func(string, []string) (bool, error) { return false, nil }
-	reReview := func([]string) ([]review.Hallazgo, error) {
-		return []review.Hallazgo{f1, f2, f3}, nil // none resolved
+	reReview := func([]string) ([]review.Finding, error) {
+		return []review.Finding{f1, f2, f3}, nil // none resolved
 	}
 
 	result, err := RunSingleRound("standard", before, []string{"shared.go", "alone.go"}, revalidate, reReview)
@@ -125,11 +125,11 @@ func TestRunSingleRoundOK(t *testing.T) {
 	// finding, or a newly introduced CRITICAL finding does, matching how the
 	// rest of this codebase (e.g. internal/gate) gates on severity — WARNING
 	// degrades, it does not block.
-	warning := review.Hallazgo{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
-	before := []review.Hallazgo{warning}
+	warning := review.Finding{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Location{File: "a.go", LineStart: 5}}
+	before := []review.Finding{warning}
 
 	revalidate := func(string, []string) (bool, error) { return false, nil }
-	reReview := func([]string) ([]review.Hallazgo, error) { return []review.Hallazgo{warning}, nil }
+	reReview := func([]string) ([]review.Finding, error) { return []review.Finding{warning}, nil }
 
 	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestRunSingleRoundPropagatesRevalidateError(t *testing.T) {
 	wantErr := errors.New("infra failure: validation profile crashed")
 	var reReviewCalls int
 	revalidate := func(string, []string) (bool, error) { return false, wantErr }
-	reReview := func([]string) ([]review.Hallazgo, error) {
+	reReview := func([]string) ([]review.Finding, error) {
 		reReviewCalls++
 		return nil, nil
 	}
@@ -179,7 +179,7 @@ func TestRunSingleRoundPropagatesReReviewError(t *testing.T) {
 	// fails: the error path must still carry that real value through, not
 	// silently reset it to false.
 	revalidate := func(string, []string) (bool, error) { return true, nil }
-	reReview := func([]string) ([]review.Hallazgo, error) { return nil, wantErr }
+	reReview := func([]string) ([]review.Finding, error) { return nil, wantErr }
 
 	result, err := RunSingleRound("standard", nil, []string{"a.go"}, revalidate, reReview)
 	if err == nil {
@@ -203,14 +203,14 @@ func TestRunSingleRoundNewCriticalForcesReview(t *testing.T) {
 	// NeedsUserReview: the fix itself introduced a new critical defect, even
 	// though revalidate is not blocked and nothing critical was left
 	// unresolved from before. This locks in Bug 1's fix.
-	warning := review.Hallazgo{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
-	newCritical := review.Hallazgo{Fingerprint: "fp-new-critical", Severity: review.SevCritical, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 40}}
+	warning := review.Finding{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Location{File: "a.go", LineStart: 5}}
+	newCritical := review.Finding{Fingerprint: "fp-new-critical", Severity: review.SevCritical, Location: review.Location{File: "a.go", LineStart: 40}}
 
-	before := []review.Hallazgo{warning}
+	before := []review.Finding{warning}
 
 	revalidate := func(string, []string) (bool, error) { return false, nil }
-	reReview := func([]string) ([]review.Hallazgo, error) {
-		return []review.Hallazgo{warning, newCritical}, nil
+	reReview := func([]string) ([]review.Finding, error) {
+		return []review.Finding{warning, newCritical}, nil
 	}
 
 	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
@@ -232,11 +232,11 @@ func TestRunSingleRoundBlockedAloneForcesReview(t *testing.T) {
 	// revalidate reports blocked=true with no unresolved or new CRITICAL
 	// finding at all (only a WARNING survives): NeedsUserReview must still
 	// follow from the blocked branch alone, independent of severity.
-	warning := review.Hallazgo{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 5}}
-	before := []review.Hallazgo{warning}
+	warning := review.Finding{Fingerprint: "fp-warning", Severity: review.SevWarning, Location: review.Location{File: "a.go", LineStart: 5}}
+	before := []review.Finding{warning}
 
 	revalidate := func(string, []string) (bool, error) { return true, nil } // blocked, no critical involved
-	reReview := func([]string) ([]review.Hallazgo, error) { return []review.Hallazgo{warning}, nil }
+	reReview := func([]string) ([]review.Finding, error) { return []review.Finding{warning}, nil }
 
 	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
 	if err != nil {
@@ -254,11 +254,11 @@ func TestRunSingleRoundCriticalUnresolvedAloneForcesReview(t *testing.T) {
 	// revalidate reports blocked=false, but a CRITICAL finding from `before`
 	// is still present in `after` (unresolved): NeedsUserReview must follow
 	// from the CRITICAL-unresolved branch alone, isolated from `blocked`.
-	critical := review.Hallazgo{Fingerprint: "fp-critical", Severity: review.SevCritical, Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 10}}
-	before := []review.Hallazgo{critical}
+	critical := review.Finding{Fingerprint: "fp-critical", Severity: review.SevCritical, Location: review.Location{File: "a.go", LineStart: 10}}
+	before := []review.Finding{critical}
 
 	revalidate := func(string, []string) (bool, error) { return false, nil } // not blocked
-	reReview := func([]string) ([]review.Hallazgo, error) { return []review.Hallazgo{critical}, nil }
+	reReview := func([]string) ([]review.Finding, error) { return []review.Finding{critical}, nil }
 
 	result, err := RunSingleRound("standard", before, []string{"a.go"}, revalidate, reReview)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestRunSingleRoundPassesThroughProfileAndTouchedFiles(t *testing.T) {
 		gotRevalidateTouched = touched
 		return false, nil
 	}
-	reReview := func(touched []string) ([]review.Hallazgo, error) {
+	reReview := func(touched []string) ([]review.Finding, error) {
 		gotReReviewTouched = touched
 		return nil, nil
 	}
@@ -311,17 +311,17 @@ func TestRunSingleRoundPassesThroughProfileAndTouchedFiles(t *testing.T) {
 	}
 }
 
-func TestSwallowedByLocatedNoFalsePositiveOnEmptyArchivo(t *testing.T) {
+func TestSwallowedByLocatedNoFalsePositiveOnEmptyFile(t *testing.T) {
 	// finding has no file at all (fully unlocated); other also has an empty
-	// Archivo but a positive LineaInicio (a malformed/inconsistent finding:
+	// File but a positive LineStart (a malformed/inconsistent finding:
 	// a line number without a file). Before the fix, the string comparison
-	// other.Location.Archivo == finding.Location.Archivo was true (both
+	// other.Location.File == finding.Location.File was true (both
 	// empty), producing a false "swallowed" verdict even though no real file
 	// exists for any DiffGuard window to have swallowed anything against.
-	finding := review.Hallazgo{Fingerprint: "fp-no-file", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: ""}}
-	other := review.Hallazgo{Fingerprint: "fp-malformed", Severity: review.SevWarning, Location: review.Ubicacion{Archivo: "", LineaInicio: 5}}
+	finding := review.Finding{Fingerprint: "fp-no-file", Severity: review.SevWarning, Location: review.Location{File: ""}}
+	other := review.Finding{Fingerprint: "fp-malformed", Severity: review.SevWarning, Location: review.Location{File: "", LineStart: 5}}
 
-	if swallowedByLocated(finding, []review.Hallazgo{other}) {
+	if swallowedByLocated(finding, []review.Finding{other}) {
 		t.Fatalf("swallowedByLocated: got true, want false (no real file to be swallowed against)")
 	}
 }

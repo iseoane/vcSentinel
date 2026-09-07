@@ -78,7 +78,7 @@ func Collect(registryPath string) ([]Repo, error) {
 
 // collectProbes fills one Repo with independent daemon, inventory, and run reads.
 func collectProbes(repo *Repo, repoPath string) {
-	commonDir, err := git.ObtenerGitCommonDir(repoPath)
+	commonDir, err := git.GetGitCommonDir(repoPath)
 	if err != nil {
 		repo.Error = fmt.Sprintf("overview: resolve git common dir for %q: %v", repoPath, err)
 		return

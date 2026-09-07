@@ -43,16 +43,16 @@ func RecordValidationEvidence(runs []validation.ValidationRun) []ValidationEvide
 	evidence := make([]ValidationEvidence, 0, len(runs))
 	for _, run := range runs {
 		evidence = append(evidence, ValidationEvidence{
-			Command:    run.Comando,
+			Command:    run.Command,
 			Capability: run.Capability,
 			Exit:       run.Exit,
-			DurationMs: run.DuracionMs,
+			DurationMs: run.DurationMs,
 			Digest: execution.HashAdapterOutput(strings.Join([]string{
-				run.Comando,
+				run.Command,
 				run.Capability,
 				strconv.Itoa(run.Exit),
-				strconv.FormatInt(run.DuracionMs, 10),
-				strings.TrimSpace(run.Salida),
+				strconv.FormatInt(run.DurationMs, 10),
+				strings.TrimSpace(run.Output),
 			}, "\x00")),
 		})
 	}

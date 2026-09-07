@@ -187,11 +187,11 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 	if err != nil {
 		t.Fatalf("NewAgentAdapter(auto): %v", err)
 	}
-	reporter, reportsEffective := chain.(agentadapter.ReportaAgenteEfectivo)
+	reporter, reportsEffective := chain.(agentadapter.ReportsEffectiveAgent)
 	if !reportsEffective {
 		t.Fatal("the built chain cannot report its effective agent")
 	}
-	promptChain, isPrompt := chain.(agentadapter.AdaptadorPrompt)
+	promptChain, isPrompt := chain.(agentadapter.PromptAdapter)
 	if !isPrompt {
 		t.Fatal("the built chain cannot answer arbitrary prompts")
 	}
@@ -211,12 +211,12 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 	}
 
 	// Effective-agent recording names whoever actually answered.
-	effective, ok := reporter.AgenteEfectivo()
+	effective, ok := reporter.EffectiveAgent()
 	if !ok {
 		t.Fatal("the chain recorded no effective agent despite answering")
 	}
-	if filepath.Base(effective.Binario) != "vas-e2e-secondary-agent" ||
-		effective.Modelo != "fake-secondary-model" || effective.Esfuerzo != "high" {
+	if filepath.Base(effective.Binary) != "vas-e2e-secondary-agent" ||
+		effective.Model != "fake-secondary-model" || effective.Effort != "high" {
 		t.Fatalf("effective agent = %+v, want the secondary's binary/model/effort", effective)
 	}
 

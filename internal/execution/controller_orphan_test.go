@@ -19,7 +19,7 @@ import (
 const orphanReason = "orphaned by daemon shutdown"
 
 func TestOrphanActiveRunsSettlesLiveRunningRun(t *testing.T) {
-	st := store.NuevoStore(t.TempDir())
+	st := store.NewStore(t.TempDir())
 	controller := NewControllerWithClock(st, &blockingAdapter{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
@@ -61,7 +61,7 @@ func TestOrphanActiveRunsSettlesLiveRunningRun(t *testing.T) {
 }
 
 func TestOrphanActiveRunsSkipsAlreadyTerminalRuns(t *testing.T) {
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{
 		result: AdapterResult{Output: "finished before shutdown"},
 	}, fixedClock())
 
@@ -83,7 +83,7 @@ func TestOrphanActiveRunsSkipsAlreadyTerminalRuns(t *testing.T) {
 }
 
 func TestOrphanActiveRunsSettlesQuiescentAwaitingHead(t *testing.T) {
-	st := store.NuevoStore(t.TempDir())
+	st := store.NewStore(t.TempDir())
 	controller := NewControllerWithClock(st, &scriptedAdapter{
 		result: AdapterResult{AwaitingDecision: true},
 	}, fixedClock())
@@ -126,7 +126,7 @@ func TestOrphanActiveRunsSettlesQuiescentAwaitingHead(t *testing.T) {
 }
 
 func TestOrphanActiveRunsRefusesBlankReasonAndNilStore(t *testing.T) {
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
 	if _, err := controller.OrphanActiveRuns("   "); err == nil {
 		t.Fatal("OrphanActiveRuns with a blank reason must fail explicitly")
 	}
@@ -143,7 +143,7 @@ func TestOrphanActiveRunsRefusesBlankReasonAndNilStore(t *testing.T) {
 // primitives, exactly like the R8 recovery fixtures) must be settled by a
 // fresh controller that never held live state for it.
 func TestOrphanActiveRunsSettlesCrossProcessResidueWithoutLiveState(t *testing.T) {
-	st := store.NuevoStore(t.TempDir())
+	st := store.NewStore(t.TempDir())
 	job, _, _ := seedOrphanedCancellationStream(t, st, "orphan-residue")
 	runID := job.RunID()
 
@@ -180,7 +180,7 @@ func TestOrphanActiveRunsSettlesCrossProcessResidueWithoutLiveState(t *testing.T
 // offers no head to reconstruct, so the sweep refuses with the mapped
 // ErrRunNotRecoverable sentinel and leaves every durable byte untouched.
 func TestOrphanActiveRunsRefusesUndecidableDurableHead(t *testing.T) {
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
 	runID := createEmptyRun(t, controller, "orphan-undecidable")
 
 	orphaned, err := controller.OrphanActiveRuns(orphanReason)
@@ -208,7 +208,7 @@ func TestOrphanActiveRunsSkipsRunsInsideBoundedEscalation(t *testing.T) {
 	blocker := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
 	var safeRelease sync.Once
 	defer safeRelease.Do(func() { close(blocker.release) })
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), blocker, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), blocker, fixedClock())
 
 	escalating, err := controller.Start(context.Background(), testRequest("orphan-escalating"), testPolicy())
 	if err != nil {

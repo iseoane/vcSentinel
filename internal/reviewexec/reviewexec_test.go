@@ -28,7 +28,7 @@ type scriptedReviewer struct {
 // cmd/sentinel's effective-agent recorder identifies the real responder.
 func (r *scriptedReviewer) ReviewerName() string { return r.name }
 
-func (r *scriptedReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (r *scriptedReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
@@ -57,8 +57,8 @@ type observedReviewer struct {
 	lastSHA    string
 }
 
-func (o *observedReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
-	output, err := o.inner.EjecutarRevision(prompt, sha, paths)
+func (o *observedReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
+	output, err := o.inner.RunReview(prompt, sha, paths)
 	if err == nil {
 		o.mu.Lock()
 		o.successes++
@@ -89,7 +89,7 @@ func startAndWait(t *testing.T, controller *execution.Controller, name string) (
 func TestExecuteRoutesSuccessfulReviewThroughController(t *testing.T) {
 	inner := &scriptedReviewer{name: "dimension-logic", output: "verdict json"}
 	observer := &observedReviewer{inner: inner}
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	controller := execution.NewControllerWithClock(backingStore, NewReviewAdapter(observer, "abc123", []string{"a.go", "b.go"}, nil), fixedClock())
 
 	handle, completion := startAndWait(t, controller, "success")
@@ -120,7 +120,7 @@ func TestExecuteRoutesSuccessfulReviewThroughController(t *testing.T) {
 func TestFailurePreservesConcreteProviderTextEndToEnd(t *testing.T) {
 	providerErr := errors.New("provider rejected request: quota exceeded for model")
 	reviewer := &scriptedReviewer{name: "dimension-style", err: providerErr}
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	controller := execution.NewControllerWithClock(backingStore, NewReviewAdapter(reviewer, "def456", nil, nil), fixedClock())
 
 	handle, completion := startAndWait(t, controller, "failure")
@@ -144,7 +144,7 @@ func TestInjectedClassifierDrivesUnavailableTerminalState(t *testing.T) {
 	providerErr := errors.New("binary not found in PATH")
 	reviewer := &scriptedReviewer{name: "dimension-tests", err: providerErr}
 	unavailable := func(error) agentrun.OutcomeClass { return agentrun.OutcomeUnavailable }
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	controller := execution.NewControllerWithClock(backingStore, NewReviewAdapter(reviewer, "ghi789", nil, unavailable), fixedClock())
 
 	handle, completion := startAndWait(t, controller, "unavailable")

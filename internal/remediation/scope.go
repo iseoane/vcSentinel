@@ -31,13 +31,13 @@ type Scope struct {
 
 // NewScope builds a Scope from the findings being remediated. Findings
 // without a resolved file location contribute nothing to the scope.
-func NewScope(findings []review.Hallazgo) Scope {
+func NewScope(findings []review.Finding) Scope {
 	allowed := make(map[string]bool, len(findings))
 	for _, f := range findings {
-		if f.Location.Archivo == "" {
+		if f.Location.File == "" {
 			continue
 		}
-		allowed[normalizePath(f.Location.Archivo)] = true
+		allowed[normalizePath(f.Location.File)] = true
 	}
 	return Scope{allowed: allowed}
 }

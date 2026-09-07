@@ -13,23 +13,23 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
-// auditorFalso implementa review.AuditorAgente devolviendo una salida fija;
-// costura mínima para no depender de ningún agente real en los tests de gate.
-type auditorFalso struct {
-	salida string
+// fakeReviewer implements review.AgentReviewer returning a fixed output; a
+// minimal seam so the gate tests do not depend on any real agent.
+type fakeReviewer struct {
+	output string
 	err    error
 }
 
-func (a *auditorFalso) EjecutarPrompt(prompt string) (string, error) {
-	return completeTestContract(a.salida), a.err
+func (a *fakeReviewer) RunPrompt(prompt string) (string, error) {
+	return completeTestContract(a.output), a.err
 }
 
-func (a *auditorFalso) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
-	return a.EjecutarPrompt(prompt)
+func (a *fakeReviewer) RunReview(prompt, _ string, _ []string) (string, error) {
+	return a.RunPrompt(prompt)
 }
 
-func (a *auditorFalso) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.EjecutarRevision(prompt, sha, paths)
+func (a *fakeReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.RunReview(prompt, sha, paths)
 }
 
 func completeTestContract(output string) string {
@@ -60,25 +60,25 @@ func completeTestContract(output string) string {
 	return string(encoded)
 }
 
-// fabricaContadora construye una review.FabricaAuditor que cuenta cuántas
-// veces se invoca (una por dimensión) y devuelve siempre el mismo auditor
-// falso: permite comprobar "cero llamadas al motor de revisión semántica"
-// cuando la validación falla (regla central de T1.7).
-func fabricaContadora(llamadas *int, salida string, err error) review.FabricaAuditor {
-	return func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		*llamadas++
-		return &auditorFalso{salida: salida, err: err}, "perfil-test", nil
+// countingFactory builds a review.ReviewerFactory that counts how many times
+// it is invoked (one per dimension) and always returns the same fake
+// reviewer: it lets a test check "zero calls to the semantic review engine"
+// when validation fails (central rule of T1.7).
+func countingFactory(calls *int, output string, err error) review.ReviewerFactory {
+	return func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
+		*calls++
+		return &fakeReviewer{output: output, err: err}, "profile-test", nil
 	}
 }
 
-func cfgConPerfil(nombreCapability string, comando string) config.Config {
+func cfgWithProfile(nameCapability string, command string) config.Config {
 	cfg := config.Config{
 		Validation: config.ValidationConfig{
 			Capabilities: map[string]config.CapabilityConfig{
-				nombreCapability: {Command: comando, FailsWhen: config.FailsWhenExitCode},
+				nameCapability: {Command: command, FailsWhen: config.FailsWhenExitCode},
 			},
 			Profiles: map[string][]string{
-				"testperfil": {nombreCapability},
+				"testprofile": {nameCapability},
 			},
 			Mode: config.ModeInplace,
 		},
@@ -86,235 +86,235 @@ func cfgConPerfil(nombreCapability string, comando string) config.Config {
 	return cfg
 }
 
-func opcionesBase(t *testing.T, cfg config.Config, ejecutar validation.EjecutorComando, fabrica review.FabricaAuditor) Opciones {
-	opts := Opciones{
-		Perfil: "testperfil",
-		OpcionesValidacion: validation.OpcionesEjecucion{
-			Worktree: "/no-usado",
+func baseOptions(t *testing.T, cfg config.Config, run validation.CommandRunner, factory review.ReviewerFactory) Options {
+	opts := Options{
+		Profile: "testprofile",
+		ValidationOptions: validation.RunOptions{
+			Worktree: "/unused",
 			Cfg:      cfg,
-			Ejecutar: ejecutar,
+			Run:      run,
 		},
-		FabricaAuditor: fabrica,
-		Parallel:       1,
-		OpcionesRevision: review.OpcionesAuditoria{
+		ReviewerFactory: factory,
+		Parallel:        1,
+		ReviewOptions: review.AuditOptions{
 			SHA:     "0123456789abcdef",
 			Bundles: []review.ReviewBundle{{Name: "test", Dimensions: []string{review.DimLogic}, Priority: 1, Cost: 1}},
 		},
-		// EjecutarValidacion inyectado en cada test: no depende de git real.
+		// RunValidation injected in each test: it does not depend on real git.
 	}
-	// Ticket 13 (R11): EjecutarGate IS the durable orchestration, so every
+	// Ticket 13 (R11): RunGate IS the durable orchestration, so every
 	// fixture exercises the only execution path with its full seam set:
 	// stage/candidate identity, a temp-dir backed durable store, and a REAL
 	// transport factory mirroring cmd/sentinel's construction. Tests that
 	// need their own counter or transport override these fields afterwards.
 	opts.Stage = "pre-push"
-	opts.CandidateSHA = opts.OpcionesRevision.SHA
-	opts.DurableStore = store.NuevoStore(filepath.Join(t.TempDir(), "gate-common"))
-	opts.DurableReviewTransportFactory = countedTransportFactory(t, opts.OpcionesRevision.SHA, new(int))
+	opts.CandidateSHA = opts.ReviewOptions.SHA
+	opts.DurableStore = store.NewStore(filepath.Join(t.TempDir(), "gate-common"))
+	opts.DurableReviewTransportFactory = countedTransportFactory(t, opts.ReviewOptions.SHA, new(int))
 	return opts
 }
 
-func ejecutarPerfilSinCandidato(perfil string, _ []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-	return validation.EjecutarPerfil(perfil, opts)
+func runProfileWithoutCandidate(profile string, _ []string, opts validation.RunOptions) ([]validation.ValidationRun, error) {
+	return validation.RunProfile(profile, opts)
 }
 
-// TestValidacionEnRojo_NoLanzaRevision cubre la aceptación #1: si la
-// validación falla, el motor de revisión semántica NUNCA se invoca (orden
-// fijo: validación primero) y el estado es VALIDATION_FAILED.
-func TestValidacionEnRojo_NoLanzaRevision(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo boom")
-	llamadas := 0
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
-		return 1, "salida real del comando fallido", nil
-	}, fabricaContadora(&llamadas, "", nil))
-	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
-	refutadores := 0
-	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-		refutadores++
-		return &auditorFalso{}, "cheap", nil
+// TestValidationRed_DoesNotLaunchReview covers acceptance #1: if validation
+// fails, the semantic review engine is NEVER invoked (fixed order:
+// validation first) and the state is VALIDATION_FAILED.
+func TestValidationRed_DoesNotLaunchReview(t *testing.T) {
+	cfg := cfgWithProfile("lint", "echo boom")
+	calls := 0
+	opts := baseOptions(t, cfg, func(string) (int, string, error) {
+		return 1, "real output of the failed command", nil
+	}, countingFactory(&calls, "", nil))
+	opts.RunValidation = runProfileWithoutCandidate
+	refuters := 0
+	opts.RefuterFactory = func() (review.AgentReviewer, string, error) {
+		refuters++
+		return &fakeReviewer{}, "cheap", nil
 	}
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoValidationFailed {
-		t.Fatalf("estado esperado %q, obtuve %q", EstadoValidationFailed, resultado.Estado)
+	if result.State != StateValidationFailed {
+		t.Fatalf("state expected %q, got %q", StateValidationFailed, result.State)
 	}
-	if llamadas != 0 {
-		t.Fatalf("se esperaban 0 llamadas al motor de revisión, hubo %d", llamadas)
+	if calls != 0 {
+		t.Fatalf("expected 0 calls to the review engine, got %d", calls)
 	}
-	if refutadores != 0 {
-		t.Fatalf("se esperaban 0 refutadores para un CRITICAL de validación, hubo %d", refutadores)
+	if refuters != 0 {
+		t.Fatalf("expected 0 refuters for a validation CRITICAL, got %d", refuters)
 	}
-	unido := strings.Join(resultado.Mensajes, "\n")
-	if !strings.Contains(unido, "salida real del comando fallido") {
-		t.Fatalf("el mensaje debe mostrar la salida real del comando fallido, obtuve: %q", unido)
+	joined := strings.Join(result.Messages, "\n")
+	if !strings.Contains(joined, "real output of the failed command") {
+		t.Fatalf("the message must show the real output of the failed command, got: %q", joined)
 	}
 }
 
-func TestValidacionEnVerdeConCriticalConfirmado_Bloquea(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo ok")
-	llamadas := 0
-	salidaAgente := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
+func TestValidationGreenWithConfirmedCritical_Blocks(t *testing.T) {
+	cfg := cfgWithProfile("lint", "echo ok")
+	calls := 0
+	outputAgent := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`
+	opts := baseOptions(t, cfg, func(string) (int, string, error) {
 		return 0, "", nil
-	}, fabricaContadora(&llamadas, salidaAgente, nil))
-	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
-	refutadores := 0
-	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-		refutadores++
-		return &auditorFalso{salida: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
+	}, countingFactory(&calls, outputAgent, nil))
+	opts.RunValidation = runProfileWithoutCandidate
+	refuters := 0
+	opts.RefuterFactory = func() (review.AgentReviewer, string, error) {
+		refuters++
+		return &fakeReviewer{output: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
 	}
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoCodeReviewFailed {
-		t.Fatalf("estado esperado %q, obtuve %q", EstadoCodeReviewFailed, resultado.Estado)
+	if result.State != StateCodeReviewFailed {
+		t.Fatalf("state expected %q, got %q", StateCodeReviewFailed, result.State)
 	}
-	if llamadas != 1 {
-		t.Fatalf("se esperaba 1 llamada al motor de revisión, hubo %d", llamadas)
+	if calls != 1 {
+		t.Fatalf("expected 1 call to the review engine, got %d", calls)
 	}
-	if refutadores != 1 {
-		t.Fatalf("se esperaba 1 llamada al refutador cheap, hubo %d", refutadores)
+	if refuters != 1 {
+		t.Fatalf("expected 1 call to the cheap refuter, got %d", refuters)
 	}
-	unido := strings.Join(resultado.Mensajes, "\n")
-	if !strings.Contains(unido, "confirmó") {
-		t.Fatalf("se esperaba confirmación del CRITICAL, obtuve: %q", unido)
+	joined := strings.Join(result.Messages, "\n")
+	if !strings.Contains(joined, "confirmed CRITICAL findings") {
+		t.Fatalf("expected the CRITICAL confirmation, got: %q", joined)
 	}
 }
 
 func TestCriticalRefuted_NeedsUserReview(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo ok")
-	llamadas := 0
-	agente := &auditorSecuencial{respuestas: []string{`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"risk"}]}`}, llamadas: &llamadas}
-	fabrica := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
-		return agente, "perfil-test", nil
+	cfg := cfgWithProfile("lint", "echo ok")
+	calls := 0
+	agent := &sequentialReviewer{answers: []string{`{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"risk"}]}`}, calls: &calls}
+	factory := func(_ review.ReviewBundle, _ string) (review.AgentReviewer, string, error) {
+		return agent, "profile-test", nil
 	}
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) { return 0, "", nil }, fabrica)
-	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
-	opts.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-		return &auditorFalso{salida: `{"refuted":true,"reason":"the final code already handles this case","sha":"0123456789abcdef","file":"a.go","line_start":1,"line_end":1,"evidence":"final code handles this case"}`}, "cheap", nil
+	opts := baseOptions(t, cfg, func(string) (int, string, error) { return 0, "", nil }, factory)
+	opts.RunValidation = runProfileWithoutCandidate
+	opts.RefuterFactory = func() (review.AgentReviewer, string, error) {
+		return &fakeReviewer{output: `{"refuted":true,"reason":"the final code already handles this case","sha":"0123456789abcdef","file":"a.go","line_start":1,"line_end":1,"evidence":"final code handles this case"}`}, "cheap", nil
 	}
-	opts.OpcionesRevision.LeerContenidoSnapshot = func(sha, file string) (string, error) {
+	opts.ReviewOptions.ReadSnapshotContent = func(sha, file string) (string, error) {
 		if sha != "0123456789abcdef" || file != "a.go" {
 			t.Fatalf("snapshot read sha=%q file=%q", sha, file)
 		}
 		return "final code handles this case", nil
 	}
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoNeedsUserReview || CodigoSalida(resultado.Estado) != 2 {
-		t.Fatalf("estado=%q exit=%d, expected NEEDS_USER_REVIEW and exit 2", resultado.Estado, CodigoSalida(resultado.Estado))
+	if result.State != StateNeedsUserReview || ExitCode(result.State) != 2 {
+		t.Fatalf("state=%q exit=%d, expected NEEDS_USER_REVIEW and exit 2", result.State, ExitCode(result.State))
 	}
 }
 
-// TestRevisionConPreguntas_NecesitaRevisionHumana cubre el estado
-// NEEDS_USER_REVIEW: veredicto question (agente pide aclaraciones sin
-// resolver) exige atención humana explícita.
-func TestRevisionConPreguntas_NecesitaRevisionHumana(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo ok")
-	llamadas := 0
-	salidaAgente := `{"dim":"logic","verdict":"question","questions":[{"id":"q1","text":"¿por qué este cambio?"}]}`
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
+// TestReviewWithQuestions_NeedsHumanReview covers the NEEDS_USER_REVIEW
+// state: question verdict (the agent asks for clarifications without
+// resolving them) demands explicit human attention.
+func TestReviewWithQuestions_NeedsHumanReview(t *testing.T) {
+	cfg := cfgWithProfile("lint", "echo ok")
+	calls := 0
+	outputAgent := `{"dim":"logic","verdict":"question","questions":[{"id":"q1","text":"why this change?"}]}`
+	opts := baseOptions(t, cfg, func(string) (int, string, error) {
 		return 0, "", nil
-	}, fabricaContadora(&llamadas, salidaAgente, nil))
-	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
+	}, countingFactory(&calls, outputAgent, nil))
+	opts.RunValidation = runProfileWithoutCandidate
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoNeedsUserReview {
-		t.Fatalf("estado esperado %q, obtuve %q", EstadoNeedsUserReview, resultado.Estado)
+	if result.State != StateNeedsUserReview {
+		t.Fatalf("state expected %q, got %q", StateNeedsUserReview, result.State)
 	}
 }
 
-// TestRevisionSinAgenteDisponible_ErrorInfraestructura cubre
-// REVIEW_INFRASTRUCTURE_ERROR cuando el agente de revisión no responde: no es
-// un hallazgo del código, es infraestructura.
-func TestRevisionSinAgenteDisponible_ErrorInfraestructura(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo ok")
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
+// TestReviewWithoutAgentAvailable_InfrastructureError covers
+// REVIEW_INFRASTRUCTURE_ERROR when the review agent does not respond: it is
+// not a code finding, it is infrastructure.
+func TestReviewWithoutAgentAvailable_InfrastructureError(t *testing.T) {
+	cfg := cfgWithProfile("lint", "echo ok")
+	opts := baseOptions(t, cfg, func(string) (int, string, error) {
 		return 0, "", nil
-	}, func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		return nil, "perfil-test", errAgenteNoDisponibleTest
+	}, func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
+		return nil, "profile-test", errAgentUnavailableTest
 	})
-	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
+	opts.RunValidation = runProfileWithoutCandidate
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoReviewInfrastructureError {
-		t.Fatalf("estado esperado %q, obtuve %q", EstadoReviewInfrastructureError, resultado.Estado)
+	if result.State != StateReviewInfrastructureError {
+		t.Fatalf("state expected %q, got %q", StateReviewInfrastructureError, result.State)
 	}
 }
 
-// TestEjecutarValidacionFalla_ErrorInfraestructura cubre el caso en el que la
-// propia orquestación de validación (T1.6) falla (p. ej. candidato obsoleto):
-// es infraestructura, no un hallazgo, y tampoco lanza la revisión.
-func TestEjecutarValidacionFalla_ErrorInfraestructura(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo ok")
-	llamadas := 0
-	opts := opcionesBase(t, cfg, nil, fabricaContadora(&llamadas, "", nil))
-	opts.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-		return nil, errAgenteNoDisponibleTest
+// TestRunValidationFails_InfrastructureError covers the case where the
+// validation orchestration itself (T1.6) fails (e.g. a stale candidate):
+// it is infrastructure, not a finding, and it also never launches the review.
+func TestRunValidationFails_InfrastructureError(t *testing.T) {
+	cfg := cfgWithProfile("lint", "echo ok")
+	calls := 0
+	opts := baseOptions(t, cfg, nil, countingFactory(&calls, "", nil))
+	opts.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
+		return nil, errAgentUnavailableTest
 	}
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoReviewInfrastructureError {
-		t.Fatalf("estado esperado %q, obtuve %q", EstadoReviewInfrastructureError, resultado.Estado)
+	if result.State != StateReviewInfrastructureError {
+		t.Fatalf("state expected %q, got %q", StateReviewInfrastructureError, result.State)
 	}
-	if llamadas != 0 {
-		t.Fatalf("se esperaban 0 llamadas al motor de revisión, hubo %d", llamadas)
+	if calls != 0 {
+		t.Fatalf("expected 0 calls to the review engine, got %d", calls)
 	}
 }
 
-// TestCodigoSalida fija la tabla exacta de exit codes de la ficha. Un estado
-// desconocido (que EjecutarGate nunca debería producir, pero que este
-// paquete tampoco puede reconocer) NUNCA falla abierto en PASS: se traduce
-// al mismo código que REVIEW_INFRASTRUCTURE_ERROR (corrección sobre el
-// defecto de diseño original, ver comentario de CodigoSalida).
-func TestCodigoSalida(t *testing.T) {
-	casos := map[string]int{
-		EstadoPass:                      0,
-		EstadoValidationFailed:          1,
-		EstadoCodeReviewFailed:          1,
-		EstadoNeedsUserReview:           2,
-		EstadoReviewInfrastructureError: 4,
-		"ESTADO_DESCONOCIDO":            4,
+// TestExitCode pins the exact exit-code table of the ticket. An unknown
+// state (which RunGate should never produce, but which this package also
+// cannot recognize) NEVER fails open as PASS: it maps to the same code as
+// REVIEW_INFRASTRUCTURE_ERROR (correction over the original design defect,
+// see the ExitCode comment).
+func TestExitCode(t *testing.T) {
+	cases := map[string]int{
+		StatePass:                      0,
+		StateValidationFailed:          1,
+		StateCodeReviewFailed:          1,
+		StateNeedsUserReview:           2,
+		StateReviewInfrastructureError: 4,
+		"UNKNOWN_STATE":                4,
 	}
-	for estado, esperado := range casos {
-		if got := CodigoSalida(estado); got != esperado {
-			t.Errorf("CodigoSalida(%q) = %d, esperado %d", estado, got, esperado)
+	for state, expected := range cases {
+		if got := ExitCode(state); got != expected {
+			t.Errorf("ExitCode(%q) = %d, expected %d", state, got, expected)
 		}
 	}
 }
 
-var errAgenteNoDisponibleTest = &errorFijo{"agente no disponible"}
+var errAgentUnavailableTest = &fixedError{"agent unavailable"}
 
-type errorFijo struct{ msg string }
+type fixedError struct{ msg string }
 
-func (e *errorFijo) Error() string { return e.msg }
+func (e *fixedError) Error() string { return e.msg }
 
-type auditorSecuencial struct {
-	respuestas []string
-	llamadas   *int
+type sequentialReviewer struct {
+	answers []string
+	calls   *int
 }
 
-func (a *auditorSecuencial) EjecutarPrompt(string) (string, error) {
-	salida := a.respuestas[*a.llamadas]
-	*a.llamadas++
-	return completeTestContract(salida), nil
+func (a *sequentialReviewer) RunPrompt(string) (string, error) {
+	output := a.answers[*a.calls]
+	*a.calls++
+	return completeTestContract(output), nil
 }
 
-func (a *auditorSecuencial) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
-	return a.EjecutarPrompt(prompt)
+func (a *sequentialReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
+	return a.RunPrompt(prompt)
 }
 
-func (a *auditorSecuencial) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.EjecutarRevision(prompt, sha, paths)
+func (a *sequentialReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.RunReview(prompt, sha, paths)
 }
 
 func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
-	confirmed := review.Hallazgo{
+	confirmed := review.Finding{
 		ID:          "finding-1",
 		Fingerprint: "fingerprint-1",
 		Dimension:   review.DimLogic,
@@ -323,21 +323,21 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 		Description: "unsafe fallback is reachable",
 		Evidence:    "return fallbackValue",
 		Confidence:  0.92,
-		Location: review.Ubicacion{
-			Archivo:     "internal/service.go",
-			LineaInicio: 17,
-			LineaFin:    19,
-			Simbolo:     "loadValue",
+		Location: review.Location{
+			File:      "internal/service.go",
+			LineStart: 17,
+			LineEnd:   19,
+			Simbolo:   "loadValue",
 		},
-		Producer: review.Productor{
-			Agente:           "reviewer-cli",
-			Binario:          "reviewer-cli",
-			Modelo:           "model-a",
-			Esfuerzo:         "high",
-			ModeloVerificado: true,
+		Producer: review.Producer{
+			Agent:         "reviewer-cli",
+			Binary:        "reviewer-cli",
+			Model:         "model-a",
+			Effort:        "high",
+			ModelVerified: true,
 		},
 	}
-	refuted := review.Hallazgo{
+	refuted := review.Finding{
 		ID:          "refuted-1",
 		Fingerprint: "refuted-fingerprint",
 		Dimension:   review.DimLogic,
@@ -345,15 +345,15 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 		Status:      review.StatusRefuted,
 		Description: "already disproved",
 		Evidence:    "safe path",
-		Location: review.Ubicacion{
-			Archivo:     "internal/service.go",
-			LineaInicio: 23,
+		Location: review.Location{
+			File:      "internal/service.go",
+			LineStart: 23,
 		},
 	}
 
 	cases := []struct {
 		name          string
-		auditResult   review.ResultadoAuditoria
+		auditResult   review.AuditResult
 		expectedState string
 		expectedExit  int
 		findingCount  int
@@ -362,12 +362,12 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 	}{
 		{
 			name: "blocked findings include all identifying evidence",
-			auditResult: review.ResultadoAuditoria{
-				SHA:       "0123456789abcdef",
-				Veredicto: review.VerdictBlock,
-				Findings:  []review.Hallazgo{confirmed},
+			auditResult: review.AuditResult{
+				SHA:      "0123456789abcdef",
+				Verdict:  review.VerdictBlock,
+				Findings: []review.Finding{confirmed},
 			},
-			expectedState: EstadoCodeReviewFailed,
+			expectedState: StateCodeReviewFailed,
 			expectedExit:  1,
 			findingCount:  1,
 			contains: []string{
@@ -384,34 +384,34 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 		},
 		{
 			name: "unavailable dimensions retain their reasons",
-			auditResult: review.ResultadoAuditoria{
-				SHA:       "0123456789abcdef",
-				Veredicto: review.VerdictUnavailable,
-				Dims: []review.ResultadoDimension{
-					{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictUnavailable, Reason: "provider rate limit"}},
-					{Dim: review.DimSecurity, Error: errAgenteNoDisponibleTest},
+			auditResult: review.AuditResult{
+				SHA:     "0123456789abcdef",
+				Verdict: review.VerdictUnavailable,
+				Dims: []review.DimensionOutcome{
+					{Dim: review.DimLogic, Result: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictUnavailable, Reason: "provider rate limit"}},
+					{Dim: review.DimSecurity, Error: errAgentUnavailableTest},
 				},
 			},
-			expectedState: EstadoReviewInfrastructureError,
+			expectedState: StateReviewInfrastructureError,
 			expectedExit:  4,
 			contains: []string{
 				"Unavailable dimensions:",
 				`dimension="logic" reason="provider rate limit"`,
-				`dimension="security" reason="agente no disponible"`,
+				`dimension="security" reason="agent unavailable"`,
 			},
 		},
 		{
 			name: "block precedence retains unavailable dimension reasons",
-			auditResult: review.ResultadoAuditoria{
-				SHA:       "0123456789abcdef",
-				Veredicto: review.VerdictBlock,
-				Findings:  []review.Hallazgo{confirmed},
-				Dims: []review.ResultadoDimension{
-					{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictBlock}},
-					{Dim: review.DimSecurity, Resultado: &review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictUnavailable, Reason: "security reviewer timed out"}},
+			auditResult: review.AuditResult{
+				SHA:      "0123456789abcdef",
+				Verdict:  review.VerdictBlock,
+				Findings: []review.Finding{confirmed},
+				Dims: []review.DimensionOutcome{
+					{Dim: review.DimLogic, Result: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictBlock}},
+					{Dim: review.DimSecurity, Result: &review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictUnavailable, Reason: "security reviewer timed out"}},
 				},
 			},
-			expectedState: EstadoCodeReviewFailed,
+			expectedState: StateCodeReviewFailed,
 			expectedExit:  1,
 			findingCount:  1,
 			contains: []string{
@@ -421,16 +421,16 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 		},
 		{
 			name: "question precedence retains unavailable dimension reasons",
-			auditResult: review.ResultadoAuditoria{
+			auditResult: review.AuditResult{
 				SHA:       "0123456789abcdef",
-				Veredicto: review.VerdictQuestion,
-				Preguntas: []review.AgentQuestion{{ID: "q1", Text: "which behavior is expected?"}},
-				Dims: []review.ResultadoDimension{
-					{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictQuestion}},
-					{Dim: review.DimSecurity, Resultado: &review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictUnavailable, Reason: "security reviewer timed out"}},
+				Verdict:   review.VerdictQuestion,
+				Questions: []review.AgentQuestion{{ID: "q1", Text: "which behavior is expected?"}},
+				Dims: []review.DimensionOutcome{
+					{Dim: review.DimLogic, Result: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictQuestion}},
+					{Dim: review.DimSecurity, Result: &review.DimensionResult{Dim: review.DimSecurity, Verdict: review.VerdictUnavailable, Reason: "security reviewer timed out"}},
 				},
 			},
-			expectedState: EstadoNeedsUserReview,
+			expectedState: StateNeedsUserReview,
 			expectedExit:  2,
 			contains: []string{
 				"which behavior is expected?",
@@ -439,40 +439,39 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 		},
 		{
 			name: "refuted critical remains human review",
-			auditResult: review.ResultadoAuditoria{
-				SHA:       "0123456789abcdef",
-				Veredicto: review.VerdictWarn,
-				Dims:      []review.ResultadoDimension{{Dim: review.DimLogic, Resultado: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictWarn, RefutedCritical: true}}},
+			auditResult: review.AuditResult{
+				SHA:     "0123456789abcdef",
+				Verdict: review.VerdictWarn,
+				Dims:    []review.DimensionOutcome{{Dim: review.DimLogic, Result: &review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictWarn, RefutedCritical: true}}},
 			},
-			expectedState: EstadoNeedsUserReview,
+			expectedState: StateNeedsUserReview,
 			expectedExit:  2,
-			contains:      []string{"refutó un hallazgo CRITICAL"},
+			contains:      []string{"refuted a CRITICAL finding"},
 		},
 		{
 			name: "mixed v1 and v2 dimensions render distinct effective blockers",
-			auditResult: review.ResultadoAuditoria{
-				SHA:       "0123456789abcdef",
-				Veredicto: review.VerdictBlock,
-				Findings: []review.Hallazgo{
+			auditResult: review.AuditResult{
+				SHA:     "0123456789abcdef",
+				Verdict: review.VerdictBlock,
+				Findings: []review.Finding{
 					confirmed,
 					refuted,
 				},
-				Dims: []review.ResultadoDimension{
+				Dims: []review.DimensionOutcome{
 					{
 						Dim: review.DimLogic,
-						Resultado: &review.DimensionResult{
-							Dim:       review.DimLogic,
-							Verdict:   review.VerdictBlock,
-							Hallazgos: []review.Hallazgo{confirmed, refuted},
+						Result: &review.DimensionResult{
+							Dim:     review.DimLogic,
+							Verdict: review.VerdictBlock,
 							Findings: []review.ReviewFinding{
-								{Dimension: review.DimLogic, File: confirmed.Location.Archivo, Line: 17, Severity: confirmed.Severity, Description: confirmed.Description, Status: review.StatusConfirmed},
-								{Dimension: review.DimLogic, File: refuted.Location.Archivo, Line: 23, Severity: refuted.Severity, Description: refuted.Description, Status: review.StatusRefuted},
+								{Dimension: review.DimLogic, File: confirmed.Location.File, Line: 17, Severity: confirmed.Severity, Description: confirmed.Description, Status: review.StatusConfirmed},
+								{Dimension: review.DimLogic, File: refuted.Location.File, Line: 23, Severity: refuted.Severity, Description: refuted.Description, Status: review.StatusRefuted},
 							},
 						},
 					},
 					{
 						Dim: review.DimSecurity,
-						Resultado: &review.DimensionResult{
+						Result: &review.DimensionResult{
 							Dim:     review.DimSecurity,
 							Verdict: review.VerdictBlock,
 							Findings: []review.ReviewFinding{
@@ -483,7 +482,7 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 					},
 				},
 			},
-			expectedState: EstadoCodeReviewFailed,
+			expectedState: StateCodeReviewFailed,
 			expectedExit:  1,
 			findingCount:  2,
 			contains:      []string{"finding-1", "fingerprint-1", "legacy blocker remains effective", "internal/legacy.go"},
@@ -493,14 +492,14 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			translated := traducirVeredicto(testCase.auditResult)
-			if translated.Estado != testCase.expectedState {
-				t.Fatalf("state = %q, expected %q", translated.Estado, testCase.expectedState)
+			translated := translateVerdict(testCase.auditResult)
+			if translated.State != testCase.expectedState {
+				t.Fatalf("state = %q, expected %q", translated.State, testCase.expectedState)
 			}
-			if got := CodigoSalida(translated.Estado); got != testCase.expectedExit {
+			if got := ExitCode(translated.State); got != testCase.expectedExit {
 				t.Fatalf("exit = %d, expected %d", got, testCase.expectedExit)
 			}
-			output := strings.Join(translated.Mensajes, "\n")
+			output := strings.Join(translated.Messages, "\n")
 			if got := strings.Count(output, "finding identity="); got != testCase.findingCount {
 				t.Errorf("finding count = %d, expected %d: %s", got, testCase.findingCount, output)
 			}
@@ -519,13 +518,13 @@ func TestTranslateVerdictRendersCurrentEvidence(t *testing.T) {
 }
 
 func TestTranslateVerdictCarriesCompactReviewerFailureMetadata(t *testing.T) {
-	translated := traducirVeredicto(review.ResultadoAuditoria{
+	translated := translateVerdict(review.AuditResult{
 		ContextSkipReason: "dirty_worktree",
-		Veredicto:         review.VerdictUnavailable,
-		Dims: []review.ResultadoDimension{{
+		Verdict:           review.VerdictUnavailable,
+		Dims: []review.DimensionOutcome{{
 			Bundle: review.BundleCorrectness,
 			Dim:    review.DimLogic,
-			Resultado: &review.DimensionResult{
+			Result: &review.DimensionResult{
 				Dim:     review.DimLogic,
 				Verdict: review.VerdictUnavailable,
 				Reason:  "provider reported: ripgrep execution failed | run restricted reviewer timed out after 10m0s",

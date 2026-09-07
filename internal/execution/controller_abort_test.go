@@ -49,7 +49,7 @@ func TestApplyAbortRunningSettlesCanceledBeforeAnyLateAdapterResult(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			adapter := &contextIgnoringAdapter{started: make(chan struct{}), release: make(chan struct{}), returned: make(chan struct{}), result: tt.releaseResult, err: tt.releaseErr}
-			controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+			controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 			handle, err := controller.Start(context.Background(), testRequest("late-"+tt.name), testPolicy())
 			if err != nil {
 				t.Fatal(err)
@@ -111,7 +111,7 @@ func TestApplyAbortRunningSettlesCanceledBeforeAnyLateAdapterResult(t *testing.T
 // no duplicate evidence event and returns accepted instead of an error.
 func TestApplyDoubleAbortIsIdempotent(t *testing.T) {
 	adapter := &contextIgnoringAdapter{started: make(chan struct{}), release: make(chan struct{}), returned: make(chan struct{})}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("double-abort"), testPolicy())
 	if err != nil {
 		t.Fatal(err)

@@ -34,7 +34,7 @@ func TestDiffGuardWithinWindowSucceeds(t *testing.T) {
 	after := changeLine(before, 6, "L6-fixed") // finding at line 5, margin 3 -> window [2,8]
 
 	editor := &fakeEditor{files: map[string]string{tenLineFile: before}}
-	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}}}
+	findings := []review.Finding{{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}}}
 	ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
 
 	if err := ge.Edit(tenLineFile, after); err != nil {
@@ -55,7 +55,7 @@ func TestDiffGuardOutOfScopeDiscardsWholeFix(t *testing.T) {
 	after := changeLine(before, 10, "L10-renamed")
 
 	editor := &fakeEditor{files: map[string]string{tenLineFile: before}}
-	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}}}
+	findings := []review.Finding{{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}}}
 	ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
 
 	err := ge.Edit(tenLineFile, after)
@@ -88,7 +88,7 @@ func TestDiffGuardFileWithoutFindingsIsNeverChecked(t *testing.T) {
 	// already authorizes on its own: the file does not exist yet, and no
 	// finding names it.
 	editor := &fakeEditor{files: map[string]string{}}
-	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}}}
+	findings := []review.Finding{{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}}}
 	ge := NewGuardedEditor(editor, guard, findings)
 	if err := ge.Edit(path, newContent); err != nil {
 		t.Fatalf("Edit: unexpected error for a file with no findings: %v", err)
@@ -118,7 +118,7 @@ func TestDiffGuardMarginBoundaryIsInclusive(t *testing.T) {
 			after := changeLine(before, tc.line, "L"+strconv.Itoa(tc.line)+"-changed")
 
 			editor := &fakeEditor{files: map[string]string{tenLineFile: before}}
-			findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}}}
+			findings := []review.Finding{{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}}}
 			ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
 
 			err := ge.Edit(tenLineFile, after)
@@ -161,9 +161,9 @@ func twentyFiveLines() string {
 func TestDiffGuardMergedAdjacentWindowsCoverGapBetweenFindings(t *testing.T) {
 	// Findings at lines 5 and 12, margin 3, produce windows [2,8] and [9,15]:
 	// contiguous but not merged by the old code. Merged, they form [2,15].
-	findings := []review.Hallazgo{
-		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}},
-		{ID: "f2", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 12, LineaFin: 12}},
+	findings := []review.Finding{
+		{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}},
+		{ID: "f2", Location: review.Location{File: tenLineFile, LineStart: 12, LineEnd: 12}},
 	}
 
 	t.Run("a fix spanning both original windows is accepted", func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestDiffGuardUnlocatedFindingAuthorizesWholeFile(t *testing.T) {
 	after := changeLine(before, 10, "L10-changed")
 
 	editor := &fakeEditor{files: map[string]string{tenLineFile: before}}
-	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 0, LineaFin: 0}}}
+	findings := []review.Finding{{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 0, LineEnd: 0}}}
 	ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
 
 	if err := ge.Edit(tenLineFile, after); err != nil {
@@ -230,9 +230,9 @@ func TestDiffGuardLocatedFindingIsNotSwallowedByUnlocatedFinding(t *testing.T) {
 	// (f2, window [2,8]) both point at the same file. Regression: the
 	// unlocated finding used to authorize the whole file, silently disabling
 	// the located finding's own narrow window too.
-	findings := []review.Hallazgo{
-		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 0, LineaFin: 0}},
-		{ID: "f2", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}},
+	findings := []review.Finding{
+		{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 0, LineEnd: 0}},
+		{ID: "f2", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}},
 	}
 
 	t.Run("a fix outside the located finding's window is still rejected", func(t *testing.T) {
@@ -273,14 +273,14 @@ func TestDiffGuardLocatedFindingIsNotSwallowedByUnlocatedFinding(t *testing.T) {
 	})
 }
 
-func TestAllowedWindowsClampsExtremeLineaFinWithoutWrapping(t *testing.T) {
+func TestAllowedWindowsClampsExtremeLineEndWithoutWrapping(t *testing.T) {
 	// Without the end clamp in allowedWindows, end+margin (math.MaxInt + 3)
 	// would silently wrap around to a large negative number (math.MinInt +
 	// 2), producing a window whose End is far below its Start. The clamp
 	// saturates end at math.MaxInt-margin first, so End lands on math.MaxInt
 	// exactly instead of wrapping.
-	findings := []review.Hallazgo{
-		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 10, LineaFin: math.MaxInt}},
+	findings := []review.Finding{
+		{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 10, LineEnd: math.MaxInt}},
 	}
 
 	windows := allowedWindows(tenLineFile, findings, 3)
@@ -315,8 +315,8 @@ func TestAllowedWindowsNegativeMarginDoesNotOverflowEndClamp(t *testing.T) {
 	// {Start:5, End:5} a margin of 0 should produce. Only the exact-value
 	// assertion below distinguishes the two; there is no End<Start case to
 	// check for this specific input.
-	findings := []review.Hallazgo{
-		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}},
+	findings := []review.Finding{
+		{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}},
 	}
 
 	windows := allowedWindows(tenLineFile, findings, -3)
@@ -330,7 +330,7 @@ func TestAllowedWindowsNegativeMarginDoesNotOverflowEndClamp(t *testing.T) {
 }
 
 func TestAllowedWindowsMergesSaturatedMaxIntWindowWithAdjacentFiniteWindow(t *testing.T) {
-	// f1's LineaFin (math.MaxInt) saturates to a window ending exactly at
+	// f1's LineEnd (math.MaxInt) saturates to a window ending exactly at
 	// math.MaxInt: [997, math.MaxInt]. f2 is a separate, non-adjacent finite
 	// window: [4997, 5003]. Without mergeWindows's dedicated
 	// "last.End == math.MaxInt" check, merging these two would compute
@@ -338,9 +338,9 @@ func TestAllowedWindowsMergesSaturatedMaxIntWindowWithAdjacentFiniteWindow(t *te
 	// making "w.Start <= last.End+1" false and wrongly leaving the two
 	// windows split apart. With the check, they merge into one window whose
 	// End is still math.MaxInt.
-	findings := []review.Hallazgo{
-		{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 1000, LineaFin: math.MaxInt}},
-		{ID: "f2", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5000, LineaFin: 5000}},
+	findings := []review.Finding{
+		{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 1000, LineEnd: math.MaxInt}},
+		{ID: "f2", Location: review.Location{File: tenLineFile, LineStart: 5000, LineEnd: 5000}},
 	}
 
 	windows := allowedWindows(tenLineFile, findings, 3)
@@ -362,7 +362,7 @@ func TestDiffGuardEditPropagatesNonNotExistReadError(t *testing.T) {
 		files:      map[string]string{},
 		readErrors: map[string]error{tenLineFile: readErr},
 	}
-	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: tenLineFile, LineaInicio: 5, LineaFin: 5}}}
+	findings := []review.Finding{{ID: "f1", Location: review.Location{File: tenLineFile, LineStart: 5, LineEnd: 5}}}
 	ge := NewGuardedEditor(editor, NewDiffGuard(3), findings)
 
 	err := ge.Edit(tenLineFile, "new content")

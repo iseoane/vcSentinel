@@ -35,7 +35,7 @@ func NewDiffGuard(margin int) DiffGuard {
 // not this guard's concern — Scope already decided the file itself may be
 // touched; Check only bounds where inside an already-scoped file the fix
 // may land — so it returns nil without computing any diff.
-func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo) error {
+func (g DiffGuard) Check(file, before, after string, findings []review.Finding) error {
 	windows := allowedWindows(file, findings, g.Margin)
 	if len(windows) == 0 {
 		return nil
@@ -53,8 +53,8 @@ func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo)
 }
 
 // allowedWindows computes, for one file, the line ranges a fix may touch.
-// Findings matching file are first partitioned into located (LineaInicio >
-// 0) and unlocated (LineaInicio <= 0). An unlocated finding has nothing real
+// Findings matching file are first partitioned into located (LineStart >
+// 0) and unlocated (LineStart <= 0). An unlocated finding has nothing real
 // to bound against, but it must never widen or swallow a located finding's
 // narrow window: as long as at least one located finding exists, every
 // unlocated finding for that file is ignored entirely, and the result is
@@ -63,38 +63,38 @@ func (g DiffGuard) Check(file, before, after string, findings []review.Hallazgo)
 // authorizing the whole file, since there is then nothing real to bound
 // against at all.
 //
-// LineaFin comes from finding data this package does not otherwise
-// validate, so end is clamped before adding margin: an extreme LineaFin
+// LineEnd comes from finding data this package does not otherwise
+// validate, so end is clamped before adding margin: an extreme LineEnd
 // (e.g. math.MaxInt) could otherwise overflow past math.MaxInt and wrap
 // around to a large negative number, producing a window with End below
 // Start. End may still legitimately equal math.MaxInt exactly when the
 // clamp saturates it, which mergeWindows handles explicitly. A negative
 // margin would make that same clamp comparison overflow instead of
 // prevent it, so margin is normalized to non-negative first; start needs
-// no equivalent clamp, since LineaInicio is already known to be positive
-// at the point start is computed (see the LineaInicio <= 0 check below),
-// so LineaInicio-margin cannot underflow past math.MinInt.
-func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.LineRange {
+// no equivalent clamp, since LineStart is already known to be positive
+// at the point start is computed (see the LineStart <= 0 check below),
+// so LineStart-margin cannot underflow past math.MinInt.
+func allowedWindows(file string, findings []review.Finding, margin int) []git.LineRange {
 	if margin < 0 {
 		margin = 0
 	}
 	var located []git.LineRange
 	matched := false
 	for _, f := range findings {
-		if normalizePath(f.Location.Archivo) != normalizePath(file) {
+		if normalizePath(f.Location.File) != normalizePath(file) {
 			continue
 		}
 		matched = true
-		if f.Location.LineaInicio <= 0 {
+		if f.Location.LineStart <= 0 {
 			continue
 		}
-		start := f.Location.LineaInicio - margin
+		start := f.Location.LineStart - margin
 		if start < 1 {
 			start = 1
 		}
-		end := f.Location.LineaFin
-		if end < f.Location.LineaInicio {
-			end = f.Location.LineaInicio
+		end := f.Location.LineEnd
+		if end < f.Location.LineStart {
+			end = f.Location.LineStart
 		}
 		if end > math.MaxInt-margin {
 			end = math.MaxInt - margin
@@ -122,7 +122,7 @@ func allowedWindows(file string, findings []review.Hallazgo, margin int) []git.L
 //
 // allowedWindows clamps every window it builds so End never exceeds
 // math.MaxInt and never wraps around from overflow. A clamped window can
-// still legitimately equal math.MaxInt exactly (an extreme LineaFin
+// still legitimately equal math.MaxInt exactly (an extreme LineEnd
 // saturated by that clamp, or the whole-file fallback window), and the
 // last.End == math.MaxInt check below exists precisely to merge that window
 // safely without ever computing last.End+1 itself.
@@ -172,12 +172,12 @@ func withinAny(r git.LineRange, windows []git.LineRange) bool {
 type GuardedEditor struct {
 	editor   Editor
 	guard    DiffGuard
-	findings []review.Hallazgo
+	findings []review.Finding
 }
 
 // NewGuardedEditor wraps editor so its Edit calls are checked by guard
 // against findings.
-func NewGuardedEditor(editor Editor, guard DiffGuard, findings []review.Hallazgo) *GuardedEditor {
+func NewGuardedEditor(editor Editor, guard DiffGuard, findings []review.Finding) *GuardedEditor {
 	return &GuardedEditor{editor: editor, guard: guard, findings: findings}
 }
 

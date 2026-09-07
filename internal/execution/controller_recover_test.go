@@ -12,7 +12,7 @@ import (
 )
 
 func TestRecoversAnAwaitingRunAndResumesItThroughRespond(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	first := NewControllerWithClock(backingStore, &responseAdapter{}, fixedClock())
 	handle, err := first.Start(context.Background(), testRequest("recover-awaiting"), testPolicy())
 	if err != nil {
@@ -93,7 +93,7 @@ func TestRecoverRefusesUnrecoverableEvidence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
+			controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
 			runID := tt.run(t, controller)
 			before, err := controller.Inspect(context.Background(), runID)
 			if err != nil {
@@ -110,14 +110,14 @@ func TestRecoverRefusesUnrecoverableEvidence(t *testing.T) {
 	}
 
 	t.Run("missing execution record refuses explicitly", func(t *testing.T) {
-		controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
+		controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock())
 		if _, err := controller.Recover(context.Background(), agentrun.Identity("never-admitted"), 0); err == nil {
 			t.Fatal("recovering a missing run must fail explicitly")
 		}
 	})
 
 	t.Run("respond on a recovered run without an adapter fails instead of panicking", func(t *testing.T) {
-		backingStore := store.NuevoStore(t.TempDir())
+		backingStore := store.NewStore(t.TempDir())
 		first := NewControllerWithClock(backingStore, &responseAdapter{}, fixedClock())
 		handle, err := first.Start(context.Background(), testRequest("recover-no-adapter"), testPolicy())
 		if err != nil {
@@ -136,7 +136,7 @@ func TestRecoverRefusesUnrecoverableEvidence(t *testing.T) {
 
 	t.Run("corrupt log propagates the store corruption error", func(t *testing.T) {
 		storeRoot := t.TempDir()
-		controller := NewControllerWithClock(store.NuevoStore(storeRoot), &scriptedAdapter{result: AdapterResult{Output: "done"}}, fixedClock())
+		controller := NewControllerWithClock(store.NewStore(storeRoot), &scriptedAdapter{result: AdapterResult{Output: "done"}}, fixedClock())
 		runID := startAndWaitTerminal(t, controller, "recover-corrupt")
 
 		file, err := os.OpenFile(eventsPath(storeRoot, runID), os.O_APPEND|os.O_WRONLY, 0600)
@@ -150,7 +150,7 @@ func TestRecoverRefusesUnrecoverableEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		fresh := NewControllerWithClock(store.NuevoStore(storeRoot), &scriptedAdapter{}, fixedClock())
+		fresh := NewControllerWithClock(store.NewStore(storeRoot), &scriptedAdapter{}, fixedClock())
 		if _, err := fresh.Recover(context.Background(), runID, 0); !errors.Is(err, store.ErrEventCorrupt) {
 			t.Fatalf("corrupt-evidence recover error = %v, want the store corruption error", err)
 		}
@@ -158,7 +158,7 @@ func TestRecoverRefusesUnrecoverableEvidence(t *testing.T) {
 }
 
 func TestRecoverRelaunchesRetryableTerminalEvidenceThroughTheRetryContract(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("worker crashed")}, fixedClock())
 	handle, err := failed.Start(context.Background(), testRequest("recover-retry"), testPolicy())
 	if err != nil {
@@ -189,7 +189,7 @@ func TestRecoverRelaunchesRetryableTerminalEvidenceThroughTheRetryContract(t *te
 func TestRecoveringALiveOrAlreadyRecoveredRunFailsExplicitly(t *testing.T) {
 	t.Run("live running run refuses without appending evidence", func(t *testing.T) {
 		blocker := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
-		controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), blocker, fixedClock())
+		controller := NewControllerWithClock(store.NewStore(t.TempDir()), blocker, fixedClock())
 		handle, err := controller.Start(context.Background(), testRequest("recover-live"), testPolicy())
 		if err != nil {
 			t.Fatal(err)
@@ -214,7 +214,7 @@ func TestRecoveringALiveOrAlreadyRecoveredRunFailsExplicitly(t *testing.T) {
 	})
 
 	t.Run("already recovered awaiting run refuses a second recovery", func(t *testing.T) {
-		backingStore := store.NuevoStore(t.TempDir())
+		backingStore := store.NewStore(t.TempDir())
 		first := NewControllerWithClock(backingStore, &responseAdapter{}, fixedClock())
 		handle, err := first.Start(context.Background(), testRequest("recover-twice"), testPolicy())
 		if err != nil {
@@ -288,7 +288,7 @@ func appendString(t *testing.T, path, value string) {
 }
 
 func TestRecoversAnAwaitingRunAndResumesItThroughAbort(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	first := NewControllerWithClock(backingStore, &responseAdapter{}, fixedClock())
 	handle, err := first.Start(context.Background(), testRequest("recover-abort"), testPolicy())
 	if err != nil {
@@ -337,7 +337,7 @@ func TestRecoverRelaunchesEveryRetryableTerminalClass(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backingStore := store.NuevoStore(t.TempDir())
+			backingStore := store.NewStore(t.TempDir())
 			first := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: tt.adapterErr}, fixedClock())
 			handle, err := first.Start(context.Background(), testRequest(tt.name), testPolicy())
 			if err != nil {

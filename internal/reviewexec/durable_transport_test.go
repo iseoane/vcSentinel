@@ -10,7 +10,7 @@ import (
 )
 
 func TestDurableTransportReturnsOutputOnSuccess(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha123", []string{"x.go"})
 	reviewer := &scriptedReviewer{name: "dimension-logic", output: "raw verdict"}
 
@@ -46,7 +46,7 @@ func TestDurableTransportReturnsOutputOnSuccess(t *testing.T) {
 }
 
 func TestDurableTransportPreservesFailureEvidenceAsTerminalError(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha456", nil)
 	failing := &scriptedReviewer{name: "dimension-style", err: errors.New("provider exploded")}
 

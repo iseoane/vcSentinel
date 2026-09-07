@@ -1,11 +1,11 @@
-// Package gate orquesta el subcomando "gate" (T1.7): un único punto de
-// entrada consolidado que exige validación en verde (T1.6) ANTES de invocar
-// la revisión semántica (internal/review), en vez de que cada gancho del
-// ciclo de vida (pre-commit, pre-push, pr) reimplemente su propio orden.
+// Package gate orchestrates the "gate" subcommand (T1.7): a single
+// consolidated entry point that requires green validation (T1.6) BEFORE
+// invoking the semantic review (internal/review), instead of letting every
+// lifecycle hook (pre-commit, pre-push, pr) reimplement its own ordering.
 //
-// La lógica de negocio vive aquí (nunca en cmd/, ver nota de arquitectura de
-// la ficha): cmd/sentinel/comandos_gate.go solo parsea flags, resuelve las
-// costuras reales (git, agentadapter) y imprime Resultado.
+// The business logic lives here (never in cmd/, see the architecture note of
+// the ticket): cmd/sentinel/commands_gate.go only parses flags, resolves the
+// real seams (git, agentadapter), and prints Result.
 package gate
 
 import (
@@ -19,52 +19,52 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
-// Estados terminales de gate: vocabulario cerrado de la ficha de T1.7.
+// Terminal gate states: closed vocabulary from the T1.7 ticket.
 const (
-	EstadoPass                      = "PASS"
-	EstadoValidationFailed          = "VALIDATION_FAILED"
-	EstadoCodeReviewFailed          = "CODE_REVIEW_FAILED"
-	EstadoNeedsUserReview           = "NEEDS_USER_REVIEW"
-	EstadoReviewInfrastructureError = "REVIEW_INFRASTRUCTURE_ERROR"
+	StatePass                      = "PASS"
+	StateValidationFailed          = "VALIDATION_FAILED"
+	StateCodeReviewFailed          = "CODE_REVIEW_FAILED"
+	StateNeedsUserReview           = "NEEDS_USER_REVIEW"
+	StateReviewInfrastructureError = "REVIEW_INFRASTRUCTURE_ERROR"
 )
 
-// CodigoSalida traduce Resultado.Estado al exit code exacto pedido por la
-// ficha: 0 PASS, 1 VALIDATION_FAILED, 2 NEEDS_USER_REVIEW,
-// 4 REVIEW_INFRASTRUCTURE_ERROR. Un estado desconocido NUNCA se trata como
-// PASS: un gate cuyo propósito es bloquear no puede fallar abierto ante un
-// valor que este mismo paquete no reconoce (p. ej. un estado nuevo añadido en
-// EjecutarGate y olvidado aquí), así que se traduce al mismo código que
-// REVIEW_INFRASTRUCTURE_ERROR (4): un estado no reconocido es un problema de
-// la propia infraestructura del gate, no una validación superada.
-func CodigoSalida(estado string) int {
-	switch estado {
-	case EstadoPass:
+// ExitCode maps Result.State to the exact exit code the ticket asks for:
+// 0 PASS, 1 VALIDATION_FAILED, 2 NEEDS_USER_REVIEW, 4
+// REVIEW_INFRASTRUCTURE_ERROR. An unknown state is NEVER treated as PASS: a
+// gate whose purpose is to block cannot fail open on a value this very
+// package does not recognize (e.g. a new state added in RunGate and forgotten
+// here), so it maps to the same code as REVIEW_INFRASTRUCTURE_ERROR (4): an
+// unrecognized state is a problem of the gate's own infrastructure, not a
+// passed validation.
+func ExitCode(state string) int {
+	switch state {
+	case StatePass:
 		return 0
-	case EstadoValidationFailed:
+	case StateValidationFailed:
 		return 1
-	case EstadoCodeReviewFailed:
+	case StateCodeReviewFailed:
 		return 1
-	case EstadoNeedsUserReview:
+	case StateNeedsUserReview:
 		return 2
-	case EstadoReviewInfrastructureError:
+	case StateReviewInfrastructureError:
 		return 4
 	default:
 		return 4
 	}
 }
 
-// Resultado es la salida de EjecutarGate: el estado final y los mensajes ya
-// redactados para que el comando los imprima tal cual, sin añadir lógica de
-// presentación en cmd/.
+// Result is the output of RunGate: the final state and the messages already
+// worded so the command prints them as-is, without adding presentation logic
+// in cmd/.
 type ReviewerFailure struct {
 	Bundle    string
 	Dimension string
 	Reason    string
 }
 
-type Resultado struct {
-	Estado   string
-	Mensajes []string
+type Result struct {
+	State    string
+	Messages []string
 	// ContextSkipReason is observational context-provider evidence. It never
 	// changes the semantic verdict but remains available to operator events.
 	ContextSkipReason string
@@ -73,40 +73,38 @@ type Resultado struct {
 	ReviewerFailures []ReviewerFailure
 	// Err carries a typed error produced by the durable orchestration when a
 	// plan, admission, or settlement seam fails (R9 slice 1). Facade text
-	// travels in Estado/Mensajes; Err exists for callers that need the typed
+	// travels in State/Messages; Err exists for callers that need the typed
 	// cause.
 	Err error
 }
 
-// Opciones configura una ejecución de gate. Las costuras EjecutarValidacion y
-// FabricaAuditor son las que T0.x/T1.6 y el motor de review.AuditarCommit ya
-// exponen como inyectables: gate no añade una capa de indirección nueva,
-// reutiliza la que ya existe para poder testear sin procesos ni agentes
-// reales.
-type Opciones struct {
-	// Perfil es el perfil de validation.profiles a ejecutar (--profile del
-	// comando). No confundir con Stage: Stage identifica el punto del ciclo de
-	// vida (mensajes/registro), Perfil identifica QUÉ se valida — son ejes
-	// independientes (decisión de diseño de T1.7, documentada también en
-	// cmd/sentinel/comandos_gate.go).
-	Perfil         string
-	RutasCambiadas []string
+// Options configures a gate run. The RunValidation and ReviewerFactory seams
+// are the ones T0.x/T1.6 and the review.AuditCommit engine already expose as
+// injectable: gate adds no new indirection layer, it reuses the existing one
+// so it can be tested without real processes or agents.
+type Options struct {
+	// Profile is the validation.profiles entry to run (the command's
+	// --profile). Do not confuse it with Stage: Stage identifies the
+	// lifecycle point (messages/record), Profile identifies WHAT is validated
+	// — they are independent axes (T1.7 design decision, also documented in
+	// cmd/sentinel/commands_gate.go).
+	Profile      string
+	ChangedPaths []string
 
-	OpcionesValidacion validation.OpcionesEjecucion
-	// EjecutarValidacion es la función de orquestación de T1.6
-	// (validation.EjecutarPerfilSobreCandidato); nil usa esa misma función.
-	// Inyectable para simular fallos de infraestructura (candidato obsoleto,
-	// snapshot que no se pudo crear...) sin depender de git real.
-	EjecutarValidacion func(perfil string, alcance []string, opts validation.OpcionesEjecucion) ([]validation.ValidationRun, error)
+	ValidationOptions validation.RunOptions
+	// RunValidation is the T1.6 orchestration function
+	// (validation.RunProfileOnCandidate); nil uses that same function.
+	// Injectable to simulate infrastructure failures (stale candidate,
+	// snapshot that could not be created...) without depending on real git.
+	RunValidation func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
 
-	// FabricaAuditor construye el agente de cada dimensión de la revisión
-	// semántica (mismo contrato que review.AuditarCommit). gate no construye
-	// agentes reales por sí mismo: eso es plumbing de cmd/, igual que hace hoy
-	// ejecutarReview.
-	FabricaAuditor   review.FabricaAuditor
-	FabricaRefutador review.FabricaRefutador
-	Parallel         int
-	OpcionesRevision review.OpcionesAuditoria
+	// ReviewerFactory builds the agent of each semantic review dimension
+	// (same contract as review.AuditCommit). gate does not build real agents
+	// itself: that is cmd/ plumbing, exactly what runReview does today.
+	ReviewerFactory review.ReviewerFactory
+	RefuterFactory  review.RefuterFactory
+	Parallel        int
+	ReviewOptions   review.AuditOptions
 
 	// Stage is the --stage lifecycle context embedded in the durable root
 	// run request. cmd/sentinel's facade messages also read the stage value.
@@ -129,7 +127,7 @@ type Opciones struct {
 	// cmd/sentinel), so reviewer invocations keep inheriting admission, owned
 	// process trees, and cancellation; tests inject substitutes and
 	// invocation counters here. When nil, the review phase falls back to
-	// OpcionesRevision.ReviewTransport (engine-level injection seam): there
+	// ReviewOptions.ReviewTransport (engine-level injection seam): there
 	// is no second review execution path.
 	DurableReviewTransportFactory func(rootRunID agentrun.Identity) review.ReviewTransport
 	// DurableReviewTransportFactoryWithEvidence is the preferred factory for
@@ -150,93 +148,93 @@ type Opciones struct {
 	DurableReviewChildren func() []agentrun.Identity
 }
 
-// mensajeValidacionNoEjecutada is the single facade text for a validation
+// validationNotRunMessage is the single facade text for a validation
 // ORCHESTRATION failure (infrastructure, never a code finding). The durable
 // orchestration renders it so equivalent inputs keep the historical facade
 // text byte-identical.
-func mensajeValidacionNoEjecutada(err error) string {
-	return fmt.Sprintf("No se pudo ejecutar la validación: %v", err)
+func validationNotRunMessage(err error) string {
+	return fmt.Sprintf("Could not run validation: %v", err)
 }
 
-// mensajesValidacionFallida redacta el detalle de qué comandos fallaron y su
-// salida real: la ficha exige mostrar la evidencia real, nunca inventar un
-// PASS.
-func mensajesValidacionFallida(hallazgos []validation.Hallazgo) []string {
-	mensajes := []string{"❌ Validación FALLIDA: no se ejecuta la revisión semántica."}
-	for _, h := range hallazgos {
-		mensajes = append(mensajes,
-			fmt.Sprintf("  ✖ %s (%s):\n%s", h.Capability, h.Comando, strings.TrimSpace(h.Evidencia)))
+// validationFailedMessages words the detail of which commands failed and
+// their real output: the ticket demands showing real evidence, never
+// inventing a PASS.
+func validationFailedMessages(findings []validation.Finding) []string {
+	messages := []string{"❌ Validation FAILED: semantic review not executed."}
+	for _, h := range findings {
+		messages = append(messages,
+			fmt.Sprintf("  ✖ %s (%s):\n%s", h.Capability, h.Command, strings.TrimSpace(h.Evidence)))
 	}
-	return mensajes
+	return messages
 }
 
-// traducirVeredicto keeps validation and semantic blockers distinct. A refuted
+// translateVerdict keeps validation and semantic blockers distinct. A refuted
 // semantic critical finding remains visible and requires human review.
-func traducirVeredicto(resultado review.ResultadoAuditoria) Resultado {
-	contextSkipReason := resultado.ContextSkipReason
-	reviewerFailures := compactReviewerFailures(resultado)
-	switch resultado.Veredicto {
+func translateVerdict(result review.AuditResult) Result {
+	contextSkipReason := result.ContextSkipReason
+	reviewerFailures := compactReviewerFailures(result)
+	switch result.Verdict {
 	case review.VerdictUnavailable:
-		return Resultado{
-			Estado:            EstadoReviewInfrastructureError,
-			Mensajes:          unavailableReviewMessages(resultado),
+		return Result{
+			State:             StateReviewInfrastructureError,
+			Messages:          unavailableReviewMessages(result),
 			ContextSkipReason: contextSkipReason,
 			ReviewerFailures:  reviewerFailures,
 		}
 	case review.VerdictQuestion:
-		mensajes := []string{"❓ La revisión semántica requiere atención humana explícita:"}
-		for _, pregunta := range resultado.Preguntas {
-			mensajes = append(mensajes, fmt.Sprintf("  ? %s", pregunta.Text))
+		messages := []string{"❓ Semantic review requires explicit human attention:"}
+		for _, question := range result.Questions {
+			messages = append(messages, fmt.Sprintf("  ? %s", question.Text))
 		}
-		mensajes = append(mensajes, unavailableDimensionMessages(resultado)...)
-		return Resultado{
-			Estado:            EstadoNeedsUserReview,
-			Mensajes:          mensajes,
+		messages = append(messages, unavailableDimensionMessages(result)...)
+		return Result{
+			State:             StateNeedsUserReview,
+			Messages:          messages,
 			ContextSkipReason: contextSkipReason,
 			ReviewerFailures:  reviewerFailures,
 		}
 	case review.VerdictBlock:
 		messages := []string{
-			"❌ La revisión semántica confirmó hallazgos CRITICAL.",
-			resultado.String(),
+			"❌ Semantic review confirmed CRITICAL findings.",
+			result.String(),
 		}
-		messages = append(messages, criticalFindingMessages(resultado)...)
-		messages = append(messages, unavailableDimensionMessages(resultado)...)
-		return Resultado{
-			Estado:            EstadoCodeReviewFailed,
-			Mensajes:          messages,
+		messages = append(messages, criticalFindingMessages(result)...)
+		messages = append(messages, unavailableDimensionMessages(result)...)
+		return Result{
+			State:             StateCodeReviewFailed,
+			Messages:          messages,
 			ContextSkipReason: contextSkipReason,
 			ReviewerFailures:  reviewerFailures,
 		}
 	default:
-		if tieneHallazgoCriticoRefutado(resultado) {
-			return Resultado{
-				Estado:            EstadoNeedsUserReview,
-				Mensajes:          []string{"❓ La revisión semántica refutó un hallazgo CRITICAL y requiere atención humana.", resultado.String()},
+		if hasRefutedCriticalFinding(result) {
+			return Result{
+				State:             StateNeedsUserReview,
+				Messages:          []string{"❓ Semantic review refuted a CRITICAL finding and requires human attention.", result.String()},
 				ContextSkipReason: contextSkipReason,
 				ReviewerFailures:  reviewerFailures,
 			}
 		}
-		return Resultado{
-			Estado:            EstadoPass,
-			Mensajes:          []string{"✅ Validación y revisión semántica en verde.", resultado.String()},
+		return Result{
+			State:             StatePass,
+			Messages:          []string{"✅ Validation and semantic review green.", result.String()},
 			ContextSkipReason: contextSkipReason,
 			ReviewerFailures:  reviewerFailures,
 		}
 	}
 }
 
-func tieneHallazgoCriticoRefutado(resultado review.ResultadoAuditoria) bool {
-	for _, dimension := range resultado.Dims {
-		if dimension.Resultado != nil && dimension.Resultado.RefutedCritical {
+func hasRefutedCriticalFinding(result review.AuditResult) bool {
+	for _, dimension := range result.Dims {
+		if dimension.Result != nil && dimension.Result.RefutedCritical {
 			return true
 		}
 	}
 	return false
 }
 
-func unavailableReviewMessages(auditResult review.ResultadoAuditoria) []string {
-	messages := []string{"❌ La revisión semántica no pudo ejecutarse (agente no disponible o error de infraestructura)."}
+func unavailableReviewMessages(auditResult review.AuditResult) []string {
+	messages := []string{"❌ Semantic review could not run (agent unavailable or infrastructure error)."}
 	dimensionMessages := unavailableDimensionMessages(auditResult)
 	if len(dimensionMessages) == 0 {
 		return append(messages, "  No unavailable dimension evidence was retained.")
@@ -244,7 +242,7 @@ func unavailableReviewMessages(auditResult review.ResultadoAuditoria) []string {
 	return append(messages, dimensionMessages...)
 }
 
-func unavailableDimensionMessages(auditResult review.ResultadoAuditoria) []string {
+func unavailableDimensionMessages(auditResult review.AuditResult) []string {
 	dimensions := unavailableDimensions(auditResult)
 	if len(dimensions) == 0 {
 		return nil
@@ -254,11 +252,11 @@ func unavailableDimensionMessages(auditResult review.ResultadoAuditoria) []strin
 	for _, dimension := range dimensions {
 		dimensionName := dimension.Dim
 		reason := ""
-		if dimension.Resultado != nil {
+		if dimension.Result != nil {
 			if dimensionName == "" {
-				dimensionName = dimension.Resultado.Dim
+				dimensionName = dimension.Result.Dim
 			}
-			reason = dimension.Resultado.Reason
+			reason = dimension.Result.Reason
 		}
 		if reason == "" && dimension.Error != nil {
 			reason = dimension.Error.Error()
@@ -271,7 +269,7 @@ func unavailableDimensionMessages(auditResult review.ResultadoAuditoria) []strin
 	return messages
 }
 
-func compactReviewerFailures(auditResult review.ResultadoAuditoria) []ReviewerFailure {
+func compactReviewerFailures(auditResult review.AuditResult) []ReviewerFailure {
 	dimensions := unavailableDimensions(auditResult)
 	if len(dimensions) == 0 {
 		return nil
@@ -281,14 +279,14 @@ func compactReviewerFailures(auditResult review.ResultadoAuditoria) []ReviewerFa
 		dimensionName := dimension.Dim
 		bundleName := dimension.Bundle
 		reason := ""
-		if dimension.Resultado != nil {
+		if dimension.Result != nil {
 			if dimensionName == "" {
-				dimensionName = dimension.Resultado.Dim
+				dimensionName = dimension.Result.Dim
 			}
 			if bundleName == "" {
-				bundleName = dimension.Resultado.Bundle
+				bundleName = dimension.Result.Bundle
 			}
-			reason = dimension.Resultado.Reason
+			reason = dimension.Result.Reason
 		}
 		if reason == "" && dimension.Error != nil {
 			reason = dimension.Error.Error()
@@ -310,31 +308,31 @@ func compactReviewerFailures(auditResult review.ResultadoAuditoria) []ReviewerFa
 // infrastructure failure (ticket 07). The typed transport error wins when the
 // engine retained it; once only the persisted reason survives, classification
 // goes through the literal admission prefix both share.
-func failureClass(dimension review.ResultadoDimension) string {
+func failureClass(dimension review.DimensionOutcome) string {
 	if reviewexec.IsAdmissionError(dimension.Error) {
 		return "admission"
 	}
-	if dimension.Resultado != nil && reviewexec.IsAdmissionReason(dimension.Resultado.Reason) {
+	if dimension.Result != nil && reviewexec.IsAdmissionReason(dimension.Result.Reason) {
 		return "admission"
 	}
 	return "infrastructure"
 }
 
-func unavailableDimensions(auditResult review.ResultadoAuditoria) []review.ResultadoDimension {
-	var dimensions []review.ResultadoDimension
+func unavailableDimensions(auditResult review.AuditResult) []review.DimensionOutcome {
+	var dimensions []review.DimensionOutcome
 	for _, dimension := range auditResult.Dims {
-		if dimension.Resultado != nil && dimension.Resultado.Verdict == review.VerdictUnavailable {
+		if dimension.Result != nil && dimension.Result.Verdict == review.VerdictUnavailable {
 			dimensions = append(dimensions, dimension)
 			continue
 		}
-		if dimension.Resultado == nil && dimension.Error != nil {
+		if dimension.Result == nil && dimension.Error != nil {
 			dimensions = append(dimensions, dimension)
 		}
 	}
 	return dimensions
 }
 
-func criticalFindingMessages(auditResult review.ResultadoAuditoria) []string {
+func criticalFindingMessages(auditResult review.AuditResult) []string {
 	messages := []string{"Confirmed CRITICAL finding evidence:"}
 	findings := effectiveCriticalFindings(auditResult)
 	if len(findings) == 0 {
@@ -356,7 +354,7 @@ func criticalFindingMessages(auditResult review.ResultadoAuditoria) []string {
 			if primaryEvidence == "" {
 				primaryEvidence = finding.EvidenceSet.Values[0].Evidence
 			}
-			if producer == (review.Productor{}) {
+			if producer == (review.Producer{}) {
 				producer = finding.EvidenceSet.Values[0].Producer
 			}
 		}
@@ -366,7 +364,7 @@ func criticalFindingMessages(auditResult review.ResultadoAuditoria) []string {
 			fmt.Sprintf("    id: %q", finding.ID),
 			fmt.Sprintf("    fingerprint: %q", fingerprint),
 			fmt.Sprintf("    dimension: %q", finding.Dimension),
-			fmt.Sprintf("    location: file=%q line_start=%d line_end=%d symbol=%q blob=%q", finding.Location.Archivo, finding.Location.LineaInicio, finding.Location.LineaFin, finding.Location.Simbolo, finding.Location.Blob),
+			fmt.Sprintf("    location: file=%q line_start=%d line_end=%d symbol=%q blob=%q", finding.Location.File, finding.Location.LineStart, finding.Location.LineEnd, finding.Location.Simbolo, finding.Location.Blob),
 			fmt.Sprintf("    description: %q", finding.Description),
 			fmt.Sprintf("    evidence: %q", primaryEvidence),
 			fmt.Sprintf("    confidence: %g", finding.Confidence),
@@ -385,28 +383,30 @@ func criticalFindingMessages(auditResult review.ResultadoAuditoria) []string {
 	return messages
 }
 
-func effectiveCriticalFindings(auditResult review.ResultadoAuditoria) []review.Hallazgo {
-	findings := append([]review.Hallazgo(nil), auditResult.Findings...)
+func effectiveCriticalFindings(auditResult review.AuditResult) []review.Finding {
+	findings := append([]review.Finding(nil), auditResult.Findings...)
 	hasAggregatedFindings := len(auditResult.Findings) > 0
 	for _, dimension := range auditResult.Dims {
-		if dimension.Resultado == nil {
+		if dimension.Result == nil {
 			continue
 		}
-		dimensionResult := dimension.Resultado
+		dimensionResult := dimension.Result
 		if !hasAggregatedFindings {
-			findings = append(findings, dimensionResult.Hallazgos...)
+			for _, legacyFinding := range dimensionResult.Findings {
+				findings = append(findings, findingFromLegacy(dimension.Dim, legacyFinding))
+			}
 		}
 		for _, legacyFinding := range dimensionResult.Findings {
-			if isLegacyFindingRepresented(legacyFinding, dimension.Dim, dimensionResult.Hallazgos) {
+			if isLegacyFindingRepresented(legacyFinding, dimension.Dim, auditResult.Findings) {
 				continue
 			}
 			findings = append(findings, findingFromLegacy(dimension.Dim, legacyFinding))
 		}
 	}
 
-	var effective []review.Hallazgo
+	var effective []review.Finding
 	for _, finding := range findings {
-		// The shared FU-6 blocking rule: engine, gate, and BloqueantesDeRama
+		// The shared FU-6 blocking rule: engine, gate, and BranchBlockers
 		// agree about the same record, so a human-refuted or fixed CRITICAL
 		// finding stops being effective here exactly as elsewhere.
 		if review.IsBlocking(finding.Severity, finding.Status) {
@@ -416,38 +416,38 @@ func effectiveCriticalFindings(auditResult review.ResultadoAuditoria) []review.H
 	return effective
 }
 
-func isLegacyFindingRepresented(legacy review.ReviewFinding, dimension string, v2Findings []review.Hallazgo) bool {
+func isLegacyFindingRepresented(legacy review.ReviewFinding, dimension string, v2Findings []review.Finding) bool {
 	for _, v2Finding := range v2Findings {
 		if v2Finding.Dimension == dimension &&
 			v2Finding.Severity == legacy.Severity &&
 			v2Finding.Description == legacy.Description &&
-			v2Finding.Location.Archivo == legacy.File &&
-			v2Finding.Location.LineaInicio == int(legacy.Line) {
+			v2Finding.Location.File == legacy.File &&
+			v2Finding.Location.LineStart == int(legacy.Line) {
 			return true
 		}
 	}
 	return false
 }
 
-func findingFromLegacy(dimension string, finding review.ReviewFinding) review.Hallazgo {
+func findingFromLegacy(dimension string, finding review.ReviewFinding) review.Finding {
 	status := finding.Status
 	if status == "" {
 		status = review.StatusConfirmed
 	}
-	convertedFinding := review.Hallazgo{
+	convertedFinding := review.Finding{
 		Dimension:   dimension,
 		Severity:    finding.Severity,
 		Status:      status,
 		Description: finding.Description,
-		Location: review.Ubicacion{
-			Archivo:     finding.File,
-			LineaInicio: int(finding.Line),
+		Location: review.Location{
+			File:      finding.File,
+			LineStart: int(finding.Line),
 		},
 	}
 	convertedFinding.Fingerprint = review.Fingerprint(convertedFinding)
 	return convertedFinding
 }
 
-func formatProducer(producer review.Productor) string {
-	return fmt.Sprintf("agent=%q binary=%q model=%q reasoning_effort=%q model_verified=%t", producer.Agente, producer.Binario, producer.Modelo, producer.Esfuerzo, producer.ModeloVerificado)
+func formatProducer(producer review.Producer) string {
+	return fmt.Sprintf("agent=%q binary=%q model=%q reasoning_effort=%q model_verified=%t", producer.Agent, producer.Binary, producer.Model, producer.Effort, producer.ModelVerified)
 }

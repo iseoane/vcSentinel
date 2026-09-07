@@ -109,11 +109,11 @@ func TestLinkedWorktreesObserveIdenticalRunStateThroughCommonDirStore(t *testing
 	linkedWorktree := filepath.Join(t.TempDir(), "linked-worktree")
 	runGit(t, repoRoot, "worktree", "add", "-q", linkedWorktree, "-b", "linked")
 
-	commonA, err := git.ObtenerGitCommonDir(repoRoot)
+	commonA, err := git.GetGitCommonDir(repoRoot)
 	if err != nil {
 		t.Fatalf("worktree A common dir: %v", err)
 	}
-	commonB, err := git.ObtenerGitCommonDir(linkedWorktree)
+	commonB, err := git.GetGitCommonDir(linkedWorktree)
 	if err != nil {
 		t.Fatalf("worktree B common dir: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestLinkedWorktreesObserveIdenticalRunStateThroughCommonDirStore(t *testing
 	}
 
 	// Worktree A admits and settles a durable review run.
-	storeA := store.NuevoStore(commonA)
+	storeA := store.NewStore(commonA)
 	writer := execution.NewControllerWithClock(storeA, successOutputAdapter("review from worktree A"), fixedClock())
 	handle, err := writer.Start(context.Background(), e2eRequest("linked-worktree-run"), e2ePolicy())
 	if err != nil {
@@ -135,7 +135,7 @@ func TestLinkedWorktreesObserveIdenticalRunStateThroughCommonDirStore(t *testing
 	runID := handle.RunID
 
 	// Worktree B observes through its own store resolution path.
-	storeB := store.NuevoStore(commonB)
+	storeB := store.NewStore(commonB)
 	reader := execution.NewControllerWithClock(storeB, nil, fixedClock())
 
 	idsA, err := storeA.ListExecutionIDs()

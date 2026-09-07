@@ -23,7 +23,7 @@ type contextRecordingReviewer struct {
 	entered        chan struct{}
 }
 
-func (r *contextRecordingReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (r *contextRecordingReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
 	r.mu.Lock()
 	r.legacyRuns++
 	r.mu.Unlock()
@@ -42,7 +42,7 @@ func (r *contextRecordingReviewer) ReviewWithContext(ctx context.Context, prompt
 
 func TestExecuteForwardsWorkerContextToContextualReviewer(t *testing.T) {
 	reviewer := &contextRecordingReviewer{entered: make(chan struct{})}
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	controller := execution.NewControllerWithClock(backingStore, NewReviewAdapter(reviewer, "abc123", nil, nil), fixedClock())
 
 	handle, err := controller.Start(context.Background(), testRequest("forward-cancel"), testPolicy())
@@ -96,14 +96,14 @@ func TestExecuteForwardsWorkerContextToContextualReviewer(t *testing.T) {
 // through it unchanged.
 type legacyOnlyReviewer struct{ calls int }
 
-func (r *legacyOnlyReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (r *legacyOnlyReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
 	r.calls++
 	return "legacy output", nil
 }
 
 func TestExecuteStillUsesLegacyReviewerWithoutContextualContract(t *testing.T) {
 	reviewer := &legacyOnlyReviewer{}
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	controller := execution.NewControllerWithClock(backingStore, NewReviewAdapter(reviewer, "abc123", nil, nil), fixedClock())
 
 	handle, completion := startAndWait(t, controller, "legacy-path")

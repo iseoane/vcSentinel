@@ -17,14 +17,14 @@ func surfaceBundles() []review.ReviewBundle {
 	return []review.ReviewBundle{{Name: "quality", Dimensions: []string{"logic"}, Priority: review.PriorityRequired}}
 }
 
-func runSurfaceAudit(t *testing.T, agent review.AuditorAgente, sha string) review.ResultadoAuditoria {
+func runSurfaceAudit(t *testing.T, agent review.AgentReviewer, sha string) review.AuditResult {
 	t.Helper()
 	transport := durableTestTransport(t, sha)
-	return review.AuditarCommit(func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+	return review.AuditCommit(func(_ review.ReviewBundle, _ string) (review.AgentReviewer, string, error) {
 		return agent, "normal", nil
-	}, 1, review.OpcionesAuditoria{
+	}, 1, review.AuditOptions{
 		SHA:             sha,
-		Mensaje:         "message",
+		Message:         "message",
 		Diff:            "diff",
 		Bundles:         surfaceBundles(),
 		ReviewTransport: transport,
@@ -37,10 +37,10 @@ func TestEngineSurfacesAdmissionFailureWithLiteralPrefix(t *testing.T) {
 	// deterministically fails snapshot binding before waiting on the provider.
 	result := runSurfaceAudit(t, &cannedAgent{responses: []string{`{"dim":"logic","verdict":"ok"}`}}, "engine:forced-admission")
 
-	if len(result.Dims) != 1 || result.Dims[0].Resultado == nil {
+	if len(result.Dims) != 1 || result.Dims[0].Result == nil {
 		t.Fatalf("dims = %+v, want one routed dimension result", result.Dims)
 	}
-	dim := result.Dims[0].Resultado
+	dim := result.Dims[0].Result
 	if dim.Verdict != review.VerdictUnavailable {
 		t.Fatalf("verdict = %q, want unavailable for an admission failure", dim.Verdict)
 	}
@@ -55,10 +55,10 @@ func TestEngineSurfacesAdmissionFailureWithLiteralPrefix(t *testing.T) {
 func TestEnginePreservesPlainProviderFailureWithoutAdmissionPrefix(t *testing.T) {
 	result := runSurfaceAudit(t, failingAgent{}, "engine-preserved-failure")
 
-	if len(result.Dims) != 1 || result.Dims[0].Resultado == nil {
+	if len(result.Dims) != 1 || result.Dims[0].Result == nil {
 		t.Fatalf("dims = %+v, want one routed dimension result", result.Dims)
 	}
-	dim := result.Dims[0].Resultado
+	dim := result.Dims[0].Result
 	if dim.Verdict != review.VerdictUnavailable {
 		t.Fatalf("verdict = %q, want unavailable for a provider failure", dim.Verdict)
 	}

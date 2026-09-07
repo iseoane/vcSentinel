@@ -75,7 +75,7 @@ func snapshotPathFor(root, runID string) string {
 
 func TestReconcileOnBootSettlesUnprojectedAndSurfacesOperatorRequired(t *testing.T) {
 	root := t.TempDir()
-	backing := store.NuevoStore(root)
+	backing := store.NewStore(root)
 
 	unprojected := appendBootFixtureStream(t, backing, "candidate:boot-unprojected", bootSuccessExtra())
 	if err := os.Remove(snapshotPathFor(root, unprojected)); err != nil {
@@ -131,7 +131,7 @@ func TestReconcileOnBootSettlesUnprojectedAndSurfacesOperatorRequired(t *testing
 
 func TestReconcileOnBootIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	backing := store.NuevoStore(root)
+	backing := store.NewStore(root)
 
 	unprojected := appendBootFixtureStream(t, backing, "candidate:boot-idempotent", bootSuccessExtra())
 	if err := os.Remove(snapshotPathFor(root, unprojected)); err != nil {
@@ -169,7 +169,7 @@ func TestReconcileOnBootIsIdempotent(t *testing.T) {
 }
 
 func TestReconcileOnBootEmptyScanPrintsQuietLine(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	controller := execution.NewController(backing, nil)
 	var out bytes.Buffer
 	if err := ReconcileOnBoot(controller, backing, &out); err != nil {

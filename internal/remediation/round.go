@@ -22,7 +22,7 @@ const (
 // located/unlocated window logic (T7.3) may have silently rejected any fix
 // attempt scoped to it, rather than the fix genuinely failing to resolve it.
 type UnresolvedFinding struct {
-	Finding            review.Hallazgo
+	Finding            review.Finding
 	SwallowedByLocated bool
 }
 
@@ -40,26 +40,26 @@ type UnresolvedFinding struct {
 type RoundResult struct {
 	Verdict    string
 	Unresolved []UnresolvedFinding
-	New        []review.Hallazgo
+	New        []review.Finding
 	Blocked    bool
 }
 
 // Revalidate re-runs the validation profile that originally failed, scoped
 // to the files a remediation round touched. Returns whether any blocking
-// (non-zero-exit, per validation.Fallo semantics — caller's problem, not
+// (non-zero-exit, per validation.Failed semantics — caller's problem, not
 // this package's) result remains.
 type Revalidate func(profile string, touchedFiles []string) (blocked bool, err error)
 
 // ReReview re-runs semantic review restricted to the touched files and
 // returns the resulting findings.
-type ReReview func(touchedFiles []string) ([]review.Hallazgo, error)
+type ReReview func(touchedFiles []string) ([]review.Finding, error)
 
 // RunSingleRound runs exactly one revalidation + re-review pass over the
 // files a remediation fix touched, comparing the resulting findings against
 // the findings that were being remediated (before) to report what is still
 // unresolved and what the fix newly introduced. It NEVER loops: this
 // function calls revalidate and reReview exactly once each, structurally (no
-// loop construct around them) — enforcing the ficha's hard single-round
+// loop construct around them) — enforcing the spec's hard single-round
 // limit. A caller that wants "try again" must call RunSingleRound again
 // itself; RunSingleRound never does so on its own. A real error from either
 // dependency (an infra failure, not a validation/review verdict) is
@@ -73,7 +73,7 @@ type ReReview func(touchedFiles []string) ([]review.Hallazgo, error)
 // reported (it ran and returned successfully before reReview failed); the
 // revalidate error path leaves Blocked at its zero value (false) because
 // revalidate itself never got to report a real state there.
-func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []string, revalidate Revalidate, reReview ReReview) (RoundResult, error) {
+func RunSingleRound(profile string, before []review.Finding, touchedFiles []string, revalidate Revalidate, reReview ReReview) (RoundResult, error) {
 	blocked, err := revalidate(profile, touchedFiles)
 	if err != nil {
 		return RoundResult{Verdict: ResultNeedsUserReview}, fmt.Errorf("remediation: revalidation failed: %w", err)
@@ -90,7 +90,7 @@ func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []str
 	}
 
 	var unresolved []UnresolvedFinding
-	var newFindings []review.Hallazgo
+	var newFindings []review.Finding
 	hasCriticalUnresolved := false
 	hasCriticalNew := false
 	for _, f := range after {
@@ -124,21 +124,21 @@ func RunSingleRound(profile string, before []review.Hallazgo, touchedFiles []str
 // it, and another finding in before, for the SAME file, IS located — so
 // allowedWindows would have authorized only that other finding's narrow
 // window in the file, silently swallowing any real fix scoped to finding.
-// A finding with no file at all (empty Archivo) can never be "swallowed" by
+// A finding with no file at all (empty File) can never be "swallowed" by
 // a same-file sibling, since there is no real file for any DiffGuard window
 // to have narrowed in the first place — matching an unrelated finding that
-// also happens to have an empty Archivo would be a coincidence of the zero
+// also happens to have an empty File would be a coincidence of the zero
 // value, not a shared file. See diffguard.go's allowedWindows doc comment
 // for the swallowing behavior this flags.
-func swallowedByLocated(finding review.Hallazgo, before []review.Hallazgo) bool {
-	if finding.Location.Archivo == "" || finding.Location.LineaInicio > 0 {
+func swallowedByLocated(finding review.Finding, before []review.Finding) bool {
+	if finding.Location.File == "" || finding.Location.LineStart > 0 {
 		return false
 	}
 	for _, other := range before {
 		if other.Fingerprint == finding.Fingerprint {
 			continue
 		}
-		if other.Location.Archivo == finding.Location.Archivo && other.Location.LineaInicio > 0 {
+		if other.Location.File == finding.Location.File && other.Location.LineStart > 0 {
 			return true
 		}
 	}

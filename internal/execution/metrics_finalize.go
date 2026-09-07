@@ -111,7 +111,7 @@ func foldExecutionMetrics(runID string, outcomes []store.AttemptOutcome, semanti
 		// Identity reads outcome.Observation only, never the flattened
 		// outcome Agent/Model/Effort beside it. Provenance differs per
 		// adapter kind (FU-9): a CLI adapter's transcript annotation carries
-		// its resolved configuration (agentadapter.CLIAdapter.AgenteEfectivo
+		// its resolved configuration (agentadapter.CLIAdapter.EffectiveAgent
 		// reports the construction config), so those flattened values are
 		// declarations, not evidence. An acpx adapter reports wire-only
 		// identity, which already lands in Observation when the provider

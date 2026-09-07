@@ -55,8 +55,8 @@ func TestGateRunPlanBuilder(t *testing.T) {
 			if !strings.Contains(prompt, "pr") || !strings.Contains(prompt, "full") {
 				t.Fatalf("validation job %d prompt lost stage/profile context: %q", index, prompt)
 			}
-			capabilities := job.Job.Request().Capabilities()
-			if len(capabilities) != 1 || capabilities[0].Attributes()["command"] != wantCommand {
+			layerbilities := job.Job.Request().Capabilities()
+			if len(layerbilities) != 1 || layerbilities[0].Attributes()["command"] != wantCommand {
 				t.Fatalf("validation job %d does not carry its command as capability evidence", index)
 			}
 		}
@@ -154,50 +154,50 @@ func TestGateRunPlanBuilder(t *testing.T) {
 // run anything, plan construction is validated before any admission, and an
 // unresolved capability reference fails during planning.
 func TestGateDurableOrchestrationSeams(t *testing.T) {
-	cfgWithBrokenProfile := cfgConPerfil("lint", "echo ok")
-	cfgWithBrokenProfile.Validation.Profiles["roto"] = []string{"missing-capability"}
+	cfgWithBrokenProfile := cfgWithProfile("lint", "echo ok")
+	cfgWithBrokenProfile.Validation.Profiles["broken"] = []string{"missing-capability"}
 
 	t.Run("without an injected store fails as infrastructure before any phase", func(t *testing.T) {
-		llamadas := 0
-		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(&llamadas, "", nil))
+		calls := 0
+		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil, countingFactory(&calls, "", nil))
 		opts.DurableStore = nil
 
-		resultado := EjecutarGate(opts)
+		result := RunGate(opts)
 
-		if resultado.Estado != EstadoReviewInfrastructureError || CodigoSalida(resultado.Estado) != 4 {
-			t.Fatalf("missing durable store is infrastructure-class, got %q exit %d", resultado.Estado, CodigoSalida(resultado.Estado))
+		if result.State != StateReviewInfrastructureError || ExitCode(result.State) != 4 {
+			t.Fatalf("missing durable store is infrastructure-class, got %q exit %d", result.State, ExitCode(result.State))
 		}
-		if resultado.Err == nil || !strings.Contains(resultado.Err.Error(), "injected store") {
-			t.Fatalf("expected an explicit missing-store failure, got %v", resultado.Err)
+		if result.Err == nil || !strings.Contains(result.Err.Error(), "injected store") {
+			t.Fatalf("expected an explicit missing-store failure, got %v", result.Err)
 		}
-		if llamadas != 0 {
-			t.Fatalf("review must never start without a durable store, got %d calls", llamadas)
+		if calls != 0 {
+			t.Fatalf("review must never start without a durable store, got %d calls", calls)
 		}
 	})
 
 	t.Run("still validates the plan before admitting anything", func(t *testing.T) {
-		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, nil)
+		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil, nil)
 		opts.Stage = ""
 
-		resultado := EjecutarGate(opts)
+		result := RunGate(opts)
 
 		var planErr GatePlanError
-		if !errors.As(resultado.Err, &planErr) {
-			t.Fatalf("expected the plan-build failure to surface before execution, got %v", resultado.Err)
+		if !errors.As(result.Err, &planErr) {
+			t.Fatalf("expected the plan-build failure to surface before execution, got %v", result.Err)
 		}
-		if resultado.Estado != EstadoReviewInfrastructureError {
-			t.Fatalf("a broken plan is infrastructure-class, got %q", resultado.Estado)
+		if result.State != StateReviewInfrastructureError {
+			t.Fatalf("a broken plan is infrastructure-class, got %q", result.State)
 		}
 	})
 
 	t.Run("rejects an unresolved capability reference during planning", func(t *testing.T) {
-		opts := opcionesBase(t, cfgWithBrokenProfile, nil, nil)
-		opts.Perfil = "roto"
+		opts := baseOptions(t, cfgWithBrokenProfile, nil, nil)
+		opts.Profile = "broken"
 
-		resultado := EjecutarGate(opts)
+		result := RunGate(opts)
 
-		if resultado.Err == nil || !strings.Contains(errorMessage(resultado.Err), "not configured") {
-			t.Fatalf("broken capability reference must fail planning, got %v", resultado.Err)
+		if result.Err == nil || !strings.Contains(errorMessage(result.Err), "not configured") {
+			t.Fatalf("broken capability reference must fail planning, got %v", result.Err)
 		}
 	})
 }
@@ -215,40 +215,40 @@ func errorMessage(err error) string {
 // a candidate has always had. Without this, the probe could climb forever
 // against an identity that never changes.
 func TestGateRunPlanAttemptDiscriminates(t *testing.T) {
-	comandos := []string{"cmd-a", "cmd-b"}
-	primero, err := BuildGateRunPlanIntento("pr", "standard", "sha-1", comandos, 0)
+	commands := []string{"cmd-a", "cmd-b"}
+	first, err := BuildGateRunPlanAttempt("pr", "standard", "sha-1", commands, 0)
 	if err != nil {
 		t.Fatalf("attempt 0: %v", err)
 	}
-	segundo, err := BuildGateRunPlanIntento("pr", "standard", "sha-1", comandos, 1)
+	second, err := BuildGateRunPlanAttempt("pr", "standard", "sha-1", commands, 1)
 	if err != nil {
 		t.Fatalf("attempt 1: %v", err)
 	}
-	if primero.Root.RunID() == segundo.Root.RunID() {
+	if first.Root.RunID() == second.Root.RunID() {
 		t.Fatal("attempt 1 reused the root run identity of attempt 0: a re-gated candidate would still be refused")
 	}
-	if len(primero.Jobs) != len(segundo.Jobs) || len(primero.Jobs) == 0 {
-		t.Fatalf("job counts diverged: %d vs %d", len(primero.Jobs), len(segundo.Jobs))
+	if len(first.Jobs) != len(second.Jobs) || len(first.Jobs) == 0 {
+		t.Fatalf("job counts diverged: %d vs %d", len(first.Jobs), len(second.Jobs))
 	}
-	for i := range primero.Jobs {
-		if primero.Jobs[i].Job.RunID() == segundo.Jobs[i].Job.RunID() {
+	for i := range first.Jobs {
+		if first.Jobs[i].Job.RunID() == second.Jobs[i].Job.RunID() {
 			t.Errorf("job %d reused its identity across attempts: the child would be refused even with a fresh root", i)
 		}
 	}
-	if primero.Attempt != 0 || segundo.Attempt != 1 {
-		t.Errorf("plan attempts = %d, %d; expected 0, 1", primero.Attempt, segundo.Attempt)
+	if first.Attempt != 0 || second.Attempt != 1 {
+		t.Errorf("plan attempts = %d, %d; expected 0, 1", first.Attempt, second.Attempt)
 	}
 
 	// Attempt 0 must stay byte-identical to the historical identity, or every
 	// durable record written before the discriminator existed is orphaned.
-	repetido, err := BuildGateRunPlanIntento("pr", "standard", "sha-1", comandos, 0)
+	rebuilt, err := BuildGateRunPlanAttempt("pr", "standard", "sha-1", commands, 0)
 	if err != nil {
 		t.Fatalf("attempt 0 rebuild: %v", err)
 	}
-	if repetido.Root.RunID() != primero.Root.RunID() {
+	if rebuilt.Root.RunID() != first.Root.RunID() {
 		t.Error("attempt 0 is no longer deterministic")
 	}
-	if _, err := BuildGateRunPlanIntento("pr", "standard", "sha-1", comandos, -1); err == nil {
+	if _, err := BuildGateRunPlanAttempt("pr", "standard", "sha-1", commands, -1); err == nil {
 		t.Error("a negative attempt should be rejected explicitly")
 	}
 }

@@ -171,7 +171,7 @@ func TestRemoteStartExplicitPayloadPreservesIdentityAcrossTheWire(t *testing.T) 
 	// The started run stays blocked until release closes; settle it BEFORE
 	// returning so its final durable writes cannot race TempDir cleanup.
 	defer safeClose.Do(func() { close(release) })
-	controller := execution.NewController(store.NuevoStore(storeDir), blockingAdapter(release))
+	controller := execution.NewController(store.NewStore(storeDir), blockingAdapter(release))
 	ep := startTestServerForRemote(t, controller)
 	host := dialRemoteHostForTest(t, ep)
 
@@ -193,7 +193,7 @@ func TestRemoteStartExplicitPayloadPreservesIdentityAcrossTheWire(t *testing.T) 
 			handle.JobID, handle.RunID, twinJob.ID(), twinJob.RunID())
 	}
 
-	durable, err := store.NuevoStore(storeDir).ReadExecutionRequest(string(handle.RunID))
+	durable, err := store.NewStore(storeDir).ReadExecutionRequest(string(handle.RunID))
 	if err != nil {
 		t.Fatal(err)
 	}

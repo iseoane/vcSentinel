@@ -22,7 +22,7 @@ func TestRoute(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			finding := review.Hallazgo{ID: "f1", Fixable: tc.fixable}
+			finding := review.Finding{ID: "f1", Fixable: tc.fixable}
 			got, err := Route(finding)
 			if tc.wantErr {
 				if err == nil {

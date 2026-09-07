@@ -18,7 +18,7 @@ import (
 
 func TestStartPersistsAdmissionAndSuccessForFreshInspection(t *testing.T) {
 	adapter := &scriptedAdapter{result: AdapterResult{Output: "admitted output"}}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 
 	handle, err := controller.Start(context.Background(), testRequest("success"), testPolicy())
 	if err != nil {
@@ -70,7 +70,7 @@ func TestAdapterFailuresRemainInspectableAfterWorkerCompletion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			adapter := &scriptedAdapter{adapterErr: tt.adapterErr}
-			controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+			controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 			handle, err := controller.Start(context.Background(), testRequest(tt.name), testPolicy())
 			if err != nil {
 				t.Fatal(err)
@@ -98,7 +98,7 @@ func TestAdapterFailuresRemainInspectableAfterWorkerCompletion(t *testing.T) {
 
 func TestApplyAbortPersistsCooperativeCancellation(t *testing.T) {
 	adapter := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("abort"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestApplyAbortPersistsCooperativeCancellation(t *testing.T) {
 
 func TestCallerContextCancellationDetachesObservation(t *testing.T) {
 	adapter := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	callerContext, cancelCaller := context.WithCancel(context.Background())
 	handle, err := controller.Start(callerContext, testRequest("detach"), testPolicy())
 	if err != nil {
@@ -146,7 +146,7 @@ func TestCallerContextCancellationDetachesObservation(t *testing.T) {
 
 func TestApplyResponseCreatesDurableChildInvocation(t *testing.T) {
 	adapter := &responseAdapter{}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("response"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestApplyResponseCreatesDurableChildInvocation(t *testing.T) {
 }
 
 func TestApplyAbortReconstructsAwaitingDecisionAfterControllerRestart(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	firstController := NewControllerWithClock(backingStore, &responseAdapter{}, fixedClock())
 	handle, err := firstController.Start(context.Background(), testRequest("restart-abort"), testPolicy())
 	if err != nil {
@@ -200,7 +200,7 @@ func TestApplyAbortReconstructsAwaitingDecisionAfterControllerRestart(t *testing
 
 func TestInspectionUsesEmbeddedTerminalOutcomeWhenLegacyOutcomeSurfaceIsCorrupt(t *testing.T) {
 	storeRoot := t.TempDir()
-	backingStore := store.NuevoStore(storeRoot)
+	backingStore := store.NewStore(storeRoot)
 	controller := NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "durable output"}}, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("missing-outcome-surface"), testPolicy())
 	if err != nil {
@@ -228,7 +228,7 @@ func TestAdapterProcessBoundaryFailureIsDurable(t *testing.T) {
 	if os.Getenv("EXECUTION_ADAPTER_CHILD") == "1" {
 		os.Exit(23)
 	}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), processAdapter{}, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), processAdapter{}, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("process-boundary"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -321,43 +321,43 @@ func waitForState(t *testing.T, controller *Controller, runID agentrun.Identity,
 	t.Fatalf("state = %q, error = %v, want %q; inspection = %+v", inspection.Projection.State, err, want, inspection)
 }
 
-// TestFinishReconcilesALostTerminalAppendRace cubre el criterio abierto de la
-// ficha 18: "A controller that loses a terminal append race must reconcile the
+// TestFinishReconcilesALostTerminalAppendRace covers the open criterion of
+// card 18: "A controller that loses a terminal append race must reconcile the
 // durable terminal event instead of reporting an infrastructure error".
 //
-// Es la peor forma de perder trabajo del sistema: el proveedor YA respondió,
-// los tokens ya se gastaron y la respuesta existía, pero otro escritor asentó
-// el run primero y el worker tira todo con un conflicto de revisión que el
-// usuario ve como `store: expected execution revision N, found M`. El resultado
-// ajeno es la autoridad —ya está escrito y es inmutable—, pero eso hace que el
-// run esté ASENTADO, no que la ejecución haya fallado.
+// This is the worst way to lose work in the system: the provider ALREADY
+// answered, the tokens were spent and the response existed, but another
+// writer settled the run first and the worker throws everything away with a
+// revision conflict the user sees as `store: expected execution revision N,
+// found M`. The foreign result is the authority —already written and
+// immutable— but that means the run is SETTLED, not that the execution failed.
 func TestFinishReconcilesALostTerminalAppendRace(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	adapter := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
 	controller := NewControllerWithClock(backing, adapter, fixedClock())
 
-	handle, err := controller.Start(context.Background(), testRequest("carrera"), testPolicy())
+	handle, err := controller.Start(context.Background(), testRequest("race"), testPolicy())
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	<-adapter.started
 
-	// Otro escritor asienta el run mientras el worker sigue ejecutando: es lo
-	// que hacía el barrido de apagado del daemon, y lo que puede hacer
-	// cualquier proceso con acceso al store.
-	ajeno := NewControllerWithClock(backing, &scriptedAdapter{}, fixedClock())
-	asentado, err := ajeno.OrphanRun(handle.RunID, "asentado por otro escritor durante la ejecución")
-	if err != nil || !asentado {
-		t.Fatalf("no se pudo asentar el run desde fuera: settled=%v err=%v", asentado, err)
+	// Another writer settles the run while the worker is still executing:
+	// that is what the daemon shutdown sweep used to do, and any process with
+	// store access can do it.
+	other := NewControllerWithClock(backing, &scriptedAdapter{}, fixedClock())
+	settled, err := other.OrphanRun(handle.RunID, "settled by another writer during execution")
+	if err != nil || !settled {
+		t.Fatalf("could not settle the run from outside: settled=%v err=%v", settled, err)
 	}
 
 	close(adapter.release)
 
 	completion, waitErr := handle.Wait(context.Background())
 	if waitErr != nil {
-		t.Fatalf("Wait = %v; perder la carrera de asentamiento deja el run ASENTADO, no fallido: el worker debe reconciliar el evento terminal duradero", waitErr)
+		t.Fatalf("Wait = %v; losing the settlement race must leave the run SETTLED, not failed: the worker must reconcile the durable terminal event", waitErr)
 	}
 	if completion.State.TerminalClass() == agentrun.TerminalNone {
-		t.Errorf("estado = %q, esperado el terminal que dejó el otro escritor", completion.State)
+		t.Errorf("state = %q, want the terminal class left by the other writer", completion.State)
 	}
 }

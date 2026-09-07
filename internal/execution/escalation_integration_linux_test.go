@@ -124,7 +124,7 @@ func TestEscalationKillsGrandchildTreeWithEvidence(t *testing.T) {
 	script := []string{"sh", "-c", "sleep 30 & printf %s $! > " + gpidFile + "\nwait"}
 	policy := EscalationPolicy{Grace: 150 * time.Millisecond, FinalBudget: 2 * time.Second}
 
-	backing := store.NuevoStore(dir)
+	backing := store.NewStore(dir)
 	adapter := newTreeSpawnAdapter(script)
 	controller := NewControllerWithClockAndEscalation(backing, adapter, nil, policy)
 	handle, err := controller.Start(context.Background(),
@@ -190,7 +190,7 @@ func TestDisabledEscalationNeverSignalsTheWholeTree(t *testing.T) {
 	gpidFile := filepath.Join(dir, "grandchild-pid")
 	script := []string{"sh", "-c", "trap '' TERM\nsleep 30 & printf %s $! > " + gpidFile + "\nwait"}
 
-	backing := store.NuevoStore(dir)
+	backing := store.NewStore(dir)
 	adapter := newTreeSpawnAdapter(script)
 	controller := NewControllerWithClockAndEscalation(backing, adapter, nil, EscalationPolicy{Disabled: true})
 	handle, err := controller.Start(context.Background(),
@@ -274,7 +274,7 @@ func TestEscalationBeatsSignalIgnoringTree(t *testing.T) {
 	script := []string{"sh", "-c", "trap '' TERM\nsleep 30 & printf %s $! > " + gpidFile + "\nwait"}
 	policy := EscalationPolicy{Grace: 200 * time.Millisecond, FinalBudget: 2 * time.Second}
 
-	backing := store.NuevoStore(dir)
+	backing := store.NewStore(dir)
 	adapter := newTreeSpawnAdapter(script)
 	controller := NewControllerWithClockAndEscalation(backing, adapter, nil, policy)
 	handle, err := controller.Start(context.Background(),

@@ -11,16 +11,16 @@ import (
 // finding is no longer effective; accepted, reopened, pending, confirmed,
 // and legacy status-less findings still are.
 func TestEffectiveCriticalFindingsHonoursTheSharedRule(t *testing.T) {
-	mk := func(status string) review.Hallazgo {
-		return review.Hallazgo{
+	mk := func(status string) review.Finding {
+		return review.Finding{
 			Dimension: review.DimLogic, Severity: review.SevCritical,
 			Status:      status,
 			Description: "finding " + status,
-			Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 1},
+			Location:    review.Location{File: "a.go", LineStart: 1},
 		}
 	}
-	audit := review.ResultadoAuditoria{
-		Findings: []review.Hallazgo{
+	audit := review.AuditResult{
+		Findings: []review.Finding{
 			mk(review.StatusRefuted),
 			mk(review.StatusFixed),
 			mk(review.StatusAcceptedByUser),
@@ -53,12 +53,12 @@ func TestEffectiveCriticalFindingsHonoursTheSharedRule(t *testing.T) {
 
 // FU-6: a human-cleared audit passes the gate instead of asking for another
 // human review: the downgrade carries no automated refutation flag.
-func TestTraducirVeredictoPassesHumanClearedAudits(t *testing.T) {
-	audit := review.ResultadoAuditoria{
-		Veredicto: review.VerdictWarn,
-		Dims: []review.ResultadoDimension{{
+func TestTranslateVerdictPassesHumanClearedAudits(t *testing.T) {
+	audit := review.AuditResult{
+		Verdict: review.VerdictWarn,
+		Dims: []review.DimensionOutcome{{
 			Dim: "logic",
-			Resultado: &review.DimensionResult{
+			Result: &review.DimensionResult{
 				Dim:     review.DimLogic,
 				Verdict: review.VerdictWarn,
 				Findings: []review.ReviewFinding{{
@@ -72,8 +72,8 @@ func TestTraducirVeredictoPassesHumanClearedAudits(t *testing.T) {
 		}},
 	}
 
-	resultado := traducirVeredicto(audit)
-	if resultado.Estado != EstadoPass {
-		t.Fatalf("estado = %q, want a human-cleared audit to pass, got %q", resultado.Estado, resultado.Mensajes)
+	result := translateVerdict(audit)
+	if result.State != StatePass {
+		t.Fatalf("state = %q, want a human-cleared audit to pass, got %q", result.State, result.Messages)
 	}
 }

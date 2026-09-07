@@ -13,7 +13,7 @@ import (
 // guard for R7 slice 1: a plain successful run must produce exactly the
 // pre-R7 stream shape, so every existing consumer keeps reading it unchanged.
 func TestNormalSuccessWritesOnlyLegacyEventKinds(t *testing.T) {
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "legacy output"}}, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "legacy output"}}, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("legacy-success"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestNormalSuccessWritesOnlyLegacyEventKinds(t *testing.T) {
 // kind joins the stream because of the abort.
 func TestAbortedAttemptAppendsCancellationEvidenceExactlyOnce(t *testing.T) {
 	adapter := &contextIgnoringAdapter{started: make(chan struct{}), release: make(chan struct{}), returned: make(chan struct{})}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("cancel-evidence"), testPolicy())
 	if err != nil {
 		t.Fatal(err)

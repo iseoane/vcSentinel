@@ -20,7 +20,7 @@ import (
 // must come back nil). grace <= 0 selects DefaultGracePeriod.
 func startGracedServer(t *testing.T, adapter execution.Adapter, grace time.Duration) (*Server, *execution.Controller, *store.Store, Endpoint, <-chan error) {
 	t.Helper()
-	st := store.NuevoStore(t.TempDir())
+	st := store.NewStore(t.TempDir())
 	controller := execution.NewController(st, adapter)
 	ep := DefaultEndpoint(t.TempDir() + "/daemon")
 	listener, err := Listen(ep)
@@ -134,7 +134,7 @@ func TestGracefulShutdownCompletesFastAndReleasesEndpoint(t *testing.T) {
 		t.Fatalf("fresh Listen after graceful shutdown: %v", err)
 	}
 	defer func() { _ = relistener.Close() }()
-	fresh := NewServer(execution.NewController(store.NuevoStore(t.TempDir()), immediateAdapter("done")), testFingerprint())
+	fresh := NewServer(execution.NewController(store.NewStore(t.TempDir()), immediateAdapter("done")), testFingerprint())
 	t.Cleanup(fresh.Close)
 	go func() { _ = fresh.Serve(relistener) }()
 	reconnect := connectClient(t, ep, testFingerprint(), "")
@@ -384,7 +384,7 @@ func TestDoubleAndPostCloseShutdownAreDeterministic(t *testing.T) {
 		t.Fatalf("double Shutdown error = %v, want errServerClosed", second)
 	}
 
-	closed := NewServer(execution.NewController(store.NuevoStore(t.TempDir()), immediateAdapter("done")), testFingerprint())
+	closed := NewServer(execution.NewController(store.NewStore(t.TempDir()), immediateAdapter("done")), testFingerprint())
 	closed.Close()
 	if err := closed.Shutdown(); !errors.Is(err, errServerClosed) {
 		t.Fatalf("Shutdown after Close error = %v, want errServerClosed", err)
@@ -392,7 +392,7 @@ func TestDoubleAndPostCloseShutdownAreDeterministic(t *testing.T) {
 
 	// Concurrent racers: exactly one wins the sequence, every loser gets a
 	// deterministic refusal, nothing panics.
-	racing := NewServer(execution.NewController(store.NuevoStore(t.TempDir()), immediateAdapter("done")), testFingerprint())
+	racing := NewServer(execution.NewController(store.NewStore(t.TempDir()), immediateAdapter("done")), testFingerprint())
 	t.Cleanup(racing.Close)
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {

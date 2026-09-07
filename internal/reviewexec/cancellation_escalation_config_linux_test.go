@@ -84,7 +84,7 @@ type treeProbeReviewer struct {
 	wholeTreeArmed bool
 }
 
-func (r *treeProbeReviewer) EjecutarRevision(prompt, _ string, _ []string) (string, error) {
+func (r *treeProbeReviewer) RunReview(prompt, _ string, _ []string) (string, error) {
 	return prompt + "|legacy", nil
 }
 
@@ -137,7 +137,7 @@ func TestCancellationEscalationFalseFromYamlKeepsDirectChildOnlyKill(t *testing.
 	t.Setenv("HOME", home)
 	writeProjectConfig(t, worktree, "version: \"2.0\"\nreview:\n  cancellation_escalation: false\n")
 
-	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
 		t.Fatalf("strict config load = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestCancellationEscalationFalseFromYamlKeepsDirectChildOnlyKill(t *testing.
 	}
 
 	reviewer := &treeProbeReviewer{t: t, gpidFile: filepath.Join(backingDir, "grandchild-pid")}
-	backing := store.NuevoStore(backingDir)
+	backing := store.NewStore(backingDir)
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:review"}, "sha-abc123", nil,
 		WithEvidenceAdmission(cfg.Review.EvidenceAdmission),
 		WithCancellationEscalation(execution.EscalationPolicy{Disabled: !cfg.Review.CancellationEscalation}))
@@ -195,7 +195,7 @@ func TestCancellationEscalationDefaultStaysArmed(t *testing.T) {
 	t.Setenv("HOME", home)
 	writeProjectConfig(t, worktree, "version: \"2.0\"\n")
 
-	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
 		t.Fatalf("strict config load = %v", err)
 	}
@@ -204,7 +204,7 @@ func TestCancellationEscalationDefaultStaysArmed(t *testing.T) {
 	}
 
 	reviewer := &treeProbeReviewer{t: t, gpidFile: filepath.Join(backingDir, "grandchild-pid")}
-	transport := NewDurableTransport(store.NuevoStore(backingDir), store.RunPolicy{ID: "policy:review"}, "sha-def456", nil,
+	transport := NewDurableTransport(store.NewStore(backingDir), store.RunPolicy{ID: "policy:review"}, "sha-def456", nil,
 		WithEvidenceAdmission(cfg.Review.EvidenceAdmission),
 		WithCancellationEscalation(execution.EscalationPolicy{Disabled: !cfg.Review.CancellationEscalation}))
 

@@ -17,19 +17,19 @@ import (
 )
 
 func TestGateSurfacesAdmissionDistinctFromInfrastructure(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo ok")
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) { return 0, "ok", nil },
-		fabricaContadora(new(int), "", nil))
+	cfg := cfgWithProfile("lint", "echo ok")
+	opts := baseOptions(t, cfg, func(string) (int, string, error) { return 0, "ok", nil },
+		countingFactory(new(int), "", nil))
 	// This test injects its own transport at the engine seam, so clear the
-	// default production-style factory wired by opcionesBase.
+	// default production-style factory wired by baseOptions.
 	opts.DurableReviewTransportFactory = nil
-	opts.EjecutarValidacion = func(_ string, _ []string, _ validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+	opts.RunValidation = func(_ string, _ []string, _ validation.RunOptions) ([]validation.ValidationRun, error) {
 		return nil, nil // validation green: the review stage is what this test exercises
 	}
-	opts.OpcionesRevision.Bundles = []review.ReviewBundle{
+	opts.ReviewOptions.Bundles = []review.ReviewBundle{
 		{Name: "test", Dimensions: []string{review.DimLogic, review.DimSecurity}, Priority: 1, Cost: 1},
 	}
-	opts.OpcionesRevision.ReviewTransport = func(_ string, dimension, _ string, _ review.AuditorAgente) (string, string, error) {
+	opts.ReviewOptions.ReviewTransport = func(_ string, dimension, _ string, _ review.AgentReviewer) (string, string, error) {
 		if dimension == review.DimLogic {
 			return "", "", &reviewexec.AdmissionError{
 				Identity: "quality/logic",
@@ -39,20 +39,20 @@ func TestGateSurfacesAdmissionDistinctFromInfrastructure(t *testing.T) {
 		return "", "", errors.New("durable store is unreachable")
 	}
 
-	resultado := EjecutarGate(opts)
+	result := RunGate(opts)
 
-	if resultado.Estado != EstadoReviewInfrastructureError {
-		t.Fatalf("estado = %q, want %q (exit-code contracts unchanged)", resultado.Estado, EstadoReviewInfrastructureError)
+	if result.State != StateReviewInfrastructureError {
+		t.Fatalf("state = %q, want %q (exit-code contracts unchanged)", result.State, StateReviewInfrastructureError)
 	}
-	unido := strings.Join(resultado.Mensajes, "\n")
-	if !strings.Contains(unido, `dimension="logic" reason="admission: output hash mismatch for the admitted invocation" class=admission`) {
-		t.Fatalf("messages = %q, want the logic dimension labeled class=admission with its evidence prefix intact", unido)
+	joined := strings.Join(result.Messages, "\n")
+	if !strings.Contains(joined, `dimension="logic" reason="admission: output hash mismatch for the admitted invocation" class=admission`) {
+		t.Fatalf("messages = %q, want the logic dimension labeled class=admission with its evidence prefix intact", joined)
 	}
-	if !strings.Contains(unido, `dimension="security" reason="durable store is unreachable" class=infrastructure`) {
-		t.Fatalf("messages = %q, want the security dimension labeled class=infrastructure", unido)
+	if !strings.Contains(joined, `dimension="security" reason="durable store is unreachable" class=infrastructure`) {
+		t.Fatalf("messages = %q, want the security dimension labeled class=infrastructure", joined)
 	}
-	if strings.Count(unido, "class=admission") != 1 || strings.Count(unido, "class=infrastructure") != 1 {
-		t.Fatalf("messages = %q, want exactly one label per failure class", unido)
+	if strings.Count(joined, "class=admission") != 1 || strings.Count(joined, "class=infrastructure") != 1 {
+		t.Fatalf("messages = %q, want exactly one label per failure class", joined)
 	}
 }
 
@@ -60,24 +60,24 @@ func TestGateSurfacesAdmissionDistinctFromInfrastructure(t *testing.T) {
 // the typed transport error wins when the engine retained it; once only the
 // persisted reason survives, the literal admission prefix decides.
 func TestFailureClassPrefersTypedErrorThenReason(t *testing.T) {
-	admitted := review.ResultadoDimension{
-		Error:     fmt.Errorf("review run failed: %w", &reviewexec.AdmissionError{Reason: "stale snapshot"}),
-		Resultado: &review.DimensionResult{Verdict: review.VerdictUnavailable},
+	admitted := review.DimensionOutcome{
+		Error:  fmt.Errorf("review run failed: %w", &reviewexec.AdmissionError{Reason: "stale snapshot"}),
+		Result: &review.DimensionResult{Verdict: review.VerdictUnavailable},
 	}
 	if got := failureClass(admitted); got != "admission" {
 		t.Fatalf("failureClass(typed admission error) = %q, want admission", got)
 	}
 
-	persisted := review.ResultadoDimension{
-		Resultado: &review.DimensionResult{Verdict: review.VerdictUnavailable, Reason: "admission: prompt identity diverged"},
+	persisted := review.DimensionOutcome{
+		Result: &review.DimensionResult{Verdict: review.VerdictUnavailable, Reason: "admission: prompt identity diverged"},
 	}
 	if got := failureClass(persisted); got != "admission" {
 		t.Fatalf("failureClass(persisted admission reason) = %q, want admission", got)
 	}
 
-	outage := review.ResultadoDimension{
-		Error:     errors.New("durable store is unreachable"),
-		Resultado: &review.DimensionResult{Verdict: review.VerdictUnavailable, Reason: "durable store is unreachable"},
+	outage := review.DimensionOutcome{
+		Error:  errors.New("durable store is unreachable"),
+		Result: &review.DimensionResult{Verdict: review.VerdictUnavailable, Reason: "durable store is unreachable"},
 	}
 	if got := failureClass(outage); got != "infrastructure" {
 		t.Fatalf("failureClass(infrastructure failure) = %q, want infrastructure", got)

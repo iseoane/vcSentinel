@@ -158,7 +158,7 @@ func admitRunWithOperation(t *testing.T, st *store.Store, candidate, operation s
 // because a cosmetic metadata miss can never fail the activity pane.
 func TestRecentRunsSurfacesOperationsAndDegradesSoftly(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	reviewID := admitRunWithOperation(t, st, "candidate:labeled-review", "review")
 	gateID := admitRunWithOperation(t, st, "candidate:labeled-gate", "gate pre-push")
 	bareID := admitRunWithOperation(t, st, "candidate:legacy-bare", "")
@@ -256,7 +256,7 @@ func seedFailedRunAt(t *testing.T, st *store.Store, candidate string, base time.
 
 func TestRecentRunsPrioritizesStateThenProjectionTime(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	olderStartedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	newerStartedAt := time.Date(2026, 1, 2, 3, 5, 5, 0, time.UTC)
 	olderID := seedFailedRunAt(t, st, "candidate:presence-fixture-003",
@@ -323,7 +323,7 @@ func TestRecentRunsPrioritizesStateThenProjectionTime(t *testing.T) {
 
 func TestRecentRunsBreaksProjectionTimeTiesByRunID(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	leftID := seedFailedRunAt(t, st, "candidate:presence-tie-left", base)
 	rightID := seedFailedRunAt(t, st, "candidate:presence-tie-right", base)
@@ -340,7 +340,7 @@ func TestRecentRunsBreaksProjectionTimeTiesByRunID(t *testing.T) {
 
 func TestRecentRunsSuppressesChildrenBeforeGlobalQuota(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	parentID := seedRunWithPolicyAt(t, st, "activity-parent", store.RunPolicy{
 		ID: "policy:activity",
@@ -362,7 +362,7 @@ func TestRecentRunsSuppressesChildrenBeforeGlobalQuota(t *testing.T) {
 
 func TestRecentRunsKeepsChildWithMissingParentVisible(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	orphanID := seedRunWithPolicyAt(t, st, "activity-orphan", store.RunPolicy{
 		ID: gateRootPolicyID, ParentRunID: "missing-parent",
 	}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
@@ -381,7 +381,7 @@ func TestRecentRunsKeepsChildWithMissingParentVisible(t *testing.T) {
 
 func TestRecentRunsPlacesActiveRunsBeforeTerminalRuns(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	activeID := seedRunWithPolicyAt(t, st, "activity-active", store.RunPolicy{
 		ID: "policy:activity",
@@ -407,7 +407,7 @@ func TestRecentRunsPlacesActiveRunsBeforeTerminalRuns(t *testing.T) {
 
 func TestRecentRunsCollapsesGateChildrenAndKeepsWorktreeQuota(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	mainPath := filepath.Join(t.TempDir(), "main")
 	featurePath := filepath.Join(t.TempDir(), "feature")
@@ -443,7 +443,7 @@ func TestRecentRunsCollapsesGateChildrenAndKeepsWorktreeQuota(t *testing.T) {
 
 func TestRecentRunsStopsPolicyScanAfterQuotasAreFilled(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	for i := 0; i < 3; i++ {
@@ -469,7 +469,7 @@ func TestRecentRunsStopsPolicyScanAfterQuotasAreFilled(t *testing.T) {
 
 func TestRecentRunsSurfacesHistoricalProjectionCorruption(t *testing.T) {
 	commonDir := t.TempDir()
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	historicalID := seedRun(t, st, "candidate:presence-corrupt-history")
 	seedFailedRun(t, st, "candidate:presence-corrupt-history-newer")
 	statePath := filepath.Join(commonDir, "vas-sentinel", "executions", "v1", historicalID, "state.json")
@@ -511,7 +511,7 @@ func TestRecentRunsAcceptsHugeLimitWithEmptyStore(t *testing.T) {
 
 	t.Run("small limit does not preallocate full history", func(t *testing.T) {
 		commonDir := t.TempDir()
-		st := store.NuevoStore(commonDir)
+		st := store.NewStore(commonDir)
 		base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 		const historySize = 64
 		for i := 0; i < historySize; i++ {

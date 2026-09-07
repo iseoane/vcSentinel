@@ -4,7 +4,7 @@
 // keeps the package-main names the tests drive, the thin dispatch wrappers
 // and the production wiring; this package owns the flows themselves.
 //
-// Movement hazard cleared: the 21 live block fichas cite snapshot.go,
+// Movement hazard cleared: the 21 live block records cite snapshot.go,
 // comandos_runs.go and siblings — none cites cmd/sentinel/comandos_pr.go —
 // and there are no standing dispositions (no dispositions.jsonl), so moving
 // that file orphans nothing.
@@ -31,17 +31,17 @@ import (
 // wiring owner: it builds one Wiring per invocation and hands it to the flows
 // below, so this package never reaches back into package main.
 type Wiring struct {
-	// NuevoVerificadorModelo must be wired as a closure over package main's
-	// nuevoVerificadorModelo var (tests swap it), so the var is read at call
+	// NewModelVerifier must be wired as a closure over package main's
+	// newModelVerifier var (tests swap it), so the var is read at call
 	// time, never captured at wiring time.
-	NuevoVerificadorModelo   func(worktree string) *modelprobe.Verificador
+	NewModelVerifier         func(worktree string) *modelprobe.Verifier
 	SharedReviewLedger       func(worktree string) (*review.Ledger, error)
 	LoadDispositions         func(worktree string) ([]review.FindingDisposition, error)
 	TransportFactory         func(cfg config.Config, worktree string) func(sha string, paths []string) review.ReviewTransport
-	OpcionesRamaConRefutador func(cfg config.Config, verificador *modelprobe.Verificador, opts review.OpcionesRama) review.OpcionesRama
-	ShaCorto                 func(sha string) string
-	PerfilGatePorDefecto     string
-	ProyectarHallazgos       func(hallazgos []validation.Hallazgo) []review.Hallazgo
+	BranchOptionsWithRefuter func(cfg config.Config, verifier *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions
+	ShortSHA                 func(sha string) string
+	DefaultGateProfile       string
+	ProjectFindings          func(findings []validation.Finding) []review.Finding
 	Version                  string
 }
 
@@ -56,24 +56,24 @@ func stackOwnDiff(parent string, chainPR bool) *review.OwnDiffOptions {
 	return nil
 }
 
-// ResolveBlobStore resolves the blob store AnalizarRama needs to reuse reviews
+// ResolveBlobStore resolves the blob store AnalyzeBranch needs to reuse reviews
 // by CONTENT instead of by SHA (F2 exit criterion), which is what makes
 // rebasing the base of a stacked PR cheap (F8 exit criterion 2): without it
 // every rewritten SHA looks unreviewed and the whole stack is audited again.
 //
 // It MUST receive the git COMMON dir, never the per-worktree git dir: linked
-// worktrees share one store, and store.NuevoStore documents that contract.
+// worktrees share one store, and store.NewStore documents that contract.
 //
-// Reuse never fabricates a verdict: AnalizarRama adopts an EXISTING ficha
+// Reuse never fabricates a verdict: AnalyzeBranch adopts an EXISTING record
 // under the new SHA, exactly as the ledger cache already did per SHA. The
 // store is therefore optional, and the error travels to the caller instead of
 // to os.Stderr so every command routes the warning through the writer it
 // already uses for its own diagnostics; a nil store restores the SHA-only
 // behaviour rather than aborting a real review.
 func ResolveBlobStore(worktree string) (review.StoreBlobs, error) {
-	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		return nil, err
 	}
-	return store.NuevoStore(commonDir), nil
+	return store.NewStore(commonDir), nil
 }

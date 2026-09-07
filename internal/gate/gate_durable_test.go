@@ -22,9 +22,9 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
-// cfgDosCapabilities is a multi-command profile fixture: two capabilities in
+// cfgWithTwoCapabilities is a multi-command profile fixture: two layerbilities in
 // exact profile order, both judged by exit code.
-func cfgDosCapabilities() config.Config {
+func cfgWithTwoCapabilities() config.Config {
 	return config.Config{
 		Validation: config.ValidationConfig{
 			Capabilities: map[string]config.CapabilityConfig{
@@ -32,37 +32,37 @@ func cfgDosCapabilities() config.Config {
 				"test": {Command: "echo test", FailsWhen: config.FailsWhenExitCode},
 			},
 			Profiles: map[string][]string{
-				"testperfil": {"lint", "test"},
+				"testprofile": {"lint", "test"},
 			},
 			Mode: config.ModeInplace,
 		},
 	}
 }
 
-// ejecutorSeleccionado fails exactly the listed commands with the given exit
+// selectedExecutor fails exactly the listed commands with the given exit
 // status and output; every other command passes silently.
-func ejecutorSeleccionado(fallidos map[string]validation.ValidationRun) validation.EjecutorComando {
-	return func(comando string) (int, string, error) {
-		if run, ok := fallidos[comando]; ok {
-			return run.Exit, run.Salida, nil
+func selectedExecutor(failing map[string]validation.ValidationRun) validation.CommandRunner {
+	return func(command string) (int, string, error) {
+		if run, ok := failing[command]; ok {
+			return run.Exit, run.Output, nil
 		}
 		return 0, "", nil
 	}
 }
 
-// inspeccionarRaiz reconstructs the root run exclusively from admitted
+// inspectRoot reconstructs the root run exclusively from admitted
 // durable state, proving the settled terminal state and its layer detail.
-func inspeccionarRaiz(t *testing.T, st *store.Store, opts Opciones) execution.Inspection {
+func inspectRoot(t *testing.T, st *store.Store, opts Options) execution.Inspection {
 	t.Helper()
 	plan, err := buildDurableGatePlan(opts)
 	if err != nil {
 		t.Fatalf("plan rebuild failed: %v", err)
 	}
-	inspeccion, err := execution.NewController(st, nil).Inspect(context.Background(), plan.Root.RunID())
+	inspection, err := execution.NewController(st, nil).Inspect(context.Background(), plan.Root.RunID())
 	if err != nil {
 		t.Fatalf("root inspection failed: %v", err)
 	}
-	return inspeccion
+	return inspection
 }
 
 // TestGateDurableReviewNeverStartsOnValidationFailure proves the legacy
@@ -73,36 +73,36 @@ func inspeccionarRaiz(t *testing.T, st *store.Store, opts Opciones) execution.In
 // job included, whose AttemptOutcome keeps class=failure AND the non-empty
 // evidence OutputHash.
 func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
-	transportes := 0
-	base := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
-		"echo test": {Exit: 3, Salida: "fallo determinista del comando test"},
-	}), fabricaContadora(new(int), "", nil))
-	var capturados []validation.ValidationRun
-	base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-		runs, err := ejecutarPerfilSinCandidato(perfil, alcance, o)
-		capturados = runs
+	transports := 0
+	base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(map[string]validation.ValidationRun{
+		"echo test": {Exit: 3, Output: "deterministic failure of the test command"},
+	}), countingFactory(new(int), "", nil))
+	var captured []validation.ValidationRun
+	base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
+		runs, err := runProfileWithoutCandidate(profile, scope, o)
+		captured = runs
 		return runs, err
 	}
-	durableOpts := opcionesDurable(t, base, &transportes)
+	durableOpts := durableOptions(t, base, &transports)
 
-	resultado := EjecutarGate(durableOpts)
+	result := RunGate(durableOpts)
 
-	if resultado.Estado != EstadoValidationFailed {
-		t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoValidationFailed)
+	if result.State != StateValidationFailed {
+		t.Fatalf("state = %q, expected %q", result.State, StateValidationFailed)
 	}
-	if transportes != 0 {
-		t.Fatalf("review transport factory was invoked %d times after a validation failure, expected 0", transportes)
+	if transports != 0 {
+		t.Fatalf("review transport factory was invoked %d times after a validation failure, expected 0", transports)
 	}
 
-	inspeccion := inspeccionarRaiz(t, durableOpts.DurableStore, durableOpts)
-	if inspeccion.Projection.State != agentrun.StateFailed {
-		t.Fatalf("root state = %q, expected %q", inspeccion.Projection.State, agentrun.StateFailed)
+	inspection := inspectRoot(t, durableOpts.DurableStore, durableOpts)
+	if inspection.Projection.State != agentrun.StateFailed {
+		t.Fatalf("root state = %q, expected %q", inspection.Projection.State, agentrun.StateFailed)
 	}
 	jobs := planValidationJobsForTest(t, durableOpts)
 	wantRootError := layerValidationDetail + "|children=" +
 		string(jobs[0].Job.RunID()) + "," + string(jobs[1].Job.RunID())
 	var rootError string
-	for _, outcome := range inspeccion.Outcomes {
+	for _, outcome := range inspection.Outcomes {
 		if strings.HasPrefix(outcome.Error, layerValidationDetail) {
 			rootError = outcome.Error
 		}
@@ -113,7 +113,7 @@ func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
 
 	// Every planned validation job settled durably, pass AND fail alike; the
 	// failed one keeps its evidence digest hash-bound despite its failure.
-	evidencia := RecordValidationEvidence(capturados)
+	evidence := RecordValidationEvidence(captured)
 	settledClasses := map[agentrun.OutcomeClass]int{}
 	for index, job := range jobs {
 		jobInspection, err := execution.NewController(durableOpts.DurableStore, nil).Inspect(context.Background(), job.Job.RunID())
@@ -126,7 +126,7 @@ func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
 				t.Fatalf("passed validation job %q settled without hash-bound evidence", job.Command)
 			}
 			if outcome.Class == agentrun.OutcomeFailure {
-				wantHash := execution.HashAdapterOutput(evidencia[index].String())
+				wantHash := execution.HashAdapterOutput(evidence[index].String())
 				if outcome.OutputHash == "" || outcome.OutputHash != wantHash {
 					t.Fatalf("failed validation job %q lost its evidence: OutputHash=%q want %q", job.Command, outcome.OutputHash, wantHash)
 				}
@@ -144,48 +144,48 @@ func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
 // unavailable with the infrastructure marker.
 func TestGateDurableRootLayerDistinction(t *testing.T) {
 	t.Run("review blocker names the review layer", func(t *testing.T) {
-		transportes := 0
-		base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
-			fabricaContadora(new(int), `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`, nil))
-		base.EjecutarValidacion = ejecutarPerfilSinCandidato
-		base.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-			return &auditorFalso{salida: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
+		transports := 0
+		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
+			countingFactory(new(int), `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`, nil))
+		base.RunValidation = runProfileWithoutCandidate
+		base.RefuterFactory = func() (review.AgentReviewer, string, error) {
+			return &fakeReviewer{output: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
 		}
-		durableOpts := opcionesDurable(t, base, &transportes)
+		durableOpts := durableOptions(t, base, &transports)
 
-		resultado := EjecutarGate(durableOpts)
+		result := RunGate(durableOpts)
 
-		if resultado.Estado != EstadoCodeReviewFailed {
-			t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoCodeReviewFailed)
+		if result.State != StateCodeReviewFailed {
+			t.Fatalf("state = %q, expected %q", result.State, StateCodeReviewFailed)
 		}
-		inspeccion := inspeccionarRaiz(t, durableOpts.DurableStore, durableOpts)
-		if inspeccion.Projection.State != agentrun.StateFailed {
-			t.Fatalf("root state = %q, expected failed", inspeccion.Projection.State)
+		inspection := inspectRoot(t, durableOpts.DurableStore, durableOpts)
+		if inspection.Projection.State != agentrun.StateFailed {
+			t.Fatalf("root state = %q, expected failed", inspection.Projection.State)
 		}
-		if !raizNombraCapa(inspeccion, "review") {
-			t.Fatalf("root outcomes never named the review layer: %+v", inspeccion.Outcomes)
+		if !rootNamesLayer(inspection, "review") {
+			t.Fatalf("root outcomes never named the review layer: %+v", inspection.Outcomes)
 		}
 	})
 
 	t.Run("infrastructure failure settles the root unavailable", func(t *testing.T) {
-		transportes := 0
-		base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), nil, fabricaContadora(new(int), "", nil))
-		base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			return nil, errAgenteNoDisponibleTest
+		transports := 0
+		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil, countingFactory(new(int), "", nil))
+		base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
+			return nil, errAgentUnavailableTest
 		}
-		durableOpts := opcionesDurable(t, base, &transportes)
+		durableOpts := durableOptions(t, base, &transports)
 
-		resultado := EjecutarGate(durableOpts)
+		result := RunGate(durableOpts)
 
-		if resultado.Estado != EstadoReviewInfrastructureError {
-			t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoReviewInfrastructureError)
+		if result.State != StateReviewInfrastructureError {
+			t.Fatalf("state = %q, expected %q", result.State, StateReviewInfrastructureError)
 		}
-		inspeccion := inspeccionarRaiz(t, durableOpts.DurableStore, durableOpts)
-		if inspeccion.Projection.State != agentrun.StateUnavailable {
-			t.Fatalf("root state = %q, expected unavailable", inspeccion.Projection.State)
+		inspection := inspectRoot(t, durableOpts.DurableStore, durableOpts)
+		if inspection.Projection.State != agentrun.StateUnavailable {
+			t.Fatalf("root state = %q, expected unavailable", inspection.Projection.State)
 		}
-		if !raizNombraCapa(inspeccion, "infrastructure") {
-			t.Fatalf("root outcomes never named the infrastructure layer: %+v", inspeccion.Outcomes)
+		if !rootNamesLayer(inspection, "infrastructure") {
+			t.Fatalf("root outcomes never named the infrastructure layer: %+v", inspection.Outcomes)
 		}
 	})
 }
@@ -196,12 +196,12 @@ func TestGateDurableRootLayerDistinction(t *testing.T) {
 // of a silent green gate.
 func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 	t.Run("settlement failure is honest infrastructure with a pinned prefix", func(t *testing.T) {
-		llamadas := 0
-		opts := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(&llamadas, "", nil))
+		calls := 0
+		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil), countingFactory(&calls, "", nil))
 		opts.Stage = "pre-push"
-		opts.CandidateSHA = opts.OpcionesRevision.SHA
+		opts.CandidateSHA = opts.ReviewOptions.SHA
 		commonDir := filepath.Join(t.TempDir(), "gate-common")
-		opts.DurableStore = store.NuevoStore(commonDir)
+		opts.DurableStore = store.NewStore(commonDir)
 		// The injected validation seam runs AFTER the root run is admitted
 		// but BEFORE any validation job settles: sabotaging the FIRST
 		// validation job's execution directory there isolates exactly the
@@ -216,20 +216,20 @@ func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 			t.Fatal("fixture drift: no validation jobs planned")
 		}
 		jobDir := filepath.Join(commonDir, "vas-sentinel", "executions", "v1", string(jobs[0].Job.RunID()))
-		opts.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
+		opts.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 			if err := os.WriteFile(jobDir, []byte("not a directory"), 0o644); err != nil {
 				t.Fatalf("sabotage failed: %v", err)
 			}
-			return ejecutarPerfilSinCandidato(perfil, alcance, o)
+			return runProfileWithoutCandidate(profile, scope, o)
 		}
 
-		resultado := EjecutarGate(opts)
+		result := RunGate(opts)
 
-		if resultado.Estado != EstadoReviewInfrastructureError {
-			t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoReviewInfrastructureError)
+		if result.State != StateReviewInfrastructureError {
+			t.Fatalf("state = %q, expected %q", result.State, StateReviewInfrastructureError)
 		}
-		if len(resultado.Mensajes) != 1 || !strings.HasPrefix(resultado.Mensajes[0], "No se pudo registrar la validación duradera:") {
-			t.Fatalf("settlement-failure facade drifted: %q", resultado.Mensajes)
+		if len(result.Messages) != 1 || !strings.HasPrefix(result.Messages[0], "Could not record the durable validation:") {
+			t.Fatalf("settlement-failure facade drifted: %q", result.Messages)
 		}
 	})
 }
@@ -239,25 +239,25 @@ func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 // each passed validation job equals execution.HashAdapterOutput over the
 // RecordValidationEvidence serialization of that command's tuple.
 func TestGateDurableEvidenceDigestBinding(t *testing.T) {
-	transportes := 0
-	base := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(nil), fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-	var capturados []validation.ValidationRun
-	base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-		runs, err := ejecutarPerfilSinCandidato(perfil, alcance, o)
-		capturados = runs
+	transports := 0
+	base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(nil), countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	var captured []validation.ValidationRun
+	base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
+		runs, err := runProfileWithoutCandidate(profile, scope, o)
+		captured = runs
 		return runs, err
 	}
-	durableOpts := opcionesDurable(t, base, &transportes)
+	durableOpts := durableOptions(t, base, &transports)
 
-	resultado := EjecutarGate(durableOpts)
+	result := RunGate(durableOpts)
 
-	if resultado.Estado != EstadoPass {
-		t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoPass)
+	if result.State != StatePass {
+		t.Fatalf("state = %q, expected %q", result.State, StatePass)
 	}
-	evidencia := RecordValidationEvidence(capturados)
+	evidence := RecordValidationEvidence(captured)
 	jobs := planValidationJobsForTest(t, durableOpts)
-	if len(jobs) != len(evidencia) {
-		t.Fatalf("planned jobs = %d, evidence entries = %d", len(jobs), len(evidencia))
+	if len(jobs) != len(evidence) {
+		t.Fatalf("planned jobs = %d, evidence entries = %d", len(jobs), len(evidence))
 	}
 	for index, job := range jobs {
 		jobInspection, err := execution.NewController(durableOpts.DurableStore, nil).Inspect(context.Background(), job.Job.RunID())
@@ -267,23 +267,23 @@ func TestGateDurableEvidenceDigestBinding(t *testing.T) {
 		if len(jobInspection.Outcomes) != 1 {
 			t.Fatalf("validation job %q recorded %d outcomes, expected 1", job.Command, len(jobInspection.Outcomes))
 		}
-		wantHash := execution.HashAdapterOutput(evidencia[index].String())
+		wantHash := execution.HashAdapterOutput(evidence[index].String())
 		if got := jobInspection.Outcomes[0].OutputHash; got != wantHash {
 			t.Fatalf("validation job %q output hash %q does not bind its evidence digest (want %q)", job.Command, got, wantHash)
 		}
 	}
 }
 
-func raizNombraCapa(inspeccion execution.Inspection, capa string) bool {
-	for _, outcome := range inspeccion.Outcomes {
-		if strings.Contains(outcome.Error, "failing layer: "+capa) {
+func rootNamesLayer(inspection execution.Inspection, layer string) bool {
+	for _, outcome := range inspection.Outcomes {
+		if strings.Contains(outcome.Error, "failing layer: "+layer) {
 			return true
 		}
 	}
 	return false
 }
 
-func planValidationJobsForTest(t *testing.T, opts Opciones) []GateJobPlan {
+func planValidationJobsForTest(t *testing.T, opts Options) []GateJobPlan {
 	t.Helper()
 	plan, err := buildDurableGatePlan(opts)
 	if err != nil {
@@ -302,50 +302,50 @@ func planValidationJobsForTest(t *testing.T, opts Opciones) []GateJobPlan {
 // unrelated file changed mid-validation, and the retry on the same commit could
 // never be admitted again, leaving the guardian unable to re-certify it.
 func TestGateDurableRerunsTheSameCandidate(t *testing.T) {
-	transportes := 0
-	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
-		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-	base.EjecutarValidacion = ejecutarPerfilSinCandidato
-	durableOpts := opcionesDurable(t, base, &transportes)
+	transports := 0
+	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
+		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base.RunValidation = runProfileWithoutCandidate
+	durableOpts := durableOptions(t, base, &transports)
 
-	primero := EjecutarGate(durableOpts)
-	if primero.Estado == EstadoReviewInfrastructureError {
-		t.Fatalf("first gate is infrastructure-broken before the case starts: %v", primero.Mensajes)
+	first := RunGate(durableOpts)
+	if first.State == StateReviewInfrastructureError {
+		t.Fatalf("first gate is infrastructure-broken before the case starts: %v", first.Messages)
 	}
 
-	segundo := EjecutarGate(durableOpts)
-	if segundo.Estado == EstadoReviewInfrastructureError {
-		t.Fatalf("re-running the gate on the same candidate = %q %v; the guardian must be able to re-certify a commit it already gated", segundo.Estado, segundo.Mensajes)
+	second := RunGate(durableOpts)
+	if second.State == StateReviewInfrastructureError {
+		t.Fatalf("re-running the gate on the same candidate = %q %v; the guardian must be able to re-certify a commit it already gated", second.State, second.Messages)
 	}
-	if segundo.Estado != primero.Estado {
-		t.Errorf("second gate estado = %q, expected the same verdict as the first (%q): the same candidate and the same commands cannot change the outcome", segundo.Estado, primero.Estado)
+	if second.State != first.State {
+		t.Errorf("second gate state = %q, expected the same verdict as the first (%q): the same candidate and the same commands cannot change the outcome", second.State, first.State)
 	}
 
 	// Facade equality is not enough: a permissive Controller.Start would look
 	// identical from here while appending a second lifecycle onto attempt 0's
 	// settled stream. Inspect attempt 1 explicitly and prove it settled on its
 	// OWN identity, distinct from attempt 0.
-	intento0, err := BuildDurableGatePlanIntento(durableOpts, 0)
+	attempt0, err := BuildDurableGatePlanAttempt(durableOpts, 0)
 	if err != nil {
 		t.Fatalf("attempt 0 plan: %v", err)
 	}
-	intento1, err := BuildDurableGatePlanIntento(durableOpts, 1)
+	attempt1, err := BuildDurableGatePlanAttempt(durableOpts, 1)
 	if err != nil {
 		t.Fatalf("attempt 1 plan: %v", err)
 	}
-	if intento0.Root.RunID() == intento1.Root.RunID() {
+	if attempt0.Root.RunID() == attempt1.Root.RunID() {
 		t.Fatal("both attempts derive the same root identity: the discriminator is not discriminating")
 	}
 	inspector := execution.NewController(durableOpts.DurableStore, nil)
-	for nombre, runID := range map[string]agentrun.Identity{
-		"attempt 0": intento0.Root.RunID(), "attempt 1": intento1.Root.RunID(),
+	for name, runID := range map[string]agentrun.Identity{
+		"attempt 0": attempt0.Root.RunID(), "attempt 1": attempt1.Root.RunID(),
 	} {
-		inspeccion, err := inspector.Inspect(context.Background(), runID)
+		inspection, err := inspector.Inspect(context.Background(), runID)
 		if err != nil {
-			t.Fatalf("%s root inspection: %v", nombre, err)
+			t.Fatalf("%s root inspection: %v", name, err)
 		}
-		if inspeccion.Projection.Terminal == agentrun.TerminalNone {
-			t.Errorf("%s root did not settle: terminal=%q state=%q", nombre, inspeccion.Projection.Terminal, inspeccion.Projection.State)
+		if inspection.Projection.Terminal == agentrun.TerminalNone {
+			t.Errorf("%s root did not settle: terminal=%q state=%q", name, inspection.Projection.Terminal, inspection.Projection.State)
 		}
 	}
 }
@@ -357,42 +357,42 @@ func TestGateDurableRerunsTheSameCandidate(t *testing.T) {
 // probe treats every terminal class alike, so without this the abort-and-retry
 // path stays plausible rather than pinned.
 func TestGateDurableRerunsAfterAnUnavailableRoot(t *testing.T) {
-	transportes := 0
+	transports := 0
 	// An empty auditor output settles the review as infrastructure-unavailable.
-	roto := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil), fabricaContadora(new(int), "", nil))
-	roto.EjecutarValidacion = ejecutarPerfilSinCandidato
-	durableOpts := opcionesDurable(t, roto, &transportes)
+	broken := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil), countingFactory(new(int), "", nil))
+	broken.RunValidation = runProfileWithoutCandidate
+	durableOpts := durableOptions(t, broken, &transports)
 
-	primero := EjecutarGate(durableOpts)
-	if primero.Estado != EstadoReviewInfrastructureError {
-		t.Fatalf("first gate estado = %q, expected the infrastructure failure this case is about", primero.Estado)
+	first := RunGate(durableOpts)
+	if first.State != StateReviewInfrastructureError {
+		t.Fatalf("first gate state = %q, expected the infrastructure failure this case is about", first.State)
 	}
-	intento0, err := BuildDurableGatePlanIntento(durableOpts, 0)
+	attempt0, err := BuildDurableGatePlanAttempt(durableOpts, 0)
 	if err != nil {
 		t.Fatalf("attempt 0 plan: %v", err)
 	}
-	inspeccion, err := execution.NewController(durableOpts.DurableStore, nil).Inspect(context.Background(), intento0.Root.RunID())
+	inspection, err := execution.NewController(durableOpts.DurableStore, nil).Inspect(context.Background(), attempt0.Root.RunID())
 	if err != nil {
 		t.Fatalf("attempt 0 inspection: %v", err)
 	}
-	if inspeccion.Projection.Terminal != agentrun.TerminalUnavailable {
-		t.Fatalf("attempt 0 terminal = %q, expected %q", inspeccion.Projection.Terminal, agentrun.TerminalUnavailable)
+	if inspection.Projection.Terminal != agentrun.TerminalUnavailable {
+		t.Fatalf("attempt 0 terminal = %q, expected %q", inspection.Projection.Terminal, agentrun.TerminalUnavailable)
 	}
 
 	// Same candidate, working reviewer this time: the guardian must be able to
 	// certify the commit its own infrastructure failure left uncertified.
-	sano := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
-		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-	sano.EjecutarValidacion = ejecutarPerfilSinCandidato
-	segundoOpts := sano
-	segundoOpts.Stage = durableOpts.Stage
-	segundoOpts.CandidateSHA = durableOpts.CandidateSHA
-	segundoOpts.DurableStore = durableOpts.DurableStore
-	segundoOpts.DurableReviewTransportFactory = durableOpts.DurableReviewTransportFactory
+	healthy := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
+		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	healthy.RunValidation = runProfileWithoutCandidate
+	secondOpts := healthy
+	secondOpts.Stage = durableOpts.Stage
+	secondOpts.CandidateSHA = durableOpts.CandidateSHA
+	secondOpts.DurableStore = durableOpts.DurableStore
+	secondOpts.DurableReviewTransportFactory = durableOpts.DurableReviewTransportFactory
 
-	segundo := EjecutarGate(segundoOpts)
-	if segundo.Estado != EstadoPass {
-		t.Fatalf("second gate estado = %q, expected %q: an infrastructure failure must not brick the candidate", segundo.Estado, EstadoPass)
+	second := RunGate(secondOpts)
+	if second.State != StatePass {
+		t.Fatalf("second gate state = %q, expected %q: an infrastructure failure must not brick the candidate", second.State, StatePass)
 	}
 }
 
@@ -400,35 +400,35 @@ func TestGateDurableRerunsAfterAnUnavailableRoot(t *testing.T) {
 // real limit of 64 the branch would need 64 real gate executions, so the test
 // lowers it instead of leaving the refusal unproven.
 func TestGateDurableRefusesAnExhaustedCandidate(t *testing.T) {
-	original := maxIntentosGate
-	maxIntentosGate = 1
-	t.Cleanup(func() { maxIntentosGate = original })
+	original := maxAttemptsGate
+	maxAttemptsGate = 1
+	t.Cleanup(func() { maxAttemptsGate = original })
 
-	transportes := 0
-	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
-		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-	base.EjecutarValidacion = ejecutarPerfilSinCandidato
-	durableOpts := opcionesDurable(t, base, &transportes)
+	transports := 0
+	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
+		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base.RunValidation = runProfileWithoutCandidate
+	durableOpts := durableOptions(t, base, &transports)
 
-	if primero := EjecutarGate(durableOpts); primero.Estado == EstadoReviewInfrastructureError {
-		t.Fatalf("first gate is broken before the case starts: %v", primero.Mensajes)
+	if first := RunGate(durableOpts); first.State == StateReviewInfrastructureError {
+		t.Fatalf("first gate is broken before the case starts: %v", first.Messages)
 	}
-	segundo := EjecutarGate(durableOpts)
-	if segundo.Estado != EstadoReviewInfrastructureError {
-		t.Fatalf("estado = %q, expected the exhausted bound to refuse", segundo.Estado)
+	second := RunGate(durableOpts)
+	if second.State != StateReviewInfrastructureError {
+		t.Fatalf("state = %q, expected the exhausted bound to refuse", second.State)
 	}
-	if mensaje := strings.Join(segundo.Mensajes, "\n"); !strings.Contains(mensaje, "settled gate executions") {
-		t.Errorf("message = %q, expected the exhaustion refusal to say so", mensaje)
+	if message := strings.Join(second.Messages, "\n"); !strings.Contains(message, "settled gate executions") {
+		t.Errorf("message = %q, expected the exhaustion refusal to say so", message)
 	}
 }
 
-// bloqueanteAdapter keeps a run running until liberar is closed, so a test can
+// blockingAdapter keeps a run running until release is closed, so a test can
 // hold a non-terminal root run in durable state while another gate tries to
 // admit the same candidate.
-type bloqueanteAdapter struct{ liberar chan struct{} }
+type blockingAdapter struct{ release chan struct{} }
 
-func (a bloqueanteAdapter) Execute(_ context.Context, _ agentrun.LogicalJob, _ agentrun.InvocationEnvelope, _ string) (execution.AdapterResult, error) {
-	<-a.liberar
+func (a blockingAdapter) Execute(_ context.Context, _ agentrun.LogicalJob, _ agentrun.InvocationEnvelope, _ string) (execution.AdapterResult, error) {
+	<-a.release
 	return execution.AdapterResult{}, nil
 }
 
@@ -438,44 +438,44 @@ func (a bloqueanteAdapter) Execute(_ context.Context, _ agentrun.LogicalJob, _ a
 // gate is racing the first over the same candidate, and refusing it stays
 // correct — with its own message, not the raw admission error.
 func TestGateDurableRefusesAConcurrentGateOnTheSameCandidate(t *testing.T) {
-	transportes := 0
-	base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
-		fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-	base.EjecutarValidacion = ejecutarPerfilSinCandidato
-	durableOpts := opcionesDurable(t, base, &transportes)
+	transports := 0
+	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
+		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base.RunValidation = runProfileWithoutCandidate
+	durableOpts := durableOptions(t, base, &transports)
 
 	plan, err := buildDurableGatePlan(durableOpts)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	liberar := make(chan struct{})
-	vivo := execution.NewController(durableOpts.DurableStore, bloqueanteAdapter{liberar: liberar})
+	release := make(chan struct{})
+	live := execution.NewController(durableOpts.DurableStore, blockingAdapter{release: release})
 	// Timing invariant this test relies on: Start persists the running head
-	// BEFORE returning its handle, so by the time EjecutarGate probes, the
+	// BEFORE returning its handle, so by the time RunGate probes, the
 	// non-terminal record is durably visible. The handle is kept and waited on
 	// so the blocked worker finishes writing before t.TempDir is removed —
 	// dropping it makes the cleanup race the worker.
-	handle, err := vivo.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
+	handle, err := live.Start(context.Background(), plan.Root.Request(), store.RunPolicy{
 		ID: DurableGateRunPolicyID, Operation: gateRootOperation(durableOpts.Stage),
-		Commit: shortCommitLabel(durableOpts.CandidateSHA), Worktree: durableOpts.OpcionesValidacion.Worktree,
+		Commit: shortCommitLabel(durableOpts.CandidateSHA), Worktree: durableOpts.ValidationOptions.Worktree,
 	})
 	if err != nil {
 		t.Fatalf("could not hold a live root run: %v", err)
 	}
 	t.Cleanup(func() {
-		close(liberar)
+		close(release)
 		if _, err := handle.Wait(context.Background()); err != nil {
 			t.Logf("held run did not settle cleanly: %v", err)
 		}
 	})
 
-	resultado := EjecutarGate(durableOpts)
+	result := RunGate(durableOpts)
 
-	if resultado.Estado != EstadoReviewInfrastructureError {
-		t.Fatalf("estado = %q, expected the concurrent gate to be refused", resultado.Estado)
+	if result.State != StateReviewInfrastructureError {
+		t.Fatalf("state = %q, expected the concurrent gate to be refused", result.State)
 	}
-	mensaje := strings.Join(resultado.Mensajes, "\n")
-	if !strings.Contains(mensaje, "already running this candidate") {
-		t.Errorf("message = %q; a concurrent gate must say so instead of surfacing the raw admission error", mensaje)
+	message := strings.Join(result.Messages, "\n")
+	if !strings.Contains(message, "already running this candidate") {
+		t.Errorf("message = %q; a concurrent gate must say so instead of surfacing the raw admission error", message)
 	}
 }

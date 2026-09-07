@@ -57,7 +57,7 @@ func (a *failThenBlockAdapter) Execute(ctx context.Context, _ agentrun.LogicalJo
 
 func TestRetryExtendsOriginalRunWithDurableAttemptLineage(t *testing.T) {
 	adapter := &failThenSucceedAdapter{failures: 1}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("retry"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestRetryRejectsRunsOutsideRetryableTerminalEvidence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), tt.adapter(), fixedClock())
+			controller := NewControllerWithClock(store.NewStore(t.TempDir()), tt.adapter(), fixedClock())
 			runID := tt.run(t, controller)
 			if _, err := controller.Retry(context.Background(), runID, 0); !errors.Is(err, tt.wantError) {
 				t.Fatalf("Retry() error = %v, want %v", err, tt.wantError)
@@ -200,7 +200,7 @@ func TestRetryRejectsRunsOutsideRetryableTerminalEvidence(t *testing.T) {
 
 func TestRetryingAnAlreadyRelaunchedRunFailsExplicitly(t *testing.T) {
 	adapter := &failThenBlockAdapter{started: make(chan struct{}), release: make(chan struct{})}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("double-retry"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +237,7 @@ func TestRetryingAnAlreadyRelaunchedRunFailsExplicitly(t *testing.T) {
 }
 
 func TestFreshControllerRetriesARunItNeverStarted(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	first := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("worker crashed")}, fixedClock())
 	handle, err := first.Start(context.Background(), testRequest("cross-process"), testPolicy())
 	if err != nil {
@@ -301,7 +301,7 @@ func TestRetryLiveGuardRefusalDecidesFromSyntheticInputs(t *testing.T) {
 // still open. The guard must consult the durable stream instead of refusing
 // on stale live memory; before the fix this surfaced as ErrRunNotActive.
 func TestRetryCrossChecksDurableTruthWhenBookkeepingLags(t *testing.T) {
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "done"}}, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "done"}}, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("stale-bookkeeping"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +331,7 @@ func TestRetryCrossChecksDurableTruthWhenBookkeepingLags(t *testing.T) {
 // appending, so replacing only the observed entry cannot clobber a newer run.
 func TestRetryRelaunchesThroughStaleBookkeepingOnARetryableHead(t *testing.T) {
 	adapter := &failThenSucceedAdapter{failures: 1}
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock())
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("window-relaunch"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +360,7 @@ func TestRetryRelaunchesThroughStaleBookkeepingOnARetryableHead(t *testing.T) {
 }
 
 func TestRetryHonorsTheExpectedRevision(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("attempt failed")}, fixedClock())
 	handle, err := failed.Start(context.Background(), testRequest("revision"), testPolicy())
 	if err != nil {

@@ -22,22 +22,22 @@ const HonestNetIntention = "No PR title/description exists before publication: c
 // boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
 // it); this struct is its counterpart here, so the fields are exported.
 type FlagsPrReview struct {
-	Base           string
-	SoloPendientes bool // --only-unaudited
-	Overview       bool // --overview
-	JsonOut        bool // --json
-	Parent         string
+	Base        string
+	OnlyPending bool // --only-unaudited
+	Overview    bool // --overview
+	JsonOut     bool // --json
+	Parent      string
 }
 
-// DetalleEventoPrReview constructs the structured detail for the pr-review event
+// PrReviewEventDetail constructs the structured detail for the pr-review event
 // (guide schema §13).
-func DetalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (ops.EventDetail, error) {
-	detalle := ops.EventDetail{
+func PrReviewEventDetail(base string, res *review.BranchResult, ci bool) (ops.EventDetail, error) {
+	detail := ops.EventDetail{
 		"base":      base,
-		"rama":      res.Rama,
-		"auditadas": len(res.Fichas),
-		"nuevas":    len(res.Pendientes),
-		"volumen":   res.Volumen,
+		"rama":      res.Branch,
+		"auditadas": len(res.Records),
+		"nuevas":    len(res.Pending),
+		"volumen":   res.Volume,
 		"ci":        ci,
 		"overview":  res.Overview != nil,
 		"chain_pr":  res.Decision == "chain",
@@ -45,15 +45,15 @@ func DetalleEventoPrReview(base string, res *review.ResultadoRama, ci bool) (ops
 	// An overview failure must not be silent in the event: if it was requested
 	// and failed, the chain decision carries its cause.
 	if res.OverviewError != "" {
-		detalle["overview_error"] = res.OverviewError
+		detail["overview_error"] = res.OverviewError
 	}
-	if failures := reviewerFailureDetails(res.Fichas); len(failures) > 0 {
-		detalle["reviewer_failures"] = failures
+	if failures := reviewerFailureDetails(res.Records); len(failures) > 0 {
+		detail["reviewer_failures"] = failures
 	}
-	return detalle, nil
+	return detail, nil
 }
 
-func reviewerFailureDetails(cards []review.Ficha) []ops.EventDetail {
+func reviewerFailureDetails(cards []review.Record) []ops.EventDetail {
 	var failures []ops.EventDetail
 	for _, card := range cards {
 		if len(card.Revisions) == 0 {
@@ -74,110 +74,110 @@ func reviewerFailureDetails(cards []review.Ficha) []ops.EventDetail {
 	return failures
 }
 
-// TextoDecision explica la decisión single/chain en la salida terminal.
-func TextoDecision(decision string, volumen int) string {
+// DecisionText explains the single/chain decision on the terminal output.
+func DecisionText(decision string, volume int) string {
 	switch decision {
 	case "chain":
-		return "Decisión PR: cadena (--chain-pr, fase 6). La rama supera " +
-			"el umbral de volumen y no se demostró coherencia: conviene dividirla en PRs encadenadas."
+		return "PR decision: chain (--chain-pr, phase 6). The branch exceeds " +
+			"the volume threshold and no coherence was demonstrated: it should be split into chained PRs."
 	case "single":
-		if volumen > review.LimiteDecisionChain {
-			return "Decisión PR: una sola PR. La rama supera el umbral de volumen pero " +
-				"el overview confirmó que es un cambio coherente."
+		if volume > review.DecisionChainLimit {
+			return "PR decision: a single PR. The branch exceeds the volume threshold but " +
+				"the overview confirmed it is a coherent change."
 		}
-		return "Decisión PR: una sola PR (volumen dentro del umbral)."
+		return "PR decision: a single PR (volume within the threshold)."
 	}
-	return "Decisión PR: " + decision
+	return "PR decision: " + decision
 }
 
-// OpcionesRamaPrReview assembles the branch-analysis options pr review hands to
-// AnalizarRama. It is a separate function, not an inline literal, because
-// EjecutarPrReview calls os.Exit and cannot be driven from a test: the wiring it
+// BranchPrReviewOptions assembles the branch-analysis options pr review hands to
+// AnalyzeBranch. It is a separate function, not an inline literal, because
+// RunPrReview calls os.Exit and cannot be driven from a test: the wiring it
 // carries — notably the blob store that keeps a base rebase cheap (F8 criterion
 // 2) — would otherwise be deletable without failing anything.
 //
-// The named results say what the signature alone would get wrong: avisoStore is
+// The named results say what the signature alone would get wrong: storeWarning is
 // ONLY the blob-store resolution failure, never a reason to abort. Reuse is
-// optional, so opciones comes back fully usable with a nil Store and the caller
+// optional, so options comes back fully usable with a nil Store and the caller
 // warns through its own stream instead of returning.
-func OpcionesRamaPrReview(cfg config.Config, verificador *modelprobe.Verificador, worktree string, flags FlagsPrReview, fabrica review.FabricaAuditor, wiring Wiring) (opciones review.OpcionesRama, avisoStore error) {
+func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags FlagsPrReview, factory review.ReviewerFactory, wiring Wiring) (options review.BranchOptions, storeWarning error) {
 	base := flags.Base
 	if base == "" {
 		base = "main"
 	}
-	blobStore, avisoStore := ResolveBlobStore(worktree)
-	return wiring.OpcionesRamaConRefutador(cfg, verificador, review.OpcionesRama{
+	blobStore, storeWarning := ResolveBlobStore(worktree)
+	return wiring.BranchOptionsWithRefuter(cfg, verifier, review.BranchOptions{
 		Base:                   base,
-		SoloPendientes:         flags.SoloPendientes,
+		OnlyPending:            flags.OnlyPending,
 		Overview:               flags.Overview,
-		Fabrica:                fabrica,
+		Factory:                factory,
 		Parallel:               cfg.Review.Parallel,
 		Store:                  blobStore,
 		ReviewTransportFactory: wiring.TransportFactory(cfg, worktree),
 		// FU-11 residual: exposed-credential incidents ride every audited
 		// commit through the per-commit deterministic channel.
 		DeterministicFindingsFactory: SecretFindingsFactory(),
-		ModelVerifier:                verificador,
+		ModelVerifier:                verifier,
 		OnCommit: func(idx, total int, sha string) {
-			fmt.Printf("⏳ [%d/%d] Auditar %s\n", idx+1, total, wiring.ShaCorto(sha))
+			fmt.Printf("⏳ [%d/%d] Auditing %s\n", idx+1, total, wiring.ShortSHA(sha))
 		},
 		OnDimension: func(dim string) {
 			fmt.Printf("  ⏳ %s …\n", dim)
 		},
 		OwnDiff:   stackOwnDiff(flags.Parent, false),
 		NetReview: &review.NetReviewOptions{Intention: HonestNetIntention, Validation: "pr review performs no deterministic validation"},
-	}), avisoStore
+	}), storeWarning
 }
 
-// AplicarDisposicionesPrReview loads the standing human answers and sets
+// ApplyPrReviewDispositions loads the standing human answers and sets
 // them on the net review input for the cross-SHA carry-over. A corrupt log
 // is an error: pr review must fail closed before spending review tokens
 // rather than audit as if no human answered. The loader is a seam so tests
 // drive this without git. A nil net review (no net audit requested) leaves
 // the options untouched and still reports a loader failure.
-func AplicarDisposicionesPrReview(opciones review.OpcionesRama, worktree string, cargar func(string) ([]review.FindingDisposition, error)) (review.OpcionesRama, error) {
-	dispositions, err := cargar(worktree)
+func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, error) {
+	dispositions, err := load(worktree)
 	if err != nil {
-		return opciones, err
+		return options, err
 	}
-	if opciones.NetReview != nil {
-		opciones.NetReview.Dispositions = dispositions
+	if options.NetReview != nil {
+		options.NetReview.Dispositions = dispositions
 	}
-	return opciones, nil
+	return options, nil
 }
 
-// EjecutarPrReview analiza la rama contra la base y muestra la matriz de
-// auditoría, el resumen y la decisión single/chain. Es dry-run: no publica
-// nada. Registra el evento pr-review al terminar. cmd/sentinel parses the
-// flags and exits on a parse error before dispatching here.
-func EjecutarPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
-	// Config ESTRICTA (hallazgo del orquestador, fuera del texto original de
-	// la ficha): una clave desconocida en el yml debe cortar aquí con error
-	// explícito, no seguir en silencio con la config por defecto.
-	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+// RunPrReview analyzes the branch against the base and shows the audit
+// matrix, the summary and the single/chain decision. It is dry-run: nothing
+// is published. It records the pr-review event when done. cmd/sentinel parses
+// the flags and exits on a parse error before dispatching here.
+func RunPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
+	// STRICT config (orchestrator finding, outside the record's original
+	// text): an unknown key in the yml must cut here with an explicit error,
+	// not silently continue with the default config.
+	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
-	gitDir, err := git.ObtenerGitDirDe(worktree)
+	gitDir, err := git.GetGitDirFrom(worktree)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
 
-	verificadorModelo := wiring.NuevoVerificadorModelo(worktree)
-	fabrica := func(_ review.ReviewBundle, dimension string) (review.AuditorAgente, string, error) {
-		profile := config.ResolverPerfil(cfg, reviewcontract.DefaultProfile(dimension), "")
-		adapter, err := agentadapter.NuevoAdaptadorConPerfil(cfg, profile)
+	modelVerifier := wiring.NewModelVerifier(worktree)
+	factory := func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
+		profile := config.ResolveProfile(cfg, reviewcontract.DefaultProfile(dimension), "")
+		adapter, err := agentadapter.NewAdapterWithProfile(cfg, profile)
 		if err != nil {
-			return nil, profile.Nombre, err
+			return nil, profile.Name, err
 		}
-		verificadorModelo.Verify(profile.Nombre, profile.Modelo, adapter)
-		return adapter, profile.Nombre, nil
+		modelVerifier.Verify(profile.Name, profile.Model, adapter)
+		return adapter, profile.Name, nil
 	}
 
 	// Anchored on the common directory, not on gitDir: see sharedReviewLedger.
-	// AnalizarRama also WRITES here, through GuardarRevision and AdoptarFicha,
+	// AnalyzeBranch also WRITES here, through GuardarRevision and AdoptarFicha,
 	// so this is where a rebase-adopted copy lands too.
 	//
 	// Resolved BEFORE the branch options, which warn-and-continue when the same
@@ -189,79 +189,79 @@ func EjecutarPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
-	opciones, err := OpcionesRamaPrReview(cfg, verificadorModelo, worktree, flags, fabrica, wiring)
+	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring)
 	if err != nil {
-		fmt.Printf("⚠️  Aviso: no se pudo resolver el git-common-dir; las revisiones no se reutilizaran por contenido tras un rebase (%v).\n", err)
+		fmt.Printf("⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
 	}
 	// Standing human answers carry into the net audit (FU-6 unit A). A
 	// corrupt log fails closed rather than auditing as if no human answered.
-	var derr error
-	opciones, derr = AplicarDisposicionesPrReview(opciones, worktree, wiring.LoadDispositions)
-	if derr != nil {
-		fmt.Printf("? %v\n", derr)
+	var loadErr error
+	options, loadErr = ApplyPrReviewDispositions(options, worktree, wiring.LoadDispositions)
+	if loadErr != nil {
+		fmt.Printf("? %v\n", loadErr)
 		os.Exit(1)
 	}
-	base := opciones.Base
-	res, err := review.AnalizarRama(ledger, opciones)
+	base := options.Base
+	res, err := review.AnalyzeBranch(ledger, options)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
 
-	detalle, err := DetalleEventoPrReview(base, res, git.DetectarCI(worktree))
+	detail, err := PrReviewEventDetail(base, res, git.DetectCI(worktree))
 	if err != nil {
-		fmt.Printf("? Aviso: no se pudo construir el detalle del evento: %v\n", err)
+		fmt.Printf("? Warning: could not build the event detail: %v\n", err)
 	}
-	if err := ops.RegistrarEvento(gitDir, "pr-review", 0, res.SHAs, detalle, worktree); err != nil {
-		fmt.Printf("? Aviso: no se pudo registrar el evento: %v\n", err)
+	if err := ops.RecordEvent(gitDir, "pr-review", 0, res.SHAs, detail, worktree); err != nil {
+		fmt.Printf("? Warning: could not record the event: %v\n", err)
 	}
 
 	if flags.JsonOut {
-		salida := SalidaJSONPrReview(base, res)
-		datos, err := json.MarshalIndent(salida, "", "  ")
+		output := PrReviewJSONOutput(base, res)
+		data, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
 			fmt.Printf("? %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println(string(datos))
+		fmt.Println(string(data))
 		return
 	}
 
 	if res.Net != nil { // T8.4/A: the authoritative verdict leads the report
 		fmt.Println(review.VerdictLine(res))
 	}
-	if len(res.Fichas) > 0 {
+	if len(res.Records) > 0 {
 		fmt.Println("OWN (per-commit audit)")
-		fmt.Println(review.RenderMatriz(res.Fichas))
+		fmt.Println(review.RenderMatrix(res.Records))
 		if res.Net == nil { // historical summary only without a net authority
-			fmt.Println(review.RenderResumen(res.Fichas))
+			fmt.Println(review.RenderSummary(res.Records))
 		}
-		fmt.Println(TextoDecision(res.Decision, res.Volumen))
+		fmt.Println(DecisionText(res.Decision, res.Volume))
 	}
-	fmt.Print(review.InheritedSection(res.Heredados))
+	fmt.Print(review.InheritedSection(res.Inherited))
 	// Ticket 07: admission failures are first-class evidence, so the terminal
 	// report never lets them pass as generic infrastructure unavailability.
-	if admission, _ := conteoNoDisponibles(res.Fichas); admission > 0 {
+	if admission, _ := unavailableCount(res.Records); admission > 0 {
 		fmt.Printf("? %d unavailable dimension record(s) are ADMISSION failures (evidence rejected before verdicts), not infrastructure outages.\n", admission)
 	}
 	if res.OverviewError != "" {
-		fmt.Printf("? Aviso: el overview no se pudo obtener (%s); se decidió por volumen.\n", res.OverviewError)
+		fmt.Printf("? Warning: the overview could not be obtained (%s); the decision was made by volume.\n", res.OverviewError)
 	}
 }
 
-// SalidaJSONPrReview builds the public --json result shape of pr review,
+// PrReviewJSONOutput builds the public --json result shape of pr review,
 // including the ticket-07 classification of unavailable dimension records:
 // review_admission_failures and review_infrastructure_failures are counted
 // separately so consumers can distinguish rejected evidence from outages.
-func SalidaJSONPrReview(base string, res *review.ResultadoRama) map[string]any {
-	admission, infrastructure := conteoNoDisponibles(res.Fichas)
-	salida := map[string]any{
-		"rama":       res.Rama,
+func PrReviewJSONOutput(base string, res *review.BranchResult) map[string]any {
+	admission, infrastructure := unavailableCount(res.Records)
+	output := map[string]any{
+		"rama":       res.Branch,
 		"base":       base,
 		"shas":       res.SHAs,
-		"pendientes": res.Pendientes,
-		"fichas":     res.Fichas,
-		"volumen":    res.Volumen,
+		"pendientes": res.Pending,
+		"fichas":     res.Records,
+		"volumen":    res.Volume,
 		"decision":   res.Decision,
 		"overview":   res.Overview,
 		// Ticket 07: admission vs infrastructure split over the append-only
@@ -270,27 +270,27 @@ func SalidaJSONPrReview(base string, res *review.ResultadoRama) map[string]any {
 		"review_infrastructure_failures": infrastructure,
 	}
 	if res.OverviewError != "" {
-		salida["overview_error"] = res.OverviewError
+		output["overview_error"] = res.OverviewError
 	}
-	if res.Propio != nil { // T8.4/E
-		salida["own"] = res.Propio
+	if res.Own != nil { // T8.4/E
+		output["own"] = res.Own
 	}
-	if len(res.Heredados) > 0 {
-		salida["inherited"] = res.Heredados
+	if len(res.Inherited) > 0 {
+		output["inherited"] = res.Inherited
 	}
 	if res.Net != nil {
-		salida["net"] = res.Net
+		output["net"] = res.Net
 	}
-	return salida
+	return output
 }
 
-// conteoNoDisponibles classifies every unavailable DimensionResult recorded
+// unavailableCount classifies every unavailable DimensionResult recorded
 // in the branch's revisions: reasons carrying the literal admission prefix
 // are admission failures; everything else stays infrastructure. It reads the
 // persisted ledger shape, where the typed transport error no longer exists.
-func conteoNoDisponibles(fichas []review.Ficha) (admission, infrastructure int) {
-	for _, ficha := range fichas {
-		for _, revision := range ficha.Revisions {
+func unavailableCount(records []review.Record) (admission, infrastructure int) {
+	for _, record := range records {
+		for _, revision := range record.Revisions {
 			for _, dim := range revision.Dims {
 				if dim.Verdict != review.VerdictUnavailable {
 					continue

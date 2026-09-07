@@ -83,7 +83,7 @@ const resolvedCommandAttribute = "resolved_command"
 // command equals the planned base command (or is unknown), the planned job is
 // returned untouched.
 func executedValidationJob(planned GateJobPlan, run validation.ValidationRun) agentrun.LogicalJob {
-	if run.Comando == "" || run.Comando == planned.Command {
+	if run.Command == "" || run.Command == planned.Command {
 		return planned.Job
 	}
 	request := planned.Job.Request()
@@ -94,21 +94,21 @@ func executedValidationJob(planned GateJobPlan, run validation.ValidationRun) ag
 			continue
 		}
 		attributes := capability.Attributes()
-		attributes[resolvedCommandAttribute] = run.Comando
+		attributes[resolvedCommandAttribute] = run.Command
 		stamped = append(stamped, agentrun.NewCapability(capability.Name(), attributes))
 	}
 	return agentrun.NewLogicalJob(agentrun.NewRunRequest(request.Candidate(), request.Prompt(), stamped))
 }
 
-// salidaEvidencia serializes the deterministic evidence entry of one settled
+// evidenceOutput serializes the deterministic evidence entry of one settled
 // validation command. The settled adapter returns exactly this text, so the
 // controller hash-binds the whole tuple into the durable AttemptOutcome
 // without persisting raw output bytes.
-func salidaEvidencia(index int, evidencia []ValidationEvidence) string {
-	if index >= len(evidencia) {
+func evidenceOutput(index int, evidence []ValidationEvidence) string {
+	if index >= len(evidence) {
 		return ""
 	}
-	return evidencia[index].String()
+	return evidence[index].String()
 }
 
 // rootRunAdapter blocks the root run's worker until the orchestration sends

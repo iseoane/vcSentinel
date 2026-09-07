@@ -28,7 +28,7 @@ const observationBudget = 5 * time.Second
 
 func newE2EStore(t *testing.T) *store.Store {
 	t.Helper()
-	return store.NuevoStore(t.TempDir())
+	return store.NewStore(t.TempDir())
 }
 
 func e2eRequest(name string) agentrun.RunRequest {
@@ -156,7 +156,7 @@ func (a *awaitingAdapter) Execute(_ context.Context, _ agentrun.LogicalJob, _ ag
 // prompt chain (CadenaAdaptador), exactly like reviewexec.ReviewAdapter does:
 // the adapter classifies infrastructure failures without deciding verdicts.
 type chainPromptAdapter struct {
-	chain agentadapter.AdaptadorPrompt
+	chain agentadapter.PromptAdapter
 }
 
 func (a chainPromptAdapter) Execute(_ context.Context, job agentrun.LogicalJob, _ agentrun.InvocationEnvelope, response string) (execution.AdapterResult, error) {
@@ -164,7 +164,7 @@ func (a chainPromptAdapter) Execute(_ context.Context, job agentrun.LogicalJob, 
 	if response != "" {
 		prompt += "\n\n" + response
 	}
-	output, err := a.chain.EjecutarPrompt(prompt)
+	output, err := a.chain.RunPrompt(prompt)
 	if err != nil {
 		return execution.AdapterResult{}, execution.NewAdapterError(agentrun.OutcomeFailure, err)
 	}

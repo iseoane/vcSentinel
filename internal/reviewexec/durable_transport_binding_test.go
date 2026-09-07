@@ -37,14 +37,14 @@ func bindingRecord(t *testing.T, backing *store.Store, candidateRaw, prompt stri
 }
 
 // bindingRequestPath rebuilds the durable request.json path from the store
-// root passed to NuevoStore, which appends vas-sentinel itself.
+// root passed to NewStore, which appends vas-sentinel itself.
 func bindingRequestPath(t *testing.T, root, runID string) string {
 	t.Helper()
 	return filepath.Join(root, "vas-sentinel", "executions", "v1", runID, "request.json")
 }
 
 func TestBindSnapshotAdmitsCoherentSnapshot(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:binding"}, "binding-sha", []string{"a.go"})
 	candidate := agentrun.Candidate("review:quality/logic:binding-sha:salt:000001")
 	job := bindingRecord(t, backing, string(candidate), "admitted prompt")
@@ -104,7 +104,7 @@ func TestBindSnapshotRejectsDivergentIdentities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backing := store.NuevoStore(t.TempDir())
+			backing := store.NewStore(t.TempDir())
 			transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:binding"}, tt.transportSha, nil)
 			job := bindingRecord(t, backing,
 				"review:quality/logic:"+tt.recordSha+":salt:000001", "admitted prompt")
@@ -147,7 +147,7 @@ func TestBindSnapshotReadFailuresStayInfrastructureErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			backing := store.NuevoStore(root)
+			backing := store.NewStore(root)
 			transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:binding"}, "binding-sha", nil)
 			candidate := agentrun.Candidate("review:quality/logic:binding-sha:salt:000006")
 			runID := "absent-run-id"
@@ -195,7 +195,7 @@ func newGatedReviewer() *gatedReviewer {
 	return &gatedReviewer{entered: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (r *gatedReviewer) EjecutarRevision(string, string, []string) (string, error) {
+func (r *gatedReviewer) RunReview(string, string, []string) (string, error) {
 	r.once.Do(func() { close(r.entered) })
 	<-r.release
 	r.mu.Lock()
@@ -216,7 +216,7 @@ func (r *gatedReviewer) callCount() int {
 // never embed it as exactly one candidate segment, so Run must reject the
 // snapshot before waiting on any provider answer.
 func TestRunRejectsSnapshotDivergenceBeforeReviewerAnswer(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:binding"}, "audit:divergent", []string{"a.go"})
 	reviewer := newGatedReviewer()
 	t.Cleanup(reviewer.finish)

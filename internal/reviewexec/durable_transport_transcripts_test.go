@@ -18,22 +18,22 @@ import (
 
 // attributedReviewer is a fake provider whose effective identity is known
 // after answering, mirroring how CLI adapters and chains report
-// AgenteEfectivo only once a real responder exists.
+// EffectiveAgent only once a real responder exists.
 type attributedReviewer struct {
 	output string
 }
 
-func (r *attributedReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (r *attributedReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
 	return r.output, nil
 }
 
-func (r *attributedReviewer) AgenteEfectivo() (agentadapter.AgenteEfectivo, bool) {
-	return agentadapter.AgenteEfectivo{Binario: "claude", Modelo: "test-model", Esfuerzo: "high"}, true
+func (r *attributedReviewer) EffectiveAgent() (agentadapter.EffectiveAgent, bool) {
+	return agentadapter.EffectiveAgent{Binary: "claude", Model: "test-model", Effort: "high"}, true
 }
 
 func runAttributedReview(t *testing.T, reviewer RestrictedReviewer, wantOutput string) (*store.Store, string, Evidence, string) {
 	t.Helper()
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha123", nil)
 	output, evidence, err := transport.Run(reviewer, "quality/logic", "the prompt")
 	if err != nil {
@@ -118,7 +118,7 @@ func TestDurableTransportPersistsTranscriptSidecar(t *testing.T) {
 }
 
 func TestDurableTransportSurvivesTranscriptWriteFailure(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	reviewer := newGatedReviewer()
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha123", nil,
 		WithRunObserver(func(runID string) {
@@ -167,7 +167,7 @@ func TestDurableTransportSurvivesTranscriptWriteFailure(t *testing.T) {
 }
 
 func TestDurableTransportFailedInvocationWritesNoTranscript(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	var runID string
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:test"}, "sha456", nil,
 		WithRunObserver(func(id string) { runID = id }))

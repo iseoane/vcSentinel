@@ -37,13 +37,13 @@ func (e *TerminalError) MetricsEvidence() (runID, invocationID, class, detail st
 	return e.RunID, e.InvocationID, string(e.Class), e.Text
 }
 
-// ProviderSettledRetryable declara que este error representa un run que ASENTÓ
-// durablemente, no un fallo de admisión ni una incertidumbre posterior al
-// envío. Solo por eso el motor puede repetir la dimensión sin arriesgarse a
-// duplicar una invocación: el intento anterior terminó y quedó registrado.
+// ProviderSettledRetryable declares that this error represents a run that
+// SETTLED durably, not an admission failure nor post-dispatch uncertainty.
+// Only for that reason can the engine repeat the dimension without risking
+// a duplicated invocation: the previous attempt finished and is recorded.
 //
-// Un timeout no entra: repetirlo costaría otro plazo completo. Una cancelación
-// tampoco: el llamante pidió parar. El éxito no es un fallo.
+// A timeout does not qualify: retrying it would cost another full deadline.
+// A cancellation neither: the caller asked to stop. Success is not a failure.
 func (e *TerminalError) ProviderSettledRetryable() bool {
 	switch e.Class {
 	case agentrun.OutcomeFailure, agentrun.OutcomeUnavailable:

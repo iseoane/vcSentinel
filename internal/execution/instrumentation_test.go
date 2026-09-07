@@ -30,7 +30,7 @@ func TestControllerPersistsPerAttemptObservationAndFinalizesMetrics(t *testing.T
 		Enforcement:     "none",
 		Usage:           &AdapterUsage{InputTokens: &input, OutputTokens: &output},
 	}}
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	controller := NewControllerWithClock(backing, adapter, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("instrumentation"), testPolicy())
 	if err != nil {
@@ -87,7 +87,7 @@ func TestControllerPersistsPerAttemptObservationAndFinalizesMetrics(t *testing.T
 }
 func TestFinalizeMetricsRejectsAwaitingAndRetryableHeads(t *testing.T) {
 	t.Run("awaiting", func(t *testing.T) {
-		controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{
+		controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{
 			result: AdapterResult{AwaitingDecision: true},
 		}, fixedClock())
 		handle, err := controller.Start(context.Background(), testRequest("metrics-awaiting"), testPolicy())
@@ -101,7 +101,7 @@ func TestFinalizeMetricsRejectsAwaitingAndRetryableHeads(t *testing.T) {
 	})
 
 	t.Run("retryable terminal", func(t *testing.T) {
-		controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{
+		controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{
 			adapterErr: errors.New("provider failed"),
 		}, fixedClock())
 		handle, err := controller.Start(context.Background(), testRequest("metrics-retryable"), testPolicy())
@@ -118,7 +118,7 @@ func TestFinalizeMetricsRejectsAwaitingAndRetryableHeads(t *testing.T) {
 }
 
 func TestFinalizeMetricsForDispositionFreezesRetryableRun(t *testing.T) {
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{
 		adapterErr: errors.New("provider failed"),
 	}, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("explicit-disposition"), testPolicy())
@@ -186,7 +186,7 @@ func TestFoldExecutionMetricsAggregatesByAgentAndPreservesUnknownAttempts(t *tes
 }
 
 func TestControllerFinalizationPreservesSemanticInvalidOutput(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	controller := NewControllerWithClock(backing, observedAdapter{}, fixedClock())
 	handle, err := controller.Start(context.Background(), testRequest("semantic-disposition"), testPolicy())
 	if err != nil {
@@ -225,7 +225,7 @@ func TestControllerObservationDurationUsesMonotonicClock(t *testing.T) {
 	// The injected clock never advances. Any duration derived from it would be
 	// exactly zero, so a value at or above the held interval can only come from
 	// a monotonic measurement around the provider call.
-	controller := NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, func() time.Time {
+	controller := NewControllerWithClock(store.NewStore(t.TempDir()), adapter, func() time.Time {
 		return time.Unix(1700000000, 0).UTC()
 	})
 	handle, err := controller.Start(context.Background(), testRequest("duration"), testPolicy())
@@ -258,7 +258,7 @@ func TestControllerObservationDurationUsesMonotonicClock(t *testing.T) {
 // because silently overwriting it would rewrite a measurement that later
 // aggregation already treats as final.
 func TestFinalizeMetricsPreservesAnExistingSnapshotOnWriteConflict(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	controller := NewControllerWithClock(backing, observedAdapter{observation: AdapterObservation{
 		Agent: "acpx:claude",
 		Model: "wire/model",

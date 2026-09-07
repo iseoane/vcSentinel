@@ -98,7 +98,7 @@ func TestScopedEditorEdit(t *testing.T) {
 				editor.files[tc.presetFile] = "original content"
 			}
 
-			findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: "internal/remediation/scope.go"}}}
+			findings := []review.Finding{{ID: "f1", Location: review.Location{File: "internal/remediation/scope.go"}}}
 			scoped := NewScopedEditor(editor, NewScope(findings))
 
 			err := scoped.Edit(tc.editPath, "new content")
@@ -150,7 +150,7 @@ func TestScopedEditorEditNormalizesPaths(t *testing.T) {
 	editor := &fakeEditor{files: map[string]string{
 		"internal/remediation/scope.go": "original content",
 	}}
-	findings := []review.Hallazgo{{ID: "f1", Location: review.Ubicacion{Archivo: "internal/remediation/scope.go"}}}
+	findings := []review.Finding{{ID: "f1", Location: review.Location{File: "internal/remediation/scope.go"}}}
 	scoped := NewScopedEditor(editor, NewScope(findings))
 
 	editPath := "./internal/remediation/scope.go"

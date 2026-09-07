@@ -18,7 +18,7 @@ import (
 const testPrincipal = "test-harness"
 
 func TestRepositoryHostStartSettlesThroughWait(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	host := NewInProcessHost(NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "host output"}}, fixedClock()))
 
 	handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("host-start"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
@@ -35,7 +35,7 @@ func TestRepositoryHostStartSettlesThroughWait(t *testing.T) {
 }
 
 func TestRepositoryHostInspectMatchesTheDirectControllerProjection(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	adapter := &scriptedAdapter{result: AdapterResult{Output: "parity output"}}
 	host := NewInProcessHost(NewControllerWithClock(backingStore, adapter, fixedClock()))
 	handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("parity"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
@@ -63,7 +63,7 @@ func TestRepositoryHostInspectMatchesTheDirectControllerProjection(t *testing.T)
 }
 
 func TestRepositoryHostSubscribePagesAfterCursor(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	host := NewInProcessHost(NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "paged output"}}, fixedClock()))
 	handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("subscribe"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestRepositoryHostSubscribePagesAfterCursor(t *testing.T) {
 
 func TestRepositoryHostApplyRespondReachesAwaitingRun(t *testing.T) {
 	adapter := &responseAdapter{}
-	host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock()))
+	host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock()))
 	handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("host-respond"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestRepositoryHostApplyRespondReachesAwaitingRun(t *testing.T) {
 
 func TestRepositoryHostApplyAbortCancelsRunningRun(t *testing.T) {
 	adapter := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
-	host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock()))
+	host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock()))
 	handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("host-abort"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestRepositoryHostSurfacesDocumentedSentinelErrors(t *testing.T) {
 		{
 			name: "duplicate admission",
 			run: func(t *testing.T) error {
-				host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock()))
+				host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock()))
 				request := StartRequest{Request: testRequest("duplicate"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}}
 				handle, err := host.Start(context.Background(), request)
 				if err != nil {
@@ -202,7 +202,7 @@ func TestRepositoryHostSurfacesDocumentedSentinelErrors(t *testing.T) {
 			name: "respond while running",
 			run: func(t *testing.T) error {
 				adapter := &blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
-				host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), adapter, fixedClock()))
+				host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), adapter, fixedClock()))
 				handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("running-respond"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
 				if err != nil {
 					t.Fatal(err)
@@ -225,7 +225,7 @@ func TestRepositoryHostSurfacesDocumentedSentinelErrors(t *testing.T) {
 		{
 			name: "unsupported action",
 			run: func(t *testing.T) error {
-				host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock()))
+				host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock()))
 				handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("unsupported"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
 				if err != nil {
 					t.Fatal(err)
@@ -246,7 +246,7 @@ func TestRepositoryHostSurfacesDocumentedSentinelErrors(t *testing.T) {
 		{
 			name: "control action on settled run",
 			run: func(t *testing.T) error {
-				host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{}, fixedClock()))
+				host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{}, fixedClock()))
 				handle, err := host.Start(context.Background(), StartRequest{Request: testRequest("settled"), Policy: testPolicy(), AuthContext: AuthContext{Principal: testPrincipal}})
 				if err != nil {
 					t.Fatal(err)
@@ -279,7 +279,7 @@ func TestRepositoryHostSurfacesDocumentedSentinelErrors(t *testing.T) {
 // seam exactly like it does through the direct controller call, while Apply
 // envelopes still carry no revision field by design.
 func TestStaleRevisionSurfacesThroughTheRetryEnvelope(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("attempt failed")}, fixedClock())
 	handle, err := failed.Start(context.Background(), testRequest("stale"), testPolicy())
 	if err != nil {
@@ -394,7 +394,7 @@ func TestRepositoryHostApplyRejectsReplayedActionIdentity(t *testing.T) {
 	// The always-awaiting scripted adapter brings every attempt back to
 	// StateAwaitingDecision, so repeated applies stay actionable without
 	// timing races between observation and application.
-	host := NewInProcessHost(NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{AwaitingDecision: true}}, fixedClock()))
+	host := NewInProcessHost(NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{AwaitingDecision: true}}, fixedClock()))
 	auth := AuthContext{Principal: testPrincipal}
 	apply := func(runID agentrun.Identity, actionID string) error {
 		_, err := host.Apply(context.Background(), ApplyRequest{
@@ -503,7 +503,7 @@ func TestValidateStartRequestRejectsConflictingPayloads(t *testing.T) {
 // job and run identities are content-derived, so equality here proves the
 // host built the canonical request rather than tolerating an empty one.
 func TestRepositoryHostExplicitStartPayloadMatchesTheCanonicalTwin(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	host := NewInProcessHost(NewControllerWithClock(backingStore, &scriptedAdapter{result: AdapterResult{Output: "explicit"}}, fixedClock()))
 	handle, err := host.Start(context.Background(), StartRequest{
 		Candidate:   "candidate:explicit-twin",
@@ -519,7 +519,7 @@ func TestRepositoryHostExplicitStartPayloadMatchesTheCanonicalTwin(t *testing.T)
 		t.Fatalf("Wait() error = %v", err)
 	}
 
-	twin := NewControllerWithClock(store.NuevoStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "twin"}}, fixedClock())
+	twin := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{result: AdapterResult{Output: "twin"}}, fixedClock())
 	twinHandle, err := twin.Start(context.Background(),
 		testRequest("explicit-twin"), testPolicy())
 	if err != nil {
@@ -628,7 +628,7 @@ func TestRepositoryHostRetryAndRecoverRelaunchInsideSameIdentity(t *testing.T) {
 		},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
-			backingStore := store.NuevoStore(t.TempDir())
+			backingStore := store.NewStore(t.TempDir())
 			failed := NewControllerWithClock(backingStore, &scriptedAdapter{adapterErr: errors.New("attempt blew up")}, fixedClock())
 			handle, err := failed.Start(context.Background(), testRequest("relaunch-"+operation.name), testPolicy())
 			if err != nil {

@@ -216,7 +216,7 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 		t.Errorf("ReviewAdapter.Execute must receive the admitted InvocationEnvelope in its dispatch signature")
 	}
 
-	runsCLI := readFile(t, root, "cmd/sentinel/comandos_runs.go")
+	runsCLI := readFile(t, root, "cmd/sentinel/runs_command.go")
 	promptBody := functionBody(t, runsCLI, "(a promptRunAdapter) Execute(")
 	if !strings.Contains(promptBody, "InvocationEnvelope") {
 		t.Errorf("promptRunAdapter.Execute must receive the admitted InvocationEnvelope in its dispatch signature")
@@ -243,16 +243,16 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 	// blocker), so with a transport present it must never call the reviewer
 	// directly.
 	engine := readFile(t, root, "internal/review/engine.go")
-	refuteBody := functionBody(t, engine, "func refutarHallazgosCriticos(")
-	richRefuteBody := functionBody(t, engine, "func refutarHallazgosCriticosConEvidencia(")
+	refuteBody := functionBody(t, engine, "func refuteCriticalFindings(")
+	richRefuteBody := functionBody(t, engine, "func refuteCriticalFindingsWithEvidence(")
 	if !strings.Contains(richRefuteBody, `transport("refutation"`) {
-		t.Errorf("refutarHallazgosCriticosConEvidencia must route refutations through the admitted ReviewTransport when one is present")
+		t.Errorf("refuteCriticalFindingsWithEvidence must route refutations through the admitted ReviewTransport when one is present")
 	}
 	// The legacy entry point no longer issues the call itself: it wraps the
 	// transport and delegates. Requiring the delegation keeps the invariant
 	// exact for both paths instead of letting one satisfy the check for both.
-	if !strings.Contains(refuteBody, "refutarHallazgosCriticosConEvidencia(") {
-		t.Errorf("refutarHallazgosCriticos must delegate to the evidence-carrying refuter instead of reaching a reviewer directly")
+	if !strings.Contains(refuteBody, "refuteCriticalFindingsWithEvidence(") {
+		t.Errorf("refuteCriticalFindings must delegate to the evidence-carrying refuter instead of reaching a reviewer directly")
 	}
 
 	// The metrics snapshot must be written under the revision it was folded
@@ -304,8 +304,8 @@ func TestNoCompatibilityGatedSitesRemain(t *testing.T) {
 // actually fail on a stale, empty or mismatched anchor.
 func TestAnchorProblemDetectsRot(t *testing.T) {
 	const text = "package p\n\nfunc f() { cmd := exec.Command(\"gh\", \"pr\") }\n"
-	casos := []struct {
-		nombre  string
+	cases := []struct {
+		name    string
 		site    Site
 		problem bool
 	}{
@@ -317,11 +317,11 @@ func TestAnchorProblemDetectsRot(t *testing.T) {
 		{"anchor that does not carry its own marker", Site{Anchor: "return nil", Marker: "exec.Command"}, true},
 		{"documentation-only row carrying an anchor", Site{Anchor: `cmd := exec.Command("gh", "pr")`}, true},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			problem := AnchorProblem(text, caso.site)
-			if (problem != "") != caso.problem {
-				t.Errorf("AnchorProblem = %q, expected a problem: %v", problem, caso.problem)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			problem := AnchorProblem(text, testCase.site)
+			if (problem != "") != testCase.problem {
+				t.Errorf("AnchorProblem = %q, expected a problem: %v", problem, testCase.problem)
 			}
 		})
 	}

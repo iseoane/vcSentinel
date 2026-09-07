@@ -23,14 +23,14 @@ import (
 
 // startForegroundDaemonWithAdapter launches Run in a goroutine with a
 // controller built exactly the way production builds one — execution.NewController
-// over store.NuevoStore(commonDir) with the given adapter — and returns once
+// over store.NewStore(commonDir) with the given adapter — and returns once
 // the endpoint answers a real handshake. The returned channel carries Run's
 // exit. There is no package-level construction seam anymore: production and
 // tests share the single Run(gitCommonDir, controller, grace, out) signature.
 func startForegroundDaemonWithAdapter(t *testing.T, commonDir string, out *bytes.Buffer, adapter execution.Adapter) (*RemoteHost, <-chan error) {
 	t.Helper()
 	done := make(chan error, 1)
-	controller := execution.NewController(store.NuevoStore(commonDir), adapter)
+	controller := execution.NewController(store.NewStore(commonDir), adapter)
 	go func() { done <- Run(commonDir, controller, DefaultGracePeriod, out) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -145,7 +145,7 @@ func TestRunRefusesSecondStarterWithOwnedError(t *testing.T) {
 
 	// The rival starter loses at Claim before its controller matters; any
 	// non-nil controller satisfies the Run signature.
-	rivalController := execution.NewController(store.NuevoStore(commonDir), immediateAdapter("unused"))
+	rivalController := execution.NewController(store.NewStore(commonDir), immediateAdapter("unused"))
 	raceErr := Run(commonDir, rivalController, DefaultGracePeriod, &bytes.Buffer{})
 	var owned *OwnedError
 	if !errors.As(raceErr, &owned) {
@@ -165,7 +165,7 @@ func TestRunRefusesSecondStarterWithOwnedError(t *testing.T) {
 
 func TestRunReconcilesBeforeServing(t *testing.T) {
 	root := t.TempDir()
-	backing := store.NuevoStore(root)
+	backing := store.NewStore(root)
 	runID := appendBootFixtureStream(t, backing, "candidate:pre-serve-reconcile", bootSuccessExtra())
 	snapshot := snapshotPathFor(root, runID)
 	if err := os.Remove(snapshot); err != nil {

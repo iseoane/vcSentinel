@@ -102,7 +102,7 @@ func TestAbortWithOwnedTreeCooperativeExitSettlesSilently(t *testing.T) {
 	// The child exits on its own long before the grace budget expires, which
 	// is what makes this a genuinely cooperative cancellation.
 	adapter.command = []string{"sleep", "0.05"}
-	controller := NewControllerWithClockAndEscalation(store.NuevoStore(t.TempDir()), adapter, fixedClock(),
+	controller := NewControllerWithClockAndEscalation(store.NewStore(t.TempDir()), adapter, fixedClock(),
 		EscalationPolicy{Grace: time.Second, FinalBudget: time.Second})
 	handle, err := controller.Start(context.Background(), testRequest("coop"), testPolicy())
 	if err != nil {
@@ -142,7 +142,7 @@ func TestAbortWithOwnedTreeReapedEvidenceExactlyOnce(t *testing.T) {
 	}
 	policy := EscalationPolicy{Grace: 100 * time.Millisecond, FinalBudget: time.Second}
 	adapter := newOwnedSleepAdapter(300 * time.Millisecond) // after grace, inside final budget
-	controller := NewControllerWithClockAndEscalation(store.NuevoStore(t.TempDir()), adapter, fixedClock(), policy)
+	controller := NewControllerWithClockAndEscalation(store.NewStore(t.TempDir()), adapter, fixedClock(), policy)
 	handle, err := controller.Start(context.Background(), testRequest("reaped"), testPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestAbortUnconfirmableReapSettlesOrphanedOnce(t *testing.T) {
 		t.Skip("real process-tree escalation requires Linux")
 	}
 	adapter := newOwnedSleepAdapter(-1 * time.Second) // never confirms exit
-	controller := NewControllerWithClockAndEscalation(store.NuevoStore(t.TempDir()), adapter, fixedClock(),
+	controller := NewControllerWithClockAndEscalation(store.NewStore(t.TempDir()), adapter, fixedClock(),
 		EscalationPolicy{Grace: 100 * time.Millisecond, FinalBudget: 250 * time.Millisecond})
 	handle, err := controller.Start(context.Background(), testRequest("orphan"), testPolicy())
 	if err != nil {
@@ -252,7 +252,7 @@ func TestDoubleAbortDuringEscalationIsIdempotent(t *testing.T) {
 		t.Skip("real process-tree escalation requires Linux")
 	}
 	adapter := newOwnedSleepAdapter(-1 * time.Second) // slow orphan path keeps the window open
-	controller := NewControllerWithClockAndEscalation(store.NuevoStore(t.TempDir()), adapter, fixedClock(),
+	controller := NewControllerWithClockAndEscalation(store.NewStore(t.TempDir()), adapter, fixedClock(),
 		EscalationPolicy{Grace: 100 * time.Millisecond, FinalBudget: 500 * time.Millisecond})
 	handle, err := controller.Start(context.Background(), testRequest("double-escalation"), testPolicy())
 	if err != nil {
@@ -303,7 +303,7 @@ func TestDisabledEscalationSettlesPromptly(t *testing.T) {
 		t.Skip("real process-tree escalation requires Linux")
 	}
 	adapter := newOwnedSleepAdapter(-1 * time.Second)
-	controller := NewControllerWithClockAndEscalation(store.NuevoStore(t.TempDir()), adapter, fixedClock(),
+	controller := NewControllerWithClockAndEscalation(store.NewStore(t.TempDir()), adapter, fixedClock(),
 		EscalationPolicy{Disabled: true})
 	handle, err := controller.Start(context.Background(), testRequest("disabled"), testPolicy())
 	if err != nil {

@@ -29,7 +29,7 @@ type entryGatedReviewer struct {
 
 const wantOutput = `{"dim":"logic","verdict":"ok","findings":[]}`
 
-func (r *entryGatedReviewer) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (r *entryGatedReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
 	<-r.allowEntry // hold entry until the test opens the gate
 	r.enteredOne.Do(func() { close(r.entered) })
 	return wantOutput, nil
@@ -40,7 +40,7 @@ func TestBlockingObserverDoesNotPreventReviewerEntry(t *testing.T) {
 	observerStarted := make(chan struct{})
 	releaseObserver := make(chan struct{})
 	observerReturned := make(chan struct{})
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:review"}, "abc123", nil,
 		WithEvidenceAdmission(false), // lenient mode: admission verification is not under test here
 		WithRunObserver(func(string) {

@@ -62,7 +62,7 @@ func originalFrames(t *testing.T, backing *store.Store, runID agentrun.Identity)
 }
 
 func TestRecoverOwnerLossRelaunchesUnderAFreshInvocationIdentity(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	job, interruptedInvocation, interruptedFrames := seedOrphanedCancellationStream(t, backingStore, "recover-owner-loss")
 	runID := job.RunID()
 
@@ -135,7 +135,7 @@ func TestRecoverOwnerLossRelaunchesUnderAFreshInvocationIdentity(t *testing.T) {
 // settlement must refuse with the typed not-recoverable error instead of
 // indexing an empty frame slice.
 func TestOrphanedCancellationSettlementRefusesZeroFrameEvidence(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	controller := NewControllerWithClock(backingStore, &scriptedAdapter{}, fixedClock())
 
 	receipt, err := controller.appendOrphanedCancellationSettlement(nil, &store.RunProjection{Revision: 1}, reconciledOwnerDeathReason)
@@ -151,7 +151,7 @@ func TestOrphanedCancellationSettlementRefusesZeroFrameEvidence(t *testing.T) {
 }
 
 func TestRetryAcceptsOwnerLossThroughTheSameContract(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	job, interruptedInvocation, _ := seedOrphanedCancellationStream(t, backingStore, "retry-owner-loss")
 
 	// Operators may call either entry point for an orphaned-canceled run:
@@ -174,7 +174,7 @@ func TestRetryAcceptsOwnerLossThroughTheSameContract(t *testing.T) {
 }
 
 func TestRecoverRefusesOperatorRequiredHeadWithoutWriting(t *testing.T) {
-	backingStore := store.NuevoStore(t.TempDir())
+	backingStore := store.NewStore(t.TempDir())
 	request := agentrun.NewRunRequest(agentrun.Candidate("recover-operator-required"), agentrun.Prompt("running head"), nil)
 	job := agentrun.NewLogicalJob(request)
 	if err := backingStore.CreateRun(job, testPolicy()); err != nil {

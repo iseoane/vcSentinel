@@ -588,7 +588,7 @@ func TestCollectedRunsFeedRepositoryAndWorktreeActivityScopes(t *testing.T) {
 	repoPath := initActivityRepo(t)
 	featurePath := filepath.Join(t.TempDir(), "feature")
 	runActivityGit(t, repoPath, "worktree", "add", featurePath, "-b", "feature")
-	st := store.NuevoStore(filepath.Join(repoPath, ".git"))
+	st := store.NewStore(filepath.Join(repoPath, ".git"))
 	mainBase := time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)
 	featureBase := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
 	for i := 0; i < 11; i++ {

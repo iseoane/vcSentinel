@@ -27,19 +27,19 @@ func TestGateRootOperationLabel(t *testing.T) {
 }
 
 func TestDurableGateAdmitsLabeledRuns(t *testing.T) {
-	cfg := cfgConPerfil("lint", "echo boom")
-	llamadas := 0
-	opts := opcionesBase(t, cfg, func(string) (int, string, error) {
-		return 1, "salida real del comando fallido", nil
-	}, fabricaContadora(&llamadas, "", nil))
-	opts.EjecutarValidacion = ejecutarPerfilSinCandidato
+	cfg := cfgWithProfile("lint", "echo boom")
+	calls := 0
+	opts := baseOptions(t, cfg, func(string) (int, string, error) {
+		return 1, "real output of the failed command", nil
+	}, countingFactory(&calls, "", nil))
+	opts.RunValidation = runProfileWithoutCandidate
 
-	resultado := EjecutarGate(opts)
-	if resultado.Estado != EstadoValidationFailed {
-		t.Fatalf("estado = %q, want %q", resultado.Estado, EstadoValidationFailed)
+	result := RunGate(opts)
+	if result.State != StateValidationFailed {
+		t.Fatalf("state = %q, want %q", result.State, StateValidationFailed)
 	}
-	if llamadas != 0 {
-		t.Fatalf("review started %d times on a red validation, want zero", llamadas)
+	if calls != 0 {
+		t.Fatalf("review started %d times on a red validation, want zero", calls)
 	}
 
 	st := opts.DurableStore

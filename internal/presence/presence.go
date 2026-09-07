@@ -89,7 +89,7 @@ func RecentRunsForWorktrees(gitCommonDir string, limit int, visibleWorktreePaths
 	if limit <= 0 {
 		return []RunSummary{}, nil
 	}
-	st := store.NuevoStore(gitCommonDir)
+	st := store.NewStore(gitCommonDir)
 	ids, err := st.ListExecutionIDs()
 	if err != nil {
 		return nil, fmt.Errorf("presence: list executions under %s: %w", gitCommonDir, err)

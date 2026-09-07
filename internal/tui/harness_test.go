@@ -84,7 +84,7 @@ type harnessDaemon struct {
 
 // startHarnessDaemon launches daemon.Run in a goroutine with a controller
 // built the way production builds it (execution.NewController over
-// store.NuevoStore(commonDir)), waits until the persisted endpoint answers,
+// store.NewStore(commonDir)), waits until the persisted endpoint answers,
 // and wires a graceful wire shutdown into cleanup.
 func startHarnessDaemon(t *testing.T, adapter execution.Adapter) harnessDaemon {
 	t.Helper()
@@ -96,7 +96,7 @@ func startHarnessDaemon(t *testing.T, adapter execution.Adapter) harnessDaemon {
 		t.Fatalf("create harness common dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(commonDir) })
-	controller := execution.NewController(store.NuevoStore(commonDir), adapter)
+	controller := execution.NewController(store.NewStore(commonDir), adapter)
 	done := make(chan error, 1)
 	go func() { done <- daemon.Run(commonDir, controller, daemon.DefaultGracePeriod, io.Discard) }()
 	deadline := time.Now().Add(5 * time.Second)
@@ -115,7 +115,7 @@ func startHarnessDaemon(t *testing.T, adapter execution.Adapter) harnessDaemon {
 		time.Sleep(5 * time.Millisecond)
 	}
 	harness := harnessDaemon{
-		backing:    store.NuevoStore(commonDir),
+		backing:    store.NewStore(commonDir),
 		controller: controller,
 	}
 	harness.provider = dialProvider{dial: func() (execution.RepositoryHost, error) {

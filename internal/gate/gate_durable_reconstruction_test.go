@@ -3,7 +3,7 @@
 // discovered through the persisted ParentRunID linkage, and the root's
 // terminal settlement detail — the gate summary (terminal state, failing
 // layer, child enumeration, per-validation-job evidence bindings, final
-// class) must rebuild identically to what EjecutarGate returned live. This
+// class) must rebuild identically to what RunGate returned live. This
 // test is the contract; every value asserted here comes from store reads,
 // never from in-process orchestration state.
 package gate
@@ -40,8 +40,8 @@ type reconstructedSummary struct {
 	outputHashes []string
 }
 
-// reconstruirDesdeTienda rebuilds the summary from STORE CONTENTS ONLY.
-func reconstruirDesdeTienda(t *testing.T, st *store.Store) reconstructedSummary {
+// reconstructFromStore rebuilds the summary from STORE CONTENTS ONLY.
+func reconstructFromStore(t *testing.T, st *store.Store) reconstructedSummary {
 	t.Helper()
 	ids, err := st.ListExecutionIDs()
 	if err != nil {
@@ -66,7 +66,7 @@ func reconstruirDesdeTienda(t *testing.T, st *store.Store) reconstructedSummary 
 		t.Fatal("store holds no root run")
 	}
 
-	sumario := reconstructedSummary{classes: map[agentrun.OutcomeClass]int{}}
+	summary := reconstructedSummary{classes: map[agentrun.OutcomeClass]int{}}
 	for _, id := range ids {
 		if parents[id] == "" {
 			continue
@@ -74,70 +74,70 @@ func reconstruirDesdeTienda(t *testing.T, st *store.Store) reconstructedSummary 
 		if parents[id] != rootID {
 			t.Fatalf("run %s links to foreign parent %s", id, parents[id])
 		}
-		sumario.scanned = append(sumario.scanned, id)
-		inspeccion, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(id))
+		summary.scanned = append(summary.scanned, id)
+		inspection, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(id))
 		if err != nil {
 			t.Fatalf("child %s inspection failed: %v", id, err)
 		}
-		if len(inspeccion.Outcomes) != 1 {
-			t.Fatalf("child %s recorded %d outcomes, expected exactly one terminal attempt", id, len(inspeccion.Outcomes))
+		if len(inspection.Outcomes) != 1 {
+			t.Fatalf("child %s recorded %d outcomes, expected exactly one terminal attempt", id, len(inspection.Outcomes))
 		}
-		outcome := inspeccion.Outcomes[0]
-		sumario.classes[outcome.Class]++
+		outcome := inspection.Outcomes[0]
+		summary.classes[outcome.Class]++
 		if outcome.OutputHash != "" {
-			sumario.outputHashes = append(sumario.outputHashes, outcome.OutputHash)
+			summary.outputHashes = append(summary.outputHashes, outcome.OutputHash)
 		}
 	}
 
-	inspeccion, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(rootID))
+	inspection, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(rootID))
 	if err != nil {
 		t.Fatalf("root inspection failed: %v", err)
 	}
-	sumario.rootState = inspeccion.Projection.State
-	for _, outcome := range inspeccion.Outcomes {
-		sumario.layer = capaDesdeDetalle(outcome.Error)
-		if suffix, ok := sufijoHijos(outcome.Error); ok {
-			sumario.enumerated = suffix
+	summary.rootState = inspection.Projection.State
+	for _, outcome := range inspection.Outcomes {
+		summary.layer = layerFromDetail(outcome.Error)
+		if suffix, ok := childrenSuffix(outcome.Error); ok {
+			summary.enumerated = suffix
 		}
 	}
-	return sumario
+	return summary
 }
 
-// capaDesdeDetalle parses the failing-layer marker out of a settlement
+// layerFromDetail parses the failing-layer marker out of a settlement
 // detail; empty means no layer marker (a green root).
-func capaDesdeDetalle(detalle string) string {
-	for _, capa := range []string{"validation", "review", "infrastructure"} {
-		if strings.Contains(detalle, "failing layer: "+capa) {
-			return capa
+func layerFromDetail(detail string) string {
+	for _, layer := range []string{"validation", "review", "infrastructure"} {
+		if strings.Contains(detail, "failing layer: "+layer) {
+			return layer
 		}
 	}
 	return ""
 }
 
-// sufijoHijos parses the machine-parseable "|children=<id,id,...>" suffix of
+// childrenSuffix parses the machine-parseable "|children=<id,id,...>" suffix of
 // a settlement detail.
-func sufijoHijos(detalle string) ([]string, bool) {
+func childrenSuffix(detail string) ([]string, bool) {
 	marker := "|children="
-	index := strings.Index(detalle, marker)
+	index := strings.Index(detail, marker)
 	if index < 0 {
 		return nil, false
 	}
-	lista := detalle[index+len(marker):]
-	if lista == "" {
+	list := detail[index+len(marker):]
+	if list == "" {
 		return []string{}, true
 	}
-	return strings.Split(lista, ","), true
+	return strings.Split(list, ","), true
 }
 
 // expectedTerminal maps a live facade state onto the durable vocabulary so
-// reconstruction can be compared against what EjecutarGate returned.
-func expectedTerminal(estado string) (agentrun.LifecycleState, string) {
-	switch estado {
-	case EstadoPass:
+// reconstruction can be compared against what RunGate returned.
+func expectedTerminal(state string) (agentrun.LifecycleState, string) {
+	switch state {
+	case StatePass:
 		return agentrun.StateSucceeded, ""
-	case EstadoValidationFailed:
+	case StateValidationFailed:
 		return agentrun.StateFailed, "validation"
-	case EstadoCodeReviewFailed, EstadoNeedsUserReview:
+	case StateCodeReviewFailed, StateNeedsUserReview:
 		return agentrun.StateFailed, "review"
 	default:
 		return agentrun.StateUnavailable, "infrastructure"
@@ -151,12 +151,12 @@ func sortedCopy(values []string) []string {
 	return copied
 }
 
-// afirmarEvidenciaLigada proves the multiset of child OutputHashes equals the
+// assertBoundEvidence proves the multiset of child OutputHashes equals the
 // HashAdapterOutput digest of every validation evidence serialization.
-func afirmarEvidenciaLigada(t *testing.T, evidencia []ValidationEvidence, got []string) {
+func assertBoundEvidence(t *testing.T, evidence []ValidationEvidence, got []string) {
 	t.Helper()
-	want := make([]string, 0, len(evidencia))
-	for _, entry := range evidencia {
+	want := make([]string, 0, len(evidence))
+	for _, entry := range evidence {
 		want = append(want, execution.HashAdapterOutput(entry.String()))
 	}
 	slices.Sort(want)
@@ -169,89 +169,89 @@ func afirmarEvidenciaLigada(t *testing.T, evidencia []ValidationEvidence, got []
 
 func TestGateDurableReconstructionFromStore(t *testing.T) {
 	t.Run("validation failure reconstructs layer outcome, children, and evidence", func(t *testing.T) {
-		transportes := 0
-		base := opcionesBase(t, cfgDosCapabilities(), ejecutorSeleccionado(map[string]validation.ValidationRun{
-			"echo test": {Exit: 1, Salida: "salida real del comando fallido"},
-		}), fabricaContadora(new(int), "", nil))
-		var capturados []validation.ValidationRun
-		base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			runs, err := ejecutarPerfilSinCandidato(perfil, alcance, o)
-			capturados = runs
+		transports := 0
+		base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(map[string]validation.ValidationRun{
+			"echo test": {Exit: 1, Output: "real output of the failed command"},
+		}), countingFactory(new(int), "", nil))
+		var captured []validation.ValidationRun
+		base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
+			runs, err := runProfileWithoutCandidate(profile, scope, o)
+			captured = runs
 			return runs, err
 		}
-		durableOpts := opcionesDurable(t, base, &transportes)
+		durableOpts := durableOptions(t, base, &transports)
 
-		resultado := EjecutarGate(durableOpts)
+		result := RunGate(durableOpts)
 
-		if resultado.Estado != EstadoValidationFailed {
-			t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoValidationFailed)
+		if result.State != StateValidationFailed {
+			t.Fatalf("state = %q, expected %q", result.State, StateValidationFailed)
 		}
-		if transportes != 0 {
-			t.Fatalf("review started after a validation failure: factory invoked %d times", transportes)
+		if transports != 0 {
+			t.Fatalf("review started after a validation failure: factory invoked %d times", transports)
 		}
 
-		sumario := reconstruirDesdeTienda(t, durableOpts.DurableStore)
+		summary := reconstructFromStore(t, durableOpts.DurableStore)
 
-		wantState, wantLayer := expectedTerminal(resultado.Estado)
-		if sumario.rootState != wantState || sumario.layer != wantLayer {
-			t.Fatalf("reconstructed terminal = {%v %s}, want {%v %s} for live estado %q",
-				sumario.rootState, sumario.layer, wantState, wantLayer, resultado.Estado)
+		wantState, wantLayer := expectedTerminal(result.State)
+		if summary.rootState != wantState || summary.layer != wantLayer {
+			t.Fatalf("reconstructed terminal = {%v %s}, want {%v %s} for live state %q",
+				summary.rootState, summary.layer, wantState, wantLayer, result.State)
 		}
 		// Set equality: enumeration order is profile/admission order while
 		// the scan order is the store's lexicographic listing.
-		if !slices.Equal(sortedCopy(sumario.enumerated), sortedCopy(sumario.scanned)) {
-			t.Fatalf("enumerated children %v != ParentRunID scan %v", sumario.enumerated, sumario.scanned)
+		if !slices.Equal(sortedCopy(summary.enumerated), sortedCopy(summary.scanned)) {
+			t.Fatalf("enumerated children %v != ParentRunID scan %v", summary.enumerated, summary.scanned)
 		}
-		if len(sumario.scanned) != 2 {
-			t.Fatalf("scanned children = %d, expected both validation jobs", len(sumario.scanned))
+		if len(summary.scanned) != 2 {
+			t.Fatalf("scanned children = %d, expected both validation jobs", len(summary.scanned))
 		}
-		if sumario.classes[agentrun.OutcomeSuccess] != 1 || sumario.classes[agentrun.OutcomeFailure] != 1 {
-			t.Fatalf("child classes = %v, expected one success and one failure", sumario.classes)
+		if summary.classes[agentrun.OutcomeSuccess] != 1 || summary.classes[agentrun.OutcomeFailure] != 1 {
+			t.Fatalf("child classes = %v, expected one success and one failure", summary.classes)
 		}
-		afirmarEvidenciaLigada(t, RecordValidationEvidence(capturados), sumario.outputHashes)
+		assertBoundEvidence(t, RecordValidationEvidence(captured), summary.outputHashes)
 	})
 
 	t.Run("green gate reconstructs success from the root record alone", func(t *testing.T) {
-		transportes := 0
-		base := opcionesBase(t, cfgConPerfil("lint", "echo ok"), ejecutorSeleccionado(nil),
-			fabricaContadora(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
-		var capturados []validation.ValidationRun
-		base.EjecutarValidacion = func(perfil string, alcance []string, o validation.OpcionesEjecucion) ([]validation.ValidationRun, error) {
-			runs, err := ejecutarPerfilSinCandidato(perfil, alcance, o)
-			capturados = runs
+		transports := 0
+		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
+			countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+		var captured []validation.ValidationRun
+		base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
+			runs, err := runProfileWithoutCandidate(profile, scope, o)
+			captured = runs
 			return runs, err
 		}
-		durableOpts := opcionesDurable(t, base, &transportes)
+		durableOpts := durableOptions(t, base, &transports)
 
-		resultado := EjecutarGate(durableOpts)
+		result := RunGate(durableOpts)
 
-		if resultado.Estado != EstadoPass {
-			t.Fatalf("estado = %q, expected %q", resultado.Estado, EstadoPass)
+		if result.State != StatePass {
+			t.Fatalf("state = %q, expected %q", result.State, StatePass)
 		}
-		if transportes != 1 {
-			t.Fatalf("transport factory invoked %d times, expected exactly one review audit", transportes)
+		if transports != 1 {
+			t.Fatalf("transport factory invoked %d times, expected exactly one review audit", transports)
 		}
 
-		sumario := reconstruirDesdeTienda(t, durableOpts.DurableStore)
+		summary := reconstructFromStore(t, durableOpts.DurableStore)
 
-		wantState, wantLayer := expectedTerminal(resultado.Estado)
-		if sumario.rootState != wantState || sumario.layer != wantLayer {
-			t.Fatalf("reconstructed terminal = {%v %s}, want {%v %s} for live estado %q",
-				sumario.rootState, sumario.layer, wantState, wantLayer, resultado.Estado)
+		wantState, wantLayer := expectedTerminal(result.State)
+		if summary.rootState != wantState || summary.layer != wantLayer {
+			t.Fatalf("reconstructed terminal = {%v %s}, want {%v %s} for live state %q",
+				summary.rootState, summary.layer, wantState, wantLayer, result.State)
 		}
 		// Green settlements carry no children suffix; the scan still finds
 		// both validation jobs through their persisted parent linkage. The
 		// review-side runs live in the factory's own backing store, so this
 		// store holds exactly root plus validation children.
-		if len(sumario.enumerated) != 0 {
-			t.Fatalf("green root enumerated children %v, expected none", sumario.enumerated)
+		if len(summary.enumerated) != 0 {
+			t.Fatalf("green root enumerated children %v, expected none", summary.enumerated)
 		}
-		if len(sumario.scanned) != 1 {
-			t.Fatalf("scanned children = %d, expected the single validation job", len(sumario.scanned))
+		if len(summary.scanned) != 1 {
+			t.Fatalf("scanned children = %d, expected the single validation job", len(summary.scanned))
 		}
-		if sumario.classes[agentrun.OutcomeSuccess] != 1 {
-			t.Fatalf("child classes = %v, expected one success", sumario.classes)
+		if summary.classes[agentrun.OutcomeSuccess] != 1 {
+			t.Fatalf("child classes = %v, expected one success", summary.classes)
 		}
-		afirmarEvidenciaLigada(t, RecordValidationEvidence(capturados), sumario.outputHashes)
+		assertBoundEvidence(t, RecordValidationEvidence(captured), summary.outputHashes)
 	})
 }

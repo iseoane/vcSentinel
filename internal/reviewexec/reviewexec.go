@@ -20,12 +20,12 @@ import (
 // imports internal/review: wiring flows from review into this package, not
 // back into the engine.
 //
-// Naming waiver: EjecutarRevision intentionally mirrors the legacy Spanish
+// Naming waiver: RunReview intentionally mirrors the legacy Spanish
 // identifier because Go structural satisfaction requires byte-identical
 // method names with the existing review agents. Do not translate it without
 // changing every implementer at once.
 type RestrictedReviewer interface {
-	EjecutarRevision(prompt, sha string, paths []string) (string, error)
+	RunReview(prompt, sha string, paths []string) (string, error)
 }
 
 // PolicyRestrictedReviewer is the semantic-review capability. A durable
@@ -47,7 +47,7 @@ type PolicyProvider interface {
 // so reviewers that only implement RestrictedReviewer keep working unchanged.
 //
 // Naming waiver: ReviewWithContext intentionally pairs with the legacy
-// EjecutarRevision entry point it extends; both stay byte-identical across
+// RunReview entry point it extends; both stay byte-identical across
 // every implementer because Go structural satisfaction requires it.
 type ContextualReviewer interface {
 	ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error)
@@ -195,7 +195,7 @@ func (a *ReviewAdapter) Execute(ctx context.Context, job agentrun.LogicalJob, _ 
 		output, err = contextual.ReviewWithContext(ctx, prompt, a.sha, a.paths)
 	} else {
 		legacy := a.reviewer.(RestrictedReviewer)
-		output, err = legacy.EjecutarRevision(prompt, a.sha, a.paths)
+		output, err = legacy.RunReview(prompt, a.sha, a.paths)
 	}
 	adapted := execution.AdapterResult{Output: output}
 	if rich {
@@ -242,23 +242,23 @@ func cloneInt64(value *int64) *int64 {
 }
 
 // TranscriptMetadata implements execution.TranscriptReporter: it forwards the
-// wrapped reviewer's AgenteEfectivo report so the durable transcript sidecar
+// wrapped reviewer's EffectiveAgent report so the durable transcript sidecar
 // records who actually answered. The controller queries this only after a
 // successful Execute, exactly when the report is honest. StopReason stays
 // empty today because the raw provider output carries no stop-reason field
 // this layer can observe; it must never be fabricated.
 func (a *ReviewAdapter) TranscriptMetadata() execution.TranscriptIdentity {
-	reporta, ok := a.reviewer.(agentadapter.ReportaAgenteEfectivo)
+	reports, ok := a.reviewer.(agentadapter.ReportsEffectiveAgent)
 	if !ok {
 		return execution.TranscriptIdentity{}
 	}
-	efectivo, ok := reporta.AgenteEfectivo()
-	if !ok || efectivo.Vacio() {
+	effective, ok := reports.EffectiveAgent()
+	if !ok || effective.Empty() {
 		return execution.TranscriptIdentity{}
 	}
 	return execution.TranscriptIdentity{
-		Agent:  efectivo.Binario,
-		Model:  efectivo.Modelo,
-		Effort: efectivo.Esfuerzo,
+		Agent:  effective.Binary,
+		Model:  effective.Model,
+		Effort: effective.Effort,
 	}
 }

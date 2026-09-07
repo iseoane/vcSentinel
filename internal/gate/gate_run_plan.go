@@ -3,7 +3,7 @@
 // descriptors, without executing anything. This file is pure construction
 // logic, fully unit-testable without processes or agents. Since R11 removed
 // the compatibility switch, this plan is the only gate orchestration path and
-// EjecutarGate consumes it unconditionally.
+// RunGate consumes it unconditionally.
 //
 // Identity derivation deliberately reuses the agentrun helpers exclusively
 // (Candidate, Prompt, NewCapability identities, NewRunRequest, NewLogicalJob):
@@ -43,7 +43,7 @@ const (
 	capabilityNameCommand  = "gate.validation.command"
 	capabilityNameReview   = "gate.review.phase"
 	// capabilityNameAttempt carries the gate execution ordinal and nothing
-	// else, so the command capabilities keep meaning exactly "these commands".
+	// else, so the command layerbilities keep meaning exactly "these commands".
 	capabilityNameAttempt = "gate.execution.attempt"
 )
 
@@ -121,14 +121,14 @@ func (e GatePlanError) Error() string {
 // one logical job in exact profile order, followed by exactly one review
 // job. The same inputs always derive the same identities.
 func BuildGateRunPlan(stage, profile, candidateSHA string, commands []string) (GateRunPlan, error) {
-	return BuildGateRunPlanIntento(stage, profile, candidateSHA, commands, 0)
+	return BuildGateRunPlanAttempt(stage, profile, candidateSHA, commands, 0)
 }
 
-// BuildGateRunPlanIntento is BuildGateRunPlan for a specific execution attempt.
+// BuildGateRunPlanAttempt is BuildGateRunPlan for a specific execution attempt.
 // Attempt 0 is BuildGateRunPlan exactly, which is what every caller but the
 // gate's admission probe wants; keeping the plain signature avoids a magic 0 at
 // every call site.
-func BuildGateRunPlanIntento(stage, profile, candidateSHA string, commands []string, attempt int) (GateRunPlan, error) {
+func BuildGateRunPlanAttempt(stage, profile, candidateSHA string, commands []string, attempt int) (GateRunPlan, error) {
 	if attempt < 0 {
 		return GateRunPlan{}, GatePlanError{Field: "attempt", Reason: "must not be negative"}
 	}
@@ -153,7 +153,7 @@ func BuildGateRunPlanIntento(stage, profile, candidateSHA string, commands []str
 	root := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 		agentrun.Candidate(candidateSHA),
 		agentrun.Prompt(canonicalPrompt(promptDomainRoot, stage, profile)),
-		conIntento([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, commandAttributes(commands))}, attempt),
+		withAttempt([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, commandAttributes(commands))}, attempt),
 	))
 
 	jobs := make([]GateJobPlan, 0, len(commands)+1)
@@ -165,7 +165,7 @@ func BuildGateRunPlanIntento(stage, profile, candidateSHA string, commands []str
 			Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
 				agentrun.Candidate(candidateSHA),
 				agentrun.Prompt(canonicalPrompt(promptDomainValidation, stage, profile, position)),
-				conIntento([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommand, map[string]string{
+				withAttempt([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommand, map[string]string{
 					"profile":  profile,
 					"position": position,
 					"command":  command,
@@ -178,7 +178,7 @@ func BuildGateRunPlanIntento(stage, profile, candidateSHA string, commands []str
 		Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
 			agentrun.Candidate(candidateSHA),
 			agentrun.Prompt(canonicalPrompt(promptDomainReview, stage, profile)),
-			conIntento([]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, map[string]string{
+			withAttempt([]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, map[string]string{
 				"profile": profile,
 			})}, attempt),
 		)),
@@ -224,7 +224,7 @@ func canonicalPrompt(domain string, parts ...string) string {
 	return strings.Join(append([]string{domain}, parts...), "\x00")
 }
 
-// conIntento appends the execution attempt as its OWN capability, so every
+// withAttempt appends the execution attempt as its OWN capability, so every
 // identity of the plan — root and jobs alike — is distinct per attempt. It is a
 // separate capability on purpose: folding the ordinal into the command
 // capability would give capabilityNameCommands two different derivations, one
@@ -240,11 +240,11 @@ func canonicalPrompt(domain string, parts ...string) string {
 // and one of them is correctly refused, which is the collision guard worth
 // keeping. Only a SEQUENTIAL re-run, after the previous attempt settled,
 // climbs to the next attempt.
-func conIntento(capabilities []agentrun.Capability, attempt int) []agentrun.Capability {
+func withAttempt(layerbilities []agentrun.Capability, attempt int) []agentrun.Capability {
 	if attempt == 0 {
-		return capabilities
+		return layerbilities
 	}
-	return append(append([]agentrun.Capability(nil), capabilities...),
+	return append(append([]agentrun.Capability(nil), layerbilities...),
 		agentrun.NewCapability(capabilityNameAttempt, map[string]string{"ordinal": strconv.Itoa(attempt)}))
 }
 

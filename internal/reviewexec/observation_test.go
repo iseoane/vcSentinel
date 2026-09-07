@@ -27,7 +27,7 @@ func (s richReviewStub) ReviewWithContextAndPolicyResult(context.Context, string
 	return s.result, s.err
 }
 
-func (s richReviewStub) EjecutarRevision(string, string, []string) (string, error) {
+func (s richReviewStub) RunReview(string, string, []string) (string, error) {
 	return s.result.Output, s.err
 }
 

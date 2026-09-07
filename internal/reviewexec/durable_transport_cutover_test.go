@@ -57,7 +57,7 @@ func TestIsAdmissionReasonMatchesTheLiteralPrefixOnly(t *testing.T) {
 func TestRunStaysStrictByDefaultOnDivergentSnapshot(t *testing.T) {
 	// A transport-bound SHA containing colons can never appear as exactly one
 	// readable candidate segment, so strict snapshot binding always rejects.
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:cutover"}, "cutover:default-strict", nil)
 	reviewer := &scriptedReviewer{name: "dimension-logic", output: "raw verdict"}
 
@@ -71,7 +71,7 @@ func TestRunStaysStrictByDefaultOnDivergentSnapshot(t *testing.T) {
 }
 
 func TestRunWithEvidenceAdmissionDisabledRestoresLenientMode(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:cutover"}, "cutover:lenient",
 		nil, WithEvidenceAdmission(false))
 	reviewer := &scriptedReviewer{name: "dimension-logic", output: "raw verdict"}
@@ -90,7 +90,7 @@ func TestRunWithEvidenceAdmissionDisabledRestoresLenientMode(t *testing.T) {
 }
 
 func TestRunWithEvidenceAdmissionDisabledStillRecordsInspectableRuns(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := NewDurableTransport(backing, store.RunPolicy{ID: "policy:cutover"},
 		"cutover-observable", nil, WithEvidenceAdmission(false))
 	reviewer := silentReviewer{name: "dimension-style"}
