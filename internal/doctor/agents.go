@@ -63,6 +63,7 @@ func checkOneAgent(name string, agent config.AgentConfig, opts Options, add func
 		return
 	}
 	add("agents", name+" resolves", true, fmt.Sprintf("%s resolves on PATH", describeTarget(name, agent)), "")
+	opts.announce("probing " + name + "…")
 	answer, err := opts.Env.Probe(name, probePrompt)
 	if err != nil {
 		var timeout *ProbeTimeout
