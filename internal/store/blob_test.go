@@ -6,133 +6,135 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
-func TestYaRevisadoBlobNuncaVisto(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+func TestAlreadyReviewedBlobNeverSeen(t *testing.T) {
+	s := NewStore(t.TempDir())
 
-	revisado, hallazgos, err := s.YaRevisado("blob-nunca-visto")
+	reviewed, findings, err := s.AlreadyReviewed("blob-never-seen")
 	if err != nil {
-		t.Fatalf("YaRevisado: %v", err)
+		t.Fatalf("AlreadyReviewed: %v", err)
 	}
-	if revisado {
-		t.Error("YaRevisado = true para un blob que nunca se registró")
+	if reviewed {
+		t.Error("AlreadyReviewed = true for a blob that was never registered")
 	}
-	if hallazgos != nil {
-		t.Errorf("hallazgos = %v, esperado nil", hallazgos)
+	if findings != nil {
+		t.Errorf("findings = %v, want nil", findings)
 	}
 }
 
-// TestYaRevisadoBlobLimpioSinHallazgos cubre la distinción clave: un blob
-// que sí apareció en un IndiceCommit, pero sin fingerprints asociados (un
-// commit limpio, sin hallazgos), debe contar como revisado=true. Si no fuera
-// así, un archivo sin problemas se re-auditaría siempre.
-func TestYaRevisadoBlobLimpioSinHallazgos(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	idx := &IndiceCommit{SHA: "sha-limpio", Blobs: map[string]string{"a.go": "blob-limpio"}}
-	if err := s.GuardarIndiceCommit(idx); err != nil {
-		t.Fatalf("GuardarIndiceCommit: %v", err)
+// TestAlreadyReviewedBlobCleanWithoutFindings covers the key distinction: a
+// blob that did appear in a CommitIndex, but with no associated fingerprints
+// (a clean commit, without findings), must count as reviewed=true. Otherwise
+// a problem-free file would be re-audited every time.
+func TestAlreadyReviewedBlobCleanWithoutFindings(t *testing.T) {
+	s := NewStore(t.TempDir())
+	idx := &CommitIndex{SHA: "clean-sha", Blobs: map[string]string{"a.go": "clean-blob"}}
+	if err := s.SaveCommitIndex(idx); err != nil {
+		t.Fatalf("SaveCommitIndex: %v", err)
 	}
 
-	revisado, hallazgos, err := s.YaRevisado("blob-limpio")
+	reviewed, findings, err := s.AlreadyReviewed("clean-blob")
 	if err != nil {
-		t.Fatalf("YaRevisado: %v", err)
+		t.Fatalf("AlreadyReviewed: %v", err)
 	}
-	if !revisado {
-		t.Error("YaRevisado = false para un blob que sí apareció en un IndiceCommit (limpio)")
+	if !reviewed {
+		t.Error("AlreadyReviewed = false for a blob that did appear in a CommitIndex (clean)")
 	}
-	if len(hallazgos) != 0 {
-		t.Errorf("hallazgos = %+v, esperado vacío (blob limpio)", hallazgos)
+	if len(findings) != 0 {
+		t.Errorf("findings = %+v, want empty (clean blob)", findings)
 	}
 }
 
-// TestYaRevisadoBlobConHallazgos cubre el caso con hallazgos v2 reales
-// asociados al blob: deben resolverse por fingerprint y devolverse.
-func TestYaRevisadoBlobConHallazgos(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	h := &review.Hallazgo{
-		Fingerprint: "fp-blob-con-hallazgo",
-		Title:       "algo",
+// TestAlreadyReviewedBlobWithFindings covers the case with real v2 findings
+// associated with the blob: they must be resolved by fingerprint and
+// returned.
+func TestAlreadyReviewedBlobWithFindings(t *testing.T) {
+	s := NewStore(t.TempDir())
+	h := &review.Finding{
+		Fingerprint: "fp-blob-with-finding",
+		Title:       "something",
 		Severity:    "high",
-		Location:    review.Ubicacion{Archivo: "a.go", Blob: "blob-con-hallazgo"},
+		Location:    review.Location{File: "a.go", Blob: "blob-with-finding"},
 	}
-	if err := s.GuardarHallazgo(h); err != nil {
-		t.Fatalf("GuardarHallazgo: %v", err)
+	if err := s.SaveFinding(h); err != nil {
+		t.Fatalf("SaveFinding: %v", err)
 	}
-	idx := &IndiceCommit{
-		SHA:          "sha-con-hallazgo",
-		Fingerprints: []string{"fp-blob-con-hallazgo"},
-		Blobs:        map[string]string{"a.go": "blob-con-hallazgo"},
+	idx := &CommitIndex{
+		SHA:          "sha-with-finding",
+		Fingerprints: []string{"fp-blob-with-finding"},
+		Blobs:        map[string]string{"a.go": "blob-with-finding"},
 	}
-	if err := s.GuardarIndiceCommit(idx); err != nil {
-		t.Fatalf("GuardarIndiceCommit: %v", err)
+	if err := s.SaveCommitIndex(idx); err != nil {
+		t.Fatalf("SaveCommitIndex: %v", err)
 	}
 
-	revisado, hallazgos, err := s.YaRevisado("blob-con-hallazgo")
+	reviewed, findings, err := s.AlreadyReviewed("blob-with-finding")
 	if err != nil {
-		t.Fatalf("YaRevisado: %v", err)
+		t.Fatalf("AlreadyReviewed: %v", err)
 	}
-	if !revisado {
-		t.Error("YaRevisado = false para un blob con hallazgo asociado")
+	if !reviewed {
+		t.Error("AlreadyReviewed = false for a blob with an associated finding")
 	}
-	if len(hallazgos) != 1 || hallazgos[0].Fingerprint != "fp-blob-con-hallazgo" {
-		t.Errorf("hallazgos = %+v, esperado [fp-blob-con-hallazgo]", hallazgos)
+	if len(findings) != 1 || findings[0].Fingerprint != "fp-blob-with-finding" {
+		t.Errorf("findings = %+v, want [fp-blob-with-finding]", findings)
 	}
 }
 
-// TestSHAsDeBlobNuncaRegistrado: un blob que nunca se registró devuelve
-// nil sin error (distinto de un blob registrado con lista vacía, que en la
-// práctica no ocurre porque registrarBlobs solo escribe cuando hay un SHA
-// que añadir, pero el contrato de "nunca visto" debe ser inequívoco).
-func TestSHAsDeBlobNuncaRegistrado(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+// TestBlobSHAsNeverRegistered: a blob that was never registered returns nil
+// without error (distinct from a registered blob with an empty list, which
+// in practice does not happen because registerBlobs only writes when there
+// is a SHA to add, but the "never seen" contract must be unambiguous).
+func TestBlobSHAsNeverRegistered(t *testing.T) {
+	s := NewStore(t.TempDir())
 
-	shas, err := s.SHAsDeBlob("blob-nunca-registrado")
+	shas, err := s.BlobSHAs("never-registered-blob")
 	if err != nil {
-		t.Fatalf("SHAsDeBlob: %v", err)
+		t.Fatalf("BlobSHAs: %v", err)
 	}
 	if shas != nil {
-		t.Errorf("shas = %v, esperado nil para un blob nunca registrado", shas)
+		t.Errorf("shas = %v, want nil for a never-registered blob", shas)
 	}
 }
 
-// TestSHAsDeBlobDevuelveLosRegistrados: cubre el camino feliz que usa
-// commitCubiertoPorBlobs (internal/review) para calcular intersecciones.
-func TestSHAsDeBlobDevuelveLosRegistrados(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	idx := &IndiceCommit{SHA: "sha-x", Blobs: map[string]string{"a.go": "blob-x"}}
-	if err := s.GuardarIndiceCommit(idx); err != nil {
-		t.Fatalf("GuardarIndiceCommit: %v", err)
+// TestBlobSHAsReturnsRegisteredOnes: covers the happy path used by
+// commitCoveredByBlobs (internal/review) to compute intersections.
+func TestBlobSHAsReturnsRegisteredOnes(t *testing.T) {
+	s := NewStore(t.TempDir())
+	idx := &CommitIndex{SHA: "sha-x", Blobs: map[string]string{"a.go": "blob-x"}}
+	if err := s.SaveCommitIndex(idx); err != nil {
+		t.Fatalf("SaveCommitIndex: %v", err)
 	}
 
-	shas, err := s.SHAsDeBlob("blob-x")
+	shas, err := s.BlobSHAs("blob-x")
 	if err != nil {
-		t.Fatalf("SHAsDeBlob: %v", err)
+		t.Fatalf("BlobSHAs: %v", err)
 	}
 	if len(shas) != 1 || shas[0] != "sha-x" {
-		t.Errorf("shas = %v, esperado [sha-x]", shas)
+		t.Errorf("shas = %v, want [sha-x]", shas)
 	}
 }
 
-// TestRegistrarBlobsCommitPreservaFingerprints: RegistrarBlobsCommit no debe
-// pisar los Fingerprints/V1 que ya tuviera el IndiceCommit de ese sha.
-func TestRegistrarBlobsCommitPreservaFingerprints(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	idx := &IndiceCommit{SHA: "sha1", Fingerprints: []string{"fp1"}, Message: "feat(x)"}
-	if err := s.GuardarIndiceCommit(idx); err != nil {
-		t.Fatalf("GuardarIndiceCommit: %v", err)
+// TestRegisterCommitBlobsPreservesFingerprints: RegisterCommitBlobs must
+// not overwrite the Fingerprints/V1 that the CommitIndex of that sha
+// already had.
+func TestRegisterCommitBlobsPreservesFingerprints(t *testing.T) {
+	s := NewStore(t.TempDir())
+	idx := &CommitIndex{SHA: "sha1", Fingerprints: []string{"fp1"}, Message: "feat(x)"}
+	if err := s.SaveCommitIndex(idx); err != nil {
+		t.Fatalf("SaveCommitIndex: %v", err)
 	}
 
-	if err := s.RegistrarBlobsCommit("sha1", map[string]string{"a.go": "blob1"}); err != nil {
-		t.Fatalf("RegistrarBlobsCommit: %v", err)
+	if err := s.RegisterCommitBlobs("sha1", map[string]string{"a.go": "blob1"}); err != nil {
+		t.Fatalf("RegisterCommitBlobs: %v", err)
 	}
 
-	leido, err := s.LeerIndiceCommit("sha1")
+	got, err := s.ReadCommitIndex("sha1")
 	if err != nil {
-		t.Fatalf("LeerIndiceCommit: %v", err)
+		t.Fatalf("ReadCommitIndex: %v", err)
 	}
-	if leido == nil || len(leido.Fingerprints) != 1 || leido.Fingerprints[0] != "fp1" {
-		t.Errorf("Fingerprints no preservados: %+v", leido)
+	if got == nil || len(got.Fingerprints) != 1 || got.Fingerprints[0] != "fp1" {
+		t.Errorf("Fingerprints not preserved: %+v", got)
 	}
-	if leido.Blobs["a.go"] != "blob1" {
-		t.Errorf("Blobs = %+v, esperado a.go->blob1", leido.Blobs)
+	if got.Blobs["a.go"] != "blob1" {
+		t.Errorf("Blobs = %+v, want a.go->blob1", got.Blobs)
 	}
 }

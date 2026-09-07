@@ -18,7 +18,7 @@ import (
 func TestReadAttemptOutcomesNeverSplitsATerminalPersistenceWrite(t *testing.T) {
 	const iterations = 15
 	for i := 0; i < iterations; i++ {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		job := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 			agentrun.Candidate("candidate:read-race"), agentrun.Prompt("read-race"), nil))
 		runID := string(job.RunID())

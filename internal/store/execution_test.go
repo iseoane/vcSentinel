@@ -29,7 +29,7 @@ func testJob() agentrun.LogicalJob {
 }
 
 func TestCreateRunCreatesIdentityRecords(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	policy := RunPolicy{ID: "policy-id"}
 
@@ -80,7 +80,7 @@ func TestCreateRunCreatesIdentityRecords(t *testing.T) {
 }
 
 func TestCreateRunAcceptsIdenticalRetry(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	policy := RunPolicy{ID: "policy-id"}
 
@@ -149,7 +149,7 @@ func TestCreateRunRejectsImmutableConflicts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := NuevoStore(t.TempDir())
+			store := NewStore(t.TempDir())
 			job := testJob()
 			if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 				t.Fatal(err)
@@ -189,7 +189,7 @@ func TestExecutionDirRejectsUnsafeRunIDs(t *testing.T) {
 		{name: "absolute path", runID: `/outside`},
 		{name: "null byte", runID: "run\x00id"},
 	}
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -213,11 +213,11 @@ func TestCreateRunUsesLinkedWorktreeCommonDir(t *testing.T) {
 
 	linked := filepath.Join(t.TempDir(), "linked")
 	runGit(t, principal, "worktree", "add", "-q", linked, "-b", "linked")
-	principalCommon, err := git.ObtenerGitCommonDir(principal)
+	principalCommon, err := git.GetGitCommonDir(principal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	linkedCommon, err := git.ObtenerGitCommonDir(linked)
+	linkedCommon, err := git.GetGitCommonDir(linked)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,10 +227,10 @@ func TestCreateRunUsesLinkedWorktreeCommonDir(t *testing.T) {
 
 	job := testJob()
 	policy := RunPolicy{ID: "policy-id"}
-	if err := NuevoStore(principalCommon).CreateRun(job, policy); err != nil {
+	if err := NewStore(principalCommon).CreateRun(job, policy); err != nil {
 		t.Fatal(err)
 	}
-	linkedStore := NuevoStore(linkedCommon)
+	linkedStore := NewStore(linkedCommon)
 	if err := linkedStore.CreateRun(job, policy); err != nil {
 		t.Fatalf("linked-worktree retry returned error: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestCreateRunUsesLinkedWorktreeCommonDir(t *testing.T) {
 }
 
 func TestAppendReadAndPageEvents(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
@@ -296,8 +296,8 @@ func TestAppendReadAndPageEvents(t *testing.T) {
 
 func TestExpectedRevisionAllowsOnlyOneConcurrentWriter(t *testing.T) {
 	root := t.TempDir()
-	firstStore := NuevoStore(root)
-	secondStore := NuevoStore(root)
+	firstStore := NewStore(root)
+	secondStore := NewStore(root)
 	job := testJob()
 	runID := string(job.RunID())
 	if err := firstStore.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
@@ -344,7 +344,7 @@ func TestExpectedRevisionAllowsOnlyOneConcurrentWriter(t *testing.T) {
 }
 
 func TestRebuildProjectionFromValidatedEvents(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
@@ -414,7 +414,7 @@ func TestEventLogCorruptionFailsClosed(t *testing.T) {
 }
 
 func TestRecoverIncompleteTailButNotCompleteCorruption(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
@@ -485,7 +485,7 @@ func TestWriterTerminationLeavesRecoverableTail(t *testing.T) {
 		os.Exit(17)
 	}
 
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
@@ -632,7 +632,7 @@ func testEvent(t *testing.T, job agentrun.LogicalJob, from, to agentrun.Lifecycl
 
 func twoEventLog(t *testing.T) (*Store, string, string) {
 	t.Helper()
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {

@@ -75,7 +75,7 @@ func assertRefusedWithReason(t *testing.T, err error, wantClass RecoveryClass, w
 // in a second store built from the same candidate identity.
 func TestRepairRecoversCrashWindowBeforeSnapshot(t *testing.T) {
 	transitions := append(append([]streamTransition{}, startSequence...), successTransition())
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job, directory := buildScanRun(t, s, "candidate:crash-window", transitions)
 	runID := string(job.RunID())
 	eventsBefore := readEventsBytes(t, directory)
@@ -97,7 +97,7 @@ func TestRepairRecoversCrashWindowBeforeSnapshot(t *testing.T) {
 		t.Fatal("repair claimed no rewrite for a missing snapshot")
 	}
 
-	healthy := NuevoStore(t.TempDir())
+	healthy := NewStore(t.TempDir())
 	healthyJob, healthyDir := buildScanRun(t, healthy, "candidate:crash-window", transitions)
 	if healthyJob.RunID() != job.RunID() {
 		t.Fatalf("identity derivation is not deterministic: %s vs %s", healthyJob.RunID(), job.RunID())
@@ -134,7 +134,7 @@ func TestRepairRecoversCrashWindowBeforeSnapshot(t *testing.T) {
 func TestRepairRecoversStaleSnapshotCrashWindow(t *testing.T) {
 	startOnly := append([]streamTransition{}, startSequence...)
 	full := append(append([]streamTransition{}, startSequence...), successTransition())
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job, directory := buildScanRun(t, s, "candidate:stale-snapshot", startOnly)
 	runID := string(job.RunID())
 
@@ -178,7 +178,7 @@ func TestRepairRecoversStaleSnapshotCrashWindow(t *testing.T) {
 		t.Fatal("repair claimed no rewrite for a stale snapshot")
 	}
 
-	healthy := NuevoStore(t.TempDir())
+	healthy := NewStore(t.TempDir())
 	healthyJob, healthyDir := buildScanRun(t, healthy, "candidate:stale-snapshot", full)
 	if healthyJob.RunID() != job.RunID() {
 		t.Fatalf("identity derivation is not deterministic: %s vs %s", healthyJob.RunID(), job.RunID())
@@ -209,7 +209,7 @@ func TestRepairRecoversStaleSnapshotCrashWindow(t *testing.T) {
 // events must reproduce the on-disk state.json exactly, and running the
 // production rebuild must be a byte-level no-op.
 func TestReplayMatchesHealthySnapshotByteForByte(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job, directory := buildScanRun(t, s, "candidate:determinism",
 		append(append([]streamTransition{}, startSequence...), successTransition()))
 	runID := string(job.RunID())
@@ -261,7 +261,7 @@ func marshalRecordOrDie(t *testing.T, value any) []byte {
 // TestRepairRefusesCorruptStreamWithZeroWrites pins that a hash-chain break
 // is reported with its exact defect and that repair performs no write at all.
 func TestRepairRefusesCorruptStreamWithZeroWrites(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	_, directory := buildScanRun(t, s, "candidate:corrupt", startSequence)
 	tamperFirstHash(t, directory)
 	root := filepath.Dir(directory)
@@ -324,7 +324,7 @@ func TestRepairRefusesNonUnprojectedClassesWithExactReasons(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NuevoStore(t.TempDir())
+			s := NewStore(t.TempDir())
 			job, directory := buildScanRun(t, s, "candidate:"+tt.name, tt.transitions)
 			root := filepath.Dir(directory)
 			before := digestsWithoutLockFiles(hashExecutionTree(t, root))
@@ -347,7 +347,7 @@ func TestRepairRefusesNonUnprojectedClassesWithExactReasons(t *testing.T) {
 // path fails cleanly with no partial snapshot. After release, the same repair
 // succeeds.
 func TestRepairUnderHeldLockFailsCleanlyWithoutPartialWrites(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job, directory := buildScanRun(t, s, "candidate:contended",
 		append(append([]streamTransition{}, startSequence...), successTransition()))
 	runID := string(job.RunID())

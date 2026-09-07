@@ -6,58 +6,58 @@ import (
 	"testing"
 )
 
-func TestStoreCalcularUnitIDDeterminista(t *testing.T) {
-	id1 := CalcularUnitID("base1", "head1", "plan1")
-	id2 := CalcularUnitID("base1", "head1", "plan1")
+func TestStoreComputeUnitIDDeterministic(t *testing.T) {
+	id1 := ComputeUnitID("base1", "head1", "plan1")
+	id2 := ComputeUnitID("base1", "head1", "plan1")
 	if id1 != id2 {
-		t.Errorf("CalcularUnitID no es determinista: %s != %s", id1, id2)
+		t.Errorf("ComputeUnitID is not deterministic: %s != %s", id1, id2)
 	}
-	// plan_id vacío sigue siendo un id válido y distinto de uno con plan.
-	idSinPlan := CalcularUnitID("base1", "head1", "")
-	if idSinPlan == id1 || idSinPlan == "" {
-		t.Errorf("CalcularUnitID sin plan_id debería ser válido y distinto: %s", idSinPlan)
+	// An empty plan_id is still a valid id, distinct from one with a plan.
+	idWithoutPlan := ComputeUnitID("base1", "head1", "")
+	if idWithoutPlan == id1 || idWithoutPlan == "" {
+		t.Errorf("ComputeUnitID without plan_id should be valid and distinct: %s", idWithoutPlan)
 	}
 }
 
-func TestStoreGuardarYLeerUnit(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	id := CalcularUnitID("base1", "head1", "plan1")
+func TestStoreSaveAndReadUnit(t *testing.T) {
+	s := NewStore(t.TempDir())
+	id := ComputeUnitID("base1", "head1", "plan1")
 	u := &Unit{ID: id, BaseTree: "base1", HeadTree: "head1", PlanID: "plan1", RunIDs: []string{"r1"}}
 
-	if err := s.GuardarUnit(u); err != nil {
-		t.Fatalf("GuardarUnit: %v", err)
+	if err := s.SaveUnit(u); err != nil {
+		t.Fatalf("SaveUnit: %v", err)
 	}
-	leido, err := s.LeerUnit(id)
+	got, err := s.ReadUnit(id)
 	if err != nil {
-		t.Fatalf("LeerUnit: %v", err)
+		t.Fatalf("ReadUnit: %v", err)
 	}
-	if leido == nil || leido.BaseTree != "base1" || leido.HeadTree != "head1" || len(leido.RunIDs) != 1 {
-		t.Errorf("unit leída = %+v, no coincide con lo guardado", leido)
+	if got == nil || got.BaseTree != "base1" || got.HeadTree != "head1" || len(got.RunIDs) != 1 {
+		t.Errorf("read unit = %+v, does not match what was saved", got)
 	}
 }
 
-func TestStoreLeerUnitInexistente(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	u, err := s.LeerUnit("noexiste")
+func TestStoreReadUnitMissing(t *testing.T) {
+	s := NewStore(t.TempDir())
+	u, err := s.ReadUnit("missing")
 	if err != nil {
-		t.Fatalf("LeerUnit: %v", err)
+		t.Fatalf("ReadUnit: %v", err)
 	}
 	if u != nil {
-		t.Error("LeerUnit debería devolver nil para un id sin unit")
+		t.Error("ReadUnit should return nil for an id without a unit")
 	}
 }
 
-func TestStoreUnitCorruptaEsError(t *testing.T) {
+func TestStoreUnitCorruptIsError(t *testing.T) {
 	dir := t.TempDir()
-	s := NuevoStore(dir)
-	ruta := filepath.Join(dir, "vas-sentinel", subdirUnits, "u1.json")
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	s := NewStore(dir)
+	path := filepath.Join(dir, "vas-sentinel", subdirUnits, "u1.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte("no es json"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.LeerUnit("u1"); err == nil {
-		t.Error("un archivo corrupto debería devolver error, no nil")
+	if _, err := s.ReadUnit("u1"); err == nil {
+		t.Error("a corrupt file should return an error, not nil")
 	}
 }

@@ -17,18 +17,18 @@ type Profile struct {
 	ActualModel   string `json:"actual_model,omitempty"`
 }
 
-// GuardarPerfil persists p in profiles/<name>.json.
-func (s *Store) GuardarPerfil(p *Profile) error {
+// SaveProfile persists p in profiles/<name>.json.
+func (s *Store) SaveProfile(p *Profile) error {
 	if p.Name == "" {
 		return errors.New("store: profile without name")
 	}
-	return s.guardarJSON(subdirProfiles, p.Name, p)
+	return s.writeJSON(subdirProfiles, p.Name, p)
 }
 
-// LeerPerfil returns the profile named name, or nil when it was not recorded.
-func (s *Store) LeerPerfil(name string) (*Profile, error) {
+// ReadProfile returns the profile named name, or nil when it was not recorded.
+func (s *Store) ReadProfile(name string) (*Profile, error) {
 	var p Profile
-	ok, err := s.leerJSON(subdirProfiles, name, &p)
+	ok, err := s.readJSON(subdirProfiles, name, &p)
 	if err != nil || !ok {
 		return nil, err
 	}

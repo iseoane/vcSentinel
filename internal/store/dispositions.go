@@ -35,7 +35,7 @@ func (s *Store) AppendDisposition(d *review.FindingDisposition) error {
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return err
 	}
-	datos, err := json.Marshal(&record)
+	data, err := json.Marshal(&record)
 	if err != nil {
 		return err
 	}
@@ -44,7 +44,7 @@ func (s *Store) AppendDisposition(d *review.FindingDisposition) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.Write(append(datos, '\n')); err != nil {
+	if _, err := f.Write(append(data, '\n')); err != nil {
 		return err
 	}
 	*d = record
@@ -89,7 +89,7 @@ func normalizeAndValidateDisposition(d *review.FindingDisposition) (review.Findi
 // that was never written returns (nil, nil); a corrupt line is an explicit
 // error, never a silent skip: every consumer of these answers fails closed.
 func (s *Store) ReadDispositions() ([]review.FindingDisposition, error) {
-	datos, err := os.ReadFile(filepath.Join(s.dir, dispositionsFile))
+	data, err := os.ReadFile(filepath.Join(s.dir, dispositionsFile))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -97,12 +97,12 @@ func (s *Store) ReadDispositions() ([]review.FindingDisposition, error) {
 		return nil, err
 	}
 	var out []review.FindingDisposition
-	for i, linea := range strings.Split(strings.TrimRight(string(datos), "\n"), "\n") {
-		if linea == "" {
+	for i, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
 			continue
 		}
 		var d review.FindingDisposition
-		if err := json.Unmarshal([]byte(linea), &d); err != nil {
+		if err := json.Unmarshal([]byte(line), &d); err != nil {
 			return nil, fmt.Errorf("store: corrupt finding disposition on line %d: %w", i+1, err)
 		}
 		record, err := normalizeAndValidateDisposition(&d)

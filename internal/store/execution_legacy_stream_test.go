@@ -54,7 +54,7 @@ func predecessorHashForTest(previous []EventFrame) string {
 // project exactly as they did: no new kind is required, and recomputing the
 // projection from the frames reproduces the persisted state.json bytes.
 func TestLegacyStreamWithoutCancellationEventsProjectsIdentically(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job := testJob()
 	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)

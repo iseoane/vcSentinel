@@ -6,9 +6,9 @@ import (
 	"errors"
 )
 
-// Unit representa un cambio delimitado auditado como conjunto: un lote de
-// slice, o el conjunto de commits de una PR. RunIDs enlaza las ejecuciones
-// (runs/<run-id>.json) que se hicieron sobre esa unit.
+// Unit represents a delimited change audited as a whole: a slice batch, or
+// the set of commits of a PR. RunIDs links the runs (runs/<run-id>.json)
+// that were executed over that unit.
 type Unit struct {
 	ID       string   `json:"id"`
 	BaseTree string   `json:"base_tree"`
@@ -17,27 +17,28 @@ type Unit struct {
 	RunIDs   []string `json:"run_ids"`
 }
 
-// CalcularUnitID deriva el id de una unit como sha256(baseTree+headTree+planID).
-// Es determinista a propósito: recalcular sobre el mismo cambio (por ejemplo,
-// un reintento) resuelve a la misma unit sin coordinación externa. planID
-// vacío sigue siendo válido: una unit no siempre viene de un plan de slice.
-func CalcularUnitID(baseTree, headTree, planID string) string {
-	suma := sha256.Sum256([]byte(baseTree + headTree + planID))
-	return hex.EncodeToString(suma[:])
+// ComputeUnitID derives the id of a unit as
+// sha256(baseTree+headTree+planID). It is deterministic on purpose:
+// recomputing it over the same change (for example, a retry) resolves to
+// the same unit without external coordination. An empty planID remains
+// valid: a unit does not always come from a slice plan.
+func ComputeUnitID(baseTree, headTree, planID string) string {
+	sum := sha256.Sum256([]byte(baseTree + headTree + planID))
+	return hex.EncodeToString(sum[:])
 }
 
-// GuardarUnit persiste u en units/<id>.json.
-func (s *Store) GuardarUnit(u *Unit) error {
+// SaveUnit persists u in units/<id>.json.
+func (s *Store) SaveUnit(u *Unit) error {
 	if u.ID == "" {
-		return errors.New("store: unit sin id")
+		return errors.New("store: unit without id")
 	}
-	return s.guardarJSON(subdirUnits, u.ID, u)
+	return s.writeJSON(subdirUnits, u.ID, u)
 }
 
-// LeerUnit devuelve la unit con ese id, o nil si no existe todavía.
-func (s *Store) LeerUnit(id string) (*Unit, error) {
+// ReadUnit returns the unit with that id, or nil if it does not exist yet.
+func (s *Store) ReadUnit(id string) (*Unit, error) {
 	var u Unit
-	ok, err := s.leerJSON(subdirUnits, id, &u)
+	ok, err := s.readJSON(subdirUnits, id, &u)
 	if err != nil || !ok {
 		return nil, err
 	}

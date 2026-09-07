@@ -12,7 +12,7 @@ import (
 )
 
 func TestAttemptOutcomeAndResponseRecordsAreImmutableAndInspectable(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestAttemptOutcomeAndResponseRecordsAreImmutableAndInspectable(t *testing.T
 }
 
 func TestReadAttemptOutcomesRetainsLegacyCompatibilityForUnembeddedTerminalEvent(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
@@ -135,7 +135,7 @@ func TestReadAttemptOutcomesRetainsLegacyCompatibilityForUnembeddedTerminalEvent
 }
 
 func TestReadDerivedProjectionUsesValidatedEventsWhenStateFileIsStale(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	runID := string(job.RunID())
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {

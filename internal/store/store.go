@@ -1,8 +1,8 @@
-// Package store implementa el almacenamiento persistente de VAS Sentinel
-// para T2.5 (F2): units, runs, findings, commits y decisions, anclados en el
-// git-common-dir del repositorio (compartido entre worktrees enlazados desde
-// el primer día). Convive con internal/review.Ledger sin sustituirlo: la
-// migración de datos existentes es tarea de T2.6, este paquete nace vacío.
+// Package store implements VAS Sentinel's persistent storage for T2.5
+// (F2): units, runs, findings, commits and decisions, anchored in the
+// repository's git common dir (shared across linked worktrees from day
+// one). It coexists with internal/review.Ledger without replacing it:
+// migrating existing data is T2.6's job; this package starts empty.
 package store
 
 import (
@@ -19,72 +19,73 @@ const (
 	subdirCommits  = "commits"
 )
 
-// Store da acceso al almacenamiento por id dentro de <gitCommonDir>/vas-sentinel.
+// Store gives access to storage keyed by id inside <gitCommonDir>/vas-sentinel.
 type Store struct {
 	dir string
 }
 
-// NuevoStore crea un store anclado a <gitCommonDir>/vas-sentinel. El llamador
-// es responsable de pasar el resultado de git.ObtenerGitCommonDir (no
-// ObtenerGitDir) para que el store se comparta entre worktrees enlazados; el
-// store en sí no impone esa elección, igual que review.NuevoLedger tampoco lo
-// hace. No crea el directorio: eso ocurre en la primera escritura.
-func NuevoStore(gitCommonDir string) *Store {
+// NewStore creates a store anchored to <gitCommonDir>/vas-sentinel. The
+// caller is responsible for passing the result of git.GetGitCommonDir
+// (not GetGitDir) so that the store is shared across linked worktrees;
+// the store itself does not enforce that choice, just as review.NewLedger
+// does not either. It does not create the directory: that happens on the
+// first write.
+func NewStore(gitCommonDir string) *Store {
 	return &Store{dir: filepath.Join(gitCommonDir, "vas-sentinel")}
 }
 
-// rutaDecisiones devuelve la ruta del archivo append-only de decisiones.
-func (s *Store) rutaDecisiones() string {
+// decisionsPath returns the path of the append-only decisions file.
+func (s *Store) decisionsPath() string {
 	return filepath.Join(s.dir, "decisions.jsonl")
 }
 
-// guardarJSON persiste v como <dir>/<subdir>/<id>.json con escritura atómica
-// temp + rename: mismo patrón que review.Ledger.guardarFicha (probado en
-// T2.x), reutilizado aquí para los cuatro tipos con clave por id (units,
-// runs, findings, commits). En Windows el destino existente se borra antes
-// del rename porque el sistema no permite sobrescribir con os.Rename.
-func (s *Store) guardarJSON(subdir, id string, v any) error {
+// writeJSON persists v as <dir>/<subdir>/<id>.json with atomic temp+rename
+// writing: same pattern as review.Ledger.saveRecord (proven in T2.x),
+// reused here for the four types keyed by id (units, runs, findings,
+// commits). On Windows the existing destination is removed before the
+// rename because the system does not allow overwriting with os.Rename.
+func (s *Store) writeJSON(subdir, id string, v any) error {
 	dir := filepath.Join(s.dir, subdir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	datos, err := json.MarshalIndent(v, "", "  ")
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	destino := filepath.Join(dir, id+".json")
+	destination := filepath.Join(dir, id+".json")
 	temp, err := os.CreateTemp(dir, "tmp-*.tmp")
 	if err != nil {
 		return err
 	}
-	rutaTemp := temp.Name()
-	defer os.Remove(rutaTemp)
-	if _, err := temp.Write(datos); err != nil {
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(data); err != nil {
 		temp.Close()
 		return err
 	}
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Remove(destino); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return os.Rename(rutaTemp, destino)
+	return os.Rename(tempPath, destination)
 }
 
-// leerJSON lee <dir>/<subdir>/<id>.json en v. Devuelve (false, nil) si el
-// archivo no existe todavía; un archivo corrupto es un error explícito, nunca
-// un nil silencioso (mismo criterio que review.Ledger.LeerFicha).
-func (s *Store) leerJSON(subdir, id string, v any) (bool, error) {
-	ruta := filepath.Join(s.dir, subdir, id+".json")
-	datos, err := os.ReadFile(ruta)
+// readJSON reads <dir>/<subdir>/<id>.json into v. Returns (false, nil) if
+// the file does not exist yet; a corrupt file is an explicit error, never a
+// silent nil (same criterion as review.Ledger.ReadRecord).
+func (s *Store) readJSON(subdir, id string, v any) (bool, error) {
+	path := filepath.Join(s.dir, subdir, id+".json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
 		return false, err
 	}
-	if err := json.Unmarshal(datos, v); err != nil {
+	if err := json.Unmarshal(data, v); err != nil {
 		return false, err
 	}
 	return true, nil

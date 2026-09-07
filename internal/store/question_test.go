@@ -2,152 +2,150 @@ package store
 
 import "testing"
 
-// TestRespuestaRegistrada_MismoBlobMismaPregunta_NoSeRepite cubre el criterio
-// de aceptación de T7.5: la misma pregunta sobre el mismo blob no se vuelve a
-// preguntar en una segunda ejecución (simulada aquí como una segunda llamada
-// a RespuestaRegistrada sobre el mismo Store).
-func TestRespuestaRegistrada_MismoBlobMismaPregunta_NoSeRepite(t *testing.T) {
+// TestRecordedAnswer_SameBlobSameQuestion_NotAskedAgain covers the T7.5
+// acceptance criterion: the same question about the same blob is not asked
+// again in a second run (simulated here as a second call to RecordedAnswer
+// on the same Store).
+func TestRecordedAnswer_SameBlobSameQuestion_NotAskedAgain(t *testing.T) {
 	gitCommonDir := t.TempDir()
-	s := NuevoStore(gitCommonDir)
+	s := NewStore(gitCommonDir)
 
-	if err := s.RegistrarRespuesta("blob123", "q1", "sí, es intencional", "iseoane"); err != nil {
-		t.Fatalf("RegistrarRespuesta: %v", err)
+	if err := s.RecordAnswer("blob123", "q1", "yes, intentional", "iseoane"); err != nil {
+		t.Fatalf("RecordAnswer: %v", err)
 	}
 
-	// Primera "ejecución": ya se registró la respuesta.
-	respuesta, ok, err := s.RespuestaRegistrada("blob123", "q1")
+	// First "run": the answer was already recorded.
+	answer, ok, err := s.RecordedAnswer("blob123", "q1")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada: %v", err)
+		t.Fatalf("RecordedAnswer: %v", err)
 	}
 	if !ok {
-		t.Fatal("ok = false, esperado true: la respuesta ya fue registrada")
+		t.Fatal("ok = false, want true: the answer was already recorded")
 	}
-	if respuesta != "sí, es intencional" {
-		t.Errorf("respuesta = %q, esperado %q", respuesta, "sí, es intencional")
+	if answer != "yes, intentional" {
+		t.Errorf("answer = %q, want %q", answer, "yes, intentional")
 	}
 
-	// Segunda "ejecución" (simulada con un Store nuevo sobre el mismo
-	// git-common-dir, como ocurriría entre dos invocaciones separadas del
-	// proceso): debe seguir encontrando la misma respuesta sin volver a
-	// preguntar.
-	s2 := NuevoStore(gitCommonDir)
-	respuesta2, ok2, err := s2.RespuestaRegistrada("blob123", "q1")
+	// Second "run" (simulated with a new Store over the same git common
+	// dir, as would happen between two separate process invocations): it
+	// must keep finding the same answer without asking again.
+	s2 := NewStore(gitCommonDir)
+	answer2, ok2, err := s2.RecordedAnswer("blob123", "q1")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada (segunda ejecución): %v", err)
+		t.Fatalf("RecordedAnswer (second run): %v", err)
 	}
-	if !ok2 || respuesta2 != respuesta {
-		t.Errorf("segunda ejecución: ok=%v respuesta=%q, esperado ok=true respuesta=%q", ok2, respuesta2, respuesta)
+	if !ok2 || answer2 != answer {
+		t.Errorf("second run: ok=%v answer=%q, want ok=true answer=%q", ok2, answer2, answer)
 	}
 }
 
-// TestRespuestaRegistrada_BlobDistinto_NoEncuentraLaDeOtroBlob confirma que
-// la clave incluye el blob: la misma questionID sobre un blob distinto no
-// debe encontrarse.
-func TestRespuestaRegistrada_BlobDistinto_NoEncuentraLaDeOtroBlob(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	if err := s.RegistrarRespuesta("blob123", "q1", "respuesta", "iseoane"); err != nil {
-		t.Fatalf("RegistrarRespuesta: %v", err)
+// TestRecordedAnswer_DifferentBlob_NotFound confirms that the key includes
+// the blob: the same questionID over a different blob must not be found.
+func TestRecordedAnswer_DifferentBlob_NotFound(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.RecordAnswer("blob123", "q1", "answer", "iseoane"); err != nil {
+		t.Fatalf("RecordAnswer: %v", err)
 	}
 
-	_, ok, err := s.RespuestaRegistrada("blob-otro", "q1")
+	_, ok, err := s.RecordedAnswer("another-blob", "q1")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada: %v", err)
+		t.Fatalf("RecordedAnswer: %v", err)
 	}
 	if ok {
-		t.Error("ok = true, esperado false: el blob es distinto")
+		t.Error("ok = true, want false: the blob is different")
 	}
 }
 
-// TestRespuestaRegistrada_QuestionIDDistinta_NoEncuentraLaDeOtraPregunta
-// confirma que la clave incluye questionID: la misma pregunta sobre el mismo
-// blob pero con otra questionID no debe encontrarse.
-func TestRespuestaRegistrada_QuestionIDDistinta_NoEncuentraLaDeOtraPregunta(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	if err := s.RegistrarRespuesta("blob123", "q1", "respuesta", "iseoane"); err != nil {
-		t.Fatalf("RegistrarRespuesta: %v", err)
+// TestRecordedAnswer_DifferentQuestionID_NotFound confirms that the key
+// includes questionID: the same question over the same blob but with a
+// different questionID must not be found.
+func TestRecordedAnswer_DifferentQuestionID_NotFound(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.RecordAnswer("blob123", "q1", "answer", "iseoane"); err != nil {
+		t.Fatalf("RecordAnswer: %v", err)
 	}
 
-	_, ok, err := s.RespuestaRegistrada("blob123", "q2")
+	_, ok, err := s.RecordedAnswer("blob123", "q2")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada: %v", err)
+		t.Fatalf("RecordedAnswer: %v", err)
 	}
 	if ok {
-		t.Error("ok = true, esperado false: la questionID es distinta")
+		t.Error("ok = true, want false: the questionID is different")
 	}
 }
 
-// TestClaveRespuesta_SinColisionConSeparadorEmbebido fija el fix real de esta
-// ronda: antes de él, claveRespuesta concatenaba "blob:%s#question:%s" sin
-// escapar, así que un blob y un questionID que ya contuvieran el separador
-// podían colisionar entre pares distintos. Si este test se revierte junto
-// con claveRespuesta a esa concatenación simple, debe fallar: ambos pares
-// producían literalmente el mismo string "blob:X#question:q1#question:q2".
-func TestClaveRespuesta_SinColisionConSeparadorEmbebido(t *testing.T) {
-	a := claveRespuesta("X#question:q1", "q2")
-	b := claveRespuesta("X", "q1#question:q2")
+// TestAnswerKey_NoCollisionWithEmbeddedSeparator pins the real fix of this
+// round: before it, answerKey concatenated "blob:%s#question:%s" without
+// escaping, so a blob and a questionID that already contained the separator
+// could collide across distinct pairs. If this test is reverted together
+// with answerKey to that simple concatenation, it must fail: both pairs
+// literally produced the same string "blob:X#question:q1#question:q2".
+func TestAnswerKey_NoCollisionWithEmbeddedSeparator(t *testing.T) {
+	a := answerKey("X#question:q1", "q2")
+	b := answerKey("X", "q1#question:q2")
 	if a == b {
-		t.Fatalf("claveRespuesta colisiona: (%q,%q) y (%q,%q) producen la misma clave %q",
+		t.Fatalf("answerKey collides: (%q,%q) and (%q,%q) produce the same key %q",
 			"X#question:q1", "q2", "X", "q1#question:q2", a)
 	}
 }
 
-// TestRespuestaRegistrada_ComponentesConSeparadorEmbebido_NoColisionan es la
-// misma colisión pero a través de la API pública: registrar una respuesta
-// para un par (blob, questionID) no debe hacerse visible para un par
-// DISTINTO cuya concatenación naive coincidiría con la del primero.
-func TestRespuestaRegistrada_ComponentesConSeparadorEmbebido_NoColisionan(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	if err := s.RegistrarRespuesta("X#question:q1", "q2", "respuesta del primer par", "iseoane"); err != nil {
-		t.Fatalf("RegistrarRespuesta: %v", err)
+// TestRecordedAnswer_ComponentsWithEmbeddedSeparator_NoCollision is the
+// same collision but through the public API: recording an answer for one
+// (blob, questionID) pair must not become visible for a DIFFERENT pair
+// whose naive concatenation would coincide with the first one's.
+func TestRecordedAnswer_ComponentsWithEmbeddedSeparator_NoCollision(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.RecordAnswer("X#question:q1", "q2", "answer of the first pair", "iseoane"); err != nil {
+		t.Fatalf("RecordAnswer: %v", err)
 	}
 
-	_, ok, err := s.RespuestaRegistrada("X", "q1#question:q2")
+	_, ok, err := s.RecordedAnswer("X", "q1#question:q2")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada: %v", err)
+		t.Fatalf("RecordedAnswer: %v", err)
 	}
 	if ok {
-		t.Error("ok = true, esperado false: es un par (blob, questionID) distinto, no debe encontrar la respuesta del otro par")
+		t.Error("ok = true, want false: it is a different (blob, questionID) pair, it must not find the other pair's answer")
 	}
 }
 
-// TestRespuestaRegistrada_DosRespuestas_DevuelveLaMasReciente confirma el
-// comentario de RespuestaRegistrada: si la misma (blob, questionID) se
-// respondió más de una vez (decisions.jsonl es append-only y no lo impide),
-// se devuelve la respuesta más reciente, no la primera.
-func TestRespuestaRegistrada_DosRespuestas_DevuelveLaMasReciente(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	if err := s.RegistrarRespuesta("blob123", "q1", "primera respuesta", "iseoane"); err != nil {
-		t.Fatalf("RegistrarRespuesta (primera): %v", err)
+// TestRecordedAnswer_TwoAnswers_ReturnsMostRecent confirms the
+// RecordedAnswer comment: if the same (blob, questionID) was answered more
+// than once (decisions.jsonl is append-only and does not prevent it), the
+// most recent answer is returned, not the first one.
+func TestRecordedAnswer_TwoAnswers_ReturnsMostRecent(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.RecordAnswer("blob123", "q1", "first answer", "iseoane"); err != nil {
+		t.Fatalf("RecordAnswer (first): %v", err)
 	}
-	if err := s.RegistrarRespuesta("blob123", "q1", "segunda respuesta", "iseoane"); err != nil {
-		t.Fatalf("RegistrarRespuesta (segunda): %v", err)
+	if err := s.RecordAnswer("blob123", "q1", "second answer", "iseoane"); err != nil {
+		t.Fatalf("RecordAnswer (second): %v", err)
 	}
 
-	respuesta, ok, err := s.RespuestaRegistrada("blob123", "q1")
+	answer, ok, err := s.RecordedAnswer("blob123", "q1")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada: %v", err)
+		t.Fatalf("RecordedAnswer: %v", err)
 	}
 	if !ok {
-		t.Fatal("ok = false, esperado true")
+		t.Fatal("ok = false, want true")
 	}
-	if respuesta != "segunda respuesta" {
-		t.Errorf("respuesta = %q, esperado la más reciente %q", respuesta, "segunda respuesta")
+	if answer != "second answer" {
+		t.Errorf("answer = %q, want the most recent %q", answer, "second answer")
 	}
 }
 
-// TestRespuestaRegistrada_SinRegistroPrevio_OkFalseSinError confirma el
-// caso de arranque: ninguna respuesta registrada todavía no es un error.
-func TestRespuestaRegistrada_SinRegistroPrevio_OkFalseSinError(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+// TestRecordedAnswer_NoPreviousRecord_OkFalseNoError confirms the
+// cold-start case: no answer recorded yet is not an error.
+func TestRecordedAnswer_NoPreviousRecord_OkFalseNoError(t *testing.T) {
+	s := NewStore(t.TempDir())
 
-	respuesta, ok, err := s.RespuestaRegistrada("blob-nuevo", "q-nueva")
+	answer, ok, err := s.RecordedAnswer("new-blob", "new-question")
 	if err != nil {
-		t.Fatalf("RespuestaRegistrada: %v", err)
+		t.Fatalf("RecordedAnswer: %v", err)
 	}
 	if ok {
-		t.Error("ok = true, esperado false: no hay ninguna respuesta registrada")
+		t.Error("ok = true, want false: there is no recorded answer yet")
 	}
-	if respuesta != "" {
-		t.Errorf("respuesta = %q, esperado vacío", respuesta)
+	if answer != "" {
+		t.Errorf("answer = %q, want empty", answer)
 	}
 }

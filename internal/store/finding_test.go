@@ -8,44 +8,44 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
-func TestStoreGuardarYLeerHallazgo(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	h := &review.Hallazgo{Fingerprint: "fp1", Title: "algo", Severity: "critical"}
+func TestStoreSaveAndReadFinding(t *testing.T) {
+	s := NewStore(t.TempDir())
+	h := &review.Finding{Fingerprint: "fp1", Title: "something", Severity: "critical"}
 
-	if err := s.GuardarHallazgo(h); err != nil {
-		t.Fatalf("GuardarHallazgo: %v", err)
+	if err := s.SaveFinding(h); err != nil {
+		t.Fatalf("SaveFinding: %v", err)
 	}
-	leido, err := s.LeerHallazgo("fp1")
+	got, err := s.ReadFinding("fp1")
 	if err != nil {
-		t.Fatalf("LeerHallazgo: %v", err)
+		t.Fatalf("ReadFinding: %v", err)
 	}
-	if leido == nil || leido.Title != "algo" || leido.Severity != "critical" {
-		t.Errorf("hallazgo leído = %+v, no coincide con lo guardado", leido)
+	if got == nil || got.Title != "something" || got.Severity != "critical" {
+		t.Errorf("read finding = %+v, does not match what was saved", got)
 	}
 }
 
-func TestStoreLeerHallazgoInexistente(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	h, err := s.LeerHallazgo("noexiste")
+func TestStoreReadFindingMissing(t *testing.T) {
+	s := NewStore(t.TempDir())
+	h, err := s.ReadFinding("missing")
 	if err != nil {
-		t.Fatalf("LeerHallazgo: %v", err)
+		t.Fatalf("ReadFinding: %v", err)
 	}
 	if h != nil {
-		t.Error("LeerHallazgo debería devolver nil para un fingerprint sin hallazgo")
+		t.Error("ReadFinding should return nil for a fingerprint without a finding")
 	}
 }
 
-func TestStoreHallazgoCorruptoEsError(t *testing.T) {
+func TestStoreFindingCorruptIsError(t *testing.T) {
 	dir := t.TempDir()
-	s := NuevoStore(dir)
-	ruta := filepath.Join(dir, "vas-sentinel", subdirFindings, "fp1.json")
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	s := NewStore(dir)
+	path := filepath.Join(dir, "vas-sentinel", subdirFindings, "fp1.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte("no es json"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.LeerHallazgo("fp1"); err == nil {
-		t.Error("un archivo corrupto debería devolver error, no nil")
+	if _, err := s.ReadFinding("fp1"); err == nil {
+		t.Error("a corrupt file should return an error, not nil")
 	}
 }

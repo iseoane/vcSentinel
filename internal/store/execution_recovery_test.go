@@ -255,7 +255,7 @@ func TestScanRecoveriesClassifiesEveryNonTerminalRun(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NuevoStore(t.TempDir())
+			s := NewStore(t.TempDir())
 			job, directory := buildScanRun(t, s, "candidate:"+tt.name, tt.transitions)
 			runID := string(job.RunID())
 			if tt.mutate != nil {
@@ -306,7 +306,7 @@ func TestScanRecoveriesClassifiesEveryNonTerminalRun(t *testing.T) {
 // TestScanRecoveriesCorruptTailCarriesExactErrorText pins that the corrupt
 // reason is not a paraphrase: it is the underlying error's own text.
 func TestScanRecoveriesCorruptTailCarriesExactErrorText(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job, directory := buildScanRun(t, s, "candidate:tail", startSequence)
 	truncateLastNewline(t, directory)
 
@@ -326,7 +326,7 @@ func TestScanRecoveriesCorruptTailCarriesExactErrorText(t *testing.T) {
 // TestScanRecoveriesExcludesSettledRunsAndIncludesTheRest proves the scan
 // surfaces only non-terminal work: healthy terminal projections never appear.
 func TestScanRecoveriesExcludesSettledRunsAndIncludesTheRest(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	settledJob, _ := buildScanRun(t, s, "candidate:settled",
 		append(append([]streamTransition{}, startSequence...), successTransition()))
 	buildScanRun(t, s, "candidate:awaiting",
@@ -355,7 +355,7 @@ func TestScanRecoveriesExcludesSettledRunsAndIncludesTheRest(t *testing.T) {
 // TestScanRecoveriesEmptyStoreReturnsNoEntries pins the empty-store contract:
 // zero entries and no error, so the CLI can exit 0 without special cases.
 func TestScanRecoveriesEmptyStoreReturnsNoEntries(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	entries, err := ScanRecoveries(s)
 	if err != nil {
 		t.Fatalf("ScanRecoveries() error = %v", err)

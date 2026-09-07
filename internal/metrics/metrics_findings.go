@@ -49,8 +49,8 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 		finding := observation.Finding
 		status := review.NormalizeStatus(finding.Status)
 		dimension := displayDimension(finding.Dimension)
-		model := displayIdentity(finding.Producer.Modelo)
-		agent := displayIdentity(finding.Producer.Agente)
+		model := displayIdentity(finding.Producer.Model)
+		agent := displayIdentity(finding.Producer.Agent)
 		override := status != review.StatusRefuted && (status == review.StatusAcceptedByUser || hasFingerprintOverride(overrides, key, finding))
 		knownStatus := status != ""
 
@@ -137,7 +137,7 @@ func aggregateFindings(observations []FindingObservation, decisions []store.Deci
 
 	// Confirmation and refutation both read finding.Status, so their coverage is
 	// the population that carries a status at all. Override reads store.Decision
-	// records instead: metrics_reader.go propagates a LeerDecisiones failure
+	// records instead: metrics_reader.go propagates a ReadDecisions failure
 	// rather than returning an empty set, so the decisions ledger is either
 	// complete or the whole report fails. Its attribute is therefore genuinely
 	// observable for every member of the effective population, and
@@ -246,7 +246,7 @@ func findingObservationAfter(candidate, current FindingObservation) bool {
 
 func findingSortKey(observation FindingObservation) string {
 	finding := observation.Finding
-	return strings.Join([]string{observation.Commit, strconv.Itoa(observation.Revision), observation.Origin, finding.Dimension, finding.Status, finding.Producer.Modelo, finding.Producer.Agente, finding.Description, finding.Title}, "\x00")
+	return strings.Join([]string{observation.Commit, strconv.Itoa(observation.Revision), observation.Origin, finding.Dimension, finding.Status, finding.Producer.Model, finding.Producer.Agent, finding.Description, finding.Title}, "\x00")
 }
 
 func originRank(origin string) int {
@@ -259,7 +259,7 @@ func originRank(origin string) int {
 	return 0
 }
 
-func hasFingerprintOverride(overrides map[string]struct{}, key string, finding review.Hallazgo) bool {
+func hasFingerprintOverride(overrides map[string]struct{}, key string, finding review.Finding) bool {
 	if _, ok := overrides[strings.TrimSpace(key)]; ok {
 		return true
 	}

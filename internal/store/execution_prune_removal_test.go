@@ -131,7 +131,7 @@ func executionDirectoryExists(t *testing.T, s *Store, runID string) bool {
 // missing request.json but still carries event bytes keeps the old refusal.
 func TestPruneExecutionsFinishesCrashInterruptedRemoval(t *testing.T) {
 	t.Run("lock-only remnant is removed", func(t *testing.T) {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		zombie := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		directory := filepath.Join(s.dir, "executions", "v1", zombie)
 		if err := os.MkdirAll(directory, 0700); err != nil {
@@ -160,7 +160,7 @@ func TestPruneExecutionsFinishesCrashInterruptedRemoval(t *testing.T) {
 	})
 
 	t.Run("missing request with event bytes stays refused", func(t *testing.T) {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		stray := "cccccccccccccccccccccccccccccccccccccccc"
 		directory := filepath.Join(s.dir, "executions", "v1", stray)
 		if err := os.MkdirAll(directory, 0700); err != nil {
@@ -188,7 +188,7 @@ func TestPruneExecutionsFinishesCrashInterruptedRemoval(t *testing.T) {
 // re-verification inside removal never deletes a record that became
 // non-terminal again between classification and deletion.
 func TestRemoveExecutionDirectoryRefusesNonTerminalUnderLock(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, _ := seedPruneRun(t, s, "reverified", "", pruneTerminalSuccess(), pruneAncientTime)
 	// Simulate a concurrent mutation by appending beyond the classification
 	// snapshot: the removal re-scan sees a non-terminal head and refuses.

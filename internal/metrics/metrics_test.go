@@ -18,29 +18,29 @@ func TestAggregateSyntheticStore(t *testing.T) {
 	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	input := Input{
 		Findings: []FindingObservation{
-			{Fingerprint: "f-confirmed", At: at, Finding: review.Hallazgo{
+			{Fingerprint: "f-confirmed", At: at, Finding: review.Finding{
 				Fingerprint: "f-confirmed", Dimension: review.DimLogic, Status: review.StatusConfirmed,
-				Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+				Producer: review.Producer{Agent: "agent-a", Model: "model-a"},
 			}},
-			{Fingerprint: "f-confirmed", At: at.Add(-time.Minute), Finding: review.Hallazgo{
+			{Fingerprint: "f-confirmed", At: at.Add(-time.Minute), Finding: review.Finding{
 				Fingerprint: "f-confirmed", Dimension: review.DimLogic, Status: review.StatusConfirmed,
-				Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+				Producer: review.Producer{Agent: "agent-a", Model: "model-a"},
 			}}, // logical retry: deduplicated by fingerprint
-			{Fingerprint: "f-refuted", At: at, Finding: review.Hallazgo{
+			{Fingerprint: "f-refuted", At: at, Finding: review.Finding{
 				Fingerprint: "f-refuted", Dimension: review.DimSecurity, Status: review.StatusRefuted,
-				Producer: review.Productor{Agente: "agent-b", Modelo: "model-b"},
+				Producer: review.Producer{Agent: "agent-b", Model: "model-b"},
 			}},
-			{Fingerprint: "f-override", At: at, Finding: review.Hallazgo{
+			{Fingerprint: "f-override", At: at, Finding: review.Finding{
 				Fingerprint: "f-override", Dimension: review.DimLogic, Status: review.StatusAcceptedByUser,
-				Producer: review.Productor{Agente: "agent-b", Modelo: "model-b"},
+				Producer: review.Producer{Agent: "agent-b", Model: "model-b"},
 			}},
-			{Fingerprint: "f-reopened", At: at, Finding: review.Hallazgo{
+			{Fingerprint: "f-reopened", At: at, Finding: review.Finding{
 				Fingerprint: "f-reopened", Dimension: review.DimSecurity, Status: review.StatusReopened,
-				Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+				Producer: review.Producer{Agent: "agent-a", Model: "model-a"},
 			}},
-			{Fingerprint: "f-superseded", At: at, Superseded: true, Finding: review.Hallazgo{
+			{Fingerprint: "f-superseded", At: at, Superseded: true, Finding: review.Finding{
 				Fingerprint: "f-superseded", Dimension: review.DimLogic, Status: review.StatusConfirmed,
-				Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+				Producer: review.Producer{Agent: "agent-a", Model: "model-a"},
 			}},
 		},
 		Decisions: []store.Decision{{
@@ -137,8 +137,8 @@ func TestAggregateSyntheticStore(t *testing.T) {
 func TestAggregateIsDeterministicRegardlessOfInputOrder(t *testing.T) {
 	input := Input{
 		Findings: []FindingObservation{
-			{Fingerprint: "b", Finding: review.Hallazgo{Dimension: review.DimSecurity, Status: review.StatusRefuted, Producer: review.Productor{Modelo: "m2"}}},
-			{Fingerprint: "a", Finding: review.Hallazgo{Dimension: review.DimLogic, Status: review.StatusConfirmed, Producer: review.Productor{Modelo: "m1"}}},
+			{Fingerprint: "b", Finding: review.Finding{Dimension: review.DimSecurity, Status: review.StatusRefuted, Producer: review.Producer{Model: "m2"}}},
+			{Fingerprint: "a", Finding: review.Finding{Dimension: review.DimLogic, Status: review.StatusConfirmed, Producer: review.Producer{Model: "m1"}}},
 		},
 		Remediations: []RemediationObservation{{LogicalID: "r2", Success: false}, {LogicalID: "r1", Success: true}},
 		Executions: []ExecutionObservation{
@@ -228,22 +228,22 @@ func ratioValue(r Ratio) float64 {
 func TestReadStoreReadsLedgerEventsAndRetainedMetrics(t *testing.T) {
 	commonDir := t.TempDir()
 	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	ledger := review.NuevoLedger(commonDir)
-	finding := review.Hallazgo{
+	ledger := review.NewLedger(commonDir)
+	finding := review.Finding{
 		Fingerprint: "stored-finding",
 		Dimension:   review.DimLogic,
 		Status:      review.StatusConfirmed,
-		Producer:    review.Productor{Agente: "agent-a", Modelo: "model-a"},
+		Producer:    review.Producer{Agent: "agent-a", Model: "model-a"},
 	}
-	if err := ledger.GuardarRevision("abc123", "message", "bucket", "model-a", review.Revision{
-		At: at, AggregatedFindings: []review.Hallazgo{finding},
+	if err := ledger.SaveRevision("abc123", "message", "bucket", "model-a", review.Revision{
+		At: at, AggregatedFindings: []review.Finding{finding},
 	}); err != nil {
 		t.Fatalf("save ledger revision: %v", err)
 	}
 
 	request := agentrun.NewRunRequest(agentrun.Candidate("candidate"), agentrun.Prompt("prompt"), nil)
 	job := agentrun.NewLogicalJob(request)
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	if err := st.CreateRun(job, store.RunPolicy{ID: "policy"}); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestReadStoreReadsLedgerEventsAndRetainedMetrics(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save metrics: %v", err)
 	}
-	if err := ops.RegistrarEvento(commonDir, "remediation", 0, nil, ops.EventDetail{
+	if err := ops.RecordEvent(commonDir, "remediation", 0, nil, ops.EventDetail{
 		"kind": "remediation", "logical_id": "remediation-1",
 		"stage": "repair", "duration_ns": float64(42),
 	}, ""); err != nil {
@@ -286,7 +286,7 @@ func TestReadStoreReadsLedgerEventsAndRetainedMetrics(t *testing.T) {
 func TestReadStoreKeepsDistinctAnonymousRemediationEvents(t *testing.T) {
 	commonDir := t.TempDir()
 	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	events := []ops.Evento{
+	events := []ops.Event{
 		{At: at, Cmd: "remediate", Exit: 0, Detail: ops.EventDetail{
 			"kind": "remediation", "target": "target-a", "dimension": "logic",
 		}},
@@ -324,7 +324,7 @@ func TestReadStoreKeepsDistinctAnonymousRemediationEvents(t *testing.T) {
 func TestReadStoreKeepsAnonymousRemediationOutcomesDistinct(t *testing.T) {
 	commonDir := t.TempDir()
 	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	events := []ops.Evento{
+	events := []ops.Event{
 		{At: at, Cmd: "remediate", Exit: 0, Detail: ops.EventDetail{
 			"kind": "remediation", "target": "target", "dimension": "logic", "success": true,
 		}},
@@ -363,7 +363,7 @@ func TestOverrideRateExcludesRefutedOverrides(t *testing.T) {
 	got := Aggregate(Input{
 		Findings: []FindingObservation{{
 			Fingerprint: "finding",
-			Finding:     review.Hallazgo{Fingerprint: "finding", Status: review.StatusRefuted},
+			Finding:     review.Finding{Fingerprint: "finding", Status: review.StatusRefuted},
 		}},
 		Decisions: []store.Decision{{Fingerprint: "finding", Decision: "accepted_by_user"}},
 	})
@@ -379,7 +379,7 @@ func TestFindingOverrideFingerprintTrimsWhitespace(t *testing.T) {
 	got := Aggregate(Input{
 		Findings: []FindingObservation{{
 			Fingerprint: "finding",
-			Finding:     review.Hallazgo{Fingerprint: "finding", Status: review.StatusConfirmed},
+			Finding:     review.Finding{Fingerprint: "finding", Status: review.StatusConfirmed},
 		}},
 		Decisions: []store.Decision{{Fingerprint: " finding ", Decision: "accepted_by_user"}},
 	})
@@ -574,7 +574,7 @@ func TestReadStoreIgnoresSymlinkedEvidence(t *testing.T) {
 	if err := os.Symlink(metricTarget, filepath.Join(metricsDir, "linked-run.json")); err != nil {
 		t.Fatal(err)
 	}
-	findingData, err := json.Marshal(review.Hallazgo{Fingerprint: "linked-finding", Status: review.StatusConfirmed})
+	findingData, err := json.Marshal(review.Finding{Fingerprint: "linked-finding", Status: review.StatusConfirmed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +670,7 @@ func TestMetricSnapshotsDoNotDuplicateTimingEvidence(t *testing.T) {
 	}
 }
 func TestStageFromEventCarriesLogicalRunID(t *testing.T) {
-	stage, ok := stageFromEvent(ops.Evento{Detail: ops.EventDetail{
+	stage, ok := stageFromEvent(ops.Event{Detail: ops.EventDetail{
 		"stage": "stage", "duration_ns": float64(10), "run_id": "run-a",
 	}})
 	if !ok {
@@ -707,7 +707,7 @@ func TestMergeCostUsesNumericAmountOrdering(t *testing.T) {
 }
 
 func TestStageFromEventSkipsBlankRunAlias(t *testing.T) {
-	stage, ok := stageFromEvent(ops.Evento{Detail: ops.EventDetail{
+	stage, ok := stageFromEvent(ops.Event{Detail: ops.EventDetail{
 		"stage": "stage", "duration_ns": float64(10),
 		"logical_run_id": "   ", "run_id": "run-b",
 	}})
@@ -722,9 +722,9 @@ func TestStageFromEventSkipsBlankRunAlias(t *testing.T) {
 // findingWithStatus builds one observation whose only variable attributes are
 // the ones every disposition-coverage assertion depends on.
 func findingWithStatus(fingerprint, dimension, model, agent, status string) FindingObservation {
-	return FindingObservation{Fingerprint: fingerprint, Finding: review.Hallazgo{
+	return FindingObservation{Fingerprint: fingerprint, Finding: review.Finding{
 		Fingerprint: fingerprint, Dimension: dimension, Status: status,
-		Producer: review.Productor{Agente: agent, Modelo: model},
+		Producer: review.Producer{Agent: agent, Model: model},
 	}}
 }
 

@@ -10,21 +10,21 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
-// GuardarHallazgo persiste h en findings/<fingerprint>.json. La clave es el
-// Fingerprint (calculado en T2.3), no un id secuencial: dos ejecuciones que
-// producen el mismo hallazgo resuelven al mismo archivo sin coordinación.
-func (s *Store) GuardarHallazgo(h *review.Hallazgo) error {
+// SaveFinding persists h in findings/<fingerprint>.json. The key is the
+// Fingerprint (computed in T2.3), not a sequential id: two runs producing
+// the same finding resolve to the same file without coordination.
+func (s *Store) SaveFinding(h *review.Finding) error {
 	if h.Fingerprint == "" {
-		return errors.New("store: hallazgo sin fingerprint")
+		return errors.New("store: finding without fingerprint")
 	}
-	return s.guardarJSON(subdirFindings, h.Fingerprint, h)
+	return s.writeJSON(subdirFindings, h.Fingerprint, h)
 }
 
-// LeerHallazgo devuelve el hallazgo con ese fingerprint, o nil si no existe
-// todavía. Un archivo corrupto es un error explícito.
-func (s *Store) LeerHallazgo(fingerprint string) (*review.Hallazgo, error) {
-	var h review.Hallazgo
-	ok, err := s.leerJSON(subdirFindings, fingerprint, &h)
+// ReadFinding returns the finding with that fingerprint, or nil if it does
+// not exist yet. A corrupt file is an explicit error.
+func (s *Store) ReadFinding(fingerprint string) (*review.Finding, error) {
+	var h review.Finding
+	ok, err := s.readJSON(subdirFindings, fingerprint, &h)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -33,10 +33,10 @@ func (s *Store) LeerHallazgo(fingerprint string) (*review.Hallazgo, error) {
 
 // ReferencedInvocationIDs returns every durable invocation identity recorded
 // as review provenance across the persisted findings. Each blob is a full
-// review.Hallazgo, so the top-level invocation_id it decodes IS
-// Hallazgo.InvocationID — including the admitted refuter identity stamped on
+// review.Finding, so the top-level invocation_id it decodes IS
+// Finding.InvocationID — including the admitted refuter identity stamped on
 // refutation-downgraded findings — which keeps this surface symmetric with
-// the ledger ficha scan in cmd/sentinel's collectProvenanceReferences.
+// the ledger record scan in cmd/sentinel's collectProvenanceReferences.
 // Retention callers feed this set into PruneExecutions so a stream cited by
 // any finding is kept. A findings file that fails to decode fails closed:
 // retention decisions must never run while evidence is unreadable.

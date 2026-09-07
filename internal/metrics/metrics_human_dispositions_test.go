@@ -16,18 +16,18 @@ func TestAggregateFindingsDoesNotCreditHumanRefutationsToAgents(t *testing.T) {
 	at := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	human := FindingObservation{
 		Fingerprint: "f-human", At: at,
-		Finding: review.Hallazgo{
+		Finding: review.Finding{
 			Dimension: review.DimLogic, Status: review.StatusRefuted,
-			Producer:         review.Productor{Agente: "agent-a", Modelo: "model-a"},
+			Producer:         review.Producer{Agent: "agent-a", Model: "model-a"},
 			RefutationActor:  review.RefutationActorHuman,
 			RefutationReason: "verified safe",
 		},
 	}
 	automated := FindingObservation{
 		Fingerprint: "f-auto", At: at,
-		Finding: review.Hallazgo{
+		Finding: review.Finding{
 			Dimension: review.DimLogic, Status: review.StatusRefuted,
-			Producer:         review.Productor{Agente: "agent-a", Modelo: "model-a"},
+			Producer:         review.Producer{Agent: "agent-a", Model: "model-a"},
 			RefutationActor:  review.RefutationActorRefuter,
 			RefutationReason: "evidence mismatch",
 		},
@@ -73,10 +73,10 @@ func TestAggregateFindingsHumanRefutationLeavesTheModelNoiseBasis(t *testing.T) 
 	at := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	observation := FindingObservation{
 		Fingerprint: "f-human", At: at,
-		Finding: review.Hallazgo{
+		Finding: review.Finding{
 			Dimension:        review.DimLogic,
 			Status:           review.StatusRefuted,
-			Producer:         review.Productor{Agente: "agent-a", Modelo: "model-a"},
+			Producer:         review.Producer{Agent: "agent-a", Model: "model-a"},
 			RefutationActor:  review.RefutationActorHuman,
 			RefutationReason: "verified safe",
 		},
@@ -132,20 +132,20 @@ func TestAggregateFindingsHumanRefutationLeavesTheModelNoiseBasis(t *testing.T) 
 func TestReadLedgerOverlaysStandingHumanDispositions(t *testing.T) {
 	commonDir := t.TempDir()
 	at := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	ledger := review.NuevoLedger(commonDir)
-	finding := review.Hallazgo{
+	ledger := review.NewLedger(commonDir)
+	finding := review.Finding{
 		Dimension: review.DimSecurity, Severity: review.SevCritical,
 		Status: review.StatusConfirmed, Description: "injected query",
 		Fingerprint: "fp-standing",
-		Location:    review.Ubicacion{Archivo: "a.go", LineaInicio: 10},
-		Producer:    review.Productor{Agente: "agent-a", Modelo: "model-a"},
+		Location:    review.Location{File: "a.go", LineStart: 10},
+		Producer:    review.Producer{Agent: "agent-a", Model: "model-a"},
 	}
-	if err := ledger.GuardarRevision("abc123", "message", "bucket", "model-a", review.Revision{
-		At: at, Result: "block", AggregatedFindings: []review.Hallazgo{finding},
+	if err := ledger.SaveRevision("abc123", "message", "bucket", "model-a", review.Revision{
+		At: at, Result: "block", AggregatedFindings: []review.Finding{finding},
 	}); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	if err := st.AppendDisposition(&review.FindingDisposition{
 		SHA: "abc123", Fingerprint: "fp-standing", Status: review.StatusRefuted,
 		Reason: "verified safe", Path: "a.go", LineStart: 9, LineEnd: 11,

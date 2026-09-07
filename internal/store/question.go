@@ -6,28 +6,28 @@ import (
 	"time"
 )
 
-// decisionRespuestaPregunta es el valor discriminador de Decision para las
-// respuestas a preguntas del agente (ver el comentario de Decision).
-const decisionRespuestaPregunta = "question_answered"
+// decisionAnswerQuestion is the Decision discriminator value for answers to
+// agent questions (see the Decision comment).
+const decisionAnswerQuestion = "question_answered"
 
-// alcanceRespuestaPregunta identifica el contexto de una respuesta
-// registrada por RegistrarRespuesta. Es un valor fijo (no hace falta más
-// granularidad hoy: la clave blob+questionID en Fingerprint ya identifica de
-// forma única qué se respondió); si en el futuro se necesita distinguir
-// dimensión u otro contexto, este es el campo a especializar.
-const alcanceRespuestaPregunta = "question"
+// scopeAnswerQuestion identifies the context of an answer recorded by
+// RecordAnswer. It is a fixed value (no more granularity is needed today:
+// the blob+questionID key in Fingerprint already identifies uniquely what
+// was answered); if in the future distinguishing a dimension or another
+// context becomes necessary, this is the field to specialize.
+const scopeAnswerQuestion = "question"
 
-// claveRespuesta construye la clave determinista de Fingerprint para una
-// respuesta: combina blob + questionID para que la misma pregunta sobre el
-// mismo contenido se reconozca como ya respondida incluso si el SHA del
-// commit cambia (p.ej. tras un rebase), igual que hacen los índices de blob
-// de F2 para los findings. Cada componente va prefijado por su longitud
-// decimal (mismo patrón que review.empaquetarConLongitud): un separador
-// simple como "#" sería ambiguo si blob o questionID lo contuvieran
-// literalmente — p.ej. claveRespuesta("X#question:q1", "q2") colisionaría
-// con claveRespuesta("X", "q1#question:q2") sin este prefijo, suprimiendo una
-// pregunta distinta de la que realmente se respondió.
-func claveRespuesta(blob, questionID string) string {
+// answerKey builds the deterministic Fingerprint key for an answer: it
+// combines blob + questionID so that the same question about the same
+// content is recognized as already answered even if the commit SHA changes
+// (e.g. after a rebase), just like the F2 blob indexes do for findings.
+// Each component is prefixed by its decimal length (same pattern as
+// review's packWithLengthPrefixes): a simple separator like "#" would be
+// ambiguous if blob or questionID contained it literally — e.g.
+// answerKey("X#question:q1", "q2") would collide with answerKey("X",
+// "q1#question:q2") without this prefix, suppressing a question different
+// from the one actually answered.
+func answerKey(blob, questionID string) string {
 	var b strings.Builder
 	for _, c := range []string{blob, questionID} {
 		b.WriteString(strconv.Itoa(len(c)))
@@ -37,58 +37,57 @@ func claveRespuesta(blob, questionID string) string {
 	return b.String()
 }
 
-// RegistrarRespuesta persiste que questionID sobre blob fue respondida por
-// actor con respuesta, como una Decision con Fingerprint = claveRespuesta(blob,
-// questionID) y Decision = "question_answered".
+// RecordAnswer persists that questionID about blob was answered by actor
+// with answer, as a Decision with Fingerprint = answerKey(blob,
+// questionID) and Decision = "question_answered".
 //
-// decisions.jsonl es un registro LOCAL sin autenticar (mismo modo 0644 que el
-// resto del store) y Actor es atribución autodeclarada (ver resolverActor en
-// cmd/sentinel): cualquiera con permiso de escritura en el repositorio puede
-// sembrar una línea question_answered por adelantado y suprimir una pregunta
-// real. Aceptable hoy porque nada la lee todavía (ver el párrafo siguiente);
-// antes de conectar esto a un flujo interactivo real, revisar si esa
-// propiedad basta o si la respuesta necesita algo más fuerte que "está en el
-// archivo".
+// decisions.jsonl is an UNAUTHENTICATED LOCAL record (same 0644 mode as
+// the rest of the store) and Actor is self-declared attribution (see
+// resolveActor in cmd/sentinel): anyone with write permission on the
+// repository can seed a question_answered line in advance and suppress a
+// real question. Acceptable today because nothing reads it yet (see the
+// next paragraph); before wiring this into a real interactive flow, check
+// whether that property suffices or whether the answer needs something
+// stronger than "it is in the file".
 //
-// Deliberadamente NO está conectada todavía a cmd/sentinel/review, gate ni
-// pr review: hoy no existe ningún bucle interactivo de preguntas en la CLI
-// (internal/review/engine.go rellena ResultadoAuditoria.Preguntas, pero
-// ningún comando de cmd/sentinel lo lee ni lo imprime; --answer es solo una
-// ronda extra dentro del mismo proceso, no algo que la CLI dispare al
-// detectar una pregunta pendiente entre invocaciones distintas). Esta
-// función es la primitiva de persistencia lista para conectarse cuando esa
-// superficie interactiva exista, siguiendo el mismo patrón de "sin segundo
-// consumidor todavía" ya usado para varias piezas de T7.1-T7.4.
-func (s *Store) RegistrarRespuesta(blob, questionID, respuesta, actor string) error {
-	return s.RegistrarDecision(&Decision{
-		Fingerprint: claveRespuesta(blob, questionID),
-		Decision:    decisionRespuestaPregunta,
+// Deliberately NOT wired yet into cmd/sentinel/review, gate or pr review:
+// today there is no interactive question loop in the CLI
+// (internal/review/engine.go fills AuditResult.Questions, but no command
+// of cmd/sentinel reads or prints it; --answer is just an extra round
+// inside the same process, not something the CLI triggers upon detecting a
+// pending question across separate invocations). This function is the
+// persistence primitive ready to be wired when that interactive surface
+// exists, following the same "no second consumer yet" pattern already used
+// for several pieces of T7.1-T7.4.
+func (s *Store) RecordAnswer(blob, questionID, answer, actor string) error {
+	return s.RecordDecision(&Decision{
+		Fingerprint: answerKey(blob, questionID),
+		Decision:    decisionAnswerQuestion,
 		Actor:       actor,
 		At:          time.Now().UTC(),
-		Motivo:      respuesta,
-		Alcance:     alcanceRespuestaPregunta,
+		Reason:      answer,
+		Scope:       scopeAnswerQuestion,
 	})
 }
 
-// RespuestaRegistrada informa si questionID sobre blob ya fue respondida en
-// una ejecución anterior, y devuelve esa respuesta si es así. Si la misma
-// pregunta se respondió más de una vez (no se espera en el flujo normal,
-// pero decisions.jsonl es append-only y no lo impide), se devuelve la
-// respuesta más reciente.
+// RecordedAnswer reports whether questionID about blob was already answered
+// in a previous run, and returns that answer if so. If the same question
+// was answered more than once (not expected in the normal flow, but
+// decisions.jsonl is append-only and does not prevent it), the most recent
+// answer is returned.
 //
-// Ver el comentario de RegistrarRespuesta: este par es una primitiva de
-// persistencia, deliberadamente no conectada todavía a ningún comando de la
-// CLI.
-func (s *Store) RespuestaRegistrada(blob, questionID string) (respuesta string, ok bool, err error) {
-	decisiones, err := s.LeerDecisiones()
+// See the RecordAnswer comment: this pair is a persistence primitive,
+// deliberately not wired yet to any CLI command.
+func (s *Store) RecordedAnswer(blob, questionID string) (answer string, ok bool, err error) {
+	decisions, err := s.ReadDecisions()
 	if err != nil {
 		return "", false, err
 	}
-	clave := claveRespuesta(blob, questionID)
-	for _, d := range decisiones {
-		if d.Decision == decisionRespuestaPregunta && d.Fingerprint == clave {
-			respuesta, ok = d.Motivo, true
+	key := answerKey(blob, questionID)
+	for _, d := range decisions {
+		if d.Decision == decisionAnswerQuestion && d.Fingerprint == key {
+			answer, ok = d.Reason, true
 		}
 	}
-	return respuesta, ok, nil
+	return answer, ok, nil
 }

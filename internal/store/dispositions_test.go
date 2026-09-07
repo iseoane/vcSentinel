@@ -24,7 +24,7 @@ func dispositionFixture(sha, fingerprint, status string) *review.FindingDisposit
 // FU-6: the dispositions log is append-only and separate from the immutable
 // review revisions: two appends accumulate in order, never overwrite.
 func TestAppendDispositionAccumulatesInOrder(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	first := dispositionFixture("sha-a", "fp-1", review.StatusRefuted)
 	second := dispositionFixture("sha-b", "fp-2", review.StatusAcceptedByUser)
 
@@ -52,7 +52,7 @@ func TestAppendDispositionAccumulatesInOrder(t *testing.T) {
 
 // FU-6: an absent log reads as no answers, never as an error.
 func TestReadDispositionsAbsentLogIsEmpty(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	got, err := st.ReadDispositions()
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -83,7 +83,7 @@ func TestReadDispositionsRejectsCorruptPersistence(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.line+"\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := NuevoStore(dir).ReadDispositions(); err == nil {
+			if _, err := NewStore(dir).ReadDispositions(); err == nil {
 				t.Fatal("corrupt persistence was accepted")
 			}
 		})
@@ -112,7 +112,7 @@ func TestReadDispositionsUsesTheWriteSchema(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.line+"\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := NuevoStore(dir).ReadDispositions(); err == nil {
+			if _, err := NewStore(dir).ReadDispositions(); err == nil {
 				t.Fatal("record rejected on append was accepted on read")
 			}
 		})
@@ -136,7 +136,7 @@ func TestAppendDispositionRejectsInvalidRecords(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := NuevoStore(t.TempDir())
+			st := NewStore(t.TempDir())
 			d := valid()
 			tc.mutate(d)
 			if err := st.AppendDisposition(d); err == nil {
@@ -156,7 +156,7 @@ func TestAppendDispositionRejectsInvalidRecords(t *testing.T) {
 // FU-6: per-SHA selection serves every consumer the answers recorded
 // against the revision it evaluates.
 func TestReadDispositionsForSHAFilters(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	if err := st.AppendDisposition(dispositionFixture("sha-a", "fp-1", review.StatusRefuted)); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestReadDispositionsForSHAFilters(t *testing.T) {
 // still join the same lifecycle every consumer compares through
 // NormalizeStatus.
 func TestAppendDispositionCanonicalisesStatus(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	d := dispositionFixture("sha-a", "fp-1", "  REFUTED  ")
 	if err := st.AppendDisposition(d); err != nil {
 		t.Fatalf("append: %v", err)

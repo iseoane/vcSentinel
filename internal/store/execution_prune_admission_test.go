@@ -46,7 +46,7 @@ func rebirthJob(name string) agentrun.LogicalJob {
 // survive. Without the in-lock content guard the cleanup wiped every child
 // unconditionally and destroyed exactly what had just been admitted.
 func TestPruneExecutionsRefusesRemnantThatGrewAdmissionRecords(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job := rebirthJob("zombie-rebirth")
 	runID := string(job.RunID())
 	writeRemnantShape(t, s, job)
@@ -83,7 +83,7 @@ func TestCreateRunRacingSameRecordRemovalNeverLosesAdmission(t *testing.T) {
 	const iterations = 20
 	for i := 0; i < iterations; i++ {
 		t.Run(fmt.Sprintf("iteration-%02d", i), func(t *testing.T) {
-			s := NuevoStore(t.TempDir())
+			s := NewStore(t.TempDir())
 			job := rebirthJob("racing-admission")
 			runID := string(job.RunID())
 			writeRemnantShape(t, s, job)

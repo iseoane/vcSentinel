@@ -15,22 +15,22 @@ import (
 
 func dispositionRawFinding(file string, line int, description, status string) review.ReviewFinding {
 	return review.ReviewFinding{
-		File: file, Line: review.Linea(line), Severity: review.SevCritical,
+		File: file, Line: review.Line(line), Severity: review.SevCritical,
 		Description: description, Status: status,
 	}
 }
 
-func dispositionAggregate(dimension, file string, line int, description, fingerprint string) review.Hallazgo {
-	return review.Hallazgo{
+func dispositionAggregate(dimension, file string, line int, description, fingerprint string) review.Finding {
+	return review.Finding{
 		Fingerprint: fingerprint, Dimension: dimension, Severity: review.SevCritical,
 		Description: description,
-		Location:    review.Ubicacion{Archivo: file, LineaInicio: line},
+		Location:    review.Location{File: file, LineStart: line},
 	}
 }
 
 func saveDispositionRevision(t *testing.T, commonDir, sha string, revision review.Revision) {
 	t.Helper()
-	if err := review.NuevoLedger(commonDir).GuardarRevision(sha, "message", "bucket", "model-a", revision); err != nil {
+	if err := review.NewLedger(commonDir).SaveRevision(sha, "message", "bucket", "model-a", revision); err != nil {
 		t.Fatalf("save ledger revision: %v", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestReadLedgerSurfacesConfirmedDispositionOntoAggregatedFindings(t *testing
 			dispositionRawFinding("a.go", 10, "nil dereference", review.StatusConfirmed),
 			dispositionRawFinding("b.go", 20, "unbounded loop", ""),
 		}}},
-		AggregatedFindings: []review.Hallazgo{
+		AggregatedFindings: []review.Finding{
 			dispositionAggregate(review.DimLogic, "a.go", 10, "nil dereference", "fp-confirmed"),
 			dispositionAggregate(review.DimLogic, "b.go", 20, "unbounded loop", "fp-unknown"),
 			// Deterministic findings are appended to the aggregated set and
@@ -85,7 +85,7 @@ func TestReadLedgerSurfacesRefutedDispositionAggregationDropped(t *testing.T) {
 			dispositionRawFinding("a.go", 10, "injected query", review.StatusRefuted),
 			dispositionRawFinding("b.go", 30, "unchecked input", review.StatusConfirmed),
 		}}},
-		AggregatedFindings: []review.Hallazgo{
+		AggregatedFindings: []review.Finding{
 			dispositionAggregate(review.DimSecurity, "b.go", 30, "unchecked input", "fp-confirmed"),
 			dispositionAggregate(review.DimSecurity, "c.go", 40, "weak cipher", "fp-deterministic"),
 		},
@@ -111,7 +111,7 @@ func TestReadLedgerCountsAFindingReachableThroughBothPathsOnce(t *testing.T) {
 		Dims: []review.DimensionResult{{Dim: review.DimLogic, Findings: []review.ReviewFinding{
 			dispositionRawFinding("a.go", 10, "nil dereference", review.StatusRefuted),
 		}}},
-		AggregatedFindings: []review.Hallazgo{
+		AggregatedFindings: []review.Finding{
 			dispositionAggregate(review.DimLogic, "a.go", 10, "nil dereference", "fp-single"),
 		},
 	})
@@ -154,7 +154,7 @@ func TestReadLedgerDoesNotRemediateARefutedFindingInAFixedRevision(t *testing.T)
 			dispositionRawFinding("a.go", 10, "injected query", "  REFUTED  "),
 			dispositionRawFinding("b.go", 30, "unchecked input", review.StatusConfirmed),
 		}}},
-		AggregatedFindings: []review.Hallazgo{
+		AggregatedFindings: []review.Finding{
 			dispositionAggregate(review.DimLogic, "b.go", 30, "unchecked input", "fp-confirmed"),
 		},
 	})
@@ -181,7 +181,7 @@ func TestFindingObservationPrefersTheObservationCarryingAStatus(t *testing.T) {
 	at := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	base := FindingObservation{
 		Fingerprint: "fp", Commit: "aaa111", Revision: 0, At: at, Origin: "ledger",
-		Finding: review.Hallazgo{Dimension: review.DimLogic, Description: "nil dereference"},
+		Finding: review.Finding{Dimension: review.DimLogic, Description: "nil dereference"},
 	}
 	disposed := base
 	disposed.Finding.Status = review.StatusRefuted
@@ -206,7 +206,7 @@ func TestReadLedgerInterpretsANonCanonicalRefutedStatus(t *testing.T) {
 			dispositionRawFinding("a.go", 10, "injected query", " Refuted "),
 			dispositionRawFinding("b.go", 30, "unchecked input", " CONFIRMED "),
 		}}},
-		AggregatedFindings: []review.Hallazgo{
+		AggregatedFindings: []review.Finding{
 			dispositionAggregate(review.DimSecurity, "b.go", 30, "unchecked input", "fp-confirmed"),
 		},
 	})
@@ -234,7 +234,7 @@ func TestReadLedgerInterpretsAnAggregateOwnNonCanonicalStatus(t *testing.T) {
 	saveDispositionRevision(t, commonDir, "ggg777", review.Revision{
 		At: at, Fixed: true,
 		Dims:               []review.DimensionResult{{Dim: review.DimLogic}},
-		AggregatedFindings: []review.Hallazgo{refuted},
+		AggregatedFindings: []review.Finding{refuted},
 	})
 
 	input, err := ReadStore(commonDir)
@@ -269,7 +269,7 @@ func TestReadLedgerEmitsFixedAndReopenedRemediations(t *testing.T) {
 	saveDispositionRevision(t, commonDir, "hhh888", review.Revision{
 		At:                 at,
 		Dims:               []review.DimensionResult{{Dim: review.DimLogic}},
-		AggregatedFindings: []review.Hallazgo{fixed, reopened},
+		AggregatedFindings: []review.Finding{fixed, reopened},
 	})
 
 	input, err := ReadStore(commonDir)

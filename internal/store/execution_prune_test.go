@@ -18,7 +18,7 @@ import (
 // only terminal-old-unreferenced records are removed; every other class is
 // kept with its stable reason.
 func TestPruneExecutionsAppliesRetentionGuards(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	cutoff := time.Now().Add(-24 * time.Hour)
 
 	oldRun, _ := seedPruneRun(t, s, "old-terminal", "", pruneTerminalSuccess(), pruneAncientTime)
@@ -69,7 +69,7 @@ func TestPruneExecutionsAppliesRetentionGuards(t *testing.T) {
 // tail keep the record with an explicit corrupt reason.
 func TestPruneExecutionsRefusesCorruptRecords(t *testing.T) {
 	t.Run("garbage line", func(t *testing.T) {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		runID, _ := seedPruneRun(t, s, "corrupt-line", "", pruneTerminalSuccess(), pruneAncientTime)
 		directory, _ := s.executionDir(runID)
 		logPath := filepath.Join(directory, "events.jsonl")
@@ -95,7 +95,7 @@ func TestPruneExecutionsRefusesCorruptRecords(t *testing.T) {
 	})
 
 	t.Run("incomplete final tail", func(t *testing.T) {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		runID, _ := seedPruneRun(t, s, "torn-tail", "", pruneTerminalSuccess(), pruneAncientTime)
 		directory, _ := s.executionDir(runID)
 		logPath := filepath.Join(directory, "events.jsonl")
@@ -119,7 +119,7 @@ func TestPruneExecutionsRefusesCorruptRecords(t *testing.T) {
 // inspectable: its reconciled canceled settlement exists only as derived
 // evidence over those exact bytes until an explicit recover settles it.
 func TestPruneExecutionsKeepsOrphanedCanceled(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, _ := seedPruneRun(t, s, "orphaned-canceled", "", pruneOrphanedEscalation(), pruneAncientTime)
 
 	projection, err := s.ReadReconciledProjection(runID)
@@ -141,11 +141,11 @@ func TestPruneExecutionsKeepsOrphanedCanceled(t *testing.T) {
 // guard: a terminal-old run whose invocation is cited by any caller-supplied
 // reference set is retained even though it would otherwise be prunable.
 // Where those references come from (dimension producers, persisted finding
-// blobs, ledger hallazgos including admitted refutations) is proven against
+// blobs, ledger findings including admitted refutations) is proven against
 // the real collectors in their own packages; this test pins only that
 // PruneExecutions honors whatever set it receives.
 func TestPruneExecutionsKeepsProvenanceReferencedStreams(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	referencedRun, frames := seedPruneRun(t, s, "referenced", "", pruneTerminalSuccess(), pruneAncientTime)
 	freeRun, _ := seedPruneRun(t, s, "unreferenced", "", pruneTerminalSuccess(), pruneAncientTime)
 	// The prunable row must be measurable: since T9.5 a run without a
@@ -169,15 +169,15 @@ func TestPruneExecutionsKeepsProvenanceReferencedStreams(t *testing.T) {
 // finding provenance lookup into the guard: findings that carry an
 // invocation_id protect the producing stream.
 func TestPruneExecutionsKeepsFindingReferencedStreams(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, frames := seedPruneRun(t, s, "finding-referenced", "", pruneTerminalSuccess(), pruneAncientTime)
-	hallazgo := &review.Hallazgo{
+	finding := &review.Finding{
 		Fingerprint:  "prune-fixture-fingerprint",
 		Dimension:    "logic",
 		Description:  "fixture finding",
 		InvocationID: frames[0].InvocationID,
 	}
-	if err := s.GuardarHallazgo(hallazgo); err != nil {
+	if err := s.SaveFinding(finding); err != nil {
 		t.Fatal(err)
 	}
 	references, err := s.ReferencedInvocationIDs()
@@ -200,14 +200,14 @@ func TestPruneExecutionsKeepsFindingReferencedStreams(t *testing.T) {
 // unreadable.
 func TestReferencedInvocationIDsEmptyAndCorrupt(t *testing.T) {
 	t.Run("empty store", func(t *testing.T) {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		references, err := s.ReferencedInvocationIDs()
 		if err != nil || len(references) != 0 {
 			t.Fatalf("references = %v, err = %v; want empty with no error", references, err)
 		}
 	})
 	t.Run("corrupt finding fails closed", func(t *testing.T) {
-		s := NuevoStore(t.TempDir())
+		s := NewStore(t.TempDir())
 		if err := os.MkdirAll(filepath.Join(s.dir, subdirFindings), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -224,7 +224,7 @@ func TestReferencedInvocationIDsEmptyAndCorrupt(t *testing.T) {
 // a gate root referenced as parent_run_id by a surviving child survives even
 // when it is itself terminal and old.
 func TestPruneExecutionsProtectsParentOfSurvivingRun(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	parentRun, _ := seedPruneRun(t, s, "gate-root", "", pruneTerminalSuccess(), pruneAncientTime)
 	// The parent must clear every earlier guard for the linkage guard to
 	// be what keeps it: since T9.5 that includes a metrics snapshot.
@@ -250,7 +250,7 @@ func TestPruneExecutionsProtectsParentOfSurvivingRun(t *testing.T) {
 // removable records are gone, a second pass keeps everything and removes
 // nothing.
 func TestPruneExecutionsIsIdempotent(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	firstRun, _ := seedPruneRun(t, s, "first-pass", "", pruneTerminalSuccess(), pruneAncientTime)
 	// The removable row must be measurable, or the first pass keeps it
 	// under the T9.5 snapshot guard and there is no second-pass contrast.
@@ -279,7 +279,7 @@ func TestPruneExecutionsIsIdempotent(t *testing.T) {
 // TestPruneExecutionsKeepsIncompleteAdmissionRecord proves a listed
 // directory without its immutable request record is never touched.
 func TestPruneExecutionsKeepsIncompleteAdmissionRecord(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	stray := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	directory := filepath.Join(s.dir, "executions", "v1", stray)
 	if err := os.MkdirAll(directory, 0700); err != nil {

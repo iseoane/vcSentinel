@@ -17,7 +17,7 @@ type Input struct {
 	Remediations []RemediationObservation
 	Executions   []ExecutionObservation
 	Stages       []StageObservation
-	Events       []ops.Evento
+	Events       []ops.Event
 }
 
 // FindingObservation is one persisted observation of a logical finding.
@@ -31,7 +31,7 @@ type FindingObservation struct {
 	At          time.Time
 	Origin      string
 	Superseded  bool
-	Finding     review.Hallazgo
+	Finding     review.Finding
 }
 
 // RemediationObservation records one logical remediation outcome. Repeated

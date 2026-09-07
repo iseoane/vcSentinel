@@ -12,7 +12,7 @@ import (
 )
 
 func TestReadExecutionRequestReturnsAdmittedIdentities(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestReadExecutionRequestReturnsAdmittedIdentities(t *testing.T) {
 // byte-identical to the legacy shape (no parent_run_id key at all), and old
 // records without the field read back as parentless.
 func TestParentRunIDLinkageIsPersistedAdditively(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	root := testJob()
 	if err := store.CreateRun(root, RunPolicy{ID: "policy-root"}); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func mustExecutionDir(t *testing.T, store *Store, runID string) string {
 }
 
 func TestReadExecutionRequestClassifiesAbsentAndDamagedRecords(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)

@@ -19,7 +19,7 @@ import (
 // fixture is terminal and old enough to prune on every other guard, so only
 // the snapshot guard can keep it.
 func TestPruneExecutionsKeepsRunsWithoutMetricsSnapshot(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, _ := seedPruneRun(t, s, "no-snapshot", "", pruneTerminalSuccess(), pruneAncientTime)
 	if got, err := s.ReadExecutionMetrics(runID); err != nil || got != nil {
 		t.Fatalf("fixture run %s must carry no snapshot: got=%v err=%v", runID, got, err)
@@ -95,7 +95,7 @@ func seedPruneRetryRun(t *testing.T, s *Store) string {
 // aggregate. The saved snapshot isolates the guard: snapshot absence would
 // keep the run for the wrong reason.
 func TestPruneExecutionsKeepsMultiAttemptRuns(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID := seedPruneRetryRun(t, s)
 	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: runID}); err != nil {
 		t.Fatalf("SaveExecutionMetrics() error = %v", err)
@@ -116,7 +116,7 @@ func TestPruneExecutionsKeepsMultiAttemptRuns(t *testing.T) {
 // second attempt settling after classification still refuses the deletion
 // with a typed refusal instead of destroying retry evidence.
 func TestRemoveExecutionDirectoryRefusesMultiAttemptUnderLock(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID := seedPruneRetryRun(t, s)
 
 	err := s.removeExecutionDirectory(runID, nil)
@@ -136,7 +136,7 @@ func TestRemoveExecutionDirectoryRefusesMultiAttemptUnderLock(t *testing.T) {
 // guards keep only what they must: a terminal old single-attempt run WITH a
 // snapshot and no references is still collected.
 func TestPruneExecutionsStillCollectsSnapshottedSingleAttemptRuns(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, _ := seedPruneRun(t, s, "collectible", "", pruneTerminalSuccess(), pruneAncientTime)
 	if err := s.SaveExecutionMetrics(ExecutionMetrics{Version: ExecutionMetricsSchemaVersion, RunID: runID}); err != nil {
 		t.Fatalf("SaveExecutionMetrics() error = %v", err)
@@ -164,7 +164,7 @@ func TestPruneExecutionsStillCollectsSnapshottedSingleAttemptRuns(t *testing.T) 
 // corrective-retry shape (semantic failure recorded, attempt ultimately
 // succeeding) with a saved snapshot carrying the failure.
 func TestPruneExecutionsKeepsContradictorySnapshots(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, _ := seedPruneRun(t, s, "contradicted", "", pruneTerminalSuccess(), pruneAncientTime)
 	snapshot := ExecutionMetrics{
 		Version: ExecutionMetricsSchemaVersion,

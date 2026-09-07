@@ -17,7 +17,7 @@ import (
 // <root>/vas-sentinel/executions/v1/<runID>/{request.json,outcomes,transcripts}.
 func newTranscriptFixture(t *testing.T) (*Store, string, string) {
 	t.Helper()
-	backing := NuevoStore(t.TempDir())
+	backing := NewStore(t.TempDir())
 	const runID = "run-transcripts"
 	execDir, err := backing.ExecutionDir(runID)
 	if err != nil {

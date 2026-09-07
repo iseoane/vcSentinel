@@ -5,37 +5,37 @@ import (
 	"time"
 )
 
-func TestStoreRegistrarDecisionDosVecesAppendNoPisa(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+func TestStoreRecordDecisionTwiceAppendNoOverwrite(t *testing.T) {
+	s := NewStore(t.TempDir())
 	d1 := &Decision{Fingerprint: "fp1", Decision: "accepted_by_user", Actor: "iseoane", At: time.Now().UTC()}
 	d2 := &Decision{Fingerprint: "fp2", Decision: "rejected_by_user", Actor: "iseoane", At: time.Now().UTC()}
 
-	if err := s.RegistrarDecision(d1); err != nil {
-		t.Fatalf("primera decision: %v", err)
+	if err := s.RecordDecision(d1); err != nil {
+		t.Fatalf("first decision: %v", err)
 	}
-	if err := s.RegistrarDecision(d2); err != nil {
-		t.Fatalf("segunda decision: %v", err)
+	if err := s.RecordDecision(d2); err != nil {
+		t.Fatalf("second decision: %v", err)
 	}
 
-	decisiones, err := s.LeerDecisiones()
+	decisions, err := s.ReadDecisions()
 	if err != nil {
-		t.Fatalf("LeerDecisiones: %v", err)
+		t.Fatalf("ReadDecisions: %v", err)
 	}
-	if len(decisiones) != 2 {
-		t.Fatalf("decisiones = %d, esperado 2 (append, ninguna pisa a la otra)", len(decisiones))
+	if len(decisions) != 2 {
+		t.Fatalf("decisions = %d, want 2 (append, neither overwrites the other)", len(decisions))
 	}
-	if decisiones[0].Fingerprint != "fp1" || decisiones[1].Fingerprint != "fp2" {
-		t.Errorf("el orden append no se respetó: %+v", decisiones)
+	if decisions[0].Fingerprint != "fp1" || decisions[1].Fingerprint != "fp2" {
+		t.Errorf("append order not respected: %+v", decisions)
 	}
 }
 
-func TestStoreLeerDecisionesInexistente(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	decisiones, err := s.LeerDecisiones()
+func TestStoreReadDecisionsMissing(t *testing.T) {
+	s := NewStore(t.TempDir())
+	decisions, err := s.ReadDecisions()
 	if err != nil {
-		t.Fatalf("LeerDecisiones: %v", err)
+		t.Fatalf("ReadDecisions: %v", err)
 	}
-	if decisiones != nil {
-		t.Error("LeerDecisiones debería devolver nil si decisions.jsonl no existe")
+	if decisions != nil {
+		t.Error("ReadDecisions should return nil when decisions.jsonl does not exist")
 	}
 }

@@ -28,7 +28,7 @@ func operationTestJob(candidate string) agentrun.LogicalJob {
 }
 
 func TestReadRunOperationRoundTripsAdmittedLabel(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	labeled := operationTestJob("labeled-candidate")
 	if err := st.CreateRun(labeled, RunPolicy{ID: "policy:gate", Operation: "gate pre-push"}); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestReadRunOperationRoundTripsAdmittedLabel(t *testing.T) {
 // to the legacy shape (no operation key at all), while a labeled one carries
 // the key with its admitted value.
 func TestRunPolicyOperationOmittedFromLegacyBytes(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	labeled := operationTestJob("labeled-bytes-candidate")
 	if err := st.CreateRun(labeled, RunPolicy{ID: "policy:review", ParentRunID: "parent", Operation: "review"}); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestRunPolicyOperationOmittedFromLegacyBytes(t *testing.T) {
 }
 
 func TestReadRunOperationClassifiesAbsentAndDamagedRecords(t *testing.T) {
-	st := NuevoStore(t.TempDir())
+	st := NewStore(t.TempDir())
 	job := testJob()
 	if err := st.CreateRun(job, RunPolicy{ID: "policy-id", Operation: "run"}); err != nil {
 		t.Fatal(err)

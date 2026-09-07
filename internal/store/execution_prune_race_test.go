@@ -28,7 +28,7 @@ func setRaceWindowHook(t *testing.T, hook func(s *Store)) {
 // classified as prunable still refuses its deletion, because the locked
 // section re-checks the reference set before removing anything.
 func TestPruneExecutionsRefusesReferencePersistedBetweenClassifyAndLock(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, frames := seedPruneRun(t, s, "late-reference", "", pruneTerminalSuccess(), pruneAncientTime)
 	// The run must clear classification — including the T9.5 snapshot
 	// guard — or the race hook it exists to exercise never fires.
@@ -59,7 +59,7 @@ func TestPruneExecutionsRefusesReferencePersistedBetweenClassifyAndLock(t *testi
 // second half of the window: a child run admitted after classification names
 // the prunable record as its parent, and the locked re-scan keeps the root.
 func TestPruneExecutionsRefusesChildPersistedBetweenClassifyAndLock(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	parentRun, _ := seedPruneRun(t, s, "gate-root", "", pruneTerminalSuccess(), pruneAncientTime)
 	// The root must clear classification — including the T9.5 snapshot
 	// guard — or the late-child hook it exists to exercise never fires.
@@ -92,7 +92,7 @@ func TestPruneExecutionsRefusesChildPersistedBetweenClassifyAndLock(t *testing.T
 // the removal path stops the deletion with a pruneInLockRefusal carrying the
 // stable provenance reason, leaving every byte in place.
 func TestRemoveExecutionDirectoryRefusesReferencedInvocationUnderLock(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	runID, frames := seedPruneRun(t, s, "locked-reference", "", pruneTerminalSuccess(), pruneAncientTime)
 
 	err := s.removeExecutionDirectory(runID, map[string]bool{frames[0].InvocationID: true})
@@ -114,7 +114,7 @@ func TestRemoveExecutionDirectoryRefusesReferencedInvocationUnderLock(t *testing
 // ParentRunID blocks the deletion with a typed refusal, even though the
 // reference set is empty.
 func TestRemoveExecutionDirectoryRefusesLateChildUnderLock(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	parentRun, _ := seedPruneRun(t, s, "gate-root", "", pruneTerminalSuccess(), pruneAncientTime)
 	childJob := agentrun.NewLogicalJob(agentrun.NewRunRequest(
 		agentrun.Candidate("candidate:child"), agentrun.Prompt("child"), nil))

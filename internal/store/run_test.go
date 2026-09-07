@@ -7,46 +7,46 @@ import (
 	"time"
 )
 
-func TestStoreGuardarYLeerRun(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+func TestStoreSaveAndReadRun(t *testing.T) {
+	s := NewStore(t.TempDir())
 	at := time.Now().UTC()
-	id := CalcularRunID("unit1", at)
+	id := ComputeRunID("unit1", at)
 	r := &Run{ID: id, UnitID: "unit1", At: at, Fingerprints: []string{"fp1"}}
 
-	if err := s.GuardarRun(r); err != nil {
-		t.Fatalf("GuardarRun: %v", err)
+	if err := s.SaveRun(r); err != nil {
+		t.Fatalf("SaveRun: %v", err)
 	}
-	leido, err := s.LeerRun(id)
+	got, err := s.ReadRun(id)
 	if err != nil {
-		t.Fatalf("LeerRun: %v", err)
+		t.Fatalf("ReadRun: %v", err)
 	}
-	if leido == nil || leido.UnitID != "unit1" || len(leido.Fingerprints) != 1 {
-		t.Errorf("run leído = %+v, no coincide con lo guardado", leido)
+	if got == nil || got.UnitID != "unit1" || len(got.Fingerprints) != 1 {
+		t.Errorf("read run = %+v, does not match what was saved", got)
 	}
 }
 
-func TestStoreLeerRunInexistente(t *testing.T) {
-	s := NuevoStore(t.TempDir())
-	r, err := s.LeerRun("noexiste")
+func TestStoreReadRunMissing(t *testing.T) {
+	s := NewStore(t.TempDir())
+	r, err := s.ReadRun("missing")
 	if err != nil {
-		t.Fatalf("LeerRun: %v", err)
+		t.Fatalf("ReadRun: %v", err)
 	}
 	if r != nil {
-		t.Error("LeerRun debería devolver nil para un id sin run")
+		t.Error("ReadRun should return nil for an id without a run")
 	}
 }
 
-func TestStoreRunCorruptoEsError(t *testing.T) {
+func TestStoreRunCorruptIsError(t *testing.T) {
 	dir := t.TempDir()
-	s := NuevoStore(dir)
-	ruta := filepath.Join(dir, "vas-sentinel", subdirRuns, "r1.json")
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	s := NewStore(dir)
+	path := filepath.Join(dir, "vas-sentinel", subdirRuns, "r1.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte("no es json"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.LeerRun("r1"); err == nil {
-		t.Error("un archivo corrupto debería devolver error, no nil")
+	if _, err := s.ReadRun("r1"); err == nil {
+		t.Error("a corrupt file should return an error, not nil")
 	}
 }

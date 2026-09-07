@@ -10,27 +10,27 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
-// TestStoreEscrituraAtomica reproduce TestLedgerEscrituraAtomica (T2.x) sobre
-// el layout nuevo: varias escrituras consecutivas al mismo id nunca dejan el
-// archivo destino a medias.
-func TestStoreEscrituraAtomica(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+// TestStoreAtomicWrite reproduces TestLedgerEscrituraAtomica (T2.x) over
+// the new layout: several consecutive writes to the same id never leave
+// the destination file half-written.
+func TestStoreAtomicWrite(t *testing.T) {
+	s := NewStore(t.TempDir())
 	for i := 0; i < 20; i++ {
-		idx := &IndiceCommit{SHA: "sha1", Message: "m", Fingerprints: []string{"fp"}}
-		if err := s.GuardarIndiceCommit(idx); err != nil {
-			t.Fatalf("escritura %d: %v", i, err)
+		idx := &CommitIndex{SHA: "sha1", Message: "m", Fingerprints: []string{"fp"}}
+		if err := s.SaveCommitIndex(idx); err != nil {
+			t.Fatalf("write %d: %v", i, err)
 		}
 	}
-	idx, err := s.LeerIndiceCommit("sha1")
+	idx, err := s.ReadCommitIndex("sha1")
 	if err != nil {
-		t.Fatalf("tras 20 escrituras el archivo quedó corrupto: %v", err)
+		t.Fatalf("after 20 writes the file was corrupt: %v", err)
 	}
 	if idx == nil || idx.Message != "m" {
-		t.Errorf("indice = %+v, no coincide con la última escritura", idx)
+		t.Errorf("index = %+v, does not match the last write", idx)
 	}
 }
 
-func ejecutarGit(t *testing.T, dir string, args ...string) {
+func execGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -39,61 +39,61 @@ func ejecutarGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// TestStoreAncladoEnGitCommonDirCompartidoEntreWorktrees confirma que el
-// store, anclado con ObtenerGitCommonDir, resuelve al mismo directorio para
-// el checkout principal y para un worktree enlazado — a diferencia de
-// ObtenerGitDir, que es privado por worktree. Una escritura desde el store
-// del checkout principal debe ser visible desde el store del worktree.
-func TestStoreAncladoEnGitCommonDirCompartidoEntreWorktrees(t *testing.T) {
-	principal := t.TempDir()
-	ejecutarGit(t, principal, "init", "-q")
-	ejecutarGit(t, principal, "config", "user.email", "test@vas.sentinel")
-	ejecutarGit(t, principal, "config", "user.name", "vas-sentinel-test")
-	if err := os.WriteFile(filepath.Join(principal, "a.txt"), []byte("x"), 0644); err != nil {
+// TestStoreAnchoredInGitCommonDirSharedAcrossWorktrees confirms that the
+// store, anchored with GetGitCommonDir, resolves to the same directory
+// for the main checkout and for a linked worktree — unlike GetGitDir,
+// which is private per worktree. A write from the store of the main
+// checkout must be visible from the store of the worktree.
+func TestStoreAnchoredInGitCommonDirSharedAcrossWorktrees(t *testing.T) {
+	mainDir := t.TempDir()
+	execGit(t, mainDir, "init", "-q")
+	execGit(t, mainDir, "config", "user.email", "test@vas.sentinel")
+	execGit(t, mainDir, "config", "user.name", "vas-sentinel-test")
+	if err := os.WriteFile(filepath.Join(mainDir, "a.txt"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, principal, "add", "a.txt")
-	ejecutarGit(t, principal, "commit", "-q", "-m", "inicial")
+	execGit(t, mainDir, "add", "a.txt")
+	execGit(t, mainDir, "commit", "-q", "-m", "initial")
 
 	worktree := filepath.Join(t.TempDir(), "worktree")
-	ejecutarGit(t, principal, "worktree", "add", "-q", worktree, "-b", "rama-test")
+	execGit(t, mainDir, "worktree", "add", "-q", worktree, "-b", "test-branch")
 
-	commonPrincipal, err := git.ObtenerGitCommonDir(principal)
+	mainCommon, err := git.GetGitCommonDir(mainDir)
 	if err != nil {
-		t.Fatalf("ObtenerGitCommonDir(principal): %v", err)
+		t.Fatalf("GetGitCommonDir(mainDir): %v", err)
 	}
-	commonWorktree, err := git.ObtenerGitCommonDir(worktree)
+	worktreeCommon, err := git.GetGitCommonDir(worktree)
 	if err != nil {
-		t.Fatalf("ObtenerGitCommonDir(worktree): %v", err)
+		t.Fatalf("GetGitCommonDir(worktree): %v", err)
 	}
-	if commonPrincipal != commonWorktree {
-		t.Fatalf("common-dir distinto entre checkout principal y worktree: %s != %s", commonPrincipal, commonWorktree)
+	if mainCommon != worktreeCommon {
+		t.Fatalf("common-dir differs between main checkout and worktree: %s != %s", mainCommon, worktreeCommon)
 	}
-	// El git-dir privado del worktree (--absolute-git-dir) es
-	// .git/worktrees/<nombre>, distinto del common-dir: confirma que anclar
-	// en ObtenerGitCommonDir (y no en ObtenerGitDir) es lo que hace posible
-	// compartir el store entre worktrees enlazados.
+	// The worktree's private git-dir (--absolute-git-dir) is
+	// .git/worktrees/<name>, different from the common-dir: it confirms
+	// that anchoring in GetGitCommonDir (and not in GetGitDir) is
+	// what makes sharing the store across linked worktrees possible.
 	cmd := exec.Command("git", "-C", worktree, "rev-parse", "--absolute-git-dir")
-	salida, err := cmd.Output()
+	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("git rev-parse --absolute-git-dir: %v", err)
 	}
-	privadoWorktree := filepath.Clean(strings.TrimSpace(string(salida)))
-	if privadoWorktree == commonWorktree {
-		t.Fatalf("el git-dir privado del worktree no debería coincidir con el common-dir")
+	worktreePrivate := filepath.Clean(strings.TrimSpace(string(output)))
+	if worktreePrivate == worktreeCommon {
+		t.Fatalf("the worktree's private git-dir should not match the common-dir")
 	}
 
-	sPrincipal := NuevoStore(commonPrincipal)
-	if err := sPrincipal.GuardarIndiceCommit(&IndiceCommit{SHA: "sha1", Fingerprints: []string{"fp1"}}); err != nil {
-		t.Fatalf("GuardarIndiceCommit desde principal: %v", err)
+	sMain := NewStore(mainCommon)
+	if err := sMain.SaveCommitIndex(&CommitIndex{SHA: "sha1", Fingerprints: []string{"fp1"}}); err != nil {
+		t.Fatalf("SaveCommitIndex from main: %v", err)
 	}
 
-	sWorktree := NuevoStore(commonWorktree)
-	idx, err := sWorktree.LeerIndiceCommit("sha1")
+	sWorktree := NewStore(worktreeCommon)
+	idx, err := sWorktree.ReadCommitIndex("sha1")
 	if err != nil {
-		t.Fatalf("LeerIndiceCommit desde worktree: %v", err)
+		t.Fatalf("ReadCommitIndex from worktree: %v", err)
 	}
 	if idx == nil || len(idx.Fingerprints) != 1 || idx.Fingerprints[0] != "fp1" {
-		t.Errorf("el worktree no ve lo escrito por el checkout principal: %+v", idx)
+		t.Errorf("the worktree does not see what the main checkout wrote: %+v", idx)
 	}
 }

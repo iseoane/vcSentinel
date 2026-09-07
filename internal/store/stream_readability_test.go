@@ -129,7 +129,7 @@ func TestPreR9StreamRemainsReadable(t *testing.T) {
 	commonDir := t.TempDir()
 	root := filepath.Join(commonDir, "vas-sentinel")
 	seedLegacyRunDirectory(t, root)
-	st := NuevoStore(commonDir)
+	st := NewStore(commonDir)
 
 	ids, err := st.ListExecutionIDs()
 	if err != nil || len(ids) != 1 || ids[0] != legacyRunID {

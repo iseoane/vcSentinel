@@ -28,7 +28,7 @@ func writeExecutionMetricsTestRecord(t *testing.T, store *Store, runID string, d
 }
 
 func TestSaveAndReadExecutionMetricsRoundTrip(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestSaveAndReadExecutionMetricsRoundTrip(t *testing.T) {
 }
 
 func TestReadExecutionMetricsTreatsHistoricalExecutionAsAbsent(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestReadExecutionMetricsTreatsHistoricalExecutionAsAbsent(t *testing.T) {
 	}
 }
 func TestSaveExecutionMetricsRejectsNonexistentExecution(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	metrics := ExecutionMetrics{
 		Version: ExecutionMetricsSchemaVersion,
 		RunID:   "missing-run",
@@ -248,7 +248,7 @@ func TestSaveExecutionMetricsRejectsNonexistentExecution(t *testing.T) {
 }
 
 func TestExecutionMetricsPreservesObservedZeroAndUnavailable(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -308,7 +308,7 @@ func TestExecutionMetricsPreservesObservedZeroAndUnavailable(t *testing.T) {
 }
 
 func TestExecutionMetricsAcceptsInvocationIdentityWithoutAgentObservation(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -334,7 +334,7 @@ func TestExecutionMetricsAcceptsInvocationIdentityWithoutAgentObservation(t *tes
 }
 
 func TestSaveExecutionMetricsRejectsSecondWrite(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func TestSaveExecutionMetricsRejectsSecondWrite(t *testing.T) {
 }
 
 func TestReadExecutionMetricsAcceptsUnknownFieldsAndValues(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -404,7 +404,7 @@ func TestReadExecutionMetricsAcceptsUnknownFieldsAndValues(t *testing.T) {
 }
 
 func TestReadExecutionMetricsRejectsUnsupportedSchemaVersion(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -556,7 +556,7 @@ func TestSaveExecutionMetricsRejectsInvalidValues(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := NuevoStore(t.TempDir())
+			store := NewStore(t.TempDir())
 			job := testJob()
 			if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 				t.Fatal(err)
@@ -574,7 +574,7 @@ func TestSaveExecutionMetricsRejectsInvalidValues(t *testing.T) {
 }
 
 func TestReadExecutionMetricsRejectsCorruptJSON(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -591,7 +591,7 @@ func TestReadExecutionMetricsRejectsCorruptJSON(t *testing.T) {
 }
 
 func TestReadExecutionMetricsRejectsMismatchedRunID(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -605,7 +605,7 @@ func TestReadExecutionMetricsRejectsMismatchedRunID(t *testing.T) {
 }
 
 func TestSaveExecutionMetricsRejectsSavingsForFullScope(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	job := testJob()
 	if err := store.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -624,7 +624,7 @@ func TestSaveExecutionMetricsRejectsSavingsForFullScope(t *testing.T) {
 }
 
 func TestPruneExecutionsRetainsReadableExecutionMetrics(t *testing.T) {
-	store := NuevoStore(t.TempDir())
+	store := NewStore(t.TempDir())
 	// Agreeing pair: a failure-terminal stream with a failing snapshot.
 	// A success stream with this snapshot would be contradictory (kept
 	// under the T9.5 agreement guard), which is not what this test
@@ -679,8 +679,8 @@ func TestPruneExecutionsRetainsReadableExecutionMetrics(t *testing.T) {
 
 func TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce(t *testing.T) {
 	root := t.TempDir()
-	first := NuevoStore(root)
-	second := NuevoStore(root)
+	first := NewStore(root)
+	second := NewStore(root)
 	job := testJob()
 	if err := first.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -750,7 +750,7 @@ func TestSaveExecutionMetricsConcurrentIndependentStoresWriteOnce(t *testing.T) 
 // that has already relaunched would record metrics that omit the new attempt
 // and then refuse every later retry, so the write must be refused instead.
 func TestSaveExecutionMetricsForRevisionRefusesAStaleHead(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job := testJob()
 	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)

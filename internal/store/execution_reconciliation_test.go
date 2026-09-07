@@ -163,7 +163,7 @@ func TestReadReconciledProjectionClassifiesOwnerDeathDuringCancellation(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NuevoStore(t.TempDir())
+			s := NewStore(t.TempDir())
 			job := testJob()
 			if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 				t.Fatal(err)
@@ -237,7 +237,7 @@ func TestReadReconciledProjectionClassifiesOwnerDeathDuringCancellation(t *testi
 // unparseable final record over an escalating stream still fails closed:
 // without the complete frame there is no trustworthy evidence to classify.
 func TestReadReconciledProjectionPartialJSONTailStaysIncomplete(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job := testJob()
 	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -276,12 +276,12 @@ func TestReconcileProjectionLeavesPersistedSerializationUnchanged(t *testing.T) 
 	}
 }
 
-// TestReconciledProjectionDoesNotFabricateTerminalAfterRetry verifies the
+// TestReconciledProjectionDoesNotFactoryteTerminalAfterRetry verifies the
 // R7 fix for finder 2: a live retried run (canceled->running, head
 // non-terminal running) must NOT be reconciled to orphaned-canceled even
 // though its history contains escalation frames before the terminal settlement.
-func TestReconciledProjectionDoesNotFabricateTerminalAfterRetry(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+func TestReconciledProjectionDoesNotFactoryteTerminalAfterRetry(t *testing.T) {
+	s := NewStore(t.TempDir())
 	job := testJob()
 	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestReconciledProjectionDoesNotFabricateTerminalAfterRetry(t *testing.T) {
 // escalation frames and NO terminal settlement after them must still derive
 // canceled-orphaned.
 func TestReconciledProjectionStillOrphansGenuineMidCancellation(t *testing.T) {
-	s := NuevoStore(t.TempDir())
+	s := NewStore(t.TempDir())
 	job := testJob()
 	if err := s.CreateRun(job, RunPolicy{ID: "policy-id"}); err != nil {
 		t.Fatal(err)

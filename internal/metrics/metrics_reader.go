@@ -32,8 +32,8 @@ func ReadStore(gitCommonDir string) (Input, error) {
 		return Input{}, err
 	}
 
-	st := store.NuevoStore(gitCommonDir)
-	decisions, err := st.LeerDecisiones()
+	st := store.NewStore(gitCommonDir)
+	decisions, err := st.ReadDecisions()
 	if err != nil {
 		return Input{}, fmt.Errorf("metrics: read decisions: %w", err)
 	}
@@ -78,7 +78,7 @@ func ReadStore(gitCommonDir string) (Input, error) {
 		input.Executions = append(input.Executions, observation)
 	}
 
-	events, err := ops.UltimosEventos(gitCommonDir, 0)
+	events, err := ops.RecentEvents(gitCommonDir, 0)
 	if err != nil {
 		return Input{}, fmt.Errorf("metrics: read events: %w", err)
 	}
@@ -98,28 +98,28 @@ func ReadStore(gitCommonDir string) (Input, error) {
 }
 
 func readLedger(gitCommonDir string, input *Input) error {
-	ledger := review.NuevoLedger(gitCommonDir)
-	shas, err := ledger.ListarFichas()
+	ledger := review.NewLedger(gitCommonDir)
+	shas, err := ledger.ListRecords()
 	if err != nil {
-		return fmt.Errorf("metrics: list review fichas: %w", err)
+		return fmt.Errorf("metrics: list review records: %w", err)
 	}
 	// Standing human answers are overlaid through the same domain projection
 	// every other consumer uses. A corrupt dispositions log fails the whole
 	// report rather than measuring a population with missing answers.
-	dispositions, err := store.NuevoStore(gitCommonDir).ReadDispositions()
+	dispositions, err := store.NewStore(gitCommonDir).ReadDispositions()
 	if err != nil {
 		return fmt.Errorf("metrics: read dispositions: %w", err)
 	}
 	for _, sha := range shas {
-		ficha, readErr := ledger.LeerFicha(sha)
+		record, readErr := ledger.ReadRecord(sha)
 		if readErr != nil {
-			return fmt.Errorf("metrics: read review ficha %q: %w", sha, readErr)
+			return fmt.Errorf("metrics: read review record %q: %w", sha, readErr)
 		}
-		if ficha == nil {
+		if record == nil {
 			continue
 		}
-		for revisionIndex, revision := range ficha.Revisions {
-			// FindingsWithDispositions, not HallazgosEfectivos: the latter
+		for revisionIndex, revision := range record.Revisions {
+			// FindingsWithDispositions, not EffectiveFindings: the latter
 			// is the blocking gate's selection point and reports no
 			// lifecycle status at all, so reading through it measures a
 			// disposition-free ledger (FU-7).
@@ -146,7 +146,7 @@ func readLedger(gitCommonDir string, input *Input) error {
 				// one.
 				if (revision.Fixed && status != review.StatusRefuted) || status == review.StatusFixed {
 					input.Remediations = append(input.Remediations, RemediationObservation{
-						Target: fingerprint, LogicalID: "fixed:" + fingerprint + ":" + ficha.FixedIn,
+						Target: fingerprint, LogicalID: "fixed:" + fingerprint + ":" + record.FixedIn,
 						Dimension: finding.Dimension, Success: true, At: revision.At,
 					})
 				}
@@ -179,7 +179,7 @@ func readStoredFindings(gitCommonDir string, input *Input) error {
 		if readErr != nil {
 			return fmt.Errorf("metrics: read stored finding %q: %w", entry.Name(), readErr)
 		}
-		var finding review.Hallazgo
+		var finding review.Finding
 		if unmarshalErr := json.Unmarshal(data, &finding); unmarshalErr != nil {
 			return fmt.Errorf("metrics: decode stored finding %q: %w", entry.Name(), unmarshalErr)
 		}
@@ -217,7 +217,7 @@ func containsSorted(values []string, needle string) bool {
 	return index < len(values) && values[index] == needle
 }
 
-func eventFields(event ops.Evento) (map[string]any, bool) {
+func eventFields(event ops.Event) (map[string]any, bool) {
 	switch fields := event.Detail.(type) {
 	case map[string]any:
 		return fields, true
@@ -228,7 +228,7 @@ func eventFields(event ops.Evento) (map[string]any, bool) {
 	}
 }
 
-func stageFromEvent(event ops.Evento) (StageObservation, bool) {
+func stageFromEvent(event ops.Event) (StageObservation, bool) {
 	fields, ok := eventFields(event)
 	if !ok {
 		return StageObservation{}, false
@@ -242,7 +242,7 @@ func stageFromEvent(event ops.Evento) (StageObservation, bool) {
 	return StageObservation{Stage: stage, DurationNanos: duration, LogicalRunID: logicalRunID}, true
 }
 
-func remediationFromEvent(event ops.Evento) (RemediationObservation, bool) {
+func remediationFromEvent(event ops.Event) (RemediationObservation, bool) {
 	fields, ok := eventFields(event)
 	if !ok {
 		return RemediationObservation{}, false
@@ -267,7 +267,7 @@ func remediationFromEvent(event ops.Evento) (RemediationObservation, bool) {
 	}, true
 }
 
-func eventRemediationIdentity(event ops.Evento, target, dimension string, success bool) string {
+func eventRemediationIdentity(event ops.Event, target, dimension string, success bool) string {
 	data, _ := json.Marshal(struct {
 		At        string `json:"at"`
 		Cmd       string `json:"cmd"`
