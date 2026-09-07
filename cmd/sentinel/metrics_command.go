@@ -28,7 +28,7 @@ func executeMetrics(out io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(out, "metrics: %v\n", err)
 		return 1
 	}
-	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		fmt.Fprintf(out, "metrics: cannot resolve Git common directory: %v\n", err)
 		return 1

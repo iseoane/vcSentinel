@@ -21,7 +21,7 @@ func TestStagedCheckAcceptsStagedCandidateWhileUnstagedWorkExceedsBudget(t *test
 	writeTestLines(t, "unfinished.go", 450)
 
 	var output bytes.Buffer
-	if exitCode := ejecutarStagedCheckCon(&output, ".", false, git.MedirVolumenStaged, noOpStagedCohesion); exitCode != 0 {
+	if exitCode := runStagedCheckWith(&output, ".", false, git.MeasureStagedVolume, noOpStagedCohesion); exitCode != 0 {
 		t.Fatalf("staged check exit code = %d, want 0\n%s", exitCode, output.String())
 	}
 	if !strings.Contains(output.String(), "within the review budget") {
@@ -37,7 +37,7 @@ func TestStagedCheckRejectsOverBudgetWithoutChangingIndexOrHistory(t *testing.T)
 	headBefore := gitOutput(t, "rev-parse", "HEAD")
 
 	var output bytes.Buffer
-	if exitCode := ejecutarStagedCheckCon(&output, ".", false, git.MedirVolumenStaged, noOpStagedCohesion); exitCode != 1 {
+	if exitCode := runStagedCheckWith(&output, ".", false, git.MeasureStagedVolume, noOpStagedCohesion); exitCode != 1 {
 		t.Fatalf("staged check exit code = %d, want 1\n%s", exitCode, output.String())
 	}
 	if !strings.Contains(output.String(), "Staged commit rejected") {
@@ -56,12 +56,12 @@ func TestStagedCheckRejectsOverBudgetWithoutChangingIndexOrHistory(t *testing.T)
 
 func TestStagedCheckBlocksMeasurementFailureDistinctly(t *testing.T) {
 	var output bytes.Buffer
-	if exitCode := ejecutarStagedCheckCon(
+	if exitCode := runStagedCheckWith(
 		&output,
 		"worktree",
 		false,
-		func() (git.VolumenPendiente, error) {
-			return git.VolumenPendiente{Estado: "ERROR"}, errors.New("git index diff failed")
+		func() (git.PendingVolume, error) {
+			return git.PendingVolume{State: "ERROR"}, errors.New("git index diff failed")
 		},
 		noOpStagedCohesion,
 	); exitCode != 1 {
@@ -90,7 +90,7 @@ func TestStagedCheckWarnsOnIndependentClustersWithoutMutation(t *testing.T) {
 	headBefore := gitOutput(t, "rev-parse", "HEAD")
 
 	var output bytes.Buffer
-	if exitCode := ejecutarStagedCheckCon(&output, ".", false, git.MedirVolumenStaged, calcularCohesionStaged); exitCode != 0 {
+	if exitCode := runStagedCheckWith(&output, ".", false, git.MeasureStagedVolume, computeStagedCohesion); exitCode != 0 {
 		t.Fatalf("staged check exit code = %d, want 0\n%s", exitCode, output.String())
 	}
 	if !strings.Contains(output.String(), "independent cohesion clusters") {
@@ -120,7 +120,7 @@ func TestHookInvokesStagedContractWithPortablePath(t *testing.T) {
 	if err := os.WriteFile(executable, []byte(fake), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hook, []byte(generarScriptHookPara(executable)), 0755); err != nil {
+	if err := os.WriteFile(hook, []byte(generateHookScriptFor(executable)), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,19 +136,19 @@ func TestHookInvokesStagedContractWithPortablePath(t *testing.T) {
 	if got := string(args); got != "check\n--staged\n" {
 		t.Fatalf("hook arguments = %q, want check --staged", got)
 	}
-	if !strings.Contains(generarScriptHookPara(filepath.FromSlash("C:/Program Files/sentinel")), "C:/Program Files/sentinel") {
+	if !strings.Contains(generateHookScriptFor(filepath.FromSlash("C:/Program Files/sentinel")), "C:/Program Files/sentinel") {
 		t.Fatal("hook script did not normalize Windows paths")
 	}
 }
 
 func TestStagedCheckJSONDistinguishesRejectionAndMeasurementFailure(t *testing.T) {
 	var rejection bytes.Buffer
-	if exitCode := ejecutarStagedCheckCon(
+	if exitCode := runStagedCheckWith(
 		&rejection,
 		"worktree",
 		true,
-		func() (git.VolumenPendiente, error) {
-			return git.VolumenPendiente{Bloqueante: 401, Estado: "CRITICO"}, nil
+		func() (git.PendingVolume, error) {
+			return git.PendingVolume{Blocking: 401, State: "CRITICAL"}, nil
 		},
 		noOpStagedCohesion,
 	); exitCode != 1 {
@@ -163,12 +163,12 @@ func TestStagedCheckJSONDistinguishesRejectionAndMeasurementFailure(t *testing.T
 	}
 
 	var failure bytes.Buffer
-	if exitCode := ejecutarStagedCheckCon(
+	if exitCode := runStagedCheckWith(
 		&failure,
 		"worktree",
 		true,
-		func() (git.VolumenPendiente, error) {
-			return git.VolumenPendiente{Estado: "ERROR"}, errors.New("index unavailable")
+		func() (git.PendingVolume, error) {
+			return git.PendingVolume{State: "ERROR"}, errors.New("index unavailable")
 		},
 		noOpStagedCohesion,
 	); exitCode != 1 {
@@ -183,8 +183,8 @@ func TestStagedCheckJSONDistinguishesRejectionAndMeasurementFailure(t *testing.T
 	}
 }
 
-func noOpStagedCohesion([]string) (change.ResultadoCohesion, error) {
-	return change.ResultadoCohesion{Clusters: 1}, nil
+func noOpStagedCohesion([]string) (change.CohesionResult, error) {
+	return change.CohesionResult{Clusters: 1}, nil
 }
 
 func prepareStagedCheckRepository(t *testing.T) {

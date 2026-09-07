@@ -29,26 +29,26 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
-const ymlValidacionCutover = "version: \"2.0\"\nvalidation:\n  capabilities:\n    lint:\n      command: \"echo ok\"\n      fails_when: \"exit_code\"\n  profiles:\n    standard: [\"lint\"]\n"
+const cutoverValidationYml = "version: \"2.0\"\nvalidation:\n  capabilities:\n    lint:\n      command: \"echo ok\"\n      fails_when: \"exit_code\"\n  profiles:\n    standard: [\"lint\"]\n"
 
-// agenteRevisionFijo implements AuditorAgente AND RestrictedReviewer with a
-// canned raw verdict, mirroring internal/gate's auditorFalso but local to the
+// fixedReviewAgent implements AgentReviewer AND RestrictedReviewer with a
+// canned raw verdict, mirroring internal/gate's fake auditor but local to the
 // cmd package.
-type agenteRevisionFijo struct{ salida string }
+type fixedReviewAgent struct{ output string }
 
-func (a *agenteRevisionFijo) EjecutarPrompt(string) (string, error) { return a.salida, nil }
-func (a *agenteRevisionFijo) EjecutarRevision(string, string, []string) (string, error) {
-	return a.salida, nil
+func (a *fixedReviewAgent) RunPrompt(string) (string, error) { return a.output, nil }
+func (a *fixedReviewAgent) RunReview(string, string, []string) (string, error) {
+	return a.output, nil
 }
 
-func (a *agenteRevisionFijo) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.EjecutarRevision(prompt, sha, paths)
+func (a *fixedReviewAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.RunReview(prompt, sha, paths)
 }
 
-// repositorioCutover creates a real repository with one commit so HEAD
+// cutoverRepository creates a real repository with one commit so HEAD
 // resolution, change profiling, and the git common dir all resolve against a
 // deterministic fixture.
-func repositorioCutover(t *testing.T) string {
+func cutoverRepository(t *testing.T) string {
 	t.Helper()
 	worktree := t.TempDir()
 	initGitRepo(t, worktree)
@@ -70,29 +70,29 @@ func repositorioCutover(t *testing.T) string {
 	return worktree
 }
 
-// construirOpcionesCutover loads the strict project configuration for the
+// buildCutoverOptions loads the strict project configuration for the
 // fixture repo, resolves HEAD inputs through the real git seams, builds the
 // production gate options, applies the durable cutover, and finally overrides
 // ONLY the reviewer agent seams with canned verdicts (the review transport
 // stays whatever production construction produced). t.Chdir pins every
 // pathless git call to the fixture repository for the whole subtest.
-func construirOpcionesCutover(t *testing.T, worktree, stage, ymlExtra string, auditorSalida string) (gate.Opciones, config.Config, *reviewChildSink) {
+func buildCutoverOptions(t *testing.T, worktree, stage, ymlExtra string, auditorOutput string) (gate.Options, config.Config, *reviewChildSink) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Chdir(worktree)
-	escribirYmlGateTest(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), ymlValidacionCutover+ymlExtra)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml+ymlExtra)
 
-	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
 		t.Fatalf("config load failed: %v", err)
 	}
-	sha, err := git.ResolverSHA("HEAD")
+	sha, err := git.ResolveSHA("HEAD")
 	if err != nil {
 		t.Fatalf("resolve HEAD: %v", err)
 	}
-	mensaje, err := git.MensajeCommit(sha)
+	message, err := git.CommitMessage(sha)
 	if err != nil {
 		t.Fatalf("commit message: %v", err)
 	}
@@ -100,51 +100,51 @@ func construirOpcionesCutover(t *testing.T, worktree, stage, ymlExtra string, au
 	if err != nil {
 		t.Fatalf("commit diff: %v", err)
 	}
-	archivos, err := git.ArchivosDeCommit(sha)
+	files, err := git.FilesOfCommit(sha)
 	if err != nil {
 		t.Fatalf("commit files: %v", err)
 	}
-	profile, err := change.PerfilDeCommit(sha)
+	profile, err := change.ComputeCommitProfile(sha)
 	if err != nil {
 		t.Fatalf("change profile: %v", err)
 	}
 
-	verificador := nuevoVerificadorModelo(worktree)
-	opciones := buildGateOptions(cfg, verificador, worktree, perfilGatePorDefecto, EvidenciaGate{
-		SHA: sha, Mensaje: mensaje, Diff: diff, Perfil: profile, Archivos: archivos,
+	verifier := newModelVerifier(worktree)
+	options := buildGateOptions(cfg, verifier, worktree, defaultGateProfile, GateEvidence{
+		SHA: sha, Message: message, Diff: diff, Profile: profile, Files: files,
 	})
-	sink := applyDurableCutover(&opciones, cfg, worktree, stage, sha, archivos)
-	opciones.FabricaAuditor = func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
-		return &agenteRevisionFijo{salida: auditorSalida}, "logic", nil
+	sink := applyDurableCutover(&options, cfg, worktree, stage, sha, files)
+	options.ReviewerFactory = func(_ review.ReviewBundle, _ string) (review.AgentReviewer, string, error) {
+		return &fixedReviewAgent{output: auditorOutput}, "logic", nil
 	}
-	opciones.FabricaRefutador = func() (review.AuditorAgente, string, error) {
-		return &agenteRevisionFijo{salida: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
+	options.RefuterFactory = func() (review.AgentReviewer, string, error) {
+		return &fixedReviewAgent{output: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
 	}
-	return opciones, cfg, sink
+	return options, cfg, sink
 }
 
 func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
-	worktree := repositorioCutover(t)
+	worktree := cutoverRepository(t)
 	blockingJSON := `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"confirmable risk","evidence":"risk()","confidence":"high"}]}`
-	opciones, _, sink := construirOpcionesCutover(t, worktree, "pre-push", "", blockingJSON)
+	options, _, sink := buildCutoverOptions(t, worktree, "pre-push", "", blockingJSON)
 
 	if sink == nil {
 		t.Fatal("applyDurableCutover returned no sink, expected the durable wiring always on")
 	}
-	if opciones.DurableStore == nil || opciones.DurableReviewTransportFactory == nil {
+	if options.DurableStore == nil || options.DurableReviewTransportFactory == nil {
 		t.Fatalf("cutover left the durable seams unwired: store=%v factory=%v",
-			opciones.DurableStore != nil, opciones.DurableReviewTransportFactory != nil)
+			options.DurableStore != nil, options.DurableReviewTransportFactory != nil)
 	}
 
-	resultado := gate.EjecutarGate(opciones)
-	if resultado.Estado != gate.EstadoCodeReviewFailed {
-		t.Fatalf("estado = %q (%v), expected %q", resultado.Estado, resultado.Mensajes, gate.EstadoCodeReviewFailed)
+	result := gate.RunGate(options)
+	if result.State != gate.StateCodeReviewFailed {
+		t.Fatalf("state = %q (%v), expected %q", result.State, result.Messages, gate.StateCodeReviewFailed)
 	}
 	if len(sink.learned()) == 0 {
 		t.Fatal("the production sink learned no review child identity")
 	}
 
-	st := opciones.DurableStore
+	st := options.DurableStore
 	ids, err := st.ListExecutionIDs()
 	if err != nil {
 		t.Fatalf("ListExecutionIDs() error = %v", err)
@@ -179,15 +179,15 @@ func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	// The learned review identities must be part of the persisted scan, and
 	// together with the single validation job they must account for EVERY
 	// scanned child.
-	aprendidos := sink.learned()
-	if len(aprendidos) < 1 {
+	learned := sink.learned()
+	if len(learned) < 1 {
 		t.Fatal("sink drained empty after the audit")
 	}
-	if len(scanned) != 1+len(aprendidos) {
+	if len(scanned) != 1+len(learned) {
 		t.Fatalf("scanned children = %d (%v), want %d (1 validation job + %d review runs)",
-			len(scanned), scanned, 1+len(aprendidos), len(aprendidos))
+			len(scanned), scanned, 1+len(learned), len(learned))
 	}
-	for _, id := range aprendidos {
+	for _, id := range learned {
 		if !slices.Contains(scanned, string(id)) {
 			t.Fatalf("learned review run %s missing from the ParentRunID scan %v", id, scanned)
 		}
@@ -196,28 +196,28 @@ func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	// Root reconstruction from store contents alone: failed naming the review
 	// layer, with a machine-parseable suffix enumerating exactly the scanned
 	// set.
-	inspeccion, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(rootID))
+	inspection, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(rootID))
 	if err != nil {
 		t.Fatalf("root inspection failed: %v", err)
 	}
-	if inspeccion.Projection.State != agentrun.StateFailed {
-		t.Fatalf("root state = %q, expected failed", inspeccion.Projection.State)
+	if inspection.Projection.State != agentrun.StateFailed {
+		t.Fatalf("root state = %q, expected failed", inspection.Projection.State)
 	}
-	var detalle string
-	for _, outcome := range inspeccion.Outcomes {
+	var detail string
+	for _, outcome := range inspection.Outcomes {
 		if strings.HasPrefix(outcome.Error, "gate: failing layer:") {
-			detalle = outcome.Error
+			detail = outcome.Error
 		}
 	}
-	if !strings.Contains(detalle, "gate: failing layer: review") {
-		t.Fatalf("root detail %q does not name the review layer", detalle)
+	if !strings.Contains(detail, "gate: failing layer: review") {
+		t.Fatalf("root detail %q does not name the review layer", detail)
 	}
 	marker := "|children="
-	index := strings.Index(detalle, marker)
+	index := strings.Index(detail, marker)
 	if index < 0 {
-		t.Fatalf("root detail %q carries no children enumeration", detalle)
+		t.Fatalf("root detail %q carries no children enumeration", detail)
 	}
-	enumerated := strings.Split(detalle[index+len(marker):], ",")
+	enumerated := strings.Split(detail[index+len(marker):], ",")
 	slices.Sort(enumerated)
 	slices.Sort(scanned)
 	if !slices.Equal(enumerated, scanned) {
@@ -227,15 +227,15 @@ func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 	// Sensible classification: only the ROOT carries the failure; every child
 	// (validation job included) reached a terminal success attempt.
 	for _, id := range scanned {
-		hijoInspeccion, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(id))
+		childInspection, err := execution.NewController(st, nil).Inspect(context.Background(), agentrun.Identity(id))
 		if err != nil {
 			t.Fatalf("child %s inspection failed: %v", id, err)
 		}
-		if len(hijoInspeccion.Outcomes) != 1 {
-			t.Fatalf("child %s recorded %d outcomes, expected exactly one terminal attempt", id, len(hijoInspeccion.Outcomes))
+		if len(childInspection.Outcomes) != 1 {
+			t.Fatalf("child %s recorded %d outcomes, expected exactly one terminal attempt", id, len(childInspection.Outcomes))
 		}
-		if hijoInspeccion.Outcomes[0].Class != agentrun.OutcomeSuccess {
-			t.Fatalf("child %s settled class=%s, expected success (only the root names the failing layer)", id, hijoInspeccion.Outcomes[0].Class)
+		if childInspection.Outcomes[0].Class != agentrun.OutcomeSuccess {
+			t.Fatalf("child %s settled class=%s, expected success (only the root names the failing layer)", id, childInspection.Outcomes[0].Class)
 		}
 	}
 }
@@ -244,21 +244,21 @@ func TestGateCutoverLinksReviewChildrenInSharedStore(t *testing.T) {
 // project yaml still carrying gate.durable_runs (removed in ticket 13 R11)
 // fails fast as configuration infrastructure instead of being ignored.
 func TestGateStrictConfigRejectsRemovedDurableRunsKey(t *testing.T) {
-	worktree := repositorioCutover(t)
+	worktree := cutoverRepository(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Chdir(worktree)
-	escribirYmlGateTest(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
-		ymlValidacionCutover+"gate:\n  durable_runs: false\n")
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		cutoverValidationYml+"gate:\n  durable_runs: false\n")
 
-	var salida bytes.Buffer
-	exitCode := ejecutarGate(&salida, worktree, []string{"--stage", "pre-push"})
+	var output bytes.Buffer
+	exitCode := runGate(&output, worktree, []string{"--stage", "pre-push"})
 
 	if exitCode != 4 {
-		t.Fatalf("exit = %d (%q), want 4 for a strict configuration failure", exitCode, salida.String())
+		t.Fatalf("exit = %d (%q), want 4 for a strict configuration failure", exitCode, output.String())
 	}
-	if !strings.Contains(salida.String(), "gate") || !strings.Contains(salida.String(), "not found") {
-		t.Fatalf("output = %q, want the unknown-key error to name the removed gate section", salida.String())
+	if !strings.Contains(output.String(), "gate") || !strings.Contains(output.String(), "not found") {
+		t.Fatalf("output = %q, want the unknown-key error to name the removed gate section", output.String())
 	}
 }

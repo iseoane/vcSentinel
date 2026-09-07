@@ -53,8 +53,8 @@ const refuteSnapshotContent = "const unrelated = true\ncriticalCall()\n"
 func refuteTestDeps(t *testing.T, snapshot review.SnapshotReader) (*refuteDeps, *review.Ledger, *store.Store) {
 	t.Helper()
 	commonDir := t.TempDir()
-	ledger := review.NuevoLedger(commonDir)
-	st := store.NuevoStore(commonDir)
+	ledger := review.NewLedger(commonDir)
+	st := store.NewStore(commonDir)
 	if snapshot == nil {
 		snapshot = func(sha, file string) (string, error) {
 			if sha != "abc12345" || file != "a.go" {
@@ -69,27 +69,27 @@ func refuteTestDeps(t *testing.T, snapshot review.SnapshotReader) (*refuteDeps, 
 	}, ledger, st
 }
 
-func refuteFichaFixture() review.Revision {
+func refuteRecordFixture() review.Revision {
 	return review.Revision{
 		At: time.Date(2026, 9, 4, 11, 0, 0, 0, time.UTC), Result: "block",
 		Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictBlock, Findings: []review.ReviewFinding{
 			{File: "a.go", Line: 2, Severity: review.SevCritical, Description: "bug", Status: review.StatusConfirmed},
 			{File: "b.go", Line: 30, Severity: review.SevCritical, Description: "other", Status: review.StatusConfirmed},
 		}}},
-		AggregatedFindings: []review.Hallazgo{
+		AggregatedFindings: []review.Finding{
 			{
 				Dimension: review.DimLogic, Severity: review.SevCritical, Status: review.StatusConfirmed,
 				Description: "bug", Fingerprint: "fp-target",
-				Location: review.Ubicacion{Archivo: "a.go", LineaInicio: 2},
+				Location: review.Location{File: "a.go", LineStart: 2},
 				Evidence: "criticalCall()", Title: "unsafe call",
-				Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+				Producer: review.Producer{Agent: "agent-a", Model: "model-a"},
 			},
 			{
 				Dimension: review.DimLogic, Severity: review.SevCritical, Status: review.StatusConfirmed,
 				Description: "other", Fingerprint: "fp-other",
-				Location: review.Ubicacion{Archivo: "b.go", LineaInicio: 30},
+				Location: review.Location{File: "b.go", LineStart: 30},
 				Evidence: "other call here", Title: "unsafe call",
-				Producer: review.Productor{Agente: "agent-a", Modelo: "model-a"},
+				Producer: review.Producer{Agent: "agent-a", Model: "model-a"},
 			},
 		},
 	}
@@ -106,12 +106,12 @@ func refuteValidOptions() refuteOptions {
 // and leaves the persisted revision byte-identical.
 func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	before, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	before, err := os.ReadFile(ledger.RecordPath("abc12345"))
 	if err != nil {
-		t.Fatalf("read ficha: %v", err)
+		t.Fatalf("read record: %v", err)
 	}
 
 	outcome, err := runRefutation(deps, refuteValidOptions())
@@ -144,9 +144,9 @@ func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 		t.Fatalf("target = %+v, want the finding identity", disposition)
 	}
 
-	after, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	after, err := os.ReadFile(ledger.RecordPath("abc12345"))
 	if err != nil {
-		t.Fatalf("read ficha: %v", err)
+		t.Fatalf("read record: %v", err)
 	}
 	if string(after) != string(before) {
 		t.Fatal("the persisted revision was mutated by the refutation")
@@ -164,16 +164,16 @@ func TestRunRefutationPersistsWithoutMutatingRevisions(t *testing.T) {
 	}
 }
 
-// FU-6 defect 2: a finding without a line (LineaInicio <= 0, e.g. a
+// FU-6 defect 2: a finding without a line (LineStart <= 0, e.g. a
 // deterministic check citing a bare file path) could never be refuted: the
 // shared gate requires the finding line inside the evidence range. The
 // command accepts a file-scoped range instead; the extract must still match
 // the audited Git object exactly, so the gate stays fail-closed.
 func TestRunRefutationAcceptsLinelessFinding(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	ficha := refuteFichaFixture()
-	ficha.AggregatedFindings[0].Location.LineaInicio = 0
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", ficha); err != nil {
+	record := refuteRecordFixture()
+	record.AggregatedFindings[0].Location.LineStart = 0
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", record); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
 	opts := refuteValidOptions()
@@ -205,9 +205,9 @@ func TestRunRefutationAcceptsLinelessFinding(t *testing.T) {
 // evidence content is rejected and nothing is persisted.
 func TestRunRefutationLinelessStillFailsClosed(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	ficha := refuteFichaFixture()
-	ficha.AggregatedFindings[0].Location.LineaInicio = 0
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", ficha); err != nil {
+	record := refuteRecordFixture()
+	record.AggregatedFindings[0].Location.LineStart = 0
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", record); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
 	opts := refuteValidOptions()
@@ -228,12 +228,12 @@ func TestRunRefutationLinelessStillFailsClosed(t *testing.T) {
 // record, missing or ambiguous fingerprint, already-cleared finding, unsafe
 // path, range outside the gate, and unreadable snapshot.
 func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
-	ambiguous := refuteFichaFixture()
+	ambiguous := refuteRecordFixture()
 	ambiguous.AggregatedFindings[1].Fingerprint = "fp-target"
-	cleared := refuteFichaFixture()
+	cleared := refuteRecordFixture()
 	cleared.AggregatedFindings[0].Status = review.StatusRefuted
-	unsafe := refuteFichaFixture()
-	unsafe.AggregatedFindings[0].Location.Archivo = "../evil.go"
+	unsafe := refuteRecordFixture()
+	unsafe.AggregatedFindings[0].Location.File = "../evil.go"
 	cases := []struct {
 		name     string
 		revision *review.Revision
@@ -242,7 +242,7 @@ func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
 	}{
 		{"missing review record", nil, nil, func(*refuteOptions) {}},
 		{
-			"missing fingerprint", &[]review.Revision{refuteFichaFixture()}[0], nil,
+			"missing fingerprint", &[]review.Revision{refuteRecordFixture()}[0], nil,
 			func(o *refuteOptions) { o.fingerprint = "fp-absent" },
 		},
 		{
@@ -258,11 +258,11 @@ func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
 			func(*refuteOptions) {},
 		},
 		{
-			"range outside finding", &[]review.Revision{refuteFichaFixture()}[0], nil,
+			"range outside finding", &[]review.Revision{refuteRecordFixture()}[0], nil,
 			func(o *refuteOptions) { o.lineStart, o.lineEnd = 1, 1 },
 		},
 		{
-			"snapshot unreadable", &[]review.Revision{refuteFichaFixture()}[0],
+			"snapshot unreadable", &[]review.Revision{refuteRecordFixture()}[0],
 			func(string, string) (string, error) { return "", errors.New("snapshot unavailable") },
 			func(*refuteOptions) {},
 		},
@@ -271,7 +271,7 @@ func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, ledger, st := refuteTestDeps(t, tc.snapshot)
 			if tc.revision != nil {
-				if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", *tc.revision); err != nil {
+				if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", *tc.revision); err != nil {
 					t.Fatalf("save revision: %v", err)
 				}
 			}
@@ -293,27 +293,27 @@ func TestRunRefutationFailsClosedWithoutPersistence(t *testing.T) {
 
 // FU-6: the command is discoverable and self-documenting.
 func TestRefuteHelpIsRegistered(t *testing.T) {
-	if !strings.Contains(construirAyuda(), "refute") {
+	if !strings.Contains(buildHelp(), "refute") {
 		t.Fatal("the top-level help does not list refute")
 	}
 	var buf bytes.Buffer
-	if !escribirAyudaComando(&buf, "refute") {
+	if !writeCommandHelp(&buf, "refute") {
 		t.Fatal("no dedicated help for refute")
 	}
 	if !strings.Contains(buf.String(), "--fingerprint") {
 		t.Fatalf("help = %q, want the addressing flags documented", buf.String())
 	}
 	buf.Reset()
-	if !gestionarAyuda(&buf, &bytes.Buffer{}, "refute", []string{"--help"}) {
+	if !handleHelp(&buf, &bytes.Buffer{}, "refute", []string{"--help"}) {
 		t.Fatal("refute --help was not intercepted")
 	}
 }
 
-// FU-6: ejecutarRefute reports success and failure through its exit code
+// FU-6: runRefute reports success and failure through its exit code
 // without touching the process.
-func TestEjecutarRefuteRejectsBadArgs(t *testing.T) {
+func TestRunRefuteRejectsBadArgs(t *testing.T) {
 	var buf bytes.Buffer
-	if code := ejecutarRefute(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
+	if code := runRefute(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
 		t.Fatalf("exit = %d, want 1 for missing flags (output %q)", code, buf.String())
 	}
 }
@@ -344,13 +344,13 @@ func TestRefuteReadsEvidenceFromTheAuditedGitObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	commonDir, err := git.ObtenerGitCommonDir(repo)
+	commonDir, err := git.GetGitCommonDir(repo)
 	if err != nil {
 		t.Fatalf("common dir: %v", err)
 	}
-	ledger := review.NuevoLedger(commonDir)
-	revision := refuteFichaFixture()
-	if err := ledger.GuardarRevision(sha, "audited commit", "bucket", "model-a", revision); err != nil {
+	ledger := review.NewLedger(commonDir)
+	revision := refuteRecordFixture()
+	if err := ledger.SaveRevision(sha, "audited commit", "bucket", "model-a", revision); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
 
@@ -360,10 +360,10 @@ func TestRefuteReadsEvidenceFromTheAuditedGitObject(t *testing.T) {
 		"--reason", "the committed implementation is safe",
 		"--line-start", "2", "--line-end", "2",
 	}
-	if code := ejecutarRefute(&buf, repo, args); code != 0 {
+	if code := runRefute(&buf, repo, args); code != 0 {
 		t.Fatalf("exit = %d, want 0 (output %q)", code, buf.String())
 	}
-	records, err := store.NuevoStore(commonDir).ReadDispositions()
+	records, err := store.NewStore(commonDir).ReadDispositions()
 	if err != nil {
 		t.Fatalf("read dispositions: %v", err)
 	}
@@ -390,11 +390,11 @@ func runRefuteGit(t *testing.T, dir string, args ...string) string {
 // a human-cleared CRITICAL no longer escalates the exit, a confirmed one
 // still does.
 func TestGateEscalationHonoursHumanRefutations(t *testing.T) {
-	build := func(status, actor string) review.ResultadoAuditoria {
-		return review.ResultadoAuditoria{
-			Dims: []review.ResultadoDimension{{
+	build := func(status, actor string) review.AuditResult {
+		return review.AuditResult{
+			Dims: []review.DimensionOutcome{{
 				Dim: review.DimSecurity,
-				Resultado: &review.DimensionResult{
+				Result: &review.DimensionResult{
 					Dim: review.DimSecurity, Verdict: review.VerdictWarn,
 					Findings: []review.ReviewFinding{{
 						Severity: review.SevCritical, File: "a.go",
@@ -404,16 +404,16 @@ func TestGateEscalationHonoursHumanRefutations(t *testing.T) {
 			}},
 		}
 	}
-	if !tieneHallazgosCriticos(build(review.StatusConfirmed, "")) {
+	if !hasCriticalFindings(build(review.StatusConfirmed, "")) {
 		t.Fatal("a confirmed CRITICAL must escalate")
 	}
-	if tieneHallazgosCriticos(build(review.StatusRefuted, review.RefutationActorHuman)) {
+	if hasCriticalFindings(build(review.StatusRefuted, review.RefutationActorHuman)) {
 		t.Fatal("a human-refuted CRITICAL must not escalate")
 	}
-	if tieneHallazgosCriticos(build(review.StatusFixed, "")) {
+	if hasCriticalFindings(build(review.StatusFixed, "")) {
 		t.Fatal("a fixed CRITICAL must not escalate")
 	}
-	if !tieneHallazgosCriticos(build(review.StatusAcceptedByUser, review.RefutationActorHuman)) {
+	if !hasCriticalFindings(build(review.StatusAcceptedByUser, review.RefutationActorHuman)) {
 		t.Fatal("an accepted CRITICAL must still escalate")
 	}
 }
@@ -424,14 +424,14 @@ func TestGateEscalationHonoursHumanRefutations(t *testing.T) {
 // must persist nothing and report the record changed.
 func TestRunRefutationRefusesConcurrentRevision(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
 	deps.beforeLockedAppend = func() {
-		next := refuteFichaFixture()
+		next := refuteRecordFixture()
 		next.AggregatedFindings[0].Fingerprint = "fp-retired"
 		next.AggregatedFindings[0].Description = "rewritten premise"
-		if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", next); err != nil {
+		if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", next); err != nil {
 			t.Errorf("concurrent revision: %v", err)
 		}
 	}
@@ -454,10 +454,10 @@ func TestRunRefutationRefusesConcurrentRevision(t *testing.T) {
 func TestRunRefutationRefusesCorruptOrRepeatedDisposition(t *testing.T) {
 	t.Run("corrupt log", func(t *testing.T) {
 		deps, ledger, _ := refuteTestDeps(t, nil)
-		if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 			t.Fatalf("save revision: %v", err)
 		}
-		path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RutaFicha("abc12345"))), "vas-sentinel", "dispositions.jsonl")
+		path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RecordPath("abc12345"))), "vas-sentinel", "dispositions.jsonl")
 		const corrupt = `{"sha":"abc12345","fingerprint":"fp-target","status":"ignored","actor":"human","source":"human"}` + "\n"
 		if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
 			t.Fatal(err)
@@ -477,7 +477,7 @@ func TestRunRefutationRefusesCorruptOrRepeatedDisposition(t *testing.T) {
 
 	t.Run("already refuted", func(t *testing.T) {
 		deps, ledger, st := refuteTestDeps(t, nil)
-		if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+		if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 			t.Fatalf("save revision: %v", err)
 		}
 		if _, err := runRefutation(deps, refuteValidOptions()); err != nil {
@@ -498,7 +498,7 @@ func TestRunRefutationRefusesCorruptOrRepeatedDisposition(t *testing.T) {
 
 // FU-6: the command boundary rejects an out-of-snapshot range in a real Git
 // repository and leaves the append-only log untouched.
-func TestEjecutarRefuteRejectsOutOfSnapshotRange(t *testing.T) {
+func TestRunRefuteRejectsOutOfSnapshotRange(t *testing.T) {
 	if testing.Short() {
 		t.Skip("uses a temporary Git repository")
 	}
@@ -515,24 +515,24 @@ func TestEjecutarRefuteRejectsOutOfSnapshotRange(t *testing.T) {
 	runRefuteGit(t, repo, "add", "a.go")
 	runRefuteGit(t, repo, "commit", "-m", "audited commit")
 	sha := strings.TrimSpace(runRefuteGit(t, repo, "rev-parse", "HEAD"))
-	commonDir, err := git.ObtenerGitCommonDir(repo)
+	commonDir, err := git.GetGitCommonDir(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := review.NuevoLedger(commonDir)
-	if err := ledger.GuardarRevision(sha, "audited commit", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	ledger := review.NewLedger(commonDir)
+	if err := ledger.SaveRevision(sha, "audited commit", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatal(err)
 	}
 
 	var output bytes.Buffer
-	if exit := ejecutarRefute(&output, repo, []string{
+	if exit := runRefute(&output, repo, []string{
 		"--sha", sha, "--fingerprint", "fp-target",
 		"--reason", "the committed implementation is safe",
 		"--line-start", "4", "--line-end", "4",
 	}); exit != 1 {
 		t.Fatalf("refute exit = %d, want 1; output: %q", exit, output.String())
 	}
-	records, err := store.NuevoStore(commonDir).ReadDispositions()
+	records, err := store.NewStore(commonDir).ReadDispositions()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,22 +546,22 @@ func TestEjecutarRefuteRejectsOutOfSnapshotRange(t *testing.T) {
 // result and report success with the lock warning.
 func TestRunRefutationPreservesCompletedAppendAfterLockCleanupFailure(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	deps.withLockedFicha = func(sha string, fn func(*review.Ficha) error) error {
-		if err := ledger.WithLockedFicha(sha, fn); err != nil {
+	deps.withLockedRecord = func(sha string, fn func(*review.Record) error) error {
+		if err := ledger.WithLockedRecord(sha, fn); err != nil {
 			return err
 		}
-		return review.ErrBloqueoNoLiberado
+		return review.ErrLockNotReleased
 	}
 
 	outcome, err := runRefutation(deps, refuteValidOptions())
 	if outcome.disposition == nil || outcome.disposition.Fingerprint != "fp-target" {
 		t.Fatalf("completed refutation was discarded: outcome=%+v err=%v", outcome, err)
 	}
-	if !errors.Is(outcome.completionWarning, review.ErrBloqueoNoLiberado) {
-		t.Fatalf("cleanup failure = %v, want ErrBloqueoNoLiberado", outcome.completionWarning)
+	if !errors.Is(outcome.completionWarning, review.ErrLockNotReleased) {
+		t.Fatalf("cleanup failure = %v, want ErrLockNotReleased", outcome.completionWarning)
 	}
 	if err != nil {
 		t.Fatalf("completed refutation failed: %v", err)
@@ -577,16 +577,16 @@ func TestRunRefutationPreservesCompletedAppendAfterLockCleanupFailure(t *testing
 
 // FU-6: the command boundary preserves a completed append when only cleanup
 // fails: it exits successfully, confirms the record, and warns about cleanup.
-func TestEjecutarRefuteReportsCompletedAppendWithLockCleanupWarning(t *testing.T) {
+func TestRunRefuteReportsCompletedAppendWithLockCleanupWarning(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	deps.withLockedFicha = func(sha string, fn func(*review.Ficha) error) error {
-		if err := ledger.WithLockedFicha(sha, fn); err != nil {
+	deps.withLockedRecord = func(sha string, fn func(*review.Record) error) error {
+		if err := ledger.WithLockedRecord(sha, fn); err != nil {
 			return err
 		}
-		return review.ErrBloqueoNoLiberado
+		return review.ErrLockNotReleased
 	}
 	previousResolver := refuteDepsResolver
 	refuteDepsResolver = func(string) (*refuteDeps, error) {
@@ -595,7 +595,7 @@ func TestEjecutarRefuteReportsCompletedAppendWithLockCleanupWarning(t *testing.T
 	t.Cleanup(func() { refuteDepsResolver = previousResolver })
 
 	var output bytes.Buffer
-	if exit := ejecutarRefute(&output, t.TempDir(), []string{
+	if exit := runRefute(&output, t.TempDir(), []string{
 		"--sha", "abc12345", "--fingerprint", "fp-target",
 		"--reason", "the committed implementation is safe",
 		"--line-start", "2", "--line-end", "2",
@@ -614,22 +614,22 @@ func TestEjecutarRefuteReportsCompletedAppendWithLockCleanupWarning(t *testing.T
 	}
 }
 
-// FU-6: a ficha lock failure before the callback runs is a hard failure, not
+// FU-6: a record lock failure before the callback runs is a hard failure, not
 // a completed append. The sentinel alone carries no completion signal, so the
 // command must return an empty outcome, surface the sentinel as an error, and
 // persist nothing.
 func TestRunRefutationRejectsLockErrorBeforeAppend(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	deps.withLockedFicha = func(string, func(*review.Ficha) error) error {
-		return review.ErrBloqueoNoLiberado
+	deps.withLockedRecord = func(string, func(*review.Record) error) error {
+		return review.ErrLockNotReleased
 	}
 
 	outcome, err := runRefutation(deps, refuteValidOptions())
-	if err == nil || !errors.Is(err, review.ErrBloqueoNoLiberado) {
-		t.Fatalf("err = %v, want a hard error wrapping ErrBloqueoNoLiberado", err)
+	if err == nil || !errors.Is(err, review.ErrLockNotReleased) {
+		t.Fatalf("err = %v, want a hard error wrapping ErrLockNotReleased", err)
 	}
 	if outcome.disposition != nil || outcome.completionWarning != nil {
 		t.Fatalf("outcome = %+v, want an empty outcome on a pre-append lock failure", outcome)

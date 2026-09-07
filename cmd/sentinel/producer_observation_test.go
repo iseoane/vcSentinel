@@ -14,11 +14,11 @@ type richPromptDelegate struct {
 	err    error
 }
 
-func (d richPromptDelegate) EjecutarPrompt(string) (string, error) {
+func (d richPromptDelegate) RunPrompt(string) (string, error) {
 	return d.result.Output, d.err
 }
 
-func (d richPromptDelegate) EjecutarPromptWithContext(context.Context, string) (string, error) {
+func (d richPromptDelegate) RunPromptWithContext(context.Context, string) (string, error) {
 	return d.result.Output, d.err
 }
 

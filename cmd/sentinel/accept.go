@@ -84,14 +84,14 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 	if strings.HasPrefix(sha, "-") {
 		return refuteOutcome{}, fmt.Errorf("accept: invalid reviewed SHA")
 	}
-	ficha, err := deps.ledger.LeerFicha(sha)
+	record, err := deps.ledger.ReadRecord(sha)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("accept: reading the review record: %w", err)
 	}
-	if ficha == nil || len(ficha.Revisions) == 0 {
+	if record == nil || len(record.Revisions) == 0 {
 		return refuteOutcome{}, fmt.Errorf("accept: no review record for SHA %q", sha)
 	}
-	target, err := review.ResolveDispositionTarget(ficha.Revisions[len(ficha.Revisions)-1], fingerprint)
+	target, err := review.ResolveDispositionTarget(record.Revisions[len(record.Revisions)-1], fingerprint)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("accept: %w", err)
 	}
@@ -99,39 +99,39 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 	// caller supplies no path, so an acceptance cannot be redirected at a
 	// file the finding never cited. Unsafe finding paths fail closed here,
 	// exactly as the refutation gate refuses them there.
-	if len(review.RutasRevisionSeguras([]string{target.Location.Archivo})) != 1 {
-		return refuteOutcome{}, fmt.Errorf("accept: the finding path %q is unsafe", target.Location.Archivo)
+	if len(review.SafeReviewPaths([]string{target.Location.File})) != 1 {
+		return refuteOutcome{}, fmt.Errorf("accept: the finding path %q is unsafe", target.Location.File)
 	}
 	disposition := &review.FindingDisposition{
 		SHA:               sha,
 		Fingerprint:       review.EffectiveFingerprint(target),
 		Status:            review.StatusAcceptedByUser,
 		Reason:            reason,
-		Path:              target.Location.Archivo,
+		Path:              target.Location.File,
 		Actor:             review.RefutationActorHuman,
 		Source:            review.DispositionSourceHuman,
 		At:                now().UTC(),
 		TargetDimension:   target.Dimension,
-		TargetLine:        target.Location.LineaInicio,
+		TargetLine:        target.Location.LineStart,
 		TargetDescription: target.Description,
 		TargetSeverity:    target.Severity,
 	}
 	// Compare-and-append against the authoritative record, mirroring
-	// runRefutation: the fingerprint above was resolved against a ficha read
+	// runRefutation: the fingerprint above was resolved against a record read
 	// before any lock, and a concurrent re-audit may have retired it since.
-	expected, err := json.Marshal(ficha)
+	expected, err := json.Marshal(record)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("accept: reading the review record: %w", err)
 	}
 	if deps.beforeLockedAppend != nil {
 		deps.beforeLockedAppend()
 	}
-	withLockedFicha := deps.ledger.WithLockedFicha
-	if deps.withLockedFicha != nil {
-		withLockedFicha = deps.withLockedFicha
+	withLockedRecord := deps.ledger.WithLockedRecord
+	if deps.withLockedRecord != nil {
+		withLockedRecord = deps.withLockedRecord
 	}
 	completed := false
-	if err := withLockedFicha(sha, func(current *review.Ficha) error {
+	if err := withLockedRecord(sha, func(current *review.Record) error {
 		fresh, err := json.Marshal(current)
 		if err != nil {
 			return fmt.Errorf("accept: reading the review record: %w", err)
@@ -163,10 +163,10 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 		completed = true
 		return nil
 	}); err != nil {
-		if completed && errors.Is(err, review.ErrBloqueoNoLiberado) {
+		if completed && errors.Is(err, review.ErrLockNotReleased) {
 			return refuteOutcome{
 				disposition:       disposition,
-				completionWarning: fmt.Errorf("accept: disposition recorded but ficha lock cleanup failed: %w", err),
+				completionWarning: fmt.Errorf("accept: disposition recorded but record lock cleanup failed: %w", err),
 			}, nil
 		}
 		return refuteOutcome{}, err
@@ -174,10 +174,10 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 	return refuteOutcome{disposition: disposition}, nil
 }
 
-// ejecutarAccept implements `sentinel accept`: parse, resolve, record.
+// runAccept implements `sentinel accept`: parse, resolve, record.
 // Exit 0 records one disposition, including the completed-but-warning case
-// where only the ficha lock cleanup failed after persistence.
-func ejecutarAccept(w io.Writer, worktree string, args []string) int {
+// where only the record lock cleanup failed after persistence.
+func runAccept(w io.Writer, worktree string, args []string) int {
 	opts, err := parseAcceptArgs(args)
 	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
@@ -205,7 +205,7 @@ func reportAcceptanceResult(w io.Writer, outcome refuteOutcome) int {
 	fmt.Fprintf(w, "✅ Human acceptance recorded for finding %q on %s (%s). The block stands: acceptance documents judgement, never clears it.\n",
 		disposition.Fingerprint, disposition.SHA, disposition.Path)
 	if outcome.completionWarning != nil {
-		fmt.Fprintf(w, "⚠️  The acceptance is recorded, but ficha lock cleanup failed: %v\n", outcome.completionWarning)
+		fmt.Fprintf(w, "⚠️  The acceptance is recorded, but record lock cleanup failed: %v\n", outcome.completionWarning)
 	}
 	return 0
 }

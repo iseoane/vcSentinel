@@ -8,22 +8,22 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 )
 
-// TestPlanDeRevisionNoLeeAtributosConDimsExplicitas pins the exception the
+// TestReviewPlanSkipsAttributeReadWithExplicitDims pins the exception the
 // review of ce8316d found untested. Explicit --dims replaces the derived plan
 // outright, so reading the evidence that derivation needs would abort a run
 // whose bundles the caller already chose, for evidence nothing consumes.
-func TestPlanDeRevisionNoLeeAtributosConDimsExplicitas(t *testing.T) {
-	leido := false
-	leer := func() (string, error) {
-		leido = true
+func TestReviewPlanSkipsAttributeReadWithExplicitDims(t *testing.T) {
+	wasRead := false
+	read := func() (string, error) {
+		wasRead = true
 		return "", errors.New("must not be called")
 	}
 
-	bundles, err := planDeRevision([]string{"logic", "tests"}, change.ChangeProfile{}, nil, "", leer)
+	bundles, err := reviewPlan([]string{"logic", "tests"}, change.ChangeProfile{}, nil, "", read)
 	if err != nil {
 		t.Fatalf("explicit dims returned %v; the attribute read must be skipped entirely", err)
 	}
-	if leido {
+	if wasRead {
 		t.Error("the attributes were read even though --dims replaced the plan")
 	}
 	if len(bundles) != 1 {
@@ -34,19 +34,19 @@ func TestPlanDeRevisionNoLeeAtributosConDimsExplicitas(t *testing.T) {
 	}
 }
 
-// TestPlanDeRevisionPropagaElFalloSinDims is the other half: with no explicit
-// dimensions the derived plan is what schedules the audit, and its evidence
-// decides whether the security bundle appears at all, so a read failure must
-// surface rather than degrade to empty.
-func TestPlanDeRevisionPropagaElFalloSinDims(t *testing.T) {
-	leer := func() (string, error) { return "", errors.New("simulated read failure") }
+// TestReviewPlanPropagatesTheFailureWithoutDims is the other half: with no
+// explicit dimensions the derived plan is what schedules the audit, and its
+// evidence decides whether the security bundle appears at all, so a read
+// failure must surface rather than degrade to empty.
+func TestReviewPlanPropagatesTheFailureWithoutDims(t *testing.T) {
+	read := func() (string, error) { return "", errors.New("simulated read failure") }
 
-	if _, err := planDeRevision(nil, change.ChangeProfile{}, nil, "", leer); err == nil {
+	if _, err := reviewPlan(nil, change.ChangeProfile{}, nil, "", read); err == nil {
 		t.Error("a derived plan swallowed an attribute read failure; it must not classify from empty evidence")
 	}
 }
 
-// TestPlanDeRevisionUsaLosAtributosLeidos closes the gap the other two leave: a
+// TestReviewPlanUsesTheReadAttributes closes the gap the other two leave: a
 // regression that read the attributes and then discarded them would keep both
 // of them green while the derivation classified from empty evidence.
 //
@@ -57,7 +57,7 @@ func TestPlanDeRevisionPropagaElFalloSinDims(t *testing.T) {
 // reason this test is not about. That interaction is characterised where the
 // characteristics themselves are observable, in
 // TestPlanForProfileHonoursAttributesPerDetector.
-func TestPlanDeRevisionUsaLosAtributosLeidos(t *testing.T) {
+func TestReviewPlanUsesTheReadAttributes(t *testing.T) {
 	profile := change.ChangeProfile{Kind: "generated", Symbols: change.ChangeSymbols{Modified: 1, Complete: true}}
 	paths := []string{"internal/api/wire.go"}
 	diff := "diff --git a/internal/api/wire.go b/internal/api/wire.go\n" +
@@ -66,19 +66,19 @@ func TestPlanDeRevisionUsaLosAtributosLeidos(t *testing.T) {
 		"@@ -1,0 +2,1 @@\n" +
 		"+\t// the caller rotates its accessToken here\n"
 
-	base, err := planDeRevision(nil, profile, paths, diff, func() (string, error) { return "", nil })
+	base, err := reviewPlan(nil, profile, paths, diff, func() (string, error) { return "", nil })
 	if err != nil {
-		t.Fatalf("planDeRevision: %v", err)
+		t.Fatalf("reviewPlan: %v", err)
 	}
 	if len(base) == 0 {
 		t.Fatalf("without attributes the content must schedule a plan; got none")
 	}
 
-	got, err := planDeRevision(nil, profile, paths, diff, func() (string, error) {
+	got, err := reviewPlan(nil, profile, paths, diff, func() (string, error) {
 		return "internal/api/wire.go linguist-generated\n", nil
 	})
 	if err != nil {
-		t.Fatalf("planDeRevision: %v", err)
+		t.Fatalf("reviewPlan: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("declaring the path generated scheduled %d bundles against %d without attributes; the attributes never reached the derivation",

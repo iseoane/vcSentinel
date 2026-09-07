@@ -68,7 +68,7 @@ func (a *reviewRunAnnouncer) observe(runID string) {
 // evidence instead of a silent direct-call fallback.
 func announcedReviewTransport(cfg config.Config, worktree, sha string, paths []string, out io.Writer) review.ReviewTransport {
 	rich := announcedReviewTransportWithEvidence(cfg, worktree, sha, paths, out)
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
+	return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, string, error) {
 		output, evidence, err := rich(bundleName, dimension, prompt, agent)
 		return output, evidence.InvocationID, err
 	}
@@ -81,15 +81,15 @@ func announcedReviewTransportWithEvidence(cfg config.Config, worktree, sha strin
 
 func announcedReviewTransportWithMetrics(cfg config.Config, worktree, sha string, paths []string, out io.Writer) (review.ReviewTransportWithEvidence, review.MetricsFinalizer) {
 	announcer := newReviewRunAnnouncer(out)
-	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
+	transport := newDurableReviewTransport(cfg, worktree, sha, paths,
 		store.RunPolicy{ID: durableRunPolicyID, Operation: "review", Commit: shortCommit(sha), Worktree: worktree},
 		[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(announcer.observe)})
 	if transport == nil {
-		return func(string, string, string, review.AuditorAgente) (string, review.ReviewEvidence, error) {
+		return func(string, string, string, review.AgentReviewer) (string, review.ReviewEvidence, error) {
 			return "", review.ReviewEvidence{}, fmt.Errorf("durable review transport unavailable for %s: no git common dir", worktree)
 		}, nil
 	}
-	rich := cerrarTransporteRevisionConEvidencia(transport)
+	rich := reviewTransportClosureWithEvidence(transport)
 	finalize := func(runID, invocationID, failureClass, detail string) error {
 		var failures []store.ExecutionFailure
 		if failureClass != "" {
@@ -147,24 +147,24 @@ func reviewTransportFactory(cfg config.Config, worktree string) func(sha string,
 	}
 }
 
-// cerrarTransporteRevision wraps a durable transport into the engine-side
+// reviewTransportClosure wraps a durable transport into the engine-side
 // review.ReviewTransport closure both production wirings share (`sentinel
 // review` and the gate cutover): restricted-capability enforcement plus
 // verified-evidence identity threading. One construction site keeps the two
 // paths from drifting.
-// cerrarTransporteRevision wraps a durable transport into the historical
+// reviewTransportClosure wraps a durable transport into the historical
 // engine-side callback while preserving the same rich evidence seam used by
 // production finalization.
-func cerrarTransporteRevision(transport *reviewexec.DurableTransport) review.ReviewTransport {
-	rich := cerrarTransporteRevisionConEvidencia(transport)
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
+func reviewTransportClosure(transport *reviewexec.DurableTransport) review.ReviewTransport {
+	rich := reviewTransportClosureWithEvidence(transport)
+	return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, string, error) {
 		output, evidence, err := rich(bundleName, dimension, prompt, agent)
 		return output, evidence.InvocationID, err
 	}
 }
 
-func cerrarTransporteRevisionConEvidencia(transport *reviewexec.DurableTransport) review.ReviewTransportWithEvidence {
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, review.ReviewEvidence, error) {
+func reviewTransportClosureWithEvidence(transport *reviewexec.DurableTransport) review.ReviewTransportWithEvidence {
+	return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, review.ReviewEvidence, error) {
 		restricted, ok := agent.(reviewexec.PolicyRestrictedReviewer)
 		if !ok {
 			return "", review.ReviewEvidence{}, review.ErrRestrictedRequired
@@ -186,21 +186,21 @@ func cerrarTransporteRevisionConEvidencia(transport *reviewexec.DurableTransport
 // dimension surfaces as honest unavailable evidence.
 func durableReviewTransport(cfg config.Config, worktree, sha string, paths []string) review.ReviewTransport {
 	rich, _ := durableReviewTransportWithMetrics(cfg, worktree, sha, paths)
-	return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
+	return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, string, error) {
 		output, evidence, err := rich(bundleName, dimension, prompt, agent)
 		return output, evidence.InvocationID, err
 	}
 }
 
 func durableReviewTransportWithMetrics(cfg config.Config, worktree, sha string, paths []string) (review.ReviewTransportWithEvidence, review.MetricsFinalizer) {
-	transport := nuevoDurableReviewTransport(cfg, worktree, sha, paths,
+	transport := newDurableReviewTransport(cfg, worktree, sha, paths,
 		store.RunPolicy{ID: durableRunPolicyID, Operation: "review", Commit: shortCommit(sha), Worktree: worktree}, nil)
 	if transport == nil {
-		return func(string, string, string, review.AuditorAgente) (string, review.ReviewEvidence, error) {
+		return func(string, string, string, review.AgentReviewer) (string, review.ReviewEvidence, error) {
 			return "", review.ReviewEvidence{}, fmt.Errorf("durable review transport unavailable for %s: no git common dir", worktree)
 		}, nil
 	}
-	rich := cerrarTransporteRevisionConEvidencia(transport)
+	rich := reviewTransportClosureWithEvidence(transport)
 	finalize := func(runID, invocationID, failureClass, detail string) error {
 		var failures []store.ExecutionFailure
 		if failureClass != "" {
@@ -216,24 +216,24 @@ func durableReviewTransportWithMetrics(cfg config.Config, worktree, sha string, 
 	return rich, finalize
 }
 
-// nuevoDurableReviewTransport constructs the shared durable review transport
+// newDurableReviewTransport constructs the shared durable review transport
 // over the repository common-dir store with the ticket 07/08 construction-time
 // seams threaded from configuration. extraOptions lets callers attach
 // additional admission-time observers (the gate cutover's child sink) without
 // forking the construction path. It returns nil only when the git common dir
 // cannot be resolved; callers translate that into an honest failure instead
 // of a silent execution-path fallback.
-func nuevoDurableReviewTransport(cfg config.Config, worktree, sha string, paths []string, policy store.RunPolicy, extraOptions []reviewexec.DurableTransportOption) *reviewexec.DurableTransport {
+func newDurableReviewTransport(cfg config.Config, worktree, sha string, paths []string, policy store.RunPolicy, extraOptions []reviewexec.DurableTransportOption) *reviewexec.DurableTransport {
 	// JD-A1 fix: the engine sanitizes its own copy per audit, so a transport
 	// bound before dispatch must apply the identical safe-list rule or the
 	// durable path would forward raw caller paths to reviewers.
-	safePaths := review.RutasRevisionSeguras(paths)
-	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+	safePaths := review.SafeReviewPaths(paths)
+	gitCommonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vas-sentinel: durable review transport unavailable, no git common dir: %v\n", err)
 		return nil
 	}
-	st := store.NuevoStore(gitCommonDir)
+	st := store.NewStore(gitCommonDir)
 	// Ticket 07 slice 3: evidence admission is threaded construction-time from
 	// review.evidence_admission (default true). Ticket 08 slice 3: bounded
 	// cancellation escalation threads from review.cancellation_escalation the
@@ -248,7 +248,7 @@ func nuevoDurableReviewTransport(cfg config.Config, worktree, sha string, paths 
 
 // applyDurableCutover wires the durable gate orchestration (ticket 11 slice
 // 3, made unconditional by ticket 13 R11 when gate.durable_runs was removed)
-// onto an already-assembled gate.Opciones value. It routes the whole gate
+// onto an already-assembled gate.Options value. It routes the whole gate
 // execution through ONE root durable run backed by the SAME repository
 // common-dir store the review transport uses, and installs a REAL
 // DurableReviewTransportFactory that threads the root run ID into the shared
@@ -258,32 +258,32 @@ func nuevoDurableReviewTransport(cfg config.Config, worktree, sha string, paths 
 // durable store unwired, so EjecutarGate fails honestly as infrastructure —
 // there is no legacy path to degrade to anymore. It returns the sink (nil
 // when wiring failed) for observability and tests.
-func applyDurableCutover(opciones *gate.Opciones, cfg config.Config, worktree, stage, sha string, archivos []string) *reviewChildSink {
-	gitCommonDir, err := git.ObtenerGitCommonDir(worktree)
+func applyDurableCutover(options *gate.Options, cfg config.Config, worktree, stage, sha string, files []string) *reviewChildSink {
+	gitCommonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vas-sentinel: gate durable runs unavailable for this execution, no git common dir: %v\n", err)
 		return nil
 	}
 	sink := &reviewChildSink{}
-	opciones.Stage = stage
-	opciones.CandidateSHA = sha
+	options.Stage = stage
+	options.CandidateSHA = sha
 	// One store directory for the root run, the validation-job settlements,
 	// and every routed review invocation (each transport holds its own
 	// stateless handle over it): root+children linkage stays inside one
 	// directory so reconstruction from store contents alone is possible.
-	durableStore := store.NuevoStore(gitCommonDir)
-	opciones.DurableStore = durableStore
-	opciones.DurableReviewChildren = sink.learned
-	opciones.DurableReviewTransportFactoryWithEvidence = func(rootRunID agentrun.Identity) (review.ReviewTransportWithEvidence, review.MetricsFinalizer) {
+	durableStore := store.NewStore(gitCommonDir)
+	options.DurableStore = durableStore
+	options.DurableReviewChildren = sink.learned
+	options.DurableReviewTransportFactoryWithEvidence = func(rootRunID agentrun.Identity) (review.ReviewTransportWithEvidence, review.MetricsFinalizer) {
 		// Same honest minimum as the standalone root, but parent-linked to the
 		// gate run. The rich callback finalizes this exact child run.
 		policy := store.RunPolicy{ID: durableRunPolicyID, ParentRunID: string(rootRunID), Operation: "review", Commit: shortCommit(sha), Worktree: worktree}
-		transport := nuevoDurableReviewTransport(cfg, worktree, sha, archivos, policy,
+		transport := newDurableReviewTransport(cfg, worktree, sha, files, policy,
 			[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(sink.observe)})
 		if transport == nil {
 			return nil, nil
 		}
-		rich := cerrarTransporteRevisionConEvidencia(transport)
+		rich := reviewTransportClosureWithEvidence(transport)
 		finalize := func(runID, invocationID, failureClass, detail string) error {
 			var failures []store.ExecutionFailure
 			if failureClass != "" {
@@ -294,12 +294,12 @@ func applyDurableCutover(opciones *gate.Opciones, cfg config.Config, worktree, s
 		}
 		return rich, finalize
 	}
-	opciones.DurableReviewTransportFactory = func(rootRunID agentrun.Identity) review.ReviewTransport {
-		rich, _ := opciones.DurableReviewTransportFactoryWithEvidence(rootRunID)
+	options.DurableReviewTransportFactory = func(rootRunID agentrun.Identity) review.ReviewTransport {
+		rich, _ := options.DurableReviewTransportFactoryWithEvidence(rootRunID)
 		if rich == nil {
 			return nil
 		}
-		return func(bundleName, dimension, prompt string, agent review.AuditorAgente) (string, string, error) {
+		return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, string, error) {
 			output, evidence, err := rich(bundleName, dimension, prompt, agent)
 			return output, evidence.InvocationID, err
 		}

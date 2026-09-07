@@ -26,14 +26,14 @@ type stagedCheckReport struct {
 	Error              string `json:"error,omitempty"`
 }
 
-type stagedVolumeMeasurement func() (git.VolumenPendiente, error)
-type stagedCohesionMeasurement func([]string) (change.ResultadoCohesion, error)
+type stagedVolumeMeasurement func() (git.PendingVolume, error)
+type stagedCohesionMeasurement func([]string) (change.CohesionResult, error)
 
-func ejecutarStagedCheck(path string, jsonOut bool) int {
-	return ejecutarStagedCheckCon(os.Stdout, path, jsonOut, git.MedirVolumenStaged, calcularCohesionStaged)
+func runStagedCheck(path string, jsonOut bool) int {
+	return runStagedCheckWith(os.Stdout, path, jsonOut, git.MeasureStagedVolume, computeStagedCohesion)
 }
 
-func ejecutarStagedCheckCon(
+func runStagedCheckWith(
 	w io.Writer,
 	path string,
 	jsonOut bool,
@@ -59,10 +59,10 @@ func ejecutarStagedCheckCon(
 	report := stagedCheckReport{
 		Scope:              "staged",
 		Worktree:           path,
-		AuthoredLines:      volume.Bloqueante,
-		InformationalLines: volume.Informativo,
-		State:              volume.Estado,
-		Accepted:           volume.Bloqueante <= git.LimiteLineasRevisables,
+		AuthoredLines:      volume.Blocking,
+		InformationalLines: volume.Informational,
+		State:              volume.State,
+		Accepted:           volume.Blocking <= git.ReviewableLinesLimit,
 	}
 	if !report.Accepted {
 		report.Rejected = true
@@ -74,7 +74,7 @@ func ejecutarStagedCheckCon(
 		switch {
 		case cohesionErr != nil:
 			report.Warning = fmt.Sprintf("Cohesion analysis was unavailable; staged volume enforcement still applies: %v", cohesionErr)
-		case cohesionResult.SugerenciaSplit:
+		case cohesionResult.SuggestSplit:
 			report.CohesionClusters = cohesionResult.Clusters
 			report.Warning = fmt.Sprintf(
 				"Warning: the staged candidate contains %d independent cohesion clusters. Run `sentinel slice plan --json` to prepare a reviewable split; no files were staged or changed.",
@@ -98,7 +98,7 @@ func printStagedCheck(w io.Writer, report stagedCheckReport) int {
 		fmt.Fprintln(w, report.Warning)
 	}
 	if report.Rejected {
-		fmt.Fprintf(w, "❌ Staged commit rejected: %d authored lines exceed the %d-line review budget.\n", report.AuthoredLines, git.LimiteLineasRevisables)
+		fmt.Fprintf(w, "❌ Staged commit rejected: %d authored lines exceed the %d-line review budget.\n", report.AuthoredLines, git.ReviewableLinesLimit)
 		fmt.Fprintf(w, "Run `%s` to prepare a reviewable split.\n", report.Recommendation)
 		return 1
 	}
@@ -121,7 +121,7 @@ func writeStagedCheckJSON(w io.Writer, report stagedCheckReport) int {
 	return 0
 }
 
-func calcularCohesionStaged(paths []string) (change.ResultadoCohesion, error) {
+func computeStagedCohesion(paths []string) (change.CohesionResult, error) {
 	return change.Cohesion(paths, func(args ...string) (string, error) {
 		output, err := exec.Command("git", args...).Output()
 		return string(output), err

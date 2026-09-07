@@ -22,7 +22,7 @@ func reopenValidOptions() reopenOptions {
 // so reopen tests start from the cleared state Unit B is about.
 func seedHumanRefutation(t *testing.T, deps *refuteDeps, ledger *review.Ledger) {
 	t.Helper()
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
 	if _, err := runRefutation(deps, refuteValidOptions()); err != nil {
@@ -35,15 +35,15 @@ func seedHumanRefutation(t *testing.T, deps *refuteDeps, ledger *review.Ledger) 
 func TestRunReopenPersistsAndReblocks(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
 	seedHumanRefutation(t, deps, ledger)
-	before, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	before, err := os.ReadFile(ledger.RecordPath("abc12345"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := runReopen(deps, reopenValidOptions())
+	outcome, err := recordReopen(deps, reopenValidOptions())
 	if err != nil {
 		t.Fatalf("reopen rejected: %v", err)
 	}
-	after, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	after, err := os.ReadFile(ledger.RecordPath("abc12345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,13 +80,13 @@ func TestRunReopenPersistsAndReblocks(t *testing.T) {
 // state, not who cleared it.
 func TestRunReopenReopensAutomatedRefutation(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	cleared := refuteFichaFixture()
+	cleared := refuteRecordFixture()
 	cleared.AggregatedFindings[0].Status = review.StatusRefuted
 	cleared.AggregatedFindings[0].RefutationActor = review.RefutationActorRefuter
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", cleared); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", cleared); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	if _, err := runReopen(deps, reopenValidOptions()); err != nil {
+	if _, err := recordReopen(deps, reopenValidOptions()); err != nil {
 		t.Fatalf("reopen of automated refutation rejected: %v", err)
 	}
 	records, err := st.ReadDispositions()
@@ -102,11 +102,11 @@ func TestRunReopenReopensAutomatedRefutation(t *testing.T) {
 // findings never cleared, missing or ambiguous fingerprints, ranges the
 // evidence gate rejects, unreadable snapshots, and a second reopen.
 func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
-	blocking := refuteFichaFixture()
-	ambiguous := refuteFichaFixture()
+	blocking := refuteRecordFixture()
+	ambiguous := refuteRecordFixture()
 	ambiguous.AggregatedFindings[1].Fingerprint = "fp-target"
-	evadido := refuteFichaFixture()
-	evadido.AggregatedFindings[0].Location.Archivo = "../evil.go"
+	evadido := refuteRecordFixture()
+	evadido.AggregatedFindings[0].Location.File = "../evil.go"
 	cases := []struct {
 		name     string
 		revision *review.Revision
@@ -120,7 +120,7 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 			func(*reopenOptions) {}, nil,
 		},
 		{
-			"missing fingerprint", &[]review.Revision{refuteFichaFixture()}[0], nil,
+			"missing fingerprint", &[]review.Revision{refuteRecordFixture()}[0], nil,
 			func(o *reopenOptions) { o.fingerprint = "fp-absent" }, nil,
 		},
 		{
@@ -132,7 +132,7 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 			func(*reopenOptions) {}, nil,
 		},
 		{
-			"range outside finding", &[]review.Revision{refuteFichaFixture()}[0], nil,
+			"range outside finding", &[]review.Revision{refuteRecordFixture()}[0], nil,
 			func(o *reopenOptions) { o.lineStart, o.lineEnd = 1, 1 },
 			func(deps *refuteDeps, ledger *review.Ledger) {
 				if _, err := runRefutation(deps, refuteValidOptions()); err != nil {
@@ -141,18 +141,18 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 			},
 		},
 		{
-			"snapshot unreadable", &[]review.Revision{refuteFichaFixture()}[0],
+			"snapshot unreadable", &[]review.Revision{refuteRecordFixture()}[0],
 			func(string, string) (string, error) { return "", errors.New("snapshot unavailable") },
 			func(*reopenOptions) {}, nil,
 		},
 		{
-			"second reopen refuses", &[]review.Revision{refuteFichaFixture()}[0], nil,
+			"second reopen refuses", &[]review.Revision{refuteRecordFixture()}[0], nil,
 			func(*reopenOptions) {},
 			func(deps *refuteDeps, ledger *review.Ledger) {
 				if _, err := runRefutation(deps, refuteValidOptions()); err != nil {
 					panic(err)
 				}
-				if _, err := runReopen(deps, reopenValidOptions()); err != nil {
+				if _, err := recordReopen(deps, reopenValidOptions()); err != nil {
 					panic(err)
 				}
 			},
@@ -162,7 +162,7 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, ledger, st := refuteTestDeps(t, tc.snapshot)
 			if tc.revision != nil {
-				if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", *tc.revision); err != nil {
+				if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", *tc.revision); err != nil {
 					t.Fatalf("save revision: %v", err)
 				}
 			}
@@ -177,7 +177,7 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 			}
 			opts := reopenValidOptions()
 			tc.mutate(&opts)
-			if _, err := runReopen(deps, opts); err == nil {
+			if _, err := recordReopen(deps, opts); err == nil {
 				t.Fatal("invalid reopen was recorded")
 			}
 			records, err := st.ReadDispositions()
@@ -198,12 +198,12 @@ func TestRunReopenFailsClosedWithoutPersistence(t *testing.T) {
 // nothing about the path check.
 func TestRunReopenUnsafePathFailsAtTheGate(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	evadido := refuteFichaFixture()
-	evadido.AggregatedFindings[0].Location.Archivo = "../evil.go"
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", evadido); err != nil {
+	evadido := refuteRecordFixture()
+	evadido.AggregatedFindings[0].Location.File = "../evil.go"
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", evadido); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	_, err := runReopen(deps, reopenValidOptions())
+	_, err := recordReopen(deps, reopenValidOptions())
 	if err == nil || !strings.Contains(err.Error(), "unsafe") {
 		t.Fatalf("err = %v, want the evidence-gate unsafe-path refusal", err)
 	}
@@ -221,15 +221,15 @@ func TestRunReopenUnsafePathFailsAtTheGate(t *testing.T) {
 // the wrong finding.
 func TestRunReopenRefusesCorruptHistory(t *testing.T) {
 	deps, ledger, _ := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RutaFicha("abc12345"))), "vas-sentinel", "dispositions.jsonl")
+	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RecordPath("abc12345"))), "vas-sentinel", "dispositions.jsonl")
 	const corrupt = `{"sha":"abc12345","fingerprint":"fp-target","status":"ignored","actor":"human","source":"human"}` + "\n"
 	if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runReopen(deps, reopenValidOptions()); err == nil {
+	if _, err := recordReopen(deps, reopenValidOptions()); err == nil {
 		t.Fatal("reopen appended despite corrupt disposition history")
 	}
 	got, err := os.ReadFile(path)
@@ -265,12 +265,12 @@ func TestParseReopenArgsRejectsBadInput(t *testing.T) {
 // fix that did not hold is exactly what reopen exists to report.
 func TestRunReopenReopensFixedFinding(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	fixed := refuteFichaFixture()
+	fixed := refuteRecordFixture()
 	fixed.AggregatedFindings[0].Status = review.StatusFixed
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", fixed); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", fixed); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	if _, err := runReopen(deps, reopenValidOptions()); err != nil {
+	if _, err := recordReopen(deps, reopenValidOptions()); err != nil {
 		t.Fatalf("reopen of fixed finding rejected: %v", err)
 	}
 	records, err := st.ReadDispositions()
@@ -283,25 +283,25 @@ func TestRunReopenReopensFixedFinding(t *testing.T) {
 }
 
 func TestReopenHelpIsRegistered(t *testing.T) {
-	if !strings.Contains(construirAyuda(), "reopen") {
+	if !strings.Contains(buildHelp(), "reopen") {
 		t.Fatal("the top-level help does not list reopen")
 	}
 	var buf bytes.Buffer
-	if !escribirAyudaComando(&buf, "reopen") {
+	if !writeCommandHelp(&buf, "reopen") {
 		t.Fatal("no dedicated help for reopen")
 	}
 	if !strings.Contains(buf.String(), "--fingerprint") {
 		t.Fatalf("help = %q, want the addressing flags documented", buf.String())
 	}
 	buf.Reset()
-	if !gestionarAyuda(&buf, &bytes.Buffer{}, "reopen", []string{"--help"}) {
+	if !handleHelp(&buf, &bytes.Buffer{}, "reopen", []string{"--help"}) {
 		t.Fatal("reopen --help was not intercepted")
 	}
 }
 
-func TestEjecutarReopenRejectsBadArgs(t *testing.T) {
+func TestRunReopenRejectsBadArgs(t *testing.T) {
 	var buf bytes.Buffer
-	if code := ejecutarReopen(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
+	if code := runReopen(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
 		t.Fatalf("code = %d, want 1 for bad args", code)
 	}
 }

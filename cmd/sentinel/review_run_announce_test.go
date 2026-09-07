@@ -87,29 +87,29 @@ func TestReviewRunAnnouncerConcurrentObservations(t *testing.T) {
 }
 
 // TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr drives the EXACT
-// production wiring `ejecutarReview` builds — the announced transport over the
+// production wiring `runReview` builds — the announced transport over the
 // repository common-dir store — through a real audit. It proves that every
 // store-admitted durable run is announced exactly once on the injected stderr
 // writer with its actionable attach command, while the command/result stdout
 // path stays free of announcement bytes (so `review --json` consumers keep
 // parsing valid payloads).
 func TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
-	worktree := repositorioCutover(t)
+	worktree := cutoverRepository(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Chdir(worktree)
-	escribirYmlGateTest(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), ymlValidacionCutover)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
 
-	cfg, err := config.CargarConfiguracionLocalEstricta(worktree)
+	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
 		t.Fatalf("config load failed: %v", err)
 	}
-	sha, err := git.ResolverSHA("HEAD")
+	sha, err := git.ResolveSHA("HEAD")
 	if err != nil {
 		t.Fatalf("resolve HEAD: %v", err)
 	}
-	commitMessage, err := git.MensajeCommit(sha)
+	commitMessage, err := git.CommitMessage(sha)
 	if err != nil {
 		t.Fatalf("commit message: %v", err)
 	}
@@ -117,39 +117,39 @@ func TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit diff: %v", err)
 	}
-	touchedFiles, err := git.ArchivosDeCommit(sha)
+	touchedFiles, err := git.FilesOfCommit(sha)
 	if err != nil {
 		t.Fatalf("commit files: %v", err)
 	}
 
 	var stderrLive bytes.Buffer
 
-	auditorFactory := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
-		return &agenteRevisionFijo{salida: `{"dim":"logic","verdict":"ok","findings":[]}`}, "logic", nil
+	auditorFactory := func(_ review.ReviewBundle, _ string) (review.AgentReviewer, string, error) {
+		return &fixedReviewAgent{output: `{"dim":"logic","verdict":"ok","findings":[]}`}, "logic", nil
 	}
-	auditOptions := review.OpcionesAuditoria{
+	auditOptions := review.AuditOptions{
 		SHA:     sha,
-		Mensaje: commitMessage,
+		Message: commitMessage,
 		Diff:    diff,
 		Bundles: []review.ReviewBundle{{Name: "requested", Dimensions: []string{"logic"}, Priority: review.PriorityRequired, Cost: 1}},
-		// This is the exact call site `ejecutarReview` uses; production passes
+		// This is the exact call site `runReview` uses; production passes
 		// os.Stderr, this fixture captures it.
 		ReviewTransport: announcedReviewTransport(cfg, worktree, sha, touchedFiles, &stderrLive),
 	}
 	// Capture the command/result stdout path for the whole audit: nothing from
 	// the announcement wiring may ever land there.
-	stdoutCaptured := capturarStdout(t, func() {
-		auditResult := review.AuditarCommit(auditorFactory, 1, auditOptions)
-		if auditResult.Veredicto != review.VerdictOK {
-			t.Fatalf("audit verdict = %q (%+v), want %q through the durable wiring", auditResult.Veredicto, auditResult.Dims, review.VerdictOK)
+	stdoutCaptured := captureStdout(t, func() {
+		auditResult := review.AuditCommit(auditorFactory, 1, auditOptions)
+		if auditResult.Verdict != review.VerdictOK {
+			t.Fatalf("audit verdict = %q (%+v), want %q through the durable wiring", auditResult.Verdict, auditResult.Dims, review.VerdictOK)
 		}
 	})
 
-	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		t.Fatalf("git common dir: %v", err)
 	}
-	st := store.NuevoStore(commonDir)
+	st := store.NewStore(commonDir)
 	ids, err := st.ListExecutionIDs()
 	if err != nil {
 		t.Fatalf("ListExecutionIDs() error = %v", err)

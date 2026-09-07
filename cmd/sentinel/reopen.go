@@ -96,13 +96,13 @@ func parseReopenArgs(args []string) (reopenOptions, error) {
 	return opts, nil
 }
 
-// runReopen records one evidence-bound human reopen. Every failure before
+// recordReopen records one evidence-bound human reopen. Every failure before
 // append is closed without persisting anything: a missing review record, a
 // missing or ambiguous fingerprint, a still-blocking finding (nothing to
 // reopen), a finding with no clearing answer to reopen, a range the evidence
 // gate rejects, an unreadable snapshot, a review record that changed between
 // resolution and append, or a corrupt dispositions log.
-func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
+func recordReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 	if deps == nil || deps.ledger == nil || deps.store == nil || deps.snapshot == nil {
 		return refuteOutcome{}, fmt.Errorf("reopen: missing dependencies")
 	}
@@ -119,14 +119,14 @@ func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 	if strings.HasPrefix(sha, "-") {
 		return refuteOutcome{}, fmt.Errorf("reopen: invalid reviewed SHA")
 	}
-	ficha, err := deps.ledger.LeerFicha(sha)
+	record, err := deps.ledger.ReadRecord(sha)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("reopen: reading the review record: %w", err)
 	}
-	if ficha == nil || len(ficha.Revisions) == 0 {
+	if record == nil || len(record.Revisions) == 0 {
 		return refuteOutcome{}, fmt.Errorf("reopen: no review record for SHA %q", sha)
 	}
-	target, err := review.ResolveDispositionTarget(ficha.Revisions[len(ficha.Revisions)-1], fingerprint)
+	target, err := review.ResolveDispositionTarget(record.Revisions[len(record.Revisions)-1], fingerprint)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("reopen: %w", err)
 	}
@@ -134,8 +134,8 @@ func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 	// caller supplies no path, so a reopen cannot be redirected at a file
 	// the finding never cited.
 	safePath, evidence, rangeHash, err := review.ValidateHumanRefutationRange(
-		deps.snapshot, sha, target.Location.Archivo, target.Location.LineaInicio,
-		reason, target.Location.Archivo, opts.lineStart, opts.lineEnd)
+		deps.snapshot, sha, target.Location.File, target.Location.LineStart,
+		reason, target.Location.File, opts.lineStart, opts.lineEnd)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("reopen: %w", err)
 	}
@@ -153,26 +153,26 @@ func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 		Source:            review.DispositionSourceHuman,
 		At:                now().UTC(),
 		TargetDimension:   target.Dimension,
-		TargetLine:        target.Location.LineaInicio,
+		TargetLine:        target.Location.LineStart,
 		TargetDescription: target.Description,
 		TargetSeverity:    target.Severity,
 	}
 	// Compare-and-append against the authoritative record, mirroring
 	// runRefutation: the effective precondition below is evaluated under the
-	// same ficha lock the revision writer holds.
-	expected, err := json.Marshal(ficha)
+	// same record lock the revision writer holds.
+	expected, err := json.Marshal(record)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("reopen: reading the review record: %w", err)
 	}
 	if deps.beforeLockedAppend != nil {
 		deps.beforeLockedAppend()
 	}
-	withLockedFicha := deps.ledger.WithLockedFicha
-	if deps.withLockedFicha != nil {
-		withLockedFicha = deps.withLockedFicha
+	withLockedRecord := deps.ledger.WithLockedRecord
+	if deps.withLockedRecord != nil {
+		withLockedRecord = deps.withLockedRecord
 	}
 	completed := false
-	if err := withLockedFicha(sha, func(current *review.Ficha) error {
+	if err := withLockedRecord(sha, func(current *review.Record) error {
 		fresh, err := json.Marshal(current)
 		if err != nil {
 			return fmt.Errorf("reopen: reading the review record: %w", err)
@@ -207,10 +207,10 @@ func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 		completed = true
 		return nil
 	}); err != nil {
-		if completed && errors.Is(err, review.ErrBloqueoNoLiberado) {
+		if completed && errors.Is(err, review.ErrLockNotReleased) {
 			return refuteOutcome{
 				disposition:       disposition,
-				completionWarning: fmt.Errorf("reopen: disposition recorded but ficha lock cleanup failed: %w", err),
+				completionWarning: fmt.Errorf("reopen: disposition recorded but record lock cleanup failed: %w", err),
 			}, nil
 		}
 		return refuteOutcome{}, err
@@ -218,10 +218,10 @@ func runReopen(deps *refuteDeps, opts reopenOptions) (refuteOutcome, error) {
 	return refuteOutcome{disposition: disposition}, nil
 }
 
-// ejecutarReopen implements `sentinel reopen`: parse, resolve, record.
+// runReopen implements `sentinel reopen`: parse, resolve, record.
 // Exit 0 records one disposition, including the completed-but-warning case
-// where only the ficha lock cleanup failed after persistence.
-func ejecutarReopen(w io.Writer, worktree string, args []string) int {
+// where only the record lock cleanup failed after persistence.
+func runReopen(w io.Writer, worktree string, args []string) int {
 	opts, err := parseReopenArgs(args)
 	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
@@ -232,7 +232,7 @@ func ejecutarReopen(w io.Writer, worktree string, args []string) int {
 		fmt.Fprintf(w, "❌ Cannot resolve the review ledger: %v\n", err)
 		return 1
 	}
-	outcome, err := runReopen(deps, opts)
+	outcome, err := recordReopen(deps, opts)
 	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
 		return 1
@@ -250,7 +250,7 @@ func reportReopenResult(w io.Writer, outcome refuteOutcome) int {
 		disposition.Fingerprint, disposition.SHA, disposition.Path,
 		disposition.LineStart, disposition.LineEnd, disposition.RangeHash)
 	if outcome.completionWarning != nil {
-		fmt.Fprintf(w, "⚠️  The reopen is recorded, but ficha lock cleanup failed: %v\n", outcome.completionWarning)
+		fmt.Fprintf(w, "⚠️  The reopen is recorded, but record lock cleanup failed: %v\n", outcome.completionWarning)
 	}
 	return 0
 }

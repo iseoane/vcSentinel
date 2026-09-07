@@ -44,519 +44,520 @@ func updateRepositoryRegistry(repositoryPath string, update func(*registry.Regis
 	}
 }
 
-// marcadorInicio y marcadorFin delimitan el bloque de reglas de volumen de
-// forma estable entre versiones: init/uninit lo detectan y lo retiran por
-// estos marcadores, no por el texto interior, así una futura versión puede
-// reformular la redacción sin dejar de ser idempotente ni dejar huérfanos.
-const marcadorInicio = "<!-- vas-sentinel:begin -->"
-const marcadorFin = "<!-- vas-sentinel:end -->"
+// markerBegin and markerEnd delimit the volume rules block in a way that is
+// stable across versions: init/uninit detect and remove it by these markers,
+// not by the inner text, so a future version can reword the text while
+// staying idempotent and leaving no orphans behind.
+const markerBegin = "<!-- vas-sentinel:begin -->"
+const markerEnd = "<!-- vas-sentinel:end -->"
 
-// cuerpoReglasVolumen es el texto visible de la regla, libre de cambiar de
-// redacción entre versiones: la detección no depende de él.
-const cuerpoReglasVolumen = "## CRITICAL VOLUME RULE (THE GUARDIAN)\n- Before making changes or proposing a plan, run `sentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICO`.\n- The repository's `pre-commit` hook runs `sentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.\n- When the worktree check is `CRITICO`, run `sentinel slice plan --json` to produce reviewable selections without committing.\n- After the user answers every pending decision, apply the approved selections with `sentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.\n"
+// volumeRulesBody is the visible text of the rule, free to change its wording
+// between versions: detection does not depend on it.
+const volumeRulesBody = "## CRITICAL VOLUME RULE (THE GUARDIAN)\n- Before making changes or proposing a plan, run `sentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICAL`.\n- The repository's `pre-commit` hook runs `sentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.\n- When the worktree check is `CRITICAL`, run `sentinel slice plan --json` to produce reviewable selections without committing.\n- After the user answers every pending decision, apply the approved selections with `sentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.\n"
 
-// reglasVolumen es el bloque que 'init' inyecta hoy en AGENTS.md, CLAUDE.md y
-// .claudecode.md, envuelto en marcadorInicio/marcadorFin.
-const reglasVolumen = "\n" + marcadorInicio + "\n" + cuerpoReglasVolumen + marcadorFin + "\n"
+// volumeRules is the block that 'init' injects today into AGENTS.md,
+// CLAUDE.md and .claudecode.md, wrapped in markerBegin/markerEnd.
+const volumeRules = "\n" + markerBegin + "\n" + volumeRulesBody + markerEnd + "\n"
 
-// reglasVolumenLegado es el bloque EXACTO (sin marcadores) que todas las
-// versiones anteriores a esta inyectaban. Se congela tal cual para siempre:
-// nunca se vuelve a escribir en este formato, solo se reconoce y se retira,
-// para poder limpiar y migrar los archivos que ya lo tienen de versiones
-// previas (incluidos los de este propio repo).
-const reglasVolumenLegado = "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
+// legacyVolumeRules is the EXACT block (without markers) that every version
+// before this one injected. It is frozen as-is forever: it is never written
+// again in this format, only recognized and removed, so files that already
+// carry it from previous versions (including this repo's own) can be cleaned
+// up and migrated. The Spanish text is intentional legacy payload used for
+// byte-exact legacy detection; never reword it.
+const legacyVolumeRules = "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
 
 func main() {
 	if len(os.Args) < 2 {
-		imprimirUso()
+		printUsage()
 		os.Exit(1)
 	}
 
-	subcomando := os.Args[1]
+	subcommand := os.Args[1]
 
-	switch subcomando {
+	switch subcommand {
 	case "--version", "-v", "version":
-		if contieneFlagAyuda(os.Args[2:]) {
-			escribirAyudaComando(os.Stdout, "version")
+		if containsHelpFlag(os.Args[2:]) {
+			writeCommandHelp(os.Stdout, "version")
 			return
 		}
-		fmt.Printf("📦 VAS Sentinel versión: %s\n", version)
+		fmt.Printf("📦 VAS Sentinel version: %s\n", version)
 		return
 	case "--help", "-h":
-		imprimirAyuda()
+		printHelp()
 		return
 	case "help":
-		manejarComandoHelp(os.Args[2:])
+		handleHelpCommand(os.Args[2:])
 		return
 	}
 
-	// Intercepción central de -h/--help (ticket 15): antes de cualquier
-	// validación, inicialización o efecto, cada comando y subcomando responde
-	// con su ayuda dedicada por stdout y exit 0. Esto elimina también el bug
-	// de 'sentinel pr --help', que caía al passthrough de gh ejecutando la
-	// limpieza de fichas como efecto lateral.
-	if gestionarAyuda(os.Stdout, os.Stderr, subcomando, os.Args[2:]) {
+	// Central -h/--help interception (ticket 15): before any validation,
+	// initialization, or side effect, every command and subcommand answers
+	// with its dedicated help on stdout and exit 0. This also removes the
+	// 'sentinel pr --help' bug, which fell through to the gh passthrough and
+	// ran the record cleanup as a side effect.
+	if handleHelp(os.Stdout, os.Stderr, subcommand, os.Args[2:]) {
 		return
 	}
 
-	worktreeActual, err := os.Getwd()
+	currentWorktree, err := os.Getwd()
 	if err != nil {
-		fmt.Printf("❌ Error al identificar el directorio actual: %v\n", err)
+		fmt.Printf("❌ Error identifying the current directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Un argumento que el subcomando no admite corta antes de ejecutar nada:
-	// vale más un error claro que una operación que parece haber obedecido a
-	// un flag que en realidad ignoró (H1/B6).
-	if mensaje := validarArgumentos(subcomando, os.Args[2:]); mensaje != "" {
-		fmt.Println(mensaje)
+	// An argument the subcommand does not accept cuts before executing
+	// anything: a clear error beats an operation that seems to have obeyed a
+	// flag it actually ignored (H1/B6).
+	if message := validateArguments(subcommand, os.Args[2:]); message != "" {
+		fmt.Println(message)
 		os.Exit(1)
 	}
 
-	switch subcomando {
+	switch subcommand {
 	case "init":
-		ejecutarInit(worktreeActual)
+		runInit(currentWorktree)
 	case "uninit":
-		ejecutarUninit(worktreeActual)
+		runUninit(currentWorktree)
 	case "check":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarCheck(worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(runCheck(currentWorktree, os.Args[2:]))
 	case "slice":
-		requireInicializado(worktreeActual)
+		requireInitialized(currentWorktree)
 		if len(os.Args) > 2 {
 			switch os.Args[2] {
 			case "plan":
-				os.Exit(ejecutarSlicePlan(os.Stdout, os.Args[3:]))
+				os.Exit(runSlicePlan(os.Stdout, os.Args[3:]))
 			case "apply":
-				os.Exit(ejecutarSliceApply(os.Stdout, os.Args[3:]))
+				os.Exit(runSliceApply(os.Stdout, os.Args[3:]))
 			}
 		}
-		ejecutarSlice(worktreeActual)
+		runSlice(currentWorktree)
 	case "review":
-		requireInicializado(worktreeActual)
-		ejecutarReview(worktreeActual, os.Args[2:])
+		requireInitialized(currentWorktree)
+		runReview(currentWorktree, os.Args[2:])
 	case "refute":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarRefute(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(runRefute(os.Stdout, currentWorktree, os.Args[2:]))
 	case "accept":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarAccept(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(runAccept(os.Stdout, currentWorktree, os.Args[2:]))
 	case "reopen":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarReopen(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(runReopen(os.Stdout, currentWorktree, os.Args[2:]))
 	case "gate":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarGate(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(runGate(os.Stdout, currentWorktree, os.Args[2:]))
 	case "lint":
-		requireInicializado(worktreeActual)
-		ejecutarLint(worktreeActual)
+		requireInitialized(currentWorktree)
+		runLint(currentWorktree)
 	case "rebase":
-		requireInicializado(worktreeActual)
-		ejecutarRebase()
+		requireInitialized(currentWorktree)
+		runRebase()
 	case "status":
-		requireInicializado(worktreeActual)
-		ejecutarStatus(worktreeActual, os.Args[2:])
+		requireInitialized(currentWorktree)
+		runStatus(currentWorktree, os.Args[2:])
 	case "metrics":
-		requireInicializado(worktreeActual)
-		os.Exit(executeMetrics(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(executeMetrics(os.Stdout, currentWorktree, os.Args[2:]))
 	case "doctor":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarDoctor(os.Stdout, worktreeActual, version, os.Args[2:]))
-	case "consentimiento-diff":
-		requireInicializado(worktreeActual)
-		os.Exit(ejecutarConsentimientoDiff(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(runDoctor(os.Stdout, currentWorktree, version, os.Args[2:]))
+	case "consent-diff":
+		requireInitialized(currentWorktree)
+		os.Exit(runConsentDiff(os.Stdout, currentWorktree, os.Args[2:]))
 	case "explain":
-		requireInicializado(worktreeActual)
-		if err := ejecutarExplain(os.Stdout, os.Args[2:]); err != nil {
+		requireInitialized(currentWorktree)
+		if err := runExplain(os.Stdout, os.Args[2:]); err != nil {
 			fmt.Printf("❌ %v\n", err)
 			os.Exit(1)
 		}
 	case "pr":
-		requireInicializado(worktreeActual)
-		ejecutarPr(worktreeActual, os.Args[2:])
+		requireInitialized(currentWorktree)
+		runPr(currentWorktree, os.Args[2:])
 	case "runs":
-		requireInicializado(worktreeActual)
-		os.Exit(executeRuns(os.Stdout, worktreeActual, os.Args[2:]))
+		requireInitialized(currentWorktree)
+		os.Exit(executeRuns(os.Stdout, currentWorktree, os.Args[2:]))
 	case "tui":
-		requireInicializado(worktreeActual)
-		os.Exit(executeTui(os.Stdout, worktreeActual))
+		requireInitialized(currentWorktree)
+		os.Exit(executeTui(os.Stdout, currentWorktree))
 	case "install":
-		if err := setup.EjecutarInstalacionCompleta(); err != nil {
-			fmt.Printf("❌ Error en la instalación: %v\n", err)
+		if err := setup.RunFullInstall(); err != nil {
+			fmt.Printf("❌ Install failed: %v\n", err)
 			os.Exit(1)
 		}
 	case "upgrade":
-		if err := setup.EjecutarUpgradeDesdeGitHub(); err != nil {
-			fmt.Printf("❌ Error en la actualización: %v\n", err)
+		if err := setup.RunUpgradeFromGitHub(); err != nil {
+			fmt.Printf("❌ Upgrade failed: %v\n", err)
 			os.Exit(1)
 		}
 	case "uninstall":
-		if err := setup.EjecutarDesinstalacionCompleta(); err != nil {
-			fmt.Printf("❌ Error en la desinstalación: %v\n", err)
+		if err := setup.RunFullUninstall(); err != nil {
+			fmt.Printf("❌ Uninstall failed: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("❌ Subcomando desconocido: '%s'. Usa 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'gate', 'lint', 'rebase', 'status', 'metrics', 'doctor', 'explain', 'pr', 'runs', 'tui', 'consentimiento-diff', 'install', 'upgrade' o 'uninstall'.\n", subcomando)
+		fmt.Printf("❌ Unknown subcommand: '%s'. Use 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'gate', 'lint', 'rebase', 'status', 'metrics', 'doctor', 'explain', 'pr', 'runs', 'tui', 'consent-diff', 'install', 'upgrade' or 'uninstall'.\n", subcommand)
 		os.Exit(1)
 	}
 }
 
-// requireInicializado exige que el worktree tenga la configuración
-// per-proyecto (sentinel init) antes de ejecutar cualquier subcomando que
-// dependa de ella; sin ella, corta con exit 1 en vez de fallar más adelante
-// con un error menos claro.
-func requireInicializado(worktreeActual string) {
-	if !setup.EstaInicializado(worktreeActual) {
-		fmt.Println("❌ Este repositorio no ha sido inicializado con VAS Sentinel.")
-		fmt.Println("Ejecuta 'sentinel init' para configurar el guardián en este proyecto.")
+// requireInitialized demands that the worktree has the per-project
+// configuration (sentinel init) before running any subcommand that depends on
+// it; without it, it cuts with exit 1 instead of failing later with a less
+// clear error.
+func requireInitialized(currentWorktree string) {
+	if !setup.IsInitialized(currentWorktree) {
+		fmt.Println("❌ This repository has not been initialized with VAS Sentinel.")
+		fmt.Println("Run 'sentinel init' to configure the guardian in this project.")
 		os.Exit(1)
 	}
 }
 
-func imprimirUso() {
-	fmt.Println("🤖 VAS Sentinel: Guardián de Código Local")
-	fmt.Println("Uso: sentinel [version | help | init | uninit | check | slice | review | refute | accept | reopen | gate | lint | rebase | status | metrics | explain | pr | runs | tui | consentimiento-diff | install | upgrade | uninstall]")
+func printUsage() {
+	fmt.Println("🤖 VAS Sentinel: Local Code Guardian")
+	fmt.Println("Usage: sentinel [version | help | init | uninit | check | slice | review | refute | accept | reopen | gate | lint | rebase | status | metrics | explain | pr | runs | tui | consent-diff | install | upgrade | uninstall]")
 }
 
-// imprimirAyuda muestra la ayuda de subcomandos construida por construirAyuda.
-func imprimirAyuda() {
-	fmt.Print(construirAyuda())
+// printHelp prints the subcommand help built by buildHelp.
+func printHelp() {
+	fmt.Print(buildHelp())
 }
 
-// construirAyuda devuelve el texto de la ayuda. Las descripciones de los
-// subcomandos se envuelven a un ancho fijo con las continuaciones alineadas en
-// la columna de descripción (14 espacios), para que nada invada la zona de
-// argumentos de los ítems.
-func construirAyuda() string {
+// buildHelp returns the help text. Subcommand descriptions are wrapped at a
+// fixed width with continuations aligned to the description column (14
+// spaces), so nothing invades the items' argument zone.
+func buildHelp() string {
 	var b strings.Builder
-	b.WriteString("🤖 VAS Sentinel: Guardián de Código Local\n")
-	b.WriteString("Uso: sentinel [version | help | init | uninit | check | slice | review |\n")
+	b.WriteString("🤖 VAS Sentinel: Local Code Guardian\n")
+	b.WriteString("Usage: sentinel [version | help | init | uninit | check | slice | review |\n")
 	b.WriteString("             refute | accept | reopen | gate | lint | rebase | status |\n")
-	b.WriteString("             metrics | explain | pr | runs | tui | consentimiento-diff |\n")
+	b.WriteString("             metrics | explain | pr | runs | tui | consent-diff |\n")
 	b.WriteString("             install | upgrade | uninstall]\n\n")
-	b.WriteString("Subcomandos:\n")
-	imprimirItemAyuda(&b, "version", "Muestra la versión instalada.")
-	imprimirItemAyuda(&b, "help", "Muestra esta ayuda.")
-	imprimirItemAyuda(&b, "init", "Inyecta las reglas de volumen en tus agentes, crea la config per-proyecto e instala el hook pre-commit del repositorio. Se ejecuta siempre en la raíz del repositorio (redirige automáticamente desde un subdirectorio).")
-	imprimirItemAyuda(&b, "uninit", "Reverte 'init' en este repositorio: retira las reglas de volumen, borra la config per-proyecto y elimina el hook pre-commit (solo si sigue siendo el que instaló VAS Sentinel).")
-	imprimirItemAyuda(&b, "check", "Audits the active worktree volume. Use --staged for the pending commit candidate; --json emits a machine-readable report.")
-	imprimirItemAyuda(&b, "slice", "Fragmenta las modificaciones en commits de máximo 400 líneas.")
-	imprimirItemAyuda(&b, "", "slice plan [--json] propone sin commitear (exit 3 si hay decisiones).")
-	imprimirItemAyuda(&b, "", "slice apply --plan X --answers Y ejecuta un plan ya aprobado.")
-	imprimirItemAyuda(&b, "review", "Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha.")
-	imprimirItemAyuda(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
-	imprimirItemAyuda(&b, "refute", "Record an evidence-bound human refutation of one reviewed finding (clears only its block).")
-	imprimirItemAyuda(&b, "", "Usage: refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
-	imprimirItemAyuda(&b, "accept", "Record a human acceptance of one reviewed finding (documents judgement, never clears the block).")
-	imprimirItemAyuda(&b, "", "Usage: accept --sha SHA --fingerprint FP --reason TEXT.")
-	imprimirItemAyuda(&b, "reopen", "Record an evidence-bound human reopen of one cleared finding (blocks again).")
-	imprimirItemAyuda(&b, "", "Usage: reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
-	imprimirItemAyuda(&b, "lint", "Ejecuta los comandos de lint_commands de la configuración.")
-	imprimirItemAyuda(&b, "rebase", "Actualiza la rama con fetch + rebase contra su upstream (pide confirmación).")
-	imprimirItemAyuda(&b, "status", "Resumen del guardián: volumen, fichas de auditoría y últimos eventos.")
-	imprimirItemAyuda(&b, "", "Con --json emite JSON; con --prune borra fichas huérfanas.")
-	imprimirItemAyuda(&b, "metrics", "Print deterministic local aggregates from the durable store; --json emits machine-readable output with null for unknown measurements.")
-	imprimirItemAyuda(&b, "doctor", "Preflight the review environment: agents, search binary, codegraph gates, hook. Advisory, exits 0. Flag: --check-updates.")
-	imprimirItemAyuda(&b, "explain", "Explica el perfil, los detectores, el riesgo y la cohesión de un rango. Uso: explain [base..head] [--json].")
-	imprimirItemAyuda(&b, "pr", "Pull-request operations: pr create publishes through gh; pr review analyzes the branch without publishing. The legacy passthrough was removed.")
-	imprimirItemAyuda(&b, "", "pr review analiza la rama sin publicar (matriz + decisión single/chain).")
-	imprimirItemAyuda(&b, "", "pr review flags: --base X --parent X --only-unaudited --overview --json.")
-	imprimirItemAyuda(&b, "", "        create --base X --parent X --chain-pr --force --reason \"...\".")
-	imprimirItemAyuda(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/design/runs-cli.md for flags, JSON shapes, and exit codes.")
-	imprimirItemAyuda(&b, "tui", "Open the full-screen control center (starts/stops this repository's daemon for the session).")
-	imprimirItemAyuda(&b, "consentimiento-diff", "Gestiona el grant local por usuario y repositorio: otorgar, revocar o estado.")
-	imprimirItemAyuda(&b, "install", "Descarga e instala la última release publicada desde GitHub.")
-	imprimirItemAyuda(&b, "upgrade", "Reemplaza el binario actual por la última release publicada.")
-	imprimirItemAyuda(&b, "uninstall", "Elimina el binario instalado y la configuración global.")
+	b.WriteString("Subcommands:\n")
+	printHelpItem(&b, "version", "Shows the installed version.")
+	printHelpItem(&b, "help", "Shows this help.")
+	printHelpItem(&b, "init", "Injects the volume rules into your agents, creates the per-project config, and installs the repository pre-commit hook. Always runs at the repository root (redirects automatically from a subdirectory).")
+	printHelpItem(&b, "uninit", "Reverts 'init' in this repository: removes the volume rules, deletes the per-project config, and removes the pre-commit hook (only if it is still the one VAS Sentinel installed).")
+	printHelpItem(&b, "check", "Audits the active worktree volume. Use --staged for the pending commit candidate; --json emits a machine-readable report.")
+	printHelpItem(&b, "slice", "Splits the pending modifications into commits of at most 400 lines.")
+	printHelpItem(&b, "", "slice plan [--json] proposes without committing (exit 3 when decisions are pending).")
+	printHelpItem(&b, "", "slice apply --plan X --answers Y executes an already approved plan.")
+	printHelpItem(&b, "review", "Audits a commit (default HEAD) against its dimension set and stores the record.")
+	printHelpItem(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
+	printHelpItem(&b, "refute", "Record an evidence-bound human refutation of one reviewed finding (clears only its block).")
+	printHelpItem(&b, "", "Usage: refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
+	printHelpItem(&b, "accept", "Record a human acceptance of one reviewed finding (documents judgement, never clears the block).")
+	printHelpItem(&b, "", "Usage: accept --sha SHA --fingerprint FP --reason TEXT.")
+	printHelpItem(&b, "reopen", "Record an evidence-bound human reopen of one cleared finding (blocks again).")
+	printHelpItem(&b, "", "Usage: reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
+	printHelpItem(&b, "lint", "Runs the lint_commands from the configuration.")
+	printHelpItem(&b, "rebase", "Updates the branch with fetch + rebase against its upstream (asks for confirmation).")
+	printHelpItem(&b, "status", "Guardian summary: volume, review records, and recent events.")
+	printHelpItem(&b, "", "With --json it emits JSON; with --prune it deletes orphan records.")
+	printHelpItem(&b, "metrics", "Print deterministic local aggregates from the durable store; --json emits machine-readable output with null for unknown measurements.")
+	printHelpItem(&b, "doctor", "Preflight the review environment: agents, search binary, codegraph gates, hook. Advisory, exits 0. Flag: --check-updates.")
+	printHelpItem(&b, "explain", "Explains the profile, detectors, risk, and cohesion of a range. Usage: explain [base..head] [--json].")
+	printHelpItem(&b, "pr", "Pull-request operations: pr create publishes through gh; pr review analyzes the branch without publishing. The legacy passthrough was removed.")
+	printHelpItem(&b, "", "pr review analyzes the branch without publishing (matrix + single/chain decision).")
+	printHelpItem(&b, "", "pr review flags: --base X --parent X --only-unaudited --overview --json.")
+	printHelpItem(&b, "", "        create --base X --parent X --chain-pr --force --reason \"...\".")
+	printHelpItem(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/design/runs-cli.md for flags, JSON shapes, and exit codes.")
+	printHelpItem(&b, "tui", "Open the full-screen control center (starts/stops this repository's daemon for the session).")
+	printHelpItem(&b, "consent-diff", "Manages the local per-user and per-repository grant: grant, revoke, or status.")
+	printHelpItem(&b, "install", "Downloads and installs the latest published release from GitHub.")
+	printHelpItem(&b, "upgrade", "Replaces the current binary with the latest published release.")
+	printHelpItem(&b, "uninstall", "Removes the installed binary and the global configuration.")
 	b.WriteString("\nFlags:\n")
-	b.WriteString("  --version, -v   Muestra la versión instalada (equivalente a 'version').\n")
-	b.WriteString("  --help, -h      Muestra esta ayuda (equivalente a 'help').\n")
+	b.WriteString("  --version, -v   Shows the installed version (equivalent to 'version').\n")
+	b.WriteString("  --help, -h      Shows this help (equivalent to 'help').\n")
 	return b.String()
 }
 
-// imprimirItemAyuda añade una entrada de subcomando: si nombre es no vacío,
-// se coloca en la columna de comando (2 espacios + hasta 12 de nombre); las
-// líneas siguientes se alinean en la columna de descripción. La descripción se
-// envuelve a un ancho acorde para no superar el ancho máximo de línea.
-func imprimirItemAyuda(b *strings.Builder, nombre, descripcion string) {
-	const anchoDescripcion = 96
-	if nombre == "" {
-		for _, linea := range envolver(descripcion, anchoDescripcion) {
-			b.WriteString("              " + linea + "\n")
+// printHelpItem adds a subcommand entry: if name is non-empty, it goes in the
+// command column (2 spaces + up to 12 of name); the following lines align to
+// the description column. The description wraps at a matching width so the
+// maximum line width is not exceeded.
+func printHelpItem(b *strings.Builder, name, description string) {
+	const descriptionWidth = 96
+	if name == "" {
+		for _, line := range wrap(description, descriptionWidth) {
+			b.WriteString("              " + line + "\n")
 		}
 		return
 	}
-	for i, linea := range envolver(descripcion, anchoDescripcion) {
+	for i, line := range wrap(description, descriptionWidth) {
 		if i == 0 {
-			separador := ""
-			if len(nombre) >= 12 {
-				separador = " "
+			separator := ""
+			if len(name) >= 12 {
+				separator = " "
 			}
-			fmt.Fprintf(b, "  %-12s%s%s\n", nombre, separador, linea)
+			fmt.Fprintf(b, "  %-12s%s%s\n", name, separator, line)
 		} else {
-			b.WriteString("              " + linea + "\n")
+			b.WriteString("              " + line + "\n")
 		}
 	}
 }
 
-// envolver divide texto en líneas de como máximo ancho caracteres cortando por
-// los espacios y sin cortar palabras. Devuelve al menos una línea (vacía si el
-// texto lo es).
-func envolver(texto string, ancho int) []string {
-	var lineas []string
-	actual := ""
-	for _, palabra := range strings.Fields(texto) {
-		if actual == "" {
-			actual = palabra
+// wrap splits text into lines of at most width characters, cutting at spaces
+// and never cutting words. It returns at least one line (empty if the text
+// is).
+func wrap(text string, width int) []string {
+	var lines []string
+	current := ""
+	for _, word := range strings.Fields(text) {
+		if current == "" {
+			current = word
 			continue
 		}
-		if len(actual)+1+len(palabra) <= ancho {
-			actual += " " + palabra
+		if len(current)+1+len(word) <= width {
+			current += " " + word
 			continue
 		}
-		lineas = append(lineas, actual)
-		actual = palabra
+		lines = append(lines, current)
+		current = word
 	}
-	if actual != "" || len(lineas) == 0 {
-		lineas = append(lineas, actual)
+	if current != "" || len(lines) == 0 {
+		lines = append(lines, current)
 	}
-	return lineas
+	return lines
 }
 
-func ejecutarInit(path string) {
-	raiz, err := git.ObtenerRaizWorktree()
+func runInit(path string) {
+	root, err := git.GetWorktreeRoot()
 	if err != nil {
-		fmt.Println("❌ init debe ejecutarse dentro de un repositorio Git (no se encontró la raíz del worktree).")
+		fmt.Println("❌ init must run inside a Git repository (worktree root not found).")
 		os.Exit(1)
 	}
-	if !git.EsMismaRuta(path, raiz) {
-		fmt.Printf("📂 Detectada la raíz del repositorio: %s\n", raiz)
-		fmt.Println("⚙️ Redirigiendo init a la raíz del repositorio...")
-		path = raiz
+	if !git.IsSamePath(path, root) {
+		fmt.Printf("📂 Repository root detected: %s\n", root)
+		fmt.Println("⚙️ Redirecting init to the repository root...")
+		path = root
 	}
 
-	fmt.Println("⚙️ Inicializando VAS Sentinel en este entorno...")
+	fmt.Println("⚙️ Initializing VAS Sentinel in this environment...")
 
-	archivosObjetivo := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}
+	targetFiles := []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"}
 	rulesSucceeded := true
 
-	for _, nombre := range archivosObjetivo {
-		escrito, err := inyectarReglasDeArchivo(filepath.Join(path, nombre))
+	for _, name := range targetFiles {
+		written, err := injectRulesIntoFile(filepath.Join(path, name))
 		switch {
 		case err != nil:
 			rulesSucceeded = false
-			fmt.Printf("⚠️ No se pudo inyectar en %s: %v\n", nombre, err)
-		case escrito:
-			fmt.Printf("📝 Reglas de volumen inyectadas en: %s\n", nombre)
+			fmt.Printf("⚠️ Could not inject into %s: %v\n", name, err)
+		case written:
+			fmt.Printf("📝 Volume rules injected into: %s\n", name)
 		}
 	}
 
 	if _, err := exec.LookPath("git"); err != nil {
-		fmt.Println("❌ git no está en el PATH. Instálalo antes de ejecutar 'sentinel init'.")
+		fmt.Println("❌ git is not on the PATH. Install it before running 'sentinel init'.")
 		os.Exit(1)
 	}
 
-	// El hook se escribe directamente en el common-dir del repositorio (el
-	// mismo para todos sus worktrees enlazados): sin carpeta global ni
-	// core.hooksPath, Git ya lo detecta ahí por defecto y no afecta a ningún
-	// otro repositorio del usuario.
-	commonDir, err := git.ObtenerGitCommonDir(path)
+	// The hook is written directly into the repository's common dir (the same
+	// one for all its linked worktrees): no global folder and no
+	// core.hooksPath, Git already detects it there by default and no other
+	// repository of the user is affected.
+	commonDir, err := git.GetGitCommonDir(path)
 	if err != nil {
-		fmt.Printf("❌ No se pudo determinar el directorio Git del repositorio: %v\n", err)
+		fmt.Printf("❌ Could not determine the repository's Git directory: %v\n", err)
 		os.Exit(1)
 	}
 	hooksDir := filepath.Join(commonDir, "hooks")
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		fmt.Printf("❌ No se pudo crear %s: %v\n", hooksDir, err)
+		fmt.Printf("❌ Could not create %s: %v\n", hooksDir, err)
 		os.Exit(1)
 	}
 
-	scriptContent := generarScriptHook()
+	scriptContent := generateHookScript()
 	hookPath := filepath.Join(hooksDir, "pre-commit")
 	if err := os.WriteFile(hookPath, []byte(scriptContent), 0755); err != nil {
-		fmt.Printf("❌ No se pudo escribir el hook en %s: %v\n", hookPath, err)
+		fmt.Printf("❌ Could not write the hook to %s: %v\n", hookPath, err)
 		os.Exit(1)
 	}
 
 	configurationSucceeded := true
-	if err := setup.CrearConfiguracionPerProyecto(path); err != nil {
+	if err := setup.CreatePerProjectConfig(path); err != nil {
 		configurationSucceeded = false
-		fmt.Printf("⚠️ No se pudo crear la configuración per-proyecto: %v\n", err)
+		fmt.Printf("⚠️ Could not create the per-project configuration: %v\n", err)
 	} else {
-		fmt.Println("📄 Configuración per-proyecto creada en: .vas_sentinel/vassentinel.yml")
+		fmt.Println("📄 Per-project configuration created at: .vas_sentinel/vassentinel.yml")
 	}
 
-	fmt.Println("⚓ Git Hook 'pre-commit' instalado en este repositorio. Entorno securizado con éxito.")
+	fmt.Println("⚓ Git Hook 'pre-commit' installed in this repository. Environment successfully secured.")
 	if rulesSucceeded && configurationSucceeded {
 		updateRepositoryRegistry(path, (*registry.Registry).Register)
 	}
 }
 
-// ejecutarUninit revierte en este repositorio exactamente lo que 'init' hizo:
-// retira el bloque de reglas de AGENTS.md/CLAUDE.md/.claudecode.md, borra la
-// config per-proyecto y elimina el hook 'pre-commit' — pero solo si su
-// contenido coincide byte a byte con el que generarScriptHook produciría hoy;
-// si no coincide (otra herramienta lo reemplazó, o es de otro origen), lo deja
-// intacto y avisa en vez de borrar algo que no instaló VAS Sentinel.
-func ejecutarUninit(path string) {
-	raiz, err := git.ObtenerRaizWorktree()
+// runUninit reverts in this repository exactly what 'init' did: it removes
+// the rules block from AGENTS.md/CLAUDE.md/.claudecode.md, deletes the
+// per-project config, and removes the 'pre-commit' hook — but only if its
+// content matches byte for byte what generateHookScript would produce today;
+// if it differs (another tool replaced it, or it comes from elsewhere), it
+// leaves it intact and warns instead of deleting something VAS Sentinel did
+// not install.
+func runUninit(path string) {
+	root, err := git.GetWorktreeRoot()
 	if err != nil {
-		fmt.Println("❌ uninit debe ejecutarse dentro de un repositorio Git (no se encontró la raíz del worktree).")
+		fmt.Println("❌ uninit must run inside a Git repository (worktree root not found).")
 		os.Exit(1)
 	}
-	if !git.EsMismaRuta(path, raiz) {
-		fmt.Printf("📂 Detectada la raíz del repositorio: %s\n", raiz)
-		fmt.Println("⚙️ Redirigiendo uninit a la raíz del repositorio...")
-		path = raiz
+	if !git.IsSamePath(path, root) {
+		fmt.Printf("📂 Repository root detected: %s\n", root)
+		fmt.Println("⚙️ Redirecting uninit to the repository root...")
+		path = root
 	}
 
-	fmt.Println("🗑️ Revirtiendo VAS Sentinel en este repositorio...")
+	fmt.Println("🗑️ Reverting VAS Sentinel in this repository...")
 
 	cleanupSucceeded := true
-	for _, nombre := range []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"} {
-		retiradas, err := quitarReglasDeArchivo(filepath.Join(path, nombre))
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", ".claudecode.md"} {
+		removed, err := removeRulesFromFile(filepath.Join(path, name))
 		switch {
 		case err != nil:
 			cleanupSucceeded = false
-			fmt.Printf("⚠️ No se pudo limpiar %s: %v\n", nombre, err)
-		case retiradas:
-			fmt.Printf("📝 Reglas de volumen retiradas de: %s\n", nombre)
+			fmt.Printf("⚠️ Could not clean %s: %v\n", name, err)
+		case removed:
+			fmt.Printf("📝 Volume rules removed from: %s\n", name)
 		}
 	}
 
-	rutaConfig := filepath.Join(path, ".vas_sentinel", "vassentinel.yml")
-	if err := os.Remove(rutaConfig); err != nil {
+	configPath := filepath.Join(path, ".vas_sentinel", "vassentinel.yml")
+	if err := os.Remove(configPath); err != nil {
 		if !os.IsNotExist(err) {
 			cleanupSucceeded = false
-			fmt.Printf("⚠️ No se pudo eliminar %s: %v\n", rutaConfig, err)
+			fmt.Printf("⚠️ Could not remove %s: %v\n", configPath, err)
 		}
 	} else {
-		fmt.Println("📄 Configuración per-proyecto eliminada: .vas_sentinel/vassentinel.yml")
+		fmt.Println("📄 Per-project configuration removed: .vas_sentinel/vassentinel.yml")
 	}
 
-	commonDir, err := git.ObtenerGitCommonDir(path)
+	commonDir, err := git.GetGitCommonDir(path)
 	if err != nil {
 		cleanupSucceeded = false
-		fmt.Printf("⚠️ No se pudo determinar el directorio Git del repositorio: %v\n", err)
+		fmt.Printf("⚠️ Could not determine the repository's Git directory: %v\n", err)
 	} else {
-		if err := quitarHookSiEsDeSentinel(filepath.Join(commonDir, "hooks", "pre-commit")); err != nil {
+		if err := removeHookIfSentinelOwned(filepath.Join(commonDir, "hooks", "pre-commit")); err != nil {
 			cleanupSucceeded = false
-			fmt.Printf("⚠️ No se pudo limpiar el hook: %v\n", err)
+			fmt.Printf("⚠️ Could not clean the hook: %v\n", err)
 		}
 	}
 
-	fmt.Println("✅ VAS Sentinel revertido en este repositorio.")
+	fmt.Println("✅ VAS Sentinel reverted in this repository.")
 	if cleanupSucceeded {
 		updateRepositoryRegistry(path, (*registry.Registry).Remove)
 	}
 }
 
-// inyectarReglasDeArchivo appends the managed rule when it is absent and
+// injectRulesIntoFile appends the managed rule when it is absent and
 // replaces it when an earlier managed version is present. Re-running init with
 // the current rule is byte-for-byte idempotent, while old marked and legacy
 // blocks are migrated to one current marked block.
-func inyectarReglasDeArchivo(ruta string) (bool, error) {
-	datos, err := os.ReadFile(ruta)
+func injectRulesIntoFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	contenido := string(datos)
+	content := string(data)
 
-	if patronReglasVolumenMarcado.MatchString(contenido) {
-		withoutRules := quitarReglasVolumen(contenido)
-		updated := withoutRules + reglasVolumenPara(contenido)
-		if updated == contenido {
+	if markedVolumeRulesPattern.MatchString(content) {
+		withoutRules := removeVolumeRules(content)
+		updated := withoutRules + volumeRulesFor(content)
+		if updated == content {
 			return false, nil
 		}
-		return true, os.WriteFile(ruta, []byte(updated), 0644)
+		return true, os.WriteFile(path, []byte(updated), 0644)
 	}
 
-	if patronReglasVolumenLegado.MatchString(contenido) {
-		// quitarReglasVolumen (no un ReplaceAllString directo) porque retira
-		// hasta el punto fijo: necesario cuando dos copias legadas están
-		// pegadas con un único salto de línea de separación, ver
-		// quitarTodasLasCoincidencias en reglasvolumen.go.
-		sinLegado := quitarReglasVolumen(contenido)
-		nuevo := sinLegado + reglasVolumenPara(contenido)
-		return true, os.WriteFile(ruta, []byte(nuevo), 0644)
+	if legacyVolumeRulesPattern.MatchString(content) {
+		// removeVolumeRules (not a direct ReplaceAllString) because it removes
+		// up to the fixed point: necessary when two legacy copies are glued
+		// together with a single separating newline, see
+		// removeAllMatches in reglasvolumen.go.
+		withoutLegacy := removeVolumeRules(content)
+		updated := withoutLegacy + volumeRulesFor(content)
+		return true, os.WriteFile(path, []byte(updated), 0644)
 	}
 
-	f, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return false, err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(reglasVolumenPara(contenido)); err != nil {
+	if _, err := f.WriteString(volumeRulesFor(content)); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// quitarReglasDeArchivo retira TODAS las apariciones del bloque reglasVolumen
-// del archivo si está presente y devuelve si hizo algún cambio. Un archivo
-// inexistente o sin el bloque no es error: simplemente no había nada que
-// retirar. Retirar todas las apariciones repara también los duplicados que
-// dejaron versiones anteriores de init.
-func quitarReglasDeArchivo(ruta string) (bool, error) {
-	datos, err := os.ReadFile(ruta)
+// removeRulesFromFile removes ALL occurrences of the volumeRules block from
+// the file when it is present and returns whether it made any change. A
+// missing file or one without the block is not an error: there was simply
+// nothing to remove. Removing all occurrences also repairs the duplicates
+// older versions of init left behind.
+func removeRulesFromFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, err
 	}
-	if !contieneReglasVolumen(string(datos)) {
+	if !containsVolumeRules(string(data)) {
 		return false, nil
 	}
-	nuevo := quitarReglasVolumen(string(datos))
-	if strings.TrimSpace(nuevo) == "" {
-		// El archivo no tenía contenido propio: init lo creó solo para el
-		// bloque de reglas, así que uninit lo borra en vez de dejarlo vacío.
-		return true, os.Remove(ruta)
+	updated := removeVolumeRules(string(data))
+	if strings.TrimSpace(updated) == "" {
+		// The file had no content of its own: init created it only for the
+		// rules block, so uninit deletes it instead of leaving it empty.
+		return true, os.Remove(path)
 	}
-	return true, os.WriteFile(ruta, []byte(nuevo), 0644)
+	return true, os.WriteFile(path, []byte(updated), 0644)
 }
 
-// quitarHookSiEsDeSentinel borra el hook pre-commit en hookPath solo si su
-// contenido coincide exactamente con el que generarScriptHook produce ahora;
-// si difiere (otro origen) o no existe, no lo toca.
-func quitarHookSiEsDeSentinel(hookPath string) error {
-	actual, err := os.ReadFile(hookPath)
+// removeHookIfSentinelOwned deletes the pre-commit hook at hookPath only if
+// its content exactly matches what generateHookScript produces now;
+// if it differs (another origin) or does not exist, it is left alone.
+func removeHookIfSentinelOwned(hookPath string) error {
+	current, err := os.ReadFile(hookPath)
 	switch {
 	case os.IsNotExist(err):
 		return nil
 	case err != nil:
 		return err
-	case string(actual) != generarScriptHook():
-		fmt.Println("⚠️ El hook 'pre-commit' actual no coincide con el instalado por VAS Sentinel: no se toca.")
+	case string(current) != generateHookScript():
+		fmt.Println("⚠️ The current 'pre-commit' hook does not match the one installed by VAS Sentinel: leaving it untouched.")
 		return nil
 	}
 	if err := os.Remove(hookPath); err != nil {
 		return err
 	}
-	fmt.Println("⚓ Hook 'pre-commit' eliminado.")
+	fmt.Println("⚓ Hook 'pre-commit' removed.")
 	return nil
 }
 
-// generarScriptHook devuelve el contenido del hook pre-commit adaptado al
-// sistema operativo donde se ejecuta el inicializador. Usa la ruta absoluta
-// del binario en ejecución para no depender del PATH del shell del hook.
-func generarScriptHook() string {
+// generateHookScript returns the pre-commit hook content adapted to the
+// operating system where the initializer runs. It uses the absolute path of
+// the running binary so it does not depend on the hook shell's PATH.
+func generateHookScript() string {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "sentinel"
 	}
-	return generarScriptHookPara(exe)
+	return generateHookScriptFor(exe)
 }
 
-func generarScriptHookPara(exe string) string {
+func generateHookScriptFor(exe string) string {
 	exeAbs := filepath.ToSlash(exe)
 	switch runtime.GOOS {
 	case "windows":
-		// Git for Windows ejecuta los hooks con su sh.exe: usa comillas
-		// dobles para tolerar espacios en la ruta (p. ej. "C:/Program Files").
+		// Git for Windows runs hooks with its sh.exe: it uses double quotes to
+		// tolerate spaces in the path (e.g. "C:/Program Files").
 		return "#!/bin/sh\n\"" + exeAbs + "\" check --staged\n"
 	default:
-		// Linux/macOS: sh estándar con la ruta absoluta del binario.
+		// Linux/macOS: standard sh with the binary's absolute path.
 		return "#!/bin/sh\n\"" + exeAbs + "\" check --staged\n"
 	}
 }
@@ -571,87 +572,88 @@ type checkReport struct {
 	Error              string `json:"error,omitempty"`
 }
 
-func ejecutarCheck(path string, args []string) int {
-	flags, err := parsearFlagsCheck(args)
+func runCheck(path string, args []string) int {
+	flags, err := parseCheckFlags(args)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		return 1
 	}
 	if flags.staged {
-		return ejecutarStagedCheck(path, flags.jsonOut)
+		return runStagedCheck(path, flags.jsonOut)
 	}
-	return ejecutarCheckCon(os.Stdout, path, flags.jsonOut, git.MedirVolumen)
+	return runCheckWith(os.Stdout, path, flags.jsonOut, git.MeasureVolume)
 }
 
-func ejecutarCheckCon(w io.Writer, path string, jsonOut bool, measure func() (git.VolumenPendiente, error)) int {
-	volumen, err := measure()
+func runCheckWith(w io.Writer, path string, jsonOut bool, measure func() (git.PendingVolume, error)) int {
+	volume, err := measure()
 	if err != nil {
 		report := checkReport{Worktree: path, State: "ERROR", Error: err.Error()}
 		if jsonOut {
-			_ = escribirCheckJSON(w, report)
+			_ = writeCheckJSON(w, report)
 			return 1
 		}
-		fmt.Fprintf(w, "❌ Error en Git: %v\n", err)
+		fmt.Fprintf(w, "❌ Git error: %v\n", err)
 		return 1
 	}
 
 	report := checkReport{
 		Worktree:           path,
-		AuthoredLines:      volumen.Bloqueante,
-		InformationalLines: volumen.Informativo,
-		State:              volumen.Estado,
+		AuthoredLines:      volume.Blocking,
+		InformationalLines: volume.Informational,
+		State:              volume.State,
 		Advisory:           true,
 	}
-	if volumen.Estado == "CRITICO" {
+	if volume.State == "CRITICAL" {
 		report.Recommendation = "sentinel slice plan --json"
 	}
 	if jsonOut {
-		return escribirCheckJSON(w, report)
+		return writeCheckJSON(w, report)
 	}
 
-	fmt.Fprintf(w, "📊 Líneas añadidas de código en este Worktree: %d [%s]\n", volumen.Bloqueante, volumen.Estado)
-	if volumen.Informativo > 0 {
-		// La documentación y lo generado se informan pero no frenan: el
-		// guardián mide revisabilidad de código, no bytes.
-		fmt.Fprintf(w, "📄 Además, %d líneas de documentación y archivos generados (no cuentan para el límite).\n", volumen.Informativo)
+	fmt.Fprintf(w, "📊 Added code lines in this worktree: %d [%s]\n", volume.Blocking, volume.State)
+	if volume.Informational > 0 {
+		// Documentation and generated content is reported but does not block:
+		// the guardian measures code reviewability, not bytes.
+		fmt.Fprintf(w, "📄 Additionally, %d documentation and generated-file lines (they do not count toward the limit).\n", volume.Informational)
 	}
-	if volumen.Estado == "CRITICO" {
+	if volume.State == "CRITICAL" {
 		fmt.Fprintln(w, "⚠️ Advisory: the worktree exceeds 400 authored lines. Run `sentinel slice plan --json` to plan a reviewable split.")
 		fmt.Fprintln(w, "✅ Measurement succeeded. You can continue implementation.")
 		return 0
 	}
-	fmt.Fprintln(w, "✅ Volumen bajo control. Puedes continuar.")
+	fmt.Fprintln(w, "✅ Volume under control. You can continue.")
 	return 0
 }
 
-func escribirCheckJSON(w io.Writer, report checkReport) int {
-	datos, err := json.MarshalIndent(report, "", "  ")
+func writeCheckJSON(w io.Writer, report checkReport) int {
+	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		fmt.Fprintf(w, "❌ Could not serialize check report: %v\n", err)
 		return 1
 	}
-	if _, err := fmt.Fprintln(w, string(datos)); err != nil {
+	if _, err := fmt.Fprintln(w, string(data)); err != nil {
 		return 1
 	}
 	return 0
 }
 
-// errRefactorAplicado señala que un agente ya aplicó el plan de refactorización
-// y que ejecutarSlice debe recalcular el plan con el working tree actualizado.
-var errRefactorAplicado = errors.New("refactorización aplicada por el agente")
+// errRefactorApplied signals that an agent already applied the refactoring
+// plan and that runSlice must recompute the plan with the updated working
+// tree.
+var errRefactorApplied = errors.New("refactor applied by the agent")
 
-func ejecutarSlice(path string) {
+func runSlice(path string) {
 	for {
-		fmt.Println("✂️ Iniciando algoritmo de partición determinista...")
-		archivos, err := git.ObtenerArchivosModificados()
-		if err != nil || len(archivos) == 0 {
-			fmt.Println("📭 No hay modificaciones pendientes para procesar.")
+		fmt.Println("✂️ Starting the deterministic partitioning algorithm...")
+		files, err := git.GetModifiedFiles()
+		if err != nil || len(files) == 0 {
+			fmt.Println("📭 No pending modifications to process.")
 			return
 		}
 
-		plan, err := git.ConstruirPlanFragmentacionConLector(archivos, construirDecisionGigante(path), ejecutarGitParaChange)
-		if errors.Is(err, errRefactorAplicado) {
-			fmt.Println("\n♻️ Refactorización aplicada. Recalculando el plan de fragmentación...")
+		plan, err := git.BuildFragmentationPlanWithReader(files, buildOversizedDecision(path), runGitForChange)
+		if errors.Is(err, errRefactorApplied) {
+			fmt.Println("\n♻️ Refactor applied. Recomputing the fragmentation plan...")
 			continue
 		}
 		if err != nil {
@@ -659,314 +661,315 @@ func ejecutarSlice(path string) {
 			os.Exit(1)
 		}
 
-		_, cancelado := elegirAdaptadorYGenerarMensajes(path, plan)
-		if cancelado {
-			fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+		_, canceled := chooseAdapterAndGenerateMessages(path, plan)
+		if canceled {
+			fmt.Println("\n🚫 Operation canceled. Nothing was committed.")
 			return
 		}
 
-		if !aprobarYEjecutar(plan, path) {
-			fmt.Println("\n🚫 Operación cancelada. No se ha commiteado nada.")
+		if !approveAndExecute(plan, path) {
+			fmt.Println("\n🚫 Operation canceled. Nothing was committed.")
 			return
 		}
 		return
 	}
 }
 
-// construirDecisionGigante devuelve el callback que decide qué hacer con un
-// archivo de código masivo (>500 líneas) durante la construcción del plan:
-// 1) refactorizar con IA, 2) hacer bypass IA o 3) abortar.
-func construirDecisionGigante(path string) func(git.ArchivoModificado) (bool, error) {
-	return func(f git.ArchivoModificado) (bool, error) {
+// buildOversizedDecision returns the callback that decides what to do with a
+// massive code file (>500 lines) while the plan is being built:
+// 1) refactor with AI, 2) AI bypass, or 3) abort.
+func buildOversizedDecision(path string) func(git.ModifiedFile) (bool, error) {
+	return func(f git.ModifiedFile) (bool, error) {
 		for {
-			fmt.Printf("\n⚠️ El archivo %s tiene %d líneas y supera el máximo sugerido de %d.\n", f.Ruta, f.Lineas, git.LimiteCodigoGigante)
-			fmt.Println("¿Cómo quieres proceder?")
-			fmt.Println("  1) Refactorizar con IA: propone un plan de división del archivo (SRP)")
-			fmt.Println("  2) Bypass IA: fragmentar el archivo tal cual (sin revisión)")
-			fmt.Println("  3) Abortar la operación")
-			fmt.Print("Opción (1-3): ")
+			fmt.Printf("\n⚠️ The file %s has %d lines and exceeds the suggested maximum of %d.\n", f.Path, f.Lines, git.GiantCodeLimit)
+			fmt.Println("How do you want to proceed?")
+			fmt.Println("  1) Refactor with AI: proposes a file-splitting plan (SRP)")
+			fmt.Println("  2) AI bypass: fragment the file as-is (no review)")
+			fmt.Println("  3) Abort the operation")
+			fmt.Print("Choice (1-3): ")
 
-			// Un EOF aquí (stdin cerrado) no hace bypass ni nada por defecto:
-			// se propaga como error y ConstruirPlanFragmentacion aborta la
-			// fragmentación. aprobarYEjecutar aplica el mismo criterio ante
-			// EOF (cancela, ver B9): mantén ambos diálogos coherentes ante un
-			// stdin cerrado si se modifica cualquiera de los dos.
-			respuesta, err := leerLinea()
+			// An EOF here (stdin closed) neither bypasses nor defaults to
+			// anything: it propagates as an error and BuildFragmentationPlan
+			// aborts the fragmentation. approveAndExecute applies the same
+			// criterion on EOF (cancel, see B9): keep both dialogs consistent
+			// on a closed stdin if either one is modified.
+			answer, err := readLine()
 			if err != nil {
-				return false, fmt.Errorf("error leyendo la opción: %w", err)
+				return false, fmt.Errorf("error reading the option: %w", err)
 			}
-			respuesta = strings.TrimSpace(respuesta)
-			switch respuesta {
+			answer = strings.TrimSpace(answer)
+			switch answer {
 			case "1":
-				refactorizado, err := refactorizarGigante(path, f)
+				refactored, err := refactorOversized(path, f)
 				if err != nil {
 					return false, err
 				}
-				if !refactorizado {
+				if !refactored {
 					continue
 				}
-				return false, fmt.Errorf("aplica el plan de refactorización propuesto y vuelve a ejecutar 'sentinel slice' para que el archivo ya dividido reingrese al plan")
+				return false, fmt.Errorf("apply the proposed refactoring plan and run 'sentinel slice' again so the already-split file re-enters the plan")
 			case "2":
 				return true, nil
 			case "3":
 				return false, nil
 			default:
-				fmt.Println("Opción no válida. Elige 1, 2 o 3.")
+				fmt.Println("Invalid option. Choose 1, 2, or 3.")
 			}
 		}
 	}
 }
 
-// refactorizarGigante pide al agente automático un plan de división para el
-// archivo masivo, lo muestra y pregunta cómo aplicarlo: manualmente por el
-// usuario, delegándolo en un agente (con fallback a otro agente si falla) o
-// cancelar. Devuelve (false, nil) para volver al menú anterior; devuelve un
-// error para abortar el slice (errRefactorAplicado si el agente ya aplicó el
-// plan y hay que recalcular el plan).
-func refactorizarGigante(path string, f git.ArchivoModificado) (bool, error) {
+// refactorOversized asks the automatic agent for a splitting plan for the
+// massive file, shows it, and asks how to apply it: manually by the user, by
+// delegating it to an agent (with a fallback to another agent on failure), or
+// cancel. It returns (false, nil) to go back to the previous menu; it returns
+// an error to abort the slice (errRefactorApplied when the agent already
+// applied the plan and the plan must be recomputed).
+func refactorOversized(path string, f git.ModifiedFile) (bool, error) {
 	adapter, err := agentadapter.NewAgentAdapter(path)
 	if err != nil {
-		fmt.Printf("⚠️ No se pudo crear el agente de refactorización: %v\n", err)
+		fmt.Printf("⚠️ Could not create the refactoring agent: %v\n", err)
 		return false, nil
 	}
 
-	refactorizador, ok := adapter.(agentadapter.AdapterRefactor)
+	refactorer, ok := adapter.(agentadapter.AdapterRefactor)
 	if !ok {
-		fmt.Println("⚠️ El agente activo no soporta propuestas de refactorización.")
+		fmt.Println("⚠️ The active agent does not support refactoring proposals.")
 		return false, nil
 	}
 
-	if !git.VerificarAdaptador(adapter) {
-		fmt.Println("⚠️ El agente activo no respondió correctamente.")
+	if !git.VerifyAdapter(adapter) {
+		fmt.Println("⚠️ The active agent did not respond correctly.")
 		return false, nil
 	}
 
-	fmt.Printf("🔍 Pidiendo al agente configurado un plan de división para %s...\n", f.Ruta)
-	planRefactor, err := refactorizador.ProponerPlanRefactor(f.Ruta)
+	fmt.Printf("🔍 Asking the configured agent for a splitting plan for %s...\n", f.Path)
+	refactorPlan, err := refactorer.ProposeRefactorPlan(f.Path)
 	if err != nil {
-		fmt.Printf("⚠️ El agente falló al generar el plan: %v\n", err)
+		fmt.Printf("⚠️ The agent failed to generate the plan: %v\n", err)
 		return false, nil
 	}
-	if strings.TrimSpace(planRefactor) == "" {
-		fmt.Println("⚠️ El agente devolvió un plan vacío.")
+	if strings.TrimSpace(refactorPlan) == "" {
+		fmt.Println("⚠️ The agent returned an empty plan.")
 		return false, nil
 	}
 
-	fmt.Println("\n📋 Plan de división propuesto:")
-	for _, linea := range strings.Split(planRefactor, "\n") {
-		fmt.Printf("   %s\n", linea)
+	fmt.Println("\n📋 Proposed splitting plan:")
+	for _, line := range strings.Split(refactorPlan, "\n") {
+		fmt.Printf("   %s\n", line)
 	}
 
 	for {
-		fmt.Println("\n¿Cómo quieres aplicar el plan?")
-		fmt.Println("  1) Aplicarlo yo: lo aplicas manualmente y luego ejecutas de nuevo 'sentinel slice'")
-		fmt.Println("  2) Delegarlo en un agente: el agente lo aplica y slice se re-ejecuta automáticamente")
-		fmt.Println("  c) Cancelar la refactorización")
-		fmt.Print("Opción (1, 2 o c): ")
+		fmt.Println("\nHow do you want to apply the plan?")
+		fmt.Println("  1) Apply it yourself: you apply it manually and then run 'sentinel slice' again")
+		fmt.Println("  2) Delegate it to an agent: the agent applies it and slice re-runs automatically")
+		fmt.Println("  c) Cancel the refactoring")
+		fmt.Print("Choice (1, 2, or c): ")
 
-		respuesta, err := leerLinea()
+		answer, err := readLine()
 		if err != nil {
-			return false, fmt.Errorf("error leyendo la opción: %w", err)
+			return false, fmt.Errorf("error reading the option: %w", err)
 		}
-		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
-		switch respuesta {
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		switch answer {
 		case "1":
-			return false, fmt.Errorf("aplica el plan de refactorización propuesto y vuelve a ejecutar 'sentinel slice' para que el archivo ya dividido reingrese al plan")
+			return false, fmt.Errorf("apply the proposed refactoring plan and run 'sentinel slice' again so the already-split file re-enters the plan")
 		case "2":
-			aplicada, err := delegarRefactorizacion(path, f, planRefactor)
+			applied, err := delegateRefactor(path, f, refactorPlan)
 			if err != nil {
 				return false, err
 			}
-			if aplicada {
-				return false, errRefactorAplicado
+			if applied {
+				return false, errRefactorApplied
 			}
 			return false, nil
-		case "c", "cancelar":
+		case "c", "cancel":
 			return false, nil
 		default:
-			fmt.Println("Opción no válida. Elige 1, 2 o c.")
+			fmt.Println("Invalid option. Choose 1, 2, or c.")
 		}
 	}
 }
 
-// delegarRefactorizacion pide al agente automático aplicar el plan de división
-// sobre el working tree. Si el agente automático no existe o falla, ofrece
-// elegir otro agente disponible o cancelar. Devuelve true si un agente aplicó
-// la refactorización.
-func delegarRefactorizacion(path string, f git.ArchivoModificado, planRefactor string) (bool, error) {
+// delegateRefactor asks the automatic agent to apply the splitting plan over
+// the working tree. If the automatic agent does not exist or fails, it offers
+// choosing another available agent or canceling. It returns true when an
+// agent applied the refactoring.
+func delegateRefactor(path string, f git.ModifiedFile, refactorPlan string) (bool, error) {
 	adapter, err := agentadapter.NewAgentAdapter(path)
-	if err != nil || !git.VerificarAdaptador(adapter) {
-		return bucleElegirAgenteRefactor(path, f, planRefactor)
+	if err != nil || !git.VerifyAdapter(adapter) {
+		return chooseRefactorAgentLoop(path, f, refactorPlan)
 	}
 
-	refactorizador, ok := adapter.(agentadapter.AdapterRefactor)
+	refactorer, ok := adapter.(agentadapter.AdapterRefactor)
 	if !ok {
-		return bucleElegirAgenteRefactor(path, f, planRefactor)
+		return chooseRefactorAgentLoop(path, f, refactorPlan)
 	}
 
-	aplicada, err := aplicarRefactor(refactorizador, f.Ruta, planRefactor)
-	if err != nil || !aplicada {
-		return bucleElegirAgenteRefactor(path, f, planRefactor)
+	applied, err := applyRefactor(refactorer, f.Path, refactorPlan)
+	if err != nil || !applied {
+		return chooseRefactorAgentLoop(path, f, refactorPlan)
 	}
 	return true, nil
 }
 
-// bucleElegirAgenteRefactor ofrece elegir otro agente para aplicar el plan de
-// refactorización cuando el agente automático no pudo, o cancelar la
-// refactorización. Devuelve true si algún agente aplicó el plan.
-func bucleElegirAgenteRefactor(path string, f git.ArchivoModificado, planRefactor string) (bool, error) {
+// chooseRefactorAgentLoop offers choosing another agent to apply the
+// refactoring plan when the automatic agent could not, or canceling the
+// refactoring. It returns true when some agent applied the plan.
+func chooseRefactorAgentLoop(path string, f git.ModifiedFile, refactorPlan string) (bool, error) {
 	for {
-		nombres := agentadapter.NombresAdaptadoresDisponibles(path)
-		if len(nombres) == 0 {
-			fmt.Println("⚠️ No hay agentes disponibles para aplicar la refactorización.")
+		names := agentadapter.AvailableAdapterNames(path)
+		if len(names) == 0 {
+			fmt.Println("⚠️ No agents are available to apply the refactoring.")
 			return false, nil
 		}
 
-		fmt.Println("\n⚠️ El agente automático no pudo aplicar el plan. Elige otro agente:")
-		for i, nombre := range nombres {
-			fmt.Printf("  %d) %s\n", i+1, nombre)
+		fmt.Println("\n⚠️ The automatic agent could not apply the plan. Choose another agent:")
+		for i, name := range names {
+			fmt.Printf("  %d) %s\n", i+1, name)
 		}
-		fmt.Println("  c) Cancelar la refactorización")
-		fmt.Print("Opción: ")
+		fmt.Println("  c) Cancel the refactoring")
+		fmt.Print("Choice: ")
 
-		respuesta, err := leerLinea()
+		answer, err := readLine()
 		if err != nil {
 			return false, nil
 		}
-		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
-		if respuesta == "c" || respuesta == "cancelar" {
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		if answer == "c" || answer == "cancel" {
 			return false, nil
 		}
 
-		numero, err := strconv.Atoi(respuesta)
-		if err != nil || numero < 1 || numero > len(nombres) {
-			fmt.Println("⚠️ Opción no válida. Intenta de nuevo.")
+		number, err := strconv.Atoi(answer)
+		if err != nil || number < 1 || number > len(names) {
+			fmt.Println("⚠️ Invalid option. Try again.")
 			continue
 		}
 
-		adapter, err := agentadapter.NewAgentAdapterNamed(path, nombres[numero-1])
+		adapter, err := agentadapter.NewAgentAdapterNamed(path, names[number-1])
 		if err != nil {
-			fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombres[numero-1], err)
+			fmt.Printf("⚠️ Could not create the adapter for %s: %v\n", names[number-1], err)
 			continue
 		}
-		refactorizador, ok := adapter.(agentadapter.AdapterRefactor)
+		refactorer, ok := adapter.(agentadapter.AdapterRefactor)
 		if !ok {
-			fmt.Printf("⚠️ El agente %s no soporta refactorizaciones.\n", nombres[numero-1])
+			fmt.Printf("⚠️ The agent %s does not support refactoring.\n", names[number-1])
 			continue
 		}
-		if !git.VerificarAdaptador(adapter) {
-			fmt.Printf("⚠️ El agente %s no respondió correctamente. Elige otra opción.\n", nombres[numero-1])
+		if !git.VerifyAdapter(adapter) {
+			fmt.Printf("⚠️ The agent %s did not respond correctly. Choose another option.\n", names[number-1])
 			continue
 		}
 
-		aplicada, err := aplicarRefactor(refactorizador, f.Ruta, planRefactor)
-		if err != nil || !aplicada {
-			fmt.Printf("⚠️ El agente %s falló al aplicar el plan. Elige otra opción.\n", nombres[numero-1])
+		applied, err := applyRefactor(refactorer, f.Path, refactorPlan)
+		if err != nil || !applied {
+			fmt.Printf("⚠️ The agent %s failed to apply the plan. Choose another option.\n", names[number-1])
 			continue
 		}
 		return true, nil
 	}
 }
 
-// aplicarRefactor ejecuta el plan de refactorización con el agente dado y
-// confirma que devolvió una respuesta no vacía.
-func aplicarRefactor(refactorizador agentadapter.AdapterRefactor, ruta string, planRefactor string) (bool, error) {
-	fmt.Printf("🔧 Pidiendo al agente seleccionado aplicar el plan sobre %s...\n", ruta)
-	resumen, err := refactorizador.AplicarPlanRefactor(ruta, planRefactor)
+// applyRefactor runs the refactoring plan with the given agent and confirms
+// it returned a non-empty response.
+func applyRefactor(refactorer agentadapter.AdapterRefactor, path string, refactorPlan string) (bool, error) {
+	fmt.Printf("🔧 Asking the selected agent to apply the plan over %s...\n", path)
+	summary, err := refactorer.ApplyRefactorPlan(path, refactorPlan)
 	if err != nil {
 		return false, err
 	}
-	if strings.TrimSpace(resumen) == "" {
-		return false, fmt.Errorf("el agente devolvió un resumen vacío")
+	if strings.TrimSpace(summary) == "" {
+		return false, fmt.Errorf("the agent returned an empty summary")
 	}
-	fmt.Printf("✅ %s\n", strings.TrimSpace(resumen))
+	fmt.Printf("✅ %s\n", strings.TrimSpace(summary))
 	return true, nil
 }
 
-// lectorStdin lee línea a línea la entrada estándar para los flujos interactivos.
-var lectorStdin = bufio.NewReader(os.Stdin)
+// stdinReader reads standard input line by line for the interactive flows.
+var stdinReader = bufio.NewReader(os.Stdin)
 
-func leerLinea() (string, error) {
-	linea, err := lectorStdin.ReadString('\n')
+func readLine() (string, error) {
+	line, err := stdinReader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(linea, "\r\n"), nil
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
-// elegirAdaptadorYGenerarMensajes selecciona el adaptador (auto por defecto),
-// lo prueba una vez y genera los mensajes del plan. Si el adaptador automático
-// no existe, falla la sonda o falla al generar algún mensaje, ofrece al usuario
-// elegir mensajes automáticos, otro adaptador disponible o cancelar.
-func elegirAdaptadorYGenerarMensajes(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
-	if !permiteDiffAgenteExterno(path) {
-		fmt.Println("ℹ️ No se envía código al agente: falta la solicitud del repositorio o el consentimiento local; se usan mensajes deterministas locales.")
-		git.AplicarMensajesAutomaticos(plan)
+// chooseAdapterAndGenerateMessages selects the adapter (auto by default),
+// probes it once, and generates the plan's messages. If the automatic adapter
+// does not exist, the probe fails, or it fails to generate some message, it
+// offers the user deterministic automatic messages, another available
+// adapter, or cancel.
+func chooseAdapterAndGenerateMessages(path string, plan *git.FragmentationPlan) (agentadapter.AgentAdapter, bool) {
+	if !allowsExternalAgentDiff(path) {
+		fmt.Println("ℹ️ No code is sent to the agent: the repository request or the local consent is missing; deterministic local messages are used.")
+		git.ApplyAutomaticMessages(plan)
 		return nil, false
 	}
-	adapter, err := agentadapter.NewAgentAdapterParaMensaje(path)
+	adapter, err := agentadapter.NewAgentAdapterForMessage(path)
 	if err != nil {
 		fmt.Printf("⚠️ %v\n", err)
-		return bucleElegirAdaptador(path, plan)
+		return chooseAdapterLoop(path, plan)
 	}
 
-	if git.VerificarAdaptador(adapter) {
-		if fallbacks := git.GenerarMensajesLotes(plan, adapter); fallbacks == 0 {
+	if git.VerifyAdapter(adapter) {
+		if fallbacks := git.GenerateBatchMessages(plan, adapter); fallbacks == 0 {
 			return adapter, false
 		}
-		fmt.Println("⚠️ El agente automático falló al generar algunos mensajes.")
-		return bucleElegirAdaptador(path, plan)
+		fmt.Println("⚠️ The automatic agent failed to generate some messages.")
+		return chooseAdapterLoop(path, plan)
 	}
 
-	fmt.Println("⚠️ El agente automático no respondió correctamente.")
-	return bucleElegirAdaptador(path, plan)
+	fmt.Println("⚠️ The automatic agent did not respond correctly.")
+	return chooseAdapterLoop(path, plan)
 }
 
-// bucleElegirAdaptador ofrece la elección de origen de los mensajes cuando el
-// adaptador automático no sirve: mensajes automáticos deterministas, un agente
-// de los disponibles o cancelar. Devuelve el adaptador elegido (nil si se eligen
-// mensajes automáticos) y si la operación quedó cancelada.
-func bucleElegirAdaptador(path string, plan *git.PlanFragmentacion) (agentadapter.AgentAdapter, bool) {
+// chooseAdapterLoop offers the choice of message source when the automatic
+// adapter will not do: deterministic automatic messages, one of the available
+// agents, or cancel. It returns the chosen adapter (nil when automatic
+// messages are chosen) and whether the operation was canceled.
+func chooseAdapterLoop(path string, plan *git.FragmentationPlan) (agentadapter.AgentAdapter, bool) {
 	for {
-		nombres := agentadapter.NombresAdaptadoresDisponibles(path)
-		fmt.Println("\nElige cómo obtener los mensajes de commit:")
-		fmt.Println("  1) Usar mensajes automáticos deterministas para todos los lotes")
-		for i, nombre := range nombres {
-			fmt.Printf("  %d) Usar el agente %s\n", i+2, nombre)
+		names := agentadapter.AvailableAdapterNames(path)
+		fmt.Println("\nChoose how to obtain the commit messages:")
+		fmt.Println("  1) Use deterministic automatic messages for all batches")
+		for i, name := range names {
+			fmt.Printf("  %d) Use the agent %s\n", i+2, name)
 		}
-		fmt.Println("  c) Cancelar la operación")
-		fmt.Print("Opción: ")
+		fmt.Println("  c) Cancel the operation")
+		fmt.Print("Choice: ")
 
-		respuesta, err := leerLinea()
+		answer, err := readLine()
 		if err != nil {
 			return nil, true
 		}
-		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+		answer = strings.ToLower(strings.TrimSpace(answer))
 
 		switch {
-		case respuesta == "1" || respuesta == "a" || respuesta == "auto":
-			git.AplicarMensajesAutomaticos(plan)
+		case answer == "1" || answer == "a" || answer == "auto":
+			git.ApplyAutomaticMessages(plan)
 			return nil, false
-		case respuesta == "c" || respuesta == "cancelar":
+		case answer == "c" || answer == "cancel":
 			return nil, true
 		default:
-			numero, err := strconv.Atoi(respuesta)
-			if err != nil || numero < 2 || numero > len(nombres)+1 {
-				fmt.Println("⚠️ Opción no válida. Intenta de nuevo.")
+			number, err := strconv.Atoi(answer)
+			if err != nil || number < 2 || number > len(names)+1 {
+				fmt.Println("⚠️ Invalid option. Try again.")
 				continue
 			}
-			nombre := nombres[numero-2]
-			adapter, err := agentadapter.NewAgentAdapterNamedParaMensaje(path, nombre)
+			name := names[number-2]
+			adapter, err := agentadapter.NewAgentAdapterNamedForMessage(path, name)
 			if err != nil {
-				fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombre, err)
+				fmt.Printf("⚠️ Could not create the adapter for %s: %v\n", name, err)
 				continue
 			}
-			if !git.VerificarAdaptador(adapter) {
-				fmt.Printf("⚠️ El agente %s no respondió correctamente. Elige otra opción.\n", nombre)
+			if !git.VerifyAdapter(adapter) {
+				fmt.Printf("⚠️ The agent %s did not respond correctly. Choose another option.\n", name)
 				continue
 			}
-			if fallbacks := git.GenerarMensajesLotes(plan, adapter); fallbacks > 0 {
-				fmt.Printf("⚠️ El agente %s falló al generar algunos mensajes. Elige otra opción.\n", nombre)
+			if fallbacks := git.GenerateBatchMessages(plan, adapter); fallbacks > 0 {
+				fmt.Printf("⚠️ The agent %s failed to generate some messages. Choose another option.\n", name)
 				continue
 			}
 			return adapter, false
@@ -974,152 +977,154 @@ func bucleElegirAdaptador(path string, plan *git.PlanFragmentacion) (agentadapte
 	}
 }
 
-// accion representa la decisión tomada en el menú de aprobación del plan de
-// fragmentación, separada de la lectura de stdin y de su ejecución para que
-// decidirAccion se pueda probar sin simular entrada ni tocar el plan ni git.
-type accion int
+// planAction represents the decision taken in the fragmentation plan's
+// approval menu, separated from stdin reading and from its execution so
+// decideAction can be tested without simulating input or touching the plan
+// or git.
+type planAction int
 
 const (
-	accionInvalida accion = iota
-	accionAprobar
-	accionRegenerar
-	accionEditar
-	accionCancelar
+	actionInvalid planAction = iota
+	actionApprove
+	actionRegenerate
+	actionEdit
+	actionCancel
 )
 
-// decidirAccion traduce la línea leída del menú de aprobación a la acción
-// correspondiente. Es una función pura: no lee stdin ni tiene efectos.
-func decidirAccion(linea string) accion {
-	switch strings.ToLower(strings.TrimSpace(linea)) {
-	case "", "a", "aprobar":
-		return accionAprobar
-	case "r", "regenerar":
-		return accionRegenerar
-	case "e", "editar":
-		return accionEditar
-	case "c", "cancelar":
-		return accionCancelar
+// decideAction translates the line read from the approval menu into the
+// corresponding action. It is a pure function: it never reads stdin and has
+// no effects.
+func decideAction(line string) planAction {
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "a", "approve":
+		return actionApprove
+	case "r", "regenerate":
+		return actionRegenerate
+	case "e", "edit":
+		return actionEdit
+	case "c", "cancel":
+		return actionCancel
 	default:
-		return accionInvalida
+		return actionInvalid
 	}
 }
 
-// aprobarYEjecutar muestra el plan propuesto y dirige el flujo de aprobación:
-// aprobar todo, regenerar un mensaje con otro agente, editar un mensaje o
-// cancelar. Devuelve false si el usuario canceló sin commitear nada.
-func aprobarYEjecutar(plan *git.PlanFragmentacion, path string) bool {
+// approveAndExecute shows the proposed plan and drives the approval flow:
+// approve everything, regenerate a message with another agent, edit a
+// message, or cancel. It returns false when the user canceled without
+// committing anything.
+func approveAndExecute(plan *git.FragmentationPlan, path string) bool {
 	for {
-		imprimirPlan(plan)
-		fmt.Println("\nOpciones:")
-		fmt.Println("  (A)probar todo y ejecutar (Enter)")
-		fmt.Println("  (R)egenerar mensaje de un lote con otro agente")
-		fmt.Println("  (E)ditar mensaje de un lote manualmente")
-		fmt.Println("  (C)ancelar sin commitear nada")
-		fmt.Print("Opción [A]: ")
+		printPlan(plan)
+		fmt.Println("\nOptions:")
+		fmt.Println("  (A)pprove all and execute (Enter)")
+		fmt.Println("  (R)egenerate a batch's message with another agent")
+		fmt.Println("  (E)dit a batch's message manually")
+		fmt.Println("  (C)ancel without committing anything")
+		fmt.Print("Choice [A]: ")
 
-		// B9 (CRITICAL): un error de leerLinea (EOF con stdin cerrado — CI,
-		// nohup, una tubería que termina, un agente sin consola) NO es una
-		// respuesta del usuario y no puede tratarse como línea vacía: la
-		// línea vacía real (Enter, sin error) sí debe aprobar, porque es el
-		// default que anuncia el propio menú ("Opción [A]:"). Por eso la
-		// decisión de EOF se toma aquí, antes de decidirAccion — decidirAccion
-		// sigue siendo una función pura que solo clasifica texto, nunca debe
-		// conocer el estado de error de la lectura. Este mismo criterio
-		// (EOF cancela, no aprueba ni hace bypass) es el que ya aplicaba
-		// construirDecisionGigante; que ningún cambio futuro vuelva a
-		// separarlos.
-		linea, err := leerLinea()
+		// B9 (CRITICAL): a readLine error (EOF with closed stdin — CI,
+		// nohup, a pipeline that ends, an agent without a console) is NOT a
+		// user answer and must not be treated as an empty line: a real empty
+		// line (Enter, with no error) must approve, because it is the
+		// default the menu itself announces ("Choice [A]: "). That is why
+		// the EOF decision is taken here, before decideAction — decideAction
+		// stays a pure function that only classifies text; it must never
+		// know the read's error state. This same criterion (EOF cancels, it
+		// neither approves nor bypasses) is what buildOversizedDecision
+		// already applied; no future change may separate them again.
+		line, err := readLine()
 		if err != nil {
-			fmt.Println("\n⚠️ Entrada estándar cerrada (EOF). Operación cancelada, no se ha commiteado nada.")
+			fmt.Println("\n⚠️ Standard input closed (EOF). Operation canceled, nothing was committed.")
 			return false
 		}
 
-		switch decidirAccion(linea) {
-		case accionAprobar:
-			return ejecutarPlanAprobado(plan)
-		case accionRegenerar:
-			regenerarMensajeLoteInteractivo(plan, path)
-		case accionEditar:
-			editarMensajeLoteInteractivo(plan)
-		case accionCancelar:
+		switch decideAction(line) {
+		case actionApprove:
+			return runApprovedPlan(plan)
+		case actionRegenerate:
+			regenerateBatchMessageInteractive(plan, path)
+		case actionEdit:
+			editBatchMessageInteractive(plan)
+		case actionCancel:
 			return false
 		default:
-			fmt.Println("⚠️ Opción no válida. Usa A, R, E o C.")
+			fmt.Println("⚠️ Invalid option. Use A, R, E, or C.")
 		}
 	}
 }
 
-func imprimirPlan(plan *git.PlanFragmentacion) {
-	fmt.Println("\n📋 Plan de fragmentación propuesto (nada se ha commiteado todavía):")
-	totalLineas := 0
-	for _, lote := range plan.Lotes {
-		sufijo := ""
-		if lote.MensajeDeterminista {
-			sufijo = " (automático)"
+func printPlan(plan *git.FragmentationPlan) {
+	fmt.Println("\n📋 Proposed fragmentation plan (nothing has been committed yet):")
+	totalLines := 0
+	for _, batch := range plan.Batches {
+		suffix := ""
+		if batch.DeterministicMessage {
+			suffix = " (automatic)"
 		}
-		totalLineas += lote.LineasTotales
-		fmt.Printf("  [%s] lote #%d — %d archivos (%d líneas) — mensaje: %s%s\n",
-			lote.Capa, lote.Numero, len(lote.Rutas), lote.LineasTotales, lote.Mensaje, sufijo)
+		totalLines += batch.TotalLines
+		fmt.Printf("  [%s] batch #%d — %d files (%d lines) — message: %s%s\n",
+			batch.Layer, batch.Number, len(batch.Paths), batch.TotalLines, batch.Message, suffix)
 	}
-	fmt.Printf("Total: %d lotes, %d líneas.\n", len(plan.Lotes), totalLineas)
+	fmt.Printf("Total: %d batches, %d lines.\n", len(plan.Batches), totalLines)
 }
 
-func regenerarMensajeLoteInteractivo(plan *git.PlanFragmentacion, path string) {
-	if !permiteDiffAgenteExterno(path) {
-		fmt.Println("⚠️ No se puede regenerar: falta la solicitud del repositorio o el consentimiento local para exponer el micro-diff.")
+func regenerateBatchMessageInteractive(plan *git.FragmentationPlan, path string) {
+	if !allowsExternalAgentDiff(path) {
+		fmt.Println("⚠️ Cannot regenerate: the repository request or the local consent to expose the micro-diff is missing.")
 		return
 	}
-	fmt.Print("¿Qué lote quieres regenerar? (número): ")
-	linea, err := leerLinea()
+	fmt.Print("Which batch do you want to regenerate? (number): ")
+	line, err := readLine()
 	if err != nil {
 		return
 	}
-	numero, err := strconv.Atoi(strings.TrimSpace(linea))
+	number, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil {
-		fmt.Println("⚠️ Número de lote no válido.")
+		fmt.Println("⚠️ Invalid batch number.")
 		return
 	}
 
-	nombres := agentadapter.NombresAdaptadoresDisponibles(path)
+	names := agentadapter.AvailableAdapterNames(path)
 	for {
-		fmt.Printf("¿Con qué agente regeneras el lote #%d?\n", numero)
-		fmt.Println("  1) Mensaje automático determinista")
-		for i, nombre := range nombres {
-			fmt.Printf("  %d) %s\n", i+2, nombre)
+		fmt.Printf("Which agent regenerates batch #%d?\n", number)
+		fmt.Println("  1) Deterministic automatic message")
+		for i, name := range names {
+			fmt.Printf("  %d) %s\n", i+2, name)
 		}
-		fmt.Print("Opción: ")
+		fmt.Print("Choice: ")
 
-		respuesta, err := leerLinea()
+		answer, err := readLine()
 		if err != nil {
 			return
 		}
-		respuesta = strings.ToLower(strings.TrimSpace(respuesta))
+		answer = strings.ToLower(strings.TrimSpace(answer))
 
 		switch {
-		case respuesta == "1" || respuesta == "a" || respuesta == "auto":
-			if err := git.AplicarMensajeAutomaticoLote(plan, numero); err != nil {
+		case answer == "1" || answer == "a" || answer == "auto":
+			if err := git.ApplyAutomaticMessageBatch(plan, number); err != nil {
 				fmt.Printf("⚠️ %v\n", err)
 			}
 			return
-		case respuesta == "c" || respuesta == "cancelar":
+		case answer == "c" || answer == "cancel":
 			return
 		default:
-			indice, err := strconv.Atoi(respuesta)
-			if err != nil || indice < 2 || indice > len(nombres)+1 {
-				fmt.Println("⚠️ Opción no válida. Intenta de nuevo.")
+			index, err := strconv.Atoi(answer)
+			if err != nil || index < 2 || index > len(names)+1 {
+				fmt.Println("⚠️ Invalid option. Try again.")
 				continue
 			}
-			nombre := nombres[indice-2]
-			adapter, err := agentadapter.NewAgentAdapterNamedParaMensaje(path, nombre)
+			name := names[index-2]
+			adapter, err := agentadapter.NewAgentAdapterNamedForMessage(path, name)
 			if err != nil {
-				fmt.Printf("⚠️ No se pudo crear el adaptador para %s: %v\n", nombre, err)
+				fmt.Printf("⚠️ Could not create the adapter for %s: %v\n", name, err)
 				continue
 			}
-			if !git.VerificarAdaptador(adapter) {
-				fmt.Printf("⚠️ El agente %s no respondió correctamente. Elige otra opción.\n", nombre)
+			if !git.VerifyAdapter(adapter) {
+				fmt.Printf("⚠️ The agent %s did not respond correctly. Choose another option.\n", name)
 				continue
 			}
-			if err := git.RegenerarMensajeLote(plan, numero, adapter); err != nil {
+			if err := git.RegenerateBatchMessage(plan, number, adapter); err != nil {
 				fmt.Printf("⚠️ %v\n", err)
 			}
 			return
@@ -1127,53 +1132,53 @@ func regenerarMensajeLoteInteractivo(plan *git.PlanFragmentacion, path string) {
 	}
 }
 
-func editarMensajeLoteInteractivo(plan *git.PlanFragmentacion) {
-	fmt.Print("¿Qué lote quieres editar? (número): ")
-	linea, err := leerLinea()
+func editBatchMessageInteractive(plan *git.FragmentationPlan) {
+	fmt.Print("Which batch do you want to edit? (number): ")
+	line, err := readLine()
 	if err != nil {
 		return
 	}
-	numero, err := strconv.Atoi(strings.TrimSpace(linea))
+	number, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil {
-		fmt.Println("⚠️ Número de lote no válido.")
+		fmt.Println("⚠️ Invalid batch number.")
 		return
 	}
-	fmt.Print("Nuevo mensaje de commit: ")
-	mensaje, err := leerLinea()
+	fmt.Print("New commit message: ")
+	message, err := readLine()
 	if err != nil {
 		return
 	}
-	if strings.TrimSpace(mensaje) == "" {
-		fmt.Println("⚠️ El mensaje no puede estar vacío.")
+	if strings.TrimSpace(message) == "" {
+		fmt.Println("⚠️ The message cannot be empty.")
 		return
 	}
-	if err := git.EditarMensajeLote(plan, numero, mensaje); err != nil {
+	if err := git.EditBatchMessage(plan, number, message); err != nil {
 		fmt.Printf("⚠️ %v\n", err)
 	}
 }
 
-func ejecutarPlanAprobado(plan *git.PlanFragmentacion) bool {
-	resultados, err := git.EjecutarPlanFragmentacion(plan)
+func runApprovedPlan(plan *git.FragmentationPlan) bool {
+	results, err := git.RunFragmentationPlan(plan)
 	if err != nil {
-		fmt.Printf("❌ Error crítico durante la creación de commits: %v\n", err)
+		fmt.Printf("❌ Critical error while creating commits: %v\n", err)
 		os.Exit(1)
 	}
-	imprimirResumen(resultados)
+	printSummary(results)
 	return true
 }
 
-func imprimirResumen(resultados []git.ResultadoCommit) {
-	fmt.Printf("\n🎉 ¡Historial fragmentado con éxito! Se crearon %d commits.\n", len(resultados))
-	for _, r := range resultados {
-		fmt.Printf("  %s  [%s]  %d archivos  %s\n", r.Hash, r.Capa, r.Archivos, r.Mensaje)
+func printSummary(results []git.CommitResult) {
+	fmt.Printf("\n🎉 History fragmented successfully! Created %d commits.\n", len(results))
+	for _, r := range results {
+		fmt.Printf("  %s  [%s]  %d files  %s\n", r.Hash, r.Layer, r.Files, r.Message)
 	}
-	limpio, err := git.WorktreeLimpio()
+	clean, err := git.WorktreeClean()
 	switch {
 	case err != nil:
-		fmt.Printf("⚠️ No se pudo verificar el estado del worktree: %v\n", err)
-	case limpio:
-		fmt.Println("✅ El worktree está limpio. Volumen bajo control.")
+		fmt.Printf("⚠️ Could not verify the worktree state: %v\n", err)
+	case clean:
+		fmt.Println("✅ The worktree is clean. Volume under control.")
 	default:
-		fmt.Println("⚠️ Quedan cambios pendientes en el worktree. Revisa con 'sentinel check'.")
+		fmt.Println("⚠️ Pending changes remain in the worktree. Review with 'sentinel check'.")
 	}
 }

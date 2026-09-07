@@ -22,10 +22,10 @@ func acceptValidOptions() acceptOptions {
 // persisted revision byte-identical, and never clears the block.
 func TestRunAcceptancePersistsWithoutClearing(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	before, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	before, err := os.ReadFile(ledger.RecordPath("abc12345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestRunAcceptancePersistsWithoutClearing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acceptance rejected: %v", err)
 	}
-	after, err := os.ReadFile(ledger.RutaFicha("abc12345"))
+	after, err := os.ReadFile(ledger.RecordPath("abc12345"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,12 +72,12 @@ func TestRunAcceptancePersistsWithoutClearing(t *testing.T) {
 // Every failure closes without persisting anything: missing record, missing
 // or ambiguous fingerprint, already-answered finding, unsafe path.
 func TestRunAcceptanceFailsClosedWithoutPersistence(t *testing.T) {
-	ambiguous := refuteFichaFixture()
+	ambiguous := refuteRecordFixture()
 	ambiguous.AggregatedFindings[1].Fingerprint = "fp-target"
-	answered := refuteFichaFixture()
+	answered := refuteRecordFixture()
 	answered.AggregatedFindings[0].Status = review.StatusRefuted
-	unsafe := refuteFichaFixture()
-	unsafe.AggregatedFindings[0].Location.Archivo = "../evil.go"
+	unsafe := refuteRecordFixture()
+	unsafe.AggregatedFindings[0].Location.File = "../evil.go"
 	cases := []struct {
 		name     string
 		revision *review.Revision
@@ -86,7 +86,7 @@ func TestRunAcceptanceFailsClosedWithoutPersistence(t *testing.T) {
 	}{
 		{"missing review record", nil, func(*acceptOptions) {}, nil},
 		{
-			"missing fingerprint", &[]review.Revision{refuteFichaFixture()}[0],
+			"missing fingerprint", &[]review.Revision{refuteRecordFixture()}[0],
 			func(o *acceptOptions) { o.fingerprint = "fp-absent" }, nil,
 		},
 		{
@@ -98,7 +98,7 @@ func TestRunAcceptanceFailsClosedWithoutPersistence(t *testing.T) {
 			func(*acceptOptions) {}, nil,
 		},
 		{
-			"already accepted", &[]review.Revision{refuteFichaFixture()}[0],
+			"already accepted", &[]review.Revision{refuteRecordFixture()}[0],
 			func(*acceptOptions) {}, func(st *store.Store) error {
 				return st.AppendDisposition(acceptanceFixture("abc12345", "fp-target"))
 			},
@@ -112,7 +112,7 @@ func TestRunAcceptanceFailsClosedWithoutPersistence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, ledger, st := refuteTestDeps(t, nil)
 			if tc.revision != nil {
-				if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", *tc.revision); err != nil {
+				if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", *tc.revision); err != nil {
 					t.Fatalf("save revision: %v", err)
 				}
 			}
@@ -168,25 +168,25 @@ func TestParseAcceptArgsRejectsBadInput(t *testing.T) {
 }
 
 func TestAcceptHelpIsRegistered(t *testing.T) {
-	if !strings.Contains(construirAyuda(), "accept") {
+	if !strings.Contains(buildHelp(), "accept") {
 		t.Fatal("the top-level help does not list accept")
 	}
 	var buf bytes.Buffer
-	if !escribirAyudaComando(&buf, "accept") {
+	if !writeCommandHelp(&buf, "accept") {
 		t.Fatal("no dedicated help for accept")
 	}
 	if !strings.Contains(buf.String(), "--fingerprint") {
 		t.Fatalf("help = %q, want the addressing flags documented", buf.String())
 	}
 	buf.Reset()
-	if !gestionarAyuda(&buf, &bytes.Buffer{}, "accept", []string{"--help"}) {
+	if !handleHelp(&buf, &bytes.Buffer{}, "accept", []string{"--help"}) {
 		t.Fatal("accept --help was not intercepted")
 	}
 }
 
-func TestEjecutarAcceptRejectsBadArgs(t *testing.T) {
+func TestRunAcceptRejectsBadArgs(t *testing.T) {
 	var buf bytes.Buffer
-	if code := ejecutarAccept(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
+	if code := runAccept(&buf, t.TempDir(), []string{"--sha", "abc123"}); code != 1 {
 		t.Fatalf("code = %d, want 1 for bad args", code)
 	}
 }
@@ -196,10 +196,10 @@ func TestEjecutarAcceptRejectsBadArgs(t *testing.T) {
 // finding.
 func TestRunAcceptanceRefusesCorruptHistory(t *testing.T) {
 	deps, ledger, _ := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RutaFicha("abc12345"))), "vas-sentinel", "dispositions.jsonl")
+	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RecordPath("abc12345"))), "vas-sentinel", "dispositions.jsonl")
 	const corrupt = `{"sha":"abc12345","fingerprint":"fp-target","status":"ignored","actor":"human","source":"human"}` + "\n"
 	if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
 		t.Fatal(err)
@@ -220,21 +220,21 @@ func TestRunAcceptanceRefusesCorruptHistory(t *testing.T) {
 // failed mutation callers should retry.
 func TestRunAcceptancePreservesCompletedAppendAfterLockCleanupFailure(t *testing.T) {
 	deps, ledger, st := refuteTestDeps(t, nil)
-	if err := ledger.GuardarRevision("abc12345", "message", "bucket", "model-a", refuteFichaFixture()); err != nil {
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	deps.withLockedFicha = func(sha string, fn func(*review.Ficha) error) error {
-		if err := ledger.WithLockedFicha(sha, fn); err != nil {
+	deps.withLockedRecord = func(sha string, fn func(*review.Record) error) error {
+		if err := ledger.WithLockedRecord(sha, fn); err != nil {
 			return err
 		}
-		return review.ErrBloqueoNoLiberado
+		return review.ErrLockNotReleased
 	}
 	outcome, err := runAcceptance(deps, acceptValidOptions())
 	if outcome.disposition == nil || outcome.disposition.Status != review.StatusAcceptedByUser {
 		t.Fatalf("completed acceptance was discarded: outcome=%+v err=%v", outcome, err)
 	}
-	if !errors.Is(outcome.completionWarning, review.ErrBloqueoNoLiberado) {
-		t.Fatalf("cleanup failure = %v, want ErrBloqueoNoLiberado", outcome.completionWarning)
+	if !errors.Is(outcome.completionWarning, review.ErrLockNotReleased) {
+		t.Fatalf("cleanup failure = %v, want ErrLockNotReleased", outcome.completionWarning)
 	}
 	if err != nil {
 		t.Fatalf("completed acceptance failed: %v", err)

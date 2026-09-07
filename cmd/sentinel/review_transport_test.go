@@ -13,7 +13,7 @@ import (
 )
 
 // initGitRepo makes the temp directory a real repository so
-// git.ObtenerGitCommonDir resolves during transport wiring.
+// git.GetGitCommonDir resolves during transport wiring.
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
@@ -27,9 +27,9 @@ type fakeRestrictedAgent struct {
 	gotPaths []string
 }
 
-func (a *fakeRestrictedAgent) EjecutarPrompt(string) (string, error) { return a.response, nil }
+func (a *fakeRestrictedAgent) RunPrompt(string) (string, error) { return a.response, nil }
 
-func (a *fakeRestrictedAgent) EjecutarRevision(prompt, _ string, paths []string) (string, error) {
+func (a *fakeRestrictedAgent) RunReview(prompt, _ string, paths []string) (string, error) {
 	a.mu.Lock()
 	a.gotPaths = append([]string(nil), paths...)
 	a.mu.Unlock()
@@ -37,29 +37,29 @@ func (a *fakeRestrictedAgent) EjecutarRevision(prompt, _ string, paths []string)
 }
 
 func (a *fakeRestrictedAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.EjecutarRevision(prompt, sha, paths)
+	return a.RunReview(prompt, sha, paths)
 }
 
 func (*fakeRestrictedAgent) ReviewToolPolicy() reviewcontract.ToolPolicy {
 	return reviewcontract.DefaultToolPolicy()
 }
 
-// agentWithoutRevision satisfies AuditorAgente only: it lacks the restricted
+// agentWithoutRevision satisfies AgentReviewer only: it lacks the restricted
 // reviewer capability the durable transport requires.
 type agentWithoutRevision struct{}
 
-func (agentWithoutRevision) EjecutarPrompt(string) (string, error) { return "", nil }
+func (agentWithoutRevision) RunPrompt(string) (string, error) { return "", nil }
 
 type policyRecordingRestrictedAgent struct {
 	policy reviewcontract.ToolPolicy
 	calls  int
 }
 
-func (a *policyRecordingRestrictedAgent) EjecutarPrompt(string) (string, error) {
+func (a *policyRecordingRestrictedAgent) RunPrompt(string) (string, error) {
 	return `{"dim":"logic","verdict":"ok"}`, nil
 }
 
-func (a *policyRecordingRestrictedAgent) EjecutarRevision(string, string, []string) (string, error) {
+func (a *policyRecordingRestrictedAgent) RunReview(string, string, []string) (string, error) {
 	return `{"dim":"logic","verdict":"ok"}`, nil
 }
 
@@ -80,15 +80,15 @@ func TestDurableReviewTransportForwardsResolvedToolPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := review.AuditarCommit(func(review.ReviewBundle, string) (review.AuditorAgente, string, error) {
+	result := review.AuditCommit(func(review.ReviewBundle, string) (review.AgentReviewer, string, error) {
 		return agent, "normal", nil
-	}, 1, review.OpcionesAuditoria{
+	}, 1, review.AuditOptions{
 		SHA:             "sha-policy",
 		Bundles:         []review.ReviewBundle{{Name: "quality", Dimensions: []string{review.DimLogic}, Priority: review.PriorityRequired, Cost: 1}},
 		ReviewTransport: durableReviewTransport(cfg, worktree, "sha-policy", []string{"x.go"}),
 	})
 
-	if result.Veredicto != review.VerdictOK || agent.calls != 1 || agent.policy != contract.ToolPolicy {
+	if result.Verdict != review.VerdictOK || agent.calls != 1 || agent.policy != contract.ToolPolicy {
 		t.Fatalf("result=%+v calls=%d policy=%#v, want one durable policy-aware call with %#v", result, agent.calls, agent.policy, contract.ToolPolicy)
 	}
 }

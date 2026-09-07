@@ -12,14 +12,14 @@ import (
 
 func TestCheckCriticalVolumeIsAdvisory(t *testing.T) {
 	var output bytes.Buffer
-	exitCode := ejecutarCheckCon(&output, t.TempDir(), false, func() (git.VolumenPendiente, error) {
-		return git.VolumenPendiente{Bloqueante: 401, Estado: "CRITICO"}, nil
+	exitCode := runCheckWith(&output, t.TempDir(), false, func() (git.PendingVolume, error) {
+		return git.PendingVolume{Blocking: 401, State: "CRITICAL"}, nil
 	})
 
 	if exitCode != 0 {
 		t.Fatalf("critical advisory check exit code = %d, want 0\n%s", exitCode, output.String())
 	}
-	if !strings.Contains(output.String(), "CRITICO") {
+	if !strings.Contains(output.String(), "CRITICAL") {
 		t.Errorf("text output does not preserve the critical state: %s", output.String())
 	}
 	if !strings.Contains(output.String(), "sentinel slice plan --json") {
@@ -29,8 +29,8 @@ func TestCheckCriticalVolumeIsAdvisory(t *testing.T) {
 
 func TestCheckJSONPreservesVolumeAndAdvisoryState(t *testing.T) {
 	var output bytes.Buffer
-	exitCode := ejecutarCheckCon(&output, "worktree", true, func() (git.VolumenPendiente, error) {
-		return git.VolumenPendiente{Bloqueante: 450, Informativo: 12, Estado: "CRITICO"}, nil
+	exitCode := runCheckWith(&output, "worktree", true, func() (git.PendingVolume, error) {
+		return git.PendingVolume{Blocking: 450, Informational: 12, State: "CRITICAL"}, nil
 	})
 	if exitCode != 0 {
 		t.Fatalf("JSON check exit code = %d", exitCode)
@@ -50,7 +50,7 @@ func TestCheckJSONPreservesVolumeAndAdvisoryState(t *testing.T) {
 	if report.Worktree != "worktree" || report.AuthoredLines != 450 || report.InformationalLines != 12 {
 		t.Errorf("JSON volume = %+v", report)
 	}
-	if report.State != "CRITICO" || !report.Advisory {
+	if report.State != "CRITICAL" || !report.Advisory {
 		t.Errorf("JSON advisory state = %+v", report)
 	}
 	if report.Recommendation != "sentinel slice plan --json" {
@@ -60,8 +60,8 @@ func TestCheckJSONPreservesVolumeAndAdvisoryState(t *testing.T) {
 
 func TestCheckMeasurementFailureRemainsBlockingAndDistinct(t *testing.T) {
 	var output bytes.Buffer
-	exitCode := ejecutarCheckCon(&output, "worktree", true, func() (git.VolumenPendiente, error) {
-		return git.VolumenPendiente{Estado: "ERROR"}, errors.New("git diff failed")
+	exitCode := runCheckWith(&output, "worktree", true, func() (git.PendingVolume, error) {
+		return git.PendingVolume{State: "ERROR"}, errors.New("git diff failed")
 	})
 	if exitCode != 1 {
 		t.Fatalf("measurement failure exit code = %d, want 1", exitCode)

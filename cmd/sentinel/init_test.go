@@ -7,95 +7,95 @@ import (
 	"testing"
 )
 
-// TestInyectarReglasIdempotente: ejecutar init dos veces NO debe duplicar el
-// bloque de reglas en los archivos objetivo (regresión del bug donde init
-// appendeaba incondicionalmente y duplicaba la inserción).
-func TestInyectarReglasIdempotente(t *testing.T) {
+// TestInjectRulesIdempotent: running init twice must NOT duplicate the
+// rules block in the target files (regression of the bug where init appended
+// unconditionally and duplicated the insertion).
+func TestInjectRulesIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, "AGENTS.md")
-	contenidoBase := "# Proyecto\n\n## Convenciones\n"
+	path := filepath.Join(dir, "AGENTS.md")
+	baseContent := "# Project\n\n## Conventions\n"
 
-	if err := os.WriteFile(ruta, []byte(contenidoBase), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(baseContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Primera inyección: debe escribir el bloque.
-	escrito, err := inyectarReglasDeArchivo(ruta)
+	// First injection: it must write the block.
+	written, err := injectRulesIntoFile(path)
 	if err != nil {
-		t.Fatalf("primera inyección devolvió error: %v", err)
+		t.Fatalf("first injection returned an error: %v", err)
 	}
-	if !escrito {
-		t.Fatal("la primera inyección debería escribir el bloque")
-	}
-
-	datos, _ := os.ReadFile(ruta)
-	if n := strings.Count(string(datos), "## CRITICAL VOLUME RULE"); n != 1 {
-		t.Fatalf("tras la primera inyección hay %d bloques, esperado 1", n)
+	if !written {
+		t.Fatal("the first injection should write the block")
 	}
 
-	// Segunda inyección (init repetido): no debe duplicar.
-	escrito, err = inyectarReglasDeArchivo(ruta)
+	data, _ := os.ReadFile(path)
+	if n := strings.Count(string(data), "## CRITICAL VOLUME RULE"); n != 1 {
+		t.Fatalf("after the first injection there are %d blocks, expected 1", n)
+	}
+
+	// Second injection (repeated init): it must not duplicate.
+	written, err = injectRulesIntoFile(path)
 	if err != nil {
-		t.Fatalf("segunda inyección devolvió error: %v", err)
+		t.Fatalf("second injection returned an error: %v", err)
 	}
-	if escrito {
-		t.Error("la segunda inyección no debería modificar el archivo (bloque ya presente)")
+	if written {
+		t.Error("the second injection should not modify the file (block already present)")
 	}
 
-	datos, _ = os.ReadFile(ruta)
-	if n := strings.Count(string(datos), "## CRITICAL VOLUME RULE"); n != 1 {
-		t.Fatalf("tras la segunda inyección hay %d bloques, esperado 1 (idempotencia rota)", n)
+	data, _ = os.ReadFile(path)
+	if n := strings.Count(string(data), "## CRITICAL VOLUME RULE"); n != 1 {
+		t.Fatalf("after the second injection there are %d blocks, expected 1 (idempotence broken)", n)
 	}
-	// El contenido original se conserva íntegro.
-	if !strings.Contains(string(datos), contenidoBase) {
-		t.Error("la inyección perdió el contenido original del archivo")
+	// The original content is preserved intact.
+	if !strings.Contains(string(data), baseContent) {
+		t.Error("the injection lost the file's original content")
 	}
 }
 
-// TestInyectarReglasCreaArchivo: si el archivo no existe, init lo crea con el
-// bloque (mismo comportamiento que antes).
-func TestInyectarReglasCreaArchivo(t *testing.T) {
+// TestInjectRulesCreatesFile: when the file does not exist, init creates it
+// with the block (same behavior as before).
+func TestInjectRulesCreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, "CLAUDE.md")
+	path := filepath.Join(dir, "CLAUDE.md")
 
-	escrito, err := inyectarReglasDeArchivo(ruta)
+	written, err := injectRulesIntoFile(path)
 	if err != nil {
-		t.Fatalf("inyección devolvió error: %v", err)
+		t.Fatalf("injection returned an error: %v", err)
 	}
-	if !escrito {
-		t.Error("con archivo inexistente debería escribirse el bloque")
+	if !written {
+		t.Error("with a missing file the block should be written")
 	}
-	datos, err := os.ReadFile(ruta)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no se creó el archivo: %v", err)
+		t.Fatalf("the file was not created: %v", err)
 	}
-	if !strings.Contains(string(datos), reglasVolumen) {
-		t.Error("el archivo creado no contiene el bloque de reglas")
+	if !strings.Contains(string(data), volumeRules) {
+		t.Error("the created file does not contain the rules block")
 	}
 }
 
-// TestQuitarReglasReparaDuplicados: uninit debe retirar TODAS las apariciones
-// del bloque, incluidos los duplicados que init dejó en versiones anteriores.
-func TestQuitarReglasReparaDuplicados(t *testing.T) {
+// TestRemoveRulesRepairsDuplicates: uninit must remove ALL occurrences of
+// the block, including the duplicates init left in previous versions.
+func TestRemoveRulesRepairsDuplicates(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, ".claudecode.md")
-	duplicado := "# previo\n" + reglasVolumen + reglasVolumen + "fin\n"
-	if err := os.WriteFile(ruta, []byte(duplicado), 0644); err != nil {
+	path := filepath.Join(dir, ".claudecode.md")
+	duplicated := "# previous\n" + volumeRules + volumeRules + "end\n"
+	if err := os.WriteFile(path, []byte(duplicated), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	retiradas, err := quitarReglasDeArchivo(ruta)
+	removed, err := removeRulesFromFile(path)
 	if err != nil {
-		t.Fatalf("quitarReglasDeArchivo devolvió error: %v", err)
+		t.Fatalf("removeRulesFromFile returned an error: %v", err)
 	}
-	if !retiradas {
-		t.Fatal("debería haberse retirado algo (había duplicados)")
+	if !removed {
+		t.Fatal("something should have been removed (there were duplicates)")
 	}
-	datos, _ := os.ReadFile(ruta)
-	if strings.Contains(string(datos), "## CRITICAL VOLUME RULE") {
-		t.Errorf("quedan bloques de reglas tras uninit: %q", datos)
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "## CRITICAL VOLUME RULE") {
+		t.Errorf("rules blocks remain after uninit: %q", data)
 	}
-	if !strings.Contains(string(datos), "# previo") || !strings.Contains(string(datos), "fin\n") {
-		t.Errorf("uninit borró contenido ajeno: %q", datos)
+	if !strings.Contains(string(data), "# previous") || !strings.Contains(string(data), "end\n") {
+		t.Errorf("uninit deleted foreign content: %q", data)
 	}
 }

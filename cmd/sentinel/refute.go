@@ -107,9 +107,9 @@ type refuteDeps struct {
 	// test sets it to land a concurrent revision, proving a stale
 	// refutation fails closed. Production leaves it nil.
 	beforeLockedAppend func()
-	// withLockedFicha permits tests to reproduce a lock cleanup failure after
+	// withLockedRecord permits tests to reproduce a lock cleanup failure after
 	// a callback already persisted its independent disposition record.
-	withLockedFicha func(string, func(*review.Ficha) error) error
+	withLockedRecord func(string, func(*review.Record) error) error
 }
 
 // refuteOutcome separates a completed append from a hard refutation failure.
@@ -127,13 +127,13 @@ func resolveRefuteDeps(worktree string) (*refuteDeps, error) {
 	if err != nil {
 		return nil, err
 	}
-	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		return nil, err
 	}
 	return &refuteDeps{
 		ledger:   ledger,
-		store:    store.NuevoStore(commonDir),
+		store:    store.NewStore(commonDir),
 		snapshot: review.NewSnapshotReader(worktree),
 		now:      time.Now,
 	}, nil
@@ -148,11 +148,11 @@ var refuteDepsResolver = resolveRefuteDeps
 // those commands must fail closed rather than audit as if no human ever
 // answered.
 func loadDispositionsForWorktree(worktree string) ([]review.FindingDisposition, error) {
-	commonDir, err := git.ObtenerGitCommonDir(worktree)
+	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		return nil, err
 	}
-	dispositions, err := store.NuevoStore(commonDir).ReadDispositions()
+	dispositions, err := store.NewStore(commonDir).ReadDispositions()
 	if err != nil {
 		return nil, fmt.Errorf("reading human dispositions: %w", err)
 	}
@@ -164,7 +164,7 @@ func loadDispositionsForWorktree(worktree string) ([]review.FindingDisposition, 
 // record, a missing or ambiguous fingerprint, an already-cleared finding, a
 // range the refutation gate rejects, an unreadable snapshot, a review record
 // that changed between resolution and append, or a corrupt dispositions log.
-// A ficha lock cleanup error after a completed append is returned as a
+// A record lock cleanup error after a completed append is returned as a
 // completion warning; all other errors are hard failures.
 func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) {
 	if deps == nil || deps.ledger == nil || deps.store == nil || deps.snapshot == nil {
@@ -183,14 +183,14 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) 
 	if strings.HasPrefix(sha, "-") {
 		return refuteOutcome{}, fmt.Errorf("refute: invalid reviewed SHA")
 	}
-	ficha, err := deps.ledger.LeerFicha(sha)
+	record, err := deps.ledger.ReadRecord(sha)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("refute: reading the review record: %w", err)
 	}
-	if ficha == nil || len(ficha.Revisions) == 0 {
+	if record == nil || len(record.Revisions) == 0 {
 		return refuteOutcome{}, fmt.Errorf("refute: no review record for SHA %q", sha)
 	}
-	target, err := review.ResolveDispositionTarget(ficha.Revisions[len(ficha.Revisions)-1], fingerprint)
+	target, err := review.ResolveDispositionTarget(record.Revisions[len(record.Revisions)-1], fingerprint)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("refute: %w", err)
 	}
@@ -201,8 +201,8 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) 
 	// caller supplies no path, so a refutation cannot be redirected at a
 	// file the finding never cited.
 	safePath, evidence, rangeHash, err := review.ValidateHumanRefutationRange(
-		deps.snapshot, sha, target.Location.Archivo, target.Location.LineaInicio,
-		reason, target.Location.Archivo, opts.lineStart, opts.lineEnd)
+		deps.snapshot, sha, target.Location.File, target.Location.LineStart,
+		reason, target.Location.File, opts.lineStart, opts.lineEnd)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("refute: %w", err)
 	}
@@ -220,30 +220,30 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) 
 		Source:            review.DispositionSourceHuman,
 		At:                now().UTC(),
 		TargetDimension:   target.Dimension,
-		TargetLine:        target.Location.LineaInicio,
+		TargetLine:        target.Location.LineStart,
 		TargetDescription: target.Description,
 		TargetSeverity:    target.Severity,
 	}
 	// Compare-and-append against the authoritative record: the fingerprint
-	// above was resolved against a ficha read before any lock, and a
+	// above was resolved against a record read before any lock, and a
 	// concurrent re-audit may have retired it since. The expected bytes are
-	// snapshotted here and re-checked under the same ficha lock the
+	// snapshotted here and re-checked under the same record lock the
 	// revision writer holds; any difference fails closed with nothing
 	// persisted. The store append itself runs inside the lock so no writer
 	// can slip between the re-check and the write.
-	expected, err := json.Marshal(ficha)
+	expected, err := json.Marshal(record)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("refute: reading the review record: %w", err)
 	}
 	if deps.beforeLockedAppend != nil {
 		deps.beforeLockedAppend()
 	}
-	withLockedFicha := deps.ledger.WithLockedFicha
-	if deps.withLockedFicha != nil {
-		withLockedFicha = deps.withLockedFicha
+	withLockedRecord := deps.ledger.WithLockedRecord
+	if deps.withLockedRecord != nil {
+		withLockedRecord = deps.withLockedRecord
 	}
 	completed := false
-	if err := withLockedFicha(sha, func(current *review.Ficha) error {
+	if err := withLockedRecord(sha, func(current *review.Record) error {
 		fresh, err := json.Marshal(current)
 		if err != nil {
 			return fmt.Errorf("refute: reading the review record: %w", err)
@@ -270,10 +270,10 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) 
 		completed = true
 		return nil
 	}); err != nil {
-		if completed && errors.Is(err, review.ErrBloqueoNoLiberado) {
+		if completed && errors.Is(err, review.ErrLockNotReleased) {
 			return refuteOutcome{
 				disposition:       disposition,
-				completionWarning: fmt.Errorf("refute: disposition recorded but ficha lock cleanup failed: %w", err),
+				completionWarning: fmt.Errorf("refute: disposition recorded but record lock cleanup failed: %w", err),
 			}, nil
 		}
 		return refuteOutcome{}, err
@@ -281,10 +281,10 @@ func runRefutation(deps *refuteDeps, opts refuteOptions) (refuteOutcome, error) 
 	return refuteOutcome{disposition: disposition}, nil
 }
 
-// ejecutarRefute implements `sentinel refute`: parse, resolve, record.
+// runRefute implements `sentinel refute`: parse, resolve, record.
 // Exit 0 records one disposition, including the completed-but-warning case
-// where only the ficha lock cleanup failed after persistence.
-func ejecutarRefute(w io.Writer, worktree string, args []string) int {
+// where only the record lock cleanup failed after persistence.
+func runRefute(w io.Writer, worktree string, args []string) int {
 	opts, err := parseRefuteArgs(args)
 	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
@@ -313,7 +313,7 @@ func reportRefutationResult(w io.Writer, outcome refuteOutcome) int {
 		disposition.Fingerprint, disposition.SHA, disposition.Path,
 		disposition.LineStart, disposition.LineEnd, disposition.RangeHash)
 	if outcome.completionWarning != nil {
-		fmt.Fprintf(w, "⚠️  The refutation is recorded, but ficha lock cleanup failed: %v\n", outcome.completionWarning)
+		fmt.Fprintf(w, "⚠️  The refutation is recorded, but record lock cleanup failed: %v\n", outcome.completionWarning)
 	}
 	return 0
 }

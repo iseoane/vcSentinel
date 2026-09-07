@@ -49,19 +49,19 @@ func prepareInitRepository(t *testing.T) string {
 	return runGit(t, "rev-parse", "--show-toplevel")
 }
 
-// TestInitInstalaHookEnCommonDirConReglaMarcada drives the real init flow over
+// TestInitInstallsHookInCommonDirWithMarkedRule drives the real init flow over
 // a temporary repository and proves the full artifact set: the pre-commit hook
 // is written into <git-common-dir>/hooks with the exact content the generator
 // produces (shebang, absolute quoted binary path, check --staged), it is
 // executable on Linux, the marked guardian rule block lands in the agent
 // instruction files, and the per-project configuration is created.
-func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
+func TestInitInstallsHookInCommonDirWithMarkedRule(t *testing.T) {
 	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
 
-	ejecutarInit(root)
+	runInit(root)
 
-	commonDir, err := git.ObtenerGitCommonDir(root)
+	commonDir, err := git.GetGitCommonDir(root)
 	if err != nil {
 		t.Fatalf("could not resolve the common-dir: %v", err)
 	}
@@ -74,9 +74,9 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not locate the test executable: %v", err)
 	}
-	esperado := generarScriptHookPara(exe)
-	if string(hookBytes) != esperado {
-		t.Errorf("unexpected hook content:\n%q\nexpected:\n%q", hookBytes, esperado)
+	expected := generateHookScriptFor(exe)
+	if string(hookBytes) != expected {
+		t.Errorf("unexpected hook content:\n%q\nexpected:\n%q", hookBytes, expected)
 	}
 	if !strings.HasPrefix(string(hookBytes), "#!/bin/sh\n") {
 		t.Errorf("the hook does not start with the #!/bin/sh shebang: %q", hookBytes)
@@ -94,21 +94,21 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 		}
 	}
 
-	for _, nombre := range []string{"AGENTS.md", "CLAUDE.md"} {
-		datos, err := os.ReadFile(filepath.Join(root, nombre))
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
-			t.Fatalf("init did not create %s: %v", nombre, err)
+			t.Fatalf("init did not create %s: %v", name, err)
 		}
-		contenido := string(datos)
-		if !strings.Contains(contenido, marcadorInicio) || !strings.Contains(contenido, marcadorFin) {
-			t.Errorf("%s does not contain the marked volume rules block", nombre)
+		content := string(data)
+		if !strings.Contains(content, markerBegin) || !strings.Contains(content, markerEnd) {
+			t.Errorf("%s does not contain the marked volume rules block", name)
 		}
-		if !strings.Contains(contenido, "CRITICAL VOLUME RULE") {
-			t.Errorf("%s does not contain the guardian rule", nombre)
+		if !strings.Contains(content, "CRITICAL VOLUME RULE") {
+			t.Errorf("%s does not contain the guardian rule", name)
 		}
 	}
 
-	if !setup.EstaInicializado(root) {
+	if !setup.IsInitialized(root) {
 		t.Error("init did not leave the per-project configuration (.vas_sentinel/vassentinel.yml)")
 	}
 	if count := repositoryCount(t, registryPath); count != 1 {
@@ -120,7 +120,7 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ejecutarInit(root)
+		runInit(root)
 		hookAfter, err := os.ReadFile(hookPath)
 		if err != nil {
 			t.Fatal(err)
@@ -132,7 +132,7 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n := strings.Count(string(agents), marcadorInicio); n != 1 {
+		if n := strings.Count(string(agents), markerBegin); n != 1 {
 			t.Errorf("after repeating init there are %d rule blocks, expected 1", n)
 		}
 		if count := repositoryCount(t, registryPath); count != 1 {
@@ -141,21 +141,21 @@ func TestInitInstalaHookEnCommonDirConReglaMarcada(t *testing.T) {
 	})
 }
 
-// TestUninitRevierteHookConfigYReglas proves uninit reverses exactly what init
+// TestUninitRevertsHookConfigAndRules proves uninit reverses exactly what init
 // installed: hook removed from the common dir, per-project configuration
 // removed, rule blocks retired from the agent files while their own content
 // survives.
-func TestUninitRevierteHookConfigYReglas(t *testing.T) {
+func TestUninitRevertsHookConfigAndRules(t *testing.T) {
 	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
-	contenidoPropio := "# My project\n\nOwn documentation.\n"
-	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(contenidoPropio), 0644); err != nil {
+	ownContent := "# My project\n\nOwn documentation.\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(ownContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	ejecutarInit(root)
+	runInit(root)
 
-	commonDir, err := git.ObtenerGitCommonDir(root)
+	commonDir, err := git.GetGitCommonDir(root)
 	if err != nil {
 		t.Fatalf("could not resolve the common-dir: %v", err)
 	}
@@ -164,55 +164,55 @@ func TestUninitRevierteHookConfigYReglas(t *testing.T) {
 		t.Fatalf("the hook was not installed after init: %v", err)
 	}
 
-	ejecutarUninit(root)
+	runUninit(root)
 
 	if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
 		t.Errorf("uninit did not remove the installed hook: %v", err)
 	}
-	if setup.EstaInicializado(root) {
+	if setup.IsInitialized(root) {
 		t.Error("uninit did not remove the per-project configuration")
 	}
 	if count := repositoryCount(t, registryPath); count != 0 {
 		t.Errorf("uninit left %d repositories registered", count)
 	}
-	datos, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	data, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	contenido := string(datos)
-	if strings.Contains(contenido, marcadorInicio) || strings.Contains(contenido, "CRITICAL VOLUME RULE") {
-		t.Errorf("uninit left leftovers of the rules block: %q", contenido)
+	content := string(data)
+	if strings.Contains(content, markerBegin) || strings.Contains(content, "CRITICAL VOLUME RULE") {
+		t.Errorf("uninit left leftovers of the rules block: %q", content)
 	}
-	if !strings.Contains(contenido, "Own documentation.") {
+	if !strings.Contains(content, "Own documentation.") {
 		t.Error("uninit lost the file's own content")
 	}
 }
 
-// TestUninitPreservaHookAjeno: if another tool replaced the hook after init,
+// TestUninitPreservesForeignHook: if another tool replaced the hook after init,
 // uninit must leave it alone instead of deleting what it did not install.
-func TestUninitPreservaHookAjeno(t *testing.T) {
+func TestUninitPreservesForeignHook(t *testing.T) {
 	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
-	ejecutarInit(root)
+	runInit(root)
 
-	commonDir, err := git.ObtenerGitCommonDir(root)
+	commonDir, err := git.GetGitCommonDir(root)
 	if err != nil {
 		t.Fatalf("could not resolve the common-dir: %v", err)
 	}
 	hookPath := filepath.Join(commonDir, "hooks", "pre-commit")
-	ajeno := "#!/bin/sh\necho other-tool\n"
-	if err := os.WriteFile(hookPath, []byte(ajeno), 0755); err != nil {
+	foreign := "#!/bin/sh\necho other-tool\n"
+	if err := os.WriteFile(hookPath, []byte(foreign), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	ejecutarUninit(root)
+	runUninit(root)
 
-	datos, err := os.ReadFile(hookPath)
+	data, err := os.ReadFile(hookPath)
 	if err != nil {
 		t.Fatalf("uninit removed a hook that no longer belonged to it: %v", err)
 	}
-	if string(datos) != ajeno {
-		t.Errorf("uninit modified the foreign hook: %q", datos)
+	if string(data) != foreign {
+		t.Errorf("uninit modified the foreign hook: %q", data)
 	}
 	if count := repositoryCount(t, registryPath); count != 0 {
 		t.Errorf("foreign hook prevented registry removal: %d repositories remain", count)
@@ -222,7 +222,7 @@ func TestUninitPreservaHookAjeno(t *testing.T) {
 func TestUninitKeepsRegistryWhenCleanupFails(t *testing.T) {
 	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
-	ejecutarInit(root)
+	runInit(root)
 	configPath := filepath.Join(root, ".vas_sentinel", "vassentinel.yml")
 	if err := os.Remove(configPath); err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func TestUninitKeepsRegistryWhenCleanupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ejecutarUninit(root)
+	runUninit(root)
 	if count := repositoryCount(t, registryPath); count != 1 {
 		t.Fatalf("failed uninit left %d registry entries, want 1", count)
 	}
@@ -248,8 +248,8 @@ func TestInitContinuesWhenRepositoryRegistryUpdateFails(t *testing.T) {
 		return filepath.Join(parentFile, "repositories.json"), nil
 	}
 	t.Cleanup(func() { resolveRepositoryRegistryPath = previous })
-	ejecutarInit(root)
-	if !setup.EstaInicializado(root) {
+	runInit(root)
+	if !setup.IsInitialized(root) {
 		t.Fatal("init failed because the additive registry update failed")
 	}
 }
@@ -259,16 +259,16 @@ func TestInitContinuesWhenRepositoryRegistryUpdateFails(t *testing.T) {
 // exit 0 otherwise. Only used from Linux-gated tests; on Windows the harness
 // coverage for the same contract is compile-time plus the existing .cmd
 // fixtures in internal/setup.
-func writeFakeSentinel(t *testing.T, ruta string, overBudget bool) {
+func writeFakeSentinel(t *testing.T, path string, overBudget bool) {
 	t.Helper()
 	script := "#!/bin/sh\necho 'STAGED VOLUME REJECTED BY FAKE SENTINEL'\nexit 1\n"
 	if !overBudget {
 		script = "#!/bin/sh\nexit 0\n"
 	}
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -278,7 +278,7 @@ func writeFakeSentinel(t *testing.T, ruta string, overBudget bool) {
 // what init does, with the fake binary standing in for the real one.
 func installHookFor(t *testing.T, root string, exeSentinel string) string {
 	t.Helper()
-	commonDir, err := git.ObtenerGitCommonDir(root)
+	commonDir, err := git.GetGitCommonDir(root)
 	if err != nil {
 		t.Fatalf("could not resolve the common-dir: %v", err)
 	}
@@ -287,7 +287,7 @@ func installHookFor(t *testing.T, root string, exeSentinel string) string {
 		t.Fatal(err)
 	}
 	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte(generarScriptHookPara(exeSentinel)), 0755); err != nil {
+	if err := os.WriteFile(hookPath, []byte(generateHookScriptFor(exeSentinel)), 0755); err != nil {
 		t.Fatal(err)
 	}
 	// core.hooksPath must point at the DIRECTORY containing the hooks,
@@ -298,9 +298,9 @@ func installHookFor(t *testing.T, root string, exeSentinel string) string {
 // commitWithHooks runs a real `git commit` with core.hooksPath resolving to
 // the repository's own installed hooks directory (overriding any ambient Git
 // configuration), so the hook under test is precisely the one init installed.
-func commitWithHooks(t *testing.T, root string, hooksPathArg string, mensaje string) ([]byte, error) {
+func commitWithHooks(t *testing.T, root string, hooksPathArg string, message string) ([]byte, error) {
 	t.Helper()
-	cmd := exec.Command("git", "-c", "core.hooksPath="+hooksPathArg, "commit", "-m", mensaje)
+	cmd := exec.Command("git", "-c", "core.hooksPath="+hooksPathArg, "commit", "-m", message)
 	cmd.Dir = root
 	return cmd.CombinedOutput()
 }
