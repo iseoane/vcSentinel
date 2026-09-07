@@ -219,18 +219,19 @@ func RunPrReviewWith(w io.Writer, worktree string, flags FlagsPrReview, wiring W
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	// The ⏳ progress lines are human motion, not payload: when this
-	// invocation will emit --json to stdout they ride stderr (the JSON-safe
-	// channel, the same discipline as the durable-run announcer), so byte 0
-	// of --json stdout stays '{'. The routing derives from the streams this
-	// function receives — never from the process globals directly.
+	// The ⏳ progress lines and the human warnings (blob-store reuse, event
+	// recording) are human motion, not payload: when this invocation will
+	// emit --json to stdout they ride stderr (the JSON-safe channel, the same
+	// discipline as the durable-run announcer), so byte 0 of --json stdout
+	// stays '{'. The routing derives from the streams this function receives
+	// — never from the process globals directly.
 	progress := io.Writer(w)
 	if flags.JsonOut {
 		progress = os.Stderr
 	}
 	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring, progress)
 	if err != nil {
-		fmt.Fprintf(w, "⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
+		fmt.Fprintf(progress, "⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
 	}
 	// Standing human answers carry into the net audit (FU-6 unit A). A
 	// corrupt log fails closed rather than auditing as if no human answered.
@@ -252,7 +253,7 @@ func RunPrReviewWith(w io.Writer, worktree string, flags FlagsPrReview, wiring W
 		fmt.Fprintf(w, "? Warning: could not build the event detail: %v\n", err)
 	}
 	if err := deps.RecordEvent(gitDir, "pr-review", 0, res.SHAs, detail, worktree); err != nil {
-		fmt.Fprintf(w, "? Warning: could not record the event: %v\n", err)
+		fmt.Fprintf(progress, "? Warning: could not record the event: %v\n", err)
 	}
 
 	if flags.JsonOut {

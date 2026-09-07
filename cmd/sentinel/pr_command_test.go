@@ -1966,6 +1966,71 @@ func TestPrReviewJSONStdoutStartsAtJSON(t *testing.T) {
 	}
 }
 
+// TestPrReviewJSONRoutesWarningsOffStdout extends the byte-0 contract to the
+// human warnings of the flow: in --json mode both the blob-store warning
+// (storeWarning) and the event-record warning are motion, not payload, and
+// must ride the same progress channel as the spinners (stderr), so the JSON
+// document still opens stdout.
+//
+// The harness splits the two git probes the way a foreign worktree with an
+// ambient GIT_DIR does: GetGitDirFrom honors the ambient GIT_DIR while the
+// sanitized common-dir probe inside ResolveBlobStore fails, which is exactly
+// the storeWarning path; the failing RecordEvent seam is the event-record
+// warning path.
+func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
+	repo := tempGitRepo(t)
+	ambient, err := exec.Command("git", "-C", repo, "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		t.Fatalf("rev-parse --absolute-git-dir: %v", err)
+	}
+	t.Setenv("GIT_DIR", strings.TrimSpace(string(ambient)))
+	worktree := t.TempDir()
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
+			return &review.BranchResult{
+				Branch:   "feat/warning-routing",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
+			return errors.New("event store locked")
+		},
+	}
+	stdout, stderr := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("byte 0 of --json stdout = %q, want '{'; stdout:\n%s", firstBytes(stdout), stdout)
+	}
+	if strings.Contains(stdout, "⚠️") || strings.Contains(stdout, "? Warning") {
+		t.Errorf("stdout received warning bytes that precede the JSON document:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "⚠️  Warning: could not resolve the git-common-dir") {
+		t.Errorf("stderr misses the blob-store warning:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "? Warning: could not record the event: event store locked") {
+		t.Errorf("stderr misses the event-record warning:\n%s", stderr)
+	}
+}
+
 // firstBytes reports the first bytes of s for failure messages, tolerating
 // empty output.
 func firstBytes(s string) string {
