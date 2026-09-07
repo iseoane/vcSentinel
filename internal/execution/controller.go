@@ -515,24 +515,23 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 			state.revision = receipt.Revision
 			state.state = receipt.State
 		}
-		// Ficha 18: perder la carrera del append terminal NO es un fallo de
-		// infraestructura. Otro escritor asentó el run primero y su evento es
-		// la autoridad —ya está escrito y es inmutable—, pero eso significa que
-		// el run está ASENTADO, no que esta ejecución fracasara. Reportarlo como
-		// error tiraba trabajo ya pagado: el proveedor había respondido y la
-		// salida existía, y el usuario solo veía "expected execution revision N,
+		// Sheet 18: losing the terminal-append race is NOT an infrastructure
+		// failure. Another writer settled the run first and its event is the
+		// authority — already written and immutable — which means the run is
+		// SETTLED, not that this execution failed. Reporting it as an error
+		// threw away work already paid for: the provider had answered, the
+		// output existed, and the user only saw "expected execution revision N,
 		// found M".
 		//
-		// Solo se reconcilia si la cabeza duradera YA es terminal. Un conflicto
-		// contra una cabeza no terminal es una escritura concurrente de verdad y
-		// sigue siendo un error. El resultado propio se descarta igual que ante
-		// un abort: la clase reportada es la que consta durablemente, nunca la
-		// nuestra.
+		// Only reconcile when the durable head is ALREADY terminal. A conflict
+		// against a non-terminal head is a genuinely concurrent write and stays
+		// an error. Our own result is discarded just like on an abort: the
+		// reported class is the one recorded durably, never ours.
 		if errors.Is(persistenceErr, store.ErrRevisionConflict) {
-			if reconciliado, clase, ok := c.reconcileLostTerminalRace(invocation.RunID()); ok {
-				state.revision = reconciliado.Revision
-				state.state = reconciliado.State
-				c.completeLocked(state, invocation, reconciliado.State, clase, AdapterResult{}, "settled by another writer while this attempt was running: "+string(reconciliado.Terminal), nil, false)
+			if reconciled, class, ok := c.reconcileLostTerminalRace(invocation.RunID()); ok {
+				state.revision = reconciled.Revision
+				state.state = reconciled.State
+				c.completeLocked(state, invocation, reconciled.State, class, AdapterResult{}, "settled by another writer while this attempt was running: "+string(reconciled.Terminal), nil, false)
 				return
 			}
 		}
@@ -546,24 +545,24 @@ func (c *Controller) finish(state *runState, invocation agentrun.InvocationEnvel
 	c.completeLocked(state, invocation, target, class, result, errorText(adapterErr), nil, false)
 }
 
-// reconcileLostTerminalRace lee el estado duradero tras perder el append
-// terminal. Devuelve la proyección y su clase solo cuando la cabeza ya es
-// terminal, que es la única situación en la que el run está realmente asentado
-// por otro escritor.
+// reconcileLostTerminalRace reads the durable state after losing the
+// terminal append. It returns the projection and its class only when the
+// head is already terminal, the only situation in which the run is truly
+// settled by another writer.
 func (c *Controller) reconcileLostTerminalRace(runID agentrun.Identity) (store.RunProjection, agentrun.OutcomeClass, bool) {
-	proyeccion, err := c.store.ReadDerivedProjection(string(runID))
-	if err != nil || proyeccion == nil {
+	derived, err := c.store.ReadDerivedProjection(string(runID))
+	if err != nil || derived == nil {
 		return store.RunProjection{}, "", false
 	}
-	projection := *proyeccion
+	projection := *derived
 	if projection.Terminal == agentrun.TerminalNone {
 		return store.RunProjection{}, "", false
 	}
-	clase, ok := outcomeDeEstadoTerminal(projection.State)
+	class, ok := outcomeFromTerminalState(projection.State)
 	if !ok {
 		return store.RunProjection{}, "", false
 	}
-	return projection, clase, true
+	return projection, class, true
 }
 
 func (c *Controller) respond(state *runState, runID agentrun.Identity, response string) (ApplyResult, error) {

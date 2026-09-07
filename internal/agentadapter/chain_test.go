@@ -244,18 +244,18 @@ func TestChainGetCommitMessageWithDiff(t *testing.T) {
 // delegated only to the children implementing AdapterRefactor, skipping the
 // rest.
 func TestChainRefactorOnlyCapableChildren(t *testing.T) {
-	base := &fakeAdapter{name: "base", err: errors.New("no implementa refactor")}
+	base := &fakeAdapter{name: "base", err: errors.New("does not implement refactor")}
 	withRefactor := &fakeAdapterRefactor{
-		fakeAdapter: fakeAdapter{name: "refactor", err: errors.New("no implementa refactor")},
-		planOutput:  "plan de división",
+		fakeAdapter: fakeAdapter{name: "refactor", err: errors.New("does not implement refactor")},
+		planOutput:  "division plan",
 	}
 	chain := &AdapterChain{adapters: []completeAdapter{base, withRefactor}}
 
-	plan, err := chain.ProposeRefactorPlan("masivo.go")
+	plan, err := chain.ProposeRefactorPlan("massive.go")
 	if err != nil {
 		t.Fatalf("ProposeRefactorPlan returned an error: %v", err)
 	}
-	if plan != "plan de división" {
+	if plan != "division plan" {
 		t.Errorf("plan = %q, want the AdapterRefactor child's", plan)
 	}
 }
@@ -270,7 +270,7 @@ func TestChainEmptyList(t *testing.T) {
 	if _, err := chain.GetCommitMessage([]string{}, "config", 1); err == nil {
 		t.Error("empty list should return an error on GetCommitMessage")
 	}
-	if _, err := chain.ProposeRefactorPlan("masivo.go"); err == nil {
+	if _, err := chain.ProposeRefactorPlan("massive.go"); err == nil {
 		t.Error("empty list should return an error on ProposeRefactorPlan")
 	}
 }

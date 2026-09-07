@@ -17,16 +17,16 @@ type stubAdapter struct {
 
 func (a *stubAdapter) RunPrompt(string) (string, error) {
 	if a.fails {
-		return "", errors.New("no disponible")
+		return "", errors.New("not available")
 	}
 	return "ok", nil
 }
 
 func (a *stubAdapter) GetCommitMessage([]string, string, int) (string, error) {
 	if a.fails {
-		return "", errors.New("no disponible")
+		return "", errors.New("not available")
 	}
-	return "chore: algo", nil
+	return "chore: something", nil
 }
 
 func (a *stubAdapter) EffectiveAgent() (EffectiveAgent, bool) {
@@ -82,7 +82,7 @@ func TestChainUpdatesAgentPerRequest(t *testing.T) {
 	second := &stubAdapter{name: "opencode", model: "sonnet"}
 	chain := &AdapterChain{adapters: []completeAdapter{first, second}}
 
-	if _, err := chain.RunPrompt("uno"); err != nil {
+	if _, err := chain.RunPrompt("one"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if effective, _ := chain.EffectiveAgent(); effective.Binary != "claude" {

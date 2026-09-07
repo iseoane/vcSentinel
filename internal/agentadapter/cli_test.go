@@ -276,9 +276,9 @@ func TestValidateCommitMessage(t *testing.T) {
 		output string
 		valid  bool
 	}{
-		{name: "conventional", output: "feat(slice): agrupar por cohesion", valid: true},
-		{name: "multiline", output: "He revisado los cambios\nfeat(slice): agrupar por cohesion", valid: false},
-		{name: "generic text", output: "He revisado los cambios", valid: false},
+		{name: "conventional", output: "feat(slice): group by cohesion", valid: true},
+		{name: "multiline", output: "I reviewed the changes\nfeat(slice): group by cohesion", valid: false},
+		{name: "generic text", output: "I reviewed the changes", valid: false},
 		{name: "empty", output: "  ", valid: false},
 	}
 
@@ -304,13 +304,13 @@ func TestExtractOpenCodeCommitMessage(t *testing.T) {
 	}{
 		{
 			name:   "one text among events",
-			output: "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): describir el cambio\"}}\n{\"type\":\"step_finish\"}\n",
-			want:   "feat(slice): describir el cambio",
+			output: "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): describe the change\"}}\n{\"type\":\"step_finish\"}\n",
+			want:   "feat(slice): describe the change",
 			valid:  true,
 		},
 		{name: "malformed json", output: "{\"type\":\"text\"", valid: false},
-		{name: "concatenated objects on one line", output: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valid: false},
-		{name: "blank intermediate line", output: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valid: false},
+		{name: "concatenated objects on one line", output: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"feat: change\"}}\n", valid: false},
+		{name: "blank intermediate line", output: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"feat: change\"}}\n", valid: false},
 		{name: "blank content", output: "   \n", valid: false},
 		{name: "no text", output: "{\"type\":\"step_finish\"}\n", valid: false},
 		{
@@ -320,17 +320,17 @@ func TestExtractOpenCodeCommitMessage(t *testing.T) {
 		},
 		{
 			name:   "conflicting texts",
-			output: "{\"type\":\"text\",\"part\":{\"text\":\"feat: primero\"}}\n{\"type\":\"text\",\"part\":{\"text\":\"fix: segundo\"}}\n",
+			output: "{\"type\":\"text\",\"part\":{\"text\":\"feat: first\"}}\n{\"type\":\"text\",\"part\":{\"text\":\"fix: second\"}}\n",
 			valid:  false,
 		},
 		{
 			name:   "multiline payload",
-			output: "{\"type\":\"text\",\"part\":{\"text\":\"explicacion\\nfeat: cambio\"}}\n",
+			output: "{\"type\":\"text\",\"part\":{\"text\":\"explanation\\nfeat: change\"}}\n",
 			valid:  false,
 		},
 		{
 			name:   "non-conventional payload",
-			output: "{\"type\":\"text\",\"part\":{\"text\":\"cambio sin formato\"}}\n",
+			output: "{\"type\":\"text\",\"part\":{\"text\":\"change without format\"}}\n",
 			valid:  false,
 		},
 	}

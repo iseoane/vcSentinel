@@ -159,14 +159,14 @@ END_REVIEW`
 // TestParseJSONMultilineWithSurroundingNoise: output text around the object
 // (agent reasoning outside the block) must not break the fallback.
 func TestParseJSONMultilineWithSurroundingNoise(t *testing.T) {
-	output := `Analizando el diff:
+	output := `Analyzing the diff:
 BEGIN_REVIEW
 {
   "dim": "tests",
   "verdict": "ok"
 }
 END_REVIEW
-Fin de la auditoría.`
+End of the audit.`
 
 	result, err := ParseDimensionResult(output)
 	if err != nil {

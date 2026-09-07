@@ -135,11 +135,11 @@ func TestParseGateFlags(t *testing.T) {
 	})
 
 	t.Run("unrecognized stage is a clear error", func(t *testing.T) {
-		_, _, _, err := parseGateFlags([]string{"--stage", "no-existe"})
+		_, _, _, err := parseGateFlags([]string{"--stage", "no-such-stage"})
 		if err == nil {
 			t.Fatal("expected an error for an unrecognized --stage")
 		}
-		if !strings.Contains(err.Error(), "no-existe") {
+		if !strings.Contains(err.Error(), "no-such-stage") {
 			t.Errorf("the error must quote the received value, got: %v", err)
 		}
 	})
@@ -156,11 +156,11 @@ func TestParseGateFlags(t *testing.T) {
 // git or agents.
 func TestRunGate_InvalidStage_RunsNothing(t *testing.T) {
 	var output bytes.Buffer
-	exit := runGate(&output, t.TempDir(), []string{"--stage", "no-existe"})
+	exit := runGate(&output, t.TempDir(), []string{"--stage", "no-such-stage"})
 	if exit != 1 {
 		t.Errorf("expected exit 1, got %d", exit)
 	}
-	if !strings.Contains(output.String(), "no-existe") {
+	if !strings.Contains(output.String(), "no-such-stage") {
 		t.Errorf("the output must explain the invalid value, got: %q", output.String())
 	}
 }

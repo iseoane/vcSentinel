@@ -13,7 +13,7 @@ import (
 // the revision. It must keep reading without error.
 const recordV1 = `{
   "sha": "6c079a8",
-  "message": "feat: algo",
+  "message": "feat: something",
   "bucket": "backend",
   "model": "default",
   "revisions": [

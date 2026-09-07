@@ -44,11 +44,11 @@ func TestPromptProbeRequestsConfiguredModelOpenCode(t *testing.T) {
 		Timeout:    10 * time.Second,
 	}
 
-	output, err := adapter.RunPrompt("¿qué modelo eres?")
+	output, err := adapter.RunPrompt("what model are you?")
 	if err != nil {
 		t.Fatalf("RunPrompt returned an error: %v", err)
 	}
-	if output != "¿qué modelo eres?" {
+	if output != "what model are you?" {
 		t.Fatalf("output = %q, expected the prompt echoed via stdin", output)
 	}
 
@@ -57,7 +57,7 @@ func TestPromptProbeRequestsConfiguredModelOpenCode(t *testing.T) {
 		t.Fatalf("args = %v, expected it to start with the run subcommand", capture.Args)
 	}
 	argsWithModel(t, capture, model)
-	if capture.Stdin != "¿qué modelo eres?" {
+	if capture.Stdin != "what model are you?" {
 		t.Fatalf("stdin = %q, expected the full prompt (stdin transport intact)", capture.Stdin)
 	}
 }
@@ -72,11 +72,11 @@ func TestPromptProbeRequestsConfiguredModelClaude(t *testing.T) {
 		Timeout:    10 * time.Second,
 	}
 
-	output, err := adapter.RunPrompt("¿qué modelo eres?")
+	output, err := adapter.RunPrompt("what model are you?")
 	if err != nil {
 		t.Fatalf("RunPrompt returned an error: %v", err)
 	}
-	if output != "¿qué modelo eres?" {
+	if output != "what model are you?" {
 		t.Fatalf("output = %q, expected the prompt echoed via stdin", output)
 	}
 
@@ -85,7 +85,7 @@ func TestPromptProbeRequestsConfiguredModelClaude(t *testing.T) {
 		t.Fatalf("args = %v, expected them to start with -p", capture.Args)
 	}
 	argsWithModel(t, capture, model)
-	if capture.Stdin != "¿qué modelo eres?" {
+	if capture.Stdin != "what model are you?" {
 		t.Fatalf("stdin = %q, expected the full prompt (stdin transport intact)", capture.Stdin)
 	}
 }

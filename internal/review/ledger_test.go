@@ -19,7 +19,7 @@ func TestLedgerSaveAndReadRecord(t *testing.T) {
 	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictOK, Dims: []DimensionResult{{Dim: DimSpec, Verdict: VerdictOK}}}
-	if err := ledger.SaveRevision("abc123", "feat(x): cosa", "backend", "test-model", rev); err != nil {
+	if err := ledger.SaveRevision("abc123", "feat(x): thing", "backend", "test-model", rev); err != nil {
 		t.Fatalf("SaveRevision returned error: %v", err)
 	}
 
@@ -30,7 +30,7 @@ func TestLedgerSaveAndReadRecord(t *testing.T) {
 	if record == nil {
 		t.Fatal("ReadRecord returned nil for an existing record")
 	}
-	if record.SHA != "abc123" || record.Message != "feat(x): cosa" || record.Bucket != "backend" || record.Model != "test-model" {
+	if record.SHA != "abc123" || record.Message != "feat(x): thing" || record.Bucket != "backend" || record.Model != "test-model" {
 		t.Errorf("record = %+v, does not match what was saved", record)
 	}
 	if len(record.Revisions) != 1 || record.Revisions[0].Result != VerdictOK {
@@ -242,7 +242,7 @@ func TestLedgerPurgeOrphans(t *testing.T) {
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	} {
-		if err := ledger.SaveRevision(sha, "feat(x): cosa", "backend", "test-model", rev); err != nil {
+		if err := ledger.SaveRevision(sha, "feat(x): thing", "backend", "test-model", rev); err != nil {
 			t.Fatalf("SaveRevision(%s) returned error: %v", sha, err)
 		}
 	}
@@ -356,7 +356,7 @@ func TestLedgerMarkFixed(t *testing.T) {
 	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictBlock}
-	if err := ledger.SaveRevision("aaa111", "feat(x): con bug", "backend", "m", rev); err != nil {
+	if err := ledger.SaveRevision("aaa111", "feat(x): with bug", "backend", "m", rev); err != nil {
 		t.Fatalf("SaveRevision returned error: %v", err)
 	}
 
@@ -403,22 +403,22 @@ func TestLedgerAdoptRecord(t *testing.T) {
 			}},
 		}},
 	}
-	if err := ledger.SaveRevision("sha-viejo", "feat(b): cosa", "pr", "test-model", rev); err != nil {
+	if err := ledger.SaveRevision("sha-old", "feat(b): thing", "pr", "test-model", rev); err != nil {
 		t.Fatalf("SaveRevision: %v", err)
 	}
 
-	if err := ledger.AdoptRecord("sha-viejo", "sha-nuevo"); err != nil {
+	if err := ledger.AdoptRecord("sha-old", "sha-new"); err != nil {
 		t.Fatalf("AdoptRecord: %v", err)
 	}
 
-	adopted, err := ledger.ReadRecord("sha-nuevo")
+	adopted, err := ledger.ReadRecord("sha-new")
 	if err != nil {
-		t.Fatalf("ReadRecord(sha-nuevo): %v", err)
+		t.Fatalf("ReadRecord(sha-new): %v", err)
 	}
 	if adopted == nil {
-		t.Fatal("ReadRecord(sha-nuevo) returned nil after AdoptRecord")
+		t.Fatal("ReadRecord(sha-new) returned nil after AdoptRecord")
 	}
-	if adopted.SHA != "sha-nuevo" || adopted.Message != "feat(b): cosa" || adopted.Bucket != "pr" || adopted.Model != "test-model" {
+	if adopted.SHA != "sha-new" || adopted.Message != "feat(b): thing" || adopted.Bucket != "pr" || adopted.Model != "test-model" {
 		t.Errorf("adopted record = %+v, does not match the origin one", adopted)
 	}
 	if len(adopted.Revisions) != 1 || len(adopted.Revisions[0].Dims) != 1 || len(adopted.Revisions[0].Dims[0].Findings) != 1 {
@@ -429,7 +429,7 @@ func TestLedgerAdoptRecord(t *testing.T) {
 	}
 
 	// The origin record still exists: adopting is not moving.
-	if origin, _ := ledger.ReadRecord("sha-viejo"); origin == nil {
+	if origin, _ := ledger.ReadRecord("sha-old"); origin == nil {
 		t.Error("the origin record should not disappear when adopted")
 	}
 }
@@ -442,10 +442,10 @@ func TestLedgerAdoptRecordMissingSourceSHAIsError(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NewLedger(dir)
 
-	if err := ledger.AdoptRecord("no-existe", "sha-nuevo"); err == nil {
+	if err := ledger.AdoptRecord("missing", "sha-new"); err == nil {
 		t.Error("AdoptRecord of a source SHA without a record should return an error")
 	}
-	if record, _ := ledger.ReadRecord("sha-nuevo"); record != nil {
+	if record, _ := ledger.ReadRecord("sha-new"); record != nil {
 		t.Error("a failing AdoptRecord should not create any destination record")
 	}
 }
@@ -458,18 +458,18 @@ func TestLedgerAdoptRecordIsIdempotent(t *testing.T) {
 	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
-	if err := ledger.SaveRevision("sha-viejo", "feat(x)", "pr", "m", rev); err != nil {
+	if err := ledger.SaveRevision("sha-old", "feat(x)", "pr", "m", rev); err != nil {
 		t.Fatalf("SaveRevision: %v", err)
 	}
 
-	if err := ledger.AdoptRecord("sha-viejo", "sha-nuevo"); err != nil {
+	if err := ledger.AdoptRecord("sha-old", "sha-new"); err != nil {
 		t.Fatalf("first adoption: %v", err)
 	}
-	if err := ledger.AdoptRecord("sha-viejo", "sha-nuevo"); err != nil {
+	if err := ledger.AdoptRecord("sha-old", "sha-new"); err != nil {
 		t.Fatalf("second adoption (idempotent): %v", err)
 	}
 
-	adopted, err := ledger.ReadRecord("sha-nuevo")
+	adopted, err := ledger.ReadRecord("sha-new")
 	if err != nil {
 		t.Fatalf("ReadRecord: %v", err)
 	}

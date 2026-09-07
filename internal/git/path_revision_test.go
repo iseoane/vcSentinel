@@ -28,7 +28,7 @@ func TestRangeRenamesMapsSourceToDestination(t *testing.T) {
 
 	runGitInDir(t, dir, "mv", "x.go", "y.go")
 	runGitInDir(t, dir, "mv", "old name.go", "new name v2.go") // internal spaces only: portable, proves no whitespace splitting
-	if err := os.WriteFile(filepath.Join(dir, "nuevo.go"), []byte("package nuevo\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "added.go"), []byte("package added\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	runGitInDir(t, dir, "add", "-A")
@@ -39,8 +39,8 @@ func TestRangeRenamesMapsSourceToDestination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RangeRenames: %v", err)
 	}
-	if renames["x.go"] != "y.go" || renames["old name.go"] != "new name v2.go" || renames["nuevo.go"] != "" {
-		t.Errorf("renames = %v, want x.go->y.go, old name.go->new name v2.go, and no mapping for nuevo.go", renames)
+	if renames["x.go"] != "y.go" || renames["old name.go"] != "new name v2.go" || renames["added.go"] != "" {
+		t.Errorf("renames = %v, want x.go->y.go, old name.go->new name v2.go, and no mapping for added.go", renames)
 	}
 
 	runGitInDir(t, dir, "rm", "-q", "y.go")

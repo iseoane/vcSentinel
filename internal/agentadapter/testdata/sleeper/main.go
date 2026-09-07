@@ -1,22 +1,24 @@
 package main
 
-// Helper de pruebas para internal/agentadapter: duerme el primer argumento
-// numérico en segundos (0 si no hay) y responde según el modo de invocación:
+// Test helper for internal/agentadapter: sleeps for the first numeric
+// argument, in seconds (0 if absent), and responds according to the
+// invocation mode:
 //
-//   - "-p <prompt>" imprime el prompt recibido como argumento (compatibilidad
-//     con el transporte antiguo);
-//   - "-p" SIN argumento, o seguido de otra bandera ("--algo"), lee el
-//     prompt completo de stdin y lo imprime (modo stdin de claude, incluidas
-//     las variantes aisladas de revisión/commit que añaden más banderas tras
-//     "-p", p. ej. "-p --safe-mode --tools ...");
-//   - sin "-p" (p. ej. "run" de opencode) también lee el prompt de stdin.
+//   - "-p <prompt>" prints the prompt received as an argument (legacy
+//     transport compatibility);
+//   - "-p" WITHOUT an argument, or followed by another flag ("--something"),
+//     reads the full prompt from stdin and prints it (claude's stdin mode,
+//     including the isolated review/commit variants that add more flags
+//     after "-p", e.g. "-p --safe-mode --tools ...");
+//   - without "-p" (e.g. opencode's "run") it also reads the prompt from
+//     stdin.
 //
-// El modo de argumento gana sobre stdin: si "-p" lleva un valor que NO
-// empieza por "-" y además hay entrada en stdin, se imprime el argumento,
-// para que los tests distingan el transporte usado por el adaptador.
+// Argument mode wins over stdin: if "-p" carries a value that does NOT
+// start with "-" and there is also stdin input, the argument is printed so
+// that the tests can tell which transport the adapter used.
 //
-// Sirve para verificar el timeout y el transporte del prompt del adaptador
-// CLI sin depender de un agente real.
+// It verifies the CLI adapter's timeout and prompt transport without
+// depending on a real agent.
 
 import (
 	"encoding/json"
@@ -40,9 +42,9 @@ func main() {
 			posicionP = i + 1
 		}
 	}
-	// VAS_SENTINEL_TEST_SLEEP permite forzar la espera cuando el adaptador
-	// construye los argumentos y no hay hueco para el argumento numérico
-	// (modo revisión: las banderas las fija reviewCommand).
+	// VAS_SENTINEL_TEST_SLEEP forces the wait when the adapter builds the
+	// arguments and there is no slot for the numeric argument (review mode:
+	// the flags are set by reviewCommand).
 	if espera := os.Getenv("VAS_SENTINEL_TEST_SLEEP"); espera != "" {
 		if n, err := strconv.Atoi(espera); err == nil {
 			segundos = n
@@ -66,9 +68,9 @@ func main() {
 		}{Args: os.Args[1:], Dir: dir, Stdin: prompt})
 		_ = os.WriteFile(ruta, datos, 0600)
 	}
-	// VAS_SENTINEL_TEST_FAIL simula un agente que falla con un mensaje de
-	// error en stderr, para probar que el adaptador captura y propaga ese
-	// detalle en vez de descartarlo.
+	// VAS_SENTINEL_TEST_FAIL simulates an agent that fails with an error
+	// message on stderr, to check that the adapter captures and propagates
+	// that detail instead of discarding it.
 	if fallo := os.Getenv("VAS_SENTINEL_TEST_FAIL"); fallo != "" {
 		fmt.Fprint(os.Stderr, fallo)
 		os.Exit(1)

@@ -33,9 +33,9 @@ func TestSplitPendingQuestions(t *testing.T) {
 			}
 			return "", errors.New("fixture file without a test blob: " + file)
 		}
-		questions := []AgentQuestion{{ID: "q1", Text: "sin archivo"}}
+		questions := []AgentQuestion{{ID: "q1", Text: "without file"}}
 		pending, answered, err := SplitPendingQuestions(questions,
-			resolverRejectsEmptyFile, knownFrom(map[string]string{"blobX|q1": "respuesta"}))
+			resolverRejectsEmptyFile, knownFrom(map[string]string{"blobX|q1": "answer"}))
 		if err != nil {
 			t.Fatalf("err = %v, want nil", err)
 		}
@@ -48,7 +48,7 @@ func TestSplitPendingQuestions(t *testing.T) {
 	})
 
 	t.Run("question with a known answer for its blob is excluded from pending", func(t *testing.T) {
-		questions := []AgentQuestion{{ID: "q1", Text: "usa camelCase?", File: "a.go"}}
+		questions := []AgentQuestion{{ID: "q1", Text: "use camelCase?", File: "a.go"}}
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(map[string]string{"a.go": "blobA"}),
 			knownFrom(map[string]string{"blobA|q1": "yes, camelCase"}))
@@ -64,7 +64,7 @@ func TestSplitPendingQuestions(t *testing.T) {
 	})
 
 	t.Run("question with no known answer for its blob stays pending", func(t *testing.T) {
-		questions := []AgentQuestion{{ID: "q1", Text: "usa camelCase?", File: "a.go"}}
+		questions := []AgentQuestion{{ID: "q1", Text: "use camelCase?", File: "a.go"}}
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(map[string]string{"a.go": "blobA"}),
 			knownFrom(nil))
@@ -80,7 +80,7 @@ func TestSplitPendingQuestions(t *testing.T) {
 	})
 
 	t.Run("resolveBlob error treats the question as pending, never blocks", func(t *testing.T) {
-		questions := []AgentQuestion{{ID: "q1", Text: "usa camelCase?", File: "missing.go"}}
+		questions := []AgentQuestion{{ID: "q1", Text: "use camelCase?", File: "missing.go"}}
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(nil), // missing.go has no entry -> resolveBlob returns an error
 			knownFrom(nil))
@@ -100,7 +100,7 @@ func TestSplitPendingQuestions(t *testing.T) {
 		failingKnown := func(blob, questionID string) (string, bool, error) {
 			return "", false, wantErr
 		}
-		questions := []AgentQuestion{{ID: "q1", Text: "usa camelCase?", File: "a.go"}}
+		questions := []AgentQuestion{{ID: "q1", Text: "use camelCase?", File: "a.go"}}
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(map[string]string{"a.go": "blobA"}), failingKnown)
 		if !errors.Is(err, wantErr) {
@@ -120,9 +120,9 @@ func TestSplitPendingQuestions(t *testing.T) {
 	// survived, silently dropping the other's answer.
 	t.Run("same ID across multiple files mixes pending and answered without data loss", func(t *testing.T) {
 		questions := []AgentQuestion{
-			{ID: "q1", Text: "¿en a.go?", File: "a.go"},
-			{ID: "q1", Text: "¿en b.go?", File: "b.go"},
-			{ID: "q1", Text: "¿en c.go?", File: "c.go"},
+			{ID: "q1", Text: "about a.go?", File: "a.go"},
+			{ID: "q1", Text: "about b.go?", File: "b.go"},
+			{ID: "q1", Text: "about c.go?", File: "c.go"},
 		}
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(map[string]string{"a.go": "blobA", "b.go": "blobB", "c.go": "blobC"}),

@@ -54,11 +54,11 @@ func knownClass(class agentrun.OutcomeClass) bool {
 	}
 }
 
-// outcomeDeEstadoTerminal es la inversa de terminalState: traduce el estado
-// terminal que otro escritor ya dejó en el stream a la clase de outcome
-// equivalente, para reconciliar una carrera de asentamiento perdida sin
-// inventar una clase distinta de la que consta durablemente.
-func outcomeDeEstadoTerminal(state agentrun.LifecycleState) (agentrun.OutcomeClass, bool) {
+// outcomeFromTerminalState is the inverse of terminalState: it translates the
+// terminal state another writer already left on the stream into the
+// equivalent outcome class, reconciling a lost settlement race without
+// inventing a class other than the durably recorded one.
+func outcomeFromTerminalState(state agentrun.LifecycleState) (agentrun.OutcomeClass, bool) {
 	switch state {
 	case agentrun.StateSucceeded:
 		return agentrun.OutcomeSuccess, true

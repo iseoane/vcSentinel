@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseDimensionResultClean(t *testing.T) {
-	output := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"internal/a.go","line":10,"severity":"WARNING","description":"condición redundante","suggestion":"simplifica"}]}`
+	output := `{"dim":"logic","verdict":"warn","findings":[{"dimension":"logic","file":"internal/a.go","line":10,"severity":"WARNING","description":"redundant condition","suggestion":"simplify"}]}`
 	result, err := ParseDimensionResult(output)
 	if err != nil {
 		t.Fatalf("ParseDimensionResult returned error: %v", err)
@@ -57,7 +57,7 @@ func TestParseDimensionResultEmpty(t *testing.T) {
 }
 
 func TestParseDimensionResultInvalid(t *testing.T) {
-	_, err := ParseDimensionResult("esto no es json\nBEGIN_REVIEW\ntampoco\nEND_REVIEW\n")
+	_, err := ParseDimensionResult("this is not json\nBEGIN_REVIEW\neither\nEND_REVIEW\n")
 	if !errors.Is(err, ErrInvalidJSONL) {
 		t.Errorf("want %v, got %v", ErrInvalidJSONL, err)
 	}
@@ -159,7 +159,7 @@ func TestParseDimensionResultOkWithWarningRaisesToWarn(t *testing.T) {
 }
 
 func TestParseDimensionResultQuestionIsRespected(t *testing.T) {
-	output := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"¿X?"}]}`
+	output := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"X?"}]}`
 	result, err := ParseDimensionResult(output)
 	if err != nil {
 		t.Fatalf("ParseDimensionResult returned error: %v", err)
@@ -190,7 +190,7 @@ func TestParseDimensionResultDiscardsJunkLines(t *testing.T) {
 	// Lines that do not even decode as JSON are discarded; the valid line
 	// wins. (A valid JSON line with an unknown dimension, on the other hand,
 	// aborts with an explicit error: TestParseDimensionResultUnknownDimension.)
-	output := "texto del agente sin sentido\n```\n{\"dim\":\"tests\",\"verdict\":\"ok\"}\n```\n"
+	output := "senseless agent text\n```\n{\"dim\":\"tests\",\"verdict\":\"ok\"}\n```\n"
 	result, err := ParseDimensionResult(output)
 	if err != nil {
 		t.Fatalf("ParseDimensionResult returned error: %v", err)
@@ -211,7 +211,7 @@ func TestParseDimensionResultDiscardsJunkLines(t *testing.T) {
 }
 
 func TestParseDimensionResultQuestions(t *testing.T) {
-	output := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"¿El rebase debe abortar si hay cambios sin commitear?"}]}`
+	output := `{"dim":"logic","verdict":"question","questions":[{"id":"Q1","text":"Should the rebase abort if there are uncommitted changes?"}]}`
 	result, err := ParseDimensionResult(output)
 	if err != nil {
 		t.Fatalf("ParseDimensionResult returned error: %v", err)
@@ -313,7 +313,7 @@ func TestFindingsWithValidEvidenceInventedEvidenceIsDiscarded(t *testing.T) {
 	read := func(file string) (string, error) {
 		return "func Real() {\n\treturn nil\n}\n", nil
 	}
-	h := findingWithEvidence("h-1", "a.go", "esto no aparece en ningún lado")
+	h := findingWithEvidence("h-1", "a.go", "this does not appear anywhere")
 
 	valid, dismissals := FindingsWithValidEvidence([]Finding{h}, read)
 
@@ -355,7 +355,7 @@ func TestFindingsWithValidEvidenceDiscardsOnlyTheInvalidOne(t *testing.T) {
 	}
 
 	valid1 := findingWithEvidence("h-ok-1", "a.go", "func A() {")
-	invalid := findingWithEvidence("h-bad", "a.go", "esto jamás apareció")
+	invalid := findingWithEvidence("h-bad", "a.go", "this never appeared")
 	valid2 := findingWithEvidence("h-ok-2", "a.go", "package a")
 
 	valid, dismissals := FindingsWithValidEvidence([]Finding{valid1, invalid, valid2}, read)
@@ -392,7 +392,7 @@ func TestFindingsWithValidEvidenceUnresolvedFileDoesNotPropagateError(t *testing
 	read := func(file string) (string, error) {
 		return "", errors.New("the file does not exist in that commit")
 	}
-	h := findingWithEvidence("h-4", "no-existe.go", "algo")
+	h := findingWithEvidence("h-4", "missing.go", "something")
 
 	valid, dismissals := FindingsWithValidEvidence([]Finding{h}, read)
 
@@ -406,7 +406,7 @@ func TestFindingsWithValidEvidenceUnresolvedFileDoesNotPropagateError(t *testing
 
 func TestFindingsWithValidEvidenceFileEmptyInLocation(t *testing.T) {
 	read := func(file string) (string, error) { return "content", nil }
-	h := findingWithEvidence("h-5", "", "algo")
+	h := findingWithEvidence("h-5", "", "something")
 
 	_, dismissals := FindingsWithValidEvidence([]Finding{h}, read)
 

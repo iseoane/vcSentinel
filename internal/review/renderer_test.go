@@ -19,13 +19,13 @@ func revisionHelper(result string, dims ...DimensionResult) Revision {
 
 func TestRenderMatrixBasic(t *testing.T) {
 	records := []Record{
-		recordHelper("6b127cd", "docs(review): concepto fase 2", "opencode.cheap",
+		recordHelper("6b127cd", "docs(review): phase 2 concept", "opencode.cheap",
 			revisionHelper("ok",
 				DimensionResult{Dim: DimSpec, Verdict: VerdictOK},
 				DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock},
 				DimensionResult{Dim: DimLogic, Verdict: VerdictOK},
 			)),
-		recordHelper("945b5b5", "feat(config): comandos de verificacion", "deepseek-v4-flash-free",
+		recordHelper("945b5b5", "feat(config): verification commands", "deepseek-v4-flash-free",
 			revisionHelper("warn",
 				DimensionResult{Dim: DimSpec, Verdict: VerdictOK},
 				DimensionResult{Dim: DimTests, Verdict: VerdictWarn},
@@ -38,8 +38,8 @@ func TestRenderMatrixBasic(t *testing.T) {
 	// the verdict of the last revision (— for absent dimensions).
 	expected := "| Commit | logic | style | design | tests | security | spec |\n" +
 		"|---|---|---|---|---|---|---|\n" +
-		"| `6b127cd` docs(review): concepto fase 2 | ✅ | — | — | — | 🚨 | ✅ |\n" +
-		"| `945b5b5` feat(config): comandos de verificacion | — | — | — | ⚠️ | — | ✅ |\n"
+		"| `6b127cd` docs(review): phase 2 concept | ✅ | — | — | — | 🚨 | ✅ |\n" +
+		"| `945b5b5` feat(config): verification commands | — | — | — | ⚠️ | — | ✅ |\n"
 	if out != expected {
 		t.Errorf("matrix mismatch:\ngot:\n%s\nwant:\n%s", out, expected)
 	}
@@ -52,7 +52,7 @@ func TestRenderMatrixEmpty(t *testing.T) {
 }
 
 func TestRenderMatrixClearedRevision(t *testing.T) {
-	record := recordHelper("945b5b5", "feat(config): comandos", "opencode.cheap",
+	record := recordHelper("945b5b5", "feat(config): commands", "opencode.cheap",
 		revisionHelper("block",
 			DimensionResult{Dim: DimSpec, Verdict: VerdictBlock,
 				Findings: []ReviewFinding{{Dimension: DimSpec, File: "a.go", Line: 1, Severity: SevCritical}}},
@@ -75,19 +75,19 @@ func TestRenderMatrixClearedRevision(t *testing.T) {
 
 func TestRenderSummaryRisks(t *testing.T) {
 	records := []Record{
-		recordHelper("6b127cd", "docs(review): concepto fase 2", "opencode.cheap",
+		recordHelper("6b127cd", "docs(review): phase 2 concept", "opencode.cheap",
 			revisionHelper("block",
 				DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 					Findings: []ReviewFinding{
-						{Dimension: DimSecurity, File: "a.go", Line: 42, Severity: SevCritical, Description: "dato expuesto"},
-						{Dimension: DimSecurity, File: "a.go", Line: 10, Severity: SevAdvisory, Description: "sugerencia menor"},
+						{Dimension: DimSecurity, File: "a.go", Line: 42, Severity: SevCritical, Description: "exposed data"},
+						{Dimension: DimSecurity, File: "a.go", Line: 10, Severity: SevAdvisory, Description: "minor suggestion"},
 					}},
 			)),
-		recordHelper("945b5b5", "feat(config): comandos", "deepseek-v4-flash-free",
+		recordHelper("945b5b5", "feat(config): commands", "deepseek-v4-flash-free",
 			revisionHelper("warn",
 				DimensionResult{Dim: DimTests, Verdict: VerdictWarn,
 					Findings: []ReviewFinding{
-						{Dimension: DimTests, File: "z.go", Line: 10, Severity: SevWarning, Description: "test frágil"},
+						{Dimension: DimTests, File: "z.go", Line: 10, Severity: SevWarning, Description: "fragile test"},
 					}},
 			)),
 	}
@@ -104,19 +104,19 @@ func TestRenderSummaryRisks(t *testing.T) {
 	// "(source, confidence)" segment is omitted entirely instead of fabricating
 	// a "(unknown, confidence 0.00)" that is not real data (T6.5bis review
 	// finding: logic WARNING).
-	if !strings.Contains(out, "🚨 `6b127cd` [security] CRITICAL — dato expuesto (a.go:42)") {
+	if !strings.Contains(out, "🚨 `6b127cd` [security] CRITICAL — exposed data (a.go:42)") {
 		t.Errorf("missing the CRITICAL risk:\n%s", out)
 	}
-	if !strings.Contains(out, "⚠️ `945b5b5` [tests] WARNING — test frágil (z.go:10)") {
+	if !strings.Contains(out, "⚠️ `945b5b5` [tests] WARNING — fragile test (z.go:10)") {
 		t.Errorf("missing the WARNING risk:\n%s", out)
 	}
-	if strings.Contains(out, "sugerencia menor") {
+	if strings.Contains(out, "minor suggestion") {
 		t.Errorf("ADVISORY entries are not risks and must not appear in the summary:\n%s", out)
 	}
 }
 
 func TestRenderSummaryFixed(t *testing.T) {
-	record := recordHelper("6b127cd", "docs(review): concepto", "opencode.cheap",
+	record := recordHelper("6b127cd", "docs(review): concept", "opencode.cheap",
 		revisionHelper("block", DimensionResult{Dim: DimSpec, Verdict: VerdictBlock}),
 	)
 	record.FixedIn = "a1b2c3d"
@@ -372,7 +372,7 @@ func TestRenderPRTemplate(t *testing.T) {
 	}
 	overview := &OverviewResult{
 		Coherent:  true,
-		Rationale: "Cambio coherent\nque completa la fase\nen tres líneas\npara el rationale.",
+		Rationale: "Coherent change\nthat completes the phase\nin three lines\nfor the rationale.",
 	}
 	verification := TemplateVerification{
 		Mode: "determinista",
@@ -385,7 +385,7 @@ func TestRenderPRTemplate(t *testing.T) {
 	if !strings.Contains(out, "Audit verdict") {
 		t.Errorf("missing the risk line: %s", out)
 	}
-	if !strings.Contains(out, "Cambio coherent") {
+	if !strings.Contains(out, "Coherent change") {
 		t.Errorf("missing the overview rationale: %s", out)
 	}
 	if !strings.Contains(out, "OWN") {
@@ -420,7 +420,7 @@ func TestRenderTemplateNoOverviewHonest(t *testing.T) {
 // count.
 func TestBranchBlockersFiltersCriticals(t *testing.T) {
 	critical := ReviewFinding{Dimension: DimSecurity, File: "a.go", Line: 42,
-		Severity: SevCritical, Description: "dato expuesto"}
+		Severity: SevCritical, Description: "exposed data"}
 	cases := []struct {
 		name    string
 		records []Record
@@ -441,7 +441,7 @@ func TestBranchBlockersFiltersCriticals(t *testing.T) {
 			records: []Record{recordHelper("u1", "feat(a)", "m",
 				revisionHelper("warn",
 					DimensionResult{Dim: DimTests, Verdict: VerdictWarn,
-						Findings: []ReviewFinding{{Dimension: DimTests, Severity: SevWarning, Description: "frágil"}}},
+						Findings: []ReviewFinding{{Dimension: DimTests, Severity: SevWarning, Description: "fragile"}}},
 					DimensionResult{Dim: DimSpec, Verdict: VerdictOK,
 						Findings: []ReviewFinding{{Dimension: DimSpec, Severity: SevAdvisory, Description: "scope"}}},
 				))},
@@ -455,7 +455,7 @@ func TestBranchBlockersFiltersCriticals(t *testing.T) {
 						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 							Findings: []ReviewFinding{
 								critical,
-								{Dimension: DimSecurity, Severity: SevWarning, Description: "menor"},
+								{Dimension: DimSecurity, Severity: SevWarning, Description: "minor"},
 							}},
 					)),
 				recordHelper("u2", "feat(b)", "m", revisionHelper("ok")),
@@ -809,19 +809,19 @@ func TestRenderTemplateRisksSection(t *testing.T) {
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictWarn,
 				Findings: []ReviewFinding{
 					{Dimension: DimSecurity, File: "a.go", Line: 7,
-						Severity: SevCritical, Description: "dato expuesto"},
+						Severity: SevCritical, Description: "exposed data"},
 					{Dimension: DimSpec, File: "b.go", Line: 1,
-						Severity: SevAdvisory, Description: "scope amplio"},
+						Severity: SevAdvisory, Description: "broad scope"},
 				}},
 		))}
 	outWith := RenderPRTemplate(recordsWithRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
-	if !strings.Contains(outWith, "dato expuesto") {
+	if !strings.Contains(outWith, "exposed data") {
 		t.Errorf("the CRITICAL must be listed under Risks: %s", outWith)
 	}
 	if !strings.Contains(outWith, "CRITICAL") {
 		t.Errorf("the risk line must quote the severity: %s", outWith)
 	}
-	if strings.Contains(outWith, "scope amplio") {
+	if strings.Contains(outWith, "broad scope") {
 		t.Errorf("ADVISORY entries are not risks and must not be listed: %s", outWith)
 	}
 	if strings.Contains(outWith, "No pending risks") {
@@ -832,11 +832,11 @@ func TestRenderTemplateRisksSection(t *testing.T) {
 	fixed := recordHelper("f1", "feat(a)", "m",
 		revisionHelper("block",
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
-				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical, Description: "dato expuesto"}}},
+				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical, Description: "exposed data"}}},
 		))
 	fixed.FixedIn = "a1b2c3d"
 	outFixed := RenderPRTemplate([]Record{fixed}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
-	if strings.Contains(outFixed, "dato expuesto") {
+	if strings.Contains(outFixed, "exposed data") {
 		t.Errorf("the findings of a corrected record are not pending risks: %s", outFixed)
 	}
 	if !strings.Contains(outFixed, "No pending risks") {
