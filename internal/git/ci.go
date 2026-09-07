@@ -4,10 +4,10 @@ import (
 	"path/filepath"
 )
 
-// rutasCI son los marcadores de integración continua reconocidos. El glob de
-// GitHub Actions cubre .github/workflows/*.yml y *.yaml; Jenkinsfile es un
-// glob literal (sin comodines) que coincide con el archivo exacto.
-var rutasCI = []string{
+// ciPaths lists the recognized continuous-integration markers. The
+// GitHub Actions glob covers .github/workflows/*.yml and *.yaml; Jenkinsfile
+// is a literal glob (no wildcards) that matches the exact file.
+var ciPaths = []string{
 	".github/workflows/*.yml",
 	".github/workflows/*.yaml",
 	".gitlab-ci.yml",
@@ -16,13 +16,14 @@ var rutasCI = []string{
 	"Jenkinsfile",
 }
 
-// DetectarCI indica si el worktree tiene configuración de integración continua
-// (GitHub Actions, GitLab CI, CircleCI, Azure Pipelines o Jenkins). Es la
-// señal del aviso de "CI ausente" de la verificación dual.
-func DetectarCI(worktree string) bool {
-	for _, patron := range rutasCI {
-		coincidencias, err := filepath.Glob(filepath.Join(worktree, patron))
-		if err == nil && len(coincidencias) > 0 {
+// DetectCI reports whether the worktree has continuous-integration
+// configuration (GitHub Actions, GitLab CI, CircleCI, Azure Pipelines, or
+// Jenkins). It is the signal behind the "CI missing" warning of the dual
+// verification.
+func DetectCI(worktree string) bool {
+	for _, pattern := range ciPaths {
+		matches, err := filepath.Glob(filepath.Join(worktree, pattern))
+		if err == nil && len(matches) > 0 {
 			return true
 		}
 	}

@@ -1,14 +1,12 @@
 package git
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestMedirVolumenStagedUsesTheIndexScope(t *testing.T) {
+func TestMeasureStagedVolumeUsesTheIndexScope(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skips real Git scope integration in short mode")
 	}
@@ -32,23 +30,23 @@ func TestMedirVolumenStagedUsesTheIndexScope(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := prepararRepositorioPrueba(t, map[string]string{"base.go": "package base\n"})
+			dir := prepareTestRepo(t, map[string]string{"base.go": "package base\n"})
 			t.Chdir(dir)
 
 			if tt.stagedLines > 0 {
 				writeLines(t, filepath.Join(dir, "staged.go"), tt.stagedLines)
-				ejecutarGit(t, dir, "add", "staged.go")
+				runGitInDir(t, dir, "add", "staged.go")
 			}
 			if tt.unstagedLines > 0 {
 				writeLines(t, filepath.Join(dir, "unstaged.go"), tt.unstagedLines)
 			}
 
-			staged, err := MedirVolumenStaged()
+			staged, err := MeasureStagedVolume()
 			if err != nil {
-				t.Fatalf("MedirVolumenStaged returned error: %v", err)
+				t.Fatalf("MeasureStagedVolume returned error: %v", err)
 			}
-			if staged.Bloqueante != tt.wantStaged {
-				t.Errorf("staged authored lines = %d, want %d", staged.Bloqueante, tt.wantStaged)
+			if staged.Blocking != tt.wantStaged {
+				t.Errorf("staged authored lines = %d, want %d", staged.Blocking, tt.wantStaged)
 			}
 			if tt.wantStagedPath && len(staged.Paths) != 1 {
 				t.Errorf("staged paths = %v, want the staged file only", staged.Paths)
@@ -57,18 +55,18 @@ func TestMedirVolumenStagedUsesTheIndexScope(t *testing.T) {
 				t.Errorf("staged paths = %v, want none", staged.Paths)
 			}
 
-			worktree, err := MedirVolumen()
+			worktree, err := MeasureVolume()
 			if err != nil {
-				t.Fatalf("MedirVolumen returned error: %v", err)
+				t.Fatalf("MeasureVolume returned error: %v", err)
 			}
-			if worktree.Bloqueante != tt.wantWorktree {
-				t.Errorf("worktree authored lines = %d, want %d", worktree.Bloqueante, tt.wantWorktree)
+			if worktree.Blocking != tt.wantWorktree {
+				t.Errorf("worktree authored lines = %d, want %d", worktree.Blocking, tt.wantWorktree)
 			}
 		})
 	}
 }
 
-func TestMedirVolumenStagedFailureIsBlocking(t *testing.T) {
+func TestMeasureStagedVolumeFailureIsBlocking(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skips real Git failure integration in short mode")
 	}
@@ -77,18 +75,11 @@ func TestMedirVolumenStagedFailureIsBlocking(t *testing.T) {
 	}
 
 	t.Chdir(t.TempDir())
-	volume, err := MedirVolumenStaged()
+	volume, err := MeasureStagedVolume()
 	if err == nil {
-		t.Fatal("MedirVolumenStaged should fail outside a Git repository")
+		t.Fatal("MeasureStagedVolume should fail outside a Git repository")
 	}
-	if volume.Estado != "ERROR" {
-		t.Errorf("failure state = %q, want ERROR", volume.Estado)
-	}
-}
-
-func writeLines(t *testing.T, path string, count int) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(strings.Repeat("// staged scope line\n", count)), 0644); err != nil {
-		t.Fatalf("could not write %s: %v", path, err)
+	if volume.State != "ERROR" {
+		t.Errorf("failure state = %q, want ERROR", volume.State)
 	}
 }

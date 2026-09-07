@@ -93,7 +93,7 @@ func hashPlannedChangesState(changes []PlannedChange) string {
 }
 
 func currentHeadFingerprint() string {
-	value, err := ejecutarGitSalida("rev-parse", "--verify", "HEAD")
+	value, err := runGitOutput("rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return "unborn-head"
 	}
@@ -103,7 +103,7 @@ func currentHeadFingerprint() string {
 func captureGitChangeRecords() ([]gitChangeRecord, error) {
 	var records []gitChangeRecord
 	if currentHeadFingerprint() == "unborn-head" {
-		staged, err := ejecutarGitSalida("ls-files", "--cached", "-z", "--")
+		staged, err := runGitOutput("ls-files", "--cached", "-z", "--")
 		if err != nil {
 			return nil, fmt.Errorf("could not list staged changes on unborn HEAD: %w", err)
 		}
@@ -114,7 +114,7 @@ func captureGitChangeRecords() ([]gitChangeRecord, error) {
 			records = append(records, gitChangeRecord{Status: "A", Path: normalizeGitPath(path)})
 		}
 	} else {
-		diff, err := ejecutarGitSalida("diff", "--name-status", "-z", "-M", "-C", "HEAD", "--")
+		diff, err := runGitOutput("diff", "--name-status", "-z", "-M", "-C", "HEAD", "--")
 		if err != nil {
 			return nil, fmt.Errorf("could not list draft changes: %w", err)
 		}
@@ -123,7 +123,7 @@ func captureGitChangeRecords() ([]gitChangeRecord, error) {
 			return nil, err
 		}
 	}
-	status, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall", "--")
+	status, err := runGitOutput("status", "--porcelain", "-z", "-uall", "--")
 	if err != nil {
 		return nil, fmt.Errorf("could not list untracked draft files: %w", err)
 	}
@@ -131,7 +131,7 @@ func captureGitChangeRecords() ([]gitChangeRecord, error) {
 	for _, record := range records {
 		known[changeKey(record.Path, record.OldPath)] = struct{}{}
 	}
-	for _, path := range rutasNoRastreadas(status) {
+	for _, path := range untrackedPaths(status) {
 		path = normalizeGitPath(path)
 		key := changeKey(path, "")
 		if _, exists := known[key]; exists {
@@ -288,7 +288,7 @@ func sumAtomLines(atoms []ChangeAtom) int {
 
 func diffForChange(record gitChangeRecord) (string, error) {
 	if record.Status == "A" && record.OldPath == "" {
-		return ejecutarGitDiffNoIndex("--unified=0", filepath.ToSlash(os.DevNull), filepath.ToSlash(record.Path))
+		return runGitDiffNoIndex("--unified=0", filepath.ToSlash(os.DevNull), filepath.ToSlash(record.Path))
 	}
 	paths := []string{record.Path}
 	if record.OldPath != "" {
@@ -298,13 +298,13 @@ func diffForChange(record gitChangeRecord) (string, error) {
 	for _, path := range paths {
 		args = append(args, literalPathspec(path))
 	}
-	return ejecutarGitSalida(args...)
+	return runGitOutput(args...)
 }
 
 func numstatForChange(record gitChangeRecord) (added int, binary bool, err error) {
 	var output string
 	if record.Status == "A" && record.OldPath == "" {
-		output, err = ejecutarGitDiffNoIndex("--numstat", filepath.ToSlash(os.DevNull), filepath.ToSlash(record.Path))
+		output, err = runGitDiffNoIndex("--numstat", filepath.ToSlash(os.DevNull), filepath.ToSlash(record.Path))
 	} else {
 		paths := []string{record.Path}
 		if record.OldPath != "" {
@@ -314,7 +314,7 @@ func numstatForChange(record gitChangeRecord) (added int, binary bool, err error
 		for _, path := range paths {
 			args = append(args, literalPathspec(path))
 		}
-		output, err = ejecutarGitSalida(args...)
+		output, err = runGitOutput(args...)
 	}
 	if err != nil {
 		return 0, false, err
@@ -400,7 +400,7 @@ func hashHeadPath(path string) (string, error) {
 	if currentHeadFingerprint() == "unborn-head" {
 		return absentFingerprint, nil
 	}
-	output, err := ejecutarGitSalida("ls-tree", "-z", "HEAD", "--", literalPathspec(path))
+	output, err := runGitOutput("ls-tree", "-z", "HEAD", "--", literalPathspec(path))
 	if err != nil {
 		return "", fmt.Errorf("could not read HEAD content for %s: %w", path, err)
 	}
@@ -419,7 +419,7 @@ func hashIndexPath(path string) (string, error) {
 	if path == "" {
 		return absentFingerprint, nil
 	}
-	output, err := ejecutarGitSalida("ls-files", "--stage", "-z", "--", literalPathspec(path))
+	output, err := runGitOutput("ls-files", "--stage", "-z", "--", literalPathspec(path))
 	if err != nil {
 		return "", fmt.Errorf("could not read index content for %s: %w", path, err)
 	}
@@ -447,7 +447,7 @@ func hashWorktreePath(path string) (string, error) {
 		}
 		return "", fmt.Errorf("could not inspect worktree path %s: %w", path, err)
 	}
-	output, err := ejecutarGitSalida("hash-object", "--", filepath.ToSlash(path))
+	output, err := runGitOutput("hash-object", "--", filepath.ToSlash(path))
 	if err != nil {
 		return "", fmt.Errorf("could not hash worktree path %s: %w", path, err)
 	}

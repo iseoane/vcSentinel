@@ -136,7 +136,7 @@ func TestResolveParentBranchRejectsAmbiguousLocalCandidates(t *testing.T) {
 }
 
 func TestResolveParentBranchFailsWithoutReliableSignal(t *testing.T) {
-	dir := prepararRepositorioPrueba(t, map[string]string{"root.txt": "root\n"})
+	dir := prepareTestRepo(t, map[string]string{"root.txt": "root\n"})
 	parentGit(t, dir, "branch", "-M", "main")
 	parentCommit(t, dir, "C")
 	_, err := resolveParentBranch(ParentResolutionOptions{Worktree: dir}, fakeParentRunner(noPullRequestResult()))
@@ -156,7 +156,7 @@ func TestResolveParentBranchPropagatesPullRequestErrors(t *testing.T) {
 
 func parentStackRepository(t *testing.T) string {
 	t.Helper()
-	dir := prepararRepositorioPrueba(t, map[string]string{"root.txt": "root\n"})
+	dir := prepareTestRepo(t, map[string]string{"root.txt": "root\n"})
 	parentGit(t, dir, "branch", "-M", "main")
 	parentCommit(t, dir, "A")
 	parentCommit(t, dir, "B")
@@ -166,7 +166,7 @@ func parentStackRepository(t *testing.T) string {
 
 func siblingParentRepository(t *testing.T) string {
 	t.Helper()
-	dir := prepararRepositorioPrueba(t, map[string]string{"root.txt": "root\n"})
+	dir := prepareTestRepo(t, map[string]string{"root.txt": "root\n"})
 	parentGit(t, dir, "branch", "-M", "main")
 	parentCommit(t, dir, "current")
 	parentGit(t, dir, "checkout", "-q", "main")
@@ -177,7 +177,7 @@ func siblingParentRepository(t *testing.T) string {
 
 func ambiguousParentRepository(t *testing.T) string {
 	t.Helper()
-	dir := prepararRepositorioPrueba(t, map[string]string{"root.txt": "root\n"})
+	dir := prepareTestRepo(t, map[string]string{"root.txt": "root\n"})
 	parentGit(t, dir, "branch", "-M", "main")
 	parentCommit(t, dir, "A")
 	parentGit(t, dir, "checkout", "-q", "main")

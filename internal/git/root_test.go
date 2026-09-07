@@ -8,97 +8,97 @@ import (
 	"testing"
 )
 
-func TestEsMismaRuta(t *testing.T) {
+func TestIsSamePath(t *testing.T) {
 	base := filepath.Join("repos", "demo")
-	conBarraFinal := base + string(filepath.Separator)
-	separadorContrario := filepath.ToSlash(base)
+	withTrailingSlash := base + string(filepath.Separator)
+	oppositeSeparator := filepath.ToSlash(base)
 
 	tests := []struct {
-		nombre   string
-		a        string
-		b        string
-		esperado bool
+		name string
+		a    string
+		b    string
+		want bool
 	}{
-		{nombre: "idénticas", a: base, b: base, esperado: true},
-		{nombre: "con barra final", a: base, b: conBarraFinal, esperado: true},
-		{nombre: "con separador contrario", a: base, b: separadorContrario, esperado: true},
-		{nombre: "rutas distintas", a: base, b: filepath.Join("repos", "otro"), esperado: false},
+		{name: "identical", a: base, b: base, want: true},
+		{name: "with trailing slash", a: base, b: withTrailingSlash, want: true},
+		{name: "with opposite separator", a: base, b: oppositeSeparator, want: true},
+		{name: "different paths", a: base, b: filepath.Join("repos", "other"), want: false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := EsMismaRuta(tt.a, tt.b)
-			if obtenido != tt.esperado {
-				t.Errorf("EsMismaRuta(%q, %q) = %v, esperado %v", tt.a, tt.b, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsSamePath(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("IsSamePath(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestEsMismaRutaToleranteMayusculas(t *testing.T) {
+func TestIsSamePathCaseInsensitiveOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("la comparación insensible a mayúsculas solo aplica en Windows")
+		t.Skip("case-insensitive comparison only applies on Windows")
 	}
-	if !EsMismaRuta(`C:\Repos\Demo`, `c:\repos\demo`) {
-		t.Error("EsMismaRuta debería ignorar mayúsculas en Windows")
+	if !IsSamePath(`C:\Repos\Demo`, `c:\repos\demo`) {
+		t.Error("IsSamePath should ignore case on Windows")
 	}
 }
 
-func TestObtenerRaizWorktreeEnRaiz(t *testing.T) {
+func TestGetWorktreeRootAtRepoRoot(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	dir := prepareTestRepo(t, map[string]string{"a.go": "package a\n"})
 	t.Chdir(dir)
 
-	raiz, err := ObtenerRaizWorktree()
+	root, err := GetWorktreeRoot()
 	if err != nil {
-		t.Fatalf("ObtenerRaizWorktree devolvió error: %v", err)
+		t.Fatalf("GetWorktreeRoot returned error: %v", err)
 	}
-	if !EsMismaRuta(raiz, dir) {
-		t.Errorf("ObtenerRaizWorktree() = %q, esperado %q", raiz, dir)
+	if !IsSamePath(root, dir) {
+		t.Errorf("GetWorktreeRoot() = %q, want %q", root, dir)
 	}
 }
 
-func TestObtenerRaizWorktreeDesdeSubdirectorio(t *testing.T) {
+func TestGetWorktreeRootFromSubdirectory(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
-	sub := filepath.Join(dir, "src", "paquete")
+	dir := prepareTestRepo(t, map[string]string{"a.go": "package a\n"})
+	sub := filepath.Join(dir, "src", "package")
 	if err := os.MkdirAll(sub, 0755); err != nil {
-		t.Fatalf("no se pudo crear el subdirectorio: %v", err)
+		t.Fatalf("could not create the subdirectory: %v", err)
 	}
 	t.Chdir(sub)
 
-	raiz, err := ObtenerRaizWorktree()
+	root, err := GetWorktreeRoot()
 	if err != nil {
-		t.Fatalf("ObtenerRaizWorktree devolvió error: %v", err)
+		t.Fatalf("GetWorktreeRoot returned error: %v", err)
 	}
-	if !EsMismaRuta(raiz, dir) {
-		t.Errorf("ObtenerRaizWorktree() = %q, esperado %q", raiz, dir)
+	if !IsSamePath(root, dir) {
+		t.Errorf("GetWorktreeRoot() = %q, want %q", root, dir)
 	}
 }
 
-func TestObtenerRaizWorktreeFueraDeRepositorio(t *testing.T) {
+func TestGetWorktreeRootOutsideRepository(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
 	t.Chdir(t.TempDir())
 
-	if _, err := ObtenerRaizWorktree(); err == nil {
-		t.Error("se esperaba error al consultar la raíz fuera de un repositorio Git")
+	if _, err := GetWorktreeRoot(); err == nil {
+		t.Error("expected an error when asking for the root outside a Git repository")
 	}
 }

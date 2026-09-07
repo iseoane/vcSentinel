@@ -11,8 +11,8 @@ import (
 )
 
 // snapshotMu serializes in-process snapshot creation and purging. Ticket 14
-// diagnosis: the flaky "llamada N devolvió una ruta distinta" failures were a
-// production race, not a test defect. Concurrent CrearSnapshot calls each ran
+// diagnosis: the flaky "call N returned a different path" failures were a
+// production race, not a test defect. Concurrent CreateSnapshot calls each ran
 // their own "git worktree add" into a private temp path and the winner then
 // ran "git worktree repair" while sibling calls were still mutating the same
 // <git-common-dir>/worktrees administrative area; git does not lock that area
@@ -26,30 +26,30 @@ var snapshotMu sync.Mutex
 
 const snapshotLockDir = "snapshot-locks"
 
-// ArbolDe devuelve el tree OID de una revisión.
-func ArbolDe(revision string) (string, error) {
-	// Una revisión que empieza con "-" se interpretaría como una opción de
-	// "git rev-parse" en vez de como el nombre de la revisión (B14): quien
-	// llame con una entrada no confiable podría inyectar opciones de git.
+// TreeOf returns the tree OID of a revision.
+func TreeOf(revision string) (string, error) {
+	// A revision starting with "-" would be interpreted as an option of
+	// "git rev-parse" instead of as the revision's name (B14): anyone
+	// calling with untrusted input could inject git options.
 	if strings.HasPrefix(revision, "-") {
-		return "", fmt.Errorf("revisión inválida %q: no puede empezar con \"-\"", revision)
+		return "", fmt.Errorf("invalid revision %q: it cannot start with \"-\"", revision)
 	}
-	salida, err := ejecutarGitSalida("rev-parse", revision+"^{tree}")
+	out, err := runGitOutput("rev-parse", revision+"^{tree}")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(salida), nil
+	return strings.TrimSpace(out), nil
 }
 
-// directorioSnapshots devuelve <git-common-dir>/vas-sentinel/snapshots del
-// repositorio activo (el mismo para todos los worktrees enlazados, a
-// diferencia del git-dir privado de cada uno), creándolo si no existe.
-func directorioSnapshots() (string, error) {
+// snapshotsDir returns <git-common-dir>/vas-sentinel/snapshots of the
+// active repository (the same for every linked worktree, unlike each one's
+// private git-dir), creating it if it does not exist.
+func snapshotsDir() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	commonDir, err := ObtenerGitCommonDir(cwd)
+	commonDir, err := GetGitCommonDir(cwd)
 	if err != nil {
 		return "", err
 	}
@@ -60,75 +60,75 @@ func directorioSnapshots() (string, error) {
 	return dir, nil
 }
 
-// CrearSnapshot crea (o reutiliza) un worktree Git separado en modo detached
-// para el árbol treeOID, dentro del common-dir del repositorio, de forma que
-// cualquier worktree enlazado del mismo repositorio vea y reutilice el mismo
-// snapshot. Si el snapshot ya existe, se devuelve sin repetir el checkout:
-// es éxito, no error.
+// CreateSnapshot creates (or reuses) a separate Git worktree in detached
+// mode for the treeOID tree, inside the repository's common-dir, so that
+// any linked worktree of the same repository sees and reuses the same
+// snapshot. If the snapshot already exists, it is returned without
+// repeating the checkout: that is success, not an error.
 //
-// Desviación de diseño verificada empíricamente: "git worktree add" exige un
-// commit-ish y rechaza un tree OID desnudo ("object ... is a tree, not a
-// commit"). Por eso primero se ancla el árbol en un commit colgante (sin
-// rama, sin ref que lo referencie) con "git commit-tree": ese commit no
-// aporta historia, solo sirve de punto de entrada válido para el checkout.
-func CrearSnapshot(treeOID string) (string, error) {
+// Design deviation verified empirically: "git worktree add" requires a
+// commit-ish and rejects a bare tree OID ("object ... is a tree, not a
+// commit"). That is why the tree is first anchored into a dangling commit
+// (no branch, no ref referencing it) with "git commit-tree": that commit
+// adds no history, it only serves as a valid entry point for the checkout.
+func CreateSnapshot(treeOID string) (string, error) {
 	// See snapshotMu: concurrent creation inside one process raced the git
 	// worktree administrative area and made repair fail intermittently.
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 
-	snapshots, err := directorioSnapshots()
+	snapshots, err := snapshotsDir()
 	if err != nil {
 		return "", err
 	}
-	destino := filepath.Join(snapshots, treeOID)
-	if info, err := os.Stat(destino); err == nil && info.IsDir() {
-		return refrescarSnapshot(destino)
+	destination := filepath.Join(snapshots, treeOID)
+	if info, err := os.Stat(destination); err == nil && info.IsDir() {
+		return refreshSnapshot(destination)
 	}
 
-	commitAncla, err := ejecutarGitSalida("commit-tree", treeOID, "-m", "vas-sentinel: snapshot")
+	anchorCommit, err := runGitOutput("commit-tree", treeOID, "-m", "vas-sentinel: snapshot")
 	if err != nil {
-		return "", fmt.Errorf("no se pudo anclar el árbol %s en un commit para el snapshot: %w", treeOID, err)
+		return "", fmt.Errorf("could not anchor tree %s into a commit for the snapshot: %w", treeOID, err)
 	}
-	commitAncla = strings.TrimSpace(commitAncla)
+	anchorCommit = strings.TrimSpace(anchorCommit)
 
-	// Se hace el checkout en un directorio temporal de nombre único (PID +
-	// timestamp) y luego se renombra al nombre final: si dos llamadas
-	// concurrentes crean el mismo snapshot, cada una hace su propio checkout
-	// aislado sin necesidad de locks explícitos, y solo una gana el
-	// renombrado atómico; la otra descarta su worktree temporal sin error.
-	temporal := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", treeOID, os.Getpid(), time.Now().UnixNano()))
-	if _, err := ejecutarGitSalida("worktree", "add", "--detach", temporal, commitAncla); err != nil {
-		return "", fmt.Errorf("no se pudo crear el worktree del snapshot %s: %w", treeOID, err)
+	// The checkout happens in a temp directory with a unique name (PID +
+	// timestamp) and is then renamed to the final name: if two concurrent
+	// calls create the same snapshot, each does its own isolated checkout
+	// without needing explicit locks, and only one wins the atomic rename;
+	// the other discards its temp worktree without error.
+	temp := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", treeOID, os.Getpid(), time.Now().UnixNano()))
+	if _, err := runGitOutput("worktree", "add", "--detach", temp, anchorCommit); err != nil {
+		return "", fmt.Errorf("could not create snapshot worktree %s: %w", treeOID, err)
 	}
 
-	if err := os.Rename(temporal, destino); err != nil {
-		if info, statErr := os.Stat(destino); statErr == nil && info.IsDir() {
-			// Otra llamada ganó la carrera: el destino ya existe. Se limpia
-			// el worktree temporal propio (en su ruta original, todavía
-			// consistente) y se reutiliza el resultado ajeno.
-			_, _ = ejecutarGitSalida("worktree", "remove", "--force", temporal)
-			return refrescarSnapshot(destino)
+	if err := os.Rename(temp, destination); err != nil {
+		if info, statErr := os.Stat(destination); statErr == nil && info.IsDir() {
+			// Another call won the race: the destination already exists. Our
+			// own temp worktree is cleaned up (at its original path, still
+			// consistent) and the other call's result is reused.
+			_, _ = runGitOutput("worktree", "remove", "--force", temp)
+			return refreshSnapshot(destination)
 		}
-		_, _ = ejecutarGitSalida("worktree", "remove", "--force", temporal)
-		return "", fmt.Errorf("no se pudo publicar el snapshot %s: %w", treeOID, err)
+		_, _ = runGitOutput("worktree", "remove", "--force", temp)
+		return "", fmt.Errorf("could not publish snapshot %s: %w", treeOID, err)
 	}
 
-	// El renombrado deja obsoleta la referencia inversa que Git guarda en su
-	// directorio administrativo (apunta a la ruta temporal, que ya no
-	// existe): sin este "repair", "git worktree list"/"remove" no reconocen
-	// la ruta final. Verificado empíricamente con git 2.47.3.
-	if _, err := ejecutarGitSalida("worktree", "repair", destino); err != nil {
-		return "", fmt.Errorf("no se pudo reparar los metadatos del worktree del snapshot %s: %w", treeOID, err)
+	// The rename leaves Git's reverse reference in its administrative
+	// directory stale (it points at the temp path, which no longer
+	// exists): without this "repair", "git worktree list"/"remove" do not
+	// recognize the final path. Verified empirically with git 2.47.3.
+	if _, err := runGitOutput("worktree", "repair", destination); err != nil {
+		return "", fmt.Errorf("could not repair snapshot worktree metadata %s: %w", treeOID, err)
 	}
 
-	path, err := refrescarSnapshot(destino)
+	path, err := refreshSnapshot(destination)
 	if err != nil {
 		return "", err
 	}
 	// Best-effort hygiene sweep after a successful publish: this is
 	// housekeeping, not correctness, so a failed sweep never fails creation.
-	_ = purgarSnapshotsLocked(RetencionSnapshots)
+	_ = purgeSnapshotsLocked(SnapshotRetention)
 	return path, nil
 }
 
@@ -138,7 +138,7 @@ func AcquireSnapshot(treeOID string) (string, func(), error) {
 	if !treeOIDIsValid(treeOID) {
 		return "", nil, fmt.Errorf("invalid snapshot tree object id %q", treeOID)
 	}
-	snapshots, err := directorioSnapshots()
+	snapshots, err := snapshotsDir()
 	if err != nil {
 		return "", nil, err
 	}
@@ -153,7 +153,7 @@ func AcquireSnapshot(treeOID string) (string, func(), error) {
 	if !acquired {
 		return "", nil, errors.New("snapshot shared lock was not acquired")
 	}
-	path, err := CrearSnapshot(treeOID)
+	path, err := CreateSnapshot(treeOID)
 	if err != nil {
 		_ = lock.Close()
 		return "", nil, err
@@ -175,103 +175,104 @@ func snapshotLockPath(snapshots, treeOID string) (string, error) {
 	return filepath.Join(dir, treeOID+".lock"), nil
 }
 
-// refrescarSnapshot marks a snapshot as actively acquired. Purge uses the
+// refreshSnapshot marks a snapshot as actively acquired. Purge uses the
 // modification time as its retention boundary, so reusing an old snapshot
 // cannot make an overlapping validation look disposable.
-func refrescarSnapshot(destino string) (string, error) {
+func refreshSnapshot(destination string) (string, error) {
 	// Retention is a cache optimization, never a reason to reject a usable
 	// snapshot when filesystem metadata cannot be updated.
-	_ = os.Chtimes(destino, time.Now(), time.Now())
-	return destino, nil
+	_ = os.Chtimes(destination, time.Now(), time.Now())
+	return destination, nil
 }
 
-// RetencionSnapshots es la edad a partir de la cual el barrido automático
-// considera basura un snapshot: los snapshots son una caché desechable por
-// árbol (CrearSnapshot reutiliza el existente), así que la retención solo
-// necesita cubrir la reutilización dentro de una sesión de trabajo típica,
-// no archivar. Es la única fuente de este umbral.
-const RetencionSnapshots = 24 * time.Hour
+// SnapshotRetention is the age from which the automatic sweep considers a
+// snapshot garbage: snapshots are a disposable per-tree cache
+// (CreateSnapshot reuses the existing one), so retention only needs to
+// cover reuse within a typical working session, not archiving. It is the
+// single source of this threshold.
+const SnapshotRetention = 24 * time.Hour
 
-// PurgarSnapshots elimina los snapshots de <git-common-dir>/vas-sentinel/snapshots
-// cuya fecha de modificación sea más antigua que antiguedad. Son desechables
-// (se regeneran con CrearSnapshot), así que se fuerza la eliminación si falla
-// la normal.
-func PurgarSnapshots(antiguedad time.Duration) error {
+// PurgeSnapshots removes the snapshots of
+// <git-common-dir>/vas-sentinel/snapshots whose modification time is older
+// than age. They are disposable (recreated by CreateSnapshot), so removal
+// is forced when the normal one fails.
+func PurgeSnapshots(age time.Duration) error {
 	// The purge removes worktrees from the same administrative area the
 	// create path mutates, so it shares snapshotMu: a purge running while
-	// CrearSnapshot renames or repairs could otherwise make either git
+	// CreateSnapshot renames or repairs could otherwise make either git
 	// command fail on transient administrative state.
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 
-	return purgarSnapshotsLocked(antiguedad)
+	return purgeSnapshotsLocked(age)
 }
 
-// purgarSnapshotsLocked is the purge body proper; the caller must already
+// purgeSnapshotsLocked is the purge body proper; the caller must already
 // hold snapshotMu. It removes every snapshot directory whose ModTime is
-// older than antiguedad, best-effort per entry: a snapshot neither the
+// older than age, best-effort per entry: a snapshot neither the
 // normal nor the forced removal can clean accumulates an error instead of
 // pretending the disk came out clean (B15), but one broken snapshot never
 // blocks the rest of the sweep.
-func purgarSnapshotsLocked(antiguedad time.Duration) error {
-	snapshots, err := directorioSnapshots()
+func purgeSnapshotsLocked(age time.Duration) error {
+	snapshots, err := snapshotsDir()
 	if err != nil {
 		return err
 	}
-	entradas, err := os.ReadDir(snapshots)
+	entries, err := os.ReadDir(snapshots)
 	if err != nil {
 		return err
 	}
 
-	limite := time.Now().Add(-antiguedad)
-	huboEliminacion := false
-	var errores []error
-	for _, entrada := range entradas {
-		if !entrada.IsDir() {
+	cutoff := time.Now().Add(-age)
+	removedAny := false
+	var errs []error
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		info, err := entrada.Info()
+		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		if info.ModTime().After(limite) {
+		if info.ModTime().After(cutoff) {
 			continue
 		}
-		lockPath, err := snapshotLockPath(snapshots, entrada.Name())
+		lockPath, err := snapshotLockPath(snapshots, entry.Name())
 		if err != nil {
-			errores = append(errores, err)
+			errs = append(errs, err)
 			continue
 		}
 		lock, acquired, err := lockSnapshot(lockPath, true, false)
 		if err != nil {
-			errores = append(errores, err)
+			errs = append(errs, err)
 			continue
 		}
 		if !acquired {
 			continue
 		}
-		ruta := filepath.Join(snapshots, entrada.Name())
-		if _, err := ejecutarGitSalida("worktree", "remove", ruta); err != nil {
-			if _, errForzado := ejecutarGitSalida("worktree", "remove", "--force", ruta); errForzado != nil {
-				// Ni la vía normal ni --force pudieron limpiar este
-				// snapshot (B15): se acumula el error en vez de devolver
-				// nil, que haría creer al llamador que el disco quedó
-				// limpio cuando el directorio roto sigue ahí. El resto del
-				// bucle continúa: es limpieza best-effort por snapshot, un
-				// fallo aislado no debe impedir purgar los demás.
-				errores = append(errores, fmt.Errorf("no se pudo eliminar el snapshot %s: %w", ruta, errForzado))
+		path := filepath.Join(snapshots, entry.Name())
+		if _, err := runGitOutput("worktree", "remove", path); err != nil {
+			if _, forcedErr := runGitOutput("worktree", "remove", "--force", path); forcedErr != nil {
+				// Neither the normal path nor --force could clean this
+				// snapshot (B15): the error accumulates instead of
+				// returning nil, which would make the caller believe the
+				// disk came out clean while the broken directory is still
+				// there. The rest of the loop continues: this is
+				// per-snapshot best-effort cleaning, one isolated failure
+				// must not keep the others from being purged.
+				errs = append(errs, fmt.Errorf("could not remove snapshot %s: %w", path, forcedErr))
 				_ = lock.Close()
 				continue
 			}
 		}
 		_ = lock.Close()
-		huboEliminacion = true
+		removedAny = true
 	}
 
-	if huboEliminacion {
-		_, _ = ejecutarGitSalida("worktree", "prune")
+	if removedAny {
+		_, _ = runGitOutput("worktree", "prune")
 	}
-	return errors.Join(errores...)
+	return errors.Join(errs...)
 }
 
 func treeOIDIsValid(treeOID string) bool {

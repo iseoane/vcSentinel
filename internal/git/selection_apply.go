@@ -23,11 +23,11 @@ type selectionIndexEntry struct {
 	object string
 }
 
-func executeSelectionPlan(plan *PlanFragmentacion) ([]ResultadoCommit, error) {
+func executeSelectionPlan(plan *FragmentationPlan) ([]CommitResult, error) {
 	return executeSelectionPlanWithCommit(plan, commitWithSelectionIndex)
 }
 
-func executeSelectionPlanWithCommit(plan *PlanFragmentacion, commit func(string, string) (string, error)) (results []ResultadoCommit, applyErr error) {
+func executeSelectionPlanWithCommit(plan *FragmentationPlan, commit func(string, string) (string, error)) (results []CommitResult, applyErr error) {
 	originalHead := currentHeadFingerprint()
 	changes := selectionChangeIndex(plan.Changes)
 	patches, err := prepareSelectionPatches(plan, changes)
@@ -48,7 +48,7 @@ func executeSelectionPlanWithCommit(plan *PlanFragmentacion, commit func(string,
 	}()
 
 	cumulativeHunks := make(map[string][]ChangeSelector)
-	for _, batch := range plan.Lotes {
+	for _, batch := range plan.Batches {
 		index, err := newSelectionIndex()
 		if err != nil {
 			return results, err
@@ -73,16 +73,16 @@ func executeSelectionPlanWithCommit(plan *PlanFragmentacion, commit func(string,
 			return results, err
 		}
 
-		message := batch.Mensaje
+		message := batch.Message
 		if strings.TrimSpace(message) == "" {
-			message = batch.MensajeAutomatico
+			message = batch.AutoMessage
 		}
 		hash, err := commit(index, message)
 		cleanupSelectionIndex(index)
 		if err != nil {
 			return results, err
 		}
-		results = append(results, ResultadoCommit{Hash: hash, Mensaje: message, Capa: batch.Capa, Archivos: len(batch.Rutas)})
+		results = append(results, CommitResult{Hash: hash, Message: message, Layer: batch.Layer, Files: len(batch.Paths)})
 	}
 	if err := resetRealIndexForPlan(plan); err != nil {
 		return results, err
@@ -98,9 +98,9 @@ func selectionChangeIndex(changes []PlannedChange) map[string]PlannedChange {
 	return result
 }
 
-func prepareSelectionPatches(plan *PlanFragmentacion, changes map[string]PlannedChange) (map[string]selectionPatch, error) {
+func prepareSelectionPatches(plan *FragmentationPlan, changes map[string]PlannedChange) (map[string]selectionPatch, error) {
 	needed := make(map[string]struct{})
-	for _, batch := range plan.Lotes {
+	for _, batch := range plan.Batches {
 		for _, selector := range batch.Selectors {
 			if selector.Mode == SelectorHunk {
 				needed[changeKey(selector.Path, selector.OldPath)] = struct{}{}
@@ -116,15 +116,15 @@ func prepareSelectionPatches(plan *PlanFragmentacion, changes map[string]Planned
 		}
 		patch, err := parseSelectionPatch(diff)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s hunk representation is unsafe: %v", ErrArbolCambiado, change.Path, err)
+			return nil, fmt.Errorf("%w: %s hunk representation is unsafe: %v", ErrTreeChanged, change.Path, err)
 		}
 		actual, err := parseDiffHunks(diff)
 		if err != nil || len(actual) != len(change.Atoms) {
-			return nil, fmt.Errorf("%w: %s hunks no longer match the approved draft", ErrArbolCambiado, change.Path)
+			return nil, fmt.Errorf("%w: %s hunks no longer match the approved draft", ErrTreeChanged, change.Path)
 		}
 		for index, atom := range change.Atoms {
 			if atom.Hunk == nil || actual[index] != *atom.Hunk || atom.Digest != actualPatchHash(patch.hunks[index]) {
-				return nil, fmt.Errorf("%w: %s hunk %d no longer matches the approved draft", ErrArbolCambiado, change.Path, index)
+				return nil, fmt.Errorf("%w: %s hunk %d no longer matches the approved draft", ErrTreeChanged, change.Path, index)
 			}
 		}
 		patches[key] = patch
@@ -174,7 +174,7 @@ func (patch selectionPatch) forSelectors(selectors []ChangeSelector) (string, er
 	seen := make(map[int]struct{}, len(selectors))
 	for _, selector := range selectors {
 		if selector.HunkIndex < 0 || selector.HunkIndex >= len(patch.hunks) {
-			return "", fmt.Errorf("%w: hunk index %d is outside the live diff", ErrArbolCambiado, selector.HunkIndex)
+			return "", fmt.Errorf("%w: hunk index %d is outside the live diff", ErrTreeChanged, selector.HunkIndex)
 		}
 		if _, ok := seen[selector.HunkIndex]; ok {
 			return "", fmt.Errorf("%w: hunk %d is selected more than once", ErrInvalidPlan, selector.HunkIndex)
@@ -191,10 +191,10 @@ func (patch selectionPatch) forSelectors(selectors []ChangeSelector) (string, er
 	return result.String(), nil
 }
 
-func preflightSelectionPlan(plan *PlanFragmentacion, originalHead string, changes map[string]PlannedChange, patches map[string]selectionPatch) error {
+func preflightSelectionPlan(plan *FragmentationPlan, originalHead string, changes map[string]PlannedChange, patches map[string]selectionPatch) error {
 	hunks := make(map[string][]ChangeSelector)
 	var whole []ChangeSelector
-	for _, batch := range plan.Lotes {
+	for _, batch := range plan.Batches {
 		for _, selector := range batch.Selectors {
 			if selector.Mode == SelectorHunk {
 				key := changeKey(selector.Path, selector.OldPath)
@@ -206,7 +206,7 @@ func preflightSelectionPlan(plan *PlanFragmentacion, originalHead string, change
 		if err := withSelectionIndex(originalHead, func(index string) error {
 			return stageSelectionSet(index, originalHead, changes, patches, whole, hunks)
 		}); err != nil {
-			return fmt.Errorf("could not preflight batch %d: %w", batch.Numero, err)
+			return fmt.Errorf("could not preflight batch %d: %w", batch.Number, err)
 		}
 	}
 	return nil
@@ -301,11 +301,11 @@ func commitWithSelectionIndex(index, message string) (string, error) {
 	if err := runGitWithIndex(index, nil, "commit", "-m", message, "--no-verify"); err != nil {
 		return "", err
 	}
-	hash, err := ejecutarGitSalida("rev-parse", "--short", "HEAD")
+	hash, err := runGitOutput("rev-parse", "--short", "HEAD")
 	return strings.TrimSpace(hash), err
 }
 
-func resetRealIndexForPlan(plan *PlanFragmentacion) error {
+func resetRealIndexForPlan(plan *FragmentationPlan) error {
 	paths := plannedSelectionPaths(plan)
 	if len(paths) == 0 {
 		return nil
@@ -314,13 +314,13 @@ func resetRealIndexForPlan(plan *PlanFragmentacion) error {
 	for _, path := range paths {
 		args = append(args, literalPathspec(path))
 	}
-	if _, err := ejecutarGitSalida(args...); err != nil {
+	if _, err := runGitOutput(args...); err != nil {
 		return fmt.Errorf("could not clean the real index after selection apply: %w", err)
 	}
 	return nil
 }
 
-func plannedSelectionPaths(plan *PlanFragmentacion) []string {
+func plannedSelectionPaths(plan *FragmentationPlan) []string {
 	paths := make([]string, 0, len(plan.Changes)*2)
 	if len(plan.Changes) > 0 {
 		for _, change := range plan.Changes {
@@ -332,9 +332,9 @@ func plannedSelectionPaths(plan *PlanFragmentacion) []string {
 		return sortedUnique(paths)
 	}
 
-	for _, batch := range plan.Lotes {
+	for _, batch := range plan.Batches {
 		if len(batch.Selectors) == 0 {
-			paths = append(paths, batch.Rutas...)
+			paths = append(paths, batch.Paths...)
 			continue
 		}
 		for _, selector := range batch.Selectors {

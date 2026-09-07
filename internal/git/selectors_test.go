@@ -11,15 +11,15 @@ import (
 )
 
 func TestSlicePlanSerializesWholeFileCoverage(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "package app\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "package app\n")
 	if err := os.WriteFile("app.go", []byte("package app\n\nfunc New() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
-		t.Fatalf("ConstruirPlanParaAgente: %v", err)
+		t.Fatalf("BuildPlanForAgent: %v", err)
 	}
 	if err := ValidateSerializedPlan(plan); err != nil {
 		t.Fatalf("ValidateSerializedPlan: %v", err)
@@ -27,10 +27,10 @@ func TestSlicePlanSerializesWholeFileCoverage(t *testing.T) {
 	if len(plan.Changes) != 1 || len(plan.Changes[0].Atoms) != 1 {
 		t.Fatalf("captured changes = %+v, want one file atom", plan.Changes)
 	}
-	if len(plan.Lotes) != 1 || len(plan.Lotes[0].Selectors) != 1 {
-		t.Fatalf("serialized batches = %+v, want one whole-file selector", plan.Lotes)
+	if len(plan.Batches) != 1 || len(plan.Batches[0].Selectors) != 1 {
+		t.Fatalf("serialized batches = %+v, want one whole-file selector", plan.Batches)
 	}
-	selector := plan.Lotes[0].Selectors[0]
+	selector := plan.Batches[0].Selectors[0]
 	if selector.Mode != SelectorWholeFile || selector.Path != "app.go" {
 		t.Fatalf("selector = %+v, want whole app.go", selector)
 	}
@@ -39,7 +39,7 @@ func TestSlicePlanSerializesWholeFileCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded PlanSerializado
+	var decoded SerializedPlan
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -49,51 +49,51 @@ func TestSlicePlanSerializesWholeFileCoverage(t *testing.T) {
 }
 
 func TestSlicePlanCanSelectMultipleHunksInOneFile(t *testing.T) {
-	prepararRepoTemp(t)
+	prepareTempRepo(t)
 	base := "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"
-	commitEnRepo(t, "app.go", base)
+	commitInRepo(t, "app.go", base)
 	updated := "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"
 	if err := os.WriteFile("app.go", []byte(updated), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
-		t.Fatalf("ConstruirPlanParaAgente: %v", err)
+		t.Fatalf("BuildPlanForAgent: %v", err)
 	}
 	change := plan.Changes[0]
 	if len(change.Atoms) != 2 {
 		t.Fatalf("atoms = %+v, want two non-adjacent hunks", change.Atoms)
 	}
 
-	plan.Lotes[0].Selectors = []ChangeSelector{
+	plan.Batches[0].Selectors = []ChangeSelector{
 		selectorForHunk(change, 0),
 		selectorForHunk(change, 1),
 	}
-	plan.Lotes[0].Lineas = change.AddedLines
+	plan.Batches[0].Lines = change.AddedLines
 	if err := RecalculatePlanID(plan); err != nil {
 		t.Fatalf("RecalculatePlanID: %v", err)
 	}
 	if err := ValidateSerializedPlan(plan); err != nil {
 		t.Fatalf("ValidateSerializedPlan: %v", err)
 	}
-	if plan.Lotes[0].Selectors[0].Mode != SelectorHunk || plan.Lotes[0].Selectors[1].HunkIndex != 1 {
-		t.Fatalf("selectors = %+v, want two exact hunk selectors", plan.Lotes[0].Selectors)
+	if plan.Batches[0].Selectors[0].Mode != SelectorHunk || plan.Batches[0].Selectors[1].HunkIndex != 1 {
+		t.Fatalf("selectors = %+v, want two exact hunk selectors", plan.Batches[0].Selectors)
 	}
 }
 
 func TestSlicePlanIDIncludesSelectorsAndState(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
 	if err := os.WriteFile("app.go", []byte("ONE\ntwo\nthree\nFOUR\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	whole, err := ConstruirPlanParaAgente()
+	whole, err := BuildPlanForAgent()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := ConstruirPlanParaAgente()
+	second, err := BuildPlanForAgent()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,12 +102,12 @@ func TestSlicePlanIDIncludesSelectorsAndState(t *testing.T) {
 	}
 
 	hunks := *whole
-	hunks.Lotes = append([]LoteSerializado(nil), whole.Lotes...)
-	hunks.Lotes[0].Selectors = []ChangeSelector{
+	hunks.Batches = append([]SerializedBatch(nil), whole.Batches...)
+	hunks.Batches[0].Selectors = []ChangeSelector{
 		selectorForHunk(whole.Changes[0], 0),
 		selectorForHunk(whole.Changes[0], 1),
 	}
-	hunks.Lotes[0].Lineas = whole.Changes[0].AddedLines
+	hunks.Batches[0].Lines = whole.Changes[0].AddedLines
 	if err := RecalculatePlanID(&hunks); err != nil {
 		t.Fatalf("RecalculatePlanID: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestSlicePlanIDIncludesSelectorsAndState(t *testing.T) {
 	}
 
 	stateChanged := hunks
-	stateChanged.EstadoWorktree = "different-state"
+	stateChanged.WorktreeState = "different-state"
 	if err := RecalculatePlanID(&stateChanged); err != nil {
 		t.Fatalf("RecalculatePlanID with changed state: %v", err)
 	}
@@ -126,12 +126,12 @@ func TestSlicePlanIDIncludesSelectorsAndState(t *testing.T) {
 }
 
 func TestSlicePlanRejectsMissingOverlappingAndCorruptSelections(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
 	if err := os.WriteFile("app.go", []byte("ONE\ntwo\nthree\nFOUR\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,9 +172,9 @@ func TestSlicePlanRejectsMissingOverlappingAndCorruptSelections(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			candidate := *plan
-			candidate.Lotes = append([]LoteSerializado(nil), plan.Lotes...)
-			candidate.Lotes[0].Selectors = tt.selectors
-			candidate.Lotes[0].Lineas = change.AddedLines
+			candidate.Batches = append([]SerializedBatch(nil), plan.Batches...)
+			candidate.Batches[0].Selectors = tt.selectors
+			candidate.Batches[0].Lines = change.AddedLines
 			if err := ValidatePlanSelections(&candidate); !errors.Is(err, ErrInvalidPlan) || !containsError(err, tt.want) {
 				t.Fatalf("validation error = %v, want ErrInvalidPlan containing %q", err, tt.want)
 			}
@@ -183,40 +183,40 @@ func TestSlicePlanRejectsMissingOverlappingAndCorruptSelections(t *testing.T) {
 }
 
 func TestSlicePlanRejectsStaleWorktreeAndIndexState(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\n")
 	if err := os.WriteFile("app.go", []byte("ONE\ntwo\nthree\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ejecutarGitSalida("add", "--", "app.go"); err != nil {
+	if _, err := runGitOutput("add", "--", "app.go"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile("app.go", []byte("ONE\ntwo\nTHREE\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan.Changes[0].IndexHash == plan.Changes[0].WorktreeHash {
 		t.Fatal("partially staged plan must preserve different index and worktree fingerprints")
 	}
-	if err := ejecutarGitExit("reset", "HEAD", "--", "app.go"); err != nil {
+	if err := runGitExit("reset", "HEAD", "--", "app.go"); err != nil {
 		t.Fatal(err)
 	}
 
-	err = ValidarAplicacion(plan, RespuestasPlan{PlanID: plan.PlanID})
-	if !errors.Is(err, ErrArbolCambiado) {
-		t.Fatalf("stale index validation error = %v, want ErrArbolCambiado", err)
+	err = ValidateApplication(plan, PlanAnswers{PlanID: plan.PlanID})
+	if !errors.Is(err, ErrTreeChanged) {
+		t.Fatalf("stale index validation error = %v, want ErrTreeChanged", err)
 	}
 
 	if err := os.WriteFile("app.go", []byte("ONE\nTWO\nTHREE\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	err = ValidarAplicacion(plan, RespuestasPlan{PlanID: plan.PlanID})
-	if !errors.Is(err, ErrArbolCambiado) {
-		t.Fatalf("stale worktree validation error = %v, want ErrArbolCambiado", err)
+	err = ValidateApplication(plan, PlanAnswers{PlanID: plan.PlanID})
+	if !errors.Is(err, ErrTreeChanged) {
+		t.Fatalf("stale worktree validation error = %v, want ErrTreeChanged", err)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestSlicePlanRepresentsRequestedGitChangeKinds(t *testing.T) {
 		{
 			name: "renamed",
 			make: func(t *testing.T, _ string) {
-				if _, err := ejecutarGitSalida("mv", "old.go", "new-name.go"); err != nil {
+				if _, err := runGitOutput("mv", "old.go", "new-name.go"); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -294,11 +294,11 @@ func TestSlicePlanRepresentsRequestedGitChangeKinds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := prepararRepoTemp(t)
-			commitEnRepo(t, "tracked.go", "original\n")
-			commitEnRepo(t, "deleted.go", "to delete\n")
-			commitEnRepo(t, "old.go", "rename me\n")
-			commitEnRepo(t, "image.bin", "binary base\n")
+			dir := prepareTempRepo(t)
+			commitInRepo(t, "tracked.go", "original\n")
+			commitInRepo(t, "deleted.go", "to delete\n")
+			commitInRepo(t, "old.go", "rename me\n")
+			commitInRepo(t, "image.bin", "binary base\n")
 			tt.make(t, dir)
 			changes, err := CaptureDraftChanges()
 			if err != nil {
@@ -310,20 +310,20 @@ func TestSlicePlanRepresentsRequestedGitChangeKinds(t *testing.T) {
 }
 
 func TestSlicePlanRejectsHunkSelectionForRenames(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "old.go", "rename me\n")
-	if _, err := ejecutarGitSalida("mv", "old.go", "new.go"); err != nil {
+	prepareTempRepo(t)
+	commitInRepo(t, "old.go", "rename me\n")
+	if _, err := runGitOutput("mv", "old.go", "new.go"); err != nil {
 		t.Fatal(err)
 	}
 	changes, err := CaptureDraftChanges()
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := &PlanSerializado{
-		EstadoWorktree: "state",
-		Changes:        changes,
-		Lotes: []LoteSerializado{{
-			Numero: 1, Rutas: []string{"new.go"}, Lineas: 0,
+	plan := &SerializedPlan{
+		WorktreeState: "state",
+		Changes:       changes,
+		Batches: []SerializedBatch{{
+			Number: 1, Paths: []string{"new.go"}, Lines: 0,
 			Selectors: []ChangeSelector{{Path: "new.go", OldPath: "old.go", Mode: SelectorHunk, HunkIndex: 0, AtomID: changes[0].Atoms[0].ID}},
 		}},
 	}
@@ -363,7 +363,7 @@ func containsError(err error, want string) bool {
 	return err != nil && strings.Contains(err.Error(), want)
 }
 
-func ejecutarGitExit(args ...string) error {
-	_, err := ejecutarGitSalida(args...)
+func runGitExit(args ...string) error {
+	_, err := runGitOutput(args...)
 	return err
 }

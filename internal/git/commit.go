@@ -9,27 +9,27 @@ import (
 	"strings"
 )
 
-// MensajeCommit devuelve la primera línea del mensaje de un commit.
-func MensajeCommit(sha string) (string, error) {
-	salida, err := ejecutarGitSalida("log", "-1", "--format=%s", sha)
+// CommitMessage returns the first line of a commit's message.
+func CommitMessage(sha string) (string, error) {
+	out, err := runGitOutput("log", "-1", "--format=%s", sha)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(salida), nil
+	return strings.TrimSpace(out), nil
 }
 
-// prefijosEstables fija los prefijos de cabecera del diff. No es cosmético: el
-// planner de revisión parsea estas salidas para extraer las líneas añadidas y
-// reconoce la ruta por su prefijo "b/". diff.noprefix, diff.mnemonicPrefix y
-// diff.srcPrefix/dstPrefix cambian ese formato, y una cabecera que el parser no
-// reconoce pierde sus líneas sin error, dejando ciegos a los detectores que
-// leen contenido. Forzarlos aquí impide que la configuración del usuario
-// reintroduzca la divergencia que FU-10 registra.
-var prefijosEstables = []string{"--src-prefix=a/", "--dst-prefix=b/"}
+// stableDiffPrefixes pins the diff header prefixes. This is not cosmetic: the
+// review planner parses this output to extract the added lines and
+// recognizes the path by its "b/" prefix. diff.noprefix, diff.mnemonicPrefix
+// and diff.srcPrefix/dstPrefix change that format, and a header the parser
+// does not recognize loses its lines silently, leaving the detectors that
+// read content blind. Forcing them here keeps the user's configuration from
+// reintroducing the divergence FU-10 records.
+var stableDiffPrefixes = []string{"--src-prefix=a/", "--dst-prefix=b/"}
 
-// DiffCommit devuelve el diff completo de un commit (sin el mensaje), con
-// archivos nuevos, modificados y renombrados. Funciona también para el primer
-// commit del repositorio (root commit).
+// DiffCommit returns the full diff of a commit (without the message),
+// including new, modified, and renamed files. It also works for the
+// repository's first commit (root commit).
 // For a merge commit (two or more parents) it diffs against the first
 // parent: `git show` emits a combined diff that stays empty on clean
 // merges, and an audit reading that diff would see the merge as touching
@@ -39,329 +39,330 @@ func DiffCommit(sha string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var salida string
+	var out string
 	if isMerge {
-		args := append([]string{"diff", "--no-color"}, prefijosEstables...)
-		salida, err = ejecutarGitSalida(append(args, sha+"^1", sha, "--")...)
+		args := append([]string{"diff", "--no-color"}, stableDiffPrefixes...)
+		out, err = runGitOutput(append(args, sha+"^1", sha, "--")...)
 	} else {
-		args := append([]string{"show", "--format=", "--no-color"}, prefijosEstables...)
-		salida, err = ejecutarGitSalida(append(args, sha, "--")...)
+		args := append([]string{"show", "--format=", "--no-color"}, stableDiffPrefixes...)
+		out, err = runGitOutput(append(args, sha, "--")...)
 	}
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(salida, "\n"), nil
+	return strings.TrimRight(out, "\n"), nil
 }
 
 // isMergeCommit reports whether the SHA points at a commit with more than one
 // parent. `rev-list --parents -n 1` prints "sha parent [parent...]", so three
 // or more fields betray a merge.
 func isMergeCommit(sha string) (bool, error) {
-	salida, err := ejecutarGitSalida("rev-list", "--parents", "-n", "1", sha)
+	out, err := runGitOutput("rev-list", "--parents", "-n", "1", sha)
 	if err != nil {
 		return false, err
 	}
-	return len(strings.Fields(salida)) > 2, nil
+	return len(strings.Fields(out)) > 2, nil
 }
 
-// DiffRango devuelve el diff de base..head con los mismos prefijos estables que
-// DiffCommit, para los llamadores que razonan sobre un rango en vez de sobre un
-// commit.
-func DiffRango(base, head string) (string, error) {
-	args := append([]string{"diff", "--no-color"}, prefijosEstables...)
-	salida, err := ejecutarGitSalida(append(args, base+".."+head, "--")...)
+// RangeDiff returns the diff of base..head with the same stable prefixes as
+// DiffCommit, for callers that reason over the diff output instead of over
+// a commit.
+func RangeDiff(base, head string) (string, error) {
+	args := append([]string{"diff", "--no-color"}, stableDiffPrefixes...)
+	out, err := runGitOutput(append(args, base+".."+head, "--")...)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(salida, "\n"), nil
+	return strings.TrimRight(out, "\n"), nil
 }
 
-// SHAHead devuelve el SHA completo del commit HEAD.
+// SHAHead returns the full SHA of the HEAD commit.
 func SHAHead() (string, error) {
-	salida, err := ejecutarGitSalida("rev-parse", "HEAD")
+	out, err := runGitOutput("rev-parse", "HEAD")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(salida), nil
+	return strings.TrimSpace(out), nil
 }
 
-// SHAsRango devuelve los SHAs desde "desde" (exclusivo) hasta "hasta"
-// (inclusivo), en orden cronológico. Para el primer commit de una rama se usa
-// un SHA vacío como "desde".
-func SHAsRango(desde, hasta string) ([]string, error) {
-	revision := desde + ".." + hasta
-	if desde == "" {
-		revision = hasta
+// RangeSHAs returns the SHAs from "from" (exclusive) to "to" (inclusive),
+// in chronological order. For the first commit of a branch an empty SHA is
+// used as "from".
+func RangeSHAs(from, to string) ([]string, error) {
+	revision := from + ".." + to
+	if from == "" {
+		revision = to
 	}
-	salida, err := ejecutarGitSalida("rev-list", "--reverse", revision)
+	out, err := runGitOutput("rev-list", "--reverse", revision)
 	if err != nil {
 		return nil, err
 	}
 	var shas []string
-	for _, linea := range strings.Split(salida, "\n") {
-		if sha := strings.TrimSpace(linea); sha != "" {
+	for _, line := range strings.Split(out, "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
 			shas = append(shas, sha)
 		}
 	}
 	return shas, nil
 }
 
-// SHAsHasta devuelve los SHAs de todos los commits alcanzables desde la
-// expresión, del más antiguo al más reciente. Útil para --all: auditar todo
-// el historial pendiente.
-func SHAsHasta(expresion string) ([]string, error) {
-	salida, err := ejecutarGitSalida("rev-list", "--reverse", expresion)
+// UpToSHAs returns the SHAs of every commit reachable from the expression,
+// oldest to newest. Useful for --all: auditing the whole pending history.
+func UpToSHAs(expression string) ([]string, error) {
+	out, err := runGitOutput("rev-list", "--reverse", expression)
 	if err != nil {
 		return nil, err
 	}
 	var shas []string
-	for _, linea := range strings.Split(salida, "\n") {
-		if sha := strings.TrimSpace(linea); sha != "" {
+	for _, line := range strings.Split(out, "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
 			shas = append(shas, sha)
 		}
 	}
 	return shas, nil
 }
 
-// RamaActual devuelve el nombre de la rama actual (corta).
-func RamaActual() (string, error) {
-	salida, err := ejecutarGitSalida("rev-parse", "--abbrev-ref", "HEAD")
+// CurrentBranch returns the (short) name of the current branch.
+func CurrentBranch() (string, error) {
+	out, err := runGitOutput("rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(salida), nil
+	return strings.TrimSpace(out), nil
 }
 
-// ArchivosDeCommit devuelve las rutas de los archivos que toca un commit,
-// útiles para deducir el saco (capa) de la auditoría.
+// FilesOfCommit returns the paths of the files a commit touches, useful for
+// inferring the audit's layer.
 //
 // Like DiffCommit, on a merge it lists the diff against the first parent:
 // `git show --name-only` also emits an empty list on clean merges.
-func ArchivosDeCommit(sha string) ([]string, error) {
+func FilesOfCommit(sha string) ([]string, error) {
 	isMerge, err := isMergeCommit(sha)
 	if err != nil {
 		return nil, err
 	}
-	var salida string
+	var out string
 	if isMerge {
-		salida, err = ejecutarGitSalida("diff", "--name-only", sha+"^1", sha, "--")
+		out, err = runGitOutput("diff", "--name-only", sha+"^1", sha, "--")
 	} else {
-		salida, err = ejecutarGitSalida("show", "--name-only", "--format=", sha, "--")
+		out, err = runGitOutput("show", "--name-only", "--format=", sha, "--")
 	}
 	if err != nil {
 		return nil, err
 	}
-	var archivos []string
-	for _, linea := range strings.Split(salida, "\n") {
-		if ruta := strings.TrimSpace(linea); ruta != "" {
-			archivos = append(archivos, ruta)
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		if path := strings.TrimSpace(line); path != "" {
+			files = append(files, path)
 		}
 	}
-	return archivos, nil
+	return files, nil
 }
 
-// ContenidoDeArchivoEnCommit devuelve el contenido exacto de un archivo tal
-// como existía en un commit concreto ("git show <sha>:<archivo>"). Si el
-// archivo no existe en ese commit (renombrado, borrado, ruta mal escrita por
-// el agente que audita), devuelve un error explícito en vez de una cadena
-// vacía silenciosa: el llamador necesita distinguir "archivo vacío" de
-// "archivo no resuelto" para decidir si un hallazgo es válido.
-func ContenidoDeArchivoEnCommit(sha, archivo string) (string, error) {
-	// filepath.ToSlash: git siempre espera "/" en un pathspec <rev>:<ruta>,
-	// aunque el archivo llegue con separadores de Windows (regla
-	// multiplataforma del proyecto: nunca concatenar rutas a git sin
-	// normalizar primero).
-	salida, err := ejecutarGitSalida("show", sha+":"+filepath.ToSlash(archivo))
+// FileContentAtCommit returns the exact content of a file as it existed in
+// a specific commit ("git show <sha>:<file>"). If the file does not exist
+// in that commit (renamed, deleted, misspelled by the auditing agent), it
+// returns an explicit error instead of a silent empty string: the caller
+// needs to distinguish "empty file" from "unresolved file" to decide
+// whether a finding is valid.
+func FileContentAtCommit(sha, file string) (string, error) {
+	// filepath.ToSlash: git always expects "/" in a <rev>:<path> pathspec,
+	// even when the file arrives with Windows separators (the project's
+	// cross-platform rule: never concatenate paths into git without
+	// normalizing first).
+	out, err := runGitOutput("show", sha+":"+filepath.ToSlash(file))
 	if err != nil {
-		return "", fmt.Errorf("no se pudo leer %q en el commit %q: %w", archivo, sha, err)
+		return "", fmt.Errorf("could not read %q in commit %q: %w", file, sha, err)
 	}
-	return salida, nil
+	return out, nil
 }
 
-// BlobDeArchivoEnCommit devuelve el hash de blob (objeto git) del contenido
-// de un archivo tal como existía en un commit concreto, vía
-// "git rev-parse <sha>:<archivo>" (esa forma ya resuelve directamente al
-// blob, sin necesitar el sufijo "^{blob}"). Es la clave que sobrevive a un
-// rebase: el SHA del commit cambia, pero el blob de un archivo cuyo
-// contenido no cambió es idéntico bajo cualquier SHA que lo contenga. Si el
-// archivo no existe en ese commit, error explícito (mismo criterio que
-// ContenidoDeArchivoEnCommit).
-func BlobDeArchivoEnCommit(sha, archivo string) (string, error) {
-	// Mismo motivo que ContenidoDeArchivoEnCommit: el pathspec <rev>:<ruta>
-	// de git siempre usa "/", sea cual sea el separador con el que llegó
-	// archivo.
-	salida, err := ejecutarGitSalida("rev-parse", sha+":"+filepath.ToSlash(archivo))
+// BlobFileAtCommit returns the blob hash (git object) of a file's content as
+// it existed in a specific commit, via "git rev-parse <sha>:<path>" (that
+// form already resolves directly to the blob, without needing the "^{blob}"
+// suffix). It is the key that survives a rebase: the commit SHA changes, but
+// the blob of a file whose content did not change is identical under any SHA
+// that contains it. If the file does not exist in that commit, an explicit
+// error (same criterion as FileContentAtCommit).
+func BlobFileAtCommit(sha, file string) (string, error) {
+	// Same reason as FileContentAtCommit: the <rev>:<path> pathspec
+	// of git always uses "/", whatever separator the path arrived with.
+	out, err := runGitOutput("rev-parse", sha+":"+filepath.ToSlash(file))
 	if err != nil {
-		return "", fmt.Errorf("no se pudo resolver el blob de %q en el commit %q: %w", archivo, sha, err)
+		return "", fmt.Errorf("could not resolve the blob of %q in commit %q: %w", file, sha, err)
 	}
-	return strings.TrimSpace(salida), nil
+	return strings.TrimSpace(out), nil
 }
 
-// ResolverSHA devuelve el SHA completo de una expresión (HEAD, HEAD~2, un sha
-// abreviado...).
-func ResolverSHA(expresion string) (string, error) {
-	salida, err := ejecutarGitSalida("rev-parse", "--verify", expresion+"^{commit}")
+// ResolveSHA returns the full SHA of an expression (HEAD, HEAD~2, an
+// abbreviated sha...).
+func ResolveSHA(expression string) (string, error) {
+	out, err := runGitOutput("rev-parse", "--verify", expression+"^{commit}")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(salida), nil
+	return strings.TrimSpace(out), nil
 }
 
-// ExisteCommit indica si el SHA existe como commit en el almacén de objetos.
-// Nota: un commit reescrito por rebase/amend/squash sigue existiendo como
-// objeto dangling; para saber si sigue vivo en la historia usa
-// ContenidoEnAlgunRef.
-func ExisteCommit(sha string) bool {
-	_, err := ejecutarGitSalida("cat-file", "-e", sha+"^{commit}")
+// CommitExists reports whether the SHA exists as a commit in the object
+// store. Note: a commit rewritten by rebase/amend/squash still exists as a
+// dangling object; use ContentInSomeRef to know whether it is still live in
+// history.
+func CommitExists(sha string) bool {
+	_, err := runGitOutput("cat-file", "-e", sha+"^{commit}")
 	return err == nil
 }
 
-// ContenidoEnAlgunRef indica si el SHA es alcanzable desde algún ref local o
-// remoto (git branch -a --contains). Un commit reescrito por rebase, amend o
-// squash deja de estar contenido en ningún ref y aquí devuelve false: es la
-// semántica correcta para detectar fichas huérfanas del ledger.
-func ContenidoEnAlgunRef(sha string) bool {
-	salida, err := ejecutarGitSalida("branch", "-a", "--contains", sha)
+// ContentInSomeRef reports whether the SHA is reachable from some local or
+// remote ref (git branch -a --contains). A commit rewritten by rebase, amend
+// or squash stops being contained in any ref and returns false here: that is
+// the correct semantics for detecting orphaned ledger records.
+func ContentInSomeRef(sha string) bool {
+	out, err := runGitOutput("branch", "-a", "--contains", sha)
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(salida) != ""
+	return strings.TrimSpace(out) != ""
 }
 
-// ContenidoEnAlgunRefDe responde lo mismo pero contra el repositorio de
-// worktree en vez de contra el directorio de trabajo del proceso.
+// ContentInSomeRefFrom answers the same question but against the worktree's
+// repository instead of the process's working directory.
 //
-// La diferencia importa donde la respuesta decide un borrado. Un llamador que
-// purgue los ledgers de varios checkouts a la vez y clasifique con el CWD
-// borraría fichas vivas en cuanto el proceso corriera desde otro repositorio,
-// porque un SHA legítimo de este repo no aparece en los refs de aquel.
-func ContenidoEnAlgunRefDe(worktree, sha string) (bool, error) {
-	// NINGÚN fallo se lee como ausencia. Es la propiedad que faltaba: mientras
-	// un error significaba "no está", cada variable de entorno que pudiera
-	// romper la consulta —un almacén de objetos ajeno, un repositorio
-	// redirigido— se convertía en un borrado de fichas vivas, y taparlas una a
-	// una solo cambiaba qué fallo llegaba a la regla equivocada.
+// The difference matters wherever the answer decides a deletion. A caller
+// purging the ledgers of several checkouts at once while classifying against
+// the CWD would delete live records as soon as the process ran from another
+// repository, because a legitimate SHA of this repo does not appear in that
+// one's refs.
+func ContentInSomeRefFrom(worktree, sha string) (bool, error) {
+	// NO failure is read as absence. That was the missing property: while an
+	// error meant "it is not there", every environment variable that could
+	// break the query —a foreign object store, a redirected repository—
+	// turned into a deletion of live records, and patching them one by one
+	// only changed which failure reached the wrong rule.
 	//
-	// rev-parse separa los dos casos por código de salida: 1 es "este objeto no
-	// existe", que es el huérfano legítimo, y cualquier otro es un fallo real
-	// que debe abortar la purga en vez de decidirla.
-	if _, err := gitEn(worktree, "rev-parse", "--verify", "--quiet", sha+"^{commit}"); err != nil {
-		var salida *exec.ExitError
-		if errors.As(err, &salida) && salida.ExitCode() == 1 {
-			// LÍMITE CONOCIDO, no descuido (FU-15): un objeto ilegible mientras
-			// HEAD sigue legible produce este mismo código. Distinguir
-			// "recolectado por gc" de "corrupto en el almacén" exigiría
-			// verificación a nivel fsck en cada purga, desproporcionado aquí.
-			// Se acepta porque el caso normal de huérfana tras rebase o amend
-			// no pasa por aquí: ahí el objeto todavía existe y lo decide
-			// `branch --contains`, que sí distingue error de vacío.
+	// rev-parse separates the two cases by exit code: 1 is "this object does
+	// not exist", the legitimate orphan, and anything else is a real failure
+	// that must abort the purge instead of deciding it.
+	if _, err := gitIn(worktree, "rev-parse", "--verify", "--quiet", sha+"^{commit}"); err != nil {
+		var out *exec.ExitError
+		if errors.As(err, &out) && out.ExitCode() == 1 {
+			// KNOWN LIMIT, not an oversight (FU-15): an unreadable object while
+			// HEAD remains readable produces the same code. Telling "collected
+			// by gc" from "corrupt in the store" would require fsck-level
+			// verification on every purge, disproportionate here. It is
+			// accepted because the normal orphan case after rebase or amend
+			// never reaches this point: there the object still exists and
+			// `branch --contains` decides, and it does distinguish error from
+			// empty.
 			return false, nil
 		}
 		return false, fmt.Errorf("resolving %s in %s: %w", sha, worktree, err)
 	}
-	// El objeto existe, así que aquí un error ya no puede ser "no está".
-	salida, err := gitEn(worktree, "branch", "-a", "--contains", sha)
+	// The object exists, so an error here can no longer mean "it is not there".
+	out, err := gitIn(worktree, "branch", "-a", "--contains", sha)
 	if err != nil {
 		return false, fmt.Errorf("checking containment of %s in %s: %w", sha, worktree, err)
 	}
-	return strings.TrimSpace(salida) != "", nil
+	return strings.TrimSpace(out) != "", nil
 }
 
-// RepositorioUsable confirma que worktree resuelve a un repositorio Git. Un
-// borrado guiado por ContenidoEnAlgunRefDe debe llamarla una vez antes de
-// clasificar nada: es lo que separa "este commit ya no está" de "no he podido
-// preguntar".
-func RepositorioUsable(worktree string) error {
-	if _, err := gitEn(worktree, "rev-parse", "--git-dir"); err != nil {
+// RequireUsableRepository confirms that worktree resolves to a Git
+// repository. A deletion driven by ContentInSomeRefFrom must call it once
+// before classifying anything: it is what separates "this commit is gone"
+// from "I could not ask".
+func RequireUsableRepository(worktree string) error {
+	if _, err := gitIn(worktree, "rev-parse", "--git-dir"); err != nil {
 		return fmt.Errorf("%s is not a usable git repository: %w", worktree, err)
 	}
-	// HEAD es el ancla, y hace falta porque el código de salida NO basta. Con
-	// un GIT_OBJECT_DIRECTORY que existe pero no contiene los objetos del
-	// repositorio, `rev-parse --verify --quiet <sha>` sale con 1, exactamente
-	// igual que un objeto de verdad desconocido: el repositorio se resuelve y
-	// sus objetos no. Un repositorio que no puede resolver su propio HEAD no
-	// está en condiciones de decidir si un commit sigue vivo, y sin esta
-	// comprobación respondería "no existe" a todos y vaciaría los ledgers.
-	if _, err := gitEn(worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+	// HEAD is the anchor, and it is needed because the exit code is NOT
+	// enough. With a GIT_OBJECT_DIRECTORY that exists but does not contain
+	// the repository's objects, `rev-parse --verify --quiet <sha>` exits
+	// with 1, exactly like a genuinely unknown object: the repository
+	// resolves and its objects do not. A repository that cannot resolve its
+	// own HEAD is in no position to decide whether a commit is still live,
+	// and without this check it would answer "does not exist" to everything
+	// and empty the ledgers.
+	if _, err := gitIn(worktree, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
 		return fmt.Errorf("%s cannot resolve its own HEAD, so it cannot answer whether a commit is still live: %w", worktree, err)
 	}
 	return nil
 }
 
-// gitEn ejecuta git contra worktree con el entorno despojado de las variables
-// que seleccionan repositorio.
+// gitIn runs git against worktree with the environment stripped of the
+// variables that select the repository.
 //
-// No es precaución teórica: GIT_DIR TIENE PRIORIDAD SOBRE "-C". Con GIT_DIR
-// apuntando a otro sitio, `git -C <ruta> rev-parse --git-dir` responde por el
-// repositorio de GIT_DIR, no por el de la ruta. Sentinel corre dentro de su
-// propio hook de pre-commit, que es exactamente un contexto donde Git exporta
-// esas variables, así que una consulta que decide borrados no puede confiar en
-// "-C" sin limpiarlas.
-func gitEn(worktree string, args ...string) (string, error) {
+// This is not theoretical caution: GIT_DIR TAKES PRIORITY OVER "-C". With
+// GIT_DIR pointing elsewhere, `git -C <path> rev-parse --git-dir` answers
+// for GIT_DIR's repository, not for the path's. Sentinel runs inside its
+// own pre-commit hook, which is exactly a context where Git exports those
+// variables, so a query that decides deletions cannot trust "-C" without
+// cleaning them.
+func gitIn(worktree string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
-	cmd.Env = entornoSinSeleccionDeRepositorio()
-	salida, err := cmd.Output()
-	return string(salida), err
+	cmd.Env = envWithoutRepoSelection()
+	out, err := cmd.Output()
+	return string(out), err
 }
 
-// entornoSinSeleccionDeRepositorio quita SOLO lo que elige repositorio o
-// restringe qué refs se ven. Deliberadamente NO toca GIT_OBJECT_DIRECTORY ni
-// GIT_ALTERNATE_OBJECT_DIRECTORIES: ésas dicen dónde están los objetos, no cuál
-// es el repositorio, y quitarlas rompería un repositorio cuyos objetos viven
-// donde el entorno indica. `branch --contains` fallaría para commits
-// perfectamente alcanzables y el fallo se leería como "huérfano".
+// envWithoutRepoSelection removes ONLY what selects a repository or
+// restricts which refs are visible. It deliberately does NOT touch
+// GIT_OBJECT_DIRECTORY nor GIT_ALTERNATE_OBJECT_DIRECTORIES: those say
+// where the objects live, not which repository it is, and removing them
+// would break a repository whose objects live where the environment says.
+// `branch --contains` would fail for perfectly reachable commits and the
+// failure would read as "orphan".
 //
-// La comparación ignora mayúsculas porque en Windows los nombres de variable no
-// distinguen caso: un `git_dir` en minúsculas sobreviviría a un filtro
-// sensible al caso y volvería a anular "-C".
-func entornoSinSeleccionDeRepositorio() []string {
-	seleccionan := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE"}
-	entorno := os.Environ()
-	limpio := make([]string, 0, len(entorno))
-	for _, variable := range entorno {
-		nombre, _, _ := strings.Cut(variable, "=")
-		descartar := false
-		for _, seleccion := range seleccionan {
-			if strings.EqualFold(nombre, seleccion) {
-				descartar = true
+// The comparison ignores case because on Windows variable names are not
+// case-sensitive: a lowercase `git_dir` would survive a case-sensitive
+// filter and override "-C" again.
+func envWithoutRepoSelection() []string {
+	repoSelectionVars := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE"}
+	environ := os.Environ()
+	clean := make([]string, 0, len(environ))
+	for _, variable := range environ {
+		name, _, _ := strings.Cut(variable, "=")
+		discard := false
+		for _, candidate := range repoSelectionVars {
+			if strings.EqualFold(name, candidate) {
+				discard = true
 				break
 			}
 		}
-		if !descartar {
-			limpio = append(limpio, variable)
+		if !discard {
+			clean = append(clean, variable)
 		}
 	}
-	return limpio
+	return clean
 }
 
-// GitEnAislado ejecuta git contra worktree con el mismo entorno saneado que usa
-// la sonda de alcance. Existe para que todo lo que participa en una decisión de
-// borrado mire el MISMO repositorio: sanear solo una de las dos consultas
-// mezcla identidades, y clasificar los ledgers de un repositorio contra los
-// refs de otro borra fichas vivas.
-func GitEnAislado(worktree string, args ...string) (string, error) {
-	return gitEn(worktree, args...)
+// GitInIsolated runs git against worktree with the same sanitized
+// environment the reachability probe uses. It exists so that everything
+// taking part in a deletion decision looks at the SAME repository:
+// sanitizing only one of the two queries mixes identities, and classifying
+// one repository's ledgers against another's refs deletes live records.
+func GitInIsolated(worktree string, args ...string) (string, error) {
+	return gitIn(worktree, args...)
 }
 
-// EsAncestroDe indica si ancestro es alcanzable desde descendiente, es decir si
-// los dos están en la misma línea de historia y en ese orden.
+// IsAncestorOf reports whether ancestor is reachable from descendant, that
+// is, whether both are on the same line of history and in that order.
 //
-// Los códigos de salida de `merge-base --is-ancestor` separan los dos casos: 0
-// es sí, 1 es no, y cualquier otro es un fallo real. Ninguno de esos fallos se
-// lee como "no": una consulta que no se puede responder nunca decide, que aquí
-// significa nunca atribuir una corrección a un commit de otra rama.
-func EsAncestroDe(worktree, ancestro, descendiente string) (bool, error) {
-	if _, err := gitEn(worktree, "merge-base", "--is-ancestor", ancestro, descendiente); err != nil {
-		var salida *exec.ExitError
-		if errors.As(err, &salida) && salida.ExitCode() == 1 {
+// The exit codes of `merge-base --is-ancestor` separate the two cases: 0 is
+// yes, 1 is no, and anything else is a real failure. None of those failures
+// is read as "no": an unanswerable query never decides, which here means
+// never attributing a correction to a commit from another branch.
+func IsAncestorOf(worktree, ancestor, descendant string) (bool, error) {
+	if _, err := gitIn(worktree, "merge-base", "--is-ancestor", ancestor, descendant); err != nil {
+		var out *exec.ExitError
+		if errors.As(err, &out) && out.ExitCode() == 1 {
 			return false, nil
 		}
-		return false, fmt.Errorf("checking whether %s is an ancestor of %s in %s: %w", ancestro, descendiente, worktree, err)
+		return false, fmt.Errorf("checking whether %s is an ancestor of %s in %s: %w", ancestor, descendant, worktree, err)
 	}
 	return true, nil
 }
 
-// PublicadoEnRemoto reports whether sha is an ancestor of origin/main in
+// PublishedToRemote reports whether sha is an ancestor of origin/main in
 // worktree's repository: the T9.5 publication boundary. A published commit's
 // in-flight detail (review dimensions, corrections, guarantees) has no
 // operational reader left, so retention may collect its execution streams.
@@ -379,51 +380,51 @@ func EsAncestroDe(worktree, ancestro, descendiente string) (bool, error) {
 // well. Reading any of those as "unpublished" would either leak published
 // detail forever or, worse, authorize collection on an unanswerable query.
 // Callers treat the error as fail-closed and skip retention for that run.
-func PublicadoEnRemoto(worktree, sha string) (bool, error) {
-	return EsAncestroDe(worktree, sha, "origin/main")
+func PublishedToRemote(worktree, sha string) (bool, error) {
+	return IsAncestorOf(worktree, sha, "origin/main")
 }
 
-// UpstreamOMain devuelve el ref base para auditar cadenas de commits: el
-// upstream si existe; si no, la rama main local; si no, master.
-func UpstreamOMain() (string, error) {
+// UpstreamOrMain returns the base ref for auditing commit chains: the
+// upstream if it exists; otherwise the local main branch; otherwise master.
+func UpstreamOrMain() (string, error) {
 	for _, ref := range []string{"@{u}", "main", "master"} {
-		salida, err := ejecutarGitSalida("rev-parse", "--verify", "--quiet", ref)
-		if err == nil && strings.TrimSpace(salida) != "" {
+		out, err := runGitOutput("rev-parse", "--verify", "--quiet", ref)
+		if err == nil && strings.TrimSpace(out) != "" {
 			return ref, nil
 		}
 	}
-	return "", errors.New("no se encontró upstream ni rama main/master para la cadena")
+	return "", errors.New("no upstream or main/master branch found for the chain")
 }
 
-// RemotoDeRama devuelve el remoto configurado para una rama (branch.<rama>.remote)
-// o vacío si la rama no tiene remoto.
-func RemotoDeRama(rama string) string {
-	salida, err := ejecutarGitSalida("config", "--get", "branch."+rama+".remote")
+// BranchRemote returns the remote configured for a branch
+// (branch.<branch>.remote) or empty if the branch has no remote.
+func BranchRemote(branch string) string {
+	out, err := runGitOutput("config", "--get", "branch."+branch+".remote")
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(salida)
+	return strings.TrimSpace(out)
 }
 
-// Attributes devuelve el contenido de .gitattributes en revision, o cadena
-// vacía si el árbol no lo tiene.
+// Attributes returns the content of .gitattributes at revision, or an
+// empty string if the tree does not have it.
 //
-// Ausencia y fallo se distinguen con ls-tree: `git show <rev>:.gitattributes`
-// y `git cat-file -e` salen con código no cero tanto si la ruta no está como
-// si el repositorio o el objeto no se pueden leer, así que cualquiera de los
-// dos convertiría un fallo real en "no hay atributos". Una ruta ausente es
-// salida vacía con código cero.
+// Absence and failure are told apart with ls-tree: `git show
+// <rev>:.gitattributes` and `git cat-file -e` exit non-zero both when the
+// path is missing and when the repository or object cannot be read, so
+// either would turn a real failure into "no attributes". A missing path is
+// empty output with a zero exit code.
 func Attributes(revision string) (string, error) {
-	listado, err := ejecutarGitSalida("ls-tree", "--name-only", revision, "--", ".gitattributes")
+	listing, err := runGitOutput("ls-tree", "--name-only", revision, "--", ".gitattributes")
 	if err != nil {
 		return "", fmt.Errorf("looking for .gitattributes at %s: %w", revision, err)
 	}
-	if strings.TrimSpace(listado) == "" {
+	if strings.TrimSpace(listing) == "" {
 		return "", nil
 	}
-	contenido, err := ejecutarGitSalida("show", revision+":.gitattributes")
+	content, err := runGitOutput("show", revision+":.gitattributes")
 	if err != nil {
 		return "", fmt.Errorf("reading .gitattributes at %s: %w", revision, err)
 	}
-	return contenido, nil
+	return content, nil
 }

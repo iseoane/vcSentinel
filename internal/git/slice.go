@@ -16,150 +16,151 @@ import (
 )
 
 const (
-	// Ambos derivan de LimiteLineasRevisables (umbrales.go): un lote y un
-	// archivo de configuración aislado se miden con la misma vara que el
-	// guardián, y recalibrar el guardián debe arrastrarlos.
-	limiteLineasLote    = LimiteLineasRevisables
-	limiteConfigGigante = LimiteLineasRevisables
-	// El micro-diff se envía a un proceso externo: limita tanto cada archivo
-	// nuevo como el resultado total antes de materializar su contenido completo.
-	limiteBytesMicroDiff = 1 << 20
+	// Both derive from ReviewableLinesLimit (thresholds.go): a batch and an
+	// isolated configuration file are measured with the same yardstick as the
+	// guardian, and recalibrating the guardian must drag them along.
+	batchLinesLimit  = ReviewableLinesLimit
+	giantConfigLimit = ReviewableLinesLimit
+	// The micro-diff is sent to an external process: it bounds both each new
+	// file and the total result before materializing its full content.
+	microDiffByteLimit = 1 << 20
 
-	mensajeAisladoDeps   = "chore(deps): track lock and auto-generated files"
-	mensajeAisladoDocs   = "docs(slice): isolate extensive document %s"
-	mensajeBypassGigante = "chore(slice): bypass IA for massive file %s"
+	isolatedDepsMessage = "chore(deps): track lock and auto-generated files"
+	isolatedDocsMessage = "docs(slice): isolate extensive document %s"
+	giantBypassMessage  = "chore(slice): bypass AI for massive file %s"
 )
 
-var ordenCapas = []string{"config", "backend", "frontend", "test"}
+var layerOrder = []string{"config", "backend", "frontend", "test"}
 
-// ArchivoModificado representa un archivo con cambios pendientes de fragmentar.
-type ArchivoModificado struct {
-	Ruta   string
-	Lineas int
-	Capa   string
+// ModifiedFile represents a file with pending changes to slice.
+type ModifiedFile struct {
+	Path  string
+	Lines int
+	Layer string
 }
 
-// ObtenerArchivosModificados devuelve los archivos con cambios respecto a HEAD,
-// incluyendo los no rastreados (untracked), con sus líneas añadidas y su capa.
-func ObtenerArchivosModificados() ([]ArchivoModificado, error) {
-	rastreados, err := archivosRastreados()
+// GetModifiedFiles returns the files with changes relative to HEAD,
+// including the untracked ones, with their added lines and their layer.
+func GetModifiedFiles() ([]ModifiedFile, error) {
+	tracked, err := trackedFiles()
 	if err != nil {
 		return nil, err
 	}
-	noRastreados, err := archivosNoRastreados()
+	untracked, err := untrackedFiles()
 	if err != nil {
 		return nil, err
 	}
-	return append(rastreados, noRastreados...), nil
+	return append(tracked, untracked...), nil
 }
 
-// archivosRastreados lee los cambios rastreados (modificados y staged) con numstat.
-func archivosRastreados() ([]ArchivoModificado, error) {
-	salida, err := ejecutarGitSalida("diff", "HEAD", "--numstat")
+// trackedFiles reads the tracked changes (modified and staged) with numstat.
+func trackedFiles() ([]ModifiedFile, error) {
+	output, err := runGitOutput("diff", "HEAD", "--numstat")
 	if err != nil {
 		return nil, err
 	}
 
-	return parsearNumstat(salida), nil
+	return parseNumstat(output), nil
 }
 
-// parsearNumstat interpreta la salida de "git diff --numstat", que separa
-// añadidas/borradas/ruta con tabuladores. Se corta por los dos primeros
-// tabuladores (SplitN) en vez de por espacios, así una ruta con espacios se
-// conserva íntegra en el tercer campo. Para los renombrados, ese campo no es
-// una ruta utilizable tal cual: rutaDestino lo reduce a la ruta de destino,
-// la única que existe en el worktree y que "git add" acepta.
-func parsearNumstat(salida string) []ArchivoModificado {
-	var resultado []ArchivoModificado
-	for _, linea := range strings.Split(salida, "\n") {
-		linea = strings.TrimRight(linea, "\r")
-		if linea == "" {
+// parseNumstat interprets the output of "git diff --numstat", which separates
+// added/deleted/path with tabs. It splits on the first two tabs (SplitN)
+// instead of on spaces, so a path with spaces stays intact in the third
+// field. For renames, that field is not a usable path as-is:
+// destinationPath reduces it to the destination path, the only one that
+// exists in the worktree and that "git add" accepts.
+func parseNumstat(output string) []ModifiedFile {
+	var result []ModifiedFile
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
 			continue
 		}
-		campos := strings.SplitN(linea, "\t", 3)
-		if len(campos) < 3 {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 3 {
 			continue
 		}
-		addCount, err := strconv.Atoi(campos[0])
+		addCount, err := strconv.Atoi(fields[0])
 		if err != nil {
-			continue // Ignora binarios marcados con "-"
+			continue // Ignores binaries marked with "-"
 		}
-		ruta := rutaDestino(campos[2])
-		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: addCount, Capa: ClasificarCapa(ruta)})
+		path := destinationPath(fields[2])
+		result = append(result, ModifiedFile{Path: path, Lines: addCount, Layer: ClassifyLayer(path)})
 	}
-	return resultado
+	return result
 }
 
-// rutaDestino reduce el tercer campo del numstat a la ruta de destino cuando
-// describe un renombrado. Git emite los renombrados en dos formas:
+// destinationPath reduces the third numstat field to the destination path
+// when it describes a rename. Git emits renames in two forms:
 //
-//   - plana: "viejo archivo.go => nuevo archivo.go" — la cadena completa no
-//     es una ruta, solo la mitad derecha lo es.
-//   - abreviada con llaves: "dir/{viejo => sub1/nuevo}.go" — solo cambia el
-//     tramo entre llaves; hay que sustituirlo por su mitad derecha y
-//     conservar el prefijo y el sufijo comunes.
+//   - flat: "old file.go => new file.go" — the whole string is not a path,
+//     only the right half is.
+//   - abbreviated with braces: "dir/{old => sub1/new}.go" — only the stretch
+//     between braces changes; it must be replaced by its right half while
+//     keeping the common prefix and suffix.
 //
-// Si el campo no describe un renombrado, se devuelve tal cual.
-func rutaDestino(campo string) string {
-	if apertura := strings.Index(campo, "{"); apertura != -1 {
-		if cierreRelativo := strings.Index(campo[apertura:], "}"); cierreRelativo != -1 {
-			cierre := apertura + cierreRelativo
-			contenido := campo[apertura+1 : cierre]
-			if partes := strings.SplitN(contenido, " => ", 2); len(partes) == 2 {
-				return campo[:apertura] + partes[1] + campo[cierre+1:]
+// If the field does not describe a rename, it is returned as-is.
+func destinationPath(field string) string {
+	if opening := strings.Index(field, "{"); opening != -1 {
+		if closingRelative := strings.Index(field[opening:], "}"); closingRelative != -1 {
+			closing := opening + closingRelative
+			content := field[opening+1 : closing]
+			if parts := strings.SplitN(content, " => ", 2); len(parts) == 2 {
+				return field[:opening] + parts[1] + field[closing+1:]
 			}
 		}
 	}
-	if partes := strings.SplitN(campo, " => ", 2); len(partes) == 2 {
-		return partes[1]
+	if parts := strings.SplitN(field, " => ", 2); len(parts) == 2 {
+		return parts[1]
 	}
-	return campo
+	return field
 }
 
-// archivosNoRastreados detecta los archivos nuevos (??) y cuenta sus líneas
-// físicas. Usa "--porcelain -z" en vez de "--short": con "--short", git
-// entrecomilla cualquier ruta con espacios o caracteres especiales y escapa
-// los no ASCII (p. ej. una tilde) con secuencias octales, lo que rompía tanto
-// el recuento (archivo inexistente) como el "git add" posterior de slice.
-// "-z" separa los registros con NUL y emite las rutas en crudo, sin comillas
-// ni escapes: elimina la clase entera de errores en vez de parchear un caso.
-func archivosNoRastreados() ([]ArchivoModificado, error) {
-	salida, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+// untrackedFiles detects the new files (??) and counts their physical lines.
+// It uses "--porcelain -z" instead of "--short": with "--short", git quotes
+// any path with spaces or special characters and escapes the non-ASCII ones
+// (e.g. an accented letter) with octal sequences, which broke both the
+// counting (nonexistent file) and slice's later "git add".
+// "-z" separates the records with NUL and emits the paths raw, without
+// quotes or escapes: it removes the whole class of errors instead of
+// patching one case.
+func untrackedFiles() ([]ModifiedFile, error) {
+	output, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 	if err != nil {
 		return nil, err
 	}
 
-	var resultado []ArchivoModificado
-	for _, ruta := range rutasNoRastreadas(salida) {
-		lineas, err := contarLineasFisicas(ruta)
+	var result []ModifiedFile
+	for _, path := range untrackedPaths(output) {
+		lines, err := countPhysicalLines(path)
 		if err != nil {
-			return nil, fmt.Errorf("no se pudo contar las líneas de %s: %w", ruta, err)
+			return nil, fmt.Errorf("could not count the lines of %s: %w", path, err)
 		}
-		resultado = append(resultado, ArchivoModificado{Ruta: ruta, Lineas: lineas, Capa: ClasificarCapa(ruta)})
+		result = append(result, ModifiedFile{Path: path, Lines: lines, Layer: ClassifyLayer(path)})
 	}
-	return resultado, nil
+	return result, nil
 }
 
-// rutasNoRastreadas extrae las rutas de los archivos no rastreados ("??") de
-// la salida de "git status --porcelain -z -uall". Cada registro va separado
-// por NUL; los no rastreados tienen un único registro con el prefijo "?? ".
-// Los renombrados de archivos rastreados generan un registro adicional sin
-// ese prefijo (la ruta antigua), que se ignora igual que cualquier otro
-// estado que no sea "??".
-func rutasNoRastreadas(salida string) []string {
-	var rutas []string
-	for _, registro := range strings.Split(salida, "\x00") {
-		ruta, esNoRastreado := strings.CutPrefix(registro, "?? ")
-		if !esNoRastreado {
+// untrackedPaths extracts the paths of the untracked files ("??") from the
+// output of "git status --porcelain -z -uall". Each record is separated by
+// NUL; the untracked ones have a single record with the "??" prefix.
+// Renames of tracked files generate an additional record without that
+// prefix (the old path), which is ignored like any other state that is not
+// "??".
+func untrackedPaths(output string) []string {
+	var paths []string
+	for _, record := range strings.Split(output, "\x00") {
+		path, isUntracked := strings.CutPrefix(record, "?? ")
+		if !isUntracked {
 			continue
 		}
-		rutas = append(rutas, ruta)
+		paths = append(paths, path)
 	}
-	return rutas
+	return paths
 }
 
-// ejecutarGitSalida ejecuta git y devuelve la salida estándar completa.
-func ejecutarGitSalida(args ...string) (string, error) {
+// runGitOutput runs git and returns the full standard output.
+func runGitOutput(args ...string) (string, error) {
 	var out bytes.Buffer
 	cmd := exec.Command("git", args...)
 	cmd.Stdout = &out
@@ -169,27 +170,27 @@ func ejecutarGitSalida(args ...string) (string, error) {
 	return out.String(), nil
 }
 
-// contarLineasFisicas cuenta las líneas de un archivo sin depender de git,
-// tolerante a líneas muy largas y a archivos sin salto de línea final.
-func contarLineasFisicas(ruta string) (int, error) {
-	archivo, err := os.Open(ruta)
+// countPhysicalLines counts the lines of a file without depending on git,
+// tolerant to very long lines and to files without a trailing newline.
+func countPhysicalLines(path string) (int, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
-	defer archivo.Close()
+	defer file.Close()
 
-	lineas := 0
-	hayContenido := false
-	terminaEnNuevaLinea := false
+	lines := 0
+	hasContent := false
+	endsWithNewline := false
 	buffer := make([]byte, 32*1024)
 	for {
-		n, err := archivo.Read(buffer)
+		n, err := file.Read(buffer)
 		if n > 0 {
-			hayContenido = true
-			terminaEnNuevaLinea = buffer[n-1] == '\n'
+			hasContent = true
+			endsWithNewline = buffer[n-1] == '\n'
 			for i := 0; i < n; i++ {
 				if buffer[i] == '\n' {
-					lineas++
+					lines++
 				}
 			}
 		}
@@ -200,30 +201,32 @@ func contarLineasFisicas(ruta string) (int, error) {
 			return 0, err
 		}
 	}
-	if hayContenido && !terminaEnNuevaLinea {
-		lineas++
+	if hasContent && !endsWithNewline {
+		lines++
 	}
-	return lineas, nil
+	return lines, nil
 }
 
-// ClasificarCapa determina la capa de un archivo según su ruta y extensión.
+// ClassifyLayer determines the layer of a file according to its path and
+// extension.
 //
-// Clasifica por subcadena (p. ej. "test" en cualquier parte de la ruta), lo
-// que produce falsos positivos documentados en F3 (latest/x.go, contest.go).
-// internal/change.ClasificarPorRuta (T3.1) corrige esto con globs explícitos,
-// pero coexiste con esta función hasta T3.7: sus tres consumidores (agrupar
-// lotes de slice, elegir dimensiones de review, calcular el bucket de la
-// ficha) migran en tareas separadas (T3.7, F5-T5.2, F2-T2.6 ya cerrada para
-// el tercero), no de un salto. No eliminar esta función ni redirigirla aquí
-// sin cerrar esa migración: ver docs/issues/decisions.md (FU-10, F3 outcome), T3.1.
-func ClasificarCapa(ruta string) string {
-	ext := filepath.Ext(ruta)
-	base := filepath.Base(ruta)
-	rutaLower := strings.ToLower(ruta)
+// It classifies by substring (e.g. "test" anywhere in the path), which
+// produces the false positives documented in F3 (latest/x.go, contest.go).
+// internal/change.ClassifyByPath (T3.1) fixes this with explicit globs, but
+// it coexists with this function until T3.7: its three consumers (grouping
+// slice batches, choosing review dimensions, computing the record bucket)
+// migrate in separate tasks (T3.7, F5-T5.2, F2-T2.6 already closed for the
+// third one), not in one jump. Do not remove this function or redirect it
+// here without closing that migration: see docs/issues/decisions.md (FU-10,
+// F3 outcome), T3.1.
+func ClassifyLayer(path string) string {
+	ext := filepath.Ext(path)
+	base := filepath.Base(path)
+	pathLower := strings.ToLower(path)
 
-	if strings.Contains(rutaLower, "test") || strings.Contains(base, "spec") {
+	if strings.Contains(pathLower, "test") || strings.Contains(base, "spec") {
 		return "test"
-	} else if strings.Contains(rutaLower, "frontend") || ext == ".tsx" || ext == ".jsx" || ext == ".css" || ext == ".scss" {
+	} else if strings.Contains(pathLower, "frontend") || ext == ".tsx" || ext == ".jsx" || ext == ".css" || ext == ".scss" {
 		return "frontend"
 	} else if ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" || ext == ".lock" || ext == ".sum" || base == "requirements.txt" {
 		return "config"
@@ -231,155 +234,157 @@ func ClasificarCapa(ruta string) string {
 	return "backend"
 }
 
-// esConfigGigante indica si un archivo de configuración supera el límite de aislamiento.
-func esConfigGigante(f ArchivoModificado) bool {
-	return f.Capa == "config" && f.Lineas > limiteConfigGigante
+// isOversizedConfig tells whether a configuration file exceeds the isolation
+// limit.
+func isOversizedConfig(f ModifiedFile) bool {
+	return f.Layer == "config" && f.Lines > giantConfigLimit
 }
 
-// esDocumentacionExtensa indica si un documento supera el límite de
-// aislamiento. Se aísla en su propio lote como la configuración, pero NUNCA
-// entra por la rama de código masivo: proponer un plan de división SRP sobre
-// prosa no tiene ningún sentido.
-func esDocumentacionExtensa(f ArchivoModificado) bool {
-	return ClaseArchivo(f.Ruta) == ClaseDocs && f.Lineas > limiteConfigGigante
+// isExtensiveDocumentation tells whether a document exceeds the isolation
+// limit. It is isolated into its own batch like the configuration, but it
+// NEVER goes through the massive-code branch: proposing an SRP split plan
+// over prose makes no sense at all.
+func isExtensiveDocumentation(f ModifiedFile) bool {
+	return FileClass(f.Path) == ClassDocs && f.Lines > giantConfigLimit
 }
 
-// esCodigoGigante indica si un archivo de código fuente supera el límite de
-// bypass interactivo. Solo aplica a código: la documentación se aísla con
-// esDocumentacionExtensa y lo generado nunca se mezcla con código porque
-// ConstruirPlanFragmentacion agrupa primero por clase, así que ninguno de los
-// dos necesita ofrecer refactorización.
-func esCodigoGigante(f ArchivoModificado) bool {
-	switch ClaseArchivo(f.Ruta) {
-	case ClaseDocs, ClaseGenerada, ClaseConfig:
+// isGiantCode tells whether a source file exceeds the interactive bypass
+// limit. It only applies to code: documentation is isolated with
+// isExtensiveDocumentation and generated content is never mixed with code
+// because the plan builder groups by class first, so neither of the two
+// needs to offer a refactor.
+func isGiantCode(f ModifiedFile) bool {
+	switch FileClass(f.Path) {
+	case ClassDocs, ClassGenerated, ClassConfig:
 		return false
 	}
-	return f.Capa != "config" && f.Lineas > LimiteCodigoGigante
+	return f.Layer != "config" && f.Lines > GiantCodeLimit
 }
 
-type loteConCapa struct {
-	Capa  string
-	Rutas []string
+type batchWithLayer struct {
+	Layer string
+	Paths []string
 }
 
-func construirSecuenciaLotes(porCapas map[string][]ArchivoModificado) []loteConCapa {
-	var secuencia []loteConCapa
+func buildBatchSequence(byLayers map[string][]ModifiedFile) []batchWithLayer {
+	var sequence []batchWithLayer
 
-	for _, capa := range ordenCapas {
-		for _, lote := range construirLotes(porCapas[capa]) {
-			rutas := make([]string, 0, len(lote))
-			for _, f := range lote {
-				rutas = append(rutas, f.Ruta)
+	for _, layer := range layerOrder {
+		for _, batch := range buildBatches(byLayers[layer]) {
+			paths := make([]string, 0, len(batch))
+			for _, f := range batch {
+				paths = append(paths, f.Path)
 			}
-			secuencia = append(secuencia, loteConCapa{Capa: capa, Rutas: rutas})
+			sequence = append(sequence, batchWithLayer{Layer: layer, Paths: paths})
 		}
 	}
-	return secuencia
+	return sequence
 }
 
-func construirLotes(archivos []ArchivoModificado) [][]ArchivoModificado {
-	var lotes [][]ArchivoModificado
-	var loteActual []ArchivoModificado
-	lineasAcumuladas := 0
+func buildBatches(files []ModifiedFile) [][]ModifiedFile {
+	var batches [][]ModifiedFile
+	var currentBatch []ModifiedFile
+	accumulatedLines := 0
 
-	for _, f := range archivos {
-		if lineasAcumuladas+f.Lineas > limiteLineasLote && len(loteActual) > 0 {
-			lotes = append(lotes, loteActual)
-			loteActual = nil
-			lineasAcumuladas = 0
+	for _, f := range files {
+		if accumulatedLines+f.Lines > batchLinesLimit && len(currentBatch) > 0 {
+			batches = append(batches, currentBatch)
+			currentBatch = nil
+			accumulatedLines = 0
 		}
-		loteActual = append(loteActual, f)
-		lineasAcumuladas += f.Lineas
+		currentBatch = append(currentBatch, f)
+		accumulatedLines += f.Lines
 	}
 
-	if len(loteActual) > 0 {
-		lotes = append(lotes, loteActual)
+	if len(currentBatch) > 0 {
+		batches = append(batches, currentBatch)
 	}
-	return lotes
+	return batches
 }
 
-// obtenerMensajeConDiff prefiere el adaptador con capacidad de diff (AdapterConDiff);
-// si la extracción del diff pendiente falla o el adaptador no la implementa, usa la
-// interfaz base AgentAdapter.
-func obtenerMensajeConDiff(rutas []string, capa string, numero int, adapter agentadapter.AgentAdapter) (string, error) {
-	if adapterConDiff, ok := adapter.(agentadapter.AdapterConDiff); ok {
-		diff, err := diffPendienteRutas(rutas)
+// getMessageWithDiff prefers the adapter with diff layerbility
+// (agentadapter.AdapterWithDiff); if the extraction of the pending diff
+// fails or the adapter does not implement it, it uses the base
+// agentadapter.AgentAdapter interface.
+func getMessageWithDiff(paths []string, layer string, number int, adapter agentadapter.AgentAdapter) (string, error) {
+	if adapterWithDiff, ok := adapter.(agentadapter.AdapterWithDiff); ok {
+		diff, err := pendingDiffForPaths(paths)
 		if err == nil {
-			return adapterConDiff.ObtenerMensajeCommitConDiff(rutas, capa, numero, diff)
+			return adapterWithDiff.GetCommitMessageWithDiff(paths, layer, number, diff)
 		}
 	}
-	return adapter.ObtenerMensajeCommit(rutas, capa, numero)
+	return adapter.GetCommitMessage(paths, layer, number)
 }
 
-// diffPendienteRutas devuelve el diff de los archivos dados frente a HEAD e
-// incorpora archivos no rastreados sin preparar ni modificar el índice.
-func diffPendienteRutas(rutas []string) (string, error) {
-	args := append([]string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD", "--"}, rutas...)
-	rastreado, err := ejecutarGitSalida(args...)
+// pendingDiffForPaths returns the diff of the given files relative to HEAD
+// and incorporates untracked files without staging or modifying the index.
+func pendingDiffForPaths(paths []string) (string, error) {
+	args := append([]string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD", "--"}, paths...)
+	tracked, err := runGitOutput(args...)
 	if err != nil {
 		return "", err
 	}
-	if len(rastreado) > limiteBytesMicroDiff {
-		return "", fmt.Errorf("el diff rastreado supera el límite de %d bytes para el micro-diff", limiteBytesMicroDiff)
+	if len(tracked) > microDiffByteLimit {
+		return "", fmt.Errorf("the tracked diff exceeds the limit of %d bytes for the micro-diff", microDiffByteLimit)
 	}
 
-	args = append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, rutas...)
-	salida, err := ejecutarGitSalida(args...)
+	args = append([]string{"ls-files", "--others", "--exclude-standard", "-z", "--"}, paths...)
+	output, err := runGitOutput(args...)
 	if err != nil {
 		return "", err
 	}
-	noRastreados := strings.Split(strings.TrimSuffix(salida, "\x00"), "\x00")
-	if len(noRastreados) == 1 && noRastreados[0] == "" {
-		return rastreado, nil
+	untracked := strings.Split(strings.TrimSuffix(output, "\x00"), "\x00")
+	if len(untracked) == 1 && untracked[0] == "" {
+		return tracked, nil
 	}
-	sort.Strings(noRastreados)
+	sort.Strings(untracked)
 
 	var diff strings.Builder
-	diff.WriteString(rastreado)
-	for _, ruta := range noRastreados {
-		info, err := os.Lstat(filepath.FromSlash(ruta))
+	diff.WriteString(tracked)
+	for _, path := range untracked {
+		info, err := os.Lstat(filepath.FromSlash(path))
 		if err != nil {
-			return "", fmt.Errorf("no se pudo leer el archivo no rastreado %s: %w", ruta, err)
+			return "", fmt.Errorf("could not read the untracked file %s: %w", path, err)
 		}
 		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("el archivo no rastreado %s no es un archivo regular", ruta)
+			return "", fmt.Errorf("the untracked file %s is not a regular file", path)
 		}
-		if info.Size() > limiteBytesMicroDiff {
-			return "", fmt.Errorf("el archivo no rastreado %s supera el límite de %d bytes para el micro-diff", ruta, limiteBytesMicroDiff)
+		if info.Size() > microDiffByteLimit {
+			return "", fmt.Errorf("the untracked file %s exceeds the limit of %d bytes for the micro-diff", path, microDiffByteLimit)
 		}
 
-		numstat, err := ejecutarGitDiffNoIndex("--numstat", os.DevNull, ruta)
+		numstat, err := runGitDiffNoIndex("--numstat", os.DevNull, path)
 		if err != nil {
 			return "", err
 		}
 		if strings.HasPrefix(numstat, "-\t-\t") {
-			return "", fmt.Errorf("el archivo no rastreado %s es binario; no se enviará su contenido", ruta)
+			return "", fmt.Errorf("the untracked file %s is binary; its content will not be sent", path)
 		}
-		parche, err := ejecutarGitDiffNoIndex("--patch", os.DevNull, ruta)
+		patch, err := runGitDiffNoIndex("--patch", os.DevNull, path)
 		if err != nil {
 			return "", err
 		}
-		if diff.Len()+len(parche) > limiteBytesMicroDiff {
-			return "", fmt.Errorf("el micro-diff supera el límite de %d bytes", limiteBytesMicroDiff)
+		if diff.Len()+len(patch) > microDiffByteLimit {
+			return "", fmt.Errorf("the micro-diff exceeds the limit of %d bytes", microDiffByteLimit)
 		}
-		diff.WriteString(parche)
+		diff.WriteString(patch)
 	}
 	return diff.String(), nil
 }
 
-func ejecutarGitDiffNoIndex(formato, origen, destino string) (string, error) {
-	cmd := exec.Command("git", "diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", formato, "--", origen, destino)
-	salida, err := cmd.Output()
+func runGitDiffNoIndex(format, from, to string) (string, error) {
+	cmd := exec.Command("git", "diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", format, "--", from, to)
+	output, err := cmd.Output()
 	if err == nil {
-		return string(salida), nil
+		return string(output), nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return string(salida), nil
+		return string(output), nil
 	}
-	detalle := ""
+	detail := ""
 	if exitErr != nil {
-		detalle = strings.TrimSpace(string(exitErr.Stderr))
+		detail = strings.TrimSpace(string(exitErr.Stderr))
 	}
-	return "", fmt.Errorf("git diff --no-index falló para %s: %w: %s", destino, err, detalle)
+	return "", fmt.Errorf("git diff --no-index failed for %s: %w: %s", to, err, detail)
 }

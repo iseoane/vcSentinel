@@ -10,13 +10,13 @@ import (
 // BuildSemanticSlicePlan builds a plan without staging, writing the index, or
 // creating history. An untrusted proposal is accepted only with consent and
 // after all deterministic validations succeed.
-func BuildSemanticSlicePlan(changes []PlannedChange, options SemanticSliceOptions) (*PlanFragmentacion, error) {
+func BuildSemanticSlicePlan(changes []PlannedChange, options SemanticSliceOptions) (*FragmentationPlan, error) {
 	canonical, _, err := indexPlannedChanges(changes)
 	if err != nil {
 		return nil, err
 	}
 	if len(canonical) == 0 {
-		return &PlanFragmentacion{Changes: canonical, Explanation: mechanicalSemanticFallback}, nil
+		return &FragmentationPlan{Changes: canonical, Explanation: mechanicalSemanticFallback}, nil
 	}
 	files, opaque := readSemanticFiles(canonical)
 	graph := semanticDependencies(files)
@@ -24,7 +24,7 @@ func BuildSemanticSlicePlan(changes []PlannedChange, options SemanticSliceOption
 	if err != nil {
 		return nil, err
 	}
-	ranks, explanation := semanticCohesion(files, ejecutarGitSalida)
+	ranks, explanation := semanticCohesion(files, runGitOutput)
 	if opaque {
 		explanation += " Some changed files could not be parsed, so the fallback keeps all changed files in a conservative dependency unit."
 	}
@@ -41,20 +41,20 @@ func BuildSemanticSlicePlan(changes []PlannedChange, options SemanticSliceOption
 		}
 	}
 	components := semanticComponents(files, graph, boundaries, ranks)
-	plan := &PlanFragmentacion{Changes: canonical, Explanation: explanation + " " + mechanicalSemanticFallback}
+	plan := &FragmentationPlan{Changes: canonical, Explanation: explanation + " " + mechanicalSemanticFallback}
 	number := 1
 	var grouped *semanticComponent
 	flushGrouped := func() {
 		if grouped == nil {
 			return
 		}
-		plan.Lotes = append(plan.Lotes, semanticLote(*grouped, files, number))
+		plan.Batches = append(plan.Batches, semanticBatch(*grouped, files, number))
 		number++
 		grouped = nil
 	}
 	for _, component := range components {
-		if component.lines <= LimiteLineasRevisables {
-			if grouped != nil && sameSemanticGroup(*grouped, component) && grouped.lines+component.lines <= LimiteLineasRevisables {
+		if component.lines <= ReviewableLinesLimit {
+			if grouped != nil && sameSemanticGroup(*grouped, component) && grouped.lines+component.lines <= ReviewableLinesLimit {
 				mergeSemanticComponents(grouped, component)
 			} else {
 				flushGrouped()
@@ -67,28 +67,28 @@ func BuildSemanticSlicePlan(changes []PlannedChange, options SemanticSliceOption
 		parts, safe := exactAtomParts(component, files)
 		if safe {
 			for _, part := range parts {
-				plan.Lotes = append(plan.Lotes, semanticLote(part, files, number))
+				plan.Batches = append(plan.Batches, semanticBatch(part, files, number))
 				number++
 			}
 			continue
 		}
 		unit := SemanticOversizedUnit{ID: semanticID(component, files), Paths: componentPaths(component, files), AddedLines: component.lines, Reason: "compile-dependent source or focused tests cannot be safely split by exact diff atoms"}
 		if options.ConfirmOversized == nil {
-			return nil, fmt.Errorf("semantic unit %q exceeds the %d-line budget and requires an explicit decision", unit.ID, LimiteLineasRevisables)
+			return nil, fmt.Errorf("semantic unit %q exceeds the %d-line budget and requires an explicit decision", unit.ID, ReviewableLinesLimit)
 		}
 		approved, err := options.ConfirmOversized(unit)
 		if err != nil {
 			return nil, err
 		}
 		if !approved {
-			return nil, fmt.Errorf("semantic slicing aborted: unit %q exceeds the %d-line budget", unit.ID, LimiteLineasRevisables)
+			return nil, fmt.Errorf("semantic slicing aborted: unit %q exceeds the %d-line budget", unit.ID, ReviewableLinesLimit)
 		}
-		lote := semanticLote(component, files, number)
-		lote.EsGigante = true
-		lote.Mensaje = semanticOversizedMessage(unit)
-		lote.MensajeAutomatico = lote.Mensaje
-		lote.MensajeDeterminista = true
-		plan.Lotes = append(plan.Lotes, lote)
+		batch := semanticBatch(component, files, number)
+		batch.IsOversized = true
+		batch.Message = semanticOversizedMessage(unit)
+		batch.AutoMessage = batch.Message
+		batch.DeterministicMessage = true
+		plan.Batches = append(plan.Batches, batch)
 		number++
 	}
 	flushGrouped()
@@ -98,7 +98,7 @@ func BuildSemanticSlicePlan(changes []PlannedChange, options SemanticSliceOption
 	return plan, nil
 }
 
-func semanticLote(component semanticComponent, files []semanticFile, number int) LotePlanificado {
+func semanticBatch(component semanticComponent, files []semanticFile, number int) PlannedBatch {
 	selectors := append([]ChangeSelector(nil), component.selectors...)
 	routes := []string{}
 	if len(selectors) == 0 {
@@ -116,13 +116,13 @@ func semanticLote(component semanticComponent, files []semanticFile, number int)
 			layer = "semantic"
 		}
 	}
-	return LotePlanificado{
-		Capa:              layer,
-		Numero:            number,
-		Rutas:             routes,
-		Selectors:         selectors,
-		LineasTotales:     semanticSelectedLines(selectors, files),
-		MensajeAutomatico: fmt.Sprintf("chore(slice): auto-fragmented %s batch #%d", layer, number),
+	return PlannedBatch{
+		Layer:       layer,
+		Number:      number,
+		Paths:       routes,
+		Selectors:   selectors,
+		TotalLines:  semanticSelectedLines(selectors, files),
+		AutoMessage: fmt.Sprintf("chore(slice): auto-fragmented %s batch #%d", layer, number),
 	}
 }
 
@@ -145,15 +145,15 @@ func semanticSelectedLines(selectors []ChangeSelector, files []semanticFile) int
 	return lines
 }
 
-func validateSemanticPlan(plan *PlanFragmentacion) error {
-	serialized := &PlanSerializado{Changes: plan.Changes}
-	for _, lote := range plan.Lotes {
-		serialized.Lotes = append(serialized.Lotes, LoteSerializado{
-			Numero:    lote.Numero,
-			Capa:      lote.Capa,
-			Rutas:     lote.Rutas,
-			Selectors: lote.Selectors,
-			Lineas:    lote.LineasTotales,
+func validateSemanticPlan(plan *FragmentationPlan) error {
+	serialized := &SerializedPlan{Changes: plan.Changes}
+	for _, batch := range plan.Batches {
+		serialized.Batches = append(serialized.Batches, SerializedBatch{
+			Number:    batch.Number,
+			Layer:     batch.Layer,
+			Paths:     batch.Paths,
+			Selectors: batch.Selectors,
+			Lines:     batch.TotalLines,
 		})
 	}
 	if err := ValidatePlanSelections(serialized); err != nil {
@@ -185,7 +185,7 @@ func exactAtomParts(component semanticComponent, files []semanticFile) ([]semant
 	}
 	var parts []semanticComponent
 	for index, atom := range change.Atoms {
-		if atom.AddedLines > LimiteLineasRevisables {
+		if atom.AddedLines > ReviewableLinesLimit {
 			return nil, false
 		}
 		part := component
@@ -199,7 +199,7 @@ func exactAtomParts(component semanticComponent, files []semanticFile) ([]semant
 	return parts, len(parts) > 0
 }
 
-func acceptSemanticProposal(changes []PlannedChange, files []semanticFile, graph semanticGraph, boundaries map[int]int, proposal *SemanticSliceProposal) (*PlanFragmentacion, error) {
+func acceptSemanticProposal(changes []PlannedChange, files []semanticFile, graph semanticGraph, boundaries map[int]int, proposal *SemanticSliceProposal) (*FragmentationPlan, error) {
 	if proposal.State == "" || proposal.State != hashPlannedChangesState(changes) {
 		return nil, fmt.Errorf("proposal is missing or has a stale state fingerprint")
 	}
@@ -211,7 +211,7 @@ func acceptSemanticProposal(changes []PlannedChange, files []semanticFile, graph
 		pathToFile[changeKey(file.change.Path, file.change.OldPath)] = i
 	}
 	seenAtoms, seenUnits := map[string]bool{}, map[string]bool{}
-	plan := &PlanFragmentacion{Changes: changes}
+	plan := &FragmentationPlan{Changes: changes}
 	for number, unit := range proposal.Units {
 		if unit.ID == "" || seenUnits[unit.ID] {
 			return nil, fmt.Errorf("proposal has a missing or repeated unit ID")
@@ -249,13 +249,13 @@ func acceptSemanticProposal(changes []PlannedChange, files []semanticFile, graph
 				lines += atom.AddedLines
 			}
 		}
-		if lines > LimiteLineasRevisables || breaksDeps(indices, graph) {
+		if lines > ReviewableLinesLimit || breaksDeps(indices, graph) {
 			return nil, fmt.Errorf("proposal unit %q is oversized or breaks a compile dependency", unit.ID)
 		}
 		component := semanticComponent{ordered: uniqueInts(indices), lines: lines}
-		lote := semanticLote(component, files, number+1)
-		lote.Selectors, lote.Rutas, lote.LineasTotales = selectors, selectorPaths(selectors), lines
-		plan.Lotes = append(plan.Lotes, lote)
+		batch := semanticBatch(component, files, number+1)
+		batch.Selectors, batch.Paths, batch.TotalLines = selectors, selectorPaths(selectors), lines
+		plan.Batches = append(plan.Batches, batch)
 	}
 	for _, change := range changes {
 		for _, atom := range change.Atoms {
@@ -264,9 +264,9 @@ func acceptSemanticProposal(changes []PlannedChange, files []semanticFile, graph
 			}
 		}
 	}
-	serialized := &PlanSerializado{Changes: changes}
-	for _, lote := range plan.Lotes {
-		serialized.Lotes = append(serialized.Lotes, LoteSerializado{Numero: lote.Numero, Capa: lote.Capa, Rutas: lote.Rutas, Selectors: lote.Selectors, Lineas: lote.LineasTotales})
+	serialized := &SerializedPlan{Changes: changes}
+	for _, batch := range plan.Batches {
+		serialized.Batches = append(serialized.Batches, SerializedBatch{Number: batch.Number, Layer: batch.Layer, Paths: batch.Paths, Selectors: batch.Selectors, Lines: batch.TotalLines})
 	}
 	if err := ValidatePlanSelections(serialized); err != nil {
 		return nil, fmt.Errorf("proposal failed exact selection validation: %w", err)
@@ -330,14 +330,14 @@ func breaksDeps(indices []int, graph semanticGraph) bool {
 }
 
 func semanticID(component semanticComponent, files []semanticFile) string {
-	return IDDecision(strings.Join(componentPaths(component, files), "\x00"))
+	return DecisionID(strings.Join(componentPaths(component, files), "\x00"))
 }
 
 func semanticOversizedMessage(unit SemanticOversizedUnit) string {
 	if len(unit.Paths) == 1 {
-		return fmt.Sprintf(mensajeBypassGigante, pathpkg.Base(unit.Paths[0]))
+		return fmt.Sprintf(giantBypassMessage, pathpkg.Base(unit.Paths[0]))
 	}
-	return fmt.Sprintf("chore(slice): bypass IA for semantic unit %s", unit.ID)
+	return fmt.Sprintf("chore(slice): bypass AI for semantic unit %s", unit.ID)
 }
 
 func componentPaths(component semanticComponent, files []semanticFile) []string {

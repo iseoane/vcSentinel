@@ -6,46 +6,46 @@ import (
 	"testing"
 )
 
-func TestDetectarCIVerdadero(t *testing.T) {
-	for _, nombre := range []string{"ci.yml", "ci.yaml"} {
+func TestDetectCIDetected(t *testing.T) {
+	for _, name := range []string{"ci.yml", "ci.yaml"} {
 		worktree := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(worktree, ".github", "workflows"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(worktree, ".github", "workflows", nombre), []byte("jobs: {}\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(worktree, ".github", "workflows", name), []byte("jobs: {}\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if !DetectarCI(worktree) {
-			t.Errorf("DetectarCI = false con .github/workflows/%s presente", nombre)
+		if !DetectCI(worktree) {
+			t.Errorf("DetectCI = false with .github/workflows/%s present", name)
 		}
 	}
 }
 
-func TestDetectarCIFalso(t *testing.T) {
+func TestDetectCINotDetected(t *testing.T) {
 	worktree := t.TempDir()
-	if DetectarCI(worktree) {
-		t.Error("DetectarCI = true en un worktree sin configuración de CI")
+	if DetectCI(worktree) {
+		t.Error("DetectCI = true in a worktree without CI configuration")
 	}
 }
 
-func TestDetectarCIOtrosProveedores(t *testing.T) {
-	casos := map[string]string{
+func TestDetectCIOtherProviders(t *testing.T) {
+	cases := map[string]string{
 		"GitLab":   ".gitlab-ci.yml",
 		"CircleCI": ".circleci/config.yml",
 		"Azure":    ".azure-pipelines.yml",
 		"Jenkins":  "Jenkinsfile",
 	}
-	for nombre, ruta := range casos {
+	for name, path := range cases {
 		worktree := t.TempDir()
-		padre := filepath.Dir(filepath.Join(worktree, ruta))
-		if err := os.MkdirAll(padre, 0755); err != nil {
+		parent := filepath.Dir(filepath.Join(worktree, path))
+		if err := os.MkdirAll(parent, 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(worktree, ruta), []byte("# ci\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(worktree, path), []byte("# ci\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if !DetectarCI(worktree) {
-			t.Errorf("DetectarCI = false con %s presente (%s)", ruta, nombre)
+		if !DetectCI(worktree) {
+			t.Errorf("DetectCI = false with %s present (%s)", path, name)
 		}
 	}
 }

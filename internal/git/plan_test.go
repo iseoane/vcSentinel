@@ -10,265 +10,265 @@ import (
 	"testing"
 )
 
-func TestConstruirPlanFragmentacionAgrupaPorCapasEnOrden(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "web/app.tsx", Lineas: 100, Capa: "frontend"},
-		{Ruta: "cmd/main.go", Lineas: 100, Capa: "backend"},
-		{Ruta: "config.yaml", Lineas: 100, Capa: "config"},
-		{Ruta: "internal/git/slice_test.go", Lineas: 100, Capa: "test"},
+func TestBuildFragmentationPlanGroupsByLayersInOrder(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "web/app.tsx", Lines: 100, Layer: "frontend"},
+		{Path: "cmd/main.go", Lines: 100, Layer: "backend"},
+		{Path: "config.yaml", Lines: 100, Layer: "config"},
+		{Path: "internal/git/slice_test.go", Lines: 100, Layer: "test"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if len(plan.Lotes) != 4 {
-		t.Fatalf("se esperaban 4 lotes, obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 4 {
+		t.Fatalf("expected 4 batches, got %d", len(plan.Batches))
 	}
-	var capas []string
-	for _, lote := range plan.Lotes {
-		capas = append(capas, lote.Capa)
+	var layers []string
+	for _, batch := range plan.Batches {
+		layers = append(layers, batch.Layer)
 	}
-	esperado := []string{"config", "backend", "frontend", "test"}
-	if !reflect.DeepEqual(capas, esperado) {
-		t.Errorf("orden de capas = %v, esperado %v", capas, esperado)
+	expected := []string{"config", "backend", "frontend", "test"}
+	if !reflect.DeepEqual(layers, expected) {
+		t.Errorf("layer order = %v, expected %v", layers, expected)
 	}
-	for i, lote := range plan.Lotes {
-		if lote.Numero != i+1 {
-			t.Errorf("lote %d: número %d, esperado %d", i, lote.Numero, i+1)
+	for i, batch := range plan.Batches {
+		if batch.Number != i+1 {
+			t.Errorf("batch %d: number %d, expected %d", i, batch.Number, i+1)
 		}
 	}
 }
 
-func TestConstruirPlanFragmentacionAgrupaPorCohesionYOrdenaClases(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "internal/auth/login_test.go", Lineas: 40, Capa: "test"},
-		{Ruta: "cmd/tool/main.go", Lineas: 30, Capa: "backend"},
-		{Ruta: "internal/auth/login.go", Lineas: 40, Capa: "backend"},
-		{Ruta: "internal/auth/config.yaml", Lineas: 20, Capa: "config"},
+func TestBuildFragmentationPlanGroupsByCohesionAndOrdersClasses(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "internal/auth/login_test.go", Lines: 40, Layer: "test"},
+		{Path: "cmd/tool/main.go", Lines: 30, Layer: "backend"},
+		{Path: "internal/auth/login.go", Lines: 40, Layer: "backend"},
+		{Path: "internal/auth/config.yaml", Lines: 20, Layer: "config"},
 	}
-	plan, err := ConstruirPlanFragmentacionConLector(archivos,
-		func(ArchivoModificado) (bool, error) { return true, nil },
+	plan, err := BuildFragmentationPlanWithReader(files,
+		func(ModifiedFile) (bool, error) { return true, nil },
 		func(args ...string) (string, error) { return "", nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacionConLector devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlanWithReader returned error: %v", err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("lotes = %+v, esperados 2 clústeres", plan.Lotes)
+	if len(plan.Batches) != 2 {
+		t.Fatalf("batches = %+v, expected 2 clusters", plan.Batches)
 	}
-	esperado := []string{"internal/auth/config.yaml", "internal/auth/login.go", "internal/auth/login_test.go"}
-	if !reflect.DeepEqual(plan.Lotes[0].Rutas, esperado) {
-		t.Fatalf("cluster auth = %v, esperado %v", plan.Lotes[0].Rutas, esperado)
+	expected := []string{"internal/auth/config.yaml", "internal/auth/login.go", "internal/auth/login_test.go"}
+	if !reflect.DeepEqual(plan.Batches[0].Paths, expected) {
+		t.Fatalf("auth cluster = %v, expected %v", plan.Batches[0].Paths, expected)
 	}
 }
 
-func TestConstruirPlanFragmentacionSoloParteClusterPorLimite(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "internal/auth/a.go", Lineas: 250, Capa: "backend"},
-		{Ruta: "internal/auth/b.go", Lineas: 250, Capa: "backend"},
+func TestBuildFragmentationPlanSplitsClusterOnlyByLimit(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "internal/auth/a.go", Lines: 250, Layer: "backend"},
+		{Path: "internal/auth/b.go", Lines: 250, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacionConLector(archivos,
-		func(ArchivoModificado) (bool, error) { return true, nil },
-		func(args ...string) (string, error) { return "", nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.Lotes) != 2 || plan.Lotes[0].LineasTotales > 400 || plan.Lotes[1].LineasTotales > 400 {
-		t.Fatalf("límite no respetado: %+v", plan.Lotes)
-	}
-}
-
-// La ruta gira sobre "./" en vez de sobre una barra invertida: git siempre
-// reporta rutas separadas por "/" (incluso ejecutándose en Windows), así que
-// una barra invertida en una ruta de git es un carácter literal del nombre
-// de archivo, no un separador a convertir. filepath.Clean sí necesita
-// normalizar "./" para que la ruta acabe en el mismo clúster que su vecina.
-func TestConstruirPlanFragmentacionNormalizaRutasUnaSolaVez(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: `internal/auth/./login.go`, Lineas: 40, Capa: "backend"},
-		{Ruta: `internal/auth/login_test.go`, Lineas: 20, Capa: "test"},
-	}
-	plan, err := ConstruirPlanFragmentacionConLector(archivos,
-		func(ArchivoModificado) (bool, error) { return true, nil },
+	plan, err := BuildFragmentationPlanWithReader(files,
+		func(ModifiedFile) (bool, error) { return true, nil },
 		func(args ...string) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Lotes) != 1 {
-		t.Fatalf("lotes = %+v, esperado un clúster normalizado", plan.Lotes)
-	}
-	esperado := []string{"internal/auth/login.go", "internal/auth/login_test.go"}
-	if !reflect.DeepEqual(plan.Lotes[0].Rutas, esperado) || plan.Lotes[0].LineasTotales != 60 {
-		t.Fatalf("lote = %+v, rutas esperadas %v y 60 líneas", plan.Lotes[0], esperado)
+	if len(plan.Batches) != 2 || plan.Batches[0].TotalLines > 400 || plan.Batches[1].TotalLines > 400 {
+		t.Fatalf("limit not respected: %+v", plan.Batches)
 	}
 }
 
-// TestConstruirPlanFragmentacionNoMezclaClases cubre T0.12: un .go y un .md
-// que caen en la misma capa ("backend", el caso por defecto de
-// ClasificarCapa para un .md) no deben terminar en el mismo lote. Antes de
-// esta tarea, agruparPorCapas solo miraba la capa y los mezclaba, como pasó
-// de verdad en el commit 3160133 (código y doc de diseño en un solo commit).
-func TestConstruirPlanFragmentacionNoMezclaClases(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "cmd/main.go", Lineas: 50, Capa: "backend"},
-		{Ruta: "docs/guia.md", Lineas: 50, Capa: "backend"},
+// The path pivots on "./" instead of on a backslash: git always reports
+// paths separated by "/" (even when running on Windows), so a backslash in a
+// git path is a literal character of the file name, not a separator to
+// convert. filepath.Clean does need to normalize "./" so the path ends up in
+// the same cluster as its neighbor.
+func TestBuildFragmentationPlanNormalizesPathsOnce(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: `internal/auth/./login.go`, Lines: 40, Layer: "backend"},
+		{Path: `internal/auth/login_test.go`, Lines: 20, Layer: "test"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlanWithReader(files,
+		func(ModifiedFile) (bool, error) { return true, nil },
+		func(args ...string) (string, error) { return "", nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatal(err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("se esperaban 2 lotes (uno por clase), obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 1 {
+		t.Fatalf("batches = %+v, expected one normalized cluster", plan.Batches)
 	}
-	for _, lote := range plan.Lotes {
-		clases := make(map[string]bool)
-		for _, ruta := range lote.Rutas {
-			clases[ClaseArchivo(ruta)] = true
+	expected := []string{"internal/auth/login.go", "internal/auth/login_test.go"}
+	if !reflect.DeepEqual(plan.Batches[0].Paths, expected) || plan.Batches[0].TotalLines != 60 {
+		t.Fatalf("batch = %+v, expected paths %v and 60 lines", plan.Batches[0], expected)
+	}
+}
+
+// TestBuildFragmentationPlanDoesNotMixClasses covers T0.12: a .go and a .md
+// that fall into the same layer ("backend", the default case of ClassifyLayer
+// for a .md) must not end up in the same batch. Before this task,
+// groupByLayers only looked at the layer and mixed them, as really happened
+// in commit 3160133 (code and design doc in a single commit).
+func TestBuildFragmentationPlanDoesNotMixClasses(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "cmd/main.go", Lines: 50, Layer: "backend"},
+		{Path: "docs/guide.md", Lines: 50, Layer: "backend"},
+	}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
+	if err != nil {
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
+	}
+	if len(plan.Batches) != 2 {
+		t.Fatalf("expected 2 batches (one per class), got %d", len(plan.Batches))
+	}
+	for _, batch := range plan.Batches {
+		classes := make(map[string]bool)
+		for _, path := range batch.Paths {
+			classes[FileClass(path)] = true
 		}
-		if len(clases) > 1 {
-			t.Errorf("lote #%d mezcla clases: rutas %v", lote.Numero, lote.Rutas)
+		if len(classes) > 1 {
+			t.Errorf("batch #%d mixes classes: paths %v", batch.Number, batch.Paths)
 		}
 	}
 }
 
-func TestConstruirPlanFragmentacionMantieneAgrupacionPorLimites(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "a.go", Lineas: 200, Capa: "backend"},
-		{Ruta: "b.go", Lineas: 200, Capa: "backend"},
-		{Ruta: "c.go", Lineas: 200, Capa: "backend"},
+func TestBuildFragmentationPlanKeepsGroupingByLimits(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "a.go", Lines: 200, Layer: "backend"},
+		{Path: "b.go", Lines: 200, Layer: "backend"},
+		{Path: "c.go", Lines: 200, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("se esperaban 2 lotes, obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 2 {
+		t.Fatalf("expected 2 batches, got %d", len(plan.Batches))
 	}
-	if !reflect.DeepEqual(plan.Lotes[0].Rutas, []string{"a.go", "b.go"}) {
-		t.Errorf("lote 1 rutas = %v", plan.Lotes[0].Rutas)
+	if !reflect.DeepEqual(plan.Batches[0].Paths, []string{"a.go", "b.go"}) {
+		t.Errorf("batch 1 paths = %v", plan.Batches[0].Paths)
 	}
-	if plan.Lotes[0].LineasTotales != 400 {
-		t.Errorf("lote 1 líneas = %d, esperado 400", plan.Lotes[0].LineasTotales)
+	if plan.Batches[0].TotalLines != 400 {
+		t.Errorf("batch 1 lines = %d, expected 400", plan.Batches[0].TotalLines)
 	}
-	if plan.Lotes[0].Numero != 1 || plan.Lotes[1].Numero != 2 {
-		t.Errorf("números de lote = %d, %d; esperado 1, 2", plan.Lotes[0].Numero, plan.Lotes[1].Numero)
+	if plan.Batches[0].Number != 1 || plan.Batches[1].Number != 2 {
+		t.Errorf("batch numbers = %d, %d; expected 1, 2", plan.Batches[0].Number, plan.Batches[1].Number)
 	}
-	if !reflect.DeepEqual(plan.Lotes[1].Rutas, []string{"c.go"}) {
-		t.Errorf("lote 2 rutas = %v", plan.Lotes[1].Rutas)
+	if !reflect.DeepEqual(plan.Batches[1].Paths, []string{"c.go"}) {
+		t.Errorf("batch 2 paths = %v", plan.Batches[1].Paths)
 	}
 }
 
-func TestConstruirPlanFragmentacionAislaConfigGigante(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "package-lock.json", Lineas: 450, Capa: "config"},
-		{Ruta: "cmd/main.go", Lineas: 100, Capa: "backend"},
+func TestBuildFragmentationPlanIsolatesGiantConfig(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "package-lock.json", Lines: 450, Layer: "config"},
+		{Path: "cmd/main.go", Lines: 100, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("se esperaban 2 lotes (gigante + normal), obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 2 {
+		t.Fatalf("expected 2 batches (giant + normal), got %d", len(plan.Batches))
 	}
-	// Desde T0.12 los lotes se agrupan primero por clase de archivo
-	// (ClaseArchivo) en el orden config → source → test → docs → generated.
-	// "package-lock.json" es clase "generated" (esGenerado por sufijo
-	// "-lock.json"), aunque su capa de negocio sea "config"; por eso el lote
-	// normal de código (clase "source") sale antes que el gigante aislado.
-	normal := plan.Lotes[0]
-	if normal.EsGigante || normal.Numero != 1 {
-		t.Errorf("lote normal = %+v", normal)
+	// Since T0.12 the batches are grouped first by file class (FileClass) in
+	// the order config → source → test → docs → generated. "package-lock.json"
+	// is class "generated" (isGenerated by the "-lock.json" suffix), even
+	// though its business layer is "config"; that is why the normal code batch
+	// (class "source") comes out before the isolated giant.
+	normal := plan.Batches[0]
+	if normal.IsOversized || normal.Number != 1 {
+		t.Errorf("normal batch = %+v", normal)
 	}
-	if normal.Mensaje != "" {
-		t.Errorf("el mensaje del lote normal debe nacer vacío y generarse luego, obtuve %q", normal.Mensaje)
+	if normal.Message != "" {
+		t.Errorf("the normal batch message must be born empty and generated later, got %q", normal.Message)
 	}
-	if normal.MensajeDeterminista {
-		t.Errorf("el lote normal no debería nacer determinista")
+	if normal.DeterministicMessage {
+		t.Errorf("the normal batch should not be born deterministic")
 	}
-	gigante := plan.Lotes[1]
-	if !gigante.EsGigante {
-		t.Errorf("el segundo lote debería ser gigante, obtuve %+v", gigante)
+	giant := plan.Batches[1]
+	if !giant.IsOversized {
+		t.Errorf("the second batch should be giant, got %+v", giant)
 	}
-	if gigante.Mensaje != mensajeAisladoDeps {
-		t.Errorf("mensaje gigante = %q, esperado %q", gigante.Mensaje, mensajeAisladoDeps)
+	if giant.Message != isolatedDepsMessage {
+		t.Errorf("giant message = %q, expected %q", giant.Message, isolatedDepsMessage)
 	}
-	if !gigante.MensajeDeterminista {
-		t.Errorf("el mensaje del gigante debería ser determinista")
+	if !giant.DeterministicMessage {
+		t.Errorf("the giant message should be deterministic")
 	}
-	if !reflect.DeepEqual(gigante.Rutas, []string{"package-lock.json"}) {
-		t.Errorf("rutas gigante = %v", gigante.Rutas)
+	if !reflect.DeepEqual(giant.Paths, []string{"package-lock.json"}) {
+		t.Errorf("giant paths = %v", giant.Paths)
 	}
-	if gigante.LineasTotales != 450 {
-		t.Errorf("líneas gigante = %d, esperado 450", gigante.LineasTotales)
+	if giant.TotalLines != 450 {
+		t.Errorf("giant lines = %d, expected 450", giant.TotalLines)
 	}
 }
 
-func TestConstruirPlanFragmentacionAislaCodigoGiganteConfirmado(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "big.go", Lineas: 600, Capa: "backend"},
-		{Ruta: "config.yaml", Lineas: 50, Capa: "config"},
+func TestBuildFragmentationPlanIsolatesConfirmedGiantCode(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "big.go", Lines: 600, Layer: "backend"},
+		{Path: "config.yaml", Lines: 50, Layer: "config"},
 	}
-	confirmado := false
-	plan, err := ConstruirPlanFragmentacion(archivos, func(f ArchivoModificado) (bool, error) {
-		confirmado = true
-		if f.Ruta != "big.go" {
-			t.Errorf("confirmarBypass recibió %q, esperado big.go", f.Ruta)
+	confirmed := false
+	plan, err := BuildFragmentationPlan(files, func(f ModifiedFile) (bool, error) {
+		confirmed = true
+		if f.Path != "big.go" {
+			t.Errorf("bypass confirmation received %q, expected big.go", f.Path)
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if !confirmado {
-		t.Error("confirmarBypass debería haberse invocado para el código gigante")
+	if !confirmed {
+		t.Error("bypass confirmation should have been invoked for the giant code")
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("se esperaban 2 lotes, obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 2 {
+		t.Fatalf("expected 2 batches, got %d", len(plan.Batches))
 	}
-	gigante := plan.Lotes[1]
-	if !gigante.EsGigante || gigante.Capa != "backend" {
-		t.Errorf("gigante = %+v", gigante)
+	giant := plan.Batches[1]
+	if !giant.IsOversized || giant.Layer != "backend" {
+		t.Errorf("giant = %+v", giant)
 	}
-	esperado := "chore(slice): bypass IA for massive file big.go"
-	if gigante.Mensaje != esperado {
-		t.Errorf("mensaje = %q, esperado %q", gigante.Mensaje, esperado)
+	expected := "chore(slice): bypass AI for massive file big.go"
+	if giant.Message != expected {
+		t.Errorf("message = %q, expected %q", giant.Message, expected)
 	}
-	if !gigante.MensajeDeterminista {
-		t.Errorf("el mensaje del gigante confirmado debería ser determinista")
+	if !giant.DeterministicMessage {
+		t.Errorf("the confirmed giant message should be deterministic")
 	}
 }
 
-func TestConstruirPlanFragmentacionAbortaSiSeRechazaGigante(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "big.go", Lineas: 600, Capa: "backend"},
+func TestBuildFragmentationPlanAbortsWhenGiantRejected(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "big.go", Lines: 600, Layer: "backend"},
 	}
-	_, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return false, nil })
+	_, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return false, nil })
 	if err == nil {
-		t.Fatal("se esperaba error al rechazar el código gigante")
+		t.Fatal("expected an error when rejecting giant code")
 	}
-	if !strings.Contains(err.Error(), "abortada") {
-		t.Errorf("error = %q, esperado mención de aborto", err)
+	if !strings.Contains(err.Error(), "aborted") {
+		t.Errorf("error = %q, expected an abort mention", err)
 	}
 }
 
-func TestConstruirPlanFragmentacionPropagaErrorDeConfirmacion(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "big.go", Lineas: 600, Capa: "backend"},
+func TestBuildFragmentationPlanPropagatesConfirmationError(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "big.go", Lines: 600, Layer: "backend"},
 	}
-	_, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return false, os.ErrPermission })
+	_, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return false, os.ErrPermission })
 	if err != os.ErrPermission {
-		t.Errorf("error = %v, esperado os.ErrPermission", err)
+		t.Errorf("error = %v, expected os.ErrPermission", err)
 	}
 }
 
-func TestConstruirPlanFragmentacionAbortaSinCommitearNada(t *testing.T) {
+func TestBuildFragmentationPlanAbortsWithoutCommittingAnything(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
@@ -276,285 +276,285 @@ func TestConstruirPlanFragmentacionAbortaSinCommitearNada(t *testing.T) {
 	if err := os.WriteFile("big.go", []byte("package big\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, dir, "add", "big.go")
+	runGitInDir(t, dir, "add", "big.go")
 
-	archivos := []ArchivoModificado{
-		{Ruta: "big.go", Lineas: 600, Capa: "backend"},
+	files := []ModifiedFile{
+		{Path: "big.go", Lines: 600, Layer: "backend"},
 	}
-	_, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return false, nil })
+	_, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return false, nil })
 	if err == nil {
-		t.Fatal("se esperaba error al rechazar el código gigante")
+		t.Fatal("expected an error when rejecting giant code")
 	}
 
-	totalCommits := ejecutarGit(t, dir, "rev-list", "--count", "HEAD")
+	totalCommits := runGitInDir(t, dir, "rev-list", "--count", "HEAD")
 	if totalCommits != "1" {
-		t.Errorf("no debería crearse ningún commit al abortar, obtuve %s commits", totalCommits)
+		t.Errorf("no commit should be created when aborting, got %s commits", totalCommits)
 	}
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if !strings.Contains(estado, "big.go") {
-		t.Errorf("big.go debería seguir pendiente tras abortar, obtuve: %q", estado)
+	status := runGitInDir(t, dir, "status", "--porcelain")
+	if !strings.Contains(status, "big.go") {
+		t.Errorf("big.go should remain pending after aborting, got: %q", status)
 	}
 }
 
-func TestGenerarMensajesLotesConAdapter(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "config.yaml", Lineas: 50, Capa: "config"},
-		{Ruta: "cmd/main.go", Lineas: 100, Capa: "backend"},
-		{Ruta: "package-lock.json", Lineas: 450, Capa: "config"},
+func TestGenerateBatchMessagesWithAdapter(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "config.yaml", Lines: 50, Layer: "config"},
+		{Path: "cmd/main.go", Lines: 100, Layer: "backend"},
+		{Path: "package-lock.json", Lines: 450, Layer: "config"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
 
-	fallbacks := GenerarMensajesLotes(plan, adaptadorPrueba{})
+	fallbacks := GenerateBatchMessages(plan, testAdapter{})
 	if fallbacks != 0 {
-		t.Errorf("se esperaban 0 fallbacks con adaptador correcto, obtuve %d", fallbacks)
+		t.Errorf("expected 0 fallbacks with a working adapter, got %d", fallbacks)
 	}
-	for _, lote := range plan.Lotes {
-		if lote.Mensaje == "" {
-			t.Errorf("lote %d (capa %s) quedó sin mensaje", lote.Numero, lote.Capa)
+	for _, batch := range plan.Batches {
+		if batch.Message == "" {
+			t.Errorf("batch %d (layer %s) was left without a message", batch.Number, batch.Layer)
 		}
-		if lote.EsGigante {
-			if lote.Mensaje != mensajeAisladoDeps {
-				t.Errorf("el mensaje del gigante fue sobreescrito: %q", lote.Mensaje)
+		if batch.IsOversized {
+			if batch.Message != isolatedDepsMessage {
+				t.Errorf("the giant message was overwritten: %q", batch.Message)
 			}
 			continue
 		}
-		if lote.Mensaje != "chore(slice): prueba" {
-			t.Errorf("lote %d mensaje = %q, esperado el del adaptador", lote.Numero, lote.Mensaje)
+		if batch.Message != "chore(slice): test" {
+			t.Errorf("batch %d message = %q, expected the adapter's", batch.Number, batch.Message)
 		}
-		if lote.MensajeDeterminista {
-			t.Errorf("lote %d debería marcarse como generado por el adaptador", lote.Numero)
+		if batch.DeterministicMessage {
+			t.Errorf("batch %d should be marked as generated by the adapter", batch.Number)
 		}
 	}
 }
 
-func TestGenerarMensajesLotesUsaFallbackCuandoAdapterFalla(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "a.go", Lineas: 200, Capa: "backend"},
-		{Ruta: "b.go", Lineas: 200, Capa: "backend"},
-		{Ruta: "c.go", Lineas: 200, Capa: "backend"},
+func TestGenerateBatchMessagesUsesFallbackWhenAdapterFails(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "a.go", Lines: 200, Layer: "backend"},
+		{Path: "b.go", Lines: 200, Layer: "backend"},
+		{Path: "c.go", Lines: 200, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("precondición: se esperaban 2 lotes, obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 2 {
+		t.Fatalf("precondition: expected 2 batches, got %d", len(plan.Batches))
 	}
 
-	adapterFallido := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
+	failingAdapter := agentadapterFunc(func(paths []string, layer string, num int) (string, error) {
 		return "", os.ErrPermission
 	})
-	fallbacks := GenerarMensajesLotes(plan, adapterFallido)
+	fallbacks := GenerateBatchMessages(plan, failingAdapter)
 	if fallbacks != 2 {
-		t.Errorf("se esperaban 2 fallbacks, obtuve %d", fallbacks)
+		t.Errorf("expected 2 fallbacks, got %d", fallbacks)
 	}
-	for i, lote := range plan.Lotes {
-		esperado := "chore(slice): auto-fragmented backend batch #" + strconv.Itoa(i+1)
-		if lote.Mensaje != esperado {
-			t.Errorf("lote %d mensaje = %q, esperado %q", i, lote.Mensaje, esperado)
+	for i, batch := range plan.Batches {
+		expected := "chore(slice): auto-fragmented backend batch #" + strconv.Itoa(i+1)
+		if batch.Message != expected {
+			t.Errorf("batch %d message = %q, expected %q", i, batch.Message, expected)
 		}
-		if !lote.MensajeDeterminista {
-			t.Errorf("lote %d debería marcarse determinista tras el fallback", i)
+		if !batch.DeterministicMessage {
+			t.Errorf("batch %d should be marked deterministic after the fallback", i)
 		}
 	}
 }
 
-func TestGenerarMensajesLotesRegeneraInclusoLotesYaCaidos(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "a.go", Lineas: 50, Capa: "backend"},
+func TestGenerateBatchMessagesRegeneratesEvenAlreadyFallenBatches(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "a.go", Lines: 50, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
 
-	adapterFallido := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
+	failingAdapter := agentadapterFunc(func(paths []string, layer string, num int) (string, error) {
 		return "", os.ErrPermission
 	})
-	GenerarMensajesLotes(plan, adapterFallido)
-	if !plan.Lotes[0].MensajeDeterminista {
-		t.Fatal("precondición: el lote debería haber caído al respaldo")
+	GenerateBatchMessages(plan, failingAdapter)
+	if !plan.Batches[0].DeterministicMessage {
+		t.Fatal("precondition: the batch should have fallen back")
 	}
 
-	// Un adaptador nuevo debe volver a regenerar el mensaje aunque el lote
-	// ya estuviera marcado como determinista por el fallback anterior.
-	fallbacks := GenerarMensajesLotes(plan, adaptadorPrueba{})
+	// A new adapter must regenerate the message even when the batch was
+	// already marked as deterministic by the previous fallback.
+	fallbacks := GenerateBatchMessages(plan, testAdapter{})
 	if fallbacks != 0 {
-		t.Errorf("se esperaban 0 fallbacks con el nuevo adaptador, obtuve %d", fallbacks)
+		t.Errorf("expected 0 fallbacks with the new adapter, got %d", fallbacks)
 	}
-	if plan.Lotes[0].Mensaje != "chore(slice): prueba" || plan.Lotes[0].MensajeDeterminista {
-		t.Errorf("el lote debería regenerarse con el nuevo adaptador, obtuve %+v", plan.Lotes[0])
-	}
-}
-
-func TestAplicarMensajesAutomaticos(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "a.go", Lineas: 50, Capa: "backend"},
-		{Ruta: "package-lock.json", Lineas: 450, Capa: "config"},
-	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
-	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
-	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("se esperaban 2 lotes (gigante + normal), obtuve %d", len(plan.Lotes))
-	}
-	// Igual que en TestConstruirPlanFragmentacionAislaConfigGigante: por clase,
-	// "a.go" (source) sale antes que "package-lock.json" (generated).
-	normal := plan.Lotes[0]
-	gigante := plan.Lotes[1]
-	GenerarMensajesLotes(plan, adaptadorPrueba{})
-	if normal.MensajeDeterminista {
-		t.Fatal("precondición: el lote normal debería ser no determinista antes de aplicar automáticos")
-	}
-
-	AplicarMensajesAutomaticos(plan)
-	for _, lote := range plan.Lotes {
-		if !lote.MensajeDeterminista {
-			t.Errorf("lote %d debería quedar determinista", lote.Numero)
-		}
-		if lote.Mensaje != lote.MensajeAutomatico {
-			t.Errorf("lote %d mensaje = %q, esperado %q", lote.Numero, lote.Mensaje, lote.MensajeAutomatico)
-		}
-	}
-	if gigante.Mensaje != mensajeAisladoDeps {
-		t.Errorf("el gigante debería conservar su mensaje determinista, obtuve %q", gigante.Mensaje)
+	if plan.Batches[0].Message != "chore(slice): test" || plan.Batches[0].DeterministicMessage {
+		t.Errorf("the batch should be regenerated with the new adapter, got %+v", plan.Batches[0])
 	}
 }
 
-func TestRegenerarMensajeLote(t *testing.T) {
-	archivos := []ArchivoModificado{
-		{Ruta: "a.go", Lineas: 200, Capa: "backend"},
-		{Ruta: "b.go", Lineas: 200, Capa: "backend"},
-		{Ruta: "c.go", Lineas: 200, Capa: "backend"},
+func TestApplyAutomaticMessages(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "a.go", Lines: 50, Layer: "backend"},
+		{Path: "package-lock.json", Lines: 450, Layer: "config"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("precondición: se esperaban 2 lotes, obtuve %d", len(plan.Lotes))
+	if len(plan.Batches) != 2 {
+		t.Fatalf("expected 2 batches (giant + normal), got %d", len(plan.Batches))
+	}
+	// Same as in TestBuildFragmentationPlanIsolatesGiantConfig: by class,
+	// "a.go" (source) comes out before "package-lock.json" (generated).
+	normal := plan.Batches[0]
+	giant := plan.Batches[1]
+	GenerateBatchMessages(plan, testAdapter{})
+	if normal.DeterministicMessage {
+		t.Fatal("precondition: the normal batch should be non-deterministic before applying automatics")
 	}
 
-	adapter := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
-		return "fix: regenerado", nil
+	ApplyAutomaticMessages(plan)
+	for _, batch := range plan.Batches {
+		if !batch.DeterministicMessage {
+			t.Errorf("batch %d should end up deterministic", batch.Number)
+		}
+		if batch.Message != batch.AutoMessage {
+			t.Errorf("batch %d message = %q, expected %q", batch.Number, batch.Message, batch.AutoMessage)
+		}
+	}
+	if giant.Message != isolatedDepsMessage {
+		t.Errorf("the giant should keep its deterministic message, got %q", giant.Message)
+	}
+}
+
+func TestRegenerateBatchMessage(t *testing.T) {
+	files := []ModifiedFile{
+		{Path: "a.go", Lines: 200, Layer: "backend"},
+		{Path: "b.go", Lines: 200, Layer: "backend"},
+		{Path: "c.go", Lines: 200, Layer: "backend"},
+	}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
+	if err != nil {
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
+	}
+	if len(plan.Batches) != 2 {
+		t.Fatalf("precondition: expected 2 batches, got %d", len(plan.Batches))
+	}
+
+	adapter := agentadapterFunc(func(paths []string, layer string, num int) (string, error) {
+		return "fix: regenerated", nil
 	})
-	if err := RegenerarMensajeLote(plan, 2, adapter); err != nil {
-		t.Fatalf("RegenerarMensajeLote devolvió error: %v", err)
+	if err := RegenerateBatchMessage(plan, 2, adapter); err != nil {
+		t.Fatalf("RegenerateBatchMessage returned error: %v", err)
 	}
-	if plan.Lotes[1].Mensaje != "fix: regenerado" {
-		t.Errorf("mensaje = %q, esperado 'fix: regenerado'", plan.Lotes[1].Mensaje)
+	if plan.Batches[1].Message != "fix: regenerated" {
+		t.Errorf("message = %q, expected 'fix: regenerated'", plan.Batches[1].Message)
 	}
-	if plan.Lotes[1].MensajeDeterminista {
-		t.Errorf("lote regenerado no debería marcarse determinista")
+	if plan.Batches[1].DeterministicMessage {
+		t.Errorf("a regenerated batch should not be marked deterministic")
 	}
-	if plan.Lotes[0].Mensaje != "" {
-		t.Errorf("el lote 1 no debería tocarse, obtuve %q", plan.Lotes[0].Mensaje)
+	if plan.Batches[0].Message != "" {
+		t.Errorf("batch 1 should not be touched, got %q", plan.Batches[0].Message)
 	}
 }
 
-func TestRegenerarMensajeLoteFallaConFallback(t *testing.T) {
-	archivos := []ArchivoModificado{{Ruta: "a.go", Lineas: 50, Capa: "backend"}}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+func TestRegenerateBatchMessageFallsBackOnFailure(t *testing.T) {
+	files := []ModifiedFile{{Path: "a.go", Lines: 50, Layer: "backend"}}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	adapterFallido := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
+	failingAdapter := agentadapterFunc(func(paths []string, layer string, num int) (string, error) {
 		return "", os.ErrPermission
 	})
-	if err := RegenerarMensajeLote(plan, 1, adapterFallido); err != nil {
-		t.Fatalf("RegenerarMensajeLote devolvió error: %v", err)
+	if err := RegenerateBatchMessage(plan, 1, failingAdapter); err != nil {
+		t.Fatalf("RegenerateBatchMessage returned error: %v", err)
 	}
-	if plan.Lotes[0].Mensaje != "chore(slice): auto-fragmented backend batch #1" {
-		t.Errorf("mensaje = %q, esperado el respaldo", plan.Lotes[0].Mensaje)
+	if plan.Batches[0].Message != "chore(slice): auto-fragmented backend batch #1" {
+		t.Errorf("message = %q, expected the fallback", plan.Batches[0].Message)
 	}
-	if !plan.Lotes[0].MensajeDeterminista {
-		t.Errorf("lote debería marcarse determinista tras el fallo")
+	if !plan.Batches[0].DeterministicMessage {
+		t.Errorf("batch should be marked deterministic after the failure")
 	}
 }
 
-func TestRegenerarMensajeLoteConNumeroDesconocido(t *testing.T) {
-	archivos := []ArchivoModificado{{Ruta: "a.go", Lineas: 50, Capa: "backend"}}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+func TestRegenerateBatchMessageWithUnknownNumber(t *testing.T) {
+	files := []ModifiedFile{{Path: "a.go", Lines: 50, Layer: "backend"}}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if err := RegenerarMensajeLote(plan, 99, adaptadorPrueba{}); err == nil {
-		t.Fatal("se esperaba error con número de lote desconocido")
+	if err := RegenerateBatchMessage(plan, 99, testAdapter{}); err == nil {
+		t.Fatal("expected an error with an unknown batch number")
 	}
 }
 
-func TestAplicarMensajeAutomaticoLote(t *testing.T) {
-	archivos := []ArchivoModificado{{Ruta: "a.go", Lineas: 50, Capa: "backend"}}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+func TestApplyAutomaticMessageBatch(t *testing.T) {
+	files := []ModifiedFile{{Path: "a.go", Lines: 50, Layer: "backend"}}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	GenerarMensajesLotes(plan, adaptadorPrueba{})
+	GenerateBatchMessages(plan, testAdapter{})
 
-	if err := AplicarMensajeAutomaticoLote(plan, 1); err != nil {
-		t.Fatalf("AplicarMensajeAutomaticoLote devolvió error: %v", err)
+	if err := ApplyAutomaticMessageBatch(plan, 1); err != nil {
+		t.Fatalf("ApplyAutomaticMessageBatch returned error: %v", err)
 	}
-	if plan.Lotes[0].Mensaje != "chore(slice): auto-fragmented backend batch #1" {
-		t.Errorf("mensaje = %q, esperado el determinista", plan.Lotes[0].Mensaje)
+	if plan.Batches[0].Message != "chore(slice): auto-fragmented backend batch #1" {
+		t.Errorf("message = %q, expected the deterministic one", plan.Batches[0].Message)
 	}
-	if !plan.Lotes[0].MensajeDeterminista {
-		t.Errorf("lote debería marcarse determinista")
+	if !plan.Batches[0].DeterministicMessage {
+		t.Errorf("batch should be marked deterministic")
 	}
 }
 
-func TestEditarMensajeLote(t *testing.T) {
-	archivos := []ArchivoModificado{{Ruta: "a.go", Lineas: 50, Capa: "backend"}}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+func TestEditBatchMessage(t *testing.T) {
+	files := []ModifiedFile{{Path: "a.go", Lines: 50, Layer: "backend"}}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if err := EditarMensajeLote(plan, 1, "feat: manual"); err != nil {
-		t.Fatalf("EditarMensajeLote devolvió error: %v", err)
+	if err := EditBatchMessage(plan, 1, "feat: manual"); err != nil {
+		t.Fatalf("EditBatchMessage returned error: %v", err)
 	}
-	if plan.Lotes[0].Mensaje != "feat: manual" {
-		t.Errorf("mensaje = %q, esperado 'feat: manual'", plan.Lotes[0].Mensaje)
+	if plan.Batches[0].Message != "feat: manual" {
+		t.Errorf("message = %q, expected 'feat: manual'", plan.Batches[0].Message)
 	}
-	if plan.Lotes[0].MensajeDeterminista {
-		t.Errorf("mensaje editado no debería marcarse determinista")
+	if plan.Batches[0].DeterministicMessage {
+		t.Errorf("an edited message should not be marked deterministic")
 	}
 }
 
-func TestEditarMensajeLoteConNumeroDesconocido(t *testing.T) {
-	archivos := []ArchivoModificado{{Ruta: "a.go", Lineas: 50, Capa: "backend"}}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+func TestEditBatchMessageWithUnknownNumber(t *testing.T) {
+	files := []ModifiedFile{{Path: "a.go", Lines: 50, Layer: "backend"}}
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if err := EditarMensajeLote(plan, 42, "feat: x"); err == nil {
-		t.Fatal("se esperaba error con número de lote desconocido")
+	if err := EditBatchMessage(plan, 42, "feat: x"); err == nil {
+		t.Fatal("expected an error with an unknown batch number")
 	}
 }
 
-func TestVerificarAdaptador(t *testing.T) {
-	if !VerificarAdaptador(adaptadorPrueba{}) {
-		t.Error("adaptadorPrueba debería verificar correctamente")
+func TestVerifyAdapter(t *testing.T) {
+	if !VerifyAdapter(testAdapter{}) {
+		t.Error("testAdapter should verify correctly")
 	}
-	adapterFallido := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
+	failingAdapter := agentadapterFunc(func(paths []string, layer string, num int) (string, error) {
 		return "", os.ErrPermission
 	})
-	if VerificarAdaptador(adapterFallido) {
-		t.Error("un adaptador que falla no debería verificar")
+	if VerifyAdapter(failingAdapter) {
+		t.Error("a failing adapter should not verify")
 	}
 }
 
-func TestEjecutarPlanFragmentacionEnRepositorioReal(t *testing.T) {
+func TestRunFragmentationPlanInRealRepository(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 		"b.go": "package b\n",
 		"c.go": "package c\n",
@@ -562,188 +562,188 @@ func TestEjecutarPlanFragmentacionEnRepositorioReal(t *testing.T) {
 	})
 	t.Chdir(dir)
 
-	agregarLineas(t, "b.go", 200)
-	agregarLineas(t, "c.go", 200)
-	agregarLineas(t, "d.go", 200)
+	appendLines(t, "b.go", 200)
+	appendLines(t, "c.go", 200)
+	appendLines(t, "d.go", 200)
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 3 {
-		t.Fatalf("se esperaban 3 archivos modificados, obtuve %d", len(archivos))
+	if len(files) != 3 {
+		t.Fatalf("expected 3 modified files, got %d", len(files))
 	}
 
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	GenerarMensajesLotes(plan, adaptadorPrueba{})
+	GenerateBatchMessages(plan, testAdapter{})
 
-	resultados, err := EjecutarPlanFragmentacion(plan)
+	results, err := RunFragmentationPlan(plan)
 	if err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("RunFragmentationPlan returned error: %v", err)
 	}
-	if len(resultados) != 2 {
-		t.Fatalf("se esperaban 2 commits, obtuve %d", len(resultados))
+	if len(results) != 2 {
+		t.Fatalf("expected 2 commits, got %d", len(results))
 	}
-	totalCommits := ejecutarGit(t, dir, "rev-list", "--count", "HEAD")
+	totalCommits := runGitInDir(t, dir, "rev-list", "--count", "HEAD")
 	if totalCommits != "3" {
-		t.Errorf("se esperaban 3 commits (inicial + 2 lotes), obtuve %s", totalCommits)
+		t.Errorf("expected 3 commits (initial + 2 batches), got %s", totalCommits)
 	}
-	for i, r := range resultados {
+	for i, r := range results {
 		if r.Hash == "" {
-			t.Errorf("el resultado %d debería incluir un hash corto", i)
+			t.Errorf("result %d should include a short hash", i)
 		}
-		if r.Mensaje != "chore(slice): prueba" {
-			t.Errorf("resultado %d mensaje = %q, esperado el aprobado", i, r.Mensaje)
+		if r.Message != "chore(slice): test" {
+			t.Errorf("result %d message = %q, expected the approved one", i, r.Message)
 		}
-		if r.Capa != "backend" {
-			t.Errorf("resultado %d capa = %q, esperado backend", i, r.Capa)
+		if r.Layer != "backend" {
+			t.Errorf("result %d layer = %q, expected backend", i, r.Layer)
 		}
 	}
-	if resultados[0].Archivos != 2 || resultados[1].Archivos != 1 {
-		t.Errorf("archivos por commit = %d, %d; esperado 2, 1", resultados[0].Archivos, resultados[1].Archivos)
+	if results[0].Files != 2 || results[1].Files != 1 {
+		t.Errorf("files per commit = %d, %d; expected 2, 1", results[0].Files, results[1].Files)
 	}
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if estado != "" {
-		t.Errorf("el worktree debería quedar limpio tras fragmentar, obtuve: %s", estado)
+	status := runGitInDir(t, dir, "status", "--porcelain")
+	if status != "" {
+		t.Errorf("the worktree should be clean after fragmenting, got: %s", status)
 	}
 }
 
-func TestEjecutarPlanFragmentacionOmiteVerificacionDeHooks(t *testing.T) {
+func TestRunFragmentationPlanSkipsHookVerification(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Hook que falla siempre: el flujo de slice (mecanismo de fragmentación del
-	// guardián) omite la verificación con --no-verify para todos sus commits.
+	// Hook that always fails: the slice flow (the guardian's fragmentation
+	// mechanism) skips verification with --no-verify for all of its commits.
 	dirHooks := t.TempDir()
 	hook := filepath.Join(dirHooks, "pre-commit")
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, dir, "config", "core.hooksPath", filepath.ToSlash(dirHooks))
+	runGitInDir(t, dir, "config", "core.hooksPath", filepath.ToSlash(dirHooks))
 
-	// Lote gigante confirmado: el commit debe omitir el hook.
+	// Confirmed giant batch: the commit must skip the hook.
 	if err := os.WriteFile("big.go", []byte("package big\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	archivos := []ArchivoModificado{
-		{Ruta: "big.go", Lineas: 600, Capa: "backend"},
+	files := []ModifiedFile{
+		{Path: "big.go", Lines: 600, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if len(plan.Lotes) != 1 || !plan.Lotes[0].EsGigante {
-		t.Fatalf("precondición: se esperaba 1 lote gigante, obtuve %+v", plan.Lotes)
+	if len(plan.Batches) != 1 || !plan.Batches[0].IsOversized {
+		t.Fatalf("precondition: expected 1 giant batch, got %+v", plan.Batches)
 	}
-	if _, err := EjecutarPlanFragmentacion(plan); err != nil {
-		t.Fatalf("el lote gigante debería omitir el hook, obtuve error: %v", err)
+	if _, err := RunFragmentationPlan(plan); err != nil {
+		t.Fatalf("the giant batch should skip the hook, got error: %v", err)
 	}
 
-	// Lote normal con el mismo hook también debe omitirlo: el total pendiente
-	// de otros lotes no puede rechazar commits legítimos de slice.
-	agregarLineas(t, "a.go", 10)
-	planNormal, err := ConstruirPlanFragmentacion([]ArchivoModificado{
-		{Ruta: "a.go", Lineas: 10, Capa: "backend"},
-	}, func(ArchivoModificado) (bool, error) { return true, nil })
+	// A normal batch with the same hook must skip it too: the total pending
+	// volume of other batches cannot reject legitimate slice commits.
+	appendLines(t, "a.go", 10)
+	normalPlan, err := BuildFragmentationPlan([]ModifiedFile{
+		{Path: "a.go", Lines: 10, Layer: "backend"},
+	}, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if _, err := EjecutarPlanFragmentacion(planNormal); err != nil {
-		t.Fatalf("el lote normal debería omitir el hook, obtuve error: %v", err)
+	if _, err := RunFragmentationPlan(normalPlan); err != nil {
+		t.Fatalf("the normal batch should skip the hook, got error: %v", err)
 	}
 }
 
-func TestEjecutarPlanFragmentacionUsaMensajeDeRespaldoCuandoAdapterFalla(t *testing.T) {
+func TestRunFragmentationPlanUsesFallbackMessageWhenAdapterFails(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	agregarLineas(t, "a.go", 10)
-	archivos, err := ObtenerArchivosModificados()
+	appendLines(t, "a.go", 10)
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
 
-	adapterFallido := agentadapterFunc(func(rutas []string, capa string, num int) (string, error) {
+	failingAdapter := agentadapterFunc(func(paths []string, layer string, num int) (string, error) {
 		return "", os.ErrPermission
 	})
-	GenerarMensajesLotes(plan, adapterFallido)
+	GenerateBatchMessages(plan, failingAdapter)
 
-	if _, err := EjecutarPlanFragmentacion(plan); err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error: %v", err)
+	if _, err := RunFragmentationPlan(plan); err != nil {
+		t.Fatalf("RunFragmentationPlan returned error: %v", err)
 	}
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if !strings.Contains(mensaje, "auto-fragmented") {
-		t.Errorf("el commit debería usar el mensaje de respaldo, obtuve: %q", mensaje)
+	message := runGitInDir(t, dir, "log", "-1", "--pretty=%s")
+	if !strings.Contains(message, "auto-fragmented") {
+		t.Errorf("the commit should use the fallback message, got: %q", message)
 	}
 }
 
-func TestEjecutarPlanFragmentacionUsaMensajesAprobados(t *testing.T) {
+func TestRunFragmentationPlanUsesApprovedMessages(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	agregarLineas(t, "a.go", 10)
-	archivos, err := ObtenerArchivosModificados()
+	appendLines(t, "a.go", 10)
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	plan.Lotes[0].Mensaje = "feat: aprobado por el usuario"
+	plan.Batches[0].Message = "feat: approved by the user"
 
-	if _, err := EjecutarPlanFragmentacion(plan); err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error: %v", err)
+	if _, err := RunFragmentationPlan(plan); err != nil {
+		t.Fatalf("RunFragmentationPlan returned error: %v", err)
 	}
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != "feat: aprobado por el usuario" {
-		t.Errorf("mensaje = %q, esperado el aprobado por el usuario", mensaje)
+	message := runGitInDir(t, dir, "log", "-1", "--pretty=%s")
+	if message != "feat: approved by the user" {
+		t.Errorf("message = %q, expected the user-approved one", message)
 	}
 }
 
-func TestEjecutarPlanFragmentacionAislaConfigGigante(t *testing.T) {
+func TestRunFragmentationPlanIsolatesGiantConfig(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
@@ -758,44 +758,44 @@ func TestEjecutarPlanFragmentacionAislaConfigGigante(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 1 {
-		t.Fatalf("se esperaba 1 archivo, obtuve %d: %+v", len(archivos), archivos)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d: %+v", len(files), files)
 	}
-	if archivos[0].Capa != "config" {
-		t.Errorf("capa = %q, esperado config", archivos[0].Capa)
+	if files[0].Layer != "config" {
+		t.Errorf("layer = %q, expected config", files[0].Layer)
 	}
 
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if _, err := EjecutarPlanFragmentacion(plan); err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error: %v", err)
+	if _, err := RunFragmentationPlan(plan); err != nil {
+		t.Fatalf("RunFragmentationPlan returned error: %v", err)
 	}
 
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != mensajeAisladoDeps {
-		t.Errorf("mensaje = %q, esperado %q", mensaje, mensajeAisladoDeps)
+	message := runGitInDir(t, dir, "log", "-1", "--pretty=%s")
+	if message != isolatedDepsMessage {
+		t.Errorf("message = %q, expected %q", message, isolatedDepsMessage)
 	}
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if estado != "" {
-		t.Errorf("el worktree debería quedar limpio tras aislar el lock, obtuve: %s", estado)
+	status := runGitInDir(t, dir, "status", "--porcelain")
+	if status != "" {
+		t.Errorf("the worktree should be clean after isolating the lock, got: %s", status)
 	}
 }
 
-func TestEjecutarPlanFragmentacionAislaCodigoGiganteConfirmado(t *testing.T) {
+func TestRunFragmentationPlanIsolatesConfirmedGiantCode(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
@@ -803,164 +803,165 @@ func TestEjecutarPlanFragmentacionAislaCodigoGiganteConfirmado(t *testing.T) {
 	if err := os.WriteFile("big.go", []byte("package big\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, dir, "add", "big.go")
+	runGitInDir(t, dir, "add", "big.go")
 
-	archivos := []ArchivoModificado{
-		{Ruta: "big.go", Lineas: 600, Capa: "backend"},
+	files := []ModifiedFile{
+		{Path: "big.go", Lines: 600, Layer: "backend"},
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
-	if _, err := EjecutarPlanFragmentacion(plan); err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error: %v", err)
+	if _, err := RunFragmentationPlan(plan); err != nil {
+		t.Fatalf("RunFragmentationPlan returned error: %v", err)
 	}
 
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != "chore(slice): bypass IA for massive file big.go" {
-		t.Errorf("mensaje = %q, esperado bypass", mensaje)
+	message := runGitInDir(t, dir, "log", "-1", "--pretty=%s")
+	if message != "chore(slice): bypass AI for massive file big.go" {
+		t.Errorf("message = %q, expected the bypass", message)
 	}
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if estado != "" {
-		t.Errorf("el worktree debería quedar limpio tras el bypass, obtuve: %s", estado)
+	status := runGitInDir(t, dir, "status", "--porcelain")
+	if status != "" {
+		t.Errorf("the worktree should be clean after the bypass, got: %s", status)
 	}
 }
 
-func TestEjecutarPlanFragmentacionEntregaDiffAlAdaptador(t *testing.T) {
+func TestRunFragmentationPlanDeliversDiffToAdapter(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	agregarLineas(t, "a.go", 5)
-	archivos, err := ObtenerArchivosModificados()
+	appendLines(t, "a.go", 5)
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	plan, err := ConstruirPlanFragmentacion(archivos, func(ArchivoModificado) (bool, error) { return true, nil })
+	plan, err := BuildFragmentationPlan(files, func(ModifiedFile) (bool, error) { return true, nil })
 	if err != nil {
-		t.Fatalf("ConstruirPlanFragmentacion devolvió error: %v", err)
+		t.Fatalf("BuildFragmentationPlan returned error: %v", err)
 	}
 
-	adapter := &adaptadorConDiffPrueba{}
-	GenerarMensajesLotes(plan, adapter)
-	if !strings.Contains(adapter.diffRecibido, "+// linea generada") {
-		t.Errorf("el diff del lote debería contener la línea añadida, obtuve: %q", adapter.diffRecibido)
+	adapter := &testAdapterWithDiff{}
+	GenerateBatchMessages(plan, adapter)
+	if !strings.Contains(adapter.receivedDiff, "+// generated line") {
+		t.Errorf("the batch diff should contain the added line, got: %q", adapter.receivedDiff)
 	}
 
-	if _, err := EjecutarPlanFragmentacion(plan); err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error: %v", err)
+	if _, err := RunFragmentationPlan(plan); err != nil {
+		t.Fatalf("RunFragmentationPlan returned error: %v", err)
 	}
-	mensaje := ejecutarGit(t, dir, "log", "-1", "--pretty=%s")
-	if mensaje != "chore(slice): con diff" {
-		t.Errorf("mensaje = %q, esperado el mensaje del adaptador con diff", mensaje)
+	message := runGitInDir(t, dir, "log", "-1", "--pretty=%s")
+	if message != "chore(slice): with diff" {
+		t.Errorf("message = %q, expected the adapter's message with diff", message)
 	}
 }
 
-func TestWorktreeLimpio(t *testing.T) {
+func TestWorktreeClean(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	limpio, err := WorktreeLimpio()
+	clean, err := WorktreeClean()
 	if err != nil {
-		t.Fatalf("WorktreeLimpio devolvió error: %v", err)
+		t.Fatalf("WorktreeClean returned error: %v", err)
 	}
-	if !limpio {
-		t.Error("un worktree recién preparado debería estar limpio")
+	if !clean {
+		t.Error("a freshly prepared worktree should be clean")
 	}
 
-	agregarLineas(t, "a.go", 5)
-	limpio, err = WorktreeLimpio()
+	appendLines(t, "a.go", 5)
+	clean, err = WorktreeClean()
 	if err != nil {
-		t.Fatalf("WorktreeLimpio devolvió error: %v", err)
+		t.Fatalf("WorktreeClean returned error: %v", err)
 	}
-	if limpio {
-		t.Error("un worktree con cambios debería reportar no limpio")
+	if clean {
+		t.Error("a worktree with changes should report not clean")
 	}
 }
 
-// TestEjecutarPlanFragmentacionCommiteaArchivoTrackeadoQueGitignoreIgnoraDespues
-// reproduce B13: un archivo ya trackeado (como .atl/ en este repo) al que
-// .gitignore empieza a afectar después. Sin -f, 'git add' sobre esa ruta
-// avisa y sale con código 1 aunque de todos modos deja el archivo en stage,
-// y ese error abortaba el lote entero.
-func TestEjecutarPlanFragmentacionCommiteaArchivoTrackeadoQueGitignoreIgnoraDespues(t *testing.T) {
+// TestRunFragmentationPlanCommitsTrackedFileGitignoreLaterIgnores reproduces
+// B13: an already tracked file (like .atl/ in this repo) that .gitignore
+// starts to affect afterwards. Without -f, 'git add' on that path warns and
+// exits with code 1 even though it leaves the file staged anyway, and that
+// error used to abort the whole batch.
+func TestRunFragmentationPlanCommitsTrackedFileGitignoreLaterIgnores(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"registro.txt": "estado inicial\n",
+	dir := prepareTestRepo(t, map[string]string{
+		"ledger.txt": "initial state\n",
 	})
 	t.Chdir(dir)
 
-	if err := os.WriteFile(".gitignore", []byte("registro.txt\n"), 0644); err != nil {
-		t.Fatalf("no se pudo escribir .gitignore: %v", err)
+	if err := os.WriteFile(".gitignore", []byte("ledger.txt\n"), 0644); err != nil {
+		t.Fatalf("could not write .gitignore: %v", err)
 	}
-	ejecutarGit(t, dir, "add", "-f", ".gitignore")
-	ejecutarGit(t, dir, "commit", "-q", "-m", "ignora registro.txt")
+	runGitInDir(t, dir, "add", "-f", ".gitignore")
+	runGitInDir(t, dir, "commit", "-q", "-m", "ignores ledger.txt")
 
-	agregarLineas(t, "registro.txt", 5)
+	appendLines(t, "ledger.txt", 5)
 
-	plan := &PlanFragmentacion{Lotes: []LotePlanificado{
-		{Capa: "backend", Numero: 1, Rutas: []string{"registro.txt"}, Mensaje: "chore(slice): prueba"},
+	plan := &FragmentationPlan{Batches: []PlannedBatch{
+		{Layer: "backend", Number: 1, Paths: []string{"ledger.txt"}, Message: "chore(slice): test"},
 	}}
 
-	resultados, err := EjecutarPlanFragmentacion(plan)
+	results, err := RunFragmentationPlan(plan)
 	if err != nil {
-		t.Fatalf("EjecutarPlanFragmentacion devolvió error con un archivo trackeado e ignorado: %v", err)
+		t.Fatalf("RunFragmentationPlan returned error with a tracked and ignored file: %v", err)
 	}
-	if len(resultados) != 1 || resultados[0].Hash == "" {
-		t.Fatalf("se esperaba 1 commit con hash, obtuve %+v", resultados)
+	if len(results) != 1 || results[0].Hash == "" {
+		t.Fatalf("expected 1 commit with a hash, got %+v", results)
 	}
-	estado := ejecutarGit(t, dir, "status", "--porcelain")
-	if estado != "" {
-		t.Errorf("el worktree debería quedar limpio, obtuve: %s", estado)
+	status := runGitInDir(t, dir, "status", "--porcelain")
+	if status != "" {
+		t.Errorf("the worktree should be clean, got: %s", status)
 	}
 }
 
-// TestEjecutarPlanFragmentacionErrorIncluyeSalidaDeGit comprueba que un fallo
-// real de git ya no se reduce a "exit status 1": debe incluir la salida de
-// git (aquí, el aviso de pathspec) para poder diagnosticarlo sin adivinar.
-func TestEjecutarPlanFragmentacionErrorIncluyeSalidaDeGit(t *testing.T) {
+// TestRunFragmentationPlanErrorIncludesGitOutput checks that a real git
+// failure is no longer reduced to "exit status 1": it must include git's
+// output (here, the pathspec warning) so it can be diagnosed without
+// guessing.
+func TestRunFragmentationPlanErrorIncludesGitOutput(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	dir := prepareTestRepo(t, map[string]string{"a.go": "package a\n"})
 	t.Chdir(dir)
 
-	plan := &PlanFragmentacion{Lotes: []LotePlanificado{
-		{Capa: "backend", Numero: 1, Rutas: []string{"no-existe.go"}, Mensaje: "chore(slice): prueba"},
+	plan := &FragmentationPlan{Batches: []PlannedBatch{
+		{Layer: "backend", Number: 1, Paths: []string{"missing.go"}, Message: "chore(slice): test"},
 	}}
 
-	_, err := EjecutarPlanFragmentacion(plan)
+	_, err := RunFragmentationPlan(plan)
 	if err == nil {
-		t.Fatal("se esperaba error: la ruta del lote no existe")
+		t.Fatal("expected an error: the batch path does not exist")
 	}
 	if !strings.Contains(err.Error(), "pathspec") {
-		t.Errorf("el error debería incluir la salida real de git (pathspec), obtuve: %v", err)
+		t.Errorf("the error should include git's real output (pathspec), got: %v", err)
 	}
 }

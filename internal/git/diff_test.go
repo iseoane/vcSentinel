@@ -8,186 +8,184 @@ import (
 	"testing"
 )
 
-func TestContarLineasAnadidas(t *testing.T) {
+func TestCountAddedLines(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		diff     string
-		esperado int
+		name string
+		diff string
+		want int
 	}{
-		{nombre: "diff vacio", diff: "", esperado: 0},
-		{nombre: "solo cabeceras de archivo", diff: "+++ b/main.go\n--- a/main.go\n", esperado: 0},
-		{nombre: "lineas anadidas normales", diff: "+func main() {\n+\treturn\n+}\n", esperado: 3},
+		{name: "empty diff", diff: "", want: 0},
+		{name: "only file headers", diff: "+++ b/main.go\n--- a/main.go\n", want: 0},
+		{name: "normal added lines", diff: "+func main() {\n+\treturn\n+}\n", want: 3},
 		{
-			nombre:   "mezcla con contexto y borradas",
-			diff:     " func main() {\n-\tfmt.Println(\"hola\")\n+\treturn\n \t_ = 0\n+++ b/main.go\n",
-			esperado: 1,
+			name: "mix with context and deletions",
+			diff: " func main() {\n-\tfmt.Println(\"hola\")\n+\treturn\n \t_ = 0\n+++ b/main.go\n",
+			want: 1,
 		},
-		{nombre: "linea con mas de tres signos mas es cabecera", diff: "+++++ no cabecera\n", esperado: 0},
+		{name: "line with more than three pluses is a header", diff: "+++++ not a header\n", want: 0},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := contarLineasAnadidas(tt.diff)
-			if obtenido != tt.esperado {
-				t.Errorf("contarLineasAnadidas(%q) = %d, esperado %d", tt.diff, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countAddedLines(tt.diff); got != tt.want {
+				t.Errorf("countAddedLines(%q) = %d, expected %d", tt.diff, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestClasificarEstado(t *testing.T) {
+func TestClassifyState(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		lineas   int
-		esperado string
+		name  string
+		lines int
+		want  string
 	}{
-		{nombre: "cero", lineas: 0, esperado: "PEQUENO"},
-		{nombre: "justo bajo el optimo", lineas: 199, esperado: "PEQUENO"},
-		{nombre: "limite inferior del optimo", lineas: 200, esperado: "PUNTO_OPTIMO"},
-		{nombre: "dentro del optimo", lineas: 300, esperado: "PUNTO_OPTIMO"},
-		{nombre: "limite superior del optimo", lineas: 400, esperado: "PUNTO_OPTIMO"},
-		{nombre: "sobre el limite critico", lineas: 401, esperado: "CRITICO"},
+		{name: "zero", lines: 0, want: "SMALL"},
+		{name: "just below the optimum", lines: 199, want: "SMALL"},
+		{name: "lower bound of the optimum", lines: 200, want: "OPTIMAL_POINT"},
+		{name: "inside the optimum", lines: 300, want: "OPTIMAL_POINT"},
+		{name: "upper bound of the optimum", lines: 400, want: "OPTIMAL_POINT"},
+		{name: "above the critical limit", lines: 401, want: "CRITICAL"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := clasificarEstado(tt.lineas)
-			if obtenido != tt.esperado {
-				t.Errorf("clasificarEstado(%d) = %q, esperado %q", tt.lineas, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyState(tt.lines); got != tt.want {
+				t.Errorf("classifyState(%d) = %q, expected %q", tt.lines, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCheckDiffLimitsEnRepositorioReal(t *testing.T) {
+func TestCheckDiffLimitsInRealRepository(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	t.Run("estado limpio reporta cero y PEQUENO", func(t *testing.T) {
-		lineas, estado, err := CheckDiffLimits()
+	t.Run("clean tree reports zero and SMALL", func(t *testing.T) {
+		lines, state, err := CheckDiffLimits()
 		if err != nil {
-			t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+			t.Fatalf("CheckDiffLimits returned error: %v", err)
 		}
-		if lineas != 0 {
-			t.Errorf("líneas = %d, esperado 0", lineas)
+		if lines != 0 {
+			t.Errorf("lines = %d, expected 0", lines)
 		}
-		if estado != "PEQUENO" {
-			t.Errorf("estado = %q, esperado PEQUENO", estado)
+		if state != "SMALL" {
+			t.Errorf("state = %q, expected SMALL", state)
 		}
 	})
 
-	t.Run("250 lineas anadidas reportan PUNTO_OPTIMO", func(t *testing.T) {
-		agregarLineas(t, "a.go", 250)
-		lineas, estado, err := CheckDiffLimits()
+	t.Run("250 added lines report OPTIMAL_POINT", func(t *testing.T) {
+		appendLines(t, "a.go", 250)
+		lines, state, err := CheckDiffLimits()
 		if err != nil {
-			t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+			t.Fatalf("CheckDiffLimits returned error: %v", err)
 		}
-		if lineas != 250 {
-			t.Errorf("líneas = %d, esperado 250", lineas)
+		if lines != 250 {
+			t.Errorf("lines = %d, expected 250", lines)
 		}
-		if estado != "PUNTO_OPTIMO" {
-			t.Errorf("estado = %q, esperado PUNTO_OPTIMO", estado)
+		if state != "OPTIMAL_POINT" {
+			t.Errorf("state = %q, expected OPTIMAL_POINT", state)
 		}
 	})
 
-	t.Run("mas de 400 lineas reportan CRITICO", func(t *testing.T) {
-		agregarLineas(t, "a.go", 250)
-		lineas, estado, err := CheckDiffLimits()
+	t.Run("more than 400 lines report CRITICAL", func(t *testing.T) {
+		appendLines(t, "a.go", 250)
+		lines, state, err := CheckDiffLimits()
 		if err != nil {
-			t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+			t.Fatalf("CheckDiffLimits returned error: %v", err)
 		}
-		if lineas != 500 {
-			t.Errorf("líneas = %d, esperado 500", lineas)
+		if lines != 500 {
+			t.Errorf("lines = %d, expected 500", lines)
 		}
-		if estado != "CRITICO" {
-			t.Errorf("estado = %q, esperado CRITICO", estado)
+		if state != "CRITICAL" {
+			t.Errorf("state = %q, expected CRITICAL", state)
 		}
 	})
 }
 
-func TestCheckDiffLimitsIncluyeArchivosNoRastreados(t *testing.T) {
+func TestCheckDiffLimitsIncludesUntrackedFiles(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Archivo nuevo sin stagear (untracked) de más de 400 líneas: debe verse
-	// como CRITICO, no como PEQUENO. Reproduce B1: "git diff HEAD" ignora los
-	// archivos sin rastrear.
-	contenido := strings.Repeat("// linea generada\n", 450)
-	if err := os.WriteFile(filepath.Join(dir, "nuevo.go"), []byte(contenido), 0644); err != nil {
+	// New unstaged (untracked) file with more than 400 lines: it must be seen
+	// as CRITICAL, not as SMALL. Reproduces B1: "git diff HEAD" ignores the
+	// untracked files.
+	content := strings.Repeat("// generated line\n", 450)
+	if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	lineas, estado, err := CheckDiffLimits()
+	lines, state, err := CheckDiffLimits()
 	if err != nil {
-		t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+		t.Fatalf("CheckDiffLimits returned error: %v", err)
 	}
-	if lineas != 450 {
-		t.Errorf("líneas = %d, esperado 450", lineas)
+	if lines != 450 {
+		t.Errorf("lines = %d, expected 450", lines)
 	}
-	if estado != "CRITICO" {
-		t.Errorf("estado = %q, esperado CRITICO", estado)
+	if state != "CRITICAL" {
+		t.Errorf("state = %q, expected CRITICAL", state)
 	}
 }
 
-func TestCheckDiffLimitsCoincideConObtenerArchivosModificados(t *testing.T) {
+func TestCheckDiffLimitsMatchesGetModifiedFiles(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Mezcla de archivo rastreado modificado y archivo nuevo sin rastrear:
-	// check y slice deben medir exactamente el mismo volumen (B2).
-	agregarLineas(t, "a.go", 100)
-	contenidoNuevo := strings.Repeat("// linea\n", 50)
-	if err := os.WriteFile(filepath.Join(dir, "nuevo.go"), []byte(contenidoNuevo), 0644); err != nil {
+	// Mix of a modified tracked file and a new untracked file: check and
+	// slice must measure exactly the same volume (B2).
+	appendLines(t, "a.go", 100)
+	newContent := strings.Repeat("// line\n", 50)
+	if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte(newContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	lineas, _, err := CheckDiffLimits()
+	lines, _, err := CheckDiffLimits()
 	if err != nil {
-		t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+		t.Fatalf("CheckDiffLimits returned error: %v", err)
 	}
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	sumaEsperada := 0
-	for _, a := range archivos {
-		sumaEsperada += a.Lineas
+	expectedSum := 0
+	for _, f := range files {
+		expectedSum += f.Lines
 	}
 
-	if lineas != sumaEsperada {
-		t.Errorf("CheckDiffLimits = %d, ObtenerArchivosModificados suma %d; deben coincidir", lineas, sumaEsperada)
+	if lines != expectedSum {
+		t.Errorf("CheckDiffLimits = %d, GetModifiedFiles sums %d; they must match", lines, expectedSum)
 	}
 }
 
-func TestMedirVolumenFallaFueraDeRepositorio(t *testing.T) {
+func TestMeasureVolumeFailsOutsideRepository(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skips the real Git measurement in short mode")
 	}
@@ -196,16 +194,19 @@ func TestMedirVolumenFallaFueraDeRepositorio(t *testing.T) {
 	}
 
 	t.Chdir(t.TempDir())
-	volumen, err := MedirVolumen()
+	volume, err := MeasureVolume()
 	if err == nil {
-		t.Fatal("MedirVolumen should fail outside a Git repository")
+		t.Fatal("MeasureVolume should fail outside a Git repository")
 	}
-	if volumen.Estado != "ERROR" {
-		t.Errorf("failure state = %q, want ERROR", volumen.Estado)
+	if volume.State != "ERROR" {
+		t.Errorf("failure state = %q, want ERROR", volume.State)
 	}
 }
 
-func prepararRepositorioPrueba(t *testing.T, archivos map[string]string) string {
+// prepareTestRepo, runGitInDir and appendLines are package-wide test fixtures
+// shared with other test files in this package.
+
+func prepareTestRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("GIT_AUTHOR_NAME", "VAS Sentinel Test")
@@ -213,42 +214,42 @@ func prepararRepositorioPrueba(t *testing.T, archivos map[string]string) string 
 	t.Setenv("GIT_COMMITTER_NAME", "VAS Sentinel Test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@vas-sentinel")
 
-	ejecutarGit(t, dir, "init", "-q")
-	ejecutarGit(t, dir, "config", "commit.gpgsign", "false")
-	ejecutarGit(t, dir, "config", "core.autocrlf", "false")
-	ejecutarGit(t, dir, "config", "core.hooksPath", "no-hooks")
+	runGitInDir(t, dir, "init", "-q")
+	runGitInDir(t, dir, "config", "commit.gpgsign", "false")
+	runGitInDir(t, dir, "config", "core.autocrlf", "false")
+	runGitInDir(t, dir, "config", "core.hooksPath", "no-hooks")
 
-	for ruta, contenido := range archivos {
-		if err := os.WriteFile(filepath.Join(dir, ruta), []byte(contenido), 0644); err != nil {
-			t.Fatalf("no se pudo crear %s: %v", ruta, err)
+	for path, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0644); err != nil {
+			t.Fatalf("could not create %s: %v", path, err)
 		}
 	}
 
-	ejecutarGit(t, dir, "add", "-A")
-	ejecutarGit(t, dir, "commit", "-q", "-m", "estado inicial")
+	runGitInDir(t, dir, "add", "-A")
+	runGitInDir(t, dir, "commit", "-q", "-m", "initial state")
 	return dir
 }
 
-func ejecutarGit(t *testing.T, dir string, args ...string) string {
+func runGitInDir(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	comando := append([]string{"-C", dir}, args...)
-	out, err := exec.Command("git", comando...).CombinedOutput()
+	command := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", command...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("git %s falló: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out))
 }
 
-func agregarLineas(t *testing.T, ruta string, cantidad int) {
+func appendLines(t *testing.T, path string, count int) {
 	t.Helper()
-	f, err := os.OpenFile(ruta, os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		t.Fatalf("no se pudo abrir %s: %v", ruta, err)
+		t.Fatalf("could not open %s: %v", path, err)
 	}
 	defer f.Close()
-	for i := 0; i < cantidad; i++ {
-		if _, err := f.WriteString("// linea generada\n"); err != nil {
-			t.Fatalf("no se pudo escribir en %s: %v", ruta, err)
+	for i := 0; i < count; i++ {
+		if _, err := f.WriteString("// generated line\n"); err != nil {
+			t.Fatalf("could not write to %s: %v", path, err)
 		}
 	}
 }

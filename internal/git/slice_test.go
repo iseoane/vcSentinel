@@ -11,548 +11,545 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 )
 
-func TestClasificarCapa(t *testing.T) {
+func TestClassifyLayer(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		ruta     string
-		esperado string
+		name string
+		path string
+		want string
 	}{
-		{nombre: "archivo de test en subcarpeta", ruta: "internal/git/slice_test.go", esperado: "test"},
-		{nombre: "documento spec en base", ruta: "docs/spec.md", esperado: "test"},
-		{nombre: "ruta frontend explicita", ruta: "web/frontend/app.tsx", esperado: "frontend"},
-		{nombre: "extension tsx", ruta: "web/app.tsx", esperado: "frontend"},
-		{nombre: "extension jsx", ruta: "app.jsx", esperado: "frontend"},
-		{nombre: "extension css", ruta: "web/app.css", esperado: "frontend"},
-		{nombre: "extension scss", ruta: "web/app.scss", esperado: "frontend"},
-		{nombre: "archivo lock", ruta: "package-lock.json", esperado: "config"},
-		{nombre: "archivo sum", ruta: "go.sum", esperado: "config"},
-		{nombre: "extension yaml", ruta: "config.yaml", esperado: "config"},
-		{nombre: "extension json", ruta: "config.json", esperado: "config"},
-		{nombre: "extension toml", ruta: "config.toml", esperado: "config"},
-		{nombre: "requirements.txt por nombre", ruta: "requirements.txt", esperado: "config"},
-		{nombre: "extension yml reconocida como config", ruta: "config.yml", esperado: "config"},
-		{nombre: "codigo go en cmd", ruta: "cmd/main.go", esperado: "backend"},
-		{nombre: "test en subcarpeta precede a backend", ruta: "internal/mi_test/helper.go", esperado: "test"},
+		{name: "test file in subfolder", path: "internal/git/slice_test.go", want: "test"},
+		{name: "spec document at base", path: "docs/spec.md", want: "test"},
+		{name: "explicit frontend path", path: "web/frontend/app.tsx", want: "frontend"},
+		{name: "tsx extension", path: "web/app.tsx", want: "frontend"},
+		{name: "jsx extension", path: "app.jsx", want: "frontend"},
+		{name: "css extension", path: "web/app.css", want: "frontend"},
+		{name: "scss extension", path: "web/app.scss", want: "frontend"},
+		{name: "lock file", path: "package-lock.json", want: "config"},
+		{name: "sum file", path: "go.sum", want: "config"},
+		{name: "yaml extension", path: "config.yaml", want: "config"},
+		{name: "json extension", path: "config.json", want: "config"},
+		{name: "toml extension", path: "config.toml", want: "config"},
+		{name: "requirements.txt by name", path: "requirements.txt", want: "config"},
+		{name: "yml extension recognized as config", path: "config.yml", want: "config"},
+		{name: "go code in cmd", path: "cmd/main.go", want: "backend"},
+		{name: "test in subfolder precedes backend", path: "internal/my_test/helper.go", want: "test"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := ClasificarCapa(tt.ruta)
-			if obtenido != tt.esperado {
-				t.Errorf("ClasificarCapa(%q) = %q, esperado %q", tt.ruta, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClassifyLayer(tt.path); got != tt.want {
+				t.Errorf("ClassifyLayer(%q) = %q, expected %q", tt.path, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestConstruirLotes(t *testing.T) {
-	archivo := func(ruta string, lineas int) ArchivoModificado {
-		return ArchivoModificado{Ruta: ruta, Lineas: lineas}
+func TestBuildBatches(t *testing.T) {
+	file := func(path string, lines int) ModifiedFile {
+		return ModifiedFile{Path: path, Lines: lines}
 	}
-	aplanar := func(lotes [][]ArchivoModificado) [][]string {
-		var obtenido [][]string
-		for _, lote := range lotes {
-			rutas := make([]string, 0, len(lote))
-			for _, f := range lote {
-				rutas = append(rutas, f.Ruta)
+	flatten := func(batches [][]ModifiedFile) [][]string {
+		var got [][]string
+		for _, batch := range batches {
+			paths := make([]string, 0, len(batch))
+			for _, f := range batch {
+				paths = append(paths, f.Path)
 			}
-			obtenido = append(obtenido, rutas)
+			got = append(got, paths)
 		}
-		return obtenido
+		return got
 	}
 
 	tests := []struct {
-		nombre   string
-		archivos []ArchivoModificado
-		esperado [][]string
+		name  string
+		files []ModifiedFile
+		want  [][]string
 	}{
 		{
-			nombre:   "sin archivos genera cero lotes",
-			archivos: nil,
-			esperado: nil,
+			name:  "no files yields zero batches",
+			files: nil,
+			want:  nil,
 		},
 		{
-			nombre:   "un solo archivo dentro del limite",
-			archivos: []ArchivoModificado{archivo("a.go", 300)},
-			esperado: [][]string{{"a.go"}},
+			name:  "single file within the limit",
+			files: []ModifiedFile{file("a.go", 300)},
+			want:  [][]string{{"a.go"}},
 		},
 		{
-			nombre:   "un solo archivo que supera el limite se mantiene completo",
-			archivos: []ArchivoModificado{archivo("a.go", 450)},
-			esperado: [][]string{{"a.go"}},
+			name:  "single file above the limit stays complete",
+			files: []ModifiedFile{file("a.go", 450)},
+			want:  [][]string{{"a.go"}},
 		},
 		{
-			nombre:   "tres archivos de 200 generan dos lotes",
-			archivos: []ArchivoModificado{archivo("a.go", 200), archivo("b.go", 200), archivo("c.go", 200)},
-			esperado: [][]string{{"a.go", "b.go"}, {"c.go"}},
+			name:  "three files of 200 produce two batches",
+			files: []ModifiedFile{file("a.go", 200), file("b.go", 200), file("c.go", 200)},
+			want:  [][]string{{"a.go", "b.go"}, {"c.go"}},
 		},
 		{
-			nombre:   "100 350 50 cortan entre el primero y el segundo",
-			archivos: []ArchivoModificado{archivo("a.go", 100), archivo("b.go", 350), archivo("c.go", 50)},
-			esperado: [][]string{{"a.go"}, {"b.go", "c.go"}},
+			name:  "100 350 50 cut between the first and the second",
+			files: []ModifiedFile{file("a.go", 100), file("b.go", 350), file("c.go", 50)},
+			want:  [][]string{{"a.go"}, {"b.go", "c.go"}},
 		},
 		{
-			nombre:   "200 450 cortan y el grande queda solo",
-			archivos: []ArchivoModificado{archivo("a.go", 200), archivo("b.go", 450)},
-			esperado: [][]string{{"a.go"}, {"b.go"}},
+			name:  "200 450 cut and the big one stays alone",
+			files: []ModifiedFile{file("a.go", 200), file("b.go", 450)},
+			want:  [][]string{{"a.go"}, {"b.go"}},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := aplanar(construirLotes(tt.archivos))
-			if !reflect.DeepEqual(obtenido, tt.esperado) {
-				t.Errorf("construirLotes() = %v, esperado %v", obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := flatten(buildBatches(tt.files)); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("buildBatches() = %v, expected %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestConstruirSecuenciaLotesRespetaOrdenDeCapas(t *testing.T) {
-	porCapas := map[string][]ArchivoModificado{
-		"test":     {{Ruta: "internal/git/slice_test.go", Lineas: 10}},
-		"backend":  {{Ruta: "cmd/main.go", Lineas: 10}},
-		"config":   {{Ruta: "config.yaml", Lineas: 10}},
-		"frontend": {{Ruta: "web/app.tsx", Lineas: 10}},
+func TestBuildBatchSequenceRespectsLayerOrder(t *testing.T) {
+	byLayers := map[string][]ModifiedFile{
+		"test":     {{Path: "internal/git/slice_test.go", Lines: 10}},
+		"backend":  {{Path: "cmd/main.go", Lines: 10}},
+		"config":   {{Path: "config.yaml", Lines: 10}},
+		"frontend": {{Path: "web/app.tsx", Lines: 10}},
 	}
 
-	secuencia := construirSecuenciaLotes(porCapas)
-	capasObtenidas := make([]string, 0, len(secuencia))
-	for _, lote := range secuencia {
-		capasObtenidas = append(capasObtenidas, lote.Capa)
+	sequence := buildBatchSequence(byLayers)
+	gotLayers := make([]string, 0, len(sequence))
+	for _, batch := range sequence {
+		gotLayers = append(gotLayers, batch.Layer)
 	}
-	esperado := []string{"config", "backend", "frontend", "test"}
-	if !reflect.DeepEqual(capasObtenidas, esperado) {
-		t.Errorf("orden de capas = %v, esperado %v", capasObtenidas, esperado)
+	want := []string{"config", "backend", "frontend", "test"}
+	if !reflect.DeepEqual(gotLayers, want) {
+		t.Errorf("layer order = %v, expected %v", gotLayers, want)
 	}
 }
 
-func TestConstruirSecuenciaLotesRespetaAgrupacionYLimites(t *testing.T) {
-	porCapas := map[string][]ArchivoModificado{
+func TestBuildBatchSequenceRespectsGroupingAndLimits(t *testing.T) {
+	byLayers := map[string][]ModifiedFile{
 		"config": {
-			{Ruta: "config.yaml", Lineas: 300},
-			{Ruta: "config2.yaml", Lineas: 300},
+			{Path: "config.yaml", Lines: 300},
+			{Path: "config2.yaml", Lines: 300},
 		},
 		"backend": {
-			{Ruta: "cmd/main.go", Lineas: 10},
+			{Path: "cmd/main.go", Lines: 10},
 		},
 	}
 
-	secuencia := construirSecuenciaLotes(porCapas)
-	if len(secuencia) != 3 {
-		t.Fatalf("se esperaban 3 lotes, obtuve %d", len(secuencia))
+	sequence := buildBatchSequence(byLayers)
+	if len(sequence) != 3 {
+		t.Fatalf("expected 3 batches, got %d", len(sequence))
 	}
-	esperado := []loteConCapa{
-		{Capa: "config", Rutas: []string{"config.yaml"}},
-		{Capa: "config", Rutas: []string{"config2.yaml"}},
-		{Capa: "backend", Rutas: []string{"cmd/main.go"}},
+	want := []batchWithLayer{
+		{Layer: "config", Paths: []string{"config.yaml"}},
+		{Layer: "config", Paths: []string{"config2.yaml"}},
+		{Layer: "backend", Paths: []string{"cmd/main.go"}},
 	}
-	if !reflect.DeepEqual(secuencia, esperado) {
-		t.Errorf("secuencia = %+v, esperado %+v", secuencia, esperado)
+	if !reflect.DeepEqual(sequence, want) {
+		t.Errorf("sequence = %+v, expected %+v", sequence, want)
 	}
 }
 
-type adaptadorPrueba struct{}
+type testAdapter struct{}
 
-func (adaptadorPrueba) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	return "chore(slice): prueba", nil
+func (testAdapter) GetCommitMessage(paths []string, layer string, batchNum int) (string, error) {
+	return "chore(slice): test", nil
 }
 
-func TestObtenerArchivosModificadosEnRepositorioReal(t *testing.T) {
+func TestGetModifiedFilesInRealRepository(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	agregarLineas(t, "a.go", 300)
+	appendLines(t, "a.go", 300)
 	if err := os.WriteFile("b.go", []byte("package b\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, dir, "add", "b.go")
+	runGitInDir(t, dir, "add", "b.go")
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 2 {
-		t.Fatalf("se esperaban 2 archivos, obtuve %d: %+v", len(archivos), archivos)
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %+v", len(files), files)
 	}
 
-	var a, b *ArchivoModificado
-	for i := range archivos {
-		if archivos[i].Ruta == "a.go" {
-			a = &archivos[i]
+	var a, b *ModifiedFile
+	for i := range files {
+		if files[i].Path == "a.go" {
+			a = &files[i]
 		}
-		if archivos[i].Ruta == "b.go" {
-			b = &archivos[i]
+		if files[i].Path == "b.go" {
+			b = &files[i]
 		}
 	}
 	if a == nil || b == nil {
-		t.Fatalf("no se encontraron a.go y b.go: %+v", archivos)
+		t.Fatalf("a.go and b.go not found: %+v", files)
 	}
-	if a.Lineas != 300 {
-		t.Errorf("a.go líneas = %d, esperado 300", a.Lineas)
+	if a.Lines != 300 {
+		t.Errorf("a.go lines = %d, expected 300", a.Lines)
 	}
-	if a.Capa != "backend" || b.Capa != "backend" {
-		t.Errorf("capas esperadas backend, obtuve a=%q b=%q", a.Capa, b.Capa)
+	if a.Layer != "backend" || b.Layer != "backend" {
+		t.Errorf("expected backend layers, got a=%q b=%q", a.Layer, b.Layer)
 	}
 }
 
-type agentadapterFunc func(rutasArchivos []string, capa string, batchNum int) (string, error)
+type agentadapterFunc func(paths []string, layer string, batchNum int) (string, error)
 
-func (f agentadapterFunc) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	return f(rutasArchivos, capa, batchNum)
+func (f agentadapterFunc) GetCommitMessage(paths []string, layer string, batchNum int) (string, error) {
+	return f(paths, layer, batchNum)
 }
 
 var _ agentadapter.AgentAdapter = agentadapterFunc(nil)
 
-func TestEsConfigGigante(t *testing.T) {
+func TestIsOversizedConfig(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		archivo  ArchivoModificado
-		esperado bool
+		name string
+		file ModifiedFile
+		want bool
 	}{
-		{nombre: "config dentro del limite", archivo: ArchivoModificado{Ruta: "config.yaml", Lineas: 400, Capa: "config"}, esperado: false},
-		{nombre: "config sobre el limite", archivo: ArchivoModificado{Ruta: "config.yaml", Lineas: 401, Capa: "config"}, esperado: true},
-		{nombre: "backend sobre 400 no es config gigante", archivo: ArchivoModificado{Ruta: "a.go", Lineas: 450, Capa: "backend"}, esperado: false},
+		{name: "config within the limit", file: ModifiedFile{Path: "config.yaml", Lines: 400, Layer: "config"}, want: false},
+		{name: "config above the limit", file: ModifiedFile{Path: "config.yaml", Lines: 401, Layer: "config"}, want: true},
+		{name: "backend above 400 is not giant config", file: ModifiedFile{Path: "a.go", Lines: 450, Layer: "backend"}, want: false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			if obtenido := esConfigGigante(tt.archivo); obtenido != tt.esperado {
-				t.Errorf("esConfigGigante(%+v) = %v, esperado %v", tt.archivo, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isOversizedConfig(tt.file); got != tt.want {
+				t.Errorf("isOversizedConfig(%+v) = %v, expected %v", tt.file, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestEsCodigoGigante(t *testing.T) {
+func TestIsGiantCode(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		archivo  ArchivoModificado
-		esperado bool
+		name string
+		file ModifiedFile
+		want bool
 	}{
-		{nombre: "codigo dentro del limite", archivo: ArchivoModificado{Ruta: "a.go", Lineas: 500, Capa: "backend"}, esperado: false},
-		{nombre: "codigo sobre el limite", archivo: ArchivoModificado{Ruta: "a.go", Lineas: 501, Capa: "backend"}, esperado: true},
-		{nombre: "config sobre 500 no es codigo gigante", archivo: ArchivoModificado{Ruta: "config.yaml", Lineas: 600, Capa: "config"}, esperado: false},
+		{name: "code within the limit", file: ModifiedFile{Path: "a.go", Lines: 500, Layer: "backend"}, want: false},
+		{name: "code above the limit", file: ModifiedFile{Path: "a.go", Lines: 501, Layer: "backend"}, want: true},
+		{name: "config above 500 is not giant code", file: ModifiedFile{Path: "config.yaml", Lines: 600, Layer: "config"}, want: false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			if obtenido := esCodigoGigante(tt.archivo); obtenido != tt.esperado {
-				t.Errorf("esCodigoGigante(%+v) = %v, esperado %v", tt.archivo, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isGiantCode(tt.file); got != tt.want {
+				t.Errorf("isGiantCode(%+v) = %v, expected %v", tt.file, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestObtenerArchivosModificadosIncluyeNoRastreados(t *testing.T) {
+func TestGetModifiedFilesIncludesUntracked(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Archivo no rastreado: no se hace git add, debe detectarse igual.
-	contenido := "package nuevo\n\nfunc Hola() {}\n"
-	if err := os.WriteFile("nuevo.go", []byte(contenido), 0644); err != nil {
+	// Untracked file: no git add is run, it must be detected anyway.
+	content := "package new\n\nfunc Hello() {}\n"
+	if err := os.WriteFile("new.go", []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 1 {
-		t.Fatalf("se esperaba 1 archivo no rastreado, obtuve %d: %+v", len(archivos), archivos)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 untracked file, got %d: %+v", len(files), files)
 	}
-	if archivos[0].Ruta != "nuevo.go" {
-		t.Errorf("ruta = %q, esperado nuevo.go", archivos[0].Ruta)
+	if files[0].Path != "new.go" {
+		t.Errorf("path = %q, expected new.go", files[0].Path)
 	}
-	if archivos[0].Lineas != 3 {
-		t.Errorf("líneas = %d, esperado 3", archivos[0].Lineas)
+	if files[0].Lines != 3 {
+		t.Errorf("lines = %d, expected 3", files[0].Lines)
 	}
-	if archivos[0].Capa != "backend" {
-		t.Errorf("capa = %q, esperado backend", archivos[0].Capa)
+	if files[0].Layer != "backend" {
+		t.Errorf("layer = %q, expected backend", files[0].Layer)
 	}
 }
 
-func TestParsearNumstat(t *testing.T) {
+func TestParseNumstat(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		salida   string
-		esperado []ArchivoModificado
+		name   string
+		output string
+		want   []ModifiedFile
 	}{
 		{
-			nombre:   "salida vacia",
-			salida:   "",
-			esperado: nil,
+			name:   "empty output",
+			output: "",
+			want:   nil,
 		},
 		{
-			nombre: "ruta simple",
-			salida: "10\t2\tcmd/main.go\n",
-			esperado: []ArchivoModificado{
-				{Ruta: "cmd/main.go", Lineas: 10, Capa: "backend"},
+			name:   "simple path",
+			output: "10\t2\tcmd/main.go\n",
+			want: []ModifiedFile{
+				{Path: "cmd/main.go", Lines: 10, Layer: "backend"},
 			},
 		},
 		{
-			nombre: "ruta con espacios se conserva integra",
-			salida: "1\t0\tarchivo con espacios.go\n",
-			esperado: []ArchivoModificado{
-				{Ruta: "archivo con espacios.go", Lineas: 1, Capa: "backend"},
+			name:   "path with spaces stays intact",
+			output: "1\t0\tfile with spaces.go\n",
+			want: []ModifiedFile{
+				{Path: "file with spaces.go", Lines: 1, Layer: "backend"},
 			},
 		},
 		{
-			// Forma plana de un renombrado. La cadena completa "viejo => nuevo"
-			// NO es una ruta válida para "git add"; solo el destino lo es.
-			nombre: "renombrado en forma plana devuelve solo el destino",
-			salida: "0\t0\tviejo archivo.go => nuevo archivo.go\n",
-			esperado: []ArchivoModificado{
-				{Ruta: "nuevo archivo.go", Lineas: 0, Capa: "backend"},
+			// Flat form of a rename. The whole string "old => new" is NOT a
+			// valid path for "git add"; only the destination is.
+			name:   "flat rename returns only the destination",
+			output: "0\t0\told file.go => new file.go\n",
+			want: []ModifiedFile{
+				{Path: "new file.go", Lines: 0, Layer: "backend"},
 			},
 		},
 		{
-			// Forma abreviada con llaves: git sustituye solo el tramo que
-			// cambia. Hay que reconstruir la ruta de destino sustituyendo el
-			// bloque "{viejo => nuevo}" por su mitad derecha.
-			nombre: "renombrado con llaves reconstruye la ruta de destino",
-			salida: "0\t0\tdir/{viejo => sub1/nuevo}.go\n",
-			esperado: []ArchivoModificado{
-				{Ruta: "dir/sub1/nuevo.go", Lineas: 0, Capa: "backend"},
+			// Abbreviated form with braces: git replaces only the stretch
+			// that changes. The destination path must be rebuilt by
+			// substituting the "{old => new}" block with its right half.
+			name:   "braced rename rebuilds the destination path",
+			output: "0\t0\tdir/{old => sub1/new}.go\n",
+			want: []ModifiedFile{
+				{Path: "dir/sub1/new.go", Lines: 0, Layer: "backend"},
 			},
 		},
 		{
-			nombre:   "binario marcado con guion se ignora",
-			salida:   "-\t-\timagen.png\n",
-			esperado: nil,
+			name:   "binary marked with dash is ignored",
+			output: "-\t-\timage.png\n",
+			want:   nil,
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := parsearNumstat(tt.salida)
-			if !reflect.DeepEqual(obtenido, tt.esperado) {
-				t.Errorf("parsearNumstat(%q) = %+v, esperado %+v", tt.salida, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseNumstat(tt.output); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseNumstat(%q) = %+v, expected %+v", tt.output, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestRutasNoRastreadas(t *testing.T) {
+func TestUntrackedPaths(t *testing.T) {
 	tests := []struct {
-		nombre   string
-		salida   string
-		esperado []string
+		name   string
+		output string
+		want   []string
 	}{
 		{
-			nombre:   "salida vacia",
-			salida:   "",
-			esperado: nil,
+			name:   "empty output",
+			output: "",
+			want:   nil,
 		},
 		{
-			nombre:   "un archivo simple",
-			salida:   "?? a.go\x00",
-			esperado: []string{"a.go"},
+			name:   "one simple file",
+			output: "?? a.go\x00",
+			want:   []string{"a.go"},
 		},
 		{
-			// git status --porcelain -z emite la ruta en crudo, sin comillas
-			// ni escapes: la ruta con espacios se conserva íntegra sin
-			// necesidad de desentrecomillar nada.
-			nombre:   "ruta con espacios se conserva integra",
-			salida:   "?? archivo con espacios.go\x00",
-			esperado: []string{"archivo con espacios.go"},
+			// git status --porcelain -z emits the path raw, without quotes
+			// or escapes: the path with spaces stays intact without needing
+			// to unquote anything.
+			name:   "path with spaces stays intact",
+			output: "?? file with spaces.go\x00",
+			want:   []string{"file with spaces.go"},
 		},
 		{
-			// Con --short (sin -z), esta misma ruta llegaría entrecomillada
-			// y con escapes octales para la "ó" (B3 tras el arreglo de B1).
-			// Con -z llega en UTF-8 puro, sin comillas ni escapes.
-			nombre:   "ruta con tilde llega sin comillas ni escapes octales",
-			salida:   "?? configuración.go\x00",
-			esperado: []string{"configuración.go"},
+			// With --short (no -z), this same path would arrive quoted and
+			// with octal escapes for the "ó" (B3 after the B1 fix).
+			// With -z it arrives in pure UTF-8, without quotes or escapes.
+			name:   "path with accented letter arrives without quotes or octal escapes",
+			output: "?? configuración.go\x00",
+			want:   []string{"configuración.go"},
 		},
 		{
-			nombre:   "entradas rastreadas se ignoran",
-			salida:   " M archivo.go\x00A  otro.go\x00",
-			esperado: nil,
+			name:   "tracked entries are ignored",
+			output: " M file.go\x00A  other.go\x00",
+			want:   nil,
 		},
 		{
-			nombre:   "mezcla de rastreados y no rastreados",
-			salida:   " M archivo.go\x00?? nuevo.go\x00?? otro con espacios.go\x00",
-			esperado: []string{"nuevo.go", "otro con espacios.go"},
+			name:   "mix of tracked and untracked",
+			output: " M file.go\x00?? new.go\x00?? other with spaces.go\x00",
+			want:   []string{"new.go", "other with spaces.go"},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			obtenido := rutasNoRastreadas(tt.salida)
-			if !reflect.DeepEqual(obtenido, tt.esperado) {
-				t.Errorf("rutasNoRastreadas(%q) = %+v, esperado %+v", tt.salida, obtenido, tt.esperado)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := untrackedPaths(tt.output); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("untrackedPaths(%q) = %+v, expected %+v", tt.output, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCheckDiffLimitsConArchivoNoRastreadoConEspacios(t *testing.T) {
+func TestCheckDiffLimitsWithUntrackedFileWithSpaces(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Reproduce la regresión: con --short (sin -z), "archivo con espacios.go"
-	// llega entrecomillado; campos[1] de strings.Fields queda en `"archivo`,
-	// contarLineasFisicas no puede abrirlo y CheckDiffLimits devuelve ERROR
-	// en vez de medir el volumen. Eso bloquearía el hook pre-commit entero.
-	contenido := strings.Repeat("// linea generada\n", 450)
-	if err := os.WriteFile(filepath.Join(dir, "archivo con espacios.go"), []byte(contenido), 0644); err != nil {
+	// Reproduces the regression: with --short (no -z), "file with spaces.go"
+	// arrives quoted; fields[1] of strings.Fields ends up as `"file`,
+	// countPhysicalLines cannot open it and CheckDiffLimits returns ERROR
+	// instead of measuring the volume. That would block the whole pre-commit
+	// hook.
+	content := strings.Repeat("// generated line\n", 450)
+	if err := os.WriteFile(filepath.Join(dir, "file with spaces.go"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	lineas, estado, err := CheckDiffLimits()
+	lines, state, err := CheckDiffLimits()
 	if err != nil {
-		t.Fatalf("CheckDiffLimits devolvió error: %v", err)
+		t.Fatalf("CheckDiffLimits returned error: %v", err)
 	}
-	if lineas != 450 {
-		t.Errorf("líneas = %d, esperado 450", lineas)
+	if lines != 450 {
+		t.Errorf("lines = %d, expected 450", lines)
 	}
-	if estado != "CRITICO" {
-		t.Errorf("estado = %q, esperado CRITICO", estado)
+	if state != "CRITICAL" {
+		t.Errorf("state = %q, expected CRITICAL", state)
 	}
 }
 
-func TestObtenerArchivosModificadosConNoRastreadoConTilde(t *testing.T) {
+func TestGetModifiedFilesWithAccentedUntracked(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"a.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Con --short (sin -z), git emite esta ruta con escapes octales para la
-	// "ó" (p. ej. \303\263), no solo entrecomillada. La verificación es que
-	// la ruta devuelta exista de verdad en disco, no que "parezca" bien.
-	if err := os.WriteFile(filepath.Join(dir, "configuración.go"), []byte("package a\n\nfunc Hola() {}\n"), 0644); err != nil {
+	// With --short (no -z), git emits this path with octal escapes for the
+	// "ó" (e.g. \303\263), not just quoted. The verification is that the
+	// returned path really exists on disk, not that it "looks" right.
+	if err := os.WriteFile(filepath.Join(dir, "configuración.go"), []byte("package a\n\nfunc Hello() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 1 {
-		t.Fatalf("se esperaba 1 archivo, obtuve %d: %+v", len(archivos), archivos)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d: %+v", len(files), files)
 	}
-	if _, err := os.Stat(filepath.Join(dir, archivos[0].Ruta)); err != nil {
-		t.Errorf("la ruta devuelta %q no existe en disco: %v", archivos[0].Ruta, err)
+	if _, err := os.Stat(filepath.Join(dir, files[0].Path)); err != nil {
+		t.Errorf("the returned path %q does not exist on disk: %v", files[0].Path, err)
 	}
 }
 
-func TestObtenerArchivosModificadosConRutaConEspacios(t *testing.T) {
+func TestGetModifiedFilesWithPathWithSpaces(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"archivo con espacios.go": "package a\n",
+	dir := prepareTestRepo(t, map[string]string{
+		"file with spaces.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	// Reproduce B3: strings.Fields partía la ruta con espacios y solo
-	// conservaba el primer fragmento.
-	agregarLineas(t, "archivo con espacios.go", 5)
+	// Reproduces B3: strings.Fields split the path with spaces and only kept
+	// the first fragment.
+	appendLines(t, "file with spaces.go", 5)
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 1 {
-		t.Fatalf("se esperaba 1 archivo, obtuve %d: %+v", len(archivos), archivos)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d: %+v", len(files), files)
 	}
-	if archivos[0].Ruta != "archivo con espacios.go" {
-		t.Errorf("ruta = %q, esperado %q", archivos[0].Ruta, "archivo con espacios.go")
+	if files[0].Path != "file with spaces.go" {
+		t.Errorf("path = %q, expected %q", files[0].Path, "file with spaces.go")
 	}
 }
 
-// TestObtenerArchivosModificadosConRenombradoEsRutaUtilizablePorGit reproduce
-// un renombrado real (git mv) con espacios y comprueba que la ruta devuelta
-// no es la cadena cruda del numstat ("viejo => nuevo"), sino una ruta que
-// existe de verdad en el worktree y que "git add" acepta. Antes del arreglo,
-// slice pasaba la cadena cruda a "git add" y fallaba con exit 128 justo al
-// intentar desbloquear el guardián.
-func TestObtenerArchivosModificadosConRenombradoEsRutaUtilizablePorGit(t *testing.T) {
+// TestGetModifiedFilesWithRenameReturnsGitUsablePath reproduces a real
+// rename (git mv) with spaces and checks that the returned path is not the
+// raw numstat string ("old => new") but a path that really exists in the
+// worktree and that "git add" accepts. Before the fix, slice passed the raw
+// string to "git add" and failed with exit 128 right when trying to release
+// the guardian.
+func TestGetModifiedFilesWithRenameReturnsGitUsablePath(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"archivo con espacios.go": "package a\n",
+	dir := prepareTestRepo(t, map[string]string{
+		"file with spaces.go": "package a\n",
 	})
 	t.Chdir(dir)
 
-	ejecutarGit(t, dir, "mv", "archivo con espacios.go", "renombrado con espacios.go")
-	ejecutarGit(t, dir, "add", "-A")
+	runGitInDir(t, dir, "mv", "file with spaces.go", "renamed with spaces.go")
+	runGitInDir(t, dir, "add", "-A")
 
-	archivos, err := ObtenerArchivosModificados()
+	files, err := GetModifiedFiles()
 	if err != nil {
-		t.Fatalf("ObtenerArchivosModificados devolvió error: %v", err)
+		t.Fatalf("GetModifiedFiles returned error: %v", err)
 	}
-	if len(archivos) != 1 {
-		t.Fatalf("se esperaba 1 archivo renombrado, obtuve %d: %+v", len(archivos), archivos)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 renamed file, got %d: %+v", len(files), files)
 	}
-	ruta := archivos[0].Ruta
+	path := files[0].Path
 
-	// La ruta debe existir de verdad en el worktree...
-	if _, err := os.Stat(filepath.Join(dir, ruta)); err != nil {
-		t.Errorf("la ruta devuelta %q no existe en disco: %v", ruta, err)
+	// The path must really exist in the worktree...
+	if _, err := os.Stat(filepath.Join(dir, path)); err != nil {
+		t.Errorf("the returned path %q does not exist on disk: %v", path, err)
 	}
-	// ...y "git add" debe aceptarla sin fallar (es justo lo que hace slice).
-	cmd := exec.Command("git", "-C", dir, "add", "--", ruta)
+	// ...and "git add" must accept it without failing (exactly what slice does).
+	cmd := exec.Command("git", "-C", dir, "add", "--", path)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Errorf("git add %q falló: %v\n%s", ruta, err, out)
+		t.Errorf("git add %q failed: %v\n%s", path, err, out)
 	}
 }
 
-type adaptadorConDiffPrueba struct {
-	diffRecibido string
+type testAdapterWithDiff struct {
+	receivedDiff string
 }
 
-func (a *adaptadorConDiffPrueba) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
+func (a *testAdapterWithDiff) GetCommitMessage(paths []string, layer string, batchNum int) (string, error) {
 	return "chore(slice): base", nil
 }
 
-func (a *adaptadorConDiffPrueba) ObtenerMensajeCommitConDiff(rutasArchivos []string, capa string, batchNum int, diff string) (string, error) {
-	a.diffRecibido = diff
-	return "chore(slice): con diff", nil
+func (a *testAdapterWithDiff) GetCommitMessageWithDiff(paths []string, layer string, batchNum int, diff string) (string, error) {
+	a.receivedDiff = diff
+	return "chore(slice): with diff", nil
 }
 
-var _ agentadapter.AdapterConDiff = (*adaptadorConDiffPrueba)(nil)
+var _ agentadapter.AdapterWithDiff = (*testAdapterWithDiff)(nil)

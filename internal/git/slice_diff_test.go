@@ -7,72 +7,72 @@ import (
 	"testing"
 )
 
-func TestDiffPendienteRutasIncluyeCambiosSinMutarIndice(t *testing.T) {
-	dir := prepararRepositorioPrueba(t, map[string]string{
-		"rastreado.go": "package ejemplo\n",
+func TestPendingDiffForPathsIncludesChangesWithoutMutatingIndex(t *testing.T) {
+	dir := prepareTestRepo(t, map[string]string{
+		"tracked.go": "package sample\n",
 	})
 	t.Chdir(dir)
 
-	contenidoStaged := "package ejemplo\n\nfunc Staged() {}\n"
-	if err := os.WriteFile("rastreado.go", []byte(contenidoStaged), 0644); err != nil {
+	stagedContent := "package sample\n\nfunc Staged() {}\n"
+	if err := os.WriteFile("tracked.go", []byte(stagedContent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, dir, "add", "--", "rastreado.go")
-	if err := os.WriteFile("rastreado.go", []byte(contenidoStaged+"\nfunc Unstaged() {}\n"), 0644); err != nil {
+	runGitInDir(t, dir, "add", "--", "tracked.go")
+	if err := os.WriteFile("tracked.go", []byte(stagedContent+"\nfunc Unstaged() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	archivosNuevos := map[string]string{
-		"archivo con espacios.go": "package nuevo\n\nfunc ConEspacios() {}\n",
-		"-opcion.go":              "package nuevo\n\nfunc OpcionLiteral() {}\n",
+	newFiles := map[string]string{
+		"file with spaces.go": "package new\n\nfunc WithSpaces() {}\n",
+		"-option.go":          "package new\n\nfunc LiteralOption() {}\n",
 	}
-	for ruta, contenido := range archivosNuevos {
-		if err := os.WriteFile(filepath.Join(dir, ruta), []byte(contenido), 0644); err != nil {
+	for path, content := range newFiles {
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	indiceAntes := ejecutarGit(t, dir, "write-tree")
-	diff, err := diffPendienteRutas([]string{"rastreado.go", "archivo con espacios.go", "-opcion.go"})
+	indexBefore := runGitInDir(t, dir, "write-tree")
+	diff, err := pendingDiffForPaths([]string{"tracked.go", "file with spaces.go", "-option.go"})
 	if err != nil {
-		t.Fatalf("diffPendienteRutas devolvió error: %v", err)
+		t.Fatalf("pendingDiffForPaths returned error: %v", err)
 	}
 
-	for _, fragmento := range []string{"func Staged() {}", "func Unstaged() {}", "func ConEspacios() {}", "func OpcionLiteral() {}"} {
-		if !strings.Contains(diff, fragmento) {
-			t.Errorf("el diff no contiene %q:\n%s", fragmento, diff)
+	for _, fragment := range []string{"func Staged() {}", "func Unstaged() {}", "func WithSpaces() {}", "func LiteralOption() {}"} {
+		if !strings.Contains(diff, fragment) {
+			t.Errorf("the diff does not contain %q:\n%s", fragment, diff)
 		}
 	}
-	if veces := strings.Count(diff, "diff --git a/rastreado.go b/rastreado.go"); veces != 1 {
-		t.Errorf("el diff rastreado aparece %d veces, esperado 1:\n%s", veces, diff)
+	if count := strings.Count(diff, "diff --git a/tracked.go b/tracked.go"); count != 1 {
+		t.Errorf("the tracked diff appears %d times, expected 1:\n%s", count, diff)
 	}
-	if indiceDespues := ejecutarGit(t, dir, "write-tree"); indiceDespues != indiceAntes {
-		t.Errorf("el índice cambió: antes %s, después %s", indiceAntes, indiceDespues)
-	}
-}
-
-func TestDiffPendienteRutasRechazaNoRastreadoBinario(t *testing.T) {
-	dir := prepararRepositorioPrueba(t, map[string]string{"rastreado.go": "package ejemplo\n"})
-	t.Chdir(dir)
-	if err := os.WriteFile("binario.dat", []byte{'V', 'A', 'S', 0, 'X'}, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	diff, err := diffPendienteRutas([]string{"binario.dat"})
-	if err == nil || diff != "" || !strings.Contains(err.Error(), "binario") {
-		t.Fatalf("resultado = (%q, %v), esperado rechazo binario sin contenido", diff, err)
+	if indexAfter := runGitInDir(t, dir, "write-tree"); indexAfter != indexBefore {
+		t.Errorf("the index changed: before %s, after %s", indexBefore, indexAfter)
 	}
 }
 
-func TestDiffPendienteRutasRechazaNoRastreadoDemasiadoGrande(t *testing.T) {
-	dir := prepararRepositorioPrueba(t, map[string]string{"rastreado.go": "package ejemplo\n"})
+func TestPendingDiffForPathsRejectsBinaryUntracked(t *testing.T) {
+	dir := prepareTestRepo(t, map[string]string{"tracked.go": "package sample\n"})
 	t.Chdir(dir)
-	if err := os.WriteFile("grande.txt", []byte(strings.Repeat("x", limiteBytesMicroDiff+1)), 0644); err != nil {
+	if err := os.WriteFile("binary.dat", []byte{'V', 'A', 'S', 0, 'X'}, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	diff, err := diffPendienteRutas([]string{"grande.txt"})
-	if err == nil || diff != "" || !strings.Contains(err.Error(), "supera el límite") {
-		t.Fatalf("resultado = (%q, %v), esperado rechazo por tamaño sin contenido", diff, err)
+	diff, err := pendingDiffForPaths([]string{"binary.dat"})
+	if err == nil || diff != "" || !strings.Contains(err.Error(), "binary") {
+		t.Fatalf("result = (%q, %v), expected binary rejection without content", diff, err)
+	}
+}
+
+func TestPendingDiffForPathsRejectsTooLargeUntracked(t *testing.T) {
+	dir := prepareTestRepo(t, map[string]string{"tracked.go": "package sample\n"})
+	t.Chdir(dir)
+	if err := os.WriteFile("large.txt", []byte(strings.Repeat("x", microDiffByteLimit+1)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := pendingDiffForPaths([]string{"large.txt"})
+	if err == nil || diff != "" || !strings.Contains(err.Error(), "exceeds the limit") {
+		t.Fatalf("result = (%q, %v), expected size rejection without content", diff, err)
 	}
 }

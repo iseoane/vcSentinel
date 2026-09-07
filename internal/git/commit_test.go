@@ -8,248 +8,248 @@ import (
 	"testing"
 )
 
-// prepararRepositorioConCommits crea un repo de prueba con estado inicial
-// (base.txt), un commit que añade a.go y otro que añade b.go.
-func prepararRepositorioConCommits(t *testing.T) string {
+// prepareRepoWithCommits creates a test repo with an initial state
+// (base.txt), one commit adding a.go and another adding b.go.
+func prepareRepoWithCommits(t *testing.T) string {
 	t.Helper()
-	dir := prepararRepositorioPrueba(t, map[string]string{"base.txt": "base\n"})
+	dir := prepareTestRepo(t, map[string]string{"base.txt": "base\n"})
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0644); err != nil {
-		t.Fatalf("no se pudo crear a.go: %v", err)
+		t.Fatalf("could not create a.go: %v", err)
 	}
-	ejecutarGit(t, dir, "add", "a.go")
-	ejecutarGit(t, dir, "commit", "-m", "feat(a): primer commit")
+	runGitInDir(t, dir, "add", "a.go")
+	runGitInDir(t, dir, "commit", "-m", "feat(a): first commit")
 	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n"), 0644); err != nil {
-		t.Fatalf("no se pudo crear b.go: %v", err)
+		t.Fatalf("could not create b.go: %v", err)
 	}
-	ejecutarGit(t, dir, "add", "b.go")
-	ejecutarGit(t, dir, "commit", "-m", "feat(b): segundo commit")
+	runGitInDir(t, dir, "add", "b.go")
+	runGitInDir(t, dir, "commit", "-m", "feat(b): second commit")
 	return dir
 }
 
-func TestMensajeCommit(t *testing.T) {
+func TestCommitMessage(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
 	head, err := SHAHead()
 	if err != nil {
-		t.Fatalf("SHAHead devolvió error: %v", err)
+		t.Fatalf("SHAHead returned error: %v", err)
 	}
-	mensaje, err := MensajeCommit(head)
+	message, err := CommitMessage(head)
 	if err != nil {
-		t.Fatalf("MensajeCommit devolvió error: %v", err)
+		t.Fatalf("CommitMessage returned error: %v", err)
 	}
-	if mensaje != "feat(b): segundo commit" {
-		t.Errorf("mensaje = %q, esperado 'feat(b): segundo commit'", mensaje)
+	if message != "feat(b): second commit" {
+		t.Errorf("message = %q, expected 'feat(b): second commit'", message)
 	}
 }
 
-func TestDiffCommitContieneArchivo(t *testing.T) {
+func TestDiffCommitContainsFile(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
 	head, _ := SHAHead()
 	diff, err := DiffCommit(head)
 	if err != nil {
-		t.Fatalf("DiffCommit devolvió error: %v", err)
+		t.Fatalf("DiffCommit returned error: %v", err)
 	}
 	if !strings.Contains(diff, "b.go") {
-		t.Errorf("el diff debería mencionar b.go, obtenido: %s", diff)
+		t.Errorf("the diff should mention b.go, got: %s", diff)
 	}
 }
 
-func TestSHAsRangoCronologico(t *testing.T) {
+func TestRangeSHAsChronological(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
-	todos, err := SHAsRango("", "HEAD")
+	all, err := RangeSHAs("", "HEAD")
 	if err != nil {
-		t.Fatalf("SHAsRango devolvió error: %v", err)
+		t.Fatalf("RangeSHAs returned error: %v", err)
 	}
-	if len(todos) != 3 {
-		t.Fatalf("SHAsRango(\"\", HEAD) = %d commits, esperado 3 (inicial + 2)", len(todos))
+	if len(all) != 3 {
+		t.Fatalf("RangeSHAs(\"\", HEAD) = %d commits, expected 3 (initial + 2)", len(all))
 	}
 
-	// Rango desde el estado inicial: solo los dos commits de trabajo.
-	shas, err := SHAsRango(todos[0], "HEAD")
+	// Range from the initial state: only the two working commits.
+	shas, err := RangeSHAs(all[0], "HEAD")
 	if err != nil {
-		t.Fatalf("SHAsRango devolvió error: %v", err)
+		t.Fatalf("RangeSHAs returned error: %v", err)
 	}
 	if len(shas) != 2 {
-		t.Fatalf("SHAsRango = %d commits, esperado 2", len(shas))
+		t.Fatalf("RangeSHAs = %d commits, expected 2", len(shas))
 	}
-	primero, _ := MensajeCommit(shas[0])
-	segundo, _ := MensajeCommit(shas[1])
-	if primero != "feat(a): primer commit" || segundo != "feat(b): segundo commit" {
-		t.Errorf("orden cronológico roto: %q, %q", primero, segundo)
-	}
-}
-
-func TestArchivosDeCommit(t *testing.T) {
-	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
-	}
-
-	dir := prepararRepositorioConCommits(t)
-	t.Chdir(dir)
-
-	shas, _ := SHAsRango("", "HEAD")
-	// shas[1] es "feat(a): primer commit" (shas[0] es el estado inicial).
-	archivos, err := ArchivosDeCommit(shas[1])
-	if err != nil {
-		t.Fatalf("ArchivosDeCommit devolvió error: %v", err)
-	}
-	if len(archivos) != 1 || archivos[0] != "a.go" {
-		t.Errorf("archivos = %+v, esperado [a.go]", archivos)
+	first, _ := CommitMessage(shas[0])
+	second, _ := CommitMessage(shas[1])
+	if first != "feat(a): first commit" || second != "feat(b): second commit" {
+		t.Errorf("chronological order broken: %q, %q", first, second)
 	}
 }
 
-func TestSHAsHastaCronologico(t *testing.T) {
+func TestFilesOfCommit(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
-	shas, err := SHAsHasta("HEAD")
+	shas, _ := RangeSHAs("", "HEAD")
+	// shas[1] is "feat(a): first commit" (shas[0] is the initial state).
+	files, err := FilesOfCommit(shas[1])
 	if err != nil {
-		t.Fatalf("SHAsHasta devolvió error: %v", err)
+		t.Fatalf("FilesOfCommit returned error: %v", err)
+	}
+	if len(files) != 1 || files[0] != "a.go" {
+		t.Errorf("files = %+v, expected [a.go]", files)
+	}
+}
+
+func TestUpToSHAsChronological(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real git repository integration in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available in PATH")
+	}
+
+	dir := prepareRepoWithCommits(t)
+	t.Chdir(dir)
+
+	shas, err := UpToSHAs("HEAD")
+	if err != nil {
+		t.Fatalf("UpToSHAs returned error: %v", err)
 	}
 	if len(shas) != 3 {
-		t.Fatalf("SHAsHasta = %d commits, esperado 3", len(shas))
+		t.Fatalf("UpToSHAs = %d commits, expected 3", len(shas))
 	}
-	primero, _ := MensajeCommit(shas[0])
-	ultimo, _ := MensajeCommit(shas[2])
-	if primero != "estado inicial" || ultimo != "feat(b): segundo commit" {
-		t.Errorf("orden roto: %q ... %q", primero, ultimo)
+	first, _ := CommitMessage(shas[0])
+	last, _ := CommitMessage(shas[2])
+	if first != "initial state" || last != "feat(b): second commit" {
+		t.Errorf("order broken: %q ... %q", first, last)
 	}
 }
 
-func TestRamaActual(t *testing.T) {
+func TestCurrentBranch(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
-	ejecutarGit(t, dir, "checkout", "-b", "feature/x")
-	rama, err := RamaActual()
+	runGitInDir(t, dir, "checkout", "-b", "feature/x")
+	branch, err := CurrentBranch()
 	if err != nil {
-		t.Fatalf("RamaActual devolvió error: %v", err)
+		t.Fatalf("CurrentBranch returned error: %v", err)
 	}
-	if rama != "feature/x" {
-		t.Errorf("RamaActual = %q, esperado feature/x", rama)
+	if branch != "feature/x" {
+		t.Errorf("CurrentBranch = %q, expected feature/x", branch)
 	}
 }
 
-func TestResolverSHA(t *testing.T) {
+func TestResolveSHA(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
 	head, _ := SHAHead()
-	resuelto, err := ResolverSHA("HEAD")
+	resolved, err := ResolveSHA("HEAD")
 	if err != nil {
-		t.Fatalf("ResolverSHA(HEAD) devolvió error: %v", err)
+		t.Fatalf("ResolveSHA(HEAD) returned error: %v", err)
 	}
-	if resuelto != head {
-		t.Errorf("ResolverSHA(HEAD) = %q, esperado %q", resuelto, head)
+	if resolved != head {
+		t.Errorf("ResolveSHA(HEAD) = %q, expected %q", resolved, head)
 	}
 
-	if _, err := ResolverSHA("HEAD~1"); err != nil {
-		t.Errorf("ResolverSHA(HEAD~1) devolvió error: %v", err)
+	if _, err := ResolveSHA("HEAD~1"); err != nil {
+		t.Errorf("ResolveSHA(HEAD~1) returned error: %v", err)
 	}
-	if _, err := ResolverSHA("no-existe-esta-ref"); err == nil {
-		t.Error("ResolverSHA(ref inválida) debería fallar")
+	if _, err := ResolveSHA("no-such-ref"); err == nil {
+		t.Error("ResolveSHA(invalid ref) should fail")
 	}
 }
 
-func TestExisteCommit(t *testing.T) {
+func TestCommitExists(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
 	head, _ := SHAHead()
-	if !ExisteCommit(head) {
-		t.Error("ExisteCommit(HEAD) = false, esperado true")
+	if !CommitExists(head) {
+		t.Error("CommitExists(HEAD) = false, expected true")
 	}
-	if ExisteCommit(strings.Repeat("0", 40)) {
-		t.Error("ExisteCommit(sha inexistente) = true, esperado false")
+	if CommitExists(strings.Repeat("0", 40)) {
+		t.Error("CommitExists(nonexistent sha) = true, expected false")
 	}
 }
 
-func TestContenidoDeArchivoEnCommit(t *testing.T) {
+func TestFileContentAtCommit(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
-	shas, _ := SHAsRango("", "HEAD")
-	// shas[1] es "feat(a): primer commit", que añade a.go con "package a\n".
-	contenido, err := ContenidoDeArchivoEnCommit(shas[1], "a.go")
+	shas, _ := RangeSHAs("", "HEAD")
+	// shas[1] is "feat(a): first commit", which adds a.go with "package a\n".
+	content, err := FileContentAtCommit(shas[1], "a.go")
 	if err != nil {
-		t.Fatalf("ContenidoDeArchivoEnCommit devolvió error: %v", err)
+		t.Fatalf("FileContentAtCommit returned error: %v", err)
 	}
-	if contenido != "package a\n" {
-		t.Errorf("contenido = %q, esperado %q", contenido, "package a\n")
+	if content != "package a\n" {
+		t.Errorf("content = %q, expected %q", content, "package a\n")
 	}
 
-	if _, err := ContenidoDeArchivoEnCommit(shas[1], "no-existe.go"); err == nil {
-		t.Error("ContenidoDeArchivoEnCommit con archivo inexistente en ese commit debería devolver error")
+	if _, err := FileContentAtCommit(shas[1], "missing.go"); err == nil {
+		t.Error("FileContentAtCommit with a file that does not exist in that commit should return an error")
 	}
 
 	if c, p, e := ReadPathAtRevision(shas[1], "a.go"); !p || e != nil || c != "package a\n" {
 		t.Errorf("ReadPathAtRevision present = %q/%v/%v", c, p, e)
 	}
-	if _, p, e := ReadPathAtRevision(shas[1], "no-existe.go"); p || e != nil {
+	if _, p, e := ReadPathAtRevision(shas[1], "missing.go"); p || e != nil {
 		t.Errorf("ReadPathAtRevision absent = %v %v", p, e)
 	}
 	if _, _, e := ReadPathAtRevision("not-a-rev", "a.go"); e == nil {
@@ -257,71 +257,72 @@ func TestContenidoDeArchivoEnCommit(t *testing.T) {
 	}
 }
 
-func TestBlobDeArchivoEnCommit(t *testing.T) {
+func TestBlobFileAtCommit(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in -short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available on the PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
-	shas, _ := SHAsRango("", "HEAD")
-	// shas[1] es "feat(a): primer commit", que añade a.go con "package a\n".
-	blob, err := BlobDeArchivoEnCommit(shas[1], "a.go")
+	shas, _ := RangeSHAs("", "HEAD")
+	// shas[1] is "feat(a): first commit", which adds a.go with "package a\n".
+	blob, err := BlobFileAtCommit(shas[1], "a.go")
 	if err != nil {
-		t.Fatalf("BlobDeArchivoEnCommit devolvió error: %v", err)
+		t.Fatalf("BlobFileAtCommit returned an error: %v", err)
 	}
 	if blob == "" {
-		t.Fatal("BlobDeArchivoEnCommit devolvió un hash vacío")
+		t.Fatal("BlobFileAtCommit returned an empty hash")
 	}
 
-	// Verificación independiente: git cat-file -p <blob> debe devolver
-	// exactamente el contenido que se escribió en el commit.
-	contenido, err := ejecutarGitSalida("cat-file", "-p", blob)
+	// Independent verification: git cat-file -p <blob> must return exactly
+	// the content written in the commit.
+	content, err := runGitOutput("cat-file", "-p", blob)
 	if err != nil {
-		t.Fatalf("git cat-file -p %s falló: %v", blob, err)
+		t.Fatalf("git cat-file -p %s failed: %v", blob, err)
 	}
-	if contenido != "package a\n" {
-		t.Errorf("contenido del blob = %q, esperado %q", contenido, "package a\n")
+	if content != "package a\n" {
+		t.Errorf("blob content = %q, expected %q", content, "package a\n")
 	}
 
-	// b.go tiene contenido distinto: su blob debe ser distinto al de a.go
-	// (confirma que no es un hash fijo, sino del contenido real).
-	blobB, err := BlobDeArchivoEnCommit(shas[2], "b.go")
+	// b.go has different content: its blob must differ from a.go's
+	// (confirms it is not a fixed hash, but the real content's).
+	blobB, err := BlobFileAtCommit(shas[2], "b.go")
 	if err != nil {
-		t.Fatalf("BlobDeArchivoEnCommit devolvió error: %v", err)
+		t.Fatalf("BlobFileAtCommit returned an error: %v", err)
 	}
 	if blobB == blob {
-		t.Errorf("blob de b.go coincide con el de a.go: %s", blob)
+		t.Errorf("b.go blob matches a.go's: %s", blob)
 	}
 
-	if _, err := BlobDeArchivoEnCommit(shas[1], "no-existe.go"); err == nil {
-		t.Error("BlobDeArchivoEnCommit con archivo inexistente en ese commit debería devolver error")
+	if _, err := BlobFileAtCommit(shas[1], "missing.go"); err == nil {
+		t.Error("BlobFileAtCommit with a file that does not exist in that commit should return an error")
 	}
 }
 
-func TestUpstreamOMainEligeMain(t *testing.T) {
+func TestUpstreamOrMainChoosesMain(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioConCommits(t)
+	dir := prepareRepoWithCommits(t)
 	t.Chdir(dir)
 
-	// Sin upstream: debe caer en la rama main o master local.
-	ejecutarGit(t, dir, "checkout", "-b", "main")
-	base, err := UpstreamOMain()
+	// Without an upstream: it must fall back to the local main or master
+	// branch.
+	runGitInDir(t, dir, "checkout", "-b", "main")
+	base, err := UpstreamOrMain()
 	if err != nil {
-		t.Fatalf("UpstreamOMain devolvió error: %v", err)
+		t.Fatalf("UpstreamOrMain returned error: %v", err)
 	}
 	if base != "main" {
-		t.Errorf("UpstreamOMain = %q, esperado main", base)
+		t.Errorf("UpstreamOrMain = %q, expected main", base)
 	}
 }
 
@@ -330,22 +331,22 @@ func TestUpstreamOMainEligeMain(t *testing.T) {
 // merge joins them without conflict.
 func prepareRepoWithMerge(t *testing.T) string {
 	t.Helper()
-	dir := prepararRepositorioPrueba(t, map[string]string{"base.txt": "base\n"})
-	ejecutarGit(t, dir, "checkout", "-q", "-b", "feat")
+	dir := prepareTestRepo(t, map[string]string{"base.txt": "base\n"})
+	runGitInDir(t, dir, "checkout", "-q", "-b", "feat")
 	if err := os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package feature\n"), 0644); err != nil {
 		t.Fatalf("could not create feature.go: %v", err)
 	}
-	ejecutarGit(t, dir, "add", "feature.go")
-	ejecutarGit(t, dir, "commit", "-q", "-m", "feat(f): branch change")
-	ejecutarGit(t, dir, "checkout", "-q", "master")
+	runGitInDir(t, dir, "add", "feature.go")
+	runGitInDir(t, dir, "commit", "-q", "-m", "feat(f): branch change")
+	runGitInDir(t, dir, "checkout", "-q", "master")
 	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base v2\n"), 0644); err != nil {
 		t.Fatalf("could not modify base.txt: %v", err)
 	}
-	ejecutarGit(t, dir, "commit", "-qam", "chore(m): master change")
-	ejecutarGit(t, dir, "merge", "-q", "--no-ff", "feat", "-m", "merge: two parents")
+	runGitInDir(t, dir, "commit", "-qam", "chore(m): master change")
+	runGitInDir(t, dir, "merge", "-q", "--no-ff", "feat", "-m", "merge: two parents")
 	// Verify HEAD really is a two-parent merge commit: if the repo setup
 	// changes, the tests must fail here instead of misleading us.
-	if parents := strings.Fields(ejecutarGit(t, dir, "rev-list", "--parents", "-n", "1", "HEAD")); len(parents) != 3 {
+	if parents := strings.Fields(runGitInDir(t, dir, "rev-list", "--parents", "-n", "1", "HEAD")); len(parents) != 3 {
 		t.Fatalf("HEAD should be a two-parent merge commit, rev-list gave %d fields", len(parents))
 	}
 	return dir
@@ -389,11 +390,11 @@ func TestCommitFilesOnMergeListsBranchFiles(t *testing.T) {
 
 	head, _ := SHAHead()
 
-	archivos, err := ArchivosDeCommit(head)
+	files, err := FilesOfCommit(head)
 	if err != nil {
-		t.Fatalf("ArchivosDeCommit returned an error: %v", err)
+		t.Fatalf("FilesOfCommit returned an error: %v", err)
 	}
-	if len(archivos) != 1 || archivos[0] != "feature.go" {
-		t.Errorf("merge ArchivosDeCommit should list exactly feature.go, got: %+v", archivos)
+	if len(files) != 1 || files[0] != "feature.go" {
+		t.Errorf("merge FilesOfCommit should list exactly feature.go, got: %+v", files)
 	}
 }

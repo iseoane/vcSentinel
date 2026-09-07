@@ -8,39 +8,39 @@ import (
 )
 
 func TestApplySelectionCommitsHunksInSeparateBatches(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
 	if err := writeSelectionTestFile("app.go", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"); err != nil {
 		t.Fatal(err)
 	}
 
 	plan := requireTwoHunkPlan(t)
 	change := plan.Changes[0]
-	plan.Lotes = []LoteSerializado{
+	plan.Batches = []SerializedBatch{
 		{
-			Numero:    1,
-			Capa:      "backend",
-			Rutas:     []string{change.Path},
+			Number:    1,
+			Layer:     "backend",
+			Paths:     []string{change.Path},
 			Selectors: []ChangeSelector{selectorForHunk(change, 0)},
-			Lineas:    change.Atoms[0].AddedLines,
-			Mensaje:   "feat(slice): commit the first hunk",
+			Lines:     change.Atoms[0].AddedLines,
+			Message:   "feat(slice): commit the first hunk",
 		},
 		{
-			Numero:    2,
-			Capa:      "backend",
-			Rutas:     []string{change.Path},
+			Number:    2,
+			Layer:     "backend",
+			Paths:     []string{change.Path},
 			Selectors: []ChangeSelector{selectorForHunk(change, 1)},
-			Lineas:    change.Atoms[1].AddedLines,
-			Mensaje:   "feat(slice): commit the second hunk",
+			Lines:     change.Atoms[1].AddedLines,
+			Message:   "feat(slice): commit the second hunk",
 		},
 	}
 	if err := RecalculatePlanID(plan); err != nil {
 		t.Fatalf("RecalculatePlanID: %v", err)
 	}
 
-	results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 	if err != nil {
-		t.Fatalf("AplicarPlanAprobado: %v", err)
+		t.Fatalf("ApplyApprovedPlan: %v", err)
 	}
 	if len(results) != 2 {
 		t.Fatalf("commits = %d, want 2", len(results))
@@ -53,9 +53,9 @@ func TestApplySelectionCommitsHunksInSeparateBatches(t *testing.T) {
 }
 
 func TestApplySelectionKeepsWholeFileAndHunkBoundaries(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
-	commitEnRepo(t, "notes.txt", "old note\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
+	commitInRepo(t, "notes.txt", "old note\n")
 	if err := writeSelectionTestFile("app.go", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -63,43 +63,43 @@ func TestApplySelectionKeepsWholeFileAndHunkBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
-		t.Fatalf("ConstruirPlanParaAgente: %v", err)
+		t.Fatalf("BuildPlanForAgent: %v", err)
 	}
 	hunkChange := findPlannedChange(t, plan.Changes, "app.go")
 	wholeChange := findPlannedChange(t, plan.Changes, "notes.txt")
 	if len(hunkChange.Atoms) != 2 {
 		t.Fatalf("app.go atoms = %d, want 2", len(hunkChange.Atoms))
 	}
-	plan.Lotes = []LoteSerializado{
+	plan.Batches = []SerializedBatch{
 		{
-			Numero: 1,
-			Capa:   "backend",
-			Rutas:  []string{"app.go", "notes.txt"},
+			Number: 1,
+			Layer:  "backend",
+			Paths:  []string{"app.go", "notes.txt"},
 			Selectors: []ChangeSelector{
 				selectorForHunk(hunkChange, 0),
 				{Path: wholeChange.Path, Mode: SelectorWholeFile},
 			},
-			Lineas:  hunkChange.Atoms[0].AddedLines + wholeChange.AddedLines,
-			Mensaje: "feat(slice): commit the selected change set",
+			Lines:   hunkChange.Atoms[0].AddedLines + wholeChange.AddedLines,
+			Message: "feat(slice): commit the selected change set",
 		},
 		{
-			Numero:    2,
-			Capa:      "backend",
-			Rutas:     []string{"app.go"},
+			Number:    2,
+			Layer:     "backend",
+			Paths:     []string{"app.go"},
 			Selectors: []ChangeSelector{selectorForHunk(hunkChange, 1)},
-			Lineas:    hunkChange.Atoms[1].AddedLines,
-			Mensaje:   "feat(slice): finish the remaining hunk",
+			Lines:     hunkChange.Atoms[1].AddedLines,
+			Message:   "feat(slice): finish the remaining hunk",
 		},
 	}
 	if err := RecalculatePlanID(plan); err != nil {
 		t.Fatalf("RecalculatePlanID: %v", err)
 	}
 
-	results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 	if err != nil {
-		t.Fatalf("AplicarPlanAprobado: %v", err)
+		t.Fatalf("ApplyApprovedPlan: %v", err)
 	}
 	if len(results) != 2 {
 		t.Fatalf("commits = %d, want 2", len(results))
@@ -113,36 +113,36 @@ func TestApplySelectionKeepsWholeFileAndHunkBoundaries(t *testing.T) {
 }
 
 func TestApplySelectionRejectsCorruptionBeforeHistoryMutation(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\n")
 	if err := writeSelectionTestFile("app.go", "ONE\ntwo\nthree\nFOUR\n"); err != nil {
 		t.Fatal(err)
 	}
 	plan := requireTwoHunkPlan(t)
 	change := plan.Changes[0]
-	plan.Lotes[0].Selectors = []ChangeSelector{
+	plan.Batches[0].Selectors = []ChangeSelector{
 		selectorForHunk(change, 0),
 		selectorForHunk(change, 1),
 	}
-	plan.Lotes[0].Lineas = change.AddedLines
+	plan.Batches[0].Lines = change.AddedLines
 	if err := RecalculatePlanID(plan); err != nil {
 		t.Fatalf("RecalculatePlanID: %v", err)
 	}
-	plan.Lotes[0].Selectors[0].Hunk.PatchHash = "corrupt"
-	commitsBefore := contarCommits(t)
-	statusBefore, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+	plan.Batches[0].Selectors[0].Hunk.PatchHash = "corrupt"
+	commitsBefore := countCommits(t)
+	statusBefore, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 	if err != nil {
 		t.Fatalf("git status before apply: %v", err)
 	}
 
-	_, err = AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+	_, err = ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 	if !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("apply error = %v, want ErrInvalidPlan", err)
 	}
-	if contarCommits(t) != commitsBefore {
+	if countCommits(t) != commitsBefore {
 		t.Fatal("corrupt selection created history")
 	}
-	statusAfter, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+	statusAfter, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 	if err != nil {
 		t.Fatalf("git status after apply: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestApplySelectionSupportsWholeFileDraftKinds(t *testing.T) {
 		{
 			name: "untracked file",
 			setup: func(t *testing.T) {
-				commitEnRepo(t, "base.txt", "base\n")
+				commitInRepo(t, "base.txt", "base\n")
 				if err := writeSelectionTestFile("new.go", "package new\n"); err != nil {
 					t.Fatal(err)
 				}
@@ -168,7 +168,7 @@ func TestApplySelectionSupportsWholeFileDraftKinds(t *testing.T) {
 		{
 			name: "binary file",
 			setup: func(t *testing.T) {
-				commitEnRepo(t, "image.bin", "binary base\n")
+				commitInRepo(t, "image.bin", "binary base\n")
 				if err := os.WriteFile("image.bin", []byte{0, 1, 2, 3, 0xff}, 0644); err != nil {
 					t.Fatal(err)
 				}
@@ -177,27 +177,27 @@ func TestApplySelectionSupportsWholeFileDraftKinds(t *testing.T) {
 		{
 			name: "rename",
 			setup: func(t *testing.T) {
-				commitEnRepo(t, "old.go", "rename me\n")
-				ejecutar(t, "mv", "old.go", "new.go")
+				commitInRepo(t, "old.go", "rename me\n")
+				runGitCommand(t, "mv", "old.go", "new.go")
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prepararRepoTemp(t)
+			prepareTempRepo(t)
 			tt.setup(t)
-			plan, err := ConstruirPlanParaAgente()
+			plan, err := BuildPlanForAgent()
 			if err != nil {
-				t.Fatalf("ConstruirPlanParaAgente: %v", err)
+				t.Fatalf("BuildPlanForAgent: %v", err)
 			}
 			makeWholeFilePlan(t, plan)
-			results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+			results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 			if err != nil {
-				t.Fatalf("AplicarPlanAprobado: %v", err)
+				t.Fatalf("ApplyApprovedPlan: %v", err)
 			}
-			if len(results) != len(plan.Lotes) {
-				t.Fatalf("commits = %d, want %d", len(results), len(plan.Lotes))
+			if len(results) != len(plan.Batches) {
+				t.Fatalf("commits = %d, want %d", len(results), len(plan.Batches))
 			}
 			assertSelectionApplyClean(t)
 		})
@@ -205,33 +205,33 @@ func TestApplySelectionSupportsWholeFileDraftKinds(t *testing.T) {
 }
 
 func TestApplySelectionPreservesPartialStagingAndUnrelatedIndex(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
 	if err := writeSelectionTestFile("app.go", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n"); err != nil {
 		t.Fatal(err)
 	}
-	ejecutar(t, "add", "--", "app.go")
+	runGitCommand(t, "add", "--", "app.go")
 	if err := writeSelectionTestFile("app.go", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"); err != nil {
 		t.Fatal(err)
 	}
 	plan := requireTwoHunkPlan(t)
 	change := plan.Changes[0]
-	plan.Lotes = []LoteSerializado{
+	plan.Batches = []SerializedBatch{
 		{
-			Numero:    1,
-			Capa:      "backend",
-			Rutas:     []string{"app.go"},
+			Number:    1,
+			Layer:     "backend",
+			Paths:     []string{"app.go"},
 			Selectors: []ChangeSelector{selectorForHunk(change, 0)},
-			Lineas:    change.Atoms[0].AddedLines,
-			Mensaje:   "feat(slice): commit staged and unstaged first hunk",
+			Lines:     change.Atoms[0].AddedLines,
+			Message:   "feat(slice): commit staged and unstaged first hunk",
 		},
 		{
-			Numero:    2,
-			Capa:      "backend",
-			Rutas:     []string{"app.go"},
+			Number:    2,
+			Layer:     "backend",
+			Paths:     []string{"app.go"},
 			Selectors: []ChangeSelector{selectorForHunk(change, 1)},
-			Lineas:    change.Atoms[1].AddedLines,
-			Mensaje:   "feat(slice): commit staged and unstaged second hunk",
+			Lines:     change.Atoms[1].AddedLines,
+			Message:   "feat(slice): commit staged and unstaged second hunk",
 		},
 	}
 	if err := RecalculatePlanID(plan); err != nil {
@@ -240,25 +240,25 @@ func TestApplySelectionPreservesPartialStagingAndUnrelatedIndex(t *testing.T) {
 	if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
 		t.Fatal(err)
 	}
-	ejecutar(t, "add", "--", "unrelated.txt")
+	runGitCommand(t, "add", "--", "unrelated.txt")
 
-	results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 	if err != nil {
-		t.Fatalf("AplicarPlanAprobado: %v", err)
+		t.Fatalf("ApplyApprovedPlan: %v", err)
 	}
 	if len(results) != 2 {
 		t.Fatalf("commits = %d, want 2", len(results))
 	}
 	assertCommitPatchExcludes(t, results[0].Hash, "unrelated.txt", "must remain staged")
 	assertCommitPatchExcludes(t, results[1].Hash, "unrelated.txt", "must remain staged")
-	staged, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+	staged, err := runGitOutput("diff", "--cached", "--name-only")
 	if err != nil {
 		t.Fatalf("git diff --cached: %v", err)
 	}
 	if staged != "unrelated.txt\n" {
 		t.Fatalf("staged unrelated paths = %q, want unrelated.txt only", staged)
 	}
-	status, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+	status, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 	if err != nil {
 		t.Fatalf("git status: %v", err)
 	}
@@ -268,26 +268,26 @@ func TestApplySelectionPreservesPartialStagingAndUnrelatedIndex(t *testing.T) {
 }
 
 func TestApplyLegacyRouteOnlyPlanUsesIsolatedIndex(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "planned.txt", "before\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "planned.txt", "before\n")
 	if err := writeSelectionTestFile("planned.txt", "after\n"); err != nil {
 		t.Fatal(err)
 	}
 
-	plan := &PlanSerializado{
-		Lotes: []LoteSerializado{{
-			Numero:  1,
-			Capa:    "backend",
-			Rutas:   []string{"planned.txt"},
-			Lineas:  1,
-			Mensaje: "feat(slice): apply a legacy route-only plan",
+	plan := &SerializedPlan{
+		Batches: []SerializedBatch{{
+			Number:  1,
+			Layer:   "backend",
+			Paths:   []string{"planned.txt"},
+			Lines:   1,
+			Message: "feat(slice): apply a legacy route-only plan",
 		}},
 	}
-	state, err := HashEstadoWorktree([]string{"planned.txt"})
+	state, err := HashWorktreeState([]string{"planned.txt"})
 	if err != nil {
-		t.Fatalf("HashEstadoWorktree: %v", err)
+		t.Fatalf("HashWorktreeState: %v", err)
 	}
-	plan.EstadoWorktree = state
+	plan.WorktreeState = state
 	if err := RecalculatePlanID(plan); err != nil {
 		t.Fatalf("RecalculatePlanID: %v", err)
 	}
@@ -295,11 +295,11 @@ func TestApplyLegacyRouteOnlyPlanUsesIsolatedIndex(t *testing.T) {
 	if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
 		t.Fatal(err)
 	}
-	ejecutar(t, "add", "--", "unrelated.txt")
+	runGitCommand(t, "add", "--", "unrelated.txt")
 
-	results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 	if err != nil {
-		t.Fatalf("AplicarPlanAprobado: %v", err)
+		t.Fatalf("ApplyApprovedPlan: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("commits = %d, want 1", len(results))
@@ -307,7 +307,7 @@ func TestApplyLegacyRouteOnlyPlanUsesIsolatedIndex(t *testing.T) {
 	assertCommitPatchContains(t, results[0].Hash, "planned.txt", "+after")
 	assertCommitPatchExcludes(t, results[0].Hash, "unrelated.txt", "must remain staged")
 
-	staged, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+	staged, err := runGitOutput("diff", "--cached", "--name-only")
 	if err != nil {
 		t.Fatalf("git diff --cached: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestApplyLegacyRouteOnlyPlanRejectsDetectedRenameOrCopy(t *testing.T) {
 			name: "rename",
 			setup: func(t *testing.T) {
 				t.Helper()
-				ejecutar(t, "mv", "old.go", "new.go")
+				runGitCommand(t, "mv", "old.go", "new.go")
 			},
 		},
 		{
@@ -338,31 +338,31 @@ func TestApplyLegacyRouteOnlyPlanRejectsDetectedRenameOrCopy(t *testing.T) {
 				if err := writeSelectionTestFile("new.go", "rename me\n"); err != nil {
 					t.Fatal(err)
 				}
-				ejecutar(t, "add", "--", "new.go")
+				runGitCommand(t, "add", "--", "new.go")
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prepararRepoTemp(t)
-			commitEnRepo(t, "old.go", "rename me\n")
+			prepareTempRepo(t)
+			commitInRepo(t, "old.go", "rename me\n")
 			tt.setup(t)
 
-			plan := &PlanSerializado{
-				Lotes: []LoteSerializado{{
-					Numero:  1,
-					Capa:    "backend",
-					Rutas:   []string{"new.go"},
-					Lineas:  0,
-					Mensaje: "chore(slice): apply a legacy route-only rename or copy",
+			plan := &SerializedPlan{
+				Batches: []SerializedBatch{{
+					Number:  1,
+					Layer:   "backend",
+					Paths:   []string{"new.go"},
+					Lines:   0,
+					Message: "chore(slice): apply a legacy route-only rename or copy",
 				}},
 			}
-			state, err := HashEstadoWorktree([]string{"new.go"})
+			state, err := HashWorktreeState([]string{"new.go"})
 			if err != nil {
-				t.Fatalf("HashEstadoWorktree: %v", err)
+				t.Fatalf("HashWorktreeState: %v", err)
 			}
-			plan.EstadoWorktree = state
+			plan.WorktreeState = state
 			if err := RecalculatePlanID(plan); err != nil {
 				t.Fatalf("RecalculatePlanID: %v", err)
 			}
@@ -370,32 +370,32 @@ func TestApplyLegacyRouteOnlyPlanRejectsDetectedRenameOrCopy(t *testing.T) {
 			if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
 				t.Fatal(err)
 			}
-			ejecutar(t, "add", "--", "unrelated.txt")
-			statusBefore, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+			runGitCommand(t, "add", "--", "unrelated.txt")
+			statusBefore, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 			if err != nil {
 				t.Fatalf("git status before apply: %v", err)
 			}
-			stagedBefore, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+			stagedBefore, err := runGitOutput("diff", "--cached", "--name-only")
 			if err != nil {
 				t.Fatalf("git diff --cached before apply: %v", err)
 			}
-			commitsBefore := contarCommits(t)
+			commitsBefore := countCommits(t)
 
-			_, err = AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+			_, err = ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 			if !errors.Is(err, ErrLegacyRouteOnlyRename) {
 				t.Fatalf("apply error = %v, want ErrLegacyRouteOnlyRename", err)
 			}
-			if contarCommits(t) != commitsBefore {
+			if countCommits(t) != commitsBefore {
 				t.Fatal("rejected legacy rename or copy created history")
 			}
-			statusAfter, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+			statusAfter, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 			if err != nil {
 				t.Fatalf("git status after apply: %v", err)
 			}
 			if statusAfter != statusBefore {
 				t.Fatalf("rejected apply changed worktree status: before %q, after %q", statusBefore, statusAfter)
 			}
-			stagedAfter, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+			stagedAfter, err := runGitOutput("diff", "--cached", "--name-only")
 			if err != nil {
 				t.Fatalf("git diff --cached after apply: %v", err)
 			}
@@ -417,38 +417,38 @@ func TestApplySelectionSupportsUnbornHead(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prepararRepoTemp(t)
+			prepareTempRepo(t)
 			if err := writeSelectionTestFile("root.go", "package root\n"); err != nil {
 				t.Fatal(err)
 			}
 			if tt.stage {
-				ejecutar(t, "add", "--", "root.go")
+				runGitCommand(t, "add", "--", "root.go")
 			}
 
-			plan, err := ConstruirPlanParaAgente()
+			plan, err := BuildPlanForAgent()
 			if err != nil {
-				t.Fatalf("ConstruirPlanParaAgente: %v", err)
+				t.Fatalf("BuildPlanForAgent: %v", err)
 			}
 			makeWholeFilePlan(t, plan)
-			if err := ValidarAplicacion(plan, RespuestasPlan{PlanID: plan.PlanID}); err != nil {
-				t.Fatalf("ValidarAplicacion: %v", err)
+			if err := ValidateApplication(plan, PlanAnswers{PlanID: plan.PlanID}); err != nil {
+				t.Fatalf("ValidateApplication: %v", err)
 			}
 
-			results, err := AplicarPlanAprobado(plan, RespuestasPlan{PlanID: plan.PlanID})
+			results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
 			if err != nil {
-				t.Fatalf("AplicarPlanAprobado: %v", err)
+				t.Fatalf("ApplyApprovedPlan: %v", err)
 			}
 			if len(results) != 1 {
 				t.Fatalf("commits = %d, want 1", len(results))
 			}
-			parents, err := ejecutarGitSalida("rev-list", "--parents", "-n", "1", "HEAD")
+			parents, err := runGitOutput("rev-list", "--parents", "-n", "1", "HEAD")
 			if err != nil {
 				t.Fatalf("git rev-list root commit: %v", err)
 			}
 			if len(strings.Fields(parents)) != 1 {
 				t.Fatalf("HEAD is not a root commit: %q", parents)
 			}
-			content, err := ejecutarGitSalida("show", "HEAD:root.go")
+			content, err := runGitOutput("show", "HEAD:root.go")
 			if err != nil {
 				t.Fatalf("git show root.go: %v", err)
 			}
@@ -461,30 +461,30 @@ func TestApplySelectionSupportsUnbornHead(t *testing.T) {
 }
 
 func TestApplySelectionNormalizesIndexAfterMidApplyFailure(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "app.go", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
 	if err := writeSelectionTestFile("app.go", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"); err != nil {
 		t.Fatal(err)
 	}
 
 	plan := requireTwoHunkPlan(t)
 	change := plan.Changes[0]
-	plan.Lotes = []LoteSerializado{
+	plan.Batches = []SerializedBatch{
 		{
-			Numero:    1,
-			Capa:      "backend",
-			Rutas:     []string{"app.go"},
+			Number:    1,
+			Layer:     "backend",
+			Paths:     []string{"app.go"},
 			Selectors: []ChangeSelector{selectorForHunk(change, 0)},
-			Lineas:    change.Atoms[0].AddedLines,
-			Mensaje:   "feat(slice): commit the first hunk before failure",
+			Lines:     change.Atoms[0].AddedLines,
+			Message:   "feat(slice): commit the first hunk before failure",
 		},
 		{
-			Numero:    2,
-			Capa:      "backend",
-			Rutas:     []string{"app.go"},
+			Number:    2,
+			Layer:     "backend",
+			Paths:     []string{"app.go"},
 			Selectors: []ChangeSelector{selectorForHunk(change, 1)},
-			Lineas:    change.Atoms[1].AddedLines,
-			Mensaje:   "feat(slice): fail before the second hunk",
+			Lines:     change.Atoms[1].AddedLines,
+			Message:   "feat(slice): fail before the second hunk",
 		},
 	}
 	if err := RecalculatePlanID(plan); err != nil {
@@ -493,13 +493,13 @@ func TestApplySelectionNormalizesIndexAfterMidApplyFailure(t *testing.T) {
 	if err := writeSelectionTestFile("unrelated.txt", "must remain staged\n"); err != nil {
 		t.Fatal(err)
 	}
-	ejecutar(t, "add", "--", "unrelated.txt")
-	if err := ValidarAplicacion(plan, RespuestasPlan{PlanID: plan.PlanID}); err != nil {
-		t.Fatalf("ValidarAplicacion: %v", err)
+	runGitCommand(t, "add", "--", "unrelated.txt")
+	if err := ValidateApplication(plan, PlanAnswers{PlanID: plan.PlanID}); err != nil {
+		t.Fatalf("ValidateApplication: %v", err)
 	}
 
 	commitCalls := 0
-	results, err := executeSelectionPlanWithCommit(deserializarPlan(plan), func(index, message string) (string, error) {
+	results, err := executeSelectionPlanWithCommit(deserializePlan(plan), func(index, message string) (string, error) {
 		commitCalls++
 		if commitCalls == 2 {
 			return "", errors.New("injected mid-apply failure")
@@ -517,21 +517,21 @@ func TestApplySelectionNormalizesIndexAfterMidApplyFailure(t *testing.T) {
 	}
 	assertCommitPatchContains(t, results[0].Hash, "app.go", "+TWO")
 
-	staged, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+	staged, err := runGitOutput("diff", "--cached", "--name-only")
 	if err != nil {
 		t.Fatalf("git diff --cached: %v", err)
 	}
 	if staged != "unrelated.txt\n" {
 		t.Fatalf("staged paths = %q, want unrelated.txt only", staged)
 	}
-	plannedIndex, err := ejecutarGitSalida("diff", "--cached", "--", "app.go")
+	plannedIndex, err := runGitOutput("diff", "--cached", "--", "app.go")
 	if err != nil {
 		t.Fatalf("git diff --cached app.go: %v", err)
 	}
 	if plannedIndex != "" {
 		t.Fatalf("planned path remains staged after failure: %q", plannedIndex)
 	}
-	remainingWorktree, err := ejecutarGitSalida("diff", "--", "app.go")
+	remainingWorktree, err := runGitOutput("diff", "--", "app.go")
 	if err != nil {
 		t.Fatalf("git diff app.go: %v", err)
 	}
@@ -540,11 +540,11 @@ func TestApplySelectionNormalizesIndexAfterMidApplyFailure(t *testing.T) {
 	}
 }
 
-func requireTwoHunkPlan(t *testing.T) *PlanSerializado {
+func requireTwoHunkPlan(t *testing.T) *SerializedPlan {
 	t.Helper()
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
-		t.Fatalf("ConstruirPlanParaAgente: %v", err)
+		t.Fatalf("BuildPlanForAgent: %v", err)
 	}
 	if len(plan.Changes) != 1 || len(plan.Changes[0].Atoms) != 2 {
 		t.Fatalf("plan changes = %+v, want one two-hunk change", plan.Changes)
@@ -552,16 +552,16 @@ func requireTwoHunkPlan(t *testing.T) *PlanSerializado {
 	return plan
 }
 
-func makeWholeFilePlan(t *testing.T, plan *PlanSerializado) {
+func makeWholeFilePlan(t *testing.T, plan *SerializedPlan) {
 	t.Helper()
-	for batchIndex := range plan.Lotes {
-		batch := &plan.Lotes[batchIndex]
+	for batchIndex := range plan.Batches {
+		batch := &plan.Batches[batchIndex]
 		batch.Selectors = nil
-		batch.Lineas = 0
-		for _, path := range batch.Rutas {
+		batch.Lines = 0
+		for _, path := range batch.Paths {
 			change := findPlannedChange(t, plan.Changes, path)
 			batch.Selectors = append(batch.Selectors, ChangeSelector{Path: change.Path, OldPath: change.OldPath, Mode: SelectorWholeFile})
-			batch.Lineas += change.AddedLines
+			batch.Lines += change.AddedLines
 		}
 	}
 	if err := RecalculatePlanID(plan); err != nil {
@@ -575,7 +575,7 @@ func writeSelectionTestFile(path, content string) error {
 
 func assertCommitPatchContains(t *testing.T, commit, path, fragment string) {
 	t.Helper()
-	patch, err := ejecutarGitSalida("show", "--format=", "--no-ext-diff", commit, "--", path)
+	patch, err := runGitOutput("show", "--format=", "--no-ext-diff", commit, "--", path)
 	if err != nil {
 		t.Fatalf("git show %s: %v", commit, err)
 	}
@@ -586,7 +586,7 @@ func assertCommitPatchContains(t *testing.T, commit, path, fragment string) {
 
 func assertCommitPatchExcludes(t *testing.T, commit, path, fragment string) {
 	t.Helper()
-	patch, err := ejecutarGitSalida("show", "--format=", "--no-ext-diff", commit, "--", path)
+	patch, err := runGitOutput("show", "--format=", "--no-ext-diff", commit, "--", path)
 	if err != nil {
 		t.Fatalf("git show %s: %v", commit, err)
 	}
@@ -597,14 +597,14 @@ func assertCommitPatchExcludes(t *testing.T, commit, path, fragment string) {
 
 func assertSelectionApplyClean(t *testing.T) {
 	t.Helper()
-	status, err := ejecutarGitSalida("status", "--porcelain", "-z", "-uall")
+	status, err := runGitOutput("status", "--porcelain", "-z", "-uall")
 	if err != nil {
 		t.Fatalf("git status: %v", err)
 	}
 	if status != "" {
 		t.Fatalf("worktree is not clean: %q", status)
 	}
-	staged, err := ejecutarGitSalida("diff", "--cached", "--name-only")
+	staged, err := runGitOutput("diff", "--cached", "--name-only")
 	if err != nil {
 		t.Fatalf("git diff --cached: %v", err)
 	}

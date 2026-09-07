@@ -8,18 +8,18 @@ import (
 
 // ReadPathAtRevision: present=false with nil error is an AUTHORITATIVE absence; err != nil propagates.
 func ReadPathAtRevision(rev, path string) (string, bool, error) {
-	commit, err := ResolverSHA(rev)
+	commit, err := ResolveSHA(rev)
 	if err != nil {
 		return "", false, fmt.Errorf("resolve %q: %w", rev, err)
 	}
-	listing, err := ejecutarGitSalida("ls-tree", commit, "--", filepath.ToSlash(path))
+	listing, err := runGitOutput("ls-tree", commit, "--", filepath.ToSlash(path))
 	if err != nil {
 		return "", false, fmt.Errorf("list %q in %q: %w", path, rev, err)
 	}
 	if strings.TrimSpace(listing) == "" {
 		return "", false, nil
 	}
-	content, err := ContenidoDeArchivoEnCommit(commit, path)
+	content, err := FileContentAtCommit(commit, path)
 	if err != nil {
 		return "", true, err
 	}
@@ -32,7 +32,7 @@ func ReadPathAtRevision(rev, path string) (string, bool, error) {
 // a score token plus two path tokens, so quoting can never corrupt the
 // mapping. (-M detects renames only; copies would require -C.)
 func RangeRenames(from, to string) (map[string]string, error) {
-	listing, err := ejecutarGitSalida("diff", "--name-status", "-z", "-M", from+".."+to)
+	listing, err := runGitOutput("diff", "--name-status", "-z", "-M", from+".."+to)
 	if err != nil {
 		return nil, fmt.Errorf("name-status %s..%s: %w", from, to, err)
 	}
@@ -63,11 +63,11 @@ func RangeRenames(from, to string) (map[string]string, error) {
 
 // RangeEvidence returns the full diff and renamed-aware changed paths of a revision range.
 func RangeEvidence(from, to string) (string, []string, error) {
-	diff, err := ejecutarGitSalida("diff", "--no-color", from+".."+to)
+	diff, err := runGitOutput("diff", "--no-color", from+".."+to)
 	if err != nil {
 		return "", nil, fmt.Errorf("diff %s..%s: %w", from, to, err)
 	}
-	listing, err := ejecutarGitSalida("diff", "--name-only", "-z", "-M", from+".."+to)
+	listing, err := runGitOutput("diff", "--name-only", "-z", "-M", from+".."+to)
 	if err != nil {
 		return "", nil, fmt.Errorf("changes %s..%s: %w", from, to, err)
 	}

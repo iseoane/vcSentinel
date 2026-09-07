@@ -11,383 +11,390 @@ import (
 	internalchange "github.com/ISeoane-Quental/vas.sentinel/internal/change"
 )
 
-// LotePlanificado representa un lote propuesto dentro del plan de fragmentación.
-// El mensaje puede nacer vacío (lotes normales) y completarse después con
-// GenerarMensajesLotes, o nacer fijo (gigantes).
-type LotePlanificado struct {
-	Capa                string
-	Numero              int
-	Rutas               []string
-	Selectors           []ChangeSelector
-	LineasTotales       int
-	Mensaje             string
-	MensajeAutomatico   string
-	MensajeDeterminista bool
-	EsGigante           bool
+// PlannedBatch represents a batch proposed within the fragmentation plan.
+// The message may start empty (normal batches) and be filled in later by
+// GenerateBatchMessages, or start fixed (giants).
+type PlannedBatch struct {
+	Layer                string
+	Number               int
+	Paths                []string
+	Selectors            []ChangeSelector
+	TotalLines           int
+	Message              string
+	AutoMessage          string
+	DeterministicMessage bool
+	IsOversized          bool
 }
 
-// PlanFragmentacion es la propuesta completa de fragmentación, construida sin
-// crear ningún commit: los lotes y sus mensajes se aprueban antes de ejecutar.
-type PlanFragmentacion struct {
-	Lotes       []LotePlanificado
+// FragmentationPlan is the complete fragmentation proposal, built without
+// creating any commit: the batches and their messages are approved before
+// running.
+type FragmentationPlan struct {
+	Batches     []PlannedBatch
 	Changes     []PlannedChange
 	Explanation string
 }
 
-// ResultadoCommit resume un commit creado durante la ejecución del plan.
-type ResultadoCommit struct {
-	Hash     string
-	Mensaje  string
-	Capa     string
-	Archivos int
+// CommitResult summarizes a commit created while running the plan.
+type CommitResult struct {
+	Hash    string
+	Message string
+	Layer   string
+	Files   int
 }
 
-// ConstruirPlanFragmentacion usa la proximidad estructural de Cohesion. La vía
-// productiva llama a ConstruirPlanFragmentacionConLector para sumar también el
-// co-cambio histórico; este wrapper sin I/O mantiene los tests y consumidores
-// que construyen planes a partir de una lista ya materializada.
-func ConstruirPlanFragmentacion(archivos []ArchivoModificado, confirmarBypass func(ArchivoModificado) (bool, error)) (*PlanFragmentacion, error) {
-	return ConstruirPlanFragmentacionConLector(archivos, confirmarBypass, func(...string) (string, error) { return "", nil })
+// BuildFragmentationPlan uses Cohesion's structural proximity. The
+// production path calls BuildFragmentationPlanWithReader to also add
+// historical co-change; this I/O-free wrapper keeps the tests and
+// consumers that build plans from an already materialized list.
+func BuildFragmentationPlan(files []ModifiedFile, confirmBypass func(ModifiedFile) (bool, error)) (*FragmentationPlan, error) {
+	return BuildFragmentationPlanWithReader(files, confirmBypass, func(...string) (string, error) { return "", nil })
 }
 
-// ConstruirPlanFragmentacionConLector agrupa primero por clúster de cohesión y
-// ordena cada clúster por clase (config → source → test → docs → generated).
-// Un clúster solo se parte cuando construirLotes alcanza el límite de 400.
-func ConstruirPlanFragmentacionConLector(archivos []ArchivoModificado, confirmarBypass func(ArchivoModificado) (bool, error), lector internalchange.LectorGit) (*PlanFragmentacion, error) {
-	porRuta := make(map[string]ArchivoModificado, len(archivos))
-	rutas := make([]string, 0, len(archivos))
-	lineasPorRuta := make(map[string]int, len(archivos))
-	for _, f := range archivos {
-		// f.Ruta viene siempre de "git status"/"git diff" (archivosRastreados,
-		// archivosNoRastreados en slice.go): git reporta rutas separadas por "/"
-		// en todo SO, así que un backslash aquí es un carácter literal del
-		// nombre, no un separador que convertir. filepath.ToSlash/Clean solo
-		// necesitan normalizar "./", "//" y similares.
-		f.Ruta = filepath.ToSlash(filepath.Clean(f.Ruta))
-		porRuta[f.Ruta] = f
-		rutas = append(rutas, f.Ruta)
-		lineasPorRuta[f.Ruta] = f.Lineas
+// BuildFragmentationPlanWithReader groups first by cohesion cluster and
+// orders each cluster by class (config → source → test → docs →
+// generated). A cluster is only split when buildBatches reaches the limit
+// of 400.
+func BuildFragmentationPlanWithReader(files []ModifiedFile, confirmBypass func(ModifiedFile) (bool, error), reader internalchange.GitReader) (*FragmentationPlan, error) {
+	byPath := make(map[string]ModifiedFile, len(files))
+	paths := make([]string, 0, len(files))
+	linesPerPath := make(map[string]int, len(files))
+	for _, f := range files {
+		// f.Path always comes from "git status"/"git diff" (trackedFiles,
+		// untrackedFiles in slice.go): git reports paths separated by "/"
+		// on every OS, so a backslash here is a literal character of the
+		// name, not a separator to convert. filepath.ToSlash/Clean only
+		// need to normalize "./", "//" and the like.
+		f.Path = filepath.ToSlash(filepath.Clean(f.Path))
+		byPath[f.Path] = f
+		paths = append(paths, f.Path)
+		linesPerPath[f.Path] = f.Lines
 	}
-	cohesion, err := internalchange.Cohesion(rutas, lector)
+	cohesion, err := internalchange.Cohesion(paths, reader)
 	if err != nil {
 		return nil, err
 	}
-	grupos := make([][]ArchivoModificado, 0, len(cohesion.Grupos))
-	for _, rutasGrupo := range cohesion.Grupos {
-		grupo := make([]ArchivoModificado, 0, len(rutasGrupo))
-		for _, ruta := range rutasGrupo {
-			grupo = append(grupo, porRuta[ruta])
+	groups := make([][]ModifiedFile, 0, len(cohesion.Groups))
+	for _, groupPaths := range cohesion.Groups {
+		group := make([]ModifiedFile, 0, len(groupPaths))
+		for _, path := range groupPaths {
+			group = append(group, byPath[path])
 		}
-		ordenarPorClase(grupo)
-		grupos = append(grupos, grupo)
+		sortByClass(group)
+		groups = append(groups, group)
 	}
-	sort.SliceStable(grupos, func(i, j int) bool {
-		claseI, claseJ := rangoClaseGrupo(grupos[i]), rangoClaseGrupo(grupos[j])
-		if claseI != claseJ {
-			return claseI < claseJ
+	sort.SliceStable(groups, func(i, j int) bool {
+		classI, classJ := classGroupRange(groups[i]), classGroupRange(groups[j])
+		if classI != classJ {
+			return classI < classJ
 		}
-		return rangoCapaGrupo(grupos[i]) < rangoCapaGrupo(grupos[j])
+		return layerGroupRange(groups[i]) < layerGroupRange(groups[j])
 	})
 
-	var plan PlanFragmentacion
-	numero := 1
-	for _, grupo := range grupos {
-		restantes := make([]ArchivoModificado, 0, len(grupo))
-		agregarRestantes := func() {
-			for _, archivosLote := range construirLotes(restantes) {
-				rutasLote := make([]string, 0, len(archivosLote))
-				for _, archivo := range archivosLote {
-					rutasLote = append(rutasLote, archivo.Ruta)
+	var plan FragmentationPlan
+	number := 1
+	for _, group := range groups {
+		remaining := make([]ModifiedFile, 0, len(group))
+		flushRemaining := func() {
+			for _, batchFiles := range buildBatches(remaining) {
+				batchPaths := make([]string, 0, len(batchFiles))
+				for _, file := range batchFiles {
+					batchPaths = append(batchPaths, file.Path)
 				}
-				plan.Lotes = append(plan.Lotes, loteNormal(loteConCapa{Capa: capaDelLote(archivosLote), Rutas: rutasLote}, numero, lineasPorRuta))
-				numero++
+				plan.Batches = append(plan.Batches, normalBatch(batchWithLayer{Layer: batchLayer(batchFiles), Paths: batchPaths}, number, linesPerPath))
+				number++
 			}
-			restantes = restantes[:0]
+			remaining = remaining[:0]
 		}
-		for _, f := range grupo {
+		for _, f := range group {
 			switch {
-			case esConfigGigante(f):
-				agregarRestantes()
-				plan.Lotes = append(plan.Lotes, loteGigante(f, mensajeAisladoDeps, numero))
-				numero++
-			case esDocumentacionExtensa(f):
-				agregarRestantes()
-				// Un documento largo se aísla como la configuración: nunca
-				// entra por la rama de código masivo, que ofrecería dividirlo
-				// con IA aplicando SRP.
-				plan.Lotes = append(plan.Lotes, loteGigante(f, fmt.Sprintf(mensajeAisladoDocs, filepath.Base(f.Ruta)), numero))
-				numero++
-			case esCodigoGigante(f):
-				agregarRestantes()
-				ok, err := confirmarBypass(f)
+			case isOversizedConfig(f):
+				flushRemaining()
+				plan.Batches = append(plan.Batches, giantBatch(f, isolatedDepsMessage, number))
+				number++
+			case isExtensiveDocumentation(f):
+				flushRemaining()
+				// A long document is isolated like the configuration: it never
+				// goes through the massive-code branch, which would offer to
+				// split it with AI applying SRP.
+				plan.Batches = append(plan.Batches, giantBatch(f, fmt.Sprintf(isolatedDocsMessage, filepath.Base(f.Path)), number))
+				number++
+			case isGiantCode(f):
+				flushRemaining()
+				ok, err := confirmBypass(f)
 				if err != nil {
 					return nil, err
 				}
 				if !ok {
-					return nil, fmt.Errorf("fragmentación abortada: %s tiene %d líneas y supera el límite de %d", f.Ruta, f.Lineas, LimiteCodigoGigante)
+					return nil, fmt.Errorf("fragmentation aborted: %s has %d lines and exceeds the limit of %d", f.Path, f.Lines, GiantCodeLimit)
 				}
-				plan.Lotes = append(plan.Lotes, loteGigante(f, fmt.Sprintf(mensajeBypassGigante, filepath.Base(f.Ruta)), numero))
-				numero++
+				plan.Batches = append(plan.Batches, giantBatch(f, fmt.Sprintf(giantBypassMessage, filepath.Base(f.Path)), number))
+				number++
 			default:
-				restantes = append(restantes, f)
+				remaining = append(remaining, f)
 			}
 		}
-		agregarRestantes()
+		flushRemaining()
 	}
 	return &plan, nil
 }
 
-func rangoCapaGrupo(grupo []ArchivoModificado) int {
-	mejor := len(ordenCapas)
-	for _, archivo := range grupo {
-		for i, capa := range ordenCapas {
-			if archivo.Capa == capa && i < mejor {
-				mejor = i
+func layerGroupRange(group []ModifiedFile) int {
+	best := len(layerOrder)
+	for _, file := range group {
+		for i, layer := range layerOrder {
+			if file.Layer == layer && i < best {
+				best = i
 			}
 		}
 	}
-	return mejor
+	return best
 }
 
-func ordenarPorClase(archivos []ArchivoModificado) {
-	sort.SliceStable(archivos, func(i, j int) bool {
-		return rangoClase(ClaseArchivo(archivos[i].Ruta)) < rangoClase(ClaseArchivo(archivos[j].Ruta))
+func sortByClass(files []ModifiedFile) {
+	sort.SliceStable(files, func(i, j int) bool {
+		return classRange(FileClass(files[i].Path)) < classRange(FileClass(files[j].Path))
 	})
 }
 
-func rangoClaseGrupo(grupo []ArchivoModificado) int {
-	mejor := len(ordenClases)
-	for _, archivo := range grupo {
-		if rango := rangoClase(ClaseArchivo(archivo.Ruta)); rango < mejor {
-			mejor = rango
+func classGroupRange(group []ModifiedFile) int {
+	best := len(classOrder)
+	for _, file := range group {
+		if diffOut := classRange(FileClass(file.Path)); diffOut < best {
+			best = diffOut
 		}
 	}
-	return mejor
+	return best
 }
 
-func rangoClase(clase string) int {
-	for i, candidata := range ordenClases {
-		if clase == candidata {
+func classRange(class string) int {
+	for i, candidate := range classOrder {
+		if class == candidate {
 			return i
 		}
 	}
-	return len(ordenClases)
+	return len(classOrder)
 }
 
-func capaDelLote(archivos []ArchivoModificado) string {
-	if len(archivos) == 0 {
+func batchLayer(files []ModifiedFile) string {
+	if len(files) == 0 {
 		return "cohesion"
 	}
-	capa := archivos[0].Capa
-	for _, archivo := range archivos[1:] {
-		if archivo.Capa != capa {
+	layer := files[0].Layer
+	for _, file := range files[1:] {
+		if file.Layer != layer {
 			return "cohesion"
 		}
 	}
-	return capa
+	return layer
 }
 
-// GenerarMensajesLotes consulta al adaptador el mensaje de cada lote no gigante
-// y lo rellena en el plan. Si el adaptador falla para un lote, usa el mensaje
-// automático de respaldo y lo marca como determinista. Devuelve la cantidad de
-// lotes que cayeron al respaldo para que la UI ofrezca fallback.
-func GenerarMensajesLotes(plan *PlanFragmentacion, adapter agentadapter.AgentAdapter) int {
+// GenerateBatchMessages asks the adapter for the message of each non-giant
+// batch and fills it into the plan. If the adapter fails for a batch, it
+// uses the automatic fallback message and marks it as deterministic.
+// Returns the number of batches that fell back so the UI can offer a
+// fallback.
+func GenerateBatchMessages(plan *FragmentationPlan, adapter agentadapter.AgentAdapter) int {
 	fallbacks := 0
-	for i := range plan.Lotes {
-		lote := &plan.Lotes[i]
-		if lote.EsGigante {
+	for i := range plan.Batches {
+		batch := &plan.Batches[i]
+		if batch.IsOversized {
 			continue
 		}
-		mensaje, err := obtenerMensajeConDiff(lote.Rutas, lote.Capa, lote.Numero, adapter)
+		message, err := getMessageWithDiff(batch.Paths, batch.Layer, batch.Number, adapter)
 		if err != nil {
-			lote.Mensaje = lote.MensajeAutomatico
-			lote.MensajeDeterminista = true
+			batch.Message = batch.AutoMessage
+			batch.DeterministicMessage = true
 			fallbacks++
 			continue
 		}
-		lote.Mensaje = mensaje
-		lote.MensajeDeterminista = false
+		batch.Message = message
+		batch.DeterministicMessage = false
 	}
 	return fallbacks
 }
 
-// AplicarMensajesAutomaticos reemplaza el mensaje de todos los lotes por su
-// mensaje determinista: el de respaldo para los lotes normales y el propio del
-// gigante para los aislados.
-func AplicarMensajesAutomaticos(plan *PlanFragmentacion) {
-	for i := range plan.Lotes {
-		lote := &plan.Lotes[i]
-		lote.Mensaje = lote.MensajeAutomatico
-		lote.MensajeDeterminista = true
+// ApplyAutomaticMessages replaces every batch's message with its
+// deterministic one: the fallback for normal batches and the giant's own
+// for the isolated ones.
+func ApplyAutomaticMessages(plan *FragmentationPlan) {
+	for i := range plan.Batches {
+		batch := &plan.Batches[i]
+		batch.Message = batch.AutoMessage
+		batch.DeterministicMessage = true
 	}
 }
 
-// RegenerarMensajeLote regenera el mensaje de un único lote con el adaptador
-// dado. Si el adaptador falla, deja el mensaje automático de respaldo.
-func RegenerarMensajeLote(plan *PlanFragmentacion, numero int, adapter agentadapter.AgentAdapter) error {
-	lote, err := lotePorNumero(plan, numero)
+// RegenerateBatchMessage asks the given adapter to produce a single
+// batch's message again. If the adapter fails, it keeps the automatic
+// fallback message.
+func RegenerateBatchMessage(plan *FragmentationPlan, number int, adapter agentadapter.AgentAdapter) error {
+	batch, err := batchByNumber(plan, number)
 	if err != nil {
 		return err
 	}
-	mensaje, err := obtenerMensajeConDiff(lote.Rutas, lote.Capa, lote.Numero, adapter)
+	message, err := getMessageWithDiff(batch.Paths, batch.Layer, batch.Number, adapter)
 	if err != nil {
-		lote.Mensaje = lote.MensajeAutomatico
-		lote.MensajeDeterminista = true
+		batch.Message = batch.AutoMessage
+		batch.DeterministicMessage = true
 		return nil
 	}
-	lote.Mensaje = mensaje
-	lote.MensajeDeterminista = false
+	batch.Message = message
+	batch.DeterministicMessage = false
 	return nil
 }
 
-// AplicarMensajeAutomaticoLote restaura el mensaje determinista de un lote.
-func AplicarMensajeAutomaticoLote(plan *PlanFragmentacion, numero int) error {
-	lote, err := lotePorNumero(plan, numero)
+// ApplyAutomaticMessageBatch restores a batch's deterministic message.
+func ApplyAutomaticMessageBatch(plan *FragmentationPlan, number int) error {
+	batch, err := batchByNumber(plan, number)
 	if err != nil {
 		return err
 	}
-	lote.Mensaje = lote.MensajeAutomatico
-	lote.MensajeDeterminista = true
+	batch.Message = batch.AutoMessage
+	batch.DeterministicMessage = true
 	return nil
 }
 
-// EditarMensajeLote fija manualmente el mensaje de un lote.
-func EditarMensajeLote(plan *PlanFragmentacion, numero int, mensaje string) error {
-	lote, err := lotePorNumero(plan, numero)
+// EditBatchMessage manually sets a batch's message.
+func EditBatchMessage(plan *FragmentationPlan, number int, message string) error {
+	batch, err := batchByNumber(plan, number)
 	if err != nil {
 		return err
 	}
-	lote.Mensaje = strings.TrimSpace(mensaje)
-	lote.MensajeDeterminista = false
+	batch.Message = strings.TrimSpace(message)
+	batch.DeterministicMessage = false
 	return nil
 }
 
-// VerificarAdaptador prueba un adaptador con una petición sintética mínima y
-// devuelve true si responde sin error. Permite detectar adaptadores no
-// disponibles o rotos antes de generar los mensajes de todo el plan.
-func VerificarAdaptador(adapter agentadapter.AgentAdapter) bool {
-	_, err := obtenerMensajeConDiff([]string{"sonda.txt"}, "backend", 0, adapter)
+// VerifyAdapter probes an adapter with a minimal synthetic request and
+// returns true if it responds without error. It helps detect unavailable
+// or broken adapters before generating the messages for the whole plan.
+func VerifyAdapter(adapter agentadapter.AgentAdapter) bool {
+	_, err := getMessageWithDiff([]string{"probe.txt"}, "backend", 0, adapter)
 	return err == nil
 }
 
-// EjecutarPlanFragmentacion commitea cada lote aprobado con su mensaje
-// pre-aprobado, en el orden del plan, y devuelve un resumen por commit creado.
-// Todos los commits omiten la verificación de hooks (--no-verify): invocar
-// sentinel slice ES el desbloqueo del guardián, cada lote ya está validado
-// (≤400 líneas salvo gigantes con bypass explícito) y el hook de volumen
-// mediría también los cambios pendientes de los lotes siguientes, rechazando
-// por error commits legítimos cuando el total pendiente supera las 400 líneas.
-func EjecutarPlanFragmentacion(plan *PlanFragmentacion) ([]ResultadoCommit, error) {
-	var resultados []ResultadoCommit
-	for _, lote := range plan.Lotes {
-		mensaje := lote.Mensaje
-		if strings.TrimSpace(mensaje) == "" {
-			mensaje = lote.MensajeAutomatico
+// RunFragmentationPlan commits each approved batch with its pre-approved
+// message, in plan order, and returns a summary per commit created. Every
+// commit skips hook verification (--no-verify): invoking sentinel slice IS
+// the guardian's unlock, each batch is already validated (≤400 lines
+// except giants with explicit bypass) and the volume hook would also
+// measure the pending changes of the following batches, wrongly rejecting
+// legitimate commits when the pending total exceeds 400 lines.
+func RunFragmentationPlan(plan *FragmentationPlan) ([]CommitResult, error) {
+	var results []CommitResult
+	for _, batch := range plan.Batches {
+		message := batch.Message
+		if strings.TrimSpace(message) == "" {
+			message = batch.AutoMessage
 		}
-		hash, err := commitLoteConMensaje(lote.Rutas, mensaje)
+		hash, err := commitBatchWithMessage(batch.Paths, message)
 		if err != nil {
-			return resultados, err
+			return results, err
 		}
-		resultados = append(resultados, ResultadoCommit{
-			Hash:     hash,
-			Mensaje:  mensaje,
-			Capa:     lote.Capa,
-			Archivos: len(lote.Rutas),
+		results = append(results, CommitResult{
+			Hash:    hash,
+			Message: message,
+			Layer:   batch.Layer,
+			Files:   len(batch.Paths),
 		})
 	}
-	return resultados, nil
+	return results, nil
 }
 
-// WorktreeLimpio indica si no quedan cambios pendientes en el worktree.
-func WorktreeLimpio() (bool, error) {
-	salida, err := ejecutarGitSalida("status", "--porcelain")
+// WorktreeClean reports whether no pending changes remain in the worktree.
+func WorktreeClean() (bool, error) {
+	out, err := runGitOutput("status", "--porcelain")
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(salida) == "", nil
+	return strings.TrimSpace(out) == "", nil
 }
 
-func agruparPorCapas(archivos []ArchivoModificado) map[string][]ArchivoModificado {
-	porCapas := map[string][]ArchivoModificado{"config": {}, "backend": {}, "frontend": {}, "test": {}}
-	for _, f := range archivos {
-		porCapas[f.Capa] = append(porCapas[f.Capa], f)
+func groupByLayers(files []ModifiedFile) map[string][]ModifiedFile {
+	byLayers := map[string][]ModifiedFile{"config": {}, "backend": {}, "frontend": {}, "test": {}}
+	for _, f := range files {
+		byLayers[f.Layer] = append(byLayers[f.Layer], f)
 	}
-	return porCapas
+	return byLayers
 }
 
-// ordenClases fija el orden de salida de los lotes por clase de archivo:
-// config → source → test → docs → generated. Es el eje que agrupa antes que
-// la capa, para que ningún lote mezcle clases (T0.12).
-var ordenClases = []string{ClaseConfig, ClaseSource, ClaseTest, ClaseDocs, ClaseGenerada}
+// classOrder pins the batches' output order by file class:
+// config → source → test → docs → generated. It is the axis that groups
+// before the layer, so that no batch mixes classes (T0.12).
+var classOrder = []string{ClassConfig, ClassSource, ClassTest, ClassDocs, ClassGenerated}
 
-// agruparPorClases separa los archivos por ClaseArchivo, sin tocar la capa:
-// son dos ejes distintos que ConstruirPlanFragmentacion combina en cascada.
-func agruparPorClases(archivos []ArchivoModificado) map[string][]ArchivoModificado {
-	porClases := make(map[string][]ArchivoModificado, len(ordenClases))
-	for _, f := range archivos {
-		clase := ClaseArchivo(f.Ruta)
-		porClases[clase] = append(porClases[clase], f)
+// groupByClasses separates the files by FileClass, without touching the
+// layer: they are two distinct axes that BuildFragmentationPlan combines
+// in cascade.
+func groupByClasses(files []ModifiedFile) map[string][]ModifiedFile {
+	byClasses := make(map[string][]ModifiedFile, len(classOrder))
+	for _, f := range files {
+		class := FileClass(f.Path)
+		byClasses[class] = append(byClasses[class], f)
 	}
-	return porClases
+	return byClasses
 }
 
-func loteGigante(f ArchivoModificado, mensaje string, numero int) LotePlanificado {
-	return LotePlanificado{
-		Capa:                f.Capa,
-		Numero:              numero,
-		Rutas:               []string{f.Ruta},
-		LineasTotales:       f.Lineas,
-		Mensaje:             mensaje,
-		MensajeAutomatico:   mensaje,
-		MensajeDeterminista: true,
-		EsGigante:           true,
+func giantBatch(f ModifiedFile, message string, number int) PlannedBatch {
+	return PlannedBatch{
+		Layer:                f.Layer,
+		Number:               number,
+		Paths:                []string{f.Path},
+		TotalLines:           f.Lines,
+		Message:              message,
+		AutoMessage:          message,
+		DeterministicMessage: true,
+		IsOversized:          true,
 	}
 }
 
-func loteNormal(lote loteConCapa, numero int, lineasPorRuta map[string]int) LotePlanificado {
+func normalBatch(batch batchWithLayer, number int, linesPerPath map[string]int) PlannedBatch {
 	total := 0
-	for _, ruta := range lote.Rutas {
-		total += lineasPorRuta[ruta]
+	for _, path := range batch.Paths {
+		total += linesPerPath[path]
 	}
-	return LotePlanificado{
-		Capa:              lote.Capa,
-		Numero:            numero,
-		Rutas:             lote.Rutas,
-		LineasTotales:     total,
-		MensajeAutomatico: fmt.Sprintf("chore(slice): auto-fragmented %s batch #%d", lote.Capa, numero),
+	return PlannedBatch{
+		Layer:       batch.Layer,
+		Number:      number,
+		Paths:       batch.Paths,
+		TotalLines:  total,
+		AutoMessage: fmt.Sprintf("chore(slice): auto-fragmented %s batch #%d", batch.Layer, number),
 	}
 }
 
-func lotePorNumero(plan *PlanFragmentacion, numero int) (*LotePlanificado, error) {
-	for i := range plan.Lotes {
-		if plan.Lotes[i].Numero == numero {
-			return &plan.Lotes[i], nil
+func batchByNumber(plan *FragmentationPlan, number int) (*PlannedBatch, error) {
+	for i := range plan.Batches {
+		if plan.Batches[i].Number == number {
+			return &plan.Batches[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no existe el lote #%d en el plan", numero)
+	return nil, fmt.Errorf("batch #%d does not exist in the plan", number)
 }
 
-// commitLoteConMensaje añade las rutas y crea el commit con el mensaje
-// aprobado. Omite los hooks (--no-verify) porque el flujo de slice ya validó
-// el tamaño de cada lote y es el mecanismo de fragmentación del guardián.
+// commitBatchWithMessage adds the paths and creates the commit with the
+// approved message. It skips the hooks (--no-verify) because the slice
+// flow already validated each batch's size and it is the guardian's
+// fragmentation mechanism.
 //
-// El add usa -f: las rutas de un lote siempre vienen de
-// ObtenerArchivosModificados, que solo reporta archivos trackeados
-// modificados o untracked NO ignorados, así que forzar el add nunca cuela un
-// ignorado genuino. Lo que sí cubre es el caso real de un archivo que ya
-// estaba trackeado cuando .gitignore empezó a afectarle después (p. ej.
-// .atl/): sin -f, git add avisa y sale con código 1 aunque de todos modos deja
-// el archivo en stage, y ese error abortaba el lote entero sin dejar rastro
-// del motivo real (B13: antes de este cambio solo se veía "exit status 1").
-func commitLoteConMensaje(rutas []string, mensaje string) (string, error) {
-	argsAdd := append([]string{"add", "-f", "--"}, rutas...)
-	if salida, err := exec.Command("git", argsAdd...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git add falló: %w: %s", err, strings.TrimSpace(string(salida)))
+// The add uses -f: a batch's paths always come from GetModifiedFiles,
+// which only reports modified tracked files or untracked NOT-ignored
+// files, so forcing the add never slips in a genuinely ignored file. What
+// it does cover is the real case of a file that was already tracked when
+// .gitignore started to affect it afterwards (e.g. .atl/): without -f,
+// git add warns and exits with code 1 even though it leaves the file
+// staged anyway, and that error aborted the whole batch without leaving a
+// trace of the real cause (B13: before this change only "exit status 1"
+// was visible).
+func commitBatchWithMessage(paths []string, message string) (string, error) {
+	argsAdd := append([]string{"add", "-f", "--"}, paths...)
+	if out, err := exec.Command("git", argsAdd...).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git add failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	if salida, err := exec.Command("git", "commit", "-m", mensaje, "--no-verify").CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git commit falló: %w: %s", err, strings.TrimSpace(string(salida)))
+	if out, err := exec.Command("git", "commit", "-m", message, "--no-verify").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git commit failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	hash, err := ejecutarGitSalida("rev-parse", "--short", "HEAD")
+	hash, err := runGitOutput("rev-parse", "--short", "HEAD")
 	if err != nil {
 		return "", err
 	}

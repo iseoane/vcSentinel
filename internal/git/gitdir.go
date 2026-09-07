@@ -7,34 +7,33 @@ import (
 	"strings"
 )
 
-// ObtenerGitDir devuelve la ruta absoluta del common-dir de Git del
-// repositorio activo (`git rev-parse --absolute-git-dir`). En worktrees
-// enlazados devuelve el directorio privado del worktree
-// (`.git/worktrees/<nombre>`), lo que aísla el estado de VAS Sentinel por
-// worktree de forma gratuita. Nunca se asume la ruta literal `.git`: en
-// Windows y en worktrees enlazados el directorio puede estar representado por
-// un archivo gitfile.
-func ObtenerGitDir() (string, error) {
-	salida, err := ejecutarGitSalida("rev-parse", "--absolute-git-dir")
+// GetGitDir returns the absolute path of the active repository's Git
+// common-dir (`git rev-parse --absolute-git-dir`). In linked worktrees it
+// returns the worktree's private directory (`.git/worktrees/<name>`),
+// which isolates VAS Sentinel state per worktree for free. The literal
+// `.git` path is never assumed: on Windows and in linked worktrees the
+// directory may be represented by a gitfile.
+func GetGitDir() (string, error) {
+	out, err := runGitOutput("rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Clean(strings.TrimSpace(salida)), nil
+	return filepath.Clean(strings.TrimSpace(out)), nil
 }
 
-// ObtenerGitDirDe devuelve el git dir de la ruta indicada, no el del
-// directorio de trabajo del proceso. Es el gemelo que le faltaba a
-// ObtenerGitCommonDir, que sí acepta ruta desde siempre.
+// GetGitDirFrom returns the git dir of the given path, not the one of the
+// process's working directory. It is the twin GetGitCommonDir was missing,
+// which does accept a path and always has.
 //
-// Esa asimetría tenía consecuencias reales: un comando que opera sobre un
-// worktree ajeno y registra su evento con ObtenerGitDir() lo escribe en el
-// repositorio donde CASUALMENTE se ejecuta. Durante `go test` el cwd es este
-// repositorio, así que los tests de gate acababan anexando sus eventos de
-// fallo al registro operativo real.
+// That asymmetry had real consequences: a command operating on a foreign
+// worktree that records its event with GetGitDir() would write it into
+// whatever repository it HAPPENED to run in. During `go test` the cwd is
+// this repository, so the gate tests ended up appending their failure
+// events to the real operational ledger.
 //
-// Fuera de un repositorio devuelve error: el llamador debe no escribir en
-// ningún sitio, nunca escribir en el repositorio equivocado.
-func ObtenerGitDirDe(path string) (string, error) {
+// Outside a repository it returns an error: the caller must write nowhere
+// at all, never into the wrong repository.
+func GetGitDirFrom(path string) (string, error) {
 	cmd := exec.Command("git", "-C", path, "rev-parse", "--absolute-git-dir")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -44,23 +43,24 @@ func ObtenerGitDirDe(path string) (string, error) {
 	return filepath.Clean(strings.TrimSpace(out.String())), nil
 }
 
-// ObtenerGitCommonDir devuelve la ruta absoluta del common-dir de Git del
-// repositorio en path (`git rev-parse --git-common-dir`): el mismo directorio
-// para todos los worktrees enlazados del repositorio, a diferencia de
-// ObtenerGitDir. Se usa para instalar artefactos compartidos por todo el
-// repositorio (como los hooks), que Git solo lee del common-dir y no del
-// directorio privado de cada worktree enlazado.
-func ObtenerGitCommonDir(path string) (string, error) {
-	// Aislado igual que la sonda de alcance. Con un GIT_DIR ambiente, esta
-	// consulta seleccionaba otro repositorio, se enumeraban SUS ledgers y luego
-	// se clasificaban contra los refs de path: fichas vivas de un repositorio
-	// borradas por ser huérfanas en otro. Sanear solo una de las dos consultas
-	// es peor que no sanear ninguna, porque parte la identidad.
-	salida, err := GitEnAislado(path, "rev-parse", "--git-common-dir")
+// GetGitCommonDir returns the absolute path of the Git common-dir of the
+// repository at path (`git rev-parse --git-common-dir`): the same
+// directory for every linked worktree of the repository, unlike
+// GetGitDir. It is used to install artifacts shared by the whole
+// repository (like the hooks), which Git only reads from the common-dir
+// and not from each linked worktree's private directory.
+func GetGitCommonDir(path string) (string, error) {
+	// Isolated the same way as the reachability probe. With an ambient
+	// GIT_DIR, this query selected another repository, ITS ledgers were
+	// enumerated and then classified against path's refs: live records of
+	// one repository deleted for being orphans in another. Sanitizing only
+	// one of the two queries is worse than sanitizing neither, because it
+	// splits the identity.
+	out, err := GitInIsolated(path, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return "", err
 	}
-	dir := strings.TrimSpace(salida)
+	dir := strings.TrimSpace(out)
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(path, dir)
 	}

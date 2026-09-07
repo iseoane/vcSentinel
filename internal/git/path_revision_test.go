@@ -18,23 +18,23 @@ func TestRangeRenamesMapsSourceToDestination(t *testing.T) {
 		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{
+	dir := prepareTestRepo(t, map[string]string{
 		"base.txt":    "base\n",
 		"x.go":        "package x\n",
 		"old name.go": "package old\n",
 	})
 	t.Chdir(dir)
-	base := ejecutarGit(t, dir, "rev-parse", "HEAD")
+	base := runGitInDir(t, dir, "rev-parse", "HEAD")
 
-	ejecutarGit(t, dir, "mv", "x.go", "y.go")
-	ejecutarGit(t, dir, "mv", "old name.go", "new name v2.go") // internal spaces only: portable, proves no whitespace splitting
+	runGitInDir(t, dir, "mv", "x.go", "y.go")
+	runGitInDir(t, dir, "mv", "old name.go", "new name v2.go") // internal spaces only: portable, proves no whitespace splitting
 	if err := os.WriteFile(filepath.Join(dir, "nuevo.go"), []byte("package nuevo\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGit(t, dir, "add", "-A")
-	ejecutarGit(t, dir, "commit", "-q", "-m", "feat: renames and addition")
+	runGitInDir(t, dir, "add", "-A")
+	runGitInDir(t, dir, "commit", "-q", "-m", "feat: renames and addition")
 
-	head := ejecutarGit(t, dir, "rev-parse", "HEAD")
+	head := runGitInDir(t, dir, "rev-parse", "HEAD")
 	renames, err := RangeRenames(base, head)
 	if err != nil {
 		t.Fatalf("RangeRenames: %v", err)
@@ -43,9 +43,9 @@ func TestRangeRenamesMapsSourceToDestination(t *testing.T) {
 		t.Errorf("renames = %v, want x.go->y.go, old name.go->new name v2.go, and no mapping for nuevo.go", renames)
 	}
 
-	ejecutarGit(t, dir, "rm", "-q", "y.go")
-	ejecutarGit(t, dir, "commit", "-q", "-m", "fix: delete y")
-	if deleted, err := RangeRenames(head, ejecutarGit(t, dir, "rev-parse", "HEAD")); err != nil || len(deleted) != 0 {
+	runGitInDir(t, dir, "rm", "-q", "y.go")
+	runGitInDir(t, dir, "commit", "-q", "-m", "fix: delete y")
+	if deleted, err := RangeRenames(head, runGitInDir(t, dir, "rev-parse", "HEAD")); err != nil || len(deleted) != 0 {
 		t.Errorf("deletion-range renames = %v/%v, want empty without error", deleted, err)
 	}
 }

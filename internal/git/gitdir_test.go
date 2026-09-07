@@ -7,105 +7,105 @@ import (
 	"testing"
 )
 
-func TestObtenerGitDirEnRepositorio(t *testing.T) {
+func TestObtainGitDirInsideRepository(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
+	dir := prepareTestRepo(t, map[string]string{"a.go": "package a\n"})
 	t.Chdir(dir)
 
-	gitDir, err := ObtenerGitDir()
+	gitDir, err := GetGitDir()
 	if err != nil {
-		t.Fatalf("ObtenerGitDir devolvió error: %v", err)
+		t.Fatalf("GetGitDir returned error: %v", err)
 	}
-	esperado := filepath.Join(dir, ".git")
-	if !EsMismaRuta(gitDir, esperado) {
-		t.Errorf("ObtenerGitDir() = %q, esperado %q", gitDir, esperado)
+	expected := filepath.Join(dir, ".git")
+	if !IsSamePath(gitDir, expected) {
+		t.Errorf("GetGitDir() = %q, expected %q", gitDir, expected)
 	}
 }
 
-func TestObtenerGitDirFueraDeRepositorio(t *testing.T) {
+func TestObtainGitDirOutsideRepository(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
 	t.Chdir(t.TempDir())
 
-	if _, err := ObtenerGitDir(); err == nil {
-		t.Error("se esperaba error al consultar el git-dir fuera de un repositorio Git")
+	if _, err := GetGitDir(); err == nil {
+		t.Error("expected an error when querying the git dir outside a Git repository")
 	}
 }
 
-func TestObtenerGitDirDesdeSubdirectorio(t *testing.T) {
+func TestObtainGitDirFromSubdirectory(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la integración con repositorio git real en modo -short")
+		t.Skip("skips the real git repository integration in short mode")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
 
-	dir := prepararRepositorioPrueba(t, map[string]string{"a.go": "package a\n"})
-	sub := filepath.Join(dir, "internal", "paquete")
+	dir := prepareTestRepo(t, map[string]string{"a.go": "package a\n"})
+	sub := filepath.Join(dir, "internal", "package")
 	if err := os.MkdirAll(sub, 0755); err != nil {
-		t.Fatalf("no se pudo crear el subdirectorio: %v", err)
+		t.Fatalf("could not create the subdirectory: %v", err)
 	}
 	t.Chdir(sub)
 
-	gitDir, err := ObtenerGitDir()
+	gitDir, err := GetGitDir()
 	if err != nil {
-		t.Fatalf("ObtenerGitDir devolvió error: %v", err)
+		t.Fatalf("GetGitDir returned error: %v", err)
 	}
-	esperado := filepath.Join(dir, ".git")
-	if !EsMismaRuta(gitDir, esperado) {
-		t.Errorf("ObtenerGitDir() = %q, esperado %q", gitDir, esperado)
+	expected := filepath.Join(dir, ".git")
+	if !IsSamePath(gitDir, expected) {
+		t.Errorf("GetGitDir() = %q, expected %q", gitDir, expected)
 	}
 }
 
-// TestObtenerGitDirDeResuelveDesdeLaRutaNoDesdeElCwd fija el contrato que
-// faltaba: el git dir se resuelve desde la ruta indicada, no desde el
-// directorio de trabajo del proceso.
+// TestObtainGitDirFromPathNotCwd pins the missing contract: the
+// git dir is resolved from the given path, not from the process working
+// directory.
 //
-// Sin él, un comando que opera sobre un worktree ajeno escribe en el
-// repositorio donde CASUALMENTE se ejecuta. Eso es lo que llenó el registro de
-// eventos real con 855 de 1082 entradas fabricadas por la suite de tests: los
-// tests pasan un worktree temporal, pero ObtenerGitDir() lee el cwd, que
-// durante `go test` es el propio repositorio.
-func TestObtenerGitDirDeResuelveDesdeLaRutaNoDesdeElCwd(t *testing.T) {
+// Without it, a command operating on a foreign worktree writes to the
+// repository where it CASUALLY runs. That is what filled the real event log
+// with 855 of 1082 entries fabricated by the test suite: the tests pass a
+// temporary worktree, but GetGitDir() reads the cwd, which during `go
+// test` is the repository itself.
+func TestObtainGitDirFromPathNotCwd(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git no está disponible en el PATH")
+		t.Skip("git is not available in PATH")
 	}
-	ajeno := t.TempDir()
-	if out, err := exec.Command("git", "-C", ajeno, "init", "-q", "-b", "main").CombinedOutput(); err != nil {
+	foreign := t.TempDir()
+	if out, err := exec.Command("git", "-C", foreign, "init", "-q", "-b", "main").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 
-	// El cwd sigue siendo este repositorio: exactamente la situación de un test.
-	resuelto, err := ObtenerGitDirDe(ajeno)
+	// The cwd is still this repository: exactly a test's situation.
+	resolved, err := GetGitDirFrom(foreign)
 	if err != nil {
-		t.Fatalf("ObtenerGitDirDe(%q): %v", ajeno, err)
+		t.Fatalf("GetGitDirFrom(%q): %v", foreign, err)
 	}
-	esperado, err := filepath.EvalSymlinks(filepath.Join(ajeno, ".git"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	obtenido, err := filepath.EvalSymlinks(resuelto)
+	expected, err := filepath.EvalSymlinks(filepath.Join(foreign, ".git"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if obtenido != esperado {
-		t.Errorf("ObtenerGitDirDe = %q, esperado %q: resolvió desde el cwd en vez de desde la ruta", obtenido, esperado)
+	got, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != expected {
+		t.Errorf("GetGitDirFrom = %q, expected %q: resolved from the cwd instead of from the path", got, expected)
 	}
 
-	// Fuera de un repositorio debe fallar, para que el llamador no escriba en
-	// ningún sitio en vez de escribir en el repositorio equivocado.
-	if _, err := ObtenerGitDirDe(t.TempDir()); err == nil {
-		t.Error("ObtenerGitDirDe fuera de un repositorio debería fallar")
+	// Outside a repository it must fail, so the caller writes nowhere instead
+	// of writing to the wrong repository.
+	if _, err := GetGitDirFrom(t.TempDir()); err == nil {
+		t.Error("GetGitDirFrom outside a repository should fail")
 	}
 }

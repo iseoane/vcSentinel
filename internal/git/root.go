@@ -6,27 +6,26 @@ import (
 	"strings"
 )
 
-// ObtenerRaizWorktree devuelve la ruta absoluta normalizada de la raíz del
-// worktree Git activo (el directorio desde el que se ejecuta el proceso).
-// Devuelve error si el directorio actual no pertenece a un repositorio Git
-// (o es un repositorio bare), porque no existe una raíz de trabajo que
-// reportar.
-func ObtenerRaizWorktree() (string, error) {
-	salida, err := ejecutarGitSalida("rev-parse", "--show-toplevel")
+// GetWorktreeRoot returns the normalized absolute path of the active Git
+// worktree's root (the directory the process runs from). It returns an
+// error if the current directory does not belong to a Git repository (or is
+// a bare repository), because there is no working root to report.
+func GetWorktreeRoot() (string, error) {
+	out, err := runGitOutput("rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Clean(strings.TrimSpace(salida)), nil
+	return filepath.Clean(strings.TrimSpace(out)), nil
 }
 
-// EsMismaRuta compara dos rutas tolerando diferencias de separador y de
-// mayúsculas. En Windows la comparación ignora mayúsculas; en el resto de
-// sistemas es sensible a mayúsculas.
-func EsMismaRuta(a string, b string) bool {
-	limpiaA := filepath.Clean(a)
-	limpiaB := filepath.Clean(b)
+// IsSamePath compares two paths tolerating separator and case differences.
+// On Windows the comparison ignores case; on every other system it is
+// case-sensitive.
+func IsSamePath(a string, b string) bool {
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
 	if runtime.GOOS == "windows" {
-		return strings.EqualFold(limpiaA, limpiaB)
+		return strings.EqualFold(cleanA, cleanB)
 	}
-	return limpiaA == limpiaB
+	return cleanA == cleanB
 }

@@ -17,7 +17,7 @@ type LineRange struct {
 // TouchedRanges diffs before and after as arbitrary in-memory text (neither
 // has to be committed or tracked) and returns, in the after content's line
 // numbering, the ranges touched by each hunk. It writes both to temp files
-// and reuses ejecutarGitDiffNoIndex the same way the micro-diff path in
+// and reuses runGitDiffNoIndex the same way the micro-diff path in
 // slice.go does, so two arbitrary strings can be compared without touching
 // the git index.
 func TouchedRanges(before, after string) ([]LineRange, error) {
@@ -33,7 +33,7 @@ func TouchedRanges(before, after string) ([]LineRange, error) {
 	}
 	defer os.Remove(afterFile)
 
-	diff, err := ejecutarGitDiffNoIndex("--unified=0", beforeFile, afterFile)
+	diff, err := runGitDiffNoIndex("--unified=0", beforeFile, afterFile)
 	if err != nil {
 		return nil, fmt.Errorf("git: could not diff the two contents: %w", err)
 	}

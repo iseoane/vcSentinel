@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// prepararRepoTemp crea un repo git temporal con identidad local configurada y
-// cambia al directorio de trabajo (los helpers de git operan sobre el cwd).
-// Devuelve la ruta del repo para que el test la use con filepath.Join.
-// PRECAUCIÓN: t.Chdir muta el cwd del proceso; los tests de este paquete no
-// deben usar t.Parallel(), o el cwd se filtraría entre tests. Preferir
-// os.Chdir con defer de restauración si algún día se necesita paralelismo.
-func prepararRepoTemp(t *testing.T) string {
+// prepareTempRepo creates a temporary git repo with the local identity
+// configured and changes into its working directory (the git helpers operate
+// on the cwd). Returns the repo path so tests can use it with filepath.Join.
+// CAUTION: t.Chdir mutates the process cwd; tests in this package must not
+// use t.Parallel(), or the cwd would leak between tests. Prefer os.Chdir with
+// a defer-restore if parallelism is ever needed.
+func prepareTempRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	t.Chdir(repo)
@@ -22,131 +22,133 @@ func prepararRepoTemp(t *testing.T) string {
 		{"init", "-b", "main"},
 		{"config", "user.email", "test@vas.sentinel"},
 		{"config", "user.name", "VAS Sentinel Test"},
-		// El core.hooksPath global del usuario instala el hook de volumen que
-		// rechazaría los commits de prueba: se desactiva solo para el repo temp.
+		// The user's global core.hooksPath installs the volume hook that
+		// would reject the test commits: it is disabled for this temp repo
+		// only.
 		{"config", "core.hooksPath", ""},
 	} {
-		if salida, err := ejecutarGitSalida(cmd...); err != nil {
-			t.Fatalf("preparación %v falló: %v (%s)", cmd, err, salida)
+		if out, err := runGitOutput(cmd...); err != nil {
+			t.Fatalf("setup %v failed: %v (%s)", cmd, err, out)
 		}
 	}
 	return repo
 }
 
-// commitEnRepo crea un commit con un archivo nuevo en el repo actual y
-// devuelve su SHA completo.
-func commitEnRepo(t *testing.T, nombre, contenido string) string {
+// commitInRepo creates a commit with a new file in the current repo and
+// returns its full SHA.
+func commitInRepo(t *testing.T, name, content string) string {
 	t.Helper()
-	ruta := filepath.Join(nombre)
-	if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
-		t.Fatalf("no se pudo escribir %s: %v", nombre, err)
+	path := filepath.Join(name)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("could not write %s: %v", name, err)
 	}
-	ejecutar(t, "add", nombre)
-	ejecutar(t, "commit", "-m", "feat("+nombre+"): contenido de prueba")
-	sha, err := ejecutarGitSalida("rev-parse", "HEAD")
+	runGitCommand(t, "add", name)
+	runGitCommand(t, "commit", "-m", "feat("+name+"): test content")
+	sha, err := runGitOutput("rev-parse", "HEAD")
 	if err != nil {
-		t.Fatalf("no se pudo leer HEAD: %v", err)
+		t.Fatalf("could not read HEAD: %v", err)
 	}
 	return strings.TrimSpace(sha)
 }
 
-func ejecutar(t *testing.T, args ...string) {
+func runGitCommand(t *testing.T, args ...string) {
 	t.Helper()
-	if _, err := ejecutarGitSalida(args...); err != nil {
-		t.Fatalf("git %v falló: %v", args, err)
+	if _, err := runGitOutput(args...); err != nil {
+		t.Fatalf("git %v failed: %v", args, err)
 	}
 }
 
-// TestMergeBase verifica el ancestro común entre main y una rama creada desde
-// un commit intermedio.
+// TestMergeBase checks the common ancestor between main and a branch created
+// from an intermediate commit.
 func TestMergeBase(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "a.txt", "base\n")
-	intermedio := commitEnRepo(t, "b.txt", "segundo\n")
-	ejecutar(t, "checkout", "-b", "feature")
-	commitEnRepo(t, "c.txt", "rama\n")
+	prepareTempRepo(t)
+	commitInRepo(t, "a.txt", "base\n")
+	intermediate := commitInRepo(t, "b.txt", "second\n")
+	runGitCommand(t, "checkout", "-b", "feature")
+	commitInRepo(t, "c.txt", "branch\n")
 
 	base, err := MergeBase("main", "HEAD")
 	if err != nil {
-		t.Fatalf("MergeBase falló: %v", err)
+		t.Fatalf("MergeBase failed: %v", err)
 	}
-	if base != intermedio {
-		t.Errorf("MergeBase = %s, esperado %s (el commit desde el que se creó la rama)", base, intermedio)
+	if base != intermediate {
+		t.Errorf("MergeBase = %s, expected %s (the commit the branch was created from)", base, intermediate)
 	}
 }
 
-// TestNumstatRango suma añadidas + borradas del rango, ignorando binarios.
-func TestNumstatRango(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "a.txt", strings.Repeat("x\n", 10))
-	ejecutar(t, "checkout", "-b", "feature")
+// TestNumstatRange sums added + deleted lines of the range, ignoring
+// binaries.
+func TestNumstatRange(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "a.txt", strings.Repeat("x\n", 10))
+	runGitCommand(t, "checkout", "-b", "feature")
 
-	// Sustituye las 10 líneas "x" por 15 líneas "y" en a.txt (10 borradas +
-	// 15 añadidas reales) y crea b.txt con 3 líneas.
+	// Replaces the 10 "x" lines with 15 "y" lines in a.txt (10 deleted + 15
+	// really added) and creates b.txt with 3 lines.
 	if err := os.WriteFile("a.txt", []byte(strings.Repeat("y\n", 15)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile("b.txt", []byte("1\n2\n3\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutar(t, "add", "-A")
-	ejecutar(t, "commit", "-m", "feat: volumen de rama")
+	runGitCommand(t, "add", "-A")
+	runGitCommand(t, "commit", "-m", "feat: branch volume")
 
-	vol, err := NumstatRango("main", "HEAD")
+	vol, err := RangeNumstat("main", "HEAD")
 	if err != nil {
-		t.Fatalf("NumstatRango falló: %v", err)
+		t.Fatalf("NumstatRange failed: %v", err)
 	}
-	// 15 añadidas en a.txt + 10 borradas en a.txt + 3 añadidas en b.txt.
+	// 15 added in a.txt + 10 deleted in a.txt + 3 added in b.txt.
 	if vol != 28 {
-		t.Errorf("NumstatRango = %d, esperado 28 (15+3 añadidas, 10 borradas)", vol)
+		t.Errorf("NumstatRange = %d, expected 28 (15+3 added, 10 deleted)", vol)
 	}
 }
 
-// TestNumstatRangoVacio: sin cambios el volumen es cero.
-func TestNumstatRangoVacio(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "a.txt", "x\n")
+// TestNumstatRangeEmpty: without changes the volume is zero.
+func TestNumstatRangeEmpty(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "a.txt", "x\n")
 
-	vol, err := NumstatRango("HEAD", "HEAD")
+	vol, err := RangeNumstat("HEAD", "HEAD")
 	if err != nil {
-		t.Fatalf("NumstatRango falló: %v", err)
+		t.Fatalf("NumstatRange failed: %v", err)
 	}
 	if vol != 0 {
-		t.Errorf("NumstatRango = %d, esperado 0", vol)
+		t.Errorf("NumstatRange = %d, expected 0", vol)
 	}
 }
 
-// TestMergeBaseSinBase: dos ramas sin ancestro común son un error explícito,
-// porque no existe base sobre la que medir el rango.
-func TestMergeBaseSinBase(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "a.txt", "main\n")
-	// Rama huérfana: un commit raíz desconectado de main.
-	ejecutar(t, "checkout", "--orphan", "otra")
-	commitEnRepo(t, "b.txt", "otra\n")
-	ejecutar(t, "checkout", "main")
+// TestMergeBaseWithoutBase: two branches without a common ancestor are an
+// explicit error, because there is no base over which to measure the range.
+func TestMergeBaseWithoutBase(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "a.txt", "main\n")
+	// Orphan branch: a root commit disconnected from main.
+	runGitCommand(t, "checkout", "--orphan", "other")
+	commitInRepo(t, "b.txt", "other\n")
+	runGitCommand(t, "checkout", "main")
 
-	if _, err := MergeBase("main", "otra"); err == nil {
-		t.Error("MergeBase aceptó dos ramas sin ancestro común")
+	if _, err := MergeBase("main", "other"); err == nil {
+		t.Error("MergeBase accepted two branches without a common ancestor")
 	}
 }
 
-// TestNumstatRangoInvalido: un rango con una revisión inexistente falla.
-func TestNumstatRangoInvalido(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "a.txt", "x\n")
+// TestNumstatRangeInvalidRevision: a range with a nonexistent revision fails.
+func TestNumstatRangeInvalidRevision(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "a.txt", "x\n")
 
-	if _, err := NumstatRango("no-existe", "HEAD"); err == nil {
-		t.Error("NumstatRango aceptó una revisión inexistente")
+	if _, err := RangeNumstat("nonexistent", "HEAD"); err == nil {
+		t.Error("NumstatRange accepted a nonexistent revision")
 	}
 }
 
-// TestNumstatRangoBinario: un archivo binario llega como "-" en el numstat y
-// no debe sumar líneas ni romper el conteo del resto.
-func TestNumstatRangoBinario(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "a.txt", "x\n")
-	ejecutar(t, "checkout", "-b", "feature")
+// TestNumstatRangeBinary: a binary file arrives as "-" in the numstat and
+// must neither sum lines nor break the count of the rest.
+func TestNumstatRangeBinary(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "a.txt", "x\n")
+	runGitCommand(t, "checkout", "-b", "feature")
 
 	if err := os.WriteFile("bin.dat", []byte{0x00, 0x01, 0x02, 0x00, 0xFF}, 0644); err != nil {
 		t.Fatal(err)
@@ -154,15 +156,15 @@ func TestNumstatRangoBinario(t *testing.T) {
 	if err := os.WriteFile("a.txt", []byte("x\ny\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutar(t, "add", "-A")
-	ejecutar(t, "commit", "-m", "feat: con binario")
+	runGitCommand(t, "add", "-A")
+	runGitCommand(t, "commit", "-m", "feat: with binary")
 
-	vol, err := NumstatRango("main", "HEAD")
+	vol, err := RangeNumstat("main", "HEAD")
 	if err != nil {
-		t.Fatalf("NumstatRango falló: %v", err)
+		t.Fatalf("NumstatRange failed: %v", err)
 	}
-	// Solo cuenta la línea añadida en a.txt; el binario se ignora.
+	// Only counts the added line in a.txt; the binary is ignored.
 	if vol != 1 {
-		t.Errorf("NumstatRango = %d, esperado 1 (el binario no suma líneas)", vol)
+		t.Errorf("NumstatRange = %d, expected 1 (the binary adds no lines)", vol)
 	}
 }

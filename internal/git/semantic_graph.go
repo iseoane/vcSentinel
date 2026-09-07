@@ -17,7 +17,7 @@ func readSemanticFiles(changes []PlannedChange) ([]semanticFile, bool) {
 	files := make([]semanticFile, len(changes))
 	opaque := false
 	for i, change := range changes {
-		file := semanticFile{change: change, path: change.Path, pkg: packageKey(change.Path, ""), class: ClaseArchivo(change.Path), layer: ClasificarCapa(change.Path), test: strings.HasSuffix(change.Path, "_test.go"), defs: map[string]bool{}}
+		file := semanticFile{change: change, path: change.Path, pkg: packageKey(change.Path, ""), class: FileClass(change.Path), layer: ClassifyLayer(change.Path), test: strings.HasSuffix(change.Path, "_test.go"), defs: map[string]bool{}}
 		if !strings.HasSuffix(strings.ToLower(change.Path), ".go") {
 			files[i] = file
 			continue
@@ -144,7 +144,7 @@ func importedPackage(alias string, files []semanticFile) string {
 	return ""
 }
 
-func semanticCohesion(files []semanticFile, reader internalchange.LectorGit) (map[string]int, string) {
+func semanticCohesion(files []semanticFile, reader internalchange.GitReader) (map[string]int, string) {
 	paths := make([]string, 0, len(files))
 	for _, file := range files {
 		paths = append(paths, file.path)
@@ -153,11 +153,11 @@ func semanticCohesion(files []semanticFile, reader internalchange.LectorGit) (ma
 	if err != nil {
 		return map[string]int{}, fmt.Sprintf("Structural cohesion was unavailable; deterministic fallback used: %v.", err)
 	}
-	sort.Slice(result.Grupos, func(i, j int) bool {
-		return smallestPath(result.Grupos[i]) < smallestPath(result.Grupos[j])
+	sort.Slice(result.Groups, func(i, j int) bool {
+		return smallestPath(result.Groups[i]) < smallestPath(result.Groups[j])
 	})
 	ranks := map[string]int{}
-	for rank, group := range result.Grupos {
+	for rank, group := range result.Groups {
 		for _, path := range group {
 			ranks[path] = rank
 		}
@@ -250,7 +250,7 @@ func semanticComponents(files []semanticFile, graph semanticGraph, boundaries ma
 			if rank := ranks[files[i].path]; rank < component.rank {
 				component.rank = rank
 			}
-			if rangoClase(files[i].class) < rangoClase(component.class) {
+			if classRange(files[i].class) < classRange(component.class) {
 				component.class = files[i].class
 			}
 			if files[i].path < component.first {
@@ -269,8 +269,8 @@ func semanticComponents(files []semanticFile, graph semanticGraph, boundaries ma
 		if left.rank != right.rank {
 			return left.rank < right.rank
 		}
-		if rangoClase(left.class) != rangoClase(right.class) {
-			return rangoClase(left.class) < rangoClase(right.class)
+		if classRange(left.class) != classRange(right.class) {
+			return classRange(left.class) < classRange(right.class)
 		}
 		return left.first < right.first
 	})
@@ -316,8 +316,8 @@ func semanticLess(left, right int, files []semanticFile, ranks map[string]int) b
 	if ranks[files[left].path] != ranks[files[right].path] {
 		return ranks[files[left].path] < ranks[files[right].path]
 	}
-	if rangoClase(files[left].class) != rangoClase(files[right].class) {
-		return rangoClase(files[left].class) < rangoClase(files[right].class)
+	if classRange(files[left].class) != classRange(files[right].class) {
+		return classRange(files[left].class) < classRange(files[right].class)
 	}
 	if files[left].layer != files[right].layer {
 		return files[left].layer < files[right].layer

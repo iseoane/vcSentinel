@@ -9,9 +9,9 @@ import (
 
 func TestBuildSemanticSlicePlanKeepsDirectDependenciesTogether(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeSemanticFile(t, "internal/git/staged.go", "package git\nfunc MedirVolumenStaged() {}\n")
-	writeSemanticFile(t, "internal/git/staged_test.go", "package git\nfunc TestStaged() { MedirVolumenStaged() }\n")
-	writeSemanticFile(t, "cmd/sentinel/staged_check.go", "package main\nimport git \"github.com/ISeoane-Quental/vas.sentinel/internal/git\"\nfunc check() { git.MedirVolumenStaged() }\n")
+	writeSemanticFile(t, "internal/git/staged.go", "package git\nfunc MeasureStagedVolume() {}\n")
+	writeSemanticFile(t, "internal/git/staged_test.go", "package git\nfunc TestStaged() { MeasureStagedVolume() }\n")
+	writeSemanticFile(t, "cmd/sentinel/staged_check.go", "package main\nimport git \"github.com/ISeoane-Quental/vas.sentinel/internal/git\"\nfunc check() { git.MeasureStagedVolume() }\n")
 	writeSemanticFile(t, "cmd/sentinel/staged_check_test.go", "package main\nfunc TestCheck() { check() }\n")
 
 	changes := []PlannedChange{
@@ -24,37 +24,37 @@ func TestBuildSemanticSlicePlanKeepsDirectDependenciesTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Lotes) != 1 {
-		t.Fatalf("semantic dependency unit was split: %+v", plan.Lotes)
+	if len(plan.Batches) != 1 {
+		t.Fatalf("semantic dependency unit was split: %+v", plan.Batches)
 	}
-	paths := plan.Lotes[0].Rutas
+	paths := plan.Batches[0].Paths
 	if indexOfPath(paths, "internal/git/staged.go") > indexOfPath(paths, "cmd/sentinel/staged_check.go") {
 		t.Fatalf("dependency was ordered after its consumer: %v", paths)
 	}
-	if len(plan.Lotes[0].Selectors) != 4 {
-		t.Fatalf("selectors = %+v, want production and focused tests together", plan.Lotes[0].Selectors)
+	if len(plan.Batches[0].Selectors) != 4 {
+		t.Fatalf("selectors = %+v, want production and focused tests together", plan.Batches[0].Selectors)
 	}
 }
 
-func TestConstruirPlanParaAgenteValidatesAccumulatedMultiFileCoverage(t *testing.T) {
-	prepararRepoTemp(t)
-	commitEnRepo(t, "base.txt", "base\n")
+func TestBuildPlanForAgentValidatesAccumulatedMultiFileCoverage(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
 	writeSemanticFile(t, "a.go", "package sample\n\nfunc A() { B() }\n")
 	writeSemanticFile(t, "b.go", "package sample\n\nfunc B() {\n\tA()\n}\n")
 
-	plan, err := ConstruirPlanParaAgente()
+	plan, err := BuildPlanForAgent()
 	if err != nil {
-		t.Fatalf("ConstruirPlanParaAgente failed: %v", err)
+		t.Fatalf("BuildPlanForAgent failed: %v", err)
 	}
 	if err := ValidateSerializedPlan(plan); err != nil {
 		t.Fatalf("serialized accumulated plan failed validation: %v", err)
 	}
-	if len(plan.Lotes) != 1 || len(plan.Lotes[0].Selectors) != 2 {
-		t.Fatalf("accumulated plan = %+v, want one batch with both files", plan.Lotes)
+	if len(plan.Batches) != 1 || len(plan.Batches[0].Selectors) != 2 {
+		t.Fatalf("accumulated plan = %+v, want one batch with both files", plan.Batches)
 	}
-	for _, lote := range plan.Lotes {
-		if got := selectedLinesFromPlan(t, plan, lote); got != lote.Lineas {
-			t.Fatalf("batch %d reports %d lines but selects %d", lote.Numero, lote.Lineas, got)
+	for _, batch := range plan.Batches {
+		if got := selectedLinesFromPlan(t, plan, batch); got != batch.Lines {
+			t.Fatalf("batch %d reports %d lines but selects %d", batch.Number, batch.Lines, got)
 		}
 	}
 }
@@ -67,15 +67,15 @@ func TestBuildSemanticSlicePlanSubdividesSafeExactAtoms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Lotes) != 2 {
-		t.Fatalf("lotes = %+v, want one exact-atom batch per safe part", plan.Lotes)
+	if len(plan.Batches) != 2 {
+		t.Fatalf("batches = %+v, want one exact-atom batch per safe part", plan.Batches)
 	}
-	for _, lote := range plan.Lotes {
-		if lote.LineasTotales > LimiteLineasRevisables || len(lote.Selectors) != 1 || lote.Selectors[0].Mode != SelectorHunk {
-			t.Fatalf("unsafe or oversized exact split: %+v", lote)
+	for _, batch := range plan.Batches {
+		if batch.TotalLines > ReviewableLinesLimit || len(batch.Selectors) != 1 || batch.Selectors[0].Mode != SelectorHunk {
+			t.Fatalf("unsafe or oversized exact split: %+v", batch)
 		}
 	}
-	serialized := SerializarPlan(plan, nil, "state")
+	serialized := SerializePlan(plan, nil, "state")
 	if err := ValidatePlanSelections(serialized); err != nil {
 		t.Fatalf("exact split failed selection validation: %v", err)
 	}
@@ -94,18 +94,18 @@ func TestBuildSemanticSlicePlanReportsSelectedAtomLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serialized := SerializarPlan(plan, nil, "state")
+	serialized := SerializePlan(plan, nil, "state")
 	if err := ValidatePlanSelections(serialized); err != nil {
 		t.Fatalf("line-accounting plan failed selection validation: %v", err)
 	}
-	if len(serialized.Lotes) != 1 {
-		t.Fatalf("lotes = %+v, want one accumulated batch", serialized.Lotes)
+	if len(serialized.Batches) != 1 {
+		t.Fatalf("batches = %+v, want one accumulated batch", serialized.Batches)
 	}
-	if got, want := serialized.Lotes[0].Lineas, 280; got != want {
+	if got, want := serialized.Batches[0].Lines, 280; got != want {
 		t.Fatalf("serialized line count = %d, want %d", got, want)
 	}
-	if got := selectedLinesFromPlan(t, serialized, serialized.Lotes[0]); got != serialized.Lotes[0].Lineas {
-		t.Fatalf("serialized line count = %d, selected atom lines = %d", serialized.Lotes[0].Lineas, got)
+	if got := selectedLinesFromPlan(t, serialized, serialized.Batches[0]); got != serialized.Batches[0].Lines {
+		t.Fatalf("serialized line count = %d, selected atom lines = %d", serialized.Batches[0].Lines, got)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestBuildSemanticSlicePlanSurfacesUnsafeOversizedUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if called.AddedLines != 401 || len(called.Paths) != 1 || !plan.Lotes[0].EsGigante {
-		t.Fatalf("oversized decision = %+v, plan = %+v", called, plan.Lotes)
+	if called.AddedLines != 401 || len(called.Paths) != 1 || !plan.Batches[0].IsOversized {
+		t.Fatalf("oversized decision = %+v, plan = %+v", called, plan.Batches)
 	}
 }
 
@@ -161,8 +161,8 @@ func TestBuildSemanticSlicePlanFallsBackFromInvalidExternalProposal(t *testing.T
 	if !strings.Contains(plan.Explanation, "External proposal rejected") {
 		t.Fatalf("fallback explanation = %q", plan.Explanation)
 	}
-	if len(plan.Lotes) != 1 || len(plan.Lotes[0].Rutas) != 2 {
-		t.Fatalf("fallback plan = %+v", plan.Lotes)
+	if len(plan.Batches) != 1 || len(plan.Batches[0].Paths) != 2 {
+		t.Fatalf("fallback plan = %+v", plan.Batches)
 	}
 }
 
@@ -208,10 +208,10 @@ func indexOfPath(paths []string, path string) int {
 	return len(paths)
 }
 
-func selectedLinesFromPlan(t *testing.T, plan *PlanSerializado, lote LoteSerializado) int {
+func selectedLinesFromPlan(t *testing.T, plan *SerializedPlan, batch SerializedBatch) int {
 	t.Helper()
 	lines := 0
-	for _, selector := range lote.Selectors {
+	for _, selector := range batch.Selectors {
 		found := false
 		for _, change := range plan.Changes {
 			if changeKey(change.Path, change.OldPath) != changeKey(selector.Path, selector.OldPath) {

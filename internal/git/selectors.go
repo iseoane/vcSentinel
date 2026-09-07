@@ -92,25 +92,25 @@ var (
 )
 
 type planIdentity struct {
-	State     string              `json:"state"`
-	Batches   []batchIdentity     `json:"batches"`
-	Changes   []PlannedChange     `json:"changes,omitempty"`
-	Decisions []DecisionPendiente `json:"decisions,omitempty"`
+	State     string            `json:"state"`
+	Batches   []batchIdentity   `json:"batches"`
+	Changes   []PlannedChange   `json:"changes,omitempty"`
+	Decisions []PendingDecision `json:"decisions,omitempty"`
 }
 
 type batchIdentity struct {
-	Numero    int              `json:"numero"`
-	Capa      string           `json:"capa"`
-	Rutas     []string         `json:"rutas"`
-	Lineas    int              `json:"lineas"`
-	EsGigante bool             `json:"es_gigante"`
-	Selectors []ChangeSelector `json:"selectors"`
+	Number      int              `json:"number"`
+	Layer       string           `json:"layer"`
+	Paths       []string         `json:"paths"`
+	Lines       int              `json:"lines"`
+	IsOversized bool             `json:"is_oversized"`
+	Selectors   []ChangeSelector `json:"selectors"`
 }
 
 // ValidatePlanSelections proves that every captured change atom is selected
 // exactly once. Plans without a captured draft retain route-only compatibility,
 // but they may only contain whole-file selectors.
-func ValidatePlanSelections(plan *PlanSerializado) error {
+func ValidatePlanSelections(plan *SerializedPlan) error {
 	if plan == nil {
 		return invalidPlan("plan is nil")
 	}
@@ -122,56 +122,56 @@ func ValidatePlanSelections(plan *PlanSerializado) error {
 	if err != nil {
 		return err
 	}
-	if len(plan.Lotes) == 0 {
+	if len(plan.Batches) == 0 {
 		return invalidPlan("captured changes are not covered by any batch")
 	}
 
 	selected := make(map[string]int)
-	batchNumbers := make(map[int]struct{}, len(plan.Lotes))
-	for i, lote := range plan.Lotes {
-		if lote.Numero <= 0 {
+	batchNumbers := make(map[int]struct{}, len(plan.Batches))
+	for i, batch := range plan.Batches {
+		if batch.Number <= 0 {
 			return invalidPlan("batch %d has an invalid number", i)
 		}
-		if _, exists := batchNumbers[lote.Numero]; exists {
-			return invalidPlan("batch number %d is repeated", lote.Numero)
+		if _, exists := batchNumbers[batch.Number]; exists {
+			return invalidPlan("batch number %d is repeated", batch.Number)
 		}
-		batchNumbers[lote.Numero] = struct{}{}
-		if len(lote.Rutas) == 0 {
-			return invalidPlan("batch %d has no routes", lote.Numero)
+		batchNumbers[batch.Number] = struct{}{}
+		if len(batch.Paths) == 0 {
+			return invalidPlan("batch %d has no routes", batch.Number)
 		}
-		if len(lote.Selectors) == 0 {
-			return invalidPlan("batch %d has no selectors", lote.Numero)
+		if len(batch.Selectors) == 0 {
+			return invalidPlan("batch %d has no selectors", batch.Number)
 		}
 
-		routeSet := make(map[string]struct{}, len(lote.Rutas))
-		for _, ruta := range lote.Rutas {
-			normalized, err := validatePlanPath(ruta)
+		routeSet := make(map[string]struct{}, len(batch.Paths))
+		for _, path := range batch.Paths {
+			normalized, err := validatePlanPath(path)
 			if err != nil {
-				return invalidPlan("batch %d: %v", lote.Numero, err)
+				return invalidPlan("batch %d: %v", batch.Number, err)
 			}
 			if _, exists := routeSet[normalized]; exists {
-				return invalidPlan("batch %d repeats route %q", lote.Numero, ruta)
+				return invalidPlan("batch %d repeats route %q", batch.Number, path)
 			}
 			routeSet[normalized] = struct{}{}
 		}
 
 		selectedLines := 0
-		selectorRoutes := make(map[string]struct{}, len(lote.Selectors))
-		for selectorIndex, selector := range lote.Selectors {
+		selectorRoutes := make(map[string]struct{}, len(batch.Selectors))
+		for selectorIndex, selector := range batch.Selectors {
 			changeKey := changeKey(selector.Path, selector.OldPath)
 			change, ok := byKey[changeKey]
 			if !ok {
-				return invalidPlan("batch %d selector %d references unknown change %q", lote.Numero, selectorIndex, selector.Path)
+				return invalidPlan("batch %d selector %d references unknown change %q", batch.Number, selectorIndex, selector.Path)
 			}
 			if _, ok := routeSet[change.Path]; !ok {
-				return invalidPlan("batch %d selector %d is missing from routes", lote.Numero, selectorIndex)
+				return invalidPlan("batch %d selector %d is missing from routes", batch.Number, selectorIndex)
 			}
 			selectorRoutes[change.Path] = struct{}{}
 
 			switch selector.Mode {
 			case SelectorWholeFile:
 				if selector.Hunk != nil || selector.AtomID != "" {
-					return invalidPlan("batch %d selector %d has hunk data for a whole-file selection", lote.Numero, selectorIndex)
+					return invalidPlan("batch %d selector %d has hunk data for a whole-file selection", batch.Number, selectorIndex)
 				}
 				for _, atom := range change.Atoms {
 					key := atomSelectionKey(changeKey, atom.ID)
@@ -180,36 +180,36 @@ func ValidatePlanSelections(plan *PlanSerializado) error {
 				}
 			case SelectorHunk:
 				if change.Kind != ChangeText {
-					return invalidPlan("batch %d selector %d cannot select a hunk from %s change %q", lote.Numero, selectorIndex, change.Kind, change.Path)
+					return invalidPlan("batch %d selector %d cannot select a hunk from %s change %q", batch.Number, selectorIndex, change.Kind, change.Path)
 				}
 				if selector.Hunk == nil {
-					return invalidPlan("batch %d selector %d has no hunk metadata", lote.Numero, selectorIndex)
+					return invalidPlan("batch %d selector %d has no hunk metadata", batch.Number, selectorIndex)
 				}
 				if selector.HunkIndex < 0 || selector.HunkIndex >= len(change.Atoms) {
-					return invalidPlan("batch %d selector %d has hunk index %d outside the draft", lote.Numero, selectorIndex, selector.HunkIndex)
+					return invalidPlan("batch %d selector %d has hunk index %d outside the draft", batch.Number, selectorIndex, selector.HunkIndex)
 				}
 				atom := change.Atoms[selector.HunkIndex]
 				if atom.Kind != changeAtomHunk || atom.Hunk == nil {
-					return invalidPlan("batch %d selector %d does not reference a selectable text hunk", lote.Numero, selectorIndex)
+					return invalidPlan("batch %d selector %d does not reference a selectable text hunk", batch.Number, selectorIndex)
 				}
 				if selector.AtomID == "" || selector.AtomID != atom.ID || !equalHunk(*selector.Hunk, *atom.Hunk) {
-					return invalidPlan("batch %d selector %d does not match the captured hunk", lote.Numero, selectorIndex)
+					return invalidPlan("batch %d selector %d does not match the captured hunk", batch.Number, selectorIndex)
 				}
 				key := atomSelectionKey(changeKey, atom.ID)
 				selected[key]++
 				selectedLines += atom.AddedLines
 			default:
-				return invalidPlan("batch %d selector %d has unsupported mode %q", lote.Numero, selectorIndex, selector.Mode)
+				return invalidPlan("batch %d selector %d has unsupported mode %q", batch.Number, selectorIndex, selector.Mode)
 			}
 		}
 
 		for route := range routeSet {
 			if _, ok := selectorRoutes[route]; !ok {
-				return invalidPlan("batch %d route %q has no selector", lote.Numero, route)
+				return invalidPlan("batch %d route %q has no selector", batch.Number, route)
 			}
 		}
-		if lote.Lineas != selectedLines {
-			return invalidPlan("batch %d reports %d added lines but selects %d", lote.Numero, lote.Lineas, selectedLines)
+		if batch.Lines != selectedLines {
+			return invalidPlan("batch %d reports %d added lines but selects %d", batch.Number, batch.Lines, selectedLines)
 		}
 	}
 
@@ -230,20 +230,20 @@ func ValidatePlanSelections(plan *PlanSerializado) error {
 // ValidateSerializedPlan validates both selection coverage and the immutable
 // plan identity. It is intentionally separate from Git freshness validation so
 // corrupt JSON fails before any repository operation that could mutate history.
-func ValidateSerializedPlan(plan *PlanSerializado) error {
+func ValidateSerializedPlan(plan *SerializedPlan) error {
 	if plan == nil {
 		return invalidPlan("plan is nil")
 	}
 	if err := ValidatePlanSelections(plan); err != nil {
 		return err
 	}
-	if plan.EstadoWorktree == "" {
+	if plan.WorktreeState == "" {
 		return invalidPlan("plan has no worktree state fingerprint")
 	}
 	if plan.PlanID == "" {
 		return invalidPlan("plan has no plan ID")
 	}
-	if expected := calcularPlanIDPlan(plan); expected != plan.PlanID {
+	if expected := calculatePlanID(plan); expected != plan.PlanID {
 		return invalidPlan("plan ID does not match its serialized selectors and state")
 	}
 	return nil
@@ -252,40 +252,40 @@ func ValidateSerializedPlan(plan *PlanSerializado) error {
 // RecalculatePlanID binds a deliberately edited, but otherwise valid, plan to
 // its current serialized selectors. It performs no Git operation and never
 // changes the index or history.
-func RecalculatePlanID(plan *PlanSerializado) error {
+func RecalculatePlanID(plan *SerializedPlan) error {
 	if err := ValidatePlanSelections(plan); err != nil {
 		return err
 	}
-	plan.PlanID = calcularPlanIDPlan(plan)
+	plan.PlanID = calculatePlanID(plan)
 	return nil
 }
 
-func validateLegacyWholeFilePlan(plan *PlanSerializado) error {
+func validateLegacyWholeFilePlan(plan *SerializedPlan) error {
 	seen := make(map[string]struct{})
-	batchNumbers := make(map[int]struct{}, len(plan.Lotes))
-	for _, lote := range plan.Lotes {
-		if lote.Numero <= 0 {
-			return invalidPlan("batch %d has an invalid number", lote.Numero)
+	batchNumbers := make(map[int]struct{}, len(plan.Batches))
+	for _, batch := range plan.Batches {
+		if batch.Number <= 0 {
+			return invalidPlan("batch %d has an invalid number", batch.Number)
 		}
-		if _, exists := batchNumbers[lote.Numero]; exists {
-			return invalidPlan("batch number %d is repeated", lote.Numero)
+		if _, exists := batchNumbers[batch.Number]; exists {
+			return invalidPlan("batch number %d is repeated", batch.Number)
 		}
-		batchNumbers[lote.Numero] = struct{}{}
-		if len(lote.Rutas) == 0 {
-			return invalidPlan("batch %d has no routes", lote.Numero)
+		batchNumbers[batch.Number] = struct{}{}
+		if len(batch.Paths) == 0 {
+			return invalidPlan("batch %d has no routes", batch.Number)
 		}
-		routes := make(map[string]struct{}, len(lote.Rutas))
-		for _, ruta := range lote.Rutas {
-			normalized, err := validatePlanPath(ruta)
+		routes := make(map[string]struct{}, len(batch.Paths))
+		for _, path := range batch.Paths {
+			normalized, err := validatePlanPath(path)
 			if err != nil {
 				return err
 			}
 			if _, exists := routes[normalized]; exists {
-				return invalidPlan("batch %d repeats route %q", lote.Numero, ruta)
+				return invalidPlan("batch %d repeats route %q", batch.Number, path)
 			}
 			routes[normalized] = struct{}{}
 		}
-		if len(lote.Selectors) == 0 {
+		if len(batch.Selectors) == 0 {
 			for route := range routes {
 				if _, exists := seen[changeKey(route, "")]; exists {
 					return invalidPlan("route-only plan selects %q more than once", route)
@@ -294,8 +294,8 @@ func validateLegacyWholeFilePlan(plan *PlanSerializado) error {
 			}
 			continue
 		}
-		selectedRoutes := make(map[string]struct{}, len(lote.Selectors))
-		for _, selector := range lote.Selectors {
+		selectedRoutes := make(map[string]struct{}, len(batch.Selectors))
+		for _, selector := range batch.Selectors {
 			if selector.Mode != SelectorWholeFile || selector.Hunk != nil || selector.AtomID != "" {
 				return invalidPlan("route-only plans support whole-file selectors only")
 			}
@@ -475,32 +475,32 @@ func atomID(change PlannedChange, atom ChangeAtom) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func calcularPlanIDPlan(plan *PlanSerializado) string {
+func calculatePlanID(plan *SerializedPlan) string {
 	identity := planIdentity{
-		State:     plan.EstadoWorktree,
-		Batches:   canonicalBatches(plan.Lotes),
+		State:     plan.WorktreeState,
+		Batches:   canonicalBatches(plan.Batches),
 		Changes:   canonicalChanges(plan.Changes),
-		Decisions: canonicalDecisions(plan.DecisionesPendientes),
+		Decisions: canonicalDecisions(plan.PendingDecisions),
 	}
 	encoded, _ := json.Marshal(identity)
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
 
-func canonicalBatches(input []LoteSerializado) []batchIdentity {
+func canonicalBatches(input []SerializedBatch) []batchIdentity {
 	batches := make([]batchIdentity, 0, len(input))
-	for _, lote := range input {
+	for _, batch := range input {
 		batches = append(batches, batchIdentity{
-			Numero:    lote.Numero,
-			Capa:      lote.Capa,
-			Rutas:     sortedUnique(lote.Rutas),
-			Lineas:    lote.Lineas,
-			EsGigante: lote.EsGigante,
-			Selectors: canonicalSelectors(lote.Selectors),
+			Number:      batch.Number,
+			Layer:       batch.Layer,
+			Paths:       sortedUnique(batch.Paths),
+			Lines:       batch.Lines,
+			IsOversized: batch.IsOversized,
+			Selectors:   canonicalSelectors(batch.Selectors),
 		})
 	}
 	sort.Slice(batches, func(i, j int) bool {
-		return batches[i].Numero < batches[j].Numero
+		return batches[i].Number < batches[j].Number
 	})
 	return batches
 }
@@ -540,8 +540,8 @@ func canonicalChanges(input []PlannedChange) []PlannedChange {
 	return changes
 }
 
-func canonicalDecisions(input []DecisionPendiente) []DecisionPendiente {
-	decisions := append([]DecisionPendiente(nil), input...)
+func canonicalDecisions(input []PendingDecision) []PendingDecision {
+	decisions := append([]PendingDecision(nil), input...)
 	sort.Slice(decisions, func(i, j int) bool {
 		return decisions[i].ID < decisions[j].ID
 	})
