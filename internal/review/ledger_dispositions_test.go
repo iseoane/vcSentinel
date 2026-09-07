@@ -6,18 +6,18 @@ import (
 )
 
 // rawFinding builds a v1 per-dimension finding for the disposition tests.
-func rawFinding(file string, line int, severity, description, status string) ReviewFinding {
-	return ReviewFinding{File: file, Line: Linea(line), Severity: severity, Description: description, Status: status}
+func sampleFinding(file string, line int, severity, description, status string) ReviewFinding {
+	return ReviewFinding{File: file, Line: Line(line), Severity: severity, Description: description, Status: status}
 }
 
 // aggregatedFinding builds the v2 counterpart aggregation persists, which
 // never carries the disposition the raw finding recorded.
-func aggregatedFinding(dimension, file string, line int, severity, description string) Hallazgo {
-	return Hallazgo{
+func aggregatedFinding(dimension, file string, line int, severity, description string) Finding {
+	return Finding{
 		Dimension:   dimension,
 		Severity:    severity,
 		Description: description,
-		Location:    Ubicacion{Archivo: file, LineaInicio: line},
+		Location:    Location{File: file, LineStart: line},
 	}
 }
 
@@ -26,10 +26,10 @@ func aggregatedFinding(dimension, file string, line int, severity, description s
 // that cross-associates findings sharing a description across dimensions or
 // files pass unnoticed, which is exactly the mis-attribution these tests
 // exist to detect.
-func statusesByKey(findings []Hallazgo) map[string]string {
+func statusesByKey(findings []Finding) map[string]string {
 	statuses := make(map[string]string, len(findings))
 	for _, finding := range findings {
-		key := fmt.Sprintf("%s|%s|%d|%s", finding.Dimension, finding.Location.Archivo, finding.Location.LineaInicio, finding.Description)
+		key := fmt.Sprintf("%s|%s|%d|%s", finding.Dimension, finding.Location.File, finding.Location.LineStart, finding.Description)
 		statuses[key] = finding.Status
 	}
 	return statuses
@@ -46,13 +46,13 @@ func TestFindingsWithDispositionsRestoresConfirmedOntoAggregate(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{
 			{Dim: DimLogic, Findings: []ReviewFinding{
-				rawFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
+				sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
 			}},
 			{Dim: DimSecurity, Findings: []ReviewFinding{
-				rawFinding("a.go", 10, SevCritical, "nil dereference", ""),
+				sampleFinding("a.go", 10, SevCritical, "nil dereference", ""),
 			}},
 		},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
 			aggregatedFinding(DimSecurity, "a.go", 10, SevCritical, "nil dereference"),
 		},
@@ -76,10 +76,10 @@ func TestFindingsWithDispositionsRestoresConfirmedOntoAggregate(t *testing.T) {
 func TestFindingsWithDispositionsAppendsRefutedWithoutCounterpart(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimSecurity, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "injected query", StatusRefuted),
-			rawFinding("b.go", 30, SevCritical, "unchecked input", StatusConfirmed),
+			sampleFinding("a.go", 10, SevCritical, "injected query", StatusRefuted),
+			sampleFinding("b.go", 30, SevCritical, "unchecked input", StatusConfirmed),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimSecurity, "b.go", 30, SevCritical, "unchecked input"),
 		},
 	}
@@ -102,11 +102,11 @@ func TestFindingsWithDispositionsAppendsRefutedWithoutCounterpart(t *testing.T) 
 func TestFindingsWithDispositionsDropsUnmatchedNonRefutedRaw(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("superseded.go", 10, SevCritical, "duplicated by gofmt", StatusConfirmed),
-			rawFinding("b.go", 30, SevCritical, "unchecked input", ""),
-			rawFinding("kept.go", 40, SevCritical, "real defect", StatusConfirmed),
+			sampleFinding("superseded.go", 10, SevCritical, "duplicated by gofmt", StatusConfirmed),
+			sampleFinding("b.go", 30, SevCritical, "unchecked input", ""),
+			sampleFinding("kept.go", 40, SevCritical, "real defect", StatusConfirmed),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "kept.go", 40, SevCritical, "real defect"),
 		},
 	}
@@ -114,7 +114,7 @@ func TestFindingsWithDispositionsDropsUnmatchedNonRefutedRaw(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("findings = %d, want 1: only the surviving aggregate, %#v", len(findings), findings)
 	}
-	if findings[0].Location.Archivo != "kept.go" || findings[0].Status != StatusConfirmed {
+	if findings[0].Location.File != "kept.go" || findings[0].Status != StatusConfirmed {
 		t.Fatalf("finding = %#v, want the confirmed kept.go aggregate", findings[0])
 	}
 }
@@ -122,9 +122,9 @@ func TestFindingsWithDispositionsDropsUnmatchedNonRefutedRaw(t *testing.T) {
 func TestFindingsWithDispositionsCountsAMatchedFindingOnce(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", StatusRefuted),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusRefuted),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
 		},
 	}
@@ -142,9 +142,9 @@ func TestFindingsWithDispositionsKeepsTheAggregateRecordedStatus(t *testing.T) {
 	aggregated.Status = StatusRefuted
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
 		}}},
-		AggregatedFindings: []Hallazgo{aggregated},
+		AggregatedFindings: []Finding{aggregated},
 	}
 	findings := revision.FindingsWithDispositions()
 	if len(findings) != 1 || findings[0].Status != StatusRefuted {
@@ -155,10 +155,10 @@ func TestFindingsWithDispositionsKeepsTheAggregateRecordedStatus(t *testing.T) {
 func TestFindingsWithDispositionsIgnoresContradictoryRawStatuses(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
-			rawFinding("a.go", 10, SevCritical, "nil dereference", StatusAcceptedByUser),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusAcceptedByUser),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
 		},
 	}
@@ -181,9 +181,9 @@ func TestFindingsWithDispositionsRefusesAmbiguousAttribution(t *testing.T) {
 	second.Title = "path traversal"
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimSecurity, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "unchecked input", StatusConfirmed),
+			sampleFinding("a.go", 10, SevCritical, "unchecked input", StatusConfirmed),
 		}}},
-		AggregatedFindings: []Hallazgo{first, second},
+		AggregatedFindings: []Finding{first, second},
 	}
 	findings := revision.FindingsWithDispositions()
 	if len(findings) != 2 {
@@ -205,9 +205,9 @@ func TestFindingsWithDispositionsDoesNotAppendRefutedUnderAmbiguity(t *testing.T
 	second.Title = "path traversal"
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimSecurity, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "unchecked input", StatusRefuted),
+			sampleFinding("a.go", 10, SevCritical, "unchecked input", StatusRefuted),
 		}}},
-		AggregatedFindings: []Hallazgo{first, second},
+		AggregatedFindings: []Finding{first, second},
 	}
 	findings := revision.FindingsWithDispositions()
 	if len(findings) != 2 {
@@ -223,10 +223,10 @@ func TestFindingsWithDispositionsDoesNotAppendRefutedUnderAmbiguity(t *testing.T
 func TestFindingsWithDispositionsNormalizesRecordedStatus(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", "  CONFIRMED  "),
-			rawFinding("b.go", 20, SevWarning, "unclear name", "   "),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", "  CONFIRMED  "),
+			sampleFinding("b.go", 20, SevWarning, "unclear name", "   "),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
 			aggregatedFinding(DimLogic, "b.go", 20, SevWarning, "unclear name"),
 		},
@@ -245,9 +245,9 @@ func TestFindingsWithDispositionsNormalizesTheAggregateOwnStatus(t *testing.T) {
 	aggregated.Status = "   "
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
 		}}},
-		AggregatedFindings: []Hallazgo{aggregated},
+		AggregatedFindings: []Finding{aggregated},
 	}
 	findings := revision.FindingsWithDispositions()
 	if len(findings) != 1 || findings[0].Status != StatusConfirmed {
@@ -258,8 +258,8 @@ func TestFindingsWithDispositionsNormalizesTheAggregateOwnStatus(t *testing.T) {
 func TestFindingsWithDispositionsFallsBackToRawDimsWithTheirStatus(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimTests, Findings: []ReviewFinding{
-			rawFinding("a_test.go", 5, SevCritical, "missing coverage", " Confirmed "),
-			rawFinding("b_test.go", 7, SevWarning, "weak assertion", ""),
+			sampleFinding("a_test.go", 5, SevCritical, "missing coverage", " Confirmed "),
+			sampleFinding("b_test.go", 7, SevWarning, "weak assertion", ""),
 		}}},
 	}
 	findings := revision.FindingsWithDispositions()
@@ -275,18 +275,18 @@ func TestFindingsWithDispositionsFallsBackToRawDimsWithTheirStatus(t *testing.T)
 	}
 }
 
-func TestHallazgosEfectivosStillIgnoresDispositions(t *testing.T) {
+func TestEffectiveFindingsStillIgnoresDispositions(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", StatusConfirmed),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
 		},
 	}
-	findings := revision.HallazgosEfectivos()
+	findings := revision.EffectiveFindings()
 	if len(findings) != 1 || findings[0].Status != "" {
-		t.Fatalf("HallazgosEfectivos = %#v, want the gate selection unchanged", findings)
+		t.Fatalf("EffectiveFindings = %#v, want the gate selection unchanged", findings)
 	}
 }
 
@@ -316,7 +316,7 @@ func TestFindingsWithDispositionsCanonicalisesTheAggregateOwnStatus(t *testing.T
 	aggregated.Status = "  REFUTED  "
 	revision := Revision{
 		Dims:               []DimensionResult{{Dim: DimLogic}},
-		AggregatedFindings: []Hallazgo{aggregated},
+		AggregatedFindings: []Finding{aggregated},
 	}
 	findings := revision.FindingsWithDispositions()
 	if len(findings) != 1 || findings[0].Status != StatusRefuted {
@@ -335,10 +335,10 @@ func TestFindingsWithDispositionsReturnsOnlyCanonicalStatuses(t *testing.T) {
 	own.Status = " Accepted_By_User "
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("adopted.go", 10, SevCritical, "adopted", " CONFIRMED "),
-			rawFinding("appended.go", 30, SevCritical, "appended", " Refuted "),
+			sampleFinding("adopted.go", 10, SevCritical, "adopted", " CONFIRMED "),
+			sampleFinding("appended.go", 30, SevCritical, "appended", " Refuted "),
 		}}},
-		AggregatedFindings: []Hallazgo{adopted, own},
+		AggregatedFindings: []Finding{adopted, own},
 	}
 	statuses := statusesByKey(revision.FindingsWithDispositions())
 	want := map[string]string{
@@ -359,9 +359,9 @@ func TestFindingsWithDispositionsReturnsOnlyCanonicalStatuses(t *testing.T) {
 func TestFindingsWithDispositionsAppendsANonCanonicalRefutation(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimSecurity, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "injected query", "  REFUTED  "),
+			sampleFinding("a.go", 10, SevCritical, "injected query", "  REFUTED  "),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimSecurity, "b.go", 30, SevCritical, "unchecked input"),
 		},
 	}
@@ -380,10 +380,10 @@ func TestFindingsWithDispositionsAppendsANonCanonicalRefutation(t *testing.T) {
 func TestFindingsWithDispositionsNormalizesBeforeDetectingContradiction(t *testing.T) {
 	revision := Revision{
 		Dims: []DimensionResult{{Dim: DimLogic, Findings: []ReviewFinding{
-			rawFinding("a.go", 10, SevCritical, "nil dereference", " confirmed "),
-			rawFinding("a.go", 10, SevCritical, "nil dereference", "CONFIRMED"),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", " confirmed "),
+			sampleFinding("a.go", 10, SevCritical, "nil dereference", "CONFIRMED"),
 		}}},
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			aggregatedFinding(DimLogic, "a.go", 10, SevCritical, "nil dereference"),
 		},
 	}

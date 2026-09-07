@@ -35,28 +35,28 @@ func prepareStackRepo(t *testing.T) stackRepo {
 		{"config", "user.name", "VAS Sentinel Test"},
 		{"config", "core.hooksPath", ""},
 	} {
-		gitEjecutar(t, args...)
+		runGit(t, args...)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("b\nb\nb\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	gitEjecutar(t, "add", "base.txt")
-	gitEjecutar(t, "commit", "-m", "feat(base): trunk")
-	pila := stackRepo{gitDir: filepath.Join(repo, ".git")}
-	pila.baseSHA = strings.TrimSpace(gitSalida(t, "rev-parse", "HEAD"))
-	gitEjecutar(t, "checkout", "-b", "feature-a")
-	pila.shaA = commitEnRama(t, "a.txt", "1\n2\n3\n4\n5\n")
-	gitEjecutar(t, "checkout", "-b", "feature-b")
-	pila.shaB = commitEnRama(t, "b.txt", "x\ny\nz\n")
-	return pila
+	runGit(t, "add", "base.txt")
+	runGit(t, "commit", "-m", "feat(base): trunk")
+	stack := stackRepo{gitDir: filepath.Join(repo, ".git")}
+	stack.baseSHA = strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	runGit(t, "checkout", "-b", "feature-a")
+	stack.shaA = commitInBranch(t, "a.txt", "1\n2\n3\n4\n5\n")
+	runGit(t, "checkout", "-b", "feature-b")
+	stack.shaB = commitInBranch(t, "b.txt", "x\ny\nz\n")
+	return stack
 }
 
 // swapParentResolver swaps the parent resolver with a fake for the test.
-func swapParentResolver(t *testing.T, reemplazo ParentResolver) {
+func swapParentResolver(t *testing.T, replacement ParentResolver) {
 	t.Helper()
-	anterior := defaultParentResolver
-	defaultParentResolver = reemplazo
-	t.Cleanup(func() { defaultParentResolver = anterior })
+	previous := defaultParentResolver
+	defaultParentResolver = replacement
+	t.Cleanup(func() { defaultParentResolver = previous })
 }
 
 func fixedResolver(ref string) ParentResolver {
@@ -73,126 +73,126 @@ func fixedResolver(ref string) ParentResolver {
 // reviewed range is only the own diff (merge_base(parent, HEAD)..HEAD) and
 // parent/base/range evidence is explained on the result.
 func TestStackedBranchExplainsRanges(t *testing.T) {
-	pila := prepareStackRepo(t)
+	stack := prepareStackRepo(t)
 	swapParentResolver(t, fixedResolver("feature-a"))
 
-	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	res, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 2,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
 	if err != nil {
-		t.Fatalf("AnalizarRama failed: %v", err)
+		t.Fatalf("AnalyzeBranch failed: %v", err)
 	}
-	if res.Propio == nil {
-		t.Fatal("Propio = nil, expected stacked resolution")
+	if res.Own == nil {
+		t.Fatal("Own = nil, expected stacked resolution")
 	}
-	if res.Propio.Parent != "feature-a" || res.Propio.ParentSource != string(git.ParentSourceLocalMergeBase) {
-		t.Errorf("parent = %s/%s, want feature-a/local_merge_base", res.Propio.Parent, res.Propio.ParentSource)
+	if res.Own.Parent != "feature-a" || res.Own.ParentSource != string(git.ParentSourceLocalMergeBase) {
+		t.Errorf("parent = %s/%s, want feature-a/local_merge_base", res.Own.Parent, res.Own.ParentSource)
 	}
-	if res.Propio.Base != "main" || res.Propio.ContextoDesde != pila.baseSHA {
-		t.Errorf("context = %s from %s, want main from %s", res.Propio.Base, res.Propio.ContextoDesde, pila.baseSHA)
+	if res.Own.Base != "main" || res.Own.ContextFrom != stack.baseSHA {
+		t.Errorf("context = %s from %s, want main from %s", res.Own.Base, res.Own.ContextFrom, stack.baseSHA)
 	}
-	if res.Propio.PropioDesde != pila.shaA {
-		t.Errorf("PropioDesde = %s, want %s", res.Propio.PropioDesde, pila.shaA)
+	if res.Own.OwnFrom != stack.shaA {
+		t.Errorf("OwnFrom = %s, want %s", res.Own.OwnFrom, stack.shaA)
 	}
-	if len(res.Propio.Evidencia) == 0 {
-		t.Error("empty Evidencia: the resolution must be explainable")
+	if len(res.Own.Evidence) == 0 {
+		t.Error("empty Evidence: the resolution must be explainable")
 	}
-	if len(res.SHAs) != 1 || res.SHAs[0] != pila.shaB {
-		t.Errorf("SHAs = %v, want only the own diff [%s]", res.SHAs, pila.shaB)
+	if len(res.SHAs) != 1 || res.SHAs[0] != stack.shaB {
+		t.Errorf("SHAs = %v, want only the own diff [%s]", res.SHAs, stack.shaB)
 	}
-	if res.Volumen != 3 {
-		t.Errorf("Volumen = %d, want 3 (own commit only)", res.Volumen)
+	if res.Volume != 3 {
+		t.Errorf("Volume = %d, want 3 (own commit only)", res.Volume)
 	}
 }
 
 // TestStackedBranchInheritedFindingDoesNotBlock: the CRITICAL introduced by
 // A shows up as inherited when reviewing B and never makes B blocking.
 func TestStackedBranchInheritedFindingDoesNotBlock(t *testing.T) {
-	pila := prepareStackRepo(t)
-	ledger := NuevoLedger(pila.gitDir)
+	stack := prepareStackRepo(t)
+	ledger := NewLedger(stack.gitDir)
 	swapParentResolver(t, fixedResolver("feature-a"))
 
-	gitEjecutar(t, "checkout", "feature-a")
-	if _, err := AnalizarRama(ledger, OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputCritical}),
+	runGit(t, "checkout", "feature-a")
+	if _, err := AnalyzeBranch(ledger, BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputCritical}),
 		Parallel: 1,
 	}); err != nil {
 		t.Fatalf("audit of A failed: %v", err)
 	}
-	gitEjecutar(t, "checkout", "feature-b")
+	runGit(t, "checkout", "feature-b")
 
-	res, err := AnalizarRama(ledger, OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	res, err := AnalyzeBranch(ledger, BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
 	if err != nil {
-		t.Fatalf("AnalizarRama failed: %v", err)
+		t.Fatalf("AnalyzeBranch failed: %v", err)
 	}
-	if len(res.Heredados) == 0 {
-		t.Fatal("empty Heredados: A's CRITICAL must surface as inherited")
+	if len(res.Inherited) == 0 {
+		t.Fatal("empty Inherited: A's CRITICAL must surface as inherited")
 	}
-	for _, h := range res.Heredados {
-		if h.SHA != pila.shaA || h.Hallazgo.Severity != SevCritical {
+	for _, h := range res.Inherited {
+		if h.SHA != stack.shaA || h.Finding.Severity != SevCritical {
 			t.Errorf("wrong inherited finding: %+v", h)
 		}
 	}
-	if bloqueantes := BloqueantesDeRama(res.Fichas); len(bloqueantes) != 0 {
-		t.Errorf("B is blocking with %d own critical findings: A's finding is inherited", len(bloqueantes))
+	if blockers := BranchBlockers(res.Records); len(blockers) != 0 {
+		t.Errorf("B is blocking with %d own critical findings: A's finding is inherited", len(blockers))
 	}
-	if len(res.Fichas) != 1 || res.Fichas[0].SHA != pila.shaB {
-		t.Errorf("Fichas = %v, esperado solo la propia de B", fichasSHAs(res.Fichas))
+	if len(res.Records) != 1 || res.Records[0].SHA != stack.shaB {
+		t.Errorf("Records = %v, expected only B's own record", recordSHAs(res.Records))
 	}
 }
 
 // TestStackedBranchOwnFindingBlocks: a CRITICAL inside B's own diff
 // stays own/current and blocks its PR.
 func TestStackedBranchOwnFindingBlocks(t *testing.T) {
-	pila := prepareStackRepo(t)
+	stack := prepareStackRepo(t)
 	swapParentResolver(t, fixedResolver("feature-a"))
 
-	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputCritical}),
+	res, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputCritical}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
 	if err != nil {
-		t.Fatalf("AnalizarRama failed: %v", err)
+		t.Fatalf("AnalyzeBranch failed: %v", err)
 	}
-	if bloqueantes := BloqueantesDeRama(res.Fichas); len(bloqueantes) == 0 {
+	if blockers := BranchBlockers(res.Records); len(blockers) == 0 {
 		t.Fatal("0 blockers: an own finding must block")
 	}
-	if len(res.Heredados) != 0 {
-		t.Errorf("Heredados = %d, want 0 (no context fichas)", len(res.Heredados))
+	if len(res.Inherited) != 0 {
+		t.Errorf("Inherited = %d, want 0 (no context records)", len(res.Inherited))
 	}
 }
 
-// TestStackedBranchContextIsReadOnly: context commits without a ficha
+// TestStackedBranchContextIsReadOnly: context commits without a record
 // are neither audited nor become pending; fixing them belongs to the parent PR.
 func TestStackedBranchContextIsReadOnly(t *testing.T) {
-	pila := prepareStackRepo(t)
+	stack := prepareStackRepo(t)
 	swapParentResolver(t, fixedResolver("feature-a"))
 
-	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	res, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{ResolveParent: true},
 	})
 	if err != nil {
-		t.Fatalf("AnalizarRama failed: %v", err)
+		t.Fatalf("AnalyzeBranch failed: %v", err)
 	}
-	for _, sha := range res.Pendientes {
-		if sha == pila.shaA {
-			t.Error("context commit entered Pendientes: context must not be reviewed")
+	for _, sha := range res.Pending {
+		if sha == stack.shaA {
+			t.Error("context commit entered Pending: context must not be reviewed")
 		}
 	}
-	fichaA, err := NuevoLedger(pila.gitDir).LeerFicha(pila.shaA)
+	recordA, err := NewLedger(stack.gitDir).ReadRecord(stack.shaA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fichaA != nil {
+	if recordA != nil {
 		t.Error("the context commit was audited: stacked mode must be read-only outside the own diff")
 	}
 }
@@ -200,29 +200,29 @@ func TestStackedBranchContextIsReadOnly(t *testing.T) {
 // TestStackedBranchExplicitParent: explicit internal input goes through
 // the T8.1 seam and is verified as a real commit.
 func TestStackedBranchExplicitParent(t *testing.T) {
-	pila := prepareStackRepo(t)
+	stack := prepareStackRepo(t)
 
-	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica:  fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	res, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		Parallel: 1,
 		OwnDiff:  &OwnDiffOptions{Parent: "feature-a"},
 	})
 	if err != nil {
-		t.Fatalf("AnalizarRama failed: %v", err)
+		t.Fatalf("AnalyzeBranch failed: %v", err)
 	}
-	if res.Propio.Parent != "feature-a" || res.Propio.ParentSource != string(git.ParentSourceExplicit) {
-		t.Errorf("parent = %s/%s, want feature-a/explicit", res.Propio.Parent, res.Propio.ParentSource)
+	if res.Own.Parent != "feature-a" || res.Own.ParentSource != string(git.ParentSourceExplicit) {
+		t.Errorf("parent = %s/%s, want feature-a/explicit", res.Own.Parent, res.Own.ParentSource)
 	}
-	gitEjecutar(t, "update-ref", "refs/remotes/origin/feature-a", pila.shaA)
-	gitEjecutar(t, "branch", "-D", "feature-a")
-	remote, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{SoloPendientes: true, OwnDiff: &OwnDiffOptions{Parent: "origin/feature-a"}})
-	if err != nil || remote.Propio.Parent != "origin/feature-a" || remote.Propio.PublicationBranch != "feature-a" || remote.Propio.PropioDesde != pila.shaA {
+	runGit(t, "update-ref", "refs/remotes/origin/feature-a", stack.shaA)
+	runGit(t, "branch", "-D", "feature-a")
+	remote, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{OnlyPending: true, OwnDiff: &OwnDiffOptions{Parent: "origin/feature-a"}})
+	if err != nil || remote.Own.Parent != "origin/feature-a" || remote.Own.PublicationBranch != "feature-a" || remote.Own.OwnFrom != stack.shaA {
 		t.Fatalf("remote-only parent = %+v, err=%v", remote, err)
 	}
 
-	_, err = AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
-		OwnDiff: &OwnDiffOptions{Parent: "no-existe"},
+	_, err = AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory: stubFactory(&auditorStub{auditOutput: auditOutputOK}),
+		OwnDiff: &OwnDiffOptions{Parent: "missing-branch"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a commit") {
 		t.Errorf("missing reference = %v, want explicit failure", err)
@@ -232,7 +232,7 @@ func TestStackedBranchExplicitParent(t *testing.T) {
 // TestStackedBranchNoSignalFailsWithoutMain: without a reliable parent signal
 // the analysis fails explicitly; main is never assumed as the parent.
 func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
-	pila := prepareStackRepo(t)
+	stack := prepareStackRepo(t)
 	swapParentResolver(t, func(git.ParentResolutionOptions) (git.ParentResolution, error) {
 		return git.ParentResolution{}, &git.ParentResolutionError{
 			Reason:   "no reliable parent signal",
@@ -240,14 +240,14 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 		}
 	})
 
-	res, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	res, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory: stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{ResolveParent: true},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no reliable parent signal") {
 		t.Fatalf("error = %v, want explicit failure for missing signal", err)
 	}
-	if res != nil && res.Propio != nil && res.Propio.Parent == "main" {
+	if res != nil && res.Own != nil && res.Own.Parent == "main" {
 		t.Error("main was assumed as parent: forbidden in a stack")
 	}
 
@@ -258,9 +258,9 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 	// to main. The resolver's evidence always names the detected current
 	// branch; requiring it proves the fake is out of the loop.
 	swapParentResolver(t, git.ResolveParentBranch)
-	sola := prepararRepoRama(t)
-	if _, err := AnalizarRama(NuevoLedger(sola), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	lone := prepareBranchRepo(t)
+	if _, err := AnalyzeBranch(NewLedger(lone), BranchOptions{
+		Factory: stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{ResolveParent: true},
 	}); err == nil || !strings.Contains(err.Error(), "could not resolve parent branch") ||
 		!strings.Contains(err.Error(), "current branch=") {
@@ -271,20 +271,20 @@ func TestStackedBranchNoSignalFailsWithoutMain(t *testing.T) {
 // TestStackedBranchWithoutOptionsFails: enabling stacked mode without an
 // explicit parent or resolution is a configuration error, not silence.
 func TestStackedBranchWithoutOptionsFails(t *testing.T) {
-	pila := prepareStackRepo(t)
-	_, err := AnalizarRama(NuevoLedger(pila.gitDir), OpcionesRama{
-		Fabrica: fabricaStub(&auditorStub{auditOutput: auditOutputOK}),
+	stack := prepareStackRepo(t)
+	_, err := AnalyzeBranch(NewLedger(stack.gitDir), BranchOptions{
+		Factory: stubFactory(&auditorStub{auditOutput: auditOutputOK}),
 		OwnDiff: &OwnDiffOptions{},
 	})
 	if err == nil || !errors.Is(err, errOwnDiffWithoutParent) {
-		t.Fatalf("error = %v, esperado errOwnDiffWithoutParent", err)
+		t.Fatalf("error = %v, expected errOwnDiffWithoutParent", err)
 	}
 }
 
-func fichasSHAs(fichas []Ficha) []string {
-	shas := make([]string, 0, len(fichas))
-	for _, ficha := range fichas {
-		shas = append(shas, ficha.SHA)
+func recordSHAs(records []Record) []string {
+	shas := make([]string, 0, len(records))
+	for _, record := range records {
+		shas = append(shas, record.SHA)
 	}
 	return shas
 }

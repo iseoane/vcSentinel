@@ -7,84 +7,84 @@ import (
 	"unicode/utf8"
 )
 
-// fichaAyuda construye una ficha realista para los tests del renderer.
-func fichaAyuda(sha, mensaje, modelo string, revs ...Revision) Ficha {
-	return Ficha{SHA: sha, Message: mensaje, Model: modelo, Revisions: revs}
+// recordHelper builds a realistic record for the renderer tests.
+func recordHelper(sha, message, model string, revs ...Revision) Record {
+	return Record{SHA: sha, Message: message, Model: model, Revisions: revs}
 }
 
-// revisionAyuda construye una revisión con el veredicto y hallazgos dados.
-func revisionAyuda(resultado string, dims ...DimensionResult) Revision {
-	return Revision{At: time.Now().UTC(), Result: resultado, Dims: dims}
+// revisionHelper builds a revision with the given verdict and findings.
+func revisionHelper(result string, dims ...DimensionResult) Revision {
+	return Revision{At: time.Now().UTC(), Result: result, Dims: dims}
 }
 
-func TestRenderMatrizBasica(t *testing.T) {
-	fichas := []Ficha{
-		fichaAyuda("6b127cd", "docs(review): concepto fase 2", "opencode.cheap",
-			revisionAyuda("ok",
+func TestRenderMatrixBasic(t *testing.T) {
+	records := []Record{
+		recordHelper("6b127cd", "docs(review): concepto fase 2", "opencode.cheap",
+			revisionHelper("ok",
 				DimensionResult{Dim: DimSpec, Verdict: VerdictOK},
 				DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock},
 				DimensionResult{Dim: DimLogic, Verdict: VerdictOK},
 			)),
-		fichaAyuda("945b5b5", "feat(config): comandos de verificacion", "deepseek-v4-flash-free",
-			revisionAyuda("warn",
+		recordHelper("945b5b5", "feat(config): comandos de verificacion", "deepseek-v4-flash-free",
+			revisionHelper("warn",
 				DimensionResult{Dim: DimSpec, Verdict: VerdictOK},
 				DimensionResult{Dim: DimTests, Verdict: VerdictWarn},
 			)),
 	}
 
-	salida := RenderMatriz(fichas)
+	out := RenderMatrix(records)
 
-	// Aserción exacta: cabecera completa canónica, filas en orden y celdas
-	// con el veredicto de la última revisión (— para dimensiones ausentes).
-	esperado := "| Commit | logic | style | design | tests | security | spec |\n" +
+	// Exact assertion: full canonical header, rows in order and cells with
+	// the verdict of the last revision (— for absent dimensions).
+	expected := "| Commit | logic | style | design | tests | security | spec |\n" +
 		"|---|---|---|---|---|---|---|\n" +
 		"| `6b127cd` docs(review): concepto fase 2 | ✅ | — | — | — | 🚨 | ✅ |\n" +
 		"| `945b5b5` feat(config): comandos de verificacion | — | — | — | ⚠️ | — | ✅ |\n"
-	if salida != esperado {
-		t.Errorf("matriz no coincide:\ngot:\n%s\nwant:\n%s", salida, esperado)
+	if out != expected {
+		t.Errorf("matrix mismatch:\ngot:\n%s\nwant:\n%s", out, expected)
 	}
 }
 
-func TestRenderMatrizVacia(t *testing.T) {
-	if salida := RenderMatriz(nil); !strings.Contains(salida, "No hay commits auditados") {
-		t.Errorf("matriz vacía = %q, esperado aviso de sin commits", salida)
+func TestRenderMatrixEmpty(t *testing.T) {
+	if out := RenderMatrix(nil); !strings.Contains(out, "No audited commits") {
+		t.Errorf("empty matrix = %q, want the no-commits notice", out)
 	}
 }
 
-func TestRenderMatrizRevisionPasada(t *testing.T) {
-	ficha := fichaAyuda("945b5b5", "feat(config): comandos", "opencode.cheap",
-		revisionAyuda("block",
+func TestRenderMatrixClearedRevision(t *testing.T) {
+	record := recordHelper("945b5b5", "feat(config): comandos", "opencode.cheap",
+		revisionHelper("block",
 			DimensionResult{Dim: DimSpec, Verdict: VerdictBlock,
 				Findings: []ReviewFinding{{Dimension: DimSpec, File: "a.go", Line: 1, Severity: SevCritical}}},
 		),
-		revisionAyuda("ok",
+		revisionHelper("ok",
 			DimensionResult{Dim: DimSpec, Verdict: VerdictOK},
 		),
 	)
 
-	salida := RenderMatriz([]Ficha{ficha})
+	out := RenderMatrix([]Record{record})
 
-	// La última revisión manda y la pasada tras un block se marca.
-	if !strings.Contains(salida, "✅ (2ª rev — CRITICAL superado)") {
-		t.Errorf("falta la marca de revisión pasada:\n%s", salida)
+	// The last revision wins and a past one after a block gets marked.
+	if !strings.Contains(out, "✅ (rev 2 — CRITICAL cleared)") {
+		t.Errorf("missing the cleared-revision mark:\n%s", out)
 	}
-	if strings.Contains(salida, "🚨") {
-		t.Errorf("la matriz no debe mostrar el block de la primera revisión:\n%s", salida)
+	if strings.Contains(out, "🚨") {
+		t.Errorf("the matrix must not show the block of the first revision:\n%s", out)
 	}
 }
 
-func TestRenderResumenRiesgos(t *testing.T) {
-	fichas := []Ficha{
-		fichaAyuda("6b127cd", "docs(review): concepto fase 2", "opencode.cheap",
-			revisionAyuda("block",
+func TestRenderSummaryRisks(t *testing.T) {
+	records := []Record{
+		recordHelper("6b127cd", "docs(review): concepto fase 2", "opencode.cheap",
+			revisionHelper("block",
 				DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 					Findings: []ReviewFinding{
 						{Dimension: DimSecurity, File: "a.go", Line: 42, Severity: SevCritical, Description: "dato expuesto"},
 						{Dimension: DimSecurity, File: "a.go", Line: 10, Severity: SevAdvisory, Description: "sugerencia menor"},
 					}},
 			)),
-		fichaAyuda("945b5b5", "feat(config): comandos", "deepseek-v4-flash-free",
-			revisionAyuda("warn",
+		recordHelper("945b5b5", "feat(config): comandos", "deepseek-v4-flash-free",
+			revisionHelper("warn",
 				DimensionResult{Dim: DimTests, Verdict: VerdictWarn,
 					Findings: []ReviewFinding{
 						{Dimension: DimTests, File: "z.go", Line: 10, Severity: SevWarning, Description: "test frágil"},
@@ -92,349 +92,354 @@ func TestRenderResumenRiesgos(t *testing.T) {
 			)),
 	}
 
-	salida := RenderResumen(fichas)
+	out := RenderSummary(records)
 
-	// Conteo global.
-	if !strings.Contains(salida, "🟢 ok: 0 · 🟡 warn: 1 · 🚨 block: 1") {
-		t.Errorf("conteo global incorrecto:\n%s", salida)
+	// Global count.
+	if !strings.Contains(out, "🟢 ok: 0 · 🟡 warn: 1 · 🚨 block: 1") {
+		t.Errorf("wrong global count:\n%s", out)
 	}
-	// Riesgos: CRITICAL y WARNING sí; ADVISORY no. Desde T6.5 riesgos() lee
-	// HallazgosEfectivos() y renderiza siempre con renderMergedFinding; un
-	// hallazgo v1 convertido desde Dims nunca tuvo Source real, así que el
-	// segmento "(source, confidence)" se omite entero en vez de fabricar un
-	// "(unknown, confidence 0.00)" que no es un dato real (T6.5bis review
+	// Risks: CRITICAL and WARNING yes; ADVISORY no. Since T6.5 pendingRisks()
+	// reads EffectiveFindings() and always renders through renderMergedFinding;
+	// a v1 finding converted from Dims never had a real Source, so the
+	// "(source, confidence)" segment is omitted entirely instead of fabricating
+	// a "(unknown, confidence 0.00)" that is not real data (T6.5bis review
 	// finding: logic WARNING).
-	if !strings.Contains(salida, "🚨 `6b127cd` [security] CRITICAL — dato expuesto (a.go:42)") {
-		t.Errorf("falta el riesgo CRITICAL:\n%s", salida)
+	if !strings.Contains(out, "🚨 `6b127cd` [security] CRITICAL — dato expuesto (a.go:42)") {
+		t.Errorf("missing the CRITICAL risk:\n%s", out)
 	}
-	if !strings.Contains(salida, "⚠️ `945b5b5` [tests] WARNING — test frágil (z.go:10)") {
-		t.Errorf("falta el riesgo WARNING:\n%s", salida)
+	if !strings.Contains(out, "⚠️ `945b5b5` [tests] WARNING — test frágil (z.go:10)") {
+		t.Errorf("missing the WARNING risk:\n%s", out)
 	}
-	if strings.Contains(salida, "sugerencia menor") {
-		t.Errorf("los ADVISORY no son riesgos y no deben aparecer en el resumen:\n%s", salida)
+	if strings.Contains(out, "sugerencia menor") {
+		t.Errorf("ADVISORY entries are not risks and must not appear in the summary:\n%s", out)
 	}
 }
 
-func TestRenderResumenCorregida(t *testing.T) {
-	ficha := fichaAyuda("6b127cd", "docs(review): concepto", "opencode.cheap",
-		revisionAyuda("block", DimensionResult{Dim: DimSpec, Verdict: VerdictBlock}),
+func TestRenderSummaryFixed(t *testing.T) {
+	record := recordHelper("6b127cd", "docs(review): concepto", "opencode.cheap",
+		revisionHelper("block", DimensionResult{Dim: DimSpec, Verdict: VerdictBlock}),
 	)
-	ficha.FixedIn = "a1b2c3d"
+	record.FixedIn = "a1b2c3d"
 
-	salida := RenderResumen([]Ficha{ficha})
-	if !strings.Contains(salida, "🔧 corregida en `a1b2c3d`") {
-		t.Errorf("falta la marca de corrección:\n%s", salida)
+	out := RenderSummary([]Record{record})
+	if !strings.Contains(out, "🔧 fixed in `a1b2c3d`") {
+		t.Errorf("missing the fix mark:\n%s", out)
 	}
 }
 
-func TestTruncarCuerpo(t *testing.T) {
-	corto := "texto breve"
-	if got := TruncarCuerpo(corto, 1024); got != corto {
-		t.Errorf("TruncarCuerpo(corto) = %q, esperado sin cambios", got)
+func TestTruncateBody(t *testing.T) {
+	short := "short text"
+	if got := TruncateBody(short, 1024); got != short {
+		t.Errorf("TruncateBody(short) = %q, want unchanged", got)
 	}
 
-	largo := strings.Repeat("x", 100)
-	got := TruncarCuerpo(largo, 50)
+	long := strings.Repeat("x", 100)
+	got := TruncateBody(long, 50)
 	if len(got) > 50 {
-		t.Errorf("TruncarCuerpo = %d bytes, esperado ≤50", len(got))
+		t.Errorf("TruncateBody = %d bytes, want ≤50", len(got))
 	}
-	if !strings.Contains(got, "truncado") || !strings.Contains(got, "omitieron") {
-		t.Errorf("el truncamiento debe estar marcado explícitamente, got: %q", got)
-	}
-}
-
-// TestTruncarCuerpoLimiteNulo: sin límite (0 o negativo) el texto no cambia.
-func TestTruncarCuerpoLimiteNulo(t *testing.T) {
-	texto := "abc"
-	if got := TruncarCuerpo(texto, 0); got != texto {
-		t.Errorf("TruncarCuerpo(0) = %q, esperado sin cambios", got)
-	}
-	if got := TruncarCuerpo(texto, -5); got != texto {
-		t.Errorf("TruncarCuerpo(-5) = %q, esperado sin cambios", got)
+	if !strings.Contains(got, "Body truncated") || !strings.Contains(got, "bytes omitted") {
+		t.Errorf("the truncation must be marked explicitly, got: %q", got)
 	}
 }
 
-// TestTruncarCuerpoMarcadorMayorQueLimite: cuando ni el marcador cabe, el
-// resultado es solo el marcador recortado al límite, sin contenido del texto.
-func TestTruncarCuerpoMarcadorMayorQueLimite(t *testing.T) {
-	got := TruncarCuerpo(strings.Repeat("x", 500), 10)
+// TestTruncateBodyZeroLimit: without a limit (0 or negative) the text does
+// not change.
+func TestTruncateBodyZeroLimit(t *testing.T) {
+	text := "abc"
+	if got := TruncateBody(text, 0); got != text {
+		t.Errorf("TruncateBody(0) = %q, want unchanged", got)
+	}
+	if got := TruncateBody(text, -5); got != text {
+		t.Errorf("TruncateBody(-5) = %q, want unchanged", got)
+	}
+}
+
+// TestTruncateBodyMarkerLargerThanLimit: when even the marker does not fit,
+// the result is only the marker clipped to the limit, with no text content.
+func TestTruncateBodyMarkerLargerThanLimit(t *testing.T) {
+	got := TruncateBody(strings.Repeat("x", 500), 10)
 	if len(got) > 10 {
-		t.Errorf("TruncarCuerpo = %d bytes, esperado ≤10", len(got))
+		t.Errorf("TruncateBody = %d bytes, want ≤10", len(got))
 	}
 	if strings.Contains(got, "x") {
-		t.Errorf("el resultado no debe contener contenido del texto, got: %q", got)
+		t.Errorf("the result must not contain text content, got: %q", got)
 	}
 }
 
-// TestTruncarCuerpoNoParteRunas: el corte nunca parte una runa UTF-8 y el
-// resultado siempre es texto válido.
-func TestTruncarCuerpoNoParteRunas(t *testing.T) {
-	texto := "áéíóúüñ " + strings.Repeat("ñ", 200)
-	got := TruncarCuerpo(texto, 57)
+// TestTruncateBodyNeverSplitsRunes: the cut never splits a UTF-8 rune and
+// the result is always valid text.
+func TestTruncateBodyNeverSplitsRunes(t *testing.T) {
+	text := "áéíóúüñ " + strings.Repeat("ñ", 200)
+	got := TruncateBody(text, 57)
 	if len(got) > 57 {
-		t.Errorf("TruncarCuerpo = %d bytes, esperado ≤57", len(got))
+		t.Errorf("TruncateBody = %d bytes, want ≤57", len(got))
 	}
 	if !utf8.ValidString(got) {
-		t.Errorf("TruncarCuerpo partió una runa UTF-8: %q", got)
+		t.Errorf("TruncateBody split a UTF-8 rune: %q", got)
 	}
 }
 
-// TestRenderResumenVacio: sin fichas, el resumen avisa en lugar de inventar.
-func TestRenderResumenVacio(t *testing.T) {
-	if salida := RenderResumen(nil); !strings.Contains(salida, "No hay commits auditados") {
-		t.Errorf("resumen vacío = %q, esperado aviso de sin commits", salida)
+// TestRenderSummaryEmpty: with no records, the summary warns instead of
+// inventing.
+func TestRenderSummaryEmpty(t *testing.T) {
+	if out := RenderSummary(nil); !strings.Contains(out, "No audited commits") {
+		t.Errorf("empty summary = %q, want the no-commits notice", out)
 	}
 }
 
-// TestConteoQuestionUnavailable: el conteo global incluye question y
-// unavailable solo cuando existen.
-func TestConteoQuestionUnavailable(t *testing.T) {
-	fichas := []Ficha{
-		fichaAyuda("aaaaaaa", "feat(a): a", "m",
-			revisionAyuda(VerdictQuestion, DimensionResult{Dim: DimSpec, Verdict: VerdictQuestion})),
-		fichaAyuda("bbbbbbb", "feat(b): b", "m",
-			revisionAyuda(VerdictUnavailable, DimensionResult{Dim: DimSpec, Verdict: VerdictUnavailable})),
+// TestCountQuestionUnavailable: the global count includes question and
+// unavailable only when they exist.
+func TestCountQuestionUnavailable(t *testing.T) {
+	records := []Record{
+		recordHelper("aaaaaaa", "feat(a): a", "m",
+			revisionHelper(VerdictQuestion, DimensionResult{Dim: DimSpec, Verdict: VerdictQuestion})),
+		recordHelper("bbbbbbb", "feat(b): b", "m",
+			revisionHelper(VerdictUnavailable, DimensionResult{Dim: DimSpec, Verdict: VerdictUnavailable})),
 	}
 
-	salida := RenderResumen(fichas)
-	if !strings.Contains(salida, "❓ question: 1") || !strings.Contains(salida, "⛔ unavailable: 1") {
-		t.Errorf("faltan los conteos de question/unavailable:\n%s", salida)
+	out := RenderSummary(records)
+	if !strings.Contains(out, "❓ question: 1") || !strings.Contains(out, "⛔ unavailable: 1") {
+		t.Errorf("missing the question/unavailable counts:\n%s", out)
 	}
-	if strings.Contains(salida, "🔧") {
-		t.Errorf("no debe haber correcciones en este fixture:\n%s", salida)
+	if strings.Contains(out, "🔧") {
+		t.Errorf("there must be no fixes in this fixture:\n%s", out)
 	}
 }
 
-func TestLineaRiesgo(t *testing.T) {
-	fichas := []Ficha{
-		fichaAyuda("6b127cd", "feat(a)", "m",
-			revisionAyuda("warn", DimensionResult{Dim: DimLogic, Verdict: VerdictWarn})),
-		fichaAyuda("945b5b5", "feat(b)", "m",
-			revisionAyuda("ok", DimensionResult{Dim: DimLogic, Verdict: VerdictOK})),
+func TestRiskLine(t *testing.T) {
+	records := []Record{
+		recordHelper("6b127cd", "feat(a)", "m",
+			revisionHelper("warn", DimensionResult{Dim: DimLogic, Verdict: VerdictWarn})),
+		recordHelper("945b5b5", "feat(b)", "m",
+			revisionHelper("ok", DimensionResult{Dim: DimLogic, Verdict: VerdictOK})),
 	}
-	linea := lineaRiesgo(fichas)
-	if !strings.Contains(linea, "warn") {
-		t.Errorf("línea de riesgo no muestra el veredicto de rama: %s", linea)
+	line := riskLine(records)
+	if !strings.Contains(line, "warn") {
+		t.Errorf("risk line does not show the branch verdict: %s", line)
 	}
-	if !strings.Contains(linea, "⚠️") {
-		t.Errorf("la línea de riesgo debe llevar emoji del peor veredicto: %s", linea)
+	if !strings.Contains(line, "⚠️") {
+		t.Errorf("the risk line must carry the emoji of the worst verdict: %s", line)
 	}
-	if !strings.Contains(linea, "ok: 1") || !strings.Contains(linea, "warn: 1") {
-		t.Errorf("la línea de riesgo debe contar los resultados: %s", linea)
+	if !strings.Contains(line, "ok: 1") || !strings.Contains(line, "warn: 1") {
+		t.Errorf("the risk line must count the results: %s", line)
 	}
 }
 
-func TestVeredictoDeRamaPonderado(t *testing.T) {
-	casos := []struct {
-		nombre   string
-		fichas   []Ficha
-		esperado string
+func TestBranchVerdictWeighted(t *testing.T) {
+	cases := []struct {
+		name     string
+		records  []Record
+		expected string
 	}{
 		{
-			"block manda sobre warn",
-			[]Ficha{
-				fichaAyuda("u1", "a", "m", revisionAyuda("warn")),
-				fichaAyuda("u2", "b", "m", revisionAyuda("block")),
+			"block beats warn",
+			[]Record{
+				recordHelper("u1", "a", "m", revisionHelper("warn")),
+				recordHelper("u2", "b", "m", revisionHelper("block")),
 			},
 			VerdictBlock,
 		},
 		{
-			"warn sobre ok",
-			[]Ficha{
-				fichaAyuda("u1", "a", "m", revisionAyuda("ok")),
-				fichaAyuda("u2", "b", "m", revisionAyuda("warn")),
+			"warn beats ok",
+			[]Record{
+				recordHelper("u1", "a", "m", revisionHelper("ok")),
+				recordHelper("u2", "b", "m", revisionHelper("warn")),
 			},
 			VerdictWarn,
 		},
 		{
-			"sin fichas = ok",
+			"no records = ok",
 			nil,
 			VerdictOK,
 		},
 	}
-	for _, c := range casos {
-		t.Run(c.nombre, func(t *testing.T) {
-			if got := VeredictoDeRama(c.fichas); got != c.esperado {
-				t.Errorf("VeredictoDeRama = %q, esperado %q", got, c.esperado)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := VerdictDeBranch(c.records); got != c.expected {
+				t.Errorf("VerdictDeBranch = %q, want %q", got, c.expected)
 			}
 		})
 	}
 }
 
-// TestVeredictoDeRamaCorregidaNoBloquea: un block corregido en un commit
-// posterior (FixedIn) ya no aporta al veredicto de la rama.
-func TestVeredictoDeRamaCorregidaNoBloquea(t *testing.T) {
-	bloqueada := fichaAyuda("u1", "feat(a)", "m", revisionAyuda("block"))
-	bloqueada.FixedIn = "a1b2c3d"
-	fichas := []Ficha{bloqueada, fichaAyuda("u2", "feat(b)", "m", revisionAyuda("ok"))}
-	if got := VeredictoDeRama(fichas); got != VerdictOK {
-		t.Errorf("VeredictoDeRama = %q, esperado ok (block corregido)", got)
+// TestBranchVerdictFixedDoesNotBlock: a block fixed in a later commit
+// (FixedIn) no longer contributes to the branch verdict.
+func TestBranchVerdictFixedDoesNotBlock(t *testing.T) {
+	blocked := recordHelper("u1", "feat(a)", "m", revisionHelper("block"))
+	blocked.FixedIn = "a1b2c3d"
+	records := []Record{blocked, recordHelper("u2", "feat(b)", "m", revisionHelper("ok"))}
+	if got := VerdictDeBranch(records); got != VerdictOK {
+		t.Errorf("VerdictDeBranch = %q, want ok (fixed block)", got)
 	}
 }
 
-func TestSeccionVerificacion(t *testing.T) {
-	t.Run("determinista con exit codes", func(t *testing.T) {
-		salida := seccionVerificacion(VerificacionPlantilla{
-			Modo: "determinista",
-			Comandos: []ComandoVerificado{
+func TestVerificationSection(t *testing.T) {
+	t.Run("deterministic with exit codes", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{
+			Mode: "determinista",
+			Comandos: []VerifiedCommand{
 				{Comando: "go vet ./...", Exit: 0},
 				{Comando: "go test ./...", Exit: 1},
 			},
 		})
-		if !strings.Contains(salida, "go vet ./...") || !strings.Contains(salida, "exit 0") {
-			t.Errorf("faltan comandos ok: %s", salida)
+		if !strings.Contains(out, "go vet ./...") || !strings.Contains(out, "exit 0") {
+			t.Errorf("missing the ok commands: %s", out)
 		}
-		if !strings.Contains(salida, "❌") || !strings.Contains(salida, "exit 1") {
-			t.Errorf("el exit no nulo debe marcarse: %s", salida)
+		if !strings.Contains(out, "❌") || !strings.Contains(out, "exit 1") {
+			t.Errorf("the non-zero exit must be marked: %s", out)
 		}
 	})
-	t.Run("delegado con tested", func(t *testing.T) {
-		salida := seccionVerificacion(VerificacionPlantilla{
-			Modo:   "delegado",
+	t.Run("delegated with tested", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{
+			Mode:   "delegado",
 			Tested: []string{"make test"},
 		})
-		if !strings.Contains(salida, "make test") {
-			t.Errorf("falta el contrato tested: %s", salida)
+		if !strings.Contains(out, "make test") {
+			t.Errorf("missing the tested contract: %s", out)
 		}
 	})
-	t.Run("omitido siempre honesto", func(t *testing.T) {
-		salida := seccionVerificacion(VerificacionPlantilla{Modo: "omitido", Motivo: "no_configurado"})
-		if !strings.Contains(salida, "no_configurado") {
-			t.Errorf("el motivo debe mostrarse: %s", salida)
+	t.Run("omitted stays honest", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{Mode: "omitido", Reason: "no_configurado"})
+		if !strings.Contains(out, "no_configurado") {
+			t.Errorf("the reason must be shown: %s", out)
 		}
-		if strings.Contains(salida, "✅ ") {
-			t.Errorf("un modo omitido nunca debe inyectar PASS: %s", salida)
+		if strings.Contains(out, "✅ ") {
+			t.Errorf("an omitted mode must never inject PASS: %s", out)
 		}
 	})
-	t.Run("sin evidencia no miente", func(t *testing.T) {
-		salida := seccionVerificacion(VerificacionPlantilla{})
-		if !strings.Contains(salida, "no ejecutados") && !strings.Contains(salida, "Tests no ejecutados") {
-			t.Errorf("sin evidencia debe declarar tests no ejecutados: %s", salida)
+	t.Run("no evidence does not lie", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{})
+		if !strings.Contains(out, "Tests not run.") {
+			t.Errorf("without evidence it must declare tests not run: %s", out)
 		}
 	})
 }
 
-// TestSeccionValidacion: exit codes reales de internal/validation (T1.8),
-// distintos de seccionVerificacion — sin comandos, nunca inventa un PASS.
-func TestSeccionValidacion(t *testing.T) {
-	t.Run("con exit codes reales", func(t *testing.T) {
-		salida := seccionValidacion([]ComandoVerificado{
+// TestValidationSection: real exit codes from internal/validation (T1.8),
+// distinct from verificationSection — with no commands it never invents a
+// PASS.
+func TestValidationSection(t *testing.T) {
+	t.Run("with real exit codes", func(t *testing.T) {
+		out := validationSection([]VerifiedCommand{
 			{Comando: "go vet ./...", Exit: 0},
 			{Comando: "go test ./...", Exit: 1},
 		})
-		if !strings.Contains(salida, "go vet ./...") || !strings.Contains(salida, "exit 0") {
-			t.Errorf("faltan los comandos en verde: %s", salida)
+		if !strings.Contains(out, "go vet ./...") || !strings.Contains(out, "exit 0") {
+			t.Errorf("missing the green commands: %s", out)
 		}
-		if !strings.Contains(salida, "❌") || !strings.Contains(salida, "exit 1") {
-			t.Errorf("el exit no nulo debe marcarse: %s", salida)
+		if !strings.Contains(out, "❌") || !strings.Contains(out, "exit 1") {
+			t.Errorf("the non-zero exit must be marked: %s", out)
 		}
 	})
-	t.Run("sin comandos no inventa nada", func(t *testing.T) {
-		salida := seccionValidacion(nil)
-		if strings.Contains(salida, "✅") {
-			t.Errorf("sin comandos no debe inventar un PASS: %s", salida)
+	t.Run("no commands invents nothing", func(t *testing.T) {
+		out := validationSection(nil)
+		if strings.Contains(out, "✅") {
+			t.Errorf("without commands it must not invent a PASS: %s", out)
 		}
 	})
 }
 
-// TestRenderPlantillaPrDistingueValidacionYVerificacion: la plantilla separa
-// la validación previa (ValidationRun) de la verificación post-hoc
-// (ops.Verificar) en dos secciones propias, sin mezclarlas (T1.8).
-func TestRenderPlantillaPrDistingueValidacionYVerificacion(t *testing.T) {
-	fichas := []Ficha{fichaAyuda("u1", "feat(a)", "m", revisionAyuda("ok"))}
-	verificacion := VerificacionPlantilla{
-		Modo:       "determinista",
-		Comandos:   []ComandoVerificado{{Comando: "go test ./... (post-hoc)", Exit: 0}},
-		Validacion: []ComandoVerificado{{Comando: "go build ./... (validacion previa)", Exit: 1}},
+// TestRenderPRTemplateSeparatesValidationAndVerification: the template
+// separates the pre-validation (ValidationRun) from the post-hoc
+// verification (ops.Verify) into two dedicated sections, without mixing
+// them (T1.8).
+func TestRenderPRTemplateSeparatesValidationAndVerification(t *testing.T) {
+	records := []Record{recordHelper("u1", "feat(a)", "m", revisionHelper("ok"))}
+	verification := TemplateVerification{
+		Mode:       "determinista",
+		Comandos:   []VerifiedCommand{{Comando: "go test ./... (post-hoc)", Exit: 0}},
+		Validation: []VerifiedCommand{{Comando: "go build ./... (validacion previa)", Exit: 1}},
 	}
-	salida := RenderPlantillaPr(fichas, nil, verificacion, "0.2.0")
-	if !strings.Contains(salida, "## Validación") {
-		t.Fatalf("falta la sección de validación previa: %s", salida)
+	out := RenderPRTemplate(records, nil, verification, "0.2.0")
+	if !strings.Contains(out, "## Validation") {
+		t.Fatalf("missing the pre-validation section: %s", out)
 	}
-	if !strings.Contains(salida, "go build ./... (validacion previa)") {
-		t.Errorf("la validación previa debe listar su propio comando: %s", salida)
+	if !strings.Contains(out, "go build ./... (validacion previa)") {
+		t.Errorf("pre-validation must list its own command: %s", out)
 	}
-	if !strings.Contains(salida, "go test ./... (post-hoc)") {
-		t.Errorf("la verificación post-hoc debe seguir apareciendo: %s", salida)
+	if !strings.Contains(out, "go test ./... (post-hoc)") {
+		t.Errorf("post-hoc verification must still appear: %s", out)
 	}
 }
 
-func TestRenderPlantillaPr(t *testing.T) {
-	fichas := []Ficha{
-		fichaAyuda("u1a", "feat(a)", "m",
-			revisionAyuda("ok",
+func TestRenderPRTemplate(t *testing.T) {
+	records := []Record{
+		recordHelper("u1a", "feat(a)", "m",
+			revisionHelper("ok",
 				DimensionResult{Dim: DimLogic, Verdict: VerdictOK},
 				DimensionResult{Dim: DimTests, Verdict: VerdictOK})),
 	}
-	overview := &ResultadoOverview{
-		Coherente: true,
-		Rationale: "Cambio coherente\nque completa la fase\nen tres líneas\npara el rationale.",
+	overview := &OverviewResult{
+		Coherent:  true,
+		Rationale: "Cambio coherent\nque completa la fase\nen tres líneas\npara el rationale.",
 	}
-	verificacion := VerificacionPlantilla{
-		Modo: "determinista",
-		Comandos: []ComandoVerificado{
+	verification := TemplateVerification{
+		Mode: "determinista",
+		Comandos: []VerifiedCommand{
 			{Comando: "go vet ./...", Exit: 0},
 		},
 	}
 
-	salida := RenderPlantillaPr(fichas, overview, verificacion, "0.2.0")
-	if !strings.Contains(salida, "Veredicto de auditoría") {
-		t.Errorf("falta la línea de riesgo: %s", salida)
+	out := RenderPRTemplate(records, overview, verification, "0.2.0")
+	if !strings.Contains(out, "Audit verdict") {
+		t.Errorf("missing the risk line: %s", out)
 	}
-	if !strings.Contains(salida, "Cambio coherente") {
-		t.Errorf("falta el rationale del overview: %s", salida)
+	if !strings.Contains(out, "Cambio coherent") {
+		t.Errorf("missing the overview rationale: %s", out)
 	}
-	if !strings.Contains(salida, "OWN") {
-		t.Errorf("falta la matriz: %s", salida)
+	if !strings.Contains(out, "OWN") {
+		t.Errorf("missing the matrix: %s", out)
 	}
-	if !strings.Contains(salida, "go vet ./...") {
-		t.Errorf("falta la sección de verificación: %s", salida)
+	if !strings.Contains(out, "go vet ./...") {
+		t.Errorf("missing the verification section: %s", out)
 	}
-	if !strings.Contains(salida, "Generated by VAS Sentinel 0.2.0") {
-		t.Errorf("falta la firma con versión: %s", salida)
+	if !strings.Contains(out, "Generated by VAS Sentinel 0.2.0") {
+		t.Errorf("missing the signature with version: %s", out)
 	}
-	if !strings.Contains(salida, "no CI") {
-		t.Errorf("la firma debe aclarar que no es CI: %s", salida)
+	if !strings.Contains(out, "not CI") {
+		t.Errorf("the signature must clarify it is not CI: %s", out)
 	}
-	if len(salida) > LimiteCuerpoPR {
-		t.Errorf("plantilla supera el límite: %d", len(salida))
-	}
-}
-
-func TestRenderPlantillaSinOverviewHonesta(t *testing.T) {
-	fichas := []Ficha{
-		fichaAyuda("u1", "feat(a)", "m", revisionAyuda("ok")),
-	}
-	salida := RenderPlantillaPr(fichas, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
-	if !strings.Contains(salida, "Sin overview") {
-		t.Errorf("sin overview debe decirse, no omitirse en silencio: %s", salida)
+	if len(out) > PRBodyLimit {
+		t.Errorf("template exceeds the limit: %d", len(out))
 	}
 }
 
-// TestBloqueantesDeRamaFiltraCriticos: solo los CRITICAL de la última
-// revisión bloquean; vacíos, sin revisión y severidades menores no cuentan.
-func TestBloqueantesDeRamaFiltraCriticos(t *testing.T) {
-	critico := ReviewFinding{Dimension: DimSecurity, File: "a.go", Line: 42,
+func TestRenderTemplateNoOverviewHonest(t *testing.T) {
+	records := []Record{
+		recordHelper("u1", "feat(a)", "m", revisionHelper("ok")),
+	}
+	out := RenderPRTemplate(records, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	if !strings.Contains(out, "No overview") {
+		t.Errorf("with no overview it must be said, not silently omitted: %s", out)
+	}
+}
+
+// TestBranchBlockersFiltersCriticals: only the CRITICAL findings of the
+// last revision block; empty ones, no revision and lesser severities do not
+// count.
+func TestBranchBlockersFiltersCriticals(t *testing.T) {
+	critical := ReviewFinding{Dimension: DimSecurity, File: "a.go", Line: 42,
 		Severity: SevCritical, Description: "dato expuesto"}
-	casos := []struct {
-		nombre string
-		fichas []Ficha
-		want   int
+	cases := []struct {
+		name    string
+		records []Record
+		want    int
 	}{
 		{
-			nombre: "sin fichas no bloquea nada",
-			fichas: nil,
-			want:   0,
+			name:    "no records blocks nothing",
+			records: nil,
+			want:    0,
 		},
 		{
-			nombre: "ficha sin revisiones no bloquea",
-			fichas: []Ficha{fichaAyuda("u1", "feat(a)", "m")},
-			want:   0,
+			name:    "record without revisions does not block",
+			records: []Record{recordHelper("u1", "feat(a)", "m")},
+			want:    0,
 		},
 		{
-			nombre: "solo severidades menores no bloquea",
-			fichas: []Ficha{fichaAyuda("u1", "feat(a)", "m",
-				revisionAyuda("warn",
+			name: "only lesser severities do not block",
+			records: []Record{recordHelper("u1", "feat(a)", "m",
+				revisionHelper("warn",
 					DimensionResult{Dim: DimTests, Verdict: VerdictWarn,
 						Findings: []ReviewFinding{{Dimension: DimTests, Severity: SevWarning, Description: "frágil"}}},
 					DimensionResult{Dim: DimSpec, Verdict: VerdictOK,
@@ -443,85 +448,85 @@ func TestBloqueantesDeRamaFiltraCriticos(t *testing.T) {
 			want: 0,
 		},
 		{
-			nombre: "mezcla con al menos un CRITICAL lista solo los criticos",
-			fichas: []Ficha{
-				fichaAyuda("u1", "feat(a)", "m",
-					revisionAyuda("block",
+			name: "mix with at least one CRITICAL lists only the criticals",
+			records: []Record{
+				recordHelper("u1", "feat(a)", "m",
+					revisionHelper("block",
 						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 							Findings: []ReviewFinding{
-								critico,
+								critical,
 								{Dimension: DimSecurity, Severity: SevWarning, Description: "menor"},
 							}},
 					)),
-				fichaAyuda("u2", "feat(b)", "m", revisionAyuda("ok")),
+				recordHelper("u2", "feat(b)", "m", revisionHelper("ok")),
 			},
 			want: 1,
 		},
 		{
-			nombre: "solo la ultima revision manda",
-			fichas: []Ficha{fichaAyuda("u1", "feat(a)", "m",
-				revisionAyuda("block",
+			name: "only the last revision wins",
+			records: []Record{recordHelper("u1", "feat(a)", "m",
+				revisionHelper("block",
 					DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
-						Findings: []ReviewFinding{critico}}),
-				revisionAyuda("ok",
+						Findings: []ReviewFinding{critical}}),
+				revisionHelper("ok",
 					DimensionResult{Dim: DimSecurity, Verdict: VerdictOK}),
 			)},
 			want: 0,
 		},
 		{
-			nombre: "block corregido no bloquea",
-			fichas: func() []Ficha {
-				corregida := fichaAyuda("f1", "feat(a)", "m",
-					revisionAyuda("block",
+			name: "fixed block does not block",
+			records: func() []Record {
+				fixed := recordHelper("f1", "feat(a)", "m",
+					revisionHelper("block",
 						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
-							Findings: []ReviewFinding{critico}}))
-				corregida.FixedIn = "a1b2c3d"
-				return []Ficha{corregida}
+							Findings: []ReviewFinding{critical}}))
+				fixed.FixedIn = "a1b2c3d"
+				return []Record{fixed}
 			}(),
 			want: 0,
 		},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			got := BloqueantesDeRama(caso.fichas)
-			if len(got) != caso.want {
-				t.Errorf("BloqueantesDeRama() = %d hallazgos, esperado %d: %+v",
-					len(got), caso.want, got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := BranchBlockers(c.records)
+			if len(got) != c.want {
+				t.Errorf("BranchBlockers() = %d findings, expected %d: %+v",
+					len(got), c.want, got)
 			}
 		})
 	}
 }
 
-// TestBloqueantesDeRamaMapsAggregatedFindingsFields: an integration test that
-// exercises BloqueantesDeRama through a real AggregatedFindings CRITICAL
-// Hallazgo (T6.1 merge + T6.2 supersede result) and asserts the actual
+// TestBranchBlockersMapsAggregatedFindingsFields: an integration test that
+// exercises BranchBlockers through a real AggregatedFindings CRITICAL
+// Finding (T6.1 merge + T6.2 supersede result) and asserts the actual
 // content of the returned ReviewFinding — every field
-// reviewFindingDesdeHallazgo maps — not only len(got). Without this,
-// reverting the T6.5 hunk that switched BloqueantesDeRama from iterating
-// Dims to ultima.HallazgosEfectivos() would not fail any test today, because
-// TestBloqueantesDeRamaFiltraCriticos only ever builds Dims-based fixtures
+// reviewFindingFromFinding maps — not only len(got). Without this,
+// reverting the T6.5 hunk that switched BranchBlockers from iterating
+// Dims to ultima.EffectiveFindings() would not fail any test today, because
+// TestBranchBlockersFiltersCriticals only ever builds Dims-based fixtures
 // (T6.5 review finding: tests WARNING).
-func TestBloqueantesDeRamaMapsAggregatedFindingsFields(t *testing.T) {
-	ficha := fichaAyuda("6b127cd", "fix(auth): tighten token check", "m", Revision{
+func TestBranchBlockersMapsAggregatedFindingsFields(t *testing.T) {
+	record := recordHelper("6b127cd", "fix(auth): tighten token check", "m", Revision{
 		At:     time.Now().UTC(),
 		Result: "block",
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			{
 				Dimension:   DimSecurity,
 				Severity:    SevCritical,
 				Source:      SourceReview,
 				Confidence:  0.9,
 				Description: "token comparison is not constant-time",
-				Location:    Ubicacion{Archivo: "auth.go", LineaInicio: 42},
+				Location:    Location{File: "auth.go", LineStart: 42},
 			},
 		},
 	})
 
-	got := BloqueantesDeRama([]Ficha{ficha})
+	got := BranchBlockers([]Record{record})
 	if len(got) != 1 {
-		t.Fatalf("BloqueantesDeRama() = %d hallazgos, esperado 1: %+v", len(got), got)
+		t.Fatalf("BranchBlockers() = %d findings, expected 1: %+v", len(got), got)
 	}
-	esperado := ReviewFinding{
+	expected := ReviewFinding{
 		Dimension:   DimSecurity,
 		File:        "auth.go",
 		Line:        42,
@@ -529,28 +534,28 @@ func TestBloqueantesDeRamaMapsAggregatedFindingsFields(t *testing.T) {
 		Description: "token comparison is not constant-time",
 		Source:      SourceReview,
 	}
-	if got[0] != esperado {
-		t.Errorf("BloqueantesDeRama()[0] = %+v, want %+v", got[0], esperado)
+	if got[0] != expected {
+		t.Errorf("BranchBlockers()[0] = %+v, want %+v", got[0], expected)
 	}
 }
 
-// TestRiesgosRendersMergedFindingWithSourceAndEvidence: a merged Hallazgo
-// (T6.1 aggregation + T6.2 supersede result, ResultadoAuditoria.Findings
+// TestRisksRenderMergedFindingWithSourceAndEvidence: a merged Finding
+// (T6.1 aggregation + T6.2 supersede result, AuditResult.Findings
 // persisted on Revision.AggregatedFindings by T6.5) renders its distinguished
 // Source (review vs validation) and every accumulated evidence from
 // EvidenceSet instead of only the single legacy Evidence string.
-func TestRiesgosRendersMergedFindingWithSourceAndEvidence(t *testing.T) {
-	ficha := fichaAyuda("6b127cd", "fix(auth): tighten token check", "m", Revision{
+func TestRisksRenderMergedFindingWithSourceAndEvidence(t *testing.T) {
+	record := recordHelper("6b127cd", "fix(auth): tighten token check", "m", Revision{
 		At:     time.Now().UTC(),
 		Result: "block",
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			{
 				Dimension:   DimSecurity,
 				Severity:    SevCritical,
 				Source:      SourceReview,
 				Confidence:  0.9,
 				Description: "token comparison is not constant-time",
-				Location:    Ubicacion{Archivo: "auth.go", LineaInicio: 42},
+				Location:    Location{File: "auth.go", LineStart: 42},
 				EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
 					{Dimension: DimSecurity, Evidence: "token == expected", Confidence: 0.8},
 					{Dimension: DimLogic, Evidence: "no hmac.Equal usage found", Confidence: 0.95},
@@ -559,153 +564,153 @@ func TestRiesgosRendersMergedFindingWithSourceAndEvidence(t *testing.T) {
 		},
 	})
 
-	salida := RenderPlantillaPr([]Ficha{ficha}, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
+	out := RenderPRTemplate([]Record{record}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
 
-	if !strings.Contains(salida, "review") {
-		t.Errorf("merged finding must show its distinguished Source (review): %s", salida)
+	if !strings.Contains(out, "review") {
+		t.Errorf("merged finding must show its distinguished Source (review): %s", out)
 	}
-	if !strings.Contains(salida, "token == expected") || !strings.Contains(salida, "no hmac.Equal usage found") {
-		t.Errorf("merged finding must show every accumulated evidence from EvidenceSet: %s", salida)
+	if !strings.Contains(out, "token == expected") || !strings.Contains(out, "no hmac.Equal usage found") {
+		t.Errorf("merged finding must show every accumulated evidence from EvidenceSet: %s", out)
 	}
-	if !strings.Contains(salida, "0.90") {
-		t.Errorf("merged finding must show the combined confidence: %s", salida)
+	if !strings.Contains(out, "0.90") {
+		t.Errorf("merged finding must show the combined confidence: %s", out)
 	}
 }
 
-// TestRiesgosMergedValidationSourceLabel: a merged Hallazgo sourced from
+// TestRisksMergedValidationSourceLabel: a merged Finding sourced from
 // deterministic validation (SourceValidation) is labeled distinctly from one
 // sourced from semantic review (SourceReview).
-func TestRiesgosMergedValidationSourceLabel(t *testing.T) {
-	ficha := fichaAyuda("945b5b5", "fix(build): repair lint failure", "m", Revision{
+func TestRisksMergedValidationSourceLabel(t *testing.T) {
+	record := recordHelper("945b5b5", "fix(build): repair lint failure", "m", Revision{
 		At:     time.Now().UTC(),
 		Result: "block",
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			{
 				Dimension:   DimStyle,
 				Severity:    SevWarning,
 				Source:      SourceValidation,
 				Confidence:  1,
 				Description: "gofmt reported an unformatted file",
-				Location:    Ubicacion{Archivo: "main.go", LineaInicio: 1},
+				Location:    Location{File: "main.go", LineStart: 1},
 				Evidence:    "gofmt -l main.go",
 			},
 		},
 	})
 
-	salida := riesgos([]Ficha{ficha})
-	if len(salida) != 1 {
-		t.Fatalf("riesgos() = %d lines, expected 1: %v", len(salida), salida)
+	lines := pendingRisks([]Record{record})
+	if len(lines) != 1 {
+		t.Fatalf("pendingRisks() = %d lines, expected 1: %v", len(lines), lines)
 	}
-	if !strings.Contains(salida[0], "validation") {
-		t.Errorf("merged finding sourced from validation must be labeled distinctly: %s", salida[0])
+	if !strings.Contains(lines[0], "validation") {
+		t.Errorf("merged finding sourced from validation must be labeled distinctly: %s", lines[0])
 	}
-	if strings.Contains(salida[0], "review") {
-		t.Errorf("a validation-sourced finding must not be mislabeled review: %s", salida[0])
+	if strings.Contains(lines[0], "review") {
+		t.Errorf("a validation-sourced finding must not be mislabeled review: %s", lines[0])
 	}
-	if !strings.Contains(salida[0], "gofmt -l main.go") {
-		t.Errorf("a non-merged Hallazgo (EvidenceSet nil) must fall back to its legacy Evidence string: %s", salida[0])
+	if !strings.Contains(lines[0], "gofmt -l main.go") {
+		t.Errorf("a non-merged Finding (EvidenceSet nil) must fall back to its legacy Evidence string: %s", lines[0])
 	}
 }
 
-// TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings: a Revision saved
+// TestRisksFallBackToLegacyDimsWithoutAggregatedFindings: a Revision saved
 // before T6.5 (or by a caller that never propagated AggregatedFindings)
-// still surfaces its Dims-based findings — HallazgosEfectivos (T6.5 review
-// finding: design) converts them to Hallazgo so riesgos() keeps working
+// still surfaces its Dims-based findings — EffectiveFindings (T6.5 review
+// finding: design) converts them to Finding so pendingRisks() keeps working
 // unchanged from the caller's point of view.
-func TestRiesgosFallsBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
-	ficha := fichaAyuda("aaaaaaa", "feat(a): legacy", "m",
-		revisionAyuda("block",
+func TestRisksFallBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
+	record := recordHelper("aaaaaaa", "feat(a): legacy", "m",
+		revisionHelper("block",
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 				Findings: []ReviewFinding{{Dimension: DimSecurity, File: "a.go", Line: 1, Severity: SevCritical, Description: "legacy finding"}}},
 		))
 
-	salida := riesgos([]Ficha{ficha})
-	if len(salida) != 1 || !strings.Contains(salida[0], "legacy finding") {
-		t.Errorf("legacy Dims-based rendering must still work when AggregatedFindings is empty: %v", salida)
+	lines := pendingRisks([]Record{record})
+	if len(lines) != 1 || !strings.Contains(lines[0], "legacy finding") {
+		t.Errorf("legacy Dims-based rendering must still work when AggregatedFindings is empty: %v", lines)
 	}
 }
 
-// TestRiesgosFiltersAdvisoryFromAggregatedFindings: the AggregatedFindings
+// TestRisksFilterAdvisoryFromAggregatedFindings: the AggregatedFindings
 // path must exclude ADVISORY the same way the legacy path always did — this
 // path had no coverage of its own severity filter before (T6.5 review
 // finding: tests WARNING).
-func TestRiesgosFiltersAdvisoryFromAggregatedFindings(t *testing.T) {
-	ficha := fichaAyuda("6b127cd", "fix(x): thing", "m", Revision{
+func TestRisksFilterAdvisoryFromAggregatedFindings(t *testing.T) {
+	record := recordHelper("6b127cd", "fix(x): thing", "m", Revision{
 		At:     time.Now().UTC(),
 		Result: "block",
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			{Dimension: DimSecurity, Severity: SevCritical, Description: "critical one"},
 			{Dimension: DimSpec, Severity: SevAdvisory, Description: "advisory one"},
 		},
 	})
 
-	salida := riesgos([]Ficha{ficha})
-	if len(salida) != 1 {
-		t.Fatalf("riesgos() = %d lines, expected 1 (ADVISORY excluded): %v", len(salida), salida)
+	lines := pendingRisks([]Record{record})
+	if len(lines) != 1 {
+		t.Fatalf("pendingRisks() = %d lines, expected 1 (ADVISORY excluded): %v", len(lines), lines)
 	}
-	if !strings.Contains(salida[0], "critical one") {
-		t.Errorf("missing the CRITICAL finding: %v", salida)
+	if !strings.Contains(lines[0], "critical one") {
+		t.Errorf("missing the CRITICAL finding: %v", lines)
 	}
-	if strings.Contains(salida[0], "advisory one") {
-		t.Errorf("ADVISORY must not appear in riesgos(): %v", salida)
+	if strings.Contains(lines[0], "advisory one") {
+		t.Errorf("ADVISORY must not appear in pendingRisks(): %v", lines)
 	}
 }
 
 // FU-6: PR risk rendering uses the same effective disposition projection as
 // branch blocking, so a human-refuted CRITICAL cannot remain in the template.
 func TestRenderBranchPRTemplateWithDispositionsHidesRefutedCritical(t *testing.T) {
-	ficha := fichaAyuda("abc12345", "fix(auth): explain false positive", "m", Revision{
+	record := recordHelper("abc12345", "fix(auth): explain false positive", "m", Revision{
 		At:     time.Now().UTC(),
 		Result: VerdictBlock,
-		AggregatedFindings: []Hallazgo{{
+		AggregatedFindings: []Finding{{
 			Dimension: DimSecurity, Severity: SevCritical, Status: StatusConfirmed,
 			Fingerprint: "fp-critical", Description: "refuted critical",
-			Location: Ubicacion{Archivo: "auth.go", LineaInicio: 12},
+			Location: Location{File: "auth.go", LineStart: 12},
 		}},
 	})
-	res := &ResultadoRama{Fichas: []Ficha{ficha}}
+	res := &BranchResult{Records: []Record{record}}
 	dispositions := []FindingDisposition{{
 		SHA: "abc12345", Fingerprint: "fp-critical", Status: StatusRefuted,
 	}}
 
-	body := RenderBranchPRTemplateWithDispositions(res, VerificacionPlantilla{Modo: "omitido"}, "0.2.0", dispositions)
+	body := RenderBranchPRTemplateWithDispositions(res, TemplateVerification{Mode: "omitido"}, "0.2.0", dispositions)
 	if strings.Contains(body, "refuted critical") {
 		t.Fatalf("PR template still renders the refuted critical:\n%s", body)
 	}
 }
 
-// TestRenderMergedFindingOmitsEmptyLocation: a Hallazgo without a resolved
+// TestRenderMergedFindingOmitsEmptyLocation: a Finding without a resolved
 // location must not render the placeholder "(:0)" — the location suffix is
 // omitted entirely instead (T6.5 review finding: logic ADVISORY). This same
-// Hallazgo also never carries a real Source (empty), so the
+// Finding also never carries a real Source (empty), so the
 // "(source, confidence)" segment is omitted too instead of fabricating
 // "(unknown, confidence 0.00)" (T6.5bis review finding: logic WARNING).
 func TestRenderMergedFindingOmitsEmptyLocation(t *testing.T) {
-	h := Hallazgo{Dimension: DimLogic, Severity: SevWarning, Description: "no location resolved"}
+	h := Finding{Dimension: DimLogic, Severity: SevWarning, Description: "no location resolved"}
 	got := renderMergedFinding("abc1234", h)
-	esperado := "- ⚠️ `abc1234` [logic] WARNING — no location resolved"
-	if got != esperado {
-		t.Errorf("renderMergedFinding() = %q, want %q", got, esperado)
+	expected := "- ⚠️ `abc1234` [logic] WARNING — no location resolved"
+	if got != expected {
+		t.Errorf("renderMergedFinding() = %q, want %q", got, expected)
 	}
 }
 
-// TestRenderMergedFindingOmitsSourceSegmentOnlyWhenEmpty: a Hallazgo with a
-// real, non-empty Source (even one HallazgosEfectivos never produces itself,
+// TestRenderMergedFindingOmitsSourceSegmentOnlyWhenEmpty: a Finding with a
+// real, non-empty Source (even one EffectiveFindings never produces itself,
 // e.g. a future/unknown value) still renders the "(source, confidence)"
 // segment through mergedFindingSourceLabel's own "unknown" fallback — only
 // Source == "" (the legacy-conversion signal) omits the segment entirely.
 func TestRenderMergedFindingOmitsSourceSegmentOnlyWhenEmpty(t *testing.T) {
-	h := Hallazgo{Dimension: DimLogic, Severity: SevWarning, Source: "future-source", Confidence: 0.42, Description: "d"}
+	h := Finding{Dimension: DimLogic, Severity: SevWarning, Source: "future-source", Confidence: 0.42, Description: "d"}
 	got := renderMergedFinding("abc1234", h)
-	esperado := "- ⚠️ `abc1234` [logic] WARNING (unknown, confidence 0.42) — d"
-	if got != esperado {
-		t.Errorf("renderMergedFinding() = %q, want %q", got, esperado)
+	expected := "- ⚠️ `abc1234` [logic] WARNING (unknown, confidence 0.42) — d"
+	if got != expected {
+		t.Errorf("renderMergedFinding() = %q, want %q", got, expected)
 	}
 }
 
-// TestRenderMergedFindingSanitizesDescriptionAndLocation: Hallazgo.Description
-// and Location.Archivo share Evidence's untrusted origin — both are decoded
-// straight from the LLM's findingCrudo JSON (finding.go), same as Evidence —
+// TestRenderMergedFindingSanitizesDescriptionAndLocation: Finding.Description
+// and Location.File share Evidence's untrusted origin — both are decoded
+// straight from the LLM's rawFinding JSON (finding.go), same as Evidence —
 // yet renderMergedFinding interpolated them raw into the same Markdown list
 // item that already sanitizes Evidence. An embedded newline or backtick in
 // either could otherwise break or forge a Markdown list line, exactly the
@@ -713,13 +718,13 @@ func TestRenderMergedFindingOmitsSourceSegmentOnlyWhenEmpty(t *testing.T) {
 // security WARNING). Description is prose, not evidence/code, so it is
 // sanitized without being wrapped in inline code (unlike Evidence).
 func TestRenderMergedFindingSanitizesDescriptionAndLocation(t *testing.T) {
-	h := Hallazgo{
+	h := Finding{
 		Dimension:   DimSecurity,
 		Severity:    SevWarning,
 		Source:      SourceReview,
 		Confidence:  0.5,
 		Description: "line one\nline two with a ` backtick",
-		Location:    Ubicacion{Archivo: "a\nb`.go", LineaInicio: 1},
+		Location:    Location{File: "a\nb`.go", LineStart: 1},
 	}
 	got := renderMergedFinding("abc1234", h)
 	if strings.Count(got, "\n") != 0 {
@@ -732,7 +737,7 @@ func TestRenderMergedFindingSanitizesDescriptionAndLocation(t *testing.T) {
 		t.Errorf("a literal backtick in Description must be escaped: %q", got)
 	}
 	if strings.Contains(got, "a\nb") || strings.Contains(got, "b`.go") {
-		t.Errorf("Location.Archivo newline/backtick must be sanitized: %q", got)
+		t.Errorf("Location.File newline/backtick must be sanitized: %q", got)
 	}
 }
 
@@ -742,15 +747,15 @@ func TestRenderMergedFindingSanitizesDescriptionAndLocation(t *testing.T) {
 // Evidence string instead of silently dropping it (T6.5 review finding:
 // logic WARNING).
 func TestMergedFindingEvidenceLinesFallsBackWhenEvidenceSetEmpty(t *testing.T) {
-	h := Hallazgo{
+	h := Finding{
 		Dimension:   DimLogic,
 		Evidence:    "legacy evidence text",
 		Confidence:  0.5,
 		EvidenceSet: &FindingEvidenceSet{},
 	}
-	lineas := mergedFindingEvidenceLines(h)
-	if len(lineas) != 1 || !strings.Contains(lineas[0], "legacy evidence text") {
-		t.Errorf("mergedFindingEvidenceLines() = %v, expected fallback to Evidence", lineas)
+	lines := mergedFindingEvidenceLines(h)
+	if len(lines) != 1 || !strings.Contains(lines[0], "legacy evidence text") {
+		t.Errorf("mergedFindingEvidenceLines() = %v, expected fallback to Evidence", lines)
 	}
 }
 
@@ -760,8 +765,8 @@ func TestMergedFindingEvidenceLinesFallsBackWhenEvidenceSetEmpty(t *testing.T) {
 // external, indexable, cached surface (T6.5 review finding: security
 // WARNING).
 func TestSanitizeEvidenceTruncatesLongEvidence(t *testing.T) {
-	larga := strings.Repeat("x", evidenceEmbedMaxBytes+100)
-	got := sanitizeEvidence(larga)
+	long := strings.Repeat("x", evidenceEmbedMaxBytes+100)
+	got := sanitizeEvidence(long)
 	if len(got) > evidenceEmbedMaxBytes+2 { // +2: the wrapping backticks.
 		t.Errorf("sanitizeEvidence did not bound the evidence length: %d bytes", len(got))
 	}
@@ -780,27 +785,27 @@ func TestSanitizeEvidenceCollapsesNewlinesAndEscapesBackticks(t *testing.T) {
 	if !strings.HasPrefix(got, "`") || !strings.HasSuffix(got, "`") {
 		t.Fatalf("sanitized evidence must be wrapped in inline code: %q", got)
 	}
-	interior := got[1 : len(got)-1]
-	if strings.Contains(interior, "`") {
+	inner := got[1 : len(got)-1]
+	if strings.Contains(inner, "`") {
 		t.Errorf("a literal backtick inside the evidence must not terminate the code span early: %q", got)
 	}
 }
 
-// TestRenderPlantillaSeccionRiesgos: la sección "## Riesgos" aparece con el
-// placeholder cuando no hay riesgos y con las líneas renderizadas cuando hay
-// hallazgos CRITICAL/WARNING pendientes (los ADVISORY no se listan).
-func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
-	fichasSinRiesgos := []Ficha{fichaAyuda("u1", "feat(a)", "m", revisionAyuda("ok"))}
-	salidaVacia := RenderPlantillaPr(fichasSinRiesgos, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
-	if !strings.Contains(salidaVacia, "## Riesgos") {
-		t.Fatalf("falta la sección Riesgos: %s", salidaVacia)
+// TestRenderTemplateRisksSection: the "## Risks" section appears with
+// the placeholder when there are no risks and with rendered lines when there
+// are pending CRITICAL/WARNING findings (ADVISORY ones are not listed).
+func TestRenderTemplateRisksSection(t *testing.T) {
+	recordsWithoutRisks := []Record{recordHelper("u1", "feat(a)", "m", revisionHelper("ok"))}
+	outEmpty := RenderPRTemplate(recordsWithoutRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	if !strings.Contains(outEmpty, "## Risks") {
+		t.Fatalf("missing the Risks section: %s", outEmpty)
 	}
-	if !strings.Contains(salidaVacia, "No pending risks") {
-		t.Errorf("sin riesgos debe mostrar el placeholder honesto: %s", salidaVacia)
+	if !strings.Contains(outEmpty, "No pending risks") {
+		t.Errorf("with no risks the honest placeholder must be shown: %s", outEmpty)
 	}
 
-	fichasConRiesgos := []Ficha{fichaAyuda("u1", "feat(a)", "m",
-		revisionAyuda("warn",
+	recordsWithRisks := []Record{recordHelper("u1", "feat(a)", "m",
+		revisionHelper("warn",
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictWarn,
 				Findings: []ReviewFinding{
 					{Dimension: DimSecurity, File: "a.go", Line: 7,
@@ -809,32 +814,32 @@ func TestRenderPlantillaSeccionRiesgos(t *testing.T) {
 						Severity: SevAdvisory, Description: "scope amplio"},
 				}},
 		))}
-	salidaCon := RenderPlantillaPr(fichasConRiesgos, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
-	if !strings.Contains(salidaCon, "dato expuesto") {
-		t.Errorf("el CRITICAL debe listarse en Riesgos: %s", salidaCon)
+	outWith := RenderPRTemplate(recordsWithRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	if !strings.Contains(outWith, "dato expuesto") {
+		t.Errorf("the CRITICAL must be listed under Risks: %s", outWith)
 	}
-	if !strings.Contains(salidaCon, "CRITICAL") {
-		t.Errorf("la línea de riesgo debe citar la severidad: %s", salidaCon)
+	if !strings.Contains(outWith, "CRITICAL") {
+		t.Errorf("the risk line must quote the severity: %s", outWith)
 	}
-	if strings.Contains(salidaCon, "scope amplio") {
-		t.Errorf("los ADVISORY no son riesgos y no deben listarse: %s", salidaCon)
+	if strings.Contains(outWith, "scope amplio") {
+		t.Errorf("ADVISORY entries are not risks and must not be listed: %s", outWith)
 	}
-	if strings.Contains(salidaCon, "No pending risks") {
-		t.Errorf("con riesgos no debe mostrarse el placeholder: %s", salidaCon)
+	if strings.Contains(outWith, "No pending risks") {
+		t.Errorf("with risks the placeholder must not be shown: %s", outWith)
 	}
 
-	// Un block corregido (FixedIn) no es un riesgo pendiente.
-	corregida := fichaAyuda("f1", "feat(a)", "m",
-		revisionAyuda("block",
+	// A fixed block (FixedIn) is not a pending risk.
+	fixed := recordHelper("f1", "feat(a)", "m",
+		revisionHelper("block",
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical, Description: "dato expuesto"}}},
 		))
-	corregida.FixedIn = "a1b2c3d"
-	salidaCorregida := RenderPlantillaPr([]Ficha{corregida}, nil, VerificacionPlantilla{Modo: "omitido"}, "0.2.0")
-	if strings.Contains(salidaCorregida, "dato expuesto") {
-		t.Errorf("los hallazgos de una ficha corregida no son riesgos pendientes: %s", salidaCorregida)
+	fixed.FixedIn = "a1b2c3d"
+	outFixed := RenderPRTemplate([]Record{fixed}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	if strings.Contains(outFixed, "dato expuesto") {
+		t.Errorf("the findings of a corrected record are not pending risks: %s", outFixed)
 	}
-	if !strings.Contains(salidaCorregida, "No pending risks") {
-		t.Errorf("con todo corregido debe mostrarse el placeholder: %s", salidaCorregida)
+	if !strings.Contains(outFixed, "No pending risks") {
+		t.Errorf("with everything fixed the placeholder must be shown: %s", outFixed)
 	}
 }

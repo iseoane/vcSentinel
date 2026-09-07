@@ -10,7 +10,7 @@ const defaultDescriptionSimilarityThreshold = 0.7
 
 // aggregateFindings collapses exact fingerprints and cross-dimension reports
 // that identify the same symbol in overlapping source ranges.
-func aggregateFindings(findings []Hallazgo, threshold float64) []Hallazgo {
+func aggregateFindings(findings []Finding, threshold float64) []Finding {
 	if len(findings) == 0 {
 		return nil
 	}
@@ -18,7 +18,7 @@ func aggregateFindings(findings []Hallazgo, threshold float64) []Hallazgo {
 		threshold = defaultDescriptionSimilarityThreshold
 	}
 
-	aggregated := make([]Hallazgo, 0, len(findings))
+	aggregated := make([]Finding, 0, len(findings))
 	exact := make(map[string]int, len(findings))
 	for _, finding := range findings {
 		if finding.Status == StatusRefuted {
@@ -54,7 +54,7 @@ func aggregateFindings(findings []Hallazgo, threshold float64) []Hallazgo {
 	return aggregated
 }
 
-func mergeFindings(merged, finding Hallazgo) Hallazgo {
+func mergeFindings(merged, finding Finding) Finding {
 	evidences := append(findingEvidences(merged), findingEvidences(finding)...)
 	if severityRank(finding.Severity) > severityRank(merged.Severity) {
 		finding.EvidenceSet = &FindingEvidenceSet{Values: evidences}
@@ -64,7 +64,7 @@ func mergeFindings(merged, finding Hallazgo) Hallazgo {
 	return merged
 }
 
-func findingEvidences(finding Hallazgo) []FindingEvidence {
+func findingEvidences(finding Finding) []FindingEvidence {
 	if finding.EvidenceSet != nil {
 		return append([]FindingEvidence(nil), finding.EvidenceSet.Values...)
 	}
@@ -76,8 +76,8 @@ func findingEvidences(finding Hallazgo) []FindingEvidence {
 	}}
 }
 
-func areProximateFindings(left, right Hallazgo, threshold float64) bool {
-	if left.Location.Archivo != right.Location.Archivo || left.Location.Simbolo == "" || left.Location.Simbolo != right.Location.Simbolo {
+func areProximateFindings(left, right Finding, threshold float64) bool {
+	if left.Location.File != right.Location.File || left.Location.Simbolo == "" || left.Location.Simbolo != right.Location.Simbolo {
 		return false
 	}
 	if !sourceRangesOverlap(left.Location, right.Location) {
@@ -86,19 +86,19 @@ func areProximateFindings(left, right Hallazgo, threshold float64) bool {
 	return descriptionSimilarity(left.Description, right.Description) > threshold
 }
 
-func sourceRangesOverlap(left, right Ubicacion) bool {
-	if left.LineaInicio <= 0 || right.LineaInicio <= 0 {
+func sourceRangesOverlap(left, right Location) bool {
+	if left.LineStart <= 0 || right.LineStart <= 0 {
 		return false
 	}
-	leftEnd := left.LineaFin
+	leftEnd := left.LineEnd
 	if leftEnd == 0 {
-		leftEnd = left.LineaInicio
+		leftEnd = left.LineStart
 	}
-	rightEnd := right.LineaFin
+	rightEnd := right.LineEnd
 	if rightEnd == 0 {
-		rightEnd = right.LineaInicio
+		rightEnd = right.LineStart
 	}
-	return left.LineaInicio <= rightEnd && right.LineaInicio <= leftEnd
+	return left.LineStart <= rightEnd && right.LineStart <= leftEnd
 }
 
 func descriptionSimilarity(left, right string) float64 {
@@ -126,10 +126,10 @@ func descriptionWords(description string) map[string]bool {
 	return words
 }
 
-func corroboratedConfidence(finding Hallazgo) float64 {
-	byProducer := make(map[Productor]float64)
+func corroboratedConfidence(finding Finding) float64 {
+	byProducer := make(map[Producer]float64)
 	for _, evidence := range findingEvidences(finding) {
-		if evidence.Producer.Agente == "" && evidence.Producer.Binario == "" {
+		if evidence.Producer.Agent == "" && evidence.Producer.Binary == "" {
 			continue
 		}
 		if evidence.Confidence > byProducer[evidence.Producer] {
@@ -156,10 +156,10 @@ func corroboratedConfidence(finding Hallazgo) float64 {
 // representative description for the group (see dominantCause), not a
 // verified root cause. Unlike aggregateFindings/mergeFindings, this is a
 // non-destructive view: every finding in Effects survives intact in
-// resultado.Findings, this only groups references to them.
+// result.Findings, this only groups references to them.
 type CauseGroup struct {
 	Cause   string
-	Effects []Hallazgo
+	Effects []Finding
 }
 
 // correlateFindingsByCause groups findings whose descriptions describe the
@@ -172,7 +172,7 @@ type CauseGroup struct {
 // components over descriptionSimilarity, computed with union-find), not only
 // when each one is directly similar to a single anchor finding. Groups with a
 // single member are dropped.
-func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGroup {
+func correlateFindingsByCause(findings []Finding, threshold float64) []CauseGroup {
 	if len(findings) == 0 {
 		return nil
 	}
@@ -208,7 +208,7 @@ func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGro
 	}
 
 	var rootOrder []int
-	membersByRoot := make(map[int][]Hallazgo, len(findings))
+	membersByRoot := make(map[int][]Finding, len(findings))
 	for i := range findings {
 		root := find(i)
 		if _, seen := membersByRoot[root]; !seen {
@@ -233,7 +233,7 @@ func correlateFindingsByCause(findings []Hallazgo, threshold float64) []CauseGro
 // label the whole group even when it shares nothing with the opposite
 // endpoint. Ties are broken by highest Confidence, then by first
 // encountered. Requires a non-empty group.
-func dominantCause(group []Hallazgo) string {
+func dominantCause(group []Finding) string {
 	scores := make([]float64, len(group))
 	confidences := make([]float64, len(group))
 	for i := range group {

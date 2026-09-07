@@ -56,7 +56,7 @@ type FindingDisposition struct {
 }
 
 // IsBlocking is the single blocking rule shared by the review engine, the
-// gate, and BloqueantesDeRama: every consumer must agree about the same
+// gate, and BranchBlockers: every consumer must agree about the same
 // record. Only a refuted or fixed CRITICAL finding stops blocking.
 // AcceptedByUser records human judgement without clearing the block, and a
 // reopened finding blocks again. An empty or unknown status blocks: legacy
@@ -77,7 +77,7 @@ func IsBlocking(severity, status string) bool {
 // EffectiveFingerprint returns the fingerprint a finding is addressed by:
 // the stored one when the finding carries it, or the computed stable
 // fingerprint otherwise.
-func EffectiveFingerprint(h Hallazgo) string {
+func EffectiveFingerprint(h Finding) string {
 	if fp := strings.TrimSpace(h.Fingerprint); fp != "" {
 		return fp
 	}
@@ -119,8 +119,8 @@ func FilterDispositionsForSHA(dispositions []FindingDisposition, sha string) []F
 // InvocationID: metrics must never attribute a human decision to an agent
 // invocation. The finding's producer is preserved: who generated the
 // finding is history, and the refutation actor records who answered it.
-func ApplyDispositions(findings []Hallazgo, dispositions []FindingDisposition) []Hallazgo {
-	out := make([]Hallazgo, len(findings))
+func ApplyDispositions(findings []Finding, dispositions []FindingDisposition) []Finding {
+	out := make([]Finding, len(findings))
 	copy(out, findings)
 	if len(dispositions) == 0 {
 		return out
@@ -143,7 +143,7 @@ func ApplyDispositions(findings []Hallazgo, dispositions []FindingDisposition) [
 		if len(targets) != 1 {
 			continue
 		}
-		applyToHallazgo(&out[targets[0]], d)
+		applyToFinding(&out[targets[0]], d)
 	}
 	return out
 }
@@ -176,9 +176,9 @@ func dispositionRefusedOnEscalation(d FindingDisposition, severity string) bool 
 	return severityRank(severity) > severityRank(recorded)
 }
 
-// applyToHallazgo stamps one disposition onto one finding. A standing
+// applyToFinding stamps one disposition onto one finding. A standing
 // disposition refused on escalation leaves the finding untouched.
-func applyToHallazgo(h *Hallazgo, d FindingDisposition) {
+func applyToFinding(h *Finding, d FindingDisposition) {
 	if dispositionRefusedOnEscalation(d, h.Severity) {
 		return
 	}
@@ -216,20 +216,18 @@ func applyToReviewFinding(f *ReviewFinding, d FindingDisposition) {
 }
 
 // ApplyDispositionToResult overlays one disposition onto a fresh dimension
-// result, across both finding shapes, and reports whether it newly cleared
-// a blocking CRITICAL finding. Matching is by unique stable fingerprint
-// only: a v2 finding whose effective fingerprint equals the recorded one is
-// flipped, and its v1 counterpart (same dimension, file, line, and
-// description, the key the automated refuter already uses) follows, so the
-// engine verdict and the persisted revision agree. A fingerprint that
-// matches nothing clears nothing: v1-only shapes carry no fingerprint input
-// and are never disposed by heuristic, they fail closed.
+// result and reports whether it newly cleared a blocking CRITICAL finding.
+// DimensionResult carries v1 findings only; matching is by unique stable
+// fingerprint, computed exactly like the persisted projection does
+// (findingWithDisposition), so the fingerprint a person answered against the
+// persisted record matches the re-audited finding without any stored
+// fingerprint input. A fingerprint that matches nothing, or that matches
+// several twin findings, clears nothing and fails closed.
 //
 // Like ApplyDispositions, a standing disposition is refused when the
 // re-audited finding is MORE severe than the severity recorded on it: the
 // refusal clears nothing and reports false, so the escalated finding keeps
-// whatever status it carried in both shapes — a blocking one stays blocking
-// and the dimension verdict stays block.
+// whatever blocking status it carried and the dimension verdict stays block.
 func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) bool {
 	if result == nil {
 		return false
@@ -246,34 +244,53 @@ func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) 
 			cleared = true
 		}
 	}
-	flipV2 := func(h *Hallazgo) {
+	flipV2 := func(h *Finding) {
 		was := IsBlocking(h.Severity, h.Status)
-		applyToHallazgo(h, disp)
+		applyToFinding(h, disp)
 		if was && !IsBlocking(h.Severity, h.Status) {
 			cleared = true
 		}
 	}
-	match := -1
-	for i := range result.Hallazgos {
-		if EffectiveFingerprint(result.Hallazgos[i]) != fp {
+	// Match on the v2 findings first: they carry the stored aggregate
+	// fingerprint the human answered against. A v1 projection recomputes
+	// its fingerprint from lossy content and can never match it.
+	v2match := -1
+	for i := range result.V2Findings {
+		if EffectiveFingerprint(result.V2Findings[i]) != fp {
 			continue
 		}
-		if match >= 0 {
+		if v2match >= 0 {
 			return false
 		}
-		match = i
+		v2match = i
 	}
-	if match < 0 {
+	if v2match >= 0 {
+		h := &result.V2Findings[v2match]
+		flipV2(h)
+		for j := range result.Findings {
+			f := &result.Findings[j]
+			if f.File == h.Location.File && int(f.Line) == h.Location.LineStart && f.Description == h.Description {
+				flipV1(f)
+			}
+		}
+		return cleared
+	}
+	// Fallback: a fingerprint computed over a v1 projection. It flips v1
+	// only; results carrying v2 findings matched above.
+	v1match := -1
+	for i := range result.Findings {
+		if EffectiveFingerprint(findingWithDisposition(result.Dim, result.Findings[i])) != fp {
+			continue
+		}
+		if v1match >= 0 {
+			return false
+		}
+		v1match = i
+	}
+	if v1match < 0 {
 		return false
 	}
-	h := &result.Hallazgos[match]
-	flipV2(h)
-	for j := range result.Findings {
-		f := &result.Findings[j]
-		if f.File == h.Location.Archivo && int(f.Line) == h.Location.LineaInicio && f.Description == h.Description {
-			flipV1(f)
-		}
-	}
+	flipV1(&result.Findings[v1match])
 	return cleared
 }
 
@@ -281,7 +298,7 @@ func ApplyDispositionToResult(result *DimensionResult, disp FindingDisposition) 
 // revision addressed by a stable fingerprint. A missing fingerprint and an
 // ambiguous one are both errors: the caller must fail closed without
 // persisting anything.
-func ResolveDispositionTarget(revision Revision, fingerprint string) (Hallazgo, error) {
+func ResolveDispositionTarget(revision Revision, fingerprint string) (Finding, error) {
 	return resolveDispositionTarget(revision.FindingsWithDispositions(), fingerprint)
 }
 
@@ -289,16 +306,16 @@ func ResolveDispositionTarget(revision Revision, fingerprint string) (Hallazgo, 
 // applying the authoritative append-only human answers. It keeps target
 // identity and the effective lifecycle in one projection, so a second human
 // refutation cannot be appended after the first one already cleared it.
-func ResolveDispositionTargetWithDispositions(revision Revision, fingerprint string, dispositions []FindingDisposition) (Hallazgo, error) {
+func ResolveDispositionTargetWithDispositions(revision Revision, fingerprint string, dispositions []FindingDisposition) (Finding, error) {
 	return resolveDispositionTarget(ApplyDispositions(revision.FindingsWithDispositions(), dispositions), fingerprint)
 }
 
-func resolveDispositionTarget(findings []Hallazgo, fingerprint string) (Hallazgo, error) {
+func resolveDispositionTarget(findings []Finding, fingerprint string) (Finding, error) {
 	fp := strings.TrimSpace(fingerprint)
 	if fp == "" {
-		return Hallazgo{}, errors.New("the finding fingerprint is empty")
+		return Finding{}, errors.New("the finding fingerprint is empty")
 	}
-	var matches []Hallazgo
+	var matches []Finding
 	for _, h := range findings {
 		if EffectiveFingerprint(h) == fp {
 			matches = append(matches, h)
@@ -306,11 +323,11 @@ func resolveDispositionTarget(findings []Hallazgo, fingerprint string) (Hallazgo
 	}
 	switch len(matches) {
 	case 0:
-		return Hallazgo{}, fmt.Errorf("no finding with fingerprint %q in the reviewed revision", fp)
+		return Finding{}, fmt.Errorf("no finding with fingerprint %q in the reviewed revision", fp)
 	case 1:
 		return matches[0], nil
 	default:
-		return Hallazgo{}, fmt.Errorf("fingerprint %q matches %d findings, refusing the ambiguous identity", fp, len(matches))
+		return Finding{}, fmt.Errorf("fingerprint %q matches %d findings, refusing the ambiguous identity", fp, len(matches))
 	}
 }
 
@@ -321,18 +338,18 @@ func resolveDispositionTarget(findings []Hallazgo, fingerprint string) (Hallazgo
 // object, never supplied by the caller, so a human cannot smuggle text the
 // commit does not contain. It returns the sanitized path, the exact snapshot
 // extract, and its range hash.
-func ValidateHumanRefutationRange(leer SnapshotReader, sha, findingFile string, findingLine int, reason, file string, lineStart, lineEnd int) (safePath, evidence, rangeHash string, err error) {
+func ValidateHumanRefutationRange(read SnapshotReader, sha, findingFile string, findingLine int, reason, file string, lineStart, lineEnd int) (safePath, evidence, rangeHash string, err error) {
 	if strings.TrimSpace(reason) == "" {
 		return "", "", "", errors.New("the refutation reason is empty")
 	}
-	if leer == nil {
-		leer = leerContenidoSnapshot
+	if read == nil {
+		read = readSnapshotContent
 	}
-	safe := RutasRevisionSeguras([]string{file})
+	safe := SafeReviewPaths([]string{file})
 	if len(safe) != 1 {
 		return "", "", "", fmt.Errorf("the evidence path %q is unsafe", file)
 	}
-	content, err := leer(sha, safe[0])
+	content, err := read(sha, safe[0])
 	if err != nil {
 		return "", "", "", fmt.Errorf("reading the audited snapshot: %w", err)
 	}
@@ -341,11 +358,11 @@ func ValidateHumanRefutationRange(leer SnapshotReader, sha, findingFile string, 
 		return "", "", "", fmt.Errorf("the evidence range %d-%d is outside the audited file", lineStart, lineEnd)
 	}
 	extract := strings.Join(lines[lineStart-1:lineEnd], "\n")
-	respuesta := respuestaRefutador{
+	response := refuterResponse{
 		Refuted: true, Reason: reason, SHA: sha, File: safe[0],
 		LineStart: lineStart, LineEnd: lineEnd, Evidence: extract,
 	}
-	// FU-6 defect 2: a finding with no line (Location.LineaInicio <= 0, the
+	// FU-6 defect 2: a finding with no line (Location.LineStart <= 0, the
 	// convention for deterministic findings citing a bare file path, e.g.
 	// `gofmt -l`) can never satisfy the shared gate's containment requirement
 	// (finding.Line >= LineStart >= 1), so no human answer could ever clear
@@ -363,7 +380,7 @@ func ValidateHumanRefutationRange(leer SnapshotReader, sha, findingFile string, 
 	if validationLine <= 0 {
 		validationLine = lineStart
 	}
-	hash, ok := validarEvidenciaRefutacion(leer, sha, ReviewFinding{File: findingFile, Line: Linea(validationLine)}, respuesta)
+	hash, ok := validateRefutationEvidence(read, sha, ReviewFinding{File: findingFile, Line: Line(validationLine)}, response)
 	if !ok {
 		return "", "", "", errors.New("the evidence range does not satisfy the refutation gate for this finding")
 	}

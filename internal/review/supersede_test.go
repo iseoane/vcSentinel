@@ -3,15 +3,15 @@ package review
 import "testing"
 
 func TestSupersedeDeterministicFindingsRemovesOverlappingSemanticFindingInSameDimension(t *testing.T) {
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12, LineaFin: 14},
+		Location:  Location{File: "config.go", LineStart: 12, LineEnd: 14},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 13},
+		Location:  Location{File: "config.go", LineStart: 13},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -24,15 +24,15 @@ func TestSupersedeDeterministicFindingsKeepsUnrelatedDimensionAtSameLocation(t *
 	// Same file and overlapping line as a formatting failure, but a security
 	// finding: a linter catching a formatting issue must never discard an
 	// unrelated semantic finding just because they share a spot.
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimSecurity,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12, LineaFin: 14},
+		Location:  Location{File: "config.go", LineStart: 12, LineEnd: 14},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 13},
+		Location:  Location{File: "config.go", LineStart: 13},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -45,14 +45,14 @@ func TestSupersedeDeterministicFindingsIgnoresDeterministicWithoutDimension(t *t
 	// A caller that cannot map its validation capability to a semantic
 	// dimension must leave Dimension empty; an empty Dimension must never
 	// act as a wildcard that supersedes everything.
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12},
+		Location:  Location{File: "config.go", LineStart: 12},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:   SourceValidation,
-		Location: Ubicacion{Archivo: "config.go", LineaInicio: 12},
+		Location: Location{File: "config.go", LineStart: 12},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -65,15 +65,15 @@ func TestSupersedeDeterministicFindingsIgnoresNonReviewSourceFindings(t *testing
 	// A finding whose Source is not SourceReview (e.g. already
 	// SourceValidation itself) must survive regardless of location overlap:
 	// the guarantee is scoped to semantic findings, not everything passed in.
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12},
+		Location:  Location{File: "config.go", LineStart: 12},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12},
+		Location:  Location{File: "config.go", LineStart: 12},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -83,15 +83,15 @@ func TestSupersedeDeterministicFindingsIgnoresNonReviewSourceFindings(t *testing
 }
 
 func TestSupersedeDeterministicFindingsKeepsSemanticFindingInAnotherFile(t *testing.T) {
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "other.go", LineaInicio: 12},
+		Location:  Location{File: "other.go", LineStart: 12},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12},
+		Location:  Location{File: "config.go", LineStart: 12},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -101,15 +101,15 @@ func TestSupersedeDeterministicFindingsKeepsSemanticFindingInAnotherFile(t *test
 }
 
 func TestSupersedeDeterministicFindingsNormalizesEquivalentPathSpellings(t *testing.T) {
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "./config.go", LineaInicio: 12},
+		Location:  Location{File: "./config.go", LineStart: 12},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12},
+		Location:  Location{File: "config.go", LineStart: 12},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -119,15 +119,15 @@ func TestSupersedeDeterministicFindingsNormalizesEquivalentPathSpellings(t *test
 }
 
 func TestSupersedeDeterministicFindingsKeepsSemanticFindingOutsideDeterministicRange(t *testing.T) {
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 20},
+		Location:  Location{File: "config.go", LineStart: 20},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 12, LineaFin: 14},
+		Location:  Location{File: "config.go", LineStart: 12, LineEnd: 14},
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -137,15 +137,15 @@ func TestSupersedeDeterministicFindingsKeepsSemanticFindingOutsideDeterministicR
 }
 
 func TestSupersedeDeterministicFindingsWholeFileDeterministicCoversEveryLineInSameDimension(t *testing.T) {
-	semantic := []Hallazgo{{
+	semantic := []Finding{{
 		Source:    SourceReview,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go", LineaInicio: 400},
+		Location:  Location{File: "config.go", LineStart: 400},
 	}}
-	deterministic := []Hallazgo{{
+	deterministic := []Finding{{
 		Source:    SourceValidation,
 		Dimension: DimStyle,
-		Location:  Ubicacion{Archivo: "config.go"}, // e.g. gofmt -l: no line, whole file
+		Location:  Location{File: "config.go"}, // e.g. gofmt -l: no line, whole file
 	}}
 
 	kept := SupersedeDeterministicFindings(semantic, deterministic)
@@ -155,7 +155,7 @@ func TestSupersedeDeterministicFindingsWholeFileDeterministicCoversEveryLineInSa
 }
 
 func TestSupersedeDeterministicFindingsNoOpWithoutDeterministicFindings(t *testing.T) {
-	semantic := []Hallazgo{{Source: SourceReview, Dimension: DimStyle, Location: Ubicacion{Archivo: "config.go", LineaInicio: 12}}}
+	semantic := []Finding{{Source: SourceReview, Dimension: DimStyle, Location: Location{File: "config.go", LineStart: 12}}}
 
 	kept := SupersedeDeterministicFindings(semantic, nil)
 	if len(kept) != 1 || kept[0] != semantic[0] {

@@ -6,36 +6,36 @@ import (
 )
 
 func TestSplitPendingQuestions(t *testing.T) {
-	resolveOK := func(blobPorArchivo map[string]string) ResolveBlob {
+	resolveOK := func(blobByFile map[string]string) ResolveBlob {
 		return func(file string) (string, error) {
-			blob, ok := blobPorArchivo[file]
+			blob, ok := blobByFile[file]
 			if !ok {
-				return "", errors.New("archivo sin blob de prueba: " + file)
+				return "", errors.New("fixture file without a test blob: " + file)
 			}
 			return blob, nil
 		}
 	}
-	knownFrom := func(respuestas map[string]string) KnownAnswer {
+	knownFrom := func(answers map[string]string) KnownAnswer {
 		return func(blob, questionID string) (string, bool, error) {
-			answer, ok := respuestas[blob+"|"+questionID]
+			answer, ok := answers[blob+"|"+questionID]
 			return answer, ok, nil
 		}
 	}
 
 	t.Run("question without File always stays pending", func(t *testing.T) {
-		// resolveBlob nunca debe llamarse con file == "": si el guard
-		// q.File == "" se eliminara, esta prueba debe fallar en vez de
-		// colar silenciosamente por la rama de error de resolveBlob (que es
-		// indistinguible de este caso para el propio SplitPendingQuestions).
-		resolverSinLlamadaVacia := func(file string) (string, error) {
+		// resolveBlob must never be called with file == "": if the
+		// q.File == "" guard were removed, this test must fail instead of
+		// slipping silently through the resolveBlob error branch (which is
+		// indistinguishable from this case for SplitPendingQuestions itself).
+		resolverRejectsEmptyFile := func(file string) (string, error) {
 			if file == "" {
-				t.Fatalf("resolveBlob no debería llamarse con file vacío: el guard q.File == \"\" debe cortar antes")
+				t.Fatalf("resolveBlob should not be called with an empty file: the q.File == \"\" guard must cut first")
 			}
-			return "", errors.New("archivo sin blob de prueba: " + file)
+			return "", errors.New("fixture file without a test blob: " + file)
 		}
 		questions := []AgentQuestion{{ID: "q1", Text: "sin archivo"}}
 		pending, answered, err := SplitPendingQuestions(questions,
-			resolverSinLlamadaVacia, knownFrom(map[string]string{"blobX|q1": "respuesta"}))
+			resolverRejectsEmptyFile, knownFrom(map[string]string{"blobX|q1": "respuesta"}))
 		if err != nil {
 			t.Fatalf("err = %v, want nil", err)
 		}
@@ -51,15 +51,15 @@ func TestSplitPendingQuestions(t *testing.T) {
 		questions := []AgentQuestion{{ID: "q1", Text: "usa camelCase?", File: "a.go"}}
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(map[string]string{"a.go": "blobA"}),
-			knownFrom(map[string]string{"blobA|q1": "sí, camelCase"}))
+			knownFrom(map[string]string{"blobA|q1": "yes, camelCase"}))
 		if err != nil {
 			t.Fatalf("err = %v, want nil", err)
 		}
 		if len(pending) != 0 {
 			t.Fatalf("pending = %+v, want empty", pending)
 		}
-		if len(answered) != 1 || answered[0].Question.ID != "q1" || answered[0].Answer != "sí, camelCase" {
-			t.Fatalf("answered = %+v, want [{q1: %q}]", answered, "sí, camelCase")
+		if len(answered) != 1 || answered[0].Question.ID != "q1" || answered[0].Answer != "yes, camelCase" {
+			t.Fatalf("answered = %+v, want [{q1: %q}]", answered, "yes, camelCase")
 		}
 	})
 
@@ -127,26 +127,26 @@ func TestSplitPendingQuestions(t *testing.T) {
 		pending, answered, err := SplitPendingQuestions(questions,
 			resolveOK(map[string]string{"a.go": "blobA", "b.go": "blobB", "c.go": "blobC"}),
 			knownFrom(map[string]string{
-				"blobA|q1": "respuesta para a.go",
-				"blobB|q1": "respuesta para b.go",
-				// c.go deliberadamente sin respuesta registrada: debe seguir
-				// pendiente aunque comparta ID "q1" con las otras dos.
+				"blobA|q1": "answer for a.go",
+				"blobB|q1": "answer for b.go",
+				// c.go deliberately has no recorded answer: it must stay
+				// pending even though it shares ID "q1" with the other two.
 			}))
 		if err != nil {
 			t.Fatalf("err = %v, want nil", err)
 		}
 		if len(pending) != 1 || pending[0].File != "c.go" {
-			t.Fatalf("pending = %+v, want solo [q1 sobre c.go]", pending)
+			t.Fatalf("pending = %+v, want only [q1 about c.go]", pending)
 		}
 		if len(answered) != 2 {
-			t.Fatalf("answered = %+v, want 2: antes del fix, un map[string]string por ID colapsaba ambas respuestas en una sola", answered)
+			t.Fatalf("answered = %+v, want 2: before the fix, a map[string]string keyed by ID collapsed both answers into one", answered)
 		}
-		porArchivo := map[string]string{}
+		byFile := map[string]string{}
 		for _, a := range answered {
-			porArchivo[a.Question.File] = a.Answer
+			byFile[a.Question.File] = a.Answer
 		}
-		if porArchivo["a.go"] != "respuesta para a.go" || porArchivo["b.go"] != "respuesta para b.go" {
-			t.Fatalf("answered = %+v, want ambas respuestas preservadas por archivo/blob, no colapsadas por ID compartido", answered)
+		if byFile["a.go"] != "answer for a.go" || byFile["b.go"] != "answer for b.go" {
+			t.Fatalf("answered = %+v, want both answers preserved per file/blob, not collapsed by shared ID", answered)
 		}
 	})
 }

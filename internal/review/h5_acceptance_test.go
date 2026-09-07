@@ -19,17 +19,17 @@ type h5Case struct {
 
 type h5Reviewer struct{ findings []ReviewFinding }
 
-func (r h5Reviewer) EjecutarPrompt(string) (string, error) { return r.resultado() }
+func (r h5Reviewer) RunPrompt(string) (string, error) { return r.result() }
 
-func (r h5Reviewer) EjecutarRevision(string, string, []string) (string, error) {
-	return r.resultado()
+func (r h5Reviewer) RunReview(string, string, []string) (string, error) {
+	return r.result()
 }
 
 func (r h5Reviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return r.EjecutarRevision(prompt, sha, paths)
+	return r.RunReview(prompt, sha, paths)
 }
 
-func (r h5Reviewer) resultado() (string, error) {
+func (r h5Reviewer) result() (string, error) {
 	return completeTestContract(string(mustJSON(struct {
 		Dim      string          `json:"dim"`
 		Verdict  string          `json:"verdict"`
@@ -42,26 +42,26 @@ type h5Refuter struct {
 	reader SnapshotReader
 }
 
-func (r h5Refuter) EjecutarPrompt(string) (string, error) { return "", nil }
+func (r h5Refuter) RunPrompt(string) (string, error) { return "", nil }
 
-func (r h5Refuter) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (r h5Refuter) RunReview(prompt, sha string, paths []string) (string, error) {
 	trustedSHA, finding, ok := h5RefutationRequest(prompt)
 	if !ok || trustedSHA != sha {
 		return h5RefutationFailure(), nil
 	}
-	for _, caso := range r.cases {
-		if finding.Description != caso.claim || finding.File != caso.file || !h5PermitsPath(paths, caso.file) {
+	for _, c := range r.cases {
+		if finding.Description != c.claim || finding.File != c.file || !h5PermitsPath(paths, c.file) {
 			continue
 		}
 		source, err := r.reader(trustedSHA, finding.File)
-		if err != nil || !h5ContainsAll(source, caso.requirements) {
+		if err != nil || !h5ContainsAll(source, c.requirements) {
 			return h5RefutationFailure(), nil
 		}
-		line, ok := h5Line(source, caso.requirements[0])
+		line, ok := h5Line(source, c.requirements[0])
 		if !ok || line != int(finding.Line) {
 			return h5RefutationFailure(), nil
 		}
-		response := respuestaRefutador{
+		response := refuterResponse{
 			Refuted:   true,
 			Reason:    "immutable final snapshot contains evidence that the claim is false",
 			SHA:       trustedSHA,
@@ -76,7 +76,7 @@ func (r h5Refuter) EjecutarRevision(prompt, sha string, paths []string) (string,
 }
 
 func (r h5Refuter) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return r.EjecutarRevision(prompt, sha, paths)
+	return r.RunReview(prompt, sha, paths)
 }
 
 func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
@@ -100,16 +100,16 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 	reader := NewSnapshotReader(repo)
 
 	findings := make([]ReviewFinding, 0, len(cases))
-	for _, caso := range cases {
-		source, err := reader(auditedSHA, caso.file)
-		if err != nil || !h5ContainsAll(source, caso.requirements) {
-			t.Fatalf("immutable fixture snapshot lacks final-state evidence for %q: %v", caso.claim, err)
+	for _, c := range cases {
+		source, err := reader(auditedSHA, c.file)
+		if err != nil || !h5ContainsAll(source, c.requirements) {
+			t.Fatalf("immutable fixture snapshot lacks final-state evidence for %q: %v", c.claim, err)
 		}
-		line, ok := h5Line(source, caso.requirements[0])
+		line, ok := h5Line(source, c.requirements[0])
 		if !ok {
-			t.Fatalf("immutable fixture snapshot lacks location for %q", caso.claim)
+			t.Fatalf("immutable fixture snapshot lacks location for %q", c.claim)
 		}
-		findings = append(findings, ReviewFinding{Dimension: DimLogic, File: caso.file, Line: Linea(line), Severity: SevCritical, Description: caso.claim, Status: StatusConfirmed})
+		findings = append(findings, ReviewFinding{Dimension: DimLogic, File: c.file, Line: Line(line), Severity: SevCritical, Description: c.claim, Status: StatusConfirmed})
 	}
 
 	// The worktree now contradicts the audited commit; refutation must still use Git objects.
@@ -119,48 +119,48 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		t.Fatalf("fixture worktree did not diverge from audited snapshot: %v", err)
 	}
 
-	opts := OpcionesAuditoria{
-		SHA:                   auditedSHA,
-		Diff:                  rendererDiff + "\n" + exitCodeDiff,
-		Bundles:               []ReviewBundle{{Name: "h5", Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1}},
-		RutasContexto:         []string{"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"},
-		LeerContenidoSnapshot: reader,
-		FabricaRefutador: func() (AuditorAgente, string, error) {
+	opts := AuditOptions{
+		SHA:                 auditedSHA,
+		Diff:                rendererDiff + "\n" + exitCodeDiff,
+		Bundles:             []ReviewBundle{{Name: "h5", Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1}},
+		ContextPaths:        []string{"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"},
+		ReadSnapshotContent: reader,
+		RefuterFactory: func() (AgentReviewer, string, error) {
 			return h5Refuter{}, "fixture", nil
 		},
 		// Post-cutover engine contract: refutations route through a
 		// transport; this fixture uses the direct-call double with the same
 		// reviewer path allowlist the audit options declare.
-		ReviewTransport: transporteDirecto(auditedSHA,
+		ReviewTransport: directTransport(auditedSHA,
 			"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"),
 	}
-	factory := func(ReviewBundle, string) (AuditorAgente, string, error) {
+	factory := func(ReviewBundle, string) (AgentReviewer, string, error) {
 		return h5Reviewer{findings: findings}, "fixture", nil
 	}
 
-	red := AuditarCommit(factory, 1, opts)
+	red := AuditCommit(factory, 1, opts)
 	h5AssertHistoricalFindings(t, red, cases, StatusConfirmed)
-	if red.Veredicto != VerdictBlock {
-		t.Fatalf("RED: expected confirmed historical CRITICAL findings to block, got %q", red.Veredicto)
+	if red.Verdict != VerdictBlock {
+		t.Fatalf("RED: expected confirmed historical CRITICAL findings to block, got %q", red.Verdict)
 	}
 
-	opts.FabricaRefutador = func() (AuditorAgente, string, error) { return h5Refuter{cases: cases, reader: reader}, "fixture", nil }
-	green := AuditarCommit(factory, 1, opts)
+	opts.RefuterFactory = func() (AgentReviewer, string, error) { return h5Refuter{cases: cases, reader: reader}, "fixture", nil }
+	green := AuditCommit(factory, 1, opts)
 	h5AssertHistoricalFindings(t, green, cases, StatusRefuted)
-	if green.Veredicto == VerdictBlock {
+	if green.Verdict == VerdictBlock {
 		t.Fatal("GREEN: final snapshot evidence must refute all historical CRITICAL claims")
 	}
 }
 
-func h5AssertHistoricalFindings(t *testing.T, resultado ResultadoAuditoria, cases []h5Case, status string) {
+func h5AssertHistoricalFindings(t *testing.T, result AuditResult, cases []h5Case, status string) {
 	t.Helper()
 	if status == "" {
 		t.Fatal("expected historical finding status is required")
 	}
-	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
-		t.Fatalf("expected one logic result, got %#v", resultado.Dims)
+	if len(result.Dims) != 1 || result.Dims[0].Result == nil {
+		t.Fatalf("expected one logic result, got %#v", result.Dims)
 	}
-	findings := resultado.Dims[0].Resultado.Findings
+	findings := result.Dims[0].Result.Findings
 	if len(findings) != len(cases) {
 		t.Fatalf("expected exactly %d injected historical findings, got %d", len(cases), len(findings))
 	}
@@ -171,17 +171,17 @@ func h5AssertHistoricalFindings(t *testing.T, resultado ResultadoAuditoria, case
 		}
 		byClaim[finding.Description] = finding
 	}
-	for _, caso := range cases {
-		finding, ok := byClaim[caso.claim]
+	for _, c := range cases {
+		finding, ok := byClaim[c.claim]
 		if !ok {
-			t.Errorf("injected historical finding %q disappeared", caso.claim)
+			t.Errorf("injected historical finding %q disappeared", c.claim)
 			continue
 		}
-		if finding.File != caso.file || finding.Severity != SevCritical {
-			t.Errorf("historical finding %q = %+v, want CRITICAL in %q", caso.claim, finding, caso.file)
+		if finding.File != c.file || finding.Severity != SevCritical {
+			t.Errorf("historical finding %q = %+v, want CRITICAL in %q", c.claim, finding, c.file)
 		}
 		if finding.Status != status {
-			t.Errorf("historical finding %q has status %q, want %q", caso.claim, finding.Status, status)
+			t.Errorf("historical finding %q has status %q, want %q", c.claim, finding.Status, status)
 		}
 	}
 }

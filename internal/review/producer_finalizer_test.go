@@ -15,7 +15,7 @@ import (
 
 type finalizerAgent struct{}
 
-func (*finalizerAgent) EjecutarPrompt(string) (string, error) {
+func (*finalizerAgent) RunPrompt(string) (string, error) {
 	return `{"dim":"logic","verdict":"ok"}`, nil
 }
 
@@ -29,7 +29,7 @@ func TestDimensionReviewerFinalizesEachPhysicalRunAfterSemanticDisposition(t *te
 	var finalized []struct {
 		runID, invocation, class, detail string
 	}
-	transport := func(_, _, _ string, _ review.AuditorAgente) (string, review.ReviewEvidence, error) {
+	transport := func(_, _, _ string, _ review.AgentReviewer) (string, review.ReviewEvidence, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		calls++
@@ -38,10 +38,10 @@ func TestDimensionReviewerFinalizesEachPhysicalRunAfterSemanticDisposition(t *te
 		}
 		return `{"dim":"logic","verdict":"ok"}`, review.ReviewEvidence{RunID: "run-valid", InvocationID: "invocation-valid"}, nil
 	}
-	factory := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+	factory := func(_ review.ReviewBundle, _ string) (review.AgentReviewer, string, error) {
 		return &finalizerAgent{}, "normal", nil
 	}
-	result := review.AuditarCommit(factory, 1, review.OpcionesAuditoria{
+	result := review.AuditCommit(factory, 1, review.AuditOptions{
 		SHA: "semantic-finalizer",
 		Bundles: []review.ReviewBundle{{
 			Name: "test", Dimensions: []string{review.DimLogic}, Priority: review.PriorityRequired, Cost: 1,
@@ -54,7 +54,7 @@ func TestDimensionReviewerFinalizesEachPhysicalRunAfterSemanticDisposition(t *te
 			return nil
 		},
 	})
-	if result.Veredicto != review.VerdictOK {
+	if result.Verdict != review.VerdictOK {
 		t.Fatalf("result = %+v, want successful corrective retry", result)
 	}
 	if len(finalized) != 2 {
@@ -78,7 +78,7 @@ type durableRetryAgent struct {
 	calls int
 }
 
-func (*durableRetryAgent) EjecutarPrompt(string) (string, error) {
+func (*durableRetryAgent) RunPrompt(string) (string, error) {
 	return "", errors.New("legacy path must not be used")
 }
 
@@ -97,10 +97,10 @@ func (*durableRetryAgent) ReviewToolPolicy() reviewcontract.ToolPolicy {
 }
 
 func TestProviderRetryFinalizesBothPhysicalRuns(t *testing.T) {
-	backing := store.NuevoStore(t.TempDir())
+	backing := store.NewStore(t.TempDir())
 	transport := reviewexec.NewDurableTransport(backing, store.RunPolicy{ID: "policy:review"}, "sha-retry", nil)
 	agent := &durableRetryAgent{}
-	rich := func(bundleName, dimension, prompt string, reviewer review.AuditorAgente) (string, review.ReviewEvidence, error) {
+	rich := func(bundleName, dimension, prompt string, reviewer review.AgentReviewer) (string, review.ReviewEvidence, error) {
 		restricted := reviewer.(reviewexec.PolicyRestrictedReviewer)
 		provider := reviewer.(reviewexec.PolicyProvider)
 		output, evidence, err := transport.RunWithPolicy(restricted, bundleName+"/"+dimension, prompt, provider.ReviewToolPolicy())
@@ -125,10 +125,10 @@ func TestProviderRetryFinalizesBothPhysicalRuns(t *testing.T) {
 		}
 		return err
 	}
-	factory := func(_ review.ReviewBundle, _ string) (review.AuditorAgente, string, error) {
+	factory := func(_ review.ReviewBundle, _ string) (review.AgentReviewer, string, error) {
 		return agent, "normal", nil
 	}
-	result := review.AuditarCommit(factory, 1, review.OpcionesAuditoria{
+	result := review.AuditCommit(factory, 1, review.AuditOptions{
 		SHA: "sha-retry",
 		Bundles: []review.ReviewBundle{{
 			Name: "quality", Dimensions: []string{review.DimLogic}, Priority: review.PriorityRequired, Cost: 1,
@@ -136,7 +136,7 @@ func TestProviderRetryFinalizesBothPhysicalRuns(t *testing.T) {
 		ReviewTransportWithEvidence: rich,
 		FinalizeMetrics:             finalize,
 	})
-	if result.Veredicto != review.VerdictOK {
+	if result.Verdict != review.VerdictOK {
 		t.Fatalf("result = %+v, want successful bounded provider retry", result)
 	}
 	if agent.calls != 2 {
@@ -165,8 +165,8 @@ func TestProviderRetryFinalizesBothPhysicalRuns(t *testing.T) {
 			t.Fatalf("metrics snapshot for %s is absent", final.runID)
 		}
 	}
-	if result.Dims[0].Resultado.InvocationID != got[1].invocation {
-		t.Fatalf("successful invocation = %q, want second finalized invocation %q", result.Dims[0].Resultado.InvocationID, got[1].invocation)
+	if result.Dims[0].Result.InvocationID != got[1].invocation {
+		t.Fatalf("successful invocation = %q, want second finalized invocation %q", result.Dims[0].Result.InvocationID, got[1].invocation)
 	}
 }
 
@@ -185,13 +185,13 @@ func TestProviderTerminalErrorsPreserveTypedFailuresAfterFinalization(t *testing
 				RunID: "run-" + tt.name, InvocationID: "inv-" + tt.name,
 				Class: tt.class, Text: tt.name + " evidence",
 			}
-			transport := func(string, string, string, review.AuditorAgente) (string, review.ReviewEvidence, error) {
+			transport := func(string, string, string, review.AgentReviewer) (string, review.ReviewEvidence, error) {
 				return "", review.ReviewEvidence{RunID: original.RunID, InvocationID: original.InvocationID}, original
 			}
 			finalized := false
-			result := review.AuditarCommit(func(review.ReviewBundle, string) (review.AuditorAgente, string, error) {
+			result := review.AuditCommit(func(review.ReviewBundle, string) (review.AgentReviewer, string, error) {
 				return &finalizerAgent{}, "normal", nil
-			}, 1, review.OpcionesAuditoria{
+			}, 1, review.AuditOptions{
 				SHA: "preserve-" + tt.name,
 				Bundles: []review.ReviewBundle{{
 					Name: "test", Dimensions: []string{review.DimLogic}, Priority: review.PriorityRequired, Cost: 1,

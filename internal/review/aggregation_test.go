@@ -16,21 +16,21 @@ func nthULPAfter(x float64, n int) float64 {
 }
 
 func TestAggregateFindingsCollapsesExactFingerprints(t *testing.T) {
-	first := Hallazgo{
+	first := Finding{
 		Dimension:  DimLogic,
 		Severity:   SevWarning,
 		Confidence: 0.6,
 		Title:      "unchecked error",
 		Evidence:   "if err != nil { return }",
-		Location:   Ubicacion{Archivo: "config.go", LineaInicio: 12, Simbolo: "parseConfig"},
-		Producer:   Productor{Agente: "logic-reviewer"},
+		Location:   Location{File: "config.go", LineStart: 12, Simbolo: "parseConfig"},
+		Producer:   Producer{Agent: "logic-reviewer"},
 	}
 	first.Fingerprint = Fingerprint(first)
 	second := first
 	second.Severity = SevCritical
-	second.Producer = Productor{Agente: "retry-reviewer"}
+	second.Producer = Producer{Agent: "retry-reviewer"}
 
-	aggregated := aggregateFindings([]Hallazgo{first, second}, defaultDescriptionSimilarityThreshold)
+	aggregated := aggregateFindings([]Finding{first, second}, defaultDescriptionSimilarityThreshold)
 	if len(aggregated) != 1 {
 		t.Fatalf("aggregated findings = %d, expected 1", len(aggregated))
 	}
@@ -40,15 +40,15 @@ func TestAggregateFindingsCollapsesExactFingerprints(t *testing.T) {
 }
 
 func TestAggregateFindingsRecomputesFingerprintFromCanonicalFields(t *testing.T) {
-	first := Hallazgo{
+	first := Finding{
 		Dimension: DimLogic, Title: "unchecked error", Evidence: "if err != nil { return }",
-		Location:    Ubicacion{Archivo: "config.go", LineaInicio: 12, Simbolo: "parseConfig"},
+		Location:    Location{File: "config.go", LineStart: 12, Simbolo: "parseConfig"},
 		Fingerprint: "untrusted-first",
 	}
 	second := first
 	second.Fingerprint = "untrusted-second"
 
-	aggregated := aggregateFindings([]Hallazgo{first, second}, defaultDescriptionSimilarityThreshold)
+	aggregated := aggregateFindings([]Finding{first, second}, defaultDescriptionSimilarityThreshold)
 	if len(aggregated) != 1 {
 		t.Fatalf("aggregated findings = %d, expected 1", len(aggregated))
 	}
@@ -58,20 +58,20 @@ func TestAggregateFindingsRecomputesFingerprintFromCanonicalFields(t *testing.T)
 }
 
 func TestAggregateFindingsUsesHighestSeverityAsCanonicalFinding(t *testing.T) {
-	first := Hallazgo{
+	first := Finding{
 		Dimension: DimLogic, Severity: SevWarning, Confidence: 0.6,
 		Description: "ignored parse error permits invalid configuration", Evidence: "return nil",
-		Location: Ubicacion{Archivo: "config.go", LineaInicio: 12, LineaFin: 16, Simbolo: "parseConfig"},
-		Producer: Productor{Agente: "logic-reviewer"},
+		Location: Location{File: "config.go", LineStart: 12, LineEnd: 16, Simbolo: "parseConfig"},
+		Producer: Producer{Agent: "logic-reviewer"},
 	}
-	highest := Hallazgo{
+	highest := Finding{
 		Dimension: DimDesign, Severity: SevCritical, Confidence: 0.8,
 		Description: "invalid configuration is permitted after ignored parse error", Evidence: "return without handling the parse error",
-		Location: Ubicacion{Archivo: "config.go", LineaInicio: 14, LineaFin: 18, Simbolo: "parseConfig"},
-		Producer: Productor{Agente: "design-reviewer"},
+		Location: Location{File: "config.go", LineStart: 14, LineEnd: 18, Simbolo: "parseConfig"},
+		Producer: Producer{Agent: "design-reviewer"},
 	}
 
-	aggregated := aggregateFindings([]Hallazgo{first, highest}, 0.3)
+	aggregated := aggregateFindings([]Finding{first, highest}, 0.3)
 	if len(aggregated) != 1 {
 		t.Fatalf("aggregated findings = %d, expected 1", len(aggregated))
 	}
@@ -85,25 +85,25 @@ func TestAggregateFindingsUsesHighestSeverityAsCanonicalFinding(t *testing.T) {
 }
 
 func TestAggregateFindingsExcludesRefutedFindings(t *testing.T) {
-	refuted := Hallazgo{Status: StatusRefuted, Fingerprint: "ignored"}
-	if aggregated := aggregateFindings([]Hallazgo{refuted}, defaultDescriptionSimilarityThreshold); len(aggregated) != 0 {
+	refuted := Finding{Status: StatusRefuted, Fingerprint: "ignored"}
+	if aggregated := aggregateFindings([]Finding{refuted}, defaultDescriptionSimilarityThreshold); len(aggregated) != 0 {
 		t.Errorf("aggregated findings = %#v, expected refuted finding to be excluded", aggregated)
 	}
 }
 
 func TestAreProximateFindingsRejectsDistinctLocationsAndBoundarySimilarity(t *testing.T) {
-	base := Hallazgo{
-		Description: "ignored parse error", Location: Ubicacion{Archivo: "config.go", LineaInicio: 12, LineaFin: 16, Simbolo: "parseConfig"},
+	base := Finding{
+		Description: "ignored parse error", Location: Location{File: "config.go", LineStart: 12, LineEnd: 16, Simbolo: "parseConfig"},
 	}
 	for _, tc := range []struct {
 		name      string
-		other     Hallazgo
+		other     Finding
 		threshold float64
 	}{
-		{"different file", Hallazgo{Description: base.Description, Location: Ubicacion{Archivo: "other.go", LineaInicio: 12, LineaFin: 16, Simbolo: "parseConfig"}}, 0.5},
-		{"different symbol", Hallazgo{Description: base.Description, Location: Ubicacion{Archivo: "config.go", LineaInicio: 12, LineaFin: 16, Simbolo: "other"}}, 0.5},
-		{"non-overlapping range", Hallazgo{Description: base.Description, Location: Ubicacion{Archivo: "config.go", LineaInicio: 17, LineaFin: 20, Simbolo: "parseConfig"}}, 0.5},
-		{"similarity at threshold", Hallazgo{Description: "ignored validation error", Location: base.Location}, 0.5},
+		{"different file", Finding{Description: base.Description, Location: Location{File: "other.go", LineStart: 12, LineEnd: 16, Simbolo: "parseConfig"}}, 0.5},
+		{"different symbol", Finding{Description: base.Description, Location: Location{File: "config.go", LineStart: 12, LineEnd: 16, Simbolo: "other"}}, 0.5},
+		{"non-overlapping range", Finding{Description: base.Description, Location: Location{File: "config.go", LineStart: 17, LineEnd: 20, Simbolo: "parseConfig"}}, 0.5},
+		{"similarity at threshold", Finding{Description: "ignored validation error", Location: base.Location}, 0.5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if areProximateFindings(base, tc.other, tc.threshold) {
@@ -114,12 +114,12 @@ func TestAreProximateFindingsRejectsDistinctLocationsAndBoundarySimilarity(t *te
 }
 
 func TestCorrelateFindingsByCauseGroupsDistinctLocationsSharingRootCause(t *testing.T) {
-	findings := []Hallazgo{
-		{Description: "session cache race condition breaks TestUserLogin", Confidence: 0.5, Location: Ubicacion{Archivo: "session.go", Simbolo: "acquireSession"}},
-		{Description: "TestUserLogin breaks because of session cache race condition", Confidence: 0.9, Location: Ubicacion{Archivo: "cache.go", Simbolo: "cacheGet"}},
-		{Description: "race condition in session cache breaks TestUserLogin intermittently", Confidence: 0.4, Location: Ubicacion{Archivo: "login_test.go", Simbolo: "TestUserLogin"}},
-		{Description: "TestUserLogin intermittently fails from session cache race condition", Confidence: 0.6, Location: Ubicacion{Archivo: "runner.go", Simbolo: "runSuite"}},
-		{Description: "the session cache race condition is why TestUserLogin breaks", Confidence: 0.3, Location: Ubicacion{Archivo: "harness.go", Simbolo: "setupHarness"}},
+	findings := []Finding{
+		{Description: "session cache race condition breaks TestUserLogin", Confidence: 0.5, Location: Location{File: "session.go", Simbolo: "acquireSession"}},
+		{Description: "TestUserLogin breaks because of session cache race condition", Confidence: 0.9, Location: Location{File: "cache.go", Simbolo: "cacheGet"}},
+		{Description: "race condition in session cache breaks TestUserLogin intermittently", Confidence: 0.4, Location: Location{File: "login_test.go", Simbolo: "TestUserLogin"}},
+		{Description: "TestUserLogin intermittently fails from session cache race condition", Confidence: 0.6, Location: Location{File: "runner.go", Simbolo: "runSuite"}},
+		{Description: "the session cache race condition is why TestUserLogin breaks", Confidence: 0.3, Location: Location{File: "harness.go", Simbolo: "setupHarness"}},
 	}
 
 	groups := correlateFindingsByCause(findings, 0.4)
@@ -172,9 +172,9 @@ const (
 // its own group (or dropped it) depending on iteration order, even though
 // A, B, and C all share the same cause transitively through B.
 func TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding(t *testing.T) {
-	a := Hallazgo{Description: chainDescriptionA, Confidence: 0.5, Location: Ubicacion{Archivo: "alloc.go", Simbolo: "allocate"}}
-	b := Hallazgo{Description: chainDescriptionB, Confidence: 0.9, Location: Ubicacion{Archivo: "pool.go", Simbolo: "acquire"}}
-	c := Hallazgo{Description: chainDescriptionC, Confidence: 0.4, Location: Ubicacion{Archivo: "session.go", Simbolo: "release"}}
+	a := Finding{Description: chainDescriptionA, Confidence: 0.5, Location: Location{File: "alloc.go", Simbolo: "allocate"}}
+	b := Finding{Description: chainDescriptionB, Confidence: 0.9, Location: Location{File: "pool.go", Simbolo: "acquire"}}
+	c := Finding{Description: chainDescriptionC, Confidence: 0.4, Location: Location{File: "session.go", Simbolo: "release"}}
 
 	const threshold = chainSimilarityThreshold
 	// Sanity-check the crafted descriptions actually exhibit the intended
@@ -190,14 +190,14 @@ func TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding(t *testi
 		t.Fatalf("similarity(A,C) = %v, want <= %v (test setup invalid)", got, threshold)
 	}
 
-	groups := correlateFindingsByCause([]Hallazgo{a, b, c}, threshold)
+	groups := correlateFindingsByCause([]Finding{a, b, c}, threshold)
 	if len(groups) != 1 {
 		t.Fatalf("groups = %d, expected 1 transitive group joining A, B, C via B: %#v", len(groups), groups)
 	}
 	if len(groups[0].Effects) != 3 {
 		t.Fatalf("effects = %d, expected 3 (A and C must join transitively through B, not split or drop C): %#v", len(groups[0].Effects), groups[0].Effects)
 	}
-	for i, want := range []Hallazgo{a, b, c} {
+	for i, want := range []Finding{a, b, c} {
 		if !reflect.DeepEqual(groups[0].Effects[i], want) {
 			t.Errorf("effects[%d] = %#v, expected %#v", i, groups[0].Effects[i], want)
 		}
@@ -213,9 +213,9 @@ func TestCorrelateFindingsByCauseGroupsTransitivelyThroughSharedFinding(t *testi
 // bridge with positive similarity to both a and c, so b must win regardless
 // of confidence ordering.
 func TestCorrelateFindingsByCauseLabelsChainWithMedoidNotConfidenceOutlier(t *testing.T) {
-	a := Hallazgo{Description: chainDescriptionA, Confidence: 0.5}
-	b := Hallazgo{Description: chainDescriptionB, Confidence: 0.3}
-	c := Hallazgo{Description: chainDescriptionC, Confidence: 0.9}
+	a := Finding{Description: chainDescriptionA, Confidence: 0.5}
+	b := Finding{Description: chainDescriptionB, Confidence: 0.3}
+	c := Finding{Description: chainDescriptionC, Confidence: 0.9}
 
 	const threshold = chainSimilarityThreshold
 	// Same sanity checks as the sibling transitivity test above: this test
@@ -231,7 +231,7 @@ func TestCorrelateFindingsByCauseLabelsChainWithMedoidNotConfidenceOutlier(t *te
 		t.Fatalf("similarity(A,C) = %v, want 0 (test setup invalid)", got)
 	}
 
-	groups := correlateFindingsByCause([]Hallazgo{a, b, c}, threshold)
+	groups := correlateFindingsByCause([]Finding{a, b, c}, threshold)
 	if len(groups) != 1 {
 		t.Fatalf("groups = %d, expected 1: %#v", len(groups), groups)
 	}
@@ -248,15 +248,15 @@ func TestCorrelateFindingsByCauseLabelsChainWithMedoidNotConfidenceOutlier(t *te
 // (sim(x,y) == sim(y,x)), so both members always score bit-identically and
 // Confidence alone decides the winner.
 func TestDominantCauseBreaksTwoMemberTieByConfidence(t *testing.T) {
-	low := Hallazgo{Description: "reused buffer without reinitializing state", Confidence: 0.2}
-	high := Hallazgo{Description: "state reinitializing without reused buffer", Confidence: 0.8}
+	low := Finding{Description: "reused buffer without reinitializing state", Confidence: 0.2}
+	high := Finding{Description: "state reinitializing without reused buffer", Confidence: 0.8}
 
 	const threshold = 0.5
 	if got := descriptionSimilarity(low.Description, high.Description); got <= threshold {
 		t.Fatalf("similarity(low,high) = %v, want > %v (test setup invalid)", got, threshold)
 	}
 
-	groups := correlateFindingsByCause([]Hallazgo{low, high}, threshold)
+	groups := correlateFindingsByCause([]Finding{low, high}, threshold)
 	if len(groups) != 1 {
 		t.Fatalf("groups = %d, expected 1: %#v", len(groups), groups)
 	}
@@ -264,7 +264,7 @@ func TestDominantCauseBreaksTwoMemberTieByConfidence(t *testing.T) {
 		t.Errorf("cause = %q, expected the higher-confidence member %q on a symmetric tie", groups[0].Cause, high.Description)
 	}
 
-	for _, order := range [][]Hallazgo{{low, high}, {high, low}} {
+	for _, order := range [][]Finding{{low, high}, {high, low}} {
 		if got := dominantCause(order); got != high.Description {
 			t.Errorf("dominantCause(%v) = %q, expected the higher-confidence member %q on a symmetric tie", order, got, high.Description)
 		}
@@ -397,23 +397,23 @@ func TestScoresTie(t *testing.T) {
 func TestCorrelateFindingsByCauseDropsUnrelatedFindings(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		findings  []Hallazgo
+		findings  []Finding
 		threshold float64
 	}{
 		{
 			name: "unrelated descriptions",
-			findings: []Hallazgo{
-				{Description: "unchecked error permits invalid configuration", Confidence: 0.5, Location: Ubicacion{Archivo: "config.go", Simbolo: "parseConfig"}},
-				{Description: "SQL injection via unsanitized user input in login handler", Confidence: 0.6, Location: Ubicacion{Archivo: "auth.go", Simbolo: "handleLogin"}},
-				{Description: "goroutine leak in background worker pool", Confidence: 0.7, Location: Ubicacion{Archivo: "worker.go", Simbolo: "startPool"}},
+			findings: []Finding{
+				{Description: "unchecked error permits invalid configuration", Confidence: 0.5, Location: Location{File: "config.go", Simbolo: "parseConfig"}},
+				{Description: "SQL injection via unsanitized user input in login handler", Confidence: 0.6, Location: Location{File: "auth.go", Simbolo: "handleLogin"}},
+				{Description: "goroutine leak in background worker pool", Confidence: 0.7, Location: Location{File: "worker.go", Simbolo: "startPool"}},
 			},
 			threshold: 0.3,
 		},
 		{
 			name: "similarity at threshold",
-			findings: []Hallazgo{
-				{Description: "ignored parse error", Confidence: 0.5, Location: Ubicacion{Archivo: "config.go", Simbolo: "parseConfig"}},
-				{Description: "ignored validation error", Confidence: 0.6, Location: Ubicacion{Archivo: "validate.go", Simbolo: "validate"}},
+			findings: []Finding{
+				{Description: "ignored parse error", Confidence: 0.5, Location: Location{File: "config.go", Simbolo: "parseConfig"}},
+				{Description: "ignored validation error", Confidence: 0.6, Location: Location{File: "validate.go", Simbolo: "validate"}},
 			},
 			threshold: 0.5,
 		},
@@ -429,22 +429,22 @@ func TestCorrelateFindingsByCauseDropsUnrelatedFindings(t *testing.T) {
 func TestCorroboratedConfidenceUsesIndependentProducersAndRepeatedMaximum(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		finding  Hallazgo
+		finding  Finding
 		expected float64
 	}{
 		{
 			name: "independent producers combine confidence",
-			finding: Hallazgo{EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
-				{Producer: Productor{Agente: "one"}, Confidence: 0.6},
-				{Producer: Productor{Agente: "two"}, Confidence: 0.7},
+			finding: Finding{EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
+				{Producer: Producer{Agent: "one"}, Confidence: 0.6},
+				{Producer: Producer{Agent: "two"}, Confidence: 0.7},
 			}}},
 			expected: 0.88,
 		},
 		{
 			name: "repeated producer uses maximum confidence",
-			finding: Hallazgo{EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
-				{Producer: Productor{Agente: "one"}, Confidence: 0.6},
-				{Producer: Productor{Agente: "one"}, Confidence: 0.7},
+			finding: Finding{EvidenceSet: &FindingEvidenceSet{Values: []FindingEvidence{
+				{Producer: Producer{Agent: "one"}, Confidence: 0.6},
+				{Producer: Producer{Agent: "one"}, Confidence: 0.7},
 			}}},
 			expected: 0.7,
 		},

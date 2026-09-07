@@ -14,58 +14,58 @@ import (
 	"time"
 )
 
-func TestLedgerGuardarYLeerFicha(t *testing.T) {
+func TestLedgerSaveAndReadRecord(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictOK, Dims: []DimensionResult{{Dim: DimSpec, Verdict: VerdictOK}}}
-	if err := ledger.GuardarRevision("abc123", "feat(x): cosa", "backend", "modelo-test", rev); err != nil {
-		t.Fatalf("GuardarRevision devolvió error: %v", err)
+	if err := ledger.SaveRevision("abc123", "feat(x): cosa", "backend", "test-model", rev); err != nil {
+		t.Fatalf("SaveRevision returned error: %v", err)
 	}
 
-	ficha, err := ledger.LeerFicha("abc123")
+	record, err := ledger.ReadRecord("abc123")
 	if err != nil {
-		t.Fatalf("LeerFicha devolvió error: %v", err)
+		t.Fatalf("ReadRecord returned error: %v", err)
 	}
-	if ficha == nil {
-		t.Fatal("LeerFicha devolvió nil para una ficha existente")
+	if record == nil {
+		t.Fatal("ReadRecord returned nil for an existing record")
 	}
-	if ficha.SHA != "abc123" || ficha.Message != "feat(x): cosa" || ficha.Bucket != "backend" || ficha.Model != "modelo-test" {
-		t.Errorf("ficha = %+v, no coincide con lo guardado", ficha)
+	if record.SHA != "abc123" || record.Message != "feat(x): cosa" || record.Bucket != "backend" || record.Model != "test-model" {
+		t.Errorf("record = %+v, does not match what was saved", record)
 	}
-	if len(ficha.Revisions) != 1 || ficha.Revisions[0].Result != VerdictOK {
-		t.Errorf("revisions = %+v, esperado 1 con resultado ok", ficha.Revisions)
+	if len(record.Revisions) != 1 || record.Revisions[0].Result != VerdictOK {
+		t.Errorf("revisions = %+v, want 1 with result ok", record.Revisions)
 	}
 }
 
-func TestLedgerRevisionesAppend(t *testing.T) {
+func TestLedgerRevisionsAppend(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
 	rev1 := Revision{At: time.Now().UTC(), Result: VerdictBlock}
 	rev2 := Revision{At: time.Now().UTC(), Result: VerdictOK}
-	if err := ledger.GuardarRevision("def456", "msg", "", "", rev1); err != nil {
-		t.Fatalf("primera revisión: %v", err)
+	if err := ledger.SaveRevision("def456", "msg", "", "", rev1); err != nil {
+		t.Fatalf("first revision: %v", err)
 	}
-	if err := ledger.GuardarRevision("def456", "msg", "", "", rev2); err != nil {
-		t.Fatalf("segunda revisión: %v", err)
+	if err := ledger.SaveRevision("def456", "msg", "", "", rev2); err != nil {
+		t.Fatalf("second revision: %v", err)
 	}
 
-	ficha, err := ledger.LeerFicha("def456")
+	record, err := ledger.ReadRecord("def456")
 	if err != nil {
-		t.Fatalf("LeerFicha devolvió error: %v", err)
+		t.Fatalf("ReadRecord returned error: %v", err)
 	}
-	if len(ficha.Revisions) != 2 {
-		t.Fatalf("revisions = %d, esperado 2 (append, no pisado)", len(ficha.Revisions))
+	if len(record.Revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2 (append, not overwritten)", len(record.Revisions))
 	}
-	if ficha.Revisions[0].Result != VerdictBlock || ficha.Revisions[1].Result != VerdictOK {
-		t.Errorf("el orden append no se respetó: %+v", ficha.Revisions)
+	if record.Revisions[0].Result != VerdictBlock || record.Revisions[1].Result != VerdictOK {
+		t.Errorf("the append order was not preserved: %+v", record.Revisions)
 	}
 }
 
 // TestLedgerPersistsAggregatedFindings verifies that Revision.AggregatedFindings
 // (T6.5) round-trips through the JSON ledger file: it is the aggregated
-// review.AuditarCommit result (ResultadoAuditoria.Findings), not the raw
+// review.AuditCommit result (AuditResult.Findings), not the raw
 // per-dimension DimensionResult.Findings already covered by Dims, and the
 // renderer needs it to survive persistence to render it later. Location and
 // EvidenceSet (with several FindingEvidence) round-trip too: they are the
@@ -73,81 +73,81 @@ func TestLedgerRevisionesAppend(t *testing.T) {
 // renderMergedFinding consumes both directly (T6.5 review finding: tests).
 func TestLedgerPersistsAggregatedFindings(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
-	ubicacion := Ubicacion{Archivo: "auth.go", LineaInicio: 42, LineaFin: 44, Simbolo: "checkToken"}
-	evidencias := []FindingEvidence{
+	location := Location{File: "auth.go", LineStart: 42, LineEnd: 44, Simbolo: "checkToken"}
+	evidences := []FindingEvidence{
 		{Dimension: DimSecurity, Evidence: "token == expected", Confidence: 0.8},
 		{Dimension: DimLogic, Evidence: "no hmac.Equal usage found", Confidence: 0.95},
 	}
 	rev := Revision{
 		At:     time.Now().UTC(),
 		Result: VerdictBlock,
-		AggregatedFindings: []Hallazgo{
+		AggregatedFindings: []Finding{
 			{
 				Dimension:   DimSecurity,
 				Severity:    SevCritical,
 				Source:      SourceReview,
 				Confidence:  0.9,
 				Description: "exposed secret",
-				Location:    ubicacion,
-				EvidenceSet: &FindingEvidenceSet{Values: evidencias},
+				Location:    location,
+				EvidenceSet: &FindingEvidenceSet{Values: evidences},
 			},
 		},
 	}
-	if err := ledger.GuardarRevision("aggfind1", "feat(x): thing", "", "", rev); err != nil {
-		t.Fatalf("GuardarRevision returned error: %v", err)
+	if err := ledger.SaveRevision("aggfind1", "feat(x): thing", "", "", rev); err != nil {
+		t.Fatalf("SaveRevision returned error: %v", err)
 	}
 
-	ficha, err := ledger.LeerFicha("aggfind1")
+	record, err := ledger.ReadRecord("aggfind1")
 	if err != nil {
-		t.Fatalf("LeerFicha returned error: %v", err)
+		t.Fatalf("ReadRecord returned error: %v", err)
 	}
-	if len(ficha.Revisions) != 1 || len(ficha.Revisions[0].AggregatedFindings) != 1 {
-		t.Fatalf("AggregatedFindings did not round-trip: %+v", ficha.Revisions)
+	if len(record.Revisions) != 1 || len(record.Revisions[0].AggregatedFindings) != 1 {
+		t.Fatalf("AggregatedFindings did not round-trip: %+v", record.Revisions)
 	}
-	got := ficha.Revisions[0].AggregatedFindings[0]
+	got := record.Revisions[0].AggregatedFindings[0]
 	if got.Source != SourceReview || got.Confidence != 0.9 || got.Description != "exposed secret" {
 		t.Errorf("AggregatedFindings[0] = %+v, values changed across persistence", got)
 	}
-	if got.Location != ubicacion {
-		t.Errorf("Location did not round-trip: got %+v, want %+v", got.Location, ubicacion)
+	if got.Location != location {
+		t.Errorf("Location did not round-trip: got %+v, want %+v", got.Location, location)
 	}
-	if got.EvidenceSet == nil || len(got.EvidenceSet.Values) != len(evidencias) {
+	if got.EvidenceSet == nil || len(got.EvidenceSet.Values) != len(evidences) {
 		t.Fatalf("EvidenceSet did not round-trip: %+v", got.EvidenceSet)
 	}
-	for i, esperada := range evidencias {
-		if got.EvidenceSet.Values[i] != esperada {
-			t.Errorf("EvidenceSet.Values[%d] = %+v, want %+v", i, got.EvidenceSet.Values[i], esperada)
+	for i, expected := range evidences {
+		if got.EvidenceSet.Values[i] != expected {
+			t.Errorf("EvidenceSet.Values[%d] = %+v, want %+v", i, got.EvidenceSet.Values[i], expected)
 		}
 	}
 }
 
-// TestRevisionHallazgosEfectivosPrefersAggregated: when AggregatedFindings is
-// non-empty, HallazgosEfectivos returns it as-is and ignores Dims entirely.
-// It is the single selection point riesgos() and BloqueantesDeRama must both
+// TestRevisionEffectiveFindingsPrefersAggregated: when AggregatedFindings is
+// non-empty, EffectiveFindings returns it as-is and ignores Dims entirely.
+// It is the single selection point riesgos() and BranchBlockers must both
 // consume (T6.5 review finding: design — before this method existed,
-// BloqueantesDeRama read only Dims and could still block on a semantic
+// BranchBlockers read only Dims and could still block on a semantic
 // finding T6.2 had already superseded by a deterministic one).
-func TestRevisionHallazgosEfectivosPrefersAggregated(t *testing.T) {
+func TestRevisionEffectiveFindingsPrefersAggregated(t *testing.T) {
 	rev := Revision{
-		AggregatedFindings: []Hallazgo{{Dimension: DimSecurity, Severity: SevCritical, Description: "aggregated"}},
+		AggregatedFindings: []Finding{{Dimension: DimSecurity, Severity: SevCritical, Description: "aggregated"}},
 		Dims: []DimensionResult{{Dim: DimSpec, Findings: []ReviewFinding{
 			{Dimension: DimSpec, Severity: SevWarning, Description: "must be ignored"},
 		}}},
 	}
-	got := rev.HallazgosEfectivos()
+	got := rev.EffectiveFindings()
 	if len(got) != 1 || got[0].Description != "aggregated" {
-		t.Errorf("HallazgosEfectivos() = %+v, expected only AggregatedFindings", got)
+		t.Errorf("EffectiveFindings() = %+v, expected only AggregatedFindings", got)
 	}
 }
 
-// TestRevisionHallazgosEfectivosConvertsDimsWithoutAggregated: with no
-// AggregatedFindings, HallazgosEfectivos converts every raw v1 ReviewFinding
-// from Dims to the v2 Hallazgo shape, so callers get one uniform type
+// TestRevisionEffectiveFindingsConvertsDimsWithoutAggregated: with no
+// AggregatedFindings, EffectiveFindings converts every raw v1 ReviewFinding
+// from Dims to the v2 Finding shape, so callers get one uniform type
 // regardless of a Revision's origin (a Revision saved before T6.5, or by a
 // caller that never propagated AggregatedFindings).
-func TestRevisionHallazgosEfectivosConvertsDimsWithoutAggregated(t *testing.T) {
+func TestRevisionEffectiveFindingsConvertsDimsWithoutAggregated(t *testing.T) {
 	rev := Revision{
 		Dims: []DimensionResult{{
 			Dim: DimSpec,
@@ -156,28 +156,28 @@ func TestRevisionHallazgosEfectivosConvertsDimsWithoutAggregated(t *testing.T) {
 			},
 		}},
 	}
-	got := rev.HallazgosEfectivos()
+	got := rev.EffectiveFindings()
 	if len(got) != 1 {
-		t.Fatalf("HallazgosEfectivos() = %d hallazgos, expected 1", len(got))
+		t.Fatalf("EffectiveFindings() = %d findings, expected 1", len(got))
 	}
 	if got[0].Dimension != DimSpec || got[0].Severity != SevWarning || got[0].Description != "converted" ||
-		got[0].Location.Archivo != "a.go" || got[0].Location.LineaInicio != 7 {
-		t.Errorf("HallazgosEfectivos() converted = %+v, values lost in conversion", got[0])
+		got[0].Location.File != "a.go" || got[0].Location.LineStart != 7 {
+		t.Errorf("EffectiveFindings() converted = %+v, values lost in conversion", got[0])
 	}
 }
 
-// TestRevisionHallazgosEfectivosNeverCarriesLegacySourceWithoutConfidence:
+// TestRevisionEffectiveFindingsNeverCarriesLegacySourceWithoutConfidence:
 // a v1 ReviewFinding can have Source populated (e.g. SourceReview, stamped
 // by the T5.7 critical-refutation path at engine.go:305) without ever
 // having had a real Confidence — v1 has no such field. If
-// hallazgoDesdeReviewFinding copied that Source as-is, the converted
-// Hallazgo would pass renderMergedFinding's "h.Source != \"\"" gate and
+// findingFromReviewFinding copied that Source as-is, the converted
+// Finding would pass renderMergedFinding's "h.Source != \"\"" gate and
 // render a fabricated "(review, confidence 0.00)" — exactly the datum T6.5
 // omits the whole segment to avoid (T6.5bis review finding: logic WARNING).
 // So the conversion must never carry a Source without its matching real
-// Confidence: HallazgosEfectivos leaves Source empty for every Dims-derived
-// Hallazgo, regardless of what the underlying ReviewFinding.Source held.
-func TestRevisionHallazgosEfectivosNeverCarriesLegacySourceWithoutConfidence(t *testing.T) {
+// Confidence: EffectiveFindings leaves Source empty for every Dims-derived
+// Finding, regardless of what the underlying ReviewFinding.Source held.
+func TestRevisionEffectiveFindingsNeverCarriesLegacySourceWithoutConfidence(t *testing.T) {
 	rev := Revision{
 		Dims: []DimensionResult{{
 			Dim: DimSecurity,
@@ -186,208 +186,208 @@ func TestRevisionHallazgosEfectivosNeverCarriesLegacySourceWithoutConfidence(t *
 			},
 		}},
 	}
-	got := rev.HallazgosEfectivos()
+	got := rev.EffectiveFindings()
 	if len(got) != 1 {
-		t.Fatalf("HallazgosEfectivos() = %d hallazgos, expected 1", len(got))
+		t.Fatalf("EffectiveFindings() = %d findings, expected 1", len(got))
 	}
 	if got[0].Source != "" {
-		t.Errorf("HallazgosEfectivos()[0].Source = %q, want \"\" (no real Confidence backs it)", got[0].Source)
+		t.Errorf("EffectiveFindings()[0].Source = %q, want \"\" (no real Confidence backs it)", got[0].Source)
 	}
 }
 
-func TestLedgerFichaInexistente(t *testing.T) {
+func TestLedgerMissingRecord(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
-	ficha, err := ledger.LeerFicha("noexiste")
+	record, err := ledger.ReadRecord("noexiste")
 	if err != nil {
-		t.Fatalf("LeerFicha devolvió error: %v", err)
+		t.Fatalf("ReadRecord returned error: %v", err)
 	}
-	if ficha != nil {
-		t.Error("LeerFicha debería devolver nil para un SHA sin ficha")
+	if record != nil {
+		t.Error("ReadRecord should return nil for a SHA without a record")
 	}
 }
 
-func TestLedgerArchivoCorruptoEsError(t *testing.T) {
+func TestLedgerCorruptFileIsError(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
-	ruta := ledger.RutaFicha("abc123")
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := ledger.RecordPath("abc123")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte("no es json"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := ledger.LeerFicha("abc123"); err == nil {
-		t.Error("un archivo corrupto debería devolver error, no nil")
+	if _, err := ledger.ReadRecord("abc123"); err == nil {
+		t.Error("a corrupt file should return an error, not nil")
 	}
 }
 
-func TestLedgerEliminarFichaInexistenteEsNoOp(t *testing.T) {
+func TestLedgerDeleteMissingRecordIsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
-	if err := ledger.EliminarFicha("ffffffffffffffffffffffffffffffffffffffff"); err != nil {
-		t.Fatalf("EliminarFicha de ficha inexistente devolvió error: %v", err)
+	ledger := NewLedger(dir)
+	if err := ledger.DeleteRecord("ffffffffffffffffffffffffffffffffffffffff"); err != nil {
+		t.Fatalf("DeleteRecord of a missing record returned error: %v", err)
 	}
 }
 
-func TestLedgerPurgarHuerfanas(t *testing.T) {
+func TestLedgerPurgeOrphans(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
 	for _, sha := range []string{
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	} {
-		if err := ledger.GuardarRevision(sha, "feat(x): cosa", "backend", "modelo-test", rev); err != nil {
-			t.Fatalf("GuardarRevision(%s) devolvió error: %v", sha, err)
+		if err := ledger.SaveRevision(sha, "feat(x): cosa", "backend", "test-model", rev); err != nil {
+			t.Fatalf("SaveRevision(%s) returned error: %v", sha, err)
 		}
 	}
 
-	// Sin un repositorio Git detrás, cat-file falla y ambas fichas son
-	// huérfanas: el purge debe vaciar el ledger.
-	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) { return git.ContenidoEnAlgunRef(sha), nil })
+	// Without a Git repository behind it, cat-file fails and both records are
+	// orphans: the purge must empty the ledger.
+	deleted, err := ledger.PurgeOrphans(func(sha string) (bool, error) { return git.ContentInSomeRef(sha), nil })
 	if err != nil {
-		t.Fatalf("PurgarHuerfanas devolvió error: %v", err)
+		t.Fatalf("PurgeOrphans returned error: %v", err)
 	}
-	if len(eliminados) != 2 {
-		t.Errorf("PurgarHuerfanas eliminó %d fichas, esperado 2", len(eliminados))
+	if len(deleted) != 2 {
+		t.Errorf("PurgeOrphans deleted %d records, want 2", len(deleted))
 	}
-	restantes, err := ledger.ListarFichas()
+	remaining, err := ledger.ListRecords()
 	if err != nil {
-		t.Fatalf("ListarFichas devolvió error: %v", err)
+		t.Fatalf("ListRecords returned error: %v", err)
 	}
-	if len(restantes) != 0 {
-		t.Errorf("tras purgar quedan %d fichas, esperado 0: %v", len(restantes), restantes)
+	if len(remaining) != 0 {
+		t.Errorf("after purging %d records remain, want 0: %v", len(remaining), remaining)
 	}
 }
 
-// TestLedgerPurgarHuerfanasDangling cubre el caso real: un commit reescrito
-// con amend sigue existiendo en el object store como dangling, pero ya no es
-// alcanzable desde ningún ref. ContenidoEnAlgunRef lo detecta y la ficha se
-// purga; un commit vivo se conserva.
-func TestLedgerPurgarHuerfanasDangling(t *testing.T) {
+// TestLedgerPurgeOrphansDangling covers the real case: a commit rewritten
+// with amend keeps existing in the object store as dangling, but is no
+// longer reachable from any ref. ContentInSomeRef detects it and the record
+// is purged; a live commit is kept.
+func TestLedgerPurgeOrphansDangling(t *testing.T) {
 	repo := t.TempDir()
-	ejecutarGitEn := func(args ...string) string {
+	runGitIn := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
-		salida, err := cmd.CombinedOutput()
+		output, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("git %v devolvió error: %v\n%s", args, err, salida)
+			t.Fatalf("git %v returned error: %v\n%s", args, err, output)
 		}
-		return strings.TrimSpace(string(salida))
+		return strings.TrimSpace(string(output))
 	}
 
-	ejecutarGitEn("init", "-q")
-	ejecutarGitEn("config", "user.email", "test@local")
-	ejecutarGitEn("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("uno\n"), 0644); err != nil {
+	runGitIn("init", "-q")
+	runGitIn("config", "user.email", "test@local")
+	runGitIn("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGitEn("add", "a.txt")
-	ejecutarGitEn("commit", "-q", "-m", "primero")
-	shaVivo := ejecutarGitEn("rev-parse", "HEAD")
+	runGitIn("add", "a.txt")
+	runGitIn("commit", "-q", "-m", "first")
+	liveSHA := runGitIn("rev-parse", "HEAD")
 
-	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("uno\ndos\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\ntwo\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ejecutarGitEn("add", "a.txt")
-	ejecutarGitEn("commit", "-q", "-m", "segundo")
-	shaDangling := ejecutarGitEn("rev-parse", "HEAD")
-	// Amend reescribe el commit: el SHA anterior queda dangling pero sigue
-	// siendo un objeto válido en el almacén.
-	ejecutarGitEn("commit", "--amend", "-q", "-m", "segundo corregido")
-	if shaVivo == shaDangling {
-		t.Fatal("los SHAs no pueden coincidir")
+	runGitIn("add", "a.txt")
+	runGitIn("commit", "-q", "-m", "second")
+	danglingSHA := runGitIn("rev-parse", "HEAD")
+	// Amend rewrites the commit: the previous SHA is left dangling but is
+	// still a valid object in the store.
+	runGitIn("commit", "--amend", "-q", "-m", "second fixed")
+	if liveSHA == danglingSHA {
+		t.Fatal("the SHAs must not match")
 	}
 
-	// El ledger se apunta al repo real para que ContenidoEnAlgunRef resuelva
-	// contra sus refs.
+	// The ledger points at the real repo so ContentInSomeRef resolves
+	// against its refs.
 	t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
 	t.Setenv("GIT_WORK_TREE", repo)
-	ledger := NuevoLedger(t.TempDir())
+	ledger := NewLedger(t.TempDir())
 	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
-	for _, sha := range []string{shaVivo, shaDangling} {
-		if err := ledger.GuardarRevision(sha, "msg", "backend", "modelo", rev); err != nil {
-			t.Fatalf("GuardarRevision(%s) devolvió error: %v", sha, err)
+	for _, sha := range []string{liveSHA, danglingSHA} {
+		if err := ledger.SaveRevision(sha, "msg", "backend", "model", rev); err != nil {
+			t.Fatalf("SaveRevision(%s) returned error: %v", sha, err)
 		}
 	}
 
-	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) { return git.ContenidoEnAlgunRef(sha), nil })
+	deleted, err := ledger.PurgeOrphans(func(sha string) (bool, error) { return git.ContentInSomeRef(sha), nil })
 	if err != nil {
-		t.Fatalf("PurgarHuerfanas devolvió error: %v", err)
+		t.Fatalf("PurgeOrphans returned error: %v", err)
 	}
-	if len(eliminados) != 1 || eliminados[0] != shaDangling {
-		t.Errorf("PurgarHuerfanas eliminó %v, esperado solo %s (el dangling)", eliminados, shaDangling)
+	if len(deleted) != 1 || deleted[0] != danglingSHA {
+		t.Errorf("PurgeOrphans deleted %v, want only %s (the dangling one)", deleted, danglingSHA)
 	}
-	if ficha, _ := ledger.LeerFicha(shaVivo); ficha == nil {
-		t.Errorf("la ficha del commit vivo %s no debería haberse purgado", shaVivo)
+	if record, _ := ledger.ReadRecord(liveSHA); record == nil {
+		t.Errorf("the record of the live commit %s should not have been purged", liveSHA)
 	}
 }
 
-func TestLedgerEscrituraAtomica(temp *testing.T) {
-	// Varias escrituras consecutivas nunca dejan un archivo a medias: al final
-	// siempre hay JSON válido con la última revisión.
-	temp.Run("secuencial", func(t *testing.T) {
+func TestLedgerAtomicWrite(temp *testing.T) {
+	// Several consecutive writes never leave a half-written file: at the end
+	// there is always valid JSON with the last revision.
+	temp.Run("sequential", func(t *testing.T) {
 		dir := t.TempDir()
-		ledger := NuevoLedger(dir)
+		ledger := NewLedger(dir)
 		for i := 0; i < 20; i++ {
 			rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
-			if err := ledger.GuardarRevision("sha1", "m", "", "", rev); err != nil {
-				t.Fatalf("escritura %d: %v", i, err)
+			if err := ledger.SaveRevision("sha1", "m", "", "", rev); err != nil {
+				t.Fatalf("write %d: %v", i, err)
 			}
 		}
-		ficha, err := ledger.LeerFicha("sha1")
+		record, err := ledger.ReadRecord("sha1")
 		if err != nil {
-			t.Fatalf("tras 20 escrituras el archivo quedó corrupto: %v", err)
+			t.Fatalf("after 20 writes the file ended up corrupt: %v", err)
 		}
-		if len(ficha.Revisions) != 20 {
-			t.Errorf("revisions = %d, esperado 20", len(ficha.Revisions))
+		if len(record.Revisions) != 20 {
+			t.Errorf("revisions = %d, want 20", len(record.Revisions))
 		}
 	})
 }
 
-func TestLedgerMarcarCorregida(t *testing.T) {
+func TestLedgerMarkFixed(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictBlock}
-	if err := ledger.GuardarRevision("aaa111", "feat(x): con bug", "backend", "m", rev); err != nil {
-		t.Fatalf("GuardarRevision devolvió error: %v", err)
+	if err := ledger.SaveRevision("aaa111", "feat(x): con bug", "backend", "m", rev); err != nil {
+		t.Fatalf("SaveRevision returned error: %v", err)
 	}
 
-	if err := ledger.MarcarCorregida("aaa111", "bbb222"); err != nil {
-		t.Fatalf("MarcarCorregida devolvió error: %v", err)
+	if err := ledger.MarkFixed("aaa111", "bbb222"); err != nil {
+		t.Fatalf("MarkFixed returned error: %v", err)
 	}
-	ficha, err := ledger.LeerFicha("aaa111")
+	record, err := ledger.ReadRecord("aaa111")
 	if err != nil {
-		t.Fatalf("LeerFicha devolvió error: %v", err)
+		t.Fatalf("ReadRecord returned error: %v", err)
 	}
-	if ficha.FixedIn != "bbb222" {
-		t.Errorf("FixedIn = %q, esperado bbb222", ficha.FixedIn)
+	if record.FixedIn != "bbb222" {
+		t.Errorf("FixedIn = %q, want bbb222", record.FixedIn)
 	}
 
-	// La primera corrección gana: no se sobreescribe con una posterior.
-	if err := ledger.MarcarCorregida("aaa111", "ccc333"); err != nil {
-		t.Fatalf("segunda MarcarCorregida devolvió error: %v", err)
+	// The first fix wins: it is not overwritten by a later one.
+	if err := ledger.MarkFixed("aaa111", "ccc333"); err != nil {
+		t.Fatalf("second MarkFixed returned error: %v", err)
 	}
-	ficha, _ = ledger.LeerFicha("aaa111")
-	if ficha.FixedIn != "bbb222" {
-		t.Errorf("FixedIn = %q, esperado que bbb222 gane", ficha.FixedIn)
+	record, _ = ledger.ReadRecord("aaa111")
+	if record.FixedIn != "bbb222" {
+		t.Errorf("FixedIn = %q, want bbb222 to win", record.FixedIn)
 	}
 }
 
-// TestLedgerAdoptarFicha cubre el fix de T2.7: adoptar la ficha de un SHA
-// origen bajo un SHA destino nuevo debe conservar Message/Bucket/Model y
-// TODAS las revisiones (incluidos los hallazgos reales), recuperables con
-// LeerFicha(hacia).
-func TestLedgerAdoptarFicha(t *testing.T) {
+// TestLedgerAdoptRecord covers the T2.7 fix: adopting the record of a source
+// SHA under a new destination SHA must preserve Message/Bucket/Model and
+// ALL revisions (including the real findings), recoverable with
+// ReadRecord(to).
+func TestLedgerAdoptRecord(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
 	rev := Revision{
 		At:     time.Now().UTC(),
@@ -399,95 +399,94 @@ func TestLedgerAdoptarFicha(t *testing.T) {
 				Dimension:   DimLogic,
 				File:        "b.txt",
 				Severity:    SevWarning,
-				Description: "hallazgo real de prueba",
+				Description: "real test finding",
 			}},
 		}},
 	}
-	if err := ledger.GuardarRevision("sha-viejo", "feat(b): cosa", "pr", "modelo-test", rev); err != nil {
-		t.Fatalf("GuardarRevision: %v", err)
+	if err := ledger.SaveRevision("sha-viejo", "feat(b): cosa", "pr", "test-model", rev); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
 	}
 
-	if err := ledger.AdoptarFicha("sha-viejo", "sha-nuevo"); err != nil {
-		t.Fatalf("AdoptarFicha: %v", err)
+	if err := ledger.AdoptRecord("sha-viejo", "sha-nuevo"); err != nil {
+		t.Fatalf("AdoptRecord: %v", err)
 	}
 
-	adoptada, err := ledger.LeerFicha("sha-nuevo")
+	adopted, err := ledger.ReadRecord("sha-nuevo")
 	if err != nil {
-		t.Fatalf("LeerFicha(sha-nuevo): %v", err)
+		t.Fatalf("ReadRecord(sha-nuevo): %v", err)
 	}
-	if adoptada == nil {
-		t.Fatal("LeerFicha(sha-nuevo) devolvió nil tras AdoptarFicha")
+	if adopted == nil {
+		t.Fatal("ReadRecord(sha-nuevo) returned nil after AdoptRecord")
 	}
-	if adoptada.SHA != "sha-nuevo" || adoptada.Message != "feat(b): cosa" || adoptada.Bucket != "pr" || adoptada.Model != "modelo-test" {
-		t.Errorf("ficha adoptada = %+v, no coincide con la de origen", adoptada)
+	if adopted.SHA != "sha-nuevo" || adopted.Message != "feat(b): cosa" || adopted.Bucket != "pr" || adopted.Model != "test-model" {
+		t.Errorf("adopted record = %+v, does not match the origin one", adopted)
 	}
-	if len(adoptada.Revisions) != 1 || len(adoptada.Revisions[0].Dims) != 1 || len(adoptada.Revisions[0].Dims[0].Findings) != 1 {
-		t.Fatalf("revisiones adoptadas = %+v, esperado el hallazgo real intacto", adoptada.Revisions)
+	if len(adopted.Revisions) != 1 || len(adopted.Revisions[0].Dims) != 1 || len(adopted.Revisions[0].Dims[0].Findings) != 1 {
+		t.Fatalf("adopted revisions = %+v, want the real finding intact", adopted.Revisions)
 	}
-	if adoptada.Revisions[0].Dims[0].Findings[0].Description != "hallazgo real de prueba" {
-		t.Errorf("hallazgo adoptado = %+v, esperado conservar la descripción original", adoptada.Revisions[0].Dims[0].Findings[0])
+	if adopted.Revisions[0].Dims[0].Findings[0].Description != "real test finding" {
+		t.Errorf("adopted finding = %+v, want the original description preserved", adopted.Revisions[0].Dims[0].Findings[0])
 	}
 
-	// La ficha origen sigue existiendo: adoptar no es mover.
-	if origen, _ := ledger.LeerFicha("sha-viejo"); origen == nil {
-		t.Error("la ficha origen no debería desaparecer al adoptarla")
+	// The origin record still exists: adopting is not moving.
+	if origin, _ := ledger.ReadRecord("sha-viejo"); origin == nil {
+		t.Error("the origin record should not disappear when adopted")
 	}
 }
 
-// TestLedgerAdoptarFichaSHAOrigenInexistenteEsError: a diferencia de
-// MarcarCorregida, adoptar de un SHA sin ficha es un error real, no un
-// no-op silencioso — el SHA origen debería existir siempre porque
-// commitCubiertoPorBlobs lo obtiene del store, que solo registra commits ya
-// auditados.
-func TestLedgerAdoptarFichaSHAOrigenInexistenteEsError(t *testing.T) {
+// TestLedgerAdoptRecordMissingSourceSHAIsError: unlike MarkFixed, adopting
+// from a SHA without a record is a real error, not a silent no-op — the
+// source SHA should always exist because commitCoveredByBlobs takes it
+// from the store, which only registers already audited commits.
+func TestLedgerAdoptRecordMissingSourceSHAIsError(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
-	if err := ledger.AdoptarFicha("no-existe", "sha-nuevo"); err == nil {
-		t.Error("AdoptarFicha de un SHA origen sin ficha debería devolver error")
+	if err := ledger.AdoptRecord("no-existe", "sha-nuevo"); err == nil {
+		t.Error("AdoptRecord of a source SHA without a record should return an error")
 	}
-	if ficha, _ := ledger.LeerFicha("sha-nuevo"); ficha != nil {
-		t.Error("AdoptarFicha que falla no debería crear ninguna ficha destino")
+	if record, _ := ledger.ReadRecord("sha-nuevo"); record != nil {
+		t.Error("a failing AdoptRecord should not create any destination record")
 	}
 }
 
-// TestLedgerAdoptarFichaEsIdempotente: llamarla dos veces con los mismos
-// argumentos no falla ni duplica nada raro, solo sobrescribe con el mismo
-// contenido.
-func TestLedgerAdoptarFichaEsIdempotente(t *testing.T) {
+// TestLedgerAdoptRecordIsIdempotent: calling it twice with the same
+// arguments does not fail nor duplicate anything weird, it just overwrites
+// with the same content.
+func TestLedgerAdoptRecordIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 
 	rev := Revision{At: time.Now().UTC(), Result: VerdictOK}
-	if err := ledger.GuardarRevision("sha-viejo", "feat(x)", "pr", "m", rev); err != nil {
-		t.Fatalf("GuardarRevision: %v", err)
+	if err := ledger.SaveRevision("sha-viejo", "feat(x)", "pr", "m", rev); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
 	}
 
-	if err := ledger.AdoptarFicha("sha-viejo", "sha-nuevo"); err != nil {
-		t.Fatalf("primera adopción: %v", err)
+	if err := ledger.AdoptRecord("sha-viejo", "sha-nuevo"); err != nil {
+		t.Fatalf("first adoption: %v", err)
 	}
-	if err := ledger.AdoptarFicha("sha-viejo", "sha-nuevo"); err != nil {
-		t.Fatalf("segunda adopción (idempotente): %v", err)
+	if err := ledger.AdoptRecord("sha-viejo", "sha-nuevo"); err != nil {
+		t.Fatalf("second adoption (idempotent): %v", err)
 	}
 
-	adoptada, err := ledger.LeerFicha("sha-nuevo")
+	adopted, err := ledger.ReadRecord("sha-nuevo")
 	if err != nil {
-		t.Fatalf("LeerFicha: %v", err)
+		t.Fatalf("ReadRecord: %v", err)
 	}
-	if adoptada == nil || len(adoptada.Revisions) != 1 {
-		t.Errorf("ficha tras adoptar dos veces = %+v, esperado 1 revisión (sin duplicar)", adoptada)
+	if adopted == nil || len(adopted.Revisions) != 1 {
+		t.Errorf("record after adopting twice = %+v, want 1 revision (no duplication)", adopted)
 	}
 }
 
-func TestLedgerMarcarCorregidaSinFichaEsNoOp(t *testing.T) {
+func TestLedgerMarkFixedWithoutRecordIsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
-	if err := ledger.MarcarCorregida("noexiste", "bbb222"); err != nil {
-		t.Fatalf("MarcarCorregida sobre SHA sin ficha devolvió error: %v", err)
+	ledger := NewLedger(dir)
+	if err := ledger.MarkFixed("noexiste", "bbb222"); err != nil {
+		t.Fatalf("MarkFixed on a SHA without a record returned error: %v", err)
 	}
 }
 
-// TestPurgarHuerfanasAbortaCuandoElCriterioFalla pins the ledger's own half of
+// TestPurgeOrphansAbortsWhenTheCriterionFails pins the ledger's own half of
 // the contract, which the migrated tests do not reach: they wrap a helper that
 // converts every git error into false and then force a nil error, so a
 // regression that swallowed query failures would still pass there.
@@ -496,520 +495,520 @@ func TestLedgerMarcarCorregidaSinFichaEsNoOp(t *testing.T) {
 // deletion, and that what was already removed is reported rather than lost, so
 // the caller knows the ledger is half-purged instead of assuming nothing
 // happened.
-func TestPurgarHuerfanasAbortaCuandoElCriterioFalla(t *testing.T) {
-	ledger := NuevoLedger(t.TempDir())
-	// ListarFichas sorts, so these names fix the traversal order: the orphan is
+func TestPurgeOrphansAbortsWhenTheCriterionFails(t *testing.T) {
+	ledger := NewLedger(t.TempDir())
+	// ListRecords sorts, so these names fix the traversal order: the orphan is
 	// visited first, the unresolvable one second, and the third exists only to
 	// prove the purge stopped. Without it an implementation could return the
 	// failure, preserve the SHA it could not resolve, and delete everything
 	// after it while satisfying every other assertion.
-	huerfana := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	ilegible := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	posterior := "cccccccccccccccccccccccccccccccccccccccc"
-	for _, sha := range []string{huerfana, ilegible, posterior} {
-		if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: "ok"}); err != nil {
+	orphaned := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	unreadable := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	later := "cccccccccccccccccccccccccccccccccccccccc"
+	for _, sha := range []string{orphaned, unreadable, later} {
+		if err := ledger.SaveRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	// The order the predicate is actually asked in is recorded, so a change in
 	// traversal fails here instead of quietly weakening the test.
-	var consultados []string
-	fallo := errors.New("the object store cannot be read")
-	eliminados, err := ledger.PurgarHuerfanas(func(sha string) (bool, error) {
-		consultados = append(consultados, sha)
-		if sha == ilegible {
-			return false, fallo
+	var queried []string
+	failure := errors.New("the object store cannot be read")
+	deleted, err := ledger.PurgeOrphans(func(sha string) (bool, error) {
+		queried = append(queried, sha)
+		if sha == unreadable {
+			return false, failure
 		}
 		return false, nil
 	})
-	if !slices.Equal(consultados, []string{huerfana, ilegible}) {
+	if !slices.Equal(queried, []string{orphaned, unreadable}) {
 		t.Fatalf("the predicate was asked for %v, want exactly %v; the purge did not stop at the failure",
-			consultados, []string{huerfana, ilegible})
+			queried, []string{orphaned, unreadable})
 	}
 
-	if !errors.Is(err, fallo) {
-		t.Fatalf("PurgarHuerfanas() error = %v, want the predicate's failure; a query that cannot be answered must not authorise a deletion", err)
+	if !errors.Is(err, failure) {
+		t.Fatalf("PurgeOrphans() error = %v, want the predicate's failure; a query that cannot be answered must not authorise a deletion", err)
 	}
-	if ficha, lerr := ledger.LeerFicha(ilegible); lerr != nil || ficha == nil {
-		t.Errorf("the ficha whose existence could not be resolved was deleted (ficha=%v, err=%v)", ficha, lerr)
+	if record, lerr := ledger.ReadRecord(unreadable); lerr != nil || record == nil {
+		t.Errorf("the record whose existence could not be resolved was deleted (record=%v, err=%v)", record, lerr)
 	}
 	// Whatever was already removed must come back with the error: the ledger is
 	// half-purged, and a caller told only "it failed" would believe otherwise.
 	// The whole list is asserted, not just membership: a purge that reported the
 	// SHA it could not resolve, or one ordered after it, as deleted would satisfy
 	// a containment check while lying about what it destroyed.
-	if !slices.Equal(eliminados, []string{huerfana}) {
-		t.Errorf("PurgarHuerfanas() = %v, want exactly %v: only the ficha it had already deleted before aborting", eliminados, []string{huerfana})
+	if !slices.Equal(deleted, []string{orphaned}) {
+		t.Errorf("PurgeOrphans() = %v, want exactly %v: only the record it had already deleted before aborting", deleted, []string{orphaned})
 	}
-	if ficha, lerr := ledger.LeerFicha(huerfana); lerr != nil || ficha != nil {
-		t.Errorf("the genuinely orphaned ficha was not deleted before the abort (ficha=%v, err=%v)", ficha, lerr)
+	if record, lerr := ledger.ReadRecord(orphaned); lerr != nil || record != nil {
+		t.Errorf("the genuinely orphaned record was not deleted before the abort (record=%v, err=%v)", record, lerr)
 	}
-	if ficha, lerr := ledger.LeerFicha(posterior); lerr != nil || ficha == nil {
-		t.Errorf("a ficha ordered after the failure was deleted anyway (ficha=%v, err=%v); the purge continued past a question it could not answer", ficha, lerr)
+	if record, lerr := ledger.ReadRecord(later); lerr != nil || record == nil {
+		t.Errorf("a record ordered after the failure was deleted anyway (record=%v, err=%v); the purge continued past a question it could not answer", record, lerr)
 	}
 }
 
-// TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead pins FU-16. The
+// TestListRecordsFailsWhenTheLedgerDirectoryCannotBeRead pins FU-16. The
 // listing enumerated with filepath.Glob, which reports only ErrBadPattern and
 // swallows every I/O error it meets while reading a directory, so an
 // unreadable ledger came back as an empty list and a nil error. The callers
 // that decide what a prune may destroy read that as "this ledger cites
 // nothing": collectProvenanceReferences, through anotarReferenciasDeLedger,
-// then treats the execution streams those fichas reference as unreferenced and
-// deletes them, which is exactly what its own contract forbids.
+// then treats the execution streams those records reference as unreferenced
+// and deletes them, which is exactly what its own contract forbids.
 //
 // The fault is staged with a file shape and not with a permission bit. A mode
 // change is a no-op under root, so a permission-based fixture would pass
 // without exercising anything.
-func TestListarFichasFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
+func TestListRecordsFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
 	gitDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(gitDir, "vas-sentinel"), []byte("not a directory"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	shas, err := NuevoLedger(gitDir).ListarFichas()
+	shas, err := NewLedger(gitDir).ListRecords()
 	if err == nil {
-		t.Fatalf("ListarFichas() = %v, nil; want an error: a ledger that cannot be enumerated must never be reported as one holding no fichas", shas)
+		t.Fatalf("ListRecords() = %v, nil; want an error: a ledger that cannot be enumerated must never be reported as one holding no records", shas)
 	}
 	if len(shas) != 0 {
-		t.Errorf("ListarFichas() returned %v next to its error, want no SHAs", shas)
+		t.Errorf("ListRecords() returned %v next to its error, want no SHAs", shas)
 	}
 }
 
-// TestListarFichasFailsOnADanglingLedgerSymlink covers the shape that reports
+// TestListRecordsFailsOnADanglingLedgerSymlink covers the shape that reports
 // the same ErrNotExist as a ledger nobody ever wrote: os.ReadDir resolves the
 // link and cannot separate a broken one from an absent path. Only absence is a
 // real answer, so the distinction has to be made before the read.
 //
-// It matters on the destructive path in particular: directoriosLedgerV1 guards
-// every linked worktree with Lstat before Stat, but appends the common
-// directory unconditionally, so a broken link there reaches this listing with
-// no check in front of it.
+// It matters on the destructive path in particular: the shared-ledger
+// directory list guards every linked worktree with Lstat before Stat, but
+// appends the common directory unconditionally, so a broken link there
+// reaches this listing with no check in front of it.
 // This test is the only one that pins the Lstat guard, and the skip below is
 // therefore a real coverage limit rather than a formality: removing the guard
 // and keeping ReadDir's own ErrNotExist check leaves the regular-file test green,
 // because ReadDir answers ENOTDIR there. Measured, and recorded under FU-16 in
 // docs/issues/decisions.md (FU-16 entry).
-func TestListarFichasFailsOnADanglingLedgerSymlink(t *testing.T) {
+func TestListRecordsFailsOnADanglingLedgerSymlink(t *testing.T) {
 	gitDir := t.TempDir()
 	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
 		t.Skipf("this platform refuses to create a symlink without extra privileges: %v", err)
 	}
 
-	shas, err := NuevoLedger(gitDir).ListarFichas()
+	shas, err := NewLedger(gitDir).ListRecords()
 	if err == nil {
-		t.Fatalf("ListarFichas() = %v, nil; want an error: a ledger path pointing nowhere is a broken ledger, not an empty one", shas)
+		t.Fatalf("ListRecords() = %v, nil; want an error: a ledger path pointing nowhere is a broken ledger, not an empty one", shas)
 	}
 	if len(shas) != 0 {
-		t.Errorf("ListarFichas() returned %v next to its error, want no SHAs", shas)
+		t.Errorf("ListRecords() returned %v next to its error, want no SHAs", shas)
 	}
 }
 
-// TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty holds the other side of
-// FU-16 down. NuevoLedger does not create the directory — the first saved
+// TestListRecordsTreatsAMissingLedgerDirectoryAsEmpty holds the other side of
+// FU-16 down. NewLedger does not create the directory — the first saved
 // revision does — so its absence is a real answer and not a failure. A fix that
 // propagated every ReadDir error would break `sentinel status`, the metrics
 // reader and the prune's own provenance scan on any repository that never saved
 // a review.
-func TestListarFichasTreatsAMissingLedgerDirectoryAsEmpty(t *testing.T) {
-	shas, err := NuevoLedger(t.TempDir()).ListarFichas()
+func TestListRecordsTreatsAMissingLedgerDirectoryAsEmpty(t *testing.T) {
+	shas, err := NewLedger(t.TempDir()).ListRecords()
 	if err != nil {
-		t.Fatalf("ListarFichas() error = %v, want nil: a ledger nobody has written to yet holds no fichas", err)
+		t.Fatalf("ListRecords() error = %v, want nil: a ledger nobody has written to yet holds no records", err)
 	}
 	if len(shas) != 0 {
-		t.Errorf("ListarFichas() = %v, want no SHAs", shas)
+		t.Errorf("ListRecords() = %v, want no SHAs", shas)
 	}
 }
 
-// TestGuardarRevisionConcurrenteNoPierdeRevisiones is the in-process half of the
-// contract. TestGuardarRevisionEntreProcesos is the half that matters, because
+// TestSaveRevisionConcurrentDoesNotLoseRevisions is the in-process half of the
+// contract. TestSaveRevisionAcrossProcesses is the half that matters, because
 // a process-local mutex would satisfy this one and still lose revisions across
 // checkouts; this stays because it fails in milliseconds and names the writer.
 //
 // It pins the contract the shared ledger made load bearing. Anchoring review, status and pr on the Git common
-// directory means two checkouts now audit into the SAME ficha file, and
-// GuardarRevision is a read-append-rename cycle: without serialization each
-// writer reads the same ficha, appends its own revision and replaces the other,
+// directory means two checkouts now audit into the SAME record file, and
+// SaveRevision is a read-append-rename cycle: without serialization each
+// writer reads the same record, appends its own revision and replaces the other,
 // so a clean result can erase a blocking one. `review --all` then reads that
 // SHA as audited and the lost verdict never resurfaces.
 //
 // The revisions array is documented as append-only. This asserts that
 // literally: every concurrent writer's revision must survive.
-func TestGuardarRevisionConcurrenteNoPierdeRevisiones(t *testing.T) {
-	ledger := NuevoLedger(t.TempDir())
+func TestSaveRevisionConcurrentDoesNotLoseRevisions(t *testing.T) {
+	ledger := NewLedger(t.TempDir())
 	const sha = "dddddddddddddddddddddddddddddddddddddddd"
-	const escritores = 8
+	const writers = 8
 
 	// A start gate rather than staggered launches: the lost update needs the
 	// reads to overlap, and goroutines started in a loop tend not to.
-	var listos, arranque, hechos sync.WaitGroup
-	listos.Add(escritores)
-	hechos.Add(escritores)
-	arranque.Add(1)
-	errores := make(chan error, escritores)
-	for i := 0; i < escritores; i++ {
+	var ready, start, done sync.WaitGroup
+	ready.Add(writers)
+	done.Add(writers)
+	start.Add(1)
+	errCh := make(chan error, writers)
+	for i := 0; i < writers; i++ {
 		go func(i int) {
-			defer hechos.Done()
-			listos.Done()
-			arranque.Wait()
-			errores <- ledger.GuardarRevision(sha, "fixture", "b", "m",
+			defer done.Done()
+			ready.Done()
+			start.Wait()
+			errCh <- ledger.SaveRevision(sha, "fixture", "b", "m",
 				Revision{At: time.Now(), Result: VerdictOK, Agent: fmt.Sprintf("writer-%d", i)})
 		}(i)
 	}
-	listos.Wait()
-	arranque.Done()
-	hechos.Wait()
-	close(errores)
-	for err := range errores {
+	ready.Wait()
+	start.Done()
+	done.Wait()
+	close(errCh)
+	for err := range errCh {
 		if err != nil {
-			t.Fatalf("GuardarRevision() error = %v", err)
+			t.Fatalf("SaveRevision() error = %v", err)
 		}
 	}
 
-	ficha, err := ledger.LeerFicha(sha)
+	record, err := ledger.ReadRecord(sha)
 	if err != nil {
-		t.Fatalf("LeerFicha() error = %v", err)
+		t.Fatalf("ReadRecord() error = %v", err)
 	}
-	if ficha == nil {
-		t.Fatal("no ficha exists after eight concurrent writes")
+	if record == nil {
+		t.Fatal("no record exists after eight concurrent writes")
 	}
-	if len(ficha.Revisions) != escritores {
-		t.Fatalf("the ficha holds %d revisions, want %d: one concurrent write replaced another writer's revision",
-			len(ficha.Revisions), escritores)
+	if len(record.Revisions) != writers {
+		t.Fatalf("the record holds %d revisions, want %d: one concurrent write replaced another writer's revision",
+			len(record.Revisions), writers)
 	}
 	// Named agents, so the failure says WHICH writer was lost instead of only
 	// that the count is short.
-	vistos := map[string]bool{}
-	for _, rev := range ficha.Revisions {
-		vistos[rev.Agent] = true
+	seen := map[string]bool{}
+	for _, rev := range record.Revisions {
+		seen[rev.Agent] = true
 	}
-	for i := 0; i < escritores; i++ {
-		if !vistos[fmt.Sprintf("writer-%d", i)] {
-			t.Errorf("writer-%d's revision is not in the ficha: %v", i, vistos)
+	for i := 0; i < writers; i++ {
+		if !seen[fmt.Sprintf("writer-%d", i)] {
+			t.Errorf("writer-%d's revision is not in the record: %v", i, seen)
 		}
 	}
 }
 
-// TestListarFichasIgnoraElArchivoDeBloqueo covers the seam between the two
+// TestListRecordsIgnoresTheLockFile covers the seam between the two
 // things this ledger learned recently: enumeration reports every *.json entry,
 // and mutations now leave a <sha>.json.lock file for as long as they hold the
-// ficha. A process killed inside the critical section leaves that file behind
+// record. A process killed inside the critical section leaves that file behind
 // for good, and a listing that reported it would hand callers a SHA ending in
-// ".json" — which LeerFicha then reads as a missing ficha, and PurgarHuerfanas
+// ".json" — which ReadRecord then reads as a missing record, and PurgeOrphans
 // as an orphan to delete.
-func TestListarFichasIgnoraElArchivoDeBloqueo(t *testing.T) {
+func TestListRecordsIgnoresTheLockFile(t *testing.T) {
 	dir := t.TempDir()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 	const sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-	if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
+	if err := ledger.SaveRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
 		t.Fatal(err)
 	}
 	// Staged as the leftover of a killed writer, which is the only way this
 	// file outlives the call that made it.
-	if err := os.WriteFile(ledger.RutaFicha(sha)+".lock", nil, 0644); err != nil {
+	if err := os.WriteFile(ledger.RecordPath(sha)+".lock", nil, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	shas, err := ledger.ListarFichas()
+	shas, err := ledger.ListRecords()
 	if err != nil {
-		t.Fatalf("ListarFichas() error = %v", err)
+		t.Fatalf("ListRecords() error = %v", err)
 	}
 	if !slices.Equal(shas, []string{sha}) {
-		t.Errorf("ListarFichas() = %v, want exactly %v: a stale lock file was reported as a ficha", shas, []string{sha})
+		t.Errorf("ListRecords() = %v, want exactly %v: a stale lock file was reported as a record", shas, []string{sha})
 	}
 }
 
-// escritoresEntreProcesos y rondasPorEscritor dimensionan el test entre
-// procesos: several rounds per writer widen the window in which two processes
-// are inside the read-append-write of the same ficha, which a single round
+// writersAcrossProcesses and roundsPerWriter size the cross-process test:
+// several rounds per writer widen the window in which two processes are
+// inside the read-append-write of the same record, which a single round
 // each does not reliably produce.
 const (
-	escritoresEntreProcesos = 6
-	rondasPorEscritor       = 4
+	writersAcrossProcesses = 6
+	roundsPerWriter        = 4
 )
 
-// TestGuardarRevisionEntreProcesos proves what the goroutine test cannot: the
+// TestSaveRevisionAcrossProcesses proves what the goroutine test cannot: the
 // serialization holds between separate PROCESSES. That is the real shape of the
 // contract, because the shared ledger exists so that two checkouts — two
-// `sentinel review` invocations — write into one ficha. A mutex inside one
+// `sentinel review` invocations — write into one record. A mutex inside one
 // process would keep the goroutine test green while every cross-checkout write
 // still overwrote another.
 //
 // Each child re-executes this same test binary with the fixture directory in
 // the environment, which is the standard way to get real processes out of `go
 // test` without a second binary to build and keep in sync.
-func TestGuardarRevisionEntreProcesos(t *testing.T) {
+func TestSaveRevisionAcrossProcesses(t *testing.T) {
 	if dir := os.Getenv("VAS_SENTINEL_TEST_LEDGER_DIR"); dir != "" {
-		escribirRevisionesHijo(t, dir, os.Getenv("VAS_SENTINEL_TEST_WRITER"))
+		writeChildRevisions(t, dir, os.Getenv("VAS_SENTINEL_TEST_WRITER"))
 		return
 	}
 
 	dir := t.TempDir()
 	const sha = "ffffffffffffffffffffffffffffffffffffffff"
 	// Seeded from the parent so the children only ever append: creating the
-	// ficha concurrently would test a different thing.
-	if err := NuevoLedger(dir).GuardarRevision(sha, "fixture", "b", "m",
+	// record concurrently would test a different thing.
+	if err := NewLedger(dir).SaveRevision(sha, "fixture", "b", "m",
 		Revision{At: time.Now(), Result: VerdictOK, Agent: "seed"}); err != nil {
 		t.Fatal(err)
 	}
 
-	hijos := make([]*exec.Cmd, 0, escritoresEntreProcesos)
-	for i := 0; i < escritoresEntreProcesos; i++ {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestGuardarRevisionEntreProcesos$", "-test.v")
+	children := make([]*exec.Cmd, 0, writersAcrossProcesses)
+	for i := 0; i < writersAcrossProcesses; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestSaveRevisionAcrossProcesses$", "-test.v")
 		cmd.Env = append(os.Environ(),
 			"VAS_SENTINEL_TEST_LEDGER_DIR="+dir,
 			fmt.Sprintf("VAS_SENTINEL_TEST_WRITER=writer-%d", i))
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("starting writer %d: %v", i, err)
 		}
-		hijos = append(hijos, cmd)
+		children = append(children, cmd)
 	}
-	for i, cmd := range hijos {
+	for i, cmd := range children {
 		if err := cmd.Wait(); err != nil {
 			t.Fatalf("writer %d failed: %v", i, err)
 		}
 	}
 
-	ficha, err := NuevoLedger(dir).LeerFicha(sha)
+	record, err := NewLedger(dir).ReadRecord(sha)
 	if err != nil {
-		t.Fatalf("LeerFicha() error = %v", err)
+		t.Fatalf("ReadRecord() error = %v", err)
 	}
-	if ficha == nil {
-		t.Fatal("the ficha does not exist after the concurrent writers finished")
+	if record == nil {
+		t.Fatal("the record does not exist after the concurrent writers finished")
 	}
-	esperadas := 1 + escritoresEntreProcesos*rondasPorEscritor
-	if len(ficha.Revisions) != esperadas {
-		t.Fatalf("the ficha holds %d revisions, want %d: a write from one process replaced another process's revision",
-			len(ficha.Revisions), esperadas)
+	expected := 1 + writersAcrossProcesses*roundsPerWriter
+	if len(record.Revisions) != expected {
+		t.Fatalf("the record holds %d revisions, want %d: a write from one process replaced another process's revision",
+			len(record.Revisions), expected)
 	}
-	porEscritor := map[string]int{}
-	for _, rev := range ficha.Revisions {
-		porEscritor[rev.Agent]++
+	perWriter := map[string]int{}
+	for _, rev := range record.Revisions {
+		perWriter[rev.Agent]++
 	}
-	for i := 0; i < escritoresEntreProcesos; i++ {
-		nombre := fmt.Sprintf("writer-%d", i)
-		if porEscritor[nombre] != rondasPorEscritor {
-			t.Errorf("%s left %d revisions, want %d: %v", nombre, porEscritor[nombre], rondasPorEscritor, porEscritor)
+	for i := 0; i < writersAcrossProcesses; i++ {
+		name := fmt.Sprintf("writer-%d", i)
+		if perWriter[name] != roundsPerWriter {
+			t.Errorf("%s left %d revisions, want %d: %v", name, perWriter[name], roundsPerWriter, perWriter)
 		}
 	}
 }
 
-// escribirRevisionesHijo is the child half of TestGuardarRevisionEntreProcesos.
+// writeChildRevisions is the child half of TestSaveRevisionAcrossProcesses.
 // It appends its rounds and reports failure through the process exit status,
 // which is what the parent's cmd.Wait observes.
-func escribirRevisionesHijo(t *testing.T, dir, escritor string) {
+func writeChildRevisions(t *testing.T, dir, writer string) {
 	t.Helper()
-	ledger := NuevoLedger(dir)
+	ledger := NewLedger(dir)
 	const sha = "ffffffffffffffffffffffffffffffffffffffff"
-	for i := 0; i < rondasPorEscritor; i++ {
-		if err := ledger.GuardarRevision(sha, "fixture", "b", "m",
-			Revision{At: time.Now(), Result: VerdictOK, Agent: escritor}); err != nil {
-			t.Fatalf("%s round %d: %v", escritor, i, err)
+	for i := 0; i < roundsPerWriter; i++ {
+		if err := ledger.SaveRevision(sha, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictOK, Agent: writer}); err != nil {
+			t.Fatalf("%s round %d: %v", writer, i, err)
 		}
 	}
 }
 
-// repeticionesCarrera is how many times a two-goroutine race is replayed. One
+// raceRepetitions is how many times a two-goroutine race is replayed. One
 // pass proves nothing: two goroutines rarely interleave inside a window this
 // small, so an unlocked implementation passes a single run. Measured — the
 // single-run versions of both tests below stayed green with the lock removed.
 //
 // Replaying is probabilistic and this comment does not pretend otherwise. What
 // is not a guess is the calibration: with each lock removed in turn, the
-// MarcarCorregida race failed on attempt 0 and the AdoptarFicha race on attempt
+// MarkFixed race failed on attempt 0 and the AdoptRecord race on attempt
 // 19, both far inside three hundred. The cross-process contract, which no
 // number of goroutines can establish, is pinned separately by
-// TestGuardarRevisionEntreProcesos.
-const repeticionesCarrera = 300
+// TestSaveRevisionAcrossProcesses.
+const raceRepetitions = 300
 
-// enCarrera runs primera and segunda concurrently behind one start gate and
+// inRace runs first and second concurrently behind one start gate and
 // waits for both. It exists so the two tests below race the same way and the
 // repetition lives in one place.
-func enCarrera(primera, segunda func()) {
-	var arranque, hechos sync.WaitGroup
-	arranque.Add(1)
-	hechos.Add(2)
-	for _, fn := range []func(){primera, segunda} {
+func inRace(first, second func()) {
+	var start, done sync.WaitGroup
+	start.Add(1)
+	done.Add(2)
+	for _, fn := range []func(){first, second} {
 		go func(fn func()) {
-			defer hechos.Done()
-			arranque.Wait()
+			defer done.Done()
+			start.Wait()
 			fn()
 		}(fn)
 	}
-	arranque.Done()
-	hechos.Wait()
+	start.Done()
+	done.Wait()
 }
 
-// TestMarcarCorregidaConcurrenteConGuardarRevision covers MarcarCorregida's
+// TestMarkFixedConcurrentWithSaveRevision covers MarkFixed's
 // lock against the property that is actually observable.
 //
-// Racing eight MarcarCorregida calls against each other proves nothing: they
-// all read FixedIn empty, the last whole-ficha rename wins, and the result is
+// Racing eight MarkFixed calls against each other proves nothing: they
+// all read FixedIn empty, the last whole-record rename wins, and the result is
 // one attribution either way, so such a test passes with the lock removed —
 // measured. What the lock really protects is the read-modify-write against a
-// CONCURRENT APPEND: MarcarCorregida rewrites the whole ficha, so an
-// unserialized GuardarRevision can be discarded by it, or discard its FixedIn.
+// CONCURRENT APPEND: MarkFixed rewrites the whole record, so an
+// unserialized SaveRevision can be discarded by it, or discard its FixedIn.
 //
 // With the lock, either order ends in the same state, and it is asserted
 // exactly: both revisions present AND the correction recorded.
-func TestMarcarCorregidaConcurrenteConGuardarRevision(t *testing.T) {
+func TestMarkFixedConcurrentWithSaveRevision(t *testing.T) {
 	const sha = "1111111111111111111111111111111111111111"
-	for intento := 0; intento < repeticionesCarrera; intento++ {
-		ledger := NuevoLedger(t.TempDir())
-		if err := ledger.GuardarRevision(sha, "fixture", "b", "m",
-			Revision{At: time.Now(), Result: VerdictBlock, Agent: "inicial"}); err != nil {
+	for attempt := 0; attempt < raceRepetitions; attempt++ {
+		ledger := NewLedger(t.TempDir())
+		if err := ledger.SaveRevision(sha, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictBlock, Agent: "initial"}); err != nil {
 			t.Fatal(err)
 		}
-		enCarrera(func() {
-			if err := ledger.MarcarCorregida(sha, "elfix"); err != nil {
-				t.Errorf("MarcarCorregida() error = %v", err)
+		inRace(func() {
+			if err := ledger.MarkFixed(sha, "thefix"); err != nil {
+				t.Errorf("MarkFixed() error = %v", err)
 			}
 		}, func() {
-			if err := ledger.GuardarRevision(sha, "fixture", "b", "m",
-				Revision{At: time.Now(), Result: VerdictOK, Agent: "reauditoria"}); err != nil {
-				t.Errorf("GuardarRevision() error = %v", err)
+			if err := ledger.SaveRevision(sha, "fixture", "b", "m",
+				Revision{At: time.Now(), Result: VerdictOK, Agent: "reaudit"}); err != nil {
+				t.Errorf("SaveRevision() error = %v", err)
 			}
 		})
 
-		ficha, err := ledger.LeerFicha(sha)
-		if err != nil || ficha == nil {
-			t.Fatalf("attempt %d: LeerFicha() = %v, %v", intento, ficha, err)
+		record, err := ledger.ReadRecord(sha)
+		if err != nil || record == nil {
+			t.Fatalf("attempt %d: ReadRecord() = %v, %v", attempt, record, err)
 		}
-		if ficha.FixedIn != "elfix" {
-			t.Fatalf("attempt %d: FixedIn = %q, want \"elfix\": the concurrent append replaced the ficha the correction had just written", intento, ficha.FixedIn)
+		if record.FixedIn != "thefix" {
+			t.Fatalf("attempt %d: FixedIn = %q, want \"thefix\": the concurrent append replaced the record the correction had just written", attempt, record.FixedIn)
 		}
-		if len(ficha.Revisions) != 2 {
-			t.Fatalf("attempt %d: the ficha holds %d revisions, want 2: the correction replaced the ficha a concurrent audit had just appended to", intento, len(ficha.Revisions))
+		if len(record.Revisions) != 2 {
+			t.Fatalf("attempt %d: the record holds %d revisions, want 2: the correction replaced the record a concurrent audit had just appended to", attempt, len(record.Revisions))
 		}
 	}
 }
 
-// TestAdoptarFichaConcurrenteConGuardarRevision covers the destination side of
-// AdoptarFicha's lock. Adoption REPLACES the ficha of the SHA it writes, so an
+// TestAdoptRecordConcurrentWithSaveRevision covers the destination side of
+// AdoptRecord's lock. Adoption REPLACES the record of the SHA it writes, so an
 // unserialized adoption racing an append to that same SHA discards the appended
 // revision — and the rebase path that calls it runs inside branch analysis,
 // which is exactly where another commit's audit may be writing.
 //
 // Both orders are legal and both are accepted, because which one happens is a
 // race. What the lock guarantees is that ONE of the two whole states is
-// reached, never a ficha missing both writers' work.
-func TestAdoptarFichaConcurrenteConGuardarRevision(t *testing.T) {
-	const origen = "2222222222222222222222222222222222222222"
-	const destino = "3333333333333333333333333333333333333333"
-	for intento := 0; intento < repeticionesCarrera; intento++ {
-		ledger := NuevoLedger(t.TempDir())
-		if err := ledger.GuardarRevision(origen, "fixture", "b", "m",
-			Revision{At: time.Now(), Result: VerdictOK, Agent: "origen"}); err != nil {
+// reached, never a record missing both writers' work.
+func TestAdoptRecordConcurrentWithSaveRevision(t *testing.T) {
+	const source = "2222222222222222222222222222222222222222"
+	const destination = "3333333333333333333333333333333333333333"
+	for attempt := 0; attempt < raceRepetitions; attempt++ {
+		ledger := NewLedger(t.TempDir())
+		if err := ledger.SaveRevision(source, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictOK, Agent: "source"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := ledger.GuardarRevision(destino, "fixture", "b", "m",
-			Revision{At: time.Now(), Result: VerdictOK, Agent: "destino"}); err != nil {
+		if err := ledger.SaveRevision(destination, "fixture", "b", "m",
+			Revision{At: time.Now(), Result: VerdictOK, Agent: "destination"}); err != nil {
 			t.Fatal(err)
 		}
-		enCarrera(func() {
-			if err := ledger.AdoptarFicha(origen, destino); err != nil {
-				t.Errorf("AdoptarFicha() error = %v", err)
+		inRace(func() {
+			if err := ledger.AdoptRecord(source, destination); err != nil {
+				t.Errorf("AdoptRecord() error = %v", err)
 			}
 		}, func() {
-			if err := ledger.GuardarRevision(destino, "fixture", "b", "m",
-				Revision{At: time.Now(), Result: VerdictOK, Agent: "tardio"}); err != nil {
-				t.Errorf("GuardarRevision() error = %v", err)
+			if err := ledger.SaveRevision(destination, "fixture", "b", "m",
+				Revision{At: time.Now(), Result: VerdictOK, Agent: "late"}); err != nil {
+				t.Errorf("SaveRevision() error = %v", err)
 			}
 		})
 
-		ficha, err := ledger.LeerFicha(destino)
-		if err != nil || ficha == nil {
-			t.Fatalf("attempt %d: LeerFicha() = %v, %v", intento, ficha, err)
+		record, err := ledger.ReadRecord(destination)
+		if err != nil || record == nil {
+			t.Fatalf("attempt %d: ReadRecord() = %v, %v", attempt, record, err)
 		}
-		autores := make([]string, 0, len(ficha.Revisions))
-		for _, rev := range ficha.Revisions {
-			autores = append(autores, rev.Agent)
+		authors := make([]string, 0, len(record.Revisions))
+		for _, rev := range record.Revisions {
+			authors = append(authors, rev.Agent)
 		}
 		// Adoption last copies the origin over the destination, so exactly the
 		// origin's revision remains. Adoption first is then appended to, leaving
 		// the origin's revision plus the late one. Anything else means one
-		// writer overwrote a ficha the other had already replaced.
-		adopcionUltima := slices.Equal(autores, []string{"origen"})
-		adopcionPrimera := slices.Equal(autores, []string{"origen", "tardio"})
-		if !adopcionUltima && !adopcionPrimera {
-			t.Fatalf("attempt %d: the destination ficha holds %v, want either [origen] or [origen tardio]: the adoption and the append overlapped instead of taking turns",
-				intento, autores)
+		// writer overwrote a record the other had already replaced.
+		adoptionLast := slices.Equal(authors, []string{"source"})
+		adoptionFirst := slices.Equal(authors, []string{"source", "late"})
+		if !adoptionLast && !adoptionFirst {
+			t.Fatalf("attempt %d: the destination record holds %v, want either [source] or [source late]: the adoption and the append overlapped instead of taking turns",
+				attempt, authors)
 		}
 	}
 }
 
-// TestPurgarHuerfanasReportaLaFichaBorradaAunqueFalleElBloqueo covers the seam
+// TestPurgeOrphansReportsDeletedRecordEvenWhenLockReleaseFails covers the seam
 // between two things this ledger learned in the same change: deletion runs
 // under the per-SHA lock, and a lock that cannot be released is reported
 // instead of discarded. Together they had a hole. The deferred release turned a
 // SUCCESSFUL deletion into an error, and the purge returned before recording
-// the SHA, so the ficha was gone while the caller was told nothing was deleted
+// the SHA, so the record was gone while the caller was told nothing was deleted
 // — and events are cleaned from that very list, so they survived pointing at a
-// ficha the command had just removed.
+// record the command had just removed.
 //
-// The release failure is injected through borrarBloqueo. There is no file shape
-// that reaches it: the lock only exists inside the critical section, and any
-// shape staged before it makes the acquisition fail instead, which is a
+// The release failure is injected through releaseLockFile. There is no file
+// shape that reaches it: the lock only exists inside the critical section, and
+// any shape staged before it makes the acquisition fail instead, which is a
 // different branch.
-func TestPurgarHuerfanasReportaLaFichaBorradaAunqueFalleElBloqueo(t *testing.T) {
-	ledger := NuevoLedger(t.TempDir())
+func TestPurgeOrphansReportsDeletedRecordEvenWhenLockReleaseFails(t *testing.T) {
+	ledger := NewLedger(t.TempDir())
 	const sha = "4444444444444444444444444444444444444444"
-	if err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
+	if err := ledger.SaveRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Installed AFTER seeding: the seed writes under the same lock, and failing
 	// its release would abort the fixture instead of exercising the purge.
-	original := ledger.borrarBloqueo
-	fallo := errors.New("the lock file could not be removed")
-	ledger.borrarBloqueo = func(ruta string) error {
-		_ = original(ruta) // still released, so the fixture leaks nothing
-		return fallo
+	original := ledger.releaseLockFile
+	failure := errors.New("the lock file could not be removed")
+	ledger.releaseLockFile = func(path string) error {
+		_ = original(path) // still released, so the fixture leaks nothing
+		return failure
 	}
 
-	eliminados, err := ledger.PurgarHuerfanas(func(string) (bool, error) {
+	deleted, err := ledger.PurgeOrphans(func(string) (bool, error) {
 		return false, nil // orphan: the purge must delete it
 	})
 
-	if !errors.Is(err, ErrBloqueoNoLiberado) {
-		t.Fatalf("PurgarHuerfanas() error = %v, want one wrapping ErrBloqueoNoLiberado", err)
+	if !errors.Is(err, ErrLockNotReleased) {
+		t.Fatalf("PurgeOrphans() error = %v, want one wrapping ErrLockNotReleased", err)
 	}
-	if ficha, lerr := ledger.LeerFicha(sha); lerr != nil || ficha != nil {
-		t.Fatalf("the ficha was not deleted (ficha=%v, err=%v); the fixture no longer exercises the case", ficha, lerr)
+	if record, lerr := ledger.ReadRecord(sha); lerr != nil || record != nil {
+		t.Fatalf("the record was not deleted (record=%v, err=%v); the fixture no longer exercises the case", record, lerr)
 	}
-	if !slices.Contains(eliminados, sha) {
-		t.Errorf("PurgarHuerfanas() = %v, want it to report %q: the ficha is deleted, and its events are cleaned from this very list",
-			eliminados, sha)
+	if !slices.Contains(deleted, sha) {
+		t.Errorf("PurgeOrphans() = %v, want it to report %q: the record is deleted, and its events are cleaned from this very list",
+			deleted, sha)
 	}
 }
 
-// TestGuardarRevisionNoOcultaElBloqueoNoLiberado holds the other half of that
+// TestSaveRevisionDoesNotHideTheUnreleasedLock holds the other half of that
 // distinction: a mutation whose lock leaked must still say so. Reporting the
 // write as clean would leave every later writer of this SHA waiting the full
 // timeout with nothing explaining why.
-func TestGuardarRevisionNoOcultaElBloqueoNoLiberado(t *testing.T) {
-	ledger := NuevoLedger(t.TempDir())
+func TestSaveRevisionDoesNotHideTheUnreleasedLock(t *testing.T) {
+	ledger := NewLedger(t.TempDir())
 	const sha = "5555555555555555555555555555555555555555"
-	original := ledger.borrarBloqueo
-	ledger.borrarBloqueo = func(ruta string) error {
-		_ = original(ruta)
+	original := ledger.releaseLockFile
+	ledger.releaseLockFile = func(path string) error {
+		_ = original(path)
 		return errors.New("the lock file could not be removed")
 	}
 
-	err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
-	if !errors.Is(err, ErrBloqueoNoLiberado) {
-		t.Fatalf("GuardarRevision() error = %v, want one wrapping ErrBloqueoNoLiberado", err)
+	err := ledger.SaveRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
+	if !errors.Is(err, ErrLockNotReleased) {
+		t.Fatalf("SaveRevision() error = %v, want one wrapping ErrLockNotReleased", err)
 	}
 	// The revision is on disk regardless: the failure is about the lock, not
 	// the write, and a caller that retried would append it twice.
-	if ficha, lerr := ledger.LeerFicha(sha); lerr != nil || ficha == nil || len(ficha.Revisions) != 1 {
-		t.Errorf("LeerFicha() = %v, %v; want the revision persisted despite the lock failure", ficha, lerr)
+	if record, lerr := ledger.ReadRecord(sha); lerr != nil || record == nil || len(record.Revisions) != 1 {
+		t.Errorf("ReadRecord() = %v, %v; want the revision persisted despite the lock failure", record, lerr)
 	}
 }
 
-// TestMarcarCorregidaFallaConUnLedgerColgante is FU-16 one more time, in the
-// guard added to keep MarcarCorregida a pure no-op for a ledger that has never
+// TestMarkFixedFailsOnADanglingLedger is FU-16 one more time, in the
+// guard added to keep MarkFixed a pure no-op for a ledger that has never
 // stored anything. os.Stat resolves symlinks, so a ledger path pointing nowhere
 // answers ErrNotExist exactly like an absent one, and the correction was
 // dropped in silence — on a repository whose ledger is broken, which is when
@@ -1017,52 +1016,52 @@ func TestGuardarRevisionNoOcultaElBloqueoNoLiberado(t *testing.T) {
 //
 // The listing three hundred lines above already separates the two with Lstat.
 // This is the same separation in the same file.
-func TestMarcarCorregidaFallaConUnLedgerColgante(t *testing.T) {
+func TestMarkFixedFailsOnADanglingLedger(t *testing.T) {
 	gitDir := t.TempDir()
 	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
 		t.Skipf("this platform refuses to create a symlink without extra privileges: %v", err)
 	}
 
-	err := NuevoLedger(gitDir).MarcarCorregida("6666666666666666666666666666666666666666", "elfix")
+	err := NewLedger(gitDir).MarkFixed("6666666666666666666666666666666666666666", "thefix")
 	if err == nil {
-		t.Fatalf("MarcarCorregida() error = nil; want a failure: a ledger path pointing nowhere is a broken ledger, not one that never stored a ficha, and reporting success drops the correction")
+		t.Fatalf("MarkFixed() error = nil; want a failure: a ledger path pointing nowhere is a broken ledger, not one that never stored a record, and reporting success drops the correction")
 	}
 }
 
-// TestBloqueoDesaparecidoNoSeReportaComoExito covers the case that used to be
+// TestVanishedLockIsNotReportedAsSuccess covers the case that used to be
 // swallowed: nothing in this package removes a lock but its own holder, so a
 // lock that is already gone when the release runs means mutual exclusion broke
 // while the operation was running and another writer may have entered.
 // Reporting that as a clean release hid a possible lost update behind the one
 // signal that could have revealed it.
-func TestBloqueoDesaparecidoNoSeReportaComoExito(t *testing.T) {
-	ledger := NuevoLedger(t.TempDir())
+func TestVanishedLockIsNotReportedAsSuccess(t *testing.T) {
+	ledger := NewLedger(t.TempDir())
 	const sha = "7777777777777777777777777777777777777777"
-	original := ledger.borrarBloqueo
-	ledger.borrarBloqueo = func(ruta string) error {
-		if err := original(ruta); err != nil {
+	original := ledger.releaseLockFile
+	ledger.releaseLockFile = func(path string) error {
+		if err := original(path); err != nil {
 			return err
 		}
 		// Second removal: reproduces "the lock was already gone" exactly as the
 		// filesystem reports it, without racing anything.
-		return original(ruta)
+		return original(path)
 	}
 
-	err := ledger.GuardarRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
-	if !errors.Is(err, ErrBloqueoNoLiberado) {
-		t.Fatalf("GuardarRevision() error = %v, want one wrapping ErrBloqueoNoLiberado", err)
+	err := ledger.SaveRevision(sha, "fixture", "b", "m", Revision{At: time.Now(), Result: VerdictOK})
+	if !errors.Is(err, ErrLockNotReleased) {
+		t.Fatalf("SaveRevision() error = %v, want one wrapping ErrLockNotReleased", err)
 	}
 	// The cause travels wrapped, not formatted: a caller that needs to know the
 	// lock vanished rather than resisted removal is the caller this error is for.
 	if !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("GuardarRevision() error = %v, want the underlying filesystem cause inspectable with errors.Is", err)
+		t.Errorf("SaveRevision() error = %v, want the underlying filesystem cause inspectable with errors.Is", err)
 	}
 	// The wording is asserted, not just the identity. This error is returned for
 	// deletions and for callbacks that changed nothing, so a message claiming a
 	// write is wrong for most of its callers — and errors.Is alone would keep
 	// passing with the old text.
-	if strings.Contains(ErrBloqueoNoLiberado.Error(), "written") {
-		t.Errorf("ErrBloqueoNoLiberado = %q; it is returned for deletions and no-ops, so it must not claim the ficha was written",
-			ErrBloqueoNoLiberado.Error())
+	if strings.Contains(ErrLockNotReleased.Error(), "written") {
+		t.Errorf("ErrLockNotReleased = %q; it is returned for deletions and no-ops, so it must not claim the record was written",
+			ErrLockNotReleased.Error())
 	}
 }

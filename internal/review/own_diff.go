@@ -19,7 +19,7 @@ type ParentResolver func(git.ParentResolutionOptions) (git.ParentResolution, err
 // analysis stays deterministic without gh, remotes, or network.
 var defaultParentResolver = git.ResolveParentBranch
 
-// OwnDiffOptions activates stacked own-diff semantics in AnalizarRama (T8.2).
+// OwnDiffOptions activates stacked own-diff semantics in AnalyzeBranch (T8.2).
 // It is internal input only: no CLI flag exposes it until F8 integration.
 type OwnDiffOptions struct {
 	// Parent is an explicit parent reference supplied by an internal caller.
@@ -30,101 +30,101 @@ type OwnDiffOptions struct {
 	// (pull request base, tracking upstream, local merge base). It never
 	// falls back to "main": an unreliable signal fails the analysis.
 	ResolveParent bool
-	// No Worktree option on purpose (semantic review of T8.2): AnalizarRama
+	// No Worktree option on purpose (semantic review of T8.2): AnalyzeBranch
 	// is ambient-cwd-based end to end. Directing only the parent resolution
 	// to another repository would split the boundary between one repo's
 	// parent and another repo's ranges.
 }
 
-// RangoPropio is the explainable range evidence of a stacked analysis:
+// OwnRange is the explainable range evidence of a stacked analysis:
 //
 //	own_diff(C) = merge_base(parent(C), C)..C   (reviewed)
 //	context(C)  = merge_base(base, parent(C))..parent(C)   (read-only)
-type RangoPropio struct {
-	Parent        string   // resolved parent reference; never a silent "main"
-	ParentSource  string   // T8.1 source: explicit | pull_request | tracking_upstream | local_merge_base
-	Base          string   // context base reference ("main" unless overridden)
-	PropioDesde   string   // merge_base(parent, HEAD): start of the reviewed range
-	ContextoDesde string   // merge_base(base, parent): start of the read-only range
-	Evidencia     []string // ordered resolution evidence from the T8.1 resolver
+type OwnRange struct {
+	Parent       string   // resolved parent reference; never a silent "main"
+	ParentSource string   // T8.1 source: explicit | pull_request | tracking_upstream | local_merge_base
+	Base         string   // context base reference ("main" unless overridden)
+	OwnFrom      string   // merge_base(parent, HEAD): start of the reviewed range
+	ContextFrom  string   // merge_base(base, parent): start of the read-only range
+	Evidence     []string // ordered resolution evidence from the T8.1 resolver
 	// PublicationBranch is the bare branch accepted by gh --base.
 	PublicationBranch string
 }
 
-// HallazgoHeredado is one finding introduced outside the current branch's own
+// InheritedFinding is one finding introduced outside the current branch's own
 // diff. Its correction belongs to the PR that introduced it: it travels as
 // inherited context and never blocks the current PR.
-type HallazgoHeredado struct {
-	SHA      string // context-range commit whose ficha carries the finding
-	Hallazgo Hallazgo
+type InheritedFinding struct {
+	SHA     string // context-range commit whose record carries the finding
+	Finding Finding
 }
 
-// resolverRangoPropio turns OwnDiffOptions into the explainable own/context
+// resolveOwnRange turns OwnDiffOptions into the explainable own/context
 // range pair. Without a usable parent signal it fails explicitly instead of
 // guessing a base: misreporting foreign changes as own is the worst review
 // outcome (T8.1 hard rule).
-func resolverRangoPropio(opciones *OwnDiffOptions, base string) (*RangoPropio, error) {
-	rango := &RangoPropio{Base: base}
-	var resolucion git.ParentResolution
+func resolveOwnRange(opts *OwnDiffOptions, base string) (*OwnRange, error) {
+	rng := &OwnRange{Base: base}
+	var resolution git.ParentResolution
 	switch {
-	case strings.TrimSpace(opciones.Parent) != "":
-		resuelto, err := defaultParentResolver(git.ParentResolutionOptions{ExplicitParent: opciones.Parent})
+	case strings.TrimSpace(opts.Parent) != "":
+		resolved, err := defaultParentResolver(git.ParentResolutionOptions{ExplicitParent: opts.Parent})
 		if err != nil {
 			return nil, err
 		}
-		resolucion = resuelto
-	case opciones.ResolveParent:
-		resuelto, err := defaultParentResolver(git.ParentResolutionOptions{})
+		resolution = resolved
+	case opts.ResolveParent:
+		resolved, err := defaultParentResolver(git.ParentResolutionOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("stacked own-diff analysis needs a parent branch: %w", err)
 		}
-		resolucion = resuelto
+		resolution = resolved
 	default:
 		return nil, errOwnDiffWithoutParent
 	}
-	rango.Parent = resolucion.Reference
-	rango.PublicationBranch = resolucion.PublicationBranch
-	rango.ParentSource = string(resolucion.Source)
-	rango.Evidencia = resolucion.Evidence
+	rng.Parent = resolution.Reference
+	rng.PublicationBranch = resolution.PublicationBranch
+	rng.ParentSource = string(resolution.Source)
+	rng.Evidence = resolution.Evidence
 
-	propioDesde, err := git.MergeBase(rango.Parent, "HEAD")
+	ownFrom, err := git.MergeBase(rng.Parent, "HEAD")
 	if err != nil {
-		return nil, fmt.Errorf("own diff against parent %s: %w", rango.Parent, err)
+		return nil, fmt.Errorf("own diff against parent %s: %w", rng.Parent, err)
 	}
-	contextoDesde, err := git.MergeBase(rango.Base, rango.Parent)
+	contextFrom, err := git.MergeBase(rng.Base, rng.Parent)
 	if err != nil {
-		return nil, fmt.Errorf("inherited context against base %s: %w", rango.Base, err)
+		return nil, fmt.Errorf("inherited context against base %s: %w", rng.Base, err)
 	}
-	rango.PropioDesde = propioDesde
-	rango.ContextoDesde = contextoDesde
-	return rango, nil
+	rng.OwnFrom = ownFrom
+	rng.ContextFrom = contextFrom
+	return rng, nil
 }
 
-// hallazgosHeredados collects the effective findings that already-audited
+// inheritedFindings collects the effective findings that already-audited
 // context commits recorded in the ledger. It is strictly read-only: missing
-// fichas are skipped, nothing is audited, adopted, or persisted, so reviewing
-// a stacked PR never audits its parent's work.
-func hallazgosHeredados(ledger *Ledger, rango *RangoPropio) ([]HallazgoHeredado, error) {
-	shas, err := git.SHAsRango(rango.ContextoDesde, rango.Parent)
+// records are skipped, nothing is audited, adopted, or persisted, so
+// reviewing a stacked PR never audits its parent's work.
+func inheritedFindings(ledger *Ledger, rng *OwnRange) ([]InheritedFinding, error) {
+	shas, err := git.RangeSHAs(rng.ContextFrom, rng.Parent)
 	if err != nil {
-		return nil, fmt.Errorf("inherited context %s..%s: %w", rango.ContextoDesde, rango.Parent, err)
+		return nil, fmt.Errorf("inherited context %s..%s: %w", rng.ContextFrom, rng.Parent, err)
 	}
-	var heredados []HallazgoHeredado
+	var inherited []InheritedFinding
 	for _, sha := range shas {
-		ficha, err := ledger.LeerFicha(sha)
+		record, err := ledger.ReadRecord(sha)
 		if err != nil {
 			return nil, err
 		}
-		if ficha == nil || !estaPendiente(*ficha) {
+		if record == nil || !isPending(*record) {
 			continue
 		}
-		ultima, ok := ultimaRevision(*ficha)
+		last, ok := lastRevision(*record)
 		if !ok {
 			continue
 		}
-		for _, hallazgo := range ultima.HallazgosEfectivos() {
-			heredados = append(heredados, HallazgoHeredado{SHA: sha, Hallazgo: hallazgo})
+		for _, finding := range last.EffectiveFindings() {
+			inherited = append(inherited, InheritedFinding{SHA: sha, Finding: finding})
 		}
 	}
-	return heredados, nil
+	return inherited, nil
 }

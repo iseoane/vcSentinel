@@ -25,7 +25,7 @@ type NetReviewOptions struct {
 // HistoricalFinding: untrusted per-commit context — never merged into net Findings, never blocking; ArchiveReason non-empty = archived.
 type HistoricalFinding struct {
 	SHA string // commit whose recorded revision carried the finding
-	Hallazgo
+	Finding
 	ArchiveReason string // empty means still ACTIVE context
 	// ClassificationError, non-empty, marks a failed archive classification:
 	// history is context-only, so the finding stays ACTIVE, never aborting.
@@ -33,20 +33,20 @@ type HistoricalFinding struct {
 }
 type NetReview struct {
 	From, To string // merge_base(base_or_resolved_parent, HEAD)..resolved HEAD
-	Audit    ResultadoAuditoria
+	Audit    AuditResult
 	Context  []HistoricalFinding
 }
 
 // runNetReview: immutable [from,to] range via standard engine seams; archive needs positive typed removal evidence.
-func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revisions []Ficha) (*NetReview, error) {
-	if opts.Fabrica == nil {
+func runNetReview(o *NetReviewOptions, opts BranchOptions, from, to string, revisions []Record) (*NetReview, error) {
+	if opts.Factory == nil {
 		return nil, fmt.Errorf("net review needs a reviewer factory")
 	}
 	diff, paths, err := git.RangeEvidence(from, to)
 	if err != nil {
-		return nil, err // real Git failure: never fabricate net evidence
+		return nil, err // real Git failure: never invent net evidence
 	}
-	safePaths := rutasRevisionSeguras(paths)
+	safePaths := sanitizeReviewPaths(paths)
 	// Rename evidence only classifies historical context whose old path is absent
 	// at the final state, so maps load lazily through this cache and a load
 	// failure becomes ClassificationError on exactly those findings — never an
@@ -64,21 +64,21 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 		renameCache[rev] = m
 		return m, nil
 	}
-	classify := func(finding Hallazgo, originSHA string) (string, error) {
-		path := filepath.ToSlash(strings.TrimSpace(finding.Location.Archivo))
+	classify := func(finding Finding, originSHA string) (string, error) {
+		path := filepath.ToSlash(strings.TrimSpace(finding.Location.File))
 		if path == "" {
 			return "", nil // unlocated findings stay active context: no Git call at all
 		}
 		originContent, opresent, err := git.ReadPathAtRevision(originSHA, path)
 		if err != nil {
-			return "", err // real Git failure: never fabricate archive evidence
+			return "", err // real Git failure: never invent archive evidence
 		}
 		flat := func(s string) string { return strings.Join(strings.Fields(s), "") }
 		lines := strings.Split(strings.ReplaceAll(originContent, "\r\n", "\n"), "\n")
 		var snippet string
-		if opresent && finding.Location.LineaInicio > 0 && finding.Location.LineaInicio <= len(lines) {
-			end := min(max(finding.Location.LineaFin, finding.Location.LineaInicio), len(lines))
-			snippet = flat(strings.Join(lines[finding.Location.LineaInicio-1:end], "\n"))
+		if opresent && finding.Location.LineStart > 0 && finding.Location.LineStart <= len(lines) {
+			end := min(max(finding.Location.LineEnd, finding.Location.LineStart), len(lines))
+			snippet = flat(strings.Join(lines[finding.Location.LineStart-1:end], "\n"))
 		}
 		headContent, present, err := git.ReadPathAtRevision(to, path)
 		if err != nil {
@@ -101,7 +101,7 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 					return "", err
 				}
 				if !present {
-					return "", nil // contradictory Git state: keep active rather than fabricate evidence
+					return "", nil // contradictory Git state: keep active rather than invent evidence
 				}
 			} else {
 				// -M detection is heuristic and misses heavily edited renames (D+A).
@@ -132,12 +132,12 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	}
 	var history []HistoricalFinding
 	for _, record := range revisions {
-		last, ok := ultimaRevision(record)
+		last, ok := lastRevision(record)
 		if !ok {
 			continue
 		}
-		for _, finding := range last.HallazgosEfectivos() {
-			entry := HistoricalFinding{SHA: record.SHA, Hallazgo: finding}
+		for _, finding := range last.EffectiveFindings() {
+			entry := HistoricalFinding{SHA: record.SHA, Finding: finding}
 			reason, cerr := classify(finding, record.SHA)
 			if cerr != nil {
 				entry.ClassificationError = cerr.Error()
@@ -147,19 +147,19 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 			history = append(history, entry)
 		}
 	}
-	profile, err := change.PerfilDeCambio(from, to)
+	profile, err := change.ComputeChangeProfile(from, to)
 	if err != nil {
 		return nil, fmt.Errorf("net change profile: %w", err)
 	}
-	netDiff, derr := git.DiffRango(from, to)
+	netDiff, derr := git.RangeDiff(from, to)
 	if derr != nil {
 		return nil, fmt.Errorf("net range diff: %w", derr)
 	}
-	netAtributos, aerr := git.Attributes(to)
+	netAttributes, aerr := git.Attributes(to)
 	if aerr != nil {
 		return nil, fmt.Errorf("net range attributes: %w", aerr)
 	}
-	// The COMPLETE path list, not safePaths. rutasRevisionSeguras drops any name
+	// The COMPLETE path list, not safePaths. sanitizeReviewPaths drops any name
 	// containing *?[]{}!, a control character or a leading dash, which is right
 	// for the surfaces that interpolate those names into reviewer prompts and
 	// Git arguments — and wrong here. Classification only matches globs against
@@ -169,9 +169,9 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	//
 	// Widening the sanitiser would have traded this coverage gap for an
 	// injection surface. The two uses want different lists, and they now get
-	// them: safePaths still feeds RutasContexto, the transport factory and
+	// them: safePaths still feeds ContextPaths, the transport factory and
 	// git.ReadPathAtRevision below.
-	plan := PlanForProfile(profile, paths, netDiff, netAtributos)
+	plan := PlanForProfile(profile, paths, netDiff, netAttributes)
 	evidence, merr := json.Marshal(map[string]any{"profile": profile, "risk": plan.Risk, "characteristics": plan.Characteristics, "validation": o.Validation})
 	if merr != nil {
 		return nil, fmt.Errorf("marshal net evidence: %w", merr)
@@ -204,17 +204,17 @@ func runNetReview(o *NetReviewOptions, opts OpcionesRama, from, to string, revis
 	engineDispositions := mergeNetDispositionsForEngine(
 		FilterDispositionsForSHA(rangeDispositions, to),
 		carriedNetDispositions(rangeDispositions, revisions, to), to)
-	audit := AuditarCommit(opts.Fabrica, opts.Parallel, OpcionesAuditoria{
-		SHA: to, Mensaje: strings.TrimSpace(o.Intention), Diff: diff,
-		Bundles: plan.Bundles, RutasContexto: safePaths,
-		Respuestas: opts.Respuestas, PerfilOverride: opts.PerfilOverride,
-		OnDimension: opts.OnDimension, FabricaRefutador: opts.FabricaRefutador,
-		HallazgosDeterministas: deterministasCommit(opts, to, paths, diff),
-		ModelVerifier:          opts.ModelVerifier,
-		ReviewTransport:        transport,
-		NetUnitLabel:           "pull request (ONE NET diff " + from + ".." + to + ")",
-		NetUnitHistory:         framed.String(),
-		Dispositions:           engineDispositions,
+	audit := AuditCommit(opts.Factory, opts.Parallel, AuditOptions{
+		SHA: to, Message: strings.TrimSpace(o.Intention), Diff: diff,
+		Bundles: plan.Bundles, ContextPaths: safePaths,
+		Answers: opts.Answers, ProfileOverride: opts.ProfileOverride,
+		OnDimension: opts.OnDimension, RefuterFactory: opts.RefuterFactory,
+		DeterministicFindings: deterministicFindingsForCommit(opts, to, paths, diff),
+		ModelVerifier:         opts.ModelVerifier,
+		ReviewTransport:       transport,
+		NetUnitLabel:          "pull request (ONE NET diff " + from + ".." + to + ")",
+		NetUnitHistory:        framed.String(),
+		Dispositions:          engineDispositions,
 	})
 	return &NetReview{From: from, To: to, Context: history, Audit: audit}, nil
 }
@@ -262,7 +262,7 @@ func mergeNetDispositionsForEngine(head, carried []FindingDisposition, to string
 // uses. Anything unverifiable is dropped, so the net re-reports instead of
 // clearing on incomplete knowledge. Dispositions recorded directly against
 // the head are excluded: the engine already applies them SHA-bound.
-func carriedNetDispositions(dispositions []FindingDisposition, revisions []Ficha, head string) []FindingDisposition {
+func carriedNetDispositions(dispositions []FindingDisposition, revisions []Record, head string) []FindingDisposition {
 	if len(dispositions) == 0 {
 		return nil
 	}
@@ -293,7 +293,7 @@ func carriedNetDispositions(dispositions []FindingDisposition, revisions []Ficha
 
 // dispositionEvidenceHoldsAtHead revalidates one recorded answer against the
 // net head snapshot. It mirrors the evidence-containment check the ledger
-// uses to discard stale evidence (motivoDescarteEvidencia): normalized
+// uses to discard stale evidence (discardEvidenceReason): normalized
 // recorded evidence must still appear in the normalized file content at the
 // head. A moved line still carries because the search spans the whole file;
 // removed evidence, a deleted file, or an unreadable snapshot does not.
@@ -303,14 +303,14 @@ func dispositionEvidenceHoldsAtHead(disp FindingDisposition, head string) bool {
 	if path == "" || evidence == "" {
 		return false
 	}
-	if len(RutasRevisionSeguras([]string{path})) != 1 {
+	if len(SafeReviewPaths([]string{path})) != 1 {
 		return false
 	}
 	content, present, err := git.ReadPathAtRevision(head, path)
 	if err != nil || !present {
 		return false
 	}
-	return contieneEvidenciaNormalizada(content, evidence)
+	return containsNormalizedEvidence(content, evidence)
 }
 
 const netAxes = `Evaluate explicitly beyond any per-commit review:

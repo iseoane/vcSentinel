@@ -1,6 +1,6 @@
 // Historical-readability contract for ticket 13 (R11): the review ledger
 // written by older binaries stays fully inspectable after the switch removal.
-// The fixture hand-writes a minimal pre-v2 ficha — no agent/model/effort
+// The fixture hand-writes a minimal pre-v2 record — no agent/model/effort
 // attribution (pre-T0.2 shape) and no aggregated findings (pre-T6.1 shape) —
 // and proves the current readers list it, decode it, and project its legacy
 // v1 findings without any conversion step.
@@ -16,13 +16,13 @@ import (
 func TestLegacyLedgerRevisionRemainsReadable(t *testing.T) {
 	t.Helper()
 	gitDir := t.TempDir()
-	ledger := NuevoLedger(gitDir)
+	ledger := NewLedger(gitDir)
 	if err := os.MkdirAll(filepath.Join(gitDir, "vas-sentinel"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	const sha = "legacy0000000000000000000000000000000"
-	// Minimal pre-v2 ficha bytes: only the fields the oldest writer emitted.
+	// Minimal pre-v2 record bytes: only the fields the oldest writer emitted.
 	legacyJSON := `{
 	  "sha": "` + sha + `",
 	  "message": "feat: historical change",
@@ -50,23 +50,23 @@ func TestLegacyLedgerRevisionRemainsReadable(t *testing.T) {
 	    }
 	  ]
 	}`
-	if err := os.WriteFile(ledger.RutaFicha(sha), []byte(legacyJSON), 0o600); err != nil {
+	if err := os.WriteFile(ledger.RecordPath(sha), []byte(legacyJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	listed, err := ledger.ListarFichas()
+	listed, err := ledger.ListRecords()
 	if err != nil || len(listed) != 1 || listed[0] != sha {
-		t.Fatalf("ListarFichas() = %v/%v, want exactly [%s]", listed, err, sha)
+		t.Fatalf("ListRecords() = %v/%v, want exactly [%s]", listed, err, sha)
 	}
 
-	ficha, err := ledger.LeerFicha(sha)
-	if err != nil || ficha == nil {
-		t.Fatalf("LeerFicha(%s) = %+v/%v, want the decoded legacy ficha", sha, ficha, err)
+	record, err := ledger.ReadRecord(sha)
+	if err != nil || record == nil {
+		t.Fatalf("ReadRecord(%s) = %+v/%v, want the decoded legacy record", sha, record, err)
 	}
-	if ficha.Message != "feat: historical change" || len(ficha.Revisions) != 1 {
-		t.Fatalf("ficha = %+v, want one historical revision", ficha)
+	if record.Message != "feat: historical change" || len(record.Revisions) != 1 {
+		t.Fatalf("record = %+v, want one historical revision", record)
 	}
-	revision := ficha.Revisions[0]
+	revision := record.Revisions[0]
 	if revision.Result != "block" || revision.Agent != "" || len(revision.AggregatedFindings) != 0 {
 		t.Fatalf("revision = %+v, want the untouched pre-v2 shape", revision)
 	}
@@ -76,13 +76,13 @@ func TestLegacyLedgerRevisionRemainsReadable(t *testing.T) {
 
 	// The effective-findings projection must still convert the legacy v1
 	// per-dimension finding into the uniform v2 shape used everywhere today.
-	hallazgos := revision.HallazgosEfectivos()
-	if len(hallazgos) != 1 {
-		t.Fatalf("HallazgosEfectivos() = %+v, want the single projected v1 finding", hallazgos)
+	findings := revision.EffectiveFindings()
+	if len(findings) != 1 {
+		t.Fatalf("EffectiveFindings() = %+v, want the single projected v1 finding", findings)
 	}
-	hallazgo := hallazgos[0]
-	if hallazgo.Dimension != DimLogic || hallazgo.Severity != SevCritical ||
-		hallazgo.Description != "historical bug" || hallazgo.Location.Archivo != "a.go" || hallazgo.Location.LineaInicio != 1 {
-		t.Fatalf("projected hallazgo = %+v, want the v1 finding carried over intact", hallazgo)
+	finding := findings[0]
+	if finding.Dimension != DimLogic || finding.Severity != SevCritical ||
+		finding.Description != "historical bug" || finding.Location.File != "a.go" || finding.Location.LineStart != 1 {
+		t.Fatalf("projected finding = %+v, want the v1 finding carried over intact", finding)
 	}
 }

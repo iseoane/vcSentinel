@@ -13,15 +13,15 @@ import (
 	"time"
 )
 
-// Revision es una auditoría concreta de un SHA. El array revisions[] es
-// append-only: re-auditar el mismo SHA añade una revisión, nunca pisa la
-// anterior. El veredicto mostrado es el de la última revisión. Fixed indica
-// que esta revisión salió sin críticos cuando la anterior estaba en block.
-// Agent, Model y Effort identifican al agente que REALMENTE atendió la
-// revisión, no el perfil que se le pidió (H4/T0.2): con `active_agent: auto`
-// la cadena puede caer a otro binario y el veredicto quedaría sin autor. Son
-// opcionales: una ficha v1 escrita antes de T0.2 no los trae y se sigue
-// leyendo sin error.
+// Revision is one concrete audit of a SHA. The revisions[] array is
+// append-only: re-auditing the same SHA adds a revision, never overwrites
+// the previous one. The displayed verdict is the latest revision's. Fixed
+// marks that this revision came out with no criticals while the previous
+// one was in block. Agent, Model and Effort identify the agent that REALLY
+// attended the revision, not the profile it was asked for (H4/T0.2): with
+// `active_agent: auto` the chain can fall to another binary and the verdict
+// would be left without an author. They are optional: a v1 record written
+// before T0.2 lacks them and is still read without error.
 type Revision struct {
 	At     time.Time         `json:"at"`
 	Result string            `json:"result"`
@@ -31,57 +31,57 @@ type Revision struct {
 	Effort string            `json:"effort,omitempty"`
 	Dims   []DimensionResult `json:"dims"`
 	// AggregatedFindings is the deduplicated, cross-dimension merged, and
-	// supersede-applied result review.AuditarCommit already computes
-	// (ResultadoAuditoria.Findings, T6.1+T6.2). It is persisted here, separate
+	// supersede-applied result review.AuditCommit already computes
+	// (AuditResult.Findings, T6.1+T6.2). It is persisted here, separate
 	// from Dims, so the renderer (T6.5) can show fused evidence and Source
 	// per finding instead of only the raw per-dimension findings in Dims.
 	// Empty for a Revision saved before this field existed, or when the
 	// caller never propagated it: consumers must fall back to Dims.
-	AggregatedFindings []Hallazgo `json:"aggregated_findings,omitempty"`
+	AggregatedFindings []Finding `json:"aggregated_findings,omitempty"`
 }
 
-// HallazgosEfectivos returns the effective findings for this revision: the
+// EffectiveFindings returns the effective findings for this revision: the
 // deduplicated, cross-dimension merged and supersede-applied result
 // (AggregatedFindings, T6.1+T6.2) when the caller propagated it, or every
-// raw per-dimension v1 ReviewFinding from Dims converted to the v2 Hallazgo
-// shape otherwise. It is the single selection point riesgos() and
-// BloqueantesDeRama (internal/review/renderer.go) both consume (T6.5 review
-// finding: before this method existed, BloqueantesDeRama read only Dims and
+// raw per-dimension v1 ReviewFinding from Dims converted to the v2 Finding
+// shape otherwise. It is the single selection point pendingRisks() and
+// BranchBlockers (internal/review/renderer.go) both consume (T6.5 review
+// finding: before this method existed, BranchBlockers read only Dims and
 // could still block on a semantic finding T6.2 had already superseded by a
 // deterministic one, defeating the point of supersede in the one flow where
 // it gates pr create --force).
-func (r Revision) HallazgosEfectivos() []Hallazgo {
+func (r Revision) EffectiveFindings() []Finding {
 	if len(r.AggregatedFindings) > 0 {
 		return r.AggregatedFindings
 	}
-	var hallazgos []Hallazgo
+	var findings []Finding
 	for _, dr := range r.Dims {
 		for _, h := range dr.Findings {
-			hallazgos = append(hallazgos, hallazgoDesdeReviewFinding(dr.Dim, h))
+			findings = append(findings, findingFromReviewFinding(dr.Dim, h))
 		}
 	}
-	return hallazgos
+	return findings
 }
 
 // FindingsWithDispositions returns the effective findings of this revision
 // carrying the lifecycle disposition each one actually recorded. It exists
 // because the two persisted finding shapes hold complementary halves of the
-// same evidence: refutarHallazgosCriticosConEvidencia (engine.go) writes
+// same evidence: refuteCriticalFindingsWithEvidence (engine.go) writes
 // Status onto the raw per-dimension v1 ReviewFinding, while aggregateFindings
 // (aggregation.go) persists the merged v2 set with an empty Status and skips
-// the refuted findings outright. A consumer reading either shape alone sees a
-// disposition-free ledger (FU-7).
+// the refuted findings outright. A consumer reading either shape alone sees
+// a disposition-free ledger (FU-7).
 //
-// It is deliberately NOT what HallazgosEfectivos returns, and never replaces
-// it: that method is the single selection point riesgos() and
-// BloqueantesDeRama consume, so changing what it returns would change branch
+// It is deliberately NOT what EffectiveFindings returns, and never replaces
+// it: that method is the single selection point pendingRisks() and
+// BranchBlockers consume, so changing what it returns would change branch
 // blocking and pr create --force. This one is for observation only. Like the
-// hallazgoDesdeReviewFinding/reviewFindingDesdeHallazgo pair it lives beside,
+// findingFromReviewFinding/reviewFindingFromFinding pair it lives beside,
 // the v1-to-v2 correspondence it applies is a rule of the domain, not of the
 // consumer that happens to need it today.
 //
 // The join is by dimension, file, start line and description, the same key
-// refutarHallazgoV2 (engine.go) already uses to find a v1 finding's v2
+// refuteFindingV2 (engine.go) already uses to find a v1 finding's v2
 // counterpart. Fingerprints cannot serve: aggregation recomputes them, and
 // the v1 shape has neither Evidence nor Title, the two components Fingerprint
 // hashes besides dimension and location. Merging is honoured rather than
@@ -96,9 +96,9 @@ func (r Revision) HallazgosEfectivos() []Hallazgo {
 // (supersede.go) also drops semantic findings, silently and without marking
 // them, so a broader rule would resurrect superseded findings as live
 // observations.
-func (r Revision) FindingsWithDispositions() []Hallazgo {
+func (r Revision) FindingsWithDispositions() []Finding {
 	if len(r.AggregatedFindings) == 0 {
-		var findings []Hallazgo
+		var findings []Finding
 		for _, dr := range r.Dims {
 			for _, h := range dr.Findings {
 				findings = append(findings, findingWithDisposition(dr.Dim, h))
@@ -108,14 +108,14 @@ func (r Revision) FindingsWithDispositions() []Hallazgo {
 	}
 
 	dispositions := rawDispositions(r.Dims)
-	findings := make([]Hallazgo, len(r.AggregatedFindings))
+	findings := make([]Finding, len(r.AggregatedFindings))
 	copy(findings, r.AggregatedFindings)
 	counterparts := make(map[string]int, len(findings))
 	for i := range findings {
-		counterparts[dispositionKey(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)]++
+		counterparts[dispositionKey(findings[i].Dimension, findings[i].Location.File, findings[i].Location.LineStart, findings[i].Description)]++
 	}
 	for i := range findings {
-		key := dispositionKey(findings[i].Dimension, findings[i].Location.Archivo, findings[i].Location.LineaInicio, findings[i].Description)
+		key := dispositionKey(findings[i].Dimension, findings[i].Location.File, findings[i].Location.LineStart, findings[i].Description)
 		// Canonicalise the value, do not merely test it in canonical form:
 		// normalizing the check and discarding the result would return the
 		// aggregate's status exactly as persisted while every raw-path
@@ -193,67 +193,67 @@ func rawDispositions(dims []DimensionResult) map[string]string {
 }
 
 func dispositionKey(dimension, file string, line int, description string) string {
-	return empaquetarConLongitud(dimension, file, strconv.Itoa(line), description)
+	return packWithLengthPrefixes(dimension, file, strconv.Itoa(line), description)
 }
 
 // findingWithDisposition projects a v1 finding exactly like
-// hallazgoDesdeReviewFinding and then restores the Status that projection
-// drops. The drop is correct there: HallazgosEfectivos feeds the blocking
+// findingFromReviewFinding and then restores the Status that projection
+// drops. The drop is correct there: EffectiveFindings feeds the blocking
 // gate, which selects on severity and supersede rather than on lifecycle.
 // Here the lifecycle is the whole point.
-func findingWithDisposition(dimension string, h ReviewFinding) Hallazgo {
-	hallazgo := hallazgoDesdeReviewFinding(dimension, h)
-	hallazgo.Status = NormalizeStatus(h.Status)
-	return hallazgo
+func findingWithDisposition(dimension string, h ReviewFinding) Finding {
+	finding := findingFromReviewFinding(dimension, h)
+	finding.Status = NormalizeStatus(h.Status)
+	return finding
 }
 
-// hallazgoDesdeReviewFinding projects a legacy v1 ReviewFinding onto the v2
-// Hallazgo shape so HallazgosEfectivos can return one uniform type
+// findingFromReviewFinding projects a legacy v1 ReviewFinding onto the v2
+// Finding shape so EffectiveFindings can return one uniform type
 // regardless of origin. dimension comes from the containing DimensionResult
-// (dr.Dim), not the finding itself, matching findingCrudo.aHallazgo's own
+// (dr.Dim), not the finding itself, matching rawFinding.toFinding's own
 // convention (finding.go) for the same v1-to-v2 projection.
 //
 // Source is deliberately dropped, never copied from h.Source: v1 has no
-// Confidence field, and Hallazgo treats Source and Confidence as a pair
-// that must co-occur — a Source without its matching real Confidence is a
-// fabricated datum, not an absent one. This makes the round-trip with
-// reviewFindingDesdeHallazgo intentionally asymmetric for Source: it is
-// dropped going v1-to-v2 here, but reviewFindingDesdeHallazgo still copies
-// it going v2-to-v1, because a v2 Hallazgo built any other way always pairs
+// Confidence field, and Finding treats Source and Confidence as a pair
+// that must co-occur — a Source without its matching real Confidence is an
+// invented datum, not an absent one. This makes the round-trip with
+// reviewFindingFromFinding intentionally asymmetric for Source: it is
+// dropped going v1-to-v2 here, but reviewFindingFromFinding still copies
+// it going v2-to-v1, because a v2 Finding built any other way always pairs
 // Source with a real Confidence.
-func hallazgoDesdeReviewFinding(dimension string, h ReviewFinding) Hallazgo {
-	return Hallazgo{
+func findingFromReviewFinding(dimension string, h ReviewFinding) Finding {
+	return Finding{
 		Dimension:   dimension,
 		Severity:    h.Severity,
 		Description: h.Description,
-		Location:    Ubicacion{Archivo: h.File, LineaInicio: int(h.Line)},
+		Location:    Location{File: h.File, LineStart: int(h.Line)},
 	}
 }
 
-// reviewFindingDesdeHallazgo proyecta un Hallazgo v2 de vuelta a la forma v1
-// ReviewFinding que BloqueantesDeRama (renderer.go) sigue devolviendo
-// públicamente. Vive junto a hallazgoDesdeReviewFinding en vez de en el
-// renderer: ambas direcciones de la pareja v1↔v2 son una regla de mapeo del
-// dominio, no del renderizado, y mantenerlas juntas evita que un campo nuevo
-// en Hallazgo/ReviewFinding obligue a tocar dos archivos con riesgo de
-// divergencia silenciosa. No es la inversa exacta de hallazgoDesdeReviewFinding
-// para Source: ver el comentario de esa función sobre por qué la asimetría
-// es intencional, no un descuido.
-func reviewFindingDesdeHallazgo(h Hallazgo) ReviewFinding {
+// reviewFindingFromFinding projects a v2 Finding back onto the v1 shape
+// ReviewFinding that BranchBlockers (renderer.go) still returns publicly.
+// It lives beside findingFromReviewFinding instead of in the renderer: both
+// directions of the v1↔v2 pair are a mapping rule of the domain, not of
+// rendering, and keeping them together avoids a new field in
+// Finding/ReviewFinding forcing two files to be touched with the risk of
+// silent divergence. It is not the exact inverse of findingFromReviewFinding
+// for Source: see that function's comment for why the asymmetry is
+// intentional, not an oversight.
+func reviewFindingFromFinding(h Finding) ReviewFinding {
 	return ReviewFinding{
 		Dimension:   h.Dimension,
-		File:        h.Location.Archivo,
-		Line:        Linea(h.Location.LineaInicio),
+		File:        h.Location.File,
+		Line:        Line(h.Location.LineStart),
 		Severity:    h.Severity,
 		Description: h.Description,
 		Source:      h.Source,
 	}
 }
 
-// Ficha es el registro completo de auditoría de un commit, guardado como
-// <git-dir>/vas-sentinel/<sha>.json. FixedIn es el SHA del commit que
-// corrigió los hallazgos (se rellena cuando un fix re-audita los archivos).
-type Ficha struct {
+// Record is the complete audit record of a commit, saved as
+// <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the commit that
+// fixed the findings (filled in when a fix re-audits the files).
+type Record struct {
 	SHA       string     `json:"sha"`
 	Message   string     `json:"message"`
 	Bucket    string     `json:"bucket"`
@@ -262,424 +262,428 @@ type Ficha struct {
 	Revisions []Revision `json:"revisions"`
 }
 
-// Ledger da acceso a las fichas por SHA dentro del common-dir de Git.
+// Ledger gives access to the records by SHA inside Git's common-dir.
 type Ledger struct {
 	dir string
-	// borrarBloqueo libera el archivo de bloqueo. Es un campo, no una llamada
-	// directa, porque la rama de fallo decide si una mutación ya hecha se
-	// reporta o se pierde y no hay forma de provocarla desde la API pública:
-	// ocurre dentro de la sección crítica. Per-Ledger and not a package
-	// variable, so a fixture that injects a failure cannot reach another
-	// instance or another test running beside it.
-	borrarBloqueo func(string) error
+	// releaseLockFile releases the lock file. It is a field, not a direct
+	// call, because the failure branch decides whether an already-made
+	// mutation is reported or lost and there is no way to provoke it from
+	// the public API: it happens inside the critical section. Per-Ledger and
+	// not a package variable, so a fixture that injects a failure cannot
+	// reach another instance or another test running beside it.
+	releaseLockFile func(string) error
 }
 
-// NuevoLedger crea un ledger anclado a <gitDir>/vas-sentinel. No crea el
-// directorio: eso ocurre en la primera escritura.
+// NewLedger creates a ledger anchored at <gitDir>/vas-sentinel. It does not
+// create the directory: that happens on the first write.
 //
-// It files fichas under whatever directory it is given and imposes no choice,
-// exactly like store.NuevoStore. Callers that read or write review evidence
-// must pass the Git common directory so linked worktrees share one ledger;
-// passing a per-checkout gitDir files the record where `git worktree remove`
-// destroys it. In cmd/sentinel that choice lives in sharedReviewLedger. The
-// exception is `runs prune`, which enumerates every per-checkout ledger on
-// purpose so no execution stream loses its provenance.
-func NuevoLedger(gitDir string) *Ledger {
-	return &Ledger{dir: filepath.Join(gitDir, "vas-sentinel"), borrarBloqueo: os.Remove}
+// It files records under whatever directory it is given and imposes no
+// choice, exactly like store.NewStore. Callers that read or write review
+// evidence must pass the Git common directory so linked worktrees share one
+// ledger; passing a per-checkout gitDir files the record where `git
+// worktree remove` destroys it. In cmd/sentinel that choice lives in
+// sharedReviewLedger. The exception is `runs prune`, which enumerates every
+// per-checkout ledger on purpose so no execution stream loses its
+// provenance.
+func NewLedger(gitDir string) *Ledger {
+	return &Ledger{dir: filepath.Join(gitDir, "vas-sentinel"), releaseLockFile: os.Remove}
 }
 
-// RutaFicha devuelve la ruta del archivo de la ficha de un SHA.
-func (l *Ledger) RutaFicha(sha string) string {
+// RecordPath returns the file path of a SHA's record.
+func (l *Ledger) RecordPath(sha string) string {
 	return filepath.Join(l.dir, sha+".json")
 }
 
-// LeerFicha devuelve la ficha de un SHA o nil si aún no existe. Un archivo
-// corrupto es un error explícito: el ledger nunca se borra en silencio.
-func (l *Ledger) LeerFicha(sha string) (*Ficha, error) {
-	datos, err := os.ReadFile(l.RutaFicha(sha))
+// ReadRecord returns the record of a SHA or nil if it does not exist yet. A
+// corrupt file is an explicit error: the ledger is never wiped in silence.
+func (l *Ledger) ReadRecord(sha string) (*Record, error) {
+	data, err := os.ReadFile(l.RecordPath(sha))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	var ficha Ficha
-	if err := json.Unmarshal(datos, &ficha); err != nil {
+	var record Record
+	if err := json.Unmarshal(data, &record); err != nil {
 		return nil, err
 	}
-	return &ficha, nil
+	return &record, nil
 }
 
-// ListarFichas devuelve los SHAs con ficha de auditoría guardada, en orden
-// alfabético. No lee el contenido: para eso se usa LeerFicha por SHA.
+// ListRecords returns the SHAs with a saved audit record, in alphabetical
+// order. It does not read the content: use ReadRecord per SHA for that.
 //
 // Enumerated with os.ReadDir and NOT with filepath.Glob. Glob reports only
 // ErrBadPattern and swallows every I/O error it meets while reading a
 // directory, so a static pattern over an unreadable ledger returned an empty
 // list and a nil error. That is indistinguishable from a ledger holding no
-// fichas, and it fails open in the callers whose whole contract is to fail
+// records, and it fails open in the callers whose whole contract is to fail
 // closed: collectProvenanceReferences decides from this list which execution
-// streams a prune may destroy, and PurgarHuerfanas decides which fichas it may
+// streams a prune may destroy, and PurgeOrphans decides which records it may
 // delete (FU-16).
 //
-// Absence is separated from breakage with Lstat before the read. NuevoLedger
-// does not create the directory — the first saved revision does — so a ledger
-// nobody has written to yet genuinely holds no fichas. But os.ReadDir resolves
-// symlinks, so it answers ErrNotExist for a ledger path pointing nowhere too,
-// and only Lstat tells the two apart.
-func (l *Ledger) ListarFichas() ([]string, error) {
+// Absence is separated from breakage with Lstat before the read. NewLedger
+// does not create the directory — the first saved revision does — so a
+// ledger nobody has written to yet genuinely holds no records. But
+// os.ReadDir resolves symlinks, so it answers ErrNotExist for a ledger path
+// pointing nowhere too, and only Lstat tells the two apart.
+func (l *Ledger) ListRecords() ([]string, error) {
 	if _, err := os.Lstat(l.dir); errors.Is(err, os.ErrNotExist) {
 		return []string{}, nil // no revision was ever saved in this checkout
 	} else if err != nil {
 		return nil, fmt.Errorf("checking the review ledger path %s: %w", l.dir, err)
 	}
-	entradas, err := os.ReadDir(l.dir)
+	entries, err := os.ReadDir(l.dir)
 	if err != nil {
 		return nil, fmt.Errorf("enumerating the review ledger in %s: %w", l.dir, err)
 	}
-	shas := make([]string, 0, len(entradas))
-	for _, entrada := range entradas {
-		nombre := entrada.Name()
-		if !strings.HasSuffix(nombre, ".json") {
-			continue // temp files from guardarFicha, and anything else
+	shas := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue // temp files from saveRecord, and anything else
 		}
-		shas = append(shas, strings.TrimSuffix(nombre, ".json"))
+		shas = append(shas, strings.TrimSuffix(name, ".json"))
 	}
 	sort.Strings(shas)
 	return shas, nil
 }
 
-// esperaMaximaBloqueoFicha bounds how long a writer waits for another
-// process's lock. A review that cannot persist safely fails loudly: dropping a
+// maxRecordLockWait bounds how long a writer waits for another process's
+// lock. A review that cannot persist safely fails loudly: dropping a
 // revision in silence is the exact failure this lock exists to prevent.
-const esperaMaximaBloqueoFicha = 30 * time.Second
+const maxRecordLockWait = 30 * time.Second
 
-// intervaloReintentoBloqueoFicha is the poll interval while waiting. The
-// critical section is one read, one marshal and one rename, so a short poll
-// costs nothing and keeps an uncontended second writer from stalling.
-const intervaloReintentoBloqueoFicha = 25 * time.Millisecond
+// recordLockRetryInterval is the poll interval while waiting. The critical
+// section is one read, one marshal and one rename, so a short poll costs
+// nothing and keeps an uncontended second writer from stalling.
+const recordLockRetryInterval = 25 * time.Millisecond
 
-// ErrBloqueoNoLiberado marks the one failure that must not be read as "the
+// ErrLockNotReleased marks the one failure that must not be read as "the
 // mutation did not happen": the protected operation COMPLETED, and only the
-// lock protocol around it broke. It says nothing about which mutation ran, so
-// it is equally correct for a write, for a deletion, and for a callback that
-// decided to change nothing — what a caller may infer is exactly that the
-// operation reached its own end.
+// lock protocol around it broke. It says nothing about which mutation ran,
+// so it is equally correct for a write, for a deletion, and for a callback
+// that decided to change nothing — what a caller may infer is exactly that
+// the operation reached its own end.
 //
-// The distinction has to exist because a deletion reported as a plain failure
-// leaves the ficha gone and its events pointing at it.
-var ErrBloqueoNoLiberado = errors.New("the review ficha operation completed but its lock protocol broke")
+// The distinction has to exist because a deletion reported as a plain
+// failure leaves the record gone and its events pointing at it.
+var ErrLockNotReleased = errors.New("the review record operation completed but its lock protocol broke")
 
-// conFichaBloqueada ejecuta fn manteniendo un bloqueo exclusivo sobre la ficha
-// de un SHA.
+// withRecordLock runs fn while holding an exclusive lock on a SHA's record.
 //
 // The ledger became repository-wide when review, status and pr moved their
-// anchor to the Git common directory, so two checkouts now audit into the same
-// ficha file. Every mutation here is a read-append-rename cycle, and without
-// serialization each writer reads the same ficha, appends its own revision and
-// replaces the other: a clean result can erase a blocking one, and `review
-// --all` then reads that SHA as audited so the lost verdict never resurfaces.
-// Measured: eight concurrent writers left one revision of eight.
+// anchor to the Git common directory, so two checkouts now audit into the
+// same record file. Every mutation here is a read-append-rename cycle, and
+// without serialization each writer reads the same record, appends its own
+// revision and replaces the other: a clean result can erase a blocking one,
+// and `review --all` then reads that SHA as audited so the lost verdict
+// never resurfaces. Measured: eight concurrent writers left one revision of
+// eight.
 //
 // The lock is a file created with O_EXCL, which is atomic on POSIX and on
-// Windows. It is advisory and only between sentinel processes; nothing stops an
-// editor from rewriting a ficha by hand. Its name ends in .lock and not .json,
-// so ListarFichas never reports it as a SHA.
+// Windows. It is advisory and only between sentinel processes; nothing
+// stops an editor from rewriting a record by hand. Its name ends in .lock
+// and not .json, so ListRecords never reports it as a SHA.
 //
-// A process killed inside the critical section leaves its lock behind, and the
-// wait then fails naming the path so an operator can remove it. That is
-// deliberate: stealing a lock after a timeout would guess that the holder is
-// dead, and guessing wrong reintroduces the lost update this prevents.
-func (l *Ledger) conFichaBloqueada(sha string, fn func() error) (err error) {
+// A process killed inside the critical section leaves its lock behind, and
+// the wait then fails naming the path so an operator can remove it. That is
+// deliberate: stealing a lock after a timeout would guess that the holder
+// is dead, and guessing wrong reintroduces the lost update this prevents.
+func (l *Ledger) withRecordLock(sha string, fn func() error) (err error) {
 	if err := os.MkdirAll(l.dir, 0755); err != nil {
 		return err
 	}
-	ruta := l.RutaFicha(sha) + ".lock"
-	limite := time.Now().Add(esperaMaximaBloqueoFicha)
+	lockPath := l.RecordPath(sha) + ".lock"
+	deadline := time.Now().Add(maxRecordLockWait)
 	for {
-		lock, errAbrir := os.OpenFile(ruta, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-		if errAbrir == nil {
-			if errCerrar := lock.Close(); errCerrar != nil {
-				os.Remove(ruta)
-				return fmt.Errorf("locking the review ficha of %s: %w", sha, errCerrar)
+		lock, openErr := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if openErr == nil {
+			if closeErr := lock.Close(); closeErr != nil {
+				os.Remove(lockPath)
+				return fmt.Errorf("locking the review record of %s: %w", sha, closeErr)
 			}
-			// Released through defer so a panic inside fn cannot leak the lock.
-			// The removal failure is reported rather than discarded, because a
-			// lock left behind makes every later writer of this SHA wait the
-			// full timeout and then fail — but ONLY when fn itself succeeded.
-			// When fn already failed its error is the one the caller needs, and
-			// replacing it with a cleanup complaint would hide the real cause;
-			// the stale lock still surfaces on the next writer, with its path.
+			// Released through defer so a panic inside fn cannot leak the
+			// lock. The removal failure is reported rather than discarded,
+			// because a lock left behind makes every later writer of this
+			// SHA wait the full timeout and then fail — but ONLY when fn
+			// itself succeeded. When fn already failed its error is the one
+			// the caller needs, and replacing it with a cleanup complaint
+			// would hide the real cause; the stale lock still surfaces on
+			// the next writer, with its path.
 			defer func() {
-				errBorrar := l.borrarBloqueo(ruta)
-				if errBorrar == nil || err != nil {
+				removeErr := l.releaseLockFile(lockPath)
+				if removeErr == nil || err != nil {
 					return
 				}
-				// An already-absent lock is NOT quietly fine. Once fn starts,
-				// this deferred call is the only remover left — the failed-Close
-				// branch above removes the lock too, but it returns without ever
-				// running fn — so finding it gone means mutual exclusion broke
-				// while fn ran and another writer may have entered. Reporting
-				// success there would hide a lost update behind the one signal
-				// that could have revealed it.
+				// An already-absent lock is NOT quietly fine. Once fn
+				// starts, this deferred call is the only remover left — the
+				// failed-Close branch above removes the lock too, but it
+				// returns without ever running fn — so finding it gone means
+				// mutual exclusion broke while fn ran and another writer may
+				// have entered. Reporting success there would hide a lost
+				// update behind the one signal that could have revealed it.
 				//
-				// The cause is wrapped, not formatted: a caller inspecting the
-				// filesystem failure with errors.Is or errors.As is exactly the
-				// caller this error exists for.
-				err = fmt.Errorf("%w (%s of %s): %w", ErrBloqueoNoLiberado, ruta, sha, errBorrar)
+				// The cause is wrapped, not formatted: a caller inspecting
+				// the filesystem failure with errors.Is or errors.As is
+				// exactly the caller this error exists for.
+				err = fmt.Errorf("%w (%s of %s): %w", ErrLockNotReleased, lockPath, sha, removeErr)
 			}()
 			return fn()
 		}
-		if !errors.Is(errAbrir, os.ErrExist) {
-			return fmt.Errorf("locking the review ficha of %s: %w", sha, errAbrir)
+		if !errors.Is(openErr, os.ErrExist) {
+			return fmt.Errorf("locking the review record of %s: %w", sha, openErr)
 		}
-		if time.Now().After(limite) {
-			return fmt.Errorf("the review ficha of %s stayed locked for %s; if no sentinel process is running, delete %s",
-				sha, esperaMaximaBloqueoFicha, ruta)
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the review record of %s stayed locked for %s; if no sentinel process is running, delete %s",
+				sha, maxRecordLockWait, lockPath)
 		}
-		time.Sleep(intervaloReintentoBloqueoFicha)
+		time.Sleep(recordLockRetryInterval)
 	}
 }
 
-// GuardarRevision añade una revisión a la ficha del SHA (creándola si es la
-// primera) y la persiste con escritura atómica temp + rename. En Windows el
-// destino existente se borra antes del rename porque el sistema no permite
-// sobrescribir con os.Rename.
+// SaveRevision appends a revision to the SHA's record (creating it if it is
+// the first) and persists it with an atomic temp + rename write. On Windows
+// the existing destination is deleted before the rename because the system
+// does not allow overwriting with os.Rename.
 //
-// The whole read-append-write runs under the ficha's lock: revisions[] is
+// The whole read-append-write runs under the record's lock: revisions[] is
 // append-only, and two unserialized writers make that a claim rather than a
 // fact.
-func (l *Ledger) GuardarRevision(sha, mensaje, bucket, modelo string, revision Revision) error {
-	return l.conFichaBloqueada(sha, func() error { return l.guardarRevisionBloqueada(sha, mensaje, bucket, modelo, revision) })
+func (l *Ledger) SaveRevision(sha, message, bucket, model string, revision Revision) error {
+	return l.withRecordLock(sha, func() error { return l.saveRevisionLocked(sha, message, bucket, model, revision) })
 }
 
-// WithLockedFicha runs fn while holding this SHA's exclusive ficha lock,
+// WithLockedRecord runs fn while holding this SHA's exclusive record lock,
 // handing it the authoritative current record. It is the compare-and-append
-// seam for writers that persist outside the ficha file itself (FU-6 human
-// dispositions): resolving against a ficha read before the lock and then
+// seam for writers that persist outside the record file itself (FU-6 human
+// dispositions): resolving against a record read before the lock and then
 // appending after it lets a concurrent re-audit change the revision in
 // between, so the writer must re-read under the same lock the revision
-// writer holds and refuse on any difference. It reuses conFichaBloqueada,
+// writer holds and refuse on any difference. It reuses withRecordLock,
 // never a second lock.
-func (l *Ledger) WithLockedFicha(sha string, fn func(*Ficha) error) error {
-	return l.conFichaBloqueada(sha, func() error {
-		ficha, err := l.LeerFicha(sha)
+func (l *Ledger) WithLockedRecord(sha string, fn func(*Record) error) error {
+	return l.withRecordLock(sha, func() error {
+		record, err := l.ReadRecord(sha)
 		if err != nil {
 			return err
 		}
-		if ficha == nil {
+		if record == nil {
 			return fmt.Errorf("ledger: no review record for %s", sha)
 		}
-		return fn(ficha)
+		return fn(record)
 	})
 }
 
-func (l *Ledger) guardarRevisionBloqueada(sha, mensaje, bucket, modelo string, revision Revision) error {
-	ficha, err := l.LeerFicha(sha)
+func (l *Ledger) saveRevisionLocked(sha, message, bucket, model string, revision Revision) error {
+	record, err := l.ReadRecord(sha)
 	if err != nil {
 		return err
 	}
-	if ficha == nil {
-		ficha = &Ficha{SHA: sha, Message: mensaje, Bucket: bucket, Model: modelo}
+	if record == nil {
+		record = &Record{SHA: sha, Message: message, Bucket: bucket, Model: model}
 	}
-	if ficha.Message == "" {
-		ficha.Message = mensaje
+	if record.Message == "" {
+		record.Message = message
 	}
-	if ficha.Bucket == "" {
-		ficha.Bucket = bucket
+	if record.Bucket == "" {
+		record.Bucket = bucket
 	}
-	if ficha.Model == "" {
-		ficha.Model = modelo
+	if record.Model == "" {
+		record.Model = model
 	}
-	ficha.Revisions = append(ficha.Revisions, revision)
-	return l.guardarFicha(ficha)
+	record.Revisions = append(record.Revisions, revision)
+	return l.saveRecord(record)
 }
 
-// MarcarCorregida registra que los hallazgos del SHA fueron corregidos por el
-// commit fixedIn (trazabilidad hallazgo → corrección). No sobreescribe un
-// FixedIn ya existente: la primera corrección gana.
-func (l *Ledger) MarcarCorregida(sha, fixedIn string) error {
-	// Checked on the DIRECTORY, not on the ficha, and with Lstat. Two separate
-	// reasons, both learned the hard way in this file.
+// MarkFixed records that the SHA's findings were fixed by the fixedIn
+// commit (finding → fix traceability). It does not overwrite an existing
+// FixedIn: the first fix wins.
+func (l *Ledger) MarkFixed(sha, fixedIn string) error {
+	// Checked on the DIRECTORY, not on the record, and with Lstat. Two
+	// separate reasons, both learned the hard way in this file.
 	//
-	// The directory rather than the ficha: guardarFicha deletes the destination
-	// before renaming over it, so an unlocked check on the ficha lands in that
-	// window and reports a live record as absent. Measured — it dropped the
-	// correction in silence. The guard exists only to keep a ledger that never
-	// stored anything from having its directory created by a call that is a
-	// documented no-op, and this one runs for every earlier commit of every
-	// fix( commit.
+	// The directory rather than the record: saveRecord deletes the
+	// destination before renaming over it, so an unlocked check on the
+	// record lands in that window and reports a live record as absent.
+	// Measured — it dropped the correction in silence. The guard exists only
+	// to keep a ledger that never stored anything from having its directory
+	// created by a call that is a documented no-op, and this one runs for
+	// every earlier commit of every fix commit.
 	//
-	// Lstat rather than Stat: Stat resolves symlinks, so a ledger path pointing
-	// nowhere answers ErrNotExist exactly like an absent one. That is FU-16, and
-	// ListarFichas separates the two the same way. A broken ledger must fail,
-	// not silently skip the correction.
+	// Lstat rather than Stat: Stat resolves symlinks, so a ledger path
+	// pointing nowhere answers ErrNotExist exactly like an absent one. That
+	// is FU-16, and ListRecords separates the two the same way. A broken
+	// ledger must fail, not silently skip the correction.
 	if _, err := os.Lstat(l.dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	// Under the ficha's lock: "the first correction wins" is decided by reading
-	// FixedIn and then writing it, so two unserialized callers can both read it
-	// empty and the second one wins instead.
-	return l.conFichaBloqueada(sha, func() error {
-		ficha, err := l.LeerFicha(sha)
+	// Under the record's lock: "the first correction wins" is decided by
+	// reading FixedIn and then writing it, so two unserialized callers can
+	// both read it empty and the second one wins instead.
+	return l.withRecordLock(sha, func() error {
+		record, err := l.ReadRecord(sha)
 		if err != nil {
 			return err
 		}
-		if ficha == nil || ficha.FixedIn != "" {
+		if record == nil || record.FixedIn != "" {
 			return nil
 		}
-		ficha.FixedIn = fixedIn
-		return l.guardarFicha(ficha)
+		record.FixedIn = fixedIn
+		return l.saveRecord(record)
 	})
 }
 
-// AdoptarFicha copia la ficha de desde bajo el SHA hacia. Es el fix de T2.7
-// para commitCubiertoPorBlobs: cuando un rebase reescribe un commit sin
-// tocar su contenido, el commit se cubre por blob bajo un SHA anterior, pero
-// si AnalizarRama solo hiciera "continue" sin escribir nada bajo el SHA
-// nuevo, ledger.LeerFicha(hacia) devolvería nil y los hallazgos reales de la
-// ficha vieja (huérfana, bajo un SHA que ya no existe en la rama)
-// desaparecerían de res.Fichas. Adoptar la ficha bajo el SHA nuevo es lo que
-// los mantiene recuperables.
+// AdoptRecord copies the record at from under the SHA to. It is the T2.7
+// fix for commitCoveredByBlobs: when a rebase rewrites a commit without
+// touching its content, the commit is blob-covered under an earlier SHA,
+// but if AnalyzeBranch only did "continue" without writing anything under
+// the new SHA, ledger.ReadRecord(to) would return nil and the real findings
+// of the old record (an orphan, under a SHA that no longer exists in the
+// branch) would disappear from res.Records. Adopting the record under the
+// new SHA is what keeps them recoverable.
 //
-// desde debería existir siempre que la llame commitCubiertoPorBlobs, porque
-// salió del store, que solo registra commits ya auditados: por eso, a
-// diferencia de MarcarCorregida (donde "no hay nada que marcar" es un
-// estado válido y se resuelve como no-op), que desde no tenga ficha aquí es
-// un error real, no algo que ignorar en silencio.
+// from should always exist whenever commitCoveredByBlobs calls it, because
+// it came out of the store, which only registers already-audited commits:
+// that is why, unlike MarkFixed (where "there is nothing to mark" is a
+// valid state resolved as a no-op), a from with no record here is a real
+// error, not something to ignore in silence.
 //
-// Idempotente: llamarlo dos veces con los mismos argumentos sobrescribe con
-// el mismo contenido, sin duplicar nada. Revisions se copia a un slice
-// nuevo (no se comparte el subyacente de la ficha origen) por higiene de
-// aliasing, no porque Revision se mute después de guardarse.
-func (l *Ledger) AdoptarFicha(desde, hacia string) error {
-	// Locked on hacia, which is the ficha this writes. Locking desde too would
+// Idempotent: calling it twice with the same arguments overwrites with the
+// same content, without duplicating anything. Revisions is copied to a new
+// slice (the origin record's underlying one is not shared) for aliasing
+// hygiene, not because Revision is mutated after being saved.
+func (l *Ledger) AdoptRecord(from, to string) error {
+	// Locked on to, which is the record this writes. Locking from too would
 	// be a second lock in a fixed-order pair and buys nothing: the source is
-	// only read, and a concurrent append to it either lands in the copy or does
-	// not, whereas an unserialized adoption can overwrite a revision another
-	// writer just appended to the destination.
-	return l.conFichaBloqueada(hacia, func() error {
-		origen, err := l.LeerFicha(desde)
+	// only read, and a concurrent append to it either lands in the copy or
+	// does not, whereas an unserialized adoption can overwrite a revision
+	// another writer just appended to the destination.
+	return l.withRecordLock(to, func() error {
+		source, err := l.ReadRecord(from)
 		if err != nil {
 			return err
 		}
-		if origen == nil {
-			return fmt.Errorf("ledger: no hay ficha en %s para adoptar hacia %s", desde, hacia)
+		if source == nil {
+			return fmt.Errorf("ledger: no record at %s to adopt into %s", from, to)
 		}
-		revisiones := make([]Revision, len(origen.Revisions))
-		copy(revisiones, origen.Revisions)
-		adoptada := &Ficha{
-			SHA:       hacia,
-			Message:   origen.Message,
-			Bucket:    origen.Bucket,
-			Model:     origen.Model,
-			FixedIn:   origen.FixedIn,
-			Revisions: revisiones,
+		revisions := make([]Revision, len(source.Revisions))
+		copy(revisions, source.Revisions)
+		adopted := &Record{
+			SHA:       to,
+			Message:   source.Message,
+			Bucket:    source.Bucket,
+			Model:     source.Model,
+			FixedIn:   source.FixedIn,
+			Revisions: revisions,
 		}
-		return l.guardarFicha(adoptada)
+		return l.saveRecord(adopted)
 	})
 }
 
-// EliminarFicha borra la ficha de un SHA. No devuelve error si no existe:
-// eliminar algo que ya no está es un no-op.
-func (l *Ledger) EliminarFicha(sha string) error {
-	ruta := l.RutaFicha(sha)
-	if err := os.Remove(ruta); err != nil && !errors.Is(err, os.ErrNotExist) {
+// DeleteRecord deletes the record of a SHA. It returns no error when the
+// record does not exist: deleting something already gone is a no-op.
+func (l *Ledger) DeleteRecord(sha string) error {
+	path := l.RecordPath(sha)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
 }
 
-// PurgarHuerfanas borra las fichas cuyo SHA ya no es alcanzable desde ningún
-// ref (commits reescritos por rebase, amend o squash: siguen en el object
-// store como dangling, pero ContenidoEnAlgunRef los detecta). Devuelve la
-// lista de SHAs eliminados; si algo falla a mitad, devuelve el error junto
-// con los SHAs que sí llegó a eliminar. El caso del commit reescrito por
-// amend queda cubierto por TestLedgerPurgarHuerfanasDangling.
+// PurgeOrphans deletes the records whose SHA is no longer reachable from any
+// ref (commits rewritten by rebase, amend or squash: they remain in the
+// object store as dangling, but ContentInSomeRef detects them). It
+// returns the list of deleted SHAs; if something fails halfway, it returns
+// the error together with the SHAs it did delete. The case of the commit
+// rewritten by amend is covered by TestLedgerPurgeOrphansDangling.
 
-// El criterio de existencia se inyecta y DEBE poder fallar. No hay variante sin
-// él a propósito: la que había envolvía un ayudante que convertía cualquier
-// error de git en "no está", así que el camino cómodo era justo el que borraba
-// fichas vivas ante una consulta rota. Un llamador que purgue los ledgers de
-// varios checkouts debe además anclar el criterio al repositorio correcto:
-// clasificar con el directorio de trabajo del proceso convierte cada ficha viva
-// de otro checkout en huérfana.
-func (l *Ledger) PurgarHuerfanas(existe func(sha string) (bool, error)) ([]string, error) {
-	shas, err := l.ListarFichas()
+// The existence criterion is injected and MUST be able to fail. There is no
+// variant without it on purpose: the one there used to be wrapped a helper
+// that turned any git error into "not there", so the convenient path was
+// exactly the one deleting live records in the face of a broken query. A
+// caller purging the ledgers of several checkouts must also anchor the
+// criterion to the right repository: classifying with the process's working
+// directory turns every live record of another checkout into an orphan.
+func (l *Ledger) PurgeOrphans(exists func(sha string) (bool, error)) ([]string, error) {
+	shas, err := l.ListRecords()
 	if err != nil {
 		return nil, err
 	}
-	eliminados := []string{}
+	deleted := []string{}
 	for _, sha := range shas {
-		presente, err := existe(sha)
+		present, err := exists(sha)
 		if err != nil {
-			// Abortar con lo ya borrado: preguntar y no poder responder nunca
-			// autoriza un borrado.
-			return eliminados, err
+			// Abort with what was already deleted: asking and never being
+			// able to answer authorizes the deletion.
+			return deleted, err
 		}
-		if presente {
+		if present {
 			continue
 		}
-		// Deletion takes the same per-SHA lock as every mutation. Without it the
-		// purge could remove a ficha while a locked GuardarRevision was writing
-		// it, so a revision that reported success would simply not exist.
-		if err := l.conFichaBloqueada(sha, func() error { return l.EliminarFicha(sha) }); err != nil {
-			// ErrBloqueoNoLiberado means the ficha IS deleted and only the lock
-			// survived. Recording it before aborting is what lets the caller
-			// clean its events, which are purged from this very list.
-			if errors.Is(err, ErrBloqueoNoLiberado) {
-				eliminados = append(eliminados, sha)
+		// Deletion takes the same per-SHA lock as every mutation. Without it
+		// the purge could remove a record while a locked SaveRevision was
+		// writing it, so a revision that reported success would simply not
+		// exist.
+		if err := l.withRecordLock(sha, func() error { return l.DeleteRecord(sha) }); err != nil {
+			// ErrLockNotReleased means the record IS deleted and only the
+			// lock survived. Recording it before aborting is what lets the
+			// caller clean its events, which are purged from this very list.
+			if errors.Is(err, ErrLockNotReleased) {
+				deleted = append(deleted, sha)
 			}
-			return eliminados, err
+			return deleted, err
 		}
-		eliminados = append(eliminados, sha)
+		deleted = append(deleted, sha)
 	}
-	return eliminados, nil
+	return deleted, nil
 }
 
-// guardarFicha persiste la ficha con escritura atómica temp + rename. En
-// Windows el destino existente se borra antes del rename porque el sistema no
-// permite sobrescribir con os.Rename.
-func (l *Ledger) guardarFicha(ficha *Ficha) error {
+// saveRecord persists the record with an atomic temp + rename write. On
+// Windows the existing destination is deleted before the rename because the
+// system does not allow overwriting with os.Rename.
+func (l *Ledger) saveRecord(record *Record) error {
 	if err := os.MkdirAll(l.dir, 0755); err != nil {
 		return err
 	}
-	datos, err := json.MarshalIndent(ficha, "", "  ")
+	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	destino := l.RutaFicha(ficha.SHA)
-	temp, err := os.CreateTemp(l.dir, "ficha-*.tmp")
+	destination := l.RecordPath(record.SHA)
+	tmp, err := os.CreateTemp(l.dir, "record-*.tmp")
 	if err != nil {
 		return err
 	}
-	rutaTemp := temp.Name()
-	defer os.Remove(rutaTemp)
-	if _, err := temp.Write(datos); err != nil {
-		temp.Close()
+	tempPath := tmp.Name()
+	defer os.Remove(tempPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
 		return err
 	}
-	if err := temp.Close(); err != nil {
+	if err := tmp.Close(); err != nil {
 		return err
 	}
-	// The destination is removed ONLY on Windows, which refuses to rename over
-	// an existing file. Elsewhere rename replaces it atomically, and deleting
-	// first opened a window in which the ficha did not exist at all: a
-	// concurrent reader saw a live record as absent, which AnalizarRama reads
-	// as "never audited". Narrowing that window to the platform that needs it
-	// costs nothing.
+	// The destination is removed ONLY on Windows, which refuses to rename
+	// over an existing file. Elsewhere rename replaces it atomically, and
+	// deleting first opened a window in which the record did not exist at
+	// all: a concurrent reader saw a live record as absent, which
+	// AnalyzeBranch reads as "never audited". Narrowing that window to the
+	// platform that needs it costs nothing.
 	//
-	// Not covered by a test, deliberately. Observing the window needs a reader
-	// running inside another process's rename, and the only seam that would
-	// expose it is a hook in this function — which would be a test scaffold in
-	// the write path of every ficha. The behaviour it protects is pinned
-	// indirectly: MarcarCorregida's guard reads the directory rather than the
-	// ficha precisely because that window existed, and its comment says so.
+	// Not covered by a test, deliberately. Observing the window needs a
+	// reader running inside another process's rename, and the only seam that
+	// would expose it is a hook in this function — which would be a test
+	// scaffold in the write path of every record. The behaviour it protects
+	// is pinned indirectly: MarkFixed's guard reads the directory rather
+	// than the record precisely because that window existed, and its
+	// comment says so.
 	if runtime.GOOS == "windows" {
-		if err := os.Remove(destino); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
-	return os.Rename(rutaTemp, destino)
+	return os.Rename(tempPath, destination)
 }

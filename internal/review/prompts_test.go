@@ -7,7 +7,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
-func TestConstruirPromptAuditoriaIncludesBaselineContractFields(t *testing.T) {
+func TestBuildAuditPromptIncludesBaselineContractFields(t *testing.T) {
 	prompt := BuildAuditPrompt(DimLogic, "fix: preserve contract", "diff --git a/a.go", "")
 
 	for _, required := range []string{
@@ -25,7 +25,7 @@ func TestConstruirPromptAuditoriaIncludesBaselineContractFields(t *testing.T) {
 	}
 }
 
-func TestConstruirPromptAuditoriaIncludesDimensionGlossary(t *testing.T) {
+func TestBuildAuditPromptIncludesDimensionGlossary(t *testing.T) {
 	for _, contract := range reviewcontract.All() {
 		prompt := BuildAuditPrompt(contract.Name, "message", "diff", "")
 		if !strings.Contains(prompt, contract.Instructions) {
@@ -34,7 +34,7 @@ func TestConstruirPromptAuditoriaIncludesDimensionGlossary(t *testing.T) {
 	}
 }
 
-func TestConstruirPromptAuditoriaIncludesAnswersOnlyWhenProvided(t *testing.T) {
+func TestBuildAuditPromptIncludesAnswersOnlyWhenProvided(t *testing.T) {
 	withAnswers := BuildAuditPrompt(DimLogic, "message", "diff", "Q1: yes")
 	if !strings.Contains(withAnswers, "Clarifications from the user") || !strings.Contains(withAnswers, "Q1: yes") {
 		t.Fatalf("prompt omits answers:\n%s", withAnswers)
@@ -46,14 +46,14 @@ func TestConstruirPromptAuditoriaIncludesAnswersOnlyWhenProvided(t *testing.T) {
 	}
 }
 
-func TestConstruirPromptAuditoriaRejectsUnknownDimension(t *testing.T) {
+func TestBuildAuditPromptRejectsUnknownDimension(t *testing.T) {
 	prompt := BuildAuditPrompt("unknown", "message", "diff", "")
 	if prompt != "" {
 		t.Fatalf("prompt = %q, expected an empty prompt for an unknown dimension", prompt)
 	}
 }
 
-func TestConstruirPromptAuditoriaAllowsBoundedReadOnlyExploration(t *testing.T) {
+func TestBuildAuditPromptAllowsBoundedReadOnlyExploration(t *testing.T) {
 	prompt := BuildAuditPrompt(DimLogic, "fix(review): bounded tools", "diff", "")
 
 	for _, required := range []string{
@@ -76,7 +76,7 @@ func TestConstruirPromptAuditoriaAllowsBoundedReadOnlyExploration(t *testing.T) 
 	}
 }
 
-func TestConstruirPromptConContextoListsPlannedPaths(t *testing.T) {
+func TestBuildPromptWithContextListsPlannedPaths(t *testing.T) {
 	contract, err := reviewcontract.Lookup(DimLogic)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestConstruirPromptConContextoListsPlannedPaths(t *testing.T) {
 	}
 }
 
-func TestConstruirPromptDelimitsSupplementalContextAsDataOnly(t *testing.T) {
+func TestBuildPromptDelimitsSupplementalContextAsDataOnly(t *testing.T) {
 	contract, err := reviewcontract.Lookup(DimLogic)
 	if err != nil {
 		t.Fatal(err)

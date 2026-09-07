@@ -25,8 +25,8 @@ import "path"
 // semantic findings (T6.1) can choose the order: superseding before
 // aggregating avoids a deterministic finding ever being merged into a
 // semantic one by proximity.
-func SupersedeDeterministicFindings(semantic, deterministic []Hallazgo) []Hallazgo {
-	var applicable []Hallazgo
+func SupersedeDeterministicFindings(semantic, deterministic []Finding) []Finding {
+	var applicable []Finding
 	for _, d := range deterministic {
 		if d.Source == SourceValidation && d.Dimension != "" {
 			applicable = append(applicable, d)
@@ -36,7 +36,7 @@ func SupersedeDeterministicFindings(semantic, deterministic []Hallazgo) []Hallaz
 		return semantic
 	}
 
-	kept := make([]Hallazgo, 0, len(semantic))
+	kept := make([]Finding, 0, len(semantic))
 	for _, finding := range semantic {
 		if finding.Source == SourceReview && supersededByAny(finding, applicable) {
 			continue
@@ -46,7 +46,7 @@ func SupersedeDeterministicFindings(semantic, deterministic []Hallazgo) []Hallaz
 	return kept
 }
 
-func supersededByAny(finding Hallazgo, deterministic []Hallazgo) bool {
+func supersededByAny(finding Finding, deterministic []Finding) bool {
 	for _, d := range deterministic {
 		if finding.Dimension == d.Dimension && sameLocation(finding.Location, d.Location) {
 			return true
@@ -59,17 +59,17 @@ func supersededByAny(finding Hallazgo, deterministic []Hallazgo) bool {
 // deterministic finding's file (compared after normalizePath, so "./a.go"
 // and "a.go" match) and, if the deterministic one has line information, an
 // overlapping range (reusing T6.1's overlap check). A deterministic finding
-// with no line (LineaInicio <= 0, e.g. `gofmt -l`, which only lists bare
+// with no line (LineStart <= 0, e.g. `gofmt -l`, which only lists bare
 // file paths) covers the whole file: nothing about that file needs a second
 // opinion within the same category.
-func sameLocation(semantic, deterministic Ubicacion) bool {
-	if semantic.Archivo == "" || deterministic.Archivo == "" {
+func sameLocation(semantic, deterministic Location) bool {
+	if semantic.File == "" || deterministic.File == "" {
 		return false
 	}
-	if normalizePath(semantic.Archivo) != normalizePath(deterministic.Archivo) {
+	if normalizePath(semantic.File) != normalizePath(deterministic.File) {
 		return false
 	}
-	if deterministic.LineaInicio <= 0 {
+	if deterministic.LineStart <= 0 {
 		return true
 	}
 	return sourceRangesOverlap(semantic, deterministic)

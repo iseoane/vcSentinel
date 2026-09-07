@@ -6,17 +6,17 @@ import (
 	"unicode/utf8"
 )
 
-// ordenColumnas devuelve el orden canónico de las columnas de la matriz
-// commit × dimensión. Es una función (no un slice a nivel de paquete) para
-// que ningún llamador pueda mutar el orden global de la matriz.
-func ordenColumnas() []string {
+// columnOrder returns the canonical column order of the commit × dimension
+// matrix. It is a function (not a package-level slice) so no caller can
+// mutate the matrix's global order.
+func columnOrder() []string {
 	return []string{DimLogic, DimStyle, DimDesign, DimTests, DimSecurity, DimSpec}
 }
 
-// veredictoEmoji mapea un veredicto de dimensión (o un resultado de revisión)
-// a su icono de tabla. La última revisión de cada ficha manda.
-func veredictoEmoji(verdicto string) string {
-	switch verdicto {
+// verdictEmoji maps a dimension verdict (or a revision result) to its table
+// icon. The latest revision of each record decides.
+func verdictEmoji(verdict string) string {
+	switch verdict {
 	case VerdictOK:
 		return "✅"
 	case VerdictWarn:
@@ -31,23 +31,23 @@ func veredictoEmoji(verdicto string) string {
 	return "❔"
 }
 
-// ultimaRevision devuelve la última revisión de la ficha y su índice (0 si no
-// hay revisiones). El veredicto mostrado siempre es el de la última.
-func ultimaRevision(ficha Ficha) (Revision, bool) {
-	if len(ficha.Revisions) == 0 {
+// lastRevision returns the record's latest revision and whether one exists.
+// The displayed verdict is always the latest one's.
+func lastRevision(record Record) (Revision, bool) {
+	if len(record.Revisions) == 0 {
 		return Revision{}, false
 	}
-	return ficha.Revisions[len(ficha.Revisions)-1], true
+	return record.Revisions[len(record.Revisions)-1], true
 }
 
-// revisionSuperoBlock indica si la última revisión salió ok cuando alguna
-// anterior estaba en block (re-auditoría tras un fix).
-func revisionSuperoBlock(ficha Ficha) bool {
-	ultima, ok := ultimaRevision(ficha)
-	if !ok || ultima.Result != VerdictOK || len(ficha.Revisions) < 2 {
+// recoveredFromBlock reports whether the latest revision came out ok while
+// some earlier one was in block (re-audit after a fix).
+func recoveredFromBlock(record Record) bool {
+	last, ok := lastRevision(record)
+	if !ok || last.Result != VerdictOK || len(record.Revisions) < 2 {
 		return false
 	}
-	for _, rev := range ficha.Revisions[:len(ficha.Revisions)-1] {
+	for _, rev := range record.Revisions[:len(record.Revisions)-1] {
 		if rev.Result == VerdictBlock {
 			return true
 		}
@@ -55,90 +55,90 @@ func revisionSuperoBlock(ficha Ficha) bool {
 	return false
 }
 
-// celdaMatriz construye la celda de una dimensión para la última revisión:
-// emoji del veredicto y, si la revisión superó un block previo, la marca de
-// la guía "spec ✅ (2ª rev — CRITICAL superado)".
-func celdaMatriz(ficha Ficha, dim string) string {
-	ultima, ok := ultimaRevision(ficha)
+// matrixCell builds a dimension's cell for the latest revision: the verdict
+// emoji and, when the revision cleared a previous block, the guide marker
+// "spec ✅ (rev N — CRITICAL cleared)".
+func matrixCell(record Record, dim string) string {
+	last, ok := lastRevision(record)
 	if !ok {
 		return "—"
 	}
-	for _, dr := range ultima.Dims {
+	for _, dr := range last.Dims {
 		if dr.Dim != dim {
 			continue
 		}
-		if dr.Verdict == VerdictOK && revisionSuperoBlock(ficha) {
-			return fmt.Sprintf("✅ (%dª rev — CRITICAL superado)", len(ficha.Revisions))
+		if dr.Verdict == VerdictOK && recoveredFromBlock(record) {
+			return fmt.Sprintf("✅ (rev %d — CRITICAL cleared)", len(record.Revisions))
 		}
-		return veredictoEmoji(dr.Verdict)
+		return verdictEmoji(dr.Verdict)
 	}
 	return "—"
 }
 
-// mensajeCorto recorta el mensaje de commit para que la fila de la matriz no
-// desborde la tabla.
-func mensajeCorto(mensaje string) string {
-	const maximo = 48
-	runas := []rune(mensaje)
-	if len(runas) <= maximo {
-		return mensaje
+// shortenMessage truncates the commit message so the matrix row does not
+// overflow the table.
+func shortenMessage(message string) string {
+	const maxLen = 48
+	runes := []rune(message)
+	if len(runes) <= maxLen {
+		return message
 	}
-	return string(runas[:maximo]) + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
-// RenderMatriz construye la tabla markdown commit × dimensión de una rama:
-// una fila por ficha (SHA corto + mensaje) y las seis dimensiones canónicas
-// como columnas fijas. Cada celda muestra el veredicto de la última revisión
-// de la dimensión; "—" indica que esa dimensión no fue auditada.
-func RenderMatriz(fichas []Ficha) string {
-	if len(fichas) == 0 {
-		return "_No hay commits auditados._"
+// RenderMatrix builds a branch's markdown commit × dimension table: one row
+// per record (short SHA + message) with the six canonical dimensions as
+// fixed columns. Each cell shows the latest revision's verdict for that
+// dimension; "—" means that dimension was not audited.
+func RenderMatrix(records []Record) string {
+	if len(records) == 0 {
+		return "_No audited commits._"
 	}
 
-	columnas := ordenColumnas()
+	columns := columnOrder()
 	var b strings.Builder
-	b.WriteString("| Commit | " + strings.Join(columnas, " | ") + " |\n")
-	b.WriteString("|" + strings.Repeat("---|", len(columnas)+1) + "\n")
-	for _, ficha := range fichas {
-		sha := ficha.SHA
+	b.WriteString("| Commit | " + strings.Join(columns, " | ") + " |\n")
+	b.WriteString("|" + strings.Repeat("---|", len(columns)+1) + "\n")
+	for _, record := range records {
+		sha := record.SHA
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		celdas := make([]string, 0, len(columnas))
-		for _, dim := range columnas {
-			celdas = append(celdas, celdaMatriz(ficha, dim))
+		cells := make([]string, 0, len(columns))
+		for _, dim := range columns {
+			cells = append(cells, matrixCell(record, dim))
 		}
-		b.WriteString(fmt.Sprintf("| `%s` %s | %s |\n", sha, mensajeCorto(ficha.Message), strings.Join(celdas, " | ")))
+		b.WriteString(fmt.Sprintf("| `%s` %s | %s |\n", sha, shortenMessage(record.Message), strings.Join(cells, " | ")))
 	}
 	return b.String()
 }
 
-// conteoResultados cuenta las fichas por resultado global de su última
-// revisión y devuelve la línea de resumen, incluyendo question/unavailable
-// solo si existen.
-func conteoResultados(fichas []Ficha) string {
-	cuentas := map[string]int{}
-	for _, ficha := range fichas {
-		ultima, ok := ultimaRevision(ficha)
+// verdictCounts counts the records by the global result of their latest
+// revision and returns the summary line, including question/unavailable
+// only when present.
+func verdictCounts(records []Record) string {
+	counts := map[string]int{}
+	for _, record := range records {
+		last, ok := lastRevision(record)
 		if !ok {
 			continue
 		}
-		cuentas[ultima.Result]++
+		counts[last.Result]++
 	}
-	linea := fmt.Sprintf("🟢 ok: %d · 🟡 warn: %d · 🚨 block: %d",
-		cuentas[VerdictOK], cuentas[VerdictWarn], cuentas[VerdictBlock])
-	if cuentas[VerdictQuestion] > 0 {
-		linea += fmt.Sprintf(" · ❓ question: %d", cuentas[VerdictQuestion])
+	line := fmt.Sprintf("🟢 ok: %d · 🟡 warn: %d · 🚨 block: %d",
+		counts[VerdictOK], counts[VerdictWarn], counts[VerdictBlock])
+	if counts[VerdictQuestion] > 0 {
+		line += fmt.Sprintf(" · ❓ question: %d", counts[VerdictQuestion])
 	}
-	if cuentas[VerdictUnavailable] > 0 {
-		linea += fmt.Sprintf(" · ⛔ unavailable: %d", cuentas[VerdictUnavailable])
+	if counts[VerdictUnavailable] > 0 {
+		line += fmt.Sprintf(" · ⛔ unavailable: %d", counts[VerdictUnavailable])
 	}
-	return linea
+	return line
 }
 
-// severidadEmoji mapea una severidad de hallazgo a su icono de riesgo.
-func severidadEmoji(severidad string) string {
-	switch severidad {
+// severityEmoji maps a finding severity to its risk icon.
+func severityEmoji(severity string) string {
+	switch severity {
 	case SevCritical:
 		return "🚨"
 	case SevWarning:
@@ -149,56 +149,57 @@ func severidadEmoji(severidad string) string {
 	return "❔"
 }
 
-// ComandoVerificado es un comando de verificación ejecutado con su exit code
-// real (determinista) — EVIDENCIA, nunca un PASS inventado.
-type ComandoVerificado struct {
+// VerifiedCommand is a verification command executed with its real
+// (deterministic) exit code — EVIDENCE, never an invented PASS.
+type VerifiedCommand struct {
 	Comando string
 	Exit    int
 }
 
-// VerificacionPlantilla es la sección de verificación del PR: solo EVIDENCIA
-// real, nunca un PASS inventado (regla de oro de la guía §12.3).
-type VerificacionPlantilla struct {
-	Modo     string              // determinista | delegado | omitido | configurar
-	Comandos []ComandoVerificado // exit codes reales por comando
-	Tested   []string            // contrato tested del agente (delegación)
-	Motivo   string              // por qué no se ejecutó (omisión/configuración)
+// TemplateVerification is the PR's verification section: only real
+// EVIDENCE, never an invented PASS (the guide's §12.3 golden rule).
+type TemplateVerification struct {
+	Mode     string            // wire value from ops.Verify: "determinista" | "delegado" | "omitido" | "configurar"
+	Comandos []VerifiedCommand // real exit codes per command
+	Tested   []string          // the agent's tested contract (delegation)
+	Reason   string            // why it did not run (skipped/configuration)
 
-	// Validacion son los exit codes reales de internal/validation (T1.8),
-	// ejecutados ANTES de la revisión semántica de la rama. Es una naturaleza
-	// de evidencia distinta de Comandos (que traduce ops.Verificar, la
-	// verificación post-hoc de tests/build): misma FORMA (comando + exit code
-	// real, por eso se reusa ComandoVerificado sin duplicar el tipo), pero
-	// distinto ORIGEN — de ahí el campo propio y su propia sección en la
-	// plantilla, nunca mezclada con Comandos.
-	Validacion []ComandoVerificado
+	// Validation carries the real exit codes of internal/validation (T1.8),
+	// run BEFORE the branch's semantic review. It is a different evidence
+	// nature from Comandos (which translates ops.Verify, the post-hoc
+	// verification of tests/build): the same SHAPE (command + real exit
+	// code, which is why VerifiedCommand is reused instead of duplicating
+	// the type), but a different ORIGIN — hence its own field and its own
+	// section in the template, never mixed with Comandos.
+	Validation []VerifiedCommand
 }
 
-// estaPendiente decide si una ficha aún aporta al veredicto de la rama. Una
-// ficha corregida (FixedIn) ya no cuenta: su block fue resuelto en un commit
-// posterior fuera de ella. Es la única definición de "pendiente" del paquete.
-func estaPendiente(ficha Ficha) bool {
-	return ficha.FixedIn == ""
+// isPending decides whether a record still contributes to the branch's
+// verdict. A fixed record (FixedIn) no longer counts: its block was
+// resolved in a later commit outside it. It is the package's only
+// definition of "pending".
+func isPending(record Record) bool {
+	return record.FixedIn == ""
 }
 
-// riesgos reúne los hallazgos CRITICAL y WARNING de la última revisión de
-// cada ficha pendiente (los ADVISORY son información, no riesgos). Las fichas
-// corregidas (FixedIn) no aportan riesgos pendientes.
+// pendingRisks collects the CRITICAL and WARNING findings of the latest
+// revision of each pending record (ADVISORY ones are information, not
+// risks). Fixed records (FixedIn) contribute no pending risks.
 //
-// T6.5: lee ultima.HallazgosEfectivos() (ledger.go) — el único punto de
-// selección que también consume BloqueantesDeRama más abajo — en vez de
-// bifurcar entre AggregatedFindings y Dims aquí mismo. Eso evita el bug de
-// diseño de T6.5 (un hallazgo semántico ya superseded por T6.2 solo
-// desaparecía de riesgos(), nunca de BloqueantesDeRama) y el continue
-// incondicional que podía tomar control de la ficha sin haber comprobado
-// severidad primero.
-func riesgos(fichas []Ficha) []string {
-	return riesgosWithDispositions(fichas, nil)
+// T6.5: reads last.EffectiveFindings() (ledger.go) — the single selection
+// point BranchBlockers further down also consumes — instead of forking
+// between AggregatedFindings and Dims right here. That avoids the T6.5
+// design bug (a semantic finding already superseded by T6.2 only
+// disappeared from pendingRisks(), never from BranchBlockers) and the
+// unconditional continue that could take over the record without checking
+// severity first.
+func pendingRisks(records []Record) []string {
+	return pendingRisksWithDispositions(records, nil)
 }
 
-func riesgosWithDispositions(fichas []Ficha, dispositions []FindingDisposition) []string {
-	var lineas []string
-	for _, candidate := range effectiveBranchFindings(fichas, dispositions) {
+func pendingRisksWithDispositions(records []Record, dispositions []FindingDisposition) []string {
+	var lines []string
+	for _, candidate := range effectiveBranchFindings(records, dispositions) {
 		h := candidate.finding
 		if h.Severity != SevWarning && !IsBlocking(h.Severity, h.Status) {
 			continue
@@ -207,41 +208,41 @@ func riesgosWithDispositions(fichas []Ficha, dispositions []FindingDisposition) 
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		lineas = append(lineas, renderMergedFinding(sha, h))
+		lines = append(lines, renderMergedFinding(sha, h))
 	}
-	return lineas
+	return lines
 }
 
 type branchFinding struct {
 	sha     string
-	finding Hallazgo
+	finding Finding
 }
 
 // effectiveBranchFindings is the one branch-level projection for consumers
 // that need an individual finding rather than only its legacy v1 rendering.
-// It keeps SHA-scoped disposition overlaying and pending-ficha selection out
-// of renderer and gate call sites.
-func effectiveBranchFindings(fichas []Ficha, dispositions []FindingDisposition) []branchFinding {
+// It keeps SHA-scoped disposition overlaying and pending-record selection
+// out of renderer and gate call sites.
+func effectiveBranchFindings(records []Record, dispositions []FindingDisposition) []branchFinding {
 	var out []branchFinding
-	for _, ficha := range fichas {
-		if !estaPendiente(ficha) {
+	for _, record := range records {
+		if !isPending(record) {
 			continue
 		}
-		ultima, ok := ultimaRevision(ficha)
+		last, ok := lastRevision(record)
 		if !ok {
 			continue
 		}
-		for _, h := range ApplyDispositions(ultima.FindingsWithDispositions(), FilterDispositionsForSHA(dispositions, ficha.SHA)) {
-			out = append(out, branchFinding{sha: ficha.SHA, finding: h})
+		for _, h := range ApplyDispositions(last.FindingsWithDispositions(), FilterDispositionsForSHA(dispositions, record.SHA)) {
+			out = append(out, branchFinding{sha: record.SHA, finding: h})
 		}
 	}
 	return out
 }
 
-// mergedFindingSourceLabel distinguishes a merged Hallazgo's origin for
+// mergedFindingSourceLabel distinguishes a merged Finding's origin for
 // rendering (T6.5): SourceReview is a semantic LLM inference, SourceValidation
 // a deterministic command. Any other value (or none) is labeled "unknown"
-// rather than guessed, since a Hallazgo can only be trusted to say what it
+// rather than guessed, since a Finding can only be trusted to say what it
 // actually declares.
 func mergedFindingSourceLabel(source string) string {
 	switch source {
@@ -258,8 +259,8 @@ func mergedFindingSourceLabel(source string) string {
 // embedded in the PR body Markdown (T6.5 review finding: security WARNING).
 // Evidence/FindingEvidence.Evidence can be the incriminating code fragment
 // itself — for a security finding, possibly an embedded secret — and the PR
-// body is an external, indexable, cached surface. recortarRunas (already
-// used by TruncarCuerpo for the whole body) bounds it the same way, never
+// body is an external, indexable, cached surface. truncateRunes (already
+// used by TruncateBody for the whole body) bounds it the same way, never
 // splitting a UTF-8 rune.
 const evidenceEmbedMaxBytes = 300
 
@@ -267,19 +268,20 @@ const evidenceEmbedMaxBytes = 300
 // embedded in a Markdown list item published to the PR body (T6.5 review
 // findings: security WARNING x2). Evidence/FindingEvidence.Evidence is
 // untrusted output (an LLM inference or a command's literal stdout/stderr),
-// so it is: bounded in size with recortarRunas; collapsed to a single line
-// so an embedded newline cannot break or forge the surrounding Markdown list
-// structure; and wrapped in inline code, replacing any literal backtick it
-// already contains so it can never terminate the code span early.
-func sanitizeEvidence(evidencia string) string {
-	acotada := recortarRunas(evidencia, evidenceEmbedMaxBytes)
-	return "`" + sanitizeText(acotada) + "`"
+// so it is: bounded in size with truncateRunes; collapsed to a single line
+// so an embedded newline cannot break or forge the surrounding Markdown
+// list structure; and wrapped in inline code, replacing any literal
+// backtick it already contains so it can never terminate the code span
+// early.
+func sanitizeEvidence(evidence string) string {
+	bounded := truncateRunes(evidence, evidenceEmbedMaxBytes)
+	return "`" + sanitizeText(bounded) + "`"
 }
 
 // sanitizeText neutralizes free-form untrusted text before it is
 // interpolated into the same Markdown list item sanitizeEvidence already
-// guards. Hallazgo.Description and Location.Archivo share Evidence's
-// untrusted origin — both are decoded straight from the LLM's findingCrudo
+// guards. Finding.Description and Location.File share Evidence's
+// untrusted origin — both are decoded straight from the LLM's rawFinding
 // JSON output (finding.go), not from a value the guardian resolves itself —
 // so an embedded newline or backtick in either could otherwise break or
 // forge the surrounding Markdown list structure (T6.5bis review finding:
@@ -287,201 +289,201 @@ func sanitizeEvidence(evidencia string) string {
 // in inline code or bound its size: a description/path is prose, not an
 // evidence code fragment, and wrapping it in a code span would change its
 // visual meaning.
-func sanitizeText(texto string) string {
-	sinSaltos := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(texto)
-	return strings.ReplaceAll(sinSaltos, "`", "'")
+func sanitizeText(text string) string {
+	flattened := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(text)
+	return strings.ReplaceAll(flattened, "`", "'")
 }
 
 // mergedFindingEvidenceLines renders every corroborating evidence T6.1's
-// aggregation retained in EvidenceSet, one line per source. A Hallazgo that
+// aggregation retained in EvidenceSet, one line per source. A Finding that
 // never went through aggregation (EvidenceSet nil, or non-nil but with no
 // Values — e.g. deserialized from {"evidence_set":{"values":[]}}) falls back
 // to its single legacy Evidence string, so a merged-but-unique finding still
 // shows its one piece of evidence instead of nothing.
-func mergedFindingEvidenceLines(h Hallazgo) []string {
+func mergedFindingEvidenceLines(h Finding) []string {
 	if h.EvidenceSet == nil || len(h.EvidenceSet.Values) == 0 {
 		if strings.TrimSpace(h.Evidence) == "" {
 			return nil
 		}
 		return []string{fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", h.Dimension, sanitizeEvidence(h.Evidence), h.Confidence)}
 	}
-	lineas := make([]string, 0, len(h.EvidenceSet.Values))
+	lines := make([]string, 0, len(h.EvidenceSet.Values))
 	for _, v := range h.EvidenceSet.Values {
-		lineas = append(lineas, fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", v.Dimension, sanitizeEvidence(v.Evidence), v.Confidence))
+		lines = append(lines, fmt.Sprintf("  - evidence [%s]: %s (confidence %.2f)", v.Dimension, sanitizeEvidence(v.Evidence), v.Confidence))
 	}
-	return lineas
+	return lines
 }
 
-// renderMergedFinding renders one aggregated Hallazgo — the T6.1 merge +
-// T6.2 supersede result carried in ResultadoAuditoria.Findings — showing its
+// renderMergedFinding renders one aggregated Finding — the T6.1 merge +
+// T6.2 supersede result carried in AuditResult.Findings — showing its
 // distinguished Source and every accumulated evidence plus the combined
 // confidence, instead of the single Evidence string a raw per-dimension
 // ReviewFinding line shows. The location suffix is omitted entirely when no
 // location was resolved, instead of rendering the empty placeholder "(:0)"
 // (T6.5 review finding: logic ADVISORY). The "(source, confidence)" segment
 // is likewise omitted entirely when h.Source == "": that only happens for a
-// legacy v1 ReviewFinding converted by hallazgoDesdeReviewFinding, which
-// never had a real Source to report — stamparProductorEfectivo/
-// stamparSourceReview always stamp one on a real Hallazgo — so showing
-// "(unknown, confidence 0.00)" would fabricate a datum that does not exist
+// legacy v1 ReviewFinding converted by findingFromReviewFinding, which
+// never had a real Source to report — stampEffectiveProducer/
+// stampSourceReview always stamp one on a real Finding — so showing
+// "(unknown, confidence 0.00)" would invent a datum that does not exist
 // instead of reporting its absence (T6.5bis review finding: logic WARNING).
-// Description and Location.Archivo are sanitized with sanitizeText before
+// Description and Location.File are sanitized with sanitizeText before
 // interpolation: they share Evidence's untrusted LLM origin, so an embedded
 // newline or backtick in either must not be able to forge a Markdown list
 // line the same way an unsanitized Evidence could (T6.5bis review finding:
 // security WARNING).
-func renderMergedFinding(sha string, h Hallazgo) string {
-	ubicacion := ""
-	if h.Location.Archivo != "" {
-		ubicacion = fmt.Sprintf(" (%s:%d)", sanitizeText(h.Location.Archivo), h.Location.LineaInicio)
+func renderMergedFinding(sha string, h Finding) string {
+	location := ""
+	if h.Location.File != "" {
+		location = fmt.Sprintf(" (%s:%d)", sanitizeText(h.Location.File), h.Location.LineStart)
 	}
-	origen := ""
+	origin := ""
 	if h.Source != "" {
-		origen = fmt.Sprintf(" (%s, confidence %.2f)", mergedFindingSourceLabel(h.Source), h.Confidence)
+		origin = fmt.Sprintf(" (%s, confidence %.2f)", mergedFindingSourceLabel(h.Source), h.Confidence)
 	}
-	linea := fmt.Sprintf("- %s `%s` [%s] %s%s — %s%s",
-		severidadEmoji(h.Severity), sha, h.Dimension, h.Severity,
-		origen, sanitizeText(h.Description), ubicacion)
-	for _, evidencia := range mergedFindingEvidenceLines(h) {
-		linea += "\n" + evidencia
+	line := fmt.Sprintf("- %s `%s` [%s] %s%s — %s%s",
+		severityEmoji(h.Severity), sha, h.Dimension, h.Severity,
+		origin, sanitizeText(h.Description), location)
+	for _, evidence := range mergedFindingEvidenceLines(h) {
+		line += "\n" + evidence
 	}
-	return linea
+	return line
 }
 
-// RenderResumen construye el resumen de veredictos y riesgos de la rama:
-// conteo global, una fila por commit (resultado, modelo, revisiones y
-// corrección) y los riesgos CRITICAL/WARNING pendientes.
-func RenderResumen(fichas []Ficha) string {
-	if len(fichas) == 0 {
-		return "_No hay commits auditados._"
+// RenderSummary builds the branch's verdict and risk summary: the global
+// count, one row per commit (result, model, revisions and fix) and the
+// pending CRITICAL/WARNING risks.
+func RenderSummary(records []Record) string {
+	if len(records) == 0 {
+		return "_No audited commits._"
 	}
 
 	var b strings.Builder
-	b.WriteString("### Resumen\n")
-	b.WriteString(conteoResultados(fichas) + "\n\n")
-	b.WriteString("| Commit | Resultado | Modelo | Revs | Corregida |\n")
+	b.WriteString("### Summary\n")
+	b.WriteString(verdictCounts(records) + "\n\n")
+	b.WriteString("| Commit | Result | Model | Revs | Fixed |\n")
 	b.WriteString("|---|---|---|---|---|\n")
-	for _, ficha := range fichas {
-		ultima, ok := ultimaRevision(ficha)
+	for _, record := range records {
+		last, ok := lastRevision(record)
 		if !ok {
 			continue
 		}
-		sha := ficha.SHA
+		sha := record.SHA
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		corregida := "—"
-		if ficha.FixedIn != "" {
-			fi := ficha.FixedIn
+		fixed := "—"
+		if record.FixedIn != "" {
+			fi := record.FixedIn
 			if len(fi) > 7 {
 				fi = fi[:7]
 			}
-			corregida = fmt.Sprintf("🔧 corregida en `%s`", fi)
+			fixed = fmt.Sprintf("🔧 fixed in `%s`", fi)
 		}
 		b.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %d | %s |\n",
-			sha, veredictoEmoji(ultima.Result), ultima.Result, ficha.Model, len(ficha.Revisions), corregida))
+			sha, verdictEmoji(last.Result), last.Result, record.Model, len(record.Revisions), fixed))
 	}
 
-	b.WriteString("\n### Riesgos\n")
-	pendientes := riesgos(fichas)
-	if len(pendientes) == 0 {
-		b.WriteString("- Ninguno\n")
+	b.WriteString("\n### Risks\n")
+	pending := pendingRisks(records)
+	if len(pending) == 0 {
+		b.WriteString("- None\n")
 	} else {
-		for _, linea := range pendientes {
-			b.WriteString(linea + "\n")
+		for _, line := range pending {
+			b.WriteString(line + "\n")
 		}
 	}
 	return b.String()
 }
 
-// MarcadorTruncamiento es el texto que señala un cuerpo recortado.
-var MarcadorTruncamiento = "\n\n> ⚠️ Cuerpo truncado: se omitieron %d bytes.\n"
+// TruncationMarker is the text that marks a truncated body.
+var TruncationMarker = "\n\n> ⚠️ Body truncated: %d bytes omitted.\n"
 
-// LimiteCuerpoPR es el límite de tamaño del cuerpo de un PR (GitHub limita el
-// body). El render de la plantilla nunca supera este tamaño.
-const LimiteCuerpoPR = 65536
+// PRBodyLimit is the size limit of a PR body (GitHub caps it). The template
+// render never exceeds this size.
+const PRBodyLimit = 65536
 
-// recortarRunas recorta texto a maxBytes sin partir una runa UTF-8. Un límite
-// no positivo devuelve el texto vacío. El corte es válido si el primer byte
-// descartado inicia una runa; si es un byte de continuación, la runa quedó
-// partida y se retrocede un byte.
-func recortarRunas(texto string, maxBytes int) string {
+// truncateRunes truncates text to maxBytes without splitting a UTF-8 rune.
+// A non-positive limit returns the empty text. The cut is valid if the
+// first discarded byte starts a rune; if it is a continuation byte, the
+// rune was split and one byte is backed off.
+func truncateRunes(text string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
 	}
-	if len(texto) <= maxBytes {
-		return texto
+	if len(text) <= maxBytes {
+		return text
 	}
-	cortado := texto[:maxBytes]
-	for len(cortado) > 0 && !utf8.RuneStart(texto[len(cortado)]) {
-		cortado = cortado[:len(cortado)-1]
+	cut := text[:maxBytes]
+	for len(cut) > 0 && !utf8.RuneStart(text[len(cut)]) {
+		cut = cut[:len(cut)-1]
 	}
-	return cortado
+	return cut
 }
 
-// TruncarCuerpo recorta un texto al límite de bytes del body (GitHub limita
-// el cuerpo de un PR) marcando el truncamiento de forma explícita y con el
-// número exacto de bytes omitidos. El tamaño del resultado nunca supera
-// maxBytes y el corte nunca parte una runa UTF-8.
-func TruncarCuerpo(texto string, maxBytes int) string {
-	if maxBytes <= 0 || len(texto) <= maxBytes {
-		return texto
+// TruncateBody truncates a text to the PR body's byte limit (GitHub caps
+// the body), marking the truncation explicitly with the exact number of
+// omitted bytes. The result's size never exceeds maxBytes and the cut never
+// splits a UTF-8 rune.
+func TruncateBody(text string, maxBytes int) string {
+	if maxBytes <= 0 || len(text) <= maxBytes {
+		return text
 	}
 
-	// Presupuesto para el contenido: el marcador sin el número ocupa su
-	// tamaño fijo; los dígitos del conteo se ajustan después.
-	base := strings.Replace(MarcadorTruncamiento, "%d", "", 1)
-	presupuesto := maxBytes - len(base)
-	if presupuesto <= 0 {
-		return recortarRunas(fmt.Sprintf(MarcadorTruncamiento, 0), maxBytes)
+	// Budget for the content: the marker without the number takes its fixed
+	// size; the count digits are adjusted afterwards.
+	base := strings.Replace(TruncationMarker, "%d", "", 1)
+	budget := maxBytes - len(base)
+	if budget <= 0 {
+		return truncateRunes(fmt.Sprintf(TruncationMarker, 0), maxBytes)
 	}
 
-	conservado := recortarRunas(texto, presupuesto)
-	marcador := fmt.Sprintf(MarcadorTruncamiento, len(texto)-len(conservado))
-	if len(conservado)+len(marcador) > maxBytes {
-		// Los dígitos del conteo desplazan el marcador: recortar el
-		// contenido lo justo y recalcular con el número exacto.
-		exceso := len(conservado) + len(marcador) - maxBytes
-		conservado = recortarRunas(conservado, len(conservado)-exceso)
-		marcador = fmt.Sprintf(MarcadorTruncamiento, len(texto)-len(conservado))
+	kept := truncateRunes(text, budget)
+	marker := fmt.Sprintf(TruncationMarker, len(text)-len(kept))
+	if len(kept)+len(marker) > maxBytes {
+		// The count digits shift the marker: trim the content by just that
+		// excess and recompute with the exact number.
+		excess := len(kept) + len(marker) - maxBytes
+		kept = truncateRunes(kept, len(kept)-excess)
+		marker = fmt.Sprintf(TruncationMarker, len(text)-len(kept))
 	}
-	if len(conservado)+len(marcador) > maxBytes {
-		// Caso extremo (conteos con muchos dígitos): ni el marcador solo
-		// cabe, se recorta a sí mismo.
-		marcador = recortarRunas(marcador, maxBytes-len(conservado))
+	if len(kept)+len(marker) > maxBytes {
+		// Edge case (counts with many digits): even the marker alone does
+		// not fit, so it trims itself.
+		marker = truncateRunes(marker, maxBytes-len(kept))
 	}
-	return conservado + marcador
+	return kept + marker
 }
 
-// VeredictoDeRama resume el peor veredicto global de la rama: el del commit
-// con la revisión más severa. Ignora las fichas ya corregidas (FixedIn): su
-// block original fue resuelto en un commit posterior, y el gate no puede
-// bloquear la publicación por un hallazgo corregido. Sin fichas pendientes
-// devuelve VerdictOK. Lo usan la plantilla de PR y el gate de block de
-// pr create.
-func VeredictoDeRama(fichas []Ficha) string {
-	peor := VerdictOK
-	for _, ficha := range fichas {
-		if !estaPendiente(ficha) {
-			// Corregida: ya no aporta al veredicto de la rama.
+// VerdictDeBranch summarizes the branch's worst global verdict: the one of
+// the commit with the most severe revision. It ignores already-fixed
+// records (FixedIn): their original block was resolved in a later commit,
+// and the gate cannot block publication over a fixed finding. With no
+// pending records it returns VerdictOK. The PR template and the pr create
+// block gate use it.
+func VerdictDeBranch(records []Record) string {
+	worst := VerdictOK
+	for _, record := range records {
+		if !isPending(record) {
+			// Fixed: it no longer contributes to the branch verdict.
 			continue
 		}
-		ultima, ok := ultimaRevision(ficha)
+		last, ok := lastRevision(record)
 		if !ok {
 			continue
 		}
-		if ordenSeveridad(ultima.Result) > ordenSeveridad(peor) {
-			peor = ultima.Result
+		if verdictRank(last.Result) > verdictRank(worst) {
+			worst = last.Result
 		}
 	}
-	return peor
+	return worst
 }
 
-// ordenSeveridad ordena los veredictos para poder comparar gravedad.
-// Contrato de sincronización: al añadir un veredicto nuevo (constante
-// Verdict*), actualizar también este ranking y veredictoDeRama.
-func ordenSeveridad(veredicto string) int {
-	switch veredicto {
+// verdictRank orders verdicts so their severity can be compared. Sync
+// contract: when adding a new verdict (a Verdict* constant), update this
+// ranking and VerdictDeBranch too.
+func verdictRank(verdict string) int {
+	switch verdict {
 	case VerdictBlock:
 		return 4
 	case VerdictQuestion:
@@ -495,158 +497,160 @@ func ordenSeveridad(veredicto string) int {
 	}
 }
 
-// lineaRiesgo es la primera línea de la plantilla: emoji del veredicto de
-// auditoría (NO el estado de CI, guía §12.4) más el conteo global.
-func lineaRiesgo(fichas []Ficha) string {
-	vd := VeredictoDeRama(fichas)
-	return fmt.Sprintf("%s **Veredicto de auditoría: %s** — %s",
-		veredictoEmoji(vd), vd, conteoResultados(fichas))
+// riskLine is the template's first line: the audit verdict emoji (NOT the
+// CI status, guide §12.4) plus the global count.
+func riskLine(records []Record) string {
+	vd := VerdictDeBranch(records)
+	return fmt.Sprintf("%s **Audit verdict: %s** — %s",
+		verdictEmoji(vd), vd, verdictCounts(records))
 }
 
-func VerdictLine(res *ResultadoRama) string {
+func VerdictLine(res *BranchResult) string {
 	if res.Net == nil {
-		return lineaRiesgo(res.Fichas)
+		return riskLine(res.Records)
 	}
-	vd := res.Net.Audit.Veredicto
+	vd := res.Net.Audit.Verdict
 	return fmt.Sprintf("%s **Net audit verdict: %s** — %d finding(s) on net diff %.7s..%.7s",
-		veredictoEmoji(vd), vd, len(res.Net.Audit.Findings), res.Net.From, res.Net.To)
+		verdictEmoji(vd), vd, len(res.Net.Audit.Findings), res.Net.From, res.Net.To)
 }
 
-func InheritedSection(heredados []HallazgoHeredado) string {
-	if len(heredados) == 0 {
+func InheritedSection(inherited []InheritedFinding) string {
+	if len(inherited) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("## INHERITED (non-blocking)\n")
-	for _, h := range heredados {
-		fmt.Fprintf(&b, "- %.7s %s/%s\n", h.SHA, h.Hallazgo.Dimension, h.Hallazgo.Severity)
+	for _, h := range inherited {
+		fmt.Fprintf(&b, "- %.7s %s/%s\n", h.SHA, h.Finding.Dimension, h.Finding.Severity)
 	}
 	return b.String() + "\n"
 }
 
-// seccionVerificacion describe la verificación de forma honesta (§12.3):
-// exit codes reales por comando, contrato tested del agente o el motivo
-// explícito de por qué no se ejecutó. Nunca un PASS inventado.
-func seccionVerificacion(v VerificacionPlantilla) string {
+// verificationSection describes the verification honestly (§12.3): real
+// exit codes per command, the agent's tested contract, or the explicit
+// reason why it did not run. Never an invented PASS.
+func verificationSection(v TemplateVerification) string {
 	var b strings.Builder
-	switch v.Modo {
+	switch v.Mode {
 	case "determinista":
 		for _, c := range v.Comandos {
-			icono := "✅"
+			icon := "✅"
 			if c.Exit != 0 {
-				icono = "❌"
+				icon = "❌"
 			}
-			b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icono, c.Comando, c.Exit))
+			b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, c.Comando, c.Exit))
 		}
 	case "delegado":
 		for _, tested := range v.Tested {
 			b.WriteString(fmt.Sprintf("- 🤖 agent: `%s`\n", tested))
 		}
 	case "configurar":
-		b.WriteString("- ⏸️  Verificación no ejecutada: se detuvo para configurar `vassentinel.yml`.\n")
+		b.WriteString("- ⏸️  Verification not run: stopped to configure `vassentinel.yml`.\n")
 	case "omitido":
-		motivo := v.Motivo
-		if motivo == "" {
-			motivo = "omitido"
+		reason := v.Reason
+		if reason == "" {
+			reason = "skipped"
 		}
-		b.WriteString(fmt.Sprintf("- ⚪ Tests no ejecutados (%s).\n", motivo))
+		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (%s).\n", reason))
 	default:
-		b.WriteString("- ⚪ Tests no ejecutados.\n")
+		b.WriteString("- ⚪ Tests not run.\n")
 	}
 	return b.String()
 }
 
-// seccionValidacion describe la validación previa (T1.8, internal/validation):
-// exit codes reales de las capabilities ejecutadas ANTES de la revisión
-// semántica. Nunca inventa un PASS: sin comandos, lo dice explícitamente en
-// vez de omitirlo en silencio (misma regla de oro que seccionVerificacion).
-func seccionValidacion(cmds []ComandoVerificado) string {
+// validationSection describes the pre-audit validation (T1.8,
+// internal/validation): real exit codes of the capabilities run BEFORE the
+// semantic review. It never invents a PASS: with no commands it says so
+// explicitly instead of omitting it in silence (the same golden rule as
+// verificationSection).
+func validationSection(cmds []VerifiedCommand) string {
 	if len(cmds) == 0 {
-		return "- ⚪ Sin comandos de validación configurados.\n"
+		return "- ⚪ No validation commands configured.\n"
 	}
 	var b strings.Builder
 	for _, c := range cmds {
-		icono := "✅"
+		icon := "✅"
 		if c.Exit != 0 {
-			icono = "❌"
+			icon = "❌"
 		}
-		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icono, c.Comando, c.Exit))
+		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, c.Comando, c.Exit))
 	}
 	return b.String()
 }
 
-// BloqueantesDeRama devuelve los hallazgos CRITICAL de la última revisión de
-// cada ficha: son los bloqueos del gate de pr create (guía §12.4). Las fichas
-// corregidas (FixedIn) no aportan bloqueantes: su block ya fue resuelto en un
-// commit posterior.
+// BranchBlockers returns the CRITICAL findings of the latest revision of
+// each record: they are the pr create gate's blockers (guide §12.4). Fixed
+// records (FixedIn) contribute no blockers: their block was already
+// resolved in a later commit.
 //
-// T6.5 review finding (design, el más importante): antes leía solo Dims, sin
-// el supersede de T6.2 — un hallazgo semántico ya descartado por estar
-// superado por uno determinista seguía bloqueando aquí aunque riesgos() ya
-// no lo mostrara. Ahora consume ultima.HallazgosEfectivos() (ledger.go), el
-// mismo punto de selección que riesgos(), y proyecta el resultado de vuelta a
-// []ReviewFinding para no romper el contrato público: el único llamador real
-// (avisoSemantico en cmd/sentinel/comandos_pr.go) solo usa Severity/File/
-// Line/Description, así que cambiar la firma pública era más invasivo de lo
-// necesario para arreglar el bug real.
+// T6.5 review finding (design, the most important one): it used to read
+// only Dims, without the T6.2 supersede — a semantic finding already
+// discarded for being superseded by a deterministic one kept blocking here
+// even though pendingRisks() no longer showed it. It now consumes
+// last.EffectiveFindings() (ledger.go), the same selection point as
+// pendingRisks(), and projects the result back to []ReviewFinding to avoid
+// breaking the public contract: the only real caller (in
+// cmd/sentinel/comandos_pr.go) only uses Severity/File/Line/Description, so
+// changing the public signature was more invasive than what fixing the real
+// bug required.
 //
-// FU-6: the selection moved from HallazgosEfectivos to the effective
+// FU-6: the selection moved from EffectiveFindings to the effective
 // disposition view (FindingsWithDispositions plus the standing human answers,
 // decided by the shared IsBlocking rule), so this gate, the engine, and the
 // gate package agree about the same record. A CRITICAL finding the ledger
 // already records as refuted or fixed no longer blocks here.
-func BloqueantesDeRama(fichas []Ficha) []ReviewFinding {
-	return BloqueantesDeRamaWithDispositions(fichas, nil)
+func BranchBlockers(records []Record) []ReviewFinding {
+	return BranchBlockersWithDispositions(records, nil)
 }
 
-// BloqueantesDeRamaWithDispositions returns the branch blockers after
+// BranchBlockersWithDispositions returns the branch blockers after
 // overlaying the append-only human dispositions recorded against each
-// ficha's SHA. It observes the same effective disposition as the engine and
+// record's SHA. It observes the same effective disposition as the engine and
 // the gate: FindingsWithDispositions restores the lifecycle each revision
 // recorded, ApplyDispositions overlays the standing human answers, and the
-// shared IsBlocking rule decides. BloqueantesDeRama delegates with no
+// shared IsBlocking rule decides. BranchBlockers delegates with no
 // external answers.
-func BloqueantesDeRamaWithDispositions(fichas []Ficha, dispositions []FindingDisposition) []ReviewFinding {
-	var bloqueantes []ReviewFinding
-	for _, candidate := range effectiveBranchFindings(fichas, dispositions) {
+func BranchBlockersWithDispositions(records []Record, dispositions []FindingDisposition) []ReviewFinding {
+	var blockers []ReviewFinding
+	for _, candidate := range effectiveBranchFindings(records, dispositions) {
 		if IsBlocking(candidate.finding.Severity, candidate.finding.Status) {
-			bloqueantes = append(bloqueantes, reviewFindingDesdeHallazgo(candidate.finding))
+			blockers = append(blockers, reviewFindingFromFinding(candidate.finding))
 		}
 	}
-	return bloqueantes
+	return blockers
 }
 
-func RenderBranchPRTemplate(res *ResultadoRama, verificacion VerificacionPlantilla, version string) string {
-	return RenderBranchPRTemplateWithDispositions(res, verificacion, version, nil)
+func RenderBranchPRTemplate(res *BranchResult, verification TemplateVerification, version string) string {
+	return RenderBranchPRTemplateWithDispositions(res, verification, version, nil)
 }
 
 // RenderBranchPRTemplateWithDispositions renders a PR template from the
 // same effective finding projection used by the branch blockers.
-func RenderBranchPRTemplateWithDispositions(res *ResultadoRama, verificacion VerificacionPlantilla, version string, dispositions []FindingDisposition) string {
+func RenderBranchPRTemplateWithDispositions(res *BranchResult, verification TemplateVerification, version string, dispositions []FindingDisposition) string {
 	var b strings.Builder
 	b.WriteString(VerdictLine(res) + "\n\n")
 
-	// Validación previa (T1.8): lo que corrió ANTES de auditar, en su propia
-	// sección — nunca mezclada con la verificación post-hoc de más abajo.
-	b.WriteString("## Validación\n")
-	b.WriteString(seccionValidacion(verificacion.Validacion) + "\n")
+	// Pre-audit validation (T1.8): what ran BEFORE auditing, in its own
+	// section — never mixed with the post-hoc verification below.
+	b.WriteString("## Validation\n")
+	b.WriteString(validationSection(verification.Validation) + "\n")
 
 	b.WriteString("## Rationale\n")
 	if res.Overview != nil {
 		b.WriteString(res.Overview.Rationale + "\n\n")
 	} else {
-		b.WriteString("_Sin overview: revisa los commits individuales._\n\n")
+		b.WriteString("_No overview: review the individual commits._\n\n")
 	}
 
 	b.WriteString("OWN (per-commit audit)\n")
-	b.WriteString(RenderMatriz(res.Fichas) + "\n\n")
+	b.WriteString(RenderMatrix(res.Records) + "\n\n")
 
-	b.WriteString(InheritedSection(res.Heredados))
+	b.WriteString(InheritedSection(res.Inherited))
 
-	b.WriteString("## Riesgos\n")
+	b.WriteString("## Risks\n")
 	var pending []string
 	if res.Net == nil {
-		pending = riesgosWithDispositions(res.Fichas, dispositions)
+		pending = pendingRisksWithDispositions(res.Records, dispositions)
 	} else {
 		for _, h := range res.Net.Audit.Findings {
 			if h.Severity == SevCritical || h.Severity == SevWarning {
@@ -663,13 +667,13 @@ func RenderBranchPRTemplateWithDispositions(res *ResultadoRama, verificacion Ver
 		b.WriteString("\n")
 	}
 
-	b.WriteString("## Verificación\n")
-	b.WriteString(seccionVerificacion(verificacion) + "\n")
+	b.WriteString("## Verification\n")
+	b.WriteString(verificationSection(verification) + "\n")
 
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("_Generated by VAS Sentinel %s — auditoría de commits, no CI._\n", version))
-	return TruncarCuerpo(b.String(), LimiteCuerpoPR)
+	b.WriteString(fmt.Sprintf("_Generated by VAS Sentinel %s — commit audit, not CI._\n", version))
+	return TruncateBody(b.String(), PRBodyLimit)
 }
-func RenderPlantillaPr(fichas []Ficha, overview *ResultadoOverview, verificacion VerificacionPlantilla, version string) string {
-	return RenderBranchPRTemplate(&ResultadoRama{Fichas: fichas, Overview: overview}, verificacion, version)
+func RenderPRTemplate(records []Record, overview *OverviewResult, verification TemplateVerification, version string) string {
+	return RenderBranchPRTemplate(&BranchResult{Records: records, Overview: overview}, verification, version)
 }

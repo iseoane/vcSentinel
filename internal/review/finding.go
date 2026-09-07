@@ -13,8 +13,8 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
-// Dimensiones canónicas de auditoría. Son el contrato Go + prompt del agente:
-// el vocabulario en inglés es fijo y validado de forma estricta.
+// Canonical audit dimensions. They are the Go + prompt contract with the
+// agent: the English vocabulary is fixed and validated strictly.
 const (
 	DimLogic    = reviewcontract.DimensionLogic
 	DimStyle    = reviewcontract.DimensionStyle
@@ -24,14 +24,14 @@ const (
 	DimSpec     = reviewcontract.DimensionSpec
 )
 
-// Severidades de un hallazgo.
+// Severities of a finding.
 const (
 	SevCritical = "CRITICAL"
 	SevWarning  = "WARNING"
 	SevAdvisory = "ADVISORY"
 )
 
-// Veredictos de una dimensión.
+// Verdicts of a dimension.
 const (
 	VerdictOK          = "ok"
 	VerdictWarn        = "warn"
@@ -40,7 +40,7 @@ const (
 	VerdictUnavailable = "unavailable"
 )
 
-var veredictosValidos = map[string]bool{
+var validVerdicts = map[string]bool{
 	VerdictOK:          true,
 	VerdictWarn:        true,
 	VerdictBlock:       true,
@@ -48,18 +48,18 @@ var veredictosValidos = map[string]bool{
 	VerdictUnavailable: true,
 }
 
-// Linea es el número de línea de un hallazgo. Los agentes a veces emiten
-// "line" como número y a veces como string ("126"); UnmarshalJSON acepta
-// ambos para que un string numérico no descarte el hallazgo completo.
-type Linea int
+// Line is the line number of a finding. Agents sometimes emit "line" as a
+// number and sometimes as a string ("126"); UnmarshalJSON accepts both so a
+// numeric string does not discard the whole finding.
+type Line int
 
 // UnmarshalJSON accepts a JSON number or a numeric string. A non-numeric
-// string returns an error: Linea is the PERSISTED shape and stays strict
+// string returns an error: Line is the PERSISTED shape and stays strict
 // (the ledger must not silence a corrupted line on reload). Agent-input
 // tolerance — any non-numeric value leaves the line at 0 and preserves the
-// raw text in LineRaw — lives in lineaCruda (FU-19), which findingCrudo uses
+// raw text in LineRaw — lives in rawLine (FU-19), which rawFinding uses
 // when parsing.
-func (l *Linea) UnmarshalJSON(b []byte) error {
+func (l *Line) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '"' {
 		var s string
 		if err := json.Unmarshal(b, &s); err != nil {
@@ -67,31 +67,31 @@ func (l *Linea) UnmarshalJSON(b []byte) error {
 		}
 		n, err := strconv.Atoi(strings.TrimSpace(s))
 		if err != nil {
-			return fmt.Errorf("línea no numérica %q", s)
+			return fmt.Errorf("non-numeric line %q", s)
 		}
-		*l = Linea(n)
+		*l = Line(n)
 		return nil
 	}
 	var n int
 	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	*l = Linea(n)
+	*l = Line(n)
 	return nil
 }
 
-// ReviewFinding es un hallazgo concreto del agente sobre una línea de un
-// archivo del commit auditado.
+// ReviewFinding is a concrete finding from the agent about one line of a
+// file in the audited commit.
 type ReviewFinding struct {
 	Dimension string `json:"dimension"`
 	File      string `json:"file"`
-	Line      Linea  `json:"line"`
+	Line      Line   `json:"line"`
 	// LineRaw preserves the raw "line" text an agent emitted when it was not
 	// a number (e.g. the range "17-19, 23-48"). FU-19 keeps such a finding
 	// with Line=0 (unknown) instead of discarding it, and persists the raw
 	// text here so the operator can read what the agent actually cited:
-	// Advertencias is memory-only (json:"-"), this field survives in the
-	// ficha. Deliberately never a Fingerprint input: it is untrusted
+	// Warnings is memory-only (json:"-"), this field survives in the
+	// persisted record. Deliberately never a Fingerprint input: it is untrusted
 	// provider formatting, and the fingerprint must stay line-independent.
 	// Empty unless the parse fell back to unknown, so existing persisted
 	// records marshal byte-identically.
@@ -113,16 +113,16 @@ type ReviewFinding struct {
 	RefutationActor string `json:"refutation_actor,omitempty"`
 }
 
-// Fuentes posibles de un Hallazgo (finding v2): de qué produjo el hallazgo.
+// Possible sources of a Finding (finding v2): what produced the finding.
 const (
-	SourceValidation = "validation" // comando determinista (internal/validation)
-	SourceReview     = "review"     // inferencia semántica de un agente LLM
+	SourceValidation = "validation" // deterministic command (internal/validation)
+	SourceReview     = "review"     // semantic inference from an LLM agent
 )
 
-// Estados del ciclo de vida de un Hallazgo (finding v2). pending es el
-// estado inicial; confirmed/refuted los fija la refutación mecánica o el
-// agente; accepted_by_user y reopened los fija un humano; fixed lo fija la
-// verificación posterior al parche.
+// Lifecycle states of a Finding (finding v2). pending is the initial
+// state; confirmed/refuted are set by mechanical refutation or by the
+// agent; accepted_by_user and reopened are set by a human; fixed is set by
+// post-patch verification.
 const (
 	StatusPending        = "pending"
 	StatusConfirmed      = "confirmed"
@@ -146,64 +146,66 @@ func NormalizeStatus(status string) string {
 	return strings.ToLower(strings.TrimSpace(status))
 }
 
-// Niveles de confianza para aplicar automáticamente la corrección sugerida
-// de un Hallazgo. safe: aplicable sin revisión; needs_review: aplicable pero
-// un humano debe confirmar; manual: no hay corrección mecánica posible.
+// Confidence levels for automatically applying a Finding's suggested fix.
+// safe: applicable without review; needs_review: applicable but a human
+// must confirm; manual: no mechanical fix is possible.
 const (
 	FixableSafe        = "safe"
 	FixableNeedsReview = "needs_review"
 	FixableManual      = "manual"
 )
 
-// Productor identifica quién o qué generó un Hallazgo: un agente LLM (con su
-// modelo y esfuerzo) o un comando determinista (binario). ModeloVerificado
-// distingue un modelo cuyo nombre fue confirmado por el propio agente
-// (p. ej. vía --version o metadata de la API) de uno asumido por config.
-type Productor struct {
-	Agente           string `json:"agent"`
-	Binario          string `json:"binary,omitempty"`
-	Modelo           string `json:"model,omitempty"`
-	Esfuerzo         string `json:"reasoning_effort,omitempty"`
-	ModeloVerificado bool   `json:"model_verified"`
+// Producer identifies who or what generated a Finding: an LLM agent (with
+// its model and effort) or a deterministic command (binary). ModelVerified
+// distinguishes a model whose name was confirmed by the agent itself (e.g.
+// via --version or API metadata) from one assumed by configuration.
+type Producer struct {
+	Agent         string `json:"agent"`
+	Binary        string `json:"binary,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Effort        string `json:"reasoning_effort,omitempty"`
+	ModelVerified bool   `json:"model_verified"`
 }
 
-// Ubicacion sitúa un Hallazgo en el código. Blob es el hash del contenido del
-// archivo en el momento del hallazgo: permite detectar si el archivo cambió
-// desde entonces sin depender de que la línea siga significando lo mismo.
-type Ubicacion struct {
-	Archivo     string `json:"file"`
-	Blob        string `json:"blob,omitempty"`
-	LineaInicio int    `json:"line_start"`
-	LineaFin    int    `json:"line_end,omitempty"`
-	Simbolo     string `json:"symbol,omitempty"`
+// Location places a Finding in the code. Blob is the hash of the file
+// content at the moment of the finding: it lets one detect whether the file
+// changed since then without depending on the line still meaning the same
+// thing.
+type Location struct {
+	File      string `json:"file"`
+	Blob      string `json:"blob,omitempty"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end,omitempty"`
+	Simbolo   string `json:"symbol,omitempty"`
 }
 
-// Hallazgo es el finding v2: convive con ReviewFinding (v1) sin sustituirlo.
-// Añade procedencia (Source/Producer), certeza (Confidence), ciclo de vida
-// (Status) y evidencia literal para que un falso positivo se pueda refutar
-// mecánicamente sin releer el código a mano.
+// Finding is finding v2: it coexists with ReviewFinding (v1) without
+// replacing it. It adds provenance (Source/Producer), certainty
+// (Confidence), lifecycle (Status) and literal evidence so a false positive
+// can be refuted mechanically without re-reading the code by hand.
 //
-// internal/validation.Hallazgo (F1) tiene forma similar (Source/Severity/
-// Evidencia) pero nació en otro paquete para otro propósito: el resultado de
-// un comando determinista (lint/test/build), no de un agente LLM. Esta
-// estructura NO importa ni depende de internal/validation a propósito: son
-// conceptos análogos, no el mismo tipo, y unificarlos (si llega a hacer
-// falta) es tarea de una fase futura (F6, agregador, según el README de
-// reingeniería). Un Hallazgo con Source=SourceValidation se rellenaría con
-// Confidence: 1.0 (certeza total: es un exit code real, no una inferencia
-// semántica) y Producer describiendo el comando ejecutado (Binario/Agente)
-// en vez de un modelo LLM (Modelo/Esfuerzo/ModeloVerificado quedarían vacíos).
-type Hallazgo struct {
+// internal/validation.Hallazgo (F1) has a similar shape (Source/Severity/
+// Evidence) but was born in another package for another purpose: the result
+// of a deterministic command (lint/test/build), not of an LLM agent. This
+// struct deliberately does NOT import nor depend on internal/validation:
+// they are analogous concepts, not the same type, and unifying them (if it
+// is ever needed) is the job of a future phase (F6, aggregator, per the
+// reengineering README). A Finding with Source=SourceValidation would be
+// filled with Confidence: 1.0 (full certainty: it is a real exit code, not
+// a semantic inference) and a Producer describing the executed command
+// (Binary/Agent) instead of an LLM model (Model/Effort/ModelVerified
+// would stay empty).
+type Finding struct {
 	ID                  string              `json:"id"`
 	Source              string              `json:"source"`
-	Producer            Productor           `json:"producer"`
+	Producer            Producer            `json:"producer"`
 	Dimension           string              `json:"dimension"`
 	Severity            string              `json:"severity"`
 	Confidence          float64             `json:"confidence"`
 	Status              string              `json:"status"`
 	Title               string              `json:"title"`
 	Description         string              `json:"description"`
-	Location            Ubicacion           `json:"location"`
+	Location            Location            `json:"location"`
 	Evidence            string              `json:"evidence"`
 	EvidenceSet         *FindingEvidenceSet `json:"evidence_set,omitempty"`
 	Impact              string              `json:"impact,omitempty"`
@@ -232,160 +234,160 @@ type Hallazgo struct {
 
 // FindingEvidence records the source evidence preserved during aggregation.
 type FindingEvidence struct {
-	Dimension  string    `json:"dimension"`
-	Producer   Productor `json:"producer"`
-	Evidence   string    `json:"evidence"`
-	Confidence float64   `json:"confidence"`
+	Dimension  string   `json:"dimension"`
+	Producer   Producer `json:"producer"`
+	Evidence   string   `json:"evidence"`
+	Confidence float64  `json:"confidence"`
 }
 
 // FindingEvidenceSet holds the evidence retained by an aggregated finding.
-// A pointer keeps Hallazgo comparable for existing consumers.
+// A pointer keeps Finding comparable for existing consumers.
 type FindingEvidenceSet struct {
 	Values []FindingEvidence `json:"values"`
 }
 
-// Motivos de descarte de un Hallazgo durante la validación de evidencia.
+// Reasons for dismissing a Finding during evidence validation.
 const (
-	MotivoSinEvidencia          = "sin evidencia: Evidence vacío"
-	MotivoArchivoNoResuelto     = "no se pudo resolver el contenido del archivo citado"
-	MotivoEvidenciaNoEncontrada = "la evidencia no aparece literalmente en el contenido del archivo"
+	ReasonNoEvidence       = "no evidence: the Evidence field is empty"
+	ReasonFileUnresolved   = "could not resolve the content of the cited file"
+	ReasonEvidenceNotFound = "the evidence does not appear literally in the file content"
 )
 
-// Descarte registra por qué se descartó un Hallazgo al validar su evidencia.
-// Descartar un hallazgo nunca invalida la ejecución completa (T2.2): el
-// motivo viaja junto al hallazgo para que quede trazabilidad de qué se perdió
-// y por qué, sin abortar la validación de los demás.
-type Descarte struct {
-	Hallazgo Hallazgo
-	Motivo   string
+// Dismissal records why a Finding was dismissed during evidence validation.
+// Dismissing a finding never invalidates the whole execution (T2.2): the
+// reason travels with the finding so there is traceability of what was lost
+// and why, without aborting the validation of the rest.
+type Dismissal struct {
+	Finding Finding
+	Reason  string
 }
 
-// HallazgosConEvidenciaValida filtra los Hallazgo (finding v2) cuya Evidence
-// no se puede comprobar mecánicamente contra el contenido real del archivo
-// que citan: es el filtro más barato contra alucinaciones de un LLM, sin
-// necesidad de que otro modelo lo juzgue.
+// FindingsWithValidEvidence filters the Findings (finding v2) whose Evidence
+// cannot be checked mechanically against the real content of the file they
+// cite: it is the cheapest filter against LLM hallucinations, without
+// needing another model to judge it.
 //
-// leerContenido es una costura de inyección deliberada: internal/review NO
-// importa internal/git para no acoplar el modelo de dominio de la auditoría
-// a la implementación concreta de lectura de git. Quien llama pasa un cierre
-// (p. ej. sobre git.ContenidoDeArchivoEnCommit) atado al commit que se está
-// auditando.
+// read is a deliberate injection seam: internal/review does NOT import
+// internal/git so the audit domain model stays decoupled from the concrete
+// git reading implementation. The caller passes a closure (e.g. over
+// git.FileContentAtCommit) bound to the commit being audited.
 //
-// Un hallazgo se descarta si Evidence está vacío, si Location.Archivo está
-// vacío o su contenido no se puede resolver, o si Evidence (normalizado) no
-// aparece literalmente en el contenido del archivo (normalizado). Descartar
-// un hallazgo nunca detiene la validación de los demás ni propaga el error
-// de leerContenido hacia arriba: de N hallazgos, si uno es inválido, los
-// otros N-1 sobreviven intactos.
-func HallazgosConEvidenciaValida(hallazgos []Hallazgo, leerContenido func(archivo string) (string, error)) ([]Hallazgo, []Descarte) {
-	validos := make([]Hallazgo, 0, len(hallazgos))
-	var descartes []Descarte
-	for _, h := range hallazgos {
-		if motivo := motivoDescarteEvidencia(h, leerContenido); motivo != "" {
-			descartes = append(descartes, Descarte{Hallazgo: h, Motivo: motivo})
+// A finding is dismissed if Evidence is empty, if Location.File is empty or
+// its content cannot be resolved, or if Evidence (normalized) does not
+// appear literally in the (normalized) file content. Dismissing a finding
+// never stops the validation of the others nor propagates the read error
+// upward: of N findings, if one is invalid, the other N-1 survive intact.
+func FindingsWithValidEvidence(findings []Finding, read func(file string) (string, error)) ([]Finding, []Dismissal) {
+	valid := make([]Finding, 0, len(findings))
+	var dismissals []Dismissal
+	for _, h := range findings {
+		if reason := discardEvidenceReason(h, read); reason != "" {
+			dismissals = append(dismissals, Dismissal{Finding: h, Reason: reason})
 			continue
 		}
-		validos = append(validos, h)
+		valid = append(valid, h)
 	}
-	return validos, descartes
+	return valid, dismissals
 }
 
-// motivoDescarteEvidencia devuelve el motivo por el que un Hallazgo se
-// descartaría, o "" si su evidencia es válida.
-func motivoDescarteEvidencia(h Hallazgo, leerContenido func(archivo string) (string, error)) string {
+// discardEvidenceReason returns the reason a Finding would be dismissed
+// for, or "" if its evidence is valid.
+func discardEvidenceReason(h Finding, read func(file string) (string, error)) string {
 	if strings.TrimSpace(h.Evidence) == "" {
-		return MotivoSinEvidencia
+		return ReasonNoEvidence
 	}
-	if strings.TrimSpace(h.Location.Archivo) == "" {
-		return MotivoArchivoNoResuelto
+	if strings.TrimSpace(h.Location.File) == "" {
+		return ReasonFileUnresolved
 	}
-	contenido, err := leerContenido(h.Location.Archivo)
+	content, err := read(h.Location.File)
 	if err != nil {
-		return MotivoArchivoNoResuelto
+		return ReasonFileUnresolved
 	}
-	if !contieneEvidenciaNormalizada(contenido, h.Evidence) {
-		return MotivoEvidenciaNoEncontrada
+	if !containsNormalizedEvidence(content, h.Evidence) {
+		return ReasonEvidenceNotFound
 	}
 	return ""
 }
 
-// normalizarParaComparar recorta espacios al principio/final de cada línea y
-// unifica fin de línea (\r\n -> \n), solo para comparar evidencia: tolera que
-// un LLM reindente al citar código sin tolerar un parecido vago (no toca nada
-// más: ni comentarios ni indentación intermedia).
-func normalizarParaComparar(s string) string {
+// normalizeForComparison trims leading/trailing whitespace of every line and
+// unifies line endings (\r\n -> \n), only for evidence comparison: it
+// tolerates an LLM reindenting the code it cites without tolerating a vague
+// similarity (it touches nothing else: not comments, not intermediate
+// indentation).
+func normalizeForComparison(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	lineas := strings.Split(s, "\n")
-	for i, linea := range lineas {
-		lineas[i] = strings.TrimSpace(linea)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
 	}
-	return strings.Join(lineas, "\n")
+	return strings.Join(lines, "\n")
 }
 
-// contieneEvidenciaNormalizada reports whether the recorded evidence still
+// containsNormalizedEvidence reports whether the recorded evidence still
 // appears in the file content under the same normalization the fingerprint
 // uses. The search spans the whole file, so a moved line still matches while
 // removed evidence does not. Single home for the containment check shared by
 // the ledger stale-evidence discard and the net carry-over revalidation.
-func contieneEvidenciaNormalizada(contenido, evidencia string) bool {
-	return strings.Contains(normalizarParaComparar(contenido), normalizarParaComparar(evidencia))
+func containsNormalizedEvidence(content, evidence string) bool {
+	return strings.Contains(normalizeForComparison(content), normalizeForComparison(evidence))
 }
 
-// Fingerprint calcula una huella estable de un Hallazgo (finding v2) para
-// poder rastrear "el mismo defecto" entre dos revisiones aunque el archivo se
-// haya reindentado o se haya renumerado por una edición en otra parte: no usa
-// Location.LineaInicio/LineaFin (los números de línea son el dato menos
-// estable del hallazgo, cambian con cualquier edición previa en el archivo) ni
-// Location.Blob (identifica una versión exacta del archivo, no el defecto en
-// sí, que puede sobrevivir varios commits sin tocarse).
+// Fingerprint computes a stable fingerprint of a Finding (finding v2) so
+// "the same defect" can be tracked between two revisions even when the file
+// was reindented or renumbered by an edit elsewhere: it does not use
+// Location.LineStart/LineEnd (line numbers are the least stable datum of a
+// finding: they change with any earlier edit in the file) nor Location.Blob
+// (it identifies an exact version of the file, not the defect itself, which
+// can survive several commits without being touched).
 //
-// Componentes, en este orden:
-//  1. Dimension: la categoría del hallazgo (logic, security, ...).
-//  2. Location.Simbolo si está disponible (más preciso: sobrevive a que el
-//     símbolo se mueva de línea o incluso de archivo); si el agente no lo
-//     resolvió, cae en Location.Archivo para no colisionar hallazgos de
-//     archivos distintos bajo una clave vacía.
-//  3. Evidence normalizada con normalizarParaComparar (T2.2): la misma
-//     normalización que ya tolera reindentado al validar evidencia contra el
-//     contenido del archivo: aquí sirve exactamente para lo mismo, tolerar
-//     reindentado sin duplicar la lógica de comparación.
-//  4. Title como "regla": Description e Impact narran detalles concretos de
-//     la instancia (qué línea, qué valor, qué consecuencia observada), que
-//     varían aunque el TIPO de defecto sea el mismo; Title es la etiqueta que
-//     el propio agente usa para nombrar el tipo de problema (p. ej.
-//     "condición siempre verdadera") y se repite igual entre instancias del
-//     mismo defecto, que es justo lo que necesita la propiedad de "regla".
-func Fingerprint(h Hallazgo) string {
-	simboloORuta := h.Location.Simbolo
-	if simboloORuta == "" {
-		simboloORuta = h.Location.Archivo
+// Components, in this order:
+//  1. Dimension: the category of the finding (logic, security, ...).
+//  2. Location.Simbolo when available (more precise: it survives the symbol
+//     moving to another line or even another file); when the agent did not
+//     resolve it, fall back to Location.File so findings from different
+//     files do not collide under an empty key.
+//  3. Evidence normalized with normalizeForComparison (T2.2): the same
+//     normalization that already tolerates reindentation when validating
+//     evidence against the file content; here it serves exactly the same
+//     purpose, tolerating reindentation without duplicating the comparison
+//     logic.
+//  4. Title as the "rule": Description and Impact narrate concrete details
+//     of the instance (which line, which value, which observed consequence),
+//     which vary even when the TYPE of defect is the same; Title is the
+//     label the agent itself uses to name the kind of problem (e.g.
+//     "always-true condition") and repeats identically across instances of
+//     the same defect, which is exactly what the "rule" property needs.
+func Fingerprint(h Finding) string {
+	symbolOrPath := h.Location.Simbolo
+	if symbolOrPath == "" {
+		symbolOrPath = h.Location.File
 	}
-	entrada := empaquetarConLongitud(
+	input := packWithLengthPrefixes(
 		h.Dimension,
-		simboloORuta,
-		normalizarParaComparar(h.Evidence),
+		symbolOrPath,
+		normalizeForComparison(h.Evidence),
 		h.Title,
 	)
-	suma := sha256.Sum256([]byte(entrada))
-	return hex.EncodeToString(suma[:])
+	sum := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(sum[:])
 }
 
-// empaquetarConLongitud concatena componentes prefijando cada uno con su
-// longitud decimal y ":". Un separador simple como "|" sería ambiguo si algún
-// componente lo contuviera literalmente (p. ej. evidencia con un "|" dentro de
-// una expresión lógica); prefijar con la longitud hace que la concatenación
-// sea inambigua sin importar qué caracteres traiga cada componente.
-func empaquetarConLongitud(componentes ...string) string {
+// packWithLengthPrefixes concatenates components, prefixing each with its
+// decimal length and ":". A simple separator like "|" would be ambiguous if
+// any component contained it literally (e.g. evidence with a "|" inside a
+// logic expression); prefixing with the length makes the concatenation
+// unambiguous no matter which characters each component carries.
+func packWithLengthPrefixes(components ...string) string {
 	var b strings.Builder
-	for _, c := range componentes {
+	for _, c := range components {
 		b.WriteString(strconv.Itoa(len(c)))
-		b.WriteByte(':')
+		b.WriteString(":")
 		b.WriteString(c)
 	}
 	return b.String()
 }
 
-// AgentQuestion es una aclaración que el agente necesita para poder auditar.
+// AgentQuestion is a clarification the agent needs in order to audit.
 type AgentQuestion struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
@@ -394,26 +396,29 @@ type AgentQuestion struct {
 	File string `json:"file,omitempty"`
 }
 
-// DimensionResult es el veredicto del agente para una dimensión concreta.
-// Advertencias recoge normalizaciones aplicadas durante el parseo (p. ej.
-// severidad desconocida rebajada a ADVISORY) y no se serializa en la ficha.
+// DimensionResult is the agent's verdict for one concrete dimension.
+// Warnings collects normalizations applied during parsing (e.g. an unknown
+// severity downgraded to ADVISORY) and is not serialized into the record.
 //
-// Hallazgos (T2.4) es paralelo a Findings, no un sustituto: cada finding
-// crudo del array "findings" que trae al menos un campo exclusivo de v2
-// (Hallazgo) se decodifica ADEMÁS como Hallazgo completo y se añade aquí,
-// sin dejar de aparecer también en Findings (v1). Un finding que hoy solo
-// trae los campos v1 (el contrato real del agente hasta F5) deja Hallazgos
-// vacío: la capacidad de parsear v2 no depende de que el prompt ya lo emita.
+// Findings carries the agent's findings projected onto the shared v1 shape
+// (ReviewFinding). The engine projects them once more into the durable v2
+// Finding shape (lifecycle, provenance, aggregated evidence); that single
+// projection belongs to the engine, never to a second parallel parse output.
 type DimensionResult struct {
-	Bundle          string          `json:"bundle,omitempty"`
-	Dim             string          `json:"dim"`
-	Verdict         string          `json:"verdict"`
-	Findings        []ReviewFinding `json:"findings,omitempty"`
-	Hallazgos       []Hallazgo      `json:"hallazgos,omitempty"`
+	Bundle   string          `json:"bundle,omitempty"`
+	Dim      string          `json:"dim"`
+	Verdict  string          `json:"verdict"`
+	Findings []ReviewFinding `json:"findings,omitempty"`
+	// V2Findings parallels Findings, not a substitute: each raw finding
+	// carrying at least one v2-exclusive field is decoded AS WELL as a
+	// full Finding and added here, while still appearing in Findings (v1).
+	// A finding with v1 fields only leaves V2Findings empty: parsing v2
+	// never depends on the prompt emitting it yet.
+	V2Findings      []Finding       `json:"v2_findings,omitempty"`
 	Questions       []AgentQuestion `json:"questions,omitempty"`
 	Reason          string          `json:"reason,omitempty"`
 	RefutedCritical bool            `json:"refuted_critical,omitempty"`
-	Advertencias    []string        `json:"-"`
+	Warnings        []string        `json:"-"`
 	// InvocationID identifies the durable invocation that produced this
 	// result, when the audit routed through a transport that reports one
 	// (ticket 07 slice 2b). Empty for legacy direct audits; additive
@@ -427,9 +432,9 @@ type DimensionResult struct {
 	ExecutionFailure *ProviderExecutionFailure `json:"-"`
 }
 
-// lineaCruda decodes the "line" field of one raw finding tolerantly (FU-19).
-// A JSON number and a numeric string keep parsing to Linea exactly as before
-// (same trimming Linea.UnmarshalJSON applies); ANY other JSON value — range
+// rawLine decodes the "line" field of one raw finding tolerantly (FU-19).
+// A JSON number and a numeric string keep parsing to Line exactly as before
+// (same trimming Line.UnmarshalJSON applies); ANY other JSON value — range
 // text ("17-19, 23-48"), a word, an array — is not an error: it leaves
 // the line at 0, the unknown-line convention deterministic file-scoped
 // findings already use, and keeps the raw text so aReviewFinding can persist
@@ -438,70 +443,70 @@ type DimensionResult struct {
 // already the unknown-line result, with nothing raw to preserve.
 //
 // Decision (FU-19): NO range semantics. The persisted shape holds a single
-// Linea int, so inventing first-line precision from "17-19, 23-48" would
+// Line int, so inventing first-line precision from "17-19, 23-48" would
 // misdirect the evidence window while pretending the line is known; unknown
 // (0) is already answerable through the file-scoped refutation gate (FU-6
-// defect 2). Strictness stays on Linea itself: the persisted shape still
+// defect 2). Strictness stays on Line itself: the persisted shape still
 // fails loudly on a corrupted line instead of silently zeroing it — only the
 // agent-input path is tolerant.
-type lineaCruda struct {
-	numero Linea
-	cruda  string // raw JSON text, set only when the value was not numeric
+type rawLine struct {
+	value Line
+	raw   string // raw JSON text, set only when the value was not numeric
 }
 
-func (l *lineaCruda) UnmarshalJSON(b []byte) error {
+func (l *rawLine) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '"' {
 		var s string
 		if err := json.Unmarshal(b, &s); err != nil {
 			return err
 		}
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-			l.numero = Linea(n)
+			l.value = Line(n)
 			return nil
 		}
-		l.numero = 0
-		l.cruda = s
+		l.value = 0
+		l.raw = s
 		return nil
 	}
 	var n int
 	if err := json.Unmarshal(b, &n); err == nil {
-		l.numero = Linea(n)
+		l.value = Line(n)
 		return nil
 	}
-	l.numero = 0
-	l.cruda = string(b)
+	l.value = 0
+	l.raw = string(b)
 	return nil
 }
 
-// findingCrudo decodifica un elemento del array "findings" de una línea
-// JSONL (o del objeto multilínea) aceptando a la vez los campos v1
-// (ReviewFinding, siempre presentes hoy) y los campos exclusivos de v2
-// (Hallazgo, F5). Los campos v1 comparten clave JSON con su homólogo de
-// Hallazgo donde existe (severity/description): no hay dos campos para lo
-// mismo, solo dos estructuras de destino a partir del mismo dato decodificado
-// una sola vez.
+// rawFinding decodes one element of the "findings" array of a JSONL line
+// (or of the multiline object) accepting at once the v1 fields
+// (ReviewFinding, always present today) and the fields exclusive to v2
+// (Finding, F5). The v1 fields share the JSON key with their Finding
+// counterpart where one exists (severity/description): there are not two
+// fields for the same thing, only two destination structs fed from the same
+// datum, decoded exactly once.
 //
-// Los campos exclusivos de v2 son punteros a propósito: nil distingue "el
-// agente no mandó este campo" de "lo mandó con su valor cero" (p. ej.
-// confidence: 0), que es justo la señal usada por esV2() para decidir si el
-// finding trae forma v2 sin exigir que el agente mande todos los campos v2
-// a la vez.
-type findingCrudo struct {
-	Dimension   string     `json:"dimension"`
-	File        string     `json:"file"`
-	Line        lineaCruda `json:"line"`
-	Severity    string     `json:"severity"`
-	Description string     `json:"description"`
-	Suggestion  string     `json:"suggestion"`
+// The fields exclusive to v2 are pointers on purpose: nil distinguishes
+// "the agent did not send this field" from "it sent it with its zero value"
+// (e.g. confidence: 0), which is exactly the signal that lets v2-only
+// fields coexist with the v1 shape without requiring the agent to send all
+// the v2 fields at once.
+type rawFinding struct {
+	Dimension   string  `json:"dimension"`
+	File        string  `json:"file"`
+	Line        rawLine `json:"line"`
+	Severity    string  `json:"severity"`
+	Description string  `json:"description"`
+	Suggestion  string  `json:"suggestion"`
 
 	ID             *string          `json:"id"`
 	Source         *string          `json:"source"`
-	Producer       *Productor       `json:"producer"`
+	Producer       *Producer        `json:"producer"`
 	Confidence     *confidenceScore `json:"confidence"`
 	Status         *string          `json:"status"`
 	Title          *string          `json:"title"`
 	Evidence       *string          `json:"evidence"`
-	Location       *Ubicacion       `json:"location"`
+	Location       *Location        `json:"location"`
 	Impact         *string          `json:"impact"`
 	Recommendation *string          `json:"recommendation"`
 	Fixable        *string          `json:"fixable"`
@@ -549,48 +554,48 @@ func (c *confidenceScore) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// esV2 indica si el finding crudo trae al menos un campo exclusivo de v2.
-func (f findingCrudo) esV2() bool {
-	return f.ID != nil || f.Source != nil || f.Producer != nil || f.Confidence != nil ||
-		f.Status != nil || f.Title != nil || f.Evidence != nil || f.Location != nil ||
-		f.Impact != nil || f.Recommendation != nil || f.Fixable != nil || f.IntroducedBy != nil
-}
-
-// aReviewFinding proyecta los campos v1 del finding crudo, ignorando los
-// exclusivos de v2: es el mismo ReviewFinding que se construía antes de T2.4.
-func (f findingCrudo) aReviewFinding() ReviewFinding {
+// aReviewFinding projects the raw finding's v1 fields, ignoring the ones
+// exclusive to v2: it is the same ReviewFinding built before T2.4.
+func (f rawFinding) aReviewFinding() ReviewFinding {
 	return ReviewFinding{
 		Dimension:   f.Dimension,
 		File:        f.File,
-		Line:        f.Line.numero,
-		LineRaw:     f.Line.cruda,
+		Line:        f.Line.value,
+		LineRaw:     f.Line.raw,
 		Severity:    f.Severity,
 		Description: f.Description,
 		Suggestion:  f.Suggestion,
 	}
 }
 
-// aHallazgo construye el Hallazgo (v2) completo del finding crudo.
-// dimensionLinea es la dimensión declarada por la línea/objeto contenedor
-// (crudo.Dim), no un campo del finding individual. Si el finding no trae
-// Location explícita, se usa File/Line (v1) como ubicación de respaldo, para
-// que Fingerprint no colisione hallazgos de archivos distintos bajo una
-// ubicación vacía.
-func (f findingCrudo) aHallazgo(dimensionLinea string) Hallazgo {
-	ubicacion := Ubicacion{Archivo: f.File, LineaInicio: int(f.Line.numero)}
-	// Guard por VACÍO, no solo por nil: un "location": {} explícito en el
-	// JSON produce un *Ubicacion no nil pero sin Archivo ni Simbolo, así que
-	// mirar solo f.Location != nil dejaría pasar una ubicación vacía y
-	// reintroduciría la colisión de Fingerprint entre archivos distintos que
-	// el respaldo v1 (File/Line) existe justamente para evitar.
-	if f.Location != nil && (f.Location.Archivo != "" || f.Location.Simbolo != "") {
-		ubicacion = *f.Location
+// isV2 reports whether the raw finding carries at least one v2-exclusive
+// field: only then is it decoded as well as a full Finding. A finding with
+// v1 fields only leaves the v2 parallel list empty.
+func (f rawFinding) isV2() bool {
+	return f.ID != nil || f.Source != nil || f.Producer != nil || f.Confidence != nil ||
+		f.Status != nil || f.Title != nil || f.Evidence != nil || f.Location != nil ||
+		f.Impact != nil || f.Recommendation != nil || f.Fixable != nil || f.IntroducedBy != nil
+}
+
+// aFinding projects the raw finding's full v2 shape, falling back to the
+// v1 file/line when no explicit location object (or an empty one) came in:
+// an empty explicit location would otherwise collide fingerprints across
+// files, which the v1 fallback exists precisely to avoid.
+func (f rawFinding) aFinding(lineDim string) Finding {
+	location := Location{File: f.File, LineStart: int(f.Line.value)}
+	// Guard on emptiness, not just nil: an explicit "location": {} in the
+	// JSON yields a non-nil pointer with neither File nor Simbolo.
+	if f.Location != nil && (f.Location.File != "" || f.Location.Simbolo != "") {
+		location = *f.Location
 	}
-	h := Hallazgo{
-		Dimension:   dimensionLinea,
+	h := Finding{
+		Dimension:   lineDim,
 		Severity:    f.Severity,
 		Description: f.Description,
-		Location:    ubicacion,
+		Location:    location,
+	}
+	if f.Dimension != "" {
+		h.Dimension = f.Dimension
 	}
 	if f.ID != nil {
 		h.ID = *f.ID
@@ -629,41 +634,47 @@ func (f findingCrudo) aHallazgo(dimensionLinea string) Hallazgo {
 	return h
 }
 
-// procesarFindings convierte los findings crudos de una línea/objeto en sus
-// formas v1 (ReviewFinding, compatibilidad) y v2 (Hallazgo, solo para los que
-// traen algún campo exclusivo). Normaliza la severidad UNA vez por finding
-// con el mismo criterio que ya existía para v1 (T2.4: no crear dos criterios
-// de normalización distintos), y esa severidad normalizada es la que ven
-// tanto el ReviewFinding como el Hallazgo resultantes.
-func procesarFindings(crudos []findingCrudo, dimensionLinea string, normalizaciones *[]string) ([]ReviewFinding, []Hallazgo) {
-	findingsV1 := make([]ReviewFinding, 0, len(crudos))
-	var hallazgosV2 []Hallazgo
-	for _, f := range crudos {
-		if f.Line.cruda != "" {
-			*normalizaciones = append(*normalizaciones,
-				fmt.Sprintf("line %q in %s normalized to unknown line", f.Line.cruda, f.File))
+// processFindings converts the raw findings of one line/object into their
+// v1 shape (ReviewFinding, compatibility) and v2 shape (Finding, only for
+// the ones carrying some exclusive field). It normalizes severity ONCE per
+// finding with the same criterion v1 always applied (T2.4: no second
+// normalization criterion), and the normalized severity is what both the
+// ReviewFinding and the Finding see.
+func processFindings(raw []rawFinding, lineDim string, normalizations *[]string) ([]ReviewFinding, []Finding) {
+	findingsV1 := make([]ReviewFinding, 0, len(raw))
+	var findingsV2 []Finding
+	for _, f := range raw {
+		if f.Line.raw != "" {
+			*normalizations = append(*normalizations,
+				fmt.Sprintf("line %q in %s normalized to unknown line", f.Line.raw, f.File))
 		}
 		if f.Severity != SevCritical && f.Severity != SevWarning && f.Severity != SevAdvisory {
-			*normalizaciones = append(*normalizaciones,
-				fmt.Sprintf("severidad %q en %s:%d normalizada a ADVISORY", f.Severity, f.File, int(f.Line.numero)))
+			*normalizations = append(*normalizations,
+				fmt.Sprintf("severity %q in %s:%d normalized to ADVISORY", f.Severity, f.File, int(f.Line.value)))
 			f.Severity = SevAdvisory
 		}
+		// The finding inherits the line's dimension unless it declares its
+		// own: the dimension comes from the containing result, never from
+		// the finding alone (pre-T2.4 convention, kept by findingWithDisposition).
+		if f.Dimension == "" {
+			f.Dimension = lineDim
+		}
 		findingsV1 = append(findingsV1, f.aReviewFinding())
-		if f.esV2() {
-			hallazgosV2 = append(hallazgosV2, f.aHallazgo(dimensionLinea))
+		if f.isV2() {
+			findingsV2 = append(findingsV2, f.aFinding(lineDim))
 		}
 	}
-	return findingsV1, hallazgosV2
+	return findingsV1, findingsV2
 }
 
-// Errores tipados del parseo, para que el llamador decida la degradación
-// (unavailable/block) sin adivinar.
+// Typed parse errors, so the caller decides the degradation
+// (unavailable/block) without guessing.
 var (
-	ErrSalidaVacia       = errors.New("el agente devolvió una salida vacía")
-	ErrJSONLInvalido     = errors.New("ninguna línea JSONL válida con dimensión")
-	ErrDimensionInvalida = errors.New("dimensión desconocida")
+	ErrEmptyOutput       = errors.New("the agent returned an empty output")
+	ErrInvalidJSONL      = errors.New("no JSONL line with a valid dimension")
+	ErrInvalidDimension  = errors.New("unknown dimension")
 	ErrDimensionMismatch = errors.New("review result dimension does not match the requested contract")
-	ErrVeredictoInvalido = errors.New("veredicto desconocido")
+	ErrInvalidVerdict    = errors.New("unknown verdict")
 )
 
 // SemanticOutputClass identifies deterministic failures in a provider's
@@ -720,7 +731,7 @@ func semanticOutputEvidence(output string) string {
 
 func classifyUnparseableSemanticOutput(output string) error {
 	trimmed := strings.TrimSpace(output)
-	legacy := ErrJSONLInvalido
+	legacy := ErrInvalidJSONL
 	switch {
 	case semanticOutputLooksToolDenied(trimmed):
 		return newSemanticOutputError(SemanticOutputToolDenied, legacy, output)
@@ -764,73 +775,72 @@ func ParseDimensionResultForContract(output string, contract reviewcontract.Dime
 
 func parseDimensionResult(output, expectedDimension string, schema reviewcontract.OutputSchema, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error) {
 	block := extractJSONLBlockWithSchema(output, schema)
-	lineas := strings.Split(block, "\n")
+	lines := strings.Split(block, "\n")
 
-	var descartadas int
-	var normalizaciones []string
-	for _, linea := range lineas {
-		linea = strings.TrimSpace(linea)
-		if linea == "" {
+	var discarded int
+	var normalizations []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
 
-		var crudo struct {
+		var parsed struct {
 			Dim       string          `json:"dim"`
 			Verdict   string          `json:"verdict"`
-			Findings  []findingCrudo  `json:"findings"`
+			Findings  []rawFinding    `json:"findings"`
 			Questions []AgentQuestion `json:"questions"`
 			Reason    string          `json:"reason"`
 		}
-		if err := json.Unmarshal([]byte(linea), &crudo); err != nil {
-			descartadas++
+		if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+			discarded++
 			continue
 		}
-		if crudo.Dim == "" {
-			descartadas++
+		if parsed.Dim == "" {
+			discarded++
 			continue
 		}
-		if _, err := reviewcontract.Lookup(crudo.Dim); err != nil {
-			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q", ErrDimensionInvalida, crudo.Dim), block)
+		if _, err := reviewcontract.Lookup(parsed.Dim); err != nil {
+			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q", ErrInvalidDimension, parsed.Dim), block)
 		}
-		if !veredictosValidos[crudo.Verdict] {
-			if len(crudo.Findings) == 0 {
-				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimension %q)", ErrVeredictoInvalido, crudo.Verdict, crudo.Dim), block)
+		if !validVerdicts[parsed.Verdict] {
+			if len(parsed.Findings) == 0 {
+				return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, fmt.Errorf("%w: %q (dimension %q)", ErrInvalidVerdict, parsed.Verdict, parsed.Dim), block)
 			}
-			// Veredictos de facto ("issues", "error", ...) con hallazgos se
-			// derivan de las severidades en lugar de abortar la auditoría.
-			normalizaciones = append(normalizaciones,
-				fmt.Sprintf("veredicto %q normalizado según severidades de hallazgos", crudo.Verdict))
-			crudo.Verdict = ""
+			// De facto verdicts ("issues", "error", ...) with findings are
+			// derived from the severities instead of aborting the audit.
+			normalizations = append(normalizations,
+				fmt.Sprintf("verdict %q normalized from the finding severities", parsed.Verdict))
+			parsed.Verdict = ""
 		}
-		if err := validateFindingsAgainstContract(crudo.Findings, evidencePolicy); err != nil {
+		if err := validateFindingsAgainstContract(parsed.Findings, evidencePolicy); err != nil {
 			return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, block)
 		}
 
-		findingsV1, hallazgosV2 := procesarFindings(crudo.Findings, crudo.Dim, &normalizaciones)
+		findings, findingsV2 := processFindings(parsed.Findings, parsed.Dim, &normalizations)
 
-		if descartadas > 0 {
-			normalizaciones = append(normalizaciones, fmt.Sprintf("%d líneas no JSONL descartadas", descartadas))
+		if discarded > 0 {
+			normalizations = append(normalizations, fmt.Sprintf("%d non-JSONL lines discarded", discarded))
 		}
 		result := &DimensionResult{
-			Dim:          crudo.Dim,
-			Verdict:      veredictoFinal(crudo.Verdict, findingsV1, &normalizaciones),
-			Findings:     findingsV1,
-			Hallazgos:    hallazgosV2,
-			Questions:    crudo.Questions,
-			Reason:       crudo.Reason,
-			Advertencias: normalizaciones,
+			Dim:        parsed.Dim,
+			Verdict:    finalVerdict(parsed.Verdict, findings, &normalizations),
+			Findings:   findings,
+			V2Findings: findingsV2,
+			Questions:  parsed.Questions,
+			Reason:     parsed.Reason,
+			Warnings:   normalizations,
 		}
 		return validateContractDimension(result, expectedDimension, block)
 	}
 
 	if strings.TrimSpace(block) == "" {
-		return nil, newSemanticOutputError(SemanticOutputMissingPayload, ErrSalidaVacia, block)
+		return nil, newSemanticOutputError(SemanticOutputMissingPayload, ErrEmptyOutput, block)
 	}
-	// Fallback: algunos modelos (p. ej. el perfil cheap con reasoning low)
-	// emiten el objeto JSON formateado en varias líneas (pretty-printed)
-	// dentro del bloque. Ninguna línea individual es JSONL válido, pero el
-	// bloque completo sí es un objeto JSON; parsearlo entero evita que una
-	// auditoría válida se degrade a unavailable.
+	// Fallback: some models (e.g. the cheap profile with reasoning low) emit
+	// the JSON object pretty-printed across several lines inside the block.
+	// No single line is valid JSONL, but the whole block is one JSON object;
+	// parsing it whole keeps a valid audit from degrading to unavailable.
 	if res, err, ok := parseMultilineObject(block, evidencePolicy); ok {
 		if err != nil {
 			return nil, err
@@ -839,8 +849,7 @@ func parseDimensionResult(output, expectedDimension string, schema reviewcontrac
 	}
 	return nil, classifyUnparseableSemanticOutput(block)
 }
-
-func validateFindingsAgainstContract(findings []findingCrudo, policy reviewcontract.EvidencePolicy) error {
+func validateFindingsAgainstContract(findings []rawFinding, policy reviewcontract.EvidencePolicy) error {
 	if !policy.RequireLiteralEvidence && !policy.RequireConfidence {
 		return nil
 	}
@@ -871,84 +880,83 @@ func validateContractDimension(result *DimensionResult, expectedDimension, outpu
 // accepting pretty-printed multiline output. It reports ok only when complete
 // parsing succeeds and the dimension is canonical.
 func parseMultilineObject(block string, evidencePolicy reviewcontract.EvidencePolicy) (*DimensionResult, error, bool) {
-	var crudo struct {
+	var parsed struct {
 		Dim       string          `json:"dim"`
 		Verdict   string          `json:"verdict"`
-		Findings  []findingCrudo  `json:"findings"`
+		Findings  []rawFinding    `json:"findings"`
 		Questions []AgentQuestion `json:"questions"`
 		Reason    string          `json:"reason"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(block)), &crudo); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(block)), &parsed); err != nil {
 		return nil, nil, false
 	}
-	if crudo.Dim == "" {
+	if parsed.Dim == "" {
 		return nil, nil, false
 	}
-	if _, err := reviewcontract.Lookup(crudo.Dim); err != nil {
+	if _, err := reviewcontract.Lookup(parsed.Dim); err != nil {
 		return nil, nil, false
 	}
 
-	var normalizaciones []string
-	verdict := crudo.Verdict
-	if !veredictosValidos[verdict] {
-		if len(crudo.Findings) == 0 {
+	var normalizations []string
+	verdict := parsed.Verdict
+	if !validVerdicts[verdict] {
+		if len(parsed.Findings) == 0 {
 			return nil, nil, false
 		}
-		normalizaciones = append(normalizaciones,
-			fmt.Sprintf("veredicto %q normalizado según severidades de hallazgos", verdict))
+		normalizations = append(normalizations,
+			fmt.Sprintf("verdict %q normalized from the finding severities", verdict))
 		verdict = ""
 	}
-	if err := validateFindingsAgainstContract(crudo.Findings, evidencePolicy); err != nil {
+	if err := validateFindingsAgainstContract(parsed.Findings, evidencePolicy); err != nil {
 		return nil, newSemanticOutputError(SemanticOutputSchemaInvalid, err, block), true
 	}
-
-	findingsV1, hallazgosV2 := procesarFindings(crudo.Findings, crudo.Dim, &normalizaciones)
+	findings, findingsV2 := processFindings(parsed.Findings, parsed.Dim, &normalizations)
 
 	return &DimensionResult{
-		Dim:          crudo.Dim,
-		Verdict:      veredictoFinal(verdict, findingsV1, &normalizaciones),
-		Findings:     findingsV1,
-		Hallazgos:    hallazgosV2,
-		Questions:    crudo.Questions,
-		Reason:       crudo.Reason,
-		Advertencias: normalizaciones,
+		Dim:        parsed.Dim,
+		Verdict:    finalVerdict(verdict, findings, &normalizations),
+		Findings:   findings,
+		V2Findings: findingsV2,
+		Questions:  parsed.Questions,
+		Reason:     parsed.Reason,
+		Warnings:   normalizations,
 	}, nil, true
 }
 
-// veredictoFinal decide el veredicto de una dimensión tras el parseo: los
-// hallazgos mandan sobre el veredicto declarado. Un ok declarado con CRITICAL
-// sube a block; un veredicto de facto (derivado de severidades) se resuelve
-// aquí. question y unavailable se respetan tal cual.
-func veredictoFinal(declarado string, hallazgos []ReviewFinding, normalizaciones *[]string) string {
-	if declarado == VerdictQuestion || declarado == VerdictUnavailable {
-		return declarado
+// finalVerdict decides a dimension's verdict after parsing: the findings
+// override the declared verdict. A declared ok with CRITICAL goes up to
+// block; a de facto verdict (derived from severities) is resolved here.
+// question and unavailable are respected as-is.
+func finalVerdict(declared string, findings []ReviewFinding, normalizations *[]string) string {
+	if declared == VerdictQuestion || declared == VerdictUnavailable {
+		return declared
 	}
 
-	derivado := veredictoDeSeveridades(hallazgos)
-	if declarado == "" {
-		return derivado
+	derived := verdictFromSeverities(findings)
+	if declared == "" {
+		return derived
 	}
-	if derivado != declarado && derivado != VerdictOK {
-		*normalizaciones = append(*normalizaciones,
-			fmt.Sprintf("veredicto %q elevado a %q por severidades de hallazgos", declarado, derivado))
-		return derivado
+	if derived != declared && derived != VerdictOK {
+		*normalizations = append(*normalizations,
+			fmt.Sprintf("verdict %q raised to %q by finding severities", declared, derived))
+		return derived
 	}
-	return declarado
+	return declared
 }
 
-// veredictoDeSeveridades mapea hallazgos a veredicto: CRITICAL -> block,
-// WARNING/ADVISORY -> warn, sin hallazgos -> ok.
-func veredictoDeSeveridades(hallazgos []ReviewFinding) string {
-	peor := VerdictOK
-	for _, h := range hallazgos {
+// verdictFromSeverities maps findings to a verdict: CRITICAL -> block,
+// WARNING/ADVISORY -> warn, no findings -> ok.
+func verdictFromSeverities(findings []ReviewFinding) string {
+	worst := VerdictOK
+	for _, h := range findings {
 		switch h.Severity {
 		case SevCritical:
 			return VerdictBlock
 		case SevWarning, SevAdvisory:
-			peor = VerdictWarn
+			worst = VerdictWarn
 		}
 	}
-	return peor
+	return worst
 }
 
 // extractJSONLBlock trims output to the segment between BEGIN_REVIEW and
@@ -962,14 +970,14 @@ func extractJSONLBlock(output string) string {
 }
 
 func extractJSONLBlockWithSchema(output string, schema reviewcontract.OutputSchema) string {
-	inicio := strings.Index(output, schema.BeginDelimiter)
-	if inicio < 0 {
+	begin := strings.Index(output, schema.BeginDelimiter)
+	if begin < 0 {
 		return output
 	}
-	inicio += len(schema.BeginDelimiter)
-	fin := strings.Index(output[inicio:], schema.EndDelimiter)
-	if fin < 0 {
-		return output[inicio:]
+	begin += len(schema.BeginDelimiter)
+	end := strings.Index(output[begin:], schema.EndDelimiter)
+	if end < 0 {
+		return output[begin:]
 	}
-	return output[inicio : inicio+fin]
+	return output[begin : begin+end]
 }

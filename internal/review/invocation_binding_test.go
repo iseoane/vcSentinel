@@ -23,12 +23,12 @@ func bundlesInvocacion() []ReviewBundle {
 }
 
 func TestFingerprintIgnoresInvocationID(t *testing.T) {
-	base := Hallazgo{
+	base := Finding{
 		Dimension:   DimLogic,
 		Title:       "nil dereference",
 		Description: "unchecked nil dereference in handler",
 		Evidence:    "handler dereferences cfg before the nil guard",
-		Location:    Ubicacion{Archivo: "a.go", LineaInicio: 3},
+		Location:    Location{File: "a.go", LineStart: 3},
 	}
 	con := base
 	sin := base
@@ -45,7 +45,7 @@ func TestFingerprintIgnoresInvocationID(t *testing.T) {
 
 type agenteTransporteSilencioso struct{}
 
-func (agenteTransporteSilencioso) EjecutarPrompt(string) (string, error) { return "", nil }
+func (agenteTransporteSilencioso) RunPrompt(string) (string, error) { return "", nil }
 
 func (agenteTransporteSilencioso) ReviewWithPolicy(string, string, []string, reviewcontract.ToolPolicy) (string, error) {
 	return "", nil
@@ -53,63 +53,63 @@ func (agenteTransporteSilencioso) ReviewWithPolicy(string, string, []string, rev
 
 type agenteRestringidoContado struct{ llamadas int }
 
-func (a *agenteRestringidoContado) EjecutarPrompt(string) (string, error) { return "", nil }
+func (a *agenteRestringidoContado) RunPrompt(string) (string, error) { return "", nil }
 
-func (a *agenteRestringidoContado) EjecutarRevision(string, string, []string) (string, error) {
+func (a *agenteRestringidoContado) RunReview(string, string, []string) (string, error) {
 	a.llamadas++
 	return respuestaV2Invocacion, nil
 }
 
 func (a *agenteRestringidoContado) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.EjecutarRevision(prompt, sha, paths)
+	return a.RunReview(prompt, sha, paths)
 }
 
-func TestAuditarCommitBindsTransportInvocationToFindings(t *testing.T) {
-	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+func TestAuditCommitBindsTransportInvocationToFindings(t *testing.T) {
+	resultado := AuditCommit(func(_ ReviewBundle, _ string) (AgentReviewer, string, error) {
 		return agenteTransporteSilencioso{}, "stub", nil
-	}, 1, OpcionesAuditoria{
+	}, 1, AuditOptions{
 		SHA:     "sha-inv-bind",
 		Bundles: bundlesInvocacion(),
-		ReviewTransport: func(_, _, _ string, _ AuditorAgente) (string, string, error) {
+		ReviewTransport: func(_, _, _ string, _ AgentReviewer) (string, string, error) {
 			return respuestaV2Invocacion, "inv-producer-42", nil
 		},
 	})
 
-	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
+	if len(resultado.Dims) != 1 || resultado.Dims[0].Result == nil {
 		t.Fatalf("dims = %+v, want one routed dimension result", resultado.Dims)
 	}
-	dim := resultado.Dims[0].Resultado
+	dim := resultado.Dims[0].Result
 	if dim.Verdict != VerdictBlock {
 		t.Fatalf("verdict = %q, want block from the transported finding", dim.Verdict)
 	}
 	if dim.InvocationID != "inv-producer-42" {
 		t.Fatalf("dimension invocation id = %q, want the identity the transport reported", dim.InvocationID)
 	}
-	if len(dim.Hallazgos) != 1 {
-		t.Fatalf("hallazgos = %+v, want the single v2 finding bound to the invocation", dim.Hallazgos)
+	if len(resultado.Findings) != 1 {
+		t.Fatalf("aggregate findings = %+v, want the single finding bound to the invocation", resultado.Findings)
 	}
-	if dim.Hallazgos[0].InvocationID != "inv-producer-42" {
-		t.Fatalf("finding invocation id = %q, want \"inv-producer-42\" stamped at finalization", dim.Hallazgos[0].InvocationID)
+	if resultado.Findings[0].InvocationID != "inv-producer-42" {
+		t.Fatalf("finding invocation id = %q, want \"inv-producer-42\" stamped from the transport identity", resultado.Findings[0].InvocationID)
 	}
 }
 
 func TestLegacyAuditLeavesInvocationIdentityEmpty(t *testing.T) {
 	agente := &agenteRestringidoContado{}
-	resultado := AuditarCommit(func(_ ReviewBundle, _ string) (AuditorAgente, string, error) {
+	resultado := AuditCommit(func(_ ReviewBundle, _ string) (AgentReviewer, string, error) {
 		return agente, "stub", nil
-	}, 1, OpcionesAuditoria{
+	}, 1, AuditOptions{
 		SHA:     "sha-inv-legacy",
 		Bundles: bundlesInvocacion(),
 	})
 
-	if len(resultado.Dims) != 1 || resultado.Dims[0].Resultado == nil {
+	if len(resultado.Dims) != 1 || resultado.Dims[0].Result == nil {
 		t.Fatalf("dims = %+v, want one legacy dimension result", resultado.Dims)
 	}
-	dim := resultado.Dims[0].Resultado
+	dim := resultado.Dims[0].Result
 	if dim.InvocationID != "" {
 		t.Fatalf("legacy dimension invocation id = %q, want empty on the direct path", dim.InvocationID)
 	}
-	if len(dim.Hallazgos) != 1 || dim.Hallazgos[0].InvocationID != "" {
-		t.Fatalf("legacy hallazgos = %+v, want findings untouched by invocation binding", dim.Hallazgos)
+	if len(resultado.Findings) != 1 || resultado.Findings[0].InvocationID != "" {
+		t.Fatalf("legacy aggregate findings = %+v, want findings untouched by invocation binding", resultado.Findings)
 	}
 }
