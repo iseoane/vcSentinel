@@ -2086,6 +2086,67 @@ func TestPrReviewJSONRoutesEventDetailWarningOffStdout(t *testing.T) {
 	}
 }
 
+// TestPrReviewNonJSONRoutesProgressThroughPayloadWriter pins the non-JSON half
+// of the routing contract that now lives at the cmd call site: outside --json
+// the caller passes the payload writer itself as progress (progress == w), so
+// the ⏳ spinner lines and the human warnings share the stream the report is
+// printed on and stderr stays silent. The failing RecordEvent seam fires the
+// warning deterministically, with no real agent in the loop.
+func TestPrReviewNonJSONRoutesProgressThroughPayloadWriter(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+			if opts.OnCommit != nil {
+				opts.OnCommit(0, 1, "abc1234abcd")
+			}
+			if opts.OnDimension != nil {
+				opts.OnDimension("logic")
+			}
+			return &review.BranchResult{
+				Branch:   "feat/non-json-routing",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
+			return errors.New("event store locked")
+		},
+		EventDetail: pr.PrReviewEventDetail,
+	}
+	stdout, stderr := captureStreams(t, func() {
+		// The cmd wiring outside --json: the payload writer carries the
+		// human motion too (progress == w).
+		progress := io.Writer(os.Stdout)
+		if code := pr.RunPrReviewWith(os.Stdout, progress, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.Contains(stdout, "⏳ [1/1] Auditing abc1234abcd") {
+		t.Errorf("non-JSON stdout misses the spinner progress:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "? Warning: could not record the event: event store locked") {
+		t.Errorf("non-JSON stdout misses the event-record warning:\n%s", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr must stay silent outside --json, got:\n%s", stderr)
+	}
+}
+
 // firstBytes reports the first bytes of s for failure messages, tolerating
 // empty output.
 func firstBytes(s string) string {
