@@ -34,6 +34,8 @@ func TestHelperProcess(t *testing.T) {
 		runLint(worktree)
 	case "runReview":
 		runReview(worktree, []string{"HEAD"})
+	case "runReviewJSON":
+		runReview(worktree, []string{"--json", "--dims", "logic", "HEAD"})
 	case "runPrReview":
 		runPrReview(worktree, nil)
 	}

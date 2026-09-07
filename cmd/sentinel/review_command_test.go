@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -1069,5 +1070,84 @@ func TestRecordFixesDoesNotCrossBranches(t *testing.T) {
 	}
 	if record.FixedIn != descendant {
 		t.Errorf("FixedIn = %q, want %q: a fix descending from the audited commit must still clear its block", record.FixedIn, descendant)
+	}
+}
+
+// reviewAgentYml is the cutover validation fixture plus the two agent rows,
+// so the audit factory builds real adapters whose binaries the test stubs on
+// PATH (they answer garbage: the audit ends unavailable, which is fine — the
+// spinner has already fired by the time any agent runs).
+const reviewAgentYml = cutoverValidationYml +
+	"active_agent: \"auto\"\n" +
+	"agents:\n  claude:\n    model: \"claude-sonnet-5\"\n    reasoning_effort: \"high\"\n" +
+	"  opencode:\n    model: \"deepseek-v4-flash-free\"\n    reasoning_effort: \"default\"\n"
+
+// runAsSubprocessSplit is runAsSubprocess with separate stdout/stderr capture
+// and extra environment overrides, so stream-contract tests can tell the
+// JSON-safe channel apart from the machine-consumed one.
+func runAsSubprocessSplit(t *testing.T, fn, worktree, home string, extraEnv ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
+	cmd.Dir = worktree
+	env := []string{
+		"VAS_SENTINEL_HELPER_PROCESS=1",
+		"VAS_SENTINEL_HELPER_FN=" + fn,
+		"VAS_SENTINEL_HELPER_WORKTREE=" + worktree,
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+	}
+	env = append(env, extraEnv...)
+	override := map[string]bool{}
+	for _, kv := range extraEnv {
+		override[strings.SplitN(kv, "=", 2)[0]] = true
+	}
+	for _, kv := range os.Environ() {
+		key := strings.SplitN(kv, "=", 2)[0]
+		if key == "HOME" || key == "USERPROFILE" || strings.HasPrefix(kv, "VAS_SENTINEL_HELPER_") || override[key] {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = env
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &outBuf, &errBuf
+	err := cmd.Run()
+	if err == nil {
+		return outBuf.String(), errBuf.String(), 0
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("could not run the %s subprocess: %v", fn, err)
+	}
+	return outBuf.String(), errBuf.String(), exitErr.ExitCode()
+}
+
+// TestRunReviewJSONKeepsSpinnerOffStdout pins the --json discipline for
+// `sentinel review`: the ⏳ progress lines are human motion and ride the
+// JSON-safe stderr channel when --json is set; stdout — where the
+// pending-questions payload of the --json contract lands — must carry zero
+// spinner bytes. The subprocess drives the REAL command over a fixture
+// repository with stub agent binaries on PATH (no real agent ever runs).
+func TestRunReviewJSONKeepsSpinnerOffStdout(t *testing.T) {
+	worktree := cutoverRepository(t)
+	home := t.TempDir()
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	fakeBin := t.TempDir()
+	for _, name := range []string{"claude", "opencode"} {
+		script := "#!/bin/sh\ncat > /dev/null\necho stub-agent-answer\n"
+		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stdout, stderr, exit := runAsSubprocessSplit(t, "runReviewJSON", worktree, home,
+		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if exit == 0 {
+		t.Errorf("review exit = 0 over stub agents answering garbage, want a provider failure; stdout:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "⏳") {
+		t.Errorf("--json stdout received spinner bytes:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "  ⏳ logic …") {
+		t.Errorf("stderr misses the dimension spinner:\n%s", stderr)
 	}
 }

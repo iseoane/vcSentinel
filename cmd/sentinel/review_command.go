@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -117,11 +118,19 @@ func runReview(worktree string, args []string) {
 
 	modelVerifier := newModelVerifier(worktree)
 	finalExit := 0
+	// The ⏳ progress lines are human motion, not payload: with --json the
+	// machine-consumed stdout must start at '{', so the progress rides the
+	// JSON-safe stderr channel, the same discipline as the durable-run
+	// announcer below.
+	progress := io.Writer(os.Stdout)
+	if flags.jsonOut {
+		progress = os.Stderr
+	}
 
 	total := len(shas)
 
 	for idx, sha := range shas {
-		fmt.Printf("⏳ [%d/%d] Audit %s\n", idx+1, total, shortSHA(sha))
+		fmt.Fprintf(progress, "⏳ [%d/%d] Audit %s\n", idx+1, total, shortSHA(sha))
 		message, err := git.CommitMessage(sha)
 		if err != nil {
 			fmt.Printf("⚠️ %s: could not read the message: %v\n", sha[:8], err)
@@ -190,7 +199,7 @@ func runReview(worktree string, args []string) {
 			// the engine consults it here without importing it.
 			ModelVerifier: modelVerifier,
 			OnDimension: func(dim string) {
-				fmt.Printf("  ⏳ %s …\n", dim)
+				fmt.Fprintf(progress, "  ⏳ %s …\n", dim)
 			},
 			// FU-11: deterministic credential incidents ride along without
 			// scheduling any dimension and without touching the verdict.

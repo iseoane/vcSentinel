@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/app/pr"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
@@ -1847,4 +1849,135 @@ func TestRealPrCreateDepsWiresTheBlobStore(t *testing.T) {
 	if !reflect.DeepEqual(fromDeps, direct) {
 		t.Errorf("deps.blobStore resolved %v while resolveBlobStore resolved %v: the production seam is not wired to resolveBlobStore", fromDeps, direct)
 	}
+}
+
+// captureStreams redirects os.Stdout and os.Stderr during f and returns what
+// each stream received. The restorations go in t.Cleanup: a t.Fatalf/panic
+// inside f must not leave the process writing into closed pipes.
+func captureStreams(t *testing.T, f func()) (stdout, stderr string) {
+	t.Helper()
+	originalOut, originalErr := os.Stdout, os.Stderr
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout, os.Stderr = outW, errW
+	t.Cleanup(func() { os.Stdout, os.Stderr = originalOut, originalErr })
+	f()
+	outW.Close()
+	errW.Close()
+	outBytes, err := io.ReadAll(outR)
+	if err != nil {
+		t.Fatalf("reading the stdout pipe: %v", err)
+	}
+	errBytes, err := io.ReadAll(errR)
+	if err != nil {
+		t.Fatalf("reading the stderr pipe: %v", err)
+	}
+	return string(outBytes), string(errBytes)
+}
+
+// TestPrReviewJSONKeepsProgressOffStdout pins the routing half of the pr
+// review --json contract: when the invocation will emit the JSON document to
+// stdout, the ⏳ progress callbacks ride stderr (the JSON-safe channel, the
+// same discipline as the durable-run announcer), so byte 0 of stdout stays
+// '{'. The callbacks are fired exactly where AnalyzeBranch fires them,
+// before the JSON is printed.
+func TestPrReviewJSONKeepsProgressOffStdout(t *testing.T) {
+	wiring := pr.Wiring{
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		ShortSHA: func(sha string) string { return sha },
+	}
+	// The progress writer resolves os.Stderr when the options are built, so
+	// the build and the callback firings must both sit inside the capture
+	// window: that is exactly the wiring order a real invocation runs.
+	stdout, stderr := captureStreams(t, func() {
+		options, _ := pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
+			pr.FlagsPrReview{JsonOut: true}, nil, wiring)
+		if options.OnCommit == nil || options.OnDimension == nil {
+			t.Fatal("BranchPrReviewOptions must wire the progress callbacks")
+		}
+		options.OnCommit(0, 1, "abc1234abcd")
+		options.OnDimension("logic")
+	})
+	if strings.Contains(stdout, "⏳") {
+		t.Errorf("stdout received spinner bytes that would precede the JSON document:\n%q", stdout)
+	}
+	if !strings.Contains(stderr, "⏳ [1/1] Auditing abc1234abcd") || !strings.Contains(stderr, "  ⏳ logic …") {
+		t.Errorf("stderr misses the progress lines in --json mode:\n%q", stderr)
+	}
+}
+
+// TestPrReviewJSONStdoutStartsAtJSON is the byte-0 regression of the pr
+// review --json contract: the whole flow runs through RunPrReviewWith with a
+// stubbed fast path (the branch analysis fires the same progress callbacks
+// the real one does, then returns a fixture result; no agent ever runs), and
+// the stdout the command produces must START at the JSON document — the ⏳
+// progress lines ride stderr. A regression that lets one progress byte
+// precede the document fails here before any automation chokes on it.
+func TestPrReviewJSONStdoutStartsAtJSON(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+			if opts.OnCommit != nil {
+				opts.OnCommit(0, 1, "abc1234abcd")
+			}
+			if opts.OnDimension != nil {
+				opts.OnDimension("logic")
+			}
+			return &review.BranchResult{
+				Branch:   "feat/json-contract",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+	}
+	stdout, stderr := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("byte 0 of --json stdout = %q, want '{'; stdout:\n%s", firstBytes(stdout), stdout)
+	}
+	if strings.Contains(stdout, "⏳") {
+		t.Errorf("stdout received spinner bytes before the JSON document:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "⏳ [1/1] Auditing abc1234abcd") || !strings.Contains(stderr, "  ⏳ logic …") {
+		t.Errorf("stderr misses the progress lines in --json mode:\n%s", stderr)
+	}
+}
+
+// firstBytes reports the first bytes of s for failure messages, tolerating
+// empty output.
+func firstBytes(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
