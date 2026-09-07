@@ -103,7 +103,7 @@ func DecisionText(decision string, volume int) string {
 // warns through its own stream instead of returning.
 //
 // progress is the injected human-motion channel for the ⏳ spinner callbacks:
-// the caller owns the JSON-safe routing (RunPrReviewWith passes its payload
+// the caller owns the JSON-safe routing (the cmd caller passes its payload
 // writer normally and stderr in --json mode), so this assembler never reads
 // the process streams itself.
 func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags FlagsPrReview, factory review.ReviewerFactory, wiring Wiring, progress io.Writer) (options review.BranchOptions, storeWarning error) {
@@ -153,34 +153,48 @@ func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, lo
 }
 
 // DepsPrReview carries the seams RunPrReviewWith needs to drive the whole
-// flow without real git or agents: the branch analysis and the event
-// recorder. Production resolves both in realPrReviewDeps; AnalyzeBranch
-// receives the ledger RunPrReviewWith resolved BEFORE the options so the
-// ledger-before-options failure order (see the comment below) is preserved.
+// flow without real git or agents: the branch analysis, the event recorder
+// and the event detail builder. Production resolves all three in
+// realPrReviewDeps; AnalyzeBranch receives the ledger RunPrReviewWith
+// resolved BEFORE the options so the ledger-before-options failure order
+// (see the comment below) is preserved. EventDetail exists because
+// PrReviewEventDetail never fails on a real branch result: the seam is the
+// only deterministic way to drive the "could not build the event detail"
+// warning from a test.
 type DepsPrReview struct {
 	AnalyzeBranch func(ledger *review.Ledger, options review.BranchOptions) (*review.BranchResult, error)
 	RecordEvent   func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
+	EventDetail   func(base string, res *review.BranchResult, ci bool) (ops.EventDetail, error)
 }
 
 func realPrReviewDeps() DepsPrReview {
 	return DepsPrReview{
 		AnalyzeBranch: review.AnalyzeBranch,
 		RecordEvent:   ops.RecordEvent,
+		EventDetail:   PrReviewEventDetail,
 	}
 }
 
 // RunPrReview analyzes the branch against the base and shows the audit
 // matrix, the summary and the single/chain decision. It is dry-run: nothing
 // is published. It records the pr-review event when done. cmd/sentinel parses
-// the flags and exits on a parse error before dispatching here.
-func RunPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
-	os.Exit(RunPrReviewWith(os.Stdout, worktree, flags, wiring, realPrReviewDeps()))
+// the flags and exits on a parse error before dispatching here, and it owns
+// the JSON-safe routing: it passes the payload writer for both channels
+// normally, and stderr for the human motion in --json mode.
+func RunPrReview(w, progress io.Writer, worktree string, flags FlagsPrReview, wiring Wiring) {
+	os.Exit(RunPrReviewWith(w, progress, worktree, flags, wiring, realPrReviewDeps()))
 }
 
 // RunPrReviewWith is the injectable core of RunPrReview (same pattern as
 // RunPrCreateWith): it returns the exit code without ending the process, so
 // the whole --json flow can be driven from a test with stubbed seams.
-func RunPrReviewWith(w io.Writer, worktree string, flags FlagsPrReview, wiring Wiring, deps DepsPrReview) int {
+//
+// w carries the payload (the terminal report or the --json document);
+// progress carries the human motion (⏳ spinners, blob-store, event-detail
+// and event-record warnings). The caller owns the JSON-safe routing — cmd
+// passes w itself normally and stderr in --json mode — so this function
+// never reads the process streams.
+func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview, wiring Wiring, deps DepsPrReview) int {
 	// STRICT config (orchestrator finding, outside the record's original
 	// text): an unknown key in the yml must cut here with an explicit error,
 	// not silently continue with the default config.
@@ -220,15 +234,10 @@ func RunPrReviewWith(w io.Writer, worktree string, flags FlagsPrReview, wiring W
 		return 1
 	}
 	// The ⏳ progress lines and the human warnings (blob-store reuse, event
-	// recording) are human motion, not payload: when this invocation will
-	// emit --json to stdout they ride stderr (the JSON-safe channel, the same
-	// discipline as the durable-run announcer), so byte 0 of --json stdout
-	// stays '{'. The routing derives from the streams this function receives
-	// — never from the process globals directly.
-	progress := io.Writer(w)
-	if flags.JsonOut {
-		progress = os.Stderr
-	}
+	// detail and event recording) are human motion, not payload: they ride
+	// the progress channel the caller injected, so byte 0 of --json stdout
+	// stays '{' without this function consulting flags.JsonOut or the
+	// process streams.
 	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring, progress)
 	if err != nil {
 		fmt.Fprintf(progress, "⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
@@ -248,9 +257,9 @@ func RunPrReviewWith(w io.Writer, worktree string, flags FlagsPrReview, wiring W
 		return 1
 	}
 
-	detail, err := PrReviewEventDetail(base, res, git.DetectCI(worktree))
+	detail, err := deps.EventDetail(base, res, git.DetectCI(worktree))
 	if err != nil {
-		fmt.Fprintf(w, "? Warning: could not build the event detail: %v\n", err)
+		fmt.Fprintf(progress, "? Warning: could not build the event detail: %v\n", err)
 	}
 	if err := deps.RecordEvent(gitDir, "pr-review", 0, res.SHAs, detail, worktree); err != nil {
 		fmt.Fprintf(progress, "? Warning: could not record the event: %v\n", err)

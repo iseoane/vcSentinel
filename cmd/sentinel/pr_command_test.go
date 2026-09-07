@@ -1885,7 +1885,7 @@ func captureStreams(t *testing.T, f func()) (stdout, stderr string) {
 // progress channel of the pr review options: the ⏳ spinner callbacks write to
 // the writer the caller passes, never to a process-global snapshot taken when
 // the options were built. The JSON-safe routing itself is decided at the
-// injection site (RunPrReviewWith passes its payload writer normally and
+// injection site (the cmd caller passes its payload writer normally and
 // stderr in --json mode) and is pinned by TestPrReviewJSONStdoutStartsAtJSON.
 func TestBranchPrReviewOptionsProgressFollowsInjectedWriter(t *testing.T) {
 	wiring := pr.Wiring{
@@ -1949,9 +1949,10 @@ func TestPrReviewJSONStdoutStartsAtJSON(t *testing.T) {
 			}, nil
 		},
 		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: pr.PrReviewEventDetail,
 	}
 	stdout, stderr := captureStreams(t, func() {
-		if code := pr.RunPrReviewWith(os.Stdout, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
 			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
 		}
 	})
@@ -2011,9 +2012,10 @@ func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
 		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
 			return errors.New("event store locked")
 		},
+		EventDetail: pr.PrReviewEventDetail,
 	}
 	stdout, stderr := captureStreams(t, func() {
-		if code := pr.RunPrReviewWith(os.Stdout, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
 			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
 		}
 	})
@@ -2028,6 +2030,59 @@ func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "? Warning: could not record the event: event store locked") {
 		t.Errorf("stderr misses the event-record warning:\n%s", stderr)
+	}
+}
+
+// TestPrReviewJSONRoutesEventDetailWarningOffStdout completes the JSON-safe
+// routing contract: the "could not build the event detail" warning is human
+// motion too, so in --json mode it must ride the injected progress channel
+// (stderr) instead of polluting the stdout the JSON document opens.
+// PrReviewEventDetail never fails on a real branch result, so the failing
+// EventDetail dep seam is the deterministic way to drive the branch — no real
+// git state or agent is involved.
+func TestPrReviewJSONRoutesEventDetailWarningOffStdout(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
+			return &review.BranchResult{
+				Branch:   "feat/event-detail-routing",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: func(string, *review.BranchResult, bool) (ops.EventDetail, error) {
+			return nil, errors.New("detail schema rejected")
+		},
+	}
+	stdout, stderr := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("byte 0 of --json stdout = %q, want '{'; stdout:\n%s", firstBytes(stdout), stdout)
+	}
+	if strings.Contains(stdout, "? Warning: could not build the event detail") {
+		t.Errorf("stdout received the event-detail warning:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "? Warning: could not build the event detail: detail schema rejected") {
+		t.Errorf("stderr misses the event-detail warning:\n%s", stderr)
 	}
 }
 
