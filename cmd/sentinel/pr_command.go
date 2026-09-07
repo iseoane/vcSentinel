@@ -220,9 +220,10 @@ func prReviewJSONOutput(base string, res *review.BranchResult) map[string]any {
 
 // branchReviewOptions assembles the pr review branch options; the assembler
 // lives in internal/app/pr and receives the package-main collaborators through
-// wiringPr.
-func branchReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags flagsPrReview, factory review.ReviewerFactory) (review.BranchOptions, error) {
-	return pr.BranchPrReviewOptions(cfg, verifier, worktree, flagsPrReviewToPr(flags), factory, wiringPr())
+// wiringPr. progress is the injected spinner channel: the real flow derives it
+// in RunPrReviewWith (payload writer normally, stderr in --json mode).
+func branchReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags flagsPrReview, factory review.ReviewerFactory, progress io.Writer) (review.BranchOptions, error) {
+	return pr.BranchPrReviewOptions(cfg, verifier, worktree, flagsPrReviewToPr(flags), factory, wiringPr(), progress)
 }
 
 // runPrReview analyzes the branch against the base and prints the audit

@@ -1778,7 +1778,7 @@ func TestBranchReviewOptionsWiresTheBlobStore(t *testing.T) {
 	// itself: outside a repository the caller only warns, so the options must
 	// still come back fully usable. Ordering it this way also keeps these
 	// assertions out of reach of tempGitRepo's skip when git is absent.
-	outside, storeWarning := branchReviewOptions(config.Config{}, nil, t.TempDir(), flagsPrReview{parent: "layer-a"}, nil)
+	outside, storeWarning := branchReviewOptions(config.Config{}, nil, t.TempDir(), flagsPrReview{parent: "layer-a"}, nil, os.Stdout)
 	if storeWarning == nil {
 		t.Error("expected an error outside a repository so the caller can warn")
 	}
@@ -1799,7 +1799,7 @@ func TestBranchReviewOptionsWiresTheBlobStore(t *testing.T) {
 	}
 
 	repo := tempGitRepo(t)
-	options, storeWarning := branchReviewOptions(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil)
+	options, storeWarning := branchReviewOptions(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil, os.Stdout)
 	if storeWarning != nil {
 		t.Fatalf("branchReviewOptions inside a real repository: %v", storeWarning)
 	}
@@ -1881,13 +1881,13 @@ func captureStreams(t *testing.T, f func()) (stdout, stderr string) {
 	return string(outBytes), string(errBytes)
 }
 
-// TestPrReviewJSONKeepsProgressOffStdout pins the routing half of the pr
-// review --json contract: when the invocation will emit the JSON document to
-// stdout, the ⏳ progress callbacks ride stderr (the JSON-safe channel, the
-// same discipline as the durable-run announcer), so byte 0 of stdout stays
-// '{'. The callbacks are fired exactly where AnalyzeBranch fires them,
-// before the JSON is printed.
-func TestPrReviewJSONKeepsProgressOffStdout(t *testing.T) {
+// TestBranchPrReviewOptionsProgressFollowsInjectedWriter covers the injected
+// progress channel of the pr review options: the ⏳ spinner callbacks write to
+// the writer the caller passes, never to a process-global snapshot taken when
+// the options were built. The JSON-safe routing itself is decided at the
+// injection site (RunPrReviewWith passes its payload writer normally and
+// stderr in --json mode) and is pinned by TestPrReviewJSONStdoutStartsAtJSON.
+func TestBranchPrReviewOptionsProgressFollowsInjectedWriter(t *testing.T) {
 	wiring := pr.Wiring{
 		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
 			return opts
@@ -1897,23 +1897,16 @@ func TestPrReviewJSONKeepsProgressOffStdout(t *testing.T) {
 		},
 		ShortSHA: func(sha string) string { return sha },
 	}
-	// The progress writer resolves os.Stderr when the options are built, so
-	// the build and the callback firings must both sit inside the capture
-	// window: that is exactly the wiring order a real invocation runs.
-	stdout, stderr := captureStreams(t, func() {
-		options, _ := pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
-			pr.FlagsPrReview{JsonOut: true}, nil, wiring)
-		if options.OnCommit == nil || options.OnDimension == nil {
-			t.Fatal("BranchPrReviewOptions must wire the progress callbacks")
-		}
-		options.OnCommit(0, 1, "abc1234abcd")
-		options.OnDimension("logic")
-	})
-	if strings.Contains(stdout, "⏳") {
-		t.Errorf("stdout received spinner bytes that would precede the JSON document:\n%q", stdout)
+	var progress bytes.Buffer
+	options, _ := pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
+		pr.FlagsPrReview{JsonOut: true}, nil, wiring, &progress)
+	if options.OnCommit == nil || options.OnDimension == nil {
+		t.Fatal("BranchPrReviewOptions must wire the progress callbacks")
 	}
-	if !strings.Contains(stderr, "⏳ [1/1] Auditing abc1234abcd") || !strings.Contains(stderr, "  ⏳ logic …") {
-		t.Errorf("stderr misses the progress lines in --json mode:\n%q", stderr)
+	options.OnCommit(0, 1, "abc1234abcd")
+	options.OnDimension("logic")
+	if got := progress.String(); !strings.Contains(got, "⏳ [1/1] Auditing abc1234abcd") || !strings.Contains(got, "  ⏳ logic …") {
+		t.Errorf("injected progress writer misses the spinner lines:\n%q", got)
 	}
 }
 

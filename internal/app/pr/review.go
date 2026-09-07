@@ -101,20 +101,17 @@ func DecisionText(decision string, volume int) string {
 // ONLY the blob-store resolution failure, never a reason to abort. Reuse is
 // optional, so options comes back fully usable with a nil Store and the caller
 // warns through its own stream instead of returning.
-func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags FlagsPrReview, factory review.ReviewerFactory, wiring Wiring) (options review.BranchOptions, storeWarning error) {
+//
+// progress is the injected human-motion channel for the ⏳ spinner callbacks:
+// the caller owns the JSON-safe routing (RunPrReviewWith passes its payload
+// writer normally and stderr in --json mode), so this assembler never reads
+// the process streams itself.
+func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags FlagsPrReview, factory review.ReviewerFactory, wiring Wiring, progress io.Writer) (options review.BranchOptions, storeWarning error) {
 	base := flags.Base
 	if base == "" {
 		base = "main"
 	}
 	blobStore, storeWarning := ResolveBlobStore(worktree)
-	// The ⏳ progress lines are human motion, not payload: when this
-	// invocation will emit --json to stdout they ride stderr (the JSON-safe
-	// channel, the same discipline as the durable-run announcer), so byte 0
-	// of --json stdout stays '{'.
-	progress := io.Writer(os.Stdout)
-	if flags.JsonOut {
-		progress = os.Stderr
-	}
 	return wiring.BranchOptionsWithRefuter(cfg, verifier, review.BranchOptions{
 		Base:                   base,
 		OnlyPending:            flags.OnlyPending,
@@ -222,7 +219,16 @@ func RunPrReviewWith(w io.Writer, worktree string, flags FlagsPrReview, wiring W
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring)
+	// The ⏳ progress lines are human motion, not payload: when this
+	// invocation will emit --json to stdout they ride stderr (the JSON-safe
+	// channel, the same discipline as the durable-run announcer), so byte 0
+	// of --json stdout stays '{'. The routing derives from the streams this
+	// function receives — never from the process globals directly.
+	progress := io.Writer(w)
+	if flags.JsonOut {
+		progress = os.Stderr
+	}
+	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring, progress)
 	if err != nil {
 		fmt.Fprintf(w, "⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
 	}
