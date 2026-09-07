@@ -5,9 +5,41 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Cache shared audit evidence across review dimensions
+## 1. Calibrate the OpenCode reviewer step budget with measured data
 
-Sits first: the token measurement now exists on all three adapter paths
+Sits first: a measured 21% of semantic reviews are being truncated before
+they return a verdict, so review coverage is silently incomplete today.
+The provisional budget was raised without the measurement that would size
+it; this item closes that gap.
+
+- Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
+  OpenCode `Steps` value — the number of model turns the restricted
+  reviewer may spend. It was `8`, chosen without measurement. When the
+  reviewer exhausts it, OpenCode ends the turn with `step_finish
+  reason: "tool-calls"` and exit 0, having emitted only its opening
+  narration. The budget is provider-conditional: the Claude branch
+  intentionally ignores it (no confirmed flag caps tool calls there).
+- Evidence: 2026-09-07 audit of `<git-common-dir>/vas-sentinel/executions/v1`.
+  Of the 90 outcomes that record a stop reason (capture landed 2026-09-06),
+  71 ended `end_turn` and 19 ended `tool-calls` — 21% truncated. Truncation
+  concentrates by model: `muse-spark-1.3-contributor` 12/68 truncated,
+  `glm-5.3-flash` 0/15. Commit `eaf82b2` dimension `logic` truncated twice
+  (runs `703826855ea4`, `863b4c9b0b63`), the second being the wasted format
+  retry, and surfaced as `missing_semantic_payload`.
+- Blocked on: the distribution of steps actually consumed by reviews that
+  complete. The durable store records the stop reason but not the step
+  count, and it cannot be reconstructed — only the concatenated answer text
+  is persisted, not the event stream. Recording it is the prerequisite.
+- Closing: a step budget selected from the observed distribution of a
+  completing review (headroom over the p90), or a recorded determination
+  that the budget is the wrong control and truncation must be handled by
+  scope reduction instead. Revisit the provisional value then.
+- Note: raising the budget trades latency for coverage. Completing reviews
+  observed a 54.5s median and 209.6s p90; truncated ones 38.8s median.
+
+## 2. Cache shared audit evidence across review dimensions
+
+Sits second: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -29,9 +61,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 2. Give cost, scope and reuse a producer (FU-3)
+## 3. Give cost, scope and reuse a producer (FU-3)
 
-Sits second: tokens now have producers on every adapter path, but cost,
+Sits third: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -49,9 +81,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 3. Validate the acpx spawn chain on native Windows
+## 4. Validate the acpx spawn chain on native Windows
 
-Sits third: conditional work — no action while Debian is the deployment
+Sits fourth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
