@@ -172,7 +172,7 @@ func Sites() []Site {
 			Class: ClassShared, Reason: "Provider process spawn seam for the ACP/acpx strategy (ticket 16): Command is the transparent spawn description; the production path runs through the owned-tree spawner in review.go (process.Spawn), mirroring cli.go's seam split. Admission binding happens at the caller, not here."},
 		{Path: "internal/acpadapter/review.go", Symbol: "AcpxAdapter RunPrompt/RunReview/ReviewWithContext", Anchor: "func (a *AcpxAdapter) RunPrompt(prompt string) (string, error) {", Marker: "RunPrompt(",
 			Class: ClassShared, Reason: "Prompt and restricted-review surface of the ACP/acpx adapter (ticket 16 slice 2, wired in slice 3): review runs reuse the shared reviewsnapshot.Create snapshot discipline and spawn through the owned-tree process.Spawn seam like cli.go; admission binding happens at the caller, not here."},
-		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.GetCommitMessageWithDiff", Anchor: "salida, err := b.RunPrompt(prompt)", Marker: "RunPrompt(",
+		{Path: "internal/agentadapter/acpx.go", Symbol: "AcpxBridge.GetCommitMessageWithDiff", Anchor: "output, err := b.RunPrompt(prompt)", Marker: "RunPrompt(",
 			Class: ClassHelper, Reason: "Factory wiring of kind:acpx entries (ticket 16 slice 3): the bridge delegates commit-message generation through one prompt turn on the acp adapter. Commit-message text cannot influence a verdict or gate outcome and degrades to deterministic fallback messages on failure."},
 
 		// --- internal/agentadapter ----------------------------------------
@@ -232,7 +232,7 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Shared read-only review snapshot discipline (git ls-tree/show plumbing) relocated in ticket 16 slice 3 so both adapter families run the exact same committed-content materialization; never invokes a provider agent."},
 
 		// --- advisory/narrative helpers --------------------------------------
-		{Path: "internal/modelprobe/verifier.go", Symbol: "Verifier.Verify", Anchor: "actual, err := agente.RunPrompt(promptModel)", Marker: "RunPrompt(",
+		{Path: "internal/modelprobe/verifier.go", Symbol: "Verifier.Verify", Anchor: "actual, err := agent.RunPrompt(promptModel)", Marker: "RunPrompt(",
 			Class: ClassHelper, Reason: "One-shot model identity probe; records a mismatch in the profile store and explicitly never affects the caller's review request."},
 		{Path: "internal/ops/verify.go", Symbol: "verifyInternal delegated mode", Anchor: "output, err := opts.Agent.RunPrompt(verificationPrompt())", Marker: "RunPrompt(",
 			Class: ClassHelper, Reason: "Advisory tested-contract delegation; every failure degrades to ModeSkipped. Verification never blocks (warn, never block)."},
@@ -270,13 +270,13 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Low-level context-aware process runner beneath the provider seam; owns tree accounting, not agents."},
 		{Path: "internal/setup/github.go", Symbol: "gh auth token", Anchor: "cmd := exec.Command(\"gh\", \"auth\", \"token\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Installer credential probe."},
-		{Path: "internal/setup/install.go", Symbol: "installer", Anchor: "cmd := exec.Command(\"go\", \"install\", paquete)", Marker: "exec.Command",
+		{Path: "internal/setup/install.go", Symbol: "installer", Anchor: "cmd := exec.Command(\"go\", \"install\", pkg)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "go install/GOPATH/PATH installer plumbing."},
-		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Anchor: "cmd := exec.Command(\"powershell\", \"-NoProfile\", \"-Command\", comando)", Marker: "exec.Command",
+		{Path: "internal/setup/uninstall.go", Symbol: "uninstaller", Anchor: "cmd := exec.Command(\"powershell\", \"-NoProfile\", \"-Command\", command)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "PATH cleanup plumbing."},
 		{Path: "internal/git/commit.go", Symbol: "gitIn (ContentInSomeRefFrom, RequireUsableRepository)", Anchor: "cmd := exec.Command(\"git\", append([]string{\"-C\", worktree}, args...)...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Read-only ref containment probe scoped to an explicit worktree instead of the process working directory. Git plumbing behind the orphan purge, which decides deletions and must classify against the repository it is purging; consults no agent."},
-		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Anchor: "cmd := exec.Command(binarioActual, \"--version\")", Marker: "exec.Command",
+		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Anchor: "cmd := exec.Command(currentBinary, \"--version\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Binary version probe for upgrades."},
 		{Path: "tools/release/main.go", Symbol: "release tooling", Anchor: "cmd := exec.Command(\"gh\", \"release\", \"view\", \"--json\", \"tagName\", \"--jq\", \".tagName\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Release asset tooling outside the sentinel runtime."},
