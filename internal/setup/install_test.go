@@ -10,209 +10,209 @@ import (
 
 func setHome(t *testing.T, home string) {
 	t.Helper()
-	// os.UserHomeDir() usa HOME en Unix y USERPROFILE en Windows.
-	claves := []string{"HOME"}
+	// os.UserHomeDir() uses HOME on Unix and USERPROFILE on Windows.
+	keys := []string{"HOME"}
 	if runtime.GOOS == "windows" {
-		claves = append(claves, "USERPROFILE")
+		keys = append(keys, "USERPROFILE")
 	}
-	originales := make(map[string]string, len(claves))
-	for _, clave := range claves {
-		originales[clave] = os.Getenv(clave)
+	originals := make(map[string]string, len(keys))
+	for _, key := range keys {
+		originals[key] = os.Getenv(key)
 	}
-	for _, clave := range claves {
-		if err := os.Setenv(clave, home); err != nil {
-			t.Fatalf("no se pudo fijar %s: %v", clave, err)
+	for _, key := range keys {
+		if err := os.Setenv(key, home); err != nil {
+			t.Fatalf("could not set %s: %v", key, err)
 		}
 	}
 	t.Cleanup(func() {
-		for clave, valor := range originales {
-			os.Setenv(clave, valor)
+		for key, value := range originals {
+			os.Setenv(key, value)
 		}
 	})
 }
 
-func TestCrearConfiguracionGlobal(t *testing.T) {
+func TestCreateGlobalConfig(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
 
-	if err := crearConfiguracionGlobal(); err != nil {
-		t.Fatalf("crearConfiguracionGlobal devolvió error: %v", err)
+	if err := createGlobalConfig(); err != nil {
+		t.Fatalf("createGlobalConfig returned error: %v", err)
 	}
-	ruta := filepath.Join(home, ".vas_sentinel", "vassentinel.yml")
-	contenido, err := os.ReadFile(ruta)
+	path := filepath.Join(home, ".vas_sentinel", "vassentinel.yml")
+	content, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no se creó la config global en %s: %v", ruta, err)
+		t.Fatalf("the global config was not created at %s: %v", path, err)
 	}
-	if len(contenido) == 0 {
-		t.Error("la config global quedó vacía")
+	if len(content) == 0 {
+		t.Error("the global config was left empty")
 	}
 
-	t.Run("no sobreescribe una config existente", func(t *testing.T) {
-		previo := "contenido-previo\n"
-		if err := os.WriteFile(ruta, []byte(previo), 0644); err != nil {
+	t.Run("does not overwrite an existing config", func(t *testing.T) {
+		before := "previous-content\n"
+		if err := os.WriteFile(path, []byte(before), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := crearConfiguracionGlobal(); err != nil {
-			t.Fatalf("segunda llamada devolvió error: %v", err)
+		if err := createGlobalConfig(); err != nil {
+			t.Fatalf("second call returned error: %v", err)
 		}
-		despues, err := os.ReadFile(ruta)
+		after, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(despues) != previo {
-			t.Errorf("la config global fue sobreescrita: %q, esperado %q", despues, previo)
+		if string(after) != before {
+			t.Errorf("the global config was overwritten: %q, want %q", after, before)
 		}
 	})
 }
 
-func TestCrearConfiguracionPerProyecto(t *testing.T) {
+func TestCreatePerProjectConfig(t *testing.T) {
 	worktree := t.TempDir()
 
-	if err := CrearConfiguracionPerProyecto(worktree); err != nil {
-		t.Fatalf("CrearConfiguracionPerProyecto devolvió error: %v", err)
+	if err := CreatePerProjectConfig(worktree); err != nil {
+		t.Fatalf("CreatePerProjectConfig returned error: %v", err)
 	}
-	ruta := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
-	contenido, err := os.ReadFile(ruta)
+	path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	content, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no se creó la config per-proyecto en %s: %v", ruta, err)
+		t.Fatalf("the per-project config was not created at %s: %v", path, err)
 	}
-	if len(contenido) == 0 {
-		t.Error("la config per-proyecto quedó vacía")
+	if len(content) == 0 {
+		t.Error("the per-project config was left empty")
 	}
 
-	t.Run("no sobreescribe una config existente", func(t *testing.T) {
-		previo := "contenido-previo\n"
-		if err := os.WriteFile(ruta, []byte(previo), 0644); err != nil {
+	t.Run("does not overwrite an existing config", func(t *testing.T) {
+		before := "previous-content\n"
+		if err := os.WriteFile(path, []byte(before), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := CrearConfiguracionPerProyecto(worktree); err != nil {
+		if err := CreatePerProjectConfig(worktree); err != nil {
 			t.Fatal(err)
 		}
-		despues, err := os.ReadFile(ruta)
+		after, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(despues) != previo {
-			t.Errorf("la config per-proyecto fue sobreescrita: %q, esperado %q", despues, previo)
+		if string(after) != before {
+			t.Errorf("the per-project config was overwritten: %q, want %q", after, before)
 		}
 	})
 }
 
-func TestPlantillaSolicitaDiffExternoDesactivadoPorDefecto(t *testing.T) {
-	if !strings.Contains(archivoConfiguracionPerProyectoBase, "request_external_agent_diff: false") {
-		t.Fatal("la plantilla debe declarar la solicitud externa en false")
+func TestTemplateRequestsExternalDiffDisabledByDefault(t *testing.T) {
+	if !strings.Contains(perProjectConfigTemplate, "request_external_agent_diff: false") {
+		t.Fatal("the template must declare the external request as false")
 	}
-	if strings.Contains(archivoConfiguracionPerProyectoBase, "allow_external_agent_diff") {
-		t.Fatal("la plantilla conserva el antiguo nombre ambiguo de consentimiento")
-	}
-}
-
-func TestPlantillaCodeGraphReviewerDesactivadoPorDefecto(t *testing.T) {
-	if !strings.Contains(archivoConfiguracionPerProyectoBase, "codegraph_context: false") {
-		t.Fatal("la plantilla debe desactivar CodeGraph reviewer context")
+	if strings.Contains(perProjectConfigTemplate, "allow_external_agent_diff") {
+		t.Fatal("the template still carries the old ambiguous consent name")
 	}
 }
 
-// TestPlantillaPerProyectoDocumentaVerificacionDeterminista: la plantilla que
-// init escribe debe mostrar al usuario (comentadas) las claves que activan la
-// verificación determinista sin agente — lint_commands, test_commands y
-// build_commands — con su efecto y un ejemplo ejecutable.
-func TestPlantillaPerProyectoDocumentaVerificacionDeterminista(t *testing.T) {
-	contenido := archivoConfiguracionPerProyectoBase
-	for _, clave := range []string{"lint_commands", "test_commands", "build_commands"} {
-		if !strings.Contains(contenido, clave) {
-			t.Errorf("la plantilla per-proyecto no documenta %q", clave)
+func TestTemplateCodeGraphReviewerDisabledByDefault(t *testing.T) {
+	if !strings.Contains(perProjectConfigTemplate, "codegraph_context: false") {
+		t.Fatal("the template must disable the CodeGraph reviewer context")
+	}
+}
+
+// TestTemplateDocumentsDeterministicVerification: the template init writes
+// must show the user (commented) the keys that activate deterministic
+// verification without an agent — lint_commands, test_commands and
+// build_commands — with their effect and an executable example.
+func TestTemplateDocumentsDeterministicVerification(t *testing.T) {
+	content := perProjectConfigTemplate
+	for _, key := range []string{"lint_commands", "test_commands", "build_commands"} {
+		if !strings.Contains(content, key) {
+			t.Errorf("the per-project template does not document %q", key)
 		}
 	}
-	if !strings.Contains(contenido, "Verificación determinista SIN agente") {
-		t.Error("la plantilla debe explicar que estas claves activan la verificación determinista")
+	if !strings.Contains(content, "Deterministic verification WITHOUT agent") {
+		t.Error("the template must explain that these keys activate deterministic verification")
 	}
-	if !strings.Contains(contenido, `go test ./...`) {
-		t.Error("la plantilla debe mostrar un ejemplo de test_commands")
+	if !strings.Contains(content, `go test ./...`) {
+		t.Error("the template must show a test_commands example")
 	}
-	if !strings.Contains(contenido, `go build ./...`) {
-		t.Error("la plantilla debe mostrar un ejemplo de build_commands")
+	if !strings.Contains(content, `go build ./...`) {
+		t.Error("the template must show a build_commands example")
 	}
-	if !strings.Contains(contenido, `supports_scope: true`) || !strings.Contains(contenido, `scoped_command: "go test {packages}"`) {
-		t.Error("la plantilla debe documentar el scope real de unit_test")
+	if !strings.Contains(content, `supports_scope: true`) || !strings.Contains(content, `scoped_command: "go test {packages}"`) {
+		t.Error("the template must document the real unit_test scope")
 	}
 }
 
-func TestMoverYReemplazar(t *testing.T) {
+func TestMoveAndReplace(t *testing.T) {
 	dir := t.TempDir()
-	origen := filepath.Join(dir, "origen")
-	destino := filepath.Join(dir, "destino")
+	source := filepath.Join(dir, "source")
+	destination := filepath.Join(dir, "destination")
 
-	if err := os.WriteFile(origen, []byte("contenido-nuevo"), 0644); err != nil {
+	if err := os.WriteFile(source, []byte("new-content"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(destino, []byte("contenido-viejo"), 0644); err != nil {
+	if err := os.WriteFile(destination, []byte("old-content"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := moverYReemplazar(origen, destino); err != nil {
-		t.Fatalf("moverYReemplazar devolvió error: %v", err)
+	if err := moveAndReplace(source, destination); err != nil {
+		t.Fatalf("moveAndReplace returned error: %v", err)
 	}
 
-	contenido, err := os.ReadFile(destino)
+	content, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(contenido) != "contenido-nuevo" {
-		t.Errorf("el destino no fue reemplazado: %q", contenido)
+	if string(content) != "new-content" {
+		t.Errorf("the destination was not replaced: %q", content)
 	}
 }
 
-func TestAnadirRutaShell(t *testing.T) {
+func TestAddShellPathBlock(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
 
-	if err := anadirRutaShell(); err != nil {
-		t.Fatalf("anadirRutaShell devolvió error: %v", err)
+	if err := addShellPathBlock(); err != nil {
+		t.Fatalf("addShellPathBlock returned error: %v", err)
 	}
 
 	zshrc := filepath.Join(home, ".zshrc")
-	contenido, err := os.ReadFile(zshrc)
+	content, err := os.ReadFile(zshrc)
 	if err != nil {
-		t.Fatalf("no se creó ~/.zshrc: %v", err)
+		t.Fatalf("~/.zshrc was not created: %v", err)
 	}
-	bloque := `export PATH="/usr/local/bin:$PATH"`
-	if !strings.Contains(string(contenido), bloque) {
-		t.Errorf("~/.zshrc no contiene el bloque esperado:\n%s", contenido)
+	block := `export PATH="/usr/local/bin:$PATH"`
+	if !strings.Contains(string(content), block) {
+		t.Errorf("~/.zshrc does not contain the expected block:\n%s", content)
 	}
 
-	t.Run("es idempotente", func(t *testing.T) {
-		if err := anadirRutaShell(); err != nil {
-			t.Fatalf("segunda llamada devolvió error: %v", err)
+	t.Run("is idempotent", func(t *testing.T) {
+		if err := addShellPathBlock(); err != nil {
+			t.Fatalf("second call returned error: %v", err)
 		}
-		despues, err := os.ReadFile(zshrc)
+		after, err := os.ReadFile(zshrc)
 		if err != nil {
 			t.Fatal(err)
 		}
-		apariciones := strings.Count(string(despues), bloque)
-		if apariciones != 1 {
-			t.Errorf("el bloque debería aparecer una sola vez, obtuve %d", apariciones)
+		occurrences := strings.Count(string(after), block)
+		if occurrences != 1 {
+			t.Errorf("the block should appear exactly once, got %d", occurrences)
 		}
 	})
 
-	t.Run("anade a bashrc cuando no existe zshrc", func(t *testing.T) {
+	t.Run("adds to bashrc when zshrc does not exist", func(t *testing.T) {
 		bashrc := filepath.Join(home, ".bashrc")
 		if err := os.WriteFile(bashrc, []byte("export OLD=1\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := anadirRutaShell(); err != nil {
-			t.Fatalf("anadirRutaShell devolvió error: %v", err)
+		if err := addShellPathBlock(); err != nil {
+			t.Fatalf("addShellPathBlock returned error: %v", err)
 		}
-		contenido, err := os.ReadFile(bashrc)
+		content, err := os.ReadFile(bashrc)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(contenido), bloque) {
-			t.Errorf("~/.bashrc no contiene el bloque esperado:\n%s", contenido)
+		if !strings.Contains(string(content), block) {
+			t.Errorf("~/.bashrc does not contain the expected block:\n%s", content)
 		}
 	})
 
-	t.Run("anade a ambos cuando existen", func(t *testing.T) {
+	t.Run("adds to both when both exist", func(t *testing.T) {
 		zshrc := filepath.Join(home, ".zshrc")
 		bashrc := filepath.Join(home, ".bashrc")
 		if err := os.WriteFile(zshrc, []byte("export OLD=1\n"), 0644); err != nil {
@@ -221,101 +221,102 @@ func TestAnadirRutaShell(t *testing.T) {
 		if err := os.WriteFile(bashrc, []byte("export OLD=1\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := anadirRutaShell(); err != nil {
-			t.Fatalf("anadirRutaShell devolvió error: %v", err)
+		if err := addShellPathBlock(); err != nil {
+			t.Fatalf("addShellPathBlock returned error: %v", err)
 		}
-		for _, ruta := range []string{zshrc, bashrc} {
-			contenido, err := os.ReadFile(ruta)
+		for _, path := range []string{zshrc, bashrc} {
+			content, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(contenido), bloque) {
-				t.Errorf("%s no contiene el bloque esperado", ruta)
+			if !strings.Contains(string(content), block) {
+				t.Errorf("%s does not contain the expected block", path)
 			}
 		}
 	})
 }
 
-func TestRutasBinario(t *testing.T) {
+func TestBinaryPaths(t *testing.T) {
 	home := t.TempDir()
-	if ruta := rutaBinarioWindows(home); ruta != filepath.Join(home, ".vas_sentinel", "bin", "sentinel.exe") {
-		t.Errorf("rutaBinarioWindows = %q, esperado en .vas_sentinel/bin/sentinel.exe", ruta)
+	if path := windowsBinaryPath(home); path != filepath.Join(home, ".vas_sentinel", "bin", "sentinel.exe") {
+		t.Errorf("windowsBinaryPath = %q, want the path under .vas_sentinel/bin/sentinel.exe", path)
 	}
-	if ruta := rutaBinarioLinux(); ruta != "/usr/local/bin/sentinel" {
-		t.Errorf("rutaBinarioLinux = %q, esperado /usr/local/bin/sentinel", ruta)
-	}
-}
-
-func TestNecesitaAnadirPathWindows(t *testing.T) {
-	if necesitaAnadirPathWindows("C:\\x;C:\\y", "C:\\x") {
-		t.Error("no debería añadir un directorio ya presente en el PATH")
-	}
-	if !necesitaAnadirPathWindows("C:\\x", "C:\\nuevo") {
-		t.Error("debería añadir un directorio ausente del PATH")
+	if path := linuxBinaryPath(); path != "/usr/local/bin/sentinel" {
+		t.Errorf("linuxBinaryPath = %q, want /usr/local/bin/sentinel", path)
 	}
 }
 
-func TestObtenerPathUsuarioWindows(t *testing.T) {
+func TestNeedsWindowsPathUpdate(t *testing.T) {
+	if needsWindowsPathUpdate("C:\\x;C:\\y", "C:\\x") {
+		t.Error("should not add a directory already present in the PATH")
+	}
+	if !needsWindowsPathUpdate("C:\\x", "C:\\new") {
+		t.Error("should add a directory missing from the PATH")
+	}
+}
+
+func TestWindowsUserPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("solo aplica a Windows")
+		t.Skip("only applies to Windows")
 	}
-	if _, err := obtenerPathUsuarioWindows(); err != nil {
-		t.Fatalf("obtenerPathUsuarioWindows devolvió error: %v", err)
+	if _, err := windowsUserPath(); err != nil {
+		t.Fatalf("windowsUserPath returned error: %v", err)
 	}
 }
 
-// TestInstalacionColocaBinarioEjecutableYReportaVersion verifies the placement
-// half of the install flow on a temporary destination: moverYReemplazar puts
+// TestInstallPlacesExecutableBinaryAndReportsVersion verifies the placement
+// half of the install flow on a temporary destination: moveAndReplace puts
 // the downloaded artifact in place and the installer's chmod 0755 step makes
-// it executable; verificarBinario then proves the installed binary answers
+// it executable; verifyBinary then proves the installed binary answers
 // --version with its real version string.
 //
-// instalarLinux itself targets /usr/local/bin and falls back to sudo, so it is
+// installLinux itself targets /usr/local/bin and falls back to sudo, so it is
 // deliberately NOT invoked from tests; this test exercises its exact placement
-// primitives over an injected temporary destination. instalarWindows is
+// primitives over an injected temporary destination. installWindows is
 // HOME-based but shells out to PowerShell for the user PATH update, so its
-// logic stays covered by path-building unit tests (TestRutasBinario,
-// TestNecesitaAnadirPathWindows) plus GOOS=windows build+vet as the
+// logic stays covered by path-building unit tests (TestBinaryPaths,
+// TestNeedsWindowsPathUpdate) plus GOOS=windows build+vet as the
 // compile-time half.
-func TestInstalacionColocaBinarioEjecutableYReportaVersion(t *testing.T) {
+func TestInstallPlacesExecutableBinaryAndReportsVersion(t *testing.T) {
 	dir := t.TempDir()
-	descarga := filepath.Join(dir, "downloaded-sentinel")
-	destino := filepath.Join(dir, "installed", nombreBinarioGo())
-	if err := os.MkdirAll(filepath.Dir(destino), 0755); err != nil {
+	download := filepath.Join(dir, "downloaded-sentinel")
+	destination := filepath.Join(dir, "installed", goBinaryName())
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	if runtime.GOOS == "windows" {
-		if err := os.WriteFile(descarga, []byte("@echo off\r\necho sentinel v3.2.1\r\n"), 0644); err != nil {
+		if err := os.WriteFile(download, []byte("@echo off\r\necho sentinel v3.2.1\r\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		if err := os.WriteFile(descarga, []byte("#!/bin/sh\necho sentinel v3.2.1\n"), 0644); err != nil {
+		if err := os.WriteFile(download, []byte("#!/bin/sh\necho sentinel v3.2.1\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := moverYReemplazar(descarga, destino); err != nil {
+	if err := moveAndReplace(download, destination); err != nil {
 		t.Fatalf("placement failed: %v", err)
 	}
-	if err := os.Chmod(destino, 0755); err != nil {
+
+	if err := os.Chmod(destination, 0755); err != nil {
 		t.Fatalf("chmod of the installed binary failed: %v", err)
 	}
 
-	info, err := os.Stat(destino)
+	info, err := os.Stat(destination)
 	if err != nil {
 		t.Fatalf("the installed binary is missing: %v", err)
 	}
 	if perm := info.Mode().Perm(); perm&0100 == 0 {
 		t.Errorf("the installed binary is not executable: %o", perm)
 	}
-	if _, err := os.Stat(descarga); !os.IsNotExist(err) {
+	if _, err := os.Stat(download); !os.IsNotExist(err) {
 		t.Errorf("the downloaded artifact was not consumed by placement: %v", err)
 	}
 
 	output := captureStdout(t, func() {
-		if err := verificarBinario(destino); err != nil {
-			t.Fatalf("verificarBinario failed on the installed binary: %v", err)
+		if err := verifyBinary(destination); err != nil {
+			t.Fatalf("verifyBinary failed on the installed binary: %v", err)
 		}
 	})
 	if !strings.Contains(output, "v3.2.1") {

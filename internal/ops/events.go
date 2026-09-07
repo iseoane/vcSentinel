@@ -18,9 +18,9 @@ import (
 // EventDetail is the structured payload used by operation event writers.
 type EventDetail map[string]any
 
-// Evento es una línea de events.jsonl: el registro append-only de operaciones
-// de VAS Sentinel en el repositorio.
-type Evento struct {
+// Event is one line of events.jsonl: the append-only record of VAS Sentinel
+// operations in the repository.
+type Event struct {
 	At       time.Time `json:"at"`
 	Cmd      string    `json:"cmd"`
 	Exit     int       `json:"exit"`
@@ -32,7 +32,7 @@ type Evento struct {
 // UnmarshalJSON accepts both the historical string representation and the
 // structured object representation. A legacy string containing a JSON object
 // is normalized for readers; other legacy text remains unchanged.
-func (e *Evento) UnmarshalJSON(data []byte) error {
+func (e *Event) UnmarshalJSON(data []byte) error {
 	type eventWire struct {
 		At       time.Time       `json:"at"`
 		Cmd      string          `json:"cmd"`
@@ -45,7 +45,7 @@ func (e *Evento) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	*e = Evento{At: wire.At, Cmd: wire.Cmd, Exit: wire.Exit, Shas: wire.Shas, Worktree: wire.Worktree}
+	*e = Event{At: wire.At, Cmd: wire.Cmd, Exit: wire.Exit, Shas: wire.Shas, Worktree: wire.Worktree}
 	rawDetail := bytes.TrimSpace(wire.Detail)
 	if len(rawDetail) == 0 || bytes.Equal(rawDetail, []byte("null")) {
 		return nil
@@ -65,23 +65,23 @@ func (e *Evento) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-var eventosRel = filepath.Join("vas-sentinel", "events.jsonl")
+var eventsRelPath = filepath.Join("vas-sentinel", "events.jsonl")
 
-// Umbrales de rotación: el log nunca crece sin límite. Cuando el archivo
-// supera maxEventosBytes se poda a las últimas maxEventosLineas líneas.
+// Rotation thresholds: the log never grows without bound. When the file
+// exceeds maxEventsBytes it is pruned to the last maxEventsLines lines.
 const (
-	maxEventosBytes  = 256 * 1024
-	maxEventosLineas = 1000
+	maxEventsBytes = 256 * 1024
+	maxEventsLines = 1000
 )
 
-// RegistrarEvento anexa un evento al log del repositorio (O_APPEND, sin
-// truncar). Crea el directorio y el archivo si no existen. Una escritura
-// fallida devuelve error: el log nunca se descarta en silencio. Tras anexar,
-// si el log supera el umbral de tamaño se rota dejando las últimas
-// maxEventosLineas líneas (nunca vacía el historial entero).
-func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail EventDetail, worktree string) error {
-	ruta := filepath.Join(gitDir, eventosRel)
-	evento := Evento{
+// RecordEvent appends an event to the repository log (O_APPEND, no
+// truncation). Creates the directory and the file if they do not exist. A
+// failed write returns an error: the log is never silently discarded. After
+// appending, if the log exceeds the size threshold it is rotated keeping the
+// last maxEventsLines lines (never empties the whole history).
+func RecordEvent(gitDir, cmd string, exit int, shas []string, detail EventDetail, worktree string) error {
+	path := filepath.Join(gitDir, eventsRelPath)
+	event := Event{
 		At:       time.Now().UTC(),
 		Cmd:      cmd,
 		Exit:     exit,
@@ -89,48 +89,48 @@ func RegistrarEvento(gitDir, cmd string, exit int, shas []string, detail EventDe
 		Worktree: worktree,
 	}
 	if detail != nil {
-		evento.Detail = detail
+		event.Detail = detail
 	}
-	linea, err := json.Marshal(evento)
+	line, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	archivo, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
-	defer archivo.Close()
-	info, err := archivo.Stat()
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
 	if info.Size() > 0 {
 		lastByte := []byte{0}
-		if _, err := archivo.ReadAt(lastByte, info.Size()-1); err != nil {
+		if _, err := file.ReadAt(lastByte, info.Size()-1); err != nil {
 			return err
 		}
 		if lastByte[0] != '\n' {
-			if _, err := archivo.Write([]byte{'\n'}); err != nil {
+			if _, err := file.Write([]byte{'\n'}); err != nil {
 				return err
 			}
 		}
 	}
-	if _, err := archivo.Write(append(linea, '\n')); err != nil {
+	if _, err := file.Write(append(line, '\n')); err != nil {
 		return err
 	}
-	if err := archivo.Close(); err != nil {
+	if err := file.Close(); err != nil {
 		return err
 	}
 
-	info, err = os.Stat(ruta)
+	info, err = os.Stat(path)
 	if err != nil {
-		return nil // sin stats no se rota, pero el evento ya quedó escrito
+		return nil // without stats no rotation happens, but the event is already written
 	}
-	if info.Size() > maxEventosBytes {
-		return RotarEventos(gitDir, maxEventosLineas)
+	if info.Size() > maxEventsBytes {
+		return RotateEvents(gitDir, maxEventsLines)
 	}
 	return nil
 }
@@ -161,32 +161,31 @@ func copyRawLine(line []byte) []byte {
 	return append([]byte(nil), line...)
 }
 
-// DetallePrCreate es el esquema del detail del evento pr-create (§13): la
-// acta de publicación. Sin pr_url la acta es por fallback y no es verificable.
-type DetallePrCreate struct {
+// PRCreateDetail is the schema of the pr-create event detail (§13): the
+// publication record. Without pr_url the record is fallback and unverifiable.
+type PRCreateDetail struct {
 	PrURL    string `json:"pr_url"`
 	Fallback bool   `json:"fallback"`
 	ChainPR  bool   `json:"chain_pr"`
 }
 
-// PurgaResultado resume la purga de actas de PRs resueltas.
-type PurgaResultado struct {
-	Purgadas    int
-	Conservadas int
-	// Avisos documenta lo que no se pudo verificar (sin gh/red, actas sin URL):
-	// la purga es best-effort y nunca destruye por incertidumbre.
-	Avisos []string
+// PurgeResult summarizes the purge of resolved PR records.
+type PurgeResult struct {
+	Purged int
+	Kept   int
+	// Warnings document what could not be verified (no gh/network, records
+	// without URL): the purge is best-effort and never destroys on uncertainty.
+	Warnings []string
 }
 
-// PurgeEventosDePRsResueltas consulta el estado de las PRs de los eventos
-// pr-create (gh pr view <nº> --json state) y purga las actas de PRs
-// MERGED/CLOSED. Conserva OPEN/DRAFT, las actas por fallback (sin URL) y todo
-// lo que no se pueda verificar. consultarEstado es inyectable para tests; nil
-// usa gh real.
-func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) (string, error)) (PurgaResultado, error) {
-	res := PurgaResultado{}
-	ruta := filepath.Join(gitDir, eventosRel)
-	archivo, err := os.Open(ruta)
+// PurgeEventsOfResolvedPRs queries the state of the PRs of the pr-create
+// events (gh pr view <n> --json state) and purges the records of MERGED/CLOSED
+// PRs. Keeps OPEN/DRAFT, the fallback records (without URL) and anything that
+// cannot be verified. fetchState is injectable for tests; nil uses the real gh.
+func PurgeEventsOfResolvedPRs(gitDir string, fetchState func(number int) (string, error)) (PurgeResult, error) {
+	res := PurgeResult{}
+	path := filepath.Join(gitDir, eventsRelPath)
+	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return res, nil
@@ -194,61 +193,61 @@ func PurgeEventosDePRsResueltas(gitDir string, consultarEstado func(numero int) 
 		return res, err
 	}
 
-	if consultarEstado == nil {
-		consultarEstado = estadoPRConGH
+	if fetchState == nil {
+		fetchState = pullRequestStateWithGH
 	}
 
-	var conservadas [][]byte
-	readErr := visitRawLines(archivo, func(line []byte) error {
-		var ev Evento
+	var kept [][]byte
+	readErr := visitRawLines(file, func(line []byte) error {
+		var ev Event
 		if json.Unmarshal(line, &ev) != nil || ev.Cmd != "pr-create" {
-			conservadas = append(conservadas, copyRawLine(line))
+			kept = append(kept, copyRawLine(line))
 			return nil
 		}
-		purgar, aviso := actaResuelta(ev.Detail, consultarEstado)
-		if purgar {
-			res.Purgadas++
+		purge, warning := resolvedPRRecord(ev.Detail, fetchState)
+		if purge {
+			res.Purged++
 			return nil
 		}
-		res.Conservadas++
-		if aviso != "" {
-			res.Avisos = append(res.Avisos, aviso)
+		res.Kept++
+		if warning != "" {
+			res.Warnings = append(res.Warnings, warning)
 		}
-		conservadas = append(conservadas, copyRawLine(line))
+		kept = append(kept, copyRawLine(line))
 		return nil
 	})
-	errCierre := archivo.Close()
+	closeErr := file.Close()
 	if readErr != nil {
 		return res, readErr
 	}
-	if errCierre != nil {
-		return res, errCierre
+	if closeErr != nil {
+		return res, closeErr
 	}
 
-	if res.Purgadas == 0 {
+	if res.Purged == 0 {
 		return res, nil
 	}
-	return res, writeRawTemporaryLog(ruta, conservadas)
+	return res, writeRawTemporaryLog(path, kept)
 }
 
-// actaResuelta decide si la acta de una PR es una PR resuelta (purgar),
-// devolviendo también un aviso si no se pudo verificar (se conserva). Un
-// detail corrupto NO aborta la purga: se conserva con aviso (best-effort,
-// nunca se destruye por incertidumbre).
-func actaResuelta(detail any, consultarEstado func(int) (string, error)) (bool, string) {
-	var acta DetallePrCreate
-	if err := unmarshalDetail(detail, &acta); err != nil {
-		return false, "acta con detail inválido: se conserva"
+// resolvedPRRecord decides whether the record of a PR is a resolved PR (purge),
+// also returning a warning if it could not be verified (it is kept). A
+// corrupt detail does NOT abort the purge: it is kept with a warning
+// (best-effort, never destroyed by uncertainty).
+func resolvedPRRecord(detail any, fetchState func(int) (string, error)) (bool, string) {
+	var record PRCreateDetail
+	if err := unmarshalDetail(detail, &record); err != nil {
+		return false, "record with invalid detail: kept"
 	}
-	numero, ok := numeroDePR(acta.PrURL)
+	number, ok := pullRequestNumber(record.PrURL)
 	if !ok {
-		return false, "acta sin pr_url (fallback): no verificable, se conserva"
+		return false, "record without pr_url (fallback): unverifiable, kept"
 	}
-	estado, err := consultarEstado(numero)
+	state, err := fetchState(number)
 	if err != nil {
-		return false, "PR #" + strconv.Itoa(numero) + " no verificable (gh/red): se conserva"
+		return false, "PR #" + strconv.Itoa(number) + " unverifiable (gh/network): kept"
 	}
-	switch estado {
+	switch state {
 	case "MERGED", "CLOSED":
 		return true, ""
 	default:
@@ -267,43 +266,43 @@ func unmarshalDetail(detail any, target any) error {
 	return json.Unmarshal(raw, target)
 }
 
-// numeroDePR extrae el número de la URL de una PR (/pull/<nº>, tolerando
-// sufijos como /pull/42/files).
-func numeroDePR(url string) (int, bool) {
+// pullRequestNumber extracts the number from a PR URL (/pull/<n>, tolerating
+// suffixes like /pull/42/files).
+func pullRequestNumber(url string) (int, bool) {
 	idx := strings.LastIndex(url, "/pull/")
 	if idx < 0 {
 		return 0, false
 	}
-	resto := url[idx+len("/pull/"):]
-	fin := 0
-	for fin < len(resto) && resto[fin] >= '0' && resto[fin] <= '9' {
-		fin++
+	rest := url[idx+len("/pull/"):]
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
 	}
-	if fin == 0 {
+	if end == 0 {
 		return 0, false
 	}
-	n, err := strconv.Atoi(resto[:fin])
+	n, err := strconv.Atoi(rest[:end])
 	if err != nil || n <= 0 {
 		return 0, false
 	}
 	return n, true
 }
 
-// estadoPRConGH consulta gh pr view <nº> --json state y devuelve el estado.
-// Cualquier fallo (gh ausente, sin red) es un error: la purga lo trata como
-// best-effort y conserva la acta.
-func estadoPRConGH(numero int) (string, error) {
-	salida, err := exec.Command("gh", "pr", "view", strconv.Itoa(numero), "--json", "state").Output()
+// pullRequestStateWithGH queries gh pr view <n> --json state and returns the
+// state. Any failure (gh missing, no network) is an error: the purge treats
+// it as best-effort and keeps the record.
+func pullRequestStateWithGH(number int) (string, error) {
+	output, err := exec.Command("gh", "pr", "view", strconv.Itoa(number), "--json", "state").Output()
 	if err != nil {
 		return "", err
 	}
-	var crudo struct {
+	var raw struct {
 		State string `json:"state"`
 	}
-	if err := json.Unmarshal(salida, &crudo); err != nil {
+	if err := json.Unmarshal(output, &raw); err != nil {
 		return "", err
 	}
-	return crudo.State, nil
+	return raw.State, nil
 }
 
 // Writes the lines (without terminators) to a temporary file and atomically
@@ -311,8 +310,8 @@ func estadoPRConGH(numero int) (string, error) {
 // replacement is written. On Windows, os.Rename over an existing destination
 // fails, so replacement is backup → rename → cleanup: on any failure, the
 // original log remains preserved (as .bak or intact).
-func escribirLogTemporal(ruta string, lineas [][]byte) error {
-	return writeTemporaryLogWithTerminators(ruta, lineas, os.Rename, true)
+func writeTemporaryLog(path string, lines [][]byte) error {
+	return writeTemporaryLogWithTerminators(path, lines, os.Rename, true)
 }
 
 // writeRawTemporaryLog rewrites only after selecting lines, preserving the
@@ -321,11 +320,11 @@ func writeRawTemporaryLog(path string, lines [][]byte) error {
 	return writeTemporaryLogWithTerminators(path, lines, os.Rename, false)
 }
 
-// escribirLogTemporalRenombrando es la variante testeable de
-// escribirLogTemporal: la operación de rename es inyectable para poder
-// ejercitar las rutas de fallo y restauración sin depender del filesystem.
-func escribirLogTemporalRenombrando(ruta string, lineas [][]byte, renombrar func(string, string) error) error {
-	return writeTemporaryLogWithTerminators(ruta, lineas, renombrar, true)
+// writeTemporaryLogRenaming is the testable variant of writeTemporaryLog:
+// the rename operation is injectable so the failure and restoration paths can
+// be exercised without depending on the filesystem.
+func writeTemporaryLogRenaming(path string, lines [][]byte, rename func(string, string) error) error {
+	return writeTemporaryLogWithTerminators(path, lines, rename, true)
 }
 
 func writeTemporaryLogWithTerminators(path string, lines [][]byte, rename func(string, string) error, terminateWithNewline bool) error {
@@ -385,18 +384,17 @@ func writeTemporaryLogWithTerminators(path string, lines [][]byte, rename func(s
 	return nil
 }
 
-// PurgeEventosDe reescribe el log eliminando las líneas que referencian
-// alguno de los SHAs dados (eventos de auditorías de commits que ya no
-// existen). Conserva intactas las líneas de commits que siguen vivos: la
-// limpieza es selectiva por SHA, nunca por antigüedad. Devuelve cuántas
-// líneas eliminó. Escritura atómica temp + rename: ante fallo, el log
-// original se conserva.
-func PurgeEventosDe(gitDir string, shas []string) (int, error) {
+// PurgeEventsOf rewrites the log removing the lines that reference any of the
+// given SHAs (events of commit audits that no longer exist). It keeps intact
+// the lines of commits that are still alive: the cleanup is selective by SHA,
+// never by age. Returns how many lines it removed. Atomic temp + rename
+// write: on failure, the original log is kept.
+func PurgeEventsOf(gitDir string, shas []string) (int, error) {
 	if len(shas) == 0 {
 		return 0, nil
 	}
-	ruta := filepath.Join(gitDir, eventosRel)
-	archivo, err := os.Open(ruta)
+	path := filepath.Join(gitDir, eventsRelPath)
+	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
@@ -404,55 +402,55 @@ func PurgeEventosDe(gitDir string, shas []string) (int, error) {
 		return 0, err
 	}
 
-	objetivo := map[string]bool{}
+	target := map[string]bool{}
 	for _, sha := range shas {
-		objetivo[sha] = true
+		target[sha] = true
 	}
 
-	var conservadas [][]byte
-	eliminadas := 0
-	readErr := visitRawLines(archivo, func(line []byte) error {
-		var ev Evento
-		if json.Unmarshal(line, &ev) == nil && eventosTocanShas(ev.Shas, objetivo) {
-			eliminadas++
+	var kept [][]byte
+	removed := 0
+	readErr := visitRawLines(file, func(line []byte) error {
+		var ev Event
+		if json.Unmarshal(line, &ev) == nil && eventsTouchShas(ev.Shas, target) {
+			removed++
 			return nil
 		}
-		conservadas = append(conservadas, copyRawLine(line))
+		kept = append(kept, copyRawLine(line))
 		return nil
 	})
-	errCierre := archivo.Close()
+	closeErr := file.Close()
 	if readErr != nil {
-		return eliminadas, readErr
+		return removed, readErr
 	}
-	if errCierre != nil {
-		return eliminadas, errCierre
+	if closeErr != nil {
+		return removed, closeErr
 	}
 
-	if eliminadas == 0 {
+	if removed == 0 {
 		return 0, nil
 	}
-	return eliminadas, writeRawTemporaryLog(ruta, conservadas)
+	return removed, writeRawTemporaryLog(path, kept)
 }
 
-// eventosTocanShas indica si la lista de SHAs del evento contiene alguno de
-// los SHAs objetivo.
-func eventosTocanShas(evento []string, objetivo map[string]bool) bool {
-	for _, sha := range evento {
-		if objetivo[sha] {
+// eventsTouchShas reports whether the event's list of SHAs contains any of
+// the target SHAs.
+func eventsTouchShas(event []string, target map[string]bool) bool {
+	for _, sha := range event {
+		if target[sha] {
 			return true
 		}
 	}
 	return false
 }
 
-// RotarEventos poda el log dejando las últimas n líneas válidas (las más
-// recientes). Descarta las líneas corruptas (JSON inválido): solo los eventos
-// que parsean cuentan para la poda y se conservan. Lo hace con escritura
-// atómica temp + rename: si algo falla, el log original se conserva intacto.
-// Un n <= 0 vacía el archivo.
-func RotarEventos(gitDir string, n int) error {
-	ruta := filepath.Join(gitDir, eventosRel)
-	archivo, err := os.Open(ruta)
+// RotateEvents prunes the log keeping the last n valid lines (the most
+// recent ones). Discards corrupt lines (invalid JSON): only events that
+// parse count for the pruning and are kept. It does so with atomic temp +
+// rename write: if anything fails, the original log is kept intact.
+// An n <= 0 empties the file.
+func RotateEvents(gitDir string, n int) error {
+	path := filepath.Join(gitDir, eventsRelPath)
+	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -460,67 +458,67 @@ func RotarEventos(gitDir string, n int) error {
 		return err
 	}
 
-	var lineas [][]byte
-	readErr := visitRawLines(archivo, func(line []byte) error {
-		var ev Evento
+	var lines [][]byte
+	readErr := visitRawLines(file, func(line []byte) error {
+		var ev Event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil // línea corrupta: se descarta en la rotación
+			return nil // corrupt line: discarded during rotation
 		}
-		lineas = append(lineas, copyRawLine(line))
+		lines = append(lines, copyRawLine(line))
 		return nil
 	})
-	errCierre := archivo.Close()
+	closeErr := file.Close()
 	if readErr != nil {
 		return readErr
 	}
-	if errCierre != nil {
-		return errCierre
+	if closeErr != nil {
+		return closeErr
 	}
 
-	if n > 0 && len(lineas) > n {
-		lineas = lineas[len(lineas)-n:]
+	if n > 0 && len(lines) > n {
+		lines = lines[len(lines)-n:]
 	} else if n <= 0 {
-		lineas = nil
+		lines = nil
 	}
-	return writeRawTemporaryLog(ruta, lineas)
+	return writeRawTemporaryLog(path, lines)
 }
 
-// UltimosEventos devuelve los n eventos más recientes del log (el más nuevo
-// primero). Si el log no existe devuelve una lista vacía sin error.
-func UltimosEventos(gitDir string, n int) ([]Evento, error) {
-	ruta := filepath.Join(gitDir, eventosRel)
-	archivo, err := os.Open(ruta)
+// RecentEvents returns the n most recent events of the log (the newest
+// first). If the log does not exist it returns an empty list without error.
+func RecentEvents(gitDir string, n int) ([]Event, error) {
+	path := filepath.Join(gitDir, eventsRelPath)
+	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return []Evento{}, nil
+			return []Event{}, nil
 		}
 		return nil, err
 	}
-	defer archivo.Close()
+	defer file.Close()
 
-	var eventos []Evento
-	readErr := visitRawLines(archivo, func(line []byte) error {
-		var ev Evento
+	var events []Event
+	readErr := visitRawLines(file, func(line []byte) error {
+		var ev Event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil // línea corrupta: se ignora, el resto del log sigue válido
+			return nil // corrupt line: ignored, the rest of the log stays valid
 		}
-		eventos = append(eventos, ev)
+		events = append(events, ev)
 		return nil
 	})
 	if readErr != nil {
 		return nil, readErr
 	}
 
-	// Últimos n, más reciente primero.
-	if n <= 0 || len(eventos) <= n {
-		for i, j := 0, len(eventos)-1; i < j; i, j = i+1, j-1 {
-			eventos[i], eventos[j] = eventos[j], eventos[i]
+	// Last n, newest first.
+	if n <= 0 || len(events) <= n {
+		for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+			events[i], events[j] = events[j], events[i]
 		}
-		return eventos, nil
+		return events, nil
 	}
-	ultimos := eventos[len(eventos)-n:]
+	last := events[len(events)-n:]
 	for i, j := 0, n-1; i < j; i, j = i+1, j-1 {
-		ultimos[i], ultimos[j] = ultimos[j], ultimos[i]
+		last[i], last[j] = last[j], last[i]
 	}
-	return ultimos, nil
+	return last, nil
 }

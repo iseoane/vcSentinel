@@ -16,40 +16,39 @@ import (
 const repoOwner = "ISeoane-Quental"
 const repoName = "vas.sentinel"
 
-// fallbackGoInstall habilita reintentar con go install cuando la descarga de
-// la release falla. Los tests lo desactivan para no ejecutar compilaciones
-// reales durante las pruebas de error.
+// fallbackGoInstall enables retrying with go install when the release
+// download fails. Tests disable it so error paths do not run real builds.
 var fallbackGoInstall = true
 
-// tokenGitHub devuelve el token de GitHub configurado en el entorno. Un
-// repositorio privado exige autenticación tanto para consultar la release como
-// para descargar sus assets: el cliente usa este token en ambas peticiones.
-func tokenGitHub() string {
+// envGitHubToken returns the GitHub token configured in the environment. A
+// private repository requires authentication both to query the release and to
+// download its assets: the client uses this token in both requests.
+func envGitHubToken() string {
 	return os.Getenv("GITHUB_TOKEN")
 }
 
-// PrepararTokenGitHub asegura que la operación de instalación/actualización
-// disponga de credenciales para repositorios privados. Orden de resolución:
-//  1. Variable de entorno GITHUB_TOKEN (si ya está definida, no hace nada).
-//  2. Token de gh CLI (gh auth token) cuando gh está autenticado.
-//  3. Pregunta interactiva al usuario por si dispone de un token.
+// PrepareGitHubToken makes sure the install/upgrade operation has credentials
+// for private repositories. Resolution order:
+//  1. GITHUB_TOKEN environment variable (if already set, does nothing).
+//  2. Token from gh CLI (gh auth token) when gh is authenticated.
+//  3. Interactive prompt asking the user whether they have a token.
 //
-// Devuelve el token resuelto (posiblemente vacío si no hay credenciales).
-func PrepararTokenGitHub() string {
-	if tokenGitHub() != "" {
-		return tokenGitHub()
+// Returns the resolved token (possibly empty if there are no credentials).
+func PrepareGitHubToken() string {
+	if envGitHubToken() != "" {
+		return envGitHubToken()
 	}
-	if token := tokenDesdeGHCLI(); token != "" {
+	if token := tokenFromGhCLI(); token != "" {
 		os.Setenv("GITHUB_TOKEN", token)
 		return token
 	}
-	return preguntarTokenGitHub()
+	return promptForGitHubToken()
 }
 
-// tokenDesdeGHCLI obtiene el token de gh CLI cuando el usuario ya está
-// autenticado en el repositorio (por ejemplo, porque publica releases). Devuelve
-// cadena vacía si gh no está disponible o no hay sesión iniciada.
-func tokenDesdeGHCLI() string {
+// tokenFromGhCLI obtains the token from gh CLI when the user is already
+// authenticated in the repository (for example, because they publish
+// releases). Returns an empty string if gh is unavailable or not logged in.
+func tokenFromGhCLI() string {
 	cmd := exec.Command("gh", "auth", "token")
 	out, err := cmd.Output()
 	if err != nil {
@@ -58,23 +57,23 @@ func tokenDesdeGHCLI() string {
 	return strings.TrimSpace(string(out))
 }
 
-// preguntarTokenGitHub pide el token por teclado cuando no se pudo resolver de
-// otra forma. Devuelve cadena vacía si el usuario no dispone de token (o no
-// hay terminal interactiva). La lectura nunca hace eco del secreto: se
-// degrada a "sin token" en vez de leer con eco en silencio cuando no hay una
-// terminal interactiva de por medio (tuberías, CI).
-func preguntarTokenGitHub() string {
-	if !esTerminalStdin() {
+// promptForGitHubToken asks for the token on the keyboard when it could not
+// be resolved any other way. Returns an empty string if the user has no token
+// (or there is no interactive terminal). The read never echoes the secret: it
+// degrades to "no token" instead of silently reading with echo when there is
+// no interactive terminal in between (pipes, CI).
+func promptForGitHubToken() string {
+	if !isStdinTerminal() {
 		return ""
 	}
-	fmt.Println("🔑 El repositorio es privado y no se encontró GITHUB_TOKEN en el entorno.")
-	fmt.Println("   Si tienes un token de GitHub, pégalo a continuación (vacío para continuar sin token):")
+	fmt.Println("🔑 The repository is private and no GITHUB_TOKEN was found in the environment.")
+	fmt.Println("   If you have a GitHub token, paste it below (empty to continue without a token):")
 	fmt.Print("   Token: ")
 
-	token, err := leerTokenSinEco()
+	token, err := readTokenWithoutEcho()
 	if err != nil {
 		fmt.Println()
-		fmt.Printf("⚠️  No se pudo leer el token sin eco (%v). Se continúa sin token.\n", err)
+		fmt.Printf("⚠️  Could not read the token without echo (%v). Continuing without a token.\n", err)
 		return ""
 	}
 	token = strings.TrimSpace(token)
@@ -84,11 +83,11 @@ func preguntarTokenGitHub() string {
 	return token
 }
 
-// esTerminalStdin indica si la entrada estándar es una terminal interactiva.
-// Evita que el prompt de token bloquee en tests, tuberías o ejecución no
-// interactiva. Variable (no función) para poder inyectarla en los tests sin
-// depender de una terminal real.
-var esTerminalStdin = func() bool {
+// isStdinTerminal reports whether standard input is an interactive terminal.
+// It prevents the token prompt from blocking on tests, pipes, or non
+// interactive execution. A variable (not a function) so tests can inject it
+// without depending on a real terminal.
+var isStdinTerminal = func() bool {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return false
@@ -96,23 +95,24 @@ var esTerminalStdin = func() bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// leerTokenSinEco es la costura de inyección: en producción delega en el
-// mecanismo real que desactiva el eco de terminal; los tests la sustituyen
-// para no depender de una terminal real.
-var leerTokenSinEco = leerTokenSinEcoDelSistema
+// readTokenWithoutEcho is the injection seam: in production it delegates to
+// the real mechanism that disables terminal echo; tests replace it to avoid
+// depending on a real terminal.
+var readTokenWithoutEcho = readTokenWithoutEchoFromSystem
 
-// leerTokenSinEcoDelSistema lee el token sin que el terminal lo repita en
-// pantalla, usando term.ReadPassword (misma familia de llamada que ssh/sudo:
-// TCGETS/TCSETS en Unix, modo de consola en Windows) sobre el descriptor de
-// stdin. Falla CERRADO a propósito: si no puede desactivar el eco -por
-// ejemplo, porque stdin no es una terminal real, aunque haya superado el
-// chequeo de esTerminalStdin- devuelve error y no lee ni un byte. Leer con
-// eco en silencio ante ese fallo es justo el defecto que esta función existe
-// para evitar: un secreto expuesto es peor que no tener secreto.
-func leerTokenSinEcoDelSistema() (string, error) {
+// readTokenWithoutEchoFromSystem reads the token without the terminal
+// repeating it on screen, using term.ReadPassword (same call family as
+// ssh/sudo: TCGETS/TCSETS on Unix, console mode on Windows) over the stdin
+// descriptor. It fails CLOSED on purpose: if it cannot disable the echo (for
+// example, because stdin is not a real terminal even though it passed the
+// isStdinTerminal check) it returns an error and does not read a single byte.
+// Silently reading with echo in the face of that failure is exactly the
+// defect this function exists to avoid: an exposed secret is worse than no
+// secret.
+func readTokenWithoutEchoFromSystem() (string, error) {
 	bytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 	if err != nil {
-		return "", fmt.Errorf("no se pudo desactivar el eco de la terminal: %w", err)
+		return "", fmt.Errorf("could not disable the terminal echo: %w", err)
 	}
 	return string(bytes), nil
 }
@@ -120,9 +120,9 @@ func leerTokenSinEcoDelSistema() (string, error) {
 type ReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
-	// URL es la dirección de la API de GitHub para el asset. Es la vía fiable
-	// de descarga en repositorios privados, donde browser_download_url
-	// responde 404 incluso con token.
+	// URL is the GitHub API address of the asset. It is the reliable download
+	// route on private repositories, where browser_download_url answers 404
+	// even with a token.
 	URL string `json:"url"`
 }
 
@@ -131,43 +131,43 @@ type ReleaseInfo struct {
 	Assets  []ReleaseAsset `json:"assets"`
 }
 
-func obtenerUltimaRelease() (ReleaseInfo, error) {
+func fetchLatestRelease() (ReleaseInfo, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return ReleaseInfo{}, fmt.Errorf("no se pudo construir la petición a GitHub: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("could not build the request to GitHub: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "vas-sentinel")
-	if token := tokenGitHub(); token != "" {
+	if token := envGitHubToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ReleaseInfo{}, fmt.Errorf("error de red al consultar la última release en GitHub: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("network error while querying the latest release on GitHub: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized {
-		return ReleaseInfo{}, fmt.Errorf("no se encontró una release publicada en %s/%s (HTTP %d). El repositorio debe tener una release publicada con assets; si es privado, configura la variable de entorno GITHUB_TOKEN", repoOwner, repoName, resp.StatusCode)
+		return ReleaseInfo{}, fmt.Errorf("no published release was found on %s/%s (HTTP %d). The repository must have a published release with assets; if it is private, configure the GITHUB_TOKEN environment variable", repoOwner, repoName, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return ReleaseInfo{}, fmt.Errorf("GitHub respondió con estado HTTP %d al consultar la última release", resp.StatusCode)
+		return ReleaseInfo{}, fmt.Errorf("GitHub answered with HTTP status %d while querying the latest release", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return ReleaseInfo{}, fmt.Errorf("no se pudo leer la respuesta de GitHub: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("could not read the response from GitHub: %w", err)
 	}
 
 	var release ReleaseInfo
 	if err := json.Unmarshal(body, &release); err != nil {
-		return ReleaseInfo{}, fmt.Errorf("no se pudo interpretar la respuesta de GitHub: %w", err)
+		return ReleaseInfo{}, fmt.Errorf("could not parse the response from GitHub: %w", err)
 	}
 	if release.TagName == "" {
-		return ReleaseInfo{}, fmt.Errorf("la release consultada no contiene un tag_name válido")
+		return ReleaseInfo{}, fmt.Errorf("the queried release does not contain a valid tag_name")
 	}
 
 	return release, nil
@@ -177,40 +177,40 @@ func obtenerUltimaRelease() (ReleaseInfo, error) {
 // "v0.2.0"). It performs a network call: its only reader is doctor
 // --check-updates, which is off by default.
 func LatestReleaseTag() (string, error) {
-	release, err := obtenerUltimaRelease()
+	release, err := fetchLatestRelease()
 	if err != nil {
 		return "", err
 	}
 	return release.TagName, nil
 }
 
-func elegirAssetParaSO(assets []ReleaseAsset) (ReleaseAsset, error) {
-	return elegirAssetParaSistema(runtime.GOOS, runtime.GOARCH, assets)
+func pickAssetForOS(assets []ReleaseAsset) (ReleaseAsset, error) {
+	return pickAssetForSystem(runtime.GOOS, runtime.GOARCH, assets)
 }
 
-func elegirAssetParaSistema(goos string, goarch string, assets []ReleaseAsset) (ReleaseAsset, error) {
-	nombreEsperado := "sentinel-" + goos + "-" + goarch
+func pickAssetForSystem(goos string, goarch string, assets []ReleaseAsset) (ReleaseAsset, error) {
+	expectedName := "sentinel-" + goos + "-" + goarch
 	if goos == "windows" {
-		nombreEsperado += ".exe"
+		expectedName += ".exe"
 	}
 
 	for _, asset := range assets {
-		if strings.EqualFold(asset.Name, nombreEsperado) {
+		if strings.EqualFold(asset.Name, expectedName) {
 			return asset, nil
 		}
 	}
 
-	nombres := make([]string, 0, len(assets))
+	names := make([]string, 0, len(assets))
 	for _, asset := range assets {
-		nombres = append(nombres, asset.Name)
+		names = append(names, asset.Name)
 	}
-	return ReleaseAsset{}, fmt.Errorf("no se encontró un asset de release para tu sistema (%s/%s). Se esperaba el patrón %q. Assets disponibles: %s", goos, goarch, nombreEsperado, strings.Join(nombres, ", "))
+	return ReleaseAsset{}, fmt.Errorf("no release asset was found for your system (%s/%s). Expected the pattern %q. Available assets: %s", goos, goarch, expectedName, strings.Join(names, ", "))
 }
 
-// descargarBinario descarga un asset de release. En repositorios privados usa
-// la URL de la API del asset (Accept: application/octet-stream) en lugar del
-// browser_download_url, que responde 404 para ese caso.
-func descargarBinario(asset ReleaseAsset, destPath string) error {
+// downloadBinary downloads a release asset. On private repositories it uses
+// the asset's API URL (Accept: application/octet-stream) instead of the
+// browser_download_url, which answers 404 in that case.
+func downloadBinary(asset ReleaseAsset, destPath string) error {
 	url := asset.BrowserDownloadURL
 	if asset.URL != "" {
 		url = asset.URL
@@ -218,28 +218,28 @@ func descargarBinario(asset ReleaseAsset, destPath string) error {
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("no se pudo construir la petición de descarga: %w", err)
+		return fmt.Errorf("could not build the download request: %w", err)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
 	req.Header.Set("User-Agent", "vas-sentinel")
-	if token := tokenGitHub(); token != "" {
+	if token := envGitHubToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error de red al descargar el binario: %w", err)
+		return fmt.Errorf("network error while downloading the binary: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("la descarga del binario falló con estado HTTP %d", resp.StatusCode)
+		return fmt.Errorf("the binary download failed with HTTP status %d", resp.StatusCode)
 	}
 
 	dest, err := os.Create(destPath)
 	if err != nil {
-		return fmt.Errorf("no se pudo crear el archivo destino %s: %w", destPath, err)
+		return fmt.Errorf("could not create the destination file %s: %w", destPath, err)
 	}
 
 	_, err = io.Copy(dest, resp.Body)
@@ -247,7 +247,7 @@ func descargarBinario(asset ReleaseAsset, destPath string) error {
 		err = cerr
 	}
 	if err != nil {
-		return fmt.Errorf("no se pudo escribir el binario en %s: %w", destPath, err)
+		return fmt.Errorf("could not write the binary to %s: %w", destPath, err)
 	}
 
 	return nil

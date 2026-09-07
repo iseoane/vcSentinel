@@ -13,7 +13,7 @@ func TestAgentEntryParsesACPXFields(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
 active_agent: claude-acpx
 agents:
   claude-acpx:
@@ -23,7 +23,7 @@ agents:
     reasoning_effort: high
     enforcement: claude-sandbox
 `)
-	cfg := CargarConfiguracionLocal(worktree)
+	cfg := LoadLocalConfig(worktree)
 	got := cfg.Agents["claude-acpx"]
 	want := AgentConfig{
 		Kind:            "acpx",
@@ -43,14 +43,14 @@ func TestAgentEntryEnforcementDefaultsToNone(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
 active_agent: opencode-acpx
 agents:
   opencode-acpx:
     kind: acpx
     agent: opencode
 `)
-	cfg := CargarConfiguracionLocal(worktree)
+	cfg := LoadLocalConfig(worktree)
 	got := cfg.Agents["opencode-acpx"]
 	if got.Kind != "acpx" || got.ACPAgent != "opencode" || got.Enforcement != "" {
 		t.Fatalf("agents.opencode-acpx = %+v, want kind/agent set and empty enforcement", got)
@@ -65,7 +65,7 @@ func TestLegacyAgentEntriesStayUnchanged(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
-	escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
 version: 1
 active_agent: claude
 agents:
@@ -76,10 +76,10 @@ agents:
       commit:
         reasoning_effort: low
 `)
-	cfg := CargarConfiguracionLocal(worktree)
-	for name, agente := range cfg.Agents {
-		if agente.Kind != "" || agente.ACPAgent != "" || agente.Enforcement != "" {
-			t.Errorf("agent %q = %+v, want zero-valued kind/agent/enforcement for a legacy entry", name, agente)
+	cfg := LoadLocalConfig(worktree)
+	for name, agent := range cfg.Agents {
+		if agent.Kind != "" || agent.ACPAgent != "" || agent.Enforcement != "" {
+			t.Errorf("agent %q = %+v, want zero-valued kind/agent/enforcement for a legacy entry", name, agent)
 		}
 	}
 	if got := cfg.Agents["claude"]; got.Model != "claude-legacy" || got.ReasoningEffort != "high" {

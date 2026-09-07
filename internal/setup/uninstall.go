@@ -9,163 +9,163 @@ import (
 	"strings"
 )
 
-// avisoHooksRepositorio is the uninstall disclaimer pinned by tests: the
+// repositoryHooksNotice is the uninstall disclaimer pinned by tests: the
 // repository pre-commit hook installed by init is Git-managed state and stays
 // out of uninstall's blast radius.
-const avisoHooksRepositorio = "   El hook pre-commit instalado en cada repositorio (.git/hooks/pre-commit) no se elimina: gestiona hooks de git, no de sentinel."
+const repositoryHooksNotice = "   The pre-commit hook installed in each repository (.git/hooks/pre-commit) is not removed: it manages git hooks, not sentinel hooks."
 
-// EjecutarDesinstalacionCompleta deshace la instalación global: elimina el
-// binario, quita la ruta del PATH de usuario, limpia la configuración global y
-// restaura los archivos de shell. No toca las configuraciones per-proyecto.
-func EjecutarDesinstalacionCompleta() error {
-	fmt.Println("🗑️ Desinstalando VAS Sentinel...")
+// RunFullUninstall undoes the global installation: removes the binary, takes
+// the directory off the user PATH, cleans the global configuration and
+// restores the shell files. It does not touch per-project configurations.
+func RunFullUninstall() error {
+	fmt.Println("🗑️ Uninstalling VAS Sentinel...")
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("no se pudo identificar el directorio del usuario: %w", err)
+		return fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
 	switch runtime.GOOS {
 	case "windows":
-		if err := desinstalarWindows(homeDir); err != nil {
+		if err := uninstallWindows(homeDir); err != nil {
 			return err
 		}
 	default:
-		if err := desinstalarLinux(); err != nil {
+		if err := uninstallLinux(); err != nil {
 			return err
 		}
 	}
 
-	if err := eliminarConfiguracionGlobal(homeDir); err != nil {
+	if err := removeGlobalConfig(homeDir); err != nil {
 		return err
 	}
 
-	if err := quitarRutaShell(); err != nil {
+	if err := removeShellPathBlock(); err != nil {
 		return err
 	}
 
-	fmt.Println("✅ VAS Sentinel desinstalado.")
-	fmt.Println(avisoHooksRepositorio)
+	fmt.Println("✅ VAS Sentinel uninstalled.")
+	fmt.Println(repositoryHooksNotice)
 	return nil
 }
 
-func desinstalarWindows(homeDir string) error {
+func uninstallWindows(homeDir string) error {
 	dir := filepath.Join(homeDir, ".vas_sentinel", "bin")
-	destino := rutaBinarioWindows(homeDir)
+	destination := windowsBinaryPath(homeDir)
 
-	if err := eliminarBinario(destino); err != nil {
+	if err := removeBinary(destination); err != nil {
 		return err
 	}
 
-	if err := quitarPathWindows(dir); err != nil {
+	if err := removeWindowsPath(dir); err != nil {
 		return err
 	}
 
 	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("no se pudo eliminar el directorio %s: %w", dir, err)
+		return fmt.Errorf("could not remove the directory %s: %w", dir, err)
 	}
 	return nil
 }
 
-func desinstalarLinux() error {
-	if err := eliminarBinario(rutaBinarioLinux()); err != nil {
+func uninstallLinux() error {
+	if err := removeBinary(linuxBinaryPath()); err != nil {
 		return err
 	}
 	return nil
 }
 
-// eliminarBinario borra el binario si existe. Si está en uso (típico de
-// Windows), sugiere el comando manual.
-func eliminarBinario(ruta string) error {
-	if _, err := os.Stat(ruta); os.IsNotExist(err) {
-		fmt.Printf("ℹ️ No se encontró el binario en %s. Se continúa con el resto.\n", ruta)
+// removeBinary deletes the binary if it exists. If it is in use (typical on
+// Windows), it suggests the manual command.
+func removeBinary(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		fmt.Printf("ℹ️ No binary was found at %s. Continuing with the rest.\n", path)
 		return nil
 	}
 
-	if err := os.Remove(ruta); err != nil {
+	if err := os.Remove(path); err != nil {
 		if runtime.GOOS == "windows" {
-			return fmt.Errorf("no se pudo eliminar %s (probablemente está en uso). Cierra el proceso y borra el archivo manualmente: %w", ruta, err)
+			return fmt.Errorf("could not remove %s (it is probably in use). Close the process and delete the file manually: %w", path, err)
 		}
-		return fmt.Errorf("no se pudo eliminar %s: %w", ruta, err)
+		return fmt.Errorf("could not remove %s: %w", path, err)
 	}
-	fmt.Printf("🗑️ Binario eliminado: %s\n", ruta)
+	fmt.Printf("🗑️ Binary removed: %s\n", path)
 	return nil
 }
 
-// quitarPathWindows elimina el directorio del PATH de usuario usando
-// PowerShell, en el mismo formato en que se añadió.
-func quitarPathWindows(dir string) error {
-	pathActual, err := obtenerPathUsuarioWindows()
+// removeWindowsPath removes the directory from the user PATH using
+// PowerShell, in the same format it was added with.
+func removeWindowsPath(dir string) error {
+	currentPath, err := windowsUserPath()
 	if err != nil {
 		return err
 	}
-	if !necesitaAnadirPathWindows(pathActual, dir) {
+	if !needsWindowsPathUpdate(currentPath, dir) {
 		return nil
 	}
 
-	comando := fmt.Sprintf("$env:Path = (($env:Path -split ';') | Where-Object { $_ -ne '%s' }) -join ';'; [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')", dir)
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", comando)
+	command := fmt.Sprintf("$env:Path = (($env:Path -split ';') | Where-Object { $_ -ne '%s' }) -join ';'; [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')", dir)
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", command)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("no se pudo quitar %s del PATH de usuario: %w", dir, err)
+		return fmt.Errorf("could not remove %s from the user PATH: %w", dir, err)
 	}
 
-	fmt.Printf("🛣️ Ruta eliminada del PATH de usuario: %s\n", dir)
+	fmt.Printf("🛣️ Path removed from the user PATH: %s\n", dir)
 	return nil
 }
 
-// quitarRutaShell elimina el bloque de export de /usr/local/bin de los
-// archivos de shell en los que se haya añadido.
-func quitarRutaShell() error {
+// removeShellPathBlock removes the /usr/local/bin export block from the shell
+// files it was added to.
+func removeShellPathBlock() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("no se pudo identificar el directorio del usuario: %w", err)
+		return fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
 	zshrc := filepath.Join(homeDir, ".zshrc")
 	bashrc := filepath.Join(homeDir, ".bashrc")
 
-	const linea = `export PATH="/usr/local/bin:$PATH"`
-	bloque := "\n# VAS Sentinel\n" + linea + "\n"
+	const line = `export PATH="/usr/local/bin:$PATH"`
+	block := "\n# VAS Sentinel\n" + line + "\n"
 
-	for _, ruta := range []string{zshrc, bashrc} {
-		contenido, err := os.ReadFile(ruta)
+	for _, path := range []string{zshrc, bashrc} {
+		content, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return fmt.Errorf("no se pudo leer %s: %w", ruta, err)
+			return fmt.Errorf("could not read %s: %w", path, err)
 		}
-		texto := string(contenido)
-		if !strings.Contains(texto, bloque) {
+		text := string(content)
+		if !strings.Contains(text, block) {
 			continue
 		}
 
-		limpio := strings.ReplaceAll(texto, bloque, "")
-		if err := os.WriteFile(ruta, []byte(limpio), 0644); err != nil {
-			return fmt.Errorf("no se pudo actualizar %s: %w", ruta, err)
+		clean := strings.ReplaceAll(text, block, "")
+		if err := os.WriteFile(path, []byte(clean), 0644); err != nil {
+			return fmt.Errorf("could not update %s: %w", path, err)
 		}
-		fmt.Printf("🗑️ Bloque de VAS Sentinel eliminado de: %s\n", ruta)
+		fmt.Printf("🗑️ VAS Sentinel block removed from: %s\n", path)
 	}
 
 	return nil
 }
 
-// eliminarConfiguracionGlobal borra la configuración global y el directorio
-// .vas_sentinel si quedó vacío.
-func eliminarConfiguracionGlobal(homeDir string) error {
+// removeGlobalConfig deletes the global configuration and the .vas_sentinel
+// directory if it was left empty.
+func removeGlobalConfig(homeDir string) error {
 	dir := filepath.Join(homeDir, ".vas_sentinel")
-	ruta := filepath.Join(dir, "vassentinel.yml")
+	path := filepath.Join(dir, "vassentinel.yml")
 
-	if _, err := os.Stat(ruta); err == nil {
-		if err := os.Remove(ruta); err != nil {
-			return fmt.Errorf("no se pudo eliminar la configuración global %s: %w", ruta, err)
+	if _, err := os.Stat(path); err == nil {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("could not remove the global configuration %s: %w", path, err)
 		}
-		fmt.Printf("🗑️ Configuración global eliminada: %s\n", ruta)
+		fmt.Printf("🗑️ Global configuration removed: %s\n", path)
 	}
 
-	if contenido, err := os.ReadDir(dir); err == nil && len(contenido) == 0 {
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
 		if err := os.Remove(dir); err != nil {
-			return fmt.Errorf("no se pudo eliminar el directorio %s: %w", dir, err)
+			return fmt.Errorf("could not remove the directory %s: %w", dir, err)
 		}
 	}
 	return nil

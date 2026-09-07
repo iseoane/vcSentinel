@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func repoTemporal(t *testing.T) string {
+func tempRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	if err := exec.Command("git", "-C", repo, "init").Run(); err != nil {
@@ -17,152 +17,152 @@ func repoTemporal(t *testing.T) string {
 	return repo
 }
 
-func usarHome(t *testing.T, home string) {
+func useHome(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 }
 
-func crearSymlink(t *testing.T, destino, enlace string) {
+func createSymlink(t *testing.T, target, link string) {
 	t.Helper()
-	if err := os.Symlink(destino, enlace); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			t.Skipf("la plataforma no permite crear symlinks: %v", err)
+			t.Skipf("the platform does not allow creating symlinks: %v", err)
 		}
 		t.Fatal(err)
 	}
 }
 
-func TestConsentimientoDiffExternoFS(t *testing.T) {
-	t.Run("grant idempotente y revocable", func(t *testing.T) {
-		repo := repoTemporal(t)
-		primero, err := OtorgarDiffExterno(repo)
+func TestExternalDiffConsentFS(t *testing.T) {
+	t.Run("grant is idempotent and revocable", func(t *testing.T) {
+		repo := tempRepo(t)
+		first, err := GrantExternalDiff(repo)
 		if err != nil {
 			t.Fatal(err)
 		}
-		contenido, err := os.ReadFile(primero.Ruta)
+		content, err := os.ReadFile(first.Path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		segundo, err := OtorgarDiffExterno(repo)
-		if err != nil || segundo.OtorgadoEn != primero.OtorgadoEn {
-			t.Fatalf("segundo grant = %+v, err = %v", segundo, err)
+		second, err := GrantExternalDiff(repo)
+		if err != nil || second.GrantedAt != first.GrantedAt {
+			t.Fatalf("second grant = %+v, err = %v", second, err)
 		}
-		despues, _ := os.ReadFile(primero.Ruta)
-		if string(despues) != string(contenido) {
-			t.Fatal("el grant idempotente reemplazo el archivo existente")
+		after, _ := os.ReadFile(first.Path)
+		if string(after) != string(content) {
+			t.Fatal("the idempotent grant replaced the existing file")
 		}
-		for ruta, modo := range map[string]os.FileMode{filepath.Dir(primero.Ruta): 0700, primero.Ruta: 0600} {
-			info, err := os.Stat(ruta)
+		for path, mode := range map[string]os.FileMode{filepath.Dir(first.Path): 0700, first.Path: 0600} {
+			info, err := os.Stat(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if info.Mode().Perm() != modo {
-				t.Fatalf("modo de %s = %v", ruta, info.Mode())
+			if info.Mode().Perm() != mode {
+				t.Fatalf("mode of %s = %v", path, info.Mode())
 			}
 		}
-		if err := RevocarDiffExterno(repo); err != nil {
+		if err := RevokeExternalDiff(repo); err != nil {
 			t.Fatal(err)
 		}
-		if estado, err := EstadoDiffExterno(repo); err != nil || estado.Otorgado {
-			t.Fatalf("estado revocado = %+v, err = %v", estado, err)
+		if state, err := ExternalDiffStatus(repo); err != nil || state.Granted {
+			t.Fatalf("revoked state = %+v, err = %v", state, err)
 		}
 	})
 
-	t.Run("JSON corrupto falla cerrado y no se reemplaza", func(t *testing.T) {
-		repo := repoTemporal(t)
-		estado, _ := alcance(repo)
-		if err := os.MkdirAll(filepath.Dir(estado.Ruta), 0700); err != nil {
+	t.Run("corrupt JSON fails closed and is not replaced", func(t *testing.T) {
+		repo := tempRepo(t)
+		state, _ := stateFor(repo)
+		if err := os.MkdirAll(filepath.Dir(state.Path), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(estado.Ruta, []byte("{corrupto"), 0600); err != nil {
+		if err := os.WriteFile(state.Path, []byte("{corrupt"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := EstadoDiffExterno(repo); err == nil {
-			t.Fatal("JSON corrupto conto como consentimiento")
+		if _, err := ExternalDiffStatus(repo); err == nil {
+			t.Fatal("corrupt JSON counted as consent")
 		}
-		if _, err := OtorgarDiffExterno(repo); err == nil {
-			t.Fatal("el grant reemplazo JSON manipulado")
+		if _, err := GrantExternalDiff(repo); err == nil {
+			t.Fatal("the grant replaced tampered JSON")
 		}
-		contenido, _ := os.ReadFile(estado.Ruta)
-		if string(contenido) != "{corrupto" {
-			t.Fatal("el JSON manipulado fue sobrescrito")
+		content, _ := os.ReadFile(state.Path)
+		if string(content) != "{corrupt" {
+			t.Fatal("the tampered JSON was overwritten")
 		}
 	})
 
-	t.Run("JSON valido manipulado no cuenta como consentimiento", func(t *testing.T) {
-		repo := repoTemporal(t)
-		estado, err := OtorgarDiffExterno(repo)
+	t.Run("valid but tampered JSON does not count as consent", func(t *testing.T) {
+		repo := tempRepo(t)
+		state, err := GrantExternalDiff(repo)
 		if err != nil {
 			t.Fatal(err)
 		}
-		contenido, _ := os.ReadFile(estado.Ruta)
-		contenido = append(contenido, '\n')
-		if err := os.WriteFile(estado.Ruta, contenido, 0600); err != nil {
+		content, _ := os.ReadFile(state.Path)
+		content = append(content, '\n')
+		if err := os.WriteFile(state.Path, content, 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := EstadoDiffExterno(repo); err == nil {
-			t.Fatal("JSON no canonico conto como consentimiento")
+		if _, err := ExternalDiffStatus(repo); err == nil {
+			t.Fatal("non-canonical JSON counted as consent")
 		}
-		if _, err := OtorgarDiffExterno(repo); err == nil {
-			t.Fatal("el grant reemplazo JSON no canonico")
+		if _, err := GrantExternalDiff(repo); err == nil {
+			t.Fatal("the grant replaced non-canonical JSON")
 		}
 	})
 
-	t.Run("aisla usuario y common-dir", func(t *testing.T) {
-		repoA, repoB := repoTemporal(t), repoTemporal(t)
-		usarHome(t, filepath.Join(t.TempDir(), "usuario-a"))
-		a, err := OtorgarDiffExterno(repoA)
+	t.Run("isolates user and common-dir", func(t *testing.T) {
+		repoA, repoB := tempRepo(t), tempRepo(t)
+		useHome(t, filepath.Join(t.TempDir(), "user-a"))
+		a, err := GrantExternalDiff(repoA)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := OtorgarDiffExterno(repoB)
+		b, err := GrantExternalDiff(repoB)
 		if err != nil {
 			t.Fatal(err)
 		}
-		usarHome(t, filepath.Join(t.TempDir(), "usuario-b"))
-		otro, err := OtorgarDiffExterno(repoA)
+		useHome(t, filepath.Join(t.TempDir(), "user-b"))
+		other, err := GrantExternalDiff(repoA)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if a.Ruta == b.Ruta || a.Repositorio == b.Repositorio || a.Ruta == otro.Ruta || a.Usuario == otro.Usuario {
-			t.Fatalf("alcances no aislados: a=%+v b=%+v otro=%+v", a, b, otro)
+		if a.Path == b.Path || a.Repository == b.Repository || a.Path == other.Path || a.User == other.User {
+			t.Fatalf("scopes are not isolated: a=%+v b=%+v other=%+v", a, b, other)
 		}
 	})
 }
 
-func TestConsentimientoDiffExternoRechazaSymlinks(t *testing.T) {
-	t.Run("destino precreado", func(t *testing.T) {
-		repo := repoTemporal(t)
-		estado, _ := alcance(repo)
-		if err := os.MkdirAll(filepath.Dir(estado.Ruta), 0700); err != nil {
+func TestExternalDiffConsentRejectsSymlinks(t *testing.T) {
+	t.Run("pre-created target", func(t *testing.T) {
+		repo := tempRepo(t)
+		state, _ := stateFor(repo)
+		if err := os.MkdirAll(filepath.Dir(state.Path), 0700); err != nil {
 			t.Fatal(err)
 		}
-		objetivo := filepath.Join(t.TempDir(), "objetivo")
-		if err := os.WriteFile(objetivo, []byte("intacto"), 0600); err != nil {
+		target := filepath.Join(t.TempDir(), "target")
+		if err := os.WriteFile(target, []byte("intact"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		crearSymlink(t, objetivo, estado.Ruta)
-		if _, err := OtorgarDiffExterno(repo); err == nil {
-			t.Fatal("el grant siguio el symlink de destino")
+		createSymlink(t, target, state.Path)
+		if _, err := GrantExternalDiff(repo); err == nil {
+			t.Fatal("the grant followed the destination symlink")
 		}
-		contenido, _ := os.ReadFile(objetivo)
-		if string(contenido) != "intacto" {
-			t.Fatal("el objetivo del symlink fue sobrescrito")
+		content, _ := os.ReadFile(target)
+		if string(content) != "intact" {
+			t.Fatal("the symlink target was overwritten")
 		}
 	})
 
-	t.Run("componente app-owned", func(t *testing.T) {
-		repo := repoTemporal(t)
-		estado, _ := alcance(repo)
-		externo := t.TempDir()
-		crearSymlink(t, externo, filepath.Dir(filepath.Dir(estado.Ruta)))
-		if _, err := OtorgarDiffExterno(repo); err == nil {
-			t.Fatal("el grant siguio un componente app-owned enlazado")
+	t.Run("app-owned component", func(t *testing.T) {
+		repo := tempRepo(t)
+		state, _ := stateFor(repo)
+		external := t.TempDir()
+		createSymlink(t, external, filepath.Dir(filepath.Dir(state.Path)))
+		if _, err := GrantExternalDiff(repo); err == nil {
+			t.Fatal("the grant followed a linked app-owned component")
 		}
-		entradas, _ := os.ReadDir(externo)
-		if len(entradas) != 0 {
-			t.Fatal("se escribio fuera del subtree de consentimiento")
+		entries, _ := os.ReadDir(external)
+		if len(entries) != 0 {
+			t.Fatal("wrote outside the consent subtree")
 		}
 	})
 }

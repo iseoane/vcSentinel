@@ -119,7 +119,7 @@ type Options struct {
 
 func (o *Options) withDefaults() {
 	if o.Env.GitCommonDir == nil {
-		o.Env.GitCommonDir = git.ObtenerGitCommonDir
+		o.Env.GitCommonDir = git.GetGitCommonDir
 	}
 	if o.Env.LatestRelease == nil {
 		o.Env.LatestRelease = setup.LatestReleaseTag
@@ -146,7 +146,7 @@ func Run(worktreePath string, opts Options) Report {
 		rep.Checks = append(rep.Checks, Check{Section: section, Name: name, OK: ok, Detail: detail, Remedy: remedy})
 	}
 
-	cfg, err := config.CargarConfiguracionLocalEstricta(worktreePath)
+	cfg, err := config.LoadStrictLocalConfig(worktreePath)
 	if err != nil {
 		add("config", "strict_load", false, fmt.Sprintf("vassentinel.yml fails strict load: %v", err), "fix the yml so it loads strictly; agent checks are skipped until it does")
 		return rep

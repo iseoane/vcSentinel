@@ -30,8 +30,8 @@ const (
 	EnforcementClaudeSandbox = "claude-sandbox"
 )
 
-// AgentConfig define el modelo y esfuerzo por defecto de un agente (binario)
-// y los perfiles anidados que ese agente ofrece (esquema v2).
+// AgentConfig defines the model and default effort of an agent (binary)
+// and the nested profiles that agent offers (schema v2).
 type AgentConfig struct {
 	Model           string
 	ReasoningEffort string
@@ -47,15 +47,15 @@ type AgentConfig struct {
 	Enforcement string
 }
 
-// ProfileConfig es una receta con nombre: agente + modelo + esfuerzo. El
-// agente es opcional: si está vacío se usa el binario activo (active_agent).
+// ProfileConfig is a named recipe: agent + model + effort. The agent is
+// optional: if empty, the active binary (active_agent) is used.
 type ProfileConfig struct {
 	Agent           string
 	Model           string
 	ReasoningEffort string
 }
 
-// ReviewConfig agrupa la configuración del motor de auditoría.
+// ReviewConfig groups the audit engine configuration.
 type ReviewConfig struct {
 	Timeout          time.Duration
 	Parallel         int
@@ -75,84 +75,84 @@ type ReviewConfig struct {
 	CancellationEscalation bool
 }
 
-// Valores posibles de CapabilityConfig.FailsWhen: cuándo se considera que una
-// capability de validación falló. exit_code es el default histórico (el
-// mismo criterio que ya usan lint_commands/test_commands/build_commands).
+// Possible values of CapabilityConfig.FailsWhen: when a validation
+// capability is considered failed. exit_code is the historical default (the
+// same criterion already used by lint_commands/test_commands/build_commands).
 const (
 	FailsWhenExitCode       = "exit_code"
 	FailsWhenOutputNotEmpty = "output_not_empty"
 )
 
-// Valores posibles de ValidationConfig.Mode: dónde se ejecutan las
-// capabilities de validación.
+// Possible values of ValidationConfig.Mode: where validation
+// capabilities run.
 const (
 	ModeWorktree = "worktree"
 	ModeInplace  = "inplace"
 )
 
-// marcadorPaquetes es el marcador literal que todo scoped_command debe
-// contener: el ejecutor (fuera del alcance de esta tarea) lo sustituye por
-// los paquetes a los que se acota la validación.
-const marcadorPaquetes = "{packages}"
+// packagesMarker is the literal marker every scoped_command must
+// contain: the executor (outside the scope of this task) substitutes it
+// with the packages the validation is scoped to.
+const packagesMarker = "{packages}"
 
-// CapabilityConfig describe un chequeo de validación configurable por el
-// usuario (T1.2): comando a ejecutar, criterio de fallo y, opcionalmente, una
-// variante acotada a un subconjunto de paquetes.
+// CapabilityConfig describes a user-configurable validation check (T1.2):
+// command to run, failure criterion and, optionally, a variant scoped to a
+// subset of packages.
 type CapabilityConfig struct {
 	Command   string
 	FailsWhen string
-	// SupportsScope y ScopedCommand habilitan una variante del comando
-	// acotada a los paquetes afectados (p. ej. tras un slice parcial).
+	// SupportsScope and ScopedCommand enable a variant of the command
+	// scoped to the affected packages (e.g. after a partial slice).
 	SupportsScope bool
 	ScopedCommand string
-	// Timeout en segundos; 0 significa "sin timeout explícito propio", el
-	// ejecutor decide su default.
+	// Timeout in seconds; 0 means "no explicit timeout of its own", the
+	// executor decides its default.
 	Timeout int
 }
 
-// ValidationConfig agrupa las capabilities configurables por el usuario, los
-// perfiles que las combinan por nombre y el modo de ejecución (T1.2).
+// ValidationConfig groups the capabilities configurable by the user, the
+// profiles that combine them by name and the execution mode (T1.2).
 type ValidationConfig struct {
 	Capabilities map[string]CapabilityConfig
-	// Profiles asigna un nombre de perfil de validación a la lista ordenada
-	// de capabilities que agrupa (deben existir en Capabilities).
+	// Profiles assigns a validation profile name to the ordered list of
+	// capabilities it groups (they must exist in Capabilities).
 	Profiles map[string][]string
 	Mode     string
 }
 
-// Config es la configuración completa de VAS Sentinel con precedencia
-// defaults -> global -> per-proyecto.
+// Config is the complete configuration of VAS Sentinel with precedence
+// defaults -> global -> per-project.
 type Config struct {
 	ActiveAgent string
 	Agents      map[string]AgentConfig
-	// AgentOrder preserva el orden de declaración de los agentes en el yml
-	// (el archivo más específico manda); alimenta la resolución automática.
+	// AgentOrder preserves the declaration order of the agents in the yaml
+	// (the most specific file wins); it feeds automatic resolution.
 	AgentOrder []string
 	Profiles   map[string]ProfileConfig
 	Review     ReviewConfig
 	Validation ValidationConfig
-	// Change son las reglas de change.classes (T3.1) que consume
-	// change.ClasificarPorRuta: el orden ES la precedencia. Sin struct
-	// envoltorio porque no agrupa nada más que esto (revisión de T3.1).
-	Change []change.Regla
-	// CommitLanguage fija el idioma de los mensajes de commit que genera el
-	// agente (T0.13). Por defecto, el del historial del repositorio.
+	// Change holds the change.classes rules (T3.1) consumed by
+	// change.ClassifyByPath: the order IS the precedence. No wrapper
+	// struct because it groups nothing else (T3.1 review).
+	Change []change.Rule
+	// CommitLanguage fixes the language of the commit messages the agent
+	// generates (T0.13). Defaults to English.
 	CommitLanguage string
-	// RequestExternalAgentDiff permite al repositorio solicitar generación
-	// semántica externa. No representa consentimiento personal.
+	// RequestExternalAgentDiff lets the repository request external
+	// semantic generation. It does not represent personal consent.
 	RequestExternalAgentDiff bool
 	LintCommands             []string
 	TestCommands             []string
 	BuildCommands            []string
 }
 
-func configuracionPorDefecto() Config {
+func defaultConfig() Config {
 	return Config{
 		ActiveAgent: "auto",
-		// "es" y no agentadapter.IdiomaPorDefecto: agentadapter ya importa
-		// config, así que referenciarlo aquí crearía un ciclo. Los tests de
-		// agentadapter fijan que ambos valores coinciden.
-		CommitLanguage:           "es",
+		// "en" and not agentadapter.DefaultLanguage: agentadapter already
+		// imports config, so referencing it here would create a cycle. The
+		// agentadapter tests pin that both values match.
+		CommitLanguage:           "en",
 		RequestExternalAgentDiff: false,
 		Agents: map[string]AgentConfig{
 			"claude": {
@@ -175,7 +175,7 @@ func configuracionPorDefecto() Config {
 			},
 		},
 		AgentOrder: []string{"claude", "opencode"},
-		Profiles:   map[string]ProfileConfig{}, // compat v1: perfiles globales
+		Profiles:   map[string]ProfileConfig{}, // compat v1: global profiles
 		Review: ReviewConfig{
 			Timeout:  900 * time.Second,
 			Parallel: 2,
@@ -195,13 +195,13 @@ func configuracionPorDefecto() Config {
 		LintCommands:  []string{},
 		TestCommands:  []string{},
 		BuildCommands: []string{},
-		Change:        change.ReglasPorDefecto(),
+		Change:        change.DefaultRules(),
 	}
 }
 
-// rutaConfigGlobal devuelve la ruta del archivo de configuración global,
-// situado junto al directorio base de VAS Sentinel en el home del usuario.
-func rutaConfigGlobal() (string, error) {
+// globalConfigPath returns the path of the global configuration file,
+// located next to the VAS Sentinel base directory in the user's home.
+func globalConfigPath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -209,99 +209,100 @@ func rutaConfigGlobal() (string, error) {
 	return filepath.Join(homeDir, ".vas_sentinel", "vassentinel.yml"), nil
 }
 
-// rutaConfigPerProyecto devuelve la ruta del archivo de configuración
-// per-proyecto, situado en la carpeta .vas_sentinel de la raíz del worktree,
-// manteniendo coherencia con el directorio global del usuario.
-func rutaConfigPerProyecto(worktreePath string) string {
+// perProjectConfigPath returns the path of the per-project configuration
+// file, located in the .vas_sentinel folder of the worktree root,
+// keeping coherence with the user's global directory.
+func perProjectConfigPath(worktreePath string) string {
 	return filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
 }
 
-// CargarConfiguracionLocal carga la configuración siguiendo la precedencia:
-// defaults -> global (~/.vas_sentinel/vassentinel.yml) -> per-proyecto
-// (<worktree>/.vas_sentinel/vassentinel.yml). El per-proyecto predomina y
-// sobreescribe solo los campos que define.
-func CargarConfiguracionLocal(worktreePath string) Config {
-	cfg := configuracionPorDefecto()
+// LoadLocalConfig loads the configuration following the
+// precedence: defaults -> global (~/.vas_sentinel/vassentinel.yml) ->
+// per-project (<worktree>/.vas_sentinel/vassentinel.yml). Per-project
+// wins and overwrites only the fields it defines.
+func LoadLocalConfig(worktreePath string) Config {
+	cfg := defaultConfig()
 
-	// CargarConfiguracionLocal conserva su firma sin error (mismo contrato de
-	// hoy para sus llamadores); el error estricto de aplicarDesdeRuta queda
-	// disponible para quien lo invoque directamente (ver tests), pendiente de
-	// decidir en otra tarea cómo se hace visible al operador del CLI.
-	if ruta, err := rutaConfigGlobal(); err == nil {
-		_ = aplicarDesdeRuta(&cfg, ruta)
+	// LoadLocalConfig keeps its error-less signature (same
+	// contract as today for its callers); the strict error from
+	// applyFromPath stays available for whoever invokes it directly
+	// (see tests), with how to make it visible to the CLI operator to be
+	// decided in another task.
+	if path, err := globalConfigPath(); err == nil {
+		_ = applyFromPath(&cfg, path)
 	}
 
-	_ = aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath))
+	_ = applyFromPath(&cfg, perProjectConfigPath(worktreePath))
 
-	traducirComandosLegadoACapabilities(&cfg)
+	translateLegacyCommandsToCapabilities(&cfg)
 
 	return cfg
 }
 
-// CargarConfiguracionLocalEstricta carga la configuración con la misma
-// precedencia que CargarConfiguracionLocal (defaults -> global ->
-// per-proyecto) pero SIN descartar en silencio el error de aplicarDesdeRuta:
-// una clave desconocida en el yml (global o per-proyecto) se propaga con
-// archivo y línea (T1.1), en vez de ignorarse.
+// LoadStrictLocalConfig loads the configuration with the same
+// precedence as LoadLocalConfig (defaults -> global ->
+// per-project) but WITHOUT silently discarding the applyFromPath error:
+// an unknown key in the yml (global or per-project) propagates with
+// file and line (T1.1), instead of being ignored.
 //
-// Requisito añadido por el orquestador para el criterio de salida #4 de la
-// fase F1 ("una clave desconocida en vassentinel.yml produce error explícito
-// con la línea, no silencio"): 'gate' (T1.7) es el primer punto de entrada
-// donde esto debe ser visible, por ser el comando consolidado nuevo.
-// CargarConfiguracionLocal NO cambia (mismo contrato sin error para no
-// romper a sus llamadores actuales); esta función es la variante estricta
-// para quien pueda propagar el error al operador.
-func CargarConfiguracionLocalEstricta(worktreePath string) (Config, error) {
-	cfg := configuracionPorDefecto()
+// Requirement added by the orchestrator for the F1 phase exit criterion #4
+// ("an unknown key in vassentinel.yml produces an explicit error with the
+// line, not silence"): 'gate' (T1.7) is the first entry point where this
+// must be visible, being the new consolidated command.
+// LoadLocalConfig does NOT change (same contract without error to
+// avoid breaking its current callers); this function is the strict variant
+// for whoever can propagate the error to the operator.
+func LoadStrictLocalConfig(worktreePath string) (Config, error) {
+	cfg := defaultConfig()
 
-	if ruta, err := rutaConfigGlobal(); err == nil {
-		if err := aplicarDesdeRuta(&cfg, ruta); err != nil {
+	if path, err := globalConfigPath(); err == nil {
+		if err := applyFromPath(&cfg, path); err != nil {
 			return Config{}, err
 		}
 	}
 
-	if err := aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath)); err != nil {
+	if err := applyFromPath(&cfg, perProjectConfigPath(worktreePath)); err != nil {
 		return Config{}, err
 	}
 
-	traducirComandosLegadoACapabilities(&cfg)
+	translateLegacyCommandsToCapabilities(&cfg)
 
 	return cfg, nil
 }
 
-// perfilAgenteYAML es un perfil anidado dentro de un agente
-// (agents.<agente>.profiles.<perfil>, esquema v2): solo model/reasoning_effort,
-// el agente lo da la clave exterior.
-type perfilAgenteYAML struct {
+// agentProfileYAML is a profile nested inside an agent
+// (agents.<agent>.profiles.<profile>, schema v2): only
+// model/reasoning_effort, the agent comes from the outer key.
+type agentProfileYAML struct {
 	Model           *string `yaml:"model"`
 	ReasoningEffort *string `yaml:"reasoning_effort"`
 }
 
-// perfilGlobalYAML es un perfil de nivel superior (sección profiles, compat
-// v1): agent es opcional, si falta se usa el active_agent.
-type perfilGlobalYAML struct {
+// globalProfileYAML is a top-level profile (profiles section, v1 compat):
+// agent is optional; if missing, the active_agent is used.
+type globalProfileYAML struct {
 	Agent           *string `yaml:"agent"`
 	Model           *string `yaml:"model"`
 	ReasoningEffort *string `yaml:"reasoning_effort"`
 }
 
-// agenteYAML es la entrada de un agente en agents.<nombre>.
-type agenteYAML struct {
+// agentYAML is an agent entry in agents.<name>.
+type agentYAML struct {
 	Model           *string                     `yaml:"model"`
 	ReasoningEffort *string                     `yaml:"reasoning_effort"`
-	Profiles        map[string]perfilAgenteYAML `yaml:"profiles"`
-	// Kind selecciona la familia de adaptador ("" CLI por defecto, "acpx"
-	// para el adaptador ACP/acpx). Agent y Enforcement solo aplican a la
-	// familia acpx (ticket 16).
+	Profiles        map[string]agentProfileYAML `yaml:"profiles"`
+	// Kind selects the adapter family ("" CLI by default, "acpx" for the
+	// ACP/acpx adapter). Agent and Enforcement only apply to the acpx
+	// family (ticket 16).
 	Kind        *string `yaml:"kind"`
 	Agent       *string `yaml:"agent"`
 	Enforcement *string `yaml:"enforcement"`
 }
 
-// reviewYAML es la sección review. Timeout/Parallel se decodifican como
-// yaml.Node (no int directo) para conservar la tolerancia histórica a
-// valores no numéricos (se ignoran y queda el default), igual que hacía
-// strconv.Atoi en el parser artesanal.
+// reviewYAML is the review section. Timeout/Parallel are decoded as
+// yaml.Node (not int directly) to preserve the historical tolerance to
+// non-numeric values (they are ignored and the default remains), the same
+// way the handcrafted parser's strconv.Atoi worked.
 type reviewYAML struct {
 	Timeout                yaml.Node `yaml:"timeout"`
 	Parallel               yaml.Node `yaml:"parallel"`
@@ -310,13 +311,13 @@ type reviewYAML struct {
 	CancellationEscalation *bool     `yaml:"cancellation_escalation"`
 }
 
-// capabilityYAML es una entrada de validation.capabilities.<nombre> (T1.2).
-// El nombre de la capability es una etiqueta libre elegida por el usuario
-// (no un enum cerrado en Go); lo único fijo es esta forma. Command es
-// obligatorio en la práctica (sin él la capability no ejecuta nada), pero
-// esta tarea solo exige las tres validaciones de forma listadas en el
-// diseño: quien declare una capability sin command se queda con la cadena
-// vacía, sin fallar la carga.
+// capabilityYAML is an entry of validation.capabilities.<name> (T1.2).
+// The capability name is a free label chosen by the user (not a closed
+// enum in Go); the only fixed thing is this shape. Command is required in
+// practice (without it the capability runs nothing), but this task only
+// requires the three shape validations listed in the design: whoever
+// declares a capability without command is left with the empty string,
+// without failing the load.
 type capabilityYAML struct {
 	Command       *string `yaml:"command"`
 	FailsWhen     *string `yaml:"fails_when"`
@@ -325,103 +326,104 @@ type capabilityYAML struct {
 	Timeout       *int    `yaml:"timeout"`
 }
 
-// validationYAML es la sección validation completa (T1.2): capabilities
-// configurables por el usuario, perfiles que las agrupan por nombre y modo
-// de ejecución.
+// validationYAML is the complete validation section (T1.2): capabilities
+// configurable by the user, profiles grouping them by name and execution
+// mode.
 type validationYAML struct {
 	Capabilities map[string]capabilityYAML `yaml:"capabilities"`
 	Profiles     map[string][]string       `yaml:"profiles"`
 	Mode         *string                   `yaml:"mode"`
 }
 
-// changeYAML es la sección change.classes: cada clase a su lista de globs.
-// El mapa no preserva el orden textual; aplicarOrdenClases lo recupera.
+// changeYAML is the change.classes section: each class mapped to its glob
+// list. The map does not preserve textual order; applyClassOrder
+// recovers it.
 type changeYAML struct {
 	Classes map[string][]string `yaml:"classes"`
 }
 
-// configYAML es el esquema completo tal cual lo consume yaml.v3 con
-// KnownFields(true): una clave fuera de esta lista (p. ej. "comand" en vez de
-// "command") hace fallar la decodificación con archivo y línea, en vez de
-// ignorarse en silencio como el parser artesanal anterior.
+// configYAML is the full schema exactly as yaml.v3 consumes it with
+// KnownFields(true): a key outside this list (e.g. "comand" instead of
+// "command") makes decoding fail with file and line, instead of being
+// silently ignored as in the previous handcrafted parser.
 //
-// Version no tiene campo equivalente en Config: no se usa en ningún cálculo
-// hoy, pero los ymls reales de este repo la declaran (ver
-// .vas_sentinel/vassentinel.yml), así que debe aceptarse para no romper la
-// decodificación estricta de configuración existente. Añadir esa sección a
-// Config es otra tarea.
+// Version has no equivalent field in Config: it is not used in any
+// computation today, but the real ymls of this repo declare it (see
+// .vas_sentinel/vassentinel.yml), so it must be accepted to avoid breaking
+// the strict decoding of existing configuration. Adding that section to
+// Config is another task.
 //
 // Ticket 13 (R11): review.durable_runs and the whole gate section were
 // removed together with their legacy execution paths. A yaml still declaring
 // them is not ignored: KnownFields(true) rejects it right here with file and
 // line, naming the unknown key ("durable_runs" / "gate").
 type configYAML struct {
-	Version                  *string                     `yaml:"version"`
-	ActiveAgent              *string                     `yaml:"active_agent"`
-	Agents                   map[string]agenteYAML       `yaml:"agents"`
-	Profiles                 map[string]perfilGlobalYAML `yaml:"profiles"`
-	Review                   *reviewYAML                 `yaml:"review"`
-	Validation               *validationYAML             `yaml:"validation"`
-	CommitLanguage           *string                     `yaml:"commit_language"`
-	RequestExternalAgentDiff *bool                       `yaml:"request_external_agent_diff"`
-	LintCommands             []string                    `yaml:"lint_commands"`
-	TestCommands             []string                    `yaml:"test_commands"`
-	BuildCommands            []string                    `yaml:"build_commands"`
-	Change                   *changeYAML                 `yaml:"change"`
+	Version                  *string                      `yaml:"version"`
+	ActiveAgent              *string                      `yaml:"active_agent"`
+	Agents                   map[string]agentYAML         `yaml:"agents"`
+	Profiles                 map[string]globalProfileYAML `yaml:"profiles"`
+	Review                   *reviewYAML                  `yaml:"review"`
+	Validation               *validationYAML              `yaml:"validation"`
+	CommitLanguage           *string                      `yaml:"commit_language"`
+	RequestExternalAgentDiff *bool                        `yaml:"request_external_agent_diff"`
+	LintCommands             []string                     `yaml:"lint_commands"`
+	TestCommands             []string                     `yaml:"test_commands"`
+	BuildCommands            []string                     `yaml:"build_commands"`
+	Change                   *changeYAML                  `yaml:"change"`
 }
 
-// ordenAgentesYAML se decodifica SIN KnownFields, solo para leer el orden
-// textual de las claves de "agents" a través de su yaml.Node: los mapas de Go
-// no preservan orden de declaración, así que es el único punto donde se
-// puede recuperar. La validación estricta de esas mismas claves ya la hizo el
-// decode de configYAML antes de llegar aquí.
-type ordenAgentesYAML struct {
+// agentOrderYAML is decoded WITHOUT KnownFields, only to read the
+// textual order of the "agents" keys through its yaml.Node: Go maps do
+// not preserve declaration order, so this is the only point where it can
+// be recovered. The strict validation of those same keys was already done
+// by the configYAML decode before reaching here.
+type agentOrderYAML struct {
 	Agents yaml.Node `yaml:"agents"`
 }
 
-// aplicarDesdeRuta decodifica el archivo en ruta (si existe) con validación
-// estricta de claves y aplica sobre cfg los campos presentes, sobreescribiendo
-// solo esos. Devuelve un error (con archivo y línea) cuando el archivo existe
-// pero tiene una clave fuera del esquema o está mal formado.
-func aplicarDesdeRuta(cfg *Config, ruta string) error {
-	datos, err := os.ReadFile(ruta)
+// applyFromPath decodes the file at path (if it exists) with strict
+// key validation and applies the present fields over cfg, overwriting
+// only those. It returns an error (with file and line) when the file
+// exists but has a key outside the schema or is malformed.
+func applyFromPath(cfg *Config, path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		// Archivo ausente: global y per-proyecto son opcionales.
+		// Missing file: global and per-project are optional.
 		return nil
 	}
 
 	var raw configYAML
-	decoder := yaml.NewDecoder(bytes.NewReader(datos))
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&raw); err != nil {
 		if err == io.EOF {
-			return nil // archivo vacío: nada que aplicar.
+			return nil // empty file: nothing to apply.
 		}
-		return fmt.Errorf("%s: %w", ruta, err)
+		return fmt.Errorf("%s: %w", path, err)
 	}
 
-	if err := aplicarValoresYAML(cfg, &raw); err != nil {
-		return fmt.Errorf("%s: %w", ruta, err)
+	if err := applyYAMLValues(cfg, &raw); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 
-	var orden ordenAgentesYAML
-	if err := yaml.Unmarshal(datos, &orden); err == nil {
-		aplicarOrdenAgentes(cfg, clavesEnOrden(&orden.Agents))
+	var order agentOrderYAML
+	if err := yaml.Unmarshal(data, &order); err == nil {
+		applyAgentOrder(cfg, keysInOrder(&order.Agents))
 	}
 
 	if raw.Change != nil {
-		aplicarOrdenClases(cfg, datos, raw.Change.Classes)
+		applyClassOrder(cfg, data, raw.Change.Classes)
 	}
 
 	return nil
 }
 
-// aplicarValoresYAML aplica sobre cfg los campos presentes en raw, campo a
-// campo (solo sobreescribe lo que el archivo declara explícitamente).
-// Devuelve error cuando validation.capabilities/profiles no respeta la forma
-// exigida (ver aplicarValidacion): a diferencia del resto de secciones, aquí
-// un valor inválido no puede ignorarse en silencio.
-func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
+// applyYAMLValues applies over cfg the fields present in raw, field by
+// field (only overwrites what the file declares explicitly).
+// It returns an error when validation.capabilities/profiles do not
+// respect the required shape (see applyValidation): unlike the rest of
+// the sections, here an invalid value cannot be silently ignored.
+func applyYAMLValues(cfg *Config, raw *configYAML) error {
 	if raw.ActiveAgent != nil {
 		cfg.ActiveAgent = *raw.ActiveAgent
 	}
@@ -431,59 +433,59 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 	if raw.RequestExternalAgentDiff != nil {
 		cfg.RequestExternalAgentDiff = *raw.RequestExternalAgentDiff
 	}
-	for nombre, agenteRaw := range raw.Agents {
-		agente := cfg.Agents[nombre]
-		if agenteRaw.Model != nil {
-			agente.Model = *agenteRaw.Model
+	for name, agentRaw := range raw.Agents {
+		agent := cfg.Agents[name]
+		if agentRaw.Model != nil {
+			agent.Model = *agentRaw.Model
 		}
-		if agenteRaw.ReasoningEffort != nil {
-			agente.ReasoningEffort = *agenteRaw.ReasoningEffort
+		if agentRaw.ReasoningEffort != nil {
+			agent.ReasoningEffort = *agentRaw.ReasoningEffort
 		}
-		if agenteRaw.Kind != nil {
-			agente.Kind = *agenteRaw.Kind
+		if agentRaw.Kind != nil {
+			agent.Kind = *agentRaw.Kind
 		}
-		if agenteRaw.Agent != nil {
-			agente.ACPAgent = *agenteRaw.Agent
+		if agentRaw.Agent != nil {
+			agent.ACPAgent = *agentRaw.Agent
 		}
-		if agenteRaw.Enforcement != nil {
-			agente.Enforcement = *agenteRaw.Enforcement
+		if agentRaw.Enforcement != nil {
+			agent.Enforcement = *agentRaw.Enforcement
 		}
-		for perfilNombre, perfilRaw := range agenteRaw.Profiles {
-			if agente.Profiles == nil {
-				agente.Profiles = map[string]ProfileConfig{}
+		for profileName, profileRaw := range agentRaw.Profiles {
+			if agent.Profiles == nil {
+				agent.Profiles = map[string]ProfileConfig{}
 			}
-			perfil := agente.Profiles[perfilNombre]
-			if perfilRaw.Model != nil {
-				perfil.Model = *perfilRaw.Model
+			profile := agent.Profiles[profileName]
+			if profileRaw.Model != nil {
+				profile.Model = *profileRaw.Model
 			}
-			if perfilRaw.ReasoningEffort != nil {
-				perfil.ReasoningEffort = *perfilRaw.ReasoningEffort
+			if profileRaw.ReasoningEffort != nil {
+				profile.ReasoningEffort = *profileRaw.ReasoningEffort
 			}
-			agente.Profiles[perfilNombre] = perfil
+			agent.Profiles[profileName] = profile
 		}
-		cfg.Agents[nombre] = agente
+		cfg.Agents[name] = agent
 	}
-	for nombre, perfilRaw := range raw.Profiles {
-		perfil := cfg.Profiles[nombre]
-		if perfilRaw.Agent != nil {
-			perfil.Agent = *perfilRaw.Agent
+	for name, profileRaw := range raw.Profiles {
+		profile := cfg.Profiles[name]
+		if profileRaw.Agent != nil {
+			profile.Agent = *profileRaw.Agent
 		}
-		if perfilRaw.Model != nil {
-			perfil.Model = *perfilRaw.Model
+		if profileRaw.Model != nil {
+			profile.Model = *profileRaw.Model
 		}
-		if perfilRaw.ReasoningEffort != nil {
-			perfil.ReasoningEffort = *perfilRaw.ReasoningEffort
+		if profileRaw.ReasoningEffort != nil {
+			profile.ReasoningEffort = *profileRaw.ReasoningEffort
 		}
-		cfg.Profiles[nombre] = perfil
+		cfg.Profiles[name] = profile
 	}
 	if raw.Review != nil {
 		if raw.Review.CodeGraphContext != nil {
 			cfg.Review.CodeGraphContext = *raw.Review.CodeGraphContext
 		}
-		if n, ok := decodificarEnteroPositivo(&raw.Review.Timeout); ok {
+		if n, ok := decodePositiveInt(&raw.Review.Timeout); ok {
 			cfg.Review.Timeout = time.Duration(n) * time.Second
 		}
-		if n, ok := decodificarEnteroPositivo(&raw.Review.Parallel); ok {
+		if n, ok := decodePositiveInt(&raw.Review.Parallel); ok {
 			cfg.Review.Parallel = n
 		}
 		if raw.Review.EvidenceAdmission != nil {
@@ -498,80 +500,81 @@ func aplicarValoresYAML(cfg *Config, raw *configYAML) error {
 	cfg.BuildCommands = append(cfg.BuildCommands, raw.BuildCommands...)
 
 	if raw.Validation != nil {
-		if err := aplicarValidacion(cfg, raw.Validation); err != nil {
+		if err := applyValidation(cfg, raw.Validation); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// RepositorioSolicitaDiffAgenteExterno lee solo la configuración versionada
-// per-proyecto: la configuración global nunca puede activar esta capacidad.
-func RepositorioSolicitaDiffAgenteExterno(worktreePath string) bool {
-	cfg := configuracionPorDefecto()
-	if err := aplicarDesdeRuta(&cfg, rutaConfigPerProyecto(worktreePath)); err != nil {
+// RepositoryRequestsExternalAgentDiff reads only the versioned
+// per-project configuration: the global configuration can never enable
+// this capability.
+func RepositoryRequestsExternalAgentDiff(worktreePath string) bool {
+	cfg := defaultConfig()
+	if err := applyFromPath(&cfg, perProjectConfigPath(worktreePath)); err != nil {
 		return false
 	}
 	return cfg.RequestExternalAgentDiff
 }
 
-// aplicarValidacion aplica sobre cfg.Validation los campos presentes en raw y
-// valida su forma. A diferencia del resto del parser (donde un valor
-// inválido se ignora y queda el default), aquí una capability o un perfil mal
-// formado producen un error explícito: un perfil que promete una capability
-// que no existe, o una capability scoped sin scoped_command o sin el
-// marcador {packages}, son errores de configuración que el operador debe
-// corregir, no defaults silenciosos que oculten el problema.
-func aplicarValidacion(cfg *Config, raw *validationYAML) error {
-	for nombre, capRaw := range raw.Capabilities {
-		capacidad := cfg.Validation.Capabilities[nombre]
+// applyValidation applies over cfg.Validation the fields present in raw
+// and validates their shape. Unlike the rest of the parser (where an
+// invalid value is ignored and the default remains), here a malformed
+// capability or profile produces an explicit error: a profile promising a
+// capability that does not exist, or a scoped capability without
+// scoped_command or without the {packages} marker, are configuration
+// errors the operator must fix, not silent defaults hiding the problem.
+func applyValidation(cfg *Config, raw *validationYAML) error {
+	for name, capRaw := range raw.Capabilities {
+		capability := cfg.Validation.Capabilities[name]
 		if capRaw.Command != nil {
-			capacidad.Command = *capRaw.Command
+			capability.Command = *capRaw.Command
 		}
 		if capRaw.FailsWhen != nil {
-			// fails_when tiene un dominio cerrado (T1.1/T1.2 lo definen como
-			// exit_code/output_not_empty): un typo como "exit-cede" no puede
-			// aceptarse en silencio, degradaría el criterio de fallo en tiempo
-			// de ejecución sin que el operador se entere (hallazgo del
-			// orquestador, fuera del texto original de la ficha).
+			// fails_when has a closed domain (T1.1/T1.2 define it as
+			// exit_code/output_not_empty): a typo like "exit-cede" cannot
+			// be accepted silently, it would degrade the failure criterion
+			// at runtime without the operator noticing (orchestrator
+			// finding, outside the original text of the ticket).
 			if *capRaw.FailsWhen != FailsWhenExitCode && *capRaw.FailsWhen != FailsWhenOutputNotEmpty {
-				return fmt.Errorf("validation.capabilities.%s: fails_when %q inválido (valores válidos: %q, %q)",
-					nombre, *capRaw.FailsWhen, FailsWhenExitCode, FailsWhenOutputNotEmpty)
+				return fmt.Errorf("validation.capabilities.%s: invalid fails_when %q (valid values: %q, %q)",
+					name, *capRaw.FailsWhen, FailsWhenExitCode, FailsWhenOutputNotEmpty)
 			}
-			capacidad.FailsWhen = *capRaw.FailsWhen
-		} else if capacidad.FailsWhen == "" {
-			capacidad.FailsWhen = FailsWhenExitCode
+			capability.FailsWhen = *capRaw.FailsWhen
+		} else if capability.FailsWhen == "" {
+			capability.FailsWhen = FailsWhenExitCode
 		}
 		if capRaw.SupportsScope != nil {
-			capacidad.SupportsScope = *capRaw.SupportsScope
+			capability.SupportsScope = *capRaw.SupportsScope
 		}
 		if capRaw.ScopedCommand != nil {
-			capacidad.ScopedCommand = *capRaw.ScopedCommand
+			capability.ScopedCommand = *capRaw.ScopedCommand
 		}
 		if capRaw.Timeout != nil {
-			capacidad.Timeout = *capRaw.Timeout
+			capability.Timeout = *capRaw.Timeout
 		}
-		if capacidad.SupportsScope && capacidad.ScopedCommand == "" {
-			return fmt.Errorf("validation.capabilities.%s: supports_scope=true requiere scoped_command", nombre)
+		if capability.SupportsScope && capability.ScopedCommand == "" {
+			return fmt.Errorf("validation.capabilities.%s: supports_scope=true requires scoped_command", name)
 		}
-		if capacidad.ScopedCommand != "" && !strings.Contains(capacidad.ScopedCommand, marcadorPaquetes) {
-			return fmt.Errorf("validation.capabilities.%s: scoped_command debe contener el marcador %s", nombre, marcadorPaquetes)
+		if capability.ScopedCommand != "" && !strings.Contains(capability.ScopedCommand, packagesMarker) {
+			return fmt.Errorf("validation.capabilities.%s: scoped_command must contain the %s marker", name, packagesMarker)
 		}
-		cfg.Validation.Capabilities[nombre] = capacidad
+		cfg.Validation.Capabilities[name] = capability
 	}
-	for perfil, nombresCapabilities := range raw.Profiles {
-		for _, nombreCap := range nombresCapabilities {
-			if _, existe := cfg.Validation.Capabilities[nombreCap]; !existe {
-				return fmt.Errorf("validation.profiles.%s: la capability %q no está declarada en validation.capabilities", perfil, nombreCap)
+	for profile, capNames := range raw.Profiles {
+		for _, capName := range capNames {
+			if _, exists := cfg.Validation.Capabilities[capName]; !exists {
+				return fmt.Errorf("validation.profiles.%s: capability %q is not declared in validation.capabilities", profile, capName)
 			}
 		}
-		cfg.Validation.Profiles[perfil] = nombresCapabilities
+		cfg.Validation.Profiles[profile] = capNames
 	}
 	if raw.Mode != nil {
-		// mode también tiene un dominio cerrado (worktree/inplace): mismo
-		// motivo que fails_when, arriba.
+		// mode also has a closed domain (worktree/inplace): same reason as
+		// fails_when, above.
 		if *raw.Mode != ModeWorktree && *raw.Mode != ModeInplace {
-			return fmt.Errorf("validation.mode: %q inválido (valores válidos: %q, %q)",
+			return fmt.Errorf("validation.mode: %q is invalid (valid values: %q, %q)",
 				*raw.Mode, ModeWorktree, ModeInplace)
 		}
 		cfg.Validation.Mode = *raw.Mode
@@ -579,117 +582,120 @@ func aplicarValidacion(cfg *Config, raw *validationYAML) error {
 	return nil
 }
 
-// traducirComandosLegadoACapabilities genera capabilities implícitas a
-// partir de lint_commands/test_commands/build_commands cuando el yml no
-// declara ninguna validation.capabilities explícita. Decisión: una config
-// vieja que solo conoce el esquema de comandos anterior a T1.2 debe seguir
-// produciendo un resultado utilizable para quien pida "las capabilities
-// configuradas" (tarea futura), sin obligar al usuario a reescribir su yml.
-// Si el usuario ya declaró validation.capabilities, esa declaración manda:
-// no se mezclan dos fuentes de verdad para las mismas capabilities. Los
-// comandos de una misma lista se combinan con "&&" en un único Command
-// porque CapabilityConfig modela un comando, no una lista.
-func traducirComandosLegadoACapabilities(cfg *Config) {
+// translateLegacyCommandsToCapabilities generates implicit capabilities from
+// lint_commands/test_commands/build_commands when the yml declares no
+// explicit validation.capabilities. Decision: an old config that only
+// knows the pre-T1.2 command schema must keep producing a usable result
+// for whoever asks for "the configured capabilities" (future task),
+// without forcing the user to rewrite their yml.
+// If the user already declared validation.capabilities, that declaration
+// wins: two sources of truth for the same capabilities are not mixed. The
+// commands of a single list are combined with "&&" into a single Command
+// because CapabilityConfig models a command, not a list.
+func translateLegacyCommandsToCapabilities(cfg *Config) {
 	if len(cfg.Validation.Capabilities) > 0 {
 		return
 	}
-	agregarCapabilityImplicita(cfg, "lint", cfg.LintCommands)
-	agregarCapabilityImplicita(cfg, "unit_test", cfg.TestCommands)
-	agregarCapabilityImplicita(cfg, "build", cfg.BuildCommands)
+	addImplicitCapability(cfg, "lint", cfg.LintCommands)
+	addImplicitCapability(cfg, "unit_test", cfg.TestCommands)
+	addImplicitCapability(cfg, "build", cfg.BuildCommands)
 }
 
-// agregarCapabilityImplicita añade a cfg.Validation.Capabilities una entrada
-// con nombre a partir de comandos, si hay al menos uno.
-func agregarCapabilityImplicita(cfg *Config, nombre string, comandos []string) {
+// addImplicitCapability adds a named entry built from the commands
+// to cfg.Validation.Capabilities, if there is at least one.
+func addImplicitCapability(cfg *Config, name string, comandos []string) {
 	if len(comandos) == 0 {
 		return
 	}
 	if cfg.Validation.Capabilities == nil {
 		cfg.Validation.Capabilities = map[string]CapabilityConfig{}
 	}
-	cfg.Validation.Capabilities[nombre] = CapabilityConfig{
+	cfg.Validation.Capabilities[name] = CapabilityConfig{
 		Command:   strings.Join(comandos, " && "),
 		FailsWhen: FailsWhenExitCode,
 	}
 }
 
-// decodificarEnteroPositivo intenta leer nodo como entero positivo. Devuelve
-// ok=false si el nodo está ausente (Kind cero), no es numérico o no es
-// positivo, igual que hacía strconv.Atoi + "n > 0" en el parser artesanal:
-// un valor inválido se ignora en silencio y queda el default.
-func decodificarEnteroPositivo(nodo *yaml.Node) (int, bool) {
-	if nodo.Kind == 0 {
+// decodePositiveInt tries to read the node as a positive integer.
+// It returns ok=false when the node is absent (zero Kind), not numeric or
+// not positive, the same way the handcrafted parser's strconv.Atoi +
+// "n > 0" worked: an invalid value is silently ignored and the default
+// remains.
+func decodePositiveInt(node *yaml.Node) (int, bool) {
+	if node.Kind == 0 {
 		return 0, false
 	}
 	var n int
-	if err := nodo.Decode(&n); err != nil || n <= 0 {
+	if err := node.Decode(&n); err != nil || n <= 0 {
 		return 0, false
 	}
 	return n, true
 }
 
-// clavesEnOrden devuelve las claves de un yaml.Node de tipo mapping en el
-// orden textual en que aparecen en el archivo.
-func clavesEnOrden(nodo *yaml.Node) []string {
-	if nodo == nil || nodo.Kind != yaml.MappingNode {
+// keysInOrder returns the keys of a yaml.Node of mapping type in the
+// textual order they appear in the file.
+func keysInOrder(node *yaml.Node) []string {
+	if node == nil || node.Kind != yaml.MappingNode {
 		return nil
 	}
-	claves := make([]string, 0, len(nodo.Content)/2)
-	for i := 0; i < len(nodo.Content); i += 2 {
-		claves = append(claves, nodo.Content[i].Value)
+	keys := make([]string, 0, len(node.Content)/2)
+	for i := 0; i < len(node.Content); i += 2 {
+		keys = append(keys, node.Content[i].Value)
 	}
-	return claves
+	return keys
 }
 
-// aplicarOrdenAgentes reconstruye cfg.AgentOrder con ordenArchivo (el orden de
-// declaración en el archivo procesado) a la cabeza, seguido de los agentes ya
-// conocidos que ese archivo no declara, en su orden relativo anterior.
-func aplicarOrdenAgentes(cfg *Config, ordenArchivo []string) {
-	if len(ordenArchivo) == 0 {
+// applyAgentOrder rebuilds cfg.AgentOrder with fileOrder (the
+// declaration order in the processed file) at the head, followed by the
+// already known agents that file does not declare, in their previous
+// relative order.
+func applyAgentOrder(cfg *Config, fileOrder []string) {
+	if len(fileOrder) == 0 {
 		return
 	}
-	enArchivo := make(map[string]bool, len(ordenArchivo))
-	for _, nombre := range ordenArchivo {
-		enArchivo[nombre] = true
+	inFile := make(map[string]bool, len(fileOrder))
+	for _, name := range fileOrder {
+		inFile[name] = true
 	}
-	nuevoOrden := make([]string, 0, len(ordenArchivo)+len(cfg.AgentOrder))
-	nuevoOrden = append(nuevoOrden, ordenArchivo...)
-	for _, nombre := range cfg.AgentOrder {
-		if !enArchivo[nombre] {
-			nuevoOrden = append(nuevoOrden, nombre)
+	newOrder := make([]string, 0, len(fileOrder)+len(cfg.AgentOrder))
+	newOrder = append(newOrder, fileOrder...)
+	for _, name := range cfg.AgentOrder {
+		if !inFile[name] {
+			newOrder = append(newOrder, name)
 		}
 	}
-	cfg.AgentOrder = nuevoOrden
+	cfg.AgentOrder = newOrder
 }
 
-// ordenClasesYAML lee sin KnownFields el orden textual de change.classes
-// (mismo motivo que ordenAgentesYAML).
-type ordenClasesYAML struct {
+// classOrderYAML reads without KnownFields the textual order of
+// change.classes (same reason as agentOrderYAML).
+type classOrderYAML struct {
 	Change struct {
 		Classes yaml.Node `yaml:"classes"`
 	} `yaml:"change"`
 }
 
-// aplicarOrdenClases reconstruye cfg.Change en el orden textual del archivo.
-// Al declarar change.classes el usuario reemplaza los defaults (mismo
-// criterio que active_agent): no se fusionan dos fuentes de reglas.
+// applyClassOrder rebuilds cfg.Change in the textual order of the file.
+// By declaring change.classes the user replaces the defaults (same
+// criterion as active_agent): two sources of rules are not merged.
 //
-// classes nil (la clave "classes" no aparece bajo "change:") deja los
-// defaults intactos; classes no nil pero vacío ("classes: {}", declarado a
-// propósito) vacía cfg.Change: son dos intenciones distintas del usuario y
-// antes se confundían (revisión de T3.1, ambas caían en el mismo "return").
-func aplicarOrdenClases(cfg *Config, datos []byte, classes map[string][]string) {
+// classes nil (the "classes" key does not appear under "change:") leaves
+// the defaults intact; classes non-nil but empty ("classes: {}", declared
+// on purpose) empties cfg.Change: they are two distinct user intents and
+// they used to be confused (T3.1 review, both fell into the same
+// "return").
+func applyClassOrder(cfg *Config, data []byte, classes map[string][]string) {
 	if classes == nil {
 		return
 	}
-	var orden ordenClasesYAML
-	if err := yaml.Unmarshal(datos, &orden); err != nil {
+	var order classOrderYAML
+	if err := yaml.Unmarshal(data, &order); err != nil {
 		return
 	}
-	claves := clavesEnOrden(&orden.Change.Classes)
-	reglas := make([]change.Regla, 0, len(claves))
-	for _, clave := range claves {
-		reglas = append(reglas, change.Regla{Clase: clave, Patrones: classes[clave]})
+	keys := keysInOrder(&order.Change.Classes)
+	rules := make([]change.Rule, 0, len(keys))
+	for _, key := range keys {
+		rules = append(rules, change.Rule{Class: key, Patterns: classes[key]})
 	}
-	cfg.Change = reglas
+	cfg.Change = rules
 }

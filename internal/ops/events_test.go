@@ -12,609 +12,610 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-var _ func(string, string, int, []string, EventDetail, string) error = RegistrarEvento
+var _ func(string, string, int, []string, EventDetail, string) error = RecordEvent
 
-func TestRegistrarYLeerEventos(t *testing.T) {
+func TestRecordAndReadEvents(t *testing.T) {
 	dir := t.TempDir()
 	writeEventLines(t, dir,
 		`{"at":"2026-01-01T00:00:00Z","cmd":"check","exit":0,"detail":{}}`,
 		`{"at":"2026-01-01T00:00:01Z","cmd":"review","exit":4,"shas":["abc123"],"detail":"provider_unavailable","worktree":"C:\\repo"}`,
 	)
 
-	eventos, err := UltimosEventos(dir, 10)
+	events, err := RecentEvents(dir, 10)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 2 {
-		t.Fatalf("eventos = %d, esperado 2", len(eventos))
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2", len(events))
 	}
-	// El más reciente primero.
-	if eventos[0].Cmd != "review" || eventos[0].Exit != 4 || eventos[0].Detail != "provider_unavailable" {
-		t.Errorf("evento más reciente = %+v, no coincide", eventos[0])
+	// Newest first.
+	if events[0].Cmd != "review" || events[0].Exit != 4 || events[0].Detail != "provider_unavailable" {
+		t.Errorf("newest event = %+v, does not match", events[0])
 	}
-	if len(eventos[0].Shas) != 1 || eventos[0].Shas[0] != "abc123" {
-		t.Errorf("shas = %+v, esperado [abc123]", eventos[0].Shas)
+	if len(events[0].Shas) != 1 || events[0].Shas[0] != "abc123" {
+		t.Errorf("shas = %+v, want [abc123]", events[0].Shas)
 	}
-	if eventos[1].Cmd != "check" {
-		t.Errorf("evento anterior = %+v, esperado check", eventos[1])
+	if events[1].Cmd != "check" {
+		t.Errorf("previous event = %+v, want check", events[1])
 	}
 }
 
-func TestUltimosEventosLimite(t *testing.T) {
+func TestRecentEventsLimit(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 5; i++ {
-		if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
+		if err := RecordEvent(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	eventos, err := UltimosEventos(dir, 3)
+	events, err := RecentEvents(dir, 3)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 3 {
-		t.Fatalf("eventos = %d, esperado 3", len(eventos))
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
 	}
 }
 
-func TestUltimosEventosSinLog(t *testing.T) {
+func TestRecentEventsNoLog(t *testing.T) {
 	dir := t.TempDir()
 
-	eventos, err := UltimosEventos(dir, 10)
+	events, err := RecentEvents(dir, 10)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 0 {
-		t.Errorf("eventos = %d, esperado 0 sin log", len(eventos))
+	if len(events) != 0 {
+		t.Errorf("events = %d, want 0 without log", len(events))
 	}
 }
 
-func TestRegistrarMilEventosSinCorrupcion(t *testing.T) {
+func TestRecordManyEventsWithoutCorruption(t *testing.T) {
 	dir := t.TempDir()
 
 	for i := 0; i < 1000; i++ {
-		if err := RegistrarEvento(dir, "check", 0, nil, EventDetail{}, ""); err != nil {
+		if err := RecordEvent(dir, "check", 0, nil, EventDetail{}, ""); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
 	}
 
-	eventos, err := UltimosEventos(dir, 0)
+	events, err := RecentEvents(dir, 0)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 1000 {
-		t.Errorf("eventos = %d, esperado 1000", len(eventos))
+	if len(events) != 1000 {
+		t.Errorf("events = %d, want 1000", len(events))
 	}
 }
 
-func TestRotarEventosDejaUltimasLineas(t *testing.T) {
+func TestRotateEventsKeepsLastLines(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 5; i++ {
-		if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
+		if err := RecordEvent(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := RotarEventos(dir, 2); err != nil {
-		t.Fatalf("RotarEventos devolvió error: %v", err)
+	if err := RotateEvents(dir, 2); err != nil {
+		t.Fatalf("RotateEvents returned error: %v", err)
 	}
-	eventos, err := UltimosEventos(dir, 10)
+	events, err := RecentEvents(dir, 10)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 2 {
-		t.Errorf("eventos = %d, esperado 2 tras rotar", len(eventos))
+	if len(events) != 2 {
+		t.Errorf("events = %d, want 2 after rotating", len(events))
 	}
 
-	// El log sigue siendo appendable tras la rotación.
-	if err := RegistrarEvento(dir, "review", 1, nil, EventDetail{}, ""); err != nil {
-		t.Fatalf("RegistrarEvento tras rotar devolvió error: %v", err)
+	// The log is still appendable after the rotation.
+	if err := RecordEvent(dir, "review", 1, nil, EventDetail{}, ""); err != nil {
+		t.Fatalf("RecordEvent after rotating returned error: %v", err)
 	}
-	eventos, err = UltimosEventos(dir, 10)
+	events, err = RecentEvents(dir, 10)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 3 || eventos[0].Cmd != "review" {
-		t.Errorf("eventos = %d, el más reciente %q, esperado 3 con review", len(eventos), eventos[0].Cmd)
+	if len(events) != 3 || events[0].Cmd != "review" {
+		t.Errorf("events = %d, the newest %q, want 3 with review", len(events), events[0].Cmd)
 	}
 }
 
-func TestRotarEventosSinLogEsNoOp(t *testing.T) {
+func TestRotateEventsNoLogIsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	if err := RotarEventos(dir, 100); err != nil {
-		t.Fatalf("RotarEventos sin log devolvió error: %v", err)
+	if err := RotateEvents(dir, 100); err != nil {
+		t.Fatalf("RotateEvents without log returned error: %v", err)
 	}
 }
 
-func TestRotarEventosDescartaLineasCorruptas(t *testing.T) {
+func TestRotateEventsDiscardsCorruptLines(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
+	if err := RecordEvent(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
-	ruta := filepath.Join(dir, eventosRel)
-	if err := appendLinea(ruta, "{\"corrupto\""); err != nil {
+	path := filepath.Join(dir, eventsRelPath)
+	if err := appendLine(path, "{\"corrupto\""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(dir, "review", 0, nil, EventDetail{}, ""); err != nil {
+	if err := RecordEvent(dir, "review", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := RotarEventos(dir, 10); err != nil {
-		t.Fatalf("RotarEventos devolvió error: %v", err)
+	if err := RotateEvents(dir, 10); err != nil {
+		t.Fatalf("RotateEvents returned error: %v", err)
 	}
-	// La rotación descarta las líneas corruptas: quedan solo los eventos
-	// que parsean, en orden.
-	eventos, err := UltimosEventos(dir, 10)
+	// The rotation discards corrupt lines: only the events that parse
+	// remain, in order.
+	events, err := RecentEvents(dir, 10)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 2 {
-		t.Errorf("eventos = %d, esperado 2 (la corrupta se descartó en la rotación)", len(eventos))
+	if len(events) != 2 {
+		t.Errorf("events = %d, want 2 (the corrupt one was discarded during rotation)", len(events))
 	}
-	// El más reciente primero (review se registró después de status).
-	if eventos[0].Cmd != "review" || eventos[1].Cmd != "status" {
-		t.Errorf("orden = %q, %q; esperado review, status", eventos[0].Cmd, eventos[1].Cmd)
+	// Newest first (review was recorded after status).
+	if events[0].Cmd != "review" || events[1].Cmd != "status" {
+		t.Errorf("order = %q, %q; want review, status", events[0].Cmd, events[1].Cmd)
 	}
-	// El archivo ya no contiene la línea corrupta.
-	contenido, err := os.ReadFile(ruta)
+	// The file no longer contains the corrupt line.
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(contenido), "corrupto") {
-		t.Errorf("la línea corrupta sigue en el archivo tras la rotación")
+	if strings.Contains(string(contents), "corrupto") {
+		t.Errorf("the corrupt line is still in the file after the rotation")
 	}
 }
 
-func TestPurgeEventosDeBorraSoloLosShasPedidos(t *testing.T) {
+func TestPurgeEventsOfDeletesOnlyRequestedSHAs(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "review", 4, []string{"aaa111"}, EventDetail{"reason": "provider_unavailable"}, ""); err != nil {
+	if err := RecordEvent(dir, "review", 4, []string{"aaa111"}, EventDetail{"reason": "provider_unavailable"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(dir, "review", 0, []string{"bbb222"}, EventDetail{}, ""); err != nil {
+	if err := RecordEvent(dir, "review", 0, []string{"bbb222"}, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegistrarEvento(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
+	if err := RecordEvent(dir, "status", 0, nil, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	eliminadas, err := PurgeEventosDe(dir, []string{"aaa111"})
+	removed, err := PurgeEventsOf(dir, []string{"aaa111"})
 	if err != nil {
-		t.Fatalf("PurgeEventosDe devolvió error: %v", err)
+		t.Fatalf("PurgeEventsOf returned error: %v", err)
 	}
-	if eliminadas != 1 {
-		t.Errorf("líneas eliminadas = %d, esperado 1", eliminadas)
+	if removed != 1 {
+		t.Errorf("removed lines = %d, want 1", removed)
 	}
 
-	eventos, err := UltimosEventos(dir, 10)
+	events, err := RecentEvents(dir, 10)
 	if err != nil {
-		t.Fatalf("UltimosEventos devolvió error: %v", err)
+		t.Fatalf("RecentEvents returned error: %v", err)
 	}
-	if len(eventos) != 2 {
-		t.Fatalf("eventos = %d, esperado 2 (los de commits vivos se conservan)", len(eventos))
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2 (the ones of still-alive commits are kept)", len(events))
 	}
-	// El evento de aaa111 desapareció; el de bbb222 y el status siguen.
-	if eventos[0].Cmd != "status" || eventos[1].Cmd != "review" || eventos[1].Shas[0] != "bbb222" {
-		t.Errorf("eventos restantes = %+v, no coinciden", eventos)
+	// The aaa111 event disappeared; the bbb222 one and the status remain.
+	if events[0].Cmd != "status" || events[1].Cmd != "review" || events[1].Shas[0] != "bbb222" {
+		t.Errorf("remaining events = %+v, do not match", events)
 	}
 
-	// El log sigue siendo appendable tras el purge.
-	if err := RegistrarEvento(dir, "check", 0, nil, EventDetail{}, ""); err != nil {
-		t.Fatalf("RegistrarEvento tras purge devolvió error: %v", err)
+	// The log is still appendable after the purge.
+	if err := RecordEvent(dir, "check", 0, nil, EventDetail{}, ""); err != nil {
+		t.Fatalf("RecordEvent after purge returned error: %v", err)
 	}
 }
 
-func TestPurgeEventosDeSinShasEsNoOp(t *testing.T) {
+func TestPurgeEventsOfNoSHAsIsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "review", 0, []string{"aaa111"}, EventDetail{}, ""); err != nil {
+	if err := RecordEvent(dir, "review", 0, []string{"aaa111"}, EventDetail{}, ""); err != nil {
 		t.Fatal(err)
 	}
-	eliminadas, err := PurgeEventosDe(dir, nil)
-	if err != nil || eliminadas != 0 {
-		t.Errorf("PurgeEventosDe(nil) = %d, %v; esperado 0, nil", eliminadas, err)
+	removed, err := PurgeEventsOf(dir, nil)
+	if err != nil || removed != 0 {
+		t.Errorf("PurgeEventsOf(nil) = %d, %v; want 0, nil", removed, err)
 	}
-	eventos, _ := UltimosEventos(dir, 10)
-	if len(eventos) != 1 {
-		t.Errorf("eventos = %d, esperado 1 (sin cambios)", len(eventos))
+	events, _ := RecentEvents(dir, 10)
+	if len(events) != 1 {
+		t.Errorf("events = %d, want 1 (unchanged)", len(events))
 	}
 }
 
-func TestPurgeEventosDeSinLogEsNoOp(t *testing.T) {
+func TestPurgeEventsOfNoLogIsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	eliminadas, err := PurgeEventosDe(dir, []string{"aaa111"})
-	if err != nil || eliminadas != 0 {
-		t.Errorf("PurgeEventosDe sin log = %d, %v; esperado 0, nil", eliminadas, err)
+	removed, err := PurgeEventsOf(dir, []string{"aaa111"})
+	if err != nil || removed != 0 {
+		t.Errorf("PurgeEventsOf without log = %d, %v; want 0, nil", removed, err)
 	}
 }
 
-func appendLinea(ruta, linea string) error {
-	archivo, err := os.OpenFile(ruta, os.O_APPEND|os.O_WRONLY, 0644)
+func appendLine(path, line string) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
-	defer archivo.Close()
-	_, err = archivo.WriteString(linea + "\n")
+	defer file.Close()
+	_, err = file.WriteString(line + "\n")
 	return err
 }
 
 func writeEventLines(t *testing.T, gitDir string, lines ...string) {
 	t.Helper()
-	ruta := filepath.Join(gitDir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := filepath.Join(gitDir, eventsRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	contenido := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
+	contents := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// escribirEventoPrCreate anexa un evento pr-create de prueba con número de PR.
-func escribirEventoPrCreate(t *testing.T, gitDir string, numero string, tieneURL bool) {
+// writeTestPrCreateEvent appends a test pr-create event with a PR number.
+func writeTestPrCreateEvent(t *testing.T, gitDir string, number string, hasURL bool) {
 	t.Helper()
-	detail := EventDetail{"fallback": !tieneURL, "chain_pr": false}
-	if tieneURL {
-		detail["pr_url"] = "https://github.com/demo/repo/pull/" + numero
+	detail := EventDetail{"fallback": !hasURL, "chain_pr": false}
+	if hasURL {
+		detail["pr_url"] = "https://github.com/demo/repo/pull/" + number
 	}
-	if err := RegistrarEvento(gitDir, "pr-create", 0, nil, detail, "C:\\repo"); err != nil {
-		t.Fatalf("no se pudo registrar el evento: %v", err)
+	if err := RecordEvent(gitDir, "pr-create", 0, nil, detail, "C:\\repo"); err != nil {
+		t.Fatalf("could not record the event: %v", err)
 	}
 }
 
-// TestPurgeEventosDePRsResueltas: las PRs mergeadas o cerradas se purgan del
-// log; las abiertas o draft se conservan.
-func TestPurgeEventosDePRsResueltas(t *testing.T) {
+// TestPurgeEventsOfResolvedPRs: merged or closed PRs are purged from the
+// log; open or draft ones are kept.
+func TestPurgeEventsOfResolvedPRs(t *testing.T) {
 	gitDir := t.TempDir()
-	escribirEventoPrCreate(t, gitDir, "10", true) // MERGED → purgar
-	escribirEventoPrCreate(t, gitDir, "11", true) // OPEN → conservar
-	escribirEventoPrCreate(t, gitDir, "12", true) // CLOSED → purgar
-	escribirEventoPrCreate(t, gitDir, "13", true) // DRAFT → conservar
+	writeTestPrCreateEvent(t, gitDir, "10", true) // MERGED → purge
+	writeTestPrCreateEvent(t, gitDir, "11", true) // OPEN → keep
+	writeTestPrCreateEvent(t, gitDir, "12", true) // CLOSED → purge
+	writeTestPrCreateEvent(t, gitDir, "13", true) // DRAFT → keep
 
-	estados := map[string]string{
+	states := map[string]string{
 		"10": "MERGED",
 		"11": "OPEN",
 		"12": "CLOSED",
 		"13": "DRAFT",
 	}
-	res, err := PurgeEventosDePRsResueltas(gitDir, func(numero int) (string, error) {
-		return estados[strconv.Itoa(numero)], nil
+	res, err := PurgeEventsOfResolvedPRs(gitDir, func(number int) (string, error) {
+		return states[strconv.Itoa(number)], nil
 	})
 	if err != nil {
-		t.Fatalf("Purge... falló: %v", err)
+		t.Fatalf("Purge... failed: %v", err)
 	}
-	if res.Purgadas != 2 {
-		t.Errorf("Purgadas = %d, esperado 2 (10 y 12)", res.Purgadas)
+	if res.Purged != 2 {
+		t.Errorf("Purged = %d, want 2 (10 and 12)", res.Purged)
 	}
-	if res.Conservadas != 2 {
-		t.Errorf("Conservadas = %d, esperado 2 (11 y 13)", res.Conservadas)
+	if res.Kept != 2 {
+		t.Errorf("Kept = %d, want 2 (11 and 13)", res.Kept)
 	}
 
-	eventos, err := UltimosEventos(gitDir, 0)
+	events, err := RecentEvents(gitDir, 0)
 	if err != nil {
-		t.Fatalf("UltimosEventos falló: %v", err)
+		t.Fatalf("RecentEvents failed: %v", err)
 	}
-	if len(eventos) != 2 {
-		t.Fatalf("quedaron %d eventos, esperado 2", len(eventos))
+	if len(events) != 2 {
+		t.Fatalf("%d events remained, want 2", len(events))
 	}
-	for _, ev := range eventos {
+	for _, ev := range events {
 		text := detailText(t, ev.Detail)
 		if !strings.Contains(text, "/pull/11") && !strings.Contains(text, "/pull/13") {
-			t.Errorf("sobrevivió un evento indebido: %s", text)
+			t.Errorf("a wrong event survived: %s", text)
 		}
 	}
 
-	// El log sigue siendo appendable tras la purga por PR.
-	if err := RegistrarEvento(gitDir, "pr-review", 0, []string{"zzz999"}, EventDetail{}, ""); err != nil {
-		t.Fatalf("RegistrarEvento tras purga por PR devolvió error: %v", err)
+	// The log is still appendable after the PR purge.
+	if err := RecordEvent(gitDir, "pr-review", 0, []string{"zzz999"}, EventDetail{}, ""); err != nil {
+		t.Fatalf("RecordEvent after PR purge returned error: %v", err)
 	}
-	eventos, err = UltimosEventos(gitDir, 10)
-	if err != nil || len(eventos) != 3 {
-		t.Errorf("eventos = %d, %v; esperado 3 tras reanexar", len(eventos), err)
+	events, err = RecentEvents(gitDir, 10)
+	if err != nil || len(events) != 3 {
+		t.Errorf("events = %d, %v; want 3 after re-appending", len(events), err)
 	}
 }
 
-// TestPurgaFallbackSinURLSeConserva: una acta por fallback (sin URL) no es
-// verificable con gh y se conserva intacta, con aviso.
-func TestPurgaFallbackSinURLSeConserva(t *testing.T) {
+// TestPurgeFallbackWithoutURLIsKept: a fallback record (without URL) is not
+// verifiable with gh and is kept intact, with a warning.
+func TestPurgeFallbackWithoutURLIsKept(t *testing.T) {
 	gitDir := t.TempDir()
-	escribirEventoPrCreate(t, gitDir, "0", false)
+	writeTestPrCreateEvent(t, gitDir, "0", false)
 
-	res, err := PurgeEventosDePRsResueltas(gitDir, func(numero int) (string, error) {
-		t.Error("no debe consultar gh para una acta sin URL")
+	res, err := PurgeEventsOfResolvedPRs(gitDir, func(number int) (string, error) {
+		t.Error("must not consult gh for a record without URL")
 		return "OPEN", nil
 	})
 	if err != nil {
-		t.Fatalf("Purge... falló: %v", err)
+		t.Fatalf("Purge... failed: %v", err)
 	}
-	if res.Conservadas != 1 || res.Purgadas != 0 {
-		t.Errorf("Conservadas = %d Purgadas = %d, esperado 1/0", res.Conservadas, res.Purgadas)
+	if res.Kept != 1 || res.Purged != 0 {
+		t.Errorf("Kept = %d Purged = %d, want 1/0", res.Kept, res.Purged)
 	}
-	if len(res.Avisos) != 1 {
-		t.Errorf("Avisos = %d, esperado 1 (acta no verificable)", len(res.Avisos))
+	if len(res.Warnings) != 1 {
+		t.Errorf("Warnings = %d, want 1 (unverifiable record)", len(res.Warnings))
 	}
 }
 
-// TestPurgaGHErrorConserva: sin gh o sin red, la purga es best-effort: el
-// fallo se avisa y las actas se conservan (nunca se destruyen por incertidumbre).
-func TestPurgaGHErrorConserva(t *testing.T) {
+// TestPurgeGHErrorKeeps: without gh or without network, the purge is
+// best-effort: the failure is warned and the records are kept (never destroyed
+// by uncertainty).
+func TestPurgeGHErrorKeeps(t *testing.T) {
 	gitDir := t.TempDir()
-	escribirEventoPrCreate(t, gitDir, "20", true)
-	escribirEventoPrCreate(t, gitDir, "21", true)
+	writeTestPrCreateEvent(t, gitDir, "20", true)
+	writeTestPrCreateEvent(t, gitDir, "21", true)
 
-	res, err := PurgeEventosDePRsResueltas(gitDir, func(numero int) (string, error) {
-		return "", errors.New("gh no está o sin red")
+	res, err := PurgeEventsOfResolvedPRs(gitDir, func(number int) (string, error) {
+		return "", errors.New("gh missing or no network")
 	})
 	if err != nil {
-		t.Fatalf("Purge... no debe fallar ante gh ausente: %v", err)
+		t.Fatalf("Purge... must not fail when gh is absent: %v", err)
 	}
-	if res.Purgadas != 0 || res.Conservadas != 2 {
-		t.Errorf("Purgadas = %d Conservadas = %d, esperado 0/2", res.Purgadas, res.Conservadas)
+	if res.Purged != 0 || res.Kept != 2 {
+		t.Errorf("Purged = %d Kept = %d, want 0/2", res.Purged, res.Kept)
 	}
-	if len(res.Avisos) != 2 {
-		t.Errorf("Avisos = %d, esperado 2", len(res.Avisos))
+	if len(res.Warnings) != 2 {
+		t.Errorf("Warnings = %d, want 2", len(res.Warnings))
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, eventosRel)); err != nil {
-		t.Fatalf("el log debe seguir existiendo: %v", err)
+	if _, err := os.Stat(filepath.Join(gitDir, eventsRelPath)); err != nil {
+		t.Fatalf("the log must still exist: %v", err)
 	}
 }
 
-// TestEscribirLogTemporalSinLogPrevio: sin log previo el temporal pasa a ser
-// el log (no se crea .bak).
-func TestEscribirLogTemporalSinLogPrevio(t *testing.T) {
+// TestWriteTemporaryLogNoPreviousLog: without a previous log the temporary
+// file becomes the log (no .bak is created).
+func TestWriteTemporaryLogNoPreviousLog(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := filepath.Join(dir, eventsRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := escribirLogTemporalRenombrando(ruta, [][]byte{[]byte("a"), []byte("b")}, os.Rename); err != nil {
-		t.Fatalf("escribirLogTemporal sin log previo falló: %v", err)
+	if err := writeTemporaryLogRenaming(path, [][]byte{[]byte("a"), []byte("b")}, os.Rename); err != nil {
+		t.Fatalf("writeTemporaryLog without previous log failed: %v", err)
 	}
-	datos, err := os.ReadFile(ruta)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("el log debe existir tras la escritura: %v", err)
+		t.Fatalf("the log must exist after the write: %v", err)
 	}
-	if string(datos) != "a\nb\n" {
-		t.Errorf("log = %q, esperado %q", datos, "a\nb\n")
+	if string(data) != "a\nb\n" {
+		t.Errorf("log = %q, want %q", data, "a\nb\n")
 	}
-	if _, err := os.Stat(ruta + ".bak"); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("sin log previo no debe quedar .bak: %v", err)
-	}
-}
-
-// TestEscribirLogTemporalRestauraBackup: si el rename temp→ruta falla, el
-// .bak se restaura y el log original queda intacto.
-func TestEscribirLogTemporalRestauraBackup(t *testing.T) {
-	dir := t.TempDir()
-	ruta := filepath.Join(dir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(ruta, []byte("original\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := escribirLogTemporalRenombrando(ruta, [][]byte{[]byte("nuevo")}, func(origen, destino string) error {
-		if strings.HasSuffix(origen, ".tmp") {
-			return errors.New("simulado: rename temp→ruta falla")
-		}
-		return os.Rename(origen, destino)
-	})
-	if err == nil {
-		t.Fatal("esperaba error ante rename fallido")
-	}
-	datos, err := os.ReadFile(ruta)
-	if err != nil || string(datos) != "original\n" {
-		t.Errorf("el log original debe restaurarse, got %q, %v", datos, err)
-	}
-	if _, err := os.Stat(ruta + ".bak"); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("el .bak debe consumirse en la restauración: %v", err)
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("without previous log no .bak must remain: %v", err)
 	}
 }
 
-// TestEscribirLogTemporalFalloDobleInformaBak: si la restauración también
-// falla, el error informa dónde quedó el respaldo (recuperación manual).
-func TestEscribirLogTemporalFalloDobleInformaBak(t *testing.T) {
+// TestWriteTemporaryLogRestoresBackup: if the rename temp→path fails, the
+// .bak is restored and the original log remains intact.
+func TestWriteTemporaryLogRestoresBackup(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := filepath.Join(dir, eventsRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte("original\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("original\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	err := escribirLogTemporalRenombrando(ruta, [][]byte{[]byte("nuevo")}, func(origen, destino string) error {
-		if strings.HasSuffix(origen, ".tmp") || strings.HasSuffix(origen, ".bak") {
-			return errors.New("simulado: rename falla")
+	err := writeTemporaryLogRenaming(path, [][]byte{[]byte("new")}, func(source, dest string) error {
+		if strings.HasSuffix(source, ".tmp") {
+			return errors.New("simulated: rename temp→path fails")
 		}
-		return os.Rename(origen, destino)
+		return os.Rename(source, dest)
 	})
 	if err == nil {
-		t.Fatal("esperaba error ante doble fallo de rename")
+		t.Fatal("expected an error on failed rename")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "original\n" {
+		t.Errorf("the original log must be restored, got %q, %v", data, err)
+	}
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the .bak must be consumed in the restoration: %v", err)
+	}
+}
+
+// TestWriteTemporaryLogDoubleFailureReportsBak: if the restoration also
+// fails, the error reports where the backup ended up (manual recovery).
+func TestWriteTemporaryLogDoubleFailureReportsBak(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, eventsRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("original\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := writeTemporaryLogRenaming(path, [][]byte{[]byte("new")}, func(source, dest string) error {
+		if strings.HasSuffix(source, ".tmp") || strings.HasSuffix(source, ".bak") {
+			return errors.New("simulated: rename fails")
+		}
+		return os.Rename(source, dest)
+	})
+	if err == nil {
+		t.Fatal("expected an error on double rename failure")
 	}
 	if !strings.Contains(err.Error(), ".bak") {
-		t.Errorf("el error debe indicar dónde está el respaldo: %v", err)
+		t.Errorf("the error must indicate where the backup is: %v", err)
 	}
-	if _, err := os.Stat(ruta + ".bak"); err != nil {
-		t.Errorf("el original debe quedar a salvo como .bak: %v", err)
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Errorf("the original must remain safe as .bak: %v", err)
 	}
 }
 
-// TestEscribirLogTemporalToleraBakResidual: un .bak residual de una ejecución
-// interrumpida no bloquea la siguiente escritura (Windows no renombra sobre
-// destino existente) y se limpia al terminar.
-func TestEscribirLogTemporalToleraBakResidual(t *testing.T) {
+// TestWriteTemporaryLogToleratesResidualBak: a residual .bak from an
+// interrupted execution does not block the next write (Windows does not
+// rename over an existing destination) and is cleaned up at the end.
+func TestWriteTemporaryLogToleratesResidualBak(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, eventosRel)
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	path := filepath.Join(dir, eventsRelPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta, []byte("original\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("original\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ruta+".bak", []byte("viejos datos\n"), 0644); err != nil {
+	if err := os.WriteFile(path+".bak", []byte("old data\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := escribirLogTemporalRenombrando(ruta, [][]byte{[]byte("nuevo")}, os.Rename); err != nil {
-		t.Fatalf("un .bak residual no debe bloquear la escritura: %v", err)
+	if err := writeTemporaryLogRenaming(path, [][]byte{[]byte("new")}, os.Rename); err != nil {
+		t.Fatalf("a residual .bak must not block the write: %v", err)
 	}
-	datos, err := os.ReadFile(ruta)
-	if err != nil || string(datos) != "nuevo\n" {
-		t.Errorf("log = %q, %v; esperado %q", datos, err, "nuevo\n")
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "new\n" {
+		t.Errorf("log = %q, %v; want %q", data, err, "new\n")
 	}
-	if _, err := os.Stat(ruta + ".bak"); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("el .bak residual debe limpiarse: %v", err)
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the residual .bak must be cleaned up: %v", err)
 	}
 }
 
-// TestPurgaDetailCorruptoConservaYNoAborta: una acta con detail inválido se
-// conserva con aviso y el resto de la purga sigue adelante (best-effort).
-func TestPurgaDetailCorruptoConservaYNoAborta(t *testing.T) {
+// TestPurgeCorruptDetailKeepsAndDoesNotAbort: a record with an invalid detail
+// is kept with a warning and the rest of the purge moves on (best-effort).
+func TestPurgeCorruptDetailKeepsAndDoesNotAbort(t *testing.T) {
 	gitDir := t.TempDir()
-	escribirEventoPrCreate(t, gitDir, "30", true) // MERGED → purgar
-	// Actas corruptas (no JSON de DetallePrCreate), seeded as historical JSONL.
-	ruta := filepath.Join(gitDir, eventosRel)
-	if err := appendLinea(ruta, `{"at":"2026-01-01T00:00:01Z","cmd":"pr-create","exit":0,"detail":"no es json"}`); err != nil {
+	writeTestPrCreateEvent(t, gitDir, "30", true) // MERGED → purge
+	// Corrupt records (not PRCreateDetail JSON), seeded as historical JSONL.
+	path := filepath.Join(gitDir, eventsRelPath)
+	if err := appendLine(path, `{"at":"2026-01-01T00:00:01Z","cmd":"pr-create","exit":0,"detail":"not json"}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendLinea(ruta, `{"at":"2026-01-01T00:00:02Z","cmd":"pr-create","exit":0,"detail":"{\"pr_url\": \"incompleta\"}"}`); err != nil {
+	if err := appendLine(path, `{"at":"2026-01-01T00:00:02Z","cmd":"pr-create","exit":0,"detail":"{\"pr_url\": \"incomplete\"}"}`); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := PurgeEventosDePRsResueltas(gitDir, func(numero int) (string, error) {
+	res, err := PurgeEventsOfResolvedPRs(gitDir, func(number int) (string, error) {
 		return "MERGED", nil
 	})
 	if err != nil {
-		t.Fatalf("un detail corrupto no debe abortar la purga: %v", err)
+		t.Fatalf("a corrupt detail must not abort the purge: %v", err)
 	}
-	if res.Purgadas != 1 || res.Conservadas != 2 {
-		t.Errorf("Purgadas = %d Conservadas = %d, esperado 1/2", res.Purgadas, res.Conservadas)
+	if res.Purged != 1 || res.Kept != 2 {
+		t.Errorf("Purged = %d Kept = %d, want 1/2", res.Purged, res.Kept)
 	}
-	if len(res.Avisos) != 2 {
-		t.Fatalf("Avisos = %d, esperado 2 (las actas inválidas se avisan)", len(res.Avisos))
+	if len(res.Warnings) != 2 {
+		t.Fatalf("Warnings = %d, want 2 (the invalid records are warned)", len(res.Warnings))
 	}
-	avisoTexto := strings.Join(res.Avisos, "\n")
-	if !strings.Contains(avisoTexto, "inválido") || !strings.Contains(avisoTexto, "se conserva") {
-		t.Errorf("los avisos deben explicar la conservación: %v", res.Avisos)
+	warningText := strings.Join(res.Warnings, "\n")
+	if !strings.Contains(warningText, "invalid") || !strings.Contains(warningText, "kept") {
+		t.Errorf("the warnings must explain why records are kept: %v", res.Warnings)
 	}
-	eventos, err := UltimosEventos(gitDir, 0)
-	if err != nil || len(eventos) != 2 {
-		t.Errorf("eventos = %d, %v; esperado 2 conservadas", len(eventos), err)
+	events, err := RecentEvents(gitDir, 0)
+	if err != nil || len(events) != 2 {
+		t.Errorf("events = %d, %v; want 2 kept", len(events), err)
 	}
 }
 
-// TestNumeroDePR: tolera sufijos tras el número (/pull/10/files).
-func TestNumeroDePR(t *testing.T) {
-	casos := map[string]int{
+// TestPullRequestNumber: tolerates suffixes after the number (/pull/10/files).
+func TestPullRequestNumber(t *testing.T) {
+	cases := map[string]int{
 		"https://github.com/a/b/pull/42":         42,
 		"https://github.com/a/b/pull/42/":        42,
 		"https://github.com/a/b/pull/42/files":   42,
 		"https://github.com/a/b/pull/42/commits": 42,
 	}
-	for url, esperado := range casos {
-		n, ok := numeroDePR(url)
-		if !ok || n != esperado {
-			t.Errorf("numeroDePR(%q) = %d, %v; esperado %d", url, n, ok, esperado)
+	for url, want := range cases {
+		n, ok := pullRequestNumber(url)
+		if !ok || n != want {
+			t.Errorf("pullRequestNumber(%q) = %d, %v; want %d", url, n, ok, want)
 		}
 	}
-	if _, ok := numeroDePR("https://github.com/a/b/issues/7"); ok {
-		t.Error("numeroDePR aceptó una URL sin /pull/")
+	if _, ok := pullRequestNumber("https://github.com/a/b/issues/7"); ok {
+		t.Error("pullRequestNumber accepted a URL without /pull/")
 	}
-	if _, ok := numeroDePR("https://github.com/a/b/pull/abc"); ok {
-		t.Error("numeroDePR aceptó un número no numérico")
+	if _, ok := pullRequestNumber("https://github.com/a/b/pull/abc"); ok {
+		t.Error("pullRequestNumber accepted a non-numeric number")
 	}
 }
 
-// TestVerificarRegistraPrVerify: con GitDir, Verificar registra el evento
-// pr-verify en los tres modos con el detail del esquema §13.
-func TestVerificarRegistraPrVerify(t *testing.T) {
-	t.Run("determinista", func(t *testing.T) {
+// TestVerifyRecordsPrVerify: with GitDir, Verify records the pr-verify event
+// in the three modes with the detail of schema §13.
+func TestVerifyRecordsPrVerify(t *testing.T) {
+	t.Run("deterministic", func(t *testing.T) {
 		gitDir := t.TempDir()
-		_, err := Verificar(OpcionesVerificar{
+		_, err := Verify(VerifyOptions{
 			GitDir: gitDir,
 			Cfg: config.Config{
 				LintCommands: []string{"go vet ./..."},
 				TestCommands: []string{"go test ./..."},
 			},
-			Ejecutar: func(comando string) (int, error) {
-				if strings.Contains(comando, "test") {
+			Run: func(command string) (int, error) {
+				if strings.Contains(command, "test") {
 					return 1, nil
 				}
 				return 0, nil
 			},
 		})
 		if err != nil {
-			t.Fatalf("Verificar falló: %v", err)
+			t.Fatalf("Verify failed: %v", err)
 		}
-		eventos, _ := UltimosEventos(gitDir, 1)
-		if len(eventos) != 1 || eventos[0].Cmd != "pr-verify" {
-			t.Fatalf("sin evento pr-verify: %+v", eventos)
+		events, _ := RecentEvents(gitDir, 1)
+		if len(events) != 1 || events[0].Cmd != "pr-verify" {
+			t.Fatalf("no pr-verify event: %+v", events)
 		}
-		if eventos[0].Exit != 1 {
-			t.Errorf("Exit = %d, esperado 1 (el exit code peor)", eventos[0].Exit)
+		if events[0].Exit != 1 {
+			t.Errorf("Exit = %d, want 1 (the worst exit code)", events[0].Exit)
 		}
-		if !strings.Contains(detailText(t, eventos[0].Detail), `"exit":1`) {
-			t.Errorf("el detail no reporta el exit por comando: %s", detailText(t, eventos[0].Detail))
+		if !strings.Contains(detailText(t, events[0].Detail), `"exit":1`) {
+			t.Errorf("the detail does not report the per-command exit: %s", detailText(t, events[0].Detail))
 		}
 	})
 
-	t.Run("delegado", func(t *testing.T) {
+	t.Run("delegated", func(t *testing.T) {
 		gitDir := t.TempDir()
-		_, err := Verificar(OpcionesVerificar{
+		_, err := Verify(VerifyOptions{
 			GitDir: gitDir,
-			Agente: &agenteFakeVerificar{salida: "tested: make test"},
-			Preguntar: func(aviso string) (string, error) {
-				return "delegar", nil
+			Agent:  &fakeVerifyAgent{output: "tested: make test"},
+			Questionr: func(warning string) (string, error) {
+				return "delegate", nil
 			},
 		})
 		if err != nil {
-			t.Fatalf("Verificar falló: %v", err)
+			t.Fatalf("Verify failed: %v", err)
 		}
-		eventos, err := UltimosEventos(gitDir, 1)
-		if err != nil || len(eventos) != 1 {
-			t.Fatalf("sin evento pr-verify: %v %+v", err, eventos)
+		events, err := RecentEvents(gitDir, 1)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("no pr-verify event: %v %+v", err, events)
 		}
-		if !strings.Contains(detailText(t, eventos[0].Detail), `"tested"`) || !strings.Contains(detailText(t, eventos[0].Detail), `make test`) {
-			t.Errorf("el detail no reporta el contrato tested: %s", detailText(t, eventos[0].Detail))
+		if !strings.Contains(detailText(t, events[0].Detail), `"tested"`) || !strings.Contains(detailText(t, events[0].Detail), `make test`) {
+			t.Errorf("the detail does not report the tested contract: %s", detailText(t, events[0].Detail))
 		}
 	})
 
-	t.Run("motivo", func(t *testing.T) {
+	t.Run("reason", func(t *testing.T) {
 		gitDir := t.TempDir()
-		_, err := Verificar(OpcionesVerificar{
+		_, err := Verify(VerifyOptions{
 			GitDir: gitDir,
-			Preguntar: func(aviso string) (string, error) {
-				return "omitir", nil
+			Questionr: func(warning string) (string, error) {
+				return "skip", nil
 			},
 		})
 		if err != nil {
-			t.Fatalf("Verificar falló: %v", err)
+			t.Fatalf("Verify failed: %v", err)
 		}
-		eventos, err := UltimosEventos(gitDir, 1)
-		if err != nil || len(eventos) != 1 {
-			t.Fatalf("evento pr-verify: %+v", eventos)
+		events, err := RecentEvents(gitDir, 1)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("pr-verify event: %+v", events)
 		}
-		if !strings.Contains(detailText(t, eventos[0].Detail), `"motivo":"omitido"`) {
-			t.Errorf("el detail no reporta el motivo: %s", detailText(t, eventos[0].Detail))
+		if !strings.Contains(detailText(t, events[0].Detail), `"reason":"omitido"`) {
+			t.Errorf("the detail does not report the reason: %s", detailText(t, events[0].Detail))
 		}
 	})
 
-	t.Run("sin gitDir no registra", func(t *testing.T) {
+	t.Run("without gitDir does not record", func(t *testing.T) {
 		dir := t.TempDir()
 		t.Chdir(dir)
-		_, err := Verificar(OpcionesVerificar{
-			Cfg: config.Config{LintCommands: []string{"echo hola"}},
-			Ejecutar: func(comando string) (int, error) {
+		_, err := Verify(VerifyOptions{
+			Cfg: config.Config{LintCommands: []string{"echo hello"}},
+			Run: func(command string) (int, error) {
 				return 0, nil
 			},
 		})
 		if err != nil {
-			t.Fatalf("Verificar sin GitDir no debe fallar por registro: %v", err)
+			t.Fatalf("Verify without GitDir must not fail on recording: %v", err)
 		}
-		// Sin GitDir no hay efectos secundarios: no se crea el log.
-		if _, err := os.Stat(filepath.Join(dir, eventosRel)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("sin GitDir no debe crearse events.jsonl: %v", err)
+		// Without GitDir there are no side effects: the log is not created.
+		if _, err := os.Stat(filepath.Join(dir, eventsRelPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("without GitDir events.jsonl must not be created: %v", err)
 		}
 	})
 }
@@ -625,11 +626,11 @@ func TestRecordEventWritesStructuredObjectDetail(t *testing.T) {
 		"reason":  "ripgrep execution failed",
 		"unknown": map[string]any{"kept": true},
 	}
-	if err := RegistrarEvento(dir, "review", 4, nil, detail, ""); err != nil {
-		t.Fatalf("RegistrarEvento failed: %v", err)
+	if err := RecordEvent(dir, "review", 4, nil, detail, ""); err != nil {
+		t.Fatalf("RecordEvent failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, eventosRel))
+	raw, err := os.ReadFile(filepath.Join(dir, eventsRelPath))
 	if err != nil {
 		t.Fatalf("read events.jsonl: %v", err)
 	}
@@ -657,7 +658,7 @@ func TestRecordEventWritesStructuredObjectDetail(t *testing.T) {
 
 func TestLatestEventsReadsMixedLegacyAndStructuredDetails(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, eventosRel)
+	path := filepath.Join(dir, eventsRelPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -671,16 +672,16 @@ func TestLatestEventsReadsMixedLegacyAndStructuredDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events, err := UltimosEventos(dir, 0)
+	events, err := RecentEvents(dir, 0)
 	if err != nil {
-		t.Fatalf("UltimosEventos failed: %v", err)
+		t.Fatalf("RecentEvents failed: %v", err)
 	}
 	if len(events) != len(lines) {
 		t.Fatalf("events = %d, want %d mixed lines", len(events), len(lines))
 	}
-	// UltimosEventos presents the newest event first; restore the stream order
+	// RecentEvents presents the newest event first; restore the stream order
 	// here to verify that decoding never loses or reorders a historical line.
-	chronological := make([]Evento, len(events))
+	chronological := make([]Event, len(events))
 	for i := range events {
 		chronological[len(events)-1-i] = events[i]
 	}
@@ -718,17 +719,17 @@ func TestLatestEventsReadsMixedLegacyAndStructuredDetails(t *testing.T) {
 
 func TestPrVerifyProducerWritesStructuredDetail(t *testing.T) {
 	gitDir := t.TempDir()
-	_, err := Verificar(OpcionesVerificar{
+	_, err := Verify(VerifyOptions{
 		GitDir: gitDir,
 		Cfg:    config.Config{TestCommands: []string{"go test ./..."}},
-		Ejecutar: func(string) (int, error) {
+		Run: func(string) (int, error) {
 			return 1, nil
 		},
 	})
 	if err != nil {
-		t.Fatalf("Verificar failed: %v", err)
+		t.Fatalf("Verify failed: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(gitDir, eventosRel))
+	raw, err := os.ReadFile(filepath.Join(gitDir, eventsRelPath))
 	if err != nil {
 		t.Fatalf("read events.jsonl: %v", err)
 	}
@@ -766,7 +767,7 @@ func detailText(t *testing.T, detail any) string {
 
 func TestRotateAndPurgePreserveRetainedLineBytes(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, eventosRel)
+	path := filepath.Join(dir, eventsRelPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -777,8 +778,8 @@ func TestRotateAndPurgePreserveRetainedLineBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RotarEventos(dir, 2); err != nil {
-		t.Fatalf("RotarEventos failed: %v", err)
+	if err := RotateEvents(dir, 2); err != nil {
+		t.Fatalf("RotateEvents failed: %v", err)
 	}
 	afterRotate, err := os.ReadFile(path)
 	if err != nil {
@@ -788,9 +789,9 @@ func TestRotateAndPurgePreserveRetainedLineBytes(t *testing.T) {
 		t.Fatalf("rotation changed retained bytes: got %q, want %q", afterRotate, original)
 	}
 
-	deleted, err := PurgeEventosDe(dir, []string{"remove"})
+	deleted, err := PurgeEventsOf(dir, []string{"remove"})
 	if err != nil {
-		t.Fatalf("PurgeEventosDe failed: %v", err)
+		t.Fatalf("PurgeEventsOf failed: %v", err)
 	}
 	if deleted != 1 {
 		t.Fatalf("eliminated = %d, want 1", deleted)
@@ -806,7 +807,7 @@ func TestRotateAndPurgePreserveRetainedLineBytes(t *testing.T) {
 
 func TestRecordEventSeparatesAnUnterminatedLegacyRecord(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, eventosRel)
+	path := filepath.Join(dir, eventsRelPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -815,12 +816,12 @@ func TestRecordEventSeparatesAnUnterminatedLegacyRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RegistrarEvento(dir, "new", 0, nil, EventDetail{"kind": "object"}, ""); err != nil {
-		t.Fatalf("RegistrarEvento failed: %v", err)
+	if err := RecordEvent(dir, "new", 0, nil, EventDetail{"kind": "object"}, ""); err != nil {
+		t.Fatalf("RecordEvent failed: %v", err)
 	}
-	events, err := UltimosEventos(dir, 0)
+	events, err := RecentEvents(dir, 0)
 	if err != nil {
-		t.Fatalf("UltimosEventos failed: %v", err)
+		t.Fatalf("RecentEvents failed: %v", err)
 	}
 	if len(events) != 2 || events[0].Cmd != "new" || events[1].Cmd != "legacy" {
 		t.Fatalf("events = %#v, want separate new and legacy records", events)
@@ -829,10 +830,10 @@ func TestRecordEventSeparatesAnUnterminatedLegacyRecord(t *testing.T) {
 
 func TestRecordEventRejectsInvalidDetailBeforeCreatingLog(t *testing.T) {
 	dir := t.TempDir()
-	if err := RegistrarEvento(dir, "invalid", 1, nil, EventDetail{"channel": make(chan int)}, ""); err == nil {
-		t.Fatal("RegistrarEvento accepted a detail that JSON cannot encode")
+	if err := RecordEvent(dir, "invalid", 1, nil, EventDetail{"channel": make(chan int)}, ""); err == nil {
+		t.Fatal("RecordEvent accepted a detail that JSON cannot encode")
 	}
-	if _, err := os.Stat(filepath.Join(dir, eventosRel)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, eventsRelPath)); !os.IsNotExist(err) {
 		t.Fatalf("events.jsonl exists after marshal failure: %v", err)
 	}
 }
@@ -850,11 +851,11 @@ func TestRecordEventWritesObjectDetailsAndOmitsNil(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := RegistrarEvento(dir, "record", 0, nil, tt.detail, ""); err != nil {
-				t.Fatalf("RegistrarEvento failed: %v", err)
+			if err := RecordEvent(dir, "record", 0, nil, tt.detail, ""); err != nil {
+				t.Fatalf("RecordEvent failed: %v", err)
 			}
 
-			raw, err := os.ReadFile(filepath.Join(dir, eventosRel))
+			raw, err := os.ReadFile(filepath.Join(dir, eventsRelPath))
 			if err != nil {
 				t.Fatalf("read events.jsonl: %v", err)
 			}

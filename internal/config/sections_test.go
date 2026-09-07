@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// TestSeccionesNuevas verifica el parseo de profiles anidados por agente (v2),
+// TestNewSections verifies the parsing of per-agent nested profiles (v2),
 // review (timeout and parallel) and lint_commands.
-func TestSeccionesNuevas(t *testing.T) {
+func TestNewSections(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
 agents:
   opencode:
     profiles:
@@ -33,46 +33,46 @@ lint_commands:
   - "go vet ./..."
 `)
 
-	cfg := CargarConfiguracionLocal(worktree)
+	cfg := LoadLocalConfig(worktree)
 
 	opencode := cfg.Agents["opencode"]
 	if opencode.Profiles["cheap"].Model != "flash-mini" || opencode.Profiles["cheap"].ReasoningEffort != "low" {
-		t.Errorf("perfil opencode.cheap = %+v, esperado flash-mini/low", opencode.Profiles["cheap"])
+		t.Errorf("profile opencode.cheap = %+v, expected flash-mini/low", opencode.Profiles["cheap"])
 	}
 	if opencode.Profiles["deep"].Model != "flash-max" || opencode.Profiles["deep"].ReasoningEffort != "high" {
-		t.Errorf("perfil opencode.deep = %+v, esperado flash-max/high", opencode.Profiles["deep"])
+		t.Errorf("profile opencode.deep = %+v, expected flash-max/high", opencode.Profiles["deep"])
 	}
 	if cfg.Review.Timeout != 30*time.Second {
-		t.Errorf("Review.Timeout = %v, esperado 30s", cfg.Review.Timeout)
+		t.Errorf("Review.Timeout = %v, expected 30s", cfg.Review.Timeout)
 	}
 	if cfg.Review.Parallel != 4 {
-		t.Errorf("Review.Parallel = %d, esperado 4", cfg.Review.Parallel)
+		t.Errorf("Review.Parallel = %d, expected 4", cfg.Review.Parallel)
 	}
-	// El merge acumula comandos globales + per-proyecto: verificamos que los
-	// per-proyecto estén presentes (puede haber más si existe config global).
-	encontrados := 0
+	// The merge accumulates global + per-project commands: we check that the
+	// per-project ones are present (there may be more if global config exists).
+	found := 0
 	for _, cmd := range cfg.LintCommands {
 		if cmd == "gofmt -l ." || cmd == "go vet ./..." {
-			encontrados++
+			found++
 		}
 	}
-	if encontrados != 2 {
-		t.Errorf("LintCommands = %+v, faltan los comandos per-proyecto", cfg.LintCommands)
+	if found != 2 {
+		t.Errorf("LintCommands = %+v, the per-project commands are missing", cfg.LintCommands)
 	}
 }
 
-// TestDefaultsPerfiles verifies that default provider profiles exist.
-func TestDefaultsPerfiles(t *testing.T) {
+// TestDefaultProfiles verifies that default provider profiles exist.
+func TestDefaultProfiles(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	cfg := CargarConfiguracionLocal(worktree)
+	cfg := LoadLocalConfig(worktree)
 
-	for _, agente := range []string{"claude", "opencode"} {
-		for _, perfil := range []string{"cheap", "normal", "deep"} {
-			if _, existe := cfg.Agents[agente].Profiles[perfil]; !existe {
-				t.Errorf("falta el perfil %q.%q por defecto", agente, perfil)
+	for _, agent := range []string{"claude", "opencode"} {
+		for _, profile := range []string{"cheap", "normal", "deep"} {
+			if _, ok := cfg.Agents[agent].Profiles[profile]; !ok {
+				t.Errorf("missing default profile %q.%q", agent, profile)
 			}
 		}
 	}
@@ -81,33 +81,33 @@ func TestDefaultsPerfiles(t *testing.T) {
 	}
 }
 
-// TestConfigLegacyAgents verifica que la sintaxis antigua de agents sigue
-// funcionando tras el refactor del parser.
+// TestConfigLegacyAgents verifies that the old agents syntax keeps working
+// after the parser refactor.
 func TestConfigLegacyAgents(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
 		"active_agent: \"claude\"\nagents:\n  claude:\n    model: \"claude-legacy\"\n    reasoning_effort: \"high\"\n")
 
-	cfg := CargarConfiguracionLocal(worktree)
+	cfg := LoadLocalConfig(worktree)
 	if cfg.ActiveAgent != "claude" {
-		t.Errorf("ActiveAgent = %q, esperado claude", cfg.ActiveAgent)
+		t.Errorf("ActiveAgent = %q, expected claude", cfg.ActiveAgent)
 	}
 	if cfg.Agents["claude"].Model != "claude-legacy" {
-		t.Errorf("Model = %q, esperado claude-legacy", cfg.Agents["claude"].Model)
+		t.Errorf("Model = %q, expected claude-legacy", cfg.Agents["claude"].Model)
 	}
 }
 
-// TestAgentOrderYml verifica que AgentOrder preserva el orden de declaración
-// de los agentes en el yml (claude antes que opencode).
+// TestAgentOrderYml verifies that AgentOrder preserves the declaration order
+// of the agents in the yml (claude before opencode).
 func TestAgentOrderYml(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
 agents:
   claude:
     model: "claude-x"
@@ -115,71 +115,71 @@ agents:
     model: "opencode-x"
 `)
 
-	cfg := CargarConfiguracionLocal(worktree)
-	esperado := []string{"claude", "opencode"}
-	if !reflect.DeepEqual(cfg.AgentOrder, esperado) {
-		t.Errorf("AgentOrder = %v, esperado %v", cfg.AgentOrder, esperado)
+	cfg := LoadLocalConfig(worktree)
+	expected := []string{"claude", "opencode"}
+	if !reflect.DeepEqual(cfg.AgentOrder, expected) {
+		t.Errorf("AgentOrder = %v, expected %v", cfg.AgentOrder, expected)
 	}
 }
 
-// TestAgentOrderDefaults verifica que sin configuración el orden por defecto
-// es claude antes que opencode.
+// TestAgentOrderDefaults verifies that without configuration the default
+// order is claude before opencode.
 func TestAgentOrderDefaults(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	cfg := CargarConfiguracionLocal(worktree)
-	esperado := []string{"claude", "opencode"}
-	if !reflect.DeepEqual(cfg.AgentOrder, esperado) {
-		t.Errorf("AgentOrder = %v, esperado %v", cfg.AgentOrder, esperado)
+	cfg := LoadLocalConfig(worktree)
+	expected := []string{"claude", "opencode"}
+	if !reflect.DeepEqual(cfg.AgentOrder, expected) {
+		t.Errorf("AgentOrder = %v, expected %v", cfg.AgentOrder, expected)
 	}
 }
 
-// TestAgentOrderPerProyectoReordena verifica que el archivo más específico
-// (per-proyecto) manda el orden de los agentes que declara y que los agentes
-// no declarados conservan su posición relativa anterior.
-func TestAgentOrderPerProyectoReordena(t *testing.T) {
+// TestAgentOrderPerProjectReorders verifies that the most specific file
+// (per-project) dictates the order of the agents it declares and that the
+// undeclared agents keep their previous relative order.
+func TestAgentOrderPerProjectReorders(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
 agents:
   claude:
     model: "claude-g"
   opencode:
     model: "opencode-g"
 `)
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
 agents:
   opencode:
     model: "opencode-l"
 `)
 
-	cfg := CargarConfiguracionLocal(worktree)
-	esperado := []string{"opencode", "claude"}
-	if !reflect.DeepEqual(cfg.AgentOrder, esperado) {
-		t.Errorf("AgentOrder = %v, esperado %v", cfg.AgentOrder, esperado)
+	cfg := LoadLocalConfig(worktree)
+	expected := []string{"opencode", "claude"}
+	if !reflect.DeepEqual(cfg.AgentOrder, expected) {
+		t.Errorf("AgentOrder = %v, expected %v", cfg.AgentOrder, expected)
 	}
 }
 
-// TestTimeoutInvalidoSeIgnora verifica que valores no numéricos de timeout y
-// parallel no rompen el parseo y dejan el default.
-func TestTimeoutInvalidoSeIgnora(t *testing.T) {
+// TestInvalidTimeoutIsIgnored verifies that non-numeric timeout and parallel
+// values do not break parsing and leave the default.
+func TestInvalidTimeoutIsIgnored(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
-		"review:\n  timeout: \"mucho\"\n  parallel: 0\n")
+	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		"review:\n  timeout: \"much\"\n  parallel: 0\n")
 
-	cfg := CargarConfiguracionLocal(worktree)
+	cfg := LoadLocalConfig(worktree)
 	if cfg.Review.Timeout != 900*time.Second {
 		t.Errorf("Timeout = %v, expected default 900s", cfg.Review.Timeout)
 	}
 	if cfg.Review.Parallel != 2 {
-		t.Errorf("Parallel = %d, esperado default 2", cfg.Review.Parallel)
+		t.Errorf("Parallel = %d, expected default 2", cfg.Review.Parallel)
 	}
 }
 
@@ -204,10 +204,10 @@ func TestRemovedDurableRunsKeysFailStrictly(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			escribirConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), tt.global)
-			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), tt.global)
+			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
 
-			_, err := CargarConfiguracionLocalEstricta(worktree)
+			_, err := LoadStrictLocalConfig(worktree)
 			if err == nil {
 				t.Fatalf("config with removed key %q loaded without error; expected a strict unknown-key failure", tt.wantKy)
 			}
@@ -235,8 +235,8 @@ func TestReviewEvidenceAdmissionFlag(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
-			cfg := CargarConfiguracionLocal(worktree)
+			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			cfg := LoadLocalConfig(worktree)
 			if cfg.Review.EvidenceAdmission != tt.want {
 				t.Fatalf("EvidenceAdmission = %v, want %v", cfg.Review.EvidenceAdmission, tt.want)
 			}
@@ -262,8 +262,8 @@ func TestReviewCancellationEscalationFlag(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			escribirConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
-			cfg := CargarConfiguracionLocal(worktree)
+			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			cfg := LoadLocalConfig(worktree)
 			if cfg.Review.CancellationEscalation != tt.want {
 				t.Fatalf("CancellationEscalation = %v, want %v", cfg.Review.CancellationEscalation, tt.want)
 			}

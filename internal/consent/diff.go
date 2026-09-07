@@ -15,275 +15,276 @@ import (
 	"strings"
 	"time"
 
-	gitinterno "github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	gitinternal "github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
 const (
-	versionEstadoDiff = 1
-	limiteGrantDiff   = 4096
-	directorioApp     = "vas-sentinel"
-	directorioConsent = "consent"
+	stateVersion  = 1
+	maxGrantBytes = 4096
+	appDir        = "vas-sentinel"
+	consentDir    = "consent"
 )
 
-// EstadoDiff registra solo el alcance local del grant; nunca contiene fuente.
-type EstadoDiff struct {
-	Version     int       `json:"version"`
-	Otorgado    bool      `json:"otorgado"`
-	Usuario     string    `json:"usuario"`
-	Repositorio string    `json:"repositorio"`
-	OtorgadoEn  time.Time `json:"otorgado_en,omitempty"`
-	Ruta        string    `json:"-"`
+// ExternalDiffState records only the local scope of the grant; it never
+// contains source.
+type ExternalDiffState struct {
+	Version    int       `json:"version"`
+	Granted    bool      `json:"granted"`
+	User       string    `json:"user"`
+	Repository string    `json:"repository"`
+	GrantedAt  time.Time `json:"granted_at,omitempty"`
+	Path       string    `json:"-"`
 }
 
-func alcance(path string) (EstadoDiff, error) {
-	commonDir, err := gitinterno.ObtenerGitCommonDir(path)
+func stateFor(path string) (ExternalDiffState, error) {
+	commonDir, err := gitinternal.GetGitCommonDir(path)
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
 	commonDir, err = filepath.Abs(commonDir)
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
-	identidad := filepath.Clean(home)
+	identity := filepath.Clean(home)
 	if runtime.GOOS == "windows" {
-		identidad = strings.ToLower(identidad)
+		identity = strings.ToLower(identity)
 	}
-	suma := sha256.Sum256([]byte(identidad))
-	usuario := hex.EncodeToString(suma[:8])
-	ruta := filepath.Join(commonDir, directorioApp, directorioConsent, "external-diff-"+usuario+".json")
-	return EstadoDiff{Version: versionEstadoDiff, Usuario: usuario, Repositorio: commonDir, Ruta: ruta}, nil
+	sum := sha256.Sum256([]byte(identity))
+	user := hex.EncodeToString(sum[:8])
+	file := filepath.Join(commonDir, appDir, consentDir, "external-diff-"+user+".json")
+	return ExternalDiffState{Version: stateVersion, User: user, Repository: commonDir, Path: file}, nil
 }
 
-func abrirSubdirectorioSeguro(padre *os.Root, nombre string, crear, privado bool) (*os.Root, bool, error) {
-	info, err := padre.Lstat(nombre)
+func openSubdirectory(parent *os.Root, name string, create, private bool) (*os.Root, bool, error) {
+	info, err := parent.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		if !crear {
+		if !create {
 			return nil, false, nil
 		}
-		if err := padre.Mkdir(nombre, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		if err := parent.Mkdir(name, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, false, err
 		}
-		info, err = padre.Lstat(nombre)
+		info, err = parent.Lstat(name)
 	}
 	if err != nil {
 		return nil, false, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, false, fmt.Errorf("componente de consentimiento inseguro: %s", nombre)
+		return nil, false, fmt.Errorf("insecure consent component: %s", name)
 	}
-	if privado && info.Mode().Perm() != 0700 {
-		return nil, false, fmt.Errorf("directorio de consentimiento sin modo privado: %s", nombre)
+	if private && info.Mode().Perm() != 0700 {
+		return nil, false, fmt.Errorf("consent directory without private mode: %s", name)
 	}
-	raiz, err := padre.OpenRoot(nombre)
+	root, err := parent.OpenRoot(name)
 	if err != nil {
 		return nil, false, err
 	}
-	abierto, err := raiz.Stat(".")
-	if err != nil || !os.SameFile(info, abierto) {
-		raiz.Close()
-		return nil, false, fmt.Errorf("componente de consentimiento manipulado: %s", nombre)
+	openStat, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, openStat) {
+		root.Close()
+		return nil, false, fmt.Errorf("tampered consent component: %s", name)
 	}
-	return raiz, true, nil
+	return root, true, nil
 }
 
-func abrirConsentimiento(estado EstadoDiff, crear bool) (*os.Root, bool, error) {
-	common, err := os.OpenRoot(estado.Repositorio)
+func openConsentDir(state ExternalDiffState, create bool) (*os.Root, bool, error) {
+	common, err := os.OpenRoot(state.Repository)
 	if err != nil {
 		return nil, false, err
 	}
 	defer common.Close()
-	app, existe, err := abrirSubdirectorioSeguro(common, directorioApp, crear, false)
-	if err != nil || !existe {
-		return nil, existe, err
+	app, exists, err := openSubdirectory(common, appDir, create, false)
+	if err != nil || !exists {
+		return nil, exists, err
 	}
 	defer app.Close()
-	return abrirSubdirectorioSeguro(app, directorioConsent, crear, true)
+	return openSubdirectory(app, consentDir, create, true)
 }
 
-func nombreGrant(estado EstadoDiff) string {
-	return filepath.Base(estado.Ruta)
+func grantName(state ExternalDiffState) string {
+	return filepath.Base(state.Path)
 }
 
-func leerGrant(raiz *os.Root, estado EstadoDiff) (EstadoDiff, bool, error) {
-	nombre := nombreGrant(estado)
-	info, err := raiz.Lstat(nombre)
+func readGrant(root *os.Root, state ExternalDiffState) (ExternalDiffState, bool, error) {
+	name := grantName(state)
+	info, err := root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		return estado, false, nil
+		return state, false, nil
 	}
 	if err != nil {
-		return EstadoDiff{}, false, err
+		return ExternalDiffState{}, false, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
-		return EstadoDiff{}, false, fmt.Errorf("archivo de grant local inseguro")
+		return ExternalDiffState{}, false, fmt.Errorf("unsafe local grant file")
 	}
-	archivo, err := raiz.Open(nombre)
+	file, err := root.Open(name)
 	if err != nil {
-		return EstadoDiff{}, false, err
+		return ExternalDiffState{}, false, err
 	}
-	defer archivo.Close()
-	abierto, err := archivo.Stat()
-	if err != nil || !os.SameFile(info, abierto) {
-		return EstadoDiff{}, false, fmt.Errorf("archivo de grant local manipulado")
+	defer file.Close()
+	openStat, err := file.Stat()
+	if err != nil || !os.SameFile(info, openStat) {
+		return ExternalDiffState{}, false, fmt.Errorf("tampered local grant file")
 	}
-	datos, err := io.ReadAll(io.LimitReader(archivo, limiteGrantDiff+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxGrantBytes+1))
 	if err != nil {
-		return EstadoDiff{}, false, err
+		return ExternalDiffState{}, false, err
 	}
-	if len(datos) > limiteGrantDiff {
-		return EstadoDiff{}, false, fmt.Errorf("grant local excede el limite permitido")
+	if len(data) > maxGrantBytes {
+		return ExternalDiffState{}, false, fmt.Errorf("local grant exceeds the allowed size")
 	}
-	var guardado EstadoDiff
-	decodificador := json.NewDecoder(bytes.NewReader(datos))
-	decodificador.DisallowUnknownFields()
-	if err := decodificador.Decode(&guardado); err != nil {
-		return EstadoDiff{}, false, fmt.Errorf("grant local invalido: %w", err)
+	var saved ExternalDiffState
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&saved); err != nil {
+		return ExternalDiffState{}, false, fmt.Errorf("invalid local grant: %w", err)
 	}
-	if err := decodificador.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return EstadoDiff{}, false, fmt.Errorf("grant local contiene datos adicionales")
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return ExternalDiffState{}, false, fmt.Errorf("local grant contains additional data")
 	}
-	if guardado.Version != estado.Version || guardado.Usuario != estado.Usuario || filepath.Clean(guardado.Repositorio) != estado.Repositorio || !guardado.Otorgado || guardado.OtorgadoEn.IsZero() {
-		return EstadoDiff{}, false, fmt.Errorf("el grant local no coincide con su alcance")
+	if saved.Version != state.Version || saved.User != state.User || filepath.Clean(saved.Repository) != state.Repository || !saved.Granted || saved.GrantedAt.IsZero() {
+		return ExternalDiffState{}, false, fmt.Errorf("local grant does not match its scope")
 	}
-	canonico, err := json.MarshalIndent(guardado, "", "  ")
-	if err != nil || !bytes.Equal(datos, append(canonico, '\n')) {
-		return EstadoDiff{}, false, fmt.Errorf("grant local no canonico o manipulado")
+	canonical, err := json.MarshalIndent(saved, "", "  ")
+	if err != nil || !bytes.Equal(data, append(canonical, '\n')) {
+		return ExternalDiffState{}, false, fmt.Errorf("local grant is not canonical or has been tampered with")
 	}
-	guardado.Ruta = estado.Ruta
-	return guardado, true, nil
+	saved.Path = state.Path
+	return saved, true, nil
 }
 
-func EstadoDiffExterno(path string) (EstadoDiff, error) {
-	estado, err := alcance(path)
+func ExternalDiffStatus(path string) (ExternalDiffState, error) {
+	state, err := stateFor(path)
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
-	raiz, existe, err := abrirConsentimiento(estado, false)
-	if err != nil || !existe {
-		return estado, err
+	root, exists, err := openConsentDir(state, false)
+	if err != nil || !exists {
+		return state, err
 	}
-	defer raiz.Close()
-	guardado, _, err := leerGrant(raiz, estado)
-	return guardado, err
+	defer root.Close()
+	saved, _, err := readGrant(root, state)
+	return saved, err
 }
 
-func escribirTodo(archivo *os.File, datos []byte) error {
-	for len(datos) > 0 {
-		n, err := archivo.Write(datos)
+func writeAll(file *os.File, data []byte) error {
+	for len(data) > 0 {
+		n, err := file.Write(data)
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return io.ErrShortWrite
 		}
-		datos = datos[n:]
+		data = data[n:]
 	}
 	return nil
 }
 
-func crearTemporal(raiz *os.Root) (*os.File, string, error) {
-	for intentos := 0; intentos < 8; intentos++ {
-		aleatorio := make([]byte, 8)
-		if _, err := rand.Read(aleatorio); err != nil {
+func createTemp(root *os.Root) (*os.File, string, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		random := make([]byte, 8)
+		if _, err := rand.Read(random); err != nil {
 			return nil, "", err
 		}
-		nombre := ".grant-" + hex.EncodeToString(aleatorio) + ".tmp"
-		archivo, err := raiz.OpenFile(nombre, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		name := ".grant-" + hex.EncodeToString(random) + ".tmp"
+		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
 		if err != nil {
 			return nil, "", err
 		}
-		if err := archivo.Chmod(0600); err != nil {
-			archivo.Close()
-			raiz.Remove(nombre)
+		if err := file.Chmod(0600); err != nil {
+			file.Close()
+			root.Remove(name)
 			return nil, "", err
 		}
-		return archivo, nombre, nil
+		return file, name, nil
 	}
-	return nil, "", fmt.Errorf("no se pudo reservar un temporal exclusivo")
+	return nil, "", fmt.Errorf("could not reserve an exclusive temp file")
 }
 
-func OtorgarDiffExterno(path string) (EstadoDiff, error) {
-	estado, err := alcance(path)
+func GrantExternalDiff(path string) (ExternalDiffState, error) {
+	state, err := stateFor(path)
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
-	raiz, _, err := abrirConsentimiento(estado, true)
+	root, _, err := openConsentDir(state, true)
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
-	defer raiz.Close()
-	if guardado, existe, err := leerGrant(raiz, estado); err != nil || existe {
-		return guardado, err
+	defer root.Close()
+	if saved, exists, err := readGrant(root, state); err != nil || exists {
+		return saved, err
 	}
-	estado.Otorgado = true
-	estado.OtorgadoEn = time.Now().UTC()
-	datos, err := json.MarshalIndent(estado, "", "  ")
+	state.Granted = true
+	state.GrantedAt = time.Now().UTC()
+	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
-	datos = append(datos, '\n')
-	if len(datos) > limiteGrantDiff {
-		return EstadoDiff{}, fmt.Errorf("grant local excede el limite permitido")
+	data = append(data, '\n')
+	if len(data) > maxGrantBytes {
+		return ExternalDiffState{}, fmt.Errorf("local grant exceeds the allowed size")
 	}
-	archivo, temporal, err := crearTemporal(raiz)
+	file, temp, err := createTemp(root)
 	if err != nil {
-		return EstadoDiff{}, err
+		return ExternalDiffState{}, err
 	}
-	limpiar := true
+	cleanup := true
 	defer func() {
-		if limpiar {
-			raiz.Remove(temporal)
+		if cleanup {
+			root.Remove(temp)
 		}
 	}()
-	if err := escribirTodo(archivo, datos); err != nil {
-		archivo.Close()
-		return EstadoDiff{}, err
+	if err := writeAll(file, data); err != nil {
+		file.Close()
+		return ExternalDiffState{}, err
 	}
-	if err := archivo.Sync(); err != nil {
-		archivo.Close()
-		return EstadoDiff{}, err
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return ExternalDiffState{}, err
 	}
-	if err := archivo.Close(); err != nil {
-		return EstadoDiff{}, err
+	if err := file.Close(); err != nil {
+		return ExternalDiffState{}, err
 	}
-	if err := raiz.Link(temporal, nombreGrant(estado)); err != nil {
-		if guardado, existe, lecturaErr := leerGrant(raiz, estado); lecturaErr == nil && existe {
-			return guardado, nil
+	if err := root.Link(temp, grantName(state)); err != nil {
+		if saved, exists, readErr := readGrant(root, state); readErr == nil && exists {
+			return saved, nil
 		}
-		return EstadoDiff{}, fmt.Errorf("no se pudo publicar el grant sin reemplazar el destino: %w", err)
+		return ExternalDiffState{}, fmt.Errorf("could not publish the grant without replacing the destination: %w", err)
 	}
-	if err := raiz.Remove(temporal); err != nil {
-		return EstadoDiff{}, err
+	if err := root.Remove(temp); err != nil {
+		return ExternalDiffState{}, err
 	}
-	limpiar = false
-	publicado, existe, err := leerGrant(raiz, estado)
+	cleanup = false
+	published, exists, err := readGrant(root, state)
 	if err != nil {
-		return EstadoDiff{}, fmt.Errorf("el grant publicado no supero la validacion: %w", err)
+		return ExternalDiffState{}, fmt.Errorf("published grant failed validation: %w", err)
 	}
-	if !existe {
-		return EstadoDiff{}, fmt.Errorf("el grant publicado desaparecio")
+	if !exists {
+		return ExternalDiffState{}, fmt.Errorf("published grant disappeared")
 	}
-	return publicado, nil
+	return published, nil
 }
 
-func RevocarDiffExterno(path string) error {
-	estado, err := alcance(path)
+func RevokeExternalDiff(path string) error {
+	state, err := stateFor(path)
 	if err != nil {
 		return err
 	}
-	raiz, existe, err := abrirConsentimiento(estado, false)
-	if err != nil || !existe {
+	root, exists, err := openConsentDir(state, false)
+	if err != nil || !exists {
 		return err
 	}
-	defer raiz.Close()
-	if _, existe, err := leerGrant(raiz, estado); err != nil || !existe {
+	defer root.Close()
+	if _, exists, err := readGrant(root, state); err != nil || !exists {
 		return err
 	}
-	return raiz.Remove(nombreGrant(estado))
+	return root.Remove(grantName(state))
 }

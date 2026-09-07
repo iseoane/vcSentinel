@@ -12,502 +12,502 @@ import (
 	"testing"
 )
 
-func TestElegirAssetParaSistema(t *testing.T) {
+func TestPickAssetForSystem(t *testing.T) {
 	tests := []struct {
-		nombre      string
-		goos        string
-		goarch      string
-		assets      []ReleaseAsset
-		esperado    string
-		quiereError bool
+		name      string
+		goos      string
+		goarch    string
+		assets    []ReleaseAsset
+		want      string
+		wantError bool
 	}{
 		{
-			nombre:   "windows amd64 encuentra su asset",
-			goos:     "windows",
-			goarch:   "amd64",
-			assets:   []ReleaseAsset{{Name: "sentinel-windows-amd64.exe", BrowserDownloadURL: "https://ejemplo/sentinel-windows-amd64.exe"}},
-			esperado: "sentinel-windows-amd64.exe",
+			name:   "windows amd64 finds its asset",
+			goos:   "windows",
+			goarch: "amd64",
+			assets: []ReleaseAsset{{Name: "sentinel-windows-amd64.exe", BrowserDownloadURL: "https://example/sentinel-windows-amd64.exe"}},
+			want:   "sentinel-windows-amd64.exe",
 		},
 		{
-			nombre:   "windows amd64 es case-insensitive",
-			goos:     "windows",
-			goarch:   "amd64",
-			assets:   []ReleaseAsset{{Name: "SENTINEL-WINDOWS-AMD64.EXE"}},
-			esperado: "SENTINEL-WINDOWS-AMD64.EXE",
+			name:   "windows amd64 is case-insensitive",
+			goos:   "windows",
+			goarch: "amd64",
+			assets: []ReleaseAsset{{Name: "SENTINEL-WINDOWS-AMD64.EXE"}},
+			want:   "SENTINEL-WINDOWS-AMD64.EXE",
 		},
 		{
-			nombre:   "linux amd64 encuentra su asset",
-			goos:     "linux",
-			goarch:   "amd64",
-			assets:   []ReleaseAsset{{Name: "sentinel-linux-amd64"}},
-			esperado: "sentinel-linux-amd64",
+			name:   "linux amd64 finds its asset",
+			goos:   "linux",
+			goarch: "amd64",
+			assets: []ReleaseAsset{{Name: "sentinel-linux-amd64"}},
+			want:   "sentinel-linux-amd64",
 		},
 		{
-			nombre:   "linux arm64 encuentra su asset",
-			goos:     "linux",
-			goarch:   "arm64",
-			assets:   []ReleaseAsset{{Name: "sentinel-linux-arm64"}},
-			esperado: "sentinel-linux-arm64",
+			name:   "linux arm64 finds its asset",
+			goos:   "linux",
+			goarch: "arm64",
+			assets: []ReleaseAsset{{Name: "sentinel-linux-arm64"}},
+			want:   "sentinel-linux-arm64",
 		},
 		{
-			nombre:      "windows sin asset de windows falla con el patron esperado",
-			goos:        "windows",
-			goarch:      "amd64",
-			assets:      []ReleaseAsset{{Name: "sentinel-linux-amd64"}, {Name: "sentinel-linux-arm64"}},
-			quiereError: true,
+			name:      "windows without a windows asset fails with the expected pattern",
+			goos:      "windows",
+			goarch:    "amd64",
+			assets:    []ReleaseAsset{{Name: "sentinel-linux-amd64"}, {Name: "sentinel-linux-arm64"}},
+			wantError: true,
 		},
 		{
-			nombre:      "assets vacio falla",
-			goos:        "linux",
-			goarch:      "amd64",
-			assets:      nil,
-			quiereError: true,
+			name:      "empty assets fails",
+			goos:      "linux",
+			goarch:    "amd64",
+			assets:    nil,
+			wantError: true,
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.nombre, func(t *testing.T) {
-			asset, err := elegirAssetParaSistema(tt.goos, tt.goarch, tt.assets)
-			if tt.quiereError {
+		t.Run(tt.name, func(t *testing.T) {
+			asset, err := pickAssetForSystem(tt.goos, tt.goarch, tt.assets)
+			if tt.wantError {
 				if err == nil {
-					t.Fatalf("se esperaba error, no lo hubo")
+					t.Fatalf("expected error, got none")
 				}
 				if tt.goos == "windows" && !strings.Contains(err.Error(), "sentinel-windows-amd64.exe") {
-					t.Errorf("el error debe incluir el patrón esperado, obtuve: %v", err)
+					t.Errorf("the error must include the expected pattern, got: %v", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("error inesperado: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if asset.Name != tt.esperado {
-				t.Errorf("asset.Name = %q, esperado %q", asset.Name, tt.esperado)
+			if asset.Name != tt.want {
+				t.Errorf("asset.Name = %q, want %q", asset.Name, tt.want)
 			}
 		})
 	}
 }
 
-func TestDescargarBinario(t *testing.T) {
-	t.Run("descarga exitosa escribe el contenido exacto", func(t *testing.T) {
-		const contenidoEsperado = "BINARIO-FAKE"
-		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, err := w.Write([]byte(contenidoEsperado)); err != nil {
-				t.Errorf("no se pudo escribir la respuesta: %v", err)
+func TestDownloadBinary(t *testing.T) {
+	t.Run("successful download writes the exact content", func(t *testing.T) {
+		const wantContent = "FAKE-BINARY"
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, err := w.Write([]byte(wantContent)); err != nil {
+				t.Errorf("could not write the response: %v", err)
 			}
 		}))
-		defer servidor.Close()
+		defer server.Close()
 
-		destino := filepath.Join(t.TempDir(), "sentinel.exe")
-		if err := descargarBinario(ReleaseAsset{BrowserDownloadURL: servidor.URL}, destino); err != nil {
-			t.Fatalf("descargarBinario devolvió error: %v", err)
+		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		if err := downloadBinary(ReleaseAsset{BrowserDownloadURL: server.URL}, destination); err != nil {
+			t.Fatalf("downloadBinary returned error: %v", err)
 		}
 
-		contenido, err := os.ReadFile(destino)
+		content, err := os.ReadFile(destination)
 		if err != nil {
-			t.Fatalf("no se pudo leer el destino: %v", err)
+			t.Fatalf("could not read the destination: %v", err)
 		}
-		if string(contenido) != contenidoEsperado {
-			t.Errorf("contenido = %q, esperado %q", contenido, contenidoEsperado)
+		if string(content) != wantContent {
+			t.Errorf("content = %q, want %q", content, wantContent)
 		}
 	})
 
-	t.Run("usa la URL API del asset cuando está disponible", func(t *testing.T) {
-		const contenidoEsperado = "VIA-API"
-		var urlRecibida string
-		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			urlRecibida = r.URL.Path
-			if _, err := w.Write([]byte(contenidoEsperado)); err != nil {
-				t.Errorf("no se pudo escribir la respuesta: %v", err)
+	t.Run("uses the asset API URL when available", func(t *testing.T) {
+		const wantContent = "VIA-API"
+		var receivedURL string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedURL = r.URL.Path
+			if _, err := w.Write([]byte(wantContent)); err != nil {
+				t.Errorf("could not write the response: %v", err)
 			}
 		}))
-		defer servidor.Close()
+		defer server.Close()
 
-		destino := filepath.Join(t.TempDir(), "sentinel.exe")
+		destination := filepath.Join(t.TempDir(), "sentinel.exe")
 		asset := ReleaseAsset{
-			BrowserDownloadURL: "https://github.com/descarga-que-no-se-usa",
-			URL:                servidor.URL + "/assets/123",
+			BrowserDownloadURL: "https://github.com/unused-download",
+			URL:                server.URL + "/assets/123",
 		}
-		if err := descargarBinario(asset, destino); err != nil {
-			t.Fatalf("descargarBinario devolvió error: %v", err)
+		if err := downloadBinary(asset, destination); err != nil {
+			t.Fatalf("downloadBinary returned error: %v", err)
 		}
 
-		if urlRecibida != "/assets/123" {
-			t.Errorf("se debió descargar desde la URL API del asset, se usó %q", urlRecibida)
+		if receivedURL != "/assets/123" {
+			t.Errorf("the download must use the asset API URL, got %q", receivedURL)
 		}
-		contenido, err := os.ReadFile(destino)
+		content, err := os.ReadFile(destination)
 		if err != nil {
-			t.Fatalf("no se pudo leer el destino: %v", err)
+			t.Fatalf("could not read the destination: %v", err)
 		}
-		if string(contenido) != contenidoEsperado {
-			t.Errorf("contenido = %q, esperado %q", contenido, contenidoEsperado)
+		if string(content) != wantContent {
+			t.Errorf("content = %q, want %q", content, wantContent)
 		}
 	})
 
-	t.Run("envía Bearer con GITHUB_TOKEN definido", func(t *testing.T) {
-		const tokenEsperado = "token-privado-123"
-		recibioToken := false
-		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if got := r.Header.Get("Authorization"); got == "Bearer "+tokenEsperado {
-				recibioToken = true
+	t.Run("sends Bearer when GITHUB_TOKEN is set", func(t *testing.T) {
+		const wantToken = "token-private-123"
+		gotToken := false
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got == "Bearer "+wantToken {
+				gotToken = true
 			}
 			w.WriteHeader(http.StatusOK)
 		}))
-		defer servidor.Close()
+		defer server.Close()
 
 		original := os.Getenv("GITHUB_TOKEN")
-		os.Setenv("GITHUB_TOKEN", tokenEsperado)
+		os.Setenv("GITHUB_TOKEN", wantToken)
 		defer os.Setenv("GITHUB_TOKEN", original)
 
-		destino := filepath.Join(t.TempDir(), "sentinel.exe")
-		if err := descargarBinario(ReleaseAsset{BrowserDownloadURL: servidor.URL}, destino); err != nil {
-			t.Fatalf("descargarBinario devolvió error: %v", err)
+		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		if err := downloadBinary(ReleaseAsset{BrowserDownloadURL: server.URL}, destination); err != nil {
+			t.Fatalf("downloadBinary returned error: %v", err)
 		}
-		if !recibioToken {
-			t.Error("la descarga no envió el header Authorization con el token")
+		if !gotToken {
+			t.Error("the download did not send the Authorization header with the token")
 		}
 	})
 
-	t.Run("respuesta 404 devuelve error", func(t *testing.T) {
-		servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	t.Run("404 response returns an error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 		}))
-		defer servidor.Close()
+		defer server.Close()
 
-		destino := filepath.Join(t.TempDir(), "sentinel.exe")
-		err := descargarBinario(ReleaseAsset{BrowserDownloadURL: servidor.URL}, destino)
+		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		err := downloadBinary(ReleaseAsset{BrowserDownloadURL: server.URL}, destination)
 		if err == nil {
-			t.Fatalf("se esperaba error con HTTP 404")
+			t.Fatalf("expected error with HTTP 404")
 		}
 		if !strings.Contains(err.Error(), "404") {
-			t.Errorf("el error debe mencionar el estado HTTP 404, obtuve: %v", err)
+			t.Errorf("the error must mention HTTP status 404, got: %v", err)
 		}
 	})
 }
 
-type transporteFalso struct {
-	respuesta    *http.Response
-	errorRed     error
-	comprobarPct func(r *http.Request)
+type fakeTransport struct {
+	response     *http.Response
+	networkError error
+	checkRequest func(r *http.Request)
 }
 
-func (t *transporteFalso) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.comprobarPct != nil {
-		t.comprobarPct(req)
+func (t *fakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.checkRequest != nil {
+		t.checkRequest(req)
 	}
-	if t.errorRed != nil {
-		return nil, t.errorRed
+	if t.networkError != nil {
+		return nil, t.networkError
 	}
-	return t.respuesta, nil
+	return t.response, nil
 }
 
-func fijarClienteHTTPFalso(t *testing.T, transporte http.RoundTripper) {
+func setFakeHTTPClient(t *testing.T, transport http.RoundTripper) {
 	t.Helper()
 	original := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: transporte}
+	http.DefaultClient = &http.Client{Transport: transport}
 	t.Cleanup(func() { http.DefaultClient = original })
 }
 
-func respuestaJSON(t *testing.T, cuerpo string, estado int) *http.Response {
+func jsonResponse(t *testing.T, body string, status int) *http.Response {
 	t.Helper()
 	return &http.Response{
-		StatusCode: estado,
-		Status:     http.StatusText(estado),
+		StatusCode: status,
+		Status:     http.StatusText(status),
 		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(cuerpo)),
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
 
-func TestObtenerUltimaRelease(t *testing.T) {
-	t.Run("release valida", func(t *testing.T) {
-		cuerpo := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-windows-amd64.exe","browser_download_url":"https://ejemplo/x"}]}`
-		transport := &transporteFalso{respuesta: respuestaJSON(t, cuerpo, http.StatusOK)}
-		transport.comprobarPct = func(r *http.Request) {
+func TestFetchLatestRelease(t *testing.T) {
+	t.Run("valid release", func(t *testing.T) {
+		body := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-windows-amd64.exe","browser_download_url":"https://example/x"}]}`
+		transport := &fakeTransport{response: jsonResponse(t, body, http.StatusOK)}
+		transport.checkRequest = func(r *http.Request) {
 			if r.Header.Get("User-Agent") == "" {
-				t.Errorf("la petición debe incluir User-Agent")
+				t.Errorf("the request must include User-Agent")
 			}
 		}
-		fijarClienteHTTPFalso(t, transport)
+		setFakeHTTPClient(t, transport)
 
-		release, err := obtenerUltimaRelease()
+		release, err := fetchLatestRelease()
 		if err != nil {
-			t.Fatalf("obtenerUltimaRelease devolvió error: %v", err)
+			t.Fatalf("fetchLatestRelease returned error: %v", err)
 		}
 		if release.TagName != "v1.2.3" {
-			t.Errorf("TagName = %q, esperado v1.2.3", release.TagName)
+			t.Errorf("TagName = %q, want v1.2.3", release.TagName)
 		}
 		if len(release.Assets) != 1 || release.Assets[0].Name != "sentinel-windows-amd64.exe" {
-			t.Errorf("assets inesperados: %+v", release.Assets)
+			t.Errorf("unexpected assets: %+v", release.Assets)
 		}
 	})
 
-	t.Run("HTTP 404 devuelve error de release no publicada", func(t *testing.T) {
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, "{}", http.StatusNotFound)})
-		_, err := obtenerUltimaRelease()
+	t.Run("HTTP 404 returns an unpublished-release error", func(t *testing.T) {
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, "{}", http.StatusNotFound)})
+		_, err := fetchLatestRelease()
 		if err == nil {
-			t.Fatalf("se esperaba error con HTTP 404")
+			t.Fatalf("expected error with HTTP 404")
 		}
-		if !strings.Contains(err.Error(), "no se encontró una release") {
-			t.Errorf("el error debe mencionar la release no publicada, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "no published release") {
+			t.Errorf("the error must mention the unpublished release, got: %v", err)
 		}
 	})
 
-	t.Run("HTTP 500 devuelve error de estado", func(t *testing.T) {
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, "{}", http.StatusInternalServerError)})
-		_, err := obtenerUltimaRelease()
+	t.Run("HTTP 500 returns a status error", func(t *testing.T) {
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, "{}", http.StatusInternalServerError)})
+		_, err := fetchLatestRelease()
 		if err == nil {
-			t.Fatalf("se esperaba error con HTTP 500")
+			t.Fatalf("expected error with HTTP 500")
 		}
 		if !strings.Contains(err.Error(), "500") {
-			t.Errorf("el error debe mencionar el estado 500, obtuve: %v", err)
+			t.Errorf("the error must mention status 500, got: %v", err)
 		}
 	})
 
-	t.Run("JSON invalido devuelve error de interpretación", func(t *testing.T) {
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, "no es json", http.StatusOK)})
-		_, err := obtenerUltimaRelease()
+	t.Run("invalid JSON returns a parse error", func(t *testing.T) {
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, "not json", http.StatusOK)})
+		_, err := fetchLatestRelease()
 		if err == nil {
-			t.Fatalf("se esperaba error con JSON inválido")
+			t.Fatalf("expected error with invalid JSON")
 		}
-		if !strings.Contains(err.Error(), "interpretar la respuesta") {
-			t.Errorf("el error debe mencionar la interpretación del JSON, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "parse the response") {
+			t.Errorf("the error must mention parsing the JSON, got: %v", err)
 		}
 	})
 
-	t.Run("sin tag_name devuelve error", func(t *testing.T) {
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, `{"assets":[]}`, http.StatusOK)})
-		_, err := obtenerUltimaRelease()
+	t.Run("missing tag_name returns an error", func(t *testing.T) {
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, `{"assets":[]}`, http.StatusOK)})
+		_, err := fetchLatestRelease()
 		if err == nil {
-			t.Fatalf("se esperaba error sin tag_name")
+			t.Fatalf("expected error without tag_name")
 		}
 		if !strings.Contains(err.Error(), "tag_name") {
-			t.Errorf("el error debe mencionar el tag_name, obtuve: %v", err)
+			t.Errorf("the error must mention tag_name, got: %v", err)
 		}
 	})
 
-	t.Run("error de red devuelve error de red", func(t *testing.T) {
-		fijarClienteHTTPFalso(t, &transporteFalso{errorRed: errors.New("conexión rechazada")})
-		_, err := obtenerUltimaRelease()
+	t.Run("network error returns a network error", func(t *testing.T) {
+		setFakeHTTPClient(t, &fakeTransport{networkError: errors.New("connection refused")})
+		_, err := fetchLatestRelease()
 		if err == nil {
-			t.Fatalf("se esperaba error de red")
+			t.Fatalf("expected a network error")
 		}
-		if !strings.Contains(err.Error(), "error de red") {
-			t.Errorf("el error debe mencionar la red, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "network error") {
+			t.Errorf("the error must mention the network, got: %v", err)
 		}
 	})
 }
 
-// TestPreguntarTokenGitHub_LeeSinEco comprueba que el token entra por la
-// costura de inyección (sin pasar por bufio.Stdin en el test) y que jamás
-// aparece en la salida estándar del proceso.
-func TestPreguntarTokenGitHub_LeeSinEco(t *testing.T) {
-	t.Run("token inyectado se resuelve sin aparecer en stdout", func(t *testing.T) {
-		tokenOriginal := os.Getenv("GITHUB_TOKEN")
+// TestPromptForGitHubTokenReadsWithoutEcho checks that the token enters
+// through the injection seam (without going through bufio.Stdin in the test)
+// and that it never appears on the process standard output.
+func TestPromptForGitHubTokenReadsWithoutEcho(t *testing.T) {
+	t.Run("injected token is resolved without appearing on stdout", func(t *testing.T) {
+		originalToken := os.Getenv("GITHUB_TOKEN")
 		os.Unsetenv("GITHUB_TOKEN")
-		defer os.Setenv("GITHUB_TOKEN", tokenOriginal)
+		defer os.Setenv("GITHUB_TOKEN", originalToken)
 
-		terminalOriginal := esTerminalStdin
-		esTerminalStdin = func() bool { return true }
-		defer func() { esTerminalStdin = terminalOriginal }()
+		originalTerminal := isStdinTerminal
+		isStdinTerminal = func() bool { return true }
+		defer func() { isStdinTerminal = originalTerminal }()
 
-		const tokenFalso = "token-secreto-xyz-789"
-		lectorOriginal := leerTokenSinEco
-		leerTokenSinEco = func() (string, error) { return tokenFalso, nil }
-		defer func() { leerTokenSinEco = lectorOriginal }()
+		const fakeToken = "secret-token-xyz-789"
+		originalReader := readTokenWithoutEcho
+		readTokenWithoutEcho = func() (string, error) { return fakeToken, nil }
+		defer func() { readTokenWithoutEcho = originalReader }()
 
-		stdoutOriginal := os.Stdout
+		originalStdout := os.Stdout
 		r, w, err := os.Pipe()
 		if err != nil {
-			t.Fatalf("no se pudo crear el pipe: %v", err)
+			t.Fatalf("could not create the pipe: %v", err)
 		}
 		os.Stdout = w
 
-		token := preguntarTokenGitHub()
+		token := promptForGitHubToken()
 
 		w.Close()
-		os.Stdout = stdoutOriginal
-		salida, _ := io.ReadAll(r)
+		os.Stdout = originalStdout
+		output, _ := io.ReadAll(r)
 
-		if token != tokenFalso {
-			t.Errorf("token = %q, esperado %q", token, tokenFalso)
+		if token != fakeToken {
+			t.Errorf("token = %q, want %q", token, fakeToken)
 		}
-		if os.Getenv("GITHUB_TOKEN") != tokenFalso {
-			t.Errorf("GITHUB_TOKEN no quedó fijado con el token inyectado")
+		if os.Getenv("GITHUB_TOKEN") != fakeToken {
+			t.Errorf("GITHUB_TOKEN was not set to the injected token")
 		}
-		if strings.Contains(string(salida), tokenFalso) {
-			t.Errorf("el token no debe aparecer en la salida estandar, salida: %q", salida)
+		if strings.Contains(string(output), fakeToken) {
+			t.Errorf("the token must not appear on standard output, output: %q", output)
 		}
 	})
 
-	t.Run("error del lector no fija token y devuelve vacio", func(t *testing.T) {
-		tokenOriginal := os.Getenv("GITHUB_TOKEN")
+	t.Run("reader error sets no token and returns empty", func(t *testing.T) {
+		originalToken := os.Getenv("GITHUB_TOKEN")
 		os.Unsetenv("GITHUB_TOKEN")
-		defer os.Setenv("GITHUB_TOKEN", tokenOriginal)
+		defer os.Setenv("GITHUB_TOKEN", originalToken)
 
-		terminalOriginal := esTerminalStdin
-		esTerminalStdin = func() bool { return true }
-		defer func() { esTerminalStdin = terminalOriginal }()
+		originalTerminal := isStdinTerminal
+		isStdinTerminal = func() bool { return true }
+		defer func() { isStdinTerminal = originalTerminal }()
 
-		lectorOriginal := leerTokenSinEco
-		leerTokenSinEco = func() (string, error) { return "", errors.New("sin terminal disponible") }
-		defer func() { leerTokenSinEco = lectorOriginal }()
+		originalReader := readTokenWithoutEcho
+		readTokenWithoutEcho = func() (string, error) { return "", errors.New("no terminal available") }
+		defer func() { readTokenWithoutEcho = originalReader }()
 
-		if token := preguntarTokenGitHub(); token != "" {
-			t.Errorf("token = %q, esperado vacio ante error del lector", token)
+		if token := promptForGitHubToken(); token != "" {
+			t.Errorf("token = %q, want empty on reader error", token)
 		}
 		if os.Getenv("GITHUB_TOKEN") != "" {
-			t.Errorf("GITHUB_TOKEN no debe quedar fijado cuando el lector falla")
+			t.Errorf("GITHUB_TOKEN must not be set when the reader fails")
 		}
 	})
 
-	t.Run("mecanismo real falla cerrado cuando stdin no es una terminal", func(t *testing.T) {
-		// No inyecta leerTokenSinEco: ejercita leerTokenSinEcoDelSistema real
-		// (term.ReadPassword) contra un stdin que no es una terminal, que es
-		// justo el caso que antes leía con eco en silencio en vez de fallar.
-		stdinOriginal := os.Stdin
-		lector, escritor, err := os.Pipe()
+	t.Run("real mechanism fails closed when stdin is not a terminal", func(t *testing.T) {
+		// Does not inject readTokenWithoutEcho: it exercises the real
+		// readTokenWithoutEchoFromSystem (term.ReadPassword) against a stdin
+		// that is not a terminal, which is exactly the case that used to read
+		// silently with echo instead of failing.
+		originalStdin := os.Stdin
+		reader, writer, err := os.Pipe()
 		if err != nil {
-			t.Fatalf("no se pudo crear el pipe: %v", err)
+			t.Fatalf("could not create the pipe: %v", err)
 		}
-		os.Stdin = lector
-		defer func() { os.Stdin = stdinOriginal }()
+		os.Stdin = reader
+		defer func() { os.Stdin = originalStdin }()
 
-		if _, err := escritor.WriteString("token-que-no-debe-leerse\n"); err != nil {
-			t.Fatalf("no se pudo escribir en el pipe: %v", err)
+		if _, err := writer.WriteString("token-that-must-not-be-read\n"); err != nil {
+			t.Fatalf("could not write to the pipe: %v", err)
 		}
-		escritor.Close()
+		writer.Close()
 
-		token, err := leerTokenSinEcoDelSistema()
+		token, err := readTokenWithoutEchoFromSystem()
 		if err == nil {
-			t.Fatalf("se esperaba error al no poder desactivar el eco, token=%q", token)
+			t.Fatalf("expected error when the echo cannot be disabled, token=%q", token)
 		}
 		if token != "" {
-			t.Errorf("token = %q, se esperaba vacio cuando falla el mecanismo sin eco", token)
+			t.Errorf("token = %q, expected empty when the no-echo mechanism fails", token)
 		}
 	})
 
-	t.Run("sin terminal interactiva no invoca al lector", func(t *testing.T) {
-		terminalOriginal := esTerminalStdin
-		esTerminalStdin = func() bool { return false }
-		defer func() { esTerminalStdin = terminalOriginal }()
+	t.Run("without an interactive terminal the reader is not invoked", func(t *testing.T) {
+		originalTerminal := isStdinTerminal
+		isStdinTerminal = func() bool { return false }
+		defer func() { isStdinTerminal = originalTerminal }()
 
-		lectorOriginal := leerTokenSinEco
-		invocado := false
-		leerTokenSinEco = func() (string, error) { invocado = true; return "no-deberia-usarse", nil }
-		defer func() { leerTokenSinEco = lectorOriginal }()
+		originalReader := readTokenWithoutEcho
+		invoked := false
+		readTokenWithoutEcho = func() (string, error) { invoked = true; return "should-not-be-used", nil }
+		defer func() { readTokenWithoutEcho = originalReader }()
 
-		preguntarTokenGitHub()
+		promptForGitHubToken()
 
-		if invocado {
-			t.Errorf("no debe invocarse el lector sin terminal interactiva")
+		if invoked {
+			t.Errorf("the reader must not be invoked without an interactive terminal")
 		}
 	})
 }
 
-func TestElegirAssetParaSO(t *testing.T) {
-	nombre := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
+func TestPickAssetForOS(t *testing.T) {
+	name := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
-		nombre += ".exe"
+		name += ".exe"
 	}
 
-	asset, err := elegirAssetParaSO([]ReleaseAsset{{Name: nombre, BrowserDownloadURL: "https://ejemplo/" + nombre}})
+	asset, err := pickAssetForOS([]ReleaseAsset{{Name: name, BrowserDownloadURL: "https://example/" + name}})
 	if err != nil {
-		t.Fatalf("elegirAssetParaSO devolvió error: %v", err)
+		t.Fatalf("pickAssetForOS returned error: %v", err)
 	}
-	if asset.Name != nombre {
-		t.Errorf("asset.Name = %q, esperado %q", asset.Name, nombre)
+	if asset.Name != name {
+		t.Errorf("asset.Name = %q, want %q", asset.Name, name)
 	}
 }
 
-func releaseValidaConAsset() string {
-	nombre := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
+func validReleaseWithAsset() string {
+	name := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
-		nombre += ".exe"
+		name += ".exe"
 	}
-	return `{"tag_name":"v1.2.3","assets":[{"name":"` + nombre + `","browser_download_url":"http://127.0.0.1:1/descarga"}]}`
+	return `{"tag_name":"v1.2.3","assets":[{"name":"` + name + `","browser_download_url":"http://127.0.0.1:1/download"}]}`
 }
 
-// desactivarFallbackGoInstall apaga el reintento con go install durante un
-// test y lo restaura al terminar, para que los errores de red/descarga no
-// ejecuten compilaciones reales.
-func desactivarFallbackGoInstall(t *testing.T) {
+// disableGoInstallFallback turns off the go install retry during a test and
+// restores it at the end, so network/download errors do not run real builds.
+func disableGoInstallFallback(t *testing.T) {
 	t.Helper()
-	anterior := fallbackGoInstall
+	previous := fallbackGoInstall
 	fallbackGoInstall = false
-	t.Cleanup(func() { fallbackGoInstall = anterior })
+	t.Cleanup(func() { fallbackGoInstall = previous })
 }
 
-func TestEjecutarInstalacionCompleta(t *testing.T) {
-	t.Run("error de red detiene la instalacion", func(t *testing.T) {
-		desactivarFallbackGoInstall(t)
-		fijarClienteHTTPFalso(t, &transporteFalso{errorRed: errors.New("conexión rechazada")})
-		err := EjecutarInstalacionCompleta()
+func TestRunFullInstall(t *testing.T) {
+	t.Run("network error stops the installation", func(t *testing.T) {
+		disableGoInstallFallback(t)
+		setFakeHTTPClient(t, &fakeTransport{networkError: errors.New("connection refused")})
+		err := RunFullInstall()
 		if err == nil {
-			t.Fatalf("se esperaba error de red")
+			t.Fatalf("expected a network error")
 		}
-		if !strings.Contains(err.Error(), "error de red") {
-			t.Errorf("el error debe mencionar la red, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "network error") {
+			t.Errorf("the error must mention the network, got: %v", err)
 		}
 	})
 
-	t.Run("sin asset para el sistema detiene la instalacion", func(t *testing.T) {
-		cuerpo := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-plan9-amd64","browser_download_url":"https://ejemplo/x"}]}`
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, cuerpo, http.StatusOK)})
-		err := EjecutarInstalacionCompleta()
+	t.Run("no asset for the system stops the installation", func(t *testing.T) {
+		body := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-plan9-amd64","browser_download_url":"https://example/x"}]}`
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, body, http.StatusOK)})
+		err := RunFullInstall()
 		if err == nil {
-			t.Fatalf("se esperaba error sin asset para el sistema")
+			t.Fatalf("expected error without an asset for the system")
 		}
-		if !strings.Contains(err.Error(), "no se encontró un asset") {
-			t.Errorf("el error debe mencionar la selección de asset, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "no release asset") {
+			t.Errorf("the error must mention the asset selection, got: %v", err)
 		}
 	})
 
-	t.Run("descarga fallida detiene la instalacion", func(t *testing.T) {
-		desactivarFallbackGoInstall(t)
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, releaseValidaConAsset(), http.StatusOK)})
-		err := EjecutarInstalacionCompleta()
+	t.Run("failed download stops the installation", func(t *testing.T) {
+		disableGoInstallFallback(t)
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, validReleaseWithAsset(), http.StatusOK)})
+		err := RunFullInstall()
 		if err == nil {
-			t.Fatalf("se esperaba error de descarga")
+			t.Fatalf("expected a download error")
 		}
-		if !strings.Contains(err.Error(), "descargar") {
-			t.Errorf("el error debe mencionar la descarga, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "download") {
+			t.Errorf("the error must mention the download, got: %v", err)
 		}
 	})
 }
 
-func TestEjecutarUpgradeDesdeGitHub(t *testing.T) {
-	t.Run("error de red detiene la actualizacion", func(t *testing.T) {
-		desactivarFallbackGoInstall(t)
-		fijarClienteHTTPFalso(t, &transporteFalso{errorRed: errors.New("conexión rechazada")})
-		err := EjecutarUpgradeDesdeGitHub()
+func TestRunUpgradeFromGitHub(t *testing.T) {
+	t.Run("network error stops the upgrade", func(t *testing.T) {
+		disableGoInstallFallback(t)
+		setFakeHTTPClient(t, &fakeTransport{networkError: errors.New("connection refused")})
+		err := RunUpgradeFromGitHub()
 		if err == nil {
-			t.Fatalf("se esperaba error de red")
+			t.Fatalf("expected a network error")
 		}
-		if !strings.Contains(err.Error(), "error de red") {
-			t.Errorf("el error debe mencionar la red, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "network error") {
+			t.Errorf("the error must mention the network, got: %v", err)
 		}
 	})
 
-	t.Run("sin asset para el sistema detiene la actualizacion", func(t *testing.T) {
-		cuerpo := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-plan9-amd64","browser_download_url":"https://ejemplo/x"}]}`
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, cuerpo, http.StatusOK)})
-		err := EjecutarUpgradeDesdeGitHub()
+	t.Run("no asset for the system stops the upgrade", func(t *testing.T) {
+		body := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-plan9-amd64","browser_download_url":"https://example/x"}]}`
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, body, http.StatusOK)})
+		err := RunUpgradeFromGitHub()
 		if err == nil {
-			t.Fatalf("se esperaba error sin asset para el sistema")
+			t.Fatalf("expected error without an asset for the system")
 		}
-		if !strings.Contains(err.Error(), "no se encontró un asset") {
-			t.Errorf("el error debe mencionar la selección de asset, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "no release asset") {
+			t.Errorf("the error must mention the asset selection, got: %v", err)
 		}
 	})
 
-	t.Run("descarga fallida detiene la actualizacion antes de reemplazar", func(t *testing.T) {
-		desactivarFallbackGoInstall(t)
-		fijarClienteHTTPFalso(t, &transporteFalso{respuesta: respuestaJSON(t, releaseValidaConAsset(), http.StatusOK)})
-		err := EjecutarUpgradeDesdeGitHub()
+	t.Run("failed download stops the upgrade before replacing", func(t *testing.T) {
+		disableGoInstallFallback(t)
+		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, validReleaseWithAsset(), http.StatusOK)})
+		err := RunUpgradeFromGitHub()
 		if err == nil {
-			t.Fatalf("se esperaba error de descarga")
+			t.Fatalf("expected a download error")
 		}
-		if !strings.Contains(err.Error(), "descargar") {
-			t.Errorf("el error debe mencionar la descarga, obtuve: %v", err)
+		if !strings.Contains(err.Error(), "download") {
+			t.Errorf("the error must mention the download, got: %v", err)
 		}
 	})
 }

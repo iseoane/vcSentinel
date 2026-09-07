@@ -9,15 +9,15 @@ import (
 	"strings"
 )
 
-const archivoConfiguracionBase = `version: "1.0"
+const globalConfigTemplate = `version: "1.0"
 active_agent: "auto"
 agents:
   claude:
     model: "claude-5-sonnet"
     reasoning_effort: "high"
-    # Perfil 'commit' (mensajes de 'sentinel slice'): razonamiento bajo
-    # porque nombrar un commit no necesita el razonamiento del resto de la
-    # tarea. Ejemplo (descomenta y ajusta):
+    # 'commit' profile ('sentinel slice' commit messages): low reasoning
+    # because naming a commit does not need the reasoning of the rest of the
+    # task. Example (uncomment and adjust):
     # profiles:
     #   commit:
     #     reasoning_effort: "low"
@@ -29,21 +29,22 @@ agents:
     #     reasoning_effort: "low"
 `
 
-// archivoConfiguracionPerProyectoBase es el template que init escribe en el
-// repo. Deliberadamente NO fija active_agent/agents con valores literales: si
-// lo hiciera, sobreescribiría en todos los repos las preferencias definidas
-// en la config global (defaults -> global -> per-proyecto), dejando el yml
-// global sin ningún efecto real. Solo lo que el usuario descomente aquí
-// sobreescribe la config global para este repo.
-const archivoConfiguracionPerProyectoBase = `version: "1.0"
-# Config per-proyecto de VAS Sentinel. Solo sobreescribe aquí lo que este
-# repo necesite distinto de tu config global (~/.vas_sentinel/vassentinel.yml,
-# creada por 'sentinel install'). Todo lo que no definas se resuelve desde ahí.
+// perProjectConfigTemplate is the template init writes into the repo.
+// Deliberately does NOT pin active_agent/agents to literal values: doing so
+// would overwrite, in every repository, the preferences defined in the global
+// config (defaults -> global -> per-project), leaving the global yml with no
+// real effect. Only what the user uncomments here overrides the global
+// config for this repo.
+const perProjectConfigTemplate = `version: "1.0"
+# Per-project VAS Sentinel configuration. Override here only what this repo
+# needs different from your global config (~/.vas_sentinel/vassentinel.yml,
+# created by 'sentinel install'). Anything you do not define is resolved from
+# there.
 #
-# Verificación determinista SIN agente: si defines estas listas, 'pr review'
-# ejecuta los comandos directamente en la shell del sistema y NUNCA consulta
-# al agente (el agente solo se ofrece cuando no hay nada configurado).
-# Descomenta y ajusta:
+# Deterministic verification WITHOUT agent: if you define these lists, 'pr
+# review' runs the commands directly in the system shell and NEVER consults
+# the agent (the agent is only offered when nothing is configured).
+# Uncomment and adjust:
 # lint_commands:
 #   - "go vet ./..."
 # test_commands:
@@ -51,8 +52,8 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 # build_commands:
 #   - "go build ./..."
 #
-# Validación por paquetes: habilita scope solo en comandos que lo soporten de
-# verdad. go test acepta import paths; gofmt, go vet y go build quedan completos.
+# Package-based validation: enable scope only on commands that truly support
+# it. go test accepts import paths; gofmt, go vet and go build remain complete.
 # validation:
 #   capabilities:
 #     unit_test:
@@ -63,22 +64,22 @@ const archivoConfiguracionPerProyectoBase = `version: "1.0"
 #     standard: [unit_test]
 #   mode: worktree
 #
-# Idioma de los mensajes de commit que genera 'sentinel slice'. Por defecto
-# "es" (el del historial de este repositorio). Sin fijarlo, el agente lo
-# elegía al azar y mezclaba idiomas dentro de la misma fragmentación.
+# Commit message language for 'sentinel slice'. Defaults to
+# "en". Without pinning it, the agent picked at random and mixed languages
+# within the same fragmentation.
 # commit_language: "en"
 #
-# Solicitud del repositorio: permite generar mensajes semánticos externos, pero
-# NO es consentimiento personal. También se requiere el grant local y no
-# versionado de 'sentinel consentimiento-diff otorgar'.
+# Repository request: allows external semantic generation, but it is NOT
+# personal consent. The local unversioned grant is also required via
+# 'sentinel consent-diff grant'.
 request_external_agent_diff: false
 #
-# Contexto CodeGraph para el revisor: solo metadatos de rutas de tests
-# afectadas. Requiere además el consentimiento local anterior.
+# CodeGraph context for the reviewer: only metadata of affected test paths.
+# Also requires the local consent above.
 review:
   codegraph_context: false
 #
-# Ejemplo (descomenta y ajusta):
+# Example (uncomment and adjust):
 # active_agent: "claude"
 # agents:
 #   claude:
@@ -87,118 +88,119 @@ review:
 #     profiles:
 #       commit:
 #         reasoning_effort: "low"
-# (El perfil 'commit' define el modelo/esfuerzo que 'sentinel slice' usa para
-# generar los mensajes de commit; si no lo defines, se usa el modelo/esfuerzo
-# base del agente sin ningún cambio de comportamiento.)
+# (The 'commit' profile defines the model/effort that 'sentinel slice' uses to
+# generate commit messages; if you do not define it, the base model/effort of
+# the agent is used with no behavior change.)
 `
 
-func EjecutarInstalacionCompleta() error {
-	fmt.Println("⬇️ Descargando la última versión desde GitHub...")
+func RunFullInstall() error {
+	fmt.Println("⬇️ Downloading the latest version from GitHub...")
 
-	PrepararTokenGitHub()
+	PrepareGitHubToken()
 
-	release, err := obtenerUltimaRelease()
+	release, err := fetchLatestRelease()
 	if err != nil {
 		if fallbackGoInstall {
-			if errFallback := InstalarViaGoInstall(); errFallback != nil {
-				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
+			if errFallback := InstallViaGoInstall(); errFallback != nil {
+				return fmt.Errorf("%v\nIn addition, the go install fallback failed: %v", err, errFallback)
 			}
 			return nil
 		}
 		return err
 	}
 
-	asset, err := elegirAssetParaSO(release.Assets)
+	asset, err := pickAssetForOS(release.Assets)
 	if err != nil {
 		return err
 	}
 
 	tmpFile, err := os.CreateTemp("", "sentinel-download-*")
 	if err != nil {
-		return fmt.Errorf("no se pudo crear el archivo temporal de descarga: %w", err)
+		return fmt.Errorf("could not create the temporary download file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	if err := descargarBinario(asset, tmpPath); err != nil {
+	if err := downloadBinary(asset, tmpPath); err != nil {
 		if fallbackGoInstall {
-			if errFallback := InstalarViaGoInstall(); errFallback != nil {
-				return fmt.Errorf("%v\nAdemás, el fallback con go install falló: %v", err, errFallback)
+			if errFallback := InstallViaGoInstall(); errFallback != nil {
+				return fmt.Errorf("%v\nIn addition, the go install fallback failed: %v", err, errFallback)
 			}
 			return nil
 		}
 		return err
 	}
 
-	var destino string
+	var destination string
 	switch runtime.GOOS {
 	case "windows":
-		destino, err = instalarWindows(tmpPath)
+		destination, err = installWindows(tmpPath)
 	default:
-		destino, err = instalarLinux(tmpPath)
+		destination, err = installLinux(tmpPath)
 	}
 	if err != nil {
 		return err
 	}
 
-	if err := crearConfiguracionGlobal(); err != nil {
+	if err := createGlobalConfig(); err != nil {
 		return err
 	}
 
-	fmt.Printf("✅ Instalado en: %s\n", destino)
+	fmt.Printf("✅ Installed at: %s\n", destination)
 	return nil
 }
 
-// InstalarViaGoInstall es el fallback de instalación cuando la descarga desde
-// la release falla (por ejemplo, repositorio privado sin token). Compila e
-// instala desde el código fuente con go install y deja el binario en el mismo
-// destino que una instalación normal.
-func InstalarViaGoInstall() error {
-	fmt.Println("⬇️ La descarga no está disponible. Reintentando con go install (compila desde el código fuente)...")
+// InstallViaGoInstall is the installation fallback when the release download
+// fails (for example, a private repository without a token). Builds and
+// installs from source with go install and leaves the binary in the same
+// destination as a normal installation.
+func InstallViaGoInstall() error {
+	fmt.Println("⬇️ Download unavailable. Retrying with go install (builds from source)...")
 
-	output, err := ejecutarGoInstall()
+	output, err := runGoInstall()
 	if err != nil {
-		return fmt.Errorf("go install falló (¿GOPRIVATE y credenciales git configuradas?): %w\n%s", err, output)
+		return fmt.Errorf("go install failed (are GOPRIVATE and git credentials configured?): %w\n%s", err, output)
 	}
 
 	gopath, err := goEnvGOPATH()
 	if err != nil {
 		return err
 	}
-	binario := filepath.Join(gopath, "bin", nombreBinarioGo())
+	binary := filepath.Join(gopath, "bin", goBinaryName())
 
-	if err := instalarBinarioCompilado(binario); err != nil {
+	if err := installCompiledBinary(binary); err != nil {
 		return err
 	}
 	return nil
 }
 
-// ejecutarGoInstall compila e instala la última versión con go install. Para
-// repositorios privados configura GOPRIVATE (evita consultar sum.golang.org) y
-// entrega las credenciales a git vía GIT_CONFIG_COUNT, sin tocar la
-// configuración global del usuario.
+// runGoInstall builds and installs the latest version with go install. For
+// private repositories it sets GOPRIVATE (avoids consulting sum.golang.org)
+// and hands git credentials over via GIT_CONFIG_COUNT, without touching the
+// user's global configuration.
 //
-// Intenta primero la última release (@latest) y, si esa versión no contiene el
-// paquete (release anterior a un cambio de estructura), cae a la rama main.
-func ejecutarGoInstall() ([]byte, error) {
-	PrepararTokenGitHub()
+// It first tries the latest release (@latest) and, if that version does not
+// contain the package (a release predating a structural change), it falls
+// back to the main branch.
+func runGoInstall() ([]byte, error) {
+	PrepareGitHubToken()
 
-	output, err := goInstallPaquete("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
+	output, err := goInstallPackage("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
 	if err != nil && strings.Contains(string(output), "does not contain package") {
-		fmt.Println("⚠️ La última release no incluye el paquete actual. Probando con la rama main...")
-		output, err = goInstallPaquete("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@main")
+		fmt.Println("⚠️ The latest release does not include the current package. Trying the main branch...")
+		output, err = goInstallPackage("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@main")
 	}
 	return output, err
 }
 
-// goInstallPaquete ejecuta go install de un paquete con el entorno preparado
-// para repositorios privados (GOPRIVATE + credenciales git temporales).
-func goInstallPaquete(paquete string) ([]byte, error) {
-	cmd := exec.Command("go", "install", paquete)
+// goInstallPackage runs go install of a package with the environment prepared
+// for private repositories (GOPRIVATE + temporary git credentials).
+func goInstallPackage(pkg string) ([]byte, error) {
+	cmd := exec.Command("go", "install", pkg)
 	cmd.Env = append(os.Environ(), "GOPRIVATE=github.com/ISeoane-Quental/*")
 
-	if token := tokenGitHub(); token != "" {
+	if token := envGitHubToken(); token != "" {
 		cmd.Env = append(cmd.Env,
 			"GIT_CONFIG_COUNT=1",
 			"GIT_CONFIG_KEY_0=url.https://x-access-token:"+token+"@github.com/.insteadOf",
@@ -209,188 +211,189 @@ func goInstallPaquete(paquete string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// instalarBinarioCompilado instala un binario ya compilado en el destino del
-// sistema y crea la configuración global, igual que el flujo normal.
-func instalarBinarioCompilado(binario string) error {
-	var destino string
+// installCompiledBinary installs an already-built binary into the system
+// destination and creates the global configuration, just like the normal flow.
+func installCompiledBinary(binary string) error {
+	var destination string
 	var err error
 	switch runtime.GOOS {
 	case "windows":
-		destino, err = instalarWindows(binario)
+		destination, err = installWindows(binary)
 	default:
-		destino, err = instalarLinux(binario)
+		destination, err = installLinux(binary)
 	}
 	if err != nil {
 		return err
 	}
 
-	if err := crearConfiguracionGlobal(); err != nil {
+	if err := createGlobalConfig(); err != nil {
 		return err
 	}
 
-	fmt.Printf("✅ Instalado en: %s (vía go install)\n", destino)
+	fmt.Printf("✅ Installed at: %s (via go install)\n", destination)
 	return nil
 }
 
-// goEnvGOPATH devuelve el GOPATH configurado.
+// goEnvGOPATH returns the configured GOPATH.
 func goEnvGOPATH() (string, error) {
 	cmd := exec.Command("go", "env", "GOPATH")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("no se pudo consultar GOPATH: %w", err)
+		return "", fmt.Errorf("could not query GOPATH: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-// nombreBinarioGo devuelve el nombre del binario que genera go install.
-func nombreBinarioGo() string {
+// goBinaryName returns the name of the binary produced by go install.
+func goBinaryName() string {
 	if runtime.GOOS == "windows" {
 		return "sentinel.exe"
 	}
 	return "sentinel"
 }
 
-func rutaBinarioWindows(homeDir string) string {
+func windowsBinaryPath(homeDir string) string {
 	return filepath.Join(homeDir, ".vas_sentinel", "bin", "sentinel.exe")
 }
 
-func instalarWindows(tmpPath string) (string, error) {
+func installWindows(tmpPath string) (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("no se pudo identificar el directorio del usuario: %w", err)
+		return "", fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
 	dir := filepath.Join(homeDir, ".vas_sentinel", "bin")
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("no se pudo crear el directorio %s: %w", dir, err)
+		return "", fmt.Errorf("could not create the directory %s: %w", dir, err)
 	}
 
-	destino := rutaBinarioWindows(homeDir)
-	if err := moverYReemplazar(tmpPath, destino); err != nil {
-		return "", fmt.Errorf("no se pudo instalar el binario en %s: %w", destino, err)
+	destination := windowsBinaryPath(homeDir)
+	if err := moveAndReplace(tmpPath, destination); err != nil {
+		return "", fmt.Errorf("could not install the binary at %s: %w", destination, err)
 	}
 
-	if err := anadirPathWindows(dir); err != nil {
+	if err := addWindowsPath(dir); err != nil {
 		return "", err
 	}
 
-	return destino, nil
+	return destination, nil
 }
 
-func necesitaAnadirPathWindows(pathActual string, dir string) bool {
-	return !strings.Contains(pathActual, dir)
+func needsWindowsPathUpdate(currentPath string, dir string) bool {
+	return !strings.Contains(currentPath, dir)
 }
 
-func anadirPathWindows(dir string) error {
-	pathActual, err := obtenerPathUsuarioWindows()
+func addWindowsPath(dir string) error {
+	currentPath, err := windowsUserPath()
 	if err != nil {
 		return err
 	}
-	if !necesitaAnadirPathWindows(pathActual, dir) {
+	if !needsWindowsPathUpdate(currentPath, dir) {
 		return nil
 	}
 
-	nuevoPath := pathActual + ";" + dir
-	comando := fmt.Sprintf("[Environment]::SetEnvironmentVariable('Path', '%s', 'User')", nuevoPath)
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", comando)
+	newPath := currentPath + ";" + dir
+	command := fmt.Sprintf("[Environment]::SetEnvironmentVariable('Path', '%s', 'User')", newPath)
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", command)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("no se pudo añadir %s al PATH de usuario: %w", dir, err)
+		return fmt.Errorf("could not add %s to the user PATH: %w", dir, err)
 	}
 
-	fmt.Printf("🛣️ Ruta añadida al PATH de usuario: %s\n", dir)
+	fmt.Printf("🛣️ Path added to the user PATH: %s\n", dir)
+
 	return nil
 }
 
-func obtenerPathUsuarioWindows() (string, error) {
+func windowsUserPath() (string, error) {
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path','User')")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("no se pudo consultar el PATH de usuario: %w", err)
+		return "", fmt.Errorf("could not query the user PATH: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-func rutaBinarioLinux() string {
+func linuxBinaryPath() string {
 	return "/usr/local/bin/sentinel"
 }
 
-func instalarLinux(tmpPath string) (string, error) {
-	destino := rutaBinarioLinux()
+func installLinux(tmpPath string) (string, error) {
+	destination := linuxBinaryPath()
 
-	if err := moverYReemplazar(tmpPath, destino); err != nil {
-		if err := ejecutarSudoMV(tmpPath, destino); err != nil {
-			return "", fmt.Errorf("no se pudo instalar el binario en %s. Ejecuta la instalación con permisos de superusuario (por ejemplo: 'sudo mv %s %s' y luego 'sudo chmod 0755 %s'): %w", destino, tmpPath, destino, destino, err)
+	if err := moveAndReplace(tmpPath, destination); err != nil {
+		if err := runSudoMove(tmpPath, destination); err != nil {
+			return "", fmt.Errorf("could not install the binary at %s. Run the installation with superuser permissions (for example: 'sudo mv %s %s' and then 'sudo chmod 0755 %s'): %w", destination, tmpPath, destination, destination, err)
 		}
 	}
 
-	if err := os.Chmod(destino, 0755); err != nil {
-		if err := ejecutarSudoChmod(destino); err != nil {
-			return "", fmt.Errorf("no se pudieron asignar permisos de ejecución a %s: %w", destino, err)
+	if err := os.Chmod(destination, 0755); err != nil {
+		if err := runSudoChmod(destination); err != nil {
+			return "", fmt.Errorf("could not grant execution permissions to %s: %w", destination, err)
 		}
 	}
 
-	if err := anadirRutaShell(); err != nil {
+	if err := addShellPathBlock(); err != nil {
 		return "", err
 	}
 
-	return destino, nil
+	return destination, nil
 }
 
-func ejecutarSudoMV(origen string, destino string) error {
-	cmd := exec.Command("sudo", "mv", origen, destino)
+func runSudoMove(source string, destination string) error {
+	cmd := exec.Command("sudo", "mv", source, destination)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("falló el intento con sudo de mover el binario: %w", err)
+		return fmt.Errorf("the sudo attempt to move the binary failed: %w", err)
 	}
 	return nil
 }
 
-func ejecutarSudoChmod(destino string) error {
-	cmd := exec.Command("sudo", "chmod", "0755", destino)
+func runSudoChmod(destination string) error {
+	cmd := exec.Command("sudo", "chmod", "0755", destination)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("falló el intento con sudo de asignar permisos: %w", err)
+		return fmt.Errorf("the sudo attempt to grant permissions failed: %w", err)
 	}
 	return nil
 }
 
-func anadirRutaShell() error {
+func addShellPathBlock() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("no se pudo identificar el directorio del usuario: %w", err)
+		return fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
 	zshrc := filepath.Join(homeDir, ".zshrc")
 	bashrc := filepath.Join(homeDir, ".bashrc")
 
-	rutas := make([]string, 0, 2)
-	if existeArchivo(zshrc) {
-		rutas = append(rutas, zshrc)
+	paths := make([]string, 0, 2)
+	if fileExists(zshrc) {
+		paths = append(paths, zshrc)
 	}
-	if existeArchivo(bashrc) {
-		rutas = append(rutas, bashrc)
+	if fileExists(bashrc) {
+		paths = append(paths, bashrc)
 	}
-	if len(rutas) == 0 {
-		rutas = append(rutas, zshrc)
+	if len(paths) == 0 {
+		paths = append(paths, zshrc)
 	}
 
-	const linea = `export PATH="/usr/local/bin:$PATH"`
+	const line = `export PATH="/usr/local/bin:$PATH"`
 
-	for _, ruta := range rutas {
-		contenido, err := os.ReadFile(ruta)
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("no se pudo leer %s: %w", ruta, err)
+			return fmt.Errorf("could not read %s: %w", path, err)
 		}
-		if strings.Contains(string(contenido), linea) {
+		if strings.Contains(string(content), line) {
 			continue
 		}
 
-		bloque := fmt.Sprintf("\n# VAS Sentinel\nexport PATH=\"/usr/local/bin:$PATH\"\n")
-		f, err := os.OpenFile(ruta, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		block := fmt.Sprintf("\n# VAS Sentinel\nexport PATH=\"/usr/local/bin:$PATH\"\n")
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			return fmt.Errorf("no se pudo actualizar %s: %w", ruta, err)
+			return fmt.Errorf("could not update %s: %w", path, err)
 		}
-		if _, err := f.WriteString(bloque); err != nil {
+		if _, err := f.WriteString(block); err != nil {
 			f.Close()
-			return fmt.Errorf("no se pudo escribir en %s: %w", ruta, err)
+			return fmt.Errorf("could not write to %s: %w", path, err)
 		}
 		f.Close()
 	}
@@ -398,68 +401,70 @@ func anadirRutaShell() error {
 	return nil
 }
 
-func existeArchivo(ruta string) bool {
-	info, err := os.Stat(ruta)
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
 
-// EstaInicializado indica si el worktree tiene la configuración per-proyecto
-// (.vas_sentinel/vassentinel.yml), es decir, si ya pasó por 'sentinel init'.
-func EstaInicializado(worktreePath string) bool {
-	ruta := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
-	return existeArchivo(ruta)
+// IsInitialized reports whether the worktree has the per-project
+// configuration (.vas_sentinel/vassentinel.yml), that is, whether it already
+// went through 'sentinel init'.
+func IsInitialized(worktreePath string) bool {
+	path := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
+	return fileExists(path)
 }
 
-// crearConfiguracionGlobal materializa el archivo de configuración global en
-// ~/.vas_sentinel/vassentinel.yml si todavía no existe. No lo sobreescribe.
-func crearConfiguracionGlobal() error {
+// createGlobalConfig materializes the global configuration file in
+// ~/.vas_sentinel/vassentinel.yml if it does not exist yet. It does not
+// overwrite it.
+func createGlobalConfig() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("no se pudo identificar el directorio del usuario: %w", err)
+		return fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
 	dir := filepath.Join(homeDir, ".vas_sentinel")
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("no se pudo crear el directorio %s: %w", dir, err)
+		return fmt.Errorf("could not create the directory %s: %w", dir, err)
 	}
 
-	ruta := filepath.Join(dir, "vassentinel.yml")
-	if existeArchivo(ruta) {
+	path := filepath.Join(dir, "vassentinel.yml")
+	if fileExists(path) {
 		return nil
 	}
-	if err := os.WriteFile(ruta, []byte(archivoConfiguracionBase), 0644); err != nil {
-		return fmt.Errorf("no se pudo crear el archivo de configuración global %s: %w", ruta, err)
+	if err := os.WriteFile(path, []byte(globalConfigTemplate), 0644); err != nil {
+		return fmt.Errorf("could not create the global configuration file %s: %w", path, err)
 	}
 	return nil
 }
 
-// CrearConfiguracionPerProyecto materializa el archivo de configuración
-// per-proyecto en <worktree>/.vas_sentinel/vassentinel.yml si todavía no
-// existe. No lo sobreescribe.
-func CrearConfiguracionPerProyecto(worktreePath string) error {
-	ruta := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
-	if existeArchivo(ruta) {
+// CreatePerProjectConfig materializes the per-project configuration file in
+// <worktree>/.vas_sentinel/vassentinel.yml if it does not exist yet. It does
+// not overwrite it.
+func CreatePerProjectConfig(worktreePath string) error {
+	path := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
+	if fileExists(path) {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
-		return fmt.Errorf("no se pudo crear el directorio %s: %w", filepath.Dir(ruta), err)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("could not create the directory %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(ruta, []byte(archivoConfiguracionPerProyectoBase), 0644); err != nil {
-		return fmt.Errorf("no se pudo crear el archivo de configuración per-proyecto %s: %w", ruta, err)
+	if err := os.WriteFile(path, []byte(perProjectConfigTemplate), 0644); err != nil {
+		return fmt.Errorf("could not create the per-project configuration file %s: %w", path, err)
 	}
 	return nil
 }
 
-func moverYReemplazar(origen string, destino string) error {
-	if err := os.Rename(origen, destino); err == nil {
+func moveAndReplace(source string, destination string) error {
+	if err := os.Rename(source, destination); err == nil {
 		return nil
 	}
-	contenido, err := os.ReadFile(origen)
+	content, err := os.ReadFile(source)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(destino, contenido, 0755); err != nil {
+	if err := os.WriteFile(destination, content, 0755); err != nil {
 		return err
 	}
-	return os.Remove(origen)
+	return os.Remove(source)
 }

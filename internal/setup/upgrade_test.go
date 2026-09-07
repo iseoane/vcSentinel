@@ -8,197 +8,198 @@ import (
 	"testing"
 )
 
-func TestReemplazarWindows(t *testing.T) {
+func TestReplaceWindowsBinary(t *testing.T) {
 	dir := t.TempDir()
-	binarioActual := filepath.Join(dir, "sentinel.exe")
-	tmpPath := filepath.Join(dir, "nuevo.exe")
+	currentBinary := filepath.Join(dir, "sentinel.exe")
+	tmpPath := filepath.Join(dir, "new.exe")
 
-	if err := os.WriteFile(binarioActual, []byte("version-vieja"), 0644); err != nil {
+	if err := os.WriteFile(currentBinary, []byte("version-old"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmpPath, []byte("version-nueva"), 0644); err != nil {
+	if err := os.WriteFile(tmpPath, []byte("version-new"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	respaldo, err := reemplazarWindows(tmpPath, binarioActual)
+	backup, err := replaceWindowsBinary(tmpPath, currentBinary)
 	if err != nil {
-		t.Fatalf("reemplazarWindows devolvió error: %v", err)
+		t.Fatalf("replaceWindowsBinary returned error: %v", err)
 	}
-	if respaldo != binarioActual+".old" {
-		t.Errorf("respaldo = %q, esperado %q", respaldo, binarioActual+".old")
+	if backup != currentBinary+".old" {
+		t.Errorf("backup = %q, want %q", backup, currentBinary+".old")
 	}
 
-	contenido, err := os.ReadFile(binarioActual)
+	content, err := os.ReadFile(currentBinary)
 	if err != nil {
-		t.Fatalf("no se pudo leer el binario actual: %v", err)
+		t.Fatalf("could not read the current binary: %v", err)
 	}
-	if string(contenido) != "version-nueva" {
-		t.Errorf("el binario actual no fue reemplazado, obtuve %q", contenido)
+	if string(content) != "version-new" {
+		t.Errorf("the current binary was not replaced, got %q", content)
 	}
 
-	if _, err := os.Stat(respaldo); !os.IsNotExist(err) {
-		t.Errorf("el respaldo %s debería haberse limpiado, err=%v", respaldo, err)
+	if _, err := os.Stat(backup); !os.IsNotExist(err) {
+		t.Errorf("the backup %s should have been cleaned up, err=%v", backup, err)
 	}
 }
 
-func TestReemplazarLinux(t *testing.T) {
+func TestReplaceLinuxBinary(t *testing.T) {
 	dir := t.TempDir()
-	binarioActual := filepath.Join(dir, "sentinel")
-	tmpPath := filepath.Join(dir, "nuevo")
+	currentBinary := filepath.Join(dir, "sentinel")
+	tmpPath := filepath.Join(dir, "new")
 
-	if err := os.WriteFile(binarioActual, []byte("version-vieja"), 0644); err != nil {
+	if err := os.WriteFile(currentBinary, []byte("version-old"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmpPath, []byte("version-nueva"), 0755); err != nil {
+	if err := os.WriteFile(tmpPath, []byte("version-new"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := reemplazarLinux(tmpPath, binarioActual); err != nil {
-		t.Fatalf("reemplazarLinux devolvió error: %v", err)
+	if err := replaceLinuxBinary(tmpPath, currentBinary); err != nil {
+		t.Fatalf("replaceLinuxBinary returned error: %v", err)
 	}
 
-	contenido, err := os.ReadFile(binarioActual)
+	content, err := os.ReadFile(currentBinary)
 	if err != nil {
-		t.Fatalf("no se pudo leer el binario actual: %v", err)
+		t.Fatalf("could not read the current binary: %v", err)
 	}
-	if string(contenido) != "version-nueva" {
-		t.Errorf("el binario no fue reemplazado, obtuve %q", contenido)
+	if string(content) != "version-new" {
+		t.Errorf("the binary was not replaced, got %q", content)
 	}
 
 	if runtime.GOOS != "windows" {
-		info, err := os.Stat(binarioActual)
+		info, err := os.Stat(currentBinary)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if perm := info.Mode().Perm(); perm != 0755 {
-			t.Errorf("permisos esperados 0755, obtuve %o", perm)
+			t.Errorf("expected permissions 0755, got %o", perm)
 		}
 	}
 }
 
-func TestReemplazarWindowsRespaldoInexistente(t *testing.T) {
+func TestReplaceWindowsBinaryWithoutBackup(t *testing.T) {
 	dir := t.TempDir()
-	binarioActual := filepath.Join(dir, "sentinel.exe")
-	tmpPath := filepath.Join(dir, "nuevo.exe")
+	currentBinary := filepath.Join(dir, "sentinel.exe")
+	tmpPath := filepath.Join(dir, "new.exe")
 
-	if err := os.WriteFile(tmpPath, []byte("version-nueva"), 0644); err != nil {
+	if err := os.WriteFile(tmpPath, []byte("version-new"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := reemplazarWindows(tmpPath, binarioActual)
+	_, err := replaceWindowsBinary(tmpPath, currentBinary)
 	if err == nil {
-		t.Fatalf("se esperaba error cuando el binario actual no existe")
+		t.Fatalf("expected error when the current binary does not exist")
 	}
-	if !strings.Contains(err.Error(), "respaldar") {
-		t.Errorf("el error debe mencionar el respaldo, obtuve: %v", err)
+	if !strings.Contains(err.Error(), "back up") {
+		t.Errorf("the error must mention the backup, got: %v", err)
 	}
 }
 
-func TestReemplazarWindowsInstalacionFallidaRestauraRespaldo(t *testing.T) {
+func TestReplaceWindowsBinaryFailureRestoresBackup(t *testing.T) {
 	dir := t.TempDir()
-	binarioActual := filepath.Join(dir, "sentinel.exe")
+	currentBinary := filepath.Join(dir, "sentinel.exe")
 
-	if err := os.WriteFile(binarioActual, []byte("version-vieja"), 0644); err != nil {
+	if err := os.WriteFile(currentBinary, []byte("version-old"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// tmpPath no existe: falla el segundo rename y debe restaurarse el respaldo.
-	tmpPath := filepath.Join(dir, "inexistente.exe")
-	_, err := reemplazarWindows(tmpPath, binarioActual)
+	// tmpPath does not exist: the second rename fails and the backup must be
+	// restored.
+	tmpPath := filepath.Join(dir, "nonexistent.exe")
+	_, err := replaceWindowsBinary(tmpPath, currentBinary)
 	if err == nil {
-		t.Fatalf("se esperaba error al instalar la nueva versión")
+		t.Fatalf("expected error when installing the new version")
 	}
-	if !strings.Contains(err.Error(), "instalar") {
-		t.Errorf("el error debe mencionar la instalación, obtuve: %v", err)
+	if !strings.Contains(err.Error(), "install") {
+		t.Errorf("the error must mention the installation, got: %v", err)
 	}
 
-	contenido, err := os.ReadFile(binarioActual)
+	content, err := os.ReadFile(currentBinary)
 	if err != nil {
-		t.Fatalf("el binario actual debería existir de nuevo: %v", err)
+		t.Fatalf("the current binary should exist again: %v", err)
 	}
-	if string(contenido) != "version-vieja" {
-		t.Errorf("el binario actual no fue restaurado, obtuve %q", contenido)
+	if string(content) != "version-old" {
+		t.Errorf("the current binary was not restored, got %q", content)
 	}
 }
 
-func TestReemplazarLinuxErrorAlSustituir(t *testing.T) {
+func TestReplaceLinuxBinaryReplaceError(t *testing.T) {
 	dir := t.TempDir()
-	binarioActual := filepath.Join(dir, "sentinel")
-	tmpPath := filepath.Join(dir, "nuevo")
+	currentBinary := filepath.Join(dir, "sentinel")
+	tmpPath := filepath.Join(dir, "new")
 
-	if err := os.Mkdir(binarioActual, 0755); err != nil {
+	if err := os.Mkdir(currentBinary, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmpPath, []byte("version-nueva"), 0755); err != nil {
+	if err := os.WriteFile(tmpPath, []byte("version-new"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	err := reemplazarLinux(tmpPath, binarioActual)
+	err := replaceLinuxBinary(tmpPath, currentBinary)
 	if err == nil {
-		t.Fatalf("se esperaba error al reemplazar sobre un directorio")
+		t.Fatalf("expected error when replacing over a directory")
 	}
-	if !strings.Contains(err.Error(), "reemplazar") {
-		t.Errorf("el error debe mencionar el reemplazo, obtuve: %v", err)
+	if !strings.Contains(err.Error(), "replace") {
+		t.Errorf("the error must mention the replacement, got: %v", err)
 	}
 }
 
-func TestVerificarBinario(t *testing.T) {
+func TestVerifyBinary(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, "sentinel")
+	path := filepath.Join(dir, "sentinel")
 	if runtime.GOOS == "windows" {
-		ruta += ".cmd"
-		if err := os.WriteFile(ruta, []byte("@echo off\r\necho v1.2.3\r\n"), 0755); err != nil {
+		path += ".cmd"
+		if err := os.WriteFile(path, []byte("@echo off\r\necho v1.2.3\r\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		if err := os.WriteFile(ruta, []byte("#!/bin/sh\necho v1.2.3\n"), 0755); err != nil {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho v1.2.3\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(ruta, 0755); err != nil {
+		if err := os.Chmod(path, 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := verificarBinario(ruta); err != nil {
-		t.Fatalf("verificarBinario devolvió error: %v", err)
+	if err := verifyBinary(path); err != nil {
+		t.Fatalf("verifyBinary returned error: %v", err)
 	}
 }
 
-func TestVerificarBinarioQueFalla(t *testing.T) {
+func TestVerifyBinaryFailure(t *testing.T) {
 	dir := t.TempDir()
-	ruta := filepath.Join(dir, "sentinel")
+	path := filepath.Join(dir, "sentinel")
 	if runtime.GOOS == "windows" {
-		ruta += ".cmd"
-		if err := os.WriteFile(ruta, []byte("@echo off\r\nexit /b 1\r\n"), 0755); err != nil {
+		path += ".cmd"
+		if err := os.WriteFile(path, []byte("@echo off\r\nexit /b 1\r\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		if err := os.WriteFile(ruta, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(ruta, 0755); err != nil {
+		if err := os.Chmod(path, 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	err := verificarBinario(ruta)
+	err := verifyBinary(path)
 	if err == nil {
-		t.Fatalf("se esperaba error cuando el binario no responde a --version")
+		t.Fatalf("expected error when the binary does not answer --version")
 	}
 	if !strings.Contains(err.Error(), "--version") {
-		t.Errorf("el error debe mencionar --version, obtuve: %v", err)
+		t.Errorf("the error must mention --version, got: %v", err)
 	}
 }
 
-func TestLocalizarBinarioActual(t *testing.T) {
-	ruta, err := localizarBinarioActual()
+func TestLocateCurrentBinary(t *testing.T) {
+	path, err := locateCurrentBinary()
 	if err != nil {
-		t.Fatalf("localizarBinarioActual devolvió error: %v", err)
+		t.Fatalf("locateCurrentBinary returned error: %v", err)
 	}
-	if ruta == "" {
-		t.Error("localizarBinarioActual devolvió una ruta vacía")
+	if path == "" {
+		t.Error("locateCurrentBinary returned an empty path")
 	}
-	if _, err := os.Stat(ruta); err != nil {
-		t.Errorf("la ruta devuelta no existe: %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the returned path does not exist: %v", err)
 	}
 }
