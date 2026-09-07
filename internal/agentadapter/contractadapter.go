@@ -1,32 +1,32 @@
 package agentadapter
 
 type AgentAdapter interface {
-	ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error)
+	GetCommitMessage(paths []string, layer string, batchNum int) (string, error)
 }
 
-// AdaptadorPrompt es la interfaz mínima para ejecutar un prompt arbitrario
-// contra el agente. La usa el motor de auditoría y la satisfacen tanto
-// CLIAdapter como CadenaAdaptador.
-type AdaptadorPrompt interface {
-	EjecutarPrompt(prompt string) (string, error)
+// PromptAdapter is the minimal interface to run an arbitrary prompt against
+// the agent. The audit engine uses it and both CLIAdapter and AdapterChain
+// satisfy it.
+type PromptAdapter interface {
+	RunPrompt(prompt string) (string, error)
 }
 
-// AdapterConDiff es una interfaz opcional que un adaptador puede implementar
-// para recibir el micro-diff exacto de la zona de preparación (git diff --cached)
-// antes de generar el mensaje de commit. Si el adaptador no la implementa,
-// el motor de slice usa la interfaz AgentAdapter base.
-type AdapterConDiff interface {
-	ObtenerMensajeCommitConDiff(rutasArchivos []string, capa string, batchNum int, diff string) (string, error)
+// AdapterWithDiff is an optional interface an adapter may implement to receive
+// the exact micro-diff of the staging area (git diff --cached) before
+// generating the commit message. If the adapter does not implement it, the
+// slice engine falls back to the base AgentAdapter interface.
+type AdapterWithDiff interface {
+	GetCommitMessageWithDiff(paths []string, layer string, batchNum int, diff string) (string, error)
 }
 
-// AdapterRefactor es una interfaz opcional que un adaptador puede implementar
-// para refactorizar un archivo de código masivo (violación potencial de SRP):
-// primero propone un plan de división y luego puede aplicarlo editando el
-// working tree (sin hacer commits).
+// AdapterRefactor is an optional interface an adapter may implement to
+// refactor a massive code file (potential SRP violation): it first proposes a
+// split plan and then may apply it by editing the working tree (without
+// committing).
 type AdapterRefactor interface {
-	// ProponerPlanRefactor devuelve el plan de división en texto plano.
-	ProponerPlanRefactor(rutaArchivo string) (string, error)
-	// AplicarPlanRefactor ordena al agente ejecutar el plan directamente sobre
-	// el working tree y devuelve un resumen breve de los cambios aplicados.
-	AplicarPlanRefactor(rutaArchivo string, plan string) (string, error)
+	// ProposeRefactorPlan returns the split plan as plain text.
+	ProposeRefactorPlan(filePath string) (string, error)
+	// ApplyRefactorPlan orders the agent to run the plan directly on the
+	// working tree and returns a brief summary of the applied changes.
+	ApplyRefactorPlan(filePath string, plan string) (string, error)
 }

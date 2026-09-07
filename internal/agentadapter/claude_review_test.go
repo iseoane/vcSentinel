@@ -213,7 +213,7 @@ func TestClaudeReviewTextParityWithPlainTextBaseline(t *testing.T) {
 // replaying the redacted probe fixture: the review invocation must request
 // --output-format json, the child must not run in the audited repository
 // (claude runs with the snapshot as its cwd; the positive cwd==snapshot
-// assertion lives in reviewer_test.go's TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd),
+// assertion lives in reviewer_test.go's TestRunReviewClaudeUsesSnapshotDirAsCwd),
 // the wire observations must land in
 // acpadapter.Result with configured declarations in Requested* and empty
 // Observed* (the result object exposes no top-level identity), and the
@@ -223,11 +223,11 @@ func TestClaudeReviewResultReportsWireObservations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not get the current directory: %v", err)
 	}
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
 	adapter := CLIAdapter{
-		BinaryName: compilarAgenteConNombre(t, "claude"),
+		BinaryName: compileAgentBinary(t, "claude"),
 		Config:     config.AgentConfig{Model: "claude-haiku-4-5"},
 		Timeout:    10 * time.Second,
 	}
@@ -255,15 +255,15 @@ func TestClaudeReviewResultReportsWireObservations(t *testing.T) {
 		t.Errorf("observed identity = %q/%q, want empty (the result object exposes none)", result.ObservedModel, result.ObservedEffort)
 	}
 
-	captura := leerCapturaAgente(t, capturaRuta)
-	if len(captura.Args) < 2 || !reflect.DeepEqual(captura.Args[len(captura.Args)-2:], []string{"--output-format", "json"}) {
-		t.Errorf("args = %v, want the review invocation to end with --output-format json", captura.Args)
+	capture := readAgentCapture(t, capturePath)
+	if len(capture.Args) < 2 || !reflect.DeepEqual(capture.Args[len(capture.Args)-2:], []string{"--output-format", "json"}) {
+		t.Errorf("args = %v, want the review invocation to end with --output-format json", capture.Args)
 	}
 	// Claude has no --dir flag; this asserts only that the child did NOT run
 	// in the audited repository. The positive cwd==snapshot assertion lives
-	// in reviewer_test.go's TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd.
-	if mismaRuta(captura.Dir, repoCwd) {
-		t.Errorf("cmd.Dir = %q, expected the isolated snapshot directory, not the repository", captura.Dir)
+	// in reviewer_test.go's TestRunReviewClaudeUsesSnapshotDirAsCwd.
+	if samePath(capture.Dir, repoCwd) {
+		t.Errorf("cmd.Dir = %q, expected the isolated snapshot directory, not the repository", capture.Dir)
 	}
 
 	output, err := adapter.ReviewWithContext(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})

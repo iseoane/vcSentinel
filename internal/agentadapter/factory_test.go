@@ -11,7 +11,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-func TestNuevoAdaptadorConPerfilExplicito(t *testing.T) {
+func TestNewAdapterWithProfileExplicit(t *testing.T) {
 	cfg := config.Config{
 		ActiveAgent: "opencode",
 		Agents: map[string]config.AgentConfig{
@@ -23,27 +23,27 @@ func TestNuevoAdaptadorConPerfilExplicito(t *testing.T) {
 		Review: config.ReviewConfig{Timeout: 30 * time.Second, Parallel: 2},
 	}
 
-	profile := config.ResolverPerfil(cfg, "deep", "")
-	adapter, err := NuevoAdaptadorConPerfil(cfg, profile)
+	profile := config.ResolveProfile(cfg, "deep", "")
+	adapter, err := NewAdapterWithProfile(cfg, profile)
 	if err != nil {
-		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
+		t.Fatalf("NewAdapterWithProfile returned an error: %v", err)
 	}
 	cli, ok := adapter.(*CLIAdapter)
 	if !ok {
-		t.Fatalf("camino concreto: se esperaba *CLIAdapter, obtuve %T", adapter)
+		t.Fatalf("concrete path: want *CLIAdapter, got %T", adapter)
 	}
-	if cli.nombreBase() != "opencode" {
-		t.Errorf("binario = %q, esperado opencode", cli.BinaryName)
+	if cli.baseName() != "opencode" {
+		t.Errorf("binary = %q, want opencode", cli.BinaryName)
 	}
 	if cli.Config.Model != "claude-sonnet" || cli.Config.ReasoningEffort != "max" {
-		t.Errorf("config = %+v, esperado claude-sonnet/max del perfil", cli.Config)
+		t.Errorf("config = %+v, want the profile's claude-sonnet/max", cli.Config)
 	}
 	if cli.Timeout != 30*time.Second {
-		t.Errorf("timeout = %v, esperado 30s de review.timeout", cli.Timeout)
+		t.Errorf("timeout = %v, want 30s from review.timeout", cli.Timeout)
 	}
 }
 
-func TestNuevoAdaptadorConPerfilHeredaDelAgente(t *testing.T) {
+func TestNewAdapterWithProfileInheritsFromAgent(t *testing.T) {
 	cfg := config.Config{
 		ActiveAgent: "claude",
 		Agents: map[string]config.AgentConfig{
@@ -55,24 +55,24 @@ func TestNuevoAdaptadorConPerfilHeredaDelAgente(t *testing.T) {
 		Review: config.ReviewConfig{},
 	}
 
-	profile := config.ResolverPerfil(cfg, "normal", "")
-	adapter, err := NuevoAdaptadorConPerfil(cfg, profile)
+	profile := config.ResolveProfile(cfg, "normal", "")
+	adapter, err := NewAdapterWithProfile(cfg, profile)
 	if err != nil {
-		t.Fatalf("NuevoAdaptadorConPerfil devolvió error: %v", err)
+		t.Fatalf("NewAdapterWithProfile returned an error: %v", err)
 	}
 	cli, ok := adapter.(*CLIAdapter)
 	if !ok {
-		t.Fatalf("camino concreto: se esperaba *CLIAdapter, obtuve %T", adapter)
+		t.Fatalf("concrete path: want *CLIAdapter, got %T", adapter)
 	}
-	if cli.nombreBase() != "claude" {
-		t.Errorf("binario = %q, esperado claude (active_agent)", cli.BinaryName)
+	if cli.baseName() != "claude" {
+		t.Errorf("binary = %q, want claude (active_agent)", cli.BinaryName)
 	}
 	if cli.Config.Model != "claude-3-5-sonnet" {
-		t.Errorf("modelo = %q, esperado heredar del agente", cli.Config.Model)
+		t.Errorf("model = %q, want inherited from the agent", cli.Config.Model)
 	}
 }
 
-func TestNuevoAdaptadorSinAgentesEnPATH(t *testing.T) {
+func TestNewAdapterWithoutAgentsInPATH(t *testing.T) {
 	cfg := config.Config{
 		ActiveAgent: "auto",
 		Agents: map[string]config.AgentConfig{
@@ -82,16 +82,16 @@ func TestNuevoAdaptadorSinAgentesEnPATH(t *testing.T) {
 		Review:   config.ReviewConfig{},
 	}
 
-	profile := config.ResolverPerfil(cfg, "normal", "")
-	if adapter, err := NuevoAdaptadorConPerfil(cfg, profile); err == nil || adapter != nil {
-		t.Errorf("sin agentes en el PATH se esperaba un error explícito, obtuve %T/%v", adapter, err)
+	profile := config.ResolveProfile(cfg, "normal", "")
+	if adapter, err := NewAdapterWithProfile(cfg, profile); err == nil || adapter != nil {
+		t.Errorf("without agents on the PATH an explicit error was expected, got %T/%v", adapter, err)
 	}
 }
 
-// TestConstruirCadenaPerfil verifica que el camino auto construye una cadena
-// con un adaptador por agente disponible, en el orden recibido, y que cada uno
-// lleva el modelo/esfuerzo de SU perfil anidado (no el del perfil resuelto).
-func TestConstruirCadenaPerfil(t *testing.T) {
+// TestBuildChainProfile verifies the auto path builds a chain with one adapter
+// per available agent, in the received order, and that each one carries the
+// model/effort of ITS nested profile (not the resolved profile's).
+func TestBuildChainProfile(t *testing.T) {
 	cfg := config.Config{
 		AgentOrder: []string{"claude", "opencode"},
 		Agents: map[string]config.AgentConfig{
@@ -112,70 +112,72 @@ func TestConstruirCadenaPerfil(t *testing.T) {
 		},
 		Review: config.ReviewConfig{Timeout: 45 * time.Second},
 	}
-	perfil := config.PerfilResuelto{Nombre: "normal", Binario: "auto"}
+	profile := config.ResolvedProfile{Name: "normal", Binary: "auto"}
 
-	cadena, err := construirCadenaPerfil(cfg, []string{"claude", "opencode"}, perfil)
+	chain, err := buildChainProfile(cfg, []string{"claude", "opencode"}, profile)
 	if err != nil {
-		t.Fatalf("construirCadenaPerfil devolvió error: %v", err)
+		t.Fatalf("buildChainProfile returned an error: %v", err)
 	}
-	if len(cadena.adaptadores) != 2 {
-		t.Fatalf("la cadena tiene %d adaptadores, esperado 2", len(cadena.adaptadores))
+	if len(chain.adapters) != 2 {
+		t.Fatalf("the chain has %d adapters, want 2", len(chain.adapters))
 	}
 
-	claude, ok := cadena.adaptadores[0].(*CLIAdapter)
+	claude, ok := chain.adapters[0].(*CLIAdapter)
 	if !ok {
-		t.Fatalf("adaptador[0] = %T, esperado *CLIAdapter", cadena.adaptadores[0])
+		t.Fatalf("adapter[0] = %T, want *CLIAdapter", chain.adapters[0])
 	}
-	if claude.nombreBase() != "claude" {
-		t.Errorf("adaptador[0] binario = %q, esperado claude", claude.BinaryName)
+	if claude.baseName() != "claude" {
+		t.Errorf("adapter[0] binary = %q, want claude", claude.BinaryName)
 	}
-	// El perfil normal de claude define solo esfuerzo: hereda el modelo del agente.
+	// claude's normal profile defines only the effort: the model is inherited
+	// from the agent.
 	if claude.Config.Model != "claude-5-sonnet" || claude.Config.ReasoningEffort != "low" {
-		t.Errorf("claude config = %+v, esperado modelo del agente + low del perfil", claude.Config)
+		t.Errorf("claude config = %+v, want the agent's model + the profile's low", claude.Config)
 	}
 	if claude.Timeout != 45*time.Second {
-		t.Errorf("claude timeout = %v, esperado 45s", claude.Timeout)
+		t.Errorf("claude timeout = %v, want 45s", claude.Timeout)
 	}
 
-	opencode, ok := cadena.adaptadores[1].(*CLIAdapter)
+	opencode, ok := chain.adapters[1].(*CLIAdapter)
 	if !ok {
-		t.Fatalf("adaptador[1] = %T, esperado *CLIAdapter", cadena.adaptadores[1])
+		t.Fatalf("adapter[1] = %T, want *CLIAdapter", chain.adapters[1])
 	}
-	if opencode.nombreBase() != "opencode" {
-		t.Errorf("adaptador[1] binario = %q, esperado opencode", opencode.BinaryName)
+	if opencode.baseName() != "opencode" {
+		t.Errorf("adapter[1] binary = %q, want opencode", opencode.BinaryName)
 	}
-	// El perfil normal de opencode define solo modelo: hereda el esfuerzo del agente.
+	// opencode's normal profile defines only the model: the effort is
+	// inherited from the agent.
 	if opencode.Config.Model != "deepseek-mini" || opencode.Config.ReasoningEffort != "max" {
-		t.Errorf("opencode config = %+v, esperado deepseek-mini del perfil + max del agente", opencode.Config)
+		t.Errorf("opencode config = %+v, want the profile's deepseek-mini + the agent's max", opencode.Config)
 	}
 	if opencode.Timeout != 45*time.Second {
-		t.Errorf("opencode timeout = %v, esperado 45s", opencode.Timeout)
+		t.Errorf("opencode timeout = %v, want 45s", opencode.Timeout)
 	}
 }
 
-// TestNombresAgentesEnPATHConservaOrdenYml verifica que la selección de
-// agentes disponibles conserva el orden declarado en AgentOrder (en lugar del
-// orden alfabético anterior). Compila dos binarios con nombres de agente en un
-// directorio temporal para controlar el PATH.
-func TestNombresAgentesEnPATHConservaOrdenYml(t *testing.T) {
+// TestAgentNamesInPATHPreserveYmlOrder verifies the available-agent selection
+// keeps the order declared in AgentOrder (instead of the previous alphabetical
+// order). It compiles two binaries named after agents into a temporary
+// directory to control the PATH.
+func TestAgentNamesInPATHPreserveYmlOrder(t *testing.T) {
 	if testing.Short() {
-		t.Skip("salta la compilación de binarios en modo -short")
+		t.Skip("skips binary compilation in -short mode")
 	}
 	dir := t.TempDir()
-	compilarAgente := func(nombre string) {
+	compileAgent := func(name string) {
 		t.Helper()
-		exe := filepath.Join(dir, nombre)
+		exe := filepath.Join(dir, name)
 		if filepath.Ext(exe) == "" && os.PathSeparator == '\\' {
 			exe += ".exe"
 		}
 		cmd := exec.Command("go", "build", "-o", exe, ".")
 		cmd.Dir = filepath.Join("testdata", "sleeper")
-		if salida, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("no se pudo compilar el agente %s: %v\n%s", nombre, err, salida)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("could not compile agent %s: %v\n%s", name, err, output)
 		}
 	}
-	compilarAgente("claude")
-	compilarAgente("opencode")
+	compileAgent("claude")
+	compileAgent("opencode")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	cfg := config.Config{
@@ -185,17 +187,17 @@ func TestNombresAgentesEnPATHConservaOrdenYml(t *testing.T) {
 			"opencode": {},
 		},
 	}
-	obtenido := nombresAgentesEnPATH(cfg)
-	esperado := []string{"opencode", "claude"}
-	if !reflect.DeepEqual(obtenido, esperado) {
-		t.Errorf("nombresAgentesEnPATH = %v, esperado %v (orden del yml)", obtenido, esperado)
+	got := agentNamesInPATH(cfg)
+	want := []string{"opencode", "claude"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("agentNamesInPATH = %v, want %v (yml order)", got, want)
 	}
 }
 
-// TestNuevoAdaptadorMensajeUsaPerfilCommit verifica que el helper compartido,
-// en su variante "commit", aplica el perfil anidado de razonamiento bajo del
-// agente y hereda el modelo base cuando el perfil solo define el esfuerzo.
-func TestNuevoAdaptadorMensajeUsaPerfilCommit(t *testing.T) {
+// TestNewAdapterForMessageUsesCommitProfile verifies the shared helper, in its
+// "commit" variant, applies the agent's nested low-reasoning profile and
+// inherits the base model when the profile only defines the effort.
+func TestNewAdapterForMessageUsesCommitProfile(t *testing.T) {
 	cfg := config.Config{
 		ActiveAgent: "opencode",
 		Agents: map[string]config.AgentConfig{
@@ -209,30 +211,32 @@ func TestNuevoAdaptadorMensajeUsaPerfilCommit(t *testing.T) {
 		},
 	}
 
-	adapter, err := nuevoAdaptador(cfg, "opencode", "commit")
+	adapter, err := newAdapter(cfg, "opencode", "commit")
 	if err != nil {
-		t.Fatalf("nuevoAdaptador devolvió error: %v", err)
+		t.Fatalf("newAdapter returned an error: %v", err)
 	}
 	cli, ok := adapter.(*CLIAdapter)
 	if !ok {
-		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+		t.Fatalf("want *CLIAdapter, got %T", adapter)
 	}
-	if cli.nombreBase() != "opencode" {
-		t.Errorf("binario = %q, esperado opencode", cli.BinaryName)
+	if cli.baseName() != "opencode" {
+		t.Errorf("binary = %q, want opencode", cli.BinaryName)
 	}
-	// El perfil commit define solo reasoning_effort: el modelo se hereda del agente.
+	// The commit profile defines only reasoning_effort: the model is inherited
+	// from the agent.
 	if cli.Config.Model != "base" {
-		t.Errorf("modelo = %q, esperado heredar 'base' del agente", cli.Config.Model)
+		t.Errorf("model = %q, want inherited 'base' from the agent", cli.Config.Model)
 	}
 	if cli.Config.ReasoningEffort != "low" {
-		t.Errorf("esfuerzo = %q, esperado 'low' del perfil commit", cli.Config.ReasoningEffort)
+		t.Errorf("effort = %q, want 'low' from the commit profile", cli.Config.ReasoningEffort)
 	}
 }
 
-// TestNuevoAdaptadorMensajeSinPerfilCaeAlBase verifica la compatibilidad:
-// cuando el agente no define el perfil commit, el adaptador queda con la misma
-// configuración que devolvería NewAgentAdapterNamed (modelo/esfuerzo base).
-func TestNuevoAdaptadorMensajeSinPerfilCaeAlBase(t *testing.T) {
+// TestNewAdapterForMessageWithoutProfileFallsBackToBase verifies the
+// compatibility: when the agent does not define the commit profile, the
+// adapter keeps the same configuration NewAgentAdapterNamed would return
+// (base model/effort).
+func TestNewAdapterForMessageWithoutProfileFallsBackToBase(t *testing.T) {
 	cfg := config.Config{
 		ActiveAgent: "opencode",
 		Agents: map[string]config.AgentConfig{
@@ -240,35 +244,34 @@ func TestNuevoAdaptadorMensajeSinPerfilCaeAlBase(t *testing.T) {
 		},
 	}
 
-	adapter, err := nuevoAdaptador(cfg, "opencode", "commit")
+	adapter, err := newAdapter(cfg, "opencode", "commit")
 	if err != nil {
-		t.Fatalf("nuevoAdaptador devolvió error: %v", err)
+		t.Fatalf("newAdapter returned an error: %v", err)
 	}
 	cli, ok := adapter.(*CLIAdapter)
 	if !ok {
-		t.Fatalf("se esperaba *CLIAdapter, obtuve %T", adapter)
+		t.Fatalf("want *CLIAdapter, got %T", adapter)
 	}
-	esperado := cfg.Agents["opencode"]
-	if !reflect.DeepEqual(cli.Config, esperado) {
-		t.Errorf("config = %+v, esperado %+v (igual que el agente)", cli.Config, esperado)
+	want := cfg.Agents["opencode"]
+	if !reflect.DeepEqual(cli.Config, want) {
+		t.Errorf("config = %+v, want %+v (same as the agent)", cli.Config, want)
 	}
 }
 
-// TestNuevoAdaptadorMensajeAgenteInexistente verifica que la variante de
-// mensaje mantiene el error de NewAgentAdapterNamed para agentes no
-// configurados.
-func TestNuevoAdaptadorMensajeAgenteInexistente(t *testing.T) {
+// TestNewAdapterForMessageUnknownAgent verifies the message variant keeps
+// NewAgentAdapterNamed's error for unconfigured agents.
+func TestNewAdapterForMessageUnknownAgent(t *testing.T) {
 	cfg := config.Config{
 		ActiveAgent: "opencode",
 		Agents:      map[string]config.AgentConfig{"opencode": {Model: "base"}},
 	}
 
-	adapter, err := nuevoAdaptador(cfg, "agente-inexistente-xyz", "commit")
+	adapter, err := newAdapter(cfg, "agente-inexistente-xyz", "commit")
 	if err == nil {
-		t.Fatalf("se esperaba un error para agente no configurado, obtuve %T/%v", adapter, err)
+		t.Fatalf("an error was expected for an unconfigured agent, got %T/%v", adapter, err)
 	}
-	esperado := `el agente "agente-inexistente-xyz" no está configurado en vassentinel.yml`
-	if err.Error() != esperado {
-		t.Errorf("error = %q, esperado %q (compatibilidad con NewAgentAdapterNamed)", err.Error(), esperado)
+	want := `agent "agente-inexistente-xyz" is not configured in vassentinel.yml`
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q (compatibility with NewAgentAdapterNamed)", err.Error(), want)
 	}
 }

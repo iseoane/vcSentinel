@@ -9,21 +9,21 @@ import (
 )
 
 type countingAgent struct {
-	modelo string
-	err    error
-	calls  int
+	model string
+	err   error
+	calls int
 }
 
-func (a *countingAgent) EjecutarPrompt(string) (string, error) {
+func (a *countingAgent) RunPrompt(string) (string, error) {
 	a.calls++
-	return a.modelo, a.err
+	return a.model, a.err
 }
 
 func TestVerifyReturnsMatchedAndVerifiedOnMatch(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
 
-	if got := v.Verify("normal", "openai/gpt-5.6-terra", agenteModeloFalso{modelo: "openai/gpt-5.6-terra"}); got != OutcomeMatched {
+	if got := v.Verify("normal", "openai/gpt-5.6-terra", fakeModelAgent{model: "openai/gpt-5.6-terra"}); got != OutcomeMatched {
 		t.Fatalf("outcome = %q, want %q", got, OutcomeMatched)
 	}
 	if !v.Verified("normal") {
@@ -32,10 +32,10 @@ func TestVerifyReturnsMatchedAndVerifiedOnMatch(t *testing.T) {
 }
 
 func TestVerifyReturnsMismatchAndKeepsVerifiedFalse(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
 
-	if got := v.Verify("normal", "openai/gpt-5.6-terra", agenteModeloFalso{modelo: "openai/gpt-5.6-sol"}); got != OutcomeMismatch {
+	if got := v.Verify("normal", "openai/gpt-5.6-terra", fakeModelAgent{model: "openai/gpt-5.6-sol"}); got != OutcomeMismatch {
 		t.Fatalf("outcome = %q, want %q", got, OutcomeMismatch)
 	}
 	if v.Verified("normal") {
@@ -44,25 +44,25 @@ func TestVerifyReturnsMismatchAndKeepsVerifiedFalse(t *testing.T) {
 }
 
 func TestVerifyProbeErrorIsNonFatalAndUnverified(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
 
-	if got := v.Verify("normal", "openai/gpt-5.6-terra", agenteModeloFalso{err: errors.New("timeout")}); got != OutcomeProbeError {
+	if got := v.Verify("normal", "openai/gpt-5.6-terra", fakeModelAgent{err: errors.New("timeout")}); got != OutcomeProbeError {
 		t.Fatalf("outcome = %q, want %q", got, OutcomeProbeError)
 	}
 	if v.Verified("normal") {
 		t.Error("Verified(normal) = true after a probe error, want false")
 	}
-	if profile, _ := s.LeerPerfil("normal"); profile != nil {
+	if profile, _ := s.ReadProfile("normal"); profile != nil {
 		t.Errorf("profile = %+v, want nil: an errored probe records nothing", profile)
 	}
 }
 
 func TestVerifyUnparseableReplyIsUnverified(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
 
-	if got := v.Verify("normal", "openai/gpt-5.6-terra", agenteModeloFalso{modelo: "I am \"the best\" model!"}); got != OutcomeUnparseable {
+	if got := v.Verify("normal", "openai/gpt-5.6-terra", fakeModelAgent{model: "I am \"the best\" model!"}); got != OutcomeUnparseable {
 		t.Fatalf("outcome = %q, want %q", got, OutcomeUnparseable)
 	}
 	if v.Verified("normal") {
@@ -71,18 +71,18 @@ func TestVerifyUnparseableReplyIsUnverified(t *testing.T) {
 }
 
 func TestVerifySkipsWithoutProbeEvidence(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
 
 	cases := []struct {
 		name    string
 		profile string
 		model   string
-		agent   Agente
+		agent   Agent
 	}{
-		{"empty profile", "", "openai/gpt-5.6-terra", agenteModeloFalso{modelo: "openai/gpt-5.6-terra"}},
+		{"empty profile", "", "openai/gpt-5.6-terra", fakeModelAgent{model: "openai/gpt-5.6-terra"}},
 		{"nil agent", "normal", "openai/gpt-5.6-terra", nil},
-		{"no expected model", "normal", "", agenteModeloFalso{modelo: "openai/gpt-5.6-terra"}},
+		{"no expected model", "normal", "", fakeModelAgent{model: "openai/gpt-5.6-terra"}},
 	}
 	for _, tc := range cases {
 		if got := v.Verify(tc.profile, tc.model, tc.agent); got != OutcomeSkipped {
@@ -92,16 +92,16 @@ func TestVerifySkipsWithoutProbeEvidence(t *testing.T) {
 	if v.Verified("normal") {
 		t.Error("Verified(normal) = true without any probe, want false")
 	}
-	nilStore := NuevoVerificador(nil)
-	if got := nilStore.Verify("normal", "m", agenteModeloFalso{modelo: "m"}); got != OutcomeSkipped {
+	nilStore := NewVerifier(nil)
+	if got := nilStore.Verify("normal", "m", fakeModelAgent{model: "m"}); got != OutcomeSkipped {
 		t.Errorf("nil store: outcome = %q, want %q", got, OutcomeSkipped)
 	}
 }
 
 func TestVerifySecondCallReturnsStoredOutcomeWithoutReprobing(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
-	agent := &countingAgent{modelo: "openai/gpt-5.6-terra"}
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
+	agent := &countingAgent{model: "openai/gpt-5.6-terra"}
 
 	first := v.Verify("normal", "openai/gpt-5.6-terra", agent)
 	second := v.Verify("normal", "openai/gpt-5.6-sol", agent)
@@ -119,20 +119,20 @@ func TestVerifySecondCallReturnsStoredOutcomeWithoutReprobing(t *testing.T) {
 
 type blockingAgent struct {
 	release chan struct{}
-	modelo  string
+	model   string
 	calls   int
 }
 
-func (a *blockingAgent) EjecutarPrompt(string) (string, error) {
+func (a *blockingAgent) RunPrompt(string) (string, error) {
 	a.calls++
 	<-a.release
-	return a.modelo, nil
+	return a.model, nil
 }
 
 func TestVerifyConcurrentCallersShareOneProbe(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
-	agent := &blockingAgent{release: make(chan struct{}), modelo: "openai/gpt-5.6-sol"}
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
+	agent := &blockingAgent{release: make(chan struct{}), model: "openai/gpt-5.6-sol"}
 
 	first := make(chan Outcome, 1)
 	go func() { first <- v.Verify("normal", "openai/gpt-5.6-sol", agent) }()

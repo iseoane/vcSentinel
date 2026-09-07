@@ -29,7 +29,7 @@ const (
 	// reviewFixturePath is a tracked regular file used as audited-path
 	// material for the real snapshot discipline, mirroring the acpadapter
 	// fixtures.
-	reviewFixturePath = "internal/agentadapter/efectivo.go"
+	reviewFixturePath = "internal/agentadapter/effective.go"
 )
 
 // TestHelperProcess is the fake acpx child for the factory-wiring contract
@@ -139,7 +139,7 @@ func TestFactoryWiringPinsAdapterFamilies(t *testing.T) {
 				if !ok {
 					t.Fatalf("legacy agent produced %T, want *CLIAdapter unchanged", ad)
 				}
-				if cli.nombreBase() != "claude" || cli.Config.Model != "m" || cli.Timeout != 0 {
+				if cli.baseName() != "claude" || cli.Config.Model != "m" || cli.Timeout != 0 {
 					t.Errorf("CLIAdapter = %+v, want historical construction unchanged", cli)
 				}
 			},
@@ -188,15 +188,15 @@ func TestFactoryWiringPinsAdapterFamilies(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Config{ActiveAgent: tc.select_, Agents: tc.agents}
-			ad, err := nuevoAdaptador(cfg, tc.select_, "")
+			ad, err := newAdapter(cfg, tc.select_, "")
 			if tc.wantErr {
 				if err == nil || ad != nil {
-					t.Fatalf("nuevoAdaptador = %T, %v; want explicit construction error", ad, err)
+					t.Fatalf("newAdapter = %T, %v; want explicit construction error", ad, err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("nuevoAdaptador returned error: %v", err)
+				t.Fatalf("newAdapter returned error: %v", err)
 			}
 			tc.check(t, ad)
 		})
@@ -214,9 +214,9 @@ func TestProfilePathMapsReviewTimeoutToACPXRuntime(t *testing.T) {
 			"b": {Kind: config.AgentKindACPX, ACPAgent: "opencode", Model: "m"},
 		},
 	}
-	ad, err := NuevoAdaptadorConPerfil(cfg, config.PerfilResuelto{Nombre: "normal"})
+	ad, err := NewAdapterWithProfile(cfg, config.ResolvedProfile{Name: "normal"})
 	if err != nil {
-		t.Fatalf("NuevoAdaptadorConPerfil returned error: %v", err)
+		t.Fatalf("NewAdapterWithProfile returned error: %v", err)
 	}
 	bridge, ok := ad.(*AcpxBridge)
 	if !ok {
@@ -238,25 +238,25 @@ func TestChainMixesAdapterFamilies(t *testing.T) {
 			"claude-acpx": {Kind: config.AgentKindACPX, ACPAgent: "claude", Model: "cfg-model"},
 		},
 	}
-	cadena, err := construirCadena(cfg, []string{"legacy-cli", "claude-acpx"}, "")
+	chain, err := buildChain(cfg, []string{"legacy-cli", "claude-acpx"}, "")
 	if err != nil {
-		t.Fatalf("construirCadena returned error: %v", err)
+		t.Fatalf("buildChain returned error: %v", err)
 	}
-	if len(cadena.adaptadores) != 2 {
-		t.Fatalf("chain length = %d, want 2", len(cadena.adaptadores))
+	if len(chain.adapters) != 2 {
+		t.Fatalf("chain length = %d, want 2", len(chain.adapters))
 	}
-	if _, ok := cadena.adaptadores[0].(*CLIAdapter); !ok {
-		t.Errorf("chain[0] = %T, want *CLIAdapter", cadena.adaptadores[0])
+	if _, ok := chain.adapters[0].(*CLIAdapter); !ok {
+		t.Errorf("chain[0] = %T, want *CLIAdapter", chain.adapters[0])
 	}
-	if _, ok := cadena.adaptadores[1].(*AcpxBridge); !ok {
-		t.Errorf("chain[1] = %T, want *AcpxBridge", cadena.adaptadores[1])
+	if _, ok := chain.adapters[1].(*AcpxBridge); !ok {
+		t.Errorf("chain[1] = %T, want *AcpxBridge", chain.adapters[1])
 	}
 }
 
 // --- structural parity ------------------------------------------------------------
 
 type restrictedReviewer interface {
-	EjecutarRevision(prompt, sha string, paths []string) (string, error)
+	RunReview(prompt, sha string, paths []string) (string, error)
 }
 
 type contextualReviewer interface {
@@ -276,7 +276,7 @@ type treeProvider interface {
 // `sentinel runs abort` reaches the acpx child without per-call plumbing.
 var (
 	_ interface {
-		EjecutarPromptWithContext(context.Context, string) (string, error)
+		RunPromptWithContext(context.Context, string) (string, error)
 	} = (*AcpxBridge)(nil)
 	_ interface{ OwnedTree() *process.Tree } = (*AcpxBridge)(nil)
 )
@@ -287,7 +287,7 @@ var (
 func TestAdapterFamiliesShareStructuralContracts(t *testing.T) {
 	factoryBridge := func(t *testing.T) any {
 		t.Helper()
-		ad, err := nuevoAdaptador(config.Config{
+		ad, err := newAdapter(config.Config{
 			ActiveAgent: "b",
 			Agents: map[string]config.AgentConfig{
 				"b": {Kind: config.AgentKindACPX, ACPAgent: "opencode"},
@@ -303,12 +303,12 @@ func TestAdapterFamiliesShareStructuralContracts(t *testing.T) {
 		hold func(adapters any) bool
 	}{
 		{name: "commit-message surface (AgentAdapter)", hold: func(a any) bool { _, ok := a.(AgentAdapter); return ok }},
-		{name: "arbitrary prompt (AdaptadorPrompt)", hold: func(a any) bool { _, ok := a.(AdaptadorPrompt); return ok }},
-		{name: "micro-diff commit messages (AdapterConDiff)", hold: func(a any) bool { _, ok := a.(AdapterConDiff); return ok }},
+		{name: "arbitrary prompt (PromptAdapter)", hold: func(a any) bool { _, ok := a.(PromptAdapter); return ok }},
+		{name: "micro-diff commit messages (AdapterWithDiff)", hold: func(a any) bool { _, ok := a.(AdapterWithDiff); return ok }},
 		{name: "legacy restricted review", hold: func(a any) bool { _, ok := a.(restrictedReviewer); return ok }},
 		{name: "contextual review", hold: func(a any) bool { _, ok := a.(contextualReviewer); return ok }},
 		{name: "owned tree provider", hold: func(a any) bool { _, ok := a.(treeProvider); return ok }},
-		{name: "effective-agent attribution", hold: func(a any) bool { _, ok := a.(ReportaAgenteEfectivo); return ok }},
+		{name: "effective-agent attribution", hold: func(a any) bool { _, ok := a.(ReportsEffectiveAgent); return ok }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -340,12 +340,12 @@ func TestSemanticReviewPolicyAdmitsCLIProvidersAndRejectsACPBridge(t *testing.T)
 // call, the normalized assistant text back, no wrapper artifacts.
 func TestBridgePromptPassthroughReturnsOutputText(t *testing.T) {
 	bridge := helperBridge(t, nil)
-	out, err := bridge.EjecutarPrompt("say PROBE")
+	out, err := bridge.RunPrompt("say PROBE")
 	if err != nil {
-		t.Fatalf("EjecutarPrompt returned error: %v", err)
+		t.Fatalf("RunPrompt returned error: %v", err)
 	}
 	if out != "BRIDGE PARITY OUTPUT" {
-		t.Errorf("EjecutarPrompt = %q, want normalized chunk text", out)
+		t.Errorf("RunPrompt = %q, want normalized chunk text", out)
 	}
 }
 
@@ -361,19 +361,19 @@ func TestBridgeStringDeclaresEnforcement(t *testing.T) {
 	}
 }
 
-// TestBridgeEjecutarPromptWithContextRoutesOutput proves the context-carrying
+// TestBridgeRunPromptWithContextRoutesOutput proves the context-carrying
 // prompt shape routes the same normalized output as the legacy entry point,
 // so context-preferring callers (the durable-runs controller) lose nothing.
-func TestBridgeEjecutarPromptWithContextRoutesOutput(t *testing.T) {
+func TestBridgeRunPromptWithContextRoutesOutput(t *testing.T) {
 	bridge := helperBridge(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out, err := bridge.EjecutarPromptWithContext(ctx, "say PROBE")
+	out, err := bridge.RunPromptWithContext(ctx, "say PROBE")
 	if err != nil {
-		t.Fatalf("EjecutarPromptWithContext returned error: %v", err)
+		t.Fatalf("RunPromptWithContext returned error: %v", err)
 	}
 	if out != "BRIDGE PARITY OUTPUT" {
-		t.Errorf("EjecutarPromptWithContext = %q, want normalized chunk text", out)
+		t.Errorf("RunPromptWithContext = %q, want normalized chunk text", out)
 	}
 }
 
@@ -387,12 +387,12 @@ func TestBridgeRevisionRunsUnderSnapshotDisciplineAndCleansUp(t *testing.T) {
 		cfg.ChildEnv = append(cfg.ChildEnv, acpxHelperArgFile+"="+argFile)
 	})
 
-	out, err := bridge.EjecutarRevision("review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	out, err := bridge.RunReview("review SNAPSHOT", headSha(t), []string{reviewFixturePath})
 	if err != nil {
-		t.Fatalf("EjecutarRevision returned error: %v", err)
+		t.Fatalf("RunReview returned error: %v", err)
 	}
 	if out != "BRIDGE PARITY OUTPUT" {
-		t.Errorf("EjecutarRevision = %q, want normalized chunk text", out)
+		t.Errorf("RunReview = %q, want normalized chunk text", out)
 	}
 
 	data, err := os.ReadFile(argFile)
@@ -418,7 +418,7 @@ func TestBridgeRevisionRunsUnderSnapshotDisciplineAndCleansUp(t *testing.T) {
 
 // TestEffectiveIdentityJSONTagsMatchAgentadapterConventions pins the identity
 // wire shape: acpadapter.EffectiveAgent marshals under the exact same JSON
-// keys as agentadapter.AgenteEfectivo (agent/model/effort), so upper layers
+// keys as agentadapter.EffectiveAgent (agent/model/effort), so upper layers
 // persist both families identically.
 func TestEffectiveIdentityJSONTagsMatchAgentadapterConventions(t *testing.T) {
 	jsonKeys := func(t *testing.T, v any) []string {
@@ -438,10 +438,10 @@ func TestEffectiveIdentityJSONTagsMatchAgentadapterConventions(t *testing.T) {
 		slices.Sort(keys)
 		return keys
 	}
-	agentKeys := jsonKeys(t, AgenteEfectivo{Binario: "b", Modelo: "m", Esfuerzo: "e"})
+	agentKeys := jsonKeys(t, EffectiveAgent{Binary: "b", Model: "m", Effort: "e"})
 	acpxKeys := jsonKeys(t, acpadapter.EffectiveAgent{Binary: "b", Model: "m", Effort: "e"})
 	if !slices.Equal(agentKeys, acpxKeys) {
-		t.Fatalf("JSON keys diverge: AgenteEfectivo=%v EffectiveAgent=%v, want identical agent/model/effort tags", agentKeys, acpxKeys)
+		t.Fatalf("JSON keys diverge: EffectiveAgent=%v EffectiveAgent=%v, want identical agent/model/effort tags", agentKeys, acpxKeys)
 	}
 	if !slices.Equal(agentKeys, []string{"agent", "effort", "model"}) {
 		t.Fatalf("keys = %v, want the agentadapter conventions agent/model/effort", agentKeys)
@@ -461,29 +461,29 @@ func TestBridgeAttributionReportsOnlyWireObservedIdentity(t *testing.T) {
 		t.Fatalf("configured echo = %q/%q, want the configured declaration", id.Model, id.Effort)
 	}
 
-	efectivo, ok := bridge.AgenteEfectivo()
+	effective, ok := bridge.EffectiveAgent()
 	if !ok {
-		t.Fatal("AgenteEfectivo() reported no identity")
+		t.Fatal("EffectiveAgent() reported no identity")
 	}
-	if efectivo.Modelo != "" || efectivo.Esfuerzo != "" {
-		t.Errorf("attribution before any turn = %q/%q, want empty: nothing was observed on the wire", efectivo.Modelo, efectivo.Esfuerzo)
+	if effective.Model != "" || effective.Effort != "" {
+		t.Errorf("attribution before any turn = %q/%q, want empty: nothing was observed on the wire", effective.Model, effective.Effort)
 	}
-	if efectivo.Binario == "" {
+	if effective.Binary == "" {
 		t.Error("attribution lost the launcher-resolved binary")
 	}
 
-	if _, err := bridge.EjecutarPrompt("say PROBE"); err != nil {
-		t.Fatalf("EjecutarPrompt returned error: %v", err)
+	if _, err := bridge.RunPrompt("say PROBE"); err != nil {
+		t.Fatalf("RunPrompt returned error: %v", err)
 	}
 
-	efectivo, ok = bridge.AgenteEfectivo()
+	effective, ok = bridge.EffectiveAgent()
 	if !ok {
-		t.Fatal("AgenteEfectivo() reported no identity after a completed turn")
+		t.Fatal("EffectiveAgent() reported no identity after a completed turn")
 	}
-	if efectivo.Modelo != "observed-model-x" {
-		t.Errorf("observed model = %q, want the model announced on the wire", efectivo.Modelo)
+	if effective.Model != "observed-model-x" {
+		t.Errorf("observed model = %q, want the model announced on the wire", effective.Model)
 	}
-	if efectivo.Esfuerzo != "observed-effort-x" {
-		t.Errorf("observed effort = %q, want the effort announced on the wire, not the configured %q", efectivo.Esfuerzo, "high")
+	if effective.Effort != "observed-effort-x" {
+		t.Errorf("observed effort = %q, want the effort announced on the wire, not the configured %q", effective.Effort, "high")
 	}
 }

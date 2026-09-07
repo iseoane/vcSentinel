@@ -19,20 +19,20 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
-// TimeoutComando es el límite de una llamada al agente (300 s). La fase 1 lo
-// hace configurable vía review.timeout en vassentinel.yml; este es el fallback
-// cuando un adaptador no define Timeout.
-const TimeoutComando = 300 * time.Second
+// CommandTimeout is the limit of one call to the agent (300 s). Phase 1 makes
+// it configurable via review.timeout in vassentinel.yml; this is the fallback
+// when an adapter does not set Timeout.
+const CommandTimeout = 300 * time.Second
 
-var patronMensajeCommit = regexp.MustCompile(`^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-zA-Z0-9._/-]+\))?!?: .+$`)
+var commitMessagePattern = regexp.MustCompile(`^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-zA-Z0-9._/-]+\))?!?: .+$`)
 
 type CLIAdapter struct {
 	BinaryName string
 	Config     config.AgentConfig
-	// CommitLanguage fija el idioma de los mensajes de commit generados. Si
-	// está vacío se usa IdiomaPorDefecto.
+	// CommitLanguage sets the language of the generated commit messages. If
+	// empty, DefaultLanguage is used.
 	CommitLanguage string
-	// Timeout es el límite por llamada; si es 0 se usa TimeoutComando.
+	// Timeout is the per-call limit; if 0, CommandTimeout is used.
 	Timeout time.Duration
 
 	// activeTree holds the restricted reviewer's currently owned process
@@ -58,17 +58,17 @@ type ReviewRequest struct {
 
 const defaultReviewToolCalls = 8
 
-// EjecutarPrompt ejecuta el binario con un prompt arbitrario y devuelve la
-// salida. Es la vía pública del motor de auditoría hacia el agente.
-func (c *CLIAdapter) EjecutarPrompt(prompt string) (string, error) {
-	return c.ejecutarComando(prompt)
+// RunPrompt runs the binary with an arbitrary prompt and returns the output.
+// It is the audit engine's public path to the agent.
+func (c *CLIAdapter) RunPrompt(prompt string) (string, error) {
+	return c.runCommand(prompt)
 }
 
-// EjecutarRevision runs a semantic review with the bounded tool profile.
+// RunReview runs a semantic review with the bounded tool profile.
 // The legacy contract carries no context: the review runs under the adapter's
 // own timeout budget only. Context-carrying callers go through
 // ReviewWithContext so cooperative cancellation reaches the provider process.
-func (c *CLIAdapter) EjecutarRevision(prompt, sha string, paths []string) (string, error) {
+func (c *CLIAdapter) RunReview(prompt, sha string, paths []string) (string, error) {
 	return c.ReviewWithPolicy(prompt, sha, paths, reviewcontract.DefaultToolPolicy())
 }
 
@@ -78,115 +78,115 @@ func (c *CLIAdapter) ReviewWithPolicy(prompt, sha string, paths []string, policy
 	return c.reviewWithContextPolicy(context.Background(), prompt, sha, paths, policy)
 }
 
-func (c *CLIAdapter) ObtenerMensajeCommit(rutasArchivos []string, capa string, batchNum int) (string, error) {
-	if c.esOpenCode() || c.esClaude() {
-		return "", fmt.Errorf("%s requiere la via consentida con micro-diff para generar mensajes de commit", c.nombreBase())
+func (c *CLIAdapter) GetCommitMessage(paths []string, layer string, batchNum int) (string, error) {
+	if c.isOpenCode() || c.isClaude() {
+		return "", fmt.Errorf("%s requires the consented micro-diff path to generate commit messages", c.baseName())
 	}
-	salida, err := c.ejecutarComando(construirPromptAgente(capa, batchNum, rutasArchivos, c.idiomaCommit()))
+	output, err := c.runCommand(buildAgentPrompt(layer, batchNum, paths, c.commitLanguage()))
 	if err != nil {
 		return "", err
 	}
-	return validarMensajeCommit(salida)
+	return validateCommitMessage(output)
 }
 
-// ObtenerMensajeCommitConDiff incorpora el cambio preparado al prompt para que
-// el agente no necesite leer el repositorio durante la generación del mensaje.
-func (c *CLIAdapter) ObtenerMensajeCommitConDiff(rutasArchivos []string, capa string, batchNum int, diff string) (string, error) {
-	prompt := construirPromptAgenteConDiff(capa, batchNum, rutasArchivos, diff, c.idiomaCommit())
-	return c.ejecutarMensajeCommit(prompt)
+// GetCommitMessageWithDiff incorporates the prepared change into the prompt so
+// the agent does not need to read the repository during message generation.
+func (c *CLIAdapter) GetCommitMessageWithDiff(paths []string, layer string, batchNum int, diff string) (string, error) {
+	prompt := buildAgentPromptWithDiff(layer, batchNum, paths, diff, c.commitLanguage())
+	return c.runCommitMessageCommand(prompt)
 }
 
-// ProponerPlanRefactor pide al agente un plan de división para un archivo de
-// código masivo. Implementa AdapterRefactor.
-func (c *CLIAdapter) ProponerPlanRefactor(rutaArchivo string) (string, error) {
-	return c.ejecutarComando(construirPromptRefactor(rutaArchivo))
+// ProposeRefactorPlan asks the agent for a split plan for a massive code
+// file. Implements AdapterRefactor.
+func (c *CLIAdapter) ProposeRefactorPlan(filePath string) (string, error) {
+	return c.runCommand(buildRefactorPrompt(filePath))
 }
 
-// AplicarPlanRefactor ordena al agente ejecutar el plan de refactorización
-// directamente sobre el working tree, sin hacer commits. Implementa
-// AdapterRefactor.
-func (c *CLIAdapter) AplicarPlanRefactor(rutaArchivo string, plan string) (string, error) {
-	return c.ejecutarComando(construirPromptAplicarRefactor(rutaArchivo, plan))
+// ApplyRefactorPlan orders the agent to run the refactor plan directly on the
+// working tree, without committing. Implements AdapterRefactor.
+func (c *CLIAdapter) ApplyRefactorPlan(filePath string, plan string) (string, error) {
+	return c.runCommand(buildApplyRefactorPrompt(filePath, plan))
 }
 
-// ejecutarComando ejecuta el binario del agente con el prompt dado y devuelve
-// la salida estándar completa (recortada). Para opencode y claude el prompt
-// viaja por stdin (ver comandoPrompt); para el resto de binarios se pasa como
-// argumento de "-p". El proceso se corta con TimeoutComando si el agente no
-// responde: un agente que espera entrada interactiva no debe colgar la
-// auditoría.
-func (c *CLIAdapter) ejecutarComando(prompt string) (string, error) {
+// runCommand runs the agent's binary with the given prompt and returns the
+// complete (trimmed) standard output. For opencode and claude the prompt
+// travels via stdin (see promptCommand); for the other binaries it is passed
+// as the "-p" argument. The process is cut off with CommandTimeout if the
+// agent does not answer: an agent waiting for interactive input must not
+// hang the audit.
+func (c *CLIAdapter) runCommand(prompt string) (string, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = TimeoutComando
+		timeout = CommandTimeout
 	}
-	return c.ejecutarComandoConTimeout(prompt, timeout)
+	return c.runCommandWithTimeout(prompt, timeout)
 }
 
-func (c *CLIAdapter) ejecutarMensajeCommit(prompt string) (string, error) {
+func (c *CLIAdapter) runCommitMessageCommand(prompt string) (string, error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = TimeoutComando
+		timeout = CommandTimeout
 	}
-	if !c.esOpenCode() && !c.esClaude() {
-		salida, err := c.ejecutarComandoConTimeout(prompt, timeout)
+	if !c.isOpenCode() && !c.isClaude() {
+		output, err := c.runCommandWithTimeout(prompt, timeout)
 		if err != nil {
 			return "", err
 		}
-		return validarMensajeCommit(salida)
+		return validateCommitMessage(output)
 	}
 
-	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
-	defer cancelar()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	if c.esClaude() {
-		cmd, limpiar, err := c.prepararComandoCommitClaude(ctx, prompt)
+	if c.isClaude() {
+		cmd, cleanup, err := c.prepareClaudeCommitCommand(ctx, prompt)
 		if err != nil {
 			return "", err
 		}
-		defer limpiar()
+		defer cleanup()
 
 		var out, stderr bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			if detail := strings.TrimSpace(stderr.String()); detail != "" {
-				return "", fmt.Errorf("generar mensaje de commit con claude: %w: %s", err, detail)
+				return "", fmt.Errorf("generate commit message with claude: %w: %s", err, detail)
 			}
 			return "", err
 		}
 		// Claude Code's plain-text "-p" output already IS the final message
 		// (unlike OpenCode's "--format json" NDJSON stream), so it goes
 		// straight through the same format check as the unrestricted path.
-		return validarMensajeCommit(out.String())
+		return validateCommitMessage(out.String())
 	}
 
-	cmd, limpiar, err := c.prepararComandoCommit(ctx, prompt)
+	cmd, cleanup, err := c.prepareCommitCommand(ctx, prompt)
 	if err != nil {
 		return "", err
 	}
-	defer limpiar()
+	defer cleanup()
 
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return "", fmt.Errorf("generar mensaje de commit con opencode: %w: %s", err, detail)
+			return "", fmt.Errorf("generate commit message with opencode: %w: %s", err, detail)
 		}
 		return "", err
 	}
-	return extraerMensajeCommitOpenCode(out.String())
+	return extractOpenCodeCommitMessage(out.String())
 }
 
-// prepararComandoCommit ejecuta OpenCode fuera del repositorio y sin plugins
-// externos. El micro-diff ya viaja en el prompt, por lo que no pierde contexto.
-func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
+// prepareCommitCommand runs OpenCode outside the repository and without
+// external plugins. The micro-diff already travels in the prompt, so no
+// context is lost.
+func (c *CLIAdapter) prepareCommitCommand(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
 	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
 	if err != nil {
-		return nil, nil, fmt.Errorf("crear directorio neutral para opencode: %w", err)
+		return nil, nil, fmt.Errorf("create neutral directory for opencode: %w", err)
 	}
-	limpiar := func() { _ = os.RemoveAll(dir) }
+	cleanup := func() { _ = os.RemoveAll(dir) }
 	args := []string{"run", "--pure", "--agent", "title", "--format", "json"}
 	if c.Config.Model != "" {
 		args = append(args, "--model", c.Config.Model)
@@ -202,20 +202,20 @@ func (c *CLIAdapter) prepararComandoCommit(ctx context.Context, prompt string) (
 		fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort),
 	)
 	cmd.Stdin = strings.NewReader(prompt)
-	return cmd, limpiar, nil
+	return cmd, cleanup, nil
 }
 
-// prepararComandoCommitClaude runs Claude Code in an empty temporary working
+// prepareClaudeCommitCommand runs Claude Code in an empty temporary working
 // directory with declarative CLI permission flags. The micro-diff already
 // travels complete in the prompt. Tests verify the generated arguments and
 // working directory only: local `claude --help` documents these flags, but no
 // integration test proves a live path matcher or an OS filesystem sandbox.
-func (c *CLIAdapter) prepararComandoCommitClaude(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
+func (c *CLIAdapter) prepareClaudeCommitCommand(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
 	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create neutral directory for claude: %w", err)
 	}
-	limpiar := func() { _ = os.RemoveAll(dir) }
+	cleanup := func() { _ = os.RemoveAll(dir) }
 	args := []string{"-p", "--safe-mode", "--tools", ""}
 	if c.Config.Model != "" {
 		args = append(args, "--model", c.Config.Model)
@@ -226,73 +226,73 @@ func (c *CLIAdapter) prepararComandoCommitClaude(ctx context.Context, prompt str
 	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(prompt)
-	return cmd, limpiar, nil
+	return cmd, cleanup, nil
 }
 
-func extraerMensajeCommitOpenCode(salida string) (string, error) {
-	scanner := bufio.NewScanner(strings.NewReader(salida))
+func extractOpenCodeCommitMessage(output string) (string, error) {
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	mensaje := ""
-	textos := 0
-	lineas := 0
+	message := ""
+	texts := 0
+	lines := 0
 	for scanner.Scan() {
-		linea := scanner.Bytes()
-		if len(bytes.TrimSpace(linea)) == 0 {
-			return "", fmt.Errorf("salida JSONL invalida de opencode: linea vacia")
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			return "", fmt.Errorf("invalid opencode JSONL output: empty line")
 		}
-		lineas++
-		var evento struct {
+		lines++
+		var event struct {
 			Type string `json:"type"`
 			Part struct {
 				Text string `json:"text"`
 			} `json:"part"`
 		}
-		if err := json.Unmarshal(linea, &evento); err != nil {
-			return "", fmt.Errorf("salida JSONL invalida de opencode: %w", err)
+		if err := json.Unmarshal(line, &event); err != nil {
+			return "", fmt.Errorf("invalid opencode JSONL output: %w", err)
 		}
-		if evento.Type != "text" {
+		if event.Type != "text" {
 			continue
 		}
-		textos++
-		if textos > 1 {
-			return "", fmt.Errorf("opencode devolvio multiples eventos de texto")
+		texts++
+		if texts > 1 {
+			return "", fmt.Errorf("opencode returned multiple text events")
 		}
-		mensaje = evento.Part.Text
+		message = event.Part.Text
 	}
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("salida JSONL invalida de opencode: %w", err)
+		return "", fmt.Errorf("invalid opencode JSONL output: %w", err)
 	}
-	if lineas == 0 {
-		return "", fmt.Errorf("salida JSONL vacia de opencode")
+	if lines == 0 {
+		return "", fmt.Errorf("empty opencode JSONL output")
 	}
-	if textos != 1 {
-		return "", fmt.Errorf("opencode no devolvio un evento de texto")
+	if texts != 1 {
+		return "", fmt.Errorf("opencode returned no text event")
 	}
-	return validarMensajeCommit(mensaje)
+	return validateCommitMessage(message)
 }
 
-func validarMensajeCommit(salida string) (string, error) {
-	mensaje := strings.TrimSpace(salida)
-	if strings.ContainsAny(mensaje, "\r\n") || !patronMensajeCommit.MatchString(mensaje) {
-		return "", fmt.Errorf("el agente no devolvio una unica linea Conventional Commit")
+func validateCommitMessage(output string) (string, error) {
+	message := strings.TrimSpace(output)
+	if strings.ContainsAny(message, "\r\n") || !commitMessagePattern.MatchString(message) {
+		return "", fmt.Errorf("agent did not return a single-line Conventional Commit")
 	}
-	return mensaje, nil
+	return message, nil
 }
 
-// ejecutarComandoConTimeout es la variante parametrizada de ejecutarComando;
-// permite a los tests acortar la espera sin tocar la constante de producción.
-func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Duration) (string, error) {
-	ctx, cancelar := context.WithTimeout(context.Background(), timeout)
-	defer cancelar()
+// runCommandWithTimeout is the parameterized variant of runCommand;
+// it lets tests shorten the wait without touching the production constant.
+func (c *CLIAdapter) runCommandWithTimeout(prompt string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	args, viaStdin := c.comandoPrompt(prompt)
+	args, viaStdin := c.promptCommand(prompt)
 	cmd := exec.CommandContext(ctx, c.BinaryName, args...)
 	env := os.Environ()
 
-	if c.esClaude() {
+	if c.isClaude() {
 		env = append(env, fmt.Sprintf("CLAUDE_CODE_MODEL=%s", c.Config.Model))
 		env = append(env, fmt.Sprintf("CLAUDE_CODE_REASONING=%s", c.Config.ReasoningEffort))
-	} else if c.esOpenCode() {
+	} else if c.isOpenCode() {
 		env = append(env, fmt.Sprintf("OPENCODE_MODEL=%s", c.Config.Model))
 		env = append(env, fmt.Sprintf("OPENCODE_REASONING_EFFORT=%s", c.Config.ReasoningEffort))
 	}
@@ -300,9 +300,9 @@ func (c *CLIAdapter) ejecutarComandoConTimeout(prompt string, timeout time.Durat
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	// opencode y claude leen el prompt de stdin; los demás binarios lo reciben
-	// como argumento. Pasar el prompt por stdin evita el límite de 32.767
-	// caracteres de la línea de comandos de Windows.
+	// opencode and claude read the prompt from stdin; the other binaries
+	// receive it as an argument. Passing the prompt via stdin avoids the
+	// 32,767-character limit of the Windows command line.
 	if viaStdin {
 		cmd.Stdin = strings.NewReader(prompt)
 	}
@@ -325,7 +325,7 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 	if maxToolCalls <= 0 {
 		maxToolCalls = defaultReviewToolCalls
 	}
-	if c.esClaude() {
+	if c.isClaude() {
 		if request.SnapshotDir == "" {
 			return nil, nil, fmt.Errorf("semantic review requires an immutable snapshot directory")
 		}
@@ -358,7 +358,7 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		args = append(args, "--output-format", "json")
 		return args, nil, nil
 	}
-	if !c.esOpenCode() {
+	if !c.isOpenCode() {
 		return nil, nil, fmt.Errorf("semantic review is unavailable: path-confined tool permissions are not configured for this provider")
 	}
 	if request.SnapshotDir == "" {
@@ -426,7 +426,7 @@ type openCodeReadPermissionRules struct {
 func openCodeReadPermissions(snapshot string, auditedPaths []string) openCodeReadPermissionRules {
 	allowed := make([]string, 0, len(auditedPaths)*3)
 	seen := make(map[string]bool, len(auditedPaths)*3)
-	for _, auditedPath := range rutasRevisionSeguras(auditedPaths) {
+	for _, auditedPath := range safeReviewPaths(auditedPaths) {
 		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(auditedPath)))
 		// Live probing (OpenCode 1.18.23) showed the permission resource is
 		// normalized inconsistently: relative calls keep repo-relative form,
@@ -586,7 +586,7 @@ func scopeCredentialToProvider(raw, model string) string {
 	return string(scoped)
 }
 
-// comandoPrompt builds the invocation arguments based on the binary and
+// promptCommand builds the invocation arguments based on the binary and
 // whether the prompt travels via stdin: opencode uses the "run" subcommand and
 // claude "-p", both reading the prompt from stdin (no length limit); any other
 // binary receives the prompt as the "-p" argument (previous behavior). When a
@@ -595,15 +595,15 @@ func scopeCredentialToProvider(raw, model string) string {
 // CLAUDE_CODE_MODEL) alone are not enough for the binary to resolve the
 // desired model. The identity probe keeps the default reasoning effort;
 // effort propagation is out of scope for the probe.
-func (c *CLIAdapter) comandoPrompt(prompt string) ([]string, bool) {
-	if c.esOpenCode() {
+func (c *CLIAdapter) promptCommand(prompt string) ([]string, bool) {
+	if c.isOpenCode() {
 		args := []string{"run"}
 		if c.Config.Model != "" {
 			args = append(args, "--model", c.Config.Model)
 		}
 		return args, true
 	}
-	if c.esClaude() {
+	if c.isClaude() {
 		args := []string{"-p"}
 		if c.Config.Model != "" {
 			args = append(args, "--model", c.Config.Model)
@@ -613,46 +613,46 @@ func (c *CLIAdapter) comandoPrompt(prompt string) ([]string, bool) {
 	return []string{"-p", prompt}, false
 }
 
-func (c *CLIAdapter) esClaude() bool {
-	return c.nombreBase() == "claude"
+func (c *CLIAdapter) isClaude() bool {
+	return c.baseName() == "claude"
 }
 
-func (c *CLIAdapter) esOpenCode() bool {
-	return c.nombreBase() == "opencode"
+func (c *CLIAdapter) isOpenCode() bool {
+	return c.baseName() == "opencode"
 }
 
-// nombreBase extrae el nombre del binario sin ruta ni extensión, para tolerar
-// rutas completas o sufijos de plataforma (p. ej. "opencode.exe").
-func (c *CLIAdapter) nombreBase() string {
+// baseName extracts the binary's name without path or extension, to tolerate
+// full paths or platform suffixes (e.g. "opencode.exe").
+func (c *CLIAdapter) baseName() string {
 	return strings.TrimSuffix(filepath.Base(c.BinaryName), filepath.Ext(c.BinaryName))
 }
 
-// construirPromptAgente arma el prompt del mensaje de commit. El idioma se
-// fija explícitamente y con un ejemplo (T0.13): sin decirlo, el modelo lo
-// elegía al azar y mezclaba idiomas dentro de la misma ejecución.
-func construirPromptAgente(capa string, batchNum int, archivos []string, idioma string) string {
-	archivosStr := strings.Join(archivos, " ")
-	instruccion, ejemplo := instruccionDeIdioma(idioma)
+// buildAgentPrompt assembles the commit-message prompt. The language is set
+// explicitly and with an example (T0.13): without stating it, the model chose
+// at random and mixed languages within the same run.
+func buildAgentPrompt(layer string, batchNum int, files []string, language string) string {
+	filesJoined := strings.Join(files, " ")
+	instruction, example := instructionAndExample(language)
 	return fmt.Sprintf(
 		"Analiza estos archivos modificados de la capa [%s] (Lote #%d): %s. Genera un mensaje de commit semántico bajo el estándar Conventional Commits. %s Ejemplo del formato esperado: %s. Devuelve ÚNICAMENTE la línea del mensaje, sin marcas de markdown ni comillas.",
-		capa, batchNum, archivosStr, instruccion, ejemplo,
+		layer, batchNum, filesJoined, instruction, example,
 	)
 }
 
-func construirPromptAgenteConDiff(capa string, batchNum int, archivos []string, diff string, idioma string) string {
-	return fmt.Sprintf("%s\n\nMicro-diff preparado:\n%s", construirPromptAgente(capa, batchNum, archivos, idioma), diff)
+func buildAgentPromptWithDiff(layer string, batchNum int, files []string, diff string, language string) string {
+	return fmt.Sprintf("%s\n\nMicro-diff preparado:\n%s", buildAgentPrompt(layer, batchNum, files, language), diff)
 }
 
-func construirPromptRefactor(ruta string) string {
+func buildRefactorPrompt(path string) string {
 	return fmt.Sprintf(
 		"Analiza el archivo %s. Propón un plan detallado para dividirlo en archivos más pequeños y cohesivos, respetando el principio de responsabilidad única (SRP). Devuelve el plan en texto plano: qué archivos crear, qué contenido debería moverse a cada uno y el orden sugerido. Sin marcas de markdown.",
-		ruta,
+		path,
 	)
 }
 
-func construirPromptAplicarRefactor(ruta string, plan string) string {
+func buildApplyRefactorPrompt(path string, plan string) string {
 	return fmt.Sprintf(
 		"Aplica el siguiente plan de refactorización sobre el archivo %s:\n%s\nRealiza los cambios directamente en el working tree: crea, mueve y edita los archivos necesarios. NO hagas commits ni ejecutes git. Devuelve un resumen breve de los archivos creados, modificados o eliminados. Sin marcas de markdown.",
-		ruta, plan,
+		path, plan,
 	)
 }

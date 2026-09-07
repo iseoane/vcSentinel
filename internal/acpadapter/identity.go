@@ -4,7 +4,7 @@ import "path/filepath"
 
 // EffectiveAgent identifies who actually served a request: the binary, the
 // model, and the reasoning effort the run used. Its JSON shape mirrors
-// internal/agentadapter.AgenteEfectivo (tags agent/model/effort) so upper
+// internal/agentadapter.EffectiveAgent (tags agent/model/effort) so upper
 // layers can persist both adapter kinds identically, while keeping every ACP
 // concept inside this package boundary.
 //

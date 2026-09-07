@@ -1,14 +1,14 @@
-// Package agentshell reúne la lógica compartida entre internal/ops e
-// internal/validation para delegar verificación/validación en un agente con
-// shell libre: ejecutar un comando por la shell del sistema devolviendo exit
-// code + salida combinada, y parsear el contrato "tested: ..." que el agente
-// devuelve al terminar. Antes de esta extracción, ambos paquetes tenían una
-// copia casi idéntica de este código (una de ellas, byte a byte); vivir aquí
-// evita que un cambio de comportamiento (por ejemplo, cómo se detecta un
-// exit code) deba replicarse a mano en los dos sitios.
+// Package agentshell centralizes the logic shared between internal/ops and
+// internal/validation to delegate verification/validation to an agent with a
+// free shell: running one command through the system shell returning the exit
+// code + combined output, and parsing the "tested: ..." contract the agent
+// returns when it finishes. Before this extraction, both packages had a
+// nearly identical copy of this code (one of them byte for byte); living here
+// keeps a behavior change (for example, how an exit code is detected) from
+// having to be replicated by hand in both places.
 //
-// Deliberadamente sin dependencias de internal/ops ni internal/validation:
-// así ambos pueden importar este paquete sin crear un ciclo.
+// Deliberately free of dependencies on internal/ops and internal/validation:
+// that way both can import this package without creating a cycle.
 package agentshell
 
 import (
@@ -18,61 +18,62 @@ import (
 	"strings"
 )
 
-// Ejecutar lanza comando a través de la shell del sistema (cmd /c en
-// Windows, sh -c en el resto) dentro de worktree y devuelve el exit code y la
-// salida combinada (stdout+stderr). Es el superset de lo que necesitan los
-// dos llamadores: internal/validation usa la salida (fails_when=
-// output_not_empty y evidencia de los hallazgos); internal/ops solo necesita
-// el exit code y descarta la salida en su punto de llamada.
+// Run launches command through the system shell (cmd /c on Windows, sh -c
+// elsewhere) inside worktree and returns the exit code and the combined
+// output (stdout+stderr). It is the superset of what the two callers need:
+// internal/validation uses the output (fails_when=output_not_empty and the
+// evidence of findings); internal/ops only needs the exit code and discards
+// the output at its call site.
 //
-// Los comandos vienen del vassentinel.yml del usuario: ejecutar con shell es
-// el diseño (confianza equivalente al propio yml); no se sanitizan aquí.
-func Ejecutar(worktree, comando string) (exit int, salida string, err error) {
+// Commands come from the user's vassentinel.yml: running them through a shell
+// is the design (trust equivalent to the yml itself); they are not sanitized
+// here.
+func Run(worktree, command string) (exit int, output string, err error) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", comando)
+		cmd = exec.Command("cmd", "/c", command)
 	} else {
-		cmd = exec.Command("sh", "-c", comando)
+		cmd = exec.Command("sh", "-c", command)
 	}
 	if worktree != "" {
 		cmd.Dir = worktree
 	}
-	salidaBytes, err := cmd.CombinedOutput()
-	salida = string(salidaBytes)
+	outputBytes, err := cmd.CombinedOutput()
+	output = string(outputBytes)
 	if err == nil {
-		return 0, salida, nil
+		return 0, output, nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), salida, nil
+		return exitErr.ExitCode(), output, nil
 	}
-	return -1, salida, err
+	return -1, output, err
 }
 
-// ParsearContratoTested extrae los comandos de la línea "tested: ..." de la
-// salida de un agente delegado y rechaza unavailable / ausencia de contrato.
-func ParsearContratoTested(salida string) ([]string, error) {
-	if strings.Contains(strings.ToLower(salida), "unavailable") {
-		return nil, errors.New("el agente no pudo ejecutar las pruebas (unavailable)")
+// ParseTestedContract extracts the commands from the "tested: ..." line of a
+// delegated agent's output and rejects unavailable / a missing contract.
+func ParseTestedContract(output string) ([]string, error) {
+	if strings.Contains(strings.ToLower(output), "unavailable") {
+		return nil, errors.New("the agent could not run the tests (unavailable)")
 	}
-	for _, linea := range strings.Split(salida, "\n") {
-		recortada := strings.TrimSpace(linea)
-		idx := strings.Index(recortada, "tested:")
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		idx := strings.Index(trimmed, "tested:")
 		if idx < 0 {
 			continue
 		}
-		resto := strings.TrimSpace(recortada[idx+len("tested:"):])
-		var comandos []string
-		for _, c := range strings.Split(resto, ";") {
+		rest := strings.TrimSpace(trimmed[idx+len("tested:"):])
+		var commands []string
+		for _, c := range strings.Split(rest, ";") {
 			c = strings.TrimSpace(c)
 			if c != "" {
-				comandos = append(comandos, c)
+				commands = append(commands, c)
 			}
 		}
-		if len(comandos) == 0 {
-			return nil, errors.New("contrato tested vacío")
+		if len(commands) == 0 {
+			return nil, errors.New("empty tested contract")
 		}
-		return comandos, nil
+		return commands, nil
 	}
-	return nil, errors.New("la salida no contiene un contrato tested")
+	return nil, errors.New("the output does not contain a tested contract")
 }

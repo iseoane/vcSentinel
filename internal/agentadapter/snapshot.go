@@ -15,8 +15,8 @@ func createReviewSnapshot(worktree, sha string, paths []string) (string, []strin
 	return reviewsnapshot.Create(worktree, sha, paths)
 }
 
-// rutasRevisionSeguras delegates to the shared reviewer path filter. See the
+// safeReviewPaths delegates to the shared reviewer path filter. See the
 // createReviewSnapshot note for why the implementation moved.
-func rutasRevisionSeguras(rutas []string) []string {
-	return reviewsnapshot.SafePaths(rutas)
+func safeReviewPaths(paths []string) []string {
+	return reviewsnapshot.SafePaths(paths)
 }

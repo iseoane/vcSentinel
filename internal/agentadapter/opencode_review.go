@@ -140,7 +140,7 @@ func (s opencodeUsageSum) usage() *acpadapter.Usage {
 }
 
 // scanOpenCodeReview parses one OpenCode --format json review stream. It
-// keeps the same fail-closed JSONL discipline as extraerMensajeCommitOpenCode
+// keeps the same fail-closed JSONL discipline as extractOpenCodeCommitMessage
 // (empty or malformed lines, and lines over the 1 MiB cap, abort the scan)
 // because a broken stream means the review text cannot be trusted: leaking
 // raw NDJSON — or a silently truncated answer — as the review text would be

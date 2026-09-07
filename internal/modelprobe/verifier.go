@@ -8,19 +8,19 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
-const promptModelo = "What model are you actually using? Reply with only the exact model identifier."
+const promptModel = "What model are you actually using? Reply with only the exact model identifier."
 
 const maxModelIdentifierLength = 128
 
-// Agente is the minimal agent capability needed for a model probe.
-type Agente interface {
-	EjecutarPrompt(prompt string) (string, error)
+// Agent is the minimal agent capability needed for a model probe.
+type Agent interface {
+	RunPrompt(prompt string) (string, error)
 }
 
-// ReportaModeloConfigurado is implemented when an adapter can identify the
+// ReportsConfiguredModel is implemented when an adapter can identify the
 // model selected after any fallback resolution.
-type ReportaModeloConfigurado interface {
-	ModeloConfigurado() (string, bool)
+type ReportsConfiguredModel interface {
+	ConfiguredModel() (string, bool)
 }
 
 // Outcome is the typed result of one model probe. Only OutcomeMatched lets
@@ -35,21 +35,21 @@ const (
 	OutcomeMismatch Outcome = "mismatch"
 	// OutcomeProbeError: the probe prompt itself failed.
 	OutcomeProbeError Outcome = "probe_error"
-	// OutcomeUnparseable: the reply fails modeloReportadoValido.
+	// OutcomeUnparseable: the reply fails validReportedModel.
 	OutcomeUnparseable Outcome = "unparseable"
 	// OutcomeSkipped: nothing to probe (empty profile, nil agent or store)
 	// or no expected model resolvable.
 	OutcomeSkipped Outcome = "skipped"
 )
 
-// Verificador runs at most one probe per configured profile in a session,
+// Verifier runs at most one probe per configured profile in a session,
 // retaining each outcome for later queries. Concurrent callers for the same
 // profile wait for the in-flight probe instead of reading a placeholder:
 // dimensions audit in parallel and stamp right after probing, so returning
 // early would stamp siblings with whatever happened to be stored mid-flight.
-type Verificador struct {
-	store       *store.Store
-	verificados sync.Map // profile name -> *probeCall
+type Verifier struct {
+	store  *store.Store
+	probes sync.Map // profile name -> *probeCall
 }
 
 // probeCall is one session's single probe for a profile. done closes when
@@ -60,8 +60,8 @@ type probeCall struct {
 	outcome Outcome
 }
 
-func NuevoVerificador(s *store.Store) *Verificador {
-	return &Verificador{store: s}
+func NewVerifier(s *store.Store) *Verifier {
+	return &Verifier{store: s}
 }
 
 // Verify probes the agent for its model and records the outcome without
@@ -70,15 +70,15 @@ func NuevoVerificador(s *store.Store) *Verificador {
 // session; a repeated call returns the stored first outcome.
 //
 // A match writes a positive profile record (status verified), giving the
-// mismatch signal a counterpart and making store.LeerPerfil useful. A
+// mismatch signal a counterpart and making store.ReadProfile useful. A
 // mismatch keeps writing the unverified record. Every other outcome
 // records nothing.
-func (v *Verificador) Verify(perfil, esperado string, agente Agente) Outcome {
-	if perfil == "" || agente == nil || v.store == nil {
+func (v *Verifier) Verify(profile, expected string, agent Agent) Outcome {
+	if profile == "" || agent == nil || v.store == nil {
 		return OutcomeSkipped
 	}
 	call := &probeCall{done: make(chan struct{})}
-	actual, loaded := v.verificados.LoadOrStore(perfil, call)
+	actual, loaded := v.probes.LoadOrStore(profile, call)
 	if loaded {
 		previous, ok := actual.(*probeCall)
 		if !ok {
@@ -87,7 +87,7 @@ func (v *Verificador) Verify(perfil, esperado string, agente Agente) Outcome {
 		<-previous.done
 		return previous.outcome
 	}
-	call.outcome = v.probe(perfil, esperado, agente)
+	call.outcome = v.probe(profile, expected, agent)
 	close(call.done)
 	return call.outcome
 }
@@ -95,8 +95,8 @@ func (v *Verificador) Verify(perfil, esperado string, agente Agente) Outcome {
 // Verified reports whether the profile was probed and matched in this
 // session. Anything else — mismatch, error, unparseable reply, in-flight
 // probe, or never probed — is false.
-func (v *Verificador) Verified(perfil string) bool {
-	raw, ok := v.verificados.Load(perfil)
+func (v *Verifier) Verified(profile string) bool {
+	raw, ok := v.probes.Load(profile)
 	if !ok {
 		return false
 	}
@@ -112,55 +112,55 @@ func (v *Verificador) Verified(perfil string) bool {
 	}
 }
 
-func (v *Verificador) probe(perfil, esperado string, agente Agente) Outcome {
-	actual, err := agente.EjecutarPrompt(promptModelo)
+func (v *Verifier) probe(profile, expected string, agent Agent) Outcome {
+	actual, err := agent.RunPrompt(promptModel)
 	if err != nil {
 		return OutcomeProbeError
 	}
-	if esperado == "" {
-		if reporta, ok := agente.(ReportaModeloConfigurado); ok {
-			if modelo, ok := reporta.ModeloConfigurado(); ok {
-				esperado = modelo
+	if expected == "" {
+		if reporter, ok := agent.(ReportsConfiguredModel); ok {
+			if model, ok := reporter.ConfiguredModel(); ok {
+				expected = model
 			}
 		}
 	}
-	actual, ok := modeloReportadoValido(actual)
-	if esperado == "" || !ok {
-		if esperado == "" {
+	actual, ok := validReportedModel(actual)
+	if expected == "" || !ok {
+		if expected == "" {
 			return OutcomeSkipped
 		}
 		return OutcomeUnparseable
 	}
-	if actual == esperado {
-		_ = v.store.GuardarPerfil(&store.Profile{
-			Name:          perfil,
+	if actual == expected {
+		_ = v.store.SaveProfile(&store.Profile{
+			Name:          profile,
 			Status:        store.ProfileVerified,
 			Event:         "model_match",
-			ExpectedModel: esperado,
+			ExpectedModel: expected,
 			ActualModel:   actual,
 		})
 		return OutcomeMatched
 	}
-	_ = v.store.GuardarPerfil(&store.Profile{
-		Name:          perfil,
+	_ = v.store.SaveProfile(&store.Profile{
+		Name:          profile,
 		Status:        store.ProfileUnverified,
 		Event:         "model_mismatch",
-		ExpectedModel: esperado,
+		ExpectedModel: expected,
 		ActualModel:   actual,
 	})
 	return OutcomeMismatch
 }
 
-func modeloReportadoValido(modelo string) (string, bool) {
-	modelo = strings.TrimSpace(modelo)
-	if modelo == "" || len(modelo) > maxModelIdentifierLength {
+func validReportedModel(model string) (string, bool) {
+	model = strings.TrimSpace(model)
+	if model == "" || len(model) > maxModelIdentifierLength {
 		return "", false
 	}
-	for _, r := range modelo {
+	for _, r := range model {
 		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '/') {
 			return "", false
 		}
 	}
-	return modelo, true
+	return model, true
 }

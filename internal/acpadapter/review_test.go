@@ -44,14 +44,14 @@ func chdirToRepoRoot(t *testing.T) {
 
 // --- prompt passthrough ------------------------------------------------------
 
-func TestEjecutarPromptPassthrough(t *testing.T) {
+func TestRunPromptPassthrough(t *testing.T) {
 	a := spawnHelper(t, helperModeOK)
-	out, err := a.EjecutarPrompt("say PROBE")
+	out, err := a.RunPrompt("say PROBE")
 	if err != nil {
-		t.Fatalf("EjecutarPrompt returned error: %v", err)
+		t.Fatalf("RunPrompt returned error: %v", err)
 	}
 	if out != "HELLO FROM FAKE ACPX" {
-		t.Errorf("EjecutarPrompt = %q, want normalized chunk text", out)
+		t.Errorf("RunPrompt = %q, want normalized chunk text", out)
 	}
 }
 func TestRunRetainsObservedAndConfiguredEffortSeparately(t *testing.T) {
@@ -127,11 +127,11 @@ func TestRunTerminalSuccessWithNonZeroExitReturnsProcessFailure(t *testing.T) {
 	}
 }
 
-func TestEjecutarPromptMapsNonSuccessToTypedOutcome(t *testing.T) {
+func TestRunPromptMapsNonSuccessToTypedOutcome(t *testing.T) {
 	a := spawnHelper(t, helperModeTrap)
-	out, runErr := a.EjecutarPrompt("say PROBE")
+	out, runErr := a.RunPrompt("say PROBE")
 	if runErr == nil {
-		t.Fatal("EjecutarPrompt must surface a classified error for a cancelled turn")
+		t.Fatal("RunPrompt must surface a classified error for a cancelled turn")
 	}
 	if out != "" {
 		t.Errorf("output = %q, want empty on non-success", out)
@@ -147,7 +147,7 @@ func TestEjecutarPromptMapsNonSuccessToTypedOutcome(t *testing.T) {
 
 // --- revision mode: snapshot cwd and cleanup ---------------------------------
 
-func TestEjecutarRevisionSnapshotCwdAndCleanup(t *testing.T) {
+func TestRunReviewSnapshotCwdAndCleanup(t *testing.T) {
 	chdirToRepoRoot(t)
 	argFile := filepath.Join(t.TempDir(), "argv.txt")
 	a := spawnHelperConfig(t, func(cfg *Config) {
@@ -160,12 +160,12 @@ func TestEjecutarRevisionSnapshotCwdAndCleanup(t *testing.T) {
 		)
 	})
 
-	out, err := a.EjecutarRevision("review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	out, err := a.RunReview("review SNAPSHOT", headSha(t), []string{reviewFixturePath})
 	if err != nil {
-		t.Fatalf("EjecutarRevision returned error: %v", err)
+		t.Fatalf("RunReview returned error: %v", err)
 	}
 	if out != "HELLO FROM FAKE ACPX" {
-		t.Errorf("EjecutarRevision = %q, want normalized chunk text", out)
+		t.Errorf("RunReview = %q, want normalized chunk text", out)
 	}
 
 	data, err := os.ReadFile(argFile)
@@ -208,7 +208,7 @@ func TestReviewWithContextCancelYieldsCanceledClass(t *testing.T) {
 		cfg.ChildEnv = append(cfg.ChildEnv,
 			helperModeEnv+"="+helperModeSleep,
 			// The tail embeds a generated snapshot directory; its contract
-			// is pinned by TestEjecutarRevisionSnapshotCwdAndCleanup.
+			// is pinned by TestRunReviewSnapshotCwdAndCleanup.
 			helperExpectEnv+"=-",
 		)
 	})

@@ -6,21 +6,21 @@ import (
 	"testing"
 )
 
-// comandoSalidaCombinada devuelve, según el sistema operativo, un comando que
-// escribe una línea en stdout y otra en stderr: sirve para comprobar que
-// Ejecutar devuelve la salida combinada (stdout+stderr), no solo una de las
-// dos.
-func comandoSalidaCombinada() string {
+// combinedOutputCommand returns, depending on the operating system, a command
+// that writes one line to stdout and another to stderr: it serves to check
+// that Run returns the combined output (stdout+stderr), not just one of the
+// two.
+func combinedOutputCommand() string {
 	if runtime.GOOS == "windows" {
-		return "echo salida-estandar && echo salida-error 1>&2"
+		return "echo stdout-line && echo stderr-line 1>&2"
 	}
-	return "echo salida-estandar; echo salida-error >&2"
+	return "echo stdout-line; echo stderr-line >&2"
 }
 
-// comandoExitCode devuelve un comando que termina con el exit code dado (0 o
-// distinto de cero), válido tanto en cmd como en sh.
-func comandoExitCode(codigo int) string {
-	if codigo == 0 {
+// exitCodeCommand returns a command that terminates with the given exit code
+// (0 or non-zero), valid both in cmd and in sh.
+func exitCodeCommand(code int) string {
+	if code == 0 {
 		if runtime.GOOS == "windows" {
 			return "exit 0"
 		}
@@ -32,63 +32,63 @@ func comandoExitCode(codigo int) string {
 	return "exit 1"
 }
 
-// TestEjecutar_SalidaCombinada: Ejecutar debe devolver stdout+stderr en un
-// único string, junto con exit 0 y sin error de ejecución.
-func TestEjecutar_SalidaCombinada(t *testing.T) {
-	exit, salida, err := Ejecutar("", comandoSalidaCombinada())
+// TestRun_CombinedOutput: Run must return stdout+stderr in a single string,
+// together with exit 0 and no execution error.
+func TestRun_CombinedOutput(t *testing.T) {
+	exit, output, err := Run("", combinedOutputCommand())
 	if err != nil {
-		t.Fatalf("Ejecutar falló: %v", err)
+		t.Fatalf("Run failed: %v", err)
 	}
 	if exit != 0 {
-		t.Errorf("exit = %d, esperado 0", exit)
+		t.Errorf("exit = %d, want 0", exit)
 	}
-	if !strings.Contains(salida, "salida-estandar") || !strings.Contains(salida, "salida-error") {
-		t.Errorf("salida = %q, esperado que contenga ambas líneas (stdout+stderr)", salida)
+	if !strings.Contains(output, "stdout-line") || !strings.Contains(output, "stderr-line") {
+		t.Errorf("output = %q, want it to contain both lines (stdout+stderr)", output)
 	}
 }
 
-// TestEjecutar_ExitCodeDistintoDeCero: un comando que falla con exit 1 se
-// refleja en el exit code devuelto, sin que eso sea un error de ejecución.
-func TestEjecutar_ExitCodeDistintoDeCero(t *testing.T) {
-	exit, _, err := Ejecutar("", comandoExitCode(1))
+// TestRun_NonZeroExitCode: a command that fails with exit 1 is reflected in
+// the returned exit code, without that being an execution error.
+func TestRun_NonZeroExitCode(t *testing.T) {
+	exit, _, err := Run("", exitCodeCommand(1))
 	if err != nil {
-		t.Fatalf("Ejecutar no debe tratar un exit code no cero como error de ejecución: %v", err)
+		t.Fatalf("Run must not treat a non-zero exit code as an execution error: %v", err)
 	}
 	if exit != 1 {
-		t.Errorf("exit = %d, esperado 1", exit)
+		t.Errorf("exit = %d, want 1", exit)
 	}
 }
 
-// TestParsearContratoTested_VariosComandos: extrae los comandos de la línea
-// "tested: ..." separados por ;.
-func TestParsearContratoTested_VariosComandos(t *testing.T) {
-	comandos, err := ParsearContratoTested("Hecho.\ntested: go test ./...; go build ./...")
+// TestParseTestedContract_MultipleCommands: extracts the commands from the
+// "tested: ..." line separated by ;.
+func TestParseTestedContract_MultipleCommands(t *testing.T) {
+	commands, err := ParseTestedContract("Done.\ntested: go test ./...; go build ./...")
 	if err != nil {
-		t.Fatalf("ParsearContratoTested falló: %v", err)
+		t.Fatalf("ParseTestedContract failed: %v", err)
 	}
-	if len(comandos) != 2 || comandos[0] != "go test ./..." || comandos[1] != "go build ./..." {
-		t.Errorf("comandos = %#v, esperado [go test ./... go build ./...]", comandos)
-	}
-}
-
-// TestParsearContratoTested_Unavailable: rechaza la salida "unavailable".
-func TestParsearContratoTested_Unavailable(t *testing.T) {
-	if _, err := ParsearContratoTested("no pude ejecutar nada\nunavailable"); err == nil {
-		t.Error("ParsearContratoTested aceptó unavailable")
+	if len(commands) != 2 || commands[0] != "go test ./..." || commands[1] != "go build ./..." {
+		t.Errorf("commands = %#v, want [go test ./... go build ./...]", commands)
 	}
 }
 
-// TestParsearContratoTested_ContratoVacio: rechaza un contrato tested sin
-// comandos tras los dos puntos.
-func TestParsearContratoTested_ContratoVacio(t *testing.T) {
-	if _, err := ParsearContratoTested("tested: "); err == nil {
-		t.Error("ParsearContratoTested aceptó un contrato tested vacío")
+// TestParseTestedContract_Unavailable: rejects the "unavailable" output.
+func TestParseTestedContract_Unavailable(t *testing.T) {
+	if _, err := ParseTestedContract("could not run anything\nunavailable"); err == nil {
+		t.Error("ParseTestedContract accepted unavailable")
 	}
 }
 
-// TestParsearContratoTested_SinContrato: rechaza una salida sin línea tested.
-func TestParsearContratoTested_SinContrato(t *testing.T) {
-	if _, err := ParsearContratoTested("respuesta sin contrato"); err == nil {
-		t.Error("ParsearContratoTested aceptó una salida sin contrato")
+// TestParseTestedContract_EmptyContract: rejects a tested contract with no
+// commands after the colon.
+func TestParseTestedContract_EmptyContract(t *testing.T) {
+	if _, err := ParseTestedContract("tested: "); err == nil {
+		t.Error("ParseTestedContract accepted an empty tested contract")
+	}
+}
+
+// TestParseTestedContract_NoContract: rejects an output with no tested line.
+func TestParseTestedContract_NoContract(t *testing.T) {
+	if _, err := ParseTestedContract("reply without contract"); err == nil {
+		t.Error("ParseTestedContract accepted an output without a contract")
 	}
 }

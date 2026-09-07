@@ -15,334 +15,336 @@ import (
 )
 
 func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
-	cfg := config.CargarConfiguracionLocal(worktreePath)
+	cfg := config.LoadLocalConfig(worktreePath)
 
-	nombre := os.Getenv("MY_SUB_AGENT")
-	if nombre == "" {
-		nombre = cfg.ActiveAgent
+	name := os.Getenv("MY_SUB_AGENT")
+	if name == "" {
+		name = cfg.ActiveAgent
 	}
 
-	if nombre != "auto" {
-		if _, existe := cfg.Agents[nombre]; existe {
-			return nuevoAdaptador(cfg, nombre, "")
+	if name != "auto" {
+		if _, exists := cfg.Agents[name]; exists {
+			return newAdapter(cfg, name, "")
 		}
 	}
 
-	todas := make([]string, 0, len(cfg.Agents))
-	for clave := range cfg.Agents {
-		todas = append(todas, clave)
+	all := make([]string, 0, len(cfg.Agents))
+	for key := range cfg.Agents {
+		all = append(all, key)
 	}
-	sort.Strings(todas)
+	sort.Strings(all)
 
-	nombres := nombresAgentesEnPATH(cfg)
-	if len(nombres) == 0 {
-		return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(todas, ", "))
+	names := agentNamesInPATH(cfg)
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no agent configured in vassentinel.yml is available on the PATH: %s", strings.Join(all, ", "))
 	}
 
-	// Camino auto: cadena con un adaptador por cada agente disponible, en el
-	// orden de configuración del yml (fallback en cadena por petición).
-	return construirCadena(cfg, nombres, "")
+	// Auto path: a chain with one adapter per available agent, in the yml's
+	// configuration order (chained fallback per request).
+	return buildChain(cfg, names, "")
 }
 
-// NewAgentAdapterParaMensaje construye el adaptador para generar los mensajes
-// de commit de 'sentinel slice'. Igual que NewAgentAdapter, pero cada agente
-// resuelve su modelo/esfuerzo con el perfil anidado "commit" (razonamiento bajo)
-// en lugar del modelo/esfuerzo base: nombrar un commit no necesita el mismo
-// razonamiento que el resto de la tarea. Cuando el agente no define el perfil,
-// ResolverPerfilAgente cae al modelo/esfuerzo base y la config queda igual.
-func NewAgentAdapterParaMensaje(worktreePath string) (AgentAdapter, error) {
-	cfg := config.CargarConfiguracionLocal(worktreePath)
+// NewAgentAdapterForMessage builds the adapter to generate the commit
+// messages of 'sentinel slice'. Same as NewAgentAdapter, but every agent
+// resolves its model/effort with the nested "commit" profile (low reasoning)
+// instead of the base model/effort: naming a commit does not need the same
+// reasoning as the rest of the task. When the agent does not define the
+// profile, ResolverProfileAgent falls back to the base model/effort and the
+// config stays the same.
+func NewAgentAdapterForMessage(worktreePath string) (AgentAdapter, error) {
+	cfg := config.LoadLocalConfig(worktreePath)
 
-	nombre := os.Getenv("MY_SUB_AGENT")
-	if nombre == "" {
-		nombre = cfg.ActiveAgent
+	name := os.Getenv("MY_SUB_AGENT")
+	if name == "" {
+		name = cfg.ActiveAgent
 	}
 
-	if nombre != "auto" {
-		if _, existe := cfg.Agents[nombre]; existe {
-			return nuevoAdaptador(cfg, nombre, "commit")
+	if name != "auto" {
+		if _, exists := cfg.Agents[name]; exists {
+			return newAdapter(cfg, name, "commit")
 		}
 	}
 
-	todas := make([]string, 0, len(cfg.Agents))
-	for clave := range cfg.Agents {
-		todas = append(todas, clave)
+	all := make([]string, 0, len(cfg.Agents))
+	for key := range cfg.Agents {
+		all = append(all, key)
 	}
-	sort.Strings(todas)
+	sort.Strings(all)
 
-	nombres := nombresAgentesEnPATH(cfg)
-	if len(nombres) == 0 {
-		return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH: %s", strings.Join(todas, ", "))
+	names := agentNamesInPATH(cfg)
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no agent configured in vassentinel.yml is available on the PATH: %s", strings.Join(all, ", "))
 	}
 
-	// Camino auto: cada adaptador de la cadena resuelve SU perfil commit.
-	return construirCadena(cfg, nombres, "commit")
+	// Auto path: each adapter of the chain resolves ITS commit profile.
+	return buildChain(cfg, names, "commit")
 }
 
-// NewAgentAdapterNamed construye un adaptador CLI para un nombre de agente
-// explícito, sin resolución automática. Devuelve error si el nombre no está
-// configurado en vassentinel.yml.
-func NewAgentAdapterNamed(worktreePath string, nombre string) (AgentAdapter, error) {
-	cfg := config.CargarConfiguracionLocal(worktreePath)
-	return nuevoAdaptador(cfg, nombre, "")
+// NewAgentAdapterNamed builds a CLI adapter for an explicit agent name,
+// without automatic resolution. It returns an error if the name is not
+// configured in vassentinel.yml.
+func NewAgentAdapterNamed(worktreePath string, name string) (AgentAdapter, error) {
+	cfg := config.LoadLocalConfig(worktreePath)
+	return newAdapter(cfg, name, "")
 }
 
-// NewAgentAdapterNamedParaMensaje construye un adaptador CLI para un nombre de
-// agente explícito, con el perfil "commit" para los mensajes de slice (aplica
-// razonamiento bajo y cae al modelo base del agente si el perfil no existe).
-// Devuelve error si el nombre no está configurado en vassentinel.yml.
-func NewAgentAdapterNamedParaMensaje(worktreePath string, nombre string) (AgentAdapter, error) {
-	cfg := config.CargarConfiguracionLocal(worktreePath)
-	return nuevoAdaptador(cfg, nombre, "commit")
+// NewAgentAdapterNamedForMessage builds a CLI adapter for an explicit agent
+// name, with the "commit" profile for the slice messages (applies low
+// reasoning and falls back to the agent's base model if the profile does not
+// exist). It returns an error if the name is not configured in
+// vassentinel.yml.
+func NewAgentAdapterNamedForMessage(worktreePath string, name string) (AgentAdapter, error) {
+	cfg := config.LoadLocalConfig(worktreePath)
+	return newAdapter(cfg, name, "commit")
 }
 
-// nuevoAdaptador construye el adaptador de un agente concreto, resolviendo
-// el binario y la configuración de modelo/esfuerzo. Si perfil es no vacío, la
-// configuración se resuelve con el perfil anidado del agente (con fallback
-// al modelo/esfuerzo base cuando el perfil no los define); si perfil es vacío
-// se usa la configuración base del agente tal cual (compatibilidad con
-// NewAgentAdapter/NewAgentAdapterNamed). La familia de adaptador la decide
-// el kind declarado por la entrada (ver construirAdaptadorAgente).
-func nuevoAdaptador(cfg config.Config, nombre, perfil string) (AgentAdapter, error) {
-	return construirAdaptadorAgente(cfg, nombre, perfil, 0)
+// newAdapter builds the adapter of a concrete agent, resolving the binary and
+// the model/effort configuration. If profile is non-empty, the configuration
+// is resolved with the agent's nested profile (with fallback to the base
+// model/effort when the profile does not define them); if profile is empty,
+// the agent's base configuration is used as is (compatibility with
+// NewAgentAdapter/NewAgentAdapterNamed). The adapter family is decided by the
+// kind declared by the entry (see buildAgentAdapter).
+func newAdapter(cfg config.Config, name, profile string) (AgentAdapter, error) {
+	return buildAgentAdapter(cfg, name, profile, 0)
 }
 
-// construirAdaptadorAgente construye el adaptador que corresponde a la
-// familia declarada por la entrada agents.<nombre>: CLIAdapter para kind
-// vacío (el camino histórico, byte-idéntico), AcpxBridge sobre
-// acpadapter.AcpxAdapter para kind "acpx" (ticket 16), y un error explícito
-// de construcción para cualquier otro valor — fail fast antes de lanzar
-// nada. timeout es el presupuesto por llamada (0 = defaults de cada familia).
-func construirAdaptadorAgente(cfg config.Config, nombre, perfil string, timeout time.Duration) (AgentAdapter, error) {
-	if _, existe := cfg.Agents[nombre]; !existe {
-		return nil, fmt.Errorf("el agente %q no está configurado en vassentinel.yml", nombre)
+// buildAgentAdapter builds the adapter matching the family declared by the
+// agents.<name> entry: CLIAdapter for an empty kind (the historical path,
+// byte-identical), AcpxBridge over acpadapter.AcpxAdapter for kind "acpx"
+// (ticket 16), and an explicit construction error for any other value — fail
+// fast before launching anything. timeout is the per-call budget (0 = each
+// family's defaults).
+func buildAgentAdapter(cfg config.Config, name, profile string, timeout time.Duration) (AgentAdapter, error) {
+	if _, exists := cfg.Agents[name]; !exists {
+		return nil, fmt.Errorf("agent %q is not configured in vassentinel.yml", name)
 	}
-	return construirFamilia(cfg, nombre, configAgente(cfg, nombre, perfil), timeout)
+	return buildAdapterFamily(cfg, name, resolveAgentConfig(cfg, name, profile), timeout)
 }
 
 // ProbeAdapterFor builds the prompt-capable adapter for one configured agent
 // entry with the given per-call budget, selecting the family its kind
 // declares through the single family switch. Doctor is its only reader: a
 // short budget keeps the preflight fast while still sending a real prompt.
-func ProbeAdapterFor(cfg config.Config, nombre string, timeout time.Duration) (AdaptadorPrompt, error) {
-	ad, err := construirAdaptadorAgente(cfg, nombre, "", timeout)
+func ProbeAdapterFor(cfg config.Config, name string, timeout time.Duration) (PromptAdapter, error) {
+	ad, err := buildAgentAdapter(cfg, name, "", timeout)
 	if err != nil {
 		return nil, err
 	}
-	prompt, ok := ad.(AdaptadorPrompt)
+	prompt, ok := ad.(PromptAdapter)
 	if !ok {
-		return nil, fmt.Errorf("agent %q: adapter %T cannot answer prompts", nombre, ad)
+		return nil, fmt.Errorf("agent %q: adapter %T cannot answer prompts", name, ad)
 	}
 	return prompt, nil
 }
 
-// construirFamilia is the ONLY place that selects the adapter family for one
+// buildAdapterFamily is the ONLY place that selects the adapter family for one
 // agent entry: every factory path (named profile, auto chain, resolved
 // profile chain, review-profile resolution) converges here, so introducing a
 // third kind means touching exactly one switch instead of hunting call sites.
 // The follow-up "Consolidate adapter-family dispatch" landed precisely to
 // enforce this invariant.
-func construirFamilia(cfg config.Config, nombre string, resuelto config.AgentConfig, timeout time.Duration) (AgentAdapter, error) {
-	switch cfg.Agents[nombre].Kind {
+func buildAdapterFamily(cfg config.Config, name string, resolved config.AgentConfig, timeout time.Duration) (AgentAdapter, error) {
+	switch cfg.Agents[name].Kind {
 	case config.AgentKindCLI:
 		return &CLIAdapter{
-			BinaryName:     resolverBinarioReal(nombre),
-			Config:         resuelto,
+			BinaryName:     resolveRealBinary(name),
+			Config:         resolved,
 			CommitLanguage: cfg.CommitLanguage,
 			Timeout:        timeout,
 		}, nil
 	case config.AgentKindACPX:
-		bridge, err := construirAdaptadorACPX(cfg, nombre, resuelto, timeout)
+		bridge, err := buildACPXAdapter(cfg, name, resolved, timeout)
 		if err != nil {
 			return nil, err
 		}
 		return bridge, nil
 	default:
-		return nil, fmt.Errorf("agent %q declares unknown kind %q (valid values: empty for the CLI family, %q for ACP/acpx)", nombre, cfg.Agents[nombre].Kind, config.AgentKindACPX)
+		return nil, fmt.Errorf("agent %q declares unknown kind %q (valid values: empty for the CLI family, %q for ACP/acpx)", name, cfg.Agents[name].Kind, config.AgentKindACPX)
 	}
 }
 
-// construirAdaptadorACPX builds the ACP-backed adapter from the agent entry:
+// buildACPXAdapter builds the ACP-backed adapter from the agent entry:
 // launcher default ["npx","-y","acpx@latest"], configured model/effort echo,
 // childEnv passthrough unchanged, and the C6 enforcement declaration validated
 // at construction time so an unsatisfiable or unknown value fails before any
 // launch. The timeout maps to the acpx --timeout budget; zero keeps the
 // adapter default.
-func construirAdaptadorACPX(cfg config.Config, nombre string, resuelto config.AgentConfig, timeout time.Duration) (*AcpxBridge, error) {
-	agente := cfg.Agents[nombre]
+func buildACPXAdapter(cfg config.Config, name string, resolved config.AgentConfig, timeout time.Duration) (*AcpxBridge, error) {
+	agent := cfg.Agents[name]
 	inner, err := acpadapter.NewAcpx(acpadapter.Config{
-		Agent:             agente.ACPAgent,
-		Model:             resuelto.Model,
-		Effort:            resuelto.ReasoningEffort,
-		Enforcement:       agente.Enforcement,
+		Agent:             agent.ACPAgent,
+		Model:             resolved.Model,
+		Effort:            resolved.ReasoningEffort,
+		Enforcement:       agent.Enforcement,
 		MaxRuntimeSeconds: int(timeout / time.Second),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("agent %q (kind: acpx): %w", nombre, err)
+		return nil, fmt.Errorf("agent %q (kind: acpx): %w", name, err)
 	}
 	return &AcpxBridge{AcpxAdapter: inner, commitLanguage: cfg.CommitLanguage}, nil
 }
 
-// construirCadena crea la cadena de adaptadores del camino auto: un adaptador
-// por cada agente disponible, en el orden recibido, cada uno con su
-// configuración (su perfil commit si perfil es no vacío) y SU familia
-// declarada. Devuelve error si alguna entrada no puede construirse.
-func construirCadena(cfg config.Config, disponibles []string, perfil string) (*CadenaAdaptador, error) {
-	cadena := &CadenaAdaptador{}
-	for _, agente := range disponibles {
-		ad, err := construirAdaptadorAgente(cfg, agente, perfil, 0)
+// buildChain creates the auto path's adapter chain: one adapter per available
+// agent, in the received order, each with its own configuration (its commit
+// profile if profile is non-empty) and ITS declared family. It returns an
+// error if any entry cannot be built.
+func buildChain(cfg config.Config, available []string, profile string) (*AdapterChain, error) {
+	chain := &AdapterChain{}
+	for _, agent := range available {
+		ad, err := buildAgentAdapter(cfg, agent, profile, 0)
 		if err != nil {
 			return nil, err
 		}
-		completo, ok := ad.(adaptadorCompleto)
+		complete, ok := ad.(completeAdapter)
 		if !ok {
-			return nil, fmt.Errorf("agent %q: adapter %T cannot join the fallback chain", agente, ad)
+			return nil, fmt.Errorf("agent %q: adapter %T cannot join the fallback chain", agent, ad)
 		}
-		cadena.adaptadores = append(cadena.adaptadores, completo)
+		chain.adapters = append(chain.adapters, complete)
 	}
-	return cadena, nil
+	return chain, nil
 }
 
-// configAgente resuelve la configuración de modelo/esfuerzo de un agente. Si
-// perfil es "" devuelve la config base del agente; si no, aplica
-// config.ResolverPerfilAgente (perfil commit con fallback al agente).
-func configAgente(cfg config.Config, nombre, perfil string) config.AgentConfig {
-	if perfil == "" {
-		return cfg.Agents[nombre]
+// resolveAgentConfig resolves an agent's model/effort configuration. If
+// profile is "" it returns the agent's base config; otherwise it applies
+// config.ResolveAgentProfile (commit profile with fallback to the agent).
+func resolveAgentConfig(cfg config.Config, name, profile string) config.AgentConfig {
+	if profile == "" {
+		return cfg.Agents[name]
 	}
-	modelo, esfuerzo := config.ResolverPerfilAgente(cfg, nombre, perfil)
-	return config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}
+	model, effort := config.ResolveAgentProfile(cfg, name, profile)
+	return config.AgentConfig{Model: model, ReasoningEffort: effort}
 }
 
-// NombresAdaptadoresDisponibles devuelve los nombres de agentes configurados en
-// vassentinel.yml cuyo binario está disponible en el PATH, en el orden en que
-// aparecen en el yml (alfabético si no hay orden declarado).
-func NombresAdaptadoresDisponibles(worktreePath string) []string {
-	cfg := config.CargarConfiguracionLocal(worktreePath)
-	return nombresAgentesEnPATH(cfg)
+// AvailableAdapterNames returns the names of the agents configured in
+// vassentinel.yml whose binary is available on the PATH, in the order they
+// appear in the yml (alphabetical when no order is declared).
+func AvailableAdapterNames(worktreePath string) []string {
+	cfg := config.LoadLocalConfig(worktreePath)
+	return agentNamesInPATH(cfg)
 }
 
-// NuevoAdaptadorConPerfil construye el adaptador que corresponde a un perfil
-// resuelto: resuelve el binario (perfil -> active_agent -> auto), completa el
-// modelo y esfuerzo con los del agente cuando el perfil no los define y fija
-// el timeout de auditoría. En el camino auto devuelve un CadenaAdaptador con
-// un adaptador por agente disponible, cada uno con el perfil de SU agente.
-func NuevoAdaptadorConPerfil(cfg config.Config, perfil config.PerfilResuelto) (AdaptadorPrompt, error) {
-	nombre := perfil.Binario
-	if nombre == "" {
-		nombre = cfg.ActiveAgent
+// NewAdapterWithProfile builds the adapter matching a resolved profile: it
+// resolves the binary (profile -> active_agent -> auto), completes the model
+// and effort with the agent's when the profile does not define them, and sets
+// the audit timeout. On the auto path it returns an AdapterChain with one
+// adapter per available agent, each with ITS agent's profile.
+func NewAdapterWithProfile(cfg config.Config, profile config.ResolvedProfile) (PromptAdapter, error) {
+	name := profile.Binary
+	if name == "" {
+		name = cfg.ActiveAgent
 	}
-	if nombre == "" || nombre == "auto" {
-		disponibles := nombresAgentesEnPATH(cfg)
-		if len(disponibles) == 0 {
-			return nil, fmt.Errorf("ningun agente configurado en vassentinel.yml esta disponible en el PATH")
+	if name == "" || name == "auto" {
+		available := agentNamesInPATH(cfg)
+		if len(available) == 0 {
+			return nil, fmt.Errorf("no agent configured in vassentinel.yml is available on the PATH")
 		}
-		return construirCadenaPerfil(cfg, disponibles, perfil)
+		return buildChainProfile(cfg, available, profile)
 	}
-	agente := cfg.Agents[nombre]
-	modelo := perfil.Modelo
-	if modelo == "" {
-		modelo = agente.Model
+	agent := cfg.Agents[name]
+	model := profile.Model
+	if model == "" {
+		model = agent.Model
 	}
-	esfuerzo := perfil.Esfuerzo
-	if esfuerzo == "" {
-		esfuerzo = agente.ReasoningEffort
+	effort := profile.Effort
+	if effort == "" {
+		effort = agent.ReasoningEffort
 	}
 
-	// El launcher (npx) no participa en la resolución de shims del binario;
-	// el modelo/esfuerzo heredan la misma fusión perfil->agente que el camino
-	// CLI y el timeout de auditoría mapea al presupuesto --timeout de acpx.
-	// La familia la decide exclusivamente construirFamilia.
-	ad, err := construirFamilia(cfg, nombre, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
+	// The launcher (npx) does not take part in the binary's shim resolution;
+	// the model/effort inherit the same profile->agent merge as the CLI path
+	// and the audit timeout maps to the acpx --timeout budget. The family is
+	// decided exclusively by buildAdapterFamily.
+	ad, err := buildAdapterFamily(cfg, name, config.AgentConfig{Model: model, ReasoningEffort: effort}, cfg.Review.Timeout)
 	if err != nil {
 		return nil, err
 	}
-	prompt, ok := ad.(AdaptadorPrompt)
+	prompt, ok := ad.(PromptAdapter)
 	if !ok {
-		return nil, fmt.Errorf("agent %q: adapter %T cannot serve arbitrary prompts", nombre, ad)
+		return nil, fmt.Errorf("agent %q: adapter %T cannot serve arbitrary prompts", name, ad)
 	}
 	return prompt, nil
 }
 
-// construirCadenaPerfil crea la cadena de adaptadores del camino auto: un
-// adaptador por cada agente disponible (en el orden recibido), cada uno con
-// el modelo/esfuerzo de SU perfil anidado, no el del perfil resuelto, y SU
-// familia declarada. Devuelve error si alguna entrada no puede construirse.
-func construirCadenaPerfil(cfg config.Config, disponibles []string, perfil config.PerfilResuelto) (*CadenaAdaptador, error) {
-	cadena := &CadenaAdaptador{}
-	for _, agente := range disponibles {
-		modelo, esfuerzo := config.ResolverPerfilAgente(cfg, agente, perfil.Nombre)
-		ad, err := construirFamilia(cfg, agente, config.AgentConfig{Model: modelo, ReasoningEffort: esfuerzo}, cfg.Review.Timeout)
+// buildChainProfile creates the auto path's adapter chain: one adapter per
+// available agent (in the received order), each with the model/effort of ITS
+// nested profile, not the resolved profile's, and ITS declared family. It
+// returns an error if any entry cannot be built.
+func buildChainProfile(cfg config.Config, available []string, profile config.ResolvedProfile) (*AdapterChain, error) {
+	chain := &AdapterChain{}
+	for _, agent := range available {
+		model, effort := config.ResolveAgentProfile(cfg, agent, profile.Name)
+		ad, err := buildAdapterFamily(cfg, agent, config.AgentConfig{Model: model, ReasoningEffort: effort}, cfg.Review.Timeout)
 		if err != nil {
 			return nil, err
 		}
-		completo, ok := ad.(adaptadorCompleto)
+		complete, ok := ad.(completeAdapter)
 		if !ok {
-			return nil, fmt.Errorf("agent %q: adapter %T cannot join the fallback chain", agente, ad)
+			return nil, fmt.Errorf("agent %q: adapter %T cannot join the fallback chain", agent, ad)
 		}
-		cadena.adaptadores = append(cadena.adaptadores, completo)
+		chain.adapters = append(chain.adapters, complete)
 	}
-	return cadena, nil
+	return chain, nil
 }
 
-// resolverBinarioReal convierte un shim npm (.cmd/.bat) en la ruta del
-// binario real al que apunta. Ejecutar shims .cmd con exec.Command usa cmd.exe
-// y rompe el quoting de prompts largos (límite de línea + comillas), así que
-// se extrae el .exe destino de la línea "node_modules\...\bin\X.exe" del shim.
-// Si no hay shim o no se puede resolver, devuelve el nombre tal cual.
-func resolverBinarioReal(nombre string) string {
-	if filepath.IsAbs(nombre) || strings.ContainsAny(nombre, `/\`) {
-		return nombre
+// resolveRealBinary converts an npm shim (.cmd/.bat) into the path of the real
+// binary it points to. Running .cmd shims with exec.Command uses cmd.exe and
+// breaks the quoting of long prompts (line limit + quotes), so the target
+// .exe is extracted from the shim's "node_modules\...\bin\X.exe" line. If
+// there is no shim or it cannot be resolved, the name is returned as is.
+func resolveRealBinary(name string) string {
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) {
+		return name
 	}
-	ruta, err := exec.LookPath(nombre)
+	path, err := exec.LookPath(name)
 	if err != nil {
-		return nombre
+		return name
 	}
-	if ext := strings.ToLower(filepath.Ext(ruta)); ext != ".cmd" && ext != ".bat" {
-		return ruta
+	if ext := strings.ToLower(filepath.Ext(path)); ext != ".cmd" && ext != ".bat" {
+		return path
 	}
 
-	datos, err := os.ReadFile(ruta)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return ruta
+		return path
 	}
-	// Los shims npm usan "%dp0%\node_modules\<paquete>\bin\<binario>.exe" (la
-	// variable apunta al directorio del propio shim); algunos usan "%~dp0".
-	patron := regexp.MustCompile(`([A-Za-z]:\\[^"\r\n]*node_modules[^"\r\n]*\.exe|(?:%dp0%|%~dp0)\\[^"\r\n]*node_modules[^"\r\n]*\.exe)`)
-	coincidencia := patron.FindString(string(datos))
-	if coincidencia == "" {
-		return ruta
+	// npm shims use "%dp0%\node_modules\<package>\bin\<binary>.exe" (the
+	// variable points at the shim's own directory); some use "%~dp0".
+	pattern := regexp.MustCompile(`([A-Za-z]:\\[^"\r\n]*node_modules[^"\r\n]*\.exe|(?:%dp0%|%~dp0)\\[^"\r\n]*node_modules[^"\r\n]*\.exe)`)
+	match := pattern.FindString(string(data))
+	if match == "" {
+		return path
 	}
-	// El .cmd de npm usa %dp0% (directorio del shim): la ruta extraída es
-	// relativa a ese directorio, no al CWD del proceso.
-	if strings.HasPrefix(coincidencia, "%dp0%") {
-		return filepath.Join(filepath.Dir(ruta), coincidencia[len("%dp0%"):])
+	// npm's .cmd uses %dp0% (the shim's directory): the extracted path is
+	// relative to that directory, not to the process CWD.
+	if strings.HasPrefix(match, "%dp0%") {
+		return filepath.Join(filepath.Dir(path), match[len("%dp0%"):])
 	}
-	if strings.HasPrefix(coincidencia, "%~dp0") {
-		return filepath.Join(filepath.Dir(ruta), coincidencia[len("%~dp0"):])
+	if strings.HasPrefix(match, "%~dp0") {
+		return filepath.Join(filepath.Dir(path), match[len("%~dp0"):])
 	}
-	return coincidencia
+	return match
 }
 
-// nombresAgentesEnPATH filtra los agentes configurados que existen en el PATH.
-// Si cfg.AgentOrder tiene elementos, conserva ese orden; si está vacío (por
-// ejemplo, una Config construida a mano en tests) cae al orden alfabético.
-// Es la lógica compartida por la resolución automática de NewAgentAdapter, por
-// NuevoAdaptadorConPerfil y por NombresAdaptadoresDisponibles.
-func nombresAgentesEnPATH(cfg config.Config) []string {
-	orden := cfg.AgentOrder
-	if len(orden) == 0 {
-		orden = make([]string, 0, len(cfg.Agents))
-		for clave := range cfg.Agents {
-			orden = append(orden, clave)
+// agentNamesInPATH filters the configured agents that exist on the PATH. If
+// cfg.AgentOrder has entries, that order is kept; if it is empty (for
+// example, a hand-built Config in tests) it falls back to alphabetical order.
+// It is the logic shared by NewAgentAdapter's automatic resolution, by
+// NewAdapterWithProfile and by AvailableAdapterNames.
+func agentNamesInPATH(cfg config.Config) []string {
+	order := cfg.AgentOrder
+	if len(order) == 0 {
+		order = make([]string, 0, len(cfg.Agents))
+		for key := range cfg.Agents {
+			order = append(order, key)
 		}
-		sort.Strings(orden)
+		sort.Strings(order)
 	}
-	nombres := make([]string, 0, len(orden))
-	for _, clave := range orden {
-		if _, err := exec.LookPath(clave); err == nil {
-			nombres = append(nombres, clave)
+	names := make([]string, 0, len(order))
+	for _, key := range order {
+		if _, err := exec.LookPath(key); err == nil {
+			names = append(names, key)
 		}
 	}
-	return nombres
+	return names
 }

@@ -237,11 +237,11 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 // empty (the OpenCode event stream provides no wire identity). The legacy
 // string contract must answer with the same observable text.
 func TestOpenCodeReviewResultReportsWireObservations(t *testing.T) {
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
 	adapter := CLIAdapter{
-		BinaryName: compilarAgenteConNombre(t, "opencode"),
+		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
 		Timeout:    10 * time.Second,
 	}
@@ -268,8 +268,8 @@ func TestOpenCodeReviewResultReportsWireObservations(t *testing.T) {
 	if result.ObservedModel != "" || result.ObservedEffort != "" {
 		t.Errorf("observed identity = %q/%q, want empty (the event stream provides none)", result.ObservedModel, result.ObservedEffort)
 	}
-	captura := leerCapturaAgente(t, capturaRuta)
-	args := captura.Args
+	capture := readAgentCapture(t, capturePath)
+	args := capture.Args
 	if len(args) < 2 || !reflect.DeepEqual(args[len(args)-2:], []string{"--format", "json"}) {
 		t.Errorf("args = %v, want the review invocation to end with --format json", args)
 	}
@@ -282,8 +282,8 @@ func TestOpenCodeReviewResultReportsWireObservations(t *testing.T) {
 	}
 	// The child's cwd stays the caller's: for OpenCode the immutable snapshot
 	// travels as the --dir value, which must never be the repository itself.
-	if dirIndex == -1 || dirIndex+1 >= len(args) || mismaRuta(args[dirIndex+1], captura.Dir) {
-		t.Errorf("args = %v, want --dir bound to an isolated snapshot directory (child cwd %q)", args, captura.Dir)
+	if dirIndex == -1 || dirIndex+1 >= len(args) || samePath(args[dirIndex+1], capture.Dir) {
+		t.Errorf("args = %v, want --dir bound to an isolated snapshot directory (child cwd %q)", args, capture.Dir)
 	}
 	output, err := adapter.ReviewWithContext(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
 	if err != nil {

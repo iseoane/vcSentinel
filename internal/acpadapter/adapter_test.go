@@ -264,13 +264,13 @@ func TestEffectiveIdentityTable(t *testing.T) {
 			}
 			got := a.EffectiveIdentity()
 			if got.Binary != tc.wantBinary {
-				t.Errorf("Binario = %q, want %q", got.Binary, tc.wantBinary)
+				t.Errorf("Binary = %q, want %q", got.Binary, tc.wantBinary)
 			}
 			if got.Model != tc.wantModel {
-				t.Errorf("Modelo = %q, want %q", got.Model, tc.wantModel)
+				t.Errorf("Model = %q, want %q", got.Model, tc.wantModel)
 			}
 			if got.Effort != tc.wantEffort {
-				t.Errorf("Esfuerzo = %q, want %q", got.Effort, tc.wantEffort)
+				t.Errorf("Effort = %q, want %q", got.Effort, tc.wantEffort)
 			}
 			empty := got.Binary == "" && got.Model == "" && got.Effort == ""
 			if got.Empty() != empty {
@@ -323,10 +323,10 @@ func TestRunPipelineEndTurn(t *testing.T) {
 		t.Errorf("post-run identity Modelo = %q, want observed test-model", ident.Model)
 	}
 	if !strings.HasSuffix(ident.Binary, ":claude") {
-		t.Errorf("Binario = %q, want launcher base + :claude suffix", ident.Binary)
+		t.Errorf("Binary = %q, want launcher base + :claude suffix", ident.Binary)
 	}
 	if ident.Effort != "high" {
-		t.Errorf("Esfuerzo = %q, want configured high", ident.Effort)
+		t.Errorf("Effort = %q, want configured high", ident.Effort)
 	}
 }
 

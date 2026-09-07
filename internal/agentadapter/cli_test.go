@@ -16,523 +16,523 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-func TestPrepararComandoCommitOpenCodeAislaLaEjecucion(t *testing.T) {
+func TestPrepareCommitCommandOpenCodeIsolatesExecution(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+		t.Fatalf("could not get the current directory: %v", err)
 	}
 	adapter := CLIAdapter{
 		BinaryName: "opencode",
 		Config:     config.AgentConfig{Model: "openai/gpt-5.6-sol", ReasoningEffort: "high"},
 	}
 
-	cmd, limpiar, err := adapter.prepararComandoCommit(context.Background(), "feat(test): mensaje")
+	cmd, cleanup, err := adapter.prepareCommitCommand(context.Background(), "feat(test): mensaje")
 	if err != nil {
-		t.Fatalf("prepararComandoCommit devolvió error: %v", err)
+		t.Fatalf("prepareCommitCommand returned an error: %v", err)
 	}
 
-	esperados := []string{"opencode", "run", "--pure", "--agent", "title", "--format", "json", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", cmd.Dir}
-	if !reflect.DeepEqual(cmd.Args, esperados) {
-		t.Fatalf("argumentos = %v, esperados %v", cmd.Args, esperados)
+	wantArgs := []string{"opencode", "run", "--pure", "--agent", "title", "--format", "json", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", cmd.Dir}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("args = %v, want %v", cmd.Args, wantArgs)
 	}
 	if cmd.Dir == "" {
-		t.Fatal("OpenCode debe ejecutarse en un directorio neutral")
+		t.Fatal("OpenCode must run in a neutral directory")
 	}
-	if mismaRuta(cmd.Dir, cwd) {
-		t.Fatalf("cmd.Dir = %q, debe ser distinto del cwd del repositorio %q", cmd.Dir, cwd)
+	if samePath(cmd.Dir, cwd) {
+		t.Fatalf("cmd.Dir = %q, it must differ from the repository cwd %q", cmd.Dir, cwd)
 	}
-	datos, err := io.ReadAll(cmd.Stdin)
+	data, err := io.ReadAll(cmd.Stdin)
 	if err != nil {
-		t.Fatalf("no se pudo leer stdin: %v", err)
+		t.Fatalf("could not read stdin: %v", err)
 	}
-	if string(datos) != "feat(test): mensaje" {
-		t.Fatalf("stdin = %q, esperado el prompt completo", datos)
+	if string(data) != "feat(test): mensaje" {
+		t.Fatalf("stdin = %q, want the full prompt", data)
 	}
 
-	limpiar()
+	cleanup()
 	if _, err := os.Stat(cmd.Dir); !os.IsNotExist(err) {
-		t.Fatalf("el directorio aislado sigue existiendo tras limpiar: %v", err)
+		t.Fatalf("the isolated directory still exists after cleanup: %v", err)
 	}
 }
 
-// TestPrepararComandoCommitClaudeAislaLaEjecucion mirrors
-// TestPrepararComandoCommitOpenCodeAislaLaEjecucion: claude must run outside
+// TestPrepareClaudeCommitCommandIsolatesExecution mirrors
+// TestPrepareCommitCommandOpenCodeIsolatesExecution: claude must run outside
 // the repository, with every tool disabled and --safe-mode set.
-func TestPrepararComandoCommitClaudeAislaLaEjecucion(t *testing.T) {
+func TestPrepareClaudeCommitCommandIsolatesExecution(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+		t.Fatalf("could not get the current directory: %v", err)
 	}
 	adapter := CLIAdapter{
 		BinaryName: "claude",
 		Config:     config.AgentConfig{Model: "claude-sonnet-5", ReasoningEffort: "high"},
 	}
 
-	cmd, limpiar, err := adapter.prepararComandoCommitClaude(context.Background(), "feat(test): mensaje")
+	cmd, cleanup, err := adapter.prepareClaudeCommitCommand(context.Background(), "feat(test): mensaje")
 	if err != nil {
-		t.Fatalf("prepararComandoCommitClaude devolvió error: %v", err)
+		t.Fatalf("prepareClaudeCommitCommand returned an error: %v", err)
 	}
 
-	esperados := []string{"claude", "-p", "--safe-mode", "--tools", "", "--model", "claude-sonnet-5", "--effort", "high"}
-	if !reflect.DeepEqual(cmd.Args, esperados) {
-		t.Fatalf("argumentos = %v, esperados %v", cmd.Args, esperados)
+	wantArgs := []string{"claude", "-p", "--safe-mode", "--tools", "", "--model", "claude-sonnet-5", "--effort", "high"}
+	if !reflect.DeepEqual(cmd.Args, wantArgs) {
+		t.Fatalf("args = %v, want %v", cmd.Args, wantArgs)
 	}
 	if cmd.Dir == "" {
-		t.Fatal("claude debe ejecutarse en un directorio neutral")
+		t.Fatal("claude must run in a neutral directory")
 	}
-	if mismaRuta(cmd.Dir, cwd) {
-		t.Fatalf("cmd.Dir = %q, debe ser distinto del cwd del repositorio %q", cmd.Dir, cwd)
+	if samePath(cmd.Dir, cwd) {
+		t.Fatalf("cmd.Dir = %q, it must differ from the repository cwd %q", cmd.Dir, cwd)
 	}
-	datos, err := io.ReadAll(cmd.Stdin)
+	data, err := io.ReadAll(cmd.Stdin)
 	if err != nil {
-		t.Fatalf("no se pudo leer stdin: %v", err)
+		t.Fatalf("could not read stdin: %v", err)
 	}
-	if string(datos) != "feat(test): mensaje" {
-		t.Fatalf("stdin = %q, esperado el prompt completo", datos)
+	if string(data) != "feat(test): mensaje" {
+		t.Fatalf("stdin = %q, want the full prompt", data)
 	}
 
-	limpiar()
+	cleanup()
 	if _, err := os.Stat(cmd.Dir); !os.IsNotExist(err) {
-		t.Fatalf("el directorio aislado sigue existiendo tras limpiar: %v", err)
+		t.Fatalf("the isolated directory still exists after cleanup: %v", err)
 	}
 }
 
-type capturaAgente struct {
+type agentCapture struct {
 	Args  []string `json:"args"`
 	Dir   string   `json:"dir"`
 	Stdin string   `json:"stdin"`
 }
 
-func mismaRuta(a, b string) bool {
+func samePath(a, b string) bool {
 	absA, errA := filepath.Abs(a)
 	absB, errB := filepath.Abs(b)
 	return errA == nil && errB == nil && filepath.Clean(absA) == filepath.Clean(absB)
 }
 
-func leerCapturaAgente(t *testing.T, ruta string) capturaAgente {
+func readAgentCapture(t *testing.T, path string) agentCapture {
 	t.Helper()
-	datos, err := os.ReadFile(ruta)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no se pudo leer la captura del agente: %v", err)
+		t.Fatalf("could not read the agent capture: %v", err)
 	}
-	var captura capturaAgente
-	if err := json.Unmarshal(datos, &captura); err != nil {
-		t.Fatalf("captura inválida: %v", err)
+	var capture agentCapture
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("invalid capture: %v", err)
 	}
-	return captura
+	return capture
 }
 
-func TestObtenerMensajeCommitOpenCodeSinDiffFallaSinInvocarProceso(t *testing.T) {
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+func TestGetCommitMessageOpenCodeWithoutDiffFailsWithoutInvokingProcess(t *testing.T) {
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
-	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "opencode"), Timeout: 10 * time.Second}
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 10 * time.Second}
 
-	if _, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
-		t.Fatal("OpenCode sin micro-diff consentido debe fallar cerrado")
+	if _, err := adapter.GetCommitMessage([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
+		t.Fatal("OpenCode without the consented micro-diff must fail closed")
 	}
-	if _, err := os.Stat(capturaRuta); !os.IsNotExist(err) {
-		t.Fatalf("OpenCode fue invocado sin micro-diff consentido: %v", err)
+	if _, err := os.Stat(capturePath); !os.IsNotExist(err) {
+		t.Fatalf("OpenCode was invoked without the consented micro-diff: %v", err)
 	}
 }
 
-// TestObtenerMensajeCommitClaudeSinDiffFallaSinInvocarProceso mirrors
-// TestObtenerMensajeCommitOpenCodeSinDiffFallaSinInvocarProceso: claude must
-// also be blocked from generating a commit message without a micro-diff.
-func TestObtenerMensajeCommitClaudeSinDiffFallaSinInvocarProceso(t *testing.T) {
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+// TestGetCommitMessageClaudeWithoutDiffFailsWithoutInvokingProcess mirrors
+// TestGetCommitMessageOpenCodeWithoutDiffFailsWithoutInvokingProcess: claude
+// must also be blocked from generating a commit message without a micro-diff.
+func TestGetCommitMessageClaudeWithoutDiffFailsWithoutInvokingProcess(t *testing.T) {
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
-	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 10 * time.Second}
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
-	if _, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
-		t.Fatal("claude sin micro-diff consentido debe fallar cerrado")
+	if _, err := adapter.GetCommitMessage([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
+		t.Fatal("claude without the consented micro-diff must fail closed")
 	}
-	if _, err := os.Stat(capturaRuta); !os.IsNotExist(err) {
-		t.Fatalf("claude fue invocado sin micro-diff consentido: %v", err)
+	if _, err := os.Stat(capturePath); !os.IsNotExist(err) {
+		t.Fatalf("claude was invoked without the consented micro-diff: %v", err)
 	}
 }
 
-// TestObtenerMensajeCommitConDiffClaudeEjecutaAislado mirrors
-// TestObtenerMensajeCommitConDiffOpenCodeEjecutaAislado: claude runs isolated
+// TestGetCommitMessageWithDiffClaudeRunsIsolated mirrors
+// TestGetCommitMessageWithDiffOpenCodeRunsIsolated: claude runs isolated
 // outside the repository and its plain-text output goes straight through
-// validarMensajeCommit, without any NDJSON parsing.
-func TestObtenerMensajeCommitConDiffClaudeEjecutaAislado(t *testing.T) {
+// validateCommitMessage, without any NDJSON parsing.
+func TestGetCommitMessageWithDiffClaudeRunsIsolated(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+		t.Fatalf("could not get the current directory: %v", err)
 	}
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "fix(adapter): usar el micro diff aislado")
 	adapter := CLIAdapter{
-		BinaryName: compilarAgenteConNombre(t, "claude"),
+		BinaryName: compileAgentBinary(t, "claude"),
 		Config:     config.AgentConfig{Model: "claude-sonnet-5", ReasoningEffort: "high"},
 		Timeout:    10 * time.Second,
 	}
 	microDiff := "diff --git a/x.go b/x.go\n+func corregida() {}"
 
-	mensaje, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, microDiff)
+	message, err := adapter.GetCommitMessageWithDiff([]string{"x.go"}, "backend", 1, microDiff)
 	if err != nil {
-		t.Fatalf("ObtenerMensajeCommitConDiff devolvió error: %v", err)
+		t.Fatalf("GetCommitMessageWithDiff returned an error: %v", err)
 	}
-	if mensaje != "fix(adapter): usar el micro diff aislado" {
-		t.Fatalf("mensaje = %q", mensaje)
+	if message != "fix(adapter): usar el micro diff aislado" {
+		t.Fatalf("message = %q", message)
 	}
-	captura := leerCapturaAgente(t, capturaRuta)
-	if mismaRuta(captura.Dir, cwd) {
-		t.Fatalf("cwd aislado = %q, no debe ser el repositorio", captura.Dir)
+	capture := readAgentCapture(t, capturePath)
+	if samePath(capture.Dir, cwd) {
+		t.Fatalf("isolated cwd = %q, it must not be the repository", capture.Dir)
 	}
-	esperados := []string{"-p", "--safe-mode", "--tools", "", "--model", "claude-sonnet-5", "--effort", "high"}
-	if !reflect.DeepEqual(captura.Args, esperados) {
-		t.Fatalf("argumentos = %v, esperados %v", captura.Args, esperados)
+	wantArgs := []string{"-p", "--safe-mode", "--tools", "", "--model", "claude-sonnet-5", "--effort", "high"}
+	if !reflect.DeepEqual(capture.Args, wantArgs) {
+		t.Fatalf("args = %v, want %v", capture.Args, wantArgs)
 	}
-	if !strings.Contains(captura.Stdin, microDiff) {
-		t.Fatalf("stdin no contiene el micro-diff real: %q", captura.Stdin)
+	if !strings.Contains(capture.Stdin, microDiff) {
+		t.Fatalf("stdin does not contain the real micro-diff: %q", capture.Stdin)
 	}
-	if _, err := os.Stat(captura.Dir); !os.IsNotExist(err) {
-		t.Fatalf("el cwd aislado sigue existiendo tras la ejecución: %v", err)
+	if _, err := os.Stat(capture.Dir); !os.IsNotExist(err) {
+		t.Fatalf("the isolated cwd still exists after the run: %v", err)
 	}
 }
 
-func TestObtenerMensajeCommitConDiffOpenCodeEjecutaAislado(t *testing.T) {
+func TestGetCommitMessageWithDiffOpenCodeRunsIsolated(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("no se pudo obtener el directorio actual: %v", err)
+		t.Fatalf("could not get the current directory: %v", err)
 	}
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"fix(adapter): usar el micro diff aislado\"}}\n{\"type\":\"step_finish\"}\n")
 	adapter := CLIAdapter{
-		BinaryName: compilarAgenteConNombre(t, "opencode"),
+		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "openai/gpt-5.6-sol", ReasoningEffort: "high"},
 		Timeout:    10 * time.Second,
 	}
 	microDiff := "diff --git a/x.go b/x.go\n+func corregida() {}"
 
-	mensaje, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, microDiff)
+	message, err := adapter.GetCommitMessageWithDiff([]string{"x.go"}, "backend", 1, microDiff)
 	if err != nil {
-		t.Fatalf("ObtenerMensajeCommitConDiff devolvió error: %v", err)
+		t.Fatalf("GetCommitMessageWithDiff returned an error: %v", err)
 	}
-	if mensaje != "fix(adapter): usar el micro diff aislado" {
-		t.Fatalf("mensaje = %q", mensaje)
+	if message != "fix(adapter): usar el micro diff aislado" {
+		t.Fatalf("message = %q", message)
 	}
-	captura := leerCapturaAgente(t, capturaRuta)
-	if mismaRuta(captura.Dir, cwd) {
-		t.Fatalf("cwd aislado = %q, no debe ser el repositorio", captura.Dir)
+	capture := readAgentCapture(t, capturePath)
+	if samePath(capture.Dir, cwd) {
+		t.Fatalf("isolated cwd = %q, it must not be the repository", capture.Dir)
 	}
-	esperados := []string{"run", "--pure", "--agent", "title", "--format", "json", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", captura.Dir}
-	if !reflect.DeepEqual(captura.Args, esperados) {
-		t.Fatalf("argumentos = %v, esperados %v", captura.Args, esperados)
+	wantArgs := []string{"run", "--pure", "--agent", "title", "--format", "json", "--model", "openai/gpt-5.6-sol", "--variant", "high", "--dir", capture.Dir}
+	if !reflect.DeepEqual(capture.Args, wantArgs) {
+		t.Fatalf("args = %v, want %v", capture.Args, wantArgs)
 	}
-	if !strings.Contains(captura.Stdin, microDiff) {
-		t.Fatalf("stdin no contiene el micro-diff real: %q", captura.Stdin)
+	if !strings.Contains(capture.Stdin, microDiff) {
+		t.Fatalf("stdin does not contain the real micro-diff: %q", capture.Stdin)
 	}
-	if _, err := os.Stat(captura.Dir); !os.IsNotExist(err) {
-		t.Fatalf("el cwd aislado sigue existiendo tras la ejecución: %v", err)
+	if _, err := os.Stat(capture.Dir); !os.IsNotExist(err) {
+		t.Fatalf("the isolated cwd still exists after the run: %v", err)
 	}
 }
 
-// TestObtenerMensajeCommitConDiffClaudePropagaDetalleDeStderr comprueba que
-// un fallo del proceso claude conserva el detalle de stderr en el error
-// devuelto, en vez de descartarlo silenciosamente.
-func TestObtenerMensajeCommitConDiffClaudePropagaDetalleDeStderr(t *testing.T) {
+// TestGetCommitMessageWithDiffClaudePropagatesStderrDetail checks that a
+// claude process failure keeps the stderr detail in the returned error
+// instead of discarding it silently.
+func TestGetCommitMessageWithDiffClaudePropagatesStderrDetail(t *testing.T) {
 	t.Setenv("VAS_SENTINEL_TEST_FAIL", "authentication expired")
 	adapter := CLIAdapter{
-		BinaryName: compilarAgenteConNombre(t, "claude"),
+		BinaryName: compileAgentBinary(t, "claude"),
 		Timeout:    10 * time.Second,
 	}
 
-	_, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, "diff")
+	_, err := adapter.GetCommitMessageWithDiff([]string{"x.go"}, "backend", 1, "diff")
 	if err == nil {
-		t.Fatal("se esperaba un error del proceso claude")
+		t.Fatal("a claude process error was expected")
 	}
 	if !strings.Contains(err.Error(), "authentication expired") {
-		t.Fatalf("error = %q, esperado que incluya el detalle de stderr", err)
+		t.Fatalf("error = %q, want it to include the stderr detail", err)
 	}
 }
 
-// TestObtenerMensajeCommitConDiffOpenCodePropagaDetalleDeStderr mirrors
-// TestObtenerMensajeCommitConDiffClaudePropagaDetalleDeStderr for opencode.
-func TestObtenerMensajeCommitConDiffOpenCodePropagaDetalleDeStderr(t *testing.T) {
+// TestGetCommitMessageWithDiffOpenCodePropagatesStderrDetail mirrors
+// TestGetCommitMessageWithDiffClaudePropagatesStderrDetail for opencode.
+func TestGetCommitMessageWithDiffOpenCodePropagatesStderrDetail(t *testing.T) {
 	t.Setenv("VAS_SENTINEL_TEST_FAIL", "rate limit exceeded")
 	adapter := CLIAdapter{
-		BinaryName: compilarAgenteConNombre(t, "opencode"),
+		BinaryName: compileAgentBinary(t, "opencode"),
 		Timeout:    10 * time.Second,
 	}
 
-	_, err := adapter.ObtenerMensajeCommitConDiff([]string{"x.go"}, "backend", 1, "diff")
+	_, err := adapter.GetCommitMessageWithDiff([]string{"x.go"}, "backend", 1, "diff")
 	if err == nil {
-		t.Fatal("se esperaba un error del proceso opencode")
+		t.Fatal("an opencode process error was expected")
 	}
 	if !strings.Contains(err.Error(), "rate limit exceeded") {
-		t.Fatalf("error = %q, esperado que incluya el detalle de stderr", err)
+		t.Fatalf("error = %q, want it to include the stderr detail", err)
 	}
 }
 
-func TestValidarMensajeCommit(t *testing.T) {
-	casos := []struct {
-		nombre string
-		salida string
-		valida bool
+func TestValidateCommitMessage(t *testing.T) {
+	tc := []struct {
+		name   string
+		output string
+		valid  bool
 	}{
-		{nombre: "convencional", salida: "feat(slice): agrupar por cohesion", valida: true},
-		{nombre: "multilinea", salida: "He revisado los cambios\nfeat(slice): agrupar por cohesion", valida: false},
-		{nombre: "texto generico", salida: "He revisado los cambios", valida: false},
-		{nombre: "vacia", salida: "  ", valida: false},
+		{name: "conventional", output: "feat(slice): agrupar por cohesion", valid: true},
+		{name: "multiline", output: "He revisado los cambios\nfeat(slice): agrupar por cohesion", valid: false},
+		{name: "generic text", output: "He revisado los cambios", valid: false},
+		{name: "empty", output: "  ", valid: false},
 	}
 
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			mensaje, err := validarMensajeCommit(caso.salida)
-			if (err == nil) != caso.valida {
-				t.Fatalf("validarMensajeCommit(%q) error = %v", caso.salida, err)
+	for _, tc := range tc {
+		t.Run(tc.name, func(t *testing.T) {
+			message, err := validateCommitMessage(tc.output)
+			if (err == nil) != tc.valid {
+				t.Fatalf("validateCommitMessage(%q) error = %v", tc.output, err)
 			}
-			if caso.valida && mensaje != strings.TrimSpace(caso.salida) {
-				t.Fatalf("mensaje = %q, esperado %q", mensaje, strings.TrimSpace(caso.salida))
+			if tc.valid && message != strings.TrimSpace(tc.output) {
+				t.Fatalf("message = %q, want %q", message, strings.TrimSpace(tc.output))
 			}
 		})
 	}
 }
 
-func TestExtraerMensajeCommitOpenCode(t *testing.T) {
-	casos := []struct {
-		nombre   string
-		salida   string
-		esperado string
-		valida   bool
+func TestExtractOpenCodeCommitMessage(t *testing.T) {
+	tc := []struct {
+		name   string
+		output string
+		want   string
+		valid  bool
 	}{
 		{
-			nombre:   "un texto entre eventos",
-			salida:   "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): describir el cambio\"}}\n{\"type\":\"step_finish\"}\n",
-			esperado: "feat(slice): describir el cambio",
-			valida:   true,
+			name:   "one text among events",
+			output: "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): describir el cambio\"}}\n{\"type\":\"step_finish\"}\n",
+			want:   "feat(slice): describir el cambio",
+			valid:  true,
 		},
-		{nombre: "json malformado", salida: "{\"type\":\"text\"", valida: false},
-		{nombre: "objetos concatenados en una linea", salida: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valida: false},
-		{nombre: "linea vacia intermedia", salida: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valida: false},
-		{nombre: "contenido en blanco", salida: "   \n", valida: false},
-		{nombre: "sin texto", salida: "{\"type\":\"step_finish\"}\n", valida: false},
+		{name: "malformed json", output: "{\"type\":\"text\"", valid: false},
+		{name: "concatenated objects on one line", output: "{\"type\":\"step_start\"}{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valid: false},
+		{name: "blank intermediate line", output: "{\"type\":\"step_start\"}\n\n{\"type\":\"text\",\"part\":{\"text\":\"feat: cambio\"}}\n", valid: false},
+		{name: "blank content", output: "   \n", valid: false},
+		{name: "no text", output: "{\"type\":\"step_finish\"}\n", valid: false},
 		{
-			nombre: "text sin payload",
-			salida: "{\"type\":\"text\",\"part\":{}}\n",
-			valida: false,
-		},
-		{
-			nombre: "textos conflictivos",
-			salida: "{\"type\":\"text\",\"part\":{\"text\":\"feat: primero\"}}\n{\"type\":\"text\",\"part\":{\"text\":\"fix: segundo\"}}\n",
-			valida: false,
+			name:   "text without payload",
+			output: "{\"type\":\"text\",\"part\":{}}\n",
+			valid:  false,
 		},
 		{
-			nombre: "payload multilinea",
-			salida: "{\"type\":\"text\",\"part\":{\"text\":\"explicacion\\nfeat: cambio\"}}\n",
-			valida: false,
+			name:   "conflicting texts",
+			output: "{\"type\":\"text\",\"part\":{\"text\":\"feat: primero\"}}\n{\"type\":\"text\",\"part\":{\"text\":\"fix: segundo\"}}\n",
+			valid:  false,
 		},
 		{
-			nombre: "payload no convencional",
-			salida: "{\"type\":\"text\",\"part\":{\"text\":\"cambio sin formato\"}}\n",
-			valida: false,
+			name:   "multiline payload",
+			output: "{\"type\":\"text\",\"part\":{\"text\":\"explicacion\\nfeat: cambio\"}}\n",
+			valid:  false,
+		},
+		{
+			name:   "non-conventional payload",
+			output: "{\"type\":\"text\",\"part\":{\"text\":\"cambio sin formato\"}}\n",
+			valid:  false,
 		},
 	}
 
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			mensaje, err := extraerMensajeCommitOpenCode(caso.salida)
-			if (err == nil) != caso.valida {
-				t.Fatalf("extraerMensajeCommitOpenCode error = %v", err)
+	for _, tc := range tc {
+		t.Run(tc.name, func(t *testing.T) {
+			message, err := extractOpenCodeCommitMessage(tc.output)
+			if (err == nil) != tc.valid {
+				t.Fatalf("extractOpenCodeCommitMessage error = %v", err)
 			}
-			if mensaje != caso.esperado {
-				t.Fatalf("mensaje = %q, esperado %q", mensaje, caso.esperado)
+			if message != tc.want {
+				t.Fatalf("message = %q, want %q", message, tc.want)
 			}
 		})
 	}
 }
 
-func TestExtraerMensajeCommitOpenCodeAceptaLineaJSONLGrandeAcotada(t *testing.T) {
-	salida := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): validar jsonl grande\"}}\n", strings.Repeat("x", 70*1024))
-	mensaje, err := extraerMensajeCommitOpenCode(salida)
-	if err != nil || mensaje != "feat(slice): validar jsonl grande" {
-		t.Fatalf("mensaje = %q, err = %v", mensaje, err)
+func TestExtractOpenCodeCommitMessageAcceptsLargeBoundedJSONLLine(t *testing.T) {
+	output := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n{\"type\":\"text\",\"part\":{\"text\":\"feat(slice): validar jsonl grande\"}}\n", strings.Repeat("x", 70*1024))
+	message, err := extractOpenCodeCommitMessage(output)
+	if err != nil || message != "feat(slice): validar jsonl grande" {
+		t.Fatalf("message = %q, err = %v", message, err)
 	}
 }
 
-func TestExtraerMensajeCommitOpenCodeRechazaLineaJSONLSobreLimite(t *testing.T) {
-	salida := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024))
-	if _, err := extraerMensajeCommitOpenCode(salida); err == nil {
-		t.Fatal("se aceptó una línea JSONL por encima del límite explícito")
+func TestExtractOpenCodeCommitMessageRejectsJSONLLineOverLimit(t *testing.T) {
+	output := fmt.Sprintf("{\"type\":\"step_start\",\"padding\":%q}\n", strings.Repeat("x", 1024*1024))
+	if _, err := extractOpenCodeCommitMessage(output); err == nil {
+		t.Fatal("a JSONL line above the explicit limit was accepted")
 	}
 }
 
-func TestObtenerMensajeCommitConDiffIncluyeElDiff(t *testing.T) {
-	prompt := construirPromptAgenteConDiff("backend", 2, []string{"internal/git/plan.go"}, "diff --git a/x b/x\n+linea", "es")
+func TestGetCommitMessageWithDiffIncludesDiff(t *testing.T) {
+	prompt := buildAgentPromptWithDiff("backend", 2, []string{"internal/git/plan.go"}, "diff --git a/x b/x\n+linea", "es")
 	if !strings.Contains(prompt, "diff --git a/x b/x\n+linea") {
-		t.Fatalf("el prompt no contiene el micro-diff: %q", prompt)
+		t.Fatalf("the prompt does not contain the micro-diff: %q", prompt)
 	}
 }
 
-func TestObtenerMensajeCommitOpenCodeRechazaSalidaNoConvencional(t *testing.T) {
-	binario := compilarAgenteConNombre(t, "opencode")
-	adapter := CLIAdapter{BinaryName: binario, Timeout: 10 * time.Second}
+func TestGetCommitMessageOpenCodeRejectsNonConventionalOutput(t *testing.T) {
+	binary := compileAgentBinary(t, "opencode")
+	adapter := CLIAdapter{BinaryName: binary, Timeout: 10 * time.Second}
 
-	if _, err := adapter.ObtenerMensajeCommit([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
-		t.Fatal("se esperaba error al recibir el prompt completo como salida")
+	if _, err := adapter.GetCommitMessage([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
+		t.Fatal("an error was expected when the full prompt comes back as the output")
 	}
 }
 
-// compilarSleeper compila el helper de testdata/sleeper a un ejecutable
-// temporal y devuelve su ruta. Los tests que lo usan se saltan en -short.
-func compilarSleeper(t *testing.T) string {
+// compileSleeper compiles the testdata/sleeper helper to a temporary
+// executable and returns its path. Tests using it are skipped in -short mode.
+func compileSleeper(t *testing.T) string {
 	t.Helper()
-	return compilarAgenteConNombre(t, "sleeper")
+	return compileAgentBinary(t, "sleeper")
 }
 
-// compilarAgenteConNombre compila el helper de testdata/sleeper a un binario
-// temporal con el nombre dado (p. ej. "opencode" o "claude") y devuelve su
-// ruta. Nombrar el binario como el agente active el transporte por stdin en
-// el adaptador sin depender de un agente real. Los tests que lo usan se
-// saltan en -short.
-func compilarAgenteConNombre(t *testing.T, nombre string) string {
+// compileAgentBinary compiles the testdata/sleeper helper to a temporary
+// binary with the given name (e.g. "opencode" or "claude") and returns its
+// path. Naming the binary after the active agent activates stdin transport in
+// the adapter without depending on a real agent. Tests using it are skipped
+// in -short mode.
+func compileAgentBinary(t *testing.T, name string) string {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("salta la compilación del helper en modo -short")
+		t.Skip("skips compiling the helper in -short mode")
 	}
 
-	exe := filepath.Join(t.TempDir(), nombre)
+	exe := filepath.Join(t.TempDir(), name)
 	if filepath.Ext(exe) == "" && os.PathSeparator == '\\' {
 		exe += ".exe"
 	}
 	cmd := exec.Command("go", "build", "-o", exe, ".")
 	cmd.Dir = filepath.Join("testdata", "sleeper")
-	if salida, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("no se pudo compilar el helper %s: %v\n%s", nombre, err, salida)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("could not compile the helper %s: %v\n%s", name, err, output)
 	}
 	return exe
 }
 
-// promptLargo devuelve un prompt de más de 40.000 caracteres, por encima del
-// límite de 32.767 de la línea de comandos de Windows, para verificar que el
-// transporte por stdin no depende de la longitud.
-func promptLargo() string {
+// longPrompt returns a prompt of more than 40,000 characters, above the
+// 32,767 limit of the Windows command line, to verify that stdin transport
+// does not depend on the length.
+func longPrompt() string {
 	return strings.Repeat("[1]", 15_000)
 }
 
-func TestEjecutarComandoDevuelveSalida(t *testing.T) {
-	sleeper := compilarSleeper(t)
+func TestRunCommandReturnsOutput(t *testing.T) {
+	sleeper := compileSleeper(t)
 	adapter := CLIAdapter{BinaryName: sleeper}
 
-	salida, err := adapter.ejecutarComandoConTimeout("prompt de prueba", 10*time.Second)
+	output, err := adapter.runCommandWithTimeout("prompt de prueba", 10*time.Second)
 	if err != nil {
-		t.Fatalf("ejecutarComandoConTimeout devolvió error: %v", err)
+		t.Fatalf("runCommandWithTimeout returned an error: %v", err)
 	}
-	if salida != "prompt de prueba" {
-		t.Errorf("salida = %q, esperado %q", salida, "prompt de prueba")
+	if output != "prompt de prueba" {
+		t.Errorf("output = %q, want %q", output, "prompt de prueba")
 	}
 }
 
-func TestEjecutarComandoCortaPorTimeout(t *testing.T) {
-	sleeper := compilarSleeper(t)
+func TestRunCommandKillsOnTimeout(t *testing.T) {
+	sleeper := compileSleeper(t)
 	adapter := CLIAdapter{BinaryName: sleeper}
 
-	inicio := time.Now()
-	// El helper interpreta el primer argumento numérico como segundos de sueño:
-	// "3" duerme 3 s, muy por encima del timeout de 150 ms.
-	_, err := adapter.ejecutarComandoConTimeout("3", 150*time.Millisecond)
-	duracion := time.Since(inicio)
+	start := time.Now()
+	// The helper interprets the first numeric argument as sleep seconds:
+	// "3" sleeps 3 s, far above the 150 ms timeout.
+	_, err := adapter.runCommandWithTimeout("3", 150*time.Millisecond)
+	elapsed := time.Since(start)
 
 	if err == nil {
-		t.Fatal("se esperaba un error por timeout, no se devolvió ninguno")
+		t.Fatal("a timeout error was expected, none was returned")
 	}
-	if duracion > 2*time.Second {
-		t.Errorf("el proceso no se cortó: tardó %v en devolver", duracion)
+	if elapsed > 2*time.Second {
+		t.Errorf("the process was not cut off: it took %v to return", elapsed)
 	}
-	if duracion < 100*time.Millisecond {
-		t.Errorf("el error llegó demasiado pronto (%v), parece un fallo previo al timeout", duracion)
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("the error arrived too early (%v), it looks like a pre-timeout failure", elapsed)
 	}
 }
 
-// TestEjecutarComandoStdinOpenCode verifica que opencode recibe el prompt por
-// stdin (el helper se nombra "opencode" para activar ese camino) y que un
-// prompt por encima del límite de línea de Windows llega completo, sin truncar.
-func TestEjecutarComandoStdinOpenCode(t *testing.T) {
-	binario := compilarAgenteConNombre(t, "opencode")
+// TestRunCommandStdinOpenCode verifies opencode receives the prompt via
+// stdin (the helper is named "opencode" to activate that path) and that a
+// prompt above the Windows line limit arrives complete, without truncation.
+func TestRunCommandStdinOpenCode(t *testing.T) {
+	binary := compileAgentBinary(t, "opencode")
 	adapter := CLIAdapter{
-		BinaryName: binario,
+		BinaryName: binary,
 		Config:     config.AgentConfig{Model: "deepseek-v4-flash-free", ReasoningEffort: "default"},
 	}
 
-	prompt := promptLargo()
-	salida, err := adapter.ejecutarComandoConTimeout(prompt, 10*time.Second)
+	prompt := longPrompt()
+	output, err := adapter.runCommandWithTimeout(prompt, 10*time.Second)
 	if err != nil {
-		t.Fatalf("ejecutarComandoConTimeout devolvió error: %v", err)
+		t.Fatalf("runCommandWithTimeout returned an error: %v", err)
 	}
-	if salida != prompt {
-		t.Errorf("salida de longitud %d, esperado %d (el prompt viaja por stdin sin truncar)", len(salida), len(prompt))
+	if output != prompt {
+		t.Errorf("output of length %d, want %d (the prompt travels via stdin without truncation)", len(output), len(prompt))
 	}
 }
 
-// TestEjecutarComandoStdinClaude verifica el mismo transporte por stdin para
-// claude, con su configuración de modelo/esfuerzo habitual.
-func TestEjecutarComandoStdinClaude(t *testing.T) {
-	binario := compilarAgenteConNombre(t, "claude")
+// TestRunCommandStdinClaude verifies the same stdin transport for claude,
+// with its usual model/effort configuration.
+func TestRunCommandStdinClaude(t *testing.T) {
+	binary := compileAgentBinary(t, "claude")
 	adapter := CLIAdapter{
-		BinaryName: binario,
+		BinaryName: binary,
 		Config:     config.AgentConfig{Model: "claude-3-5-sonnet", ReasoningEffort: "high"},
 	}
 
-	prompt := promptLargo()
-	salida, err := adapter.ejecutarComandoConTimeout(prompt, 10*time.Second)
+	prompt := longPrompt()
+	output, err := adapter.runCommandWithTimeout(prompt, 10*time.Second)
 	if err != nil {
-		t.Fatalf("ejecutarComandoConTimeout devolvió error: %v", err)
+		t.Fatalf("runCommandWithTimeout returned an error: %v", err)
 	}
-	if salida != prompt {
-		t.Errorf("salida de longitud %d, esperado %d (el prompt viaja por stdin sin truncar)", len(salida), len(prompt))
+	if output != prompt {
+		t.Errorf("output of length %d, want %d (the prompt travels via stdin without truncation)", len(output), len(prompt))
 	}
 }
 
-// TestEjecutarComandoArgumentoDesconocido verifica que un binario fuera de los
-// conocidos (claude/opencode) mantiene el transporte por argumento: el helper
-// "sleeper" recibe el prompt como "-p <prompt>" y lo devuelve tal cual.
-func TestEjecutarComandoArgumentoDesconocido(t *testing.T) {
-	sleeper := compilarSleeper(t)
+// TestRunCommandUnknownBinaryUsesArgument verifies that a binary outside the
+// known ones (claude/opencode) keeps the argument transport: the "sleeper"
+// helper receives the prompt as "-p <prompt>" and returns it verbatim.
+func TestRunCommandUnknownBinaryUsesArgument(t *testing.T) {
+	sleeper := compileSleeper(t)
 	adapter := CLIAdapter{BinaryName: sleeper}
 
-	// Prompt largo pero por debajo del límite de 32.767 de Windows: el caso
-	// desconocido sigue viajando por argumento y no debe truncarse.
+	// Long prompt but below the 32,767 Windows limit: the unknown case keeps
+	// traveling as an argument and must not be truncated.
 	prompt := strings.Repeat("x", 20_000)
-	salida, err := adapter.ejecutarComandoConTimeout(prompt, 10*time.Second)
+	output, err := adapter.runCommandWithTimeout(prompt, 10*time.Second)
 	if err != nil {
-		t.Fatalf("ejecutarComandoConTimeout devolvió error: %v", err)
+		t.Fatalf("runCommandWithTimeout returned an error: %v", err)
 	}
-	if salida != prompt {
-		t.Errorf("salida de longitud %d, esperado %d (el transporte por argumento se mantiene)", len(salida), len(prompt))
+	if output != prompt {
+		t.Errorf("output of length %d, want %d (the argument transport is kept)", len(output), len(prompt))
 	}
 }
 
-// TestComandoPromptDecideStdin verifica la decisión de transporte sin ejecutar
-// ningún binario: opencode/claude usan stdin; cualquier otro pasa el prompt
-// como argumento de "-p".
-func TestComandoPromptDecideStdin(t *testing.T) {
-	casos := []struct {
-		nombre        string
-		binario       string
-		prompt        string
-		argsEsperados []string
-		viaStdin      bool
+// TestPromptCommandDecidesStdin verifies the transport decision without
+// running any binary: opencode/claude use stdin; anything else passes the
+// prompt as the "-p" argument.
+func TestPromptCommandDecidesStdin(t *testing.T) {
+	tc := []struct {
+		name     string
+		binary   string
+		prompt   string
+		wantArgs []string
+		viaStdin bool
 	}{
-		{nombre: "opencode usa run y stdin", binario: "opencode", argsEsperados: []string{"run"}, viaStdin: true},
-		{nombre: "opencode con extensión se detecta", binario: "opencode.exe", argsEsperados: []string{"run"}, viaStdin: true},
-		{nombre: "claude usa -p y stdin", binario: "claude", argsEsperados: []string{"-p"}, viaStdin: true},
-		{nombre: "desconocido usa -p con el prompt en el argumento", binario: "sleeper", prompt: "prompt de prueba", argsEsperados: []string{"-p", "prompt de prueba"}, viaStdin: false},
+		{name: "opencode uses run and stdin", binary: "opencode", wantArgs: []string{"run"}, viaStdin: true},
+		{name: "opencode with extension is detected", binary: "opencode.exe", wantArgs: []string{"run"}, viaStdin: true},
+		{name: "claude uses -p and stdin", binary: "claude", wantArgs: []string{"-p"}, viaStdin: true},
+		{name: "unknown uses -p with the prompt as argument", binary: "sleeper", prompt: "prompt de prueba", wantArgs: []string{"-p", "prompt de prueba"}, viaStdin: false},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			adapter := CLIAdapter{BinaryName: caso.binario}
-			args, viaStdin := adapter.comandoPrompt(caso.prompt)
-			if !reflect.DeepEqual(args, caso.argsEsperados) {
-				t.Errorf("comandoPrompt(%q) args = %v, esperado %v", caso.prompt, args, caso.argsEsperados)
+	for _, tc := range tc {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := CLIAdapter{BinaryName: tc.binary}
+			args, viaStdin := adapter.promptCommand(tc.prompt)
+			if !reflect.DeepEqual(args, tc.wantArgs) {
+				t.Errorf("promptCommand(%q) args = %v, want %v", tc.prompt, args, tc.wantArgs)
 			}
-			if viaStdin != caso.viaStdin {
-				t.Errorf("comandoPrompt(%q) viaStdin = %v, esperado %v", caso.prompt, viaStdin, caso.viaStdin)
+			if viaStdin != tc.viaStdin {
+				t.Errorf("promptCommand(%q) viaStdin = %v, want %v", tc.prompt, viaStdin, tc.viaStdin)
 			}
 		})
 	}

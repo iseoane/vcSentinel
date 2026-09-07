@@ -15,14 +15,14 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
-// ReviewWithContext runs the same restricted review as EjecutarRevision but
+// ReviewWithContext runs the same restricted review as RunReview but
 // derives its execution budget from the caller-supplied context: the adapter
 // timeout still applies, and an earlier caller cancellation or deadline wins.
 // This is the seam that lets the durable execution controller's worker
 // context reach the spawned provider process, so Apply(ActionAbort) kills it
 // instead of waiting for it to finish (R7 slice 1).
 //
-// The method name pairs with the legacy EjecutarRevision entry point it
+// The method name pairs with the legacy RunReview entry point it
 // extends; reviewexec.ReviewAdapter discovers it structurally through its
 // ContextualReviewer contract, so wrappers and chains forward it unchanged.
 func (c *CLIAdapter) ReviewWithContext(ctx context.Context, prompt, sha string, paths []string) (string, error) {
@@ -61,7 +61,7 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = TimeoutComando
+		timeout = CommandTimeout
 	}
 	result := c.declaredResult()
 	snapshot, safePaths, cleanup, err := createReviewSnapshot("", sha, paths)
@@ -70,7 +70,7 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 	}
 	defer cleanup()
 	request := ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls, ToolPolicy: policy}
-	run, err := c.ejecutarRevision(ctx, request, timeout)
+	run, err := c.runBoundedReview(ctx, request, timeout)
 	if err != nil {
 		return result, err
 	}
@@ -115,7 +115,7 @@ type reviewExecution struct {
 	stopReason string
 }
 
-// ejecutarRevision spawns the restricted reviewer under a combined budget:
+// runBoundedReview spawns the restricted reviewer under a combined budget:
 // the parent context governs cooperative cancellation and the timeout bounds
 // a provider that never answers. The child is born into an owned process
 // tree, and the containment watchdog guarantees that even without the
@@ -123,9 +123,9 @@ type reviewExecution struct {
 // the shared grace budget plus a fixed margin. The returned observation
 // adds the extracted answer text and — for OpenCode and Claude — the wire
 // usage and terminal stop reason the provider's output format reports.
-func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequest, timeout time.Duration) (reviewExecution, error) {
-	ctx, cancelar := context.WithTimeout(parent, timeout)
-	defer cancelar()
+func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequest, timeout time.Duration) (reviewExecution, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
 
 	args, restrictions, err := c.reviewCommand(request)
 	if err != nil {
@@ -133,7 +133,7 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 	}
 	env := os.Environ()
 	dir := ""
-	if c.esClaude() {
+	if c.isClaude() {
 		// Claude Code has no "--dir"-style flag (unlike OpenCode's --pure +
 		// --dir), so it runs with the snapshot as its working directory. Tool
 		// authorization is configured by reviewCommand; this is not an OS
@@ -164,14 +164,14 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 		// records OutcomeTimeout instead of OutcomeFailure and the durable
 		// record stops misreporting why the dimension failed.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			motivo := "timed out after " + timeout.String()
+			reason := "timed out after " + timeout.String()
 			if errors.Is(ctxErr, context.Canceled) {
-				motivo = "canceled"
+				reason = "canceled"
 			}
 			if detail != "" {
-				return reviewExecution{}, fmt.Errorf("run restricted reviewer %s: %w: %s", motivo, errors.Join(waitErr, ctxErr), detail)
+				return reviewExecution{}, fmt.Errorf("run restricted reviewer %s: %w: %s", reason, errors.Join(waitErr, ctxErr), detail)
 			}
-			return reviewExecution{}, fmt.Errorf("run restricted reviewer %s: %w", motivo, errors.Join(waitErr, ctxErr))
+			return reviewExecution{}, fmt.Errorf("run restricted reviewer %s: %w", reason, errors.Join(waitErr, ctxErr))
 		}
 		if detail != "" {
 			return reviewExecution{}, fmt.Errorf("run restricted reviewer: %w: %s", waitErr, detail)
@@ -180,13 +180,13 @@ func (c *CLIAdapter) ejecutarRevision(parent context.Context, request ReviewRequ
 	}
 	raw := spawn.stdout.String()
 	switch {
-	case c.esOpenCode():
+	case c.isOpenCode():
 		scan, err := scanOpenCodeReview(strings.NewReader(raw))
 		if err != nil {
 			return reviewExecution{}, err
 		}
 		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason), nil
-	case c.esClaude():
+	case c.isClaude():
 		scan, err := scanClaudeReview(strings.NewReader(raw))
 		if err != nil {
 			return reviewExecution{}, err

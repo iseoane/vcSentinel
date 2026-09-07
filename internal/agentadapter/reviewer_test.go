@@ -445,12 +445,12 @@ func TestReviewEnvironmentPrefersInheritedAuthContentOverHostFile(t *testing.T) 
 // snapshot in both cases; this only asserts the environment produced, not
 // that a real OpenCode process is unable to reach the fixture file.
 func TestReviewEnvironmentDoesNotFallBackToHostDataDirWhenScopingFails(t *testing.T) {
-	casos := map[string]string{
+	cases := map[string]string{
 		"non-matching provider": `{"anthropic":{"key":"not-the-configured-provider"}}`,
 		"malformed JSON":        `{"anthropic":`,
 	}
-	for nombre, inherited := range casos {
-		t.Run(nombre, func(t *testing.T) {
+	for name, inherited := range cases {
+		t.Run(name, func(t *testing.T) {
 			hostDataHome := t.TempDir()
 			writeHostAuthFixture(t, hostDataHome)
 			t.Setenv("XDG_DATA_HOME", hostDataHome)
@@ -460,11 +460,11 @@ func TestReviewEnvironmentDoesNotFallBackToHostDataDirWhenScopingFails(t *testin
 			env := reviewEnvironment("generated", snapshot, "openai/gpt-5.6-terra")
 			values := environmentValues(env)
 			if got := values["OPENCODE_AUTH_CONTENT"]; len(got) != 0 {
-				t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry for %s", got, nombre)
+				t.Fatalf("OPENCODE_AUTH_CONTENT = %v, expected no entry for %s", got, name)
 			}
 			wantDataHome := filepath.Join(snapshot, ".local", "share")
 			if got := values["XDG_DATA_HOME"]; !reflect.DeepEqual(got, []string{wantDataHome}) {
-				t.Fatalf("XDG_DATA_HOME = %v, expected the isolated snapshot path %q for %s, not the host's real data dir", got, wantDataHome, nombre)
+				t.Fatalf("XDG_DATA_HOME = %v, expected the isolated snapshot path %q for %s, not the host's real data dir", got, wantDataHome, name)
 			}
 		})
 	}
@@ -534,7 +534,7 @@ func TestReviewCommandClaudeBuildsSnapshotBoundArgs(t *testing.T) {
 }
 
 // TestReviewCommandClaudeExeIsDetected mirrors the opencode.exe coverage:
-// nombreBase must strip the platform suffix so Windows binaries are detected.
+// baseName must strip the platform suffix so Windows binaries are detected.
 func TestReviewCommandClaudeExeIsDetected(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	snapshotPattern := filepath.ToSlash(filepath.Join(snapshot, "**"))
@@ -571,33 +571,33 @@ func TestReviewCommandClaudeRequiresSnapshotDirectory(t *testing.T) {
 	}
 }
 
-// TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd verifies the actual os/exec
+// TestRunReviewClaudeUsesSnapshotDirAsCwd verifies the actual os/exec
 // wiring: Claude has no "--dir" flag, so the review process starts in the
 // immutable snapshot directory.
-func TestEjecutarRevisionClaudeUsesSnapshotDirAsCwd(t *testing.T) {
-	capturaRuta := filepath.Join(t.TempDir(), "captura.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturaRuta)
+func TestRunReviewClaudeUsesSnapshotDirAsCwd(t *testing.T) {
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	// The fake claude must answer in the format the production invocation now
 	// requests: one result object the rich path scans. The echoed prompt
 	// would fail the parser's fail-closed JSON check.
 	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
 	snapshotDir := t.TempDir()
-	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 10 * time.Second}
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
-	if _, err := adapter.ejecutarRevision(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 10*time.Second); err != nil {
-		t.Fatalf("ejecutarRevision() error = %v", err)
+	if _, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 10*time.Second); err != nil {
+		t.Fatalf("runBoundedReview() error = %v", err)
 	}
-	captura := leerCapturaAgente(t, capturaRuta)
-	if !mismaRuta(captura.Dir, snapshotDir) {
-		t.Fatalf("cmd.Dir = %q, expected the snapshot directory %q", captura.Dir, snapshotDir)
+	capture := readAgentCapture(t, capturePath)
+	if !samePath(capture.Dir, snapshotDir) {
+		t.Fatalf("cmd.Dir = %q, expected the snapshot directory %q", capture.Dir, snapshotDir)
 	}
-	if captura.Stdin != "audit" {
-		t.Fatalf("stdin = %q, expected the review prompt", captura.Stdin)
+	if capture.Stdin != "audit" {
+		t.Fatalf("stdin = %q, expected the review prompt", capture.Stdin)
 	}
 	snapshotPattern := filepath.ToSlash(filepath.Join(snapshotDir, "**"))
 	wantArgs := []string{"-p", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob", "--allowed-tools", "Read(" + snapshotPattern + "),Grep(" + snapshotPattern + "),Glob(" + snapshotPattern + ")", "--disallowed-tools", "Bash,Edit,Write", "--output-format", "json"}
-	if !reflect.DeepEqual(captura.Args, wantArgs) {
-		t.Fatalf("args = %v, expected restricted snapshot-bound invocation %v", captura.Args, wantArgs)
+	if !reflect.DeepEqual(capture.Args, wantArgs) {
+		t.Fatalf("args = %v, expected restricted snapshot-bound invocation %v", capture.Args, wantArgs)
 	}
 }
 
@@ -616,20 +616,20 @@ func TestReviewCommandRejectsProvidersWithoutBoundedToolPermissions(t *testing.T
 	}
 }
 
-// TestEjecutarRevisionMarcaElPlazoAgotado fija que un revisor que agota su
-// plazo sea distinguible de uno que se cae. El vigilante de contención manda
-// SIGTERM al grupo de procesos, así que cmd.Wait devuelve "signal: terminated"
-// — un texto que no dice nada del plazo. Sin esta marca, reviewexec clasifica
-// el timeout como OutcomeFailure y el registro durable miente sobre por qué
-// falló la dimensión.
-func TestEjecutarRevisionMarcaElPlazoAgotado(t *testing.T) {
+// TestRunReviewMarksDeadlineExceeded pins that a reviewer exhausting its
+// deadline is distinguishable from one that crashes. The containment watchdog
+// sends SIGTERM to the process group, so cmd.Wait returns "signal: terminated"
+// — text that says nothing about the deadline. Without this mark, reviewexec
+// classifies the timeout as OutcomeFailure and the durable record lies about
+// why the dimension failed.
+func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
 	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
 	snapshotDir := t.TempDir()
-	adapter := CLIAdapter{BinaryName: compilarAgenteConNombre(t, "claude"), Timeout: 200 * time.Millisecond}
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 200 * time.Millisecond}
 
-	_, err := adapter.ejecutarRevision(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 200*time.Millisecond)
+	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 200*time.Millisecond)
 	if err == nil {
-		t.Fatal("ejecutarRevision() = nil error, expected the deadline to fire")
+		t.Fatal("runBoundedReview() = nil error, expected the deadline to fire")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error = %v; it must wrap context.DeadlineExceeded so the durable record classifies it as a timeout instead of a failure", err)

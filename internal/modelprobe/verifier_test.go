@@ -7,29 +7,29 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
 
-type agenteModeloFalso struct {
-	modelo string
-	err    error
+type fakeModelAgent struct {
+	model string
+	err   error
 }
 
-func (a agenteModeloFalso) EjecutarPrompt(string) (string, error) {
-	return a.modelo, a.err
+func (a fakeModelAgent) RunPrompt(string) (string, error) {
+	return a.model, a.err
 }
 
-type agenteModeloConfiguradoFalso struct {
-	agenteModeloFalso
-	esperado string
+type fakeConfiguredModelAgent struct {
+	fakeModelAgent
+	expected string
 }
 
-func (a agenteModeloConfiguradoFalso) ModeloConfigurado() (string, bool) {
-	return a.esperado, true
+func (a fakeConfiguredModelAgent) ConfiguredModel() (string, bool) {
+	return a.expected, true
 }
 
-type agenteModeloConfiguradoNoDisponible struct {
-	agenteModeloFalso
+type unavailableConfiguredModelAgent struct {
+	fakeModelAgent
 }
 
-func (agenteModeloConfiguradoNoDisponible) ModeloConfigurado() (string, bool) {
+func (unavailableConfiguredModelAgent) ConfiguredModel() (string, bool) {
 	return "openai/gpt-5.6-terra", false
 }
 
@@ -38,14 +38,14 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 		name     string
 		profile  string
 		expected string
-		agent    Agente
+		agent    Agent
 		stored   *store.Profile
 	}{
 		{
 			name:     "mismatch persists normalized values",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: "  openai/gpt-5.6-sol  "},
+			agent:    fakeModelAgent{model: "  openai/gpt-5.6-sol  "},
 			stored: &store.Profile{
 				Name:          "normal",
 				Status:        store.ProfileUnverified,
@@ -58,7 +58,7 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 			name:     "matching surrounding whitespace is ignored",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: "  openai/gpt-5.6-terra\t"},
+			agent:    fakeModelAgent{model: "  openai/gpt-5.6-terra\t"},
 			stored: &store.Profile{
 				Name:          "normal",
 				Status:        store.ProfileVerified,
@@ -71,7 +71,7 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 			name:     "mismatch with trailing LF is recorded",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: "openai/gpt-5.6-sol\n"},
+			agent:    fakeModelAgent{model: "openai/gpt-5.6-sol\n"},
 			stored: &store.Profile{
 				Name:          "normal",
 				Status:        store.ProfileUnverified,
@@ -84,7 +84,7 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 			name:     "mismatch with trailing CRLF is recorded",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: "openai/gpt-5.6-sol\r\n"},
+			agent:    fakeModelAgent{model: "openai/gpt-5.6-sol\r\n"},
 			stored: &store.Profile{
 				Name:          "normal",
 				Status:        store.ProfileUnverified,
@@ -97,21 +97,21 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 			name:     "agent error is ignored",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{err: errors.New("unavailable")},
+			agent:    fakeModelAgent{err: errors.New("unavailable")},
 		},
 		{
 			name:    "unavailable configured model is ignored",
 			profile: "normal",
-			agent: agenteModeloConfiguradoNoDisponible{
-				agenteModeloFalso: agenteModeloFalso{modelo: "openai/gpt-5.6-sol"},
+			agent: unavailableConfiguredModelAgent{
+				fakeModelAgent: fakeModelAgent{model: "openai/gpt-5.6-sol"},
 			},
 		},
 		{
 			name:    "available configured model is used",
 			profile: "normal",
-			agent: agenteModeloConfiguradoFalso{
-				agenteModeloFalso: agenteModeloFalso{modelo: "openai/gpt-5.6-sol"},
-				esperado:          "openai/gpt-5.6-terra",
+			agent: fakeConfiguredModelAgent{
+				fakeModelAgent: fakeModelAgent{model: "openai/gpt-5.6-sol"},
+				expected:       "openai/gpt-5.6-terra",
 			},
 			stored: &store.Profile{
 				Name:          "normal",
@@ -125,26 +125,26 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 			name:     "invalid response is ignored",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: "openai/gpt-5.6-sol\nuntrusted"},
+			agent:    fakeModelAgent{model: "openai/gpt-5.6-sol\nuntrusted"},
 		},
 		{
 			name:     "literal 129 character response is ignored",
 			profile:  "normal",
 			expected: "openai/gpt-5.6-terra",
-			agent:    agenteModeloFalso{modelo: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			agent:    fakeModelAgent{model: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := store.NuevoStore(t.TempDir())
-			v := NuevoVerificador(s)
+			s := store.NewStore(t.TempDir())
+			v := NewVerifier(s)
 
 			v.Verify(tt.profile, tt.expected, tt.agent)
 
-			profile, err := s.LeerPerfil(tt.profile)
+			profile, err := s.ReadProfile(tt.profile)
 			if err != nil {
-				t.Fatalf("LeerPerfil: %v", err)
+				t.Fatalf("ReadProfile: %v", err)
 			}
 			if tt.stored == nil {
 				if profile != nil {
@@ -163,19 +163,19 @@ func TestVerifierPersistsNormalizedOutcomes(t *testing.T) {
 }
 
 func TestReportedModelAccepts128CharLiteral(t *testing.T) {
-	modelo, ok := modeloReportadoValido("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	model, ok := validReportedModel("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if !ok {
-		t.Fatal("modeloReportadoValido rejected a 128 character identifier")
+		t.Fatal("validReportedModel rejected a 128 character identifier")
 	}
-	if len(modelo) != 128 {
-		t.Errorf("len(modelo) = %d, want 128", len(modelo))
+	if len(model) != 128 {
+		t.Errorf("len(model) = %d, want 128", len(model))
 	}
 }
 
 func TestVerifierProbesOncePerProfile(t *testing.T) {
-	s := store.NuevoStore(t.TempDir())
-	v := NuevoVerificador(s)
-	agent := &countingAgent{modelo: "openai/gpt-5.6-terra"}
+	s := store.NewStore(t.TempDir())
+	v := NewVerifier(s)
+	agent := &countingAgent{model: "openai/gpt-5.6-terra"}
 
 	first := v.Verify("normal", "openai/gpt-5.6-terra", agent)
 	second := v.Verify("normal", "openai/gpt-5.6-sol", agent)
@@ -186,9 +186,9 @@ func TestVerifierProbesOncePerProfile(t *testing.T) {
 	if first != OutcomeMatched || second != OutcomeMatched {
 		t.Errorf("outcomes = %q, %q: want the stored first outcome twice", first, second)
 	}
-	profile, err := s.LeerPerfil("normal")
+	profile, err := s.ReadProfile("normal")
 	if err != nil {
-		t.Fatalf("LeerPerfil: %v", err)
+		t.Fatalf("ReadProfile: %v", err)
 	}
 	if profile == nil || profile.Status != store.ProfileVerified {
 		t.Errorf("profile = %+v, want the verified match record", profile)
