@@ -7,193 +7,194 @@ import (
 	"testing"
 )
 
-func TestCohesionPorComponentesConexas(t *testing.T) {
-	casos := []struct {
-		nombre           string
-		rutas            []string
-		historial        string
-		quiereClusters   int
-		quierePuntuacion float64
-		quiereSplit      bool
+func TestCohesionByConnectedComponents(t *testing.T) {
+	cases := []struct {
+		name        string
+		paths       []string
+		history     string
+		wantCluster int
+		wantScore   float64
+		wantSplit   bool
 	}{
 		{
-			nombre: "tres grupos independientes",
-			rutas: []string{
+			name: "three independent groups",
+			paths: []string{
 				"internal/review/finding.go",
 				"internal/review/ledger.go",
 				"internal/setup/github.go",
 				".github/workflows/ci.yml",
 			},
-			quiereClusters:   3,
-			quierePuntuacion: 1.0 / 3.0,
-			quiereSplit:      true,
+			wantCluster: 3,
+			wantScore:   1.0 / 3.0,
+			wantSplit:   true,
 		},
 		{
-			nombre: "cambio grande cohesivo por modulo",
-			rutas: []string{
+			name: "large cohesive change by module",
+			paths: []string{
 				"internal/change/clases.go",
 				"internal/change/perfil.go",
 				"internal/change/caracteristicas.go",
 				"internal/change/cohesion.go",
 				"internal/change/cohesion_test.go",
 			},
-			quiereClusters:   1,
-			quierePuntuacion: 1,
-			quiereSplit:      false,
+			wantCluster: 1,
+			wantScore:   1,
+			wantSplit:   false,
 		},
 		{
-			nombre:           "solo el co-cambio historico conecta",
-			rutas:            []string{"internal/auth/token.go", "pkg/session/store.go"},
-			historial:        "commit:abc123\n\ninternal/auth/token.go\npkg/session/store.go\n",
-			quiereClusters:   1,
-			quierePuntuacion: 1,
-			quiereSplit:      false,
+			name:        "only historical co-change connects",
+			paths:       []string{"internal/auth/token.go", "pkg/session/store.go"},
+			history:     "commit:abc123\n\ninternal/auth/token.go\npkg/session/store.go\n",
+			wantCluster: 1,
+			wantScore:   1,
+			wantSplit:   false,
 		},
 		{
-			nombre: "el co-cambio historico es transitivo",
-			rutas:  []string{"internal/auth/token.go", "pkg/session/store.go", "cmd/api/main.go"},
-			historial: "commit:abc123\n\ninternal/auth/token.go\npkg/session/store.go\n" +
+			name:  "historical co-change is transitive",
+			paths: []string{"internal/auth/token.go", "pkg/session/store.go", "cmd/api/main.go"},
+			history: "commit:abc123\n\ninternal/auth/token.go\npkg/session/store.go\n" +
 				"commit:def456\n\npkg/session/store.go\ncmd/api/main.go\n",
-			quiereClusters:   1,
-			quierePuntuacion: 1,
-			quiereSplit:      false,
+			wantCluster: 1,
+			wantScore:   1,
+			wantSplit:   false,
 		},
 	}
 
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			llamadas := 0
-			falso := func(args ...string) (string, error) {
-				llamadas++
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			calls := 0
+			fake := func(args ...string) (string, error) {
+				calls++
 				if len(args) == 0 || args[0] != "log" || !contains(args, "--name-only") {
-					t.Fatalf("lectura git inesperada: %v", args)
+					t.Fatalf("unexpected git read: %v", args)
 				}
-				for _, ruta := range caso.rutas {
-					if !contains(args, ruta) {
-						t.Errorf("git log no recibió la ruta %q: %v", ruta, args)
+				for _, path := range c.paths {
+					if !contains(args, path) {
+						t.Errorf("git log did not receive the path %q: %v", path, args)
 					}
 				}
-				return caso.historial, nil
+				return c.history, nil
 			}
 
-			resultado, err := Cohesion(caso.rutas, falso)
+			result, err := Cohesion(c.paths, fake)
 			if err != nil {
-				t.Fatalf("Cohesion devolvió error: %v", err)
+				t.Fatalf("Cohesion returned an error: %v", err)
 			}
-			if resultado.Clusters != caso.quiereClusters || resultado.Puntuacion != caso.quierePuntuacion || resultado.SugerenciaSplit != caso.quiereSplit {
-				t.Errorf("Cohesion = %#v, quiere clusters=%d puntuacion=%v split=%v", resultado, caso.quiereClusters, caso.quierePuntuacion, caso.quiereSplit)
+			if result.Clusters != c.wantCluster || result.Score != c.wantScore || result.SuggestSplit != c.wantSplit {
+				t.Errorf("Cohesion = %#v, want clusters=%d score=%v split=%v", result, c.wantCluster, c.wantScore, c.wantSplit)
 			}
-			if llamadas != 1 {
-				t.Errorf("llamadas a git = %d, quiere 1", llamadas)
+			if calls != 1 {
+				t.Errorf("git calls = %d, want 1", calls)
 			}
 		})
 	}
 }
 
-func TestCohesionDevuelveMiembrosDeCadaCluster(t *testing.T) {
-	rutas := []string{"internal/auth/config.yaml", "internal/auth/login.go", "cmd/tool/main.go"}
-	resultado, err := Cohesion(rutas, func(args ...string) (string, error) { return "", nil })
+func TestCohesionReturnsMembersOfEachCluster(t *testing.T) {
+	paths := []string{"internal/auth/config.yaml", "internal/auth/login.go", "cmd/tool/main.go"}
+	result, err := Cohesion(paths, func(args ...string) (string, error) { return "", nil })
 	if err != nil {
-		t.Fatalf("Cohesion devolvió error: %v", err)
+		t.Fatalf("Cohesion returned an error: %v", err)
 	}
-	esperado := [][]string{{"internal/auth/config.yaml", "internal/auth/login.go"}, {"cmd/tool/main.go"}}
-	if !reflect.DeepEqual(resultado.Grupos, esperado) {
-		t.Fatalf("grupos = %v, esperado %v", resultado.Grupos, esperado)
+	expected := [][]string{{"internal/auth/config.yaml", "internal/auth/login.go"}, {"cmd/tool/main.go"}}
+	if !reflect.DeepEqual(result.Groups, expected) {
+		t.Fatalf("groups = %v, expected %v", result.Groups, expected)
 	}
 }
 
-// TestCohesionTroceaRutasEnLotesParaGitLog cubre la revisión de T3.5: pasar
-// más de loteMaximoRutasHistorial rutas de una sola vez a "git log -- ..."
-// arriesgaba el límite de argumentos del proceso. Con 250 rutas debe haber 2
-// llamadas (200 + 50), ninguna con más de loteMaximoRutasHistorial rutas.
-func TestCohesionTroceaRutasEnLotesParaGitLog(t *testing.T) {
-	rutas := make([]string, 250)
-	for i := range rutas {
-		rutas[i] = fmt.Sprintf("internal/mismo/archivo%03d.go", i)
+// TestCohesionSplitsPathsIntoGitLogBatches covers the T3.5 review: passing
+// more than maxHistoryBatchPaths paths at once to "git log -- ..." risked
+// the process argument limit. With 250 paths there must be 2 calls
+// (200 + 50), none with more than maxHistoryBatchPaths paths.
+func TestCohesionSplitsPathsIntoGitLogBatches(t *testing.T) {
+	paths := make([]string, 250)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("internal/same/file%03d.go", i)
 	}
 
-	llamadas := 0
-	var tamanosDeLote []int
-	falso := func(args ...string) (string, error) {
-		llamadas++
-		rutasEnEsteLote := 0
+	calls := 0
+	var batchSizes []int
+	fake := func(args ...string) (string, error) {
+		calls++
+		pathsInBatch := 0
 		for _, arg := range args {
-			if strings.HasPrefix(arg, "internal/mismo/") {
-				rutasEnEsteLote++
+			if strings.HasPrefix(arg, "internal/same/") {
+				pathsInBatch++
 			}
 		}
-		tamanosDeLote = append(tamanosDeLote, rutasEnEsteLote)
-		if rutasEnEsteLote > loteMaximoRutasHistorial {
-			t.Fatalf("lote de %d rutas supera loteMaximoRutasHistorial=%d", rutasEnEsteLote, loteMaximoRutasHistorial)
+		batchSizes = append(batchSizes, pathsInBatch)
+		if pathsInBatch > maxHistoryBatchPaths {
+			t.Fatalf("batch of %d paths exceeds maxHistoryBatchPaths=%d", pathsInBatch, maxHistoryBatchPaths)
 		}
 		return "", nil
 	}
 
-	resultado, err := Cohesion(rutas, falso)
+	result, err := Cohesion(paths, fake)
 	if err != nil {
-		t.Fatalf("Cohesion devolvió error: %v", err)
+		t.Fatalf("Cohesion returned an error: %v", err)
 	}
-	if llamadas != 2 {
-		t.Fatalf("llamadas a git = %d, quiere 2 (250 rutas en lotes de %d)", llamadas, loteMaximoRutasHistorial)
+	if calls != 2 {
+		t.Fatalf("git calls = %d, want 2 (250 paths in batches of %d)", calls, maxHistoryBatchPaths)
 	}
-	if tamanosDeLote[0] != loteMaximoRutasHistorial || tamanosDeLote[1] != 50 {
-		t.Errorf("tamaños de lote = %v, quiere [%d, 50]", tamanosDeLote, loteMaximoRutasHistorial)
+	if batchSizes[0] != maxHistoryBatchPaths || batchSizes[1] != 50 {
+		t.Errorf("batch sizes = %v, want [%d, 50]", batchSizes, maxHistoryBatchPaths)
 	}
-	// Mismo directorio ("internal/mismo"): proximidad estructural las conecta
-	// a todas en un único clúster, independientemente del historial vacío.
-	if resultado.Clusters != 1 {
-		t.Errorf("Clusters = %d, quiere 1 (mismo directorio)", resultado.Clusters)
+	// Same directory ("internal/same"): structural proximity connects them
+	// all in a single cluster, regardless of the empty history.
+	if result.Clusters != 1 {
+		t.Errorf("Clusters = %d, want 1 (same directory)", result.Clusters)
 	}
 }
 
-// TestCohesionFusionaCoCambioEntreLotes cubre el CRITICAL de la revisión de
-// T3.5: dos archivos co-cambiados en el MISMO commit histórico, pero
-// repartidos en lotes distintos de "git log", deben seguir uniéndose. Antes
-// del fix, cada lote solo veía sus propios archivos por commit y la unión se
-// perdía en silencio en el caso exitoso (no solo cuando fallaba un lote).
+// TestCohesionMergesCoChangeAcrossBatches covers the CRITICAL of the T3.5
+// review: two files co-changed in the SAME historical commit, but split
+// across different "git log" batches, must still be joined. Before the fix,
+// each batch only saw its own files per commit and the union was silently
+// lost in the successful case (not only when a batch failed).
 //
-// 250 rutas totalmente aisladas entre sí por directorio/módulo (sin ninguna
-// proximidad estructural), salvo un par —una en el lote 1, otra en el lote
-// 2— que comparten un commit histórico simulado. Sin fusión entre lotes:
-// 250 clústeres (el par nunca se une). Con fusión: 249 (el par se funde).
-func TestCohesionFusionaCoCambioEntreLotes(t *testing.T) {
+// 250 paths fully isolated from each other by directory/module (no
+// structural proximity at all), except for one pair —one in batch 1, the
+// other in batch 2— that shares a simulated historical commit. Without
+// merging across batches: 250 clusters (the pair never joins). With
+// merging: 249 (the pair fuses).
+func TestCohesionMergesCoChangeAcrossBatches(t *testing.T) {
 	const (
-		archivoLote1 = "grupo_a/unico/archivo0.go"
-		archivoLote2 = "grupo_b/unico/archivo200.go"
+		fileBatch1 = "group_a/unique/file0.go"
+		fileBatch2 = "group_b/unique/file200.go"
 	)
-	rutas := make([]string, 250)
-	for i := range rutas {
-		rutas[i] = fmt.Sprintf("filler/idx%03d/f.go", i)
+	paths := make([]string, 250)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("filler/idx%03d/f.go", i)
 	}
-	rutas[0] = archivoLote1
-	rutas[200] = archivoLote2
+	paths[0] = fileBatch1
+	paths[200] = fileBatch2
 
-	llamadas := 0
-	falso := func(args ...string) (string, error) {
-		llamadas++
-		var salida strings.Builder
-		tieneLote1 := contains(args, archivoLote1)
-		tieneLote2 := contains(args, archivoLote2)
-		if tieneLote1 || tieneLote2 {
-			salida.WriteString("commit:shaCompartido\n\n")
-			if tieneLote1 {
-				salida.WriteString(archivoLote1 + "\n")
+	calls := 0
+	fake := func(args ...string) (string, error) {
+		calls++
+		var output strings.Builder
+		hasBatch1 := contains(args, fileBatch1)
+		hasBatch2 := contains(args, fileBatch2)
+		if hasBatch1 || hasBatch2 {
+			output.WriteString("commit:sharedSha\n\n")
+			if hasBatch1 {
+				output.WriteString(fileBatch1 + "\n")
 			}
-			if tieneLote2 {
-				salida.WriteString(archivoLote2 + "\n")
+			if hasBatch2 {
+				output.WriteString(fileBatch2 + "\n")
 			}
 		}
-		return salida.String(), nil
+		return output.String(), nil
 	}
 
-	resultado, err := Cohesion(rutas, falso)
+	result, err := Cohesion(paths, fake)
 	if err != nil {
-		t.Fatalf("Cohesion devolvió error: %v", err)
+		t.Fatalf("Cohesion returned an error: %v", err)
 	}
-	if llamadas != 2 {
-		t.Fatalf("llamadas a git = %d, quiere 2", llamadas)
+	if calls != 2 {
+		t.Fatalf("git calls = %d, want 2", calls)
 	}
-	if resultado.Clusters != 249 {
-		t.Fatalf("Clusters = %d, quiere 249 (250 aislados con un par fusionado por co-cambio entre lotes)", resultado.Clusters)
+	if result.Clusters != 249 {
+		t.Fatalf("Clusters = %d, want 249 (250 isolated with one pair fused by co-change across batches)", result.Clusters)
 	}
 }

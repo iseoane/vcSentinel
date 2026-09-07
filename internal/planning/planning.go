@@ -41,7 +41,7 @@ type Policy struct {
 type ExecutionPlan struct {
 	PlanID        string               `json:"plan_id"`
 	ChangeProfile change.ChangeProfile `json:"change_profile"`
-	RiskProfile   risk.Resultado       `json:"risk_profile"`
+	RiskProfile   risk.Result          `json:"risk_profile"`
 	CodeModel     CodeModel            `json:"code_model"`
 	Policy        Policy               `json:"policy"`
 	Stage         Stage                `json:"stage"`
@@ -50,14 +50,14 @@ type ExecutionPlan struct {
 
 type canonicalInputs struct {
 	ChangeProfile change.ChangeProfile `json:"change_profile"`
-	RiskProfile   risk.Resultado       `json:"risk_profile"`
+	RiskProfile   risk.Result          `json:"risk_profile"`
 	CodeModel     CodeModel            `json:"code_model"`
 	Policy        Policy               `json:"policy"`
 	Stage         Stage                `json:"stage"`
 }
 
 // Plan returns the same plan for semantically equivalent inputs.
-func Plan(profile change.ChangeProfile, riskProfile risk.Resultado, model CodeModel, policy Policy, stage Stage) ExecutionPlan {
+func Plan(profile change.ChangeProfile, riskProfile risk.Result, model CodeModel, policy Policy, stage Stage) ExecutionPlan {
 	inputs := canonicalInputs{
 		ChangeProfile: canonicalChangeProfile(profile),
 		RiskProfile:   riskProfile,
@@ -74,7 +74,7 @@ func Plan(profile change.ChangeProfile, riskProfile risk.Resultado, model CodeMo
 		PlanID: hex.EncodeToString(digest[:]), ChangeProfile: inputs.ChangeProfile,
 		RiskProfile: inputs.RiskProfile, CodeModel: inputs.CodeModel,
 		Policy: inputs.Policy, Stage: inputs.Stage,
-		Explain: fmt.Sprintf("Plan for stage %s uses policy %q at risk %s: %s.", stage, policy.Name, riskProfile.Nivel, riskProfile.Explicacion),
+		Explain: fmt.Sprintf("Plan for stage %s uses policy %q at risk %s: %s.", stage, policy.Name, riskProfile.Level, riskProfile.Explanation),
 	}
 }
 

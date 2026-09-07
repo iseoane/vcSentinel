@@ -23,7 +23,7 @@ type Condition struct {
 }
 
 // Preflight condition names, in evaluation order. The six review-time gates
-// from ProveedorCodeGraph.Contexto keep their skip-reason vocabulary so a
+// from CodeGraphProvider.Context keep their skip-reason vocabulary so a
 // preflight row maps one-to-one to the silent skip it predicts.
 const (
 	CondBinary           = "binary"
@@ -39,7 +39,7 @@ const (
 // PreflightCodeGraph evaluates the codegraph preflight against the current
 // worktree with real PATH resolution and subprocess execution.
 func PreflightCodeGraph(root string) []Condition {
-	return Preflight(root, exec.LookPath, ejecutarCodeGraph)
+	return Preflight(root, exec.LookPath, runCodeGraph)
 }
 
 // Preflight evaluates, in order, the codegraph binary, the .codegraph index
@@ -49,7 +49,7 @@ func PreflightCodeGraph(root string) []Condition {
 // prerequisite report why they were skipped instead of running probes whose
 // results would be meaningless. It never returns nil: callers always get the
 // full eight-row shape.
-func Preflight(root string, lookup func(string) (string, error), run ejecutorCodeGraph) []Condition {
+func Preflight(root string, lookup func(string) (string, error), run codeGraphRunner) []Condition {
 	names := []string{CondBinary, CondIndexDir, CondHead, CondWorktreeClean, CondIndexInitialized, CondProjectPath, CondPendingChanges, CondWorktreeMatch}
 	fail := func(detail string) []Condition {
 		conds := make([]Condition, 0, len(names))
@@ -86,10 +86,10 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 		)
 		return append(conds, skipped(names[4:], "skipped: git not found on PATH")...)
 	}
-	p := &ProveedorCodeGraph{raiz: canonical, ejecutable: binary, git: gitBin, limite: limiteContextoCodeGraph, ejecutar: run, excludes: buscarExcludesGlobal}
-	env := entornoCodeGraph(binary)
+	p := &CodeGraphProvider{root: canonical, binary: binary, git: gitBin, limit: codeGraphContextLimit, run: run, excludes: resolveGlobalExcludes}
+	env := codeGraphEnv(binary)
 
-	head, err := p.ejecutarConTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
+	head, err := p.runWithTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
 	sha := strings.TrimSpace(string(head))
 	if err != nil || sha == "" {
 		conds = append(conds, Condition{Name: CondHead, Detail: fmt.Sprintf("HEAD does not resolve: %v", err)})
@@ -97,7 +97,7 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 		conds = append(conds, Condition{Name: CondHead, OK: true, Detail: fmt.Sprintf("HEAD resolves to %s (each review compares it against the audited commit)", sha)})
 	}
 
-	dirty, err := p.ejecutarConTimeout(p.git, argsEstadoPorcelain(p.excludes, p.git), env, "")
+	dirty, err := p.runWithTimeout(p.git, argsStatePorcelain(p.excludes, p.git), env, "")
 	if err != nil {
 		conds = append(conds, Condition{Name: CondWorktreeClean, Detail: fmt.Sprintf("git status failed: %v", err)})
 	} else if lines := len(strings.Split(strings.TrimSpace(string(dirty)), "\n")); len(bytes.TrimSpace(dirty)) != 0 {
@@ -106,14 +106,14 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 		conds = append(conds, Condition{Name: CondWorktreeClean, OK: true, Detail: "worktree clean"})
 	}
 
-	statusRaw, err := p.ejecutarConTimeout(p.ejecutable, []string{"status", "--json", p.raiz}, env, "")
+	statusRaw, err := p.runWithTimeout(p.binary, []string{"status", "--json", p.root}, env, "")
 	var status struct {
 		Initialized      bool                                    `json:"initialized"`
 		ProjectPath      string                                  `json:"projectPath"`
 		Pending          *struct{ Added, Modified, Removed int } `json:"pendingChanges"`
 		WorktreeMismatch json.RawMessage                         `json:"worktreeMismatch"`
 	}
-	if err != nil || len(statusRaw) == 0 || len(statusRaw) >= p.limite {
+	if err != nil || len(statusRaw) == 0 || len(statusRaw) >= p.limit {
 		detail := fmt.Sprintf("codegraph status unavailable: %v", err)
 		return append(conds, unknownStatuses(detail)...)
 	}
@@ -127,8 +127,8 @@ func Preflight(root string, lookup func(string) (string, error), run ejecutorCod
 	} else {
 		conds = append(conds, Condition{Name: CondIndexInitialized, OK: true, Detail: "codegraph index initialized"})
 	}
-	if filepath.Clean(status.ProjectPath) != p.raiz {
-		conds = append(conds, Condition{Name: CondProjectPath, Detail: fmt.Sprintf("projectPath %q does not match %s", status.ProjectPath, p.raiz)})
+	if filepath.Clean(status.ProjectPath) != p.root {
+		conds = append(conds, Condition{Name: CondProjectPath, Detail: fmt.Sprintf("projectPath %q does not match %s", status.ProjectPath, p.root)})
 	} else {
 		conds = append(conds, Condition{Name: CondProjectPath, OK: true, Detail: "projectPath matches worktree"})
 	}

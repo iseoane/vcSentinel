@@ -10,17 +10,17 @@ var defaultSensitivePathPatterns = []string{"**/auth/**", "**/*auth*.go", "**/se
 
 // NewCharacteristicsInput assembles detector evidence from one change
 // profile, its changed paths, a unified diff, and the repository attributes.
-func NewCharacteristicsInput(profile ChangeProfile, paths []string, unifiedDiff, gitattributes string) EntradaCaracteristicas {
+func NewCharacteristicsInput(profile ChangeProfile, paths []string, unifiedDiff, gitattributes string) FeaturesInput {
 	normalizedPaths := make([]string, len(paths))
 	for i, path := range paths {
 		normalizedPaths[i] = filepath.ToSlash(path)
 	}
-	return EntradaCaracteristicas{
+	return FeaturesInput{
 		Symbols:           profile.Symbols,
-		Rutas:             normalizedPaths,
-		LineasAnadidas:    addedLinesFromUnifiedDiff(unifiedDiff, normalizedPaths),
+		Paths:             normalizedPaths,
+		AddedLines:        addedLinesFromUnifiedDiff(unifiedDiff, normalizedPaths),
 		Gitattributes:     gitattributes,
-		PatronesSensibles: append([]string(nil), defaultSensitivePathPatterns...),
+		SensitivePatterns: append([]string(nil), defaultSensitivePathPatterns...),
 	}
 }
 

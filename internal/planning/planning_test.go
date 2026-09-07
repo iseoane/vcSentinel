@@ -30,7 +30,7 @@ func TestPlanProducesStableSerializablePlan(t *testing.T) {
 	modelB.Tests = []string{"./internal/change", "./internal/risk"}
 	policyA := Policy{Name: "standard", Capabilities: []string{"test", "lint"}, Options: map[string]string{"timeout": "2m", "mode": "worktree"}}
 	policyB := Policy{Name: "standard", Capabilities: []string{"lint", "test"}, Options: map[string]string{"mode": "worktree", "timeout": "2m"}}
-	riskProfile := risk.Resultado{Nivel: risk.NivelStandard, Explicacion: "default risk"}
+	riskProfile := risk.Result{Level: risk.LevelStandard, Explanation: "default risk"}
 
 	first := Plan(profileA, riskProfile, modelA, policyA, StagePrePush)
 	second := Plan(profileB, riskProfile, modelB, policyB, StagePrePush)
@@ -59,7 +59,7 @@ func TestPlanProducesStableSerializablePlan(t *testing.T) {
 }
 
 func TestPlanCanonicalizesEmptyMapsAsNil(t *testing.T) {
-	riskProfile := risk.Resultado{Nivel: risk.NivelLow, Explicacion: "low risk"}
+	riskProfile := risk.Result{Level: risk.LevelLow, Explanation: "low risk"}
 	model := CodeModel{SnapshotID: "tree", Complete: true}
 
 	withNilMaps := Plan(
@@ -105,7 +105,7 @@ func TestPlanDoesNotMutateCallerInputs(t *testing.T) {
 	wantModel := CodeModel{Paths: []string{"z.go", "a.go"}, Packages: []string{"./z", "./a"}, Tests: []string{"./z", "./a"}}
 	wantPolicy := Policy{Capabilities: []string{"test", "lint"}, Options: map[string]string{"mode": "worktree"}}
 
-	plan := Plan(profile, risk.Resultado{}, model, policy, StagePreCommit)
+	plan := Plan(profile, risk.Result{}, model, policy, StagePreCommit)
 	plan.ChangeProfile.Modules[0] = "changed"
 	plan.ChangeProfile.FileClasses["source"] = 2
 	plan.CodeModel.Paths[0] = "changed.go"
@@ -127,7 +127,7 @@ func TestPlanDoesNotMutateCallerInputs(t *testing.T) {
 
 func TestPlanIDChangesWithEachInputDomain(t *testing.T) {
 	baseProfile := change.ChangeProfile{Base: "base", Head: "head", Kind: "feature"}
-	baseRisk := risk.Resultado{Nivel: risk.NivelLow, Explicacion: "low risk"}
+	baseRisk := risk.Result{Level: risk.LevelLow, Explanation: "low risk"}
 	baseModel := CodeModel{SnapshotID: "tree", Complete: true}
 	basePolicy := Policy{Name: "standard"}
 	base := Plan(baseProfile, baseRisk, baseModel, basePolicy, StagePreCommit).PlanID
@@ -137,7 +137,7 @@ func TestPlanIDChangesWithEachInputDomain(t *testing.T) {
 		plan ExecutionPlan
 	}{
 		{"change profile", Plan(change.ChangeProfile{Base: "base", Head: "other", Kind: "feature"}, baseRisk, baseModel, basePolicy, StagePreCommit)},
-		{"risk profile", Plan(baseProfile, risk.Resultado{Nivel: risk.NivelHigh, Explicacion: "high risk"}, baseModel, basePolicy, StagePreCommit)},
+		{"risk profile", Plan(baseProfile, risk.Result{Level: risk.LevelHigh, Explanation: "high risk"}, baseModel, basePolicy, StagePreCommit)},
 		{"code model", Plan(baseProfile, baseRisk, CodeModel{SnapshotID: "other", Complete: true}, basePolicy, StagePreCommit)},
 		{"policy", Plan(baseProfile, baseRisk, baseModel, Policy{Name: "strict"}, StagePreCommit)},
 		{"stage", Plan(baseProfile, baseRisk, baseModel, basePolicy, StagePR)},

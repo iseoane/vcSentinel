@@ -17,10 +17,10 @@ import (
 // shared review.IsBlocking rule never blocks on it: the incident reports,
 // it does not gate. Evidence stays empty on purpose: persisting the matched
 // value in the ledger would make the exposure permanent.
-func ProjectSecretIncidents(incidents []Incident) []review.Hallazgo {
-	findings := make([]review.Hallazgo, 0, len(incidents))
+func ProjectSecretIncidents(incidents []Incident) []review.Finding {
+	findings := make([]review.Finding, 0, len(incidents))
 	for _, incident := range incidents {
-		finding := review.Hallazgo{
+		finding := review.Finding{
 			Source:      review.SourceValidation,
 			Severity:    review.SevWarning,
 			Confidence:  0.9,
@@ -28,7 +28,7 @@ func ProjectSecretIncidents(incidents []Incident) []review.Hallazgo {
 			Title:       fmt.Sprintf("exposed credential (%s)", incident.Shape),
 			Description: fmt.Sprintf("%s:%d matches %s (value withheld)", incident.Path, incident.Line, incident.Shape),
 			Fixable:     review.FixableManual,
-			Location:    review.Ubicacion{Archivo: incident.Path, LineaInicio: incident.Line},
+			Location:    review.Location{File: incident.Path, LineStart: incident.Line},
 		}
 		finding.Fingerprint = review.Fingerprint(finding)
 		findings = append(findings, finding)
@@ -40,8 +40,8 @@ func ProjectSecretIncidents(incidents []Incident) []review.Hallazgo {
 // and diff and returns both the deterministic findings for the audit result
 // and the console advisory lines. Both stay empty when there is nothing to
 // report and nothing the scanner could not read.
-func SecretFindingsAndAdvisories(archivos []string, diff string) ([]review.Hallazgo, []string) {
-	incidents, unreadable := Scan(archivos, diff)
+func SecretFindingsAndAdvisories(paths []string, diff string) ([]review.Finding, []string) {
+	incidents, unreadable := Scan(paths, diff)
 	return ProjectSecretIncidents(incidents), SecretAdvisories(incidents, unreadable)
 }
 

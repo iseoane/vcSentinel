@@ -20,18 +20,18 @@ func TestNewCharacteristicsInputAssemblesDetectorInput(t *testing.T) {
 	if input.Symbols != profile.Symbols {
 		t.Fatalf("symbols = %+v, want %+v", input.Symbols, profile.Symbols)
 	}
-	if !reflect.DeepEqual(input.Rutas, paths) {
-		t.Fatalf("paths = %q, want %q", input.Rutas, paths)
+	if !reflect.DeepEqual(input.Paths, paths) {
+		t.Fatalf("paths = %q, want %q", input.Paths, paths)
 	}
-	if !reflect.DeepEqual(input.LineasAnadidas[paths[0]], []string{"func Login() {}"}) {
-		t.Fatalf("added lines = %q", input.LineasAnadidas[paths[0]])
+	if !reflect.DeepEqual(input.AddedLines[paths[0]], []string{"func Login() {}"}) {
+		t.Fatalf("added lines = %q", input.AddedLines[paths[0]])
 	}
 	if input.Gitattributes != gitattributes {
 		t.Fatalf("gitattributes = %q, want %q", input.Gitattributes, gitattributes)
 	}
 	wantSensitivePatterns := []string{"**/auth/**", "**/*auth*.go", "**/security/**"}
-	if !reflect.DeepEqual(input.PatronesSensibles, wantSensitivePatterns) {
-		t.Fatalf("sensitive patterns = %q, want %q", input.PatronesSensibles, wantSensitivePatterns)
+	if !reflect.DeepEqual(input.SensitivePatterns, wantSensitivePatterns) {
+		t.Fatalf("sensitive patterns = %q, want %q", input.SensitivePatterns, wantSensitivePatterns)
 	}
 }
 
@@ -45,7 +45,7 @@ func TestNewCharacteristicsInputParsesQuotedPaths(t *testing.T) {
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
-	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, []string{"quoted path"}) {
+	if got := input.AddedLines[path]; !reflect.DeepEqual(got, []string{"quoted path"}) {
 		t.Fatalf("added lines for quoted path = %q, want %q", got, []string{"quoted path"})
 	}
 }
@@ -62,7 +62,7 @@ new file mode 100644
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
-	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, []string{"first", "second"}) {
+	if got := input.AddedLines[path]; !reflect.DeepEqual(got, []string{"first", "second"}) {
 		t.Fatalf("added lines for pure addition = %q, want %q", got, []string{"first", "second"})
 	}
 }
@@ -79,8 +79,8 @@ deleted file mode 100644
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
-	if len(input.LineasAnadidas) != 0 {
-		t.Fatalf("deleted file contributed added lines: %v", input.LineasAnadidas)
+	if len(input.AddedLines) != 0 {
+		t.Fatalf("deleted file contributed added lines: %v", input.AddedLines)
 	}
 }
 
@@ -92,8 +92,8 @@ rename to new.go
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{"new.go"}, diff, "")
-	if len(input.LineasAnadidas) != 0 {
-		t.Fatalf("rename without a hunk contributed added lines: %v", input.LineasAnadidas)
+	if len(input.AddedLines) != 0 {
+		t.Fatalf("rename without a hunk contributed added lines: %v", input.AddedLines)
 	}
 }
 
@@ -104,8 +104,8 @@ new mode 100755
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{"script.sh"}, diff, "")
-	if len(input.LineasAnadidas) != 0 {
-		t.Fatalf("mode-only change contributed added lines: %v", input.LineasAnadidas)
+	if len(input.AddedLines) != 0 {
+		t.Fatalf("mode-only change contributed added lines: %v", input.AddedLines)
 	}
 }
 
@@ -117,8 +117,8 @@ Binary files /dev/null and b/image.bin differ
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{"image.bin"}, diff, "")
-	if len(input.LineasAnadidas) != 0 {
-		t.Fatalf("binary file contributed added lines: %v", input.LineasAnadidas)
+	if len(input.AddedLines) != 0 {
+		t.Fatalf("binary file contributed added lines: %v", input.AddedLines)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestNewCharacteristicsInputIgnoresNoNewlineMarker(t *testing.T) {
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
-	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, []string{"new"}) {
+	if got := input.AddedLines[path]; !reflect.DeepEqual(got, []string{"new"}) {
 		t.Fatalf("added lines with no-newline marker = %q, want %q", got, []string{"new"})
 	}
 }
@@ -151,7 +151,7 @@ func TestNewCharacteristicsInputKeepsHeaderSequencesInsideAddedLines(t *testing.
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
 	want := []string{"++ b/not-a-header", "@@ -not-a-hunk"}
-	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, want) {
+	if got := input.AddedLines[path]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("added lines with header sequences = %q, want %q", got, want)
 	}
 }
@@ -163,7 +163,7 @@ func TestNewCharacteristicsInputParsesColorlessDiff(t *testing.T) {
 		"@@ -0,0 +1 @@\n+plain line\n"
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
-	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, []string{"plain line"}) {
+	if got := input.AddedLines[path]; !reflect.DeepEqual(got, []string{"plain line"}) {
 		t.Fatalf("added lines from colorless diff = %q, want %q", got, []string{"plain line"})
 	}
 }
@@ -178,7 +178,7 @@ func TestNewCharacteristicsInputKeepsPathStartingWithB(t *testing.T) {
 `
 
 	input := NewCharacteristicsInput(ChangeProfile{}, []string{path}, diff, "")
-	if got := input.LineasAnadidas[path]; !reflect.DeepEqual(got, []string{"func Added() {}"}) {
+	if got := input.AddedLines[path]; !reflect.DeepEqual(got, []string{"func Added() {}"}) {
 		t.Fatalf("added lines for path starting with b/ = %q, want %q", got, []string{"func Added() {}"})
 	}
 }

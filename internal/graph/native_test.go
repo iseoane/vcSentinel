@@ -18,8 +18,8 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-func TestProveedorNativoCargaGrafoBasico(t *testing.T) {
-	dir := crearModulo(t, map[string]string{
+func TestNativeProviderLoadsBasicGraph(t *testing.T) {
+	dir := createModule(t, map[string]string{
 		"go.mod":                         "module example.test/snapshot\n\ngo 1.26\n",
 		"internal/git/diff.go":           "package git\n",
 		"internal/git/diff_test.go":      "package git\nimport \"testing\"\nfunc TestDiff(t *testing.T) {}\n",
@@ -28,245 +28,245 @@ func TestProveedorNativoCargaGrafoBasico(t *testing.T) {
 		"cmd/sentinel/main.go":           "package main\nimport _ \"example.test/snapshot/internal/review\"\nfunc main() {}\n",
 		"cmd/sentinel/main_test.go":      "package main\nimport \"testing\"\nfunc TestMain(t *testing.T) {}\n",
 	})
-	p := proveedorDelModulo(t, dir)
-	resultado, err := p.Analizar([]string{"internal/git/diff.go", "internal/git/diff.go"})
-	if err != nil || !resultado.Completo() {
-		t.Fatalf("análisis = %+v, error = %v, motivo = %q", resultado, err, resultado.MotivoIncompleto())
+	p := providerForModule(t, dir)
+	result, err := p.Analyze([]string{"internal/git/diff.go", "internal/git/diff.go"})
+	if err != nil || !result.Complete() {
+		t.Fatalf("analysis = %+v, error = %v, reason = %q", result, err, result.ReasonIncomplete())
 	}
-	alcance := resultado.Alcance()
-	if !reflect.DeepEqual(alcance.Paquetes(), []string{
+	scope := result.Scope()
+	if !reflect.DeepEqual(scope.Packages(), []string{
 		"example.test/snapshot/cmd/sentinel", "example.test/snapshot/internal/git", "example.test/snapshot/internal/review",
-	}) || !reflect.DeepEqual(alcance.Tests(), []string{"./cmd/sentinel", "./internal/git", "./internal/review"}) {
-		t.Fatalf("alcance = paquetes %v, tests %v", alcance.Paquetes(), alcance.Tests())
+	}) || !reflect.DeepEqual(scope.Tests(), []string{"./cmd/sentinel", "./internal/git", "./internal/review"}) {
+		t.Fatalf("scope = packages %v, tests %v", scope.Packages(), scope.Tests())
 	}
-	explicacion := strings.Join(alcance.Explicacion(), "\n")
-	for _, parte := range []string{"internal/git/diff.go", "internal/review", "cmd/sentinel", "importa"} {
-		if !strings.Contains(explicacion, parte) {
-			t.Fatalf("explicación sin %q:\n%s", parte, explicacion)
+	explanation := strings.Join(scope.Explanation(), "\n")
+	for _, part := range []string{"internal/git/diff.go", "internal/review", "cmd/sentinel", "imports"} {
+		if !strings.Contains(explanation, part) {
+			t.Fatalf("explanation missing %q:\n%s", part, explanation)
 		}
 	}
 }
 
-func TestProveedorNativoCacheaCargaPorTreeOID(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "a/a.go": "package a\n", "b/b.go": "package b\nimport _ \"example.test/s/a\"\n"})
-	cargas := 0
-	analizar := func(oid, ruta, goos string) ResultadoAnalisis {
-		p := NuevoProveedorNativo(dir, oid)
+func TestNativeProviderCachesLoadPerTreeOID(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "a/a.go": "package a\n", "b/b.go": "package b\nimport _ \"example.test/s/a\"\n"})
+	loads := 0
+	analyze := func(oid, path, goos string) AnalysisResult {
+		p := NewNativeProvider(dir, oid)
 		if goos != "" {
-			p.contexto.GOOS = goos
+			p.context.GOOS = goos
 		}
-		cargar := p.cargar
-		p.cargar = func(config *packages.Config, patrones ...string) ([]*packages.Package, error) {
-			cargas++
-			return cargar(config, patrones...)
+		load := p.load
+		p.load = func(config *packages.Config, patterns ...string) ([]*packages.Package, error) {
+			loads++
+			return load(config, patterns...)
 		}
-		resultado, _ := p.Analizar([]string{ruta})
-		return resultado
+		result, _ := p.Analyze([]string{path})
+		return result
 	}
 
 	oid := treeOID(t, dir)
-	analizar(oid, "a/a.go", "")
-	segundo := analizar(oid, "b/b.go", "")
-	cargasMismoArbol := cargas
+	analyze(oid, "a/a.go", "")
+	second := analyze(oid, "b/b.go", "")
+	loadsSameTree := loads
 	goos := "windows"
-	if contextoCargaActual().GOOS == goos {
+	if currentLoadContext().GOOS == goos {
 		goos = "linux"
 	}
-	analizar(oid, "a/a.go", goos)
-	cargasOtroContexto := cargas
-	analizar(oid, "a/a.go", "")
-	cargasContextoOriginal := cargas
+	analyze(oid, "a/a.go", goos)
+	loadsOtherContext := loads
+	analyze(oid, "a/a.go", "")
+	loadsOriginalContext := loads
 	os.WriteFile(filepath.Join(dir, "b", "b.go"), []byte("package b\n"), 0644)
-	git(t, dir, "commit", "-qam", "segundo árbol")
-	analizar(treeOID(t, dir), "b/b.go", "")
-	if cargasMismoArbol != 1 || cargasOtroContexto != 2 || cargasContextoOriginal != 2 || cargas != 3 || !reflect.DeepEqual(segundo.Alcance().Paquetes(), []string{"example.test/s/b"}) {
-		t.Fatalf("cargas mismo/otro/original/árbol=%d/%d/%d/%d; alcance=%v", cargasMismoArbol, cargasOtroContexto, cargasContextoOriginal, cargas, segundo.Alcance().Paquetes())
+	git(t, dir, "commit", "-qam", "second tree")
+	analyze(treeOID(t, dir), "b/b.go", "")
+	if loadsSameTree != 1 || loadsOtherContext != 2 || loadsOriginalContext != 2 || loads != 3 || !reflect.DeepEqual(second.Scope().Packages(), []string{"example.test/s/b"}) {
+		t.Fatalf("loads same/other/original/tree=%d/%d/%d/%d; scope=%v", loadsSameTree, loadsOtherContext, loadsOriginalContext, loads, second.Scope().Packages())
 	}
 }
 
-func TestProveedorNativoCargaVendorHermetico(t *testing.T) {
-	dir := crearModulo(t, map[string]string{
+func TestNativeProviderLoadsHermeticVendor(t *testing.T) {
+	dir := createModule(t, map[string]string{
 		"go.mod":                         "module example.test/s\n\ngo 1.26\n\nrequire example.test/dep v1.0.0\n",
 		"main.go":                        "package s\nimport _ \"example.test/dep\"\n",
 		"vendor/modules.txt":             "# example.test/dep v1.0.0\n## explicit; go 1.26\nexample.test/dep\n",
 		"vendor/example.test/dep/dep.go": "package dep\n",
 	})
-	p := proveedorDelModulo(t, dir)
-	p.contexto.GOPATH, p.contexto.GOMODCACHE, p.contexto.GOCACHE = t.TempDir(), t.TempDir(), t.TempDir()
-	resultado, _ := p.Analizar([]string{"main.go"})
-	if !resultado.Completo() || !reflect.DeepEqual(p.contexto.BuildFlags, []string{"-mod=vendor", "-tags="}) {
-		t.Fatalf("completo=%v flags=%v motivo=%q", resultado.Completo(), p.contexto.BuildFlags, resultado.MotivoIncompleto())
+	p := providerForModule(t, dir)
+	p.context.GOPATH, p.context.GOMODCACHE, p.context.GOCACHE = t.TempDir(), t.TempDir(), t.TempDir()
+	result, _ := p.Analyze([]string{"main.go"})
+	if !result.Complete() || !reflect.DeepEqual(p.context.BuildFlags, []string{"-mod=vendor", "-tags="}) {
+		t.Fatalf("complete=%v flags=%v reason=%q", result.Complete(), p.context.BuildFlags, result.ReasonIncomplete())
 	}
 }
 
-func TestProveedorNativoVendorIncompletoUsaReadonly(t *testing.T) {
-	for _, caso := range []string{"ausente", "symlink"} {
-		t.Run(caso, func(t *testing.T) {
-			dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderIncompleteVendorUsesReadonly(t *testing.T) {
+	for _, name := range []string{"missing", "symlink"} {
+		t.Run(name, func(t *testing.T) {
+			dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 			if err := os.Mkdir(filepath.Join(dir, "vendor"), 0755); err != nil {
 				t.Fatal(err)
 			}
-			if caso == "symlink" {
+			if name == "symlink" {
 				if err := os.Symlink(filepath.Join(dir, "go.mod"), filepath.Join(dir, "vendor", "modules.txt")); err != nil {
-					t.Skipf("symlinks no disponibles: %v", err)
+					t.Skipf("symlinks not available: %v", err)
 				}
 			}
-			p := proveedorDelModulo(t, dir)
-			if !reflect.DeepEqual(p.contexto.BuildFlags, []string{"-mod=readonly", "-tags="}) {
-				t.Fatalf("flags=%v", p.contexto.BuildFlags)
+			p := providerForModule(t, dir)
+			if !reflect.DeepEqual(p.context.BuildFlags, []string{"-mod=readonly", "-tags="}) {
+				t.Fatalf("flags=%v", p.context.BuildFlags)
 			}
 		})
 	}
 }
 
-func TestProveedorNativoContencionCacheNoAfectaCompletitud(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-	raiz, err := raizCache(dir)
+func TestNativeProviderCacheContentionDoesNotAffectCompleteness(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	root, err := cacheRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raiz.Close()
-	desbloquear, err := bloquearCache(raiz)
+	defer root.Close()
+	unlock, err := lockCache(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer desbloquear()
-	inicio := time.Now()
-	p := proveedorDelModulo(t, dir)
-	resultado, err := p.Analizar([]string{"main.go"})
-	if err != nil || !resultado.Completo() || resultado.MotivoIncompleto() != "" {
-		t.Fatalf("completo=%v error=%v motivo=%q", resultado.Completo(), err, resultado.MotivoIncompleto())
+	defer unlock()
+	start := time.Now()
+	p := providerForModule(t, dir)
+	result, err := p.Analyze([]string{"main.go"})
+	if err != nil || !result.Complete() || result.ReasonIncomplete() != "" {
+		t.Fatalf("complete=%v error=%v reason=%q", result.Complete(), err, result.ReasonIncomplete())
 	}
-	if _, ok := p.leerCacheValida(); ok {
-		t.Fatal("la contención no omitió la persistencia")
+	if _, ok := p.readValidCache(); ok {
+		t.Fatal("contention did not skip persistence")
 	}
-	if time.Since(inicio) > 2*time.Second {
-		t.Fatal("la contención de cache no quedó acotada")
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("cache contention did not stay bounded")
 	}
 }
 
-func TestBloqueoCacheLiberadoPermiteEscritura(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestReleasedCacheLockAllowsWrite(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	raiz, err := raizCache(dir)
+	root, err := cacheRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raiz.Close()
-	desbloquear, err := bloquearCache(raiz)
+	defer root.Close()
+	unlock, err := lockCache(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	desbloquear()
-	p := NuevoProveedorNativo(dir, oid)
-	p.imports, p.archivos, p.tests = map[string][]string{}, map[string]string{"main.go": "example.test/s"}, map[string]string{}
-	if err := p.guardarCache([]string{filepath.Join(dir, "main.go")}); err != nil {
-		t.Fatalf("el descriptor cerrado no permitió escribir: %v", err)
+	unlock()
+	p := NewNativeProvider(dir, oid)
+	p.imports, p.files, p.tests = map[string][]string{}, map[string]string{"main.go": "example.test/s"}, map[string]string{}
+	if err := p.saveCache([]string{filepath.Join(dir, "main.go")}); err != nil {
+		t.Fatalf("the released lock did not allow writing: %v", err)
 	}
-	info, err := raiz.Lstat(".write.lock")
+	info, err := root.Lstat(".write.lock")
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf("archivo de bloqueo inseguro: info=%v error=%v", info, err)
+		t.Fatalf("unsafe lock file: info=%v error=%v", info, err)
 	}
-	if cache, ok := p.leerCacheValida(); !ok || cache.Entries[p.contexto.fingerprint()].TreeOID != oid {
-		t.Fatalf("escritura posterior inválida: %#v", cache)
+	if cache, ok := p.readValidCache(); !ok || cache.Entries[p.context.fingerprint()].TreeOID != oid {
+		t.Fatalf("subsequent write invalid: %#v", cache)
 	}
 }
 
-func TestProveedorNativoCacheEvictaNovenoContexto(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderCacheEvictsNinthContext(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	fingerprints := make([]string, 0, maxEntradasCache+1)
-	for i := range maxEntradasCache + 1 {
-		p := NuevoProveedorNativo(dir, oid)
-		p.contexto.GoVersion = fmt.Sprintf("test-version-%d", i)
-		fingerprints = append(fingerprints, p.contexto.fingerprint())
-		resultado, _ := p.Analizar([]string{"main.go"})
-		if !resultado.Completo() {
-			t.Fatalf("contexto %d incompleto: %s", i, resultado.MotivoIncompleto())
+	fingerprints := make([]string, 0, maxCacheEntries+1)
+	for i := range maxCacheEntries + 1 {
+		p := NewNativeProvider(dir, oid)
+		p.context.GoVersion = fmt.Sprintf("test-version-%d", i)
+		fingerprints = append(fingerprints, p.context.fingerprint())
+		result, _ := p.Analyze([]string{"main.go"})
+		if !result.Complete() {
+			t.Fatalf("context %d incomplete: %s", i, result.ReasonIncomplete())
 		}
 	}
-	cache, ok := NuevoProveedorNativo(dir, oid).leerCacheValida()
-	if !ok || len(cache.Entries) != maxEntradasCache {
-		t.Fatalf("cache válida=%v entradas=%d", ok, len(cache.Entries))
+	cache, ok := NewNativeProvider(dir, oid).readValidCache()
+	if !ok || len(cache.Entries) != maxCacheEntries {
+		t.Fatalf("cache valid=%v entries=%d", ok, len(cache.Entries))
 	}
-	sort.Strings(fingerprints[:maxEntradasCache])
-	if _, existe := cache.Entries[fingerprints[0]]; existe || cache.Entries[fingerprints[maxEntradasCache]].TreeOID != oid {
-		t.Fatalf("evicción no determinista: %#v", cache.Entries)
+	sort.Strings(fingerprints[:maxCacheEntries])
+	if _, exists := cache.Entries[fingerprints[0]]; exists || cache.Entries[fingerprints[maxCacheEntries]].TreeOID != oid {
+		t.Fatalf("non-deterministic eviction: %#v", cache.Entries)
 	}
 }
 
-func TestCacheCombinaEscritoresIndependientes(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestCacheCombinesIndependentWriters(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	p1, p2 := NuevoProveedorNativo(dir, oid), NuevoProveedorNativo(dir, oid)
-	p1.contexto.Temp, p2.contexto.Temp = "writer-1", "writer-2"
-	for _, p := range []*proveedorNativo{p1, p2} {
-		p.imports, p.archivos, p.tests = map[string][]string{}, map[string]string{"main.go": "example.test/s"}, map[string]string{}
+	p1, p2 := NewNativeProvider(dir, oid), NewNativeProvider(dir, oid)
+	p1.context.Temp, p2.context.Temp = "writer-1", "writer-2"
+	for _, p := range []*nativeProvider{p1, p2} {
+		p.imports, p.files, p.tests = map[string][]string{}, map[string]string{"main.go": "example.test/s"}, map[string]string{}
 	}
 	var wg sync.WaitGroup
-	for _, p := range []*proveedorNativo{p1, p2} {
+	for _, p := range []*nativeProvider{p1, p2} {
 		wg.Add(1)
-		go func() { defer wg.Done(); _ = p.guardarCacheSinMutex([]string{filepath.Join(dir, "main.go")}) }()
+		go func() { defer wg.Done(); _ = p.saveCacheWithoutMutex([]string{filepath.Join(dir, "main.go")}) }()
 	}
 	wg.Wait()
-	cache, ok := p1.leerCacheValida()
-	if !ok || cache.Entries[p1.contexto.fingerprint()].TreeOID != oid || cache.Entries[p2.contexto.fingerprint()].TreeOID != oid {
-		t.Fatalf("se perdió un escritor: %#v", cache.Entries)
+	cache, ok := p1.readValidCache()
+	if !ok || cache.Entries[p1.context.fingerprint()].TreeOID != oid || cache.Entries[p2.context.fingerprint()].TreeOID != oid {
+		t.Fatalf("a writer was lost: %#v", cache.Entries)
 	}
 }
 
-func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderRecoversFromUntrustedCache(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	if resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"}); !resultado.Completo() {
-		t.Fatal(resultado.MotivoIncompleto())
+	if result, _ := NewNativeProvider(dir, oid).Analyze([]string{"main.go"}); !result.Complete() {
+		t.Fatal(result.ReasonIncomplete())
 	}
-	ruta := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
-	valida, err := os.ReadFile(ruta)
+	path := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	valid, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	casos := []struct {
-		nombre   string
-		preparar func()
+	cases := []struct {
+		name    string
+		prepare func()
 	}{
-		{"malformada", func() { os.WriteFile(ruta, []byte("{"), 0600) }},
-		{"versión distinta", func() {
-			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"version": 3`, `"version": 1`, 1)), 0600)
+		{"malformed", func() { os.WriteFile(path, []byte("{"), 0600) }},
+		{"different version", func() {
+			os.WriteFile(path, []byte(strings.Replace(string(valid), `"version": 3`, `"version": 1`, 1)), 0600)
 		}},
-		{"tree distinto", func() {
-			os.WriteFile(ruta, []byte(strings.Replace(string(valida), oid, strings.Repeat("0", len(oid)), 1)), 0600)
+		{"different tree", func() {
+			os.WriteFile(path, []byte(strings.Replace(string(valid), oid, strings.Repeat("0", len(oid)), 1)), 0600)
 		}},
-		{"fingerprint distinto", func() {
-			fingerprint := NuevoProveedorNativo(dir, oid).contexto.fingerprint()
-			os.WriteFile(ruta, []byte(strings.Replace(string(valida), `"`+fingerprint+`":`, `"`+strings.Repeat("0", 64)+`":`, 1)), 0600)
+		{"different fingerprint", func() {
+			fingerprint := NewNativeProvider(dir, oid).context.fingerprint()
+			os.WriteFile(path, []byte(strings.Replace(string(valid), `"`+fingerprint+`":`, `"`+strings.Repeat("0", 64)+`":`, 1)), 0600)
 		}},
-		{"sobredimensionada", func() { os.WriteFile(ruta, make([]byte, maxCacheGrafo+1), 0600) }},
+		{"oversized", func() { os.WriteFile(path, make([]byte, maxGraphCacheSize+1), 0600) }},
 		{"symlink", func() {
-			os.Remove(ruta)
-			if err := os.Symlink(filepath.Join(t.TempDir(), "destino"), ruta); err != nil {
-				t.Skipf("symlinks no disponibles: %v", err)
+			os.Remove(path)
+			if err := os.Symlink(filepath.Join(t.TempDir(), "target"), path); err != nil {
+				t.Skipf("symlinks not available: %v", err)
 			}
 		}},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			caso.preparar()
-			p := NuevoProveedorNativo(dir, oid)
-			cargas := 0
-			cargar := p.cargar
-			p.cargar = func(c *packages.Config, patrones ...string) ([]*packages.Package, error) {
-				cargas++
-				return cargar(c, patrones...)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.prepare()
+			p := NewNativeProvider(dir, oid)
+			loads := 0
+			load := p.load
+			p.load = func(c *packages.Config, patterns ...string) ([]*packages.Package, error) {
+				loads++
+				return load(c, patterns...)
 			}
-			resultado, _ := p.Analizar([]string{"main.go"})
-			if !resultado.Completo() || cargas != 1 {
-				t.Fatalf("completo=%v cargas=%d motivo=%q", resultado.Completo(), cargas, resultado.MotivoIncompleto())
+			result, _ := p.Analyze([]string{"main.go"})
+			if !result.Complete() || loads != 1 {
+				t.Fatalf("complete=%v loads=%d reason=%q", result.Complete(), loads, result.ReasonIncomplete())
 			}
-			if caso.nombre == "symlink" {
+			if tc.name == "symlink" {
 				return
 			}
-			valida, err = os.ReadFile(ruta)
+			valid, err = os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -274,130 +274,130 @@ func TestProveedorNativoRecuperaCacheNoConfiable(t *testing.T) {
 	}
 }
 
-func TestProveedorNativoSoloPersisteTrasVerificacion(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderPersistsOnlyAfterVerification(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	p := NuevoProveedorNativo(dir, oid)
-	p.verificar = func(s solicitudVerificacion) error {
-		if s.fase == verificarConsumidos {
-			return errors.New("fallo final")
+	p := NewNativeProvider(dir, oid)
+	p.verify = func(r verifyRequest) error {
+		if r.phase == verifyConsumed {
+			return errors.New("final failure")
 		}
-		return verificarSnapshotGit(s)
+		return verifyGitSnapshot(r)
 	}
-	resultado, _ := p.Analizar([]string{"main.go"})
-	ruta := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
-	if resultado.Completo() || !errors.Is(func() error { _, err := os.Stat(ruta); return err }(), os.ErrNotExist) {
-		t.Fatalf("resultado=%q cache persistida=%v", resultado.MotivoIncompleto(), ruta)
+	result, _ := p.Analyze([]string{"main.go"})
+	path := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	if result.Complete() || !errors.Is(func() error { _, err := os.Stat(path); return err }(), os.ErrNotExist) {
+		t.Fatalf("result=%q persisted cache=%v", result.ReasonIncomplete(), path)
 	}
 }
 
-func TestProveedorNativoCacheConcurrenteEsSegura(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderConcurrentCacheIsSafe(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	var cargas atomic.Int32
+	var loads atomic.Int32
 	var wg sync.WaitGroup
-	errores := make(chan string, 12)
+	errs := make(chan string, 12)
 	for range 12 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p := NuevoProveedorNativo(dir, oid)
-			cargar := p.cargar
-			p.cargar = func(c *packages.Config, patrones ...string) ([]*packages.Package, error) {
-				cargas.Add(1)
-				return cargar(c, patrones...)
+			p := NewNativeProvider(dir, oid)
+			load := p.load
+			p.load = func(c *packages.Config, patterns ...string) ([]*packages.Package, error) {
+				loads.Add(1)
+				return load(c, patterns...)
 			}
-			resultado, _ := p.Analizar([]string{"main.go"})
-			if !resultado.Completo() {
-				errores <- resultado.MotivoIncompleto()
+			result, _ := p.Analyze([]string{"main.go"})
+			if !result.Complete() {
+				errs <- result.ReasonIncomplete()
 			}
 		}()
 	}
 	wg.Wait()
-	close(errores)
-	for err := range errores {
+	close(errs)
+	for err := range errs {
 		t.Error(err)
 	}
-	if cargas.Load() == 0 {
-		t.Fatal("ningún lector construyó la cache")
+	if loads.Load() == 0 {
+		t.Fatal("no reader built the cache")
 	}
-	p := NuevoProveedorNativo(dir, oid)
-	p.cargar = func(*packages.Config, ...string) ([]*packages.Package, error) {
-		return nil, errors.New("loader no debe ejecutarse")
+	p := NewNativeProvider(dir, oid)
+	p.load = func(*packages.Config, ...string) ([]*packages.Package, error) {
+		return nil, errors.New("loader must not run")
 	}
-	resultado, _ := p.Analizar([]string{"main.go"})
-	if !resultado.Completo() {
-		t.Fatal(resultado.MotivoIncompleto())
+	result, _ := p.Analyze([]string{"main.go"})
+	if !result.Complete() {
+		t.Fatal(result.ReasonIncomplete())
 	}
-	ruta := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
-	info, err := os.Lstat(ruta)
+	path := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("entrada cache no regular: %v %v", info, err)
+		t.Fatalf("cache entry not regular: %v %v", info, err)
 	}
-	var cache cacheGrafo
-	datos, _ := os.ReadFile(ruta)
-	if json.Unmarshal(datos, &cache) != nil || !cache.valida(oid) || cache.Entries[p.contexto.fingerprint()].TreeOID != oid {
-		t.Fatalf("cache final inválida: %s", datos)
+	var cache graphCache
+	data, _ := os.ReadFile(path)
+	if json.Unmarshal(data, &cache) != nil || !cache.valid(oid) || cache.Entries[p.context.fingerprint()].TreeOID != oid {
+		t.Fatalf("final cache invalid: %s", data)
 	}
 }
 
-func TestProveedorNativoFallaCerrado(t *testing.T) {
-	casos := []struct {
-		nombre, ruta, contenido, motivo string
+func TestNativeProviderFailsClosed(t *testing.T) {
+	cases := []struct {
+		name, path, content, reason string
 	}{
-		{"error de carga", "bad.go", "package broken\nfunc {", "carga"},
+		{"load error", "bad.go", "package broken\nfunc {", "load"},
 		{"reflect", "main.go", "package sample\nimport \"reflect\"\nvar _ = reflect.TypeOf(1)\n", "reflect"},
 		{"plugin", "main.go", "package sample\nimport \"plugin\"\nvar _ = plugin.Open\n", "plugin"},
 		{"go linkname", "main.go", "package sample\nimport _ \"unsafe\"\n//go:linkname f x.f\nfunc f()\n", "go:linkname"},
-		{"archivo no cubierto", "z.txt", "texto\n", "ningún paquete"},
-		{"go mod", "go.mod", "module example.test/changed\n", "configuración global"},
-		{"makefile", "Makefile", "all:\n\t@true\n", "configuración global"},
-		{"build script", "build.sh", "go build ./...\n", "configuración global"},
-		{"ci", filepath.Join(".github", "workflows", "ci.yml"), "name: ci\n", "configuración global"},
-		{"sin identidad", "main.go", "package sample\n", "identidad de snapshot"},
+		{"uncovered file", "z.txt", "text\n", "any loaded package"},
+		{"go mod", "go.mod", "module example.test/changed\n", "global configuration"},
+		{"makefile", "Makefile", "all:\n\t@true\n", "global configuration"},
+		{"build script", "build.sh", "go build ./...\n", "global configuration"},
+		{"ci", filepath.Join(".github", "workflows", "ci.yml"), "name: ci\n", "global configuration"},
+		{"missing identity", "main.go", "package sample\n", "snapshot identity"},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			archivos := map[string]string{
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{
 				"go.mod":  "module example.test/snapshot\n\ngo 1.26\n",
 				"base.go": "package sample\n",
 			}
-			archivos[caso.ruta] = caso.contenido
-			dir := crearModulo(t, archivos)
-			identidad := "tree-case"
-			if caso.nombre == "sin identidad" {
-				identidad = ""
+			files[tc.path] = tc.content
+			dir := createModule(t, files)
+			identity := "tree-case"
+			if tc.name == "missing identity" {
+				identity = ""
 			}
-			if identidad != "" {
-				identidad = treeOID(t, dir)
+			if identity != "" {
+				identity = treeOID(t, dir)
 			}
-			resultado, err := NuevoProveedorNativo(dir, identidad).Analizar([]string{caso.ruta})
-			if err != nil || resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), caso.motivo) {
-				t.Fatalf("completo=%v, error=%v, motivo=%q", resultado.Completo(), err, resultado.MotivoIncompleto())
+			result, err := NewNativeProvider(dir, identity).Analyze([]string{tc.path})
+			if err != nil || result.Complete() || !strings.Contains(result.ReasonIncomplete(), tc.reason) {
+				t.Fatalf("complete=%v, error=%v, reason=%q", result.Complete(), err, result.ReasonIncomplete())
 			}
-			if !reflect.DeepEqual(resultado.NoCubiertos(), []string{filepath.ToSlash(caso.ruta)}) {
-				t.Fatalf("no cubiertos = %v", resultado.NoCubiertos())
+			if !reflect.DeepEqual(result.Uncovered(), []string{filepath.ToSlash(tc.path)}) {
+				t.Fatalf("uncovered = %v", result.Uncovered())
 			}
 		})
 	}
 }
 
-func TestProveedorNativoVerificaSnapshotAntesDeConfiar(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-	casos := []struct {
-		nombre, oid string
-		mutar       func()
+func TestNativeProviderVerifiesSnapshotBeforeTrusting(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	cases := []struct {
+		name, oid string
+		mutate    func()
 	}{
-		{"tree distinto", strings.Repeat("0", 40), func() {}},
-		{"archivo rastreado mutado", treeOID(t, dir), func() { os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// dirty\n"), 0644) }},
-		{"archivo no rastreado", treeOID(t, dir), func() { os.WriteFile(filepath.Join(dir, "extra.txt"), []byte("dirty"), 0644) }},
+		{"different tree", strings.Repeat("0", 40), func() {}},
+		{"mutated tracked file", treeOID(t, dir), func() { os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// dirty\n"), 0644) }},
+		{"untracked file", treeOID(t, dir), func() { os.WriteFile(filepath.Join(dir, "extra.txt"), []byte("dirty"), 0644) }},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			caso.mutar()
-			resultado, _ := NuevoProveedorNativo(dir, caso.oid).Analizar([]string{"main.go"})
-			if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "snapshot") {
-				t.Fatalf("snapshot no verificado: completo=%v motivo=%q", resultado.Completo(), resultado.MotivoIncompleto())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.mutate()
+			result, _ := NewNativeProvider(dir, tc.oid).Analyze([]string{"main.go"})
+			if result.Complete() || !strings.Contains(result.ReasonIncomplete(), "snapshot") {
+				t.Fatalf("snapshot not verified: complete=%v reason=%q", result.Complete(), result.ReasonIncomplete())
 			}
 			git(t, dir, "reset", "--hard", "-q")
 			os.Remove(filepath.Join(dir, "extra.txt"))
@@ -405,43 +405,43 @@ func TestProveedorNativoVerificaSnapshotAntesDeConfiar(t *testing.T) {
 	}
 }
 
-func TestProveedorNativoAtestaArchivosConsumidos(t *testing.T) {
-	casos := []struct {
-		nombre string
-		mutar  func(*testing.T, string)
+func TestNativeProviderAttestsConsumedFiles(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*testing.T, string)
 	}{
-		{"go ignorado", func(t *testing.T, dir string) {
+		{"ignored go", func(t *testing.T, dir string) {
 			os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored.go\n"), 0644)
 			git(t, dir, "add", ".gitignore")
 			git(t, dir, "commit", "-qm", "ignore")
 			os.WriteFile(filepath.Join(dir, "ignored.go"), []byte("package s\n"), 0644)
 		}},
-		{"rastreado assume unchanged", func(t *testing.T, dir string) {
-			os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// alterado\n"), 0644)
+		{"tracked assume unchanged", func(t *testing.T, dir string) {
+			os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// altered\n"), 0644)
 			git(t, dir, "update-index", "--assume-unchanged", "main.go")
-			if estado := strings.TrimSpace(git(t, dir, "status", "--porcelain")); estado != "" {
-				t.Fatalf("el fixture debe ocultar el cambio a status: %q", estado)
+			if state := strings.TrimSpace(git(t, dir, "status", "--porcelain")); state != "" {
+				t.Fatalf("the fixture must hide the change from status: %q", state)
 			}
 		}},
-		{"metadata de módulo", func(t *testing.T, dir string) {
+		{"module metadata", func(t *testing.T, dir string) {
 			os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module hostile.test/s\n\ngo 1.26\n"), 0644)
 			git(t, dir, "update-index", "--assume-unchanged", "go.mod")
 		}},
 	}
-	for _, caso := range casos {
-		t.Run(caso.nombre, func(t *testing.T) {
-			dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-			caso.mutar(t, dir)
-			resultado, _ := proveedorDelModulo(t, dir).Analizar([]string{"main.go"})
-			if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "blob") {
-				t.Fatalf("bytes no atestados: completo=%v motivo=%q", resultado.Completo(), resultado.MotivoIncompleto())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+			tc.mutate(t, dir)
+			result, _ := providerForModule(t, dir).Analyze([]string{"main.go"})
+			if result.Complete() || !strings.Contains(result.ReasonIncomplete(), "blob") {
+				t.Fatalf("bytes not attested: complete=%v reason=%q", result.Complete(), result.ReasonIncomplete())
 			}
 		})
 	}
 }
 
-func TestProveedorNativoIgnoraGoWorkDesactivado(t *testing.T) {
-	dir := crearModulo(t, map[string]string{
+func TestNativeProviderIgnoresGoWorkWhenDisabled(t *testing.T) {
+	dir := createModule(t, map[string]string{
 		"go.mod":  "module example.test/s\n\ngo 1.26\n",
 		"go.work": "go 1.26\n\nuse .\n",
 		"main.go": "package s\n",
@@ -449,137 +449,137 @@ func TestProveedorNativoIgnoraGoWorkDesactivado(t *testing.T) {
 	oid := treeOID(t, dir)
 	os.WriteFile(filepath.Join(dir, "go.work"), []byte("go 1.26\n\nuse ./missing\n"), 0644)
 	git(t, dir, "update-index", "--assume-unchanged", "go.work")
-	resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"})
-	if !resultado.Completo() {
-		t.Fatalf("go.work consumido pese a GOWORK=off: %q", resultado.MotivoIncompleto())
+	result, _ := NewNativeProvider(dir, oid).Analyze([]string{"main.go"})
+	if !result.Complete() {
+		t.Fatalf("go.work consumed despite GOWORK=off: %q", result.ReasonIncomplete())
 	}
 }
 
-func TestProveedorNativoIgnoraObjetosDeReemplazo(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderIgnoresReplacementObjects(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	original := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
-	esperado := treeOID(t, dir)
+	expected := treeOID(t, dir)
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package hostile\n"), 0644)
 	git(t, dir, "commit", "-qam", "replacement")
-	reemplazo := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	replacement := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
 	git(t, dir, "reset", "--hard", "-q", original)
-	git(t, dir, "replace", original, reemplazo)
-	if actual := treeOID(t, dir); actual == esperado {
-		t.Fatal("refs/replace no alteró HEAD^{tree}; el fixture no prueba la defensa")
+	git(t, dir, "replace", original, replacement)
+	if actual := treeOID(t, dir); actual == expected {
+		t.Fatal("refs/replace did not alter HEAD^{tree}; the fixture does not exercise the defense")
 	}
-	resultado, _ := NuevoProveedorNativo(dir, esperado).Analizar([]string{"main.go"})
-	if !resultado.Completo() {
-		t.Fatalf("refs/replace alteró la atestación: %q", resultado.MotivoIncompleto())
+	result, _ := NewNativeProvider(dir, expected).Analyze([]string{"main.go"})
+	if !result.Complete() {
+		t.Fatalf("refs/replace altered the attestation: %q", result.ReasonIncomplete())
 	}
 }
 
-func TestProveedorNativoSaneaEntornoGit(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-	hostil := crearModulo(t, map[string]string{"go.mod": "module hostile.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+func TestNativeProviderSanitizesGitEnvironment(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	hostile := createModule(t, map[string]string{"go.mod": "module hostile.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
 	oid := treeOID(t, dir)
-	t.Setenv("GIT_DIR", filepath.Join(hostil, ".git"))
-	t.Setenv("GIT_WORK_TREE", hostil)
-	configHostil := filepath.Join(hostil, "hostile-config")
-	os.WriteFile(configHostil, []byte("configuración inválida\n"), 0644)
-	t.Setenv("GIT_CONFIG_GLOBAL", configHostil)
+	t.Setenv("GIT_DIR", filepath.Join(hostile, ".git"))
+	t.Setenv("GIT_WORK_TREE", hostile)
+	hostileConfig := filepath.Join(hostile, "hostile-config")
+	os.WriteFile(hostileConfig, []byte("invalid configuration\n"), 0644)
+	t.Setenv("GIT_CONFIG_GLOBAL", hostileConfig)
 	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err == nil {
-		t.Fatal("la configuración global hostil no altera Git; el fixture no prueba el saneado")
+		t.Fatal("the hostile global configuration does not affect Git; the fixture does not exercise the sanitization")
 	}
-	resultado, _ := NuevoProveedorNativo(dir, oid).Analizar([]string{"main.go"})
-	if !resultado.Completo() {
-		t.Fatalf("entorno Git redirigió la atestación: %q", resultado.MotivoIncompleto())
+	result, _ := NewNativeProvider(dir, oid).Analyze([]string{"main.go"})
+	if !result.Complete() {
+		t.Fatalf("the Git environment redirected the attestation: %q", result.ReasonIncomplete())
 	}
 }
 
-func TestProveedorNativoRevalidaTrasCarga(t *testing.T) {
-	dir := crearModulo(t, map[string]string{
+func TestNativeProviderRevalidatesAfterLoad(t *testing.T) {
+	dir := createModule(t, map[string]string{
 		"go.mod":   "module example.test/s\n\ngo 1.26\n",
 		"main.go":  "package s\n",
 		"other.go": "package s\n",
 	})
-	p := proveedorDelModulo(t, dir)
-	cargar := p.cargar
-	p.cargar = func(config *packages.Config, patrones ...string) ([]*packages.Package, error) {
-		paquetes, err := cargar(config, patrones...)
-		os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// mutado durante carga\n"), 0644)
-		return paquetes, err
+	p := providerForModule(t, dir)
+	load := p.load
+	p.load = func(config *packages.Config, patterns ...string) ([]*packages.Package, error) {
+		pkgs, err := load(config, patterns...)
+		os.WriteFile(filepath.Join(dir, "main.go"), []byte("package s\n// mutated during load\n"), 0644)
+		return pkgs, err
 	}
-	resultado, _ := p.Analizar([]string{"main.go", "other.go"})
-	if resultado.Completo() || !reflect.DeepEqual(resultado.NoCubiertos(), []string{"main.go", "other.go"}) {
-		t.Fatalf("mutación temporal autorizada: completo=%v no cubiertos=%v motivo=%q", resultado.Completo(), resultado.NoCubiertos(), resultado.MotivoIncompleto())
+	result, _ := p.Analyze([]string{"main.go", "other.go"})
+	if result.Complete() || !reflect.DeepEqual(result.Uncovered(), []string{"main.go", "other.go"}) {
+		t.Fatalf("temporary mutation authorized: complete=%v uncovered=%v reason=%q", result.Complete(), result.Uncovered(), result.ReasonIncomplete())
 	}
 }
 
-func TestProveedorNativoRechazaEscapePorSymlink(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-	fuera := filepath.Join(t.TempDir(), "fuera.go")
-	os.WriteFile(fuera, []byte("package fuera\n"), 0644)
-	enlace := filepath.Join(dir, "escape.go")
-	if err := os.Symlink(fuera, enlace); err != nil {
-		t.Skipf("symlinks no disponibles: %v", err)
+func TestNativeProviderRejectsSymlinkEscape(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	os.WriteFile(outside, []byte("package outside\n"), 0644)
+	link := filepath.Join(dir, "escape.go")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks not available: %v", err)
 	}
 	git(t, dir, "add", ".")
 	git(t, dir, "commit", "-qm", "symlink")
-	resultado, _ := proveedorDelModulo(t, dir).Analizar([]string{"escape.go"})
-	if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "fuera del snapshot") {
-		t.Fatalf("escape autorizado: %q", resultado.MotivoIncompleto())
+	result, _ := providerForModule(t, dir).Analyze([]string{"escape.go"})
+	if result.Complete() || !strings.Contains(result.ReasonIncomplete(), "outside the snapshot") {
+		t.Fatalf("escape authorized: %q", result.ReasonIncomplete())
 	}
-	os.Remove(fuera)
-	resultado, _ = proveedorDelModulo(t, dir).Analizar([]string{"escape.go"})
-	if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "no resoluble") {
-		t.Fatalf("symlink roto autorizado: %q", resultado.MotivoIncompleto())
-	}
-}
-
-func TestBuildGoEsFuenteOrdinaria(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "build.go": "package s\n"})
-	enlace := filepath.Join(t.TempDir(), "snapshot")
-	if err := os.Symlink(dir, enlace); err != nil {
-		t.Skipf("symlinks no disponibles: %v", err)
-	}
-	resultado, _ := NuevoProveedorNativo(enlace, treeOID(t, dir)).Analizar([]string{"build.go"})
-	if !resultado.Completo() {
-		t.Fatalf("build.go marcado global: %s", resultado.MotivoIncompleto())
+	os.Remove(outside)
+	result, _ = providerForModule(t, dir).Analyze([]string{"escape.go"})
+	if result.Complete() || !strings.Contains(result.ReasonIncomplete(), "unresolvable") {
+		t.Fatalf("broken symlink authorized: %q", result.ReasonIncomplete())
 	}
 }
 
-func TestCierreInversoConCicloEsDeterminista(t *testing.T) {
-	p := &proveedorNativo{imports: map[string][]string{"a": {"b"}, "b": {"a"}}, tests: map[string]string{"a": "./a", "b": "./b"}}
-	var primero, segundo alcanceAfectado
-	p.expandirAlcance(map[string][]string{"a": {"a.go", "a.go"}}, &primero)
-	p.expandirAlcance(map[string][]string{"a": {"a.go", "a.go"}}, &segundo)
-	if !reflect.DeepEqual(primero, segundo) || !reflect.DeepEqual(primero.paquetes, []string{"a", "b"}) {
-		t.Fatalf("cierre no determinista: %+v / %+v", primero, segundo)
+func TestBuildGoIsOrdinarySource(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "build.go": "package s\n"})
+	link := filepath.Join(t.TempDir(), "snapshot")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("symlinks not available: %v", err)
 	}
-}
-func TestCargaNoAutorizaArchivosFueraDelSnapshot(t *testing.T) {
-	dir := crearModulo(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
-	fuera := filepath.Join(t.TempDir(), "fuera.go")
-	os.WriteFile(fuera, []byte("package fuera\n"), 0644)
-	p := proveedorDelModulo(t, dir)
-	p.cargar = func(*packages.Config, ...string) ([]*packages.Package, error) {
-		return []*packages.Package{{PkgPath: "example.test/fuera", GoFiles: []string{fuera}}}, nil
-	}
-	resultado, _ := p.Analizar([]string{"main.go"})
-	if resultado.Completo() || !strings.Contains(resultado.MotivoIncompleto(), "archivo de paquete fuera") {
-		t.Fatalf("archivo externo autorizado: %q", resultado.MotivoIncompleto())
-	}
-	if strings.Contains(resultado.MotivoIncompleto(), fuera) {
-		t.Fatalf("motivo expone ruta absoluta consumida: %q", resultado.MotivoIncompleto())
+	result, _ := NewNativeProvider(link, treeOID(t, dir)).Analyze([]string{"build.go"})
+	if !result.Complete() {
+		t.Fatalf("build.go flagged as global: %s", result.ReasonIncomplete())
 	}
 }
 
-func crearModulo(t *testing.T, archivos map[string]string) string {
+func TestReverseClosureWithCycleIsDeterministic(t *testing.T) {
+	p := &nativeProvider{imports: map[string][]string{"a": {"b"}, "b": {"a"}}, tests: map[string]string{"a": "./a", "b": "./b"}}
+	var first, second affectedScope
+	p.expandScope(map[string][]string{"a": {"a.go", "a.go"}}, &first)
+	p.expandScope(map[string][]string{"a": {"a.go", "a.go"}}, &second)
+	if !reflect.DeepEqual(first, second) || !reflect.DeepEqual(first.packages, []string{"a", "b"}) {
+		t.Fatalf("non-deterministic closure: %+v / %+v", first, second)
+	}
+}
+func TestLoadDoesNotAuthorizeFilesOutsideSnapshot(t *testing.T) {
+	dir := createModule(t, map[string]string{"go.mod": "module example.test/s\n\ngo 1.26\n", "main.go": "package s\n"})
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	os.WriteFile(outside, []byte("package outside\n"), 0644)
+	p := providerForModule(t, dir)
+	p.load = func(*packages.Config, ...string) ([]*packages.Package, error) {
+		return []*packages.Package{{PkgPath: "example.test/outside", GoFiles: []string{outside}}}, nil
+	}
+	result, _ := p.Analyze([]string{"main.go"})
+	if result.Complete() || !strings.Contains(result.ReasonIncomplete(), "package file outside") {
+		t.Fatalf("external file authorized: %q", result.ReasonIncomplete())
+	}
+	if strings.Contains(result.ReasonIncomplete(), outside) {
+		t.Fatalf("reason exposes absolute consumed path: %q", result.ReasonIncomplete())
+	}
+}
+
+func createModule(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for ruta, contenido := range archivos {
-		ruta = filepath.Join(dir, filepath.FromSlash(ruta))
-		if err := os.MkdirAll(filepath.Dir(ruta), 0755); err != nil {
+	for path, content := range files {
+		path = filepath.Join(dir, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(ruta, []byte(contenido), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -591,9 +591,9 @@ func crearModulo(t *testing.T, archivos map[string]string) string {
 	return dir
 }
 
-func proveedorDelModulo(t *testing.T, dir string) *proveedorNativo {
+func providerForModule(t *testing.T, dir string) *nativeProvider {
 	t.Helper()
-	return NuevoProveedorNativo(dir, treeOID(t, dir))
+	return NewNativeProvider(dir, treeOID(t, dir))
 }
 
 func treeOID(t *testing.T, dir string) string {
@@ -604,9 +604,9 @@ func treeOID(t *testing.T, dir string) string {
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	salida, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, salida)
+		t.Fatalf("git %v: %v: %s", args, err, output)
 	}
-	return string(salida)
+	return string(output)
 }

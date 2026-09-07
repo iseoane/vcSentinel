@@ -19,20 +19,20 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 )
 
-const limiteContextoCodeGraph = 32 << 10
-const maxReferenciasCodeGraph = 32
+const codeGraphContextLimit = 32 << 10
+const maxCodeGraphRefs = 32
 
 // perRelationBudget caps each additive relation (callers, callees, impact)
-// at 8 references. It does not split maxReferenciasCodeGraph: affectedTests
-// consumes the full maxReferenciasCodeGraph on its own, and each additive
+// at 8 references. It does not split maxCodeGraphRefs: affectedTests
+// consumes the full maxCodeGraphRefs on its own, and each additive
 // relation adds up to perRelationBudget on top, bounding the total at
 // maxTotalRefs (32 + 3*8 = 56).
-const perRelationBudget = maxReferenciasCodeGraph / 4
+const perRelationBudget = maxCodeGraphRefs / 4
 
 // maxTotalRefs bounds the total references a codegraph context returns:
-// maxReferenciasCodeGraph affectedTests plus one perRelationBudget for each
+// maxCodeGraphRefs affectedTests plus one perRelationBudget for each
 // of the three additive relations.
-const maxTotalRefs = maxReferenciasCodeGraph + 3*perRelationBudget
+const maxTotalRefs = maxCodeGraphRefs + 3*perRelationBudget
 
 // codeGraphEntryLimit asks each callers/callees query for up to 16
 // entries — twice the per-relation budget — so several entries naming the
@@ -58,32 +58,32 @@ var reAddedFuncDecl = regexp.MustCompile(`^\+func\s+(?:\([^)]*\)\s+)?(\w+)`)
 // reAddedTypeDecl matches an added diff line declaring a top-level Go type.
 var reAddedTypeDecl = regexp.MustCompile(`^\+type\s+(\w+)`)
 
-type ejecutorCodeGraph func(context.Context, string, []string, string, []string, string, int) ([]byte, error)
+type codeGraphRunner func(context.Context, string, []string, string, []string, string, int) ([]byte, error)
 
-type ProveedorCodeGraph struct {
-	raiz, ejecutable, git string
-	limite                int
-	ejecutar              ejecutorCodeGraph
+type CodeGraphProvider struct {
+	root, binary, git string
+	limit             int
+	run               codeGraphRunner
 	// excludes resolves the parent-side global excludes file to pass the
 	// sanitized child explicitly. Nil means no file: the status call goes
 	// out unchanged.
 	excludes func(string) string
 }
 
-func DetectarProveedorCodeGraph(raiz string) review.ContextProvider {
-	return detectarProveedorCodeGraph(raiz, exec.LookPath, ejecutarCodeGraph)
+func DetectCodeGraphProvider(root string) review.ContextProvider {
+	return detectCodeGraphProvider(root, exec.LookPath, runCodeGraph)
 }
 
-func detectarProveedorCodeGraph(raiz string, lookup func(string) (string, error), ejecutar ejecutorCodeGraph) review.ContextProvider {
-	canonica, err := filepath.EvalSymlinks(raiz)
+func detectCodeGraphProvider(root string, lookup func(string) (string, error), run codeGraphRunner) review.ContextProvider {
+	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil
 	}
-	info, err := os.Stat(filepath.Join(canonica, ".codegraph"))
+	info, err := os.Stat(filepath.Join(canonical, ".codegraph"))
 	if err != nil || !info.IsDir() {
 		return nil
 	}
-	binario, err := lookup("codegraph")
+	binary, err := lookup("codegraph")
 	if err != nil {
 		return nil
 	}
@@ -91,33 +91,33 @@ func detectarProveedorCodeGraph(raiz string, lookup func(string) (string, error)
 	if err != nil {
 		return nil
 	}
-	return &ProveedorCodeGraph{raiz: canonica, ejecutable: binario, git: git, limite: limiteContextoCodeGraph, ejecutar: ejecutar, excludes: buscarExcludesGlobal}
+	return &CodeGraphProvider{root: canonical, binary: binary, git: git, limit: codeGraphContextLimit, run: run, excludes: resolveGlobalExcludes}
 }
 
-func (p *ProveedorCodeGraph) Nombre() string { return "codegraph" }
+func (p *CodeGraphProvider) Name() string { return "codegraph" }
 
-func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Reference, error) {
-	validas := rutasSeguras(rutas, 0)
-	if sha == "" || len(validas) == 0 || p.ejecutar == nil {
+func (p *CodeGraphProvider) Context(sha string, paths []string) ([]review.Reference, error) {
+	validPaths := safePaths(paths, 0)
+	if sha == "" || len(validPaths) == 0 || p.run == nil {
 		return nil, nil
 	}
-	env := entornoCodeGraph(p.ejecutable)
-	head, err := p.ejecutarConTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
+	env := codeGraphEnv(p.binary)
+	head, err := p.runWithTimeout(p.git, []string{"rev-parse", "--verify", "HEAD^{commit}"}, env, "")
 	if err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: head_mismatch: %w", err)
 	}
 	if strings.TrimSpace(string(head)) != sha {
 		return nil, fmt.Errorf("codegraph context skipped: head_mismatch")
 	}
-	sucio, err := p.ejecutarConTimeout(p.git, argsEstadoPorcelain(p.excludes, p.git), env, "")
+	dirty, err := p.runWithTimeout(p.git, argsStatePorcelain(p.excludes, p.git), env, "")
 	if err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: dirty_worktree: %w", err)
 	}
-	if len(bytes.TrimSpace(sucio)) != 0 {
+	if len(bytes.TrimSpace(dirty)) != 0 {
 		return nil, fmt.Errorf("codegraph context skipped: dirty_worktree")
 	}
-	estadoRaw, err := p.ejecutarConTimeout(p.ejecutable, []string{"status", "--json", p.raiz}, env, "")
-	var estado struct {
+	statusRaw, err := p.runWithTimeout(p.binary, []string{"status", "--json", p.root}, env, "")
+	var status struct {
 		Initialized      bool                                    `json:"initialized"`
 		ProjectPath      string                                  `json:"projectPath"`
 		Pending          *struct{ Added, Modified, Removed int } `json:"pendingChanges"`
@@ -126,64 +126,64 @@ func (p *ProveedorCodeGraph) Contexto(sha string, rutas []string) ([]review.Refe
 	if err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: status_unavailable: %w", err)
 	}
-	if len(estadoRaw) == 0 || len(estadoRaw) >= p.limite {
+	if len(statusRaw) == 0 || len(statusRaw) >= p.limit {
 		return nil, fmt.Errorf("codegraph context skipped: status_unavailable")
 	}
-	if err := json.Unmarshal(estadoRaw, &estado); err != nil {
+	if err := json.Unmarshal(statusRaw, &status); err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: status_unavailable: %w", err)
 	}
-	if !estado.Initialized {
+	if !status.Initialized {
 		return nil, fmt.Errorf("codegraph context skipped: uninitialized_index")
 	}
-	if filepath.Clean(estado.ProjectPath) != p.raiz {
+	if filepath.Clean(status.ProjectPath) != p.root {
 		return nil, fmt.Errorf("codegraph context skipped: project_path_mismatch")
 	}
-	if estado.Pending == nil || estado.Pending.Added != 0 || estado.Pending.Modified != 0 || estado.Pending.Removed != 0 {
+	if status.Pending == nil || status.Pending.Added != 0 || status.Pending.Modified != 0 || status.Pending.Removed != 0 {
 		return nil, fmt.Errorf("codegraph context skipped: pending_changes")
 	}
-	if string(estado.WorktreeMismatch) != "null" {
+	if string(status.WorktreeMismatch) != "null" {
 		return nil, fmt.Errorf("codegraph context skipped: worktree_mismatch")
 	}
-	salida, err := p.ejecutarConTimeout(p.ejecutable, []string{"affected", "-p", p.raiz, "--stdin", "--json"}, env, strings.Join(validas, "\n")+"\n")
-	var afectado struct {
+	output, err := p.runWithTimeout(p.binary, []string{"affected", "-p", p.root, "--stdin", "--json"}, env, strings.Join(validPaths, "\n")+"\n")
+	var affected struct {
 		AffectedTests []string `json:"affectedTests"`
 	}
 	if err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable: %w", err)
 	}
-	if len(salida) == 0 || len(salida) >= p.limite {
+	if len(output) == 0 || len(output) >= p.limit {
 		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable")
 	}
-	if err := json.Unmarshal(salida, &afectado); err != nil {
+	if err := json.Unmarshal(output, &affected); err != nil {
 		return nil, fmt.Errorf("codegraph context skipped: affected_unavailable: %w", err)
 	}
-	tests := rutasSeguras(afectado.AffectedTests, maxReferenciasCodeGraph)
+	tests := safePaths(affected.AffectedTests, maxCodeGraphRefs)
 	refs := make([]review.Reference, 0, len(tests))
-	for _, ruta := range tests {
-		if p.validatedPath(ruta) {
-			refs = append(refs, review.Reference{Path: ruta, Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
+	for _, path := range tests {
+		if p.validatedPath(path) {
+			refs = append(refs, review.Reference{Path: path, Relation: review.RelationAffectedTest, Reason: review.ReasonCodeGraph})
 		}
 	}
-	return p.widenWithRelations(env, sha, validas, refs), nil
+	return p.widenWithRelations(env, sha, validPaths, refs), nil
 }
 
 // validatedPath is the shared gate for every untrusted path that may become
-// a reference: already sanitized by rutasSeguras, it must resolve (through
-// EvalSymlinks) to a regular file contained under p.raiz.
-func (p *ProveedorCodeGraph) validatedPath(ruta string) bool {
-	resuelta, err := filepath.EvalSymlinks(filepath.Join(p.raiz, filepath.FromSlash(ruta)))
+// a reference: already sanitized by safePaths, it must resolve (through
+// EvalSymlinks) to a regular file contained under p.root.
+func (p *CodeGraphProvider) validatedPath(path string) bool {
+	resolved, err := filepath.EvalSymlinks(filepath.Join(p.root, filepath.FromSlash(path)))
 	if err != nil {
 		return false
 	}
-	relativa, relErr := filepath.Rel(p.raiz, resuelta)
+	relative, relErr := filepath.Rel(p.root, resolved)
 	if relErr != nil {
 		return false
 	}
-	info, statErr := os.Stat(resuelta)
+	info, statErr := os.Stat(resolved)
 	if statErr != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	return relativa != ".." && !strings.HasPrefix(relativa, ".."+string(filepath.Separator))
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // graphEntry is one entry of a callers/callees/impact --json response; the
@@ -205,14 +205,14 @@ type relationResponse struct {
 }
 
 // entriesFor selects the entry list a relation reads from the shared shape.
-func entriesFor(respuesta relationResponse, relation review.Relation) []graphEntry {
+func entriesFor(response relationResponse, relation review.Relation) []graphEntry {
 	switch relation {
 	case review.RelationCaller:
-		return respuesta.Callers
+		return response.Callers
 	case review.RelationCallee:
-		return respuesta.Callees
+		return response.Callees
 	case review.RelationImpact:
-		return respuesta.Affected
+		return response.Affected
 	}
 	return nil
 }
@@ -243,7 +243,7 @@ var additiveRelations = []review.Relation{review.RelationCaller, review.Relation
 // query, an empty, oversized, or malformed response — degrades to that piece
 // contributing nothing: additive context never errors and never regresses the
 // affectedTests result it extends.
-func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths []string, refs []review.Reference) []review.Reference {
+func (p *CodeGraphProvider) widenWithRelations(env []string, sha string, paths []string, refs []review.Reference) []review.Reference {
 	symbols := p.diffSymbols(env, sha, paths)
 	if len(symbols) == 0 {
 		return refs
@@ -251,15 +251,15 @@ func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths 
 	candidates := map[review.Relation][]string{}
 	for _, symbol := range symbols {
 		for _, relation := range additiveRelations {
-			output, err := p.ejecutarConTimeout(p.ejecutable, relationQueryArgs(relation, p.raiz, symbol), env, "")
-			if err != nil || len(output) == 0 || len(output) >= p.limite {
+			output, err := p.runWithTimeout(p.binary, relationQueryArgs(relation, p.root, symbol), env, "")
+			if err != nil || len(output) == 0 || len(output) >= p.limit {
 				continue
 			}
-			var respuesta relationResponse
-			if json.Unmarshal(output, &respuesta) != nil {
+			var response relationResponse
+			if json.Unmarshal(output, &response) != nil {
 				continue
 			}
-			for _, entry := range entriesFor(respuesta, relation) {
+			for _, entry := range entriesFor(response, relation) {
 				candidates[relation] = append(candidates[relation], entry.FilePath)
 			}
 		}
@@ -268,17 +268,17 @@ func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths 
 		// Validated over the full over-fetch before capping, so invalid
 		// graph paths cannot starve the budget with valid references.
 		validated := make([]string, 0, len(candidates[relation]))
-		for _, ruta := range rutasSeguras(candidates[relation], 0) {
-			if p.validatedPath(ruta) {
-				validated = append(validated, ruta)
+		for _, path := range safePaths(candidates[relation], 0) {
+			if p.validatedPath(path) {
+				validated = append(validated, path)
 			}
 		}
 		if len(validated) > perRelationBudget {
 			validated = validated[:perRelationBudget]
 		}
 		// Same path under different relations is intentional: each relation is a distinct reviewer signal.
-		for _, ruta := range validated {
-			refs = append(refs, review.Reference{Path: ruta, Relation: relation, Reason: review.ReasonCodeGraph})
+		for _, path := range validated {
+			refs = append(refs, review.Reference{Path: path, Relation: relation, Reason: review.ReasonCodeGraph})
 		}
 	}
 	return refs
@@ -291,12 +291,12 @@ func (p *ProveedorCodeGraph) widenWithRelations(env []string, sha string, paths 
 // call, an oversized output, or a diff without Go declarations (non-Go
 // files, no matches) yields nil so the provider keeps its affected-only
 // result without error.
-func (p *ProveedorCodeGraph) diffSymbols(env []string, sha string, paths []string) []string {
+func (p *CodeGraphProvider) diffSymbols(env []string, sha string, paths []string) []string {
 	args := make([]string, 0, len(paths)+5)
 	args = append(args, "show", sha, "--format=", "--")
 	args = append(args, paths...)
-	output, err := p.ejecutarConTimeout(p.git, args, env, "")
-	if err != nil || len(output) == 0 || len(output) >= p.limite {
+	output, err := p.runWithTimeout(p.git, args, env, "")
+	if err != nil || len(output) == 0 || len(output) >= p.limit {
 		return nil
 	}
 	names := make([]string, 0, maxCodeGraphSymbols)
@@ -320,38 +320,38 @@ func (p *ProveedorCodeGraph) diffSymbols(env []string, sha string, paths []strin
 	return names
 }
 
-// ejecutarConTimeout da a cada subproceso su propio presupuesto de 3s, para
-// que las verificaciones previas (rev-parse, status) no le resten tiempo a
-// 'affected', la única llamada que recorre el grafo de dependientes.
-func (p *ProveedorCodeGraph) ejecutarConTimeout(ejecutable string, args []string, env []string, stdin string) ([]byte, error) {
+// runWithTimeout gives each subprocess its own 3s budget, so that the
+// pre-checks (rev-parse, status) do not eat into 'affected' time — the only
+// call that walks the dependents graph.
+func (p *CodeGraphProvider) runWithTimeout(executable string, args []string, env []string, stdin string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	return p.ejecutar(ctx, ejecutable, args, p.raiz, env, stdin, p.limite)
+	return p.run(ctx, executable, args, p.root, env, stdin, p.limit)
 }
 
-func rutasSeguras(rutas []string, max int) []string {
-	unicas := map[string]bool{}
-	for _, ruta := range rutas {
-		normalizada := strings.ReplaceAll(ruta, "\\", "/")
-		limpia := path.Clean(normalizada)
-		drive := len(limpia) >= 2 && limpia[1] == ':'
-		if ruta != "" && !path.IsAbs(limpia) && !drive && limpia != ".." && !strings.HasPrefix(limpia, "../") && !strings.HasPrefix(ruta, "-") && !strings.ContainsAny(ruta, "\x00\r\n") {
-			unicas[limpia] = true
+func safePaths(paths []string, max int) []string {
+	unique := map[string]bool{}
+	for _, raw := range paths {
+		normalized := strings.ReplaceAll(raw, "\\", "/")
+		clean := path.Clean(normalized)
+		drive := len(clean) >= 2 && clean[1] == ':'
+		if raw != "" && !path.IsAbs(clean) && !drive && clean != ".." && !strings.HasPrefix(clean, "../") && !strings.HasPrefix(raw, "-") && !strings.ContainsAny(raw, "\x00\r\n") {
+			unique[clean] = true
 		}
 	}
-	salida := make([]string, 0, len(unicas))
-	for ruta := range unicas {
-		salida = append(salida, ruta)
+	output := make([]string, 0, len(unique))
+	for clean := range unique {
+		output = append(output, clean)
 	}
-	sort.Strings(salida)
-	if max > 0 && len(salida) > max {
-		salida = salida[:max]
+	sort.Strings(output)
+	if max > 0 && len(output) > max {
+		output = output[:max]
 	}
-	return salida
+	return output
 }
 
-func entornoCodeGraph(ejecutable string) []string {
-	dirs := []string{filepath.Dir(ejecutable)}
+func codeGraphEnv(executable string) []string {
+	dirs := []string{filepath.Dir(executable)}
 	// An npm-style launcher is a shebang script (#!/usr/bin/env node), so the
 	// tool directory alone leaves the kernel unable to resolve its
 	// interpreter and every invocation dies with exit 127. Appending the
@@ -360,32 +360,32 @@ func entornoCodeGraph(ejecutable string) []string {
 	// the interpreter lookup runs in the parent, and no parent variable
 	// reaches the child — from its side exactly two explicit directories are
 	// reachable, never the caller's environment.
-	if dir := directorioInterprete(ejecutable); dir != "" && dir != dirs[0] {
+	if dir := interpreterDir(executable); dir != "" && dir != dirs[0] {
 		dirs = append(dirs, dir)
 	}
 	env := []string{"PATH=" + strings.Join(dirs, string(os.PathListSeparator))}
-	for _, nombre := range []string{"SystemRoot", "TEMP", "TMP", "TMPDIR"} {
-		if valor := os.Getenv(nombre); valor != "" {
-			env = append(env, nombre+"="+valor)
+	for _, name := range []string{"SystemRoot", "TEMP", "TMP", "TMPDIR"} {
+		if value := os.Getenv(name); value != "" {
+			env = append(env, name+"="+value)
 		}
 	}
 	return env
 }
 
-// directorioInterprete returns the directory of the interpreter named by the
+// interpreterDir returns the directory of the interpreter named by the
 // executable's shebang line, or "" when there is none or it cannot be
 // resolved. Only a 256-byte prefix is read: a shebang is capped at 127 bytes
 // on Linux and a few hundred elsewhere, so a first line that does not fit
 // could never execute anyway.
-func directorioInterprete(ejecutable string) string {
-	archivo, err := os.Open(ejecutable)
+func interpreterDir(executable string) string {
+	file, err := os.Open(executable)
 	if err != nil {
 		return ""
 	}
-	defer archivo.Close()
-	var prefijo [256]byte
-	n, _ := io.ReadFull(archivo, prefijo[:])
-	line, _, _ := strings.Cut(string(prefijo[:n]), "\n")
+	defer file.Close()
+	var prefix [256]byte
+	n, _ := io.ReadFull(file, prefix[:])
+	line, _, _ := strings.Cut(string(prefix[:n]), "\n")
 	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
 	if !strings.HasPrefix(line, "#!") || len(fields) == 0 {
 		return ""
@@ -412,22 +412,22 @@ func directorioInterprete(ejecutable string) string {
 	return ""
 }
 
-type escritorLimitado struct {
+type limitedWriter struct {
 	bytes.Buffer
-	restante int
+	remaining int
 }
 
-func (w *escritorLimitado) Write(p []byte) (int, error) {
-	if len(p) > w.restante {
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if len(p) > w.remaining {
 		return 0, io.ErrShortBuffer
 	}
-	w.restante -= len(p)
+	w.remaining -= len(p)
 	return w.Buffer.Write(p)
 }
 
-func ejecutarCodeGraph(ctx context.Context, ejecutable string, args []string, dir string, env []string, stdin string, limite int) ([]byte, error) {
-	w := &escritorLimitado{restante: limite}
-	cmd := exec.CommandContext(ctx, ejecutable, args...)
+func runCodeGraph(ctx context.Context, executable string, args []string, dir string, env []string, stdin string, limit int) ([]byte, error) {
+	w := &limitedWriter{remaining: limit}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir, cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = dir, env, strings.NewReader(stdin), w, io.Discard
 	err := cmd.Run()
 	return w.Bytes(), err

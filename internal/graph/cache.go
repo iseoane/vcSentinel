@@ -17,338 +17,338 @@ import (
 )
 
 const (
-	versionCacheGrafo = 3
-	maxCacheGrafo     = 16 << 20
-	maxEntradasCache  = 8
+	graphCacheVersion = 3
+	maxGraphCacheSize = 16 << 20
+	maxCacheEntries   = 8
 )
 
-type cacheGrafo struct {
-	Version int                     `json:"version"`
-	Entries map[string]entradaCache `json:"entries"`
+type graphCache struct {
+	Version int                   `json:"version"`
+	Entries map[string]cacheEntry `json:"entries"`
 }
 
-type entradaCache struct {
-	TreeOID    string              `json:"tree_oid"`
-	Imports    map[string][]string `json:"imports"`
-	Archivos   map[string]string   `json:"files"`
-	Tests      map[string]string   `json:"tests"`
-	Consumidos []string            `json:"consumed"`
+type cacheEntry struct {
+	TreeOID  string              `json:"tree_oid"`
+	Imports  map[string][]string `json:"imports"`
+	Files    map[string]string   `json:"files"`
+	Tests    map[string]string   `json:"tests"`
+	Consumed []string            `json:"consumed"`
 }
 
-var mutexCache sync.Mutex
+var cacheMutex sync.Mutex
 
-func bloquearCache(raiz *os.Root) (func(), error) {
-	const nombre = ".write.lock"
-	if info, err := raiz.Lstat(nombre); err == nil {
+func lockCache(root *os.Root) (func(), error) {
+	const name = ".write.lock"
+	if info, err := root.Lstat(name); err == nil {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("archivo de bloqueo inseguro")
+			return nil, fmt.Errorf("unsafe lock file")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	archivo, err := abrirArchivoBloqueo(raiz, nombre)
+	file, err := openLockFile(root, name)
 	if err != nil {
 		return nil, err
 	}
-	infoArchivo, errArchivo := archivo.Stat()
-	infoRuta, errRuta := raiz.Lstat(nombre)
-	if errArchivo != nil || errRuta != nil || !infoArchivo.Mode().IsRegular() ||
-		infoRuta.Mode()&os.ModeSymlink != 0 || !os.SameFile(infoArchivo, infoRuta) {
-		_ = archivo.Close()
-		return nil, fmt.Errorf("archivo de bloqueo inseguro")
+	fileInfo, errFile := file.Stat()
+	pathInfo, errPath := root.Lstat(name)
+	if errFile != nil || errPath != nil || !fileInfo.Mode().IsRegular() ||
+		pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(fileInfo, pathInfo) {
+		_ = file.Close()
+		return nil, fmt.Errorf("unsafe lock file")
 	}
-	limite := time.Now().Add(250 * time.Millisecond)
+	deadline := time.Now().Add(250 * time.Millisecond)
 	for {
-		adquirido, err := intentarBloqueoArchivo(archivo)
+		acquired, err := tryLockFile(file)
 		if err != nil {
-			_ = archivo.Close()
+			_ = file.Close()
 			return nil, err
 		}
-		if adquirido {
+		if acquired {
 			return func() {
-				_ = desbloquearArchivo(archivo)
-				_ = archivo.Close()
+				_ = unlockFile(file)
+				_ = file.Close()
 			}, nil
 		}
-		if time.Now().After(limite) {
-			_ = archivo.Close()
-			return nil, fmt.Errorf("tiempo de espera del bloqueo agotado")
+		if time.Now().After(deadline) {
+			_ = file.Close()
+			return nil, fmt.Errorf("lock wait timed out")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func decodificarCache(datos []byte) (cacheGrafo, bool) {
-	var c cacheGrafo
-	dec := json.NewDecoder(bytes.NewReader(datos))
+func decodeCache(data []byte) (graphCache, bool) {
+	var c graphCache
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	ok := dec.Decode(&c) == nil && dec.Decode(&struct{}{}) == io.EOF
 	return c, ok
 }
 
-func oidSeguro(oid string) bool {
+func safeOID(oid string) bool {
 	_, err := hex.DecodeString(oid)
 	return (len(oid) == 40 || len(oid) == 64) && err == nil && strings.ToLower(oid) == oid
 }
 
-func raizCache(directorio string) (*os.Root, error) {
-	comun, err := gitSnapshot(directorio, "rev-parse", "--git-common-dir")
+func cacheRoot(dir string) (*os.Root, error) {
+	common, err := gitSnapshot(dir, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
-	comun = strings.TrimSpace(comun)
-	if !filepath.IsAbs(comun) {
-		comun = filepath.Join(directorio, comun)
+	common = strings.TrimSpace(common)
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
 	}
-	raiz, err := os.OpenRoot(comun)
+	root, err := os.OpenRoot(common)
 	if err != nil {
 		return nil, err
 	}
-	defer raiz.Close()
-	ruta := filepath.Join("vas-sentinel", "graph")
-	if err := raiz.MkdirAll(ruta, 0700); err != nil {
+	defer root.Close()
+	path := filepath.Join("vas-sentinel", "graph")
+	if err := root.MkdirAll(path, 0700); err != nil {
 		return nil, err
 	}
-	app, appErr := raiz.Lstat("vas-sentinel")
-	info, infoErr := raiz.Lstat(ruta)
+	app, appErr := root.Lstat("vas-sentinel")
+	info, infoErr := root.Lstat(path)
 	if appErr != nil || infoErr != nil || app.Mode()&os.ModeSymlink != 0 || !app.IsDir() || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0700 {
-		return nil, fmt.Errorf("directorio de cache inseguro")
+		return nil, fmt.Errorf("unsafe cache directory")
 	}
-	graph, err := raiz.OpenRoot(ruta)
+	graph, err := root.OpenRoot(path)
 	if err != nil {
 		return nil, err
 	}
 	return graph, nil
 }
 
-func rutaCacheValida(ruta string) bool {
-	nativa := filepath.FromSlash(ruta)
-	return ruta != "" && ruta != "." && ruta != ".." && !filepath.IsAbs(nativa) && !strings.HasPrefix(ruta, "../") && filepath.ToSlash(filepath.Clean(nativa)) == ruta
+func validCachePath(path string) bool {
+	native := filepath.FromSlash(path)
+	return path != "" && path != "." && path != ".." && !filepath.IsAbs(native) && !strings.HasPrefix(path, "../") && filepath.ToSlash(filepath.Clean(native)) == path
 }
 
-func (c cacheGrafo) valida(oid string) bool {
-	if c.Version != versionCacheGrafo || !oidSeguro(oid) || len(c.Entries) == 0 || len(c.Entries) > maxEntradasCache {
+func (c graphCache) valid(oid string) bool {
+	if c.Version != graphCacheVersion || !safeOID(oid) || len(c.Entries) == 0 || len(c.Entries) > maxCacheEntries {
 		return false
 	}
-	for fingerprint, entrada := range c.Entries {
-		if len(fingerprint) != 64 || entrada.TreeOID != oid || !entrada.valida() {
+	for fingerprint, entry := range c.Entries {
+		if len(fingerprint) != 64 || entry.TreeOID != oid || !entry.valid() {
 			return false
 		}
 	}
 	return true
 }
 
-func (c entradaCache) valida() bool {
-	if len(c.Archivos) == 0 {
+func (c cacheEntry) valid() bool {
+	if len(c.Files) == 0 {
 		return false
 	}
-	for _, ruta := range c.Consumidos {
-		if !rutaCacheValida(ruta) {
+	for _, path := range c.Consumed {
+		if !validCachePath(path) {
 			return false
 		}
 	}
-	for paquete, imports := range c.Imports {
-		if paquete == "" || !validosOpcionales(imports) {
+	for pkg, imports := range c.Imports {
+		if pkg == "" || !optionalValid(imports) {
 			return false
 		}
 	}
-	for ruta, paquete := range c.Archivos {
-		if paquete == "" || !rutaCacheValida(ruta) {
+	for path, pkg := range c.Files {
+		if pkg == "" || !validCachePath(path) {
 			return false
 		}
 	}
-	for paquete, ruta := range c.Tests {
-		if paquete == "" || !strings.HasPrefix(ruta, "./") || ruta != "./." && !rutaCacheValida(strings.TrimPrefix(ruta, "./")) {
+	for pkg, path := range c.Tests {
+		if pkg == "" || !strings.HasPrefix(path, "./") || path != "./." && !validCachePath(strings.TrimPrefix(path, "./")) {
 			return false
 		}
 	}
 	return true
 }
 
-func (p *proveedorNativo) cargarCache() ([]string, bool, error) {
-	if !oidSeguro(p.identidad) {
+func (p *nativeProvider) loadCache() ([]string, bool, error) {
+	if !safeOID(p.identity) {
 		return nil, false, nil
 	}
-	raiz, err := raizCache(p.directorio)
+	root, err := cacheRoot(p.dir)
 	if err != nil {
 		return nil, false, nil
 	}
-	defer raiz.Close()
-	nombre := p.identidad + ".json"
-	info, err := raiz.Lstat(nombre)
+	defer root.Close()
+	name := p.identity + ".json"
+	info, err := root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, false, fmt.Errorf("entrada insegura")
+		return nil, false, fmt.Errorf("unsafe cache entry")
 	}
-	archivo, err := raiz.Open(nombre)
+	file, err := root.Open(name)
 	if err != nil {
 		return nil, false, err
 	}
-	defer archivo.Close()
-	limitado := &io.LimitedReader{R: archivo, N: maxCacheGrafo + 1}
-	datos, err := io.ReadAll(limitado)
-	if err != nil || len(datos) > maxCacheGrafo {
+	defer file.Close()
+	limited := &io.LimitedReader{R: file, N: maxGraphCacheSize + 1}
+	data, err := io.ReadAll(limited)
+	if err != nil || len(data) > maxGraphCacheSize {
 		return nil, false, nil
 	}
-	c, ok := decodificarCache(datos)
-	if !ok || !c.valida(p.identidad) {
+	c, ok := decodeCache(data)
+	if !ok || !c.valid(p.identity) {
 		return nil, false, nil
 	}
-	entrada, ok := c.Entries[p.contexto.fingerprint()]
+	entry, ok := c.Entries[p.context.fingerprint()]
 	if !ok {
 		return nil, false, nil
 	}
-	p.imports, p.archivos, p.tests = clonarImports(entrada.Imports), clonarMapa(entrada.Archivos), clonarMapa(entrada.Tests)
-	for i, ruta := range entrada.Consumidos {
-		entrada.Consumidos[i] = filepath.Join(p.directorio, filepath.FromSlash(ruta))
+	p.imports, p.files, p.tests = cloneImports(entry.Imports), cloneMap(entry.Files), cloneMap(entry.Tests)
+	for i, path := range entry.Consumed {
+		entry.Consumed[i] = filepath.Join(p.dir, filepath.FromSlash(path))
 	}
-	return entrada.Consumidos, true, nil
+	return entry.Consumed, true, nil
 }
 
-func (p *proveedorNativo) guardarCache(consumidos []string) error {
-	mutexCache.Lock()
-	defer mutexCache.Unlock()
-	return p.guardarCacheSinMutex(consumidos)
+func (p *nativeProvider) saveCache(consumed []string) error {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+	return p.saveCacheWithoutMutex(consumed)
 }
 
-func (p *proveedorNativo) guardarCacheSinMutex(consumidos []string) error {
-	// Best-effort: no poder limpiar entradas caducadas nunca debe impedir
-	// guardar la caché que se acaba de calcular.
-	_ = PurgarCacheGrafo(p.directorio, RetencionCacheGrafo)
-	relativas := make([]string, 0, len(consumidos))
-	for _, archivo := range consumidos {
-		relativa, err := filepath.Rel(p.directorio, archivo)
-		if err != nil || !rutaCacheValida(filepath.ToSlash(relativa)) {
+func (p *nativeProvider) saveCacheWithoutMutex(consumed []string) error {
+	// Best-effort: failing to purge expired entries must never prevent
+	// saving the cache that was just computed.
+	_ = PurgeGraphCache(p.dir, GraphCacheRetention)
+	relativePaths := make([]string, 0, len(consumed))
+	for _, file := range consumed {
+		relative, err := filepath.Rel(p.dir, file)
+		if err != nil || !validCachePath(filepath.ToSlash(relative)) {
 			return nil
 		}
-		relativas = append(relativas, filepath.ToSlash(relativa))
+		relativePaths = append(relativePaths, filepath.ToSlash(relative))
 	}
-	ordenarUnicos(&relativas)
-	raiz, err := raizCache(p.directorio)
+	sortUnique(&relativePaths)
+	root, err := cacheRoot(p.dir)
 	if err != nil {
 		return err
 	}
-	defer raiz.Close()
-	desbloquear, err := bloquearCache(raiz)
+	defer root.Close()
+	unlock, err := lockCache(root)
 	if err != nil {
 		return err
 	}
-	defer desbloquear()
-	c := cacheGrafo{Version: versionCacheGrafo, Entries: map[string]entradaCache{}}
-	if anterior, ok := p.leerCacheValidaDesde(raiz); ok {
-		c = anterior
+	defer unlock()
+	c := graphCache{Version: graphCacheVersion, Entries: map[string]cacheEntry{}}
+	if previous, ok := p.readValidCacheFrom(root); ok {
+		c = previous
 	}
-	fingerprint := p.contexto.fingerprint()
-	if _, existe := c.Entries[fingerprint]; !existe && len(c.Entries) >= maxEntradasCache {
-		claves := make([]string, 0, len(c.Entries))
-		for clave := range c.Entries {
-			claves = append(claves, clave)
+	fingerprint := p.context.fingerprint()
+	if _, exists := c.Entries[fingerprint]; !exists && len(c.Entries) >= maxCacheEntries {
+		keys := make([]string, 0, len(c.Entries))
+		for key := range c.Entries {
+			keys = append(keys, key)
 		}
-		sort.Strings(claves)
-		delete(c.Entries, claves[0])
+		sort.Strings(keys)
+		delete(c.Entries, keys[0])
 	}
-	c.Entries[fingerprint] = entradaCache{p.identidad, clonarImports(p.imports), clonarMapa(p.archivos), clonarMapa(p.tests), relativas}
-	datos, err := json.MarshalIndent(c, "", "  ")
-	if err != nil || len(datos)+1 > maxCacheGrafo {
-		return fmt.Errorf("cache excede el límite")
+	c.Entries[fingerprint] = cacheEntry{p.identity, cloneImports(p.imports), cloneMap(p.files), cloneMap(p.tests), relativePaths}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil || len(data)+1 > maxGraphCacheSize {
+		return fmt.Errorf("cache exceeds the limit")
 	}
-	temporal := fmt.Sprintf(".graph-%d.tmp", time.Now().UnixNano())
-	defer raiz.Remove(temporal)
-	archivo, err := raiz.OpenFile(temporal, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	temp := fmt.Sprintf(".graph-%d.tmp", time.Now().UnixNano())
+	defer root.Remove(temp)
+	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	defer archivo.Close()
-	if _, err := archivo.Write(append(datos, '\n')); err != nil || archivo.Close() != nil {
-		return fmt.Errorf("escritura de cache fallida")
+	defer file.Close()
+	if _, err := file.Write(append(data, '\n')); err != nil || file.Close() != nil {
+		return fmt.Errorf("cache write failed")
 	}
-	nombre := p.identidad + ".json"
-	if err := raiz.Rename(temporal, nombre); err == nil {
+	name := p.identity + ".json"
+	if err := root.Rename(temp, name); err == nil {
 		return nil
 	}
-	if info, err := raiz.Lstat(nombre); err == nil {
+	if info, err := root.Lstat(name); err == nil {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("entrada existente insegura")
+			return fmt.Errorf("unsafe existing cache entry")
 		}
-		if err := raiz.Remove(nombre); err != nil {
+		if err := root.Remove(name); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return raiz.Rename(temporal, nombre)
+	return root.Rename(temp, name)
 }
 
-func (p *proveedorNativo) leerCacheValida() (cacheGrafo, bool) {
-	raiz, err := raizCache(p.directorio)
+func (p *nativeProvider) readValidCache() (graphCache, bool) {
+	root, err := cacheRoot(p.dir)
 	if err != nil {
-		return cacheGrafo{}, false
+		return graphCache{}, false
 	}
-	defer raiz.Close()
-	return p.leerCacheValidaDesde(raiz)
+	defer root.Close()
+	return p.readValidCacheFrom(root)
 }
 
-func (p *proveedorNativo) leerCacheValidaDesde(raiz *os.Root) (cacheGrafo, bool) {
-	info, err := raiz.Lstat(p.identidad + ".json")
+func (p *nativeProvider) readValidCacheFrom(root *os.Root) (graphCache, bool) {
+	info, err := root.Lstat(p.identity + ".json")
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return cacheGrafo{}, false
+		return graphCache{}, false
 	}
-	archivo, err := raiz.Open(p.identidad + ".json")
+	file, err := root.Open(p.identity + ".json")
 	if err != nil {
-		return cacheGrafo{}, false
+		return graphCache{}, false
 	}
-	defer archivo.Close()
-	datos, err := io.ReadAll(&io.LimitedReader{R: archivo, N: maxCacheGrafo + 1})
-	c, ok := decodificarCache(datos)
-	return c, err == nil && len(datos) <= maxCacheGrafo && ok && c.valida(p.identidad)
+	defer file.Close()
+	data, err := io.ReadAll(&io.LimitedReader{R: file, N: maxGraphCacheSize + 1})
+	c, ok := decodeCache(data)
+	return c, err == nil && len(data) <= maxGraphCacheSize && ok && c.valid(p.identity)
 }
 
-func clonarImports(origen map[string][]string) map[string][]string {
-	destino := make(map[string][]string, len(origen))
-	for clave, valores := range origen {
-		destino[clave] = clonar(valores)
+func cloneImports(source map[string][]string) map[string][]string {
+	dest := make(map[string][]string, len(source))
+	for key, values := range source {
+		dest[key] = clone(values)
 	}
-	return destino
+	return dest
 }
 
-func clonarMapa(origen map[string]string) map[string]string {
-	destino := make(map[string]string, len(origen))
-	for clave, valor := range origen {
-		destino[clave] = valor
+func cloneMap(source map[string]string) map[string]string {
+	dest := make(map[string]string, len(source))
+	for key, value := range source {
+		dest[key] = value
 	}
-	return destino
+	return dest
 }
 
-// RetencionCacheGrafo es la edad a partir de la cual una entrada de caché se
-// considera desechable. Es el mismo criterio que git.RetencionSnapshots: la
-// caché se regenera sola, así que perder una entrada solo cuesta un recálculo,
-// mientras que conservarlas todas de por vida no cuesta nada visible hasta que
-// el directorio ya es enorme.
-const RetencionCacheGrafo = 24 * time.Hour
+// GraphCacheRetention is the age at which a cache entry becomes disposable.
+// It follows the same criterion as git.SnapshotRetention: the cache
+// regenerates itself, so losing an entry only costs a recomputation, while
+// keeping all of them for life costs nothing visible until the directory is
+// already huge.
+const GraphCacheRetention = 24 * time.Hour
 
-// PurgarCacheGrafo elimina las entradas de caché anteriores a antiguedad.
+// PurgeGraphCache removes cache entries older than age.
 //
-// Existía escrita y probada pero SIN UN SOLO LLAMANTE en producción, así que la
-// caché crecía sin límite. Ahora la invoca guardarCacheSinMutex: purgar al
-// escribir acota el residuo por el uso, que es el mismo patrón con el que
-// internal/validation/candidato.go invoca git.PurgarSnapshots.
-func PurgarCacheGrafo(directorio string, antiguedad time.Duration) error {
-	raiz, err := raizCache(directorio)
+// It existed written and tested but WITHOUT A SINGLE CALLER in production,
+// so the cache grew without bound. saveCacheWithoutMutex now invokes it:
+// purging at write time bounds the residue by usage, the same pattern
+// internal/validation/candidate.go uses to invoke git.PurgeSnapshots.
+func PurgeGraphCache(dir string, age time.Duration) error {
+	root, err := cacheRoot(dir)
 	if err != nil {
 		return err
 	}
-	entradas, err := fs.ReadDir(raiz.FS(), ".")
-	defer raiz.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	defer root.Close()
 	if err != nil {
 		return err
 	}
-	for _, entrada := range entradas {
-		oid := strings.TrimSuffix(entrada.Name(), ".json")
-		info, fallo := entrada.Info()
-		if fallo == nil && entrada.Name() == oid+".json" && oidSeguro(oid) && info.Mode().IsRegular() && time.Since(info.ModTime()) >= antiguedad {
-			_ = raiz.Remove(entrada.Name())
+	for _, entry := range entries {
+		oid := strings.TrimSuffix(entry.Name(), ".json")
+		info, infoErr := entry.Info()
+		if infoErr == nil && entry.Name() == oid+".json" && safeOID(oid) && info.Mode().IsRegular() && time.Since(info.ModTime()) >= age {
+			_ = root.Remove(entry.Name())
 		}
 	}
 	return nil

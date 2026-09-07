@@ -18,7 +18,7 @@ func writeExecutableFixture(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-func TestEntornoCodeGraphIncludesShebangInterpreterDir(t *testing.T) {
+func TestEnvironmentCodeGraphIncludesShebangInterpreterDir(t *testing.T) {
 	toolDir := t.TempDir()
 	interpDir := t.TempDir()
 	interp := "vas-sentinel-test-interp"
@@ -27,7 +27,7 @@ func TestEntornoCodeGraphIncludesShebangInterpreterDir(t *testing.T) {
 
 	t.Setenv("PATH", interpDir)
 	var pathEntry string
-	for _, entry := range entornoCodeGraph(tool) {
+	for _, entry := range codeGraphEnv(tool) {
 		if rest, ok := strings.CutPrefix(entry, "PATH="); ok {
 			pathEntry = rest
 		}
@@ -42,11 +42,11 @@ func TestEntornoCodeGraphIncludesShebangInterpreterDir(t *testing.T) {
 	}
 }
 
-func TestEntornoCodeGraphNativeBinaryKeepsSingleDir(t *testing.T) {
+func TestEnvironmentCodeGraphNativeBinaryKeepsSingleDir(t *testing.T) {
 	toolDir := t.TempDir()
 	tool := writeExecutableFixture(t, toolDir, "tool", "not a script, no shebang\n")
 	var pathEntry string
-	for _, entry := range entornoCodeGraph(tool) {
+	for _, entry := range codeGraphEnv(tool) {
 		if rest, ok := strings.CutPrefix(entry, "PATH="); ok {
 			pathEntry = rest
 		}
@@ -67,7 +67,7 @@ func TestShebangToolRunsWithSanitizedEnv(t *testing.T) {
 	tool := writeExecutableFixture(t, toolDir, "tool", "#!/usr/bin/env "+interp+"\necho tool-output\n")
 
 	t.Setenv("PATH", interpDir)
-	out, err := ejecutarCodeGraph(t.Context(), tool, []string{"status"}, toolDir, entornoCodeGraph(tool), "", 1<<20)
+	out, err := runCodeGraph(t.Context(), tool, []string{"status"}, toolDir, codeGraphEnv(tool), "", 1<<20)
 	if err != nil {
 		t.Fatalf("shebang tool failed under the sanitized environment: %v", err)
 	}

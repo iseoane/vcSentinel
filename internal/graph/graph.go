@@ -1,122 +1,124 @@
-// Package graph define los contratos del grafo verificable y del contexto
-// opcional. Solo el proveedor nativo del paquete puede autorizar alcance parcial.
+// Package graph defines the contracts of the verifiable graph and the
+// optional context. Only the package's native provider can authorize partial
+// scope.
 package graph
 
-// GraphProvider representa el grafo nativo que produce un análisis atómico.
+// GraphProvider represents the native graph that produces an atomic analysis.
 type GraphProvider interface {
-	Nombre() string
-	Analizar(rutas []string) (ResultadoAnalisis, error)
+	Name() string
+	Analyze(paths []string) (AnalysisResult, error)
 }
 
-type evidenciaCompletitud struct {
-	completo    bool
-	motivo      string
-	noCubiertos []string
+type completenessEvidence struct {
+	complete  bool
+	reason    string
+	uncovered []string
 }
 
-type alcanceAfectado struct {
-	paquetes    []string
+type affectedScope struct {
+	packages    []string
 	tests       []string
-	explicacion []string
+	explanation []string
 }
 
-// ResultadoAnalisis vincula la entrada analizada, el alcance y su evidencia.
-// Su valor cero no es confiable; solo graph puede producir un valor autorizable.
-type ResultadoAnalisis struct {
-	identidad string
-	rutas     []string
-	alcance   alcanceAfectado
-	evidencia evidenciaCompletitud
-	confiable bool
+// AnalysisResult binds the analyzed input, the scope, and its evidence.
+// Its zero value is not trusted; only graph can produce an authorizable value.
+type AnalysisResult struct {
+	identity string
+	paths    []string
+	scope    affectedScope
+	evidence completenessEvidence
+	trusted  bool
 }
 
-func nuevoResultadoAnalisis(identidad string, rutas []string, alcance alcanceAfectado, evidencia evidenciaCompletitud) ResultadoAnalisis {
-	return ResultadoAnalisis{
-		identidad: identidad,
-		rutas:     clonar(rutas),
-		alcance: alcanceAfectado{
-			paquetes:    clonar(alcance.paquetes),
-			tests:       clonar(alcance.tests),
-			explicacion: clonar(alcance.explicacion),
+func newAnalysisResult(identity string, paths []string, scope affectedScope, evidence completenessEvidence) AnalysisResult {
+	return AnalysisResult{
+		identity: identity,
+		paths:    clone(paths),
+		scope: affectedScope{
+			packages:    clone(scope.packages),
+			tests:       clone(scope.tests),
+			explanation: clone(scope.explanation),
 		},
-		evidencia: evidenciaCompletitud{
-			completo:    evidencia.completo,
-			motivo:      evidencia.motivo,
-			noCubiertos: clonar(evidencia.noCubiertos),
+		evidence: completenessEvidence{
+			complete:  evidence.complete,
+			reason:    evidence.reason,
+			uncovered: clone(evidence.uncovered),
 		},
-		confiable: true,
+		trusted: true,
 	}
 }
 
-func (r ResultadoAnalisis) IdentidadSnapshot() string { return r.identidad }
-func (r ResultadoAnalisis) RutasAnalizadas() []string { return clonar(r.rutas) }
-func (r ResultadoAnalisis) Completo() bool            { return r.evidencia.completo }
-func (r ResultadoAnalisis) MotivoIncompleto() string  { return r.evidencia.motivo }
-func (r ResultadoAnalisis) NoCubiertos() []string     { return clonar(r.evidencia.noCubiertos) }
-func (r ResultadoAnalisis) Alcance() AlcanceAfectado  { return copiarAlcance(r.alcance) }
+func (r AnalysisResult) SnapshotIdentity() string { return r.identity }
+func (r AnalysisResult) AnalyzedPaths() []string  { return clone(r.paths) }
+func (r AnalysisResult) Complete() bool           { return r.evidence.complete }
+func (r AnalysisResult) ReasonIncomplete() string { return r.evidence.reason }
+func (r AnalysisResult) Uncovered() []string      { return clone(r.evidence.uncovered) }
+func (r AnalysisResult) Scope() AffectedScope     { return copyScope(r.scope) }
 
-// AlcanceAfectado es una vista de solo lectura del alcance autorizado.
-type AlcanceAfectado struct {
-	paquetes    []string
+// AffectedScope is a read-only view of the authorized scope.
+type AffectedScope struct {
+	packages    []string
 	tests       []string
-	explicacion []string
+	explanation []string
 }
 
-func (a AlcanceAfectado) Paquetes() []string    { return clonar(a.paquetes) }
-func (a AlcanceAfectado) Tests() []string       { return clonar(a.tests) }
-func (a AlcanceAfectado) Explicacion() []string { return clonar(a.explicacion) }
+func (a AffectedScope) Packages() []string    { return clone(a.packages) }
+func (a AffectedScope) Tests() []string       { return clone(a.tests) }
+func (a AffectedScope) Explanation() []string { return clone(a.explanation) }
 
-// AutorizacionAlcance es la única entrada válida para ejecutar parcialmente.
-// Su valor cero no autoriza; solo AutorizarAlcanceParcial puede crearla válida.
-type AutorizacionAlcance struct {
-	alcance    alcanceAfectado
-	autorizada bool
+// ScopeAuthorization is the only valid input for partial execution.
+// Its zero value authorizes nothing; only AuthorizePartialScope can create a valid one.
+type ScopeAuthorization struct {
+	scope      affectedScope
+	authorized bool
 }
 
-func (a AutorizacionAlcance) Autorizada() bool      { return a.autorizada }
-func (a AutorizacionAlcance) Paquetes() []string    { return clonar(a.alcance.paquetes) }
-func (a AutorizacionAlcance) Tests() []string       { return clonar(a.alcance.tests) }
-func (a AutorizacionAlcance) Explicacion() []string { return clonar(a.alcance.explicacion) }
+func (a ScopeAuthorization) Authorized() bool      { return a.authorized }
+func (a ScopeAuthorization) Packages() []string    { return clone(a.scope.packages) }
+func (a ScopeAuthorization) Tests() []string       { return clone(a.scope.tests) }
+func (a ScopeAuthorization) Explanation() []string { return clone(a.scope.explanation) }
 
-// AutorizarAlcanceParcial falla cerrado ante resultados ajenos, incompletos,
-// contradictorios o sin una entrada y un alcance explicable válidos.
-func AutorizarAlcanceParcial(resultado ResultadoAnalisis) (AutorizacionAlcance, bool) {
-	a := resultado.alcance
-	e := resultado.evidencia
-	if !resultado.confiable || resultado.identidad == "" || !e.completo || e.motivo != "" || len(e.noCubiertos) != 0 ||
-		!validos(resultado.rutas) || len(a.paquetes) == 0 ||
-		!validosOpcionales(a.paquetes) || !validosOpcionales(a.tests) || !validos(a.explicacion) {
-		return AutorizacionAlcance{}, false
+// AuthorizePartialScope fails closed against foreign, incomplete, or
+// contradictory results, and against ones lacking a valid input and an
+// explainable scope.
+func AuthorizePartialScope(result AnalysisResult) (ScopeAuthorization, bool) {
+	a := result.scope
+	e := result.evidence
+	if !result.trusted || result.identity == "" || !e.complete || e.reason != "" || len(e.uncovered) != 0 ||
+		!allValid(result.paths) || len(a.packages) == 0 ||
+		!optionalValid(a.packages) || !optionalValid(a.tests) || !allValid(a.explanation) {
+		return ScopeAuthorization{}, false
 	}
-	return AutorizacionAlcance{alcance: alcanceAfectado{
-		paquetes: clonar(a.paquetes), tests: clonar(a.tests), explicacion: clonar(a.explicacion),
-	}, autorizada: true}, true
+	return ScopeAuthorization{scope: affectedScope{
+		packages: clone(a.packages), tests: clone(a.tests), explanation: clone(a.explanation),
+	}, authorized: true}, true
 }
 
-func copiarAlcance(a alcanceAfectado) AlcanceAfectado {
-	return AlcanceAfectado{
-		paquetes:    clonar(a.paquetes),
-		tests:       clonar(a.tests),
-		explicacion: clonar(a.explicacion),
+func copyScope(a affectedScope) AffectedScope {
+	return AffectedScope{
+		packages:    clone(a.packages),
+		tests:       clone(a.tests),
+		explanation: clone(a.explanation),
 	}
 }
 
-func validos(valores []string) bool {
-	if len(valores) == 0 {
+func allValid(values []string) bool {
+	if len(values) == 0 {
 		return false
 	}
-	return validosOpcionales(valores)
+	return optionalValid(values)
 }
 
-func validosOpcionales(valores []string) bool {
-	for _, valor := range valores {
-		if valor == "" {
+func optionalValid(values []string) bool {
+	for _, value := range values {
+		if value == "" {
 			return false
 		}
 	}
 	return true
 }
 
-func clonar(valores []string) []string {
-	return append([]string(nil), valores...)
+func clone(values []string) []string {
+	return append([]string(nil), values...)
 }

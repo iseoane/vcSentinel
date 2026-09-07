@@ -38,7 +38,7 @@ func TestProjectSecretIncidentsDeterministicWithoutDimension(t *testing.T) {
 	if h.Evidence != "" {
 		t.Errorf("Evidence = %q, expected empty (the value must never persist)", h.Evidence)
 	}
-	if h.Location.Archivo != "docs/runbook.md" || h.Location.LineaInicio != 12 {
+	if h.Location.File != "docs/runbook.md" || h.Location.LineStart != 12 {
 		t.Errorf("Location = %+v, expected docs/runbook.md:12", h.Location)
 	}
 	if h.Fingerprint == "" {
