@@ -37,7 +37,7 @@ A blocked ficha is marked `FixedIn` by `registrarCorrecciones` only when a later
 After reading the real diff and confirming ownership:
 
 1. Run `sentinel slice plan --json > plan.json`.
-2. If `decisiones_pendientes[]` is empty, create `answers.json` as `{"plan_id":"<plan_id>","respuestas":{}}`. If decisions exist, present every decision verbatim, wait for the user, and record only the user's literal `bypass` or `abortar` answer.
+2. If `pending_decisions[]` is empty, create `answers.json` as `{"plan_id":"<plan_id>","answers":{}}`. If decisions exist, present every decision verbatim, wait for the user, and record only the user's literal `bypass` or `abort` answer.
 3. Run `sentinel slice apply --plan plan.json --answers answers.json`. Keep both transport files out of commits and remove them only when this agent created them.
 
 Review every commit the slice produces. Capture every emitted durable root and child run ID, require a terminal status with `sentinel runs status --run <id>`, and run `sentinel runs verify --run <id>` for every run used as acceptance evidence. Use `sentinel runs logs` or `sentinel runs attach` for observation, and `sentinel runs recover` only according to its reported recovery class. Never infer settlement from a notification, transcript, process listing, or exit text alone. An `admission:` failure is evidence corruption or a stale snapshot: inspect the exact run status/logs and do not blindly retry.

@@ -1,15 +1,26 @@
-# VAS Sentinel — Replanteamiento arquitectónico
+# VAS Sentinel — Architectural Rethinking (legacy)
 
-Análisis de la aplicación existente y propuesta de arquitectura objetivo hacia
-**Change Intelligence + Deterministic Validation + Incremental AI Code Review +
-Quality Gate**.
+> **Legacy document.** This was the project's original architectural rethinking
+> report, written in Spanish. It is kept for history: do not treat sections
+> 1–2 and 4–26 as current descriptions of the codebase — the authoritative,
+> current record of open work and decisions lives in [`docs/issues/`](../issues/)
+> (`actionable.md`, `future.md`, `parked.md`, `decisions.md`).
+>
+> **Translated in place into English:** section 3 (architectural problems),
+> section 27 (migration plan), section 28 (decisions taken), section 29 (what
+> is deliberately not built), section 30 (risks), section 31 (four additional
+> design decisions), and section 32 (conclusion). The remaining sections are
+> preserved verbatim in Spanish as legacy history.
 
-Este documento **no implementa nada**. Es diagnóstico, decisión arquitectónica y
-plan de evolución. Toda afirmación sobre el estado actual va con `file:line`.
+**Summary.** Analysis of the existing application and a target-architecture
+proposal toward **Change Intelligence + Deterministic Validation +
+Incremental AI Code Review + Quality Gate**. The document **implements
+nothing**. It is diagnosis, architectural decision, and an evolution plan.
+Every claim about the current state carries a `file:line` reference.
 
-Fuentes inspeccionadas: los 68 `.go` del módulo, `docs/guia-implantacion-revision.md`
-(diseño acordado, 6 iteraciones), `docs/plan-fase-2.md`, `docs/auditoria/*`
-(auditoría propia en curso), `.vas_sentinel/vassentinel.yml`, `release.yml`.
+Sources inspected: the module's 68 `.go` files, `docs/guia-implantacion-revision.md`
+(agreed design, 6 iterations), `docs/plan-fase-2.md`, `docs/auditoria/*`
+(own audit in progress), `.vas_sentinel/vassentinel.yml`, `release.yml`.
 
 ---
 
@@ -177,117 +188,116 @@ Todo lo demás del diagnóstico se ordena alrededor de esto.
 
 ---
 
-## 3. Problemas arquitectónicos
+## 3. Architectural problems
 
 ### CRITICAL
 
-**C1 · La revisión semántica es el gate; la validación determinista no lo es.**
-`comandos_pr.go:528` bloquea por veredicto de auditoría; `verificar.go` solo
-informa. Consecuencia: falsos positivos de LLM bloquean PRs correctas y código
-que no compila puede publicarse. Además se gasta presupuesto de tokens
-revisando código que un `go build` habría descartado en 2 segundos.
+**C1 · Semantic review is the gate; deterministic validation is not.**
+`comandos_pr.go:528` blocks on audit verdict; `verificar.go` only reports.
+Consequence: LLM false positives block correct PRs, and code that does not
+compile can be published. It also spends the token budget reviewing code a
+`go build` would have discarded in 2 seconds.
 
-**C2 · El contexto del revisor es un diff aislado y el repositorio está
-prohibido.** `prompts.go:555`. Causa directa de H5. Ningún ajuste de modelo,
-esfuerzo o prompt corrige la falta de información: el revisor no puede saber si
-un símbolo existe porque no puede mirar.
+**C2 · The reviewer's context is an isolated diff and the repository is
+forbidden.** `prompts.go:555`. Direct cause of H5. No amount of model, effort
+or prompt tuning fixes the missing information: the reviewer cannot know
+whether a symbol exists because it cannot look.
 
-**C3 · La incrementalidad está anclada al SHA del commit.** El ledger es
-`<sha>.json` (`ledger.go:926`) y `PurgarHuerfanas` borra lo que dejó de ser
-alcanzable (`ledger.go:1017`). Cualquier `rebase`, `amend` o `squash` —el flujo
-normal de una rama de agente, y el que el propio `sentinel rebase` promueve—
-invalida el 100 % de las revisiones aunque el contenido no haya cambiado ni una
-línea. La incrementalidad se derrumba precisamente en el escenario objetivo.
+**C3 · Incrementality is anchored to the commit SHA.** The ledger is
+`<sha>.json` (`ledger.go:926`) and `PurgarHuerfanas` deletes what stopped being
+reachable (`ledger.go:1017`). Any `rebase`, `amend` or `squash` —the normal
+flow of an agent branch, and the one `sentinel rebase` itself promotes—
+invalidates 100 % of reviews even if the content did not change by one line.
+Incrementality collapses precisely in the target scenario.
 
-**C4 · No existe modelo del cambio.** No hay AST, ni grafo de símbolos, ni de
-dependencias, ni perfil de cambio, ni modelo de riesgo. Todo se decide por dos
-señales: número de líneas y subcadena de la ruta. `LimiteDecisionChain = 400`
-(`rama.go:587`) es literalmente el mismo umbral del guardián reutilizado como
-criterio de arquitectura de PRs.
+**C4 · There is no model of the change.** No AST, no symbol graph, no
+dependency graph, no change profile, no risk model. Everything is decided by
+two signals: line count and path substring. `LimiteDecisionChain = 400`
+(`rama.go:587`) is literally the guardian's own threshold reused as the
+architecture criterion for PRs.
 
-**C5 · La clasificación por capa es una taxonomía falsa que alimenta
-decisiones reales.** `ClasificarCapa` (`slice.go:214`) devuelve `test` para
-cualquier ruta que contenga la subcadena `test` — `latest/`, `contest.go`,
-`internal/testdata/` — y `config` para cualquier `.json`/`.yml`/`.lock`. Ese
-valor decide **qué dimensiones se auditan** (`engine.go:51`) y **cómo se
-agrupan los commits** (`plan.go:44`). Entrada incorrecta ⇒ plan de revisión
-incorrecto, en silencio.
+**C5 · Layer classification is a false taxonomy that feeds real decisions.**
+`ClasificarCapa` (`slice.go:214`) returns `test` for any path containing the
+substring `test` — `latest/`, `contest.go`, `internal/testdata/` — and `config`
+for any `.json`/`.yml`/`.lock`. That value decides **which dimensions are
+audited** (`engine.go:51`) and **how commits are grouped** (`plan.go:44`).
+Wrong input ⇒ wrong review plan, silently.
 
-**C6 · La lógica de negocio vive en `package main`.** `main.go` 949 líneas,
-`comandos_pr.go` 570+. Orquestación, política, IO y presentación mezcladas. Es
-el hallazgo **H3** del propio proyecto y la causa de **B8** (cero tests en la
-capa interactiva hasta las correcciones actuales). No hay capa de casos de uso
-donde colgar Planner, Scheduler, Aggregator o Remediation.
+**C6 · Business logic lives in `package main`.** `main.go` 949 lines,
+`comandos_pr.go` 570+. Orchestration, policy, IO and presentation mixed. It is
+the project's own finding **H3** and the cause of **B8** (zero tests in the
+interactive layer until the current fixes). There is no use-case layer to hang
+Planner, Scheduler, Aggregator or Remediation on.
 
 ### IMPORTANT
 
-**I1 · Trazabilidad rota en la ficha (H4, confirmado).** Con `active_agent:
-auto` la ficha guarda el nombre del perfil, no el agente que respondió
-(`comandos_review.go:113-116`). Si la cadena cae de `claude` a `opencode`, el
-veredicto queda sin autor. Sin esto, la sección 38 (calidad del reviewer) es
-inejecutable: no se puede atribuir ruido a un modelo.
+**I1 · Broken traceability in the record (H4, confirmed).** With
+`active_agent: auto` the record stores the profile name, not the agent that
+answered (`comandos_review.go:113-116`). If the chain falls back from `claude`
+to `opencode`, the verdict has no author. Without this, section 38 (reviewer
+quality) is unexecutable: noise cannot be attributed to a model.
 
-**I2 · El modelo se inyecta por variables de entorno no contractuales.**
-`CLAUDE_CODE_MODEL`, `OPENCODE_MODEL` (`cli.go:1022-1028`). La propia guía
-documenta que un modelo inexistente **se ignora en silencio** y opencode usa
-otro (§10). Toda la estrategia de coste/calidad por perfiles puede estar
-degradada sin que nada lo señale.
+**I2 · The model is injected through non-contractual environment variables.**
+`CLAUDE_CODE_MODEL`, `OPENCODE_MODEL` (`cli.go:1022-1028`). The guide itself
+documents that a nonexistent model **is silently ignored** and opencode uses
+another (§10). The entire cost/quality strategy by profiles can be degraded
+with nothing signaling it.
 
-**I3 · El agregador no agrega.** `veredictoGlobal` (`engine.go:156`) es una
-precedencia de cinco casos. No deduplica, no correlaciona, no fusiona
-evidencia. Con seis dimensiones de mandatos solapados (`design` y `logic`
-comparten "complejidad"; `security` y `logic` comparten "entrada no validada")
-el mismo defecto se reporta N veces.
+**I3 · The aggregator does not aggregate.** `veredictoGlobal`
+(`engine.go:156`) is a precedence of five cases. It does not deduplicate, does
+not correlate, does not merge evidence. With six dimensions with overlapping
+mandates (`design` and `logic` share "complexity"; `security` and `logic`
+share "unvalidated input"), the same defect is reported N times.
 
-**I4 · El contrato de finding es insuficiente para un gate.** `ReviewFinding`
-(`finding.go:286`) tiene `dimension, file, line, severity, description,
-suggestion`. Faltan `source` (validation|review), `confidence`, rango de líneas,
-`evidence` (la cita textual que lo prueba), `impact` y `fixable`. Sin `evidence`
-no hay forma de refutar un falso positivo salvo leyendo el código a mano; sin
-`confidence` no hay forma de graduar el bloqueo.
+**I4 · The finding contract is insufficient for a gate.** `ReviewFinding`
+(`finding.go:286`) has `dimension, file, line, severity, description,
+suggestion`. Missing: `source` (validation|review), `confidence`, line range,
+`evidence` (the verbatim quote that proves it), `impact`, and `fixable`.
+Without `evidence` there is no way to refute a false positive except reading
+the code by hand; without `confidence` there is no way to grade the block.
 
-**I5 · El parser YAML es artesanal.** `aplicarDesdeRuta` (`config/parser.go:145`)
-recorre por niveles de indentación, ignora en silencio toda clave desconocida y
-no soporta listas dentro de mapas anidados. La política de repositorio que la
-arquitectura objetivo necesita (capacidades, perfiles, umbrales, excepciones,
-reglas por ruta) no es expresable con este parser.
+**I5 · The YAML parser is artisanal.** `aplicarDesdeRuta`
+(`config/parser.go:145`) walks indentation levels, silently ignores every
+unknown key and does not support lists inside nested maps. The repository
+policy the target architecture needs (capabilities, profiles, thresholds,
+exceptions, per-path rules) is not expressible with this parser.
 
-**I6 · Sin observabilidad de coste ni latencia.** El `Evento`
-(`ops/events.go`) guarda `at, cmd, exit, shas, detail, worktree`. No hay
-duración, ni tokens, ni modelo efectivo, ni tasa de override. Las secciones 37
-y 38 del objetivo no tienen datos sobre los que operar.
+**I6 · No cost or latency observability.** The `Evento` (`ops/events.go`)
+stores `at, cmd, exit, shas, detail, worktree`. No duration, no tokens, no
+effective model, no override rate. The objective's sections 37 and 38 have no
+data to operate on.
 
-**I7 · `style` como dimensión de LLM es gasto redundante.** Formato, naming
-convencional y consistencia son competencia de `gofmt` y `golangci-lint`, que
-son exactos, gratis e instantáneos. Se está pagando un modelo por responder lo
-que un linter ya sabe.
+**I7 · `style` as an LLM dimension is redundant expense.** Formatting,
+conventional naming and consistency are the competence of `gofmt` and
+`golangci-lint`, which are exact, free and instant. A model is being paid to
+answer what a linter already knows.
 
 ### IMPROVEMENT
 
-**M1 · Stacked PR es aspiracional.** `--chain-pr` solo permite publicar una
-rama que el sistema desaconseja (`comandos_pr.go:540`). No hay noción de rama
-padre ni de *diff ownership*: `AnalizarRama` siempre usa
-`merge-base(base, HEAD)` con base `main` (`rama.go:626-637`), así que revisar B
-sobre A arrastra los commits de A a la matriz y al gate.
+**M1 · Stacked PR is aspirational.** `--chain-pr` only allows publishing a
+branch the system itself discourages (`comandos_pr.go:540`). There is no notion
+of parent branch nor of *diff ownership*: `AnalizarRama` always uses
+`merge-base(base, HEAD)` with base `main` (`rama.go:626-637`), so reviewing B
+on top of A drags A's commits into the matrix and the gate.
 
-**M2 · Métricas de volumen con semánticas mezcladas.** Rastreados: líneas
-añadidas del numstat. No rastreados: líneas físicas del archivo. Rango de rama:
-añadidas + borradas (`mergebase.go:19`). Tres definiciones de "volumen" para el
-mismo concepto. Es el residuo de **B5** del informe del guardián.
+**M2 · Volume metrics with mixed semantics.** Tracked: added lines of the
+numstat. Not tracked: the file's physical lines. Branch range: added + deleted
+(`mergebase.go:19`). Three definitions of "volume" for the same concept. It is
+the residue of **B5** in the guardian's report.
 
-**M3 · `--force` sin registro de excepción.** `comandos_pr.go:528` permite
-saltar el gate sin dejar una decisión trazable de quién y por qué.
+**M3 · `--force` without an exception record.** `comandos_pr.go:528` allows
+skipping the gate without leaving a traceable decision of who and why.
 
-**M4 · `detail` del evento es un string con JSON dentro.** Impide consultar
-sin re-parsear.
+**M4 · The event's `detail` is a string with JSON inside.** It prevents
+querying without re-parsing.
 
 ### OPTIONAL
 
-**O1 · Passthrough legacy de `pr`** (`comandos_pr.go:50`) convive con los verbos
-propios; deuda de compatibilidad a retirar con aviso.
+**O1 · Legacy passthrough of `pr`** (`comandos_pr.go:50`) coexists with the
+native verbs; compatibility debt to retire with a deprecation notice.
 
-**O2 · Umbrales duplicados** (`400` en `diff.go`, `slice.go`, `rama.go`) —
-**B4** del informe del guardián, aún abierto.
+**O2 · Duplicated thresholds** (`400` in `diff.go`, `slice.go`, `rama.go`) —
+**B4** of the guardian's report, still open.
 
 ---
 
@@ -1286,110 +1296,111 @@ uno en otro, en ninguna dirección.
 
 ## 27. Migration Plan
 
-Fases pequeñas y verificables, respetando la regla del guardián (≤400 líneas por
-unidad de trabajo, `check` entre unidades). Cada fase entrega valor por sí sola y
-ninguna requiere reescritura.
+Small, verifiable phases, respecting the guardian's rule (≤400 lines per work
+unit, `check` between units). Each phase delivers value on its own and none
+requires a rewrite.
 
-### F0 — Saldar la deuda abierta *(prerequisito, sin arquitectura nueva)*
+### F0 — Settle the open debt *(prerequisite, no new architecture)*
 
-- Commitear las correcciones B1/B2/B3/B9 pendientes en el worktree (702 líneas).
-- Cerrar **H4** (registrar agente y modelo efectivos en la ficha) y **H6**
-  (eco del token).
-- Cerrar **B4/O2**: umbrales a constantes compartidas.
-- **Criterio de salida**: `go test ./...` verde, `check` en verde, H4/H6 cerrados
-  con evidencia en `docs/auditoria/`.
+- Commit the pending B1/B2/B3/B9 corrections in the worktree (702 lines).
+- Close **H4** (record the effective agent and model in the record) and **H6**
+  (token echo).
+- Close **B4/O2**: thresholds into shared constants.
+- **Exit criterion**: `go test ./...` green, `check` green, H4/H6 closed with
+  evidence in `docs/auditoria/`.
 
-### F1 — Invertir el gate *(la fase de mayor retorno del plan)*
+### F1 — Invert the gate *(the plan's highest-return phase)*
 
-- `internal/validation`: extraer `ops.Verificar` a un motor con capabilities.
-- Ejecutar validación **antes** de la revisión en `pr create` y en un nuevo
+- `internal/validation`: extract `ops.Verificar` into a capabilities-aware
+  engine.
+- Run validation **before** review in `pr create` and in a new
   `sentinel gate --stage pre-push`.
-- `VALIDATION_FAILED` bloquea; el veredicto semántico pasa a *advisory* de forma
-  transitoria hasta F5.
-- **Congelación del candidato** (§31.3): la validación deja de ejecutarse sobre
-  el worktree vivo y pasa a un worktree efímero del árbol congelado; detección
-  de obsolescencia al terminar. Va en esta fase porque un gate que mide el árbol
-  equivocado no es un gate.
-- **Criterio de salida**: una PR con `go test` en rojo no se publica; una PR con
-  un CRITICAL semántico y tests verdes sí, con aviso; y con cambios sin
-  commitear en disco durante la ejecución, el resultado sigue siendo el del
-  árbol publicado.
-- Riesgo: cambia comportamiento observable del gate. Se anuncia en el README.
+- `VALIDATION_FAILED` blocks; the semantic verdict becomes *advisory*
+  transiently until F5.
+- **Candidate freeze** (§31.3): validation stops running over the live worktree
+  and moves to an ephemeral worktree of the frozen tree; staleness detection on
+  completion. It belongs in this phase because a gate that measures the wrong
+  tree is not a gate.
+- **Exit criterion**: a PR with red `go test` is not published; a PR with a
+  semantic CRITICAL and green tests is, with a warning; and with uncommitted
+  changes on disk during the run, the result is still that of the published
+  tree.
+- Risk: it changes the gate's observable behavior. Announced in the README.
 
-### F2 — Contrato de finding v2 y store por contenido
+### F2 — Finding contract v2 and content-addressed store
 
-- `source`, `confidence`, `evidence` (obligatoria), `line_start/end`, `blob`,
+- `source`, `confidence`, `evidence` (mandatory), `line_start/end`, `blob`,
   `fingerprint`, `status`, `fixable`.
-- Rechazo de findings sin evidencia verificable contra el blob.
-- Store indexado por blob; ficha por SHA degradada a índice de trazabilidad, con
-  lectura en compatibilidad de las fichas existentes.
-- **Criterio de salida**: un `git rebase` sin cambios de contenido conserva el
-  100 % de los findings. Test de regresión que lo demuestre.
+- Rejection of findings without evidence verifiable against the blob.
+- Blob-indexed store; the per-SHA record degraded to a traceability index, with
+  compatibility reads of existing records.
+- **Exit criterion**: a `git rebase` without content changes preserves 100 % of
+  the findings. A regression test proves it.
 
-### F3 — Change Profile y Risk Model deterministas *(sin AST)*
+### F3 — Deterministic Change Profile and Risk Model *(no AST)*
 
-- `internal/change`: perfil, características, clases de fichero por **reglas de
-  ruta configurables** — sustituye `ClasificarCapa` (C5).
-- `internal/risk`: riesgo por máximo sobre reglas, con `explain`.
-- Cohesión por clústeres (co-cambio + directorio) → sugerencia de split en
+- `internal/change`: profile, characteristics, file classes by **configurable
+  path rules** — replaces `ClasificarCapa` (C5).
+- `internal/risk`: risk as maximum over rules, with `explain`.
+- Cohesion by clusters (co-change + directory) → split suggestion in
   `pre-commit`.
-- **Criterio de salida**: `sentinel explain` imprime perfil, riesgo y las reglas
-  que lo produjeron para cualquier rango.
+- **Exit criterion**: `sentinel explain` prints profile, risk, and the rules
+  that produced it for any range.
 
-### F4 — Code Model Go y validación incremental
+### F4 — Go Code Model and incremental validation
 
-- `GraphProvider` + implementación `native` con `go/packages` — **única
-  autorizada a acotar la validación** (§31.2).
-- Proveedor `codegraph` opcional, solo para selección de contexto del revisor;
-  ausente → degradación silenciosa.
-- Cierre inverso de imports → paquetes afectados → tests afectados.
-- `supports_scope` en los providers de validación; fallback duro a completo.
-- Cache de grafo por `tree OID`.
-- **Criterio de salida**: el tiempo de `pre-push` en un cambio de un paquete
-  baja de forma medible, y existe un test que fuerza `graph=incomplete` y
-  comprueba que se ejecuta la validación completa.
+- `GraphProvider` + a `native` implementation with `go/packages` — **the only
+  one authorized to bound validation** (§31.2).
+- Optional `codegraph` provider, only for reviewer context selection; absent →
+  silent degradation.
+- Reverse import closure → affected packages → affected tests.
+- `supports_scope` on the validation providers; hard fallback to full.
+- Graph cache keyed by `tree OID`.
+- **Exit criterion**: `pre-push` time on a single-package change drops
+  measurably, and a test exists that forces `graph=incomplete` and checks that
+  full validation runs.
 
-### F5 — Planner, Scheduler y contexto acotado
+### F5 — Planner, Scheduler, and bounded context
 
-- `internal/planning` (función pura, con `explain`) y `internal/agents`
-  (bundling, presupuesto, atribución).
-- Sustituir el mapa estático `dimensionesPorCapa` por el plan.
-- Levantar la prohibición de herramientas; toolset de solo lectura con rutas
-  acotadas; contexto en capas con el **estado final de los ficheros**.
-- Verificador sobre findings bloqueantes; el veredicto semántico recupera poder
-  de bloqueo, ahora corroborado.
-- **Criterio de salida**: los cuatro falsos positivos documentados en H5 dejan de
-  reproducirse. Es un test de aceptación concreto, no una impresión.
+- `internal/planning` (pure function, with `explain`) and `internal/agents`
+  (bundling, budget, attribution).
+- Replace the static `dimensionesPorCapa` map with the plan.
+- Lift the tool prohibition; read-only toolset with bounded paths; layered
+  context carrying the **final state of the files**.
+- Verifier over blocking findings; the semantic verdict regains blocking power,
+  now corroborated.
+- **Exit criterion**: the four false positives documented in H5 stop
+  reproducing. That is a concrete acceptance test, not an impression.
 
 ### F6 — Aggregator v2
 
-- Dedup por fingerprint y por proximidad; supersede determinista→semántico;
-  correlación por causa.
-- Estados `PASS` / `VALIDATION_FAILED` / `CODE_REVIEW_FAILED` /
+- Dedup by fingerprint and by proximity; deterministic→semantic supersede;
+  correlation by cause.
+- States `PASS` / `VALIDATION_FAILED` / `CODE_REVIEW_FAILED` /
   `NEEDS_USER_REVIEW` / `REVIEW_INFRASTRUCTURE_ERROR`.
-- **Criterio de salida**: en un cambio con un defecto que dispara tres
-  dimensiones, se reporta **un** finding con tres evidencias.
+- **Exit criterion**: in a change with one defect that triggers three
+  dimensions, **one** finding is reported with three pieces of evidence.
 
-### F7 — Remediation acotada
+### F7 — Bounded remediation
 
-- Planner de remediación, agente con `Edit` restringido, **Diff Guard**,
-  re-validación acotada, una sola ronda.
-- **Criterio de salida**: un fix que toca ficheros fuera del alcance se descarta
-  íntegro y se reporta.
+- Remediation planner, agent with restricted `Edit`, **Diff Guard**,
+  bounded re-validation, a single round.
+- **Exit criterion**: a fix touching files outside the scope is discarded in
+  full and reported.
 
-### F8 — Stacked PR y PR review global
+### F8 — Stacked PR and global PR review
 
-- Inferencia de rama padre, `diff_propio`, findings `inherited`.
-- Revisión de PR como unidad neta, con archivado de findings sobre código que ya
-  no existe.
-- **Criterio de salida**: revisar B sobre A no reporta ni bloquea por hallazgos
-  de A.
+- Parent-branch inference, `diff_propio`, `inherited` findings.
+- PR review as a net unit, with archival of findings over code that no longer
+  exists.
+- **Exit criterion**: reviewing B on top of A neither reports nor blocks on
+  A's findings.
 
-### F9 — Observabilidad y calibración
+### F9 — Observability and calibration
 
-- Coste, latencia, tokens, modelo efectivo en cada run.
-- `sentinel metrics` con las agregaciones de §24.
-- **Solo entonces** se ajustan bundles, umbrales y perfiles — con datos.
+- Cost, latency, tokens, effective model on every run.
+- `sentinel metrics` with the aggregations of §24.
+- **Only then** are bundles, thresholds and profiles tuned — with data.
 
 **Delivered 2026-09-04** (T9.0-T9.5, detail in
 [`docs/issues/decisions.md`](../issues/decisions.md)).
@@ -1412,434 +1423,446 @@ What actually shipped, and what did not:
   that date are not comparable.** The calibrated default above predates it and
   is unaffected.
 
-### Fases transversales, en paralelo y sin bloquear
+### Transversal phases, in parallel and without blocking
 
-- **Política de repositorio**: sustituir el parser artesanal por `yaml.v3` con
-  validación de esquema y error explícito ante clave desconocida (I5).
-  Es la primera dependencia externa del proyecto: se acepta porque la
-  complejidad de la política objetivo no es expresable a mano y porque el parser
-  actual falla en silencio, que es el peor modo de fallo posible.
-- **Extracción de `cmd/sentinel`** (C6): mover orquestación a `internal/app` de
-  forma incremental, un subcomando por unidad de trabajo, empezando por los que
-  toque cada fase. No se hace como refactor de una sola vez.
+- **Repository policy**: replace the artisanal parser with `yaml.v3` plus
+  schema validation and an explicit error on unknown keys (I5). It is the
+  project's first external dependency: accepted because the target policy's
+  complexity is not hand-expressible and because the current parser fails
+  silently, which is the worst possible failure mode.
+- **Extraction of `cmd/sentinel`** (C6): move orchestration to `internal/app`
+  incrementally, one subcommand per work unit, starting with the ones each
+  phase touches. It is not done as a one-shot refactor.
 
-### Orden y dependencias
+### Order and dependencies
 
 ```
 F0 ──► F1 ──► F2 ──► F3 ──► F4 ──► F5 ──► F6 ──► F7
                       │              │
                       └──────────────┴──► F8 ──► F9
-       (política yaml.v3 y extracción de cmd/ en paralelo desde F1)
+       (yaml.v3 policy and cmd/ extraction run in parallel from F1)
 ```
 
 ---
 
-## 28. Decisiones tomadas — resumen
+## 28. Decisions taken — summary
 
-Lo que el enunciado §43 pedía decidir explícitamente:
+What the statement's §43 asked to decide explicitly:
 
-| Decisión | Elección | Razón en una línea |
+| Decision | Choice | Reason in one line |
 |---|---|---|
-| 6 agentes vs dynamic scheduling | **Dynamic (0–5) + verificador de bloqueantes** | El problema no es el número de lentes, es el contexto y la falta de corroboración |
-| AST graph vs dependencia simple | **Escalonado: archivos → paquetes+tests → símbolos acotados**; sin grafo global persistente | El nivel 1 da el 90 % del valor al 10 % del coste |
-| Caché vs Review Store + invalidación | **Store por contenido (blob/tree OID)**; ficha por SHA como índice de trazabilidad | El rebase es el flujo normal y hoy destruye toda la incrementalidad |
-| Validación completa vs afectada | **Afectada solo con grafo completo y provider que declara alcance; si no, completa** | La confianza del gate no se negocia por tiempo |
-| Herramientas de Claude | **Revisores read-only con rutas acotadas** (no prohibición, no libertad) | La prohibición actual es la causa raíz de H5 |
-| Selección de modelo | **Por riesgo, no por dimensión**, con verificación del modelo efectivo | Un modelo degradado en silencio invalida toda la estrategia de coste |
-| Selección de esfuerzo | **Por riesgo y profundidad de contexto**, no fijo por dimensión | El esfuerzo alto en `style` es gasto puro |
-| Agentes paralelos vs secuenciales | **Validación secuencial primero; agentes en paralelo con presupuesto** | No pagar por revisar código que no compila |
-| Granularidad de revisión | **La unidad de cambio (rango neto), con atribución a commit**; per-commit solo para cohesión | Revisar commits aislados produce falsos positivos por construcción |
-| Agregación de findings | **Go, fingerprint + proximidad, con supersede determinista→semántico** | Menos ruido sin perder señal |
-| Permisos de remediación | **`Edit` acotado a ficheros con findings, sin shell, con Diff Guard, una ronda** | Sin límite, "arregla esto" se convierte en un refactor no revisable |
-| Dimensiones | **Se conservan 6 como taxonomía**; `style` pasa a determinista; `tests` deja de contar tests | No preguntar a un LLM lo que un linter ya sabe |
-| Severidad | `CRITICAL` / `WARN` / `ADVISORY` + `NEEDS_USER_REVIEW`, con `source` | Un `go test` rojo y un advisory de estilo no pueden compartir tratamiento |
-| Política | **`vassentinel.yml` extendido con `yaml.v3`**, no un `.review/` nuevo | Un solo lugar de configuración; el parser actual falla en silencio |
+| 6 agents vs dynamic scheduling | **Dynamic (0–5) + verifier of blocking findings** | The problem is not the number of lenses, it is the context and the lack of corroboration |
+| AST graph vs simple dependency | **Staged: files → packages+tests → bounded symbols**; no persistent global graph | Level 1 gives 90 % of the value at 10 % of the cost |
+| Cache vs Review Store + invalidation | **Content-addressed store (blob/tree OID)**; the per-SHA record becomes a traceability index | Rebase is the normal flow and today it destroys all incrementality |
+| Full vs affected validation | **Affected only with a complete graph and a provider that declares scope; otherwise full** | The gate's confidence is not traded for time |
+| Claude's tools | **Read-only reviewers with bounded paths** (not prohibition, not freedom) | The current prohibition is the root cause of H5 |
+| Model selection | **By risk, not by dimension**, with verification of the effective model | A silently degraded model invalidates the whole cost strategy |
+| Effort selection | **By risk and context depth**, not fixed per dimension | High effort on `style` is pure expense |
+| Parallel vs sequential agents | **Sequential validation first; agents in parallel with a budget** | Do not pay for reviewing code that does not compile |
+| Review granularity | **The change unit (net range), with attribution to commit**; per-commit only for cohesion | Reviewing isolated commits produces false positives by construction |
+| Finding aggregation | **Go, fingerprint + proximity, with deterministic→semantic supersede** | Less noise without losing signal |
+| Remediation permissions | **`Edit` bounded to files with findings, no shell, with Diff Guard, one round** | Without a limit, "fix this" becomes an unreviewable refactor |
+| Dimensions | **6 kept as taxonomy**; `style` becomes deterministic; `tests` stops counting tests | Do not ask an LLM what a linter already knows |
+| Severity | `CRITICAL` / `WARN` / `ADVISORY` + `NEEDS_USER_REVIEW`, with `source` | A red `go test` and a style advisory cannot share treatment |
+| Policy | **`vassentinel.yml` extended with `yaml.v3`**, not a new `.review/` | One single place for configuration; the current parser fails silently |
 
 ---
 
-## 29. Lo que deliberadamente NO se construye
+## 29. What is deliberately NOT built
 
-Cada componente descartado, con su motivo — la sección 42 del enunciado exige
-justificar coste y alternativa de todo lo que se añade; esto es su complemento.
+Every discarded component, with its reason — the statement's section 42
+requires justifying cost and alternative for everything that is added; this is
+its complement.
 
-| Descartado | Motivo | Alternativa adoptada |
+| Discarded | Reason | Alternative adopted |
 |---|---|---|
-| Grafo de símbolos global persistente multilenguaje | Coste e invalidación desproporcionados; es un producto aparte | Grafo por árbol, cacheado, nivel 1–2 |
-| SQLite para el store | Cientos de registros, no millones; JSON+rename ya es atómico y auditable | Archivos JSON por entidad |
-| Servicio o daemon | Contradice "local y determinista por construcción" (guía §1) | CLI puro |
-| Un agente por capacidad transversal | Multiplica coste sin añadir señal | Asignación a dimensiones (§12) |
-| Bucle fix→review→fix ilimitado | Coste no acotado y resultado no reproducible | Una ronda + `NEEDS_USER_REVIEW` |
-| Score de riesgo por suma ponderada | Imposible de calibrar y de explicar | Máximo sobre reglas, con `explain` |
-| Shell para el agente de remediación | Camino directo a tests debilitados | Validación ejecutada por Go |
-| Auto-split del historial | Reescribir historia sin humano es inaceptable | Sugerencia + `slice` con aprobación |
+| Persistent multi-language global symbol graph | Disproportionate cost and invalidation; it is a separate product | Per-tree graph, cached, level 1–2 |
+| SQLite for the store | Hundreds of records, not millions; JSON+rename is already atomic and auditable | JSON files per entity |
+| Service or daemon | Contradicts "local and deterministic by construction" (guide §1) | Pure CLI |
+| One agent per transversal capability | Multiplies cost without adding signal | Assignment to dimensions (§12) |
+| Unlimited fix→review→fix loop | Uncapped cost and non-reproducible outcome | One round + `NEEDS_USER_REVIEW` |
+| Risk score by weighted sum | Impossible to calibrate and to explain | Maximum over rules, with `explain` |
+| Shell for the remediation agent | Direct path to weakened tests | Validation executed by Go |
+| Auto-split of history | Rewriting history without a human is unacceptable | Suggestion + `slice` with approval |
 
 ---
 
-## 30. Riesgos de la propuesta
+## 30. Risks of the proposal
 
-1. **Levantar la prohibición de herramientas puede reintroducir cuelgues.**
-   Es la razón por la que se prohibieron (guía §7.3, punto 10). Mitigación:
-   toolset explícito sin `Bash`, límite de llamadas a herramienta, timeout ya
-   existente. Debe verificarse con `opencode` real antes de dar F5 por buena.
-2. **Un verificador puede refutar hallazgos verdaderos.** Mitigación: refutar
-   solo baja a `NEEDS_USER_REVIEW`, nunca descarta en silencio; y la tasa de
-   refutación es una métrica vigilada (§24).
-3. **El store por contenido complica la trazabilidad a commit.** Mitigación:
-   `introduced_by` y el índice `commits/<sha>.json` se conservan.
-4. **Primera dependencia externa (`yaml.v3`, `go/packages`).** Rompe una
-   propiedad actual del proyecto. Se acepta conscientemente en F4 y en la fase
-   de política; ambas son dependencias del ecosistema Go oficial o de facto.
-5. **El plan tiene nueve fases.** El riesgo real es abandonarlo a mitad. Por eso
-   F1 y F2 están ordenadas primero: si el plan se detuviera ahí, el sistema ya
-   sería sustancialmente mejor que hoy (gate correcto + incrementalidad que
-   sobrevive al rebase) sin haber construido nada del grafo.
+1. **Lifting the tool prohibition may reintroduce hangs.** That is why the
+   tools were prohibited in the first place (guide §7.3, point 10).
+   Mitigation: explicit toolset without `Bash`, tool-call limit, the already
+   existing timeout. It must be verified with a real `opencode` before F5 is
+   declared good.
+2. **A verifier may refute true findings.** Mitigation: a refutation only
+   lowers to `NEEDS_USER_REVIEW`, never silently discards; and the refutation
+   rate is a watched metric (§24).
+3. **The content-addressed store complicates traceability to commit.**
+   Mitigation: `introduced_by` and the `commits/<sha>.json` index are kept.
+4. **First external dependencies (`yaml.v3`, `go/packages`).** It breaks a
+   current property of the project. Accepted consciously in F4 and in the
+   policy phase; both are official or de-facto Go ecosystem dependencies.
+5. **The plan has nine phases.** The real risk is abandoning it halfway. That
+   is why F1 and F2 are ordered first: if the plan stopped there, the system
+   would already be substantially better than today (correct gate +
+   incrementality that survives rebase) without having built any of the graph.
 
 ---
 
-## 31. Revisión del diseño — cuatro decisiones adicionales
+## 31. Design review — four additional decisions
 
-Cuestiones planteadas tras la primera versión del informe. Tres modifican el
-diseño; la cuarta lo confirma con un matiz.
+Questions raised after the first version of the report. Three modify the
+design; the fourth confirms it with a nuance.
 
-### 31.1 Ubicación de la configuración: se mantiene en el worktree
+### 31.1 Configuration location: it stays in the worktree
 
-La regla no es "unificar el estado", es **origen del dato**:
+The rule is not "unify state", it is **origin of the data**:
 
-| Dato | Ubicación | Motivo |
+| Data | Location | Reason |
 |---|---|---|
-| Configuración humana (política) | worktree, **versionada** | Se revisa en PR, se clona, tiene historia |
-| Estado derivado (store, grafo, eventos) | common-dir | Se recalcula, no se comparte, no se revisa |
+| Human configuration (policy) | worktree, **versioned** | Reviewed in PR, cloned, has history |
+| Derived state (store, graph, events) | common-dir | Recomputed, not shared, not reviewed |
 
-Mover `vassentinel.yml` al common-dir rompería las tres propiedades que hacen
-útil a una política de calidad: no se clonaría (cada desarrollador la
-reconstruye a mano), no se versionaría (bajar un umbral de `security` no dejaría
-rastro en ningún diff) y no sería revisable. Para una herramienta cuyo propósito
-es la trazabilidad de las decisiones de calidad, esconder la política es una
-contradicción interna.
+Moving `vassentinel.yml` to the common-dir would break the three properties
+that make a quality policy useful: it would not be cloned (every developer
+would rebuild it by hand), it would not be versioned (lowering a `security`
+threshold would leave no trace in any diff) and it would not be reviewable.
+For a tool whose purpose is the traceability of quality decisions, hiding the
+policy is an internal contradiction.
 
-La decisión ya está tomada en otro punto del sistema: `init` inyecta las reglas
-de volumen en `AGENTS.md` / `CLAUDE.md` / `.claudecode.md` (`main.go:211`), que
-sí se commitean.
+The decision is already made elsewhere in the system: `init` injects the volume
+rules into `AGENTS.md` / `CLAUDE.md` / `.claudecode.md` (`main.go:211`), which
+are committed.
 
-**Se mantienen dos archivos.** Un tercer nivel gitignored se consideró y se
-descarta: el caso que resolvería (override local del usuario sobre un repo
-concreto) **ya está cubierto** por mecanismos efímeros existentes, que son el
-medio correcto para un override efímero.
+**Two files are kept.** A third, gitignored level was considered and rejected:
+the case it would solve (a local user override over one concrete repo) **is
+already covered** by existing ephemeral mechanisms, which are the right means
+for an ephemeral override.
 
-| Necesidad | Mecanismo vigente |
+| Need | Current mechanism |
 |---|---|
-| Override por invocación | `--profile`, `--timeout` (`comandos_estado.go:367-390`) |
-| Override por sesión o máquina | `MY_SUB_AGENT` (`agentadapter/factory.go:18,54`) |
+| Per-invocation override | `--profile`, `--timeout` (`comandos_estado.go:367-390`) |
+| Per-session or per-machine override | `MY_SUB_AGENT` (`agentadapter/factory.go:18,54`) |
 
-Un archivo persistente adicional habría duplicado esa función y añadido estado
-que nadie recuerda que existe.
+One more persistent file would have duplicated that function and added state
+nobody remembers exists.
 
 ```
-defaults                          en el binario
-~/.vas_sentinel/vassentinel.yml   usuario — creado por install (install.go:387)
-.vas_sentinel/vassentinel.yml     repositorio, versionado — init (install.go:412)
+defaults                          in the binary
+~/.vas_sentinel/vassentinel.yml   user — created by install (install.go:387)
+.vas_sentinel/vassentinel.yml     repository, versioned — init (install.go:412)
 ```
 
-**El problema real no es el número de archivos: son dos clases de claves con
-dueño opuesto conviviendo en un mismo esquema.**
+**The real problem is not the number of files: it is two classes of keys with
+opposite owners coexisting in the same schema.**
 
-| Clase | Ejemplos | Quién debe mandar |
+| Class | Examples | Who must decide |
 |---|---|---|
-| **Política** | `validation.*`, `review.dims`, umbrales, comandos | El repositorio: es contrato de equipo |
-| **Recursos** | `active_agent`, `model`, `reasoning_effort`, `timeout` | El usuario: son su cuota, sus credenciales, su máquina |
+| **Policy** | `validation.*`, `review.dims`, thresholds, commands | The repository: it is a team contract |
+| **Resources** | `active_agent`, `model`, `reasoning_effort`, `timeout` | The user: it is their quota, their credentials, their machine |
 
-Hoy el repositorio gana en todo (`parser.go:125`: el per-proyecto se aplica el
-último). Consecuencia práctica verificable: el `.vas_sentinel/vassentinel.yml`
-de este propio repositorio fija `claude-opus`; quien lo clone sin cuota de
-Claude hereda un binario que no puede ejecutar, en silencio.
+Today the repository wins everywhere (`parser.go:125`: the per-project file is
+applied last). A verifiable practical consequence: this very repository's
+`.vas_sentinel/vassentinel.yml` pins `claude-opus`; whoever clones it without a
+Claude quota silently inherits a binary that cannot run.
 
-**Decisión**: no se invierte la precedencia — sería sorprendente y rompería
-configuraciones existentes. Se **avisa**: al cargar, si el archivo del
-repositorio fija claves de recurso, se emite un aviso de una línea (`este
-repositorio fija el agente 'claude'; tu preferencia global se ignora`). Coste
-trivial, elimina el fallo silencioso, y la separación queda documentada en el
-esquema de la política.
+**Decision**: precedence is not inverted — that would be surprising and would
+break existing configurations. A **warning** is emitted instead: on load, if
+the repository file pins resource keys, a one-line warning is printed (`this
+repository pins agent 'claude'; your global preference is ignored`). Trivial
+cost, eliminates the silent failure, and the separation is documented in the
+policy schema.
 
-### 31.2 CodeGraph: integración con rol acotado
+### 31.2 CodeGraph: integration with a bounded role
 
-CodeGraph (índice SQLite de símbolos y aristas, con daemon y watcher) ya está
-instalado en los proyectos del usuario. Se integra, con una separación estricta:
+CodeGraph (a SQLite index of symbols and edges, with a daemon and watcher) is
+already installed in the user's projects. It is integrated, with a strict
+separation:
 
-> El grafo que decide **qué NO ejecutar** debe ser verificable.
-> El grafo que decide **qué leer** puede ser heurístico.
+> The graph that decides **what NOT to run** must be verifiable.
+> The graph that decides **what to read** may be heuristic.
 
-| Rol | Proveedor | Consecuencia de un error |
+| Role | Provider | Consequence of an error |
 |---|---|---|
-| Selección de contexto para el revisor | **CodeGraph** (si está) | Menos contexto → un finding peor |
-| Alcance de la validación incremental | **Solo `native`** (`go/packages`) | Un test omitido → **bug con el gate en verde** |
+| Context selection for the reviewer | **CodeGraph** (when present) | Less context → a worse finding |
+| Scope of incremental validation | **`native` only** (`go/packages`) | A skipped test → **bug shipped with the gate green** |
 
-Tres razones por las que un índice externo no puede decidir el alcance de la
-validación:
+Three reasons an external index cannot decide validation scope:
 
-1. **No expone un contrato de completitud.** No responde "he parseado estos N
-   ficheros y ninguno usa reflexión". Sin esa señal no se puede acotar sin
-   violar la regla dura de §6.4.
-2. **Estado mutable con retraso.** El watcher sincroniza con lag; un gate cuyo
-   resultado depende de si el daemon había terminado no es reproducible, y la
-   reproducibilidad es requisito explícito del objetivo.
-3. **Cambia la distribución del producto.** Sentinel es hoy un binario
-   (`go install`, release assets). Exigir un segundo componente instalado lo
-   convierte en un stack.
+1. **It exposes no completeness contract.** It does not answer "I parsed these
+   N files and none uses reflection". Without that signal, scoping would
+   violate the hard rule of §6.4.
+2. **Mutable state with lag.** The watcher syncs with delay; a gate whose
+   result depends on whether the daemon had finished is not reproducible, and
+   reproducibility is an explicit requirement of the goal.
+3. **It changes the product's distribution.** Sentinel is today one binary
+   (`go install`, release assets). Requiring a second installed component
+   turns it into a stack.
 
-**Diseño**: interfaz `GraphProvider` con dos implementaciones y roles disjuntos.
-
-```
-native    (go/packages)  obligatorio para Go
-                         ÚNICO autorizado a acotar la validación
-codegraph (opcional)     enriquece el contexto del revisor, multilenguaje
-                         ausente → degradación silenciosa, nunca fallo
-```
-
-Efecto sobre el plan: **F4 se abarata**. El cierre inverso de imports con
-`go/packages` son ~100 líneas; lo caro era el grafo multilenguaje, y ese rol lo
-cubre CodeGraph en el único lugar donde equivocarse no tiene coste.
-
-La documentación indicará cómo instalarlo y enlazará a su repositorio, como
-capacidad opcional — nunca como requisito.
-
-### 31.3 Congelación del candidato — cambios durante la revisión
-
-**Defecto vigente**: `pr create` audita y después llama a `ops.Verificar`, que
-ejecuta los comandos con `cmd.Dir = worktree` sobre el **worktree vivo**
-(`internal/ops/verificar.go:894`, invocado desde `comandos_pr.go:546`). Con
-cambios sin commitear en disco, el PR publica exit codes que **no corresponden
-al código que se va a mergear**. Es un PASS honesto sobre el árbol equivocado.
-
-**Diseño objetivo**: la unidad de revisión deja de ser "el worktree" y pasa a ser
-un par de árboles inmutables.
+**Design**: a `GraphProvider` interface with two implementations and disjoint
+roles.
 
 ```
-al iniciar   → congelar (base_tree, head_tree, HEAD)
-reviewers    → leen del object store (git show <tree>:<path>); nunca del worktree
-validación   → git worktree add --detach .git/vas-sentinel/snapshots/<tree-oid> <head>
-               tests sobre el árbol real, no sobre el worktree del usuario
-al terminar  → ¿cambió HEAD o el árbol? → resultado `stale`, receipt no válido
+native    (go/packages)  mandatory for Go
+                         the ONLY one authorized to bound validation scope
+codegraph (optional)     enriches reviewer context, multi-language
+                         absent → silent degradation, never failure
 ```
 
-Consecuencias:
+Effect on the plan: **F4 gets cheaper**. Reverse import closure with
+`go/packages` is ~100 lines; the expensive part was the multi-language graph,
+and that role is covered by CodeGraph in the one place where being wrong costs
+nothing.
 
-- **El usuario puede seguir trabajando durante la revisión sin corromperla.**
-- Los tests miden lo que se va a mergear, no el estado intermedio del disco.
-- Encaja sin coste con el store por contenido (§17): la clave ya es el tree OID.
-- La detección de obsolescencia es barata: `rev-parse HEAD` y hash del árbol al
-  principio y al final.
+The documentation will state how to install it and will link to its repository,
+as an optional capability — never as a requirement.
 
-Alcance: aplica a `pre-push` y `pr`. **No** a `pre-commit`, que es rápido y opera
-sobre el índice.
+### 31.3 Candidate freeze — changes during review
 
-#### Ubicación del worktree efímero
+**Current defect**: `pr create` audits and then calls `ops.Verificar`, which
+executes the commands with `cmd.Dir = worktree` over the **live worktree**
+(`internal/ops/verificar.go:894`, invoked from `comandos_pr.go:546`). With
+uncommitted changes on disk, the PR publishes exit codes that **do not
+correspond to the code being merged**. It is an honest PASS over the wrong
+tree.
 
-Dentro de la carpeta `.git` **del propio repositorio**. Ni el home del usuario ni
-el directorio de instalación de Git:
+**Target design**: the review unit stops being "the worktree" and becomes a
+pair of immutable trees.
 
 ```
-<raíz-del-repo>/.git/vas-sentinel/snapshots/<tree-oid>/
+on start     → freeze (base_tree, head_tree, HEAD)
+reviewers    → read from the object store (git show <tree>:<path>); never from the worktree
+validation   → git worktree add --detach .git/vas-sentinel/snapshots/<tree-oid> <head>
+               tests run against the real tree, not the user's worktree
+on finish    → did HEAD or the tree change? → `stale` result, receipt not valid
 ```
 
-Ejemplo real en este repositorio (`git rev-parse --git-common-dir` →
+Consequences:
+
+- **The user can keep working during review without corrupting it.**
+- Tests measure what will be merged, not an intermediate disk state.
+- It fits the content-addressed store (§17) at no cost: the key is already the
+  tree OID.
+- Staleness detection is cheap: `rev-parse HEAD` and a tree hash at the start
+  and at the end.
+
+Scope: applies to `pre-push` and `pr`. **Not** to `pre-commit`, which is fast
+and operates on the index.
+
+#### Location of the ephemeral worktree
+
+Inside the `.git` folder **of the repository itself**. Neither the user's home
+nor Git's installation directory:
+
+```
+<repo-root>/.git/vas-sentinel/snapshots/<tree-oid>/
+```
+
+Real example in this repository (`git rev-parse --git-common-dir` →
 `C:/0-BackupVF/WorkSpace/vas.sentinel/.git`):
 
 ```
 C:\0-BackupVF\WorkSpace\vas.sentinel\.git\vas-sentinel\snapshots\281428a2add4…\
 ```
 
-No es una carpeta nueva: **el ledger ya vive ahí** (`.git/vas-sentinel/<sha>.json`,
-`ledger.go:920`). La expresión `git-common-dir` es jerga de la guía §4 para
-distinguir el `.git` compartido del directorio privado de un worktree enlazado
-(`.git/worktrees/<nombre>`); la distinción solo importa con `git worktree`.
+It is not a new folder: **the ledger already lives there**
+(`.git/vas-sentinel/<sha>.json`, `ledger.go:920`). The `git-common-dir`
+expression is the guide's §4 jargon to distinguish the shared `.git` from a
+linked worktree's private directory (`.git/worktrees/<name>`); the distinction
+only matters with `git worktree`.
 
-Verificado en Windows: `git worktree add --detach` acepta una ruta dentro del
-common-dir, la registra en `git worktree list` y `git worktree remove` la
-elimina limpiamente.
+Verified on Windows: `git worktree add --detach` accepts a path inside the
+common-dir, registers it in `git worktree list`, and `git worktree remove`
+deletes it cleanly.
 
-**El nombre del repositorio no forma parte de la ruta, y no debe formarla**: la
-ruta ya está dentro del repositorio, así que añadirlo sería redundante
-(`vas.sentinel/.git/vas-sentinel/vas.sentinel/…`). Un `tree-oid` no es ambiguo
-por construcción: es un hash del object store de ese repositorio y no sale de
-él. Solo haría falta desambiguar si el estado viviera en `~/.vas_sentinel/`, que
-es precisamente una de las razones por las que la guía §4 descartó el home.
+**The repository name is not part of the path, and must not become one**: the
+path is already inside the repository, so adding it would be redundant
+(`vas.sentinel/.git/vas-sentinel/vas.sentinel/…`). A `tree-oid` is unambiguous
+by construction: it is a hash of that repository's object store and does not
+leave it. Disambiguation would only be needed if the state lived in
+`~/.vas_sentinel/`, which is precisely one of the reasons guide §4 rejected
+the home directory.
 
-Estructura resultante del directorio de estado:
+Resulting state-directory layout:
 
 ```
 <repo>/.git/vas-sentinel/
-    <sha>.json               fichas de trazabilidad      (ya existe)
-    events.jsonl             eventos                     (ya existe)
-    snapshots/<tree-oid>/    árbol congelado a validar   (nuevo)
-    graph/<tree-oid>.json    grafo cacheado              (nuevo)
+    <sha>.json               traceability records        (already exists)
+    events.jsonl             events                      (already exists)
+    snapshots/<tree-oid>/    frozen tree to validate     (new)
+    graph/<tree-oid>.json    cached graph                (new)
 ```
 
-#### Desde un worktree enlazado: siempre el `.git` del repositorio principal
+#### From a linked worktree: always the main repository's `.git`
 
-Comprobado con un worktree enlazado real:
+Checked with a real linked worktree:
 
 ```
-Desde el worktree enlazado:
-  git rev-parse --git-common-dir    → <principal>/.git                       ← compartido
-  git rev-parse --absolute-git-dir  → <principal>/.git/worktrees/<nombre>    ← privado
+From the linked worktree:
+  git rev-parse --git-common-dir    → <main>/.git                            ← shared
+  git rev-parse --absolute-git-dir  → <main>/.git/worktrees/<name>           ← private
 ```
 
-Un worktree enlazado **no tiene carpeta `.git`**: tiene un *gitfile*, un archivo
-de texto con una línea `gitdir: <ruta>`. No existe un directorio local donde
-alojar estado; todo termina, por una vía o por otra, dentro del `.git` del
-repositorio principal. La única decisión real es si va en la raíz compartida o
-en el subdirectorio privado `worktrees/<nombre>/`.
+A linked worktree **has no `.git` folder**: it has a *gitfile*, a text file
+with one line `gitdir: <path>`. There is no local directory to host state;
+everything ends, one way or another, inside the main repository's `.git`. The
+only real decision is whether it goes at the shared root or in the private
+`worktrees/<name>/` subdirectory.
 
-**Corrección derivada a la guía §4.** Hoy el ledger usa `ObtenerGitDir`
-(`gitdir.go:17`, `--absolute-git-dir`), es decir el directorio **privado** de
-cada worktree; la guía lo justificaba como "aislamiento per-worktree gratis".
+**Correction derived to guide §4.** Today the ledger uses `ObtenerGitDir`
+(`gitdir.go:17`, `--absolute-git-dir`), i.e. the **private** directory of each
+worktree; the guide justified it as "free per-worktree isolation".
 
-| | Hoy | Objetivo |
+| | Today | Target |
 |---|---|---|
-| Función | `ObtenerGitDir` (`gitdir.go:17`) | `ObtenerGitCommonDir` (`gitdir.go:31`) |
-| Ruta desde un worktree enlazado | `.git/worktrees/<nombre>/vas-sentinel/` | `.git/vas-sentinel/` |
-| Efecto | Cada worktree tiene su propio ledger: auditar en A y cambiar a B obliga a **re-auditarlo todo** | Compartido: el trabajo hecho en A vale en B |
+| Function | `ObtenerGitDir` (`gitdir.go:17`) | `ObtenerGitCommonDir` (`gitdir.go:31`) |
+| Path from a linked worktree | `.git/worktrees/<name>/vas-sentinel/` | `.git/vas-sentinel/` |
+| Effect | Each worktree has its own ledger: auditing in A and switching to B forces **re-auditing everything** | Shared: work done in A is valid in B |
 
-El aislamiento tenía sentido con clave por SHA (cada rama, su historia). Con
-clave por contenido deja de tenerlo: un finding sobre un blob es válido en
-cualquier worktree del mismo repositorio. **Store, snapshots y grafo pasan al
-common-dir compartido.**
+Isolation made sense with a SHA key (each branch, its history). With a
+content key it stops making sense: a finding about a blob is valid in any
+worktree of the same repository. **Store, snapshots and graph move to the
+shared common-dir.**
 
-Dos detalles operativos del traslado:
+Two operational details of the move:
 
-1. **Migración**: los ledgers privados existentes quedarían invisibles. En el
-   primer arranque, si `.git/worktrees/<n>/vas-sentinel/` contiene fichas, se
-   trasladan al compartido. No se borra nada.
-2. **Concurrencia**: dos worktrees validando a la vez pueden solicitar el mismo
-   `snapshots/<tree-oid>/`. No hay riesgo de corrupción —el contenido es
-   idéntico por definición— pero `git worktree add` falla si la ruta existe. Se
-   crea con nombre temporal y se renombra; "ya existe" se trata como éxito.
+1. **Migration**: existing private ledgers would become invisible. On first
+   startup, if `.git/worktrees/<n>/vas-sentinel/` contains records, they are
+   moved to the shared one. Nothing is deleted.
+2. **Concurrency**: two worktrees validating at the same time may request the
+   same `snapshots/<tree-oid>/`. There is no corruption risk —the content is
+   identical by definition— but `git worktree add` fails if the path exists.
+   Create with a temporary name and rename; "already exists" is treated as
+   success.
 
-Cinco razones frente a `os.TempDir()`:
+Five reasons against `os.TempDir()`:
 
-1. **Mismo volumen que el object store** → Git enlaza en duro y el checkout es
-   barato. En Windows `%TEMP%` puede estar en otro disco y obligaría a copiar.
-2. **Coherencia con la decisión ya tomada** (guía §4): todo el estado derivado
-   vive en el common-dir; no se inventa una ubicación nueva.
-3. **Nunca se commitea ni ensucia `git status`**: está fuera del árbol de
-   trabajo, sin depender del `.gitignore`.
-4. **Ciclo de vida ligado al clon**: desaparece con el repositorio, sin dejar
-   basura en el temporal del sistema.
-5. **No es estado invisible**: `git worktree list` lo muestra; un candidato
-   huérfano tras una interrupción es diagnosticable y `git worktree prune` lo
-   limpia.
+1. **Same volume as the object store** → Git hardlinks and the checkout is
+   cheap. On Windows `%TEMP%` can be on another disk and would force a copy.
+2. **Coherence with the decision already made** (guide §4): all derived state
+   lives in the common-dir; no new location is invented.
+3. **Never committed, never dirties `git status`**: it is outside the working
+   tree, without depending on `.gitignore`.
+4. **Lifecycle tied to the clone**: it disappears with the repository, leaving
+   no garbage in the system temp directory.
+5. **It is not invisible state**: `git worktree list` shows it; an orphaned
+   candidate after an interruption is diagnosable and `git worktree prune`
+   cleans it.
 
-La clave por `tree-oid` da reutilización sin coste: si ya existe un snapshot de
-ese árbol, se reaprovecha sin checkout. Purga por antigüedad, igual que las
-fichas huérfanas del ledger.
+The `tree-oid` key gives reuse at no cost: if a snapshot of that tree already
+exists, it is reused without a checkout. Purge by age, same as the ledger's
+orphaned records.
 
-#### Limitación declarada: ficheros no versionados
+#### Declared limitation: unversioned files
 
-Un checkout limpio **no contiene los artefactos no versionados**:
-`node_modules`, `.env`, fixtures descargados, código generado fuera de Git. Un
-`go test` funciona; un `npm test` sin `node_modules`, no.
+A clean checkout **does not contain unversioned artifacts**: `node_modules`,
+`.env`, downloaded fixtures, generated code outside Git. A `go test` works; an
+`npm test` without `node_modules` does not.
 
-Por eso el modo es configurable, con degradación explícita y nunca silenciosa:
+That is why the mode is configurable, with explicit and never silent
+degradation:
 
-| Modo | Comportamiento |
+| Mode | Behavior |
 |---|---|
-| `worktree` (por defecto) | Candidato congelado; aislado y correcto |
-| `inplace` | Ejecuta en el worktree real **exigiendo que esté limpio**; si está sucio, **aborta** en lugar de reportar un resultado del árbol equivocado |
+| `worktree` (default) | Frozen candidate; isolated and correct |
+| `inplace` | Runs in the real worktree **requiring it to be clean**; if it is dirty, it **aborts** instead of reporting a result for the wrong tree |
 
-Lo que no puede repetirse es el comportamiento actual: ejecutar sobre un
-worktree sucio y publicar el resultado como si fuera el del árbol de la PR.
+What cannot be repeated is the current behavior: running over a dirty worktree
+and publishing the result as if it were the PR tree's.
 
-Coste: un checkout efímero por árbol nuevo. Es el precio de que el resultado
-signifique algo.
+Cost: one ephemeral checkout per new tree. It is the price of the result
+meaning something.
 
-### 31.4 Tamaño de fichero: sin límite, y aclaración del umbral actual
+### 31.4 File size: no limit, and a clarification of the current threshold
 
-**Aclaración previa**: `LimiteCodigoGigante = 500` (`slice.go:19`) **no mide el
-tamaño del fichero**. Mide `ArchivoModificado.Lineas`, que es:
+**Prior clarification**: `LimiteCodigoGigante = 500` (`slice.go:19`) **does not
+measure file size**. It measures `ArchivoModificado.Lineas`, which is:
 
-- fichero rastreado → **líneas añadidas** del numstat;
-- fichero nuevo → **líneas físicas** del fichero (`slice.go:167`).
+- tracked file → **added lines** from the numstat;
+- new file → **physical lines** of the file (`slice.go:167`).
 
-Un fichero de 3000 líneas con 10 modificadas no dispara nada; uno nuevo de 501,
-sí. Dos métricas distintas bajo el mismo nombre — es **M2** aplicado a este
-umbral, y debe unificarse.
+A 3000-line file with 10 modified triggers nothing; a new one with 501 does.
+Two different metrics under the same name — this is **M2** applied to this
+threshold, and it must be unified.
 
-**Decisión: no se limita el tamaño de fichero.**
+**Decision: file size is not limited.**
 
-- El tamaño es un *síntoma*, no un defecto. `main.go` con 949 líneas es un
-  problema por concentrar orquestación (**C6/H3**), no por su longitud; una
-  tabla generada de 5000 líneas es correcta.
-- Un límite duro produce el peor resultado posible: partición mecánica en
-  `foo1.go` / `foo2.go` guiada por un contador y sin cohesión — peor que el
-  fichero grande, y más difícil de revisar.
+- Size is a *symptom*, not a defect. `main.go` at 949 lines is a problem for
+  concentrating orchestration (**C6/H3**), not for its length; a generated
+  5000-line table is correct.
+- A hard limit produces the worst possible outcome: mechanical partitioning
+  into `foo1.go` / `foo2.go` driven by a counter and without cohesion — worse
+  than the big file, and harder to review.
 
-**Señales que sí se adoptan, siempre `ADVISORY`, nunca bloqueantes:**
+**Signals that are adopted, always `ADVISORY`, never blocking:**
 
-| Señal | Qué indica |
+| Signal | What it indicates |
 |---|---|
-| Símbolos exportados en el fichero sin relación de llamada entre sí | Violación real de responsabilidad única |
-| Churn: cambia en la mayoría de commits, por motivos distintos cada vez | Candidato a división |
-| Número de líneas | Solo informativo. Nunca criterio de decisión |
+| Exported symbols in the file with no call relation among them | Real single-responsibility violation |
+| Churn: changes in most commits, for a different reason each time | Split candidate |
+| Number of lines | Informational only. Never a decision criterion |
 
-El diálogo interactivo actual (refactorizar / bypass / abortar, `main.go:457`) se
-conserva íntegro; cambia únicamente su disparador: cohesión en lugar de contador.
+The current interactive dialogue (refactor / bypass / abort, `main.go:457`) is
+kept in full; only its trigger changes: cohesion instead of a counter.
 
-**El umbral de 400 del guardián se mantiene duro.** Mide una magnitud distinta:
-revisibilidad de un *cambio*, que es una propiedad del revisor humano y sí tiene
-techo real. Tamaño de fichero y volumen de cambio no comparten umbral porque no
-son la misma magnitud.
+**The guardian's 400 threshold stays hard.** It measures a different
+magnitude: reviewability of a *change*, which is a property of the human
+reviewer and does have a real ceiling. File size and change volume do not
+share a threshold because they are not the same magnitude.
 
-#### Qué cuenta para el umbral: la frontera es generado vs escrito a mano
+#### What counts for the threshold: the boundary is generated vs hand-written
 
-El guardián mide **revisabilidad de código**, no bytes. Verificado en el código
-actual: nada está exento — escribir 4055 líneas de documentación llevó `check` de
-702 a 4701 líneas y frenó el desarrollo. Y peor: un `.md` se clasifica como
-`backend` (`ClasificarCapa`, `slice.go:214`), así que un documento de 1792 líneas
-disparaba `esCodigoGigante` y `slice` ofrecía **dividirlo con IA aplicando SRP**.
+The guardian measures **code reviewability**, not bytes. Verified against the
+current code: nothing is exempt — writing 4055 lines of documentation took
+`check` from 702 to 4701 lines and stalled development. And worse: an `.md` is
+classified as `backend` (`ClasificarCapa`, `slice.go:214`), so a 1792-line
+document triggered `esCodigoGigante` and `slice` offered to **split it with AI
+applying SRP**.
 
-La frontera correcta no es «configuración vs código» —un `docker-compose.yml`
-escrito a mano es código que se ejecuta— sino **generado vs escrito a mano**:
+The correct boundary is not «configuration vs code» —a hand-written
+`docker-compose.yml` is code that runs— but **generated vs hand-written**:
 
-| Clase | ¿Cuenta para el umbral? | Umbral de archivo grande | Trato en `slice` |
+| Class | Counts for the threshold? | Large-file threshold | Treatment in `slice` |
 |---|---|---|---|
-| `source` | Sí, **bloquea** | 500 → diálogo de refactorización | lotes normales |
-| `test` | Sí, **bloquea** | 500 → diálogo de refactorización | lotes normales |
-| `config` escrita a mano | Sí, **bloquea** | 400 → aislar | lote propio |
-| `generated` / lock | **No cuenta** | — | lote propio `chore(deps)` |
-| `docs` | **No bloquea; se informa** | 400 → aislar | lote propio `docs(...)` |
+| `source` | Yes, **blocks** | 500 → refactor dialogue | normal batches |
+| `test` | Yes, **blocks** | 500 → refactor dialogue | normal batches |
+| hand-written `config` | Yes, **blocks** | 400 → isolate | its own batch |
+| `generated` / lock | **Does not count** | — | its own `chore(deps)` batch |
+| `docs` | **Does not block; it is reported** | 400 → isolate | its own `docs(...)` batch |
 
-No es una excepción ad hoc: es la aplicación directa del modelo de riesgo de §9 —
-el tamaño no eleva el riesgo por sí solo, y 2000 líneas de configuración generada
-siguen siendo riesgo `none`.
+It is not an ad-hoc exception: it is the direct application of the risk model
+of §9 — size alone does not raise risk, and 2000 lines of generated
+configuration are still `none` risk.
 
-Sobre la documentación se elige **avisar, no bloquear**: 1792 líneas de documento
-tampoco son revisables de una sentada, y merecen un aviso; pero frenar el
-guardián por ellas es fricción sin seguridad a cambio.
+For documentation the choice is **warn, not block**: 1792 lines of document
+are also not reviewable in one sitting and deserve a warning; but stalling
+the guardian over them is friction without safety in return.
 
-Implementado de forma anticipada (`internal/git/clases.go`) porque bloqueaba la
-propia redacción de este informe. Ver `internal/git/clases.go` (antes `docs/reingenieria/f0-deuda.md` → **T0.8**, consolidated into `docs/issues/`).
-La versión configurable por repositorio y la retirada de `ClasificarCapa`
-corresponden a F3-T3.1.
+Implemented ahead of the plan (`internal/git/clases.go`) because it blocked
+the writing of this very report. See `internal/git/clases.go` (formerly
+`docs/reingenieria/f0-deuda.md` → **T0.8**, consolidated into `docs/issues/`).
+The per-repository configurable version and the removal of `ClasificarCapa`
+belong to F3-T3.1.
 
 ---
 
-## 32. Conclusión
+## 32. Conclusion
 
-VAS Sentinel no necesita una reescritura. Necesita **invertir su relación de
-confianza** y **anclar su memoria al contenido en lugar de al commit**.
+VAS Sentinel does not need a rewrite. It needs to **invert its relationship of
+trust** and **anchor its memory to content instead of to the commit**.
 
-El sistema ya tiene ledger atómico, degradación tipada, adaptadores con
-fallback, análisis de rama, verificación configurable, plantilla honesta y una
-cultura de auditoría con regla de evidencia. Lo que le falta no es infraestructura:
-es que lo determinista mande, que el revisor pueda ver, y que lo ya sabido no se
-recalcule.
+The system already has an atomic ledger, typed degradation, adapters with
+fallback, branch analysis, configurable verification, an honest prompt
+template, and an audit culture with an evidence rule. What it lacks is not
+infrastructure: it is that the deterministic side commands, that the reviewer
+can see, and that what is already known is not recomputed.
 
-Las dos primeras fases del plan (F1 y F2) cambian eso, no dependen de ningún
-grafo, y caben en el presupuesto de 400 líneas por unidad de trabajo que el
-propio guardián impone.
+The first two phases of the plan (F1 and F2) change exactly that, depend on no
+graph, and fit within the 400-lines-per-work-unit budget the guardian itself
+imposes.
 
-El objetivo final no es tener más agentes. Es:
+The final goal is not to have more agents. It is:
 
-> analizar cada cambio con la mínima computación y el mínimo razonamiento
-> necesarios para obtener una revisión suficientemente fiable, reproducible,
-> trazable e incremental.
+> analyze each change with the minimum computation and the minimum reasoning
+> necessary to obtain a sufficiently reliable, reproducible, traceable and
+> incremental review.

@@ -81,7 +81,7 @@ satisfied by the producers above; its remaining closing conditions
   dependency direction (the domain engine imports `internal/acpadapter`
   and must change per provider result shape), metrics finalization crosses
   into review as a callback, `observedAgent` owns two capability descents
-  that can diverge, and `internal/review/diagnostico.go` reads an agent
+  that can diverge, and `internal/review/diagnostic.go` reads an agent
   CLI's unstructured terminal presentation inside the domain layer.
 - Comes forward when: the unit adding a third adapter kind performs this
   restructuring as part of its own work. Restructuring now would rewrite

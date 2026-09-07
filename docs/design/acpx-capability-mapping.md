@@ -75,12 +75,12 @@ decision-grade for A2 design.
   independently exposes `model:` while running (`status-running.txt`).
   Stream chunks do NOT carry model attribution. Conclusion: binary and
   model attribution are observable at session admission time
-  (`AgenteEfectivo.Binario` and `AgenteEfectivo.Modelo`), satisfying that
+  (`EffectiveAgent.Binary` and `EffectiveAgent.Model`), satisfying that
   portion of H4/T0.2 only; reasoning effort has no protocol equivalent
-  (see C8), so full `AgenteEfectivo` parity is not claimed.
+  (see C8), so full `EffectiveAgent` parity is not claimed.
 - **Reasoning effort:** no protocol equivalent observed. UNCONFIRMED whether
   `_meta` carries effort metadata for some adapters; A2 must leave
-  `AgenteEfectivo.Esfuerzo` empty or source it from configured echo (C8).
+  `EffectiveAgent.Effort` empty or source it from configured echo (C8).
 
 ## 4. Streaming
 
@@ -196,7 +196,7 @@ A2 provided every constraint below becomes an explicit A2 design obligation:
   grant-by-design or enforced by an external sandbox; byte caps stay
   consumer-side.
 - **C8 — Effective-effort honesty:** acpx exposes no effective-effort
-  reporting; A2 must leave `AgenteEfectivo.Esfuerzo` empty (`Vacio()`
+  reporting; A2 must leave `EffectiveAgent.Effort` empty (`Empty()`
   semantics permit partial attribution) or source it from configured echo —
   never fabricate it as observed.
 

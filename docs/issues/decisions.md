@@ -94,7 +94,7 @@ The Verify probe reaches the agent through `CLIAdapter.EjecutarPrompt`
 (`internal/agentadapter/cli.go:284`) → `comandoPrompt`
 (`internal/agentadapter/cli.go:578`), which emits bare `opencode run`
 with no `--model` flag. The probe
-(`internal/modelprobe/verificador.go:115-152`) therefore always measures
+(`internal/modelprobe/verifier.go:115-152`) therefore always measures
 the OpenCode default (`openai/gpt-5.6-sol`) instead of the configured
 profile model and records `model_mismatch` against it: the store records
 `.git/vas-sentinel/profiles/cheap.json`, `normal.json` and `deep.json`

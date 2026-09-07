@@ -1,116 +1,116 @@
-# VAS Sentinel — Guardián de Worktrees para agentes de IA
+# VAS Sentinel — Worktree Guardian for AI agents
 
-Guardián local determinista en Go que evita la acumulación masiva de cambios en Git worktrees operados por asistentes de IA. Un solo binario que funciona igual en **Windows** y **Debian Linux**.
+A deterministic local guardian in Go that prevents massive change accumulation in Git worktrees operated by AI assistants. A single binary that behaves identically on **Windows** and **Debian Linux**.
 
 ## Quick path
 
-1. Compila: `build.bat` (Windows) o `./build.sh` (Debian) → `bin/<version>/sentinel(.exe)`
-2. Configura: `sentinel init` → crea `.vas_sentinel/vassentinel.yml` e instala el hook `pre-commit` en este repositorio (no es global: no afecta a tus otros repos)
-3. Trabaja: ejecuta `sentinel check` antes de cualquier cambio. Si dice **CRÍTICO** (>400 líneas), detente y ejecuta `sentinel slice`.
+1. Build: `build.bat` (Windows) or `./build.sh` (Debian) → `bin/<version>/sentinel(.exe)`
+2. Set up: `sentinel init` → creates `.vas_sentinel/vassentinel.yml` and installs the `pre-commit` hook in this repository (not global: it does not affect your other repos)
+3. Work: run `sentinel check` before any change. If it says **CRITICAL** (>400 lines), stop and run `sentinel slice`.
 
-## Comandos
+## Commands
 
-| Comando | Qué hace |
+| Command | What it does |
 |---|---|
-| `sentinel check` | Audita el volumen de líneas del worktree: `PEQUENO`, `PUNTO_OPTIMO` (200–400) o `CRÍTICO` (>400). Es advisory y sale con exit 0; el límite lo impone `sentinel check --staged`, que rechaza con exit 1 más de 400 líneas authored en stage. |
-| `sentinel slice` | Fragmenta los cambios pendientes en micro-commits por capas con un plan que debes aprobar antes de commitear. |
-| `sentinel slice plan` | Propone el plan **sin commitear nada**. Con `--json` emite el plan completo; exit 3 si hay decisiones que solo tú puedes responder. |
-| `sentinel slice apply` | Ejecuta un plan ya aprobado: `--plan plan.json --answers respuestas.json`. |
-| `sentinel init` | Inyecta la regla de volumen en los prompts de tus agentes, crea la configuración per-proyecto e instala el hook `pre-commit` **en este repositorio** (en su common-dir, no en una carpeta global: no afecta a tus otros repos). |
-| `sentinel uninit` | Revierte `init` en este repositorio: retira la regla de volumen, borra la config per-proyecto y elimina el hook (solo si sigue siendo el que instaló VAS Sentinel). |
-| `sentinel install` / `sentinel upgrade` | Instala o actualiza el binario desde la última release de GitHub, con fallback a `go install` si la release no está disponible. |
-| `sentinel review` | Audita un commit (default HEAD) contra las dimensiones de su saco y guarda la ficha en el ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--timeout N` `--prune` `--json`. `--timeout` sobrescribe `review.timeout` solo en esa invocación (segundos). |
+| `sentinel check` | Audits the worktree's line volume: `SMALL`, `OPTIMAL_POINT` (200–400) or `CRITICAL` (>400). It is advisory and exits 0; the limit is enforced by `sentinel check --staged`, which rejects more than 400 authored lines in the stage with exit 1. |
+| `sentinel slice` | Splits pending changes into layered micro-commits with a plan you must approve before committing. |
+| `sentinel slice plan` | Proposes the plan **without committing anything**. With `--json` it emits the full plan; exit 3 if there are decisions only you can answer. |
+| `sentinel slice apply` | Executes an already-approved plan: `--plan plan.json --answers answers.json`. |
+| `sentinel init` | Injects the volume rule into your agents' prompts, creates the per-project configuration, and installs the `pre-commit` hook **in this repository** (in its common-dir, not a global folder: it does not affect your other repos). |
+| `sentinel uninit` | Reverts `init` in this repository: removes the volume rule, deletes the per-project config, and removes the hook (only if it is still the one VAS Sentinel installed). |
+| `sentinel install` / `sentinel upgrade` | Installs or updates the binary from the latest GitHub release, falling back to `go install` if the release is not available. |
+| `sentinel review` | Audits a commit (default HEAD) against the dimensions of its bundle and saves the record to the ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--timeout N` `--prune` `--json`. `--timeout` overrides `review.timeout` only for that invocation (seconds). |
 | `sentinel refute` | Record an evidence-bound human refutation of one reviewed finding (clears only its block). Usage: `--sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
 | `sentinel accept` | Record a human acceptance of one reviewed finding (documents judgement, never clears the block). Usage: `--sha SHA --fingerprint FP --reason TEXT`. |
 | `sentinel reopen` | Record an evidence-bound human reopen of one cleared finding (blocks again). Usage: `--sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
-| `sentinel lint` | Ejecuta los comandos definidos en `lint_commands` de la configuración. |
-| `sentinel rebase` | Actualiza la rama con `fetch` + `rebase` contra su upstream (pide confirmación). |
-| `sentinel status` | Resumen del guardián: volumen, fichas de auditoría y últimos eventos. Con `--json` emite JSON; con `--prune` borra fichas huérfanas. |
+| `sentinel lint` | Runs the commands defined in `lint_commands` of the configuration. |
+| `sentinel rebase` | Updates the branch with `fetch` + `rebase` against its upstream (asks for confirmation). |
+| `sentinel status` | Guardian summary: volume, audit records, and recent events. With `--json` it emits JSON; with `--prune` it deletes orphaned records. |
 | `sentinel metrics` | Prints deterministic local aggregates from the durable store (duration, success and failure). Reads only the local Git common directory. Unknown measurements render as `null`, never as zero, and unreadable evidence is an error rather than an empty store. Cost, tokens and scope stay unknown until an adapter reports them. Flag: `--json`. |
 | `sentinel doctor` | Preflight the local environment a review depends on (agents, search binary, codegraph gates, hook). Advisory, exits 0 like `check`. Flag: `--check-updates`. |
-| `sentinel pr` | Crea un pull request con `gh`; antes limpia las fichas de auditoría huérfanas. Pasa los argumentos a `gh pr create`. |
-| `sentinel pr review` | Analiza la rama sin publicar: matriz de fichas y decisión single/chain. Flags: `--base X` `--only-unaudited` `--overview` `--json`. |
+| `sentinel pr` | Creates a pull request with `gh`; first it cleans up orphaned audit records. Passes the arguments to `gh pr create`. |
+| `sentinel pr review` | Analyzes the branch without publishing: record matrix and single/chain decision. Flags: `--base X` `--only-unaudited` `--overview` `--json`. |
 | `sentinel explain` | Explain the change profile, detected characteristics, risk, and cohesion of a commit range. Usage: `[<base>..<head>] [--json]`. |
-| `sentinel consentimiento-diff` | Manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent). Usage: `otorgar\|revocar\|estado`. |
+| `sentinel consent-diff` | Manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent). Usage: `grant\|revoke\|status`. |
 | `sentinel tui` | Open the full-screen control center over the repository registry snapshot, refreshed live while the session is open. |
-| `sentinel uninstall` | Elimina el binario y la configuración global (`~/.vas_sentinel/`). |
-| `sentinel version` / `sentinel --version` | Muestra la versión instalada. |
-| `sentinel help` / `sentinel --help` | Muestra la ayuda completa. |
+| `sentinel uninstall` | Removes the binary and the global configuration (`~/.vas_sentinel/`). |
+| `sentinel version` / `sentinel --version` | Prints the installed version. |
+| `sentinel help` / `sentinel --help` | Prints the full help. |
 
-## Slice: fragmentación con plan
+## Slice: planned splitting
 
-`sentinel slice` no commitea a ciegas. Flujo completo:
+`sentinel slice` does not commit blindly. Full flow:
 
-1. **Plan** — agrupa los cambios pendientes por capas (`config → backend → frontend → test`) en lotes de ≤400 líneas.
-2. **Mensajes** — genera el mensaje de cada lote con tu agente configurado. Si el agente no responde, elige entre mensajes automáticos deterministas, otro agente disponible o cancelar.
-3. **Aprobación** — muestra el plan completo y espera tu decisión: **(A)probar todo**, **(R)egenerar** un mensaje con otro agente, **(E)ditar** un mensaje manualmente o **(C)ancelar**. Enter aprueba.
-4. **Resumen** — lista los commits creados y verifica que el worktree quedó limpio.
+1. **Plan** — groups pending changes by layer (`config → backend → frontend → test`) into batches of ≤400 lines.
+2. **Messages** — generates each batch's message with your configured agent. If the agent does not respond, choose among deterministic automatic messages, another available agent, or cancel.
+3. **Approval** — shows the full plan and waits for your decision: **(A)pprove all**, **(R)egenerate** a message with another agent, **(E)dit** a message manually, or **(C)ancel**. Enter approves.
+4. **Summary** — lists the created commits and verifies the worktree was left clean.
 
-### Flujo conducido por un agente
+### Agent-driven flow
 
-El diálogo anterior es un REPL sobre `stdin`: un agente no puede conducirlo. Para eso existe la vía de dos pasos, que **no cambia quién decide** — la decisión sigue siendo tuya, solo cambia el transporte de la pregunta:
+The dialogue above is a REPL over `stdin`: an agent cannot drive it. That is what the two-step path is for, and it **does not change who decides** — the decision remains yours; only the transport of the question changes:
 
 ```bash
-sentinel slice plan --json > plan.json   # propone; no commitea nada
-# exit 0 → no hay nada que preguntar
-# exit 3 → el plan trae decisiones_pendientes que debes responder tú
-sentinel slice apply --plan plan.json --answers respuestas.json
+sentinel slice plan --json > plan.json   # proposes; commits nothing
+# exit 0 → there is nothing to ask
+# exit 3 → the plan carries pending_decisions that you must answer
+sentinel slice apply --plan plan.json --answers answers.json
 ```
 
-`respuestas.json` liga la aprobación a un plan concreto:
+`answers.json` binds the approval to a concrete plan:
 
 ```json
-{ "plan_id": "<el plan_id del plan emitido>", "respuestas": { "<id de la decisión>": "bypass" } }
+{ "plan_id": "<the plan_id of the emitted plan>", "answers": { "<decision id>": "bypass" } }
 ```
 
-Tres ligaduras que `apply` verifica antes de crear un solo commit:
+Three bindings that `apply` verifies before creating a single commit:
 
-1. **Al árbol** — si cambió el contenido de alguna ruta del plan, se niega y hay que replanificar.
-2. **Al plan** — las respuestas llevan el `plan_id`; una aprobación de un plan anterior no sirve.
-3. **Sin defaults** — toda decisión pendiente exige respuesta explícita (`bypass` o `abortar`). Ni siquiera «aprobar todo» es implícito.
+1. **To the tree** — if the content of any path in the plan changed, it refuses and a replan is required.
+2. **To the plan** — the answers carry the `plan_id`; an approval of a previous plan is not valid.
+3. **No defaults** — every pending decision demands an explicit answer (`bypass` or `abort`). Not even "approve all" is implicit.
 
-Esto elimina el accidente de confundir «nadie al teclado» con «el humano aprobó». Lo que **no** promete es impedir que un agente deliberado llame a `git commit` por su cuenta: eso queda fuera del modelo de amenaza.
+This eliminates the accident of confusing "nobody at the keyboard" with "the human approved". What it does **not** promise is to stop a deliberate agent from calling `git commit` on its own: that is outside the threat model.
 
-Casos especiales:
+Special cases:
 
-- **Archivos gigantes:** config >400 líneas se aísla automáticamente (`chore(deps): track lock and auto-generated files`); código >500 líneas pide confirmación y hace bypass explícito (`chore(slice): bypass IA for massive file …`) o aborta sin commitear nada.
-- **Hook y slice:** los commits de slice omiten el hook (`--no-verify`). Slice es el mecanismo de desbloqueo del guardián y cada lote ya está validado; el hook sigue protegiendo los commits manuales.
+- **Giant files:** config over 400 lines is isolated automatically (`chore(deps): track lock and auto-generated files`); code over 500 lines asks for confirmation and makes an explicit bypass (`chore(slice): bypass IA for massive file …`) or aborts without committing anything.
+- **Hook and slice:** slice commits skip the hook (`--no-verify`). Slice is the guardian's unlocking mechanism and every batch is already validated; the hook keeps protecting manual commits.
 
-## Compilación
+## Build
 
-## Contexto opcional con CodeGraph
+## Optional context with CodeGraph
 
-Con `review.codegraph_context: true`, consentimiento local para diff externo,
-un índice `.codegraph/` limpio y el CLI upstream en `PATH`, Sentinel puede
-añadir metadatos opcionales de rutas de tests afectadas a la revisión semántica.
-Son datos advisory no confiables: pueden informar la revisión, pero nunca
-autorizan alcance de validación y se omiten ante cualquier incertidumbre. No se
-envía salida fuente de CodeGraph. Sentinel tampoco indexa ni administra CodeGraph:
-[CodeGraph](https://github.com/colbymchenry/codegraph).
+With `review.codegraph_context: true`, local consent for external diff,
+a clean `.codegraph/` index and the upstream CLI on `PATH`, Sentinel can
+add optional metadata about affected test paths to the semantic review.
+This is untrusted advisory data: it may inform the review, but it never
+authorizes validation scope and is omitted under any uncertainty. No
+source output from CodeGraph is sent. Sentinel neither indexes nor
+administers CodeGraph: [CodeGraph](https://github.com/colbymchenry/codegraph).
 
-Los binarios se generan en `bin/<version>/` (nunca se commitean, están en `.gitignore`). La versión se lee de `release.yml` (fuente de verdad del proyecto) y puedes forzarla con la variable `SENTINEL_VERSION`:
+Binaries are generated in `bin/<version>/` (never committed; they are in `.gitignore`). The version is read from `release.yml` (the project's source of truth) and you can force it with the `SENTINEL_VERSION` variable:
 
 ```bash
-# Windows: genera bin\0.1.0\sentinel.exe
+# Windows: produces bin\0.1.0\sentinel.exe
 build.bat
 
-# Debian/Linux: genera bin/0.1.0/sentinel
+# Debian/Linux: produces bin/0.1.0/sentinel
 chmod +x build.sh
 ./build.sh
 
-# Override opcional de la versión (ignora la de release.yml)
+# Optional version override (ignores the one in release.yml)
 export SENTINEL_VERSION=1.2.0
 ./build.sh
 ```
 
-Ambos scripts ejecutan `gofmt -w .` → `go vet ./...` → `go build -ldflags="-s -w -X main.version=<versión>"`.
+Both scripts run `gofmt -w .` → `go vet ./...` → `go build -ldflags="-s -w -X main.version=<version>"`.
 
-Verificación rápida de un cambio: `go build ./... && go vet ./...`
+Quick verification of a change: `go build ./... && go vet ./...`
 
-## Publicar una release
+## Publishing a release
 
-1. Actualiza `version` en `release.yml` con una versión **superior** a la última publicada.
-2. Publica con los scripts de `infra/` (ejecutan vet, generan los assets multiplataforma y crean la release):
+1. Update `version` in `release.yml` with a version **higher** than the last published one.
+2. Publish with the scripts in `infra/` (they run vet, generate the multi-platform assets, and create the release):
 
 ```bash
 # Windows
@@ -121,74 +121,75 @@ chmod +x infra/release.sh
 ./infra/release.sh
 ```
 
-> `tools/release` consulta la última release publicada con `gh` y **aborta si la versión de `release.yml` es igual o inferior**: debes incrementarla antes de publicar.
+> `tools/release` queries the latest published release with `gh` and **aborts if the version in `release.yml` is equal or lower**: you must increment it before publishing.
 
-También puedes hacerlo manualmente: `go run ./tools/release` para generar los assets en `bin/<version>/` y después `gh release create v<version> bin/<version>/*`.
+You can also do it manually: `go run ./tools/release` to generate the assets in `bin/<version>/` and then `gh release create v<version> bin/<version>/*`.
 
-## Instalación
+## Installation
 
-### Opción A — Bootstrap con Go (no necesitas el binario previo)
+### Option A — Bootstrap with Go (you do not need the prior binary)
 
 ```bash
 go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest
 ```
 
-Esto compila el binario en `$(go env GOPATH)/bin`. Asegúrate de que esa carpeta esté en tu `PATH` y comprueba con `sentinel --version`.
+This builds the binary into `$(go env GOPATH)/bin`. Make sure that folder is on your `PATH` and verify with `sentinel --version`.
 
-> **Repo privado:** configura `GOPRIVATE` y las credenciales de git antes:
+> **Private repo:** configure `GOPRIVATE` and git credentials first:
 > `go env -w GOPRIVATE=github.com/ISeoane-Quental/*`
 
-### Opción B — Con el propio sentinel
+### Option B — With sentinel itself
 
-`sentinel install` descarga la última release publicada y la instala de forma global:
+`sentinel install` downloads the latest published release and installs it globally:
 
-- **Windows:** copia el binario a `~/.vas_sentinel/bin/` y lo añade al PATH de usuario.
-- **Debian/Linux:** instala en `/usr/local/bin/sentinel` (reintenta con `sudo`) y deja la ruta en `~/.zshrc` / `~/.bashrc`.
+- **Windows:** copies the binary to `~/.vas_sentinel/bin/` and adds it to the user PATH.
+- **Debian/Linux:** installs to `/usr/local/bin/sentinel` (retries with `sudo`) and leaves the path in `~/.zshrc` / `~/.bashrc`.
 
-> **Repos privados:** `sentinel install` / `upgrade` resuelven el token en este orden: variable `GITHUB_TOKEN`, token de la sesión de `gh` (`gh auth token`) o pregunta interactiva. No necesitas exportar nada si ya tienes `gh` autenticado.
+> **Private repos:** `sentinel install` / `upgrade` resolve the token in this order: the `GITHUB_TOKEN` variable, the `gh` session token (`gh auth token`), or an interactive prompt. You do not need to export anything if you already have `gh` authenticated.
 
-> **Fallback a go install:** si la release no está disponible (red, token o asset ausente), `install`/`upgrade` reintentan automáticamente con `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest` y dejan el binario en el mismo destino.
+> **Fallback to go install:** if the release is not available (network, token, or missing asset), `install`/`upgrade` automatically retry with `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest` and leave the binary in the same destination.
 
-## Actualizaciones automáticas
+## Automatic updates
 
-`sentinel upgrade` descarga la última release y reemplaza el binario actual. En Windows el binario en ejecución está bloqueado, por lo que se renombra el actual a `.old` como respaldo durante la operación.
+`sentinel upgrade` downloads the latest release and replaces the current binary. On Windows the running binary is locked, so the current one is renamed to `.old` as a backup during the operation.
 
-## Desinstalación
+## Uninstall
 
-`sentinel uninstall` elimina el binario instalado (tanto `~/.vas_sentinel/bin/sentinel` en Windows como `/usr/local/bin/sentinel` en Linux, así como cualquier copia dentro de `GOPATH/bin`) y borra la configuración global `~/.vas_sentinel/`.
+`sentinel uninstall` removes the installed binary (both `~/.vas_sentinel/bin/sentinel` on Windows and `/usr/local/bin/sentinel` on Linux, plus any copy inside `GOPATH/bin`) and deletes the global configuration `~/.vas_sentinel/`.
 
-## Convención de nombres de assets
+## Asset naming convention
 
-Cada release debe publicar assets con esta convención para que `install`/`upgrade` encuentren el binario correcto:
+Each release must publish assets with this convention so that `install`/`upgrade` find the right binary:
 
 - `sentinel-windows-amd64.exe`
 - `sentinel-linux-amd64`
-- `sentinel-linux-arm64` (si se publica)
+- `sentinel-linux-arm64` (if published)
 
-## Configuración (Control de Adaptadores)
+## Configuration (Adapter Control)
 
-La configuración se busca en este orden (el primero que define un campo predomina):
+Configuration is looked up in this order (the first one defining a field wins):
 
-1. **Per-proyecto:** `.vas_sentinel/vassentinel.yml` — creado por `sentinel init`
-2. **Global:** `~/.vas_sentinel/vassentinel.yml` — creado por `sentinel install`
-3. **Defaults** integrados
+1. **Per-project:** `.vas_sentinel/vassentinel.yml` — created by `sentinel init`
+2. **Global:** `~/.vas_sentinel/vassentinel.yml` — created by `sentinel install`
+3. Built-in **defaults**
 
-`active_agent` (default `auto`) selecciona el agente. En `auto`, la preferencia
-sigue el **orden en que los agentes están declarados en el yml** (no alfabético):
-el primero cuyo binario esté en el PATH se usa primero y, si falla en una
-petición, se prueba el siguiente en ese mismo orden (fallback en cadena por
-petición, nunca cacheado). También puedes fijar `active_agent: "claude"` u
-`"opencode"` para un agente concreto. `MY_SUB_AGENT` sigue existiendo como
-override temporal en la terminal, pero ya no es el mecanismo principal.
+`active_agent` (default `auto`) selects the agent. In `auto`, the preference
+follows the **order in which the agents are declared in the yml** (not
+alphabetical): the first one whose binary is on the PATH is used first and,
+if it fails on a request, the next one is tried in that same order
+(per-request chain fallback, never cached). You can also set
+`active_agent: "claude"` or `"opencode"` for a concrete agent.
+`MY_SUB_AGENT` still exists as a temporary terminal override, but it is no
+longer the primary mechanism.
 
-Cada agente define su modelo y esfuerzo base, más **perfiles** anidados
-(`cheap`, `normal`, `deep`…) que sobreescriben modelo y/o esfuerzo. Las
-dimensiones de auditoría (`review.dims`) mapean cada dimensión a un perfil en
-dos sintaxis: `agente.perfil` (agente explícito) o solo `perfil` (se aplica el
-`active_agent`: el perfil de ese agente si es concreto, o la cadena auto en
-orden del yml con fallback).
+Each agent defines its model and base effort, plus nested **profiles**
+(`cheap`, `normal`, `deep`…) that override model and/or effort. The audit
+dimensions (`review.dims`) map each dimension to a profile with two
+syntaxes: `agent.profile` (explicit agent) or just `profile` (applies to
+the `active_agent`: that agent's profile if concrete, or the auto chain in
+yml order with fallback).
 
-Ejemplo de `.vas_sentinel/vassentinel.yml`:
+Example of `.vas_sentinel/vassentinel.yml`:
 
 ```yaml
 version: "2.0"

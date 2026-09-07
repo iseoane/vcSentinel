@@ -24,7 +24,7 @@ prints usage and exits `1`.
 
 ## Exit codes and terminal-state mapping
 
-Documented next to the dispatch in `cmd/sentinel/comandos_runs_decls.go`
+Documented next to the dispatch in `cmd/sentinel/runs_command_decls.go`
 (`runExitCode`) and mirrored here:
 
 | Code | Meaning | Mapped errors |
@@ -81,7 +81,7 @@ completed.
 Machine output never changes shape without a major note. The table below is
 the ONE consolidated reference for every stable JSON shape across `runs`
 commands. It is derived manually from the Go structs in
-`cmd/sentinel/comandos_runs_decls.go` (`runActionResult`,
+`cmd/sentinel/runs_command_decls.go` (`runActionResult`,
 `applyResultOutput`, `runsVerificationOutput`, `runsListEntry`,
 `runsStatusSummary`, `runsLogsOutput`, `runsRecoveryRow`, `runsRecoveryOutput`,
 `runsRepairOutput`, `runsPruneOutput`) and the store contracts they embed
