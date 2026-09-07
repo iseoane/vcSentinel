@@ -2,18 +2,20 @@ package doctor
 
 import (
 	"errors"
-	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
 )
 
 // TestRunAnnouncesProgressBeforeLongSteps pins the visible-progress contract:
-// Run emits one "probing <name>…" announcement before each configured agent's
-// probe (in yml declaration order) and "checking for updates…" before the
-// release feed is contacted, so the 2x60s probes read as progress instead of
-// silence. A nil Progress is the default for embedders and must stay silent
-// and panic-free.
+// Run emits each long step's announcement before the blocking call it
+// describes — one "probing <name>…" before each configured agent's probe and
+// "checking for updates…" before the release feed is contacted — so the 2x60s
+// probes read as progress instead of silence. The assertions are containment
+// over the writer state at the moment each blocking call starts, not the full
+// line sequence: a future benign announcement must not fail this test. A nil
+// Progress is the default for embedders and must stay silent and panic-free.
 func TestRunAnnouncesProgressBeforeLongSteps(t *testing.T) {
 	isolateHome(t)
 	worktree := t.TempDir()
@@ -22,19 +24,28 @@ func TestRunAnnouncesProgressBeforeLongSteps(t *testing.T) {
 	writeHook(t, common, "/usr/local/bin/sentinel")
 	stageBinaries(t, "claude", "opencode", "rg")
 	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
-	env.LatestRelease = func() (string, error) { return "v0.2.0", nil }
 
 	var got []string
+	writerAt := map[string]string{}
+	baseProbe := env.Probe
+	env.Probe = func(agent, prompt string) (string, error) {
+		writerAt["probe "+agent] = strings.Join(got, "\n")
+		return baseProbe(agent, prompt)
+	}
+	env.LatestRelease = func() (string, error) {
+		writerAt["update check"] = strings.Join(got, "\n")
+		return "v0.2.0", nil
+	}
 	Run(worktree, Options{CurrentVersion: "0.2.0", CheckUpdates: true, Env: env, Progress: func(msg string) {
 		got = append(got, msg)
 	}})
-	want := []string{
-		"probing claude…",
-		"probing opencode…",
-		"checking for updates…",
+	for _, agent := range []string{"claude", "opencode"} {
+		if !strings.Contains(writerAt["probe "+agent], "probing "+agent+"…") {
+			t.Fatalf("writer held %q when the %s probe started, want its flushed announcement", writerAt["probe "+agent], agent)
+		}
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("progress announcements = %q, want %q", got, want)
+	if !strings.Contains(writerAt["update check"], "checking for updates…") {
+		t.Fatalf("writer held %q when the release feed was contacted, want the flushed announcement", writerAt["update check"])
 	}
 }
 
