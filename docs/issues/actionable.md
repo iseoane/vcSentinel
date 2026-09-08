@@ -63,10 +63,10 @@ Sits second: unblocked and small, but it only bites under unusual load.
   Item 2 is what makes retention worth anything, so land it first and expect
   the tree count to fall to one per audited commit.
 
-## 3. Decide whether the gate's review leaves a record
+## 3. Give the pre-publication audits a record `pr create` can consult
 
-Sits third: unblocked, found by exercising the full pre-push flow, and the
-cost it creates is already measured.
+Sits third: unblocked, found by exercising the full pre-push flow, and its
+cheap half is separable from its expensive half.
 
 - Wrong, or possibly deliberate: `gate --stage pre-push` runs a semantic
   review of `HEAD` and prints its verdict, but writes no review record. On
@@ -86,10 +86,42 @@ cost it creates is already measured.
 - Note it may be intended: `AGENTS.md` names `review`, `status` and `pr` as
   the commands that anchor the shared ledger, and pointedly not `gate`. The
   gate is a lifecycle gate rather than an audit of record.
-- Closing: either the gate's review persists a record the rest of the system
-  can see — so `pr review` reuses it instead of paying twice, and its warnings
-  outlive the terminal — or a recorded determination that the gate
-  deliberately keeps none, with the double-audit cost accepted in writing.
+- The same hole seen from the publishing end: `pr create` does not audit at
+  all. `internal/app/pr/create.go` reads the shared ledger through
+  `review.AnalyzeBranch` and derives its notice from those records via
+  `SemanticNoticeWithDispositions` -> `review.BranchBlockers`; the only gate
+  that blocks is a red deterministic validation, overridable with `--force
+  --reason`. So the semantic signal that reaches a published PR comes ONLY
+  from `sentinel review` fichas. A team using gate plus `pr review` — the two
+  commands that sound like "before publishing" — would publish with no
+  semantic signal at all, not because the code is clean but because nothing
+  was written down. On this branch `pr review` reported 11 findings on the net
+  diff and none of them can reach the PR.
+- Why the two halves differ, and this decides the design: the ledger is keyed
+  by commit SHA. The gate audits `HEAD`, a single commit, so it HAS a natural
+  key and needs no new record shape — it would inherit fingerprints,
+  `refute`/`accept`/`reopen`, the metrics aggregates, blob-index reuse across
+  rebases, and the existing `--prune`. `pr review` and `pr create` audit a
+  net diff over a RANGE, which has no such key.
+- The trap in the expensive half: a range record would have to be keyed by
+  `base..head` or by a hash of the net diff, and it goes stale the moment the
+  branch moves — one more commit and it describes different code. A per-commit
+  ficha survives a rebase through its content blobs; a range record cannot. A
+  STALE range record is worse than none: `pr create` would publish a PR
+  asserting a verdict that does not describe the code being published, whereas
+  today's "these commits have no record" is at least true. Any such record
+  must be bound to an exact identity and refused when it does not match,
+  exactly as `reviewsnapshot` revalidates its manifest on every lease.
+- Closing, cheap half first: make the gate's per-commit review persist a
+  record, or record a determination that it deliberately keeps none. Then
+  decide the range half by MEASUREMENT rather than preference — compare the
+  net-diff findings against the union of the per-commit findings for the same
+  commits. If they substantially overlap, no range record is justified and
+  per-commit records are enough; if the net audit sees interactions between
+  commits that no single commit shows, that is the evidence for building it,
+  with the staleness discipline above. The first data point is available: 11
+  net findings on `99138bb..19a5b2f` versus the per-commit fichas for
+  `e408d42` and `19a5b2f`.
 
 ## 4. Bound the provider's own temporary residue
 
