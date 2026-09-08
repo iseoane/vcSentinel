@@ -314,6 +314,59 @@ func TestAnalyzeBranchOnlyPending(t *testing.T) {
 	}
 }
 
+// TestAnalyzeBranchOnlyPendingReportsSubject: OnlyPending must not just list
+// SHAs — a human deciding whether to run `sentinel review <sha>` needs the
+// commit's subject too, exactly like the audited matrix does (item 2 of
+// docs/issues/actionable.md: the PR must report the gap, not hide it behind
+// a bare SHA).
+func TestAnalyzeBranchOnlyPendingReportsSubject(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	sha := commitInBranch(t, "feat.txt", "1\n2\n3\n")
+	ledger := NewLedger(gitDir)
+	stub := &auditorStub{auditOutput: auditOutputOK}
+
+	res, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, OnlyPending: true})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch(OnlyPending) failed: %v", err)
+	}
+	if stub.auditCalls != 0 {
+		t.Fatalf("OnlyPending must not audit: %d calls", stub.auditCalls)
+	}
+	if len(res.Unaudited) != 1 || res.Unaudited[0].SHA != sha ||
+		res.Unaudited[0].Subject != "feat(feat.txt): test content" {
+		t.Errorf("Unaudited = %+v, want [{%s feat(feat.txt): test content}]", res.Unaudited, sha)
+	}
+}
+
+// TestAnalyzeBranchUnauditedIsAccurateAfterAuditing: the whole point of
+// BranchResult.Unaudited is telling a machine consumer "this commit carries
+// no review record" apart from "this commit was audited and had no
+// findings" (item 5). Unlike Pending (pre-audit discovery, kept for the
+// "nuevas" event telemetry), Unaudited must be recomputed AFTER the audit
+// loop: a commit audited within this very call must not still read as
+// unaudited, or JSON consumers cannot tell the two states apart.
+func TestAnalyzeBranchUnauditedIsAccurateAfterAuditing(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	sha := commitInBranch(t, "feat.txt", "1\n2\n3\n")
+	ledger := NewLedger(gitDir)
+	stub := &auditorStub{auditOutput: auditOutputOK}
+
+	// OnlyPending is false: this commit gets audited within this very call.
+	res, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, OnlyPending: false})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch failed: %v", err)
+	}
+	if len(res.Unaudited) != 0 {
+		t.Errorf("Unaudited = %+v, want empty: %s was just audited in this call", res.Unaudited, sha)
+	}
+	if len(res.Pending) != 1 || res.Pending[0] != sha {
+		t.Errorf("Pending = %v, want [%s] (discovered new this pass, for the event telemetry)", res.Pending, sha)
+	}
+	if len(res.Records) != 1 || res.Records[0].SHA != sha {
+		t.Errorf("Records = %+v, want the freshly audited record for %s", res.Records, sha)
+	}
+}
+
 // TestDecisionChainByVolume: without an overview, a branch above the line
 // threshold proposes a PR chain.
 func TestDecisionChainByVolume(t *testing.T) {

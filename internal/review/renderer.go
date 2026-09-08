@@ -86,6 +86,30 @@ func shortenMessage(message string) string {
 	return string(runes[:maxLen]) + "..."
 }
 
+// RenderUnauditedNotice reports commits that carry no review record: it must
+// inform, never gate (docs/issues/actionable.md item 2) — the net verdict is
+// the only thing that blocks publication. Empty when every commit on the
+// branch already has a record, so a fully audited branch's report carries
+// nothing extra.
+func RenderUnauditedNotice(pending []UnauditedCommit) string {
+	if len(pending) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "? %d commit(s) have no review record (not audited by default):\n", len(pending))
+	shas := make([]string, 0, len(pending))
+	for _, c := range pending {
+		sha := c.SHA
+		if len(sha) > 7 {
+			sha = sha[:7]
+		}
+		fmt.Fprintf(&b, "  - `%s` %s\n", sha, shortenMessage(c.Subject))
+		shas = append(shas, c.SHA)
+	}
+	fmt.Fprintf(&b, "  Audit them with: sentinel review %s\n", strings.Join(shas, " "))
+	return b.String()
+}
+
 // RenderMatrix builds a branch's markdown commit × dimension table: one row
 // per record (short SHA + message) with the six canonical dimensions as
 // fixed columns. Each cell shows the latest revision's verdict for that
@@ -644,6 +668,7 @@ func RenderBranchPRTemplateWithDispositions(res *BranchResult, verification Temp
 
 	b.WriteString("OWN (per-commit audit)\n")
 	b.WriteString(RenderMatrix(res.Records) + "\n\n")
+	b.WriteString(RenderUnauditedNotice(res.Unaudited))
 
 	b.WriteString(InheritedSection(res.Inherited))
 

@@ -121,12 +121,33 @@ type OverviewResult struct {
 	Rationale string `json:"rationale"`
 }
 
+// UnauditedCommit pairs a commit that carries no review record, at the end
+// of this AnalyzeBranch call, with its subject line — so a report can point
+// a human at it (`sentinel review <sha>`) without a second git lookup.
+type UnauditedCommit struct {
+	SHA     string
+	Subject string
+}
+
 // BranchResult aggregates the complete branch analysis: the SHAs of the
 // range, the records, the real volume and the single/chain decision.
 type BranchResult struct {
-	Branch        string
-	SHAs          []string
-	Pending       []string
+	Branch string
+	SHAs   []string
+	// Pending is the SHAs that had no review record when this call STARTED
+	// (before the audit loop below runs): it answers "how many new commits
+	// did this pass discover", which is what the pr-review/pr-create event
+	// detail's "nuevas" counter reports. It is NOT recomputed after auditing,
+	// so with OnlyPending == false a commit audited within this very call
+	// still appears here — by design, for that telemetry meaning.
+	Pending []string
+	// Unaudited is the SHAs (with subject) that STILL carry no review
+	// record once this call is done — recomputed AFTER the audit loop, so it
+	// is what a report or a machine consumer should read to mean "this
+	// commit was never audited" (docs/issues/actionable.md item 2/5). With
+	// the default OnlyPending == true it equals Pending; with the
+	// --audit-pending opt-in it is empty once auditing succeeds.
+	Unaudited     []UnauditedCommit
 	Records       []Record
 	Volume        int
 	Overview      *OverviewResult // nil when not requested or not obtained
@@ -223,6 +244,7 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	}
 
 	records := make([]Record, 0, len(shas))
+	var stillUnaudited []string
 	for _, sha := range shas {
 		record, err := ledger.ReadRecord(sha)
 		if err != nil {
@@ -230,8 +252,16 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 		}
 		if record != nil {
 			records = append(records, *record)
+		} else {
+			// Recomputed HERE, not reused from the pre-audit `pending` slice
+			// above: when OnlyPending is false the loop just above audited
+			// these commits and gave them a record, so re-reading the ledger
+			// is what tells "still has no record" from "just got one" —
+			// exactly the ambiguity BranchResult.Unaudited exists to remove.
+			stillUnaudited = append(stillUnaudited, sha)
 		}
 	}
+	unaudited := unauditedCommitSubjects(stillUnaudited)
 
 	volume, err := git.RangeNumstat(mergeBase, "HEAD")
 	if err != nil {
@@ -239,7 +269,7 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	}
 
 	res := &BranchResult{
-		Branch: branch, SHAs: shas, Pending: pending,
+		Branch: branch, SHAs: shas, Pending: pending, Unaudited: unaudited,
 		Records: records, Volume: volume,
 	}
 	if opts.NetReview != nil { // T8.3: mergeBase already is merge_base(base_or_resolved_parent, HEAD)
@@ -390,6 +420,33 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 		}
 	}
 	return nil
+}
+
+// unauditedCommitSubjects resolves the subject line of every commit that
+// still has no review record, so a report can name them instead of a bare
+// SHA (docs/issues/actionable.md item 2). A nil slice in, nil slice out: a
+// fully audited branch must not carry an empty-but-allocated slice into the
+// rendered report or the JSON output.
+//
+// A subject-lookup failure is NOT fatal, same rationale as commitBlobs
+// below: this is reporting sugar, not the audit itself, and the net verdict
+// (the only thing that gates, per docs/issues/actionable.md item 2) must not
+// be thrown away over a cosmetic git failure. It warns on stderr and falls
+// back to the bare SHA as the subject.
+func unauditedCommitSubjects(shas []string) []UnauditedCommit {
+	if len(shas) == 0 {
+		return nil
+	}
+	out := make([]UnauditedCommit, 0, len(shas))
+	for _, sha := range shas {
+		subject, err := git.CommitMessage(sha)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vas-sentinel: could not resolve the subject of %s, reporting it unaudited without one: %v\n", sha, err)
+			subject = ""
+		}
+		out = append(out, UnauditedCommit{SHA: sha, Subject: subject})
+	}
+	return out
 }
 
 // commitBlobs resolves the blob of each file of a commit (file → blob), to

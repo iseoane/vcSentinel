@@ -45,6 +45,33 @@ func TestRenderMatrixBasic(t *testing.T) {
 	}
 }
 
+// TestRenderUnauditedNoticeEmpty: a fully audited branch renders nothing —
+// the notice must not clutter a report that has no gap to report.
+func TestRenderUnauditedNoticeEmpty(t *testing.T) {
+	if out := RenderUnauditedNotice(nil); out != "" {
+		t.Errorf("RenderUnauditedNotice(nil) = %q, want empty", out)
+	}
+}
+
+// TestRenderUnauditedNoticeListsShaSubjectAndCommand: the notice must inform,
+// never block (docs/issues/actionable.md item 2) — it names every commit
+// with its short SHA and subject, and gives the exact command to audit them.
+func TestRenderUnauditedNoticeListsShaSubjectAndCommand(t *testing.T) {
+	pending := []UnauditedCommit{
+		{SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Subject: "feat(x): add x"},
+		{SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Subject: "fix(y): fix y"},
+	}
+	out := RenderUnauditedNotice(pending)
+	for _, want := range []string{
+		"2 commit", "aaaaaaa", "feat(x): add x", "bbbbbbb", "fix(y): fix y",
+		"sentinel review aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("RenderUnauditedNotice missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderMatrixEmpty(t *testing.T) {
 	if out := RenderMatrix(nil); !strings.Contains(out, "No audited commits") {
 		t.Errorf("empty matrix = %q, want the no-commits notice", out)
@@ -676,6 +703,24 @@ func TestRenderBranchPRTemplateWithDispositionsHidesRefutedCritical(t *testing.T
 	body := RenderBranchPRTemplateWithDispositions(res, TemplateVerification{Mode: "omitido"}, "0.2.0", dispositions)
 	if strings.Contains(body, "refuted critical") {
 		t.Fatalf("PR template still renders the refuted critical:\n%s", body)
+	}
+}
+
+// TestRenderBranchPRTemplateReportsUnauditedCommits: docs/issues/actionable.md
+// item 2 — a PR body must say plainly when a commit on the branch has no
+// review record of its own, name it, and point at the audit command. It must
+// not gate: the net verdict remains authoritative regardless.
+func TestRenderBranchPRTemplateReportsUnauditedCommits(t *testing.T) {
+	res := &BranchResult{
+		Records:   nil,
+		Unaudited: []UnauditedCommit{{SHA: "cafe1234cafe1234cafe1234cafe1234cafe1234", Subject: "feat(x): x"}},
+		Net:       &NetReview{Audit: AuditResult{Verdict: VerdictOK}},
+	}
+	body := RenderBranchPRTemplateWithDispositions(res, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
+	for _, want := range []string{"no review record", "cafe123", "feat(x): x", "sentinel review cafe1234cafe1234cafe1234cafe1234cafe1234"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("PR body missing %q:\n%s", want, body)
+		}
 	}
 }
 
