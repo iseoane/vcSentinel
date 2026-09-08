@@ -199,7 +199,7 @@ func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 		if err != nil || now.Sub(info.ModTime()) < maxAge {
 			continue
 		}
-		if os.RemoveAll(filepath.Join(raiz, entrada.Name())) == nil {
+		if removeReadOnlyStoreEntry(filepath.Join(raiz, entrada.Name())) == nil {
 			recolectados++
 		}
 	}

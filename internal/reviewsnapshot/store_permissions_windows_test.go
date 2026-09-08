@@ -2,10 +2,7 @@
 
 package reviewsnapshot
 
-import (
-	"io/fs"
-	"testing"
-)
+import "testing"
 
 func TestPublishedPermissionsAcceptWindowsReadOnlyModes(t *testing.T) {
 	for _, gitMode := range []string{"100644", "100755"} {
