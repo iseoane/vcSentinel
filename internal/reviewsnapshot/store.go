@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -314,6 +315,12 @@ func leasePublishedSnapshot(sha string) (*snapshotLease, error) {
 		_ = lock.Close()
 		return nil, nil
 	}
+	// Directory mtime records the most recent successful lease. The capacity
+	// reaper uses it to evict the least recently leased unleased tree first.
+	if err := os.Chtimes(published, time.Now(), time.Now()); err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("touch leased review snapshot for %q: %w", sha, err)
+	}
 	return &snapshotLease{dir: published, lock: lock}, nil
 }
 
@@ -584,6 +591,86 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 			if removeUnleasedStoreEntry(root, sha, now, maxAge, filepath.Join(root, name)) {
 				removed++
 			}
+		}
+	}
+	return removed
+}
+
+// reapSharedStoreCapacity evicts the least recently leased published trees
+// until the filesystem holding the store has its capacity-relative free-space
+// margin again. It never makes a removal decision from a pre-lock stat alone:
+// each selected tree is re-statted after its SHA's exclusive lock is acquired,
+// so a tree leased or republished since the scan survives. Staging trees and
+// readiness artifacts do not compete here; the age reaper above owns their
+// abandoned-residue cleanup.
+func reapSharedStoreCapacity(root string) int {
+	if err := checkStoreRoot(root); err != nil {
+		return 0
+	}
+	space, err := storeFilesystemSpace(root)
+	if err != nil || space.available >= storeFreeSpaceMargin(space.capacity) {
+		return 0
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	type candidate struct {
+		sha     string
+		modTime time.Time
+	}
+	candidates := make([]candidate, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), publishedPrefix) || strings.HasSuffix(entry.Name(), readySuffix) || strings.HasSuffix(entry.Name(), manifestSuffix) {
+			continue
+		}
+		sha := strings.TrimPrefix(entry.Name(), publishedPrefix)
+		if !validObjectID(sha) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, candidate{sha: sha, modTime: info.ModTime()})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].modTime.Before(candidates[j].modTime)
+	})
+
+	removed := 0
+	for _, candidate := range candidates {
+		space, err = storeFilesystemSpace(root)
+		if err != nil || space.available >= storeFreeSpaceMargin(space.capacity) {
+			break
+		}
+		if removeUnleasedStoreEntryAtMtime(root, candidate.sha, candidate.modTime, publishedPath(root, candidate.sha), markerPath(root, candidate.sha), manifestPath(root, candidate.sha)) {
+			removed++
+		}
+	}
+	return removed
+}
+
+// removeUnleasedStoreEntryAtMtime removes a published tree only when its state
+// remains exactly the state selected for capacity eviction after the SHA's
+// exclusive lock is held. A newer mtime means a successful lease or fresh
+// publication won the race, so it must remain reusable.
+func removeUnleasedStoreEntryAtMtime(root, sha string, selectedModTime time.Time, targets ...string) bool {
+	lock, acquired, err := lockSnapshot(lockPath(root, sha), true)
+	if err != nil || !acquired {
+		return false
+	}
+	defer lock.Close()
+
+	published := publishedPath(root, sha)
+	info, err := os.Lstat(published)
+	if err != nil || !info.IsDir() || !info.ModTime().Equal(selectedModTime) {
+		return false
+	}
+	removed := false
+	for _, target := range targets {
+		if err := removeReadOnlyStoreEntry(target); err == nil {
+			removed = true
 		}
 	}
 	return removed

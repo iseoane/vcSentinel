@@ -607,8 +607,8 @@ func gitCommitExecutable(t *testing.T, root string) string {
 // committed 100755 file is published owner-executable (0500) while regular
 // evidence is owner read-only (0400), the readiness manifest records the
 // committed mode, and a second Create for the same SHA leases the very same
-// tree without a rebuild — the directory mtime planted before the second
-// call would have been reset by any rematerialization.
+// tree without a rebuild. Leasing deliberately refreshes the directory mtime:
+// the capacity reaper uses it to identify the least recently leased tree.
 func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	root, _ := gitInit(t)
 	sha := gitCommitExecutable(t, root)
@@ -641,8 +641,8 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	}
 
 	// Reuse without rebuild: plant an old directory mtime — the live lease
-	// below keeps the reaper away from the stale-looking tree — and require
-	// it to survive the second Create untouched.
+	// below keeps the reaper away from the stale-looking tree — then require
+	// the second successful lease to refresh it for capacity ordering.
 	pinned := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(snapshot, pinned, pinned); err != nil {
 		t.Fatal(err)
@@ -654,8 +654,12 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	if again != snapshot {
 		t.Fatalf("second Create returned %q, want the published %q", again, snapshot)
 	}
-	if info, err := os.Stat(snapshot); err != nil || !info.ModTime().Equal(pinned) {
-		t.Fatalf("published tree was rebuilt on reuse: mtime %v (err %v), want pinned %v", info.ModTime(), err, pinned)
+	info, err := os.Stat(snapshot)
+	if err != nil {
+		t.Fatalf("stat reused published tree: %v", err)
+	}
+	if info.ModTime().Equal(pinned) {
+		t.Fatalf("published tree lease mtime = %v, want a refresh after pinned %v", info.ModTime(), pinned)
 	}
 	release()
 	secondRelease()
@@ -755,6 +759,75 @@ func gitCommitNestedFile(t *testing.T, root string) string {
 // lock is held, so a fresh publication is never deleted even when an older
 // directory scan had already marked the entry for collection — and a stale,
 // unlocked entry still goes away.
+// TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree verifies the size
+// ceiling's safety and ordering together: an exclusive lock is still required
+// before deletion, so a live lease survives even when it is oldest, and the
+// oldest unleased published tree is evicted before newer reusable evidence.
+func TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var replacements []byte
+	for digit := byte('0'); digit <= 'f' && len(replacements) < 3; digit++ {
+		if (digit < '0' || digit > '9') && (digit < 'a' || digit > 'f') {
+			continue
+		}
+		if digit != sha[len(sha)-1] {
+			replacements = append(replacements, digit)
+		}
+	}
+	activeSHA := sha[:len(sha)-1] + string(replacements[0])
+	oldestUnleasedSHA := sha[:len(sha)-1] + string(replacements[1])
+	newerUnleasedSHA := sha[:len(sha)-1] + string(replacements[2])
+	for _, candidate := range []string{activeSHA, oldestUnleasedSHA, newerUnleasedSHA} {
+		if err := os.MkdirAll(publishedPath(storeRoot(), candidate), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	for path, modTime := range map[string]time.Time{
+		publishedPath(storeRoot(), activeSHA):         now.Add(-3 * time.Minute),
+		publishedPath(storeRoot(), oldestUnleasedSHA): now.Add(-2 * time.Minute),
+		publishedPath(storeRoot(), newerUnleasedSHA):  now.Add(-time.Minute),
+	} {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	activeLock, acquired, err := lockSnapshot(lockPath(storeRoot(), activeSHA), false)
+	if err != nil || !acquired {
+		t.Fatalf("lock active snapshot: acquired=%t err=%v", acquired, err)
+	}
+	defer activeLock.Close()
+
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		if _, err := os.Stat(publishedPath(storeRoot(), oldestUnleasedSHA)); err == nil {
+			return filesystemSpace{available: 0, capacity: 100}, nil
+		}
+		return filesystemSpace{available: 10, capacity: 100}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	if removed := reapSharedStoreCapacity(storeRoot()); removed != 1 {
+		t.Fatalf("reapSharedStoreCapacity removed %d entries, want 1", removed)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), activeSHA)); err != nil {
+		t.Fatalf("active leased tree was evicted: %v", err)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), oldestUnleasedSHA)); !os.IsNotExist(err) {
+		t.Fatalf("oldest unleased tree survived capacity eviction: %v", err)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), newerUnleasedSHA)); err != nil {
+		t.Fatalf("newer unleased tree was evicted before the oldest one: %v", err)
+	}
+}
+
 func TestReaperRechecksStalenessUnderLock(t *testing.T) {
 	_, sha := gitInit(t)
 	tmp := t.TempDir()

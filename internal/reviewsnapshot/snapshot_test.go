@@ -461,6 +461,12 @@ func TestCreateRequiresSHA(t *testing.T) {
 //
 // Measured on this machine: 472 MB accumulated on a 3.8 GB tmpfs. When /tmp
 // fills up, not only do reviews fail; even building fails.
+func TestStaleSnapshotAgeIsOneHour(t *testing.T) {
+	if staleSnapshotAge != time.Hour {
+		t.Fatalf("staleSnapshotAge = %s, want 1h", staleSnapshotAge)
+	}
+}
+
 func TestCreateReapsAbandonedSnapshots(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)

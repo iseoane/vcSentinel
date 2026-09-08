@@ -157,13 +157,12 @@ func isSensitiveFileTemplate(name string) bool {
 	return false
 }
 
-// staleSnapshotAge bounds how long an abandoned snapshot may survive. A review
-// can never outlive review.timeout (300s by default), so anything older than a
-// day is definitively residue from a process that died before its cleanup ran,
-// never work in flight. The margin is deliberately enormous: deleting a live
-// snapshot would sabotage a running review, while deleting one a day late costs
-// nothing.
-const staleSnapshotAge = 24 * time.Hour
+// staleSnapshotAge bounds how long an abandoned snapshot may survive. The
+// repository owner decided on 2026-09-08 that one hour covers the useful reuse
+// window — one review's dimensions, format retries, and chained reviews — while
+// avoiding a day's accumulation of committed trees. This is a retention decision,
+// not a measurement.
+const staleSnapshotAge = time.Hour
 
 // reapAbandonedSnapshots removes review snapshots left behind by processes that
 // died before their caller-owned cleanup could run — Ctrl+C, an aborted gate, a
@@ -203,7 +202,8 @@ func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 			recolectados++
 		}
 	}
-	return recolectados + reapSharedStore(storeRoot(), now, maxAge)
+	sharedRoot := storeRoot()
+	return recolectados + reapSharedStore(sharedRoot, now, maxAge) + reapSharedStoreCapacity(sharedRoot)
 }
 
 // snapshotPrefix identifies this package's LEGACY per-invocation temporary
