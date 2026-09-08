@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -50,8 +51,6 @@ func main() {
 			segundos = n
 		}
 	}
-	time.Sleep(time.Duration(segundos) * time.Second)
-
 	prompt := ""
 	if posicionP >= 0 && posicionP < len(os.Args)-1 && !strings.HasPrefix(os.Args[posicionP+1], "-") {
 		prompt = os.Args[posicionP+1]
@@ -59,15 +58,32 @@ func main() {
 		prompt = string(datos)
 	}
 
+	home := os.Getenv("HOME")
+	providerState := ""
+	if os.Getenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE") != "" {
+		if home == "" {
+			fmt.Fprint(os.Stderr, "provider state home is empty")
+			os.Exit(1)
+		}
+		providerState = filepath.Join(home, ".provider-state")
+		if err := os.WriteFile(providerState, []byte("provider state\n"), 0o600); err != nil {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
 	if ruta := os.Getenv("VAS_SENTINEL_TEST_CAPTURE"); ruta != "" {
 		dir, _ := os.Getwd()
 		datos, _ := json.Marshal(struct {
-			Args  []string `json:"args"`
-			Dir   string   `json:"dir"`
-			Stdin string   `json:"stdin"`
-		}{Args: os.Args[1:], Dir: dir, Stdin: prompt})
+			Args          []string `json:"args"`
+			Dir           string   `json:"dir"`
+			Stdin         string   `json:"stdin"`
+			Home          string   `json:"home"`
+			ProviderState string   `json:"provider_state"`
+		}{Args: os.Args[1:], Dir: dir, Stdin: prompt, Home: home, ProviderState: providerState})
 		_ = os.WriteFile(ruta, datos, 0600)
 	}
+	time.Sleep(time.Duration(segundos) * time.Second)
 	// VAS_SENTINEL_TEST_FAIL simulates an agent that fails with an error
 	// message on stderr, to check that the adapter captures and propagates
 	// that detail instead of discarding it.

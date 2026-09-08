@@ -520,8 +520,19 @@ func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {
 	return encoded.Bytes(), nil
 }
 
-func reviewEnvironment(configuration, snapshot, model string) []string {
-	isolationRoot := snapshot
+// newReviewEnvironment gives one provider invocation its own writable state
+// directory. The snapshot remains the provider's working directory and read
+// target; HOME and XDG state must never share the published evidence tree.
+func newReviewEnvironment(configuration, model string) ([]string, func(), error) {
+	isolationRoot, err := os.MkdirTemp("", "vas-sentinel-review-provider-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create provider isolation root: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(isolationRoot) }
+	return reviewEnvironment(configuration, isolationRoot, model), cleanup, nil
+}
+
+func reviewEnvironment(configuration, isolationRoot, model string) []string {
 	blocked := map[string]bool{
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
 		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true,
@@ -557,7 +568,7 @@ func reviewEnvironment(configuration, snapshot, model string) []string {
 		// the host's real auth.json directory, giving OpenCode an unscoped
 		// fallback whenever scopeCredentialToProvider below yields nothing
 		// (malformed or non-matching credentials). Pointing it at the empty
-		// snapshot closes that fallback path.
+		// provider root closes that fallback path.
 		"XDG_DATA_HOME="+filepath.Join(isolationRoot, ".local", "share"),
 	)
 	// Isolating HOME strands OpenCode's real auth.json (it lives under the

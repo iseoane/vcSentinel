@@ -98,9 +98,11 @@ func TestPrepareClaudeCommitCommandIsolatesExecution(t *testing.T) {
 }
 
 type agentCapture struct {
-	Args  []string `json:"args"`
-	Dir   string   `json:"dir"`
-	Stdin string   `json:"stdin"`
+	Args          []string `json:"args"`
+	Dir           string   `json:"dir"`
+	Stdin         string   `json:"stdin"`
+	Home          string   `json:"home"`
+	ProviderState string   `json:"provider_state"`
 }
 
 func samePath(a, b string) bool {
