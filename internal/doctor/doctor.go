@@ -113,7 +113,11 @@ type Options struct {
 	CurrentVersion string
 	// CheckUpdates enables the network comparison against the latest
 	// published release. Off by default.
+	// Progress receives one line before each long step (each agent probe,
+	// the update check) so the operator sees motion instead of silence.
+	// Nil is the default: callers that stream nothing stay safe.
 	CheckUpdates bool
+	Progress     func(string)
 	Env          Env
 }
 
@@ -172,6 +176,7 @@ func Run(worktreePath string, opts Options) Report {
 	}
 	checkHook(worktreePath, opts, add)
 	if opts.CheckUpdates {
+		opts.announce("checking for updates…")
 		checkUpdates(opts, add)
 	}
 	return rep
@@ -293,6 +298,14 @@ func checkUpdates(opts Options, add func(string, string, bool, string, string)) 
 		add("updates", "latest_release", true, fmt.Sprintf("%s is running, newer than published %s", opts.CurrentVersion, latest), "")
 	default:
 		add("updates", "latest_release", true, fmt.Sprintf("%s matches published %s", opts.CurrentVersion, latest), "")
+	}
+}
+
+// announce reports one progress line when the caller wired a callback. The
+// announcement precedes the blocking call it describes, never trails it.
+func (o Options) announce(msg string) {
+	if o.Progress != nil {
+		o.Progress(msg)
 	}
 }
 

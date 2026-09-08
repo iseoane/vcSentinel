@@ -220,22 +220,29 @@ func prReviewJSONOutput(base string, res *review.BranchResult) map[string]any {
 
 // branchReviewOptions assembles the pr review branch options; the assembler
 // lives in internal/app/pr and receives the package-main collaborators through
-// wiringPr.
-func branchReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags flagsPrReview, factory review.ReviewerFactory) (review.BranchOptions, error) {
-	return pr.BranchPrReviewOptions(cfg, verifier, worktree, flagsPrReviewToPr(flags), factory, wiringPr())
+// wiringPr. progress is the injected spinner channel: the cmd caller routes it
+// (payload writer normally, stderr in --json mode).
+func branchReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags flagsPrReview, factory review.ReviewerFactory, progress io.Writer) (review.BranchOptions, error) {
+	return pr.BranchPrReviewOptions(cfg, verifier, worktree, flagsPrReviewToPr(flags), factory, wiringPr(), progress)
 }
 
 // runPrReview analyzes the branch against the base and prints the audit
 // matrix, the summary and the single/chain decision. It is a dry-run: nothing
 // is published. It records the pr-review event when done; the flow lives in
-// internal/app/pr.
+// internal/app/pr. It owns the JSON-safe routing here: the payload writer
+// carries the human motion (⏳ spinners, warnings) normally, and stderr
+// carries it in --json mode so byte 0 of stdout stays '{'.
 func runPrReview(worktree string, args []string) {
 	flags, err := parsePrReviewFlags(args)
 	if err != nil {
 		fmt.Printf("? %v\n", err)
 		os.Exit(1)
 	}
-	pr.RunPrReview(worktree, flagsPrReviewToPr(flags), wiringPr())
+	progress := io.Writer(os.Stdout)
+	if flags.jsonOut {
+		progress = os.Stderr
+	}
+	pr.RunPrReview(os.Stdout, progress, worktree, flagsPrReviewToPr(flags), wiringPr())
 }
 
 func semanticAdvisory(records []review.Record) (warn bool, blockers []review.ReviewFinding) {

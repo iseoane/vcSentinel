@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/app/pr"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
@@ -1776,7 +1778,7 @@ func TestBranchReviewOptionsWiresTheBlobStore(t *testing.T) {
 	// itself: outside a repository the caller only warns, so the options must
 	// still come back fully usable. Ordering it this way also keeps these
 	// assertions out of reach of tempGitRepo's skip when git is absent.
-	outside, storeWarning := branchReviewOptions(config.Config{}, nil, t.TempDir(), flagsPrReview{parent: "layer-a"}, nil)
+	outside, storeWarning := branchReviewOptions(config.Config{}, nil, t.TempDir(), flagsPrReview{parent: "layer-a"}, nil, os.Stdout)
 	if storeWarning == nil {
 		t.Error("expected an error outside a repository so the caller can warn")
 	}
@@ -1797,7 +1799,7 @@ func TestBranchReviewOptionsWiresTheBlobStore(t *testing.T) {
 	}
 
 	repo := tempGitRepo(t)
-	options, storeWarning := branchReviewOptions(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil)
+	options, storeWarning := branchReviewOptions(config.Config{}, nil, repo, flagsPrReview{parent: "layer-a"}, nil, os.Stdout)
 	if storeWarning != nil {
 		t.Fatalf("branchReviewOptions inside a real repository: %v", storeWarning)
 	}
@@ -1847,4 +1849,309 @@ func TestRealPrCreateDepsWiresTheBlobStore(t *testing.T) {
 	if !reflect.DeepEqual(fromDeps, direct) {
 		t.Errorf("deps.blobStore resolved %v while resolveBlobStore resolved %v: the production seam is not wired to resolveBlobStore", fromDeps, direct)
 	}
+}
+
+// captureStreams redirects os.Stdout and os.Stderr during f and returns what
+// each stream received. The restorations go in t.Cleanup: a t.Fatalf/panic
+// inside f must not leave the process writing into closed pipes.
+func captureStreams(t *testing.T, f func()) (stdout, stderr string) {
+	t.Helper()
+	originalOut, originalErr := os.Stdout, os.Stderr
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout, os.Stderr = outW, errW
+	t.Cleanup(func() { os.Stdout, os.Stderr = originalOut, originalErr })
+	f()
+	outW.Close()
+	errW.Close()
+	outBytes, err := io.ReadAll(outR)
+	if err != nil {
+		t.Fatalf("reading the stdout pipe: %v", err)
+	}
+	errBytes, err := io.ReadAll(errR)
+	if err != nil {
+		t.Fatalf("reading the stderr pipe: %v", err)
+	}
+	return string(outBytes), string(errBytes)
+}
+
+// TestBranchPrReviewOptionsProgressFollowsInjectedWriter covers the injected
+// progress channel of the pr review options: the ⏳ spinner callbacks write to
+// the writer the caller passes, never to a process-global snapshot taken when
+// the options were built. The JSON-safe routing itself is decided at the
+// injection site (the cmd caller passes its payload writer normally and
+// stderr in --json mode) and is pinned by TestPrReviewJSONStdoutStartsAtJSON.
+func TestBranchPrReviewOptionsProgressFollowsInjectedWriter(t *testing.T) {
+	wiring := pr.Wiring{
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		ShortSHA: func(sha string) string { return sha },
+	}
+	var progress bytes.Buffer
+	options, _ := pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
+		pr.FlagsPrReview{JsonOut: true}, nil, wiring, &progress)
+	if options.OnCommit == nil || options.OnDimension == nil {
+		t.Fatal("BranchPrReviewOptions must wire the progress callbacks")
+	}
+	options.OnCommit(0, 1, "abc1234abcd")
+	options.OnDimension("logic")
+	if got := progress.String(); !strings.Contains(got, "⏳ [1/1] Auditing abc1234abcd") || !strings.Contains(got, "  ⏳ logic …") {
+		t.Errorf("injected progress writer misses the spinner lines:\n%q", got)
+	}
+}
+
+// TestPrReviewJSONStdoutStartsAtJSON is the byte-0 regression of the pr
+// review --json contract: the whole flow runs through RunPrReviewWith with a
+// stubbed fast path (the branch analysis fires the same progress callbacks
+// the real one does, then returns a fixture result; no agent ever runs), and
+// the stdout the command produces must START at the JSON document — the ⏳
+// progress lines ride stderr. A regression that lets one progress byte
+// precede the document fails here before any automation chokes on it.
+func TestPrReviewJSONStdoutStartsAtJSON(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+			if opts.OnCommit != nil {
+				opts.OnCommit(0, 1, "abc1234abcd")
+			}
+			if opts.OnDimension != nil {
+				opts.OnDimension("logic")
+			}
+			return &review.BranchResult{
+				Branch:   "feat/json-contract",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: pr.PrReviewEventDetail,
+	}
+	stdout, stderr := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("byte 0 of --json stdout = %q, want '{'; stdout:\n%s", firstBytes(stdout), stdout)
+	}
+	if strings.Contains(stdout, "⏳") {
+		t.Errorf("stdout received spinner bytes before the JSON document:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "⏳ [1/1] Auditing abc1234abcd") || !strings.Contains(stderr, "  ⏳ logic …") {
+		t.Errorf("stderr misses the progress lines in --json mode:\n%s", stderr)
+	}
+}
+
+// TestPrReviewJSONRoutesWarningsOffStdout extends the byte-0 contract to the
+// human warnings of the flow: in --json mode both the blob-store warning
+// (storeWarning) and the event-record warning are motion, not payload, and
+// must ride the same progress channel as the spinners (stderr), so the JSON
+// document still opens stdout.
+//
+// The harness splits the two git probes the way a foreign worktree with an
+// ambient GIT_DIR does: GetGitDirFrom honors the ambient GIT_DIR while the
+// sanitized common-dir probe inside ResolveBlobStore fails, which is exactly
+// the storeWarning path; the failing RecordEvent seam is the event-record
+// warning path.
+func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
+	repo := tempGitRepo(t)
+	ambient, err := exec.Command("git", "-C", repo, "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		t.Fatalf("rev-parse --absolute-git-dir: %v", err)
+	}
+	t.Setenv("GIT_DIR", strings.TrimSpace(string(ambient)))
+	worktree := t.TempDir()
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
+			return &review.BranchResult{
+				Branch:   "feat/warning-routing",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
+			return errors.New("event store locked")
+		},
+		EventDetail: pr.PrReviewEventDetail,
+	}
+	stdout, stderr := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("byte 0 of --json stdout = %q, want '{'; stdout:\n%s", firstBytes(stdout), stdout)
+	}
+	if strings.Contains(stdout, "⚠️") || strings.Contains(stdout, "? Warning") {
+		t.Errorf("stdout received warning bytes that precede the JSON document:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "⚠️  Warning: could not resolve the git-common-dir") {
+		t.Errorf("stderr misses the blob-store warning:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "? Warning: could not record the event: event store locked") {
+		t.Errorf("stderr misses the event-record warning:\n%s", stderr)
+	}
+}
+
+// TestPrReviewJSONRoutesEventDetailWarningOffStdout completes the JSON-safe
+// routing contract: the "could not build the event detail" warning is human
+// motion too, so in --json mode it must ride the injected progress channel
+// (stderr) instead of polluting the stdout the JSON document opens.
+// PrReviewEventDetail never fails on a real branch result, so the failing
+// EventDetail dep seam is the deterministic way to drive the branch — no real
+// git state or agent is involved.
+func TestPrReviewJSONRoutesEventDetailWarningOffStdout(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
+			return &review.BranchResult{
+				Branch:   "feat/event-detail-routing",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: func(string, *review.BranchResult, bool) (ops.EventDetail, error) {
+			return nil, errors.New("detail schema rejected")
+		},
+	}
+	stdout, stderr := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.HasPrefix(stdout, "{") {
+		t.Fatalf("byte 0 of --json stdout = %q, want '{'; stdout:\n%s", firstBytes(stdout), stdout)
+	}
+	if strings.Contains(stdout, "? Warning: could not build the event detail") {
+		t.Errorf("stdout received the event-detail warning:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "? Warning: could not build the event detail: detail schema rejected") {
+		t.Errorf("stderr misses the event-detail warning:\n%s", stderr)
+	}
+}
+
+// TestPrReviewNonJSONRoutesProgressThroughPayloadWriter pins the non-JSON half
+// of the routing contract that now lives at the cmd call site: outside --json
+// the caller passes the payload writer itself as progress (progress == w), so
+// the ⏳ spinner lines and the human warnings share the stream the report is
+// printed on and stderr stays silent. The failing RecordEvent seam fires the
+// warning deterministically, with no real agent in the loop.
+func TestPrReviewNonJSONRoutesProgressThroughPayloadWriter(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+			if opts.OnCommit != nil {
+				opts.OnCommit(0, 1, "abc1234abcd")
+			}
+			if opts.OnDimension != nil {
+				opts.OnDimension("logic")
+			}
+			return &review.BranchResult{
+				Branch:   "feat/non-json-routing",
+				SHAs:     []string{"abc1234abcd"},
+				Decision: "single",
+				Records:  []review.Record{},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
+			return errors.New("event store locked")
+		},
+		EventDetail: pr.PrReviewEventDetail,
+	}
+	stdout, stderr := captureStreams(t, func() {
+		// The cmd wiring outside --json: the payload writer carries the
+		// human motion too (progress == w).
+		progress := io.Writer(os.Stdout)
+		if code := pr.RunPrReviewWith(os.Stdout, progress, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0", code)
+		}
+	})
+	if !strings.Contains(stdout, "⏳ [1/1] Auditing abc1234abcd") {
+		t.Errorf("non-JSON stdout misses the spinner progress:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "? Warning: could not record the event: event store locked") {
+		t.Errorf("non-JSON stdout misses the event-record warning:\n%s", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr must stay silent outside --json, got:\n%s", stderr)
+	}
+}
+
+// firstBytes reports the first bytes of s for failure messages, tolerating
+// empty output.
+func firstBytes(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }

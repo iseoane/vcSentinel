@@ -3,6 +3,7 @@ package pr
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -92,15 +93,20 @@ func DecisionText(decision string, volume int) string {
 
 // BranchPrReviewOptions assembles the branch-analysis options pr review hands to
 // AnalyzeBranch. It is a separate function, not an inline literal, because
-// RunPrReview calls os.Exit and cannot be driven from a test: the wiring it
-// carries — notably the blob store that keeps a base rebase cheap (F8 criterion
-// 2) — would otherwise be deletable without failing anything.
+// the wiring it carries — notably the blob store that keeps a base rebase
+// cheap (F8 criterion 2) — would otherwise be deletable without failing
+// anything.
 //
 // The named results say what the signature alone would get wrong: storeWarning is
 // ONLY the blob-store resolution failure, never a reason to abort. Reuse is
 // optional, so options comes back fully usable with a nil Store and the caller
 // warns through its own stream instead of returning.
-func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags FlagsPrReview, factory review.ReviewerFactory, wiring Wiring) (options review.BranchOptions, storeWarning error) {
+//
+// progress is the injected human-motion channel for the ⏳ spinner callbacks:
+// the caller owns the JSON-safe routing (the cmd caller passes its payload
+// writer normally and stderr in --json mode), so this assembler never reads
+// the process streams itself.
+func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree string, flags FlagsPrReview, factory review.ReviewerFactory, wiring Wiring, progress io.Writer) (options review.BranchOptions, storeWarning error) {
 	base := flags.Base
 	if base == "" {
 		base = "main"
@@ -119,10 +125,10 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 		DeterministicFindingsFactory: SecretFindingsFactory(),
 		ModelVerifier:                verifier,
 		OnCommit: func(idx, total int, sha string) {
-			fmt.Printf("⏳ [%d/%d] Auditing %s\n", idx+1, total, wiring.ShortSHA(sha))
+			fmt.Fprintf(progress, "⏳ [%d/%d] Auditing %s\n", idx+1, total, wiring.ShortSHA(sha))
 		},
 		OnDimension: func(dim string) {
-			fmt.Printf("  ⏳ %s …\n", dim)
+			fmt.Fprintf(progress, "  ⏳ %s …\n", dim)
 		},
 		OwnDiff:   stackOwnDiff(flags.Parent, false),
 		NetReview: &review.NetReviewOptions{Intention: HonestNetIntention, Validation: "pr review performs no deterministic validation"},
@@ -146,23 +152,61 @@ func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, lo
 	return options, nil
 }
 
+// DepsPrReview carries the seams RunPrReviewWith needs to drive the whole
+// flow without real git or agents: the branch analysis, the event recorder
+// and the event detail builder. Production resolves all three in
+// realPrReviewDeps; AnalyzeBranch receives the ledger RunPrReviewWith
+// resolved BEFORE the options so the ledger-before-options failure order
+// (see the comment below) is preserved. EventDetail exists because
+// PrReviewEventDetail never fails on a real branch result: the seam is the
+// only deterministic way to drive the "could not build the event detail"
+// warning from a test.
+type DepsPrReview struct {
+	AnalyzeBranch func(ledger *review.Ledger, options review.BranchOptions) (*review.BranchResult, error)
+	RecordEvent   func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
+	EventDetail   func(base string, res *review.BranchResult, ci bool) (ops.EventDetail, error)
+}
+
+func realPrReviewDeps() DepsPrReview {
+	return DepsPrReview{
+		AnalyzeBranch: review.AnalyzeBranch,
+		RecordEvent:   ops.RecordEvent,
+		EventDetail:   PrReviewEventDetail,
+	}
+}
+
 // RunPrReview analyzes the branch against the base and shows the audit
 // matrix, the summary and the single/chain decision. It is dry-run: nothing
 // is published. It records the pr-review event when done. cmd/sentinel parses
-// the flags and exits on a parse error before dispatching here.
-func RunPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
+// the flags and exits on a parse error before dispatching here, and it owns
+// the JSON-safe routing: it passes the payload writer for both channels
+// normally, and stderr for the human motion in --json mode.
+func RunPrReview(w, progress io.Writer, worktree string, flags FlagsPrReview, wiring Wiring) {
+	os.Exit(RunPrReviewWith(w, progress, worktree, flags, wiring, realPrReviewDeps()))
+}
+
+// RunPrReviewWith is the injectable core of RunPrReview (same pattern as
+// RunPrCreateWith): it returns the exit code without ending the process, so
+// the whole --json flow can be driven from a test with stubbed seams.
+//
+// w carries the payload (the terminal report or the --json document);
+// progress carries the human motion (⏳ spinners, blob-store, event-detail
+// and event-record warnings). The caller owns the JSON-safe routing — cmd
+// passes w itself normally and stderr in --json mode — so this function
+// never reads the process streams.
+func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview, wiring Wiring, deps DepsPrReview) int {
 	// STRICT config (orchestrator finding, outside the record's original
 	// text): an unknown key in the yml must cut here with an explicit error,
 	// not silently continue with the default config.
 	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 	gitDir, err := git.GetGitDirFrom(worktree)
 	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 
 	modelVerifier := wiring.NewModelVerifier(worktree)
@@ -186,67 +230,73 @@ func RunPrReview(worktree string, flags FlagsPrReview, wiring Wiring) {
 	// would continue when it could not.
 	ledger, err := wiring.SharedReviewLedger(worktree)
 	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
-	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring)
+	// The ⏳ progress lines and the human warnings (blob-store reuse, event
+	// detail and event recording) are human motion, not payload: they ride
+	// the progress channel the caller injected, so byte 0 of --json stdout
+	// stays '{' without this function consulting flags.JsonOut or the
+	// process streams.
+	options, err := BranchPrReviewOptions(cfg, modelVerifier, worktree, flags, factory, wiring, progress)
 	if err != nil {
-		fmt.Printf("⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
+		fmt.Fprintf(progress, "⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
 	}
 	// Standing human answers carry into the net audit (FU-6 unit A). A
 	// corrupt log fails closed rather than auditing as if no human answered.
 	var loadErr error
 	options, loadErr = ApplyPrReviewDispositions(options, worktree, wiring.LoadDispositions)
 	if loadErr != nil {
-		fmt.Printf("? %v\n", loadErr)
-		os.Exit(1)
+		fmt.Fprintf(w, "? %v\n", loadErr)
+		return 1
 	}
 	base := options.Base
-	res, err := review.AnalyzeBranch(ledger, options)
+	res, err := deps.AnalyzeBranch(ledger, options)
 	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 
-	detail, err := PrReviewEventDetail(base, res, git.DetectCI(worktree))
+	detail, err := deps.EventDetail(base, res, git.DetectCI(worktree))
 	if err != nil {
-		fmt.Printf("? Warning: could not build the event detail: %v\n", err)
+		fmt.Fprintf(progress, "? Warning: could not build the event detail: %v\n", err)
 	}
-	if err := ops.RecordEvent(gitDir, "pr-review", 0, res.SHAs, detail, worktree); err != nil {
-		fmt.Printf("? Warning: could not record the event: %v\n", err)
+	if err := deps.RecordEvent(gitDir, "pr-review", 0, res.SHAs, detail, worktree); err != nil {
+		fmt.Fprintf(progress, "? Warning: could not record the event: %v\n", err)
 	}
 
 	if flags.JsonOut {
 		output := PrReviewJSONOutput(base, res)
 		data, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
-			fmt.Printf("? %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
 		}
-		fmt.Println(string(data))
-		return
+		fmt.Fprintln(w, string(data))
+		return 0
 	}
 
 	if res.Net != nil { // T8.4/A: the authoritative verdict leads the report
-		fmt.Println(review.VerdictLine(res))
+		fmt.Fprintln(w, review.VerdictLine(res))
 	}
 	if len(res.Records) > 0 {
-		fmt.Println("OWN (per-commit audit)")
-		fmt.Println(review.RenderMatrix(res.Records))
+		fmt.Fprintln(w, "OWN (per-commit audit)")
+		fmt.Fprintln(w, review.RenderMatrix(res.Records))
 		if res.Net == nil { // historical summary only without a net authority
-			fmt.Println(review.RenderSummary(res.Records))
+			fmt.Fprintln(w, review.RenderSummary(res.Records))
 		}
-		fmt.Println(DecisionText(res.Decision, res.Volume))
+		fmt.Fprintln(w, DecisionText(res.Decision, res.Volume))
 	}
-	fmt.Print(review.InheritedSection(res.Inherited))
+	fmt.Fprint(w, review.InheritedSection(res.Inherited))
 	// Ticket 07: admission failures are first-class evidence, so the terminal
 	// report never lets them pass as generic infrastructure unavailability.
 	if admission, _ := unavailableCount(res.Records); admission > 0 {
-		fmt.Printf("? %d unavailable dimension record(s) are ADMISSION failures (evidence rejected before verdicts), not infrastructure outages.\n", admission)
+		fmt.Fprintf(w, "? %d unavailable dimension record(s) are ADMISSION failures (evidence rejected before verdicts), not infrastructure outages.\n", admission)
 	}
 	if res.OverviewError != "" {
-		fmt.Printf("? Warning: the overview could not be obtained (%s); the decision was made by volume.\n", res.OverviewError)
+		fmt.Fprintf(w, "? Warning: the overview could not be obtained (%s); the decision was made by volume.\n", res.OverviewError)
 	}
+	return 0
 }
 
 // PrReviewJSONOutput builds the public --json result shape of pr review,

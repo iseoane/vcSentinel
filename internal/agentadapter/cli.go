@@ -642,15 +642,18 @@ func scopeCredentialToProvider(raw, model string) string {
 // promptCommand builds the invocation arguments based on the binary and
 // whether the prompt travels via stdin: opencode uses the "run" subcommand and
 // claude "-p", both reading the prompt from stdin (no length limit); any other
-// binary receives the prompt as the "-p" argument (previous behavior). When a
-// model is configured, "--model <model>" is appended, matching the model-flag
-// part of the review invocations: environment variables (OPENCODE_MODEL,
-// CLAUDE_CODE_MODEL) alone are not enough for the binary to resolve the
-// desired model. The identity probe keeps the default reasoning effort;
-// effort propagation is out of scope for the probe.
+// binary receives the prompt as the "-p" argument (previous behavior). The
+// opencode invocation carries --pure (no external plugins), matching the
+// sibling review and commit-message invocations, and never --format json:
+// runCommandWithTimeout parses this output as trimmed plain text, not as an
+// event stream. When a model is configured, "--model <model>" is appended,
+// matching the model-flag part of the review invocations: environment
+// variables (OPENCODE_MODEL, CLAUDE_CODE_MODEL) alone are not enough for the
+// binary to resolve the desired model. The identity probe keeps the default
+// reasoning effort; effort propagation is out of scope for the probe.
 func (c *CLIAdapter) promptCommand(prompt string) ([]string, bool) {
 	if c.isOpenCode() {
-		args := []string{"run"}
+		args := []string{"run", "--pure"}
 		if c.Config.Model != "" {
 			args = append(args, "--model", c.Config.Model)
 		}

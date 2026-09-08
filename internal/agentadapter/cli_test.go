@@ -510,23 +510,27 @@ func TestRunCommandUnknownBinaryUsesArgument(t *testing.T) {
 
 // TestPromptCommandDecidesStdin verifies the transport decision without
 // running any binary: opencode/claude use stdin; anything else passes the
-// prompt as the "-p" argument.
+// prompt as the "-p" argument. The opencode invocation carries --pure like
+// the sibling review and title invocations (no external plugins) and never
+// --format json: this path parses trimmed plain text, not an event stream.
 func TestPromptCommandDecidesStdin(t *testing.T) {
 	tc := []struct {
 		name     string
 		binary   string
+		model    string
 		prompt   string
 		wantArgs []string
 		viaStdin bool
 	}{
-		{name: "opencode uses run and stdin", binary: "opencode", wantArgs: []string{"run"}, viaStdin: true},
-		{name: "opencode with extension is detected", binary: "opencode.exe", wantArgs: []string{"run"}, viaStdin: true},
+		{name: "opencode uses run and stdin", binary: "opencode", wantArgs: []string{"run", "--pure"}, viaStdin: true},
+		{name: "opencode with extension is detected", binary: "opencode.exe", wantArgs: []string{"run", "--pure"}, viaStdin: true},
+		{name: "opencode with a configured model", binary: "opencode", model: "deepseek-v4-flash-free", wantArgs: []string{"run", "--pure", "--model", "deepseek-v4-flash-free"}, viaStdin: true},
 		{name: "claude uses -p and stdin", binary: "claude", wantArgs: []string{"-p"}, viaStdin: true},
 		{name: "unknown uses -p with the prompt as argument", binary: "sleeper", prompt: "prompt de prueba", wantArgs: []string{"-p", "prompt de prueba"}, viaStdin: false},
 	}
 	for _, tc := range tc {
 		t.Run(tc.name, func(t *testing.T) {
-			adapter := CLIAdapter{BinaryName: tc.binary}
+			adapter := CLIAdapter{BinaryName: tc.binary, Config: config.AgentConfig{Model: tc.model}}
 			args, viaStdin := adapter.promptCommand(tc.prompt)
 			if !reflect.DeepEqual(args, tc.wantArgs) {
 				t.Errorf("promptCommand(%q) args = %v, want %v", tc.prompt, args, tc.wantArgs)
