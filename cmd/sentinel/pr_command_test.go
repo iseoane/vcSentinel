@@ -688,6 +688,11 @@ func TestPublishPRFallbackUnreadableFile(t *testing.T) {
 // TestPublishPRWithUsesGhWithExactArguments: with gh available, gh is used
 // with the contract arguments (pr create --draft -F) and the worktree as cwd;
 // the URL comes from gh's output, no clipboard.
+// --fill-first is part of the exact argument list on purpose: gh prompts for
+// the title when none is given, so without it `gh pr create` fails outside a
+// TTY with "must provide `--title` and `--body`" and this command cannot
+// publish from a script or an agent. gh takes only the title from the first
+// commit; the body still comes from -F, so the template is not displaced.
 func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "template.md")
 	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
@@ -716,7 +721,7 @@ func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	if seenWorktree != "the-worktree" {
 		t.Errorf("gh must run with the worktree as cwd, got %q", seenWorktree)
 	}
-	expected := []string{"pr", "create", "--draft", "-F", path}
+	expected := []string{"pr", "create", "--draft", "--fill-first", "-F", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("gh arguments = %v, expected %v", seenArgs, expected)
 	}
@@ -761,7 +766,7 @@ func TestPublishPRWithExplicitBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fake gh should not fail: %v", err)
 	}
-	expected := []string{"pr", "create", "--draft", "--base", "develop", "-F", path}
+	expected := []string{"pr", "create", "--draft", "--fill-first", "--base", "develop", "-F", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("with --base the gh arguments = %v, expected %v", seenArgs, expected)
 	}
@@ -786,7 +791,7 @@ func TestPublishPRWithEmptyBaseAddsNoFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fake gh should not fail: %v", err)
 	}
-	expected := []string{"pr", "create", "--draft", "-F", path}
+	expected := []string{"pr", "create", "--draft", "--fill-first", "-F", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("without --base the gh arguments = %v, expected %v", seenArgs, expected)
 	}
