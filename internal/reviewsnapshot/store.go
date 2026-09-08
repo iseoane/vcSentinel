@@ -100,18 +100,6 @@ func isCommittedRegularFile(mode, objectType string) bool {
 	return objectType == "blob" && strings.HasPrefix(mode, "100")
 }
 
-// publishedPerm maps a committed git regular-file mode to the immutable
-// on-disk permission the store publishes: owner read-only (0400), plus owner
-// execute exactly for git's 100755 entries (0500). It is the single source
-// of that mapping, used both to tighten files at publication and to validate
-// them at lease time.
-func publishedPerm(gitMode string) fs.FileMode {
-	if gitMode == "100755" {
-		return 0o500
-	}
-	return 0o400
-}
-
 // manifestEntry is one committed regular file's expected on-disk evidence:
 // its published permission and its byte size. Contents are deliberately not
 // hashed — lease validation compares structure and metadata only, which is
@@ -125,8 +113,8 @@ type manifestEntry struct {
 // writeManifest walks the finished staging tree once and, in that single
 // pass, tightens every regular file to its published permission and records
 // the file's committed mode and size. The directory tree keeps its
-// owner-traversable 0700 directories so the snapshot remains a usable
-// working directory for the reviewer process. Records are NUL-terminated
+// owner-traversable 0700 directories so the snapshot remains a usable working
+// directory for the reviewer process. Records are NUL-terminated
 // "<git-mode> <size> <path>" lines, so any committed path — spaces, tabs,
 // newlines included — round-trips losslessly.
 func writeManifest(staging, manifest string, modes map[string]string) error {
@@ -187,7 +175,11 @@ func readManifest(manifest string) (map[string]manifestEntry, error) {
 		if err != nil || size < 0 {
 			return nil, fmt.Errorf("malformed readiness manifest record %q", record)
 		}
-		entries[string(path)] = manifestEntry{perm: publishedPerm(string(mode)), size: size}
+		gitMode := string(mode)
+		if gitMode != "100644" && gitMode != "100755" {
+			return nil, fmt.Errorf("malformed readiness manifest record %q", record)
+		}
+		entries[string(path)] = manifestEntry{perm: publishedPerm(gitMode), size: size}
 	}
 	return entries, nil
 }
@@ -252,7 +244,7 @@ func publishedSnapshotUsable(dir, marker, manifest string) bool {
 		if info.Size() != want.size {
 			return fmt.Errorf("size drift for %q in published snapshot", rel)
 		}
-		if info.Mode().Perm() != want.perm {
+		if !publishedPermMatches(info.Mode().Perm(), want.perm) {
 			return fmt.Errorf("mode drift for %q in published snapshot", rel)
 		}
 		delete(expected, rel)
@@ -480,6 +472,10 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		}
 		return err
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		_ = os.RemoveAll(staging)
+		return fmt.Errorf("review snapshot aborted: %w", ctxErr)
+	}
 	// Tighten the staged evidence to non-writable files and record exactly
 	// what the tree must contain, then publish the readiness marker BEFORE
 	// the rename: once the directory appears under its SHA name it must
@@ -494,6 +490,12 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		_ = os.RemoveAll(staging)
 		_ = os.Remove(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		_ = os.RemoveAll(staging)
+		_ = os.Remove(marker)
+		_ = os.Remove(manifest)
+		return fmt.Errorf("review snapshot aborted: %w", ctxErr)
 	}
 	if err := os.Rename(staging, published); err != nil {
 		if _, statErr := os.Stat(published); statErr == nil {

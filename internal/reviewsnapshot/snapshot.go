@@ -428,6 +428,9 @@ func gitTreeEntries(ctx context.Context, worktree, sha string) ([]treeEntry, err
 // field 0 is the blob OID, never a mode — so committed modes travel to the
 // publisher from gitTreeEntries instead.
 func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(paths) == 0 {
 		return nil
 	}

@@ -634,6 +634,36 @@ func TestCreateAbortsDuringMaterializationAndLeavesNoSnapshot(t *testing.T) {
 	}
 }
 
+func TestCreateAbortsAfterMaterializationAndLeavesNothingPublished(t *testing.T) {
+	root, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	// gitInit materializes three regular, safe paths. The first three Err calls
+	// happen before materialization, the next four cover materializeTree entry
+	// and its three files, and the eighth must be the post-materialization
+	// publication guard.
+	cancelCtx := newCountingCancelContext(8)
+	_, _, cleanup, err := Create(cancelCtx, root, sha, []string{"audited.go"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want errors.Is(err, context.Canceled)", err)
+	}
+	if cleanup != nil {
+		t.Fatalf("cleanup = %p, want nil", cleanup)
+	}
+	assertStoreHasNoPublishedOrStaging(t, "cancellation after materialization")
+}
+
+func TestMaterializeTreeHonorsEmptyPathCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := materializeTree(ctx, t.TempDir(), strings.Repeat("a", 40), t.TempDir(), nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("materializeTree error = %v, want errors.Is(err, context.Canceled)", err)
+	}
+}
+
 // TestMaterializeTreeSurfacesBatchProcessStderr pins the Wait diagnostics:
 // when the started git batch process serves every response and then exits
 // non-zero with stderr output, the returned error must carry that stderr.

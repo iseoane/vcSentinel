@@ -661,6 +661,95 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	secondRelease()
 }
 
+// TestCreatePublishesOwnerWritableDirectories preserves a usable provider
+// working directory: reviewEnvironment assigns HOME and XDG paths beneath the
+// snapshot, so its directories cannot be sealed until provider isolation moves
+// outside the evidence tree.
+func TestCreatePublishesOwnerWritableDirectories(t *testing.T) {
+	root, _ := gitInit(t)
+	sha := gitCommitNestedFile(t, root)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	snapshot, _, release, err := Create(context.Background(), root, sha, []string{"nested/context.go"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, dir := range []string{snapshot, filepath.Join(snapshot, "nested")} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if info.Mode().Perm()&0o200 == 0 {
+			t.Fatalf("published directory %s is not owner-writable: mode %04o", dir, info.Mode().Perm())
+		}
+	}
+
+	release()
+}
+
+func TestLeaseRejectsPublishedSnapshotWithInvalidManifestMode(t *testing.T) {
+	root, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	_, _, release, err := Create(context.Background(), root, sha, []string{"audited.go"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	release()
+
+	manifest := manifestPath(storeRoot(), sha)
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	corrupted := strings.Replace(string(data), "100644 ", "100600 ", 1)
+	if corrupted == string(data) {
+		t.Fatal("fixture manifest has no regular-file mode to corrupt")
+	}
+	if err := os.WriteFile(manifest, []byte(corrupted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lease, err := leasePublishedSnapshot(sha)
+	if err != nil {
+		t.Fatalf("leasePublishedSnapshot: %v", err)
+	}
+	if lease != nil {
+		lease.release()
+		t.Fatal("leasePublishedSnapshot accepted a manifest with an invalid Git mode")
+	}
+}
+
+func gitCommitNestedFile(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "nested", "context.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package nested\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", root, "add", "nested/context.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add nested/context.go: %v\n%s", err, output)
+	}
+	cmd = exec.Command("git", "-C", root, "commit", "-qm", "nested")
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit nested/context.go: %v\n%s", err, output)
+	}
+	output, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(output))
+}
+
 // TestReaperRechecksStalenessUnderLock pins the reaper's TOCTOU guard: the
 // staleness verdict is re-checked against each target AFTER the exclusive
 // lock is held, so a fresh publication is never deleted even when an older
