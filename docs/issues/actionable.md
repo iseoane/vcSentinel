@@ -75,11 +75,14 @@ cost it creates is already measured.
   time), nor in the worktree's per-checkout ledger, which holds only an
   `events.jsonl`. `status` does not list it, and it was not findable by SHA in
   the durable store either.
-- Evidence of the cost: with no record, `pr review` counted that same commit
-  as unaudited and audited it again, so one branch of two commits issued ten
-  provider invocations where five would have done. The findings themselves
-  survive only in terminal output, so a gate `PASS` leaves nothing auditable
-  about what its review warned.
+- Evidence of the cost, corrected after actually running the flow: `pr review`
+  does NOT re-audit those commits. It audits the net diff and REPORTS the
+  commits lacking a record, which is the behaviour commit 6a43b4a deliberately
+  introduced. So the cost is not a duplicated audit; it is that the gate's
+  warnings survive only in terminal output, and that `pr review` then labels a
+  commit the gate did review as having no record and recommends auditing it by
+  name. An operator who follows that recommendation pays for the same audit
+  twice, and one who does not is left with no record of what the gate warned.
 - Note it may be intended: `AGENTS.md` names `review`, `status` and `pr` as
   the commands that anchor the shared ledger, and pointedly not `gate`. The
   gate is a lifecycle gate rather than an audit of record.
