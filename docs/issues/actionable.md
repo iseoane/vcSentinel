@@ -135,8 +135,30 @@ cheap half is separable from its expensive half.
   inspected, plus gentle-ai's documented contract. Its source was not read, so
   how it renders findings, and whether it supports per-finding human
   disposition comparable to `refute`/`accept`/`reopen`, is UNVERIFIED. Confirm
-  before copying that part. A second candidate, no-mistakes, was not on this
-  machine and was not examined at all.
+  before copying that part.
+- Second reference design, no-mistakes (`kunchenguid/no-mistakes`, Go), read
+  from source 2026-09-08. It keeps evidence in git itself rather than beside
+  it. `internal/custody/refs.go` anchors a terminal run at
+  `refs/no-mistakes/recover/<runID>` through
+  `update-ref --no-deref <ref> <head> <zeros>` — a create-only
+  compare-and-swap against the null OID, idempotent when the commit matches
+  and failing closed on a conflicting or symbolic ref, so evidence is never
+  silently replaced. `internal/evidence/publish.go` publishes a run's evidence
+  directory to an ORPHAN branch pushed to the same remote as the code branch,
+  fork-aware so a PR's evidence lands in the fork holding the head, under a
+  directory prefix plus slugged branch segments, and bounded at 500 files,
+  256 MB total and 64 MB per file on the stated grounds that evidence is
+  agent-produced and a runaway recording must fail the publish closed rather
+  than push gigabytes.
+- What each reference answers, since they are complementary rather than
+  competing: gentle-ai answers the KEYING question above, and no-mistakes
+  answers durability and shareability — its evidence travels with the pull
+  request, so the human reviewing it sees what the tooling found, and it is
+  maintainable in the sense this item needs, prunable as refs and branches and
+  reclaimable by `git gc`. The trade-off to state before copying it: that
+  evidence is PUSHED, hence visible to anyone who can read the repository,
+  whereas this project's ledger is deliberately machine-local under the git
+  common directory. Choosing one is choosing who the audit trail is for.
 - Closing, cheap half first: make the gate's per-commit review persist a
   record, or record a determination that it deliberately keeps none. Then
   decide the range half by MEASUREMENT rather than preference — compare the
