@@ -421,7 +421,7 @@ func TestBridgeRevisionRunsUnderSnapshotDiscipline(t *testing.T) {
 		t.Errorf("--cwd %q is not the published snapshot for the audited SHA %s", snapshotDir, auditedSha)
 	}
 	storeRoot := filepath.Dir(snapshotDir)
-	if parent := filepath.Dir(storeRoot); parent != os.TempDir() || !strings.HasPrefix(filepath.Base(storeRoot), "vas-sentinel-snapshots") {
+	if parent := filepath.Dir(storeRoot); parent != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(storeRoot), "vas-sentinel-snapshots") {
 		t.Errorf("--cwd %q is not under the shared snapshot store root", snapshotDir)
 	}
 	// Cleanup is an idempotent lease release, never a per-call deletion: the
