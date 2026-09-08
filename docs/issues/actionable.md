@@ -67,38 +67,9 @@ Sits second: unblocked, small, and it makes a published claim untrue.
   notice and the template agree, and decide the interactive question's
   non-interactive answer explicitly instead of by EOF.
 
-## 3. Move provider isolation out of the evidence snapshot
+## 3. Bound the total size of the review snapshot store
 
-Sits third: unblocked, and it is the reason the shared snapshot does not yet
-deliver the reuse it was built for. Highest trust impact on this list.
-
-- Wrong: `reviewEnvironment` (`internal/agentadapter/cli.go:523`) sets
-  `isolationRoot := snapshot` and exports `HOME`, `OPENCODE_TEST_HOME` and
-  every `XDG_*` path underneath the published snapshot. The audited evidence
-  tree and the provider's writable home are the same directory. That is why
-  its directories are 0700, and it is why sealing them read-only broke every
-  review with `EACCES: permission denied, mkdir '<snapshot>/.local'`.
-- Evidence, three independent consequences observed on 2026-09-08: the
-  provider writes `.cache` and `.config` into the published tree, which
-  `publishedSnapshotUsable` (store.go:227-239) then rejects as unexpected
-  entries, so the next lease for that SHA discards and rematerializes instead
-  of reusing — defeating the dedup item 1 landed for; concurrent dimensions
-  auditing one SHA now share one home, and a review failed with the provider's
-  own `CREATE TABLE workspace` SQLite error, consistent with concurrent
-  migrations racing in that shared state; and Sentinel raised the coupling
-  itself as a WARNING at confidence 0.9 on both the design and logic
-  dimensions.
-- Closing: a writable per-invocation isolation root distinct from the
-  read-only evidence tree, so the snapshot carries only audited content and a
-  lease can be reused as designed. Spans `internal/agentadapter` and
-  `internal/reviewsnapshot`.
-- Related: it also closes the tampering finding that motivated the reverted
-  sealing attempt — concurrent reviewers can currently add, rename or delete
-  evidence another reviewer is reading.
-
-## 4. Bound the total size of the review snapshot store
-
-Sits fourth: unblocked and small, but it only bites under unusual load.
+Sits third: unblocked and small, but it only bites under unusual load.
 
 - Wrong: the store under `os.TempDir()/vas-sentinel-snapshots-<uid>` is
   reaped by staleness alone. Nothing bounds its total size, and one committed
@@ -125,9 +96,9 @@ Sits fourth: unblocked and small, but it only bites under unusual load.
   Item 2 is what makes retention worth anything, so land it first and expect
   the tree count to fall to one per audited commit.
 
-## 5. Give the pre-publication audits a record `pr create` can consult
+## 4. Give the pre-publication audits a record `pr create` can consult
 
-Sits fifth: unblocked, found by exercising the full pre-push flow, and its
+Sits fourth: unblocked, found by exercising the full pre-push flow, and its
 cheap half is separable from its expensive half.
 
 - Wrong, or possibly deliberate: `gate --stage pre-push` runs a semantic
@@ -232,9 +203,9 @@ cheap half is separable from its expensive half.
   net findings on `99138bb..19a5b2f` versus the per-commit fichas for
   `e408d42` and `19a5b2f`.
 
-## 6. Bound the provider's own temporary residue
+## 5. Bound the provider's own temporary residue
 
-Sits sixth: unblocked and mechanical, but the residue is the provider's, not
+Sits fifth: unblocked and mechanical, but the residue is the provider's, not
 this repository's, so the fix can only be to clean it, not to prevent it.
 
 - Wrong: each restricted reviewer invocation leaves a roughly 14 MB
@@ -242,7 +213,7 @@ this repository's, so the fix can only be to clean it, not to prevent it.
   ships, and nothing ever removes them. Measured on 2026-09-08: 540 files
   totalling 2,945 MB, accumulated since 2026-09-06, none held by any process.
   Deleting the unheld ones took `/tmp` from 92% to 16% used.
-- Why it matters more than its size suggests: item 4 bounds THIS package's
+- Why it matters more than its size suggests: item 3 bounds THIS package's
   store, which was 191 MB at that moment — fifteen times less than the
   provider residue sitting beside it. No ceiling of ours touches it. On the
   3.8 GB tmpfs this machine uses, a day of heavy reviewing fills the disk from
@@ -255,9 +226,9 @@ this repository's, so the fix can only be to clean it, not to prevent it.
   it. Do not simply widen the existing prefix match without checking that a
   live invocation's file is never removed.
 
-## 7. Recalibrate or retire the OpenCode reviewer turn budget
+## 6. Recalibrate or retire the OpenCode reviewer turn budget
 
-Sits seventh: unblocked but low value, and its original premise was disproven.
+Sits sixth: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
   OpenCode `Steps` value — the number of model turns the restricted reviewer
@@ -315,9 +286,9 @@ Sits seventh: unblocked but low value, and its original premise was disproven.
   turn value does not need that attribution; re-testing the disproven premise
   above would.
 
-## 8. Cache shared audit evidence across review dimensions
+## 7. Cache shared audit evidence across review dimensions
 
-Sits eighth: the token measurement now exists on all three adapter paths
+Sits seventh: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -339,9 +310,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 9. Give cost, scope and reuse a producer (FU-3)
+## 8. Give cost, scope and reuse a producer (FU-3)
 
-Sits ninth: tokens now have producers on every adapter path, but cost,
+Sits eighth: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -359,9 +330,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 10. Validate the acpx spawn chain on native Windows
+## 9. Validate the acpx spawn chain on native Windows
 
-Sits tenth: conditional work — no action while Debian is the deployment
+Sits ninth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`

@@ -522,7 +522,12 @@ func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {
 }
 
 // newRestrictedReviewEnvironment isolates only OpenCode's writable provider
-// state. Other providers retain their host environment and credential model.
+// state. A generic provider keeps the host environment untouched. Claude keeps
+// its own credential model and its real HOME, but with any inherited
+// OPENCODE_AUTH_CONTENT removed: that value is OpenCode's, so forwarding it
+// across a provider boundary would leak one provider's credentials into
+// another's process, and the host environment can carry it from an enclosing
+// OpenCode session.
 func (c *CLIAdapter) newRestrictedReviewEnvironment(configuration, snapshot string) ([]string, func(), error) {
 	if c.isOpenCode() {
 		return newReviewEnvironment(configuration, c.Config.Model, snapshot)

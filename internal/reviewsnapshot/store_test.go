@@ -336,6 +336,26 @@ func unusedHexDigits(c byte) (byte, byte) {
 	return found[0], found[1]
 }
 
+// writeCapacityStoreEntry creates one complete published snapshot fixture. The
+// capacity accounting includes both readiness artifacts, so tests must create
+// them instead of testing a layout production never retains.
+func writeCapacityStoreEntry(t *testing.T, root, sha string) {
+	t.Helper()
+	tree := publishedPath(root, sha)
+	if err := os.MkdirAll(tree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "payload"), make([]byte, 9<<10), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath(root, sha), []byte("ready\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath(root, sha), []byte("100644 9216 payload\x00"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestReaperRetainsLockNamespaceAcrossTransition pins why lock files are
 // persistent: the reaper removes stale snapshot and staging residue under the
 // SHA's exclusive lock, but never the lock file itself. Unlinking a lock file
@@ -629,8 +649,8 @@ func gitCommitExecutable(t *testing.T, root string) string {
 // committed 100755 file is published owner-executable (0500) while regular
 // evidence is owner read-only (0400), the readiness manifest records the
 // committed mode, and a second Create for the same SHA leases the very same
-// tree without a rebuild — the directory mtime planted before the second
-// call would have been reset by any rematerialization.
+// tree without a rebuild. Leasing deliberately refreshes the directory mtime:
+// the capacity reaper uses it to identify the least recently leased tree.
 func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	root, _ := gitInit(t)
 	sha := gitCommitExecutable(t, root)
@@ -663,8 +683,8 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	}
 
 	// Reuse without rebuild: plant an old directory mtime — the live lease
-	// below keeps the reaper away from the stale-looking tree — and require
-	// it to survive the second Create untouched.
+	// below keeps the reaper away from the stale-looking tree — then require
+	// the second successful lease to refresh it for capacity ordering.
 	pinned := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(snapshot, pinned, pinned); err != nil {
 		t.Fatal(err)
@@ -676,8 +696,12 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	if again != snapshot {
 		t.Fatalf("second Create returned %q, want the published %q", again, snapshot)
 	}
-	if info, err := os.Stat(snapshot); err != nil || !info.ModTime().Equal(pinned) {
-		t.Fatalf("published tree was rebuilt on reuse: mtime %v (err %v), want pinned %v", info.ModTime(), err, pinned)
+	info, err := os.Stat(snapshot)
+	if err != nil {
+		t.Fatalf("stat reused published tree: %v", err)
+	}
+	if !info.ModTime().After(pinned) {
+		t.Fatalf("published tree lease mtime = %v, want a refresh after pinned %v", info.ModTime(), pinned)
 	}
 	release()
 	secondRelease()
@@ -770,6 +794,246 @@ func gitCommitNestedFile(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+// TestCapacityReaperKeepsSmallStoreOnOtherwiseFullFilesystem verifies that
+// capacity cleanup reacts only to review snapshots it can actually control. A
+// nearly full large disk whose unrelated contents dwarf this small store must
+// not destroy reusable evidence merely because deleting it cannot restore a
+// global free-space target.
+func TestCapacityReaperKeepsSmallStoreOnOtherwiseFullFilesystem(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	candidateSHA, _ := unusedHexDigits(sha[len(sha)-1])
+	candidateID := sha[:len(sha)-1] + string(candidateSHA)
+	writeCapacityStoreEntry(t, storeRoot(), candidateID)
+	candidate := publishedPath(storeRoot(), candidateID)
+
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{available: 50 << 30, capacity: 1 << 40}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	if removed := reapSharedStoreCapacity(storeRoot()); removed != 0 {
+		t.Fatalf("reapSharedStoreCapacity removed %d entries from a small store", removed)
+	}
+	if _, err := os.Stat(candidate); err != nil {
+		t.Fatalf("small reusable tree was evicted because of unrelated disk use: %v", err)
+	}
+}
+
+// TestSnapshotEntrySizeIncludesReadinessArtifacts pins every byte class the
+// capacity policy owns: omitting a marker or manifest must change the measured
+// footprint and therefore fail this test.
+func TestSnapshotEntrySizeIncludesReadinessArtifacts(t *testing.T) {
+	_, sha := gitInit(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidateSHA, _ := unusedHexDigits(sha[len(sha)-1])
+	candidate := sha[:len(sha)-1] + string(candidateSHA)
+	writeCapacityStoreEntry(t, root, candidate)
+
+	want := uint64(0)
+	for _, path := range []string{publishedPath(root, candidate), markerPath(root, candidate), manifestPath(root, candidate)} {
+		size, err := storeEntrySize(path)
+		if err != nil {
+			t.Fatalf("measure fixture entry %q: %v", path, err)
+		}
+		want += size
+	}
+	got, err := snapshotEntrySize(root, candidate)
+	if err != nil {
+		t.Fatalf("snapshotEntrySize: %v", err)
+	}
+	if got != want {
+		t.Fatalf("snapshotEntrySize = %d, want tree, marker, and manifest total %d", got, want)
+	}
+}
+
+// TestCapacityReaperEvictsWhenSizingFails verifies that a measurement failure
+// cannot make the store look empty. It is safer to evict an unlocked tree than
+// to retain unbounded data after failing to inspect its size.
+func TestCapacityReaperEvictsWhenSizingFails(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	candidateSHA, _ := unusedHexDigits(sha[len(sha)-1])
+	candidate := sha[:len(sha)-1] + string(candidateSHA)
+	writeCapacityStoreEntry(t, storeRoot(), candidate)
+
+	originalSizer := storeEntrySize
+	storeEntrySize = func(path string) (uint64, error) {
+		if path == publishedPath(storeRoot(), candidate) {
+			return 0, errors.New("simulated snapshot sizing failure")
+		}
+		return originalSizer(path)
+	}
+	t.Cleanup(func() { storeEntrySize = originalSizer })
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{capacity: 1 << 40}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	if removed := reapSharedStoreCapacity(storeRoot()); removed != 1 {
+		t.Fatalf("reapSharedStoreCapacity removed %d entries after sizing failure, want 1", removed)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), candidate)); !os.IsNotExist(err) {
+		t.Fatalf("unlocked tree survived sizing failure: %v", err)
+	}
+}
+
+// TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree verifies the size
+// ceiling's safety and ordering together: an exclusive lock is still required
+// before deletion, so a live lease survives even when it is oldest, and the
+// oldest unleased published tree is evicted before newer reusable evidence.
+func TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var replacements []byte
+	for digit := byte('0'); digit <= 'f' && len(replacements) < 3; digit++ {
+		if (digit < '0' || digit > '9') && (digit < 'a' || digit > 'f') {
+			continue
+		}
+		if digit != sha[len(sha)-1] {
+			replacements = append(replacements, digit)
+		}
+	}
+	activeSHA := sha[:len(sha)-1] + string(replacements[0])
+	oldestUnleasedSHA := sha[:len(sha)-1] + string(replacements[1])
+	newerUnleasedSHA := sha[:len(sha)-1] + string(replacements[2])
+	for _, candidate := range []string{activeSHA, oldestUnleasedSHA, newerUnleasedSHA} {
+		writeCapacityStoreEntry(t, storeRoot(), candidate)
+	}
+	now := time.Now()
+	for path, modTime := range map[string]time.Time{
+		publishedPath(storeRoot(), activeSHA):         now.Add(-3 * time.Minute),
+		publishedPath(storeRoot(), oldestUnleasedSHA): now.Add(-2 * time.Minute),
+		publishedPath(storeRoot(), newerUnleasedSHA):  now.Add(-time.Minute),
+	} {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	activeLock, acquired, err := lockSnapshot(lockPath(storeRoot(), activeSHA), false)
+	if err != nil || !acquired {
+		t.Fatalf("lock active snapshot: acquired=%t err=%v", acquired, err)
+	}
+	defer activeLock.Close()
+
+	initialBytes, err := sharedStoreSnapshotBytes(storeRoot())
+	if err != nil {
+		t.Fatalf("measure capacity fixture: %v", err)
+	}
+	oldestBytes, err := snapshotEntrySize(storeRoot(), oldestUnleasedSHA)
+	if err != nil {
+		t.Fatalf("measure oldest unleased fixture: %v", err)
+	}
+	limit := initialBytes - oldestBytes
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{capacity: limit * 10}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	if reaped := reapAbandonedSnapshots(now, staleSnapshotAge); reaped != 1 {
+		t.Fatalf("reapAbandonedSnapshots reaped %d entries, want 1 capacity eviction", reaped)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), activeSHA)); err != nil {
+		t.Fatalf("active leased tree was evicted: %v", err)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), oldestUnleasedSHA)); !os.IsNotExist(err) {
+		t.Fatalf("oldest unleased tree survived capacity eviction: %v", err)
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), newerUnleasedSHA)); err != nil {
+		t.Fatalf("newer unleased tree was evicted before the oldest one: %v", err)
+	}
+}
+
+// TestCapacityReaperRefreshesAfterConcurrentRemoval models a second reaper
+// removing the selected oldest tree after the directory scan. The next decision
+// must use the refreshed footprint rather than evicting a newer tree from stale
+// accounting.
+func TestCapacityReaperRefreshesAfterConcurrentRemoval(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first, second := unusedHexDigits(sha[len(sha)-1])
+	oldestSHA := sha[:len(sha)-1] + string(first)
+	newerSHA := sha[:len(sha)-1] + string(second)
+	for _, candidate := range []string{oldestSHA, newerSHA} {
+		writeCapacityStoreEntry(t, storeRoot(), candidate)
+	}
+	now := time.Now()
+	for path, modTime := range map[string]time.Time{
+		publishedPath(storeRoot(), oldestSHA): now.Add(-2 * time.Minute),
+		publishedPath(storeRoot(), newerSHA):  now.Add(-time.Minute),
+	} {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initialBytes, err := sharedStoreSnapshotBytes(storeRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldestBytes, err := snapshotEntrySize(storeRoot(), oldestSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{capacity: (initialBytes - oldestBytes) * 10}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	originalRemove := removeUnleasedStoreEntryAtMtime
+	newerAttempted := false
+	removeUnleasedStoreEntryAtMtime = func(root, sha string, selectedModTime time.Time, targets ...string) bool {
+		if sha == oldestSHA {
+			for _, target := range targets {
+				if err := removeReadOnlyStoreEntry(target); err != nil {
+					t.Fatalf("simulate concurrent removal of %q: %v", target, err)
+				}
+			}
+			return false
+		}
+		if sha == newerSHA {
+			newerAttempted = true
+		}
+		return originalRemove(root, sha, selectedModTime, targets...)
+	}
+	t.Cleanup(func() { removeUnleasedStoreEntryAtMtime = originalRemove })
+
+	if removed := reapSharedStoreCapacity(storeRoot()); removed != 0 {
+		t.Fatalf("reapSharedStoreCapacity removed %d local entries, want the concurrent removal only", removed)
+	}
+	if newerAttempted {
+		t.Fatal("capacity reaper tried to evict the newer tree using stale accounting")
+	}
+	if _, err := os.Stat(publishedPath(storeRoot(), newerSHA)); err != nil {
+		t.Fatalf("newer tree was removed after concurrent oldest removal: %v", err)
+	}
 }
 
 // TestReaperRechecksStalenessUnderLock pins the reaper's TOCTOU guard: the

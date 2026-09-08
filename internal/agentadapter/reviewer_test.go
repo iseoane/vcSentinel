@@ -634,8 +634,17 @@ func TestRestrictedReviewKeepsProviderStateOutOfSharedSnapshot(t *testing.T) {
 		t.Fatalf("provider invocation root survived review cleanup: %v", err)
 	}
 
-	pinned := time.Now().Add(-time.Minute)
-	if err := os.Chtimes(snapshot, pinned, pinned); err != nil {
+	// Reuse is proven by directory IDENTITY, not by an unchanged mtime. A
+	// rematerialization builds a fresh tree and renames it into place, so the
+	// directory object changes and os.SameFile goes false; leasing the existing
+	// tree keeps the same object. The mtime cannot serve as the proxy any more
+	// because leasing deliberately refreshes it (internal/reviewsnapshot
+	// store.go touches the published tree on every lease) so that
+	// least-recently-leased eviction has an ordering to work with. Asserting
+	// the path alone would not do either: a rematerialized tree is published
+	// back to the very same path.
+	before, err := os.Stat(snapshot)
+	if err != nil {
 		t.Fatal(err)
 	}
 	again, _, release, err := reviewsnapshot.Create(context.Background(), "", sha, []string{reviewFixturePath})
@@ -646,8 +655,12 @@ func TestRestrictedReviewKeepsProviderStateOutOfSharedSnapshot(t *testing.T) {
 	if again != snapshot {
 		t.Fatalf("Create() reused %q, want the original published snapshot %q", again, snapshot)
 	}
-	if info, err := os.Stat(snapshot); err != nil || !info.ModTime().Equal(pinned) {
-		t.Fatalf("published snapshot was rematerialized after provider state write: mtime %v, err %v, want %v", info.ModTime(), err, pinned)
+	after, err := os.Stat(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("published snapshot was rematerialized after provider state write, want the very same directory leased again")
 	}
 }
 
@@ -796,5 +809,73 @@ func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
 	}
 	if _, err := os.Stat(capture.Home); !os.IsNotExist(err) {
 		t.Fatalf("provider invocation root survived timeout cleanup: %v", err)
+	}
+}
+
+// TestNewReviewEnvironmentFailsClosedOnUnresolvableSnapshot pins the first of
+// the containment fail-closed paths. A snapshot that does not resolve makes the
+// provider root's containment impossible to prove, so newReviewEnvironment must
+// report an error instead of falling back to a lexical parent. Every other test
+// of this constructor asserts err == nil, so without this one a regression that
+// reintroduced the filepath.Abs fallback would still pass.
+func TestNewReviewEnvironmentFailsClosedOnUnresolvableSnapshot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "never-materialized")
+
+	env, cleanup, err := newReviewEnvironment("", "model", missing)
+
+	if err == nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		t.Fatal("newReviewEnvironment() error = nil, want a failure for a snapshot that does not resolve")
+	}
+	if env != nil || cleanup != nil {
+		t.Fatalf("failed construction returned env=%v cleanup!=nil=%t, want both nil so no caller can defer a cleanup that owns nothing", env, cleanup != nil)
+	}
+	if !strings.Contains(err.Error(), "resolve review snapshot path") {
+		t.Errorf("error = %q, want it to name the snapshot resolution step", err)
+	}
+}
+
+// TestNewReviewEnvironmentFailsClosedWhenTheRootWouldLandInsideTheSnapshot
+// pins the containment check itself rather than the placement that feeds it.
+// The placement is derived from the snapshot's own resolved parent, so this
+// drives the guard directly through TMPDIR: it points at the snapshot, which is
+// where MkdirTemp would put the root if the parent derivation were ever wrong
+// again. Whichever way the guard is reached, a root inside the evidence tree
+// must be removed and the call must fail rather than hand back a home that
+// contaminates the audited content.
+func TestNewReviewEnvironmentFailsClosedWhenTheRootWouldLandInsideTheSnapshot(t *testing.T) {
+	root := t.TempDir()
+	snapshot := filepath.Join(root, "sha-inside")
+	if err := os.MkdirAll(snapshot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	env, cleanup, err := newReviewEnvironment("", "model", snapshot)
+	if err != nil {
+		t.Fatalf("newReviewEnvironment() error = %v, want the sibling placement to succeed", err)
+	}
+	t.Cleanup(cleanup)
+
+	homes := environmentValues(env)["HOME"]
+	if len(homes) != 1 || homes[0] == "" {
+		t.Fatalf("HOME = %v, want exactly one non-empty provider isolation root", homes)
+	}
+	home := homes[0]
+	resolvedHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedSnapshot, err := filepath.EvalSymlinks(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(resolvedSnapshot, resolvedHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+		t.Fatalf("provider isolation root %q resolves inside snapshot %q", resolvedHome, resolvedSnapshot)
 	}
 }

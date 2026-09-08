@@ -461,6 +461,49 @@ func TestCreateRequiresSHA(t *testing.T) {
 //
 // Measured on this machine: 472 MB accumulated on a 3.8 GB tmpfs. When /tmp
 // fills up, not only do reviews fail; even building fails.
+// TestStaleSnapshotAgeIsExactlyOneHour keeps the recorded decision pinned to
+// its exact value, which the behavioural test below deliberately cannot do:
+// that one ages residue by 90 minutes, so it would still pass if the window
+// were shortened to 30 or 5 minutes. One hour is a retention decision, not a
+// measurement, so the constant itself is part of the contract and a silent
+// change to it must fail here.
+func TestStaleSnapshotAgeIsExactlyOneHour(t *testing.T) {
+	if staleSnapshotAge != time.Hour {
+		t.Fatalf("staleSnapshotAge = %v, want exactly 1h", staleSnapshotAge)
+	}
+}
+
+func TestStaleSnapshotAgeReapsOneHourOldResidue(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", root)
+	old := filepath.Join(root, snapshotPrefix+"one-hour-old")
+	recent := filepath.Join(root, snapshotPrefix+"still-reusable")
+	for _, path := range []string{old, recent} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	oldTime := now.Add(-90 * time.Minute)
+	if err := os.Chtimes(old, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	recentTime := now.Add(-30 * time.Minute)
+	if err := os.Chtimes(recent, recentTime, recentTime); err != nil {
+		t.Fatal(err)
+	}
+
+	if reaped := reapAbandonedSnapshots(now, staleSnapshotAge); reaped != 1 {
+		t.Fatalf("reapAbandonedSnapshots reaped %d entries, want the one-hour-old residue", reaped)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("one-hour-old snapshot survived: %v", err)
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Fatalf("recent snapshot was reaped: %v", err)
+	}
+}
+
 func TestCreateReapsAbandonedSnapshots(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)
