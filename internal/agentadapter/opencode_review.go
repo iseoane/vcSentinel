@@ -58,6 +58,35 @@ type opencodeReviewScan struct {
 	// tool events and counting tool_use would overcount the budget the
 	// provider actually spends. That fixture consumes 2 turns, not 3.
 	Steps int
+	// TerminalEventObserved reports whether at least one step_finish event
+	// appeared anywhere in the stream. It exists because StopReason alone
+	// cannot distinguish two very different situations that both leave it
+	// empty: a step_finish that happened to carry an unusual empty reason
+	// (a terminal event DID occur), versus a stream that never produced a
+	// single step_finish at all (no terminal event was ever observed — the
+	// most severe truncation there is, since even the provider's own
+	// end-of-turn signal never arrived).
+	TerminalEventObserved bool
+	// DeniedToolCalls lists every tool_use event whose part.state.status was
+	// "error", in stream order. Measured evidence (11 real review
+	// invocations) found perfect correlation between at least one denied
+	// tool call and the turn ending truncated: OpenCode's restricted
+	// permission set auto-rejects a read outside the audited/context paths,
+	// and that denial — not the turn budget — is what kills the turn. The
+	// denial arrives as stream event state, never as text in the answer,
+	// which is why the pre-existing semanticOutputLooksToolDenied text
+	// matcher in internal/review/finding.go could never catch it.
+	DeniedToolCalls []DeniedToolCall
+}
+
+// DeniedToolCall records one tool_use event OpenCode reported as failed
+// (part.state.status == "error"): the tool name and the error text, exactly
+// as observed on the wire. Most observed causes are permission denials, but
+// this simply records whatever error text the provider reported — it never
+// infers a cause beyond what the wire said.
+type DeniedToolCall struct {
+	Tool  string
+	Error string
 }
 
 // opencodeReviewEvent probes one NDJSON line of the review stream. The
@@ -67,9 +96,14 @@ type opencodeReviewEvent struct {
 	Type string `json:"type"`
 	Part struct {
 		Type   string          `json:"type"`
+		Tool   string          `json:"tool"`
 		Text   string          `json:"text"`
 		Reason string          `json:"reason"`
 		Tokens json.RawMessage `json:"tokens"`
+		State  struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"state"`
 	} `json:"part"`
 }
 
@@ -165,6 +199,7 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 		lastReason string
 		events     int
 		steps      int
+		denied     []DeniedToolCall
 	)
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -178,6 +213,12 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 		}
 		if event.Type == "text" {
 			texts.WriteString(event.Part.Text)
+			continue
+		}
+		if event.Type == "tool_use" {
+			if event.Part.State.Status == "error" {
+				denied = append(denied, DeniedToolCall{Tool: event.Part.Tool, Error: event.Part.State.Error})
+			}
 			continue
 		}
 		if event.Type != "step_finish" {
@@ -207,6 +248,8 @@ func scanOpenCodeReview(stream io.Reader) (opencodeReviewScan, error) {
 	scan.UsageJSON = strings.TrimSuffix(usageJSON.String(), "\n")
 	scan.StopReason = mapOpenCodeStopReason(lastReason)
 	scan.Steps = steps
+	scan.TerminalEventObserved = steps > 0
+	scan.DeniedToolCalls = denied
 	return scan, nil
 }
 

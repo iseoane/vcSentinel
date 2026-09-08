@@ -246,6 +246,75 @@ func TestOpenCodeReviewStepsCountsStepFinishEvents(t *testing.T) {
 	}
 }
 
+// TestOpenCodeReviewObservesTerminalEventOccurrence pins the fix for a bug
+// found in an earlier commit's review: an empty StopReason was treated as a
+// completed turn on every path, but opencodeReviewScan's own contract says
+// an empty reason means no terminal event was observed at all — the most
+// severe truncation there is, worse than a labeled reason like "tool-calls".
+// TerminalEventObserved must distinguish that case (zero step_finish events
+// in the whole stream) from a step_finish that merely carried an unusual
+// empty reason string (a terminal event DID occur).
+func TestOpenCodeReviewObservesTerminalEventOccurrence(t *testing.T) {
+	cases := []struct {
+		name   string
+		stream string
+		want   bool
+	}{
+		{
+			name:   "no step_finish at all: no terminal event was observed",
+			stream: "{\"type\":\"text\",\"part\":{\"type\":\"text\",\"text\":\"orphan answer\"}}\n",
+			want:   false,
+		},
+		{
+			name:   "a step_finish occurred, even with an unusual empty reason",
+			stream: "{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"\"}}\n",
+			want:   true,
+		},
+		{
+			name:   "a step_finish occurred normally",
+			stream: "{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\"}}\n",
+			want:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scan, err := scanOpenCodeReview(strings.NewReader(tc.stream))
+			if err != nil {
+				t.Fatalf("scanOpenCodeReview() error = %v", err)
+			}
+			if scan.TerminalEventObserved != tc.want {
+				t.Errorf("TerminalEventObserved = %t, want %t", scan.TerminalEventObserved, tc.want)
+			}
+		})
+	}
+}
+
+// TestOpenCodeReviewObservesDeniedToolCalls pins the confirmed defect: a
+// denied tool call arrives as a tool_use event whose part.state.status is
+// "error" — never as text in the answer, which is exactly why the
+// pre-existing semanticOutputLooksToolDenied text matcher in
+// internal/review/finding.go never caught it. The scanner must observe it
+// at the stream-event level: at minimum the tool name and the error text.
+// A completed tool call must never be recorded as denied.
+func TestOpenCodeReviewObservesDeniedToolCalls(t *testing.T) {
+	stream := "{\"type\":\"tool_use\",\"part\":{\"type\":\"tool\",\"tool\":\"read\",\"state\":{\"status\":\"completed\"}}}\n" +
+		"{\"type\":\"tool_use\",\"part\":{\"type\":\"tool\",\"tool\":\"read\",\"state\":{\"status\":\"error\",\"error\":\"The user rejected permission to use this specific tool call.\"}}}\n" +
+		"{\"type\":\"tool_use\",\"part\":{\"type\":\"tool\",\"tool\":\"glob\",\"state\":{\"status\":\"error\",\"error\":\"permission requested: external\"}}}\n" +
+		"{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"tool-calls\"}}\n"
+
+	scan, err := scanOpenCodeReview(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("scanOpenCodeReview() error = %v", err)
+	}
+	want := []DeniedToolCall{
+		{Tool: "read", Error: "The user rejected permission to use this specific tool call."},
+		{Tool: "glob", Error: "permission requested: external"},
+	}
+	if !reflect.DeepEqual(scan.DeniedToolCalls, want) {
+		t.Errorf("DeniedToolCalls = %+v, want %+v", scan.DeniedToolCalls, want)
+	}
+}
+
 // TestOpenCodeReviewResultReportsWireObservations drives the rich
 // ReviewWithContextResult surface end to end against a fake opencode binary
 // replaying the redacted probe fixture: the review invocation must request
