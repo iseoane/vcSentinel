@@ -217,10 +217,18 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 		// — is what keeps the deadline/cancel distinction callerContextOutcome
 		// exists to preserve; consulting runCtx here would misclassify a
 		// caller cancellation as a runtime-budget timeout whenever both
-		// happen to be set. A genuine launch failure with a live caller
-		// context (missing binary, permission error, ...) still falls
-		// through to the unconditional process error.
-		if parent.Err() != nil {
+		// happen to be set.
+		//
+		// The caller-context class applies only when err IS the context
+		// ending, not merely concurrent with it: os/exec resolves the
+		// executable and stores any lookup failure BEFORE Start() ever
+		// checks ctx.Done(), so a genuine launch failure (missing binary,
+		// permission error, ...) returns its own error even when the
+		// caller's context happens to have ended around the same moment.
+		// Inferring the class from parent.Err() alone — without checking
+		// that err itself is the context's own sentinel error — would
+		// misreport that broken installation as a cancellation or timeout.
+		if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && parent.Err() != nil {
 			class, reason := callerContextOutcome(parent.Err())
 			return a.declaredResult(), &OutcomeError{
 				Class:  class,

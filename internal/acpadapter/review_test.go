@@ -399,6 +399,44 @@ func TestReviewWithCallerDeadlineYieldsTimeoutClass(t *testing.T) {
 	}
 }
 
+// TestRunSpawnFailureConcurrentWithCallerCancelStaysProcessError pins the
+// other direction of the truncated-turn spawn-classification fix: a launch
+// that fails for its OWN reason (missing binary, permission denied, ...)
+// must stay a process error even when the caller's context happens to have
+// ended around the same moment. Go's os/exec resolves the executable and
+// stores any lookup failure BEFORE it ever checks ctx.Done() in Start(), so
+// an already-canceled context here does not change which error Start()
+// returns — the launcher genuinely never existed. A classifier that infers
+// the outcome class from parent.Err() alone (instead of inspecting whether
+// the spawn error IS the context ending) would misreport this as a
+// cancellation, hiding a broken installation behind "canceled".
+func TestRunSpawnFailureConcurrentWithCallerCancelStaysProcessError(t *testing.T) {
+	// A launcher NAME (no path separator) that is not on PATH goes through
+	// os/exec's LookPath resolution, whose failure Start() reports BEFORE it
+	// ever checks ctx.Done() — exactly the case this fix must not
+	// misclassify. An ABSOLUTE path to a missing file, by contrast, is never
+	// looked up ahead of time and would hit the ctx.Done() check first,
+	// defeating this test.
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.Launcher = []string{"vas-sentinel-missing-acpx-launcher"}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := a.run(ctx, a.buildArgs("never spawned", t.TempDir()))
+
+	var oe *OutcomeError
+	if !errors.As(err, &oe) {
+		t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+	}
+	if oe.Outcome() != agentrun.OutcomeProcessError {
+		t.Errorf("Outcome() = %q, want process error even though the caller context had already ended", oe.Outcome())
+	}
+	if strings.Contains(oe.Error(), "canceled") || strings.Contains(oe.Error(), "cancelled") {
+		t.Errorf("detail = %q, must not report a genuine launch failure as a cancellation", oe.Error())
+	}
+}
+
 // --- output budget -------------------------------------------------------------
 
 func TestMaxOutputBytesCapTriggersFailure(t *testing.T) {

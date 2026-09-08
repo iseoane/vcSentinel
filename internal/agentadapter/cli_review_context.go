@@ -64,13 +64,38 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 		timeout = CommandTimeout
 	}
 	result := c.declaredResult()
-	snapshot, safePaths, cleanup, err := createReviewSnapshot(ctx, "", sha, paths)
+	// The timeout-bounded context is derived ONCE, here, before snapshot
+	// creation, and reused for both the snapshot and the provider run. That
+	// used to happen only inside runBoundedReview, after the snapshot had
+	// already been materialized from the audited commit's whole tree: the
+	// caller's context bounded snapshot creation (if it carried a deadline
+	// of its own at all), but the adapter's OWN timeout only ever started
+	// applying once runBoundedReview began, letting a slow or pathological
+	// tree consume unbounded wall-clock time first. Deriving boundedCtx here
+	// closes that gap without weakening runBoundedReview's ownership of the
+	// deadline/cancel distinction: runBoundedReview still derives its own
+	// context.WithTimeout(parent, timeout) from boundedCtx, but since
+	// boundedCtx's deadline was fixed at this earlier point, that inner
+	// derivation always resolves to the SAME deadline (context.WithTimeout
+	// takes the earlier of the two), never a later one — so the budget is
+	// not extended by however long the snapshot took, and there is exactly
+	// one effective deadline, not two independently-firing ones with
+	// possibly different reported reasons.
+	//
+	// reviewsnapshot.Create already joins ctx's own error into whatever it
+	// returns (see its doc comment), so a snapshot aborted by boundedCtx's
+	// deadline classifies as context.DeadlineExceeded — a timeout, never a
+	// cancellation — exactly like callerContextOutcome's discipline in
+	// internal/acpadapter, with no extra handling needed here.
+	boundedCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	snapshot, safePaths, cleanup, err := createReviewSnapshot(boundedCtx, "", sha, paths)
 	if err != nil {
 		return result, err
 	}
 	defer cleanup()
 	request := ReviewRequest{Prompt: prompt, SHA: sha, Paths: safePaths, SnapshotDir: snapshot, MaxToolCalls: defaultReviewToolCalls, ToolPolicy: policy}
-	run, err := c.runBoundedReview(ctx, request, timeout)
+	run, err := c.runBoundedReview(boundedCtx, request, timeout)
 	if err != nil {
 		return result, err
 	}

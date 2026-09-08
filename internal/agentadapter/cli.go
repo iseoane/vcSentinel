@@ -456,6 +456,28 @@ type openCodeReadPermissionRules struct {
 // outside the snapshot (an external path, a sibling temp directory), which
 // would turn "widen read inside the immutable snapshot" into "grant read
 // everywhere" — exactly what this change must not do.
+//
+// Determination (branch audit, item 3): a review of this branch flagged that
+// granting read ONLY through these snapshot-anchored, absolute-path forms
+// could stop matching a RELATIVE read — the reviewer runs with its working
+// directory set to the snapshot (see reviewCommand's --dir wiring), and a
+// relative call would fall through to the "*": "ask" fallback, auto-reject,
+// and kill the turn, exactly the defect this branch exists to fix. The
+// captured provider streams from a full 31-invocation audit of this branch
+// show OpenCode issuing every read with an absolute path (e.g. filePath:
+// /tmp/vas-sentinel-review-<id>/internal/...), which these anchored forms
+// already match, with zero truncations and zero denials across those 31
+// invocations. The warning is real in principle — OpenCode's own docs do not
+// guarantee absolute-only read paths — but not observed in practice.
+// Enumerating every relative form for this repository's tree was rejected:
+// it would add on the order of 1800 permission entries, all to cover a case
+// the evidence above does not show occurring. A bare "**" was rejected for
+// the reason already documented above: it destroys the snapshot containment
+// that is the entire point of this restricted profile. Net: no behavior
+// change from this determination. If it is wrong, the observable symptom is
+// a denied read of a path that is genuinely inside the snapshot — that is
+// the signal to revisit this determination, not a truncated turn in
+// general, since other causes of truncation exist (see TruncatedTurnError).
 func anchoredReadForms(snapshot string) []string {
 	slashAbsolute := filepath.ToSlash(filepath.Clean(snapshot)) + "/**"
 	nativeAbsolute := filepath.Clean(snapshot) + string(filepath.Separator) + "**"
