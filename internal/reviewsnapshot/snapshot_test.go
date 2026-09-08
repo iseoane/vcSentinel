@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -72,6 +73,64 @@ func TestSafePathsFiltersSensitiveEnvironmentFilesCaseInsensitively(t *testing.T
 
 	if got := SafePaths(paths); !reflect.DeepEqual(got, want) {
 		t.Fatalf("SafePaths() = %v, want %v", got, want)
+	}
+}
+
+// TestSafePathsFiltersSensitiveFileClasses covers isSensitiveFile's wider
+// job: now that Create materializes every committed regular file (not just
+// the audited handful), the filter has to cover private keys and key
+// material, credential and token stores, and well-known credential
+// dotfiles — while still keeping public halves of a keypair, certificates,
+// and documentation templates reviewable.
+func TestSafePathsFiltersSensitiveFileClasses(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool // kept?
+	}{
+		{"ssh private key dropped", "id_rsa", false},
+		{"ssh public key kept", "id_rsa.pub", true},
+		{"ed25519 private key dropped", ".ssh/id_ed25519", false},
+		{"dsa private key dropped", "id_dsa", false},
+		{"ecdsa private key dropped", "id_ecdsa", false},
+		{"pem private key dropped", "certs/service.pem", false},
+		{"key file dropped", "certs/service.key", false},
+		{"crt certificate kept", "certs/service.crt", true},
+		{"cer certificate kept", "certs/service.cer", true},
+		{"cert certificate kept", "certs/service.cert", true},
+		{"pfx keystore dropped", "certs/service.pfx", false},
+		{"p12 keystore dropped", "certs/service.p12", false},
+		{"jks keystore dropped", "certs/service.jks", false},
+		{"keystore file dropped", "certs/service.keystore", false},
+		{"ppk putty key dropped", "certs/service.ppk", false},
+		{"npmrc token store dropped", ".npmrc", false},
+		{"pypirc token store dropped", ".pypirc", false},
+		{"netrc dropped", ".netrc", false},
+		{"underscore netrc dropped", "_netrc", false},
+		{"git credentials store dropped", ".git-credentials", false},
+		{"dockercfg dropped", ".dockercfg", false},
+		{"htpasswd dropped", "ops/.htpasswd", false},
+		{"pgpass dropped", "ops/.pgpass", false},
+		{"aws credentials dropped", ".aws/credentials", false},
+		{"nested aws credentials dropped", "home/user/.aws/credentials", false},
+		{"docker config auth dropped", ".docker/config.json", false},
+		{"gcloud adc dropped", "application_default_credentials.json", false},
+		{"key example template kept", "certs/service.key.example", true},
+		{"pem sample template kept", "certs/service.pem.sample", true},
+		{"npmrc example template kept", ".npmrc.example", true},
+		{"unrelated json config kept", "config/settings.json", true},
+		{"unrelated credentials-shaped name kept", "docs/credentials-guide.md", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SafePaths([]string{tc.in})
+			if tc.want && len(got) != 1 {
+				t.Fatalf("SafePaths(%q) = %v, want it kept", tc.in, got)
+			}
+			if !tc.want && len(got) != 0 {
+				t.Fatalf("SafePaths(%q) = %v, want it dropped", tc.in, got)
+			}
+		})
 	}
 }
 
@@ -204,6 +263,182 @@ func TestCreateMaterializesWholeCommittedTreeAsReadOnlyContext(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(snapshot, "link.go")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the committed symlink (mode 120000) was materialized as a file: %v", err)
+	}
+}
+
+// gitInitSensitiveFixture commits one file per wider sensitive-file class
+// (plus their carve-outs) in a fresh repository, so a single Create call can
+// exercise the whole filter against a real committed tree instead of only
+// isSensitiveFile's pure string logic.
+func gitInitSensitiveFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+
+	files := map[string]string{
+		"audited.go":                           "package p\n",
+		"id_rsa":                               "PRIVATE KEY MATERIAL\n",
+		"id_rsa.pub":                           "ssh-rsa AAAAB3NzaC1yc2E...\n",
+		"certs/service.pem":                    "PRIVATE KEY PEM\n",
+		"certs/service.crt":                    "PUBLIC CERTIFICATE\n",
+		".npmrc":                               "//registry.npmjs.org/:_authToken=secret\n",
+		".aws/credentials":                     "[default]\naws_secret_access_key=secret\n",
+		"application_default_credentials.json": "{\"client_secret\":\"secret\"}\n",
+		"certs/service.key.example":            "-----BEGIN EXAMPLE KEY-----\n",
+	}
+	for name, content := range files {
+		full := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("add", ".")
+	run("commit", "-qm", "seed")
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, string(out[:len(out)-1])
+}
+
+// TestSensitiveFileFilterAppliesToAuditedAndContextPathsIdentically covers
+// the "one rule, one place" requirement: SafePaths (which gates the audited
+// paths Create is asked to review) and Create's own whole-tree enumeration
+// (which gates every other committed file materialized as read-only
+// context) share the same safePath helper. This asserts they actually
+// behave identically against a real committed tree, not just that each one
+// individually rejects sensitive names.
+func TestSensitiveFileFilterAppliesToAuditedAndContextPathsIdentically(t *testing.T) {
+	root, sha := gitInitSensitiveFixture(t)
+
+	sensitivePaths := []string{
+		"id_rsa",
+		"certs/service.pem",
+		".npmrc",
+		".aws/credentials",
+		"application_default_credentials.json",
+	}
+	publicPaths := []string{
+		"audited.go",
+		"id_rsa.pub",
+		"certs/service.crt",
+		"certs/service.key.example",
+	}
+	requested := append(append([]string{}, sensitivePaths...), publicPaths...)
+
+	snapshot, allowed, cleanup, err := Create(context.Background(), root, sha, requested)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer cleanup()
+
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, p := range allowed {
+		allowedSet[p] = true
+	}
+
+	for _, p := range sensitivePaths {
+		if allowedSet[p] {
+			t.Errorf("audited path %q: must not survive as an allowed audited path", p)
+		}
+		if _, err := os.Stat(filepath.Join(snapshot, filepath.FromSlash(p))); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("context path %q: must not leak into the whole-tree snapshot, stat err=%v", p, err)
+		}
+	}
+	for _, p := range publicPaths {
+		if !allowedSet[p] {
+			t.Errorf("audited path %q: should remain an allowed audited path", p)
+		}
+		if _, err := os.Stat(filepath.Join(snapshot, filepath.FromSlash(p))); err != nil {
+			t.Errorf("context path %q: missing from the whole-tree snapshot: %v", p, err)
+		}
+	}
+}
+
+// TestMaterializeTreeReleasesGitProcessOnWriteFailure is the deterministic
+// regression test for the cat-file deadlock: every early return out of
+// materializeTree's read loop used to call only cmd.Wait(), which blocks
+// forever once cat-file is stuck writing into a stdout pipe this function
+// has stopped draining. It never depends on timing or on luck filling a
+// real pipe: the snapshot directory is made read-only up front so the very
+// first file write fails deterministically, while a large enough tree
+// guarantees the remaining, still-unread cat-file responses overflow the
+// OS pipe buffer, which is exactly the condition that made the old code
+// hang. A hang is the bug under test, so this itself must never hang the
+// suite: it runs materializeTree in a goroutine and fails on a bounded
+// timeout instead of blocking forever.
+func TestMaterializeTreeReleasesGitProcessOnWriteFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod cannot deny directory write access to the owner on Windows")
+	}
+
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+
+	const fileCount = 500
+	content := strings.Repeat("x", 2000) // 2000 bytes * 500 files ~= 1MB of pending cat-file output, far past any OS pipe buffer.
+	paths := make([]string, fileCount)
+	for i := 0; i < fileCount; i++ {
+		name := "file" + strconv.Itoa(i) + ".go"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths[i] = name
+	}
+	run("add", ".")
+	run("commit", "-qm", "seed")
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := string(out[:len(out)-1])
+
+	snapshot := t.TempDir()
+	if err := os.Chmod(snapshot, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	// Restore write access before the test's own TempDir cleanup tries to
+	// remove this directory.
+	t.Cleanup(func() { _ = os.Chmod(snapshot, 0o700) })
+
+	done := make(chan error, 1)
+	go func() { done <- materializeTree(context.Background(), dir, sha, snapshot, paths) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("materializeTree = nil, want an error from the unwritable snapshot directory")
+		}
+		t.Logf("materializeTree returned as expected: %v", err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("materializeTree hung: regression of the git cat-file deadlock on an early return")
 	}
 }
 

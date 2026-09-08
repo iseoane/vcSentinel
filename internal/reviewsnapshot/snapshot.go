@@ -30,10 +30,11 @@ import (
 
 // SafePaths filters and normalizes reviewer-audited paths: absolute paths,
 // drive letters, traversal escapes, option-looking strings, paths carrying
-// control or glob metacharacters, and sensitive environment files are dropped;
-// the survivors are slash-normalized and cleaned. Environment examples ending
-// in .env.example remain reviewable. Shared by every adapter family so the
-// review snapshot accepts exactly the same path vocabulary everywhere.
+// control or glob metacharacters, and sensitive files are dropped; the
+// survivors are slash-normalized and cleaned. A template or sample copy of a
+// sensitive filename (for example .env.example) remains reviewable. Shared
+// by every adapter family so the review snapshot accepts exactly the same
+// path vocabulary everywhere.
 func SafePaths(paths []string) []string {
 	safe := make([]string, 0, len(paths))
 	for _, p := range paths {
@@ -48,23 +49,111 @@ func SafePaths(paths []string) []string {
 // reviewer-audited input to a single path. It is reused for the whole
 // committed tree in Create: a path taken straight from git's own tree
 // listing is not automatically more trustworthy than reviewer input, so the
-// same safety and sensitivity gates apply to both.
+// same safety and sensitivity gates apply to both. Keeping both callers
+// funneled through this one function is deliberate: SafePaths (audited
+// paths) and the whole-tree enumeration in Create must never diverge on
+// what counts as sensitive.
 func safePath(p string) (string, bool) {
 	normalized := strings.ReplaceAll(p, "\\", "/")
 	clean := path.Clean(normalized)
 	drive := len(clean) >= 2 && clean[1] == ':'
-	if p == "" || path.IsAbs(clean) || drive || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(p, "-") || strings.ContainsAny(p, "\x00\r\n*?[]{}!") || isSensitiveEnvironmentFile(clean) {
+	if p == "" || path.IsAbs(clean) || drive || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(p, "-") || strings.ContainsAny(p, "\x00\r\n*?[]{}!") || isSensitiveFile(clean) {
 		return "", false
 	}
 	return clean, true
 }
 
-func isSensitiveEnvironmentFile(filePath string) bool {
+// isSensitiveFile decides whether filePath must never leave the working tree
+// through a review snapshot. It used to match only dotenv-style names, which
+// was proportionate when a snapshot held only the handful of paths under
+// audit. Create now materializes every committed regular file as read-only
+// context (see Create's doc comment), so this filter is the only thing
+// standing between a third-party reviewer process and every committed
+// private key, credential store, or token-bearing config in the repository —
+// it has to cover the whole tree, not just the files a reviewer asked for.
+//
+// Each blocked class below is a known way real repositories leak secrets.
+// Two carve-outs keep it from over-blocking material reviewers legitimately
+// need: a documentation template (.example/.sample/.template, mirroring the
+// pre-existing .env.example allowance) is never a secret in this tree, and
+// public halves of a keypair (SSH .pub files, X.509 certificates) are meant
+// to be shared and are not the sensitive half.
+func isSensitiveFile(filePath string) bool {
 	name := strings.ToLower(path.Base(filePath))
-	if strings.HasSuffix(name, ".env.example") {
+	full := strings.ToLower(filePath)
+
+	if isSensitiveFileTemplate(name) {
 		return false
 	}
-	return strings.HasSuffix(name, ".env") || strings.Contains(name, ".env.")
+	if strings.HasSuffix(name, ".pub") {
+		// The public half of an SSH/GPG keypair is shareable by design; only
+		// the private half (see below) is the secret.
+		return false
+	}
+	if strings.HasSuffix(name, ".crt") || strings.HasSuffix(name, ".cer") || strings.HasSuffix(name, ".cert") {
+		// X.509 certificates are public by design (that is the point of a
+		// certificate); the paired private key is what must stay out.
+		return false
+	}
+
+	// Dotenv-style environment files: the original, narrower filter this
+	// function replaces. Kept verbatim so existing behavior does not regress.
+	if strings.HasSuffix(name, ".env") || strings.Contains(name, ".env.") {
+		return true
+	}
+
+	// Private keys and other key material: TLS/SSH private keys, PKCS#12 and
+	// Java keystores, and PuTTY private keys are routinely committed by
+	// accident and grant direct access to whatever they authenticate.
+	for _, ext := range []string{".pem", ".key", ".pfx", ".p12", ".jks", ".keystore", ".ppk"} {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	switch name {
+	case "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519":
+		// ssh-keygen's default unencrypted private key filenames: no
+		// extension, so they need an explicit name match rather than a
+		// suffix check.
+		return true
+	}
+
+	// Credential and token stores: package manager, VCS and generic
+	// credential helper files that hold bearer tokens or plaintext
+	// passwords for whatever service they configure.
+	switch name {
+	case ".npmrc", ".pypirc", ".netrc", "_netrc", ".git-credentials", ".dockercfg", ".htpasswd", ".pgpass":
+		return true
+	}
+
+	// Well-known credential paths that only carry secrets at a specific,
+	// conventional location: the bare filename ("credentials", "config",
+	// "config.json") is far too generic to block everywhere, but at these
+	// exact paths it is always a cloud provider's credential or auth store.
+	for _, suffix := range []string{"/.aws/credentials", "/.docker/config.json"} {
+		if full == strings.TrimPrefix(suffix, "/") || strings.HasSuffix(full, suffix) {
+			return true
+		}
+	}
+	if name == "application_default_credentials.json" {
+		// gcloud's default application credentials file.
+		return true
+	}
+
+	return false
+}
+
+// isSensitiveFileTemplate reports whether name is a documentation template
+// or sample copy of an otherwise-sensitive filename, generalizing the
+// pre-existing .env.example carve-out to every sensitive class above (for
+// example id_rsa.example, service.key.sample).
+func isSensitiveFileTemplate(name string) bool {
+	for _, suffix := range []string{".example", ".sample", ".template"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // staleSnapshotAge bounds how long an abandoned snapshot may survive. A review
@@ -318,6 +407,37 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		writeErr <- writer.Flush()
 	}()
 
+	// released guards the deferred forced release below. The happy path
+	// (reached only after every response has been read and the writer
+	// goroutine has reported success) calls cmd.Wait() itself, right before
+	// returning, so a genuine cat-file failure keeps surfacing its stderr
+	// exactly as before. released is set to true immediately before that
+	// call so the defer below skips it.
+	//
+	// Every early return — a read error, a malformed batch entry, a
+	// filesystem failure writing the snapshot, or a canceled context — used
+	// to leave released false and call only cmd.Wait(). That deadlocks:
+	// cat-file blocks writing its next response into a stdout pipe this
+	// function has stopped draining, and the writer goroutine blocks writing
+	// the next request into a stdin pipe cat-file is no longer reading, so
+	// nothing ever exits and Wait never returns. Killing the process breaks
+	// both blocks at once — a dead process can neither read stdin nor write
+	// stdout, so the writer goroutine's pending write fails and the goroutine
+	// returns, and Wait itself returns as soon as the kernel reaps the
+	// killed process. Closing stdin here too is a harmless, idempotent
+	// second signal for the writer goroutine (it closes stdin itself via its
+	// own defer already; closing an already-closed pipe just returns an
+	// ignored error).
+	released := false
+	defer func() {
+		if released {
+			return
+		}
+		_ = cmd.Process.Kill()
+		_ = stdin.Close()
+		_ = cmd.Wait()
+	}()
+
 	reader := bufio.NewReader(stdout)
 	for _, filePath := range paths {
 		// Checked on every iteration, not only once at entry: this loop can
@@ -325,13 +445,10 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		// cancels while it is midway through must be observed promptly
 		// instead of after every remaining file has been written.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
 			return ctxErr
 		}
 		header, err := reader.ReadString('\n')
 		if err != nil {
-			_ = cmd.Wait()
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
@@ -339,17 +456,14 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		}
 		fields := strings.Fields(header)
 		if len(fields) != 3 || fields[1] != "blob" {
-			_ = cmd.Wait()
 			return fmt.Errorf("unexpected committed tree batch entry for %q: %q", filePath, strings.TrimSpace(header))
 		}
 		size, err := strconv.ParseInt(fields[2], 10, 64)
 		if err != nil || size < 0 {
-			_ = cmd.Wait()
 			return fmt.Errorf("invalid committed tree batch size for %q: %q", filePath, strings.TrimSpace(header))
 		}
 		content := make([]byte, size)
 		if _, err := io.ReadFull(reader, content); err != nil {
-			_ = cmd.Wait()
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
@@ -357,7 +471,6 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		}
 		// Every batch response carries one trailing LF after the object bytes.
 		if _, err := reader.Discard(1); err != nil {
-			_ = cmd.Wait()
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
@@ -365,18 +478,16 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		}
 		target := filepath.Join(snapshot, filepath.FromSlash(filePath))
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			_ = cmd.Wait()
 			return fmt.Errorf("create review snapshot directory: %w", err)
 		}
 		if err := os.WriteFile(target, content, 0o600); err != nil {
-			_ = cmd.Wait()
 			return fmt.Errorf("write review snapshot file: %w", err)
 		}
 	}
 	if err := <-writeErr; err != nil {
-		_ = cmd.Wait()
 		return fmt.Errorf("write committed tree batch request for %q: %w", sha, err)
 	}
+	released = true
 	if err := cmd.Wait(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
