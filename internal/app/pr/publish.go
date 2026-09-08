@@ -68,7 +68,14 @@ func PublishPRWith(worktree, templatePath, base string,
 	runGh func(worktree string, args ...string) ([]byte, error),
 	copy func(string) error) (string, bool, error) {
 	if ghAvailable("gh") {
-		args := []string{"pr", "create", "--draft"}
+		// --fill-first supplies the TITLE from the branch's first commit, which
+		// gh otherwise prompts for: without it `gh pr create` fails outside a
+		// TTY with "must provide --title and --body", so this command could
+		// never publish from a script or an agent — the callers it exists for.
+		// It does not displace the template: gh takes the title from the commit
+		// and the body from -F, verified with `gh pr create --dry-run`, which
+		// echoed the template's own first line as the body.
+		args := []string{"pr", "create", "--draft", "--fill-first"}
 		if base != "" {
 			// The PR must target the SAME base that was audited: without an
 			// explicit --base, the review and the PR could diverge silently.
