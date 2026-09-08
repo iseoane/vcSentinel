@@ -276,6 +276,6 @@ func TestReviewWithContextResultLeavesClaudeTurnCountNil(t *testing.T) {
 // path-confined tool permissions are not configured for this provider") —
 // that rejection predates this change and is out of scope for it. The
 // default branch of runBoundedReview's provider switch (cli_review_context.go)
-// constructs a bare reviewExecution{} literal that never sets turns, so it
-// stays nil by Go's zero-value semantics; there is no reachable path to
-// regress here.
+// returns a reviewExecution{output: ..., terminalEventObserved: true}
+// literal that never sets the turns field, so it stays nil by Go's
+// zero-value semantics; there is no reachable path to regress here.

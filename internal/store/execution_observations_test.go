@@ -34,6 +34,27 @@ func TestCloneAttemptObservationLeavesNilTurnsNil(t *testing.T) {
 	}
 }
 
+// TestCloneAttemptObservationPreservesObservedZeroTurns pins the nil-vs-zero
+// invariant that is the entire point of this task, at the
+// cloneAttemptObservation layer specifically: a pointer to zero (a
+// legitimately observed zero-turn review) must survive cloning as a non-nil
+// pointer to zero, never collapse to nil. Every other clone test above uses
+// a non-zero count (4), so this is the only test that would catch a
+// regression that treated an observed zero as "unset" during cloning.
+func TestCloneAttemptObservationPreservesObservedZeroTurns(t *testing.T) {
+	zero := 0
+	clone := cloneAttemptObservation(&AttemptObservation{Turns: &zero})
+	if clone == nil {
+		t.Fatal("clone = nil, want a non-nil observation")
+	}
+	if clone.Turns == nil {
+		t.Fatal("Turns = nil, want a non-nil pointer to the observed zero, not a collapse to unknown")
+	}
+	if *clone.Turns != 0 {
+		t.Errorf("Turns = %d, want 0", *clone.Turns)
+	}
+}
+
 // TestValidateAttemptObservationRejectsNegativeTurns mirrors the existing
 // negative-duration check: a negative observed turn count is corrupt
 // evidence and must be rejected.

@@ -133,3 +133,29 @@ func TestReviewAdapterLeavesTurnCountNilWhenUnobserved(t *testing.T) {
 		t.Errorf("Turns = %d, want nil", *got.Observation.Turns)
 	}
 }
+
+// TestReviewAdapterPreservesObservedZeroTurnCount pins the nil-vs-zero
+// invariant that is the entire point of this task, at the
+// observationFromResult mapping layer specifically: a pointer to zero (a
+// legitimately observed zero-turn review) must survive as a non-nil pointer
+// to zero, never collapse to nil.
+func TestReviewAdapterPreservesObservedZeroTurnCount(t *testing.T) {
+	zero := 0
+	adapter := NewReviewAdapter(
+		richReviewStub{result: acpadapter.Result{Output: "ok", StopReason: "end_turn", Turns: &zero}},
+		"sha", nil, nil,
+	)
+	got, err := adapter.Execute(context.Background(), testJob(t), mustInvocation(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observation == nil {
+		t.Fatal("observation = nil, want a non-nil observation")
+	}
+	if got.Observation.Turns == nil {
+		t.Fatal("Turns = nil, want a non-nil pointer to the observed zero, not a collapse to unknown")
+	}
+	if *got.Observation.Turns != 0 {
+		t.Errorf("Turns = %d, want 0", *got.Observation.Turns)
+	}
+}

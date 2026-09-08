@@ -39,6 +39,27 @@ func TestStoreObservationLeavesTurnCountNilWhenUnobserved(t *testing.T) {
 	}
 }
 
+// TestStoreObservationPreservesObservedZeroTurns pins the nil-vs-zero
+// invariant that is the entire point of this task, at the storeObservation
+// mapping layer specifically: a pointer to zero (a legitimately observed
+// zero-turn review) must survive as a non-nil pointer to zero, never
+// collapse to nil. Every other propagation test in this file uses a
+// non-zero count, so this is the only test that would catch a regression
+// that treated an observed zero as "unset" during mapping.
+func TestStoreObservationPreservesObservedZeroTurns(t *testing.T) {
+	zero := 0
+	mapped := storeObservation(&AdapterObservation{StopReason: "end_turn", Turns: &zero})
+	if mapped == nil {
+		t.Fatal("mapped = nil, want a non-nil observation")
+	}
+	if mapped.Turns == nil {
+		t.Fatal("Turns = nil, want a non-nil pointer to the observed zero, not a collapse to unknown")
+	}
+	if *mapped.Turns != 0 {
+		t.Errorf("Turns = %d, want 0", *mapped.Turns)
+	}
+}
+
 // TestApplyObservationCarriesTurnCountOntoOutcome pins the outcome-side half
 // of the same mapping: applyObservation must project Turns onto
 // outcome.Observation.
