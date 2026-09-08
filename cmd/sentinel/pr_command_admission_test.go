@@ -63,6 +63,49 @@ func TestPrReviewJSONOutputCountsAdmissionApartFromInfrastructure(t *testing.T) 
 	}
 }
 
+// TestPrReviewJSONOutputDistinguishesUnauditedFromEmptyFindings covers
+// docs/issues/actionable.md item 5: a machine consumer must be able to tell
+// "this commit carries no review record" apart from "this commit was
+// audited and had no findings" without cross-referencing two arrays by
+// position. The explicit "unaudited" key (sha + subject) makes that
+// unambiguous; "pendientes" and "fichas" stay exactly as before it.
+func TestPrReviewJSONOutputDistinguishesUnauditedFromEmptyFindings(t *testing.T) {
+	res := &review.BranchResult{
+		Branch: "feature/branch",
+		Records: []review.Record{{
+			SHA: "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+			Revisions: []review.Revision{
+				{Result: review.VerdictOK, Dims: []review.DimensionResult{{Dim: "logic", Verdict: review.VerdictOK}}},
+			},
+		}},
+		Unaudited: []review.UnauditedCommit{
+			{SHA: "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222", Subject: "feat(x): x"},
+		},
+	}
+
+	output := prReviewJSONOutput("main", res)
+
+	unaudited, ok := output["unaudited"].([]review.UnauditedCommit)
+	if !ok || len(unaudited) != 1 || unaudited[0].SHA != "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222" || unaudited[0].Subject != "feat(x): x" {
+		t.Fatalf("output[\"unaudited\"] = %#v, want the one unaudited commit with its subject", output["unaudited"])
+	}
+	if _, ok := output["fichas"]; !ok {
+		t.Fatal("output missing fichas: the audited commit's own record must still be there")
+	}
+}
+
+// TestPrReviewJSONOutputOmitsUnauditedWhenEverythingIsAudited: a fully
+// audited branch must not carry a spurious empty "unaudited" key.
+func TestPrReviewJSONOutputOmitsUnauditedWhenEverythingIsAudited(t *testing.T) {
+	res := &review.BranchResult{Records: []review.Record{{SHA: "cccc3333cccc3333cccc3333cccc3333cccc3333"}}}
+
+	output := prReviewJSONOutput("main", res)
+
+	if _, ok := output["unaudited"]; ok {
+		t.Fatalf("output[\"unaudited\"] = %#v, want the key absent when nothing is unaudited", output["unaudited"])
+	}
+}
+
 func TestPrReviewJSONOutputWithoutFailuresKeepsZeroCounts(t *testing.T) {
 	res := &review.BranchResult{Records: []review.Record{{
 		SHA: "cccc3333cccc3333cccc3333cccc3333cccc3333",

@@ -23,11 +23,15 @@ const HonestNetIntention = "No PR title/description exists before publication: c
 // boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
 // it); this struct is its counterpart here, so the fields are exported.
 type FlagsPrReview struct {
-	Base        string
-	OnlyPending bool // --only-unaudited
-	Overview    bool // --overview
-	JsonOut     bool // --json
-	Parent      string
+	Base string
+	// AuditPending (--audit-pending) restores auditing every commit on the
+	// branch that carries no review record; by default pr review only
+	// reports that gap (docs/issues/actionable.md item 2), it never audits
+	// it and never blocks on it — the net audit is unaffected either way.
+	AuditPending bool
+	Overview     bool // --overview
+	JsonOut      bool // --json
+	Parent       string
 }
 
 // PrReviewEventDetail constructs the structured detail for the pr-review event
@@ -42,6 +46,11 @@ func PrReviewEventDetail(base string, res *review.BranchResult, ci bool) (ops.Ev
 		"ci":        ci,
 		"overview":  res.Overview != nil,
 		"chain_pr":  res.Decision == "chain",
+		// docs/issues/actionable.md item 5: distinct from "nuevas" (commits
+		// discovered this pass) — this is how many still carry no review
+		// record once the pass is done, so an operator reading events can
+		// tell an audited pass apart from a skipped one.
+		"unaudited": len(res.Unaudited),
 	}
 	// An overview failure must not be silent in the event: if it was requested
 	// and failed, the chain decision carries its cause.
@@ -113,8 +122,10 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 	}
 	blobStore, storeWarning := ResolveBlobStore(worktree)
 	return wiring.BranchOptionsWithRefuter(cfg, verifier, review.BranchOptions{
-		Base:                   base,
-		OnlyPending:            flags.OnlyPending,
+		Base: base,
+		// docs/issues/actionable.md item 2: pr review no longer audits every
+		// unaudited commit by default. --audit-pending restores that.
+		OnlyPending:            !flags.AuditPending,
 		Overview:               flags.Overview,
 		Factory:                factory,
 		Parallel:               cfg.Review.Parallel,
@@ -285,8 +296,14 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		if res.Net == nil { // historical summary only without a net authority
 			fmt.Fprintln(w, review.RenderSummary(res.Records))
 		}
-		fmt.Fprintln(w, DecisionText(res.Decision, res.Volume))
 	}
+	// Informational only, never a gate (docs/issues/actionable.md item 2):
+	// this must render even with zero Records, the default now that pr
+	// review does not audit pending commits.
+	fmt.Fprint(w, review.RenderUnauditedNotice(res.Unaudited))
+	// The single/chain decision is volume-driven, independent of whether any
+	// per-commit record exists: it must not disappear when Records is empty.
+	fmt.Fprintln(w, DecisionText(res.Decision, res.Volume))
 	fmt.Fprint(w, review.InheritedSection(res.Inherited))
 	// Ticket 07: admission failures are first-class evidence, so the terminal
 	// report never lets them pass as generic infrastructure unavailability.
@@ -330,6 +347,14 @@ func PrReviewJSONOutput(base string, res *review.BranchResult) map[string]any {
 	}
 	if res.Net != nil {
 		output["net"] = res.Net
+	}
+	// docs/issues/actionable.md item 5: "pendientes" alone leaves a machine
+	// consumer unable to tell "no review record" apart from "audited, no
+	// findings" without cross-referencing "fichas" by SHA. "unaudited"
+	// carries the same commits explicitly, paired with their subject, and is
+	// only present when the branch actually has a gap to report.
+	if len(res.Unaudited) > 0 {
+		output["unaudited"] = res.Unaudited
 	}
 	return output
 }

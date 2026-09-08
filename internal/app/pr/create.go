@@ -26,19 +26,28 @@ type FlagsPrCreate struct {
 	Force   bool   // --force: override a red validation (T1.8: the only gate that blocks)
 	Reason  string // --reason: explicit and mandatory motive next to --force
 	Parent  string
+	// AuditPending (--audit-pending) restores the old default: audit every
+	// commit on the branch that carries no review record instead of only
+	// reporting the gap (docs/issues/actionable.md item 2). The net audit
+	// below is unconditional either way and is what actually gates.
+	AuditPending bool
 }
 
 // PrCreateEventDetail builds the detail of the pr-create event (guide §13):
 // the publication record with pr_url, fallback and chain_pr. Extends T1.8:
 // force records whether the red validation was overridden, and reason (only
 // with force) leaves an explicit trace of why — the exception is never
-// silent.
-func PrCreateEventDetail(prURL string, fallback, chain, force bool, reason string) (ops.EventDetail, error) {
+// silent. unaudited (docs/issues/actionable.md item 5) records how many
+// branch commits carried no review record in this pass, so an operator
+// reconstructing what happened from the event stream can tell an audited
+// pass apart from a skipped one, not just the --json report.
+func PrCreateEventDetail(prURL string, fallback, chain, force bool, reason string, unaudited int) (ops.EventDetail, error) {
 	detail := ops.EventDetail{
-		"pr_url":   prURL,
-		"fallback": fallback,
-		"chain_pr": chain,
-		"force":    force,
+		"pr_url":    prURL,
+		"fallback":  fallback,
+		"chain_pr":  chain,
+		"force":     force,
+		"unaudited": unaudited,
 	}
 	if force {
 		detail["motivo"] = reason
@@ -218,8 +227,13 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		}
 	}
 	res, err := deps.AnalyzeBranch(worktree, wiring.BranchOptionsWithRefuter(cfg, modelVerifier, review.BranchOptions{
-		Base:                     base,
-		OnlyPending:              false,
+		Base: base,
+		// docs/issues/actionable.md item 2: pr create no longer audits every
+		// unaudited commit by default — the net audit below already plans
+		// from the net diff's own aggregate risk, so paying for both was the
+		// largest single cost in a review. --audit-pending restores the old
+		// behavior explicitly.
+		OnlyPending:              !flags.AuditPending,
 		Overview:                 true,
 		DeterministicFindings:    deterministicFindings,
 		DeterministicFindingsSHA: validatedSHA,
@@ -245,7 +259,12 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		return 1
 	}
 
-	if len(res.Records) == 0 {
+	// Records can legitimately be empty now that pr create no longer audits
+	// pending commits by default (docs/issues/actionable.md item 2): the net
+	// audit below already plans from the net diff's own aggregate risk, so an
+	// empty per-commit history is only a real dead end when there is no net
+	// verdict either.
+	if len(res.Records) == 0 && res.Net == nil {
 		fmt.Fprintln(w, "_No audited commits on the branch._")
 		return 1
 	}
@@ -259,6 +278,9 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
 		}
 	}
+	// Informational only, never a gate (docs/issues/actionable.md item 2):
+	// the net verdict above is what decides, this only points at the gap.
+	fmt.Fprint(w, review.RenderUnauditedNotice(res.Unaudited))
 
 	// Oversized branch without --chain-pr: the chain is proposed, no giant PR
 	// is published (guide §12.4).
@@ -306,7 +328,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		}
 	}
 
-	detail, err := PrCreateEventDetail(prURL, fallback, flags.ChainPR, forcedRedValidation, flags.Reason)
+	detail, err := PrCreateEventDetail(prURL, fallback, flags.ChainPR, forcedRedValidation, flags.Reason, len(res.Unaudited))
 	if err != nil {
 		fmt.Fprintf(w, "? Warning: could not build the event detail: %v\n", err)
 	}

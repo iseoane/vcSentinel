@@ -31,11 +31,15 @@ const honestNetIntention = pr.HonestNetIntention
 
 // flagsPrReview are the options of pr review.
 type flagsPrReview struct {
-	base        string
-	onlyPending bool // --only-unaudited
-	overview    bool // --overview
-	jsonOut     bool // --json
-	parent      string
+	base string
+	// auditPending (--audit-pending) restores auditing every commit on the
+	// branch that carries no review record; by default pr review only
+	// reports that gap (docs/issues/actionable.md item 2), it never audits
+	// it, and never blocks on it.
+	auditPending bool
+	overview     bool // --overview
+	jsonOut      bool // --json
+	parent       string
 }
 
 func parseParentFlagValue(args []string, at int) (string, error) {
@@ -66,7 +70,15 @@ func parsePrReviewFlags(args []string) (flagsPrReview, error) {
 			}
 			flags.parent = val
 		case "--only-unaudited":
-			flags.onlyPending = true
+			// Retired (docs/issues/actionable.md item 2): pr review no longer
+			// audits pending commits by default, so this flag now describes
+			// the default rather than restricting scope — keeping it as a
+			// silent no-op would mislead a caller who still expects it to
+			// change behavior. Same clean-break precedent as the removed
+			// 'sentinel pr [gh arguments]' passthrough.
+			return flags, fmt.Errorf("--only-unaudited was retired: pr review no longer audits pending commits by default; use --audit-pending to restore the old behavior of auditing every commit without a review record")
+		case "--audit-pending":
+			flags.auditPending = true
 		case "--overview":
 			flags.overview = true
 		case "--json":
@@ -85,6 +97,11 @@ type flagsPrCreate struct {
 	force   bool   // --force: override a red validation (T1.8: the only gate that blocks)
 	reason  string // --reason: explicit and mandatory motive next to --force
 	parent  string
+	// auditPending (--audit-pending) restores auditing every commit on the
+	// branch that carries no review record; by default pr create only
+	// reports that gap (docs/issues/actionable.md item 2). The net audit is
+	// unconditional and is what actually gates publication.
+	auditPending bool
 }
 
 // parsePrCreateFlags parses the pr create options with the same simple
@@ -112,6 +129,8 @@ func parsePrCreateFlags(args []string) (flagsPrCreate, error) {
 			flags.parent = val
 		case "--chain-pr":
 			flags.chainPR = true
+		case "--audit-pending":
+			flags.auditPending = true
 		case "--force":
 			flags.force = true
 		case "--reason":
@@ -165,21 +184,22 @@ func runPr(worktree string, args []string) {
 
 func flagsPrReviewToPr(f flagsPrReview) pr.FlagsPrReview {
 	return pr.FlagsPrReview{
-		Base:        f.base,
-		OnlyPending: f.onlyPending,
-		Overview:    f.overview,
-		JsonOut:     f.jsonOut,
-		Parent:      f.parent,
+		Base:         f.base,
+		AuditPending: f.auditPending,
+		Overview:     f.overview,
+		JsonOut:      f.jsonOut,
+		Parent:       f.parent,
 	}
 }
 
 func flagsPrCreateToPr(f flagsPrCreate) pr.FlagsPrCreate {
 	return pr.FlagsPrCreate{
-		Base:    f.base,
-		ChainPR: f.chainPR,
-		Force:   f.force,
-		Reason:  f.reason,
-		Parent:  f.parent,
+		Base:         f.base,
+		ChainPR:      f.chainPR,
+		Force:        f.force,
+		Reason:       f.reason,
+		Parent:       f.parent,
+		AuditPending: f.auditPending,
 	}
 }
 
@@ -253,8 +273,8 @@ func semanticAdvisoryWithDispositions(records []review.Record, dispositions []re
 	return pr.SemanticNoticeWithDispositions(records, dispositions)
 }
 
-func detailPrCreateEvent(prURL string, fallback, chain, force bool, reason string) (ops.EventDetail, error) {
-	return pr.PrCreateEventDetail(prURL, fallback, chain, force, reason)
+func detailPrCreateEvent(prURL string, fallback, chain, force bool, reason string, unaudited int) (ops.EventDetail, error) {
+	return pr.PrCreateEventDetail(prURL, fallback, chain, force, reason, unaudited)
 }
 
 // resolveActor identifies who runs the process, for the traceability of T7.5

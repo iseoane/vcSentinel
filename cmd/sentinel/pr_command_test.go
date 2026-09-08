@@ -79,16 +79,28 @@ func TestParsePrReviewFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsePrReviewFlags failed: %v", err)
 	}
-	if flags.base != "dev" || !flags.overview || !flags.jsonOut || flags.onlyPending {
-		t.Errorf("flags = %+v, expected base=dev overview json", flags)
+	if flags.base != "dev" || !flags.overview || !flags.jsonOut || flags.auditPending {
+		t.Errorf("flags = %+v, expected base=dev overview json, auditPending=false by default", flags)
 	}
 
-	flags, err = parsePrReviewFlags([]string{"--only-unaudited"})
+	flags, err = parsePrReviewFlags([]string{"--audit-pending"})
 	if err != nil {
-		t.Fatalf("parsePrReviewFlags(--only-unaudited) failed: %v", err)
+		t.Fatalf("parsePrReviewFlags(--audit-pending) failed: %v", err)
 	}
-	if !flags.onlyPending {
-		t.Errorf("flags = %+v, expected onlyPending", flags)
+	if !flags.auditPending {
+		t.Errorf("flags = %+v, expected auditPending", flags)
+	}
+
+	// --only-unaudited is retired (docs/issues/actionable.md item 2): it now
+	// describes the default (nothing is audited unless --audit-pending is
+	// given), so keeping it as a silent no-op would mislead a caller into
+	// believing it still restricts scope. It fails closed with a migration
+	// hint instead, the same clean-break precedent as the removed
+	// 'sentinel pr [gh arguments]' passthrough.
+	if _, err := parsePrReviewFlags([]string{"--only-unaudited"}); err == nil {
+		t.Error("--only-unaudited must be rejected: it was retired")
+	} else if !strings.Contains(err.Error(), "--audit-pending") {
+		t.Errorf("--only-unaudited error should point at --audit-pending: %v", err)
 	}
 
 	if _, err := parsePrReviewFlags([]string{"--nope"}); err == nil {
@@ -114,12 +126,13 @@ func TestParsePrReviewFlags(t *testing.T) {
 // guide §13 schema.
 func TestDetailPrReviewEvent(t *testing.T) {
 	res := &review.BranchResult{
-		Branch:   "feature/x",
-		SHAs:     []string{"a1b2c3d4e5f6"},
-		Pending:  []string{"a1b2c3d4e5f6"},
-		Records:  []review.Record{{SHA: "a1b2c3d4e5f6", Message: "feat: something"}},
-		Volume:   420,
-		Decision: "chain",
+		Branch:    "feature/x",
+		SHAs:      []string{"a1b2c3d4e5f6"},
+		Pending:   []string{"a1b2c3d4e5f6"},
+		Unaudited: []review.UnauditedCommit{{SHA: "a1b2c3d4e5f6", Subject: "feat: something"}},
+		Records:   []review.Record{{SHA: "a1b2c3d4e5f6", Message: "feat: something"}},
+		Volume:    420,
+		Decision:  "chain",
 	}
 	detail, err := detailPrReviewEvent("main", res, true)
 	if err != nil {
@@ -143,6 +156,7 @@ func TestDetailPrReviewEvent(t *testing.T) {
 		"ci":        true,
 		"overview":  false,
 		"chain_pr":  true,
+		"unaudited": float64(1),
 	} {
 		if raw[key] != expected {
 			t.Errorf("detail[%q] = %v, expected %v", key, raw[key], expected)
@@ -779,7 +793,7 @@ func TestPublishPRWithEmptyBaseAddsNoFlag(t *testing.T) {
 }
 
 func TestDetailPrCreateEvent(t *testing.T) {
-	detail, err := detailPrCreateEvent("https://github.com/x/pr/1", false, false, false, "")
+	detail, err := detailPrCreateEvent("https://github.com/x/pr/1", false, false, false, "", 0)
 	if err != nil {
 		t.Fatalf("the detail should not fail: %v", err)
 	}
@@ -804,7 +818,7 @@ func TestDetailPrCreateEvent(t *testing.T) {
 }
 
 func TestDetailPrCreateEventFallbackAndChain(t *testing.T) {
-	detail, err := detailPrCreateEvent("", true, true, false, "")
+	detail, err := detailPrCreateEvent("", true, true, false, "", 0)
 	if err != nil {
 		t.Fatalf("the detail should not fail: %v", err)
 	}
@@ -824,11 +838,33 @@ func TestDetailPrCreateEventFallbackAndChain(t *testing.T) {
 	}
 }
 
+// TestDetailPrCreateEventRecordsUnauditedCount covers docs/issues/actionable.md
+// item 5 for the event stream: an operator reconstructing what happened from
+// events must be able to tell an audited pass from a skipped one, not just
+// the JSON --json report.
+func TestDetailPrCreateEventRecordsUnauditedCount(t *testing.T) {
+	detail, err := detailPrCreateEvent("https://github.com/x/pr/3", false, false, false, "", 2)
+	if err != nil {
+		t.Fatalf("the detail should not fail: %v", err)
+	}
+	var raw map[string]any
+	data, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("detail must be valid JSON: %v", err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("detail must be valid JSON: %v", err)
+	}
+	if raw["unaudited"] != float64(2) {
+		t.Errorf("unaudited = %v, want 2", raw["unaudited"])
+	}
+}
+
 // TestDetailPrCreateEventForceWithReason: the --force exception is recorded in
 // the event with the explicit reason (T1.8). The "motivo" key is the wire key
 // internal/app/pr emits.
 func TestDetailPrCreateEventForceWithReason(t *testing.T) {
-	detail, err := detailPrCreateEvent("https://github.com/x/pr/2", false, false, true, "real reason")
+	detail, err := detailPrCreateEvent("https://github.com/x/pr/2", false, false, true, "real reason", 0)
 	if err != nil {
 		t.Fatalf("the detail should not fail: %v", err)
 	}
@@ -850,8 +886,16 @@ func TestParsePrCreateFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing should not fail: %v", err)
 	}
-	if flags.base != "develop" || !flags.chainPR || !flags.force || flags.reason != "real reason" {
+	if flags.base != "develop" || !flags.chainPR || !flags.force || flags.reason != "real reason" || flags.auditPending {
 		t.Errorf("flags = %+v", flags)
+	}
+
+	flags, err = parsePrCreateFlags([]string{"--audit-pending"})
+	if err != nil {
+		t.Fatalf("parsePrCreateFlags(--audit-pending) failed: %v", err)
+	}
+	if !flags.auditPending {
+		t.Errorf("flags = %+v, expected auditPending", flags)
 	}
 }
 
@@ -1594,6 +1638,9 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 		Net: &review.NetReview{Audit: review.AuditResult{Verdict: review.VerdictBlock,
 			Findings: []review.Finding{{Dimension: review.DimSecurity, Severity: review.SevCritical, Description: "secret logged"}}}},
 		Inherited: []review.InheritedFinding{{SHA: "deadbeefcafe", Finding: review.Finding{Dimension: review.DimLogic, Severity: review.SevCritical}}},
+		// docs/issues/actionable.md item 2: the published PR body must report
+		// a commit with no review record without gating on it.
+		Unaudited: []review.UnauditedCommit{{SHA: "beefcafe1234", Subject: "feat(unaudited): skipped commit"}},
 	}
 	var opts review.BranchOptions
 	pubBase, body := "", ""
@@ -1622,7 +1669,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 		opts.NetReview == nil || opts.NetReview.Intention != honestNetIntention {
 		t.Errorf("stacked: exitCode=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
 	}
-	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee"} {
+	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee", "no review record", "beefcafe", "feat(unaudited): skipped commit", "sentinel review beefcafe1234"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("published body lacks %q: %s", want, body)
 		}
@@ -1670,6 +1717,43 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	code = runPrCreateCon(output, "wt", nil, deps)
 	if code != 0 || pubBase != "main" {
 		t.Errorf("legacy: exitCode=%d base=%q, want 0/main", code, pubBase)
+	}
+}
+
+// TestRunPrCreateDefaultsToNotAuditingPending covers docs/issues/actionable.md
+// item 2 at the pr create boundary: OnlyPending must default to true (no
+// per-commit auditing) and --audit-pending must be the only way back to the
+// old behavior. The net audit stays unconditional regardless.
+func TestRunPrCreateDefaultsToNotAuditingPending(t *testing.T) {
+	var opts review.BranchOptions
+	res := &review.BranchResult{Net: &review.NetReview{Audit: review.AuditResult{Verdict: review.VerdictOK}}}
+	deps := depsPrCreate{
+		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
+		getGitDir:  func() (string, error) { return "gd", nil },
+		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
+			return nil, nil
+		},
+		analyzeBranch: func(_ string, o review.BranchOptions) (*review.BranchResult, error) { opts = o; return res, nil },
+		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
+			return review.TemplateVerification{Mode: "omitido"}
+		},
+		publish:       func(_, path, base string) (string, bool, error) { return "https://x/pr/1", false, nil },
+		recordEvent:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		writeTemplate: func(string) (string, error) { return "/tmp/sentinel_pr_fake.md", nil },
+	}
+
+	if code := runPrCreateCon(new(bytes.Buffer), "wt", nil, deps); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !opts.OnlyPending {
+		t.Errorf("pr create default: opts.OnlyPending = %v, want true (do not audit pending commits)", opts.OnlyPending)
+	}
+
+	if code := runPrCreateCon(new(bytes.Buffer), "wt", []string{"--audit-pending"}, deps); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if opts.OnlyPending {
+		t.Errorf("--audit-pending: opts.OnlyPending = %v, want false (restore auditing pending commits)", opts.OnlyPending)
 	}
 }
 
@@ -1879,6 +1963,33 @@ func captureStreams(t *testing.T, f func()) (stdout, stderr string) {
 		t.Fatalf("reading the stderr pipe: %v", err)
 	}
 	return string(outBytes), string(errBytes)
+}
+
+// TestBranchPrReviewOptionsDefaultsToNotAuditingPending covers
+// docs/issues/actionable.md item 2: pr review must NOT audit commits without
+// a review record by default any more — only --audit-pending restores that.
+// The net audit is unconditional and unaffected either way.
+func TestBranchPrReviewOptionsDefaultsToNotAuditingPending(t *testing.T) {
+	wiring := pr.Wiring{
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		ShortSHA: func(sha string) string { return sha },
+	}
+	options, _ := pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
+		pr.FlagsPrReview{}, nil, wiring, &bytes.Buffer{})
+	if !options.OnlyPending {
+		t.Errorf("default pr review must not audit pending commits: OnlyPending = %v, want true", options.OnlyPending)
+	}
+
+	options, _ = pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
+		pr.FlagsPrReview{AuditPending: true}, nil, wiring, &bytes.Buffer{})
+	if options.OnlyPending {
+		t.Errorf("--audit-pending must restore auditing pending commits: OnlyPending = %v, want false", options.OnlyPending)
+	}
 }
 
 // TestBranchPrReviewOptionsProgressFollowsInjectedWriter covers the injected
@@ -2144,6 +2255,53 @@ func TestPrReviewNonJSONRoutesProgressThroughPayloadWriter(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Errorf("stderr must stay silent outside --json, got:\n%s", stderr)
+	}
+}
+
+// TestRunPrReviewReportsUnauditedCommitsWithoutBlocking covers
+// docs/issues/actionable.md item 2 at the terminal-report boundary: when a
+// branch has commits with no review record, the report must say so, name
+// them, and point at 'sentinel review <sha>' — but it must never block, and
+// the single/chain decision line must still render even with zero Records
+// (the default now that pr review does not audit pending commits).
+func TestRunPrReviewReportsUnauditedCommitsWithoutBlocking(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+		Version:  "test",
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+			return &review.BranchResult{
+				Branch:    "feat/unaudited",
+				SHAs:      []string{"abc1234abcd"},
+				Decision:  "single",
+				Records:   nil,
+				Unaudited: []review.UnauditedCommit{{SHA: "abc1234abcd", Subject: "feat(x): x"}},
+			}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: pr.PrReviewEventDetail,
+	}
+	stdout, _ := captureStreams(t, func() {
+		if code := pr.RunPrReviewWith(os.Stdout, os.Stdout, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
+			t.Errorf("RunPrReviewWith exit = %d, want 0 (reporting must never block)", code)
+		}
+	})
+	for _, want := range []string{"no review record", "abc1234a", "feat(x): x", "sentinel review abc1234abcd", "PR decision"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		}
 	}
 }
 

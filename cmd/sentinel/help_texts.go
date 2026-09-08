@@ -273,14 +273,15 @@ Run 'sentinel help pr create' or 'sentinel help pr review' for their flags.
 	prCreateHelp = `Purpose: analyze the branch, apply the blocking gate, and publish the pull request through gh with the honest verification template.
 
 Usage:
-  sentinel pr create [--base X] [--parent X] [--chain-pr] [--force --reason "..."]
+  sentinel pr create [--base X] [--parent X] [--chain-pr] [--audit-pending] [--force --reason "..."]
 
 Flags:
-  --base      Comparison branch for the analysis; context/default base for stacked layers.
-  --parent    Explicit stacked parent branch: only the own diff against it is reviewed, and the PR targets it.
-  --chain-pr  Declare this branch as a stack layer and publish it even when oversized. Without --parent, the parent branch is resolved strictly and fails closed without a reliable signal.
-  --force     Override a red validation verdict; requires --reason.
-  --reason    Explicit motive recorded alongside --force.
+  --base            Comparison branch for the analysis; context/default base for stacked layers.
+  --parent          Explicit stacked parent branch: only the own diff against it is reviewed, and the PR targets it.
+  --chain-pr        Declare this branch as a stack layer and publish it even when oversized. Without --parent, the parent branch is resolved strictly and fails closed without a reliable signal.
+  --audit-pending   Audit every branch commit without a review record instead of only reporting the gap (the net audit already covers the whole picture; this is the more expensive opt-in).
+  --force           Override a red validation verdict; requires --reason.
+  --reason          Explicit motive recorded alongside --force.
 
 Example:
   sentinel pr create --base main
@@ -288,12 +289,12 @@ Example:
 	prReviewHelp = `Purpose: dry-run analysis of the unpublished branch: audit matrix, summary, and the single-versus-chained PR decision. Publishes nothing.
 
 Usage:
-  sentinel pr review [--base X] [--parent X] [--only-unaudited] [--overview] [--json]
+  sentinel pr review [--base X] [--parent X] [--audit-pending] [--overview] [--json]
 
 Flags:
   --base            Comparison branch (default main).
   --parent          Explicit stacked parent branch: reviews only the own diff against it; inherited findings render separately (non-blocking).
-  --only-unaudited  Restrict the analysis to commits without a review record.
+  --audit-pending   Audit every branch commit without a review record instead of only reporting the gap (the net audit already covers the whole picture; this is the more expensive opt-in).
   --overview        Include the PR overview in the analysis.
   --json            Emit machine-readable JSON.
 
