@@ -520,11 +520,39 @@ func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {
 	return encoded.Bytes(), nil
 }
 
-// newReviewEnvironment gives one provider invocation its own writable state
+// newRestrictedReviewEnvironment isolates only OpenCode's writable provider
+// state. Other providers retain their host environment and credential model.
+func (c *CLIAdapter) newRestrictedReviewEnvironment(configuration, snapshot string) ([]string, func(), error) {
+	if c.isOpenCode() {
+		return newReviewEnvironment(configuration, c.Config.Model, snapshot)
+	}
+	if !c.isClaude() {
+		return os.Environ(), func() {}, nil
+	}
+	env := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && key == "OPENCODE_AUTH_CONTENT" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env, func() {}, nil
+}
+
+// newReviewEnvironment gives one OpenCode invocation its own writable state
 // directory. The snapshot remains the provider's working directory and read
 // target; HOME and XDG state must never share the published evidence tree.
-func newReviewEnvironment(configuration, model string) ([]string, func(), error) {
-	isolationRoot, err := os.MkdirTemp("", "vas-sentinel-review-provider-")
+func newReviewEnvironment(configuration, model, snapshot string) ([]string, func(), error) {
+	parent := ""
+	if snapshot != "" {
+		absoluteSnapshot, err := filepath.Abs(snapshot)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve review snapshot path: %w", err)
+		}
+		parent = filepath.Dir(absoluteSnapshot)
+	}
+	isolationRoot, err := os.MkdirTemp(parent, "vas-sentinel-review-provider-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create provider isolation root: %w", err)
 	}

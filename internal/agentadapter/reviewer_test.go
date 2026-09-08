@@ -555,6 +555,47 @@ func TestRunReviewClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	}
 }
 
+func TestRunReviewClaudeKeepsHostEnvironmentWithoutOpenCodeCredentials(t *testing.T) {
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"token":"host-secret"}}`)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
+
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "claude"),
+		Config:     config.AgentConfig{Model: "openai/gpt-5.6-terra"},
+		Timeout:    10 * time.Second,
+	}
+	if _, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: t.TempDir()}, 10*time.Second); err != nil {
+		t.Fatalf("runBoundedReview() error = %v", err)
+	}
+
+	capture := readAgentCapture(t, capturePath)
+	if !samePath(capture.Home, hostHome) {
+		t.Fatalf("HOME = %q, expected host HOME %q", capture.Home, hostHome)
+	}
+	if capture.OpenCodeAuth != "" {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %q, expected no OpenCode credentials for Claude", capture.OpenCodeAuth)
+	}
+}
+
+func TestRestrictedReviewGenericEnvironmentIsUnchanged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"token":"host-secret"}}`)
+	adapter := CLIAdapter{BinaryName: "generic-agent"}
+
+	env, cleanup, err := adapter.newRestrictedReviewEnvironment("generated", t.TempDir())
+	if err != nil {
+		t.Fatalf("newRestrictedReviewEnvironment() error = %v", err)
+	}
+	defer cleanup()
+	if got, want := environmentValues(env), environmentValues(os.Environ()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("generic review environment = %v, expected unchanged host environment %v", got, want)
+	}
+}
+
 func TestRestrictedReviewKeepsProviderStateOutOfSharedSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
@@ -625,7 +666,7 @@ func TestNewReviewEnvironmentAllocatesDistinctConcurrentRootsAndCleansThem(t *te
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			invocations[i].env, invocations[i].cleanup, invocations[i].err = newReviewEnvironment("generated", "openai/gpt-5.6-terra")
+			invocations[i].env, invocations[i].cleanup, invocations[i].err = newReviewEnvironment("generated", "openai/gpt-5.6-terra", "")
 		}(i)
 	}
 	wg.Wait()
@@ -648,6 +689,29 @@ func TestNewReviewEnvironmentAllocatesDistinctConcurrentRootsAndCleansThem(t *te
 		if _, err := os.Stat(roots[i]); !os.IsNotExist(err) {
 			t.Fatalf("provider root %q survived cleanup: %v", roots[i], err)
 		}
+	}
+}
+
+func TestNewReviewEnvironmentStaysOutsideSnapshotWhenTMPDIRIsNested(t *testing.T) {
+	snapshot := t.TempDir()
+	nestedTmp := filepath.Join(snapshot, "tmp")
+	if err := os.Mkdir(nestedTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", nestedTmp)
+
+	env, cleanup, err := newReviewEnvironment("generated", "openai/gpt-5.6-terra", snapshot)
+	if err != nil {
+		t.Fatalf("newReviewEnvironment() error = %v", err)
+	}
+	defer cleanup()
+	root := environmentValues(env)["HOME"][0]
+	relative, err := filepath.Rel(snapshot, root)
+	if err != nil {
+		t.Fatalf("filepath.Rel(%q, %q): %v", snapshot, root, err)
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("provider isolation root %q is nested in snapshot %q", root, snapshot)
 	}
 }
 
@@ -678,7 +742,7 @@ func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
 	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
 	t.Setenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
 	snapshotDir := t.TempDir()
-	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 200 * time.Millisecond}
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 200 * time.Millisecond}
 
 	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 200*time.Millisecond)
 	if err == nil {

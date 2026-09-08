@@ -79,8 +79,9 @@ func main() {
 			Dir           string   `json:"dir"`
 			Stdin         string   `json:"stdin"`
 			Home          string   `json:"home"`
+			OpenCodeAuth  string   `json:"opencode_auth"`
 			ProviderState string   `json:"provider_state"`
-		}{Args: os.Args[1:], Dir: dir, Stdin: prompt, Home: home, ProviderState: providerState})
+		}{Args: os.Args[1:], Dir: dir, Stdin: prompt, Home: home, OpenCodeAuth: os.Getenv("OPENCODE_AUTH_CONTENT"), ProviderState: providerState})
 		_ = os.WriteFile(ruta, datos, 0600)
 	}
 	time.Sleep(time.Duration(segundos) * time.Second)

@@ -102,6 +102,7 @@ type agentCapture struct {
 	Dir           string   `json:"dir"`
 	Stdin         string   `json:"stdin"`
 	Home          string   `json:"home"`
+	OpenCodeAuth  string   `json:"opencode_auth"`
 	ProviderState string   `json:"provider_state"`
 }
 

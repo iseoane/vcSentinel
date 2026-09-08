@@ -287,7 +287,7 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 	if err != nil {
 		return reviewExecution{}, err
 	}
-	env, cleanupEnvironment, err := newReviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], c.Config.Model)
+	env, cleanupEnvironment, err := c.newRestrictedReviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir)
 	if err != nil {
 		return reviewExecution{}, err
 	}
