@@ -56,11 +56,27 @@ Sits second: unblocked but low value, and its original premise was disproven.
 - Closing: either a value selected from the observed distribution of turns
   consumed by completing reviews, or a recorded determination that the turn
   budget is not a useful control and the constant should hold a documented
-  provider default instead. Both need the per-review turn count, which is now
-  counted but not yet persisted.
-- Blocked on: persisting the consumed turn count in the durable store. It
-  cannot be reconstructed from existing records — only the concatenated
-  answer text is kept, not the event stream.
+  provider default instead.
+- No longer blocked on persistence, as of 2026-09-08: the consumed turn count
+  now reaches the durable store as `AttemptObservation.Turns`, a `*int` that
+  stays nil for every provider that reports no comparable count, so an
+  unobserved count never renders as a real zero. Records written before that
+  date carry no count and cannot be backfilled, because only the concatenated
+  answer text was kept, not the event stream.
+- Waiting on sample only: filter on completing reviews, whose mapped stop
+  reason is `end_turn` (raw `stop`). Truncated runs are right-censored at
+  their denial point and would bias the value down. Pre-2026-09-07 records are
+  not comparable either way, because the truncations were caused by denied
+  tool calls and the whole-tree snapshot removed that cause. Measured rate:
+  144 completing invocations in the two days after that change, so tens of
+  samples accumulate within a day of ordinary use.
+- Remaining limitation, which does not block the closing condition: the
+  denial evidence is still unpersisted. `TruncatedTurnError.ToolCallErrors`
+  carries the observed `DeniedToolCalls`, but nothing writes it to the store,
+  so a truncated run's event stream holds no record of a rejected permission
+  and the store cannot attribute any truncation to a denial. Selecting the
+  turn value does not need that attribution; re-testing the disproven premise
+  above would.
 
 ## 3. Cache shared audit evidence across review dimensions
 
