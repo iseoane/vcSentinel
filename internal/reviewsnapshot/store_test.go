@@ -14,12 +14,6 @@ import (
 	"time"
 )
 
-func cleanupSealedStore(t *testing.T) {
-	t.Helper()
-	root := storeRoot()
-	t.Cleanup(func() { _ = removeReadOnlyStoreEntry(root) })
-}
-
 // assertSharedSnapshotComplete asserts that dir carries the committed bytes of
 // the gitInit fixture: the audited file and the committed-but-never-audited
 // context file must both be present with their exact committed content, so a
@@ -53,7 +47,6 @@ func TestCreateSameSHASharesOneSnapshotDirectory(t *testing.T) {
 	root, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	// Five concurrent callers against an empty store single-flight behind one
 	// materialization and observe the same complete directory.
@@ -179,7 +172,6 @@ func TestCreateAbortsLeaveNoPublishedOrStagingDirectory(t *testing.T) {
 	root, sha := gitInitManyFiles(t, 30)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	// Cancellation in the middle of materialization: the counting context
 	// fires inside the whole-tree loop, long before all 30 files are written.
@@ -212,7 +204,6 @@ func TestReaperSkipsActiveLeaseAndRemovesAbandonedStoreEntries(t *testing.T) {
 	root, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	active, _, release, err := Create(context.Background(), root, sha, []string{"audited.go"})
 	if err != nil {
@@ -336,7 +327,6 @@ func TestReaperRetainsLockNamespaceAcrossTransition(t *testing.T) {
 	_, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	// Stale, unlocked residue of a dead process, under a valid object-id key.
 	lastDigit, _ := unusedHexDigits(sha[len(sha)-1])
@@ -389,7 +379,6 @@ func TestCreateRejectsNonCanonicalObjectID(t *testing.T) {
 	root, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	rejections := []string{
 		"HEAD",
@@ -431,9 +420,9 @@ func TestCreateRejectsNonCanonicalObjectID(t *testing.T) {
 }
 
 // TestCreatePublishesImmutableValidatedSnapshots pins the retained-evidence
-// contract: a published snapshot's regular files and directories are
-// non-writable by the owner, a readiness manifest beside the tree describes
-// the expected committed files, and every
+// contract: a published snapshot's regular files are non-writable by the
+// owner while its directory root stays a usable working directory, a readiness
+// manifest beside the tree describes the expected committed files, and every
 // lease validates marker, manifest, and on-disk tree — rejecting added,
 // removed, symlinked, mode-changed, or size-changed entries without hashing
 // contents. A corrupted cache is never handed out: Create rebuilds it from
@@ -443,7 +432,6 @@ func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
 	root, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	snapshot, _, release, err := Create(context.Background(), root, sha, []string{"audited.go"})
 	if err != nil {
@@ -459,8 +447,8 @@ func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
 		}
 	}
 	if runtime.GOOS != "windows" {
-		if info, err := os.Stat(snapshot); err != nil || info.Mode().Perm() != 0o500 {
-			t.Fatalf("snapshot root mode = %v, want a read-only 0500 working directory", info)
+		if info, err := os.Stat(snapshot); err != nil || info.Mode().Perm() != 0o700 {
+			t.Fatalf("snapshot root mode = %v, want a usable 0700 working directory", info)
 		}
 	}
 	if manifest, err := os.ReadFile(manifestPath(storeRoot(), sha)); err != nil || len(manifest) == 0 {
@@ -493,7 +481,6 @@ func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
 	}
 
 	t.Run("added entry rejected", func(t *testing.T) {
-		makeSnapshotMutableForTest(t, snapshot)
 		if err := os.WriteFile(filepath.Join(snapshot, "extra.go"), []byte("evil\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -504,7 +491,6 @@ func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
 	})
 
 	t.Run("removed entry rejected", func(t *testing.T) {
-		makeSnapshotMutableForTest(t, snapshot)
 		if err := os.Remove(filepath.Join(snapshot, "audited.go")); err != nil {
 			t.Fatal(err)
 		}
@@ -515,7 +501,6 @@ func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("unprivileged symlinks are not available on Windows")
 		}
-		makeSnapshotMutableForTest(t, snapshot)
 		if err := os.Symlink("/etc/hostname", filepath.Join(snapshot, "link.go")); err != nil {
 			t.Fatal(err)
 		}
@@ -554,13 +539,6 @@ func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
 		}
 	})
 
-}
-
-func makeSnapshotMutableForTest(t *testing.T, snapshot string) {
-	t.Helper()
-	if err := os.Chmod(snapshot, 0o700); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // TestValidObjectIDAcceptsOnlyFullCanonicalHex pins the storage-key alphabet
@@ -636,7 +614,6 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	sha := gitCommitExecutable(t, root)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	snapshot, _, release, err := Create(context.Background(), root, sha, []string{"run.sh"})
 	if err != nil {
@@ -684,12 +661,15 @@ func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
 	secondRelease()
 }
 
-func TestCreateSealsDirectoriesAndReaperRemovesPublishedTree(t *testing.T) {
+// TestCreatePublishesOwnerWritableDirectories preserves a usable provider
+// working directory: reviewEnvironment assigns HOME and XDG paths beneath the
+// snapshot, so its directories cannot be sealed until provider isolation moves
+// outside the evidence tree.
+func TestCreatePublishesOwnerWritableDirectories(t *testing.T) {
 	root, _ := gitInit(t)
 	sha := gitCommitNestedFile(t, root)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	snapshot, _, release, err := Create(context.Background(), root, sha, []string{"nested/context.go"})
 	if err != nil {
@@ -700,29 +680,18 @@ func TestCreateSealsDirectoriesAndReaperRemovesPublishedTree(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", dir, err)
 		}
-		if info.Mode().Perm()&0o222 != 0 {
-			t.Fatalf("published directory %s is writable: mode %04o", dir, info.Mode().Perm())
+		if info.Mode().Perm()&0o200 == 0 {
+			t.Fatalf("published directory %s is not owner-writable: mode %04o", dir, info.Mode().Perm())
 		}
 	}
 
 	release()
-	stale := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(snapshot, stale, stale); err != nil {
-		t.Fatal(err)
-	}
-	if reaped := reapAbandonedSnapshots(time.Now(), staleSnapshotAge); reaped != 1 {
-		t.Fatalf("reaped = %d, want 1 sealed published tree", reaped)
-	}
-	if _, err := os.Stat(snapshot); !os.IsNotExist(err) {
-		t.Fatalf("sealed published tree survived reaping: %v", err)
-	}
 }
 
 func TestLeaseRejectsPublishedSnapshotWithInvalidManifestMode(t *testing.T) {
 	root, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	_, _, release, err := Create(context.Background(), root, sha, []string{"audited.go"})
 	if err != nil {
@@ -790,7 +759,6 @@ func TestReaperRechecksStalenessUnderLock(t *testing.T) {
 	_, sha := gitInit(t)
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	cleanupSealedStore(t)
 
 	lastDigit, otherDigit := unusedHexDigits(sha[len(sha)-1])
 	freshSHA := sha[:len(sha)-1] + string(lastDigit)
