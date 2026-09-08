@@ -620,7 +620,7 @@ func reapSharedStoreCapacity(root string) int {
 		modTime time.Time
 	}
 	candidates := make([]candidate, 0, len(entries))
-	var ownedBytes uint64
+	sizingFailed := false
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), publishedPrefix) || strings.HasSuffix(entry.Name(), readySuffix) || strings.HasSuffix(entry.Name(), manifestSuffix) {
 			continue
@@ -631,22 +631,20 @@ func reapSharedStoreCapacity(root string) int {
 		}
 		info, err := entry.Info()
 		if err != nil {
+			// A metadata failure must never make the store look smaller than it
+			// is. Other candidates can still be evicted under their own locks.
+			sizingFailed = true
 			continue
 		}
-		size, err := storeEntrySize(filepath.Join(root, entry.Name()))
-		if err != nil {
-			continue
-		}
-		for _, artifact := range []string{markerPath(root, sha), manifestPath(root, sha)} {
-			artifactSize, err := storeEntrySize(artifact)
-			if err == nil {
-				size += artifactSize
-			}
-		}
-		ownedBytes += size
 		candidates = append(candidates, candidate{sha: sha, modTime: info.ModTime()})
 	}
-	if ownedBytes <= storeCapacityLimit(space.capacity) {
+	ownedBytes, err := sharedStoreSnapshotBytes(root)
+	if err != nil {
+		// Fail conservatively: an unreadable entry may be arbitrarily large, so
+		// retain no capacity-based reuse guarantee while sizing is incomplete.
+		sizingFailed = true
+	}
+	if !sizingFailed && ownedBytes <= storeCapacityLimit(space.capacity) {
 		return 0
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -655,15 +653,22 @@ func reapSharedStoreCapacity(root string) int {
 
 	removed := 0
 	for _, candidate := range candidates {
-		if ownedBytes <= storeCapacityLimit(space.capacity) {
+		if !sizingFailed && ownedBytes <= storeCapacityLimit(space.capacity) {
 			break
 		}
 		if removeUnleasedStoreEntryAtMtime(root, candidate.sha, candidate.modTime, publishedPath(root, candidate.sha), markerPath(root, candidate.sha), manifestPath(root, candidate.sha)) {
 			removed++
-			if refreshedBytes, err := sharedStoreSnapshotBytes(root); err == nil {
-				ownedBytes = refreshedBytes
-			}
 		}
+		// Refresh after every attempt, including one that found the candidate
+		// already gone. The directory scan predates the SHA lock, so a failed
+		// removal says nothing reliable about the current store footprint.
+		refreshedBytes, err := sharedStoreSnapshotBytes(root)
+		if err != nil {
+			sizingFailed = true
+			continue
+		}
+		ownedBytes = refreshedBytes
+		sizingFailed = false
 	}
 	return removed
 }
@@ -686,17 +691,38 @@ func sharedStoreSnapshotBytes(root string) (uint64, error) {
 		if !validObjectID(sha) {
 			continue
 		}
-		for _, path := range []string{filepath.Join(root, entry.Name()), markerPath(root, sha), manifestPath(root, sha)} {
-			size, err := storeEntrySize(path)
-			if err == nil {
-				total += size
-			}
+		size, err := snapshotEntrySize(root, sha)
+		if err != nil {
+			return 0, err
 		}
+		total += size
 	}
 	return total, nil
 }
 
-func storeEntrySize(path string) (uint64, error) {
+// snapshotEntrySize measures one published tree and its optional readiness
+// artifacts. Missing artifacts have no bytes to count; other read failures are
+// returned so the caller can evict conservatively rather than under-count.
+func snapshotEntrySize(root, sha string) (uint64, error) {
+	var total uint64
+	for _, path := range []string{publishedPath(root, sha), markerPath(root, sha), manifestPath(root, sha)} {
+		size, err := storeEntrySize(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("measure review snapshot entry %q: %w", path, err)
+		}
+		total += size
+	}
+	return total, nil
+}
+
+// storeEntrySize is replaceable by focused tests that simulate an unreadable
+// snapshot entry. Production always measures through measureStoreEntrySize.
+var storeEntrySize = measureStoreEntrySize
+
+func measureStoreEntrySize(path string) (uint64, error) {
 	var size uint64
 	err := filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -714,11 +740,16 @@ func storeEntrySize(path string) (uint64, error) {
 	return size, err
 }
 
-// removeUnleasedStoreEntryAtMtime removes a published tree only when its state
-// remains exactly the state selected for capacity eviction after the SHA's
+// removeUnleasedStoreEntryAtMtime is replaceable by focused tests that model a
+// concurrent reaper winning the deletion race. Production uses the lock-aware
+// implementation below.
+var removeUnleasedStoreEntryAtMtime = removeUnleasedStoreEntryAtMtimeLocked
+
+// removeUnleasedStoreEntryAtMtimeLocked removes a published tree only when its
+// state remains exactly the state selected for capacity eviction after the SHA's
 // exclusive lock is held. A newer mtime means a successful lease or fresh
 // publication won the race, so it must remain reusable.
-func removeUnleasedStoreEntryAtMtime(root, sha string, selectedModTime time.Time, targets ...string) bool {
+func removeUnleasedStoreEntryAtMtimeLocked(root, sha string, selectedModTime time.Time, targets ...string) bool {
 	lock, acquired, err := lockSnapshot(lockPath(root, sha), true)
 	if err != nil || !acquired {
 		return false
