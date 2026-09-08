@@ -178,7 +178,8 @@ const staleSnapshotAge = 24 * time.Hour
 // removed lock-aware: reapSharedStore takes each candidate SHA's nonblocking
 // exclusive lock first, so a tree a live lease still holds in any process is
 // skipped even when its directory already looks stale, while abandoned
-// trees, staging directories, and orphaned readiness artifacts go away.
+// trees, staging directories, orphaned readiness artifacts, and stale
+// per-provider state roots go away.
 //
 // It is best-effort by contract: every error is ignored, because failing to
 // tidy must never fail the review that was about to start. It only ever

@@ -17,6 +17,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
 )
 
 // CommandTimeout is the limit of one call to the agent (300 s). Phase 1 makes
@@ -552,7 +553,7 @@ func newReviewEnvironment(configuration, model, snapshot string) ([]string, func
 		}
 		parent = filepath.Dir(absoluteSnapshot)
 	}
-	isolationRoot, err := os.MkdirTemp(parent, "vas-sentinel-review-provider-")
+	isolationRoot, err := os.MkdirTemp(parent, reviewsnapshot.ProviderStatePrefix)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create provider isolation root: %w", err)
 	}
