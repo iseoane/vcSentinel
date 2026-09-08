@@ -459,6 +459,35 @@ here is what a reader would otherwise re-derive.
   gate evidence, and the T9.3a executor deviation was recorded rather
   than presented as compliance.
 
+### Published snapshot removal restores owner write access (landed 2026-09-08)
+
+Published regular files are deliberately read-only (0400, or 0500 for a
+committed executable), so every store cleanup path routes through
+`removeReadOnlyStoreEntry`, which restores owner write access before deleting:
+the stale reaper, the failed-publication cleanup and every staging path. Linux
+unlinks a read-only file inside a writable directory, which is why the whole
+suite passed while the defect existed; Windows refuses, so there the reaper
+could remove nothing and residue grew without bound.
+
+The expectation is pinned per platform the way `publishedPermMatches` pins
+validation: Linux adds the owner write bit while preserving the rest, Windows
+forces 0600 to clear the read-only attribute. Only the Linux branch is
+executed on this machine; the Windows branch is compile-verified.
+
+The helper also tolerates an already-removed entry, because it stands in for
+`os.RemoveAll`, which succeeds on a missing path, while `filepath.WalkDir`
+reports the lstat failure. Two callers count a nil result as one reaped entry,
+so an entry lost to a concurrent race had stopped being counted.
+
+Two Sentinel WARNINGs were accepted with reason rather than fixed: `removalMode`
+exists only for linux and windows, which is pre-existing — darwin already fails
+to build through `internal/process` `newPlatformOwner` and `publishedPerm`, and
+the documented platforms are Windows and Debian; and the chmod walk is
+path-based, so a same-user symlink swap inside the 0700 per-uid store root
+could redirect it.
+
+Merged as 4010883.
+
 ### Shared review snapshots are SHA-keyed and retained (decided and landed 2026-09-08)
 
 `reviewsnapshot.Create` now publishes one retained snapshot for each audited

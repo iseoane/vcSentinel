@@ -5,33 +5,9 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Restore permission-aware removal of published snapshots
+## 1. Move provider isolation out of the evidence snapshot
 
-Sits first: a regression introduced on `fix/reviewsnapshot-platform-modes`,
-not yet merged, and it blocks that branch. Smallest fix on this list.
-
-- Wrong: published regular files are still tightened to their published
-  permission (`os.Chmod` at `internal/reviewsnapshot/store.go:146`, 0400 or
-  0500), but `removeReadOnlyStoreEntry` — which chmodded a tree back to 0700
-  before deleting it — was removed as dead code when directory sealing was
-  reverted. Cleanup is now raw `os.RemoveAll`/`os.Remove` at eight sites
-  (store.go:438-440 and 486-513). Unlinking a read-only file inside a
-  writable directory succeeds on Linux, so the suite passes; Windows refuses
-  to delete a read-only file, so the reaper and the failed-publication
-  cleanup cannot remove anything, residue accumulates without bound, and the
-  rename error path then reads an existing target as a competing winner and
-  can make `Create` retry indefinitely.
-- Evidence: Sentinel logic dimension, CRITICAL at confidence 0.9, on commit
-  `ea5d579`. The helper was deleted on my instruction: I judged it dead
-  because directories were no longer sealed, which was wrong — it existed for
-  read-only FILES, and those never stopped being read-only.
-- Closing: removal that restores owner write access before deleting,
-  reinstated for every cleanup path, with the Windows expectation pinned the
-  way `publishedPermMatches` now pins the validation rule.
-
-## 2. Move provider isolation out of the evidence snapshot
-
-Sits second: unblocked, and it is the reason the shared snapshot does not yet
+Sits first: unblocked, and it is the reason the shared snapshot does not yet
 deliver the reuse it was built for. Highest trust impact on this list.
 
 - Wrong: `reviewEnvironment` (`internal/agentadapter/cli.go:523`) sets
@@ -58,9 +34,9 @@ deliver the reuse it was built for. Highest trust impact on this list.
   sealing attempt — concurrent reviewers can currently add, rename or delete
   evidence another reviewer is reading.
 
-## 3. Bound the total size of the review snapshot store
+## 2. Bound the total size of the review snapshot store
 
-Sits third: unblocked and small, but it only bites under unusual load.
+Sits second: unblocked and small, but it only bites under unusual load.
 
 - Wrong: the store under `os.TempDir()/vas-sentinel-snapshots-<uid>` is
   reaped by staleness alone. Nothing bounds its total size, and one committed
@@ -87,9 +63,57 @@ Sits third: unblocked and small, but it only bites under unusual load.
   Item 2 is what makes retention worth anything, so land it first and expect
   the tree count to fall to one per audited commit.
 
-## 4. Recalibrate or retire the OpenCode reviewer turn budget
+## 3. Decide whether the gate's review leaves a record
 
-Sits fourth: unblocked but low value, and its original premise was disproven.
+Sits third: unblocked, found by exercising the full pre-push flow, and the
+cost it creates is already measured.
+
+- Wrong, or possibly deliberate: `gate --stage pre-push` runs a semantic
+  review of `HEAD` and prints its verdict, but writes no review record. On
+  2026-09-08 it reported `Review of 19a5b2f6: warn` across three dimensions
+  and no ficha exists for that SHA in the shared ledger (618 records at the
+  time), nor in the worktree's per-checkout ledger, which holds only an
+  `events.jsonl`. `status` does not list it, and it was not findable by SHA in
+  the durable store either.
+- Evidence of the cost: with no record, `pr review` counted that same commit
+  as unaudited and audited it again, so one branch of two commits issued ten
+  provider invocations where five would have done. The findings themselves
+  survive only in terminal output, so a gate `PASS` leaves nothing auditable
+  about what its review warned.
+- Note it may be intended: `AGENTS.md` names `review`, `status` and `pr` as
+  the commands that anchor the shared ledger, and pointedly not `gate`. The
+  gate is a lifecycle gate rather than an audit of record.
+- Closing: either the gate's review persists a record the rest of the system
+  can see — so `pr review` reuses it instead of paying twice, and its warnings
+  outlive the terminal — or a recorded determination that the gate
+  deliberately keeps none, with the double-audit cost accepted in writing.
+
+## 4. Bound the provider's own temporary residue
+
+Sits fourth: unblocked and mechanical, but the residue is the provider's, not
+this repository's, so the fix can only be to clean it, not to prevent it.
+
+- Wrong: each restricted reviewer invocation leaves a roughly 14 MB
+  `/tmp/.<hex>-00000000.so` file behind, written by the Bun runtime OpenCode
+  ships, and nothing ever removes them. Measured on 2026-09-08: 540 files
+  totalling 2,945 MB, accumulated since 2026-09-06, none held by any process.
+  Deleting the unheld ones took `/tmp` from 92% to 16% used.
+- Why it matters more than its size suggests: item 2 bounds THIS package's
+  store, which was 191 MB at that moment — fifteen times less than the
+  provider residue sitting beside it. No ceiling of ours touches it. On the
+  3.8 GB tmpfs this machine uses, a day of heavy reviewing fills the disk from
+  this alone, and the symptom is `no space left on device` inside a review,
+  which invites blaming the snapshot store. That misdiagnosis already happened
+  once during this work.
+- Closing: the reaper that already runs at every snapshot creation also
+  collects unheld, stale provider temporary files, or a recorded determination
+  that cleaning another tool's residue is out of scope and the operator owns
+  it. Do not simply widen the existing prefix match without checking that a
+  live invocation's file is never removed.
+
+## 5. Recalibrate or retire the OpenCode reviewer turn budget
+
+Sits fifth: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
   OpenCode `Steps` value — the number of model turns the restricted reviewer
@@ -147,9 +171,9 @@ Sits fourth: unblocked but low value, and its original premise was disproven.
   turn value does not need that attribution; re-testing the disproven premise
   above would.
 
-## 5. Cache shared audit evidence across review dimensions
+## 6. Cache shared audit evidence across review dimensions
 
-Sits fifth: the token measurement now exists on all three adapter paths
+Sits sixth: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -171,9 +195,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 6. Give cost, scope and reuse a producer (FU-3)
+## 7. Give cost, scope and reuse a producer (FU-3)
 
-Sits sixth: tokens now have producers on every adapter path, but cost,
+Sits seventh: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -191,9 +215,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 7. Validate the acpx spawn chain on native Windows
+## 8. Validate the acpx spawn chain on native Windows
 
-Sits seventh: conditional work — no action while Debian is the deployment
+Sits eighth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
