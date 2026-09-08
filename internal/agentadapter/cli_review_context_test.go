@@ -77,6 +77,37 @@ func TestReviewWithContextResultTruncatedTurnErrorsButKeepsEvidence(t *testing.T
 	}
 }
 
+// TestTruncatedTurnErrorReportsObservedStepsNotZero pins the derivation FIX
+// 2 introduced: reviewWithContextResultPolicy now derives
+// TruncatedTurnError.Steps from run.turns at its construction site (steps :=
+// 0; if run.turns != nil { steps = *run.turns }) instead of reading a stored
+// field. Nothing previously exercised this on an actual truncated run:
+// existing truncation coverage only asserts Output and StopReason. A
+// regression that derived Steps as a constant zero — the same nil-vs-zero
+// collapse this whole task exists to prevent, now on the error path — would
+// pass the rest of the suite untouched. truncationStream's single
+// step_finish event pins the minimal case: Steps must come back 1 (the
+// count the scanner actually observed), never the zero a broken derivation
+// would produce.
+func TestTruncatedTurnErrorReportsObservedStepsNotZero(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", truncationStream("tool-calls"))
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "opencode"),
+		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
+		Timeout:    10 * time.Second,
+	}
+
+	_, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+
+	var truncated *TruncatedTurnError
+	if !errors.As(err, &truncated) {
+		t.Fatalf("err = %v, want a *TruncatedTurnError", err)
+	}
+	if truncated.Steps != 1 {
+		t.Errorf("Steps = %d, want 1 (the single step_finish event in the truncation stream)", truncated.Steps)
+	}
+}
+
 // TestDefaultReviewToolCallsSurvivesOpenCodeTruncationBelowIt is a behavior
 // test replacing a weak one: the previous test only pinned the literal
 // constant value (defaultReviewToolCalls == 16), which fails the instant the
