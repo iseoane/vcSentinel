@@ -11,8 +11,10 @@ import (
 
 // storeRoot returns the shared review snapshot store under os.TempDir(),
 // which tests retarget through TMPDIR at every call. On Windows os.TempDir
-// resolves to the current user's private temp location, which carries the
-// per-user isolation the per-UID suffix provides on Linux.
+// resolves to the current user's private temp location, which is the
+// practical isolation here — unlike the Linux per-UID root this is not a
+// universal per-UID guarantee. The checks below reject symlink and reparse
+// point roots and non-directories where feasible.
 func storeRoot() string {
 	return filepath.Join(os.TempDir(), storeDirName)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -571,5 +572,146 @@ func TestValidObjectIDAcceptsOnlyFullCanonicalHex(t *testing.T) {
 				t.Fatalf("validObjectID(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// gitCommitExecutable commits an owner-executable run.sh on top of gitInit's
+// seed commit and returns the new commit's full SHA, so a committed 100755
+// git mode reaches the store pipeline.
+func gitCommitExecutable(t *testing.T, root string) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("add", "run.sh")
+	run("update-index", "--chmod=+x", "run.sh")
+	run("commit", "-qm", "executable")
+	out, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out[:len(out)-1])
+}
+
+// TestCreatePreservesCommittedExecutableMode pins the exec-bit contract: a
+// committed 100755 file is published owner-executable (0500) while regular
+// evidence is owner read-only (0400), the readiness manifest records the
+// committed mode, and a second Create for the same SHA leases the very same
+// tree without a rebuild — the directory mtime planted before the second
+// call would have been reset by any rematerialization.
+func TestCreatePreservesCommittedExecutableMode(t *testing.T) {
+	root, _ := gitInit(t)
+	sha := gitCommitExecutable(t, root)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	snapshot, _, release, err := Create(context.Background(), root, sha, []string{"run.sh"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		execInfo, err := os.Stat(filepath.Join(snapshot, "run.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := execInfo.Mode().Perm(); got != 0o500 {
+			t.Fatalf("committed 100755 published as %04o, want 0500", got)
+		}
+		plainInfo, err := os.Stat(filepath.Join(snapshot, "audited.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := plainInfo.Mode().Perm(); got != 0o400 {
+			t.Fatalf("committed 100644 published as %04o, want 0400", got)
+		}
+	}
+	manifest, err := os.ReadFile(manifestPath(storeRoot(), sha))
+	if err != nil || !strings.Contains(string(manifest), "100755 10 run.sh\x00") {
+		t.Fatalf("readiness manifest does not record the executable mode: %q, %v", manifest, err)
+	}
+
+	// Reuse without rebuild: plant an old directory mtime — the live lease
+	// below keeps the reaper away from the stale-looking tree — and require
+	// it to survive the second Create untouched.
+	pinned := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(snapshot, pinned, pinned); err != nil {
+		t.Fatal(err)
+	}
+	again, _, secondRelease, err := Create(context.Background(), root, sha, []string{"run.sh"})
+	if err != nil {
+		t.Fatalf("second Create: %v", err)
+	}
+	if again != snapshot {
+		t.Fatalf("second Create returned %q, want the published %q", again, snapshot)
+	}
+	if info, err := os.Stat(snapshot); err != nil || !info.ModTime().Equal(pinned) {
+		t.Fatalf("published tree was rebuilt on reuse: mtime %v (err %v), want pinned %v", info.ModTime(), err, pinned)
+	}
+	release()
+	secondRelease()
+}
+
+// TestReaperRechecksStalenessUnderLock pins the reaper's TOCTOU guard: the
+// staleness verdict is re-checked against each target AFTER the exclusive
+// lock is held, so a fresh publication is never deleted even when an older
+// directory scan had already marked the entry for collection — and a stale,
+// unlocked entry still goes away.
+func TestReaperRechecksStalenessUnderLock(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	lastDigit, otherDigit := unusedHexDigits(sha[len(sha)-1])
+	freshSHA := sha[:len(sha)-1] + string(lastDigit)
+	staleSHA := sha[:len(sha)-1] + string(otherDigit)
+
+	freshTree := publishedPath(storeRoot(), freshSHA)
+	if err := os.MkdirAll(freshTree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	freshMarker := markerPath(storeRoot(), freshSHA)
+	if err := os.WriteFile(freshMarker, []byte("ready\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	staleTree := publishedPath(storeRoot(), staleSHA)
+	if err := os.MkdirAll(staleTree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staleMarker := markerPath(storeRoot(), staleSHA)
+	if err := os.WriteFile(staleMarker, []byte("ready\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-48 * time.Hour)
+	for _, path := range []string{staleTree, staleMarker} {
+		if err := os.Chtimes(path, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now := time.Now()
+	if removeUnleasedStoreEntry(storeRoot(), freshSHA, now, staleSnapshotAge, freshTree, freshMarker) {
+		t.Fatal("the reaper deleted a fresh publication that was re-checked under the lock")
+	}
+	if _, err := os.Stat(freshTree); err != nil {
+		t.Fatalf("fresh publication vanished: %v", err)
+	}
+	if _, err := os.Stat(freshMarker); err != nil {
+		t.Fatalf("fresh publication's marker vanished: %v", err)
+	}
+	if !removeUnleasedStoreEntry(storeRoot(), staleSHA, now, staleSnapshotAge, staleTree, staleMarker) {
+		t.Fatal("the reaper refused to collect a stale, unlocked entry")
+	}
+	if _, err := os.Stat(staleTree); !os.IsNotExist(err) {
+		t.Fatal("a stale, unlocked entry survived the reaper")
 	}
 }

@@ -100,24 +100,35 @@ func isCommittedRegularFile(mode, objectType string) bool {
 	return objectType == "blob" && strings.HasPrefix(mode, "100")
 }
 
+// publishedPerm maps a committed git regular-file mode to the immutable
+// on-disk permission the store publishes: owner read-only (0400), plus owner
+// execute exactly for git's 100755 entries (0500). It is the single source
+// of that mapping, used both to tighten files at publication and to validate
+// them at lease time.
+func publishedPerm(gitMode string) fs.FileMode {
+	if gitMode == "100755" {
+		return 0o500
+	}
+	return 0o400
+}
+
 // manifestEntry is one committed regular file's expected on-disk evidence:
-// whether git marked it executable and its byte size. Contents are
-// deliberately not hashed — lease validation compares structure and metadata
-// only, which is exactly what catches added, removed, symlinked,
-// mode-changed, and size-changed entries without paying a hash per lease.
+// its published permission and its byte size. Contents are deliberately not
+// hashed — lease validation compares structure and metadata only, which is
+// exactly what catches added, removed, symlinked, mode-changed, and
+// size-changed entries without paying a hash per lease.
 type manifestEntry struct {
-	exec bool
+	perm fs.FileMode
 	size int64
 }
 
-// writeManifest walks the finished staging tree and records every regular
-// file's committed mode and size, tightening each file to owner read-only
-// (plus owner execute exactly for git's 100755 entries) as it goes. The
-// directory tree keeps its owner-traversable 0700 directories so the
-// snapshot remains a usable working directory for the reviewer process.
-// Records are NUL-terminated "<git-mode> <size> <path>" lines, the same
-// shape materializeTree's batch responses use, so any committed path —
-// spaces, tabs, newlines included — round-trips losslessly.
+// writeManifest walks the finished staging tree once and, in that single
+// pass, tightens every regular file to its published permission and records
+// the file's committed mode and size. The directory tree keeps its
+// owner-traversable 0700 directories so the snapshot remains a usable
+// working directory for the reviewer process. Records are NUL-terminated
+// "<git-mode> <size> <path>" lines, so any committed path — spaces, tabs,
+// newlines included — round-trips losslessly.
 func writeManifest(staging, manifest string, modes map[string]string) error {
 	var buf []byte
 	walkErr := filepath.WalkDir(staging, func(p string, d fs.DirEntry, err error) error {
@@ -143,10 +154,7 @@ func writeManifest(staging, manifest string, modes map[string]string) error {
 		if err != nil {
 			return err
 		}
-		perm := fs.FileMode(0o444)
-		if gitMode == "100755" {
-			perm = 0o555
-		}
+		perm := publishedPerm(gitMode)
 		if err := os.Chmod(p, perm); err != nil {
 			return err
 		}
@@ -179,7 +187,7 @@ func readManifest(manifest string) (map[string]manifestEntry, error) {
 		if err != nil || size < 0 {
 			return nil, fmt.Errorf("malformed readiness manifest record %q", record)
 		}
-		entries[string(path)] = manifestEntry{exec: string(mode) == "100755", size: size}
+		entries[string(path)] = manifestEntry{perm: publishedPerm(string(mode)), size: size}
 	}
 	return entries, nil
 }
@@ -187,10 +195,13 @@ func readManifest(manifest string) (map[string]manifestEntry, error) {
 // publishedSnapshotUsable reports whether a published tree may be leased:
 // the readiness marker must exist, the manifest must parse, and the on-disk
 // tree must match the manifest exactly — no added or removed entries, no
-// symlinks or other non-regular files, no mode or size drift. Contents are
-// never hashed; the metadata comparison is what makes tampering detectable
-// at lease time. A tree that fails here is corrupted cache, and the caller
-// rebuilds it from Git under the per-SHA transition lock.
+// symlinks or other non-regular files, no mode or size drift. This is
+// accidental-corruption defense, not tamper-proofing: the manifest and the
+// tree share the same owner's write capability, so a same-UID actor could
+// rewrite both in concert — which is also why contents are not hashed per
+// lease (full-tree I/O without creating a boundary). A tree that fails here
+// is corrupted cache, and the caller rebuilds it from Git under the per-SHA
+// transition lock.
 func publishedSnapshotUsable(dir, marker, manifest string) bool {
 	if _, err := os.Stat(marker); err != nil {
 		return false
@@ -241,15 +252,7 @@ func publishedSnapshotUsable(dir, marker, manifest string) bool {
 		if info.Size() != want.size {
 			return fmt.Errorf("size drift for %q in published snapshot", rel)
 		}
-		// The published permission is canonical — owner read-only, plus
-		// owner execute exactly for git's 100755 entries — so ANY permission
-		// drift, writability included, is a mode change and rejects the
-		// cache.
-		wantPerm := fs.FileMode(0o444)
-		if want.exec {
-			wantPerm = 0o555
-		}
-		if info.Mode().Perm() != wantPerm {
+		if info.Mode().Perm() != want.perm {
 			return fmt.Errorf("mode drift for %q in published snapshot", rel)
 		}
 		delete(expected, rel)
@@ -451,21 +454,26 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		}
 		return err
 	}
+	// The committed mode travels with the path from git's own ls-tree
+	// listing — `git cat-file --batch` header field 0 is the blob OID, not a
+	// mode — so the mapping is built here, once, from the authoritative
+	// source.
 	regularFiles := make([]string, 0, len(entries))
+	modes := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		if !isCommittedRegularFile(entry.mode, entry.objectType) {
 			continue
 		}
 		if clean, ok := safePath(entry.path); ok && clean == entry.path {
 			regularFiles = append(regularFiles, entry.path)
+			modes[entry.path] = entry.mode
 		}
 	}
 	staging, err := os.MkdirTemp(root, stagingPrefix+sha+"~")
 	if err != nil {
 		return fmt.Errorf("create review snapshot: %w", err)
 	}
-	modes, err := materializeTree(ctx, worktree, sha, staging, regularFiles)
-	if err != nil {
+	if err := materializeTree(ctx, worktree, sha, staging, regularFiles); err != nil {
 		_ = os.RemoveAll(staging)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("review snapshot aborted: %w", ctxErr)
@@ -488,15 +496,19 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	if err := os.Rename(staging, published); err != nil {
+		if _, statErr := os.Stat(published); statErr == nil {
+			// A published tree is already in place: concede the transition
+			// to the winner and leave its readiness marker and manifest
+			// alone — removing them would invalidate a tree we did not
+			// publish.
+			_ = os.RemoveAll(staging)
+			return nil
+		}
+		// A genuine rename failure: remove the staging tree and the
+		// readiness artifacts we published for it, so no orphan survives.
 		_ = os.RemoveAll(staging)
 		_ = os.Remove(marker)
 		_ = os.Remove(manifest)
-		if _, statErr := os.Stat(published); statErr == nil {
-			// Lost a rename race that the exclusive lock rules out in
-			// theory; the winner's tree is published and complete, which is
-			// all this call owed its caller.
-			return nil
-		}
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	return nil
@@ -545,7 +557,7 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 			if sha == "" || !validObjectID(sha) || !isStaleStoreEntry(entry, now, maxAge) {
 				continue
 			}
-			if removeUnleasedStoreEntry(root, sha, filepath.Join(root, name), markerPath(root, sha), manifestPath(root, sha)) {
+			if removeUnleasedStoreEntry(root, sha, now, maxAge, filepath.Join(root, name), markerPath(root, sha), manifestPath(root, sha)) {
 				removed++
 			}
 		case entry.IsDir() && strings.HasPrefix(name, stagingPrefix):
@@ -553,7 +565,7 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 			if sha == "" || !validObjectID(sha) || !isStaleStoreEntry(entry, now, maxAge) {
 				continue
 			}
-			if removeUnleasedStoreEntry(root, sha, filepath.Join(root, name)) {
+			if removeUnleasedStoreEntry(root, sha, now, maxAge, filepath.Join(root, name)) {
 				removed++
 			}
 		case !entry.IsDir() && strings.HasPrefix(name, publishedPrefix) && (strings.HasSuffix(name, readySuffix) || strings.HasSuffix(name, manifestSuffix)):
@@ -567,7 +579,7 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 			if _, err := os.Stat(publishedPath(root, sha)); err == nil {
 				continue
 			}
-			if removeUnleasedStoreEntry(root, sha, filepath.Join(root, name)) {
+			if removeUnleasedStoreEntry(root, sha, now, maxAge, filepath.Join(root, name)) {
 				removed++
 			}
 		}
@@ -578,22 +590,36 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 // removeUnleasedStoreEntry removes the given store entries for sha only while
 // nothing leases them anywhere: the nonblocking exclusive lock on the SHA's
 // lock file succeeds only when no shared lease exists, and while it is held,
-// no creator or reaper can be inside the same entries either. Only the
-// snapshot, marker, manifest, and staging targets go away — never the lock
-// file. Unlinking a lock file while its inode is locked would break the
+// no creator or reaper can be inside the same entries either. Each target is
+// re-statted and its staleness re-checked UNDER that lock before deletion —
+// the verdict that scheduled this entry was formed from a directory scan
+// taken before the lock was held, and a fresh publication may have replaced
+// or refreshed the entry since; a fresh publication always survives. Only
+// the snapshot, marker, manifest, and staging targets go away — never the
+// lock file. Unlinking a lock file while its inode is locked would break the
 // mutual exclusion the whole store rests on: a party holding the old file
 // open could lock the orphaned inode while a later opener created a fresh
 // inode, and the two would no longer exclude each other. Lock files are
 // therefore persistent zero-byte files, one per object id ever audited,
 // keeping the lock namespace stable for the lifetime of the store.
-func removeUnleasedStoreEntry(root, sha string, targets ...string) bool {
+func removeUnleasedStoreEntry(root, sha string, now time.Time, maxAge time.Duration, targets ...string) bool {
 	lock, acquired, err := lockSnapshot(lockPath(root, sha), true)
 	if err != nil || !acquired {
 		return false
 	}
 	defer lock.Close()
+	removed := false
 	for _, target := range targets {
-		_ = os.RemoveAll(target)
+		info, err := os.Lstat(target)
+		if err != nil {
+			continue // already gone; nothing to remove
+		}
+		if now.Sub(info.ModTime()) < maxAge {
+			continue // refreshed since the scan: a fresh publication survives
+		}
+		if os.RemoveAll(target) == nil {
+			removed = true
+		}
 	}
-	return true
+	return removed
 }

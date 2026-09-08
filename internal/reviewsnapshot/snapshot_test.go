@@ -433,7 +433,7 @@ func TestMaterializeTreeReleasesGitProcessOnWriteFailure(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- func() error { _, err := materializeTree(context.Background(), dir, sha, snapshot, paths); return err }()
+		done <- materializeTree(context.Background(), dir, sha, snapshot, paths)
 	}()
 
 	select {

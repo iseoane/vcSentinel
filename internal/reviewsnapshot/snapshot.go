@@ -423,29 +423,28 @@ func gitTreeEntries(ctx context.Context, worktree, sha string) ([]treeEntry, err
 // raw blob objects straight from the object database: unlike `git archive`,
 // it never runs the tree's own .gitattributes (export-ignore could silently
 // drop a file, export-subst could silently rewrite its bytes), which matters
-// because this package's contract is byte-identical committed content. It
-// returns each written file's committed git mode — the vocabulary the
-// readiness manifest and the publish-time evidence tightening are built
-// from.
-func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths []string) (map[string]string, error) {
-	modes := make(map[string]string, len(paths))
+// because this package's contract is byte-identical committed content. Its
+// `git cat-file --batch` response headers carry "<oid> <type> <size>" —
+// field 0 is the blob OID, never a mode — so committed modes travel to the
+// publisher from gitTreeEntries instead.
+func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths []string) error {
 	if len(paths) == 0 {
-		return modes, nil
+		return nil
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", worktree, "cat-file", "--batch")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
+		return fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
+		return fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start committed tree batch reader for %q: %w", sha, err)
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start committed tree batch reader for %q: %w", sha, err)
-	}
 
 	writeErr := make(chan error, 1)
 	go func() {
@@ -498,55 +497,54 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		// cancels while it is midway through must be observed promptly
 		// instead of after every remaining file has been written.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return ctxErr
 		}
 		header, err := reader.ReadString('\n')
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
+				return ctxErr
 			}
-			return nil, fmt.Errorf("read committed tree batch header for %q: %w", filePath, err)
+			return fmt.Errorf("read committed tree batch header for %q: %w", filePath, err)
 		}
 		fields := strings.Fields(header)
 		if len(fields) != 3 || fields[1] != "blob" {
-			return nil, fmt.Errorf("unexpected committed tree batch entry for %q: %q", filePath, strings.TrimSpace(header))
+			return fmt.Errorf("unexpected committed tree batch entry for %q: %q", filePath, strings.TrimSpace(header))
 		}
 		size, err := strconv.ParseInt(fields[2], 10, 64)
 		if err != nil || size < 0 {
-			return nil, fmt.Errorf("invalid committed tree batch size for %q: %q", filePath, strings.TrimSpace(header))
+			return fmt.Errorf("invalid committed tree batch size for %q: %q", filePath, strings.TrimSpace(header))
 		}
 		content := make([]byte, size)
 		if _, err := io.ReadFull(reader, content); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
+				return ctxErr
 			}
-			return nil, fmt.Errorf("read committed tree batch content for %q: %w", filePath, err)
+			return fmt.Errorf("read committed tree batch content for %q: %w", filePath, err)
 		}
 		// Every batch response carries one trailing LF after the object bytes.
 		if _, err := reader.Discard(1); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
+				return ctxErr
 			}
-			return nil, fmt.Errorf("read committed tree batch trailer for %q: %w", filePath, err)
+			return fmt.Errorf("read committed tree batch trailer for %q: %w", filePath, err)
 		}
-		modes[filePath] = fields[0]
 		target := filepath.Join(snapshot, filepath.FromSlash(filePath))
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return nil, fmt.Errorf("create review snapshot directory: %w", err)
+			return fmt.Errorf("create review snapshot directory: %w", err)
 		}
 		if err := os.WriteFile(target, content, 0o600); err != nil {
-			return nil, fmt.Errorf("write review snapshot file: %w", err)
+			return fmt.Errorf("write review snapshot file: %w", err)
 		}
 	}
 	if err := <-writeErr; err != nil {
-		return nil, fmt.Errorf("write committed tree batch request for %q: %w", sha, err)
+		return fmt.Errorf("write committed tree batch request for %q: %w", sha, err)
 	}
 	released = true
 	if err := cmd.Wait(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return ctxErr
 		}
-		return nil, fmt.Errorf("materialize committed tree batch for %q: %w (%s)", sha, err, stderr.String())
+		return fmt.Errorf("materialize committed tree batch for %q: %w (%s)", sha, err, stderr.String())
 	}
-	return modes, nil
+	return nil
 }
