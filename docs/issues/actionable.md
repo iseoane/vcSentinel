@@ -5,9 +5,71 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Move provider isolation out of the evidence snapshot
+## 1. Bound what the review flow costs the machine that runs it
 
-Sits first: unblocked, and it is the reason the shared snapshot does not yet
+Sits first: unblocked, and it is the only item that has stopped work outright
+rather than degrading it. Six consecutive failures on 2026-09-08.
+
+- Wrong: nothing relates the flow's resource use to the machine's capacity, in
+  four independent places. `review.parallel` (5 here) spawns that many
+  concurrent OpenCode reviewers, each a full Bun process. `pr create` runs the
+  validation profile AND the net semantic audit; the `standard` profile ends in
+  `go test ./...`, which in this repository spawns real child processes from
+  `internal/durableruns_e2e`, `internal/daemon` and `internal/process`, with
+  `mode: worktree` materializing another checkout. `/tmp` is tmpfs on this
+  machine, so every byte of snapshot and provider residue is RAM, not disk. And
+  a process killed mid-validation leaves its materialized worktree registered
+  in git, which no reaper collects.
+- Evidence, 2026-09-08: `pr create` was killed by the OOM reaper six times
+  across four configurations — untouched, `GOFLAGS=-p=2`, that plus
+  `review.parallel: 2`, and a prebuilt binary with `GOFLAGS=-p=1`. A review of
+  one commit was killed the same way earlier. Freeing 914 MB of residue (525 MB
+  of snapshots plus 389 MB of Bun temporaries) moved available memory from
+  4.1 GB to 4.9 GB, which is what proves tmpfs residue is memory. Closing one
+  agent pane freed a further 780 MB and let a review reach completion. Three
+  orphaned validation worktrees had accumulated under
+  `.git/vas-sentinel/snapshots/`, taking `git worktree list` to seven entries.
+- Why the symptom misleads: the process dies with no diagnostic of its own, so
+  it reads as a hang or a provider fault. It cost several wrong diagnoses in one
+  afternoon, including blaming the snapshot store for a disk fill that was
+  mostly the provider's Bun residue.
+- Closing: a ceiling derived from what the machine actually has, the way
+  `storeCapacityLimit` derives from `statfs` rather than a magic number —
+  applied to reviewer concurrency and to running validation alongside a
+  semantic audit — plus collection of validation worktrees left by a killed
+  run. Or a recorded determination that Sentinel targets machines where this
+  does not arise, which would be a real decision given it runs on the same
+  machine as the agents that drive it.
+
+## 2. Make the PR verification notice read the configuration this project uses
+
+Sits second: unblocked, small, and it makes a published claim untrue.
+
+- Wrong: `verifyInternal` (`internal/ops/verify.go:107-109`) builds its command
+  list from `Cfg.LintCommands`, `Cfg.TestCommands` and `Cfg.BuildCommands`
+  only. This project configures verification under `validation.capabilities`
+  instead — `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test ./...` —
+  and `translateLegacyCommandsToCapabilities` (`internal/config/parser.go:595`)
+  converts legacy keys INTO capabilities, never the reverse, and returns early
+  when capabilities are already present. So the list is empty and
+  `verificationNoticeText` announces "No verification commands are configured
+  (lint_commands/test_commands/build_commands in vassentinel.yml)" followed by
+  "No CI was detected: this PR will not have any automatic verification".
+- Evidence: on 2026-09-08 `pr create` printed exactly that, minutes after
+  `gate --stage pre-push` had run all four of those commands and reported PASS.
+  The template it wrote contradicts its own console notice: the template's
+  Validation section lists the four commands at exit 0. The two read different
+  places, and the template is the one telling the truth.
+- It also blocks scripted use: the notice ends by asking the operator to reply
+  `configure`, `skip` or `delegate` on stdin, so a non-interactive run answers
+  by EOF and proceeds on a default nobody chose.
+- Closing: read the capability profile the project actually declares, so the
+  notice and the template agree, and decide the interactive question's
+  non-interactive answer explicitly instead of by EOF.
+
+## 3. Move provider isolation out of the evidence snapshot
+
+Sits third: unblocked, and it is the reason the shared snapshot does not yet
 deliver the reuse it was built for. Highest trust impact on this list.
 
 - Wrong: `reviewEnvironment` (`internal/agentadapter/cli.go:523`) sets
@@ -34,9 +96,9 @@ deliver the reuse it was built for. Highest trust impact on this list.
   sealing attempt — concurrent reviewers can currently add, rename or delete
   evidence another reviewer is reading.
 
-## 2. Bound the total size of the review snapshot store
+## 4. Bound the total size of the review snapshot store
 
-Sits second: unblocked and small, but it only bites under unusual load.
+Sits fourth: unblocked and small, but it only bites under unusual load.
 
 - Wrong: the store under `os.TempDir()/vas-sentinel-snapshots-<uid>` is
   reaped by staleness alone. Nothing bounds its total size, and one committed
@@ -63,9 +125,9 @@ Sits second: unblocked and small, but it only bites under unusual load.
   Item 2 is what makes retention worth anything, so land it first and expect
   the tree count to fall to one per audited commit.
 
-## 3. Give the pre-publication audits a record `pr create` can consult
+## 5. Give the pre-publication audits a record `pr create` can consult
 
-Sits third: unblocked, found by exercising the full pre-push flow, and its
+Sits fifth: unblocked, found by exercising the full pre-push flow, and its
 cheap half is separable from its expensive half.
 
 - Wrong, or possibly deliberate: `gate --stage pre-push` runs a semantic
@@ -170,9 +232,9 @@ cheap half is separable from its expensive half.
   net findings on `99138bb..19a5b2f` versus the per-commit fichas for
   `e408d42` and `19a5b2f`.
 
-## 4. Bound the provider's own temporary residue
+## 6. Bound the provider's own temporary residue
 
-Sits fourth: unblocked and mechanical, but the residue is the provider's, not
+Sits sixth: unblocked and mechanical, but the residue is the provider's, not
 this repository's, so the fix can only be to clean it, not to prevent it.
 
 - Wrong: each restricted reviewer invocation leaves a roughly 14 MB
@@ -180,7 +242,7 @@ this repository's, so the fix can only be to clean it, not to prevent it.
   ships, and nothing ever removes them. Measured on 2026-09-08: 540 files
   totalling 2,945 MB, accumulated since 2026-09-06, none held by any process.
   Deleting the unheld ones took `/tmp` from 92% to 16% used.
-- Why it matters more than its size suggests: item 2 bounds THIS package's
+- Why it matters more than its size suggests: item 4 bounds THIS package's
   store, which was 191 MB at that moment — fifteen times less than the
   provider residue sitting beside it. No ceiling of ours touches it. On the
   3.8 GB tmpfs this machine uses, a day of heavy reviewing fills the disk from
@@ -193,9 +255,9 @@ this repository's, so the fix can only be to clean it, not to prevent it.
   it. Do not simply widen the existing prefix match without checking that a
   live invocation's file is never removed.
 
-## 5. Recalibrate or retire the OpenCode reviewer turn budget
+## 7. Recalibrate or retire the OpenCode reviewer turn budget
 
-Sits fifth: unblocked but low value, and its original premise was disproven.
+Sits seventh: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
   OpenCode `Steps` value — the number of model turns the restricted reviewer
@@ -253,9 +315,9 @@ Sits fifth: unblocked but low value, and its original premise was disproven.
   turn value does not need that attribution; re-testing the disproven premise
   above would.
 
-## 6. Cache shared audit evidence across review dimensions
+## 8. Cache shared audit evidence across review dimensions
 
-Sits sixth: the token measurement now exists on all three adapter paths
+Sits eighth: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -277,9 +339,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 7. Give cost, scope and reuse a producer (FU-3)
+## 9. Give cost, scope and reuse a producer (FU-3)
 
-Sits seventh: tokens now have producers on every adapter path, but cost,
+Sits ninth: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -297,9 +359,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 8. Validate the acpx spawn chain on native Windows
+## 10. Validate the acpx spawn chain on native Windows
 
-Sits eighth: conditional work — no action while Debian is the deployment
+Sits tenth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
