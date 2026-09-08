@@ -79,8 +79,26 @@ func (a *AcpxAdapter) ReviewWithContextResult(ctx context.Context, prompt, sha s
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	snapshot, _, cleanup, err := reviewsnapshot.Create("", sha, paths)
+	snapshot, _, cleanup, err := reviewsnapshot.Create(ctx, "", sha, paths)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// A snapshot abort caused by the caller's own context ending is
+			// not a process failure: it must classify exactly like a
+			// cancellation or timeout observed later in run, or a caller that
+			// interrupts an audit while the (potentially whole-tree) snapshot
+			// is still being materialized — before any provider process is
+			// even spawned — gets an OutcomeError-less plain error here that
+			// downstream classifiers cannot attribute, or worse, the ambient
+			// context ending races the eventual spawn attempt into an
+			// unrelated *OutcomeError with the wrong class. callerContextOutcome
+			// keeps the deadline/cancellation distinction this package
+			// maintains everywhere else.
+			class, reason := callerContextOutcome(err)
+			return a.declaredResult(), &OutcomeError{
+				Class:  class,
+				Detail: fmt.Sprintf("acpx: %s before review snapshot ready: %v", reason, err),
+			}
+		}
 		return a.declaredResult(), fmt.Errorf("acpx: create review snapshot: %w", err)
 	}
 	defer cleanup()
@@ -189,6 +207,26 @@ func (a *AcpxAdapter) run(parent context.Context, args []string) (Result, error)
 	if err != nil {
 		stdoutR.Close()
 		stdoutW.Close()
+		// A spawn that never started because the CALLER's own context had
+		// already ended (os/exec's Cmd.Start checks ctx.Err() up front and
+		// returns it immediately) is not a process failure: it is the exact
+		// same cancellation/timeout the switch below classifies once a
+		// terminal result exists, just observed earlier, before there was
+		// ever a child to wait on. runCtx is derived from parent with the
+		// runtime budget layered on top, so parent.Err() — not runCtx.Err()
+		// — is what keeps the deadline/cancel distinction callerContextOutcome
+		// exists to preserve; consulting runCtx here would misclassify a
+		// caller cancellation as a runtime-budget timeout whenever both
+		// happen to be set. A genuine launch failure with a live caller
+		// context (missing binary, permission error, ...) still falls
+		// through to the unconditional process error.
+		if parent.Err() != nil {
+			class, reason := callerContextOutcome(parent.Err())
+			return a.declaredResult(), &OutcomeError{
+				Class:  class,
+				Detail: fmt.Sprintf("acpx: %s before launch %q could start: %v", reason, filepath.Base(a.launcher[0]), err),
+			}
+		}
 		return a.declaredResult(), &OutcomeError{
 			Class:  agentrun.OutcomeProcessError,
 			Detail: fmt.Sprintf("acpx: launch %q failed: %v", filepath.Base(a.launcher[0]), err),

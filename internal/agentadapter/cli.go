@@ -57,15 +57,21 @@ type ReviewRequest struct {
 }
 
 // defaultReviewToolCalls is the OpenCode agent-configuration "Steps" turn
-// budget applied to a restricted review when the caller supplies none. It is
-// PROVISIONAL: raised from 8 to 16 because 21% of durable review outcomes
-// that record a stop reason ended "tool-calls" (the reviewer exhausted its
-// 8-turn budget before returning a verdict, admitted as a healthy completion
-// until agentadapter.TruncatedTurnError started rejecting it). Item 1 of
-// docs/issues/actionable.md tracks calibrating this value from measured
-// data instead of a guess. The Claude branch of reviewCommand intentionally
-// ignores this value: its own comment there explains there is no confirmed
-// flag to cap Claude Code's turn count.
+// budget applied to a restricted review when the caller supplies none.
+//
+// It is PROVISIONAL and unmeasured. It was raised from 8 to 16 believing that
+// budget exhaustion caused the truncated reviews; captured provider streams
+// then DISPROVED that. A denied tool call kills the turn: across 11
+// invocations of one review, the 3 that recorded a permission rejection all
+// ended "tool-calls" — at 4 and 5 turns out of 16, nowhere near the budget —
+// and the 8 without a rejection all ended "stop". The real fix is that the
+// snapshot now carries the whole committed tree so the reviewer is not denied
+// the context it needs; this value merely stopped being the suspect.
+//
+// Item 2 of docs/issues/actionable.md tracks recalibrating or retiring it.
+// The Claude branch of reviewCommand intentionally ignores this value: its
+// own comment there explains there is no confirmed flag to cap Claude Code's
+// turn count.
 const defaultReviewToolCalls = 16
 
 // RunPrompt runs the binary with an arbitrary prompt and returns the output.
@@ -378,7 +384,7 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		"bash":  map[string]string{"*": "deny"},
 		"edit":  map[string]string{"*": "deny"},
 		"write": map[string]string{"*": "deny"},
-		"read":  openCodeReadPermissions(request.SnapshotDir, request.Paths),
+		"read":  openCodeReadPermissions(request.SnapshotDir),
 		// Grep and Glob receive user-supplied search expressions, not the paths
 		// found by those searches. Restricting them to audited filenames would
 		// reject ordinary expressions while contributing no snapshot containment.
@@ -433,29 +439,44 @@ type openCodeReadPermissionRules struct {
 	allowed []string
 }
 
-func openCodeReadPermissions(snapshot string, auditedPaths []string) openCodeReadPermissionRules {
-	allowed := make([]string, 0, len(auditedPaths)*3)
-	seen := make(map[string]bool, len(auditedPaths)*3)
-	for _, auditedPath := range safeReviewPaths(auditedPaths) {
-		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(auditedPath)))
-		// Live probing (OpenCode 1.18.23) showed the permission resource is
-		// normalized inconsistently: relative calls keep repo-relative form,
-		// while absolute calls may be evaluated with the leading slash
-		// stripped. Allowing all three deterministic forms keeps admitted
-		// reads usable; anything else still falls through to the agent-level
-		// "ask" fallback, which auto-rejects non-interactively.
-		for _, pathForm := range []string{
-			auditedPath,
-			absolute,
-			strings.TrimPrefix(absolute, "/"),
-		} {
-			if !seen[pathForm] {
-				seen[pathForm] = true
-				allowed = append(allowed, pathForm)
-			}
+// anchoredReadForms returns the resource forms that grant read access to the
+// whole snapshot subtree, every one anchored to the snapshot directory
+// itself. Item 1 materializes the whole committed tree into the snapshot as
+// read-only context (not just the audited paths that used to drive this
+// function), so the grant widens from one entry per audited path to the
+// whole subtree — mirroring the Claude branch's Read(<snapshot>/**).
+//
+// Live probing (OpenCode 1.18.23) showed the permission resource is
+// normalized inconsistently: absolute calls may be evaluated with the
+// leading slash stripped. This keeps that normalization discipline for the
+// subtree pattern instead of dropping it, plus the platform-native
+// separator form for Windows parity (identical to the slash form on POSIX,
+// where it collapses via dedup). A bare "**" is deliberately never emitted:
+// under globstar semantics it is unanchored and could match resources
+// outside the snapshot (an external path, a sibling temp directory), which
+// would turn "widen read inside the immutable snapshot" into "grant read
+// everywhere" — exactly what this change must not do.
+func anchoredReadForms(snapshot string) []string {
+	slashAbsolute := filepath.ToSlash(filepath.Clean(snapshot)) + "/**"
+	nativeAbsolute := filepath.Clean(snapshot) + string(filepath.Separator) + "**"
+	candidates := []string{
+		slashAbsolute,
+		strings.TrimPrefix(slashAbsolute, "/"),
+		nativeAbsolute,
+	}
+	seen := make(map[string]bool, len(candidates))
+	forms := make([]string, 0, len(candidates))
+	for _, form := range candidates {
+		if !seen[form] {
+			seen[form] = true
+			forms = append(forms, form)
 		}
 	}
-	return openCodeReadPermissionRules{allowed: allowed}
+	return forms
+}
+
+func openCodeReadPermissions(snapshot string) openCodeReadPermissionRules {
+	return openCodeReadPermissionRules{allowed: anchoredReadForms(snapshot)}
 }
 
 func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {

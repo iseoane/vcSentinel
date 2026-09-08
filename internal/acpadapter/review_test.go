@@ -242,6 +242,118 @@ func TestReviewWithContextCancelYieldsCanceledClass(t *testing.T) {
 	}
 }
 
+// TestReviewWithContextSnapshotCancelYieldsCanceledClass is the deterministic
+// counterpart of TestReviewWithContextCancelYieldsCanceledClass: instead of
+// racing a real 150ms timer against a real spawned process, it cancels the
+// context BEFORE ReviewWithContextResult is ever called, so the failure is
+// pinned to the snapshot-creation error path (reviewsnapshot.Create returns
+// immediately on an already-canceled context, before any acpx process is
+// spawned). No provider process runs, so there is nothing to race.
+func TestReviewWithContextSnapshotCancelYieldsCanceledClass(t *testing.T) {
+	chdirToRepoRoot(t)
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.ChildEnv = append(cfg.ChildEnv, helperModeEnv+"="+helperModeOK)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := a.ReviewWithContext(ctx, "review CANCEL", headSha(t), []string{reviewFixturePath})
+
+	var oe *OutcomeError
+	if !errors.As(err, &oe) {
+		t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+	}
+	if oe.Outcome() != agentrun.OutcomeCancellation {
+		t.Errorf("Outcome() = %q, want canceled outcome class", oe.Outcome())
+	}
+	if !strings.Contains(oe.Error(), "context canceled") {
+		t.Errorf("detail = %q, want it to wrap the context error", oe.Error())
+	}
+}
+
+// TestReviewWithContextSnapshotDeadlineYieldsTimeoutClass is the deadline
+// counterpart: an already-expired deadline hitting the snapshot-creation
+// path must classify as a timeout, never a cancellation, exactly like every
+// other caller-context-ended path in this package.
+func TestReviewWithContextSnapshotDeadlineYieldsTimeoutClass(t *testing.T) {
+	chdirToRepoRoot(t)
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.ChildEnv = append(cfg.ChildEnv, helperModeEnv+"="+helperModeOK)
+	})
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := a.ReviewWithContext(ctx, "review DEADLINE", headSha(t), []string{reviewFixturePath})
+
+	var oe *OutcomeError
+	if !errors.As(err, &oe) {
+		t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+	}
+	if oe.Outcome() != agentrun.OutcomeTimeout {
+		t.Errorf("Outcome() = %q, want timeout outcome class", oe.Outcome())
+	}
+	if !strings.Contains(oe.Error(), "deadline exceeded") {
+		t.Errorf("detail = %q, want it to wrap the deadline error", oe.Error())
+	}
+}
+
+// TestRunSpawnFailureAfterCallerCancelYieldsCanceledClass is the deterministic
+// closure of the SECOND site the truncated-turn defect could surface at: the
+// caller's context can die AFTER the snapshot has already succeeded but
+// before (or during) process.Spawn. Go's os/exec checks ctx.Err() inside
+// Start() and returns it immediately when the context is already done, so
+// canceling parent before calling run — with no timer, no sleeping helper
+// process, nothing to race — deterministically reproduces exactly that
+// window without depending on the 150ms integration test's timing.
+func TestRunSpawnFailureAfterCallerCancelYieldsCanceledClass(t *testing.T) {
+	chdirToRepoRoot(t)
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.ChildEnv = append(cfg.ChildEnv, helperModeEnv+"="+helperModeOK)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := a.run(ctx, a.buildArgs("never spawned", t.TempDir()))
+
+	var oe *OutcomeError
+	if !errors.As(err, &oe) {
+		t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+	}
+	if oe.Outcome() != agentrun.OutcomeCancellation {
+		t.Errorf("Outcome() = %q, want canceled outcome class", oe.Outcome())
+	}
+	if !strings.Contains(oe.Error(), "context canceled") {
+		t.Errorf("detail = %q, want it to wrap the context error", oe.Error())
+	}
+}
+
+// TestRunSpawnFailureAfterCallerDeadlineYieldsTimeoutClass is the deadline
+// counterpart: a spawn failure caused by an already-expired caller deadline
+// must classify as a timeout, never a cancellation, mirroring the
+// distinction callerContextOutcome maintains at every other call site in
+// this package.
+func TestRunSpawnFailureAfterCallerDeadlineYieldsTimeoutClass(t *testing.T) {
+	chdirToRepoRoot(t)
+	a := spawnHelperConfig(t, func(cfg *Config) {
+		cfg.ChildEnv = append(cfg.ChildEnv, helperModeEnv+"="+helperModeOK)
+	})
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := a.run(ctx, a.buildArgs("never spawned", t.TempDir()))
+
+	var oe *OutcomeError
+	if !errors.As(err, &oe) {
+		t.Fatalf("error type = %T (%v), want *OutcomeError", err, err)
+	}
+	if oe.Outcome() != agentrun.OutcomeTimeout {
+		t.Errorf("Outcome() = %q, want timeout outcome class", oe.Outcome())
+	}
+	if !strings.Contains(oe.Error(), "deadline exceeded") {
+		t.Errorf("detail = %q, want it to wrap the deadline error", oe.Error())
+	}
+}
+
 // TestReviewWithCallerDeadlineYieldsTimeoutClass separates the two ways a
 // caller context ends. An expired deadline is budget exhaustion, so recording
 // it as a cancellation would file a timeout under the class reserved for a

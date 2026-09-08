@@ -1,6 +1,7 @@
 package agentadapter
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ func TestCreateReviewSnapshotUsesCommittedContentAndRegularFiles(t *testing.T) {
 	sha := strings.TrimSpace(gitSnapshot(t, repo, "rev-parse", "HEAD"))
 	writeSnapshotFile(t, repo, "safe.go", "mutated worktree\n")
 
-	snapshot, paths, cleanup, err := createReviewSnapshot(repo, sha, []string{"safe.go", "link.go", "missing.go"})
+	snapshot, paths, cleanup, err := createReviewSnapshot(context.Background(), repo, sha, []string{"safe.go", "link.go", "missing.go"})
 	if err != nil {
 		t.Fatalf("createReviewSnapshot() error = %v", err)
 	}

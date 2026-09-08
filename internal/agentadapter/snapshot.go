@@ -1,6 +1,8 @@
 package agentadapter
 
 import (
+	"context"
+
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
 )
 
@@ -10,13 +12,8 @@ import (
 // without importing this package (which now constructs ACP-backed adapters
 // and therefore depends on acpadapter). Keep this a pure delegation: any
 // semantic change belongs in reviewsnapshot so both adapter kinds stay
-// byte-identical.
-func createReviewSnapshot(worktree, sha string, paths []string) (string, []string, func(), error) {
-	return reviewsnapshot.Create(worktree, sha, paths)
-}
-
-// safeReviewPaths delegates to the shared reviewer path filter. See the
-// createReviewSnapshot note for why the implementation moved.
-func safeReviewPaths(paths []string) []string {
-	return reviewsnapshot.SafePaths(paths)
+// byte-identical. ctx is threaded straight through so a caller cancellation
+// aborts materialization instead of waiting for it to finish.
+func createReviewSnapshot(ctx context.Context, worktree, sha string, paths []string) (string, []string, func(), error) {
+	return reviewsnapshot.Create(ctx, worktree, sha, paths)
 }

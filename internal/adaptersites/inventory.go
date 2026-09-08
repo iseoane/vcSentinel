@@ -228,8 +228,8 @@ func Sites() []Site {
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
 		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing feeding reviewer context snapshots."},
-		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Anchor: "cmd := exec.Command(\"git\", \"-C\", worktree, \"ls-tree\", \"-z\", sha, \"--\", filePath)", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "Shared read-only review snapshot discipline (git ls-tree/show plumbing) relocated in ticket 16 slice 3 so both adapter families run the exact same committed-content materialization; never invokes a provider agent."},
+		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Anchor: "cmd := exec.CommandContext(ctx, \"git\", \"-C\", worktree, \"ls-tree\", \"-z\", sha, \"--\", filePath)", Marker: "exec.Command",
+			Class: ClassInfra, Reason: "Shared read-only review snapshot discipline (git ls-tree/show plumbing) relocated in ticket 16 slice 3 so both adapter families run the exact same committed-content materialization; never invokes a provider agent. Now context-bound so a caller cancellation aborts materialization instead of letting it run to completion."},
 
 		// --- advisory/narrative helpers --------------------------------------
 		{Path: "internal/modelprobe/verifier.go", Symbol: "Verifier.Verify", Anchor: "actual, err := agent.RunPrompt(promptModel)", Marker: "RunPrompt(",

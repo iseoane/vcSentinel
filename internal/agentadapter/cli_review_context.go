@@ -64,7 +64,7 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 		timeout = CommandTimeout
 	}
 	result := c.declaredResult()
-	snapshot, safePaths, cleanup, err := createReviewSnapshot("", sha, paths)
+	snapshot, safePaths, cleanup, err := createReviewSnapshot(ctx, "", sha, paths)
 	if err != nil {
 		return result, err
 	}
@@ -80,36 +80,99 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 	result.StopReason = run.stopReason
 	// A stop reason other than a completed turn ("end_turn"), a cancellation
 	// (already handled by the caller's context plumbing), or the absence of
-	// one at all (generic plain-text providers report no stop reason)
-	// means the provider ended the process without finishing its turn — most
-	// commonly OpenCode's "tool-calls" when the reviewer exhausts its Steps
-	// budget mid-turn. The wire evidence above still lands on result; only
-	// the answer text is untrustworthy, so the error carries no output of
-	// its own and the caller must not parse run.output as a verdict.
-	if run.stopReason != "" && run.stopReason != "end_turn" && run.stopReason != "cancelled" {
-		return result, &TruncatedTurnError{StopReason: run.stopReason, Steps: run.steps}
+	// one at all (generic plain-text providers report no stop reason, which
+	// is normal and not evidence of anything) means the provider ended the
+	// process without finishing its turn.
+	//
+	// terminalEventObserved distinguishes the one case genuine absence alone
+	// cannot: for OpenCode, an empty stop reason with NO terminal event
+	// observed at all (the stream never produced a single step_finish) is
+	// the most severe truncation there is, worse than a labeled reason like
+	// "tool-calls" — even the provider's own end-of-turn signal never
+	// arrived. Non-OpenCode paths report terminalEventObserved true
+	// unconditionally, so this can never misclassify a generic provider or
+	// Claude, neither of which this fix touches.
+	//
+	// The wire evidence above still lands on result regardless of the
+	// classification: only the answer TEXT is untrustworthy when the turn
+	// did not complete, which is why the legacy string-only surface
+	// (reviewWithContextPolicy) empties its returned string on error instead
+	// of forwarding result.Output — the rich Result kept here is evidence,
+	// not a verdict, and the caller must not parse it as one.
+	incomplete := run.stopReason != "" && run.stopReason != "end_turn" && run.stopReason != "cancelled"
+	if !incomplete && !run.terminalEventObserved {
+		incomplete = true
+	}
+	if incomplete {
+		return result, &TruncatedTurnError{
+			StopReason:            run.stopReason,
+			Steps:                 run.steps,
+			TerminalEventObserved: run.terminalEventObserved,
+			ToolCallErrors:        run.deniedToolCalls,
+		}
 	}
 	return result, nil
 }
 
 // TruncatedTurnError reports that the restricted reviewer's process ended
-// before completing its turn: the provider exhausted its turn budget (for
-// example OpenCode's "Steps" agent configuration) and stopped mid-answer
-// instead of returning a verdict. It is non-retryable — see
-// internal/review's permanentProviderFailures — because repeating the same
-// prompt against the same turn budget reproduces the truncation exactly.
+// before completing its turn. It is non-retryable — see internal/review's
+// permanentProviderFailures — because a turn ending this way, whether from a
+// turn budget or a denied tool call, reproduces on retry against the same
+// snapshot and the same restrictions.
+//
+// Its message states only what was observed, never a cause it cannot know.
+// An earlier version claimed the reviewer "exhausted its turn budget" on
+// every truncation; measured evidence (11 real review invocations) disproved
+// that: truncations landed at 4 and 5 turns out of a 16-turn budget, every
+// one correlated with at least one denied tool call, never with the budget
+// being exhausted. ToolCallErrors carries that denial evidence when the
+// stream recorded one, so the message can name the actual reason instead.
 type TruncatedTurnError struct {
 	// StopReason is the provider's terminal stop reason, already translated
-	// onto the acpadapter vocabulary (see mapOpenCodeStopReason).
+	// onto the acpadapter vocabulary (see mapOpenCodeStopReason). Empty when
+	// TerminalEventObserved is false.
 	StopReason string
 	// Steps is the number of model turns the run consumed before it was cut
 	// off, as counted by the provider's stream scanner (opencodeReviewScan.Steps
-	// for OpenCode). Zero when the provider format carries no turn count.
+	// for OpenCode). Zero when the provider format carries no turn count, or
+	// when TerminalEventObserved is false.
 	Steps int
+	// TerminalEventObserved reports whether the provider's own end-of-turn
+	// signal was ever seen at all (opencodeReviewScan.TerminalEventObserved
+	// for OpenCode; true unconditionally for every other provider path,
+	// which this error type does not reclassify). False is the most severe
+	// truncation there is.
+	TerminalEventObserved bool
+	// ToolCallErrors lists every tool call the stream recorded as denied
+	// (opencodeReviewScan.DeniedToolCalls for OpenCode), in stream order.
+	// Empty when the truncation is not correlated with any observed denial.
+	ToolCallErrors []DeniedToolCall
 }
 
 func (e *TruncatedTurnError) Error() string {
-	return fmt.Sprintf("review turn truncated after %d turn(s) (stop reason: %s): the reviewer exhausted its turn budget before returning a verdict", e.Steps, e.StopReason)
+	var message strings.Builder
+	message.WriteString("review turn truncated: the turn ended without completing")
+	if e.TerminalEventObserved {
+		fmt.Fprintf(&message, " after %d turn(s)", e.Steps)
+	} else {
+		message.WriteString(" before any terminal event was observed")
+	}
+	if e.StopReason != "" {
+		fmt.Fprintf(&message, " (stop reason: %s)", e.StopReason)
+	}
+	if len(e.ToolCallErrors) > 0 {
+		message.WriteString(": denied tool call")
+		if len(e.ToolCallErrors) > 1 {
+			message.WriteString("s")
+		}
+		message.WriteString(" — ")
+		details := make([]string, len(e.ToolCallErrors))
+		for i, denied := range e.ToolCallErrors {
+			details[i] = fmt.Sprintf("%s: %s", denied.Tool, denied.Error)
+		}
+		message.WriteString(strings.Join(details, "; "))
+	}
+	return message.String()
 }
 
 // declaredResult carries the configured request declarations on every
@@ -131,7 +194,16 @@ func (c *CLIAdapter) declaredResult() acpadapter.Result {
 // the single TrimSpace text boundary.
 func (c *CLIAdapter) reviewWithContextPolicy(ctx context.Context, prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error) {
 	result, err := c.reviewWithContextResultPolicy(ctx, prompt, sha, paths, policy)
-	return result.Output, err
+	if err != nil {
+		// The rich Result above keeps Output as evidence even on error (a
+		// truncated turn's partial narration is still useful for diagnosis),
+		// but this legacy surface's own contract promises empty output on
+		// error: an earlier version returned result.Output unconditionally,
+		// letting an untrustworthy partial answer cross this boundary as if
+		// it were a verdict.
+		return "", err
+	}
+	return result.Output, nil
 }
 
 // reviewExecution is the rich observation of one restricted review run: the
@@ -145,6 +217,17 @@ type reviewExecution struct {
 	usageJSON  string
 	stopReason string
 	steps      int
+	// terminalEventObserved reports whether the provider's own end-of-turn
+	// signal was ever seen at all (opencodeReviewScan.TerminalEventObserved
+	// for OpenCode). True unconditionally for Claude and generic providers,
+	// which this fix does not touch: their stopReason semantics are left
+	// exactly as they were.
+	terminalEventObserved bool
+	// deniedToolCalls carries OpenCode's observed tool-call denials
+	// (opencodeReviewScan.DeniedToolCalls) forward so a truncated turn's
+	// error can name the cause. Always empty for Claude and generic
+	// providers.
+	deniedToolCalls []DeniedToolCall
 }
 
 // runBoundedReview spawns the restricted reviewer under a combined budget:
@@ -217,7 +300,7 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 		if err != nil {
 			return reviewExecution{}, err
 		}
-		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, scan.Steps), nil
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, scan.Steps, scan.TerminalEventObserved, scan.DeniedToolCalls), nil
 	case c.isClaude():
 		scan, err := scanClaudeReview(strings.NewReader(raw))
 		if err != nil {
@@ -226,24 +309,31 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 		// Claude Code exposes no per-turn step count comparable to OpenCode's
 		// Steps budget (reviewCommand's own comment: there is no confirmed
 		// flag to cap or observe it), so steps stays zero here rather than
-		// inventing one.
-		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, 0), nil
+		// inventing one. terminalEventObserved stays true unconditionally:
+		// this fix is scoped to OpenCode's stream and must not reclassify
+		// Claude's own stopReason semantics.
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, 0, true, nil), nil
 	default:
 		// generic providers answer in plain text; there is nothing to scan.
-		return reviewExecution{output: strings.TrimSpace(raw)}, nil
+		// terminalEventObserved stays true: a generic provider legitimately
+		// reports no stop reason at all, and that must keep working exactly
+		// as before.
+		return reviewExecution{output: strings.TrimSpace(raw), terminalEventObserved: true}, nil
 	}
 }
 
 // reviewExecutionFromScan projects a provider scan onto the rich review
 // observation. The single TrimSpace lives here so every provider's
 // stdout->answer boundary behaves byte-identically.
-func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string, steps int) reviewExecution {
+func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string, steps int, terminalEventObserved bool, deniedToolCalls []DeniedToolCall) reviewExecution {
 	return reviewExecution{
-		output:     strings.TrimSpace(output),
-		usage:      usage,
-		usageJSON:  usageJSON,
-		stopReason: stopReason,
-		steps:      steps,
+		output:                strings.TrimSpace(output),
+		usage:                 usage,
+		usageJSON:             usageJSON,
+		stopReason:            stopReason,
+		steps:                 steps,
+		terminalEventObserved: terminalEventObserved,
+		deniedToolCalls:       deniedToolCalls,
 	}
 }
 
