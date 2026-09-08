@@ -1,6 +1,7 @@
 package reviewsnapshot
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -30,7 +31,12 @@ func removeWithOwnerWrite(path string, remove func(string) error) error {
 			return err
 		}
 		return nil
-	}); err != nil {
+		// An entry that vanished under us is already removed, which is what
+		// os.RemoveAll reports too. filepath.WalkDir does not share that
+		// tolerance: it surfaces the lstat failure for a missing root, so it
+		// is absorbed here rather than reported as a cleanup failure. Two
+		// callers count a nil result as one reaped entry.
+	}); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("restore owner write access for review snapshot %q: %w", path, err)
 	}
 	return remove(path)
