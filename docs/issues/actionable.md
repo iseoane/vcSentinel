@@ -5,38 +5,9 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Share one review snapshot per audited commit
+## 1. Recalibrate or retire the OpenCode reviewer turn budget
 
-Sits first: unblocked, and it is the direct cost consequence of widening the
-snapshot to the whole committed tree. Nothing else must land before it.
-
-- Wrong: `reviewsnapshot.Create` is called once per PROVIDER INVOCATION, in
-  `reviewWithContextResultPolicy`, with a caller-owned `defer cleanup()`.
-  Every dimension, every format retry and every chained call materializes its
-  own copy. The copies are bit-identical: the content is derived from the
-  audited SHA, so one commit has exactly one correct snapshot.
-- Evidence: one review of commit `7e41611` on 2026-09-07 issued 11 provider
-  invocations, so 11 snapshots. While the snapshot held only the changed
-  files this was free; now that it carries the whole tree it is ~5.6 MB and
-  609 files per copy in this repository, so that review would materialize
-  ~62 MB instead of 5.6 MB. `reapAbandonedSnapshots` already documents that
-  472 MB of residue was measured once on a 3.8 GB tmpfs.
-- Closing: a snapshot keyed by the audited SHA, created once and reused by
-  every invocation auditing that commit.
-- Design constraints, none of which the current per-call ownership solves:
-  a lifetime owner (with `review.parallel: 5` there are up to five concurrent
-  reviewers on the same SHA, so either reference counting or ownership by the
-  whole review run); atomic publication (build in a temporary directory and
-  rename into place under a lock, so concurrent creators neither duplicate the
-  work nor observe a half-written tree); and a reaper that no longer assumes
-  exclusive ownership — today it deletes by age alone and could remove a
-  shared snapshot still in use.
-- Related: item 3 attacks the same duplication one layer up (the evidence sent
-  to the provider); this item is the on-disk half.
-
-## 2. Recalibrate or retire the OpenCode reviewer turn budget
-
-Sits second: unblocked but low value, and its original premise was disproven.
+Sits first: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
   OpenCode `Steps` value — the number of model turns the restricted reviewer
@@ -78,9 +49,9 @@ Sits second: unblocked but low value, and its original premise was disproven.
   turn value does not need that attribution; re-testing the disproven premise
   above would.
 
-## 3. Cache shared audit evidence across review dimensions
+## 2. Cache shared audit evidence across review dimensions
 
-Sits third: the token measurement now exists on all three adapter paths
+Sits second: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -102,9 +73,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 4. Give cost, scope and reuse a producer (FU-3)
+## 3. Give cost, scope and reuse a producer (FU-3)
 
-Sits fourth: tokens now have producers on every adapter path, but cost,
+Sits third: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -122,9 +93,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 5. Validate the acpx spawn chain on native Windows
+## 4. Validate the acpx spawn chain on native Windows
 
-Sits fifth: conditional work — no action while Debian is the deployment
+Sits fourth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`

@@ -50,10 +50,12 @@ func (a *AcpxAdapter) RunPromptWithContext(ctx context.Context, prompt string) (
 
 // RunReview runs a semantic review under the SAME snapshot discipline
 // as CLIAdapter.RunReview: the audited paths are materialized read-only
-// from committed content into an isolated snapshot directory, acpx is pointed
-// at that directory through its --cwd global option (before the agent token),
-// and the snapshot is cleaned up when the turn ends. The legacy contract
-// carries no context; context-carrying callers go through ReviewWithContext.
+// from committed content into the published shared snapshot for the audited
+// SHA, acpx is pointed at that directory through its --cwd global option
+// (before the agent token), and the caller-owned cleanup releases the
+// retained snapshot's lease — the lock-aware stale reaper owns its removal.
+// The legacy contract carries no context; context-carrying callers go
+// through ReviewWithContext.
 func (a *AcpxAdapter) RunReview(prompt, sha string, paths []string) (string, error) {
 	return a.ReviewWithContext(context.Background(), prompt, sha, paths)
 }

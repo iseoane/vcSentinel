@@ -458,3 +458,19 @@ here is what a reader would otherwise re-derive.
 - Recorded honesty norms: F6 and F9 both refused to manufacture missing
   gate evidence, and the T9.3a executor deviation was recorded rather
   than presented as compliance.
+
+### Shared review snapshots are SHA-keyed and retained (decided and landed 2026-09-08)
+
+`reviewsnapshot.Create` now publishes one retained snapshot for each audited
+commit SHA. Concurrent reviewers lease the same complete tree through
+per-SHA locks; the reaper only removes entries that remain stale after it
+holds the exclusive lock. Published files preserve committed executable mode
+and are owner-read-only, while the snapshot directory remains a usable
+reviewer working directory.
+
+The store is deliberately scoped to Debian/Linux and Windows, matching the
+repository support policy. Its package-local nonblocking locks are not
+extracted into `internal/git`: their lease and reaper semantics differ from
+the existing Git snapshot locks. Metadata validation detects accidental
+corruption and incomplete publication; it is not a same-UID security
+boundary, so per-lease content hashing was not added.

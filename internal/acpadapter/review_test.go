@@ -145,9 +145,15 @@ func TestRunPromptMapsNonSuccessToTypedOutcome(t *testing.T) {
 	}
 }
 
-// --- revision mode: snapshot cwd and cleanup ---------------------------------
+// --- revision mode: retained snapshot cwd ------------------------------------
 
-func TestRunReviewSnapshotCwdAndCleanup(t *testing.T) {
+// TestRunReviewRunsInRetainedSnapshotCwd proves the revision shape: the
+// provider runs with --cwd pointed at the published shared snapshot for the
+// audited SHA — a usable review snapshot carrying the committed audited
+// fixture — and the caller-owned cleanup only releases the lease, so the
+// validated snapshot remains on disk for the next invocation auditing the
+// same commit.
+func TestRunReviewRunsInRetainedSnapshotCwd(t *testing.T) {
 	chdirToRepoRoot(t)
 	argFile := filepath.Join(t.TempDir(), "argv.txt")
 	a := spawnHelperConfig(t, func(cfg *Config) {
@@ -160,7 +166,8 @@ func TestRunReviewSnapshotCwdAndCleanup(t *testing.T) {
 		)
 	})
 
-	out, err := a.RunReview("review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	auditedSha := headSha(t)
+	out, err := a.RunReview("review SNAPSHOT", auditedSha, []string{reviewFixturePath})
 	if err != nil {
 		t.Fatalf("RunReview returned error: %v", err)
 	}
@@ -192,11 +199,29 @@ func TestRunReviewSnapshotCwdAndCleanup(t *testing.T) {
 		t.Errorf("--cwd must precede the agent token; recorded args %v", got)
 	}
 	snapshotDir := got[cwdIdx+1]
-	if base := filepath.Base(snapshotDir); !strings.HasPrefix(base, "vas-sentinel-review-") {
-		t.Errorf("--cwd value %q is not a review snapshot directory", snapshotDir)
+	// --cwd is the published shared snapshot FOR THE AUDITED SHA, not the
+	// live repository: its name is the SHA storage key and it lives directly
+	// under the shared snapshot store root, whose directory name carries the
+	// vas-sentinel-snapshots prefix on every supported platform (per-UID
+	// suffixed on Linux, plain under the user's temp location on Windows).
+	if base := filepath.Base(snapshotDir); base != "sha-"+auditedSha {
+		t.Errorf("--cwd %q is not the published snapshot for the audited SHA %s", snapshotDir, auditedSha)
 	}
-	if _, statErr := os.Stat(snapshotDir); !os.IsNotExist(statErr) {
-		t.Errorf("snapshot directory %q survived cleanup; it must be removed when the turn ends", snapshotDir)
+	storeRoot := filepath.Dir(snapshotDir)
+	if parent := filepath.Dir(storeRoot); parent != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(storeRoot), "vas-sentinel-snapshots") {
+		t.Errorf("--cwd %q is not under the shared snapshot store root", snapshotDir)
+	}
+	// Cleanup is an idempotent lease release, never a per-call deletion: the
+	// published snapshot for the SHA is retained after the turn, and the
+	// stale reaper owns its removal.
+	info, statErr := os.Stat(snapshotDir)
+	if statErr != nil || !info.IsDir() {
+		t.Fatalf("snapshot directory %q did not survive the turn: %v", snapshotDir, statErr)
+	}
+	// The cwd is a usable review snapshot: it carries the committed audited
+	// fixture the revision was addressed to.
+	if fixture, readErr := os.ReadFile(filepath.Join(snapshotDir, reviewFixturePath)); readErr != nil || len(fixture) == 0 {
+		t.Fatalf("snapshot %q does not carry the audited fixture: %v", snapshotDir, readErr)
 	}
 }
 
@@ -208,7 +233,7 @@ func TestReviewWithContextCancelYieldsCanceledClass(t *testing.T) {
 		cfg.ChildEnv = append(cfg.ChildEnv,
 			helperModeEnv+"="+helperModeSleep,
 			// The tail embeds a generated snapshot directory; its contract
-			// is pinned by TestRunReviewSnapshotCwdAndCleanup.
+			// is pinned by TestRunReviewRunsInRetainedSnapshotCwd.
 			helperExpectEnv+"=-",
 		)
 	})
