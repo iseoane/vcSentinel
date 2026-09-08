@@ -390,7 +390,8 @@ func TestBridgeRevisionRunsUnderSnapshotDiscipline(t *testing.T) {
 		cfg.ChildEnv = append(cfg.ChildEnv, acpxHelperArgFile+"="+argFile)
 	})
 
-	out, err := bridge.RunReview("review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	auditedSha := headSha(t)
+	out, err := bridge.RunReview("review SNAPSHOT", auditedSha, []string{reviewFixturePath})
 	if err != nil {
 		t.Fatalf("RunReview returned error: %v", err)
 	}
@@ -411,6 +412,18 @@ func TestBridgeRevisionRunsUnderSnapshotDiscipline(t *testing.T) {
 		t.Errorf("--cwd must precede the agent token; recorded args %v", got)
 	}
 	snapshotDir := got[cwdIdx+1]
+	// --cwd is the published shared snapshot FOR THE AUDITED SHA, not the
+	// live repository: its name is the SHA storage key and it lives directly
+	// under the shared snapshot store root, whose directory name carries the
+	// vas-sentinel-snapshots prefix on every supported platform (per-UID
+	// suffixed on Linux, plain under the user's temp location on Windows).
+	if base := filepath.Base(snapshotDir); base != "sha-"+auditedSha {
+		t.Errorf("--cwd %q is not the published snapshot for the audited SHA %s", snapshotDir, auditedSha)
+	}
+	storeRoot := filepath.Dir(snapshotDir)
+	if parent := filepath.Dir(storeRoot); parent != os.TempDir() || !strings.HasPrefix(filepath.Base(storeRoot), "vas-sentinel-snapshots") {
+		t.Errorf("--cwd %q is not under the shared snapshot store root", snapshotDir)
+	}
 	// Cleanup is an idempotent lease release, never a per-call deletion: the
 	// published snapshot for the SHA is retained after the turn, and the
 	// stale reaper owns its removal.
