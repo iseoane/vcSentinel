@@ -1,14 +1,15 @@
 // Package reviewsnapshot owns the read-only review snapshot discipline shared
 // by every adapter family: audited paths are materialized from COMMITTED
-// content (git ls-tree / git show) into an isolated temporary directory, only
-// committed regular files survive filtering, and cleanup stays caller-owned.
+// content (git ls-tree / git show) into a shared, per-commit snapshot store,
+// only committed regular files survive filtering, and cleanup stays
+// caller-owned as an idempotent lease release.
 //
 // It lives outside internal/agentadapter on purpose: both the CLI adapters
 // (agentadapter) and the ACP/acpx adapter (acpadapter) must run the exact
 // same discipline, and neither package can own it without forcing a dependency
-// direction between the two adapter families. This package depends on
-// nothing but the standard library, so both families import it freely.
-//
+// direction between the two adapter families. This package depends on nothing
+// but the standard library plus the same golang.org/x/sys syscall wrappers
+// internal/git's snapshot locks use, so both families import it freely.
 // Any semantic change belongs here so every adapter kind stays byte-identical;
 // wrappers elsewhere must remain pure delegation.
 package reviewsnapshot
@@ -171,9 +172,18 @@ const staleSnapshotAge = 24 * time.Hour
 // forever: 472 MB were measured on one machine, in a 3.8 GB tmpfs where filling
 // /tmp breaks not just reviews but compilation.
 //
+// Legacy per-invocation snapshot directories — the vas-sentinel-review-*
+// prefix this package created before snapshots became shared and reusable —
+// are removed purely by age, exactly as before. Shared-store entries are
+// removed lock-aware: reapSharedStore takes each candidate SHA's nonblocking
+// exclusive lock first, so a tree a live lease still holds in any process is
+// skipped even when its directory already looks stale, while abandoned
+// trees, staging directories, and orphaned readiness markers go away.
+//
 // It is best-effort by contract: every error is ignored, because failing to
-// tidy must never fail the review that was about to start. It only ever touches
-// entries carrying this package's own prefix.
+// tidy must never fail the review that was about to start. It only ever
+// touches entries carrying this package's own names: the legacy temporary
+// prefix and the shared store directory.
 func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 	raiz := os.TempDir()
 	entradas, err := os.ReadDir(raiz)
@@ -193,11 +203,13 @@ func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 			recolectados++
 		}
 	}
-	return recolectados
+	return recolectados + reapSharedStore(storeRoot(), now, maxAge)
 }
 
-// snapshotPrefix identifies this package's temporary directories, both when
-// creating one and when reaping the ones nobody cleaned up.
+// snapshotPrefix identifies this package's LEGACY per-invocation temporary
+// directories. Nothing creates them anymore — snapshots are shared and
+// reusable now — but the reaper keeps cleaning them so machines upgraded
+// mid-flight do not accumulate residue forever.
 const snapshotPrefix = "vas-sentinel-review-"
 
 // Create materializes the read-only review snapshot for sha. It writes every
@@ -209,9 +221,28 @@ const snapshotPrefix = "vas-sentinel-review-"
 // what is under audit: allowed returns exactly that subset, unchanged in
 // meaning and order, for the prompt and the permission map to consume.
 //
+// Snapshots are shared, not per-call: one published tree exists per audited
+// commit SHA in a package-private store under os.TempDir(), materialized once
+// and reused by every caller for that SHA — sequential or concurrent, in
+// this process or across processes. A call materializes only when no
+// complete tree is published yet: it writes into a staging directory,
+// publishes a readiness marker, and atomically renames the staging directory
+// onto the SHA's published name, so no caller can ever observe a partial
+// tree. The returned dir is leased, not owned: cleanup is an idempotent
+// lease release that must still run as the caller's defer, and it never
+// deletes the published tree — the snapshot is retained on disk so the next
+// invocation auditing the same SHA (a format or transport retry, a second
+// provider, a later review) leases the very same directory, and the
+// lock-aware stale reaper that runs at every Create is the only thing that
+// ever removes it, once no lease in any process holds it and its mtime is
+// past staleSnapshotAge.
+//
 // It returns the snapshot directory, the audited paths that survived the
 // committed-regular-file filter, a caller-owned cleanup func, and an error.
-// An empty worktree resolves to the current working directory, which matches
+// sha must be a full hexadecimal Git object id — 40 characters for SHA-1
+// repositories, 64 for SHA-256 — because it is the store's storage key;
+// abbreviations and revspecs are rejected before any filesystem work. An
+// empty worktree resolves to the current working directory, which matches
 // production usage (review runs from the worktree root).
 //
 // ctx is honored end to end: it is checked before any git work starts and
@@ -220,22 +251,29 @@ const snapshotPrefix = "vas-sentinel-review-"
 // caller that cancels while it is running (Ctrl+C, controller abort, a
 // caller deadline) must observe that promptly instead of waiting for
 // materialization to finish before the failure is even noticed. On abort,
-// the snapshot directory created so far is removed (cleanup runs before
-// Create returns, so the returned cleanup func is nil) and the returned
-// error wraps ctx's own error, so errors.Is(err, context.Canceled) and
-// errors.Is(err, context.DeadlineExceeded) hold for the respective cases —
-// several classifiers in this repository (reviewexec.DefaultClassifier,
-// internal/execution's classify) depend on exactly that. A nil ctx is
-// tolerated the same way the rest of this codebase does it (see
-// reviewWithContextResultPolicy and ReviewWithContextResult, both of which
-// substitute context.Background()), because Create is called from paths
-// that may not have one.
+// the staging directory materialized so far is removed and nothing is
+// published (cleanup runs before Create returns, so the returned cleanup
+// func is nil) and the returned error wraps ctx's own error, so
+// errors.Is(err, context.Canceled) and errors.Is(err, context.DeadlineExceeded)
+// hold for the respective cases — several classifiers in this repository
+// (reviewexec.DefaultClassifier, internal/execution's classify) depend on
+// exactly that. A nil ctx is tolerated the same way the rest of this
+// codebase does it (see reviewWithContextResultPolicy and
+// ReviewWithContextResult, both of which substitute context.Background()),
+// because Create is called from paths that may not have one.
 func Create(ctx context.Context, worktree, sha string, paths []string) (string, []string, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if sha == "" {
 		return "", nil, nil, fmt.Errorf("semantic review requires an audited commit SHA")
+	}
+	// The object id is the shared store's storage key and ends up in file
+	// and directory names, so it is validated before any filesystem work —
+	// including the reaper's scan — can happen. Callers pass what git
+	// rev-parse produced: full canonical hexadecimal object ids.
+	if !validObjectID(sha) {
+		return "", nil, nil, fmt.Errorf("invalid audited commit SHA %q: want a full hexadecimal git object id (40 or 64 hex characters)", sha)
 	}
 	if worktree == "" {
 		var err error
@@ -251,54 +289,61 @@ func Create(ctx context.Context, worktree, sha string, paths []string) (string, 
 	// review, but tying it to snapshot creation means the residue is bounded by
 	// use instead of growing until something else breaks.
 	reapAbandonedSnapshots(time.Now(), staleSnapshotAge)
-	snapshot, err := os.MkdirTemp("", snapshotPrefix)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("create review snapshot: %w", err)
-	}
-	cleanup := func() { _ = os.RemoveAll(snapshot) }
-	abort := func(err error) (string, []string, func(), error) {
-		cleanup()
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", nil, nil, fmt.Errorf("review snapshot aborted: %w", ctxErr)
-		}
-		return "", nil, nil, err
-	}
 
-	entries, err := gitTreeEntries(ctx, worktree, sha)
-	if err != nil {
-		return abort(err)
-	}
-	regularFiles := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.objectType != "blob" || !strings.HasPrefix(entry.mode, "100") {
+	// Lease a published tree when one exists; otherwise create one and come
+	// back to lease it. The cycle converges because publication only happens
+	// under the SHA's exclusive lock and every lease validates completeness
+	// under its own shared lock.
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", nil, nil, fmt.Errorf("review snapshot aborted: %w", err)
+		}
+		lease, err := leasePublishedSnapshot(sha)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		if lease == nil {
+			// Nothing reusable is published for this SHA yet: create it —
+			// concurrent callers in this process single-flight behind one
+			// materialization — and lease it on the next cycle.
+			if err := publishSnapshotForSHA(ctx, worktree, sha); err != nil {
+				return "", nil, nil, err
+			}
 			continue
 		}
-		if clean, ok := safePath(entry.path); ok && clean == entry.path {
-			regularFiles = append(regularFiles, entry.path)
+		allowed, err := allowedSnapshotPaths(ctx, worktree, sha, paths)
+		if err != nil {
+			lease.release()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", nil, nil, fmt.Errorf("review snapshot aborted: %w", ctxErr)
+			}
+			return "", nil, nil, err
 		}
+		return lease.dir, allowed, lease.release, nil
 	}
-	if err := materializeTree(ctx, worktree, sha, snapshot, regularFiles); err != nil {
-		return abort(err)
-	}
-	if err := ctx.Err(); err != nil {
-		return abort(err)
-	}
+}
 
+// allowedSnapshotPaths verifies the audited paths against sha's committed
+// tree: only paths that exist there as committed regular files survive,
+// unchanged in meaning and order. It runs on every Create call even when the
+// snapshot tree itself is reused, so the allowed vocabulary always reflects
+// the audited commit rather than whoever happened to materialize it first.
+func allowedSnapshotPaths(ctx context.Context, worktree, sha string, paths []string) ([]string, error) {
 	allowed := make([]string, 0, len(paths))
 	for _, filePath := range SafePaths(paths) {
 		if err := ctx.Err(); err != nil {
-			return abort(err)
+			return nil, err
 		}
 		mode, objectType, exists, err := gitTreeEntry(ctx, worktree, sha, filePath)
 		if err != nil {
-			return abort(err)
+			return nil, err
 		}
 		if !exists || objectType != "blob" || !strings.HasPrefix(mode, "100") {
 			continue
 		}
 		allowed = append(allowed, filePath)
 	}
-	return snapshot, allowed, cleanup, nil
+	return allowed, nil
 }
 
 func gitTreeEntry(ctx context.Context, worktree, sha, filePath string) (mode, objectType string, exists bool, err error) {

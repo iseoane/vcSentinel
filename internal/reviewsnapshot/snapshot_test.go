@@ -210,8 +210,11 @@ func TestCreateMaterializesCommittedContentAndCleansUp(t *testing.T) {
 		t.Fatalf("survived = %v, want only audited.go (committed regular files)", survived)
 	}
 	cleanup()
-	if _, err := os.Stat(snapshot); !os.IsNotExist(err) {
-		t.Fatalf("snapshot still exists after cleanup: %v", err)
+	// The cleanup is a lease release, not a per-call deletion: the published
+	// snapshot is retained for the next invocation auditing the same SHA,
+	// and only the lock-aware stale reaper ever removes it.
+	if _, err := os.Stat(snapshot); err != nil {
+		t.Fatalf("published snapshot missing after lease release: %v", err)
 	}
 }
 
