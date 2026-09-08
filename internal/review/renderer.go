@@ -87,7 +87,7 @@ func shortenMessage(message string) string {
 }
 
 // RenderUnauditedNotice reports commits that carry no review record: it must
-// inform, never gate (docs/issues/actionable.md item 2) — the net verdict is
+// inform, never gate (the unaudited-commits decision in docs/issues/decisions.md) — the net verdict is
 // the only thing that blocks publication. Empty when every commit on the
 // branch already has a record, so a fully audited branch's report carries
 // nothing extra.

@@ -31,41 +31,12 @@ snapshot to the whole committed tree. Nothing else must land before it.
   work nor observe a half-written tree); and a reaper that no longer assumes
   exclusive ownership — today it deletes by age alone and could remove a
   shared snapshot still in use.
-- Related: item 4 attacks the same duplication one layer up (the evidence sent
+- Related: item 3 attacks the same duplication one layer up (the evidence sent
   to the provider); this item is the on-disk half.
 
-## 2. Decide whether a PR still needs its per-commit audits
+## 2. Recalibrate or retire the OpenCode reviewer turn budget
 
-Sits second: unblocked, and it decides how much every future review costs.
-
-- Wrong: `pr review` audits every commit without a record AND then runs the
-  net audit. The same code reaches the reviewer twice.
-- Not a bug, and NOT the gap it first looks like: `runNetReview`
-  (`internal/review/net_pr.go:174`) already calls `PlanForProfile` on the NET
-  diff, so the whole picture is planned from its own aggregate risk, not from
-  the union of the per-commit plans. The two audits ask genuinely different
-  questions of the same code — "is this commit sound alone?" and "is the whole
-  coherent?" — and the prompt is relabelled accordingly.
-- Evidence: reviewing this branch on 2026-09-08 audited 5 commits plus the net
-  diff. The per-commit half only became expensive because the commits were
-  created without reviewing as they went, so `pr review` paid the whole
-  accumulated bill at once instead of finding records already there.
-- The decision: keep auditing unaudited commits inside `pr review`, or let the
-  net verdict stand alone and leave per-commit records as optional work for
-  whoever reviews incrementally.
-  - For keeping them: they attribute a finding to one commit, they are what
-    `refute` and `accept` operate on, and they survive rebases through the blob
-    index. They are also the reviewable-unit discipline the guardian exists to
-    enforce.
-  - For dropping them: the net verdict is what gates, per-commit records do not
-    change it, and paying for both is the largest single cost in a review.
-- Closing: a recorded determination either way, and — if they stay — a way for
-  the per-commit half not to be silently deferred until PR time, since that is
-  what makes the cost feel like a defect.
-
-## 3. Recalibrate or retire the OpenCode reviewer turn budget
-
-Sits third: unblocked but low value, and its original premise was disproven.
+Sits second: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
   OpenCode `Steps` value — the number of model turns the restricted reviewer
@@ -91,9 +62,9 @@ Sits third: unblocked but low value, and its original premise was disproven.
   cannot be reconstructed from existing records — only the concatenated
   answer text is kept, not the event stream.
 
-## 4. Cache shared audit evidence across review dimensions
+## 3. Cache shared audit evidence across review dimensions
 
-Sits fourth: the token measurement now exists on all three adapter paths
+Sits third: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -115,9 +86,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 5. Give cost, scope and reuse a producer (FU-3)
+## 4. Give cost, scope and reuse a producer (FU-3)
 
-Sits fifth: tokens now have producers on every adapter path, but cost,
+Sits fourth: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -135,9 +106,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 6. Validate the acpx spawn chain on native Windows
+## 5. Validate the acpx spawn chain on native Windows
 
-Sits sixth: conditional work — no action while Debian is the deployment
+Sits fifth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`

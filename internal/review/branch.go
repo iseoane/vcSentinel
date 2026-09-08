@@ -144,7 +144,7 @@ type BranchResult struct {
 	// Unaudited is the SHAs (with subject) that STILL carry no review
 	// record once this call is done — recomputed AFTER the audit loop, so it
 	// is what a report or a machine consumer should read to mean "this
-	// commit was never audited" (docs/issues/actionable.md item 2/5). With
+	// commit was never audited" (the unaudited-commits decision in docs/issues/decisions.md). With
 	// the default OnlyPending == true it equals Pending; with the
 	// --audit-pending opt-in it is empty once auditing succeeds.
 	Unaudited     []UnauditedCommit
@@ -424,13 +424,13 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 
 // unauditedCommitSubjects resolves the subject line of every commit that
 // still has no review record, so a report can name them instead of a bare
-// SHA (docs/issues/actionable.md item 2). A nil slice in, nil slice out: a
+// SHA (the unaudited-commits decision in docs/issues/decisions.md). A nil slice in, nil slice out: a
 // fully audited branch must not carry an empty-but-allocated slice into the
 // rendered report or the JSON output.
 //
 // A subject-lookup failure is NOT fatal, same rationale as commitBlobs
 // below: this is reporting sugar, not the audit itself, and the net verdict
-// (the only thing that gates, per docs/issues/actionable.md item 2) must not
+// (the only thing that gates, per the unaudited-commits decision in docs/issues/decisions.md) must not
 // be thrown away over a cosmetic git failure. It warns on stderr and falls
 // back to the bare SHA as the subject.
 func unauditedCommitSubjects(shas []string) []UnauditedCommit {

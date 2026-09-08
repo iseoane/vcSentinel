@@ -28,7 +28,7 @@ type FlagsPrCreate struct {
 	Parent  string
 	// AuditPending (--audit-pending) restores the old default: audit every
 	// commit on the branch that carries no review record instead of only
-	// reporting the gap (docs/issues/actionable.md item 2). The net audit
+	// reporting the gap (the unaudited-commits decision in docs/issues/decisions.md). The net audit
 	// below is unconditional either way and is what actually gates.
 	AuditPending bool
 }
@@ -37,7 +37,7 @@ type FlagsPrCreate struct {
 // the publication record with pr_url, fallback and chain_pr. Extends T1.8:
 // force records whether the red validation was overridden, and reason (only
 // with force) leaves an explicit trace of why — the exception is never
-// silent. unaudited (docs/issues/actionable.md item 5) records how many
+// silent. unaudited (the unaudited-commits decision in docs/issues/decisions.md) records how many
 // branch commits carried no review record in this pass, so an operator
 // reconstructing what happened from the event stream can tell an audited
 // pass apart from a skipped one, not just the --json report.
@@ -228,7 +228,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	}
 	res, err := deps.AnalyzeBranch(worktree, wiring.BranchOptionsWithRefuter(cfg, modelVerifier, review.BranchOptions{
 		Base: base,
-		// docs/issues/actionable.md item 2: pr create no longer audits every
+		// the unaudited-commits decision in docs/issues/decisions.md: pr create no longer audits every
 		// unaudited commit by default — the net audit below already plans
 		// from the net diff's own aggregate risk, so paying for both was the
 		// largest single cost in a review. --audit-pending restores the old
@@ -260,7 +260,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	}
 
 	// Records can legitimately be empty now that pr create no longer audits
-	// pending commits by default (docs/issues/actionable.md item 2): the net
+	// pending commits by default (the unaudited-commits decision in docs/issues/decisions.md): the net
 	// audit below already plans from the net diff's own aggregate risk, so an
 	// empty per-commit history is only a real dead end when there is no net
 	// verdict either.
@@ -278,7 +278,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
 		}
 	}
-	// Informational only, never a gate (docs/issues/actionable.md item 2):
+	// Informational only, never a gate (the unaudited-commits decision in docs/issues/decisions.md):
 	// the net verdict above is what decides, this only points at the gap.
 	fmt.Fprint(w, review.RenderUnauditedNotice(res.Unaudited))
 

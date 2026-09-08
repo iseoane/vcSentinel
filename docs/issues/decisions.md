@@ -172,6 +172,40 @@ latency and review-equivalence numbers. Cost stays unmapped on purpose
 (F9 precedent); FU-3 narrows to price, scope and reuse.
 
 
+### A pull request reports its unaudited commits instead of auditing them (decided 2026-09-08, landed 2026-09-08)
+
+`pr review` and `pr create` audited every branch commit that carried no
+review record, and then ran the net audit as well, so the same code
+reached the reviewer twice. That is not the redundancy it looks like —
+`runNetReview` plans from the NET diff's own aggregate risk through
+`PlanForProfile`, so the two ask different questions — but the PR verdict
+never depended on the per-commit half, and paying for both fell due at
+the worst moment: a branch whose commits were never reviewed as they went
+made the pull request settle the whole accumulated bill at once. One
+measured run audited five commits plus the net diff, ran about an hour,
+and ended by exhausting the machine's memory.
+
+Decided: a pull request names the commits with no record and points at
+`sentinel review <sha>`; it never audits them on the operator's behalf,
+and it never blocks on their absence. The net verdict stays the only
+gate. `--audit-pending` restores the old behavior for callers that want
+it in one pass. `--only-unaudited` was retired rather than kept as a
+silent no-op: it had come to describe the default, and its help text
+("restrict the analysis to commits without a review record") never
+matched what it did (skip auditing entirely).
+
+Two consequences were handled with it. `pr create` refused to publish on
+an empty per-commit history, which is now a legitimate state, so the
+refusal requires a missing net verdict too. And the `--json` report and
+both event details now carry the unaudited commits, because an unaudited
+commit and an audited one with no findings were indistinguishable to a
+machine consumer.
+
+Kept deliberately: per-commit records still attribute a finding to one
+commit, are what `refute` and `accept` operate on, and survive rebases
+through the blob index. Nothing about them changed except who pays for
+creating them.
+
 ## Closed FUs (from the former `f0-deuda.md`)
 
 ### FU-5: widened review context provider (resolved 2026-09-06)

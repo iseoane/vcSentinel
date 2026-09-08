@@ -26,7 +26,7 @@ type FlagsPrReview struct {
 	Base string
 	// AuditPending (--audit-pending) restores auditing every commit on the
 	// branch that carries no review record; by default pr review only
-	// reports that gap (docs/issues/actionable.md item 2), it never audits
+	// reports that gap (the unaudited-commits decision in docs/issues/decisions.md), it never audits
 	// it and never blocks on it — the net audit is unaffected either way.
 	AuditPending bool
 	Overview     bool // --overview
@@ -46,7 +46,7 @@ func PrReviewEventDetail(base string, res *review.BranchResult, ci bool) (ops.Ev
 		"ci":        ci,
 		"overview":  res.Overview != nil,
 		"chain_pr":  res.Decision == "chain",
-		// docs/issues/actionable.md item 5: distinct from "nuevas" (commits
+		// the unaudited-commits decision in docs/issues/decisions.md: distinct from "nuevas" (commits
 		// discovered this pass) — this is how many still carry no review
 		// record once the pass is done, so an operator reading events can
 		// tell an audited pass apart from a skipped one.
@@ -123,7 +123,7 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 	blobStore, storeWarning := ResolveBlobStore(worktree)
 	return wiring.BranchOptionsWithRefuter(cfg, verifier, review.BranchOptions{
 		Base: base,
-		// docs/issues/actionable.md item 2: pr review no longer audits every
+		// the unaudited-commits decision in docs/issues/decisions.md: pr review no longer audits every
 		// unaudited commit by default. --audit-pending restores that.
 		OnlyPending:            !flags.AuditPending,
 		Overview:               flags.Overview,
@@ -297,7 +297,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 			fmt.Fprintln(w, review.RenderSummary(res.Records))
 		}
 	}
-	// Informational only, never a gate (docs/issues/actionable.md item 2):
+	// Informational only, never a gate (the unaudited-commits decision in docs/issues/decisions.md):
 	// this must render even with zero Records, the default now that pr
 	// review does not audit pending commits.
 	fmt.Fprint(w, review.RenderUnauditedNotice(res.Unaudited))
@@ -348,7 +348,7 @@ func PrReviewJSONOutput(base string, res *review.BranchResult) map[string]any {
 	if res.Net != nil {
 		output["net"] = res.Net
 	}
-	// docs/issues/actionable.md item 5: "pendientes" alone leaves a machine
+	// the unaudited-commits decision in docs/issues/decisions.md: "pendientes" alone leaves a machine
 	// consumer unable to tell "no review record" apart from "audited, no
 	// findings" without cross-referencing "fichas" by SHA. "unaudited"
 	// carries the same commits explicitly, paired with their subject, and is

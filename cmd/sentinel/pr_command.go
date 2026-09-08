@@ -34,7 +34,7 @@ type flagsPrReview struct {
 	base string
 	// auditPending (--audit-pending) restores auditing every commit on the
 	// branch that carries no review record; by default pr review only
-	// reports that gap (docs/issues/actionable.md item 2), it never audits
+	// reports that gap (the unaudited-commits decision in docs/issues/decisions.md), it never audits
 	// it, and never blocks on it.
 	auditPending bool
 	overview     bool // --overview
@@ -70,7 +70,7 @@ func parsePrReviewFlags(args []string) (flagsPrReview, error) {
 			}
 			flags.parent = val
 		case "--only-unaudited":
-			// Retired (docs/issues/actionable.md item 2): pr review no longer
+			// Retired (the unaudited-commits decision in docs/issues/decisions.md): pr review no longer
 			// audits pending commits by default, so this flag now describes
 			// the default rather than restricting scope — keeping it as a
 			// silent no-op would mislead a caller who still expects it to
@@ -99,7 +99,7 @@ type flagsPrCreate struct {
 	parent  string
 	// auditPending (--audit-pending) restores auditing every commit on the
 	// branch that carries no review record; by default pr create only
-	// reports that gap (docs/issues/actionable.md item 2). The net audit is
+	// reports that gap (the unaudited-commits decision in docs/issues/decisions.md). The net audit is
 	// unconditional and is what actually gates publication.
 	auditPending bool
 }

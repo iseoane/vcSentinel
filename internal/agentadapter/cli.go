@@ -68,7 +68,8 @@ type ReviewRequest struct {
 // snapshot now carries the whole committed tree so the reviewer is not denied
 // the context it needs; this value merely stopped being the suspect.
 //
-// Item 3 of docs/issues/actionable.md tracks recalibrating or retiring it.
+// docs/issues/actionable.md, "Recalibrate or retire the OpenCode
+// reviewer turn budget", tracks replacing this guess with a measurement.
 // The Claude branch of reviewCommand intentionally ignores this value: its
 // own comment there explains there is no confirmed flag to cap Claude Code's
 // turn count.
