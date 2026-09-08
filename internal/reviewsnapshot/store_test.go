@@ -296,6 +296,28 @@ func TestReaperSkipsActiveLeaseAndRemovesAbandonedStoreEntries(t *testing.T) {
 	}
 }
 
+func TestReaperRemovesStaleProviderStateRoot(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(storeRoot(), ProviderStatePrefix+"orphan")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(orphan, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	if reaped := reapAbandonedSnapshots(time.Now(), staleSnapshotAge); reaped != 1 {
+		t.Fatalf("reaped = %d, want 1 stale provider state root removed", reaped)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("stale provider state root survived reaping: %v", err)
+	}
+}
+
 // unusedHexDigits returns the two smallest hexadecimal digits different from
 // c, so reaper fixtures derive valid object-id keys that are guaranteed never
 // to collide with the audited SHA's key.

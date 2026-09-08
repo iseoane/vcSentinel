@@ -5,33 +5,9 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Restore permission-aware removal of published snapshots
+## 1. Move provider isolation out of the evidence snapshot
 
-Sits first: a regression introduced on `fix/reviewsnapshot-platform-modes`,
-not yet merged, and it blocks that branch. Smallest fix on this list.
-
-- Wrong: published regular files are still tightened to their published
-  permission (`os.Chmod` at `internal/reviewsnapshot/store.go:146`, 0400 or
-  0500), but `removeReadOnlyStoreEntry` — which chmodded a tree back to 0700
-  before deleting it — was removed as dead code when directory sealing was
-  reverted. Cleanup is now raw `os.RemoveAll`/`os.Remove` at eight sites
-  (store.go:438-440 and 486-513). Unlinking a read-only file inside a
-  writable directory succeeds on Linux, so the suite passes; Windows refuses
-  to delete a read-only file, so the reaper and the failed-publication
-  cleanup cannot remove anything, residue accumulates without bound, and the
-  rename error path then reads an existing target as a competing winner and
-  can make `Create` retry indefinitely.
-- Evidence: Sentinel logic dimension, CRITICAL at confidence 0.9, on commit
-  `ea5d579`. The helper was deleted on my instruction: I judged it dead
-  because directories were no longer sealed, which was wrong — it existed for
-  read-only FILES, and those never stopped being read-only.
-- Closing: removal that restores owner write access before deleting,
-  reinstated for every cleanup path, with the Windows expectation pinned the
-  way `publishedPermMatches` now pins the validation rule.
-
-## 2. Move provider isolation out of the evidence snapshot
-
-Sits second: unblocked, and it is the reason the shared snapshot does not yet
+Sits first: unblocked, and it is the reason the shared snapshot does not yet
 deliver the reuse it was built for. Highest trust impact on this list.
 
 - Wrong: `reviewEnvironment` (`internal/agentadapter/cli.go:523`) sets
@@ -58,9 +34,9 @@ deliver the reuse it was built for. Highest trust impact on this list.
   sealing attempt — concurrent reviewers can currently add, rename or delete
   evidence another reviewer is reading.
 
-## 3. Bound the total size of the review snapshot store
+## 2. Bound the total size of the review snapshot store
 
-Sits third: unblocked and small, but it only bites under unusual load.
+Sits second: unblocked and small, but it only bites under unusual load.
 
 - Wrong: the store under `os.TempDir()/vas-sentinel-snapshots-<uid>` is
   reaped by staleness alone. Nothing bounds its total size, and one committed
@@ -87,9 +63,139 @@ Sits third: unblocked and small, but it only bites under unusual load.
   Item 2 is what makes retention worth anything, so land it first and expect
   the tree count to fall to one per audited commit.
 
-## 4. Recalibrate or retire the OpenCode reviewer turn budget
+## 3. Give the pre-publication audits a record `pr create` can consult
 
-Sits fourth: unblocked but low value, and its original premise was disproven.
+Sits third: unblocked, found by exercising the full pre-push flow, and its
+cheap half is separable from its expensive half.
+
+- Wrong, or possibly deliberate: `gate --stage pre-push` runs a semantic
+  review of `HEAD` and prints its verdict, but writes no review record. On
+  2026-09-08 it reported `Review of 19a5b2f6: warn` across three dimensions
+  and no ficha exists for that SHA in the shared ledger (618 records at the
+  time), nor in the worktree's per-checkout ledger, which holds only an
+  `events.jsonl`. `status` does not list it, and it was not findable by SHA in
+  the durable store either.
+- Evidence of the cost, corrected after actually running the flow: `pr review`
+  does NOT re-audit those commits. It audits the net diff and REPORTS the
+  commits lacking a record, which is the behaviour commit 6a43b4a deliberately
+  introduced. So the cost is not a duplicated audit; it is that the gate's
+  warnings survive only in terminal output, and that `pr review` then labels a
+  commit the gate did review as having no record and recommends auditing it by
+  name. An operator who follows that recommendation pays for the same audit
+  twice, and one who does not is left with no record of what the gate warned.
+- Note it may be intended: `AGENTS.md` names `review`, `status` and `pr` as
+  the commands that anchor the shared ledger, and pointedly not `gate`. The
+  gate is a lifecycle gate rather than an audit of record.
+- The same hole seen from the publishing end: `pr create` does not audit at
+  all. `internal/app/pr/create.go` reads the shared ledger through
+  `review.AnalyzeBranch` and derives its notice from those records via
+  `SemanticNoticeWithDispositions` -> `review.BranchBlockers`; the only gate
+  that blocks is a red deterministic validation, overridable with `--force
+  --reason`. So the semantic signal that reaches a published PR comes ONLY
+  from `sentinel review` fichas. A team using gate plus `pr review` — the two
+  commands that sound like "before publishing" — would publish with no
+  semantic signal at all, not because the code is clean but because nothing
+  was written down. On this branch `pr review` reported 11 findings on the net
+  diff and none of them can reach the PR.
+- Why the two halves differ, and this decides the design: the ledger is keyed
+  by commit SHA. The gate audits `HEAD`, a single commit, so it HAS a natural
+  key and needs no new record shape — it would inherit fingerprints,
+  `refute`/`accept`/`reopen`, the metrics aggregates, blob-index reuse across
+  rebases, and the existing `--prune`. `pr review` and `pr create` audit a
+  net diff over a RANGE, which has no such key.
+- The trap in the expensive half: a range record would have to be keyed by
+  `base..head` or by a hash of the net diff, and it goes stale the moment the
+  branch moves — one more commit and it describes different code. A per-commit
+  ficha survives a rebase through its content blobs; a range record cannot. A
+  STALE range record is worse than none: `pr create` would publish a PR
+  asserting a verdict that does not describe the code being published, whereas
+  today's "these commits have no record" is at least true. Any such record
+  must be bound to an exact identity and refused when it does not match,
+  exactly as `reviewsnapshot` revalidates its manifest on every lease.
+- Reference design, gentle-ai, inspected on disk 2026-09-08. Its
+  `~/.gentle-ai/review-contexts/v1/` records carry `schema`
+  (`gentle-ai.review-repository-context/v1`), a content-addressed `handle`
+  (`rctx1_<sha256>`), a `lineage_id`, and — the part that matters here —
+  `target_identity` and `revision`, both `sha256:` digests rather than commit
+  SHAs, alongside `repository_identity` and the resolved root, common dir and
+  git dir. Hashing the candidate dissolves the keying problem stated above: a
+  range, a net diff, or any arbitrary candidate becomes addressable, so the
+  obstacle was never that a range has no key, it was indexing by commit.
+  Storing `revision` next to the record turns staleness into something a
+  consumer DETECTS by comparing identities instead of assuming, which is the
+  discipline this item already demands; gentle-ai's own contract states that
+  any byte, path or mode change invalidates the receipt and requires a new
+  review. Two further choices worth copying: the `lineage_id`, which threads
+  the operations performed on one candidate — precisely what would relate "the
+  gate reviewed this" to "pr review analysed this" to "pr create published
+  this" — and keeping the record informational so it never becomes delivery
+  authority, which Sentinel already does by blocking only on deterministic
+  validation but does not state.
+- Limit of that reference: only the on-disk shape of two 630-byte records was
+  inspected, plus gentle-ai's documented contract. Its source was not read, so
+  how it renders findings, and whether it supports per-finding human
+  disposition comparable to `refute`/`accept`/`reopen`, is UNVERIFIED. Confirm
+  before copying that part.
+- Second reference design, no-mistakes (`kunchenguid/no-mistakes`, Go), read
+  from source 2026-09-08. It keeps evidence in git itself rather than beside
+  it. `internal/custody/refs.go` anchors a terminal run at
+  `refs/no-mistakes/recover/<runID>` through
+  `update-ref --no-deref <ref> <head> <zeros>` — a create-only
+  compare-and-swap against the null OID, idempotent when the commit matches
+  and failing closed on a conflicting or symbolic ref, so evidence is never
+  silently replaced. `internal/evidence/publish.go` publishes a run's evidence
+  directory to an ORPHAN branch pushed to the same remote as the code branch,
+  fork-aware so a PR's evidence lands in the fork holding the head, under a
+  directory prefix plus slugged branch segments, and bounded at 500 files,
+  256 MB total and 64 MB per file on the stated grounds that evidence is
+  agent-produced and a runaway recording must fail the publish closed rather
+  than push gigabytes.
+- What each reference answers, since they are complementary rather than
+  competing: gentle-ai answers the KEYING question above, and no-mistakes
+  answers durability and shareability — its evidence travels with the pull
+  request, so the human reviewing it sees what the tooling found, and it is
+  maintainable in the sense this item needs, prunable as refs and branches and
+  reclaimable by `git gc`. The trade-off to state before copying it: that
+  evidence is PUSHED, hence visible to anyone who can read the repository,
+  whereas this project's ledger is deliberately machine-local under the git
+  common directory. Choosing one is choosing who the audit trail is for.
+- Closing, cheap half first: make the gate's per-commit review persist a
+  record, or record a determination that it deliberately keeps none. Then
+  decide the range half by MEASUREMENT rather than preference — compare the
+  net-diff findings against the union of the per-commit findings for the same
+  commits. If they substantially overlap, no range record is justified and
+  per-commit records are enough; if the net audit sees interactions between
+  commits that no single commit shows, that is the evidence for building it,
+  with the staleness discipline above. The first data point is available: 11
+  net findings on `99138bb..19a5b2f` versus the per-commit fichas for
+  `e408d42` and `19a5b2f`.
+
+## 4. Bound the provider's own temporary residue
+
+Sits fourth: unblocked and mechanical, but the residue is the provider's, not
+this repository's, so the fix can only be to clean it, not to prevent it.
+
+- Wrong: each restricted reviewer invocation leaves a roughly 14 MB
+  `/tmp/.<hex>-00000000.so` file behind, written by the Bun runtime OpenCode
+  ships, and nothing ever removes them. Measured on 2026-09-08: 540 files
+  totalling 2,945 MB, accumulated since 2026-09-06, none held by any process.
+  Deleting the unheld ones took `/tmp` from 92% to 16% used.
+- Why it matters more than its size suggests: item 2 bounds THIS package's
+  store, which was 191 MB at that moment — fifteen times less than the
+  provider residue sitting beside it. No ceiling of ours touches it. On the
+  3.8 GB tmpfs this machine uses, a day of heavy reviewing fills the disk from
+  this alone, and the symptom is `no space left on device` inside a review,
+  which invites blaming the snapshot store. That misdiagnosis already happened
+  once during this work.
+- Closing: the reaper that already runs at every snapshot creation also
+  collects unheld, stale provider temporary files, or a recorded determination
+  that cleaning another tool's residue is out of scope and the operator owns
+  it. Do not simply widen the existing prefix match without checking that a
+  live invocation's file is never removed.
+
+## 5. Recalibrate or retire the OpenCode reviewer turn budget
+
+Sits fifth: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
   OpenCode `Steps` value — the number of model turns the restricted reviewer
@@ -147,9 +253,9 @@ Sits fourth: unblocked but low value, and its original premise was disproven.
   turn value does not need that attribution; re-testing the disproven premise
   above would.
 
-## 5. Cache shared audit evidence across review dimensions
+## 6. Cache shared audit evidence across review dimensions
 
-Sits fifth: the token measurement now exists on all three adapter paths
+Sits sixth: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -171,9 +277,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 6. Give cost, scope and reuse a producer (FU-3)
+## 7. Give cost, scope and reuse a producer (FU-3)
 
-Sits sixth: tokens now have producers on every adapter path, but cost,
+Sits seventh: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -191,9 +297,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 7. Validate the acpx spawn chain on native Windows
+## 8. Validate the acpx spawn chain on native Windows
 
-Sits seventh: conditional work — no action while Debian is the deployment
+Sits eighth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`

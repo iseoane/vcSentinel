@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -288,7 +287,11 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 	if err != nil {
 		return reviewExecution{}, err
 	}
-	env := os.Environ()
+	env, cleanupEnvironment, err := c.newRestrictedReviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir)
+	if err != nil {
+		return reviewExecution{}, err
+	}
+	defer cleanupEnvironment()
 	dir := ""
 	if c.isClaude() {
 		// Claude Code has no "--dir"-style flag (unlike OpenCode's --pure +
@@ -297,8 +300,6 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 		// sandbox. Tests verify the generated CLI arguments and snapshot cwd,
 		// not live provider permission enforcement or path-matcher behavior.
 		dir = request.SnapshotDir
-	} else {
-		env = reviewEnvironment(restrictions["OPENCODE_CONFIG_CONTENT"], request.SnapshotDir, c.Config.Model)
 	}
 
 	spawn, err := startOwnedCommand(ctx, c.BinaryName, args, env, dir, request.Prompt)

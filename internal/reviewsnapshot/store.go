@@ -39,6 +39,9 @@ const (
 	readySuffix     = ".ready"
 	manifestSuffix  = ".manifest"
 	lockSuffix      = ".lock"
+	// ProviderStatePrefix identifies per-invocation provider state roots.
+	// Unlike published snapshots, no lease is shared across these directories.
+	ProviderStatePrefix = "vas-sentinel-review-provider-"
 )
 
 func publishedPath(root, sha string) string {
@@ -545,10 +548,11 @@ func isStaleStoreEntry(entry os.DirEntry, now time.Time, maxAge time.Duration) b
 // removed only after the reaper acquires that SHA's nonblocking exclusive
 // lock, so an entry a live lease still holds in any process is skipped no
 // matter how old it looks, and an entry a live creator is materializing is
-// protected by the very same exclusive hold. Names parsed back out of the
-// store must be full canonical object ids; anything else is left alone. The
-// legacy per-invocation snapshot directories keep their older, purely
-// age-based cleanup in reapAbandonedSnapshots.
+// protected by the very same exclusive hold. Provider state roots are private
+// to one review, so stale ones use age-based cleanup without a lease. Names
+// parsed back out of the store must be full canonical object ids; anything
+// else is left alone. The legacy per-invocation snapshot directories keep
+// their older, purely age-based cleanup in reapAbandonedSnapshots.
 func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 	if err := checkStoreRoot(root); err != nil {
 		return 0
@@ -561,6 +565,13 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 	for _, entry := range entries {
 		name := entry.Name()
 		switch {
+		case entry.IsDir() && strings.HasPrefix(name, ProviderStatePrefix):
+			if !isStaleStoreEntry(entry, now, maxAge) {
+				continue
+			}
+			if removeReadOnlyStoreEntry(filepath.Join(root, name)) == nil {
+				removed++
+			}
 		case entry.IsDir() && strings.HasPrefix(name, publishedPrefix) && !strings.HasSuffix(name, readySuffix) && !strings.HasSuffix(name, manifestSuffix):
 			sha := strings.TrimPrefix(name, publishedPrefix)
 			if sha == "" || !validObjectID(sha) || !isStaleStoreEntry(entry, now, maxAge) {

@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
 )
 
 // wantAnchoredReadPermissions builds the expected OpenCode read-permission
@@ -553,6 +555,218 @@ func TestRunReviewClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	}
 }
 
+func TestRunReviewClaudeKeepsHostEnvironmentWithoutOpenCodeCredentials(t *testing.T) {
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"token":"host-secret"}}`)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
+
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "claude"),
+		Config:     config.AgentConfig{Model: "openai/gpt-5.6-terra"},
+		Timeout:    10 * time.Second,
+	}
+	if _, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: t.TempDir()}, 10*time.Second); err != nil {
+		t.Fatalf("runBoundedReview() error = %v", err)
+	}
+
+	capture := readAgentCapture(t, capturePath)
+	if !samePath(capture.Home, hostHome) {
+		t.Fatalf("HOME = %q, expected host HOME %q", capture.Home, hostHome)
+	}
+	if capture.OpenCodeAuth != "" {
+		t.Fatalf("OPENCODE_AUTH_CONTENT = %q, expected no OpenCode credentials for Claude", capture.OpenCodeAuth)
+	}
+}
+
+func TestRestrictedReviewGenericEnvironmentIsUnchanged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"token":"host-secret"}}`)
+	adapter := CLIAdapter{BinaryName: "generic-agent"}
+
+	env, cleanup, err := adapter.newRestrictedReviewEnvironment("generated", t.TempDir())
+	if err != nil {
+		t.Fatalf("newRestrictedReviewEnvironment() error = %v", err)
+	}
+	defer cleanup()
+	if got, want := environmentValues(env), environmentValues(os.Environ()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("generic review environment = %v, expected unchanged host environment %v", got, want)
+	}
+}
+
+func TestRestrictedReviewKeepsProviderStateOutOfSharedSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\"}}\n")
+
+	sha := headSha(t)
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 10 * time.Second}
+	if _, err := adapter.ReviewWithContext(context.Background(), "audit", sha, []string{reviewFixturePath}); err != nil {
+		t.Fatalf("ReviewWithContext() error = %v", err)
+	}
+
+	capture := readAgentCapture(t, capturePath)
+	snapshot := ""
+	for i, arg := range capture.Args {
+		if arg == "--dir" && i+1 < len(capture.Args) {
+			snapshot = capture.Args[i+1]
+			break
+		}
+	}
+	if snapshot == "" {
+		t.Fatalf("review invocation did not include a snapshot directory: %v", capture.Args)
+	}
+	if samePath(capture.Home, snapshot) {
+		t.Fatalf("provider home = %q, want an invocation root distinct from snapshot %q", capture.Home, snapshot)
+	}
+	if capture.ProviderState == "" || !samePath(filepath.Dir(capture.ProviderState), capture.Home) {
+		t.Fatalf("provider state = %q, want a file written under provider home %q", capture.ProviderState, capture.Home)
+	}
+	if _, err := os.Stat(filepath.Join(snapshot, ".provider-state")); !os.IsNotExist(err) {
+		t.Fatalf("provider state contaminated the published snapshot: %v", err)
+	}
+	if _, err := os.Stat(capture.Home); !os.IsNotExist(err) {
+		t.Fatalf("provider invocation root survived review cleanup: %v", err)
+	}
+
+	// Reuse is proven by directory IDENTITY, not by an unchanged mtime. A
+	// rematerialization builds a fresh tree and renames it into place, so the
+	// directory object changes and os.SameFile goes false; leasing the existing
+	// tree keeps the same object. The mtime cannot serve as the proxy any more
+	// because leasing deliberately refreshes it (internal/reviewsnapshot
+	// store.go touches the published tree on every lease) so that
+	// least-recently-leased eviction has an ordering to work with. Asserting
+	// the path alone would not do either: a rematerialized tree is published
+	// back to the very same path.
+	before, err := os.Stat(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _, release, err := reviewsnapshot.Create(context.Background(), "", sha, []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("Create() after provider state write: %v", err)
+	}
+	defer release()
+	if again != snapshot {
+		t.Fatalf("Create() reused %q, want the original published snapshot %q", again, snapshot)
+	}
+	after, err := os.Stat(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("published snapshot was rematerialized after provider state write, want the very same directory leased again")
+	}
+}
+
+func TestNewReviewEnvironmentAllocatesDistinctConcurrentRootsAndCleansThem(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	type invocation struct {
+		env     []string
+		cleanup func()
+		err     error
+	}
+	invocations := make([]invocation, 2)
+	var wg sync.WaitGroup
+	for i := range invocations {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			invocations[i].env, invocations[i].cleanup, invocations[i].err = newReviewEnvironment("generated", "openai/gpt-5.6-terra", "")
+		}(i)
+	}
+	wg.Wait()
+
+	roots := make([]string, len(invocations))
+	for i, invocation := range invocations {
+		if invocation.err != nil {
+			t.Fatalf("newReviewEnvironment() error = %v", invocation.err)
+		}
+		roots[i] = environmentValues(invocation.env)["HOME"][0]
+		if _, err := os.Stat(roots[i]); err != nil {
+			t.Fatalf("provider root %q is not writable: %v", roots[i], err)
+		}
+	}
+	if samePath(roots[0], roots[1]) {
+		t.Fatalf("concurrent provider invocations shared root %q", roots[0])
+	}
+	for i, invocation := range invocations {
+		invocation.cleanup()
+		if _, err := os.Stat(roots[i]); !os.IsNotExist(err) {
+			t.Fatalf("provider root %q survived cleanup: %v", roots[i], err)
+		}
+	}
+}
+
+func TestNewReviewEnvironmentStaysOutsideSnapshotWhenTMPDIRIsNested(t *testing.T) {
+	snapshot := t.TempDir()
+	nestedTmp := filepath.Join(snapshot, "tmp")
+	if err := os.Mkdir(nestedTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", nestedTmp)
+
+	env, cleanup, err := newReviewEnvironment("generated", "openai/gpt-5.6-terra", snapshot)
+	if err != nil {
+		t.Fatalf("newReviewEnvironment() error = %v", err)
+	}
+	defer cleanup()
+	root := environmentValues(env)["HOME"][0]
+	relative, err := filepath.Rel(snapshot, root)
+	if err != nil {
+		t.Fatalf("filepath.Rel(%q, %q): %v", snapshot, root, err)
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("provider isolation root %q is nested in snapshot %q", root, snapshot)
+	}
+}
+
+func TestNewReviewEnvironmentStaysOutsideSymlinkedSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	snapshot := filepath.Join(workspace, "snapshot")
+	nested := filepath.Join(snapshot, "nested")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(workspace, "alias")
+	if err := os.Symlink(nested, alias); err != nil {
+		t.Skipf("create snapshot alias: %v", err)
+	}
+	if err := os.Symlink("..", filepath.Join(nested, "snapshot")); err != nil {
+		t.Skipf("create snapshot return link: %v", err)
+	}
+	linkedSnapshot := filepath.Join(alias, "snapshot")
+	resolvedSnapshot, err := filepath.EvalSymlinks(linkedSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env, cleanup, err := newReviewEnvironment("generated", "openai/gpt-5.6-terra", linkedSnapshot)
+	if err != nil {
+		t.Fatalf("newReviewEnvironment() error = %v", err)
+	}
+	defer cleanup()
+	root := environmentValues(env)["HOME"][0]
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(resolvedSnapshot, resolvedRoot)
+	if err != nil {
+		t.Fatalf("filepath.Rel(%q, %q): %v", resolvedSnapshot, resolvedRoot, err)
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("provider isolation root %q resolves inside snapshot %q", resolvedRoot, resolvedSnapshot)
+	}
+}
+
 func TestReviewCommandRejectsProvidersWithoutBoundedToolPermissions(t *testing.T) {
 	adapter := CLIAdapter{BinaryName: "other-agent"}
 	args, env, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", MaxToolCalls: 7})
@@ -576,8 +790,11 @@ func TestReviewCommandRejectsProvidersWithoutBoundedToolPermissions(t *testing.T
 // why the dimension failed.
 func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
 	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
+	capturePath := filepath.Join(t.TempDir(), "capture.json")
+	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
 	snapshotDir := t.TempDir()
-	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 200 * time.Millisecond}
+	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 200 * time.Millisecond}
 
 	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: snapshotDir}, 200*time.Millisecond)
 	if err == nil {
@@ -585,5 +802,12 @@ func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error = %v; it must wrap context.DeadlineExceeded so the durable record classifies it as a timeout instead of a failure", err)
+	}
+	capture := readAgentCapture(t, capturePath)
+	if capture.ProviderState == "" {
+		t.Fatal("the timed-out provider did not write its configured state file")
+	}
+	if _, err := os.Stat(capture.Home); !os.IsNotExist(err) {
+		t.Fatalf("provider invocation root survived timeout cleanup: %v", err)
 	}
 }
