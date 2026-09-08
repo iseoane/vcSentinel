@@ -633,3 +633,37 @@ func TestCreateAbortsDuringMaterializationAndLeavesNoSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// TestMaterializeTreeSurfacesBatchProcessStderr pins the Wait diagnostics:
+// when the started git batch process serves every response and then exits
+// non-zero with stderr output, the returned error must carry that stderr.
+// That requires cmd.Stderr to be wired BEFORE cmd.Start — assigned after
+// Start, os/exec sends the child's stderr to the null device and the
+// diagnostics are lost. The test shims git on PATH with a batch server that
+// serves one canned response, then fails with stderr, so the failure lands
+// in the cmd.Wait branch.
+func TestMaterializeTreeSurfacesBatchProcessStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the PATH shim relies on a POSIX shell")
+	}
+	bin := t.TempDir()
+	shim := filepath.Join(bin, "git")
+	script := "#!/bin/sh\n" +
+		"cat >/dev/null\n" +
+		"printf '0000000000000000000000000000000000000000 blob 9\\npackage p\\n'\n" +
+		"echo 'boom: simulated batch failure' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	snapshot := t.TempDir()
+	err := materializeTree(context.Background(), t.TempDir(), strings.Repeat("a", 40), snapshot, []string{"canned.go"})
+	if err == nil {
+		t.Fatal("materializeTree succeeded against a failing batch process")
+	}
+	if !strings.Contains(err.Error(), "boom: simulated batch failure") {
+		t.Fatalf("error %q does not include the batch process's stderr", err)
+	}
+}

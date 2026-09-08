@@ -440,11 +440,14 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 	if err != nil {
 		return fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
 	}
+	// stderr must be wired BEFORE Start: assigned afterwards, os/exec sends
+	// the child's stderr to the null device and the Wait diagnostics below
+	// lose whatever git tried to report.
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start committed tree batch reader for %q: %w", sha, err)
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
 
 	writeErr := make(chan error, 1)
 	go func() {
