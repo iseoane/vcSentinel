@@ -178,7 +178,7 @@ const staleSnapshotAge = 24 * time.Hour
 // removed lock-aware: reapSharedStore takes each candidate SHA's nonblocking
 // exclusive lock first, so a tree a live lease still holds in any process is
 // skipped even when its directory already looks stale, while abandoned
-// trees, staging directories, and orphaned readiness markers go away.
+// trees, staging directories, and orphaned readiness artifacts go away.
 //
 // It is best-effort by contract: every error is ignored, because failing to
 // tidy must never fail the review that was about to start. It only ever
@@ -226,16 +226,20 @@ const snapshotPrefix = "vas-sentinel-review-"
 // and reused by every caller for that SHA — sequential or concurrent, in
 // this process or across processes. A call materializes only when no
 // complete tree is published yet: it writes into a staging directory,
-// publishes a readiness marker, and atomically renames the staging directory
-// onto the SHA's published name, so no caller can ever observe a partial
-// tree. The returned dir is leased, not owned: cleanup is an idempotent
-// lease release that must still run as the caller's defer, and it never
-// deletes the published tree — the snapshot is retained on disk so the next
-// invocation auditing the same SHA (a format or transport retry, a second
-// provider, a later review) leases the very same directory, and the
-// lock-aware stale reaper that runs at every Create is the only thing that
-// ever removes it, once no lease in any process holds it and its mtime is
-// past staleSnapshotAge.
+// publishes a readiness manifest and marker, and atomically renames the
+// staging directory onto the SHA's published name, so no caller can ever
+// observe a partial tree. Published evidence is immutable and validated:
+// regular files are owner read-only, the manifest records every committed
+// file's mode and size, and every lease validates marker, manifest, and
+// on-disk tree — a corrupted cache is never handed out; Create rebuilds it
+// from Git under the per-SHA transition lock. The returned dir is leased,
+// not owned: cleanup is an idempotent lease release that must still run as
+// the caller's defer, and it never deletes the published tree — the snapshot
+// is retained on disk so the next invocation auditing the same SHA (a format
+// or transport retry, a second provider, a later review) leases the very
+// same directory, and the lock-aware stale reaper that runs at every Create
+// is the only thing that ever removes it, once no lease in any process holds
+// it and its mtime is past staleSnapshotAge.
 //
 // It returns the snapshot directory, the audited paths that survived the
 // committed-regular-file filter, a caller-owned cleanup func, and an error.
@@ -338,7 +342,7 @@ func allowedSnapshotPaths(ctx context.Context, worktree, sha string, paths []str
 		if err != nil {
 			return nil, err
 		}
-		if !exists || objectType != "blob" || !strings.HasPrefix(mode, "100") {
+		if !exists || !isCommittedRegularFile(mode, objectType) {
 			continue
 		}
 		allowed = append(allowed, filePath)
@@ -419,24 +423,28 @@ func gitTreeEntries(ctx context.Context, worktree, sha string) ([]treeEntry, err
 // raw blob objects straight from the object database: unlike `git archive`,
 // it never runs the tree's own .gitattributes (export-ignore could silently
 // drop a file, export-subst could silently rewrite its bytes), which matters
-// because this package's contract is byte-identical committed content.
-func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths []string) error {
+// because this package's contract is byte-identical committed content. It
+// returns each written file's committed git mode — the vocabulary the
+// readiness manifest and the publish-time evidence tightening are built
+// from.
+func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths []string) (map[string]string, error) {
+	modes := make(map[string]string, len(paths))
 	if len(paths) == 0 {
-		return nil
+		return modes, nil
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", worktree, "cat-file", "--batch")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
+		return nil, fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
+		return nil, fmt.Errorf("open committed tree batch reader for %q: %w", sha, err)
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start committed tree batch reader for %q: %w", sha, err)
+		return nil, fmt.Errorf("start committed tree batch reader for %q: %w", sha, err)
 	}
 
 	writeErr := make(chan error, 1)
@@ -490,54 +498,55 @@ func materializeTree(ctx context.Context, worktree, sha, snapshot string, paths 
 		// cancels while it is midway through must be observed promptly
 		// instead of after every remaining file has been written.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+			return nil, ctxErr
 		}
 		header, err := reader.ReadString('\n')
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+				return nil, ctxErr
 			}
-			return fmt.Errorf("read committed tree batch header for %q: %w", filePath, err)
+			return nil, fmt.Errorf("read committed tree batch header for %q: %w", filePath, err)
 		}
 		fields := strings.Fields(header)
 		if len(fields) != 3 || fields[1] != "blob" {
-			return fmt.Errorf("unexpected committed tree batch entry for %q: %q", filePath, strings.TrimSpace(header))
+			return nil, fmt.Errorf("unexpected committed tree batch entry for %q: %q", filePath, strings.TrimSpace(header))
 		}
 		size, err := strconv.ParseInt(fields[2], 10, 64)
 		if err != nil || size < 0 {
-			return fmt.Errorf("invalid committed tree batch size for %q: %q", filePath, strings.TrimSpace(header))
+			return nil, fmt.Errorf("invalid committed tree batch size for %q: %q", filePath, strings.TrimSpace(header))
 		}
 		content := make([]byte, size)
 		if _, err := io.ReadFull(reader, content); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+				return nil, ctxErr
 			}
-			return fmt.Errorf("read committed tree batch content for %q: %w", filePath, err)
+			return nil, fmt.Errorf("read committed tree batch content for %q: %w", filePath, err)
 		}
 		// Every batch response carries one trailing LF after the object bytes.
 		if _, err := reader.Discard(1); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+				return nil, ctxErr
 			}
-			return fmt.Errorf("read committed tree batch trailer for %q: %w", filePath, err)
+			return nil, fmt.Errorf("read committed tree batch trailer for %q: %w", filePath, err)
 		}
+		modes[filePath] = fields[0]
 		target := filepath.Join(snapshot, filepath.FromSlash(filePath))
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return fmt.Errorf("create review snapshot directory: %w", err)
+			return nil, fmt.Errorf("create review snapshot directory: %w", err)
 		}
 		if err := os.WriteFile(target, content, 0o600); err != nil {
-			return fmt.Errorf("write review snapshot file: %w", err)
+			return nil, fmt.Errorf("write review snapshot file: %w", err)
 		}
 	}
 	if err := <-writeErr; err != nil {
-		return fmt.Errorf("write committed tree batch request for %q: %w", sha, err)
+		return nil, fmt.Errorf("write committed tree batch request for %q: %w", sha, err)
 	}
 	released = true
 	if err := cmd.Wait(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+			return nil, ctxErr
 		}
-		return fmt.Errorf("materialize committed tree batch for %q: %w (%s)", sha, err, stderr.String())
+		return nil, fmt.Errorf("materialize committed tree batch for %q: %w (%s)", sha, err, stderr.String())
 	}
-	return nil
+	return modes, nil
 }

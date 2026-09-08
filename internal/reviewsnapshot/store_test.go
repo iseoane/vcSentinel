@@ -3,8 +3,10 @@ package reviewsnapshot
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -108,8 +110,10 @@ func TestCreateSameSHASharesOneSnapshotDirectory(t *testing.T) {
 
 // assertStoreHasNoPublishedOrStaging fails when the shared store holds any
 // published tree or staging directory — the residue an aborted or failed
-// creation would leak. Plain lock files are not publication state and may
-// remain.
+// creation would leak. It also detects orphan readiness artifacts: a marker
+// or manifest whose published tree is gone is exactly the atomicity hole a
+// crash between artifact publication and rename would leave behind. Plain
+// lock files are not publication state and may remain.
 func assertStoreHasNoPublishedOrStaging(t *testing.T, where string) {
 	t.Helper()
 	entries, err := os.ReadDir(storeRoot())
@@ -127,6 +131,35 @@ func assertStoreHasNoPublishedOrStaging(t *testing.T, where string) {
 			t.Fatalf("%s: staging directory %q survived an aborted creation", where, entry.Name())
 		}
 	}
+	for _, name := range orphanReadinessArtifacts(storeRoot()) {
+		t.Fatalf("%s: orphan readiness artifact %q survived an aborted creation", where, name)
+	}
+}
+
+// orphanReadinessArtifacts lists readiness markers and manifests in the store
+// whose published tree is gone.
+func orphanReadinessArtifacts(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var orphans []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, publishedPrefix) {
+			continue
+		}
+		if !strings.HasSuffix(name, readySuffix) && !strings.HasSuffix(name, manifestSuffix) {
+			continue
+		}
+		sha := strings.TrimSuffix(strings.TrimPrefix(name, publishedPrefix), readySuffix)
+		sha = strings.TrimSuffix(sha, manifestSuffix)
+		if _, err := os.Stat(publishedPath(root, sha)); err == nil {
+			continue
+		}
+		orphans = append(orphans, name)
+	}
+	return orphans
 }
 
 // TestCreateAbortsLeaveNoPublishedOrStagingDirectory pins the atomicity half
@@ -202,21 +235,25 @@ func TestReaperSkipsActiveLeaseAndRemovesAbandonedStoreEntries(t *testing.T) {
 	if err := os.WriteFile(orphanMarker, []byte("ready\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	orphanManifest := manifestPath(storeRoot(), sha[:len(sha)-1]+string(otherDigit))
+	if err := os.WriteFile(orphanManifest, []byte("100644 10 audited.go\x00"), 0o400); err != nil {
+		t.Fatal(err)
+	}
 	// A staging directory too recent to judge: a live materialization
 	// elsewhere could own it.
 	freshStaging := filepath.Join(storeRoot(), stagingPrefix+deadSHA+"~5678")
 	if err := os.MkdirAll(freshStaging, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{abandoned, abandonedMarker, abandonedStaging, orphanMarker} {
+	for _, path := range []string{abandoned, abandonedMarker, abandonedStaging, orphanMarker, orphanManifest} {
 		if err := os.Chtimes(path, stale, stale); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	reaped := reapAbandonedSnapshots(time.Now(), staleSnapshotAge)
-	if reaped != 3 {
-		t.Errorf("reaped = %d, want 3 (abandoned tree, abandoned staging, orphan marker)", reaped)
+	if reaped != 4 {
+		t.Errorf("reaped = %d, want 4 (abandoned tree, abandoned staging, orphan marker, orphan manifest)", reaped)
 	}
 	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
 		t.Error("an abandoned published snapshot survived the reaper")
@@ -229,6 +266,9 @@ func TestReaperSkipsActiveLeaseAndRemovesAbandonedStoreEntries(t *testing.T) {
 	}
 	if _, err := os.Stat(orphanMarker); !os.IsNotExist(err) {
 		t.Error("an orphan readiness marker survived the reaper")
+	}
+	if _, err := os.Stat(orphanManifest); !os.IsNotExist(err) {
+		t.Error("an orphan readiness manifest survived the reaper")
 	}
 	if _, err := os.Stat(freshStaging); err != nil {
 		t.Error("a fresh staging directory was deleted: it could be materializing right now")
@@ -253,52 +293,6 @@ func TestReaperSkipsActiveLeaseAndRemovesAbandonedStoreEntries(t *testing.T) {
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
 		t.Fatal("the reaper left a stale, unlocked published snapshot behind")
 	}
-}
-
-// TestCreateRetainsPublishedSnapshotAfterRelease pins the reuse contract for
-// sequential invocations: the published snapshot for a SHA is retained on
-// disk after every current lease is released, so a fresh Create for the same
-// SHA — a format or transport retry, a second provider auditing the same
-// commit — leases the SAME complete directory instead of rematerializing it.
-// The stale-and-unlocked tree only goes away when the lock-aware reaper
-// collects it, never when a caller cleans up. The canary the test plants in
-// the tree is what distinguishes reuse from an identical-path
-// rematerialization.
-func TestCreateRetainsPublishedSnapshotAfterRelease(t *testing.T) {
-	root, sha := gitInit(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-
-	first, _, firstRelease, err := Create(context.Background(), root, sha, []string{"audited.go"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	canary := filepath.Join(first, "lease-canary")
-	if err := os.WriteFile(canary, []byte("leased\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	firstRelease()
-	firstRelease() // idempotent
-
-	second, _, secondRelease, err := Create(context.Background(), root, sha, []string{"audited.go"})
-	if err != nil {
-		t.Fatalf("Create after release: %v", err)
-	}
-	if second != first {
-		t.Fatalf("Create after release returned %q, want the retained %q", second, first)
-	}
-	if _, err := os.Stat(canary); err != nil {
-		t.Fatalf("snapshot was rematerialized after release: canary gone: %v", err)
-	}
-	assertSharedSnapshotComplete(t, second)
-	secondRelease()
-	secondRelease()
-
-	// Retained, not deleted: only the stale reaper may remove it now.
-	if _, err := os.Stat(first); err != nil {
-		t.Fatalf("published snapshot was deleted by its last lease release: %v", err)
-	}
-	assertSharedSnapshotComplete(t, first)
 }
 
 // unusedHexDigits returns the two smallest hexadecimal digits different from
@@ -422,4 +416,160 @@ func TestCreateRejectsNonCanonicalObjectID(t *testing.T) {
 		t.Fatalf("survived = %v, want [audited.go]", survived)
 	}
 	cleanup()
+}
+
+// TestCreatePublishesImmutableValidatedSnapshots pins the retained-evidence
+// contract: a published snapshot's regular files are non-writable by the
+// owner while its directory root stays a usable working directory, a readiness
+// manifest beside the tree describes the expected committed files, and every
+// lease validates marker, manifest, and on-disk tree — rejecting added,
+// removed, symlinked, mode-changed, or size-changed entries without hashing
+// contents. A corrupted cache is never handed out: Create rebuilds it from
+// Git under the per-SHA transition lock, restoring canonical committed
+// content.
+func TestCreatePublishesImmutableValidatedSnapshots(t *testing.T) {
+	root, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+
+	snapshot, _, release, err := Create(context.Background(), root, sha, []string{"audited.go"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, name := range []string{"audited.go", "context.go", ".env.example"} {
+		info, err := os.Stat(filepath.Join(snapshot, name))
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o222 != 0 {
+			t.Fatalf("%s is writable (mode %04o), want owner read-only evidence", name, info.Mode().Perm())
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(snapshot); err != nil || info.Mode().Perm() != 0o700 {
+			t.Fatalf("snapshot root mode = %v, want a usable 0700 working directory", info)
+		}
+	}
+	if manifest, err := os.ReadFile(manifestPath(storeRoot(), sha)); err != nil || len(manifest) == 0 {
+		t.Fatalf("readiness manifest missing or empty: %v", err)
+	}
+	assertSharedSnapshotComplete(t, snapshot)
+
+	// The publishing lease is dropped before the corruption rounds: each
+	// round's rebuild Create must find the tampered cache without waiting
+	// behind any live lease.
+	release()
+	release()
+
+	// Every corruption below is repaired by the next Create: the corrupted
+	// cache is rejected at lease time and rebuilt from Git under the
+	// transition lock, at the same published path.
+	rebuild := func(stage string) {
+		dir, _, cleanup, err := Create(context.Background(), root, sha, []string{"audited.go"})
+		if err != nil {
+			t.Fatalf("Create over %s corruption: %v", stage, err)
+		}
+		defer cleanup()
+		if dir != snapshot {
+			t.Fatalf("rebuild after %s corruption returned %q, want the published %q", stage, dir, snapshot)
+		}
+		assertSharedSnapshotComplete(t, dir)
+		if manifest, err := os.ReadFile(manifestPath(storeRoot(), sha)); err != nil || len(manifest) == 0 {
+			t.Fatalf("rebuild after %s corruption lost the readiness manifest: %v", stage, err)
+		}
+	}
+
+	t.Run("added entry rejected", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(snapshot, "extra.go"), []byte("evil\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rebuild("added")
+		if _, err := os.Stat(filepath.Join(snapshot, "extra.go")); !os.IsNotExist(err) {
+			t.Fatal("an entry added to the published tree survived the rebuild")
+		}
+	})
+
+	t.Run("removed entry rejected", func(t *testing.T) {
+		if err := os.Remove(filepath.Join(snapshot, "audited.go")); err != nil {
+			t.Fatal(err)
+		}
+		rebuild("removed")
+	})
+
+	t.Run("symlinked entry rejected", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("unprivileged symlinks are not available on Windows")
+		}
+		if err := os.Symlink("/etc/hostname", filepath.Join(snapshot, "link.go")); err != nil {
+			t.Fatal(err)
+		}
+		rebuild("symlinked")
+		if info, err := os.Lstat(filepath.Join(snapshot, "link.go")); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			t.Fatal("a symlink planted in the published tree survived the rebuild")
+		}
+	})
+
+	t.Run("mode change rejected", func(t *testing.T) {
+		if err := os.Chmod(filepath.Join(snapshot, "context.go"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rebuild("mode change")
+		info, err := os.Stat(filepath.Join(snapshot, "context.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o222 != 0 {
+			t.Fatal("a mode-tampered file kept its writable mode after the rebuild")
+		}
+	})
+
+	t.Run("size change rejected", func(t *testing.T) {
+		target := filepath.Join(snapshot, "audited.go")
+		if err := os.Chmod(target, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("tampered\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rebuild("size change")
+		data, err := os.ReadFile(target)
+		if err != nil || string(data) != "package p\n" {
+			t.Fatalf("tampered content survived the rebuild: %q, %v", data, err)
+		}
+	})
+
+}
+
+// TestValidObjectIDAcceptsOnlyFullCanonicalHex pins the storage-key alphabet
+// in isolation: exactly 40 or 64 lowercase hexadecimal characters — the
+// canonical form of SHA-1 and SHA-256 Git object ids — and nothing else.
+func TestValidObjectIDAcceptsOnlyFullCanonicalHex(t *testing.T) {
+	sha1 := strings.Repeat("deadbeef", 5)           // 40 hex characters
+	sha256 := strings.Repeat("deadbeef01234567", 4) // 64 hex characters
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"sha-1 object id accepted", sha1, true},
+		{"sha-256 object id accepted", sha256, true},
+		{"empty rejected", "", false},
+		{"39 characters rejected", sha1[:39], false},
+		{"41 characters rejected", sha1 + "0", false},
+		{"63 characters rejected", sha256[:63], false},
+		{"65 characters rejected", sha256 + "0", false},
+		{"revspec rejected", "HEAD", false},
+		{"branch name rejected", "main", false},
+		{"separator rejected", "a/b", false},
+		{"traversal rejected", "../escape", false},
+		{"non-hex alphabet rejected", strings.Repeat("g", 40), false},
+		{"uppercase rejected", strings.ToUpper(sha1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validObjectID(tc.in); got != tc.want {
+				t.Fatalf("validObjectID(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
 }

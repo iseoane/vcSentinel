@@ -432,7 +432,9 @@ func TestMaterializeTreeReleasesGitProcessOnWriteFailure(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(snapshot, 0o700) })
 
 	done := make(chan error, 1)
-	go func() { done <- materializeTree(context.Background(), dir, sha, snapshot, paths) }()
+	go func() {
+		done <- func() error { _, err := materializeTree(context.Background(), dir, sha, snapshot, paths); return err }()
+	}()
 
 	select {
 	case err := <-done:
