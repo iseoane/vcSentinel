@@ -546,18 +546,39 @@ func (c *CLIAdapter) newRestrictedReviewEnvironment(configuration, snapshot stri
 // target; HOME and XDG state must never share the published evidence tree.
 func newReviewEnvironment(configuration, model, snapshot string) ([]string, func(), error) {
 	parent := ""
+	resolvedSnapshot := ""
 	if snapshot != "" {
-		absoluteSnapshot, err := filepath.Abs(snapshot)
+		// A nonempty snapshot must resolve. Falling back for a missing or broken
+		// path would make the provider root's containment impossible to prove.
+		var err error
+		resolvedSnapshot, err = filepath.EvalSymlinks(snapshot)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve review snapshot path: %w", err)
 		}
-		parent = filepath.Dir(absoluteSnapshot)
+		parent = filepath.Dir(resolvedSnapshot)
 	}
 	isolationRoot, err := os.MkdirTemp(parent, reviewsnapshot.ProviderStatePrefix)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create provider isolation root: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(isolationRoot) }
+	if resolvedSnapshot != "" {
+		resolvedRoot, err := filepath.EvalSymlinks(isolationRoot)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("resolve provider isolation root: %w", err)
+		}
+		relative, err := filepath.Rel(resolvedSnapshot, resolvedRoot)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("compare provider isolation root with snapshot: %w", err)
+		}
+		if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			cleanup()
+			return nil, nil, fmt.Errorf("provider isolation root %q is within review snapshot %q", resolvedRoot, resolvedSnapshot)
+		}
+		isolationRoot = resolvedRoot
+	}
 	return reviewEnvironment(configuration, isolationRoot, model), cleanup, nil
 }
 

@@ -715,6 +715,45 @@ func TestNewReviewEnvironmentStaysOutsideSnapshotWhenTMPDIRIsNested(t *testing.T
 	}
 }
 
+func TestNewReviewEnvironmentStaysOutsideSymlinkedSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	snapshot := filepath.Join(workspace, "snapshot")
+	nested := filepath.Join(snapshot, "nested")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(workspace, "alias")
+	if err := os.Symlink(nested, alias); err != nil {
+		t.Skipf("create snapshot alias: %v", err)
+	}
+	if err := os.Symlink("..", filepath.Join(nested, "snapshot")); err != nil {
+		t.Skipf("create snapshot return link: %v", err)
+	}
+	linkedSnapshot := filepath.Join(alias, "snapshot")
+	resolvedSnapshot, err := filepath.EvalSymlinks(linkedSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env, cleanup, err := newReviewEnvironment("generated", "openai/gpt-5.6-terra", linkedSnapshot)
+	if err != nil {
+		t.Fatalf("newReviewEnvironment() error = %v", err)
+	}
+	defer cleanup()
+	root := environmentValues(env)["HOME"][0]
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(resolvedSnapshot, resolvedRoot)
+	if err != nil {
+		t.Fatalf("filepath.Rel(%q, %q): %v", resolvedSnapshot, resolvedRoot, err)
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("provider isolation root %q resolves inside snapshot %q", resolvedRoot, resolvedSnapshot)
+	}
+}
+
 func TestReviewCommandRejectsProvidersWithoutBoundedToolPermissions(t *testing.T) {
 	adapter := CLIAdapter{BinaryName: "other-agent"}
 	args, env, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", MaxToolCalls: 7})
