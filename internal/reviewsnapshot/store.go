@@ -435,9 +435,9 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 	// validation is residue from a dead publisher or tampered cache. No lease
 	// can hold it — a lease holds the shared lock, and we just acquired the
 	// exclusive one — so it is safe to discard and rebuild over it.
-	_ = os.RemoveAll(published)
-	_ = os.Remove(marker)
-	_ = os.Remove(manifest)
+	_ = removeReadOnlyStoreEntry(published)
+	_ = removeReadOnlyStoreEntry(marker)
+	_ = removeReadOnlyStoreEntry(manifest)
 
 	entries, err := gitTreeEntries(ctx, worktree, sha)
 	if err != nil {
@@ -466,14 +466,14 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		return fmt.Errorf("create review snapshot: %w", err)
 	}
 	if err := materializeTree(ctx, worktree, sha, staging, regularFiles); err != nil {
-		_ = os.RemoveAll(staging)
+		_ = removeReadOnlyStoreEntry(staging)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("review snapshot aborted: %w", ctxErr)
 		}
 		return err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		_ = os.RemoveAll(staging)
+		_ = removeReadOnlyStoreEntry(staging)
 		return fmt.Errorf("review snapshot aborted: %w", ctxErr)
 	}
 	// Tighten the staged evidence to non-writable files and record exactly
@@ -482,19 +482,19 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 	// already be identifiable as complete, because that is the moment any
 	// other process may lease it.
 	if err := writeManifest(staging, manifest, modes); err != nil {
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	if err := os.WriteFile(marker, []byte("ready\n"), 0o400); err != nil {
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(marker)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(marker)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("review snapshot aborted: %w", ctxErr)
 	}
 	if err := os.Rename(staging, published); err != nil {
@@ -503,14 +503,14 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 			// to the winner and leave its readiness marker and manifest
 			// alone — removing them would invalidate a tree we did not
 			// publish.
-			_ = os.RemoveAll(staging)
+			_ = removeReadOnlyStoreEntry(staging)
 			return nil
 		}
 		// A genuine rename failure: remove the staging tree and the
 		// readiness artifacts we published for it, so no orphan survives.
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(marker)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(marker)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	return nil
@@ -619,7 +619,7 @@ func removeUnleasedStoreEntry(root, sha string, now time.Time, maxAge time.Durat
 		if now.Sub(info.ModTime()) < maxAge {
 			continue // refreshed since the scan: a fresh publication survives
 		}
-		if os.RemoveAll(target) == nil {
+		if removeReadOnlyStoreEntry(target) == nil {
 			removed = true
 		}
 	}
