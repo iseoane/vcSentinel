@@ -377,10 +377,13 @@ func TestBridgeRunPromptWithContextRoutesOutput(t *testing.T) {
 	}
 }
 
-// TestBridgeRevisionRunsUnderSnapshotDisciplineAndCleansUp proves the
-// revision shape equals CLIAdapter's: committed-content snapshot passed via
-// --cwd BEFORE the agent token, and the snapshot removed when the turn ends.
-func TestBridgeRevisionRunsUnderSnapshotDisciplineAndCleansUp(t *testing.T) {
+// TestBridgeRevisionRunsUnderSnapshotDiscipline proves the revision shape
+// equals CLIAdapter's: the provider runs with --cwd pointed at the published
+// shared snapshot for the audited SHA — a usable review snapshot carrying the
+// committed audited fixture — BEFORE the agent token, and the caller-owned
+// cleanup only releases the lease, so the validated snapshot remains on disk
+// for reuse.
+func TestBridgeRevisionRunsUnderSnapshotDiscipline(t *testing.T) {
 	chdirToRepoRoot(t)
 	argFile := filepath.Join(t.TempDir(), "argv.txt")
 	bridge := helperBridge(t, func(cfg *acpadapter.Config) {
@@ -408,11 +411,17 @@ func TestBridgeRevisionRunsUnderSnapshotDisciplineAndCleansUp(t *testing.T) {
 		t.Errorf("--cwd must precede the agent token; recorded args %v", got)
 	}
 	snapshotDir := got[cwdIdx+1]
-	if base := filepath.Base(snapshotDir); !strings.HasPrefix(base, "vas-sentinel-review-") {
-		t.Errorf("--cwd value %q is not a review snapshot directory", snapshotDir)
+	// Cleanup is an idempotent lease release, never a per-call deletion: the
+	// published snapshot for the SHA is retained after the turn, and the
+	// stale reaper owns its removal.
+	info, statErr := os.Stat(snapshotDir)
+	if statErr != nil || !info.IsDir() {
+		t.Fatalf("snapshot directory %q did not survive the turn: %v", snapshotDir, statErr)
 	}
-	if _, statErr := os.Stat(snapshotDir); !os.IsNotExist(statErr) {
-		t.Errorf("snapshot directory %q survived cleanup; it must be removed when the turn ends", snapshotDir)
+	// The cwd is a usable review snapshot: it carries the committed audited
+	// fixture the revision was addressed to.
+	if fixture, readErr := os.ReadFile(filepath.Join(snapshotDir, reviewFixturePath)); readErr != nil || len(fixture) == 0 {
+		t.Fatalf("snapshot %q does not carry the audited fixture: %v", snapshotDir, readErr)
 	}
 }
 
