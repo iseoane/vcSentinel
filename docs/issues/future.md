@@ -111,3 +111,68 @@ satisfied by the producers above; its remaining closing conditions
   in `status` and the fichas for debugging a single review without going
   through `runs`. That is an observability goal of its own, not part of the
   budget recalibration, and it is the only benefit this item still carries.
+
+## Adapters and ACP for codex and pi
+
+- Postponed by decision 2026-09-08: semantic review supports exactly two
+  providers with path-confined tool permissions. `reviewCommand` builds an
+  OpenCode invocation or a Claude one and rejects everything else with
+  "semantic review is unavailable: path-confined tool permissions are not
+  configured for this provider". Both codex and pi are installed and driven
+  daily on this machine, and neither can act as a reviewer.
+- Why it is worth more than provider variety: a day of heavy reviewing showed
+  that three of the four recurring failure classes are properties of the
+  chosen provider, not of this repository. The Bun runtime OpenCode ships
+  leaves a ~14 MB temporary file per invocation that nothing removes (540
+  files, 2,945 MB measured); OpenCode's own SQLite state raced itself with
+  `CREATE TABLE workspace` whenever concurrent dimensions shared a home, which
+  is the reason provider isolation had to be built at all; and its agent-level
+  `"*": "ask"` rule with deny dominance auto-rejects any tool outside the
+  allowed set in a non-interactive run, killing a dimension on its first turn
+  — observed for `todowrite` and for `read`. A second and third independent
+  reviewer would turn "the reviewer is unavailable" into "this reviewer is
+  unavailable", and would let a provider-specific defect be diagnosed by
+  comparison instead of by inference.
+- Comes forward when: a reviewer-side failure blocks work and no configured
+  alternative can take over, or when the turn-budget item needs a provider
+  that reports a comparable per-turn count. Note the asymmetry it would have
+  to respect: the Claude branch deliberately ignores `defaultReviewToolCalls`
+  because no confirmed flag caps its turns, and its snapshot confinement is
+  tool-pattern based, which this repository already documents as not being an
+  OS sandbox. A new adapter must state which of the two disciplines it can
+  actually enforce rather than claiming both.
+- Related: `internal/acpadapter` and `internal/agentadapter/acpx.go` already
+  carry a provider-neutral contract with usage and stop-reason plumbing, so
+  the seam exists; what is missing per provider is the path-confined
+  permission profile and the stream scanner.
+
+## Compare against no-mistakes on resource use and PR presentation
+
+- Postponed by decision 2026-09-08, raised by the repository owner after a day
+  in which `pr create` was OOM-killed six times: no-mistakes does not exhibit
+  this memory behaviour on the same machine, and its pull-request template is
+  considerably clearer than the one rendered here.
+- Two separate questions, and they should not be merged into one:
+  first, WHY its flow costs less — whether it audits less, audits
+  sequentially, avoids materialising a validation worktree, keeps evidence out
+  of tmpfs, or simply does not run a full test suite inside the publish path.
+  Second, what its template does better. The template rendered here leads with
+  a verdict line and a symbol matrix; a reader has to learn the legend before
+  the page means anything, and the reviewer's own `⛔` was mistaken for a block
+  during this very session when it means unavailable.
+- Evidence available already: `internal/evidence/publish.go` bounds one
+  publication at 500 files, 256 MB total and 64 MB per file, on the stated
+  grounds that agent-produced evidence must fail the publish closed rather
+  than push gigabytes. That is a resource ceiling of exactly the kind item 1 of
+  `actionable.md` asks for, already implemented by the project being compared
+  against.
+- Comes forward when: item 1 is designed, since the comparison is direct input
+  to it, or when the PR template is next touched. Read the source rather than
+  inferring from behaviour: it is a public Go repository
+  (`kunchenguid/no-mistakes`), and this session already read its custody and
+  evidence packages.
+- Related: the language-policy gap found in the same session. Running the
+  review with `active_agent: "claude"` produced findings written in Spanish
+  and persisted them that way into the ledger, against the English-artifact
+  policy in `AGENTS.md`. No agent profile constrains the reviewer's output
+  language, so this is not specific to that provider.
