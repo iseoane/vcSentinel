@@ -112,6 +112,31 @@ cheap half is separable from its expensive half.
   today's "these commits have no record" is at least true. Any such record
   must be bound to an exact identity and refused when it does not match,
   exactly as `reviewsnapshot` revalidates its manifest on every lease.
+- Reference design, gentle-ai, inspected on disk 2026-09-08. Its
+  `~/.gentle-ai/review-contexts/v1/` records carry `schema`
+  (`gentle-ai.review-repository-context/v1`), a content-addressed `handle`
+  (`rctx1_<sha256>`), a `lineage_id`, and — the part that matters here —
+  `target_identity` and `revision`, both `sha256:` digests rather than commit
+  SHAs, alongside `repository_identity` and the resolved root, common dir and
+  git dir. Hashing the candidate dissolves the keying problem stated above: a
+  range, a net diff, or any arbitrary candidate becomes addressable, so the
+  obstacle was never that a range has no key, it was indexing by commit.
+  Storing `revision` next to the record turns staleness into something a
+  consumer DETECTS by comparing identities instead of assuming, which is the
+  discipline this item already demands; gentle-ai's own contract states that
+  any byte, path or mode change invalidates the receipt and requires a new
+  review. Two further choices worth copying: the `lineage_id`, which threads
+  the operations performed on one candidate — precisely what would relate "the
+  gate reviewed this" to "pr review analysed this" to "pr create published
+  this" — and keeping the record informational so it never becomes delivery
+  authority, which Sentinel already does by blocking only on deterministic
+  validation but does not state.
+- Limit of that reference: only the on-disk shape of two 630-byte records was
+  inspected, plus gentle-ai's documented contract. Its source was not read, so
+  how it renders findings, and whether it supports per-finding human
+  disposition comparable to `refute`/`accept`/`reopen`, is UNVERIFIED. Confirm
+  before copying that part. A second candidate, no-mistakes, was not on this
+  machine and was not examined at all.
 - Closing, cheap half first: make the gate's per-commit review persist a
   record, or record a determination that it deliberately keeps none. Then
   decide the range half by MEASUREMENT rather than preference — compare the
