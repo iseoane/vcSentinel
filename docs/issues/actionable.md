@@ -5,41 +5,66 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-## 1. Calibrate the OpenCode reviewer step budget with measured data
+## 1. Share one review snapshot per audited commit
 
-Sits first: a measured 21% of semantic reviews are being truncated before
-they return a verdict, so review coverage is silently incomplete today.
-The provisional budget was raised without the measurement that would size
-it; this item closes that gap.
+Sits first: unblocked, and it is the direct cost consequence of widening the
+snapshot to the whole committed tree. Nothing else must land before it.
+
+- Wrong: `reviewsnapshot.Create` is called once per PROVIDER INVOCATION, in
+  `reviewWithContextResultPolicy`, with a caller-owned `defer cleanup()`.
+  Every dimension, every format retry and every chained call materializes its
+  own copy. The copies are bit-identical: the content is derived from the
+  audited SHA, so one commit has exactly one correct snapshot.
+- Evidence: one review of commit `7e41611` on 2026-09-07 issued 11 provider
+  invocations, so 11 snapshots. While the snapshot held only the changed
+  files this was free; now that it carries the whole tree it is ~5.6 MB and
+  609 files per copy in this repository, so that review would materialize
+  ~62 MB instead of 5.6 MB. `reapAbandonedSnapshots` already documents that
+  472 MB of residue was measured once on a 3.8 GB tmpfs.
+- Closing: a snapshot keyed by the audited SHA, created once and reused by
+  every invocation auditing that commit.
+- Design constraints, none of which the current per-call ownership solves:
+  a lifetime owner (with `review.parallel: 5` there are up to five concurrent
+  reviewers on the same SHA, so either reference counting or ownership by the
+  whole review run); atomic publication (build in a temporary directory and
+  rename into place under a lock, so concurrent creators neither duplicate the
+  work nor observe a half-written tree); and a reaper that no longer assumes
+  exclusive ownership — today it deletes by age alone and could remove a
+  shared snapshot still in use.
+- Related: item 3 attacks the same duplication one layer up (the evidence sent
+  to the provider); this item is the on-disk half.
+
+## 2. Recalibrate or retire the OpenCode reviewer turn budget
+
+Sits second: unblocked but low value, and its original premise was disproven.
 
 - Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
-  OpenCode `Steps` value — the number of model turns the restricted
-  reviewer may spend. It was `8`, chosen without measurement. When the
-  reviewer exhausts it, OpenCode ends the turn with `step_finish
-  reason: "tool-calls"` and exit 0, having emitted only its opening
-  narration. The budget is provider-conditional: the Claude branch
-  intentionally ignores it (no confirmed flag caps tool calls there).
-- Evidence: 2026-09-07 audit of `<git-common-dir>/vas-sentinel/executions/v1`.
-  Of the 90 outcomes that record a stop reason (capture landed 2026-09-06),
-  71 ended `end_turn` and 19 ended `tool-calls` — 21% truncated. Truncation
-  concentrates by model: `muse-spark-1.3-contributor` 12/68 truncated,
-  `glm-5.3-flash` 0/15. Commit `eaf82b2` dimension `logic` truncated twice
-  (runs `703826855ea4`, `863b4c9b0b63`), the second being the wasted format
-  retry, and surfaced as `missing_semantic_payload`.
-- Blocked on: the distribution of steps actually consumed by reviews that
-  complete. The durable store records the stop reason but not the step
-  count, and it cannot be reconstructed — only the concatenated answer text
-  is persisted, not the event stream. Recording it is the prerequisite.
-- Closing: a step budget selected from the observed distribution of a
-  completing review (headroom over the p90), or a recorded determination
-  that the budget is the wrong control and truncation must be handled by
-  scope reduction instead. Revisit the provisional value then.
-- Note: raising the budget trades latency for coverage. Completing reviews
-  observed a 54.5s median and 209.6s p90; truncated ones 38.8s median.
+  OpenCode `Steps` value — the number of model turns the restricted reviewer
+  may spend. It was `8`, chosen without measurement, and was raised to a
+  PROVISIONAL `16` that is equally unmeasured. The budget is
+  provider-conditional: the Claude branch intentionally ignores it (no
+  confirmed flag caps turns there).
+- Disproven premise: the raise was made believing budget exhaustion caused the
+  truncated reviews. It did not. A denied tool call kills the turn. Captured
+  raw NDJSON from one review on 2026-09-07 showed 11 invocations: the 3 that
+  recorded a permission rejection all ended `tool-calls` (truncated at 4 and 5
+  turns out of 16), and the 8 with no rejection all ended `stop`. The
+  correlation was exact, and the budget was never approached.
+- Evidence for the original 21% figure, now explained by denials rather than
+  by the budget: of the 90 durable outcomes recording a stop reason (capture
+  landed 2026-09-06), 19 ended `tool-calls`.
+- Closing: either a value selected from the observed distribution of turns
+  consumed by completing reviews, or a recorded determination that the turn
+  budget is not a useful control and the constant should hold a documented
+  provider default instead. Both need the per-review turn count, which is now
+  counted but not yet persisted.
+- Blocked on: persisting the consumed turn count in the durable store. It
+  cannot be reconstructed from existing records — only the concatenated
+  answer text is kept, not the event stream.
 
-## 2. Cache shared audit evidence across review dimensions
+## 3. Cache shared audit evidence across review dimensions
 
-Sits second: the token measurement now exists on all three adapter paths
+Sits third: the token measurement now exists on all three adapter paths
 (see the 2026-09-06 entry in `decisions.md`) — the design can be selected
 with real numbers instead of guesses.
 
@@ -61,9 +86,9 @@ with real numbers instead of guesses.
   review-equivalence before selecting the design. Do not cache model
   outputs or reduce dimension coverage.
 
-## 3. Give cost, scope and reuse a producer (FU-3)
+## 4. Give cost, scope and reuse a producer (FU-3)
 
-Sits third: tokens now have producers on every adapter path, but cost,
+Sits fourth: tokens now have producers on every adapter path, but cost,
 scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`
@@ -81,9 +106,9 @@ scope and reuse still have no observable source.
 - Blocked on: an observable source for price, scope or reuse; the token half
   of the shared note is resolved (see the 2026-09-06 entry in `decisions.md`).
 
-## 4. Validate the acpx spawn chain on native Windows
+## 5. Validate the acpx spawn chain on native Windows
 
-Sits fourth: conditional work — no action while Debian is the deployment
+Sits fifth: conditional work — no action while Debian is the deployment
 platform.
 
 - Question: the `npx -> node __queue-owner -> npm exec -> node <agent>-acp`
