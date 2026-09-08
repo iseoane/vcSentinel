@@ -17,6 +17,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
 )
 
 // CommandTimeout is the limit of one call to the agent (300 s). Phase 1 makes
@@ -520,8 +521,68 @@ func (rules openCodeReadPermissionRules) MarshalJSON() ([]byte, error) {
 	return encoded.Bytes(), nil
 }
 
-func reviewEnvironment(configuration, snapshot, model string) []string {
-	isolationRoot := snapshot
+// newRestrictedReviewEnvironment isolates only OpenCode's writable provider
+// state. Other providers retain their host environment and credential model.
+func (c *CLIAdapter) newRestrictedReviewEnvironment(configuration, snapshot string) ([]string, func(), error) {
+	if c.isOpenCode() {
+		return newReviewEnvironment(configuration, c.Config.Model, snapshot)
+	}
+	if !c.isClaude() {
+		return os.Environ(), func() {}, nil
+	}
+	env := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && key == "OPENCODE_AUTH_CONTENT" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env, func() {}, nil
+}
+
+// newReviewEnvironment gives one OpenCode invocation its own writable state
+// directory. The snapshot remains the provider's working directory and read
+// target; HOME and XDG state must never share the published evidence tree.
+func newReviewEnvironment(configuration, model, snapshot string) ([]string, func(), error) {
+	parent := ""
+	resolvedSnapshot := ""
+	if snapshot != "" {
+		// A nonempty snapshot must resolve. Falling back for a missing or broken
+		// path would make the provider root's containment impossible to prove.
+		var err error
+		resolvedSnapshot, err = filepath.EvalSymlinks(snapshot)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve review snapshot path: %w", err)
+		}
+		parent = filepath.Dir(resolvedSnapshot)
+	}
+	isolationRoot, err := os.MkdirTemp(parent, reviewsnapshot.ProviderStatePrefix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create provider isolation root: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(isolationRoot) }
+	if resolvedSnapshot != "" {
+		resolvedRoot, err := filepath.EvalSymlinks(isolationRoot)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("resolve provider isolation root: %w", err)
+		}
+		relative, err := filepath.Rel(resolvedSnapshot, resolvedRoot)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("compare provider isolation root with snapshot: %w", err)
+		}
+		if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			cleanup()
+			return nil, nil, fmt.Errorf("provider isolation root %q is within review snapshot %q", resolvedRoot, resolvedSnapshot)
+		}
+		isolationRoot = resolvedRoot
+	}
+	return reviewEnvironment(configuration, isolationRoot, model), cleanup, nil
+}
+
+func reviewEnvironment(configuration, isolationRoot, model string) []string {
 	blocked := map[string]bool{
 		"OPENCODE_CONFIG": true, "OPENCODE_CONFIG_CONTENT": true, "OPENCODE_CONFIG_DIR": true,
 		"OPENCODE_TEST_HOME": true, "OPENCODE_PURE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true,
@@ -557,7 +618,7 @@ func reviewEnvironment(configuration, snapshot, model string) []string {
 		// the host's real auth.json directory, giving OpenCode an unscoped
 		// fallback whenever scopeCredentialToProvider below yields nothing
 		// (malformed or non-matching credentials). Pointing it at the empty
-		// snapshot closes that fallback path.
+		// provider root closes that fallback path.
 		"XDG_DATA_HOME="+filepath.Join(isolationRoot, ".local", "share"),
 	)
 	// Isolating HOME strands OpenCode's real auth.json (it lives under the
