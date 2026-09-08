@@ -77,23 +77,143 @@ func TestReviewWithContextResultTruncatedTurnErrorsButKeepsEvidence(t *testing.T
 	}
 }
 
-// TestDefaultReviewToolCallsIsTheProvisionalRaisedBudget pins the provisional
-// OpenCode Steps turn budget raised from 8 to 16 after measuring that 21% of
-// reviews were truncated at 8 (docs/issues/actionable.md item 1 tracks
-// calibrating it from measured data instead of a guess).
-func TestDefaultReviewToolCallsIsTheProvisionalRaisedBudget(t *testing.T) {
-	if defaultReviewToolCalls != 16 {
-		t.Errorf("defaultReviewToolCalls = %d, want the provisional raised budget of 16", defaultReviewToolCalls)
+// TestDefaultReviewToolCallsSurvivesOpenCodeTruncationBelowIt is a behavior
+// test replacing a weak one: the previous test only pinned the literal
+// constant value (defaultReviewToolCalls == 16), which fails the instant the
+// budget is recalibrated even though nothing would actually be broken. This
+// instead exercises what the constant is FOR: a review that completes in
+// fewer turns than the configured Steps budget must not be misclassified as
+// truncated, regardless of what the budget's numeric value is.
+func TestDefaultReviewToolCallsSurvivesOpenCodeTruncationBelowIt(t *testing.T) {
+	if defaultReviewToolCalls < 2 {
+		t.Fatalf("defaultReviewToolCalls = %d, this test needs room for at least 2 turns", defaultReviewToolCalls)
+	}
+	stream := "{\"type\":\"text\",\"part\":{\"type\":\"text\",\"text\":\"complete answer\"}}\n" +
+		"{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\"}}\n"
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", stream)
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "opencode"),
+		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
+		Timeout:    10 * time.Second,
+	}
+
+	result, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContextResult() error = %v, want a completed turn well under the %d-turn budget", err, defaultReviewToolCalls)
+	}
+	if result.Output != "complete answer" {
+		t.Errorf("Output = %q, want the wire narration", result.Output)
+	}
+}
+
+// TestReviewWithContextResultTreatsNoTerminalEventAsTheMostSevereTruncation
+// covers the bug found in an earlier commit's review: an empty StopReason
+// was treated as a completed turn on every path, but a stream that never
+// produced a single step_finish event is worse than one that produced a
+// labeled reason like "tool-calls" — it means even the provider's own
+// end-of-turn signal never arrived. Distinguishing this from the (different,
+// already-covered) case of an empty stop REASON on an observed step_finish
+// event is exactly what opencodeReviewScan.TerminalEventObserved is for.
+func TestReviewWithContextResultTreatsNoTerminalEventAsTheMostSevereTruncation(t *testing.T) {
+	stream := "{\"type\":\"text\",\"part\":{\"type\":\"text\",\"text\":\"orphan answer\"}}\n"
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", stream)
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "opencode"),
+		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
+		Timeout:    10 * time.Second,
+	}
+
+	result, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+
+	var truncated *TruncatedTurnError
+	if !errors.As(err, &truncated) {
+		t.Fatalf("err = %v, want *TruncatedTurnError for a stream with no terminal event at all", err)
+	}
+	if truncated.TerminalEventObserved {
+		t.Errorf("TerminalEventObserved = true, want false: the stream never produced a step_finish event")
+	}
+	if result.Output != "orphan answer" {
+		t.Errorf("Output = %q, want the wire narration to survive as evidence", result.Output)
+	}
+}
+
+// TestReviewWithContextEmptiesOutputOnTruncation pins the legacy string
+// contract's own documented promise ("answer text only, empty output on
+// error"): a previous version assigned result.Output before the truncation
+// check and then returned result.Output unconditionally, so a truncated
+// answer text still crossed the legacy boundary as if it were trustworthy.
+// The rich ReviewWithContextResult surface keeps Output as evidence
+// regardless (see the test above); only the legacy string surface must empty
+// it on error.
+func TestReviewWithContextEmptiesOutputOnTruncation(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", truncationStream("tool-calls"))
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "opencode"),
+		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
+		Timeout:    10 * time.Second,
+	}
+
+	output, err := adapter.ReviewWithContext(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+
+	var truncated *TruncatedTurnError
+	if !errors.As(err, &truncated) {
+		t.Fatalf("err = %v, want *TruncatedTurnError", err)
+	}
+	if output != "" {
+		t.Errorf("output = %q, want empty output on error (legacy contract)", output)
 	}
 }
 
 // TestTruncatedTurnErrorMessage pins the exact wording the durable evidence
-// and any human reading it depend on.
+// and any human reading it depend on. The message asserts only what was
+// observed — that the turn ended without completing, after how many turns,
+// with which stop reason, and which tool calls were denied if any — never a
+// specific cause it cannot know: measured evidence showed truncations at 4
+// and 5 turns out of a 16-turn budget, disproving the previous wording's
+// "exhausted its turn budget" claim.
 func TestTruncatedTurnErrorMessage(t *testing.T) {
-	err := &TruncatedTurnError{StopReason: "tool-calls", Steps: 8}
-	got := err.Error()
-	want := "review turn truncated after 8 turn(s) (stop reason: tool-calls): the reviewer exhausted its turn budget before returning a verdict"
-	if got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
+	cases := []struct {
+		name string
+		err  *TruncatedTurnError
+		want string
+	}{
+		{
+			name: "stop reason without denial detail",
+			err:  &TruncatedTurnError{StopReason: "tool-calls", Steps: 8, TerminalEventObserved: true},
+			want: "review turn truncated: the turn ended without completing after 8 turn(s) (stop reason: tool-calls)",
+		},
+		{
+			name: "no terminal event was observed at all",
+			err:  &TruncatedTurnError{Steps: 0, TerminalEventObserved: false},
+			want: "review turn truncated: the turn ended without completing before any terminal event was observed",
+		},
+		{
+			name: "denied tool calls name the cause",
+			err: &TruncatedTurnError{StopReason: "tool-calls", Steps: 5, TerminalEventObserved: true, ToolCallErrors: []DeniedToolCall{
+				{Tool: "read", Error: "The user rejected permission to use this specific tool call."},
+			}},
+			want: "review turn truncated: the turn ended without completing after 5 turn(s) (stop reason: tool-calls): denied tool call — read: The user rejected permission to use this specific tool call.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("Error() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTruncatedTurnErrorMessageContainsThePermanentFailureLiteral binds the
+// literal substring internal/review's permanentProviderFailures matches
+// ("review turn truncated") directly to TruncatedTurnError.Error(), so the
+// two cannot silently drift apart — a previous review flagged that nothing
+// enforced this. See also
+// internal/review.TestTruncatedTurnErrorIsPermanentAcrossTheRealMessage for
+// the classification side of the same binding.
+func TestTruncatedTurnErrorMessageContainsThePermanentFailureLiteral(t *testing.T) {
+	err := &TruncatedTurnError{StopReason: "tool-calls", Steps: 4, TerminalEventObserved: true}
+	if !strings.Contains(err.Error(), "review turn truncated") {
+		t.Fatalf("Error() = %q, must contain the literal substring %q that internal/review matches on to keep this failure non-retryable", err.Error(), "review turn truncated")
 	}
 }

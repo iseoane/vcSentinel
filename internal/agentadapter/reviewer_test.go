@@ -15,6 +15,18 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 )
 
+// wantAnchoredReadPermissions builds the expected OpenCode read-permission
+// map for a given snapshot directory: the whole subtree, granted in the two
+// distinct resource forms the leading-slash normalization quirk produces on
+// this platform (see openCodeReadPermissions).
+func wantAnchoredReadPermissions(snapshot string) map[string]any {
+	want := map[string]any{}
+	for _, form := range anchoredReadForms(snapshot) {
+		want[form] = "allow"
+	}
+	return want
+}
+
 func TestReviewCommandsTranslateTheSameContractToolPolicy(t *testing.T) {
 	contract, err := reviewcontract.Lookup(reviewcontract.DimensionSecurity)
 	if err != nil {
@@ -112,17 +124,17 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	}
 	readPermissions := reviewer.Permission["read"].(map[string]any)
 	if _, hasWildcard := readPermissions["*"]; hasWildcard {
-		t.Errorf("read permissions = %v, expected no wildcard (it shadows exact allows)", readPermissions)
+		t.Errorf("read permissions = %v, expected no bare wildcard (it shadows exact allows and is unanchored to the snapshot)", readPermissions)
 	}
-	wantReadPermissions := map[string]any{}
-	for _, admittedPath := range []string{"internal/review/engine.go", "internal/planning/context.go"} {
-		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(admittedPath)))
-		for _, form := range []string{admittedPath, absolute, strings.TrimPrefix(absolute, "/")} {
-			wantReadPermissions[form] = "allow"
-		}
-	}
+	// Item 1 now materializes the whole committed tree as read-only context,
+	// not just the audited paths, so the read grant must widen to the whole
+	// snapshot subtree instead of one entry per audited path — mirroring the
+	// Claude branch's Read(<snapshot>/**). Every key must still be anchored
+	// to the snapshot directory: a bare "**" would match resources outside
+	// it and was rejected for that reason.
+	wantReadPermissions := wantAnchoredReadPermissions(snapshot)
 	if !reflect.DeepEqual(readPermissions, wantReadPermissions) {
-		t.Errorf("read permissions = %v, expected exact admitted paths in all three resource forms %v", readPermissions, wantReadPermissions)
+		t.Errorf("read permissions = %v, expected the whole snapshot subtree anchored %v", readPermissions, wantReadPermissions)
 	}
 	for _, tool := range []string{"grep", "glob"} {
 		permissions := reviewer.Permission[tool].(map[string]any)
@@ -132,12 +144,13 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	}
 }
 
-// TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard pins the live
-// provider contract: wildcards inside the read map shadow exact allows under
-// current OpenCode evaluation, so containment relies on the agent-level ask
-// fallback (auto-rejected non-interactively) while the read map carries only
-// exact allows in all three resource forms.
-func TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard(t *testing.T) {
+// TestReviewCommandOpenCodeReadGrantIsIndependentOfAuditedPaths pins the
+// item-1/item-2 relationship: since the snapshot now carries the whole
+// committed tree as read-only context (not just the audited paths), the read
+// grant covers the whole snapshot subtree regardless of which paths are
+// under audit, and never carries a bare wildcard that would shadow exact
+// containment or escape the snapshot boundary.
+func TestReviewCommandOpenCodeReadGrantIsIndependentOfAuditedPaths(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	adapter := CLIAdapter{BinaryName: "opencode"}
 	_, env, err := adapter.reviewCommand(ReviewRequest{
@@ -161,31 +174,15 @@ func TestReviewCommandOpenCodeUsesAskFallbackWithoutReadWildcard(t *testing.T) {
 	if string(permission["*"]) != `"ask"` {
 		t.Fatalf("agent-level fallback = %s, expected \"ask\"", permission["*"])
 	}
-	readRules := string(permission["read"])
-	if strings.Contains(readRules, `"*"`) {
-		t.Fatalf("read rules = %s, expected no wildcard entry", readRules)
+	var readRules map[string]any
+	if err := json.Unmarshal(permission["read"], &readRules); err != nil {
+		t.Fatalf("read rules are invalid JSON: %v", err)
 	}
-	relativeKey, err := json.Marshal("&review.go")
-	if err != nil {
-		t.Fatal(err)
+	if _, hasWildcard := readRules["*"]; hasWildcard {
+		t.Fatalf("read rules = %v, expected no bare wildcard entry", readRules)
 	}
-	absolute := filepath.ToSlash(filepath.Join(snapshot, "&review.go"))
-	absoluteKey, err := json.Marshal(absolute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	strippedKey, err := json.Marshal(strings.TrimPrefix(absolute, "/"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		string(relativeKey) + `:"allow"`,
-		string(absoluteKey) + `:"allow"`,
-		string(strippedKey) + `:"allow"`,
-	} {
-		if !strings.Contains(readRules, want) {
-			t.Fatalf("read rules = %s, missing allow for %s", readRules, want)
-		}
+	if !reflect.DeepEqual(readRules, wantAnchoredReadPermissions(snapshot)) {
+		t.Fatalf("read rules = %v, expected the snapshot-anchored subtree grant, unaffected by Paths", readRules)
 	}
 }
 
@@ -223,40 +220,24 @@ func TestReviewCommandOpenCodeOmitsEmptyModelConfiguration(t *testing.T) {
 	if got := permission["bash"].(map[string]any)["*"]; got != "deny" {
 		t.Errorf("bash permission = %v, expected deny", got)
 	}
-	wantPath := "internal/review/engine.go"
-	if got := permission["read"].(map[string]any)[wantPath]; got != "allow" {
-		t.Errorf("read permission = %v, expected allow for the admitted relative path", got)
+	readPermissions := permission["read"].(map[string]any)
+	if !reflect.DeepEqual(readPermissions, wantAnchoredReadPermissions(snapshot)) {
+		t.Errorf("read permissions = %v, expected the snapshot-anchored subtree grant %v", readPermissions, wantAnchoredReadPermissions(snapshot))
 	}
 }
 
-func TestReviewCommandOpenCodeAllowsOnlyAdmittedReadPathForms(t *testing.T) {
+// TestReviewCommandOpenCodeReadGrantStaysAnchoredToTheSnapshot asserts every
+// emitted read-permission key is anchored to the snapshot directory itself
+// (its absolute path, in both forms the leading-slash normalization quirk
+// produces), never a bare "**" or any pattern whose literal prefix escapes
+// the snapshot — the containment property item 2 must preserve while
+// widening the grant from per-audited-path to the whole subtree.
+func TestReviewCommandOpenCodeReadGrantStaysAnchoredToTheSnapshot(t *testing.T) {
 	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	adapter := CLIAdapter{BinaryName: "opencode"}
-	rawPaths := []string{
-		"internal\\agentadapter\\cli.go",
-		"internal/agentadapter/cli_review_context.go",
-		".env.example",
-		".env",
-		"config/.env.local",
-		"/etc/passwd",
-		"../outside.go",
-		"nested/../../outside.go",
-		"C:/outside.go",
-		"D:\\outside.go",
-		"unsafe\x00path",
-		"unsafe\rpath",
-		"unsafe\npath",
-		"star*.go",
-		"double**.go",
-		"question?.go",
-		"class[ab].go",
-		"brace{a,b}.go",
-		"-option.go",
-		"*",
-	}
 	_, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt:      "audit",
-		Paths:       rawPaths,
+		Paths:       []string{"internal/agentadapter/cli.go"},
 		SnapshotDir: snapshot,
 	})
 	if err != nil {
@@ -275,50 +256,21 @@ func TestReviewCommandOpenCodeAllowsOnlyAdmittedReadPathForms(t *testing.T) {
 	if got := config.Agent["reviewer"].Permission["*"]; got != "ask" {
 		t.Fatalf("agent-level fallback = %v, expected ask (non-interactive auto-reject)", got)
 	}
-	wantPermissions := map[string]any{}
-	for _, admittedPath := range []string{"internal/agentadapter/cli.go", "internal/agentadapter/cli_review_context.go", ".env.example"} {
-		absolute := filepath.ToSlash(filepath.Join(snapshot, filepath.FromSlash(admittedPath)))
-		for _, form := range []string{admittedPath, absolute, strings.TrimPrefix(absolute, "/")} {
-			wantPermissions[form] = "allow"
+	if len(readPermissions) == 0 {
+		t.Fatal("read permissions are empty, expected the whole snapshot subtree granted")
+	}
+	snapshotSlash := filepath.ToSlash(snapshot)
+	strippedSnapshot := strings.TrimPrefix(snapshotSlash, "/")
+	for key, value := range readPermissions {
+		if value != "allow" {
+			t.Errorf("read permission %q = %v, expected allow", key, value)
 		}
-	}
-	if !reflect.DeepEqual(readPermissions, wantPermissions) {
-		t.Fatalf("read permissions = %v, expected exact admitted paths in all three resource forms %v", readPermissions, wantPermissions)
-	}
-	for _, test := range []struct {
-		name string
-		path string
-	}{
-		{name: "unrelated relative path", path: "internal/review/engine.go"},
-		{name: "unrelated absolute snapshot path", path: filepath.ToSlash(filepath.Join(snapshot, "internal", "review", "engine.go"))},
-		{name: "wildcard path", path: "*"},
-		{name: "environment file", path: ".env"},
-		{name: "nested environment file", path: "config/.env.local"},
-		{name: "parent traversal", path: "../outside.go"},
-		{name: "glob path", path: "star*.go"},
-		{name: "absolute snapshot environment file", path: filepath.ToSlash(filepath.Join(snapshot, ".env"))},
-		{name: "external absolute path", path: "/etc/passwd"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, exists := readPermissions[test.path]; exists {
-				t.Errorf("read permission for %q unexpectedly exists; unmatched reads must fall through to the agent-level ask fallback", test.path)
-			}
-		})
-	}
-	for _, unsafePath := range []string{
-		".env",
-		"config/.env.local",
-		"../outside.go",
-		"/etc/passwd",
-		"star*.go",
-		"double**.go",
-		"question?.go",
-		"class[ab].go",
-		"brace{a,b}.go",
-		filepath.ToSlash(filepath.Join(snapshot, "**")),
-	} {
-		if _, exists := readPermissions[unsafePath]; exists {
-			t.Errorf("read permissions unexpectedly include %q", unsafePath)
+		if key == "**" || key == "*" {
+			t.Fatalf("read permission key %q is unanchored: it would match resources outside the snapshot", key)
+		}
+		anchored := strings.HasPrefix(key, snapshotSlash+"/") || strings.HasPrefix(key, strippedSnapshot+"/")
+		if !anchored || !strings.HasSuffix(key, "/**") {
+			t.Errorf("read permission key %q is not anchored to the snapshot directory %q", key, snapshot)
 		}
 	}
 	for _, tool := range []string{"grep", "glob"} {

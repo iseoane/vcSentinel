@@ -1752,6 +1752,25 @@ type settledError struct {
 func (e *settledError) Error() string                  { return e.text }
 func (e *settledError) ProviderSettledRetryable() bool { return e.retryable }
 
+// TestTruncatedTurnErrorIsPermanentAcrossTheRealMessage binds the literal
+// substring permanentProviderFailures matches ("review turn truncated")
+// directly to agentadapter.TruncatedTurnError's own Error() output, instead
+// of to a hand-typed fixture string. The literal lives in agentadapter; the
+// matcher lives here in internal/review, which already imports agentadapter
+// (policyBoundReviewer). Only this package can see both sides of the
+// contract, so only a test here can prove they cannot silently drift apart —
+// a previous review flagged that nothing enforced this before. See also
+// agentadapter.TestTruncatedTurnErrorMessageContainsThePermanentFailureLiteral
+// for the message-construction side of the same binding.
+func TestTruncatedTurnErrorIsPermanentAcrossTheRealMessage(t *testing.T) {
+	real := &agentadapter.TruncatedTurnError{StopReason: "tool-calls", Steps: 5, TerminalEventObserved: true}
+	settled := &settledError{text: fmt.Sprintf("run ended failure: %s", real.Error()), retryable: true}
+
+	if isTransientProviderFailure(settled) {
+		t.Fatalf("isTransientProviderFailure(%q) = true, want a real TruncatedTurnError message classified as permanent (non-retryable)", settled.text)
+	}
+}
+
 // TestRetriesProviderTransientFailures covers the last real gap in
 // `unavailable`: a provider EXECUTION failure was never retried. With
 // `active_agent` pinned to a binary no adapter chain is built, so a 500 from
