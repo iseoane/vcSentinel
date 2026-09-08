@@ -71,9 +71,21 @@ Sits third: unblocked and small, but it only bites under unusual load.
   `no space left on device`. The immediate cause was the wrong flag, but a
   store with no ceiling on a tmpfs is one bad invocation away from filling
   the disk.
-- Closing: a total-size ceiling that evicts the least recently leased
-  unleased tree, or a recorded determination that staleness alone is the
-  intended policy and the flag is the thing to guard.
+- The threshold is also wrong, decided 2026-09-08: `staleSnapshotAge` is 24
+  hours, but the window in which retention buys anything is minutes — one
+  review's five dimensions — and at most an hour for format retries and
+  chained reviews of the same commit. Twenty-four hours buys almost no extra
+  reuse while multiplying the worst-case residue by every commit touched in a
+  day. Measured that afternoon: 50 published trees and 446 MB, none older
+  than an hour, so the reaper correctly refused to remove any of it while
+  /tmp sat at 94%.
+- Closing: both sides of the hole. A total-size ceiling that evicts the least
+  recently leased unleased tree, AND `staleSnapshotAge` lowered to one hour.
+  Either alone leaves the other axis unbounded.
+- Note: today the store pays the retention cost without earning the reuse,
+  because provider state contaminates each tree and forces rematerialization.
+  Item 2 is what makes retention worth anything, so land it first and expect
+  the tree count to fall to one per audited commit.
 
 ## 4. Recalibrate or retire the OpenCode reviewer turn budget
 
