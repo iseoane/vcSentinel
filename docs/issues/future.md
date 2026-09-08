@@ -87,3 +87,27 @@ satisfied by the producers above; its remaining closing conditions
   restructuring as part of its own work. Restructuring now would rewrite
   the most delicate piece of the system for no observable benefit, and
   paying for it twice is the outcome the trigger exists to avoid.
+
+## Record the reviewer turn count in the legacy review ledger
+
+- Postponed by decision 2026-09-08: the recalibration of the OpenCode
+  reviewer turn budget (`actionable.md` item 2) only needs the consumed
+  turn count on the durable path. Also writing it through
+  `internal/review`'s append-only ledger, so a direct `sentinel review`
+  fed the same sample, was considered and rejected.
+- Measured reason for rejecting it: the durable path already produces the
+  sample faster than the decision needs. Counting `"stop_reason":"end_turn"`
+  occurrences in `events.jsonl` across this repository's durable store
+  (one per invocation; the `outcomes/` copies are indented and do not
+  double-count) gave 0 on 2026-09-05, 0 on 2026-09-06, 93 on 2026-09-07
+  and 51 on 2026-09-08 — 144 completing invocations in the two days since
+  the snapshot began carrying the whole committed tree. A stable percentile
+  needs tens, not hundreds.
+- It also adds no evidence: `sentinel review` and `sentinel runs` traverse
+  the same `CLIAdapter`, the same `ToolPolicy` and the same prompts, so the
+  turn-consumption distribution is one population sampled twice, not two
+  samples.
+- Comes forward when: the turn count is wanted as per-review observability
+  in `status` and the fichas for debugging a single review without going
+  through `runs`. That is an observability goal of its own, not part of the
+  budget recalibration, and it is the only benefit this item still carries.
