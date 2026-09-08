@@ -193,6 +193,15 @@ type Result struct {
 	// Enforcement is the validated enforcement declaration of the adapter
 	// that produced this turn (EnforcementNone when nothing was declared).
 	Enforcement string
+	// Turns is the observed model-turn count, when the provider's wire
+	// format exposes one comparable to OpenCode's --format json
+	// step_finish-per-turn stream (its own configured Steps agent budget).
+	// Nil means the provider reports no turn count at all — never a bare
+	// zero, which would be indistinguishable from a real "zero turns"
+	// observation. The real ACP/acpx stream parsed by ParseStream carries no
+	// such per-turn count, so it stays nil there; only agentadapter's
+	// OpenCode review path populates it today.
+	Turns *int
 }
 
 // ResultObservation is the provider-local normalized evidence shape. Upper
@@ -207,6 +216,7 @@ type ResultObservation struct {
 	StopReason      string
 	Enforcement     string
 	Usage           *Usage
+	Turns           *int
 }
 
 func (r Result) AdapterObservation() ResultObservation {
@@ -215,7 +225,7 @@ func (r Result) AdapterObservation() ResultObservation {
 		RequestedModel: r.RequestedModel, Effort: r.ObservedEffort,
 		RequestedEffort: r.RequestedEffort,
 		StopReason:      r.StopReason, Enforcement: r.Enforcement,
-		Usage: r.Usage,
+		Usage: r.Usage, Turns: r.Turns,
 	}
 }
 

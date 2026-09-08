@@ -87,3 +87,49 @@ func TestReviewAdapterUsesObservedStopReasonWithoutGuessing(t *testing.T) {
 		t.Fatalf("observation = %+v, want observed stop reason", got.Observation)
 	}
 }
+
+// TestReviewAdapterCarriesObservedTurnCount pins the mapping this task adds:
+// an OpenCode review's observed turn count must survive
+// observationFromResult into execution.AdapterObservation.Turns, as a
+// non-nil pointer independent of the provider result's own pointer (a clone,
+// per cloneInt's contract).
+func TestReviewAdapterCarriesObservedTurnCount(t *testing.T) {
+	turns := 2
+	adapter := NewReviewAdapter(
+		richReviewStub{result: acpadapter.Result{Output: "ok", StopReason: "end_turn", Turns: &turns}},
+		"sha", nil, nil,
+	)
+	got, err := adapter.Execute(context.Background(), testJob(t), mustInvocation(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observation == nil || got.Observation.Turns == nil {
+		t.Fatalf("observation = %+v, want a non-nil observed turn count", got.Observation)
+	}
+	if *got.Observation.Turns != 2 {
+		t.Errorf("Turns = %d, want 2", *got.Observation.Turns)
+	}
+	if got.Observation.Turns == &turns {
+		t.Error("Turns aliases the provider result's own pointer, want a clone")
+	}
+}
+
+// TestReviewAdapterLeavesTurnCountNilWhenUnobserved pins the negative case:
+// a provider result with no observed turn count (Claude, or a generic
+// provider) must map to a nil Turns, never a fabricated zero.
+func TestReviewAdapterLeavesTurnCountNilWhenUnobserved(t *testing.T) {
+	adapter := NewReviewAdapter(
+		richReviewStub{result: acpadapter.Result{Output: "ok", StopReason: "end_turn"}},
+		"sha", nil, nil,
+	)
+	got, err := adapter.Execute(context.Background(), testJob(t), mustInvocation(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observation == nil {
+		t.Fatal("observation = nil, want a non-nil observation")
+	}
+	if got.Observation.Turns != nil {
+		t.Errorf("Turns = %d, want nil", *got.Observation.Turns)
+	}
+}

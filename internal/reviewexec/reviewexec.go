@@ -220,6 +220,7 @@ func observationFromResult(result acpadapter.Result) *execution.AdapterObservati
 		RequestedEffort: provider.RequestedEffort,
 		StopReason:      provider.StopReason,
 		Enforcement:     provider.Enforcement,
+		Turns:           cloneInt(provider.Turns),
 	}
 	if provider.Usage != nil {
 		observation.Usage = &execution.AdapterUsage{
@@ -234,6 +235,16 @@ func observationFromResult(result acpadapter.Result) *execution.AdapterObservati
 }
 
 func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+// cloneInt deep-copies an observed turn count so the returned observation
+// never aliases the provider result's own pointer.
+func cloneInt(value *int) *int {
 	if value == nil {
 		return nil
 	}

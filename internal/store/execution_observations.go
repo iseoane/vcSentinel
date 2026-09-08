@@ -21,6 +21,13 @@ type AttemptObservation struct {
 	Enforcement     string               `json:"enforcement,omitempty"`
 	Usage           *ExecutionTokenUsage `json:"usage,omitempty"`
 	DurationNanos   *time.Duration       `json:"duration_ns,omitempty"`
+	// Turns is the observed model-turn count from a provider whose wire
+	// format exposes one (OpenCode's --format json step_finish-per-turn
+	// stream, bound to its own configured Steps agent budget). Nil means the
+	// provider reports no turn count at all — never a bare zero, which would
+	// be indistinguishable from a real observed-zero measurement and would
+	// corrupt a later turn-budget recalibration.
+	Turns *int `json:"turns,omitempty"`
 }
 
 func cloneAttemptObservation(observation *AttemptObservation) *AttemptObservation {
@@ -31,6 +38,10 @@ func cloneAttemptObservation(observation *AttemptObservation) *AttemptObservatio
 	if observation.DurationNanos != nil {
 		value := *observation.DurationNanos
 		clone.DurationNanos = &value
+	}
+	if observation.Turns != nil {
+		value := *observation.Turns
+		clone.Turns = &value
 	}
 	if observation.Usage != nil {
 		usage := *observation.Usage
@@ -57,6 +68,9 @@ func validateAttemptObservation(observation *AttemptObservation) error {
 	}
 	if observation.DurationNanos != nil && *observation.DurationNanos < 0 {
 		return fmt.Errorf("store: negative attempt duration")
+	}
+	if observation.Turns != nil && *observation.Turns < 0 {
+		return fmt.Errorf("store: negative attempt turn count")
 	}
 	if observation.Usage != nil {
 		if err := validateExecutionTokenUsage(*observation.Usage); err != nil {

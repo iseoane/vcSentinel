@@ -217,3 +217,65 @@ func TestTruncatedTurnErrorMessageContainsThePermanentFailureLiteral(t *testing.
 		t.Fatalf("Error() = %q, must contain the literal substring %q that internal/review matches on to keep this failure non-retryable", err.Error(), "review turn truncated")
 	}
 }
+
+// TestReviewWithContextResultCarriesOpenCodeTurnCount pins the persistence
+// gap this change closes: a completed OpenCode review's observed turn count
+// (one per step_finish event, exactly opencodeReviewScan.Steps) must reach
+// the returned acpadapter.Result rather than being silently dropped on the
+// success path. The probe fixture carries exactly 2 step_finish events (see
+// TestOpenCodeReviewStepsCountsStepFinishEvents), so Turns must be a non-nil
+// pointer to 2, never a bare zero value that would be indistinguishable from
+// "unknown".
+func TestReviewWithContextResultCarriesOpenCodeTurnCount(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "opencode"),
+		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
+		Timeout:    10 * time.Second,
+	}
+
+	result, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContextResult() error = %v", err)
+	}
+	if result.Turns == nil {
+		t.Fatal("Turns = nil, want a non-nil observed turn count for a completed OpenCode review")
+	}
+	if *result.Turns != 2 {
+		t.Errorf("Turns = %d, want 2 (one per step_finish event in the probe fixture)", *result.Turns)
+	}
+}
+
+// TestReviewWithContextResultLeavesClaudeTurnCountNil pins the regression
+// this task calls out explicitly: Claude Code exposes no comparable per-turn
+// step count, so Turns must be nil, NOT a plain zero. A plain int field with
+// omitempty would make "Claude answered this review" indistinguishable from
+// "the provider reports no turn count", which is exactly what a later
+// recalibration must never read as a real measurement.
+func TestReviewWithContextResultLeavesClaudeTurnCountNil(t *testing.T) {
+	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
+	adapter := CLIAdapter{
+		BinaryName: compileAgentBinary(t, "claude"),
+		Config:     config.AgentConfig{Model: "claude-haiku-4-5"},
+		Timeout:    10 * time.Second,
+	}
+
+	result, err := adapter.ReviewWithContextResult(context.Background(), "review SNAPSHOT", headSha(t), []string{reviewFixturePath})
+	if err != nil {
+		t.Fatalf("ReviewWithContextResult() error = %v", err)
+	}
+	if result.Turns != nil {
+		t.Errorf("Turns = %d, want nil (Claude Code exposes no comparable turn count)", *result.Turns)
+	}
+}
+
+// Note: the third provider path (a generic plain-text provider with no
+// structured stream to scan) is not exercised here because reviewCommand
+// already rejects any binary that is neither Claude nor OpenCode before a
+// review can be spawned at all ("semantic review is unavailable:
+// path-confined tool permissions are not configured for this provider") —
+// that rejection predates this change and is out of scope for it. The
+// default branch of runBoundedReview's provider switch (cli_review_context.go)
+// constructs a bare reviewExecution{} literal that never sets turns, so it
+// stays nil by Go's zero-value semantics; there is no reachable path to
+// regress here.

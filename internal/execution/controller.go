@@ -60,6 +60,11 @@ type AdapterObservation struct {
 	Enforcement     string
 	Usage           *AdapterUsage
 	DurationNanos   *time.Duration
+	// Turns is the observed model-turn count, when the provider reports one
+	// (OpenCode's --format json step_finish-per-turn stream). Nil means the
+	// provider exposes no comparable count — never a bare zero, which would
+	// be indistinguishable from a real observed-zero measurement.
+	Turns *int
 }
 
 // AdapterResult is untrusted provider output. The controller admits only its

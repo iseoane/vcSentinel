@@ -19,6 +19,7 @@ func storeObservation(observation *AdapterObservation) *store.AttemptObservation
 		StopReason:      observation.StopReason,
 		Enforcement:     observation.Enforcement,
 		DurationNanos:   cloneDuration(observation.DurationNanos),
+		Turns:           cloneInt(observation.Turns),
 	}
 	if observation.Usage != nil {
 		mapped.Usage = &store.ExecutionTokenUsage{
@@ -58,6 +59,17 @@ func cloneInt64(value *int64) *int64 {
 }
 
 func cloneDuration(value *time.Duration) *time.Duration {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+// cloneInt deep-copies an observed turn count so the durable outcome never
+// aliases the caller's own pointer, following the same idiom as
+// cloneDuration/cloneInt64 above.
+func cloneInt(value *int) *int {
 	if value == nil {
 		return nil
 	}

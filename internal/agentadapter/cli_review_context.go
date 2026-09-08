@@ -103,6 +103,10 @@ func (c *CLIAdapter) reviewWithContextResultPolicy(ctx context.Context, prompt, 
 	result.Usage = run.usage
 	result.UsageJSON = run.usageJSON
 	result.StopReason = run.stopReason
+	if run.turns != nil {
+		turns := *run.turns
+		result.Turns = &turns
+	}
 	// A stop reason other than a completed turn ("end_turn"), a cancellation
 	// (already handled by the caller's context plumbing), or the absence of
 	// one at all (generic plain-text providers report no stop reason, which
@@ -242,6 +246,14 @@ type reviewExecution struct {
 	usageJSON  string
 	stopReason string
 	steps      int
+	// turns mirrors steps as the pointer this run's caller carries forward
+	// onto acpadapter.Result.Turns: non-nil only for OpenCode, where an
+	// observed count (including a legitimate small one) is real evidence;
+	// nil for Claude (no comparable per-turn count exists) and for generic
+	// providers (nothing to scan). Kept separate from steps, which stays a
+	// plain int because TruncatedTurnError.Steps is reported unconditionally
+	// on the truncation error path and this fix does not touch that path.
+	turns *int
 	// terminalEventObserved reports whether the provider's own end-of-turn
 	// signal was ever seen at all (opencodeReviewScan.TerminalEventObserved
 	// for OpenCode). True unconditionally for Claude and generic providers,
@@ -325,7 +337,8 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 		if err != nil {
 			return reviewExecution{}, err
 		}
-		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, scan.Steps, scan.TerminalEventObserved, scan.DeniedToolCalls), nil
+		steps := scan.Steps
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, scan.Steps, &steps, scan.TerminalEventObserved, scan.DeniedToolCalls), nil
 	case c.isClaude():
 		scan, err := scanClaudeReview(strings.NewReader(raw))
 		if err != nil {
@@ -334,10 +347,11 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 		// Claude Code exposes no per-turn step count comparable to OpenCode's
 		// Steps budget (reviewCommand's own comment: there is no confirmed
 		// flag to cap or observe it), so steps stays zero here rather than
-		// inventing one. terminalEventObserved stays true unconditionally:
-		// this fix is scoped to OpenCode's stream and must not reclassify
-		// Claude's own stopReason semantics.
-		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, 0, true, nil), nil
+		// inventing one, and turns stays nil rather than a fabricated zero.
+		// terminalEventObserved stays true unconditionally: this fix is
+		// scoped to OpenCode's stream and must not reclassify Claude's own
+		// stopReason semantics.
+		return reviewExecutionFromScan(scan.Output, scan.Usage, scan.UsageJSON, scan.StopReason, 0, nil, true, nil), nil
 	default:
 		// generic providers answer in plain text; there is nothing to scan.
 		// terminalEventObserved stays true: a generic provider legitimately
@@ -350,13 +364,14 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 // reviewExecutionFromScan projects a provider scan onto the rich review
 // observation. The single TrimSpace lives here so every provider's
 // stdout->answer boundary behaves byte-identically.
-func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string, steps int, terminalEventObserved bool, deniedToolCalls []DeniedToolCall) reviewExecution {
+func reviewExecutionFromScan(output string, usage *acpadapter.Usage, usageJSON, stopReason string, steps int, turns *int, terminalEventObserved bool, deniedToolCalls []DeniedToolCall) reviewExecution {
 	return reviewExecution{
 		output:                strings.TrimSpace(output),
 		usage:                 usage,
 		usageJSON:             usageJSON,
 		stopReason:            stopReason,
 		steps:                 steps,
+		turns:                 turns,
 		terminalEventObserved: terminalEventObserved,
 		deniedToolCalls:       deniedToolCalls,
 	}
