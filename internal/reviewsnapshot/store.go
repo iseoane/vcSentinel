@@ -100,18 +100,6 @@ func isCommittedRegularFile(mode, objectType string) bool {
 	return objectType == "blob" && strings.HasPrefix(mode, "100")
 }
 
-// publishedPerm maps a committed git regular-file mode to the immutable
-// on-disk permission the store publishes: owner read-only (0400), plus owner
-// execute exactly for git's 100755 entries (0500). It is the single source
-// of that mapping, used both to tighten files at publication and to validate
-// them at lease time.
-func publishedPerm(gitMode string) fs.FileMode {
-	if gitMode == "100755" {
-		return 0o500
-	}
-	return 0o400
-}
-
 // manifestEntry is one committed regular file's expected on-disk evidence:
 // its published permission and its byte size. Contents are deliberately not
 // hashed — lease validation compares structure and metadata only, which is
@@ -252,7 +240,7 @@ func publishedSnapshotUsable(dir, marker, manifest string) bool {
 		if info.Size() != want.size {
 			return fmt.Errorf("size drift for %q in published snapshot", rel)
 		}
-		if info.Mode().Perm() != want.perm {
+		if !publishedPermMatches(info.Mode().Perm(), want.perm) {
 			return fmt.Errorf("mode drift for %q in published snapshot", rel)
 		}
 		delete(expected, rel)
