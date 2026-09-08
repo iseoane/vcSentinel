@@ -945,11 +945,6 @@ func TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree(t *testing.T) {
 	}
 }
 
-// TestReaperRechecksStalenessUnderLock pins the reaper's TOCTOU guard: the
-// staleness verdict is re-checked against each target AFTER the exclusive
-// lock is held, so a fresh publication is never deleted even when an older
-// directory scan had already marked the entry for collection — and a stale,
-// unlocked entry still goes away.
 // TestCapacityReaperRefreshesAfterConcurrentRemoval models a second reaper
 // removing the selected oldest tree after the directory scan. The next decision
 // must use the refreshed footprint rather than evicting a newer tree from stale

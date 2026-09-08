@@ -461,6 +461,18 @@ func TestCreateRequiresSHA(t *testing.T) {
 //
 // Measured on this machine: 472 MB accumulated on a 3.8 GB tmpfs. When /tmp
 // fills up, not only do reviews fail; even building fails.
+// TestStaleSnapshotAgeIsExactlyOneHour keeps the recorded decision pinned to
+// its exact value, which the behavioural test below deliberately cannot do:
+// that one ages residue by 90 minutes, so it would still pass if the window
+// were shortened to 30 or 5 minutes. One hour is a retention decision, not a
+// measurement, so the constant itself is part of the contract and a silent
+// change to it must fail here.
+func TestStaleSnapshotAgeIsExactlyOneHour(t *testing.T) {
+	if staleSnapshotAge != time.Hour {
+		t.Fatalf("staleSnapshotAge = %v, want exactly 1h", staleSnapshotAge)
+	}
+}
+
 func TestStaleSnapshotAgeReapsOneHourOldResidue(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)
