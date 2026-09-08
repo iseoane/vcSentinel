@@ -759,6 +759,39 @@ func gitCommitNestedFile(t *testing.T, root string) string {
 // lock is held, so a fresh publication is never deleted even when an older
 // directory scan had already marked the entry for collection — and a stale,
 // unlocked entry still goes away.
+// TestCapacityReaperKeepsSmallStoreOnOtherwiseFullFilesystem verifies that
+// capacity cleanup reacts only to review snapshots it can actually control. A
+// nearly full large disk whose unrelated contents dwarf this small store must
+// not destroy reusable evidence merely because deleting it cannot restore a
+// global free-space target.
+func TestCapacityReaperKeepsSmallStoreOnOtherwiseFullFilesystem(t *testing.T) {
+	_, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	if err := os.MkdirAll(storeRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	candidateSHA, _ := unusedHexDigits(sha[len(sha)-1])
+	candidate := publishedPath(storeRoot(), sha[:len(sha)-1]+string(candidateSHA))
+	if err := os.MkdirAll(candidate, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{available: 50 << 30, capacity: 1 << 40}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	if removed := reapSharedStoreCapacity(storeRoot()); removed != 0 {
+		t.Fatalf("reapSharedStoreCapacity removed %d entries from a small store", removed)
+	}
+	if _, err := os.Stat(candidate); err != nil {
+		t.Fatalf("small reusable tree was evicted because of unrelated disk use: %v", err)
+	}
+}
+
 // TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree verifies the size
 // ceiling's safety and ordering together: an exclusive lock is still required
 // before deletion, so a live lease survives even when it is oldest, and the
@@ -784,7 +817,11 @@ func TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree(t *testing.T) {
 	oldestUnleasedSHA := sha[:len(sha)-1] + string(replacements[1])
 	newerUnleasedSHA := sha[:len(sha)-1] + string(replacements[2])
 	for _, candidate := range []string{activeSHA, oldestUnleasedSHA, newerUnleasedSHA} {
-		if err := os.MkdirAll(publishedPath(storeRoot(), candidate), 0o700); err != nil {
+		tree := publishedPath(storeRoot(), candidate)
+		if err := os.MkdirAll(tree, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tree, "payload"), make([]byte, 9<<10), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -807,10 +844,7 @@ func TestCapacityReaperEvictsLeastRecentlyLeasedUnleasedTree(t *testing.T) {
 
 	originalSpace := storeFilesystemSpace
 	storeFilesystemSpace = func(string) (filesystemSpace, error) {
-		if _, err := os.Stat(publishedPath(storeRoot(), oldestUnleasedSHA)); err == nil {
-			return filesystemSpace{available: 0, capacity: 100}, nil
-		}
-		return filesystemSpace{available: 10, capacity: 100}, nil
+		return filesystemSpace{capacity: 250 << 10}, nil
 	}
 	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
 

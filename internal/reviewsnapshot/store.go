@@ -597,18 +597,18 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 }
 
 // reapSharedStoreCapacity evicts the least recently leased published trees
-// until the filesystem holding the store has its capacity-relative free-space
-// margin again. It never makes a removal decision from a pre-lock stat alone:
-// each selected tree is re-statted after its SHA's exclusive lock is acquired,
-// so a tree leased or republished since the scan survives. Staging trees and
-// readiness artifacts do not compete here; the age reaper above owns their
-// abandoned-residue cleanup.
+// until the snapshot data this package owns fits its capacity-relative ceiling.
+// It never makes a removal decision from a pre-lock stat alone: each selected
+// tree is re-statted after its SHA's exclusive lock is acquired, so a tree
+// leased or republished since the scan survives. Staging trees and readiness
+// artifacts do not compete here; the age reaper above owns their abandoned-
+// residue cleanup.
 func reapSharedStoreCapacity(root string) int {
 	if err := checkStoreRoot(root); err != nil {
 		return 0
 	}
 	space, err := storeFilesystemSpace(root)
-	if err != nil || space.available >= storeFreeSpaceMargin(space.capacity) {
+	if err != nil {
 		return 0
 	}
 	entries, err := os.ReadDir(root)
@@ -620,6 +620,7 @@ func reapSharedStoreCapacity(root string) int {
 		modTime time.Time
 	}
 	candidates := make([]candidate, 0, len(entries))
+	var ownedBytes uint64
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), publishedPrefix) || strings.HasSuffix(entry.Name(), readySuffix) || strings.HasSuffix(entry.Name(), manifestSuffix) {
 			continue
@@ -632,7 +633,21 @@ func reapSharedStoreCapacity(root string) int {
 		if err != nil {
 			continue
 		}
+		size, err := storeEntrySize(filepath.Join(root, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, artifact := range []string{markerPath(root, sha), manifestPath(root, sha)} {
+			artifactSize, err := storeEntrySize(artifact)
+			if err == nil {
+				size += artifactSize
+			}
+		}
+		ownedBytes += size
 		candidates = append(candidates, candidate{sha: sha, modTime: info.ModTime()})
+	}
+	if ownedBytes <= storeCapacityLimit(space.capacity) {
+		return 0
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].modTime.Before(candidates[j].modTime)
@@ -640,15 +655,63 @@ func reapSharedStoreCapacity(root string) int {
 
 	removed := 0
 	for _, candidate := range candidates {
-		space, err = storeFilesystemSpace(root)
-		if err != nil || space.available >= storeFreeSpaceMargin(space.capacity) {
+		if ownedBytes <= storeCapacityLimit(space.capacity) {
 			break
 		}
 		if removeUnleasedStoreEntryAtMtime(root, candidate.sha, candidate.modTime, publishedPath(root, candidate.sha), markerPath(root, candidate.sha), manifestPath(root, candidate.sha)) {
 			removed++
+			if refreshedBytes, err := sharedStoreSnapshotBytes(root); err == nil {
+				ownedBytes = refreshedBytes
+			}
 		}
 	}
 	return removed
+}
+
+// sharedStoreSnapshotBytes reports the logical footprint of published snapshot
+// trees and their readiness artifacts. Persistent lock files are deliberately
+// excluded: removing them would break the lock namespace, and they contain no
+// snapshot evidence.
+func sharedStoreSnapshotBytes(root string) (uint64, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0, err
+	}
+	var total uint64
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), publishedPrefix) || strings.HasSuffix(entry.Name(), readySuffix) || strings.HasSuffix(entry.Name(), manifestSuffix) {
+			continue
+		}
+		sha := strings.TrimPrefix(entry.Name(), publishedPrefix)
+		if !validObjectID(sha) {
+			continue
+		}
+		for _, path := range []string{filepath.Join(root, entry.Name()), markerPath(root, sha), manifestPath(root, sha)} {
+			size, err := storeEntrySize(path)
+			if err == nil {
+				total += size
+			}
+		}
+	}
+	return total, nil
+}
+
+func storeEntrySize(path string) (uint64, error) {
+	var size uint64
+	err := filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > 0 {
+			size += uint64(info.Size())
+		}
+		return nil
+	})
+	return size, err
 }
 
 // removeUnleasedStoreEntryAtMtime removes a published tree only when its state
