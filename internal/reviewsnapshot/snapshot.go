@@ -229,10 +229,10 @@ const snapshotPrefix = "vas-sentinel-review-"
 // publishes a readiness manifest and marker, and atomically renames the
 // staging directory onto the SHA's published name, so no caller can ever
 // observe a partial tree. Published evidence is immutable and validated:
-// regular files are owner read-only, the manifest records every committed
-// file's mode and size, and every lease validates marker, manifest, and
-// on-disk tree — a corrupted cache is never handed out; Create rebuilds it
-// from Git under the per-SHA transition lock. The returned dir is leased,
+// regular files and directories are owner read-only, the manifest records
+// every committed file's mode and size, and every lease validates marker,
+// manifest, and on-disk tree — a corrupted cache is never handed out; Create
+// rebuilds it from Git under the per-SHA transition lock. The returned dir is leased,
 // not owned: cleanup is an idempotent lease release that must still run as
 // the caller's defer, and it never deletes the published tree — the snapshot
 // is retained on disk so the next invocation auditing the same SHA (a format

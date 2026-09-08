@@ -111,10 +111,9 @@ type manifestEntry struct {
 }
 
 // writeManifest walks the finished staging tree once and, in that single
-// pass, tightens every regular file to its published permission and records
-// the file's committed mode and size. The directory tree keeps its
-// owner-traversable 0700 directories so the snapshot remains a usable
-// working directory for the reviewer process. Records are NUL-terminated
+// pass, tightens every regular file to its published permission, seals every
+// directory against mutation, and records the file's committed mode and size.
+// Records are NUL-terminated
 // "<git-mode> <size> <path>" lines, so any committed path — spaces, tabs,
 // newlines included — round-trips losslessly.
 func writeManifest(staging, manifest string, modes map[string]string) error {
@@ -124,7 +123,7 @@ func writeManifest(staging, manifest string, modes map[string]string) error {
 			return err
 		}
 		if d.IsDir() {
-			return nil
+			return os.Chmod(p, 0o500)
 		}
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("unexpected non-regular entry %q in staged snapshot", p)
@@ -153,6 +152,24 @@ func writeManifest(staging, manifest string, modes map[string]string) error {
 		return walkErr
 	}
 	return os.WriteFile(manifest, buf, 0o400)
+}
+
+// removeReadOnlyStoreEntry restores owner write access before removing a
+// sealed publication. Reaping and failed-publication cleanup hold the SHA's
+// exclusive lock, so no lease can observe this brief transition.
+func removeReadOnlyStoreEntry(target string) error {
+	if err := filepath.WalkDir(target, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || d.Type().IsRegular() {
+			return os.Chmod(p, 0o700)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.RemoveAll(target)
 }
 
 // readManifest parses a readiness manifest into the expected evidence map.
@@ -431,9 +448,9 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 	// validation is residue from a dead publisher or tampered cache. No lease
 	// can hold it — a lease holds the shared lock, and we just acquired the
 	// exclusive one — so it is safe to discard and rebuild over it.
-	_ = os.RemoveAll(published)
-	_ = os.Remove(marker)
-	_ = os.Remove(manifest)
+	_ = removeReadOnlyStoreEntry(published)
+	_ = removeReadOnlyStoreEntry(marker)
+	_ = removeReadOnlyStoreEntry(manifest)
 
 	entries, err := gitTreeEntries(ctx, worktree, sha)
 	if err != nil {
@@ -462,7 +479,7 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		return fmt.Errorf("create review snapshot: %w", err)
 	}
 	if err := materializeTree(ctx, worktree, sha, staging, regularFiles); err != nil {
-		_ = os.RemoveAll(staging)
+		_ = removeReadOnlyStoreEntry(staging)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("review snapshot aborted: %w", ctxErr)
 		}
@@ -474,13 +491,13 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 	// already be identifiable as complete, because that is the moment any
 	// other process may lease it.
 	if err := writeManifest(staging, manifest, modes); err != nil {
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	if err := os.WriteFile(marker, []byte("ready\n"), 0o400); err != nil {
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	if err := os.Rename(staging, published); err != nil {
@@ -489,14 +506,14 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 			// to the winner and leave its readiness marker and manifest
 			// alone — removing them would invalidate a tree we did not
 			// publish.
-			_ = os.RemoveAll(staging)
+			_ = removeReadOnlyStoreEntry(staging)
 			return nil
 		}
 		// A genuine rename failure: remove the staging tree and the
 		// readiness artifacts we published for it, so no orphan survives.
-		_ = os.RemoveAll(staging)
-		_ = os.Remove(marker)
-		_ = os.Remove(manifest)
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(marker)
+		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
 	}
 	return nil
@@ -605,7 +622,7 @@ func removeUnleasedStoreEntry(root, sha string, now time.Time, maxAge time.Durat
 		if now.Sub(info.ModTime()) < maxAge {
 			continue // refreshed since the scan: a fresh publication survives
 		}
-		if os.RemoveAll(target) == nil {
+		if removeReadOnlyStoreEntry(target) == nil {
 			removed = true
 		}
 	}

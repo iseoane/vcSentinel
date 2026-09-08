@@ -464,6 +464,7 @@ func TestCreateRequiresSHA(t *testing.T) {
 func TestCreateReapsAbandonedSnapshots(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)
+	cleanupSealedStore(t)
 
 	abandoned := filepath.Join(root, "vas-sentinel-review-abandonado")
 	if err := os.MkdirAll(filepath.Join(abandoned, "sub"), 0o700); err != nil {
@@ -615,6 +616,7 @@ func TestCreateAbortsDuringMaterializationAndLeavesNoSnapshot(t *testing.T) {
 
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
+	cleanupSealedStore(t)
 
 	_, _, cleanup, err := Create(cancelCtx, root, sha, []string{"file0.go"})
 	if !errors.Is(err, context.Canceled) {
