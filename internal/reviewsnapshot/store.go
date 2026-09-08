@@ -192,7 +192,11 @@ func readManifest(manifest string) (map[string]manifestEntry, error) {
 		if err != nil || size < 0 {
 			return nil, fmt.Errorf("malformed readiness manifest record %q", record)
 		}
-		entries[string(path)] = manifestEntry{perm: publishedPerm(string(mode)), size: size}
+		gitMode := string(mode)
+		if gitMode != "100644" && gitMode != "100755" {
+			return nil, fmt.Errorf("malformed readiness manifest record %q", record)
+		}
+		entries[string(path)] = manifestEntry{perm: publishedPerm(gitMode), size: size}
 	}
 	return entries, nil
 }

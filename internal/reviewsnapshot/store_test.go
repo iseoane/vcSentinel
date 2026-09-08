@@ -718,6 +718,44 @@ func TestCreateSealsDirectoriesAndReaperRemovesPublishedTree(t *testing.T) {
 	}
 }
 
+func TestLeaseRejectsPublishedSnapshotWithInvalidManifestMode(t *testing.T) {
+	root, sha := gitInit(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	cleanupSealedStore(t)
+
+	_, _, release, err := Create(context.Background(), root, sha, []string{"audited.go"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	release()
+
+	manifest := manifestPath(storeRoot(), sha)
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	corrupted := strings.Replace(string(data), "100644 ", "100600 ", 1)
+	if corrupted == string(data) {
+		t.Fatal("fixture manifest has no regular-file mode to corrupt")
+	}
+	if err := os.WriteFile(manifest, []byte(corrupted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lease, err := leasePublishedSnapshot(sha)
+	if err != nil {
+		t.Fatalf("leasePublishedSnapshot: %v", err)
+	}
+	if lease != nil {
+		lease.release()
+		t.Fatal("leasePublishedSnapshot accepted a manifest with an invalid Git mode")
+	}
+}
+
 func gitCommitNestedFile(t *testing.T, root string) string {
 	t.Helper()
 	path := filepath.Join(root, "nested", "context.go")
