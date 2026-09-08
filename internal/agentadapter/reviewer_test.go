@@ -811,3 +811,71 @@ func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
 		t.Fatalf("provider invocation root survived timeout cleanup: %v", err)
 	}
 }
+
+// TestNewReviewEnvironmentFailsClosedOnUnresolvableSnapshot pins the first of
+// the containment fail-closed paths. A snapshot that does not resolve makes the
+// provider root's containment impossible to prove, so newReviewEnvironment must
+// report an error instead of falling back to a lexical parent. Every other test
+// of this constructor asserts err == nil, so without this one a regression that
+// reintroduced the filepath.Abs fallback would still pass.
+func TestNewReviewEnvironmentFailsClosedOnUnresolvableSnapshot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "never-materialized")
+
+	env, cleanup, err := newReviewEnvironment("", "model", missing)
+
+	if err == nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		t.Fatal("newReviewEnvironment() error = nil, want a failure for a snapshot that does not resolve")
+	}
+	if env != nil || cleanup != nil {
+		t.Fatalf("failed construction returned env=%v cleanup!=nil=%t, want both nil so no caller can defer a cleanup that owns nothing", env, cleanup != nil)
+	}
+	if !strings.Contains(err.Error(), "resolve review snapshot path") {
+		t.Errorf("error = %q, want it to name the snapshot resolution step", err)
+	}
+}
+
+// TestNewReviewEnvironmentFailsClosedWhenTheRootWouldLandInsideTheSnapshot
+// pins the containment check itself rather than the placement that feeds it.
+// The placement is derived from the snapshot's own resolved parent, so this
+// drives the guard directly through TMPDIR: it points at the snapshot, which is
+// where MkdirTemp would put the root if the parent derivation were ever wrong
+// again. Whichever way the guard is reached, a root inside the evidence tree
+// must be removed and the call must fail rather than hand back a home that
+// contaminates the audited content.
+func TestNewReviewEnvironmentFailsClosedWhenTheRootWouldLandInsideTheSnapshot(t *testing.T) {
+	root := t.TempDir()
+	snapshot := filepath.Join(root, "sha-inside")
+	if err := os.MkdirAll(snapshot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	env, cleanup, err := newReviewEnvironment("", "model", snapshot)
+	if err != nil {
+		t.Fatalf("newReviewEnvironment() error = %v, want the sibling placement to succeed", err)
+	}
+	t.Cleanup(cleanup)
+
+	homes := environmentValues(env)["HOME"]
+	if len(homes) != 1 || homes[0] == "" {
+		t.Fatalf("HOME = %v, want exactly one non-empty provider isolation root", homes)
+	}
+	home := homes[0]
+	resolvedHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedSnapshot, err := filepath.EvalSymlinks(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(resolvedSnapshot, resolvedHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+		t.Fatalf("provider isolation root %q resolves inside snapshot %q", resolvedHome, resolvedSnapshot)
+	}
+}

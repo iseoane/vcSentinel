@@ -459,6 +459,42 @@ here is what a reader would otherwise re-derive.
   gate evidence, and the T9.3a executor deviation was recorded rather
   than presented as compliance.
 
+### Provider state lives outside the evidence snapshot (landed 2026-09-08)
+
+`reviewEnvironment` used to set `isolationRoot := snapshot`, so `HOME`,
+`USERPROFILE`, `OPENCODE_TEST_HOME` and every `XDG_*` path pointed at the
+published review snapshot: the audited evidence tree and the provider's
+writable home were one directory. That is why its directories were 0700, why
+sealing them read-only broke every review with `EACCES` on
+`mkdir '<snapshot>/.local'`, why concurrent dimensions auditing one SHA raced
+each other's SQLite state with `CREATE TABLE workspace`, and why a contaminated
+tree was rejected by `publishedSnapshotUsable` and rematerialized instead of
+reused — so the per-SHA dedup was real on disk while earning nothing.
+
+Each OpenCode invocation now gets its own writable isolation root, created as a
+sibling of the resolved snapshot and removed by whoever created it. Claude and
+generic providers keep their own environment; Claude's is additionally stripped
+of any inherited `OPENCODE_AUTH_CONTENT`, which closes a cross-provider
+credential path that predated this work. The root is reaped by its own prefix
+case, and its containment is proven rather than assumed: the snapshot is
+resolved with `EvalSymlinks` and a root that would land inside it is removed
+with the call failing closed.
+
+Verified on a real review rather than by tests alone: one published tree for
+the audited commit instead of the twelve a contaminated tree forces, zero
+provider directories inside it, one live isolation root per concurrent
+invocation, all cleaned up afterwards, and every dimension completing with no
+`CREATE TABLE workspace` error.
+
+Three CRITICALs were found and fixed on the way, all by review and none
+catchable by the suite: the isolation was first applied unconditionally and so
+sent OpenCode's environment and credentials into the Claude process while
+hiding Claude's own HOME; the isolation root then sat where no reaper could
+reach it; and `filepath.Abs` left the containment guarantee holding only for
+paths with no symlinked component.
+
+Merged as 3c2dc96.
+
 ### Published snapshot removal restores owner write access (landed 2026-09-08)
 
 Published regular files are deliberately read-only (0400, or 0500 for a
