@@ -485,6 +485,10 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		}
 		return err
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		_ = removeReadOnlyStoreEntry(staging)
+		return fmt.Errorf("review snapshot aborted: %w", ctxErr)
+	}
 	// Tighten the staged evidence to non-writable files and record exactly
 	// what the tree must contain, then publish the readiness marker BEFORE
 	// the rename: once the directory appears under its SHA name it must
@@ -499,6 +503,12 @@ func materializeAndPublish(ctx context.Context, worktree, sha string) error {
 		_ = removeReadOnlyStoreEntry(staging)
 		_ = removeReadOnlyStoreEntry(manifest)
 		return fmt.Errorf("publish review snapshot: %w", err)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		_ = removeReadOnlyStoreEntry(staging)
+		_ = removeReadOnlyStoreEntry(marker)
+		_ = removeReadOnlyStoreEntry(manifest)
+		return fmt.Errorf("review snapshot aborted: %w", ctxErr)
 	}
 	if err := os.Rename(staging, published); err != nil {
 		if _, statErr := os.Stat(published); statErr == nil {
