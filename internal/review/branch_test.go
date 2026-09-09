@@ -578,8 +578,8 @@ func TestDecisionOverview(t *testing.T) {
 		coherent string
 		want     string
 	}{
-		{"coherent → single", `{"coherent":true,"rationale":"A single change: the commits share the same goal and files."}`, "single"},
-		{"incoherent → chain", `{"coherent":false,"rationale":"Independent units with seams between them."}`, "chain"},
+		{"coherent → single", `{"coherent":true,"rationale":"A single change: the commits share the same goal and files.","changed":["Keeps one coherent goal."],"risk":"The change is limited to one coherent unit."}`, "single"},
+		{"incoherent → chain", `{"coherent":false,"rationale":"Independent units with seams between them.","changed":["Contains independent units."],"risk":"The seams require separate review."}`, "chain"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

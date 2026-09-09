@@ -716,8 +716,15 @@ func ParseOverview(output string) (*OverviewResult, error) {
 			if err := json.Unmarshal([]byte(candidate), &overview); err != nil {
 				return nil, fmt.Errorf("invalid coherence JSON: %v", err)
 			}
-			if len(overview.Changed) == 0 || strings.TrimSpace(overview.Risk) == "" {
-				return nil, errors.New("invalid coherence JSON: changed and risk must be non-empty")
+			changed := overview.Changed[:0]
+			for _, item := range overview.Changed {
+				if item = strings.TrimSpace(item); item != "" {
+					changed = append(changed, item)
+				}
+			}
+			overview.Changed = changed
+			if strings.TrimSpace(overview.Rationale) == "" || len(overview.Changed) == 0 || strings.TrimSpace(overview.Risk) == "" {
+				return nil, errors.New("invalid coherence JSON: rationale, changed, and risk must be non-empty")
 			}
 			return &overview, nil
 		}
