@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -394,7 +395,7 @@ func TestRunSlicePlanTranscriptConsentMatrix(t *testing.T) {
 				t.Fatalf("summarizer calls = %d, want %d", fake.promptCalls, tc.wantPromptCall)
 			}
 			if tc.grantExternal && !tc.acknowledge {
-				wantCommand := "sentinel slice plan --json --intent-transcript transcript.txt --transcript-consent"
+				wantCommand := "sentinel slice plan --json --intent-transcript " + quoteCommandArgument("transcript.txt") + " --transcript-consent"
 				if !strings.HasSuffix(strings.TrimSpace(out.String()), wantCommand) {
 					t.Fatalf("missing exact repeat command in output: %s", out.String())
 				}
@@ -765,5 +766,71 @@ func grantExternalDiffForPlan(t *testing.T) {
 	}
 	if _, err := consent.GrantExternalDiff("."); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTranscriptRepeatCommandKeepsPathAsOneArgument(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "metacharacter-was-executed")
+	path := filepath.Join(t.TempDir(), "transcript with spaces O'Reilly")
+	if runtime.GOOS == "windows" {
+		path += " & echo retry-command-injected"
+	} else {
+		path += "; touch " + marker
+	}
+	command := transcriptRepeatCommand(true, path)
+
+	binDir := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "arguments")
+	if runtime.GOOS == "windows" {
+		sentinel := filepath.Join(binDir, "sentinel.cmd")
+		script := "@echo off\r\n> \"%CAPTURE%\" echo \"%~5\"\r\n"
+		if err := os.WriteFile(sentinel, []byte(script), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := exec.Command("cmd.exe", "/d", "/s", "/c", command)
+		cmd.Env = append(os.Environ(), "CAPTURE="+capture, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("retry command failed: %v (%s)", err, output)
+		}
+		if strings.Contains(string(output), "retry-command-injected") {
+			t.Fatal("retry command evaluated the path's shell metacharacters")
+		}
+		captured, err := os.ReadFile(capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `"` + path + `"` + "\r\n"
+		if string(captured) != want {
+			t.Fatalf("retry command argument = %q, want %q", captured, want)
+		}
+		return
+	}
+
+	sentinel := filepath.Join(binDir, "sentinel")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$#\" > \"$CAPTURE\"\nfor arg do printf '%s\\n' \"$arg\" >> \"$CAPTURE\"; done\n"
+	if err := os.WriteFile(sentinel, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Env = append(os.Environ(), "CAPTURE="+capture, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("retry command failed: %v (%s)", err, output)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("retry command evaluated the path's shell metacharacters")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("checking injection marker: %v", err)
+	}
+
+	captured, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join([]string{"6", "slice", "plan", "--json", "--intent-transcript", path, "--transcript-consent", ""}, "\n")
+	if string(captured) != want {
+		t.Fatalf("retry command arguments = %q, want %q", captured, want)
 	}
 }
