@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // SelectorMode describes the smallest safe unit that a slice plan can select.
@@ -92,10 +94,12 @@ var (
 )
 
 type planIdentity struct {
-	State     string            `json:"state"`
-	Batches   []batchIdentity   `json:"batches"`
-	Changes   []PlannedChange   `json:"changes,omitempty"`
-	Decisions []PendingDecision `json:"decisions,omitempty"`
+	State        string            `json:"state"`
+	Intent       string            `json:"intent,omitempty"`
+	IntentSource intent.Source     `json:"intent_source,omitempty"`
+	Batches      []batchIdentity   `json:"batches"`
+	Changes      []PlannedChange   `json:"changes,omitempty"`
+	Decisions    []PendingDecision `json:"decisions,omitempty"`
 }
 
 type batchIdentity struct {
@@ -234,6 +238,9 @@ func ValidateSerializedPlan(plan *SerializedPlan) error {
 	if plan == nil {
 		return invalidPlan("plan is nil")
 	}
+	if err := validatePlanIntent(plan); err != nil {
+		return err
+	}
 	if err := ValidatePlanSelections(plan); err != nil {
 		return err
 	}
@@ -253,6 +260,9 @@ func ValidateSerializedPlan(plan *SerializedPlan) error {
 // its current serialized selectors. It performs no Git operation and never
 // changes the index or history.
 func RecalculatePlanID(plan *SerializedPlan) error {
+	if err := validatePlanIntent(plan); err != nil {
+		return err
+	}
 	if err := ValidatePlanSelections(plan); err != nil {
 		return err
 	}
@@ -446,6 +456,20 @@ func validatePlanPath(value string) (string, error) {
 	return normalized, nil
 }
 
+func validatePlanIntent(plan *SerializedPlan) error {
+	if plan == nil {
+		return invalidPlan("plan is nil")
+	}
+	normalized, err := intent.Normalize(plan.Intent, plan.IntentSource)
+	if err != nil {
+		return invalidPlan("plan intent: %v", err)
+	}
+	if normalized.Text != plan.Intent || normalized.Source != plan.IntentSource {
+		return invalidPlan("plan intent is not normalized")
+	}
+	return nil
+}
+
 func invalidPlan(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidPlan, fmt.Sprintf(format, args...))
 }
@@ -477,10 +501,12 @@ func atomID(change PlannedChange, atom ChangeAtom) string {
 
 func calculatePlanID(plan *SerializedPlan) string {
 	identity := planIdentity{
-		State:     plan.WorktreeState,
-		Batches:   canonicalBatches(plan.Batches),
-		Changes:   canonicalChanges(plan.Changes),
-		Decisions: canonicalDecisions(plan.PendingDecisions),
+		State:        plan.WorktreeState,
+		Intent:       plan.Intent,
+		IntentSource: plan.IntentSource,
+		Batches:      canonicalBatches(plan.Batches),
+		Changes:      canonicalChanges(plan.Changes),
+		Decisions:    canonicalDecisions(plan.PendingDecisions),
 	}
 	encoded, _ := json.Marshal(identity)
 	digest := sha256.Sum256(encoded)

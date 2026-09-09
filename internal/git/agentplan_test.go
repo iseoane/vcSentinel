@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 type adapterPlanFake struct {
@@ -158,4 +160,94 @@ func countCommits(t *testing.T) string {
 		t.Fatalf("could not count commits: %v", err)
 	}
 	return strings.TrimSpace(output)
+}
+
+func TestPlanIDIncludesIntentAndSource(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	declared, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+		Intent:       "protect the release",
+		IntentSource: intent.SourceDeclared,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+		Intent:       "summarize the release",
+		IntentSource: intent.SourceConversation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared.Intent != "protect the release" || declared.IntentSource != intent.SourceDeclared {
+		t.Fatalf("declared plan intent = %+v", declared)
+	}
+	if declared.PlanID == conversation.PlanID {
+		t.Fatal("different plan intent produced the same PlanID")
+	}
+}
+
+func TestPlanWarningsAreDisplayMetadataOnly(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+		Intent:       "protect the release",
+		IntentSource: intent.SourceDeclared,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID := plan.PlanID
+	plan.Warnings = []string{"Transcript was sent under consent."}
+	if plan.PlanID != originalID {
+		t.Fatalf("display warnings changed PlanID from %q to %q", originalID, plan.PlanID)
+	}
+	if err := ValidateSerializedPlan(plan); err != nil {
+		t.Fatalf("warnings made an otherwise valid plan invalid: %v", err)
+	}
+}
+
+func TestValidateApplicationRejectsAlteredIntentAndNoIntentAnswers(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+		Intent:       "protect the release",
+		IntentSource: intent.SourceDeclared,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID := plan.PlanID
+	plan.Intent = "altered intent"
+	if err := ValidateApplication(plan, PlanAnswers{PlanID: originalID, Answers: map[string]string{}}); !errors.Is(err, ErrInvalidPlan) {
+		t.Fatalf("altered intent error = %v, want ErrInvalidPlan", err)
+	}
+
+	noIntent, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withIntent, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+		Intent:       "protect the release",
+		IntentSource: intent.SourceDeclared,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noIntent.PlanID == withIntent.PlanID {
+		t.Fatal("no-intent and intent plans unexpectedly share a PlanID")
+	}
+	if err := ValidateApplication(withIntent, PlanAnswers{PlanID: noIntent.PlanID, Answers: map[string]string{}}); !errors.Is(err, ErrPlanMismatch) {
+		t.Fatalf("no-intent answer error = %v, want ErrPlanMismatch", err)
+	}
 }

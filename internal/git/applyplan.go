@@ -3,6 +3,8 @@ package git
 import (
 	"errors"
 	"fmt"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // Rejection reasons of `slice apply`. They are sentinel errors so the CLI
@@ -131,14 +133,18 @@ func deserializePlan(plan *SerializedPlan) *FragmentationPlan {
 		if len(selectors) == 0 {
 			selectors = wholeFileSelectors(batch.Paths)
 		}
+		message := batch.Message
+		if plan.Intent != "" || plan.IntentSource != "" {
+			message = intent.Append(message, intent.Intent{Text: plan.Intent, Source: plan.IntentSource})
+		}
 		executable.Batches = append(executable.Batches, PlannedBatch{
 			Layer:       batch.Layer,
 			Number:      batch.Number,
 			Paths:       batch.Paths,
 			Selectors:   selectors,
 			TotalLines:  batch.Lines,
-			Message:     batch.Message,
-			AutoMessage: batch.Message,
+			Message:     message,
+			AutoMessage: message,
 			IsOversized: batch.IsOversized,
 		})
 	}

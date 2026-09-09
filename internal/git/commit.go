@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // CommitMessage returns the first line of a commit's message.
@@ -16,6 +18,17 @@ func CommitMessage(sha string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// CommitIntent reads the complete commit message with Git's %B placeholder and
+// delegates trailer parsing to internal/intent. A commit without a complete
+// recognized pair returns the zero intent, not an inferred source.
+func CommitIntent(sha string) (intent.Intent, error) {
+	out, err := runGitOutput("show", "-s", "--format=%B", sha)
+	if err != nil {
+		return intent.Intent{}, err
+	}
+	return intent.Parse(out), nil
 }
 
 // stableDiffPrefixes pins the diff header prefixes. This is not cosmetic: the

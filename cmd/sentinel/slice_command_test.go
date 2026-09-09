@@ -14,11 +14,15 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/consent"
 	git "github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 type adapterSlicePlanFake struct {
-	baseCalls int
-	diffCalls int
+	baseCalls      int
+	diffCalls      int
+	prompt         string
+	promptResponse string
+	promptErr      error
 }
 
 func (a *adapterSlicePlanFake) GetCommitMessage([]string, string, int) (string, error) {
@@ -29,6 +33,11 @@ func (a *adapterSlicePlanFake) GetCommitMessage([]string, string, int) (string, 
 func (a *adapterSlicePlanFake) GetCommitMessageWithDiff([]string, string, int, string) (string, error) {
 	a.diffCalls++
 	return "feat(slice): message from commit profile", nil
+}
+
+func (a *adapterSlicePlanFake) RunPrompt(prompt string) (string, error) {
+	a.prompt = prompt
+	return a.promptResponse, a.promptErr
 }
 
 func TestRunSlicePlanWithConsentUsesAdapterWithDiffNotBaseMethod(t *testing.T) {
@@ -209,6 +218,192 @@ func TestSlicePlanAndApplyFullPath(t *testing.T) {
 	if code := runSliceApply(&repeatOut, []string{"--plan", "plan.json", "--answers", "answers.json"}); code != 1 {
 		t.Fatalf("reapply exit = %d, expected 1. Output: %s", code, repeatOut.String())
 	}
+}
+
+func TestRunSlicePlanCapturesDeclaredIntentAndHumanOutput(t *testing.T) {
+	prepareRepoForPlan(t)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var jsonOut bytes.Buffer
+	if code := runSlicePlan(&jsonOut, []string{"--json", "--intent", "  protect\n the   release "}); code != 0 {
+		t.Fatalf("JSON plan exit = %d: %s", code, jsonOut.String())
+	}
+	var plan git.SerializedPlan
+	if err := json.Unmarshal(jsonOut.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Intent != "protect the release" || plan.IntentSource != "declared" {
+		t.Fatalf("plan intent = %+v", plan)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("declared intent warnings = %v", plan.Warnings)
+	}
+
+	var humanOut bytes.Buffer
+	if code := runSlicePlan(&humanOut, []string{"--intent", "protect the release"}); code != 0 {
+		t.Fatalf("human plan exit = %d: %s", code, humanOut.String())
+	}
+	if !strings.Contains(humanOut.String(), "🎯 Intent (declared): protect the release") {
+		t.Fatalf("human plan omitted intent: %s", humanOut.String())
+	}
+}
+
+func TestRunSlicePlanSummarizesTranscriptOnlyWithConsent(t *testing.T) {
+	prepareRepoForPlan(t)
+	writeDiffRequest(t, true)
+	for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+		if err := exec.Command("git", args...).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := consent.GrantExternalDiff("."); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &adapterSlicePlanFake{promptResponse: "Protect the release"}
+	previous := newAgentAdapterForMessage
+	newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) { return fake, nil }
+	t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+	var out bytes.Buffer
+	if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt"}); code != 0 {
+		t.Fatalf("transcript plan exit = %d: %s", code, out.String())
+	}
+	var plan git.SerializedPlan
+	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Intent != "Protect the release" || plan.IntentSource != "conversation" {
+		t.Fatalf("transcript intent = %+v", plan)
+	}
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "consent") {
+		t.Fatalf("transcript warnings = %v", plan.Warnings)
+	}
+	if !strings.Contains(fake.prompt, intentTranscriptMarkerForTest()) {
+		t.Fatalf("adapter prompt did not contain transcript fences: %q", fake.prompt)
+	}
+}
+
+func TestRunSlicePlanDoesNotSendTranscriptWithoutConsent(t *testing.T) {
+	prepareRepoForPlan(t)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	invoked := false
+	previous := newAgentAdapterForMessage
+	newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) {
+		invoked = true
+		return &adapterSlicePlanFake{promptResponse: "must not run"}, nil
+	}
+	t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+	var out bytes.Buffer
+	if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt"}); code != 0 {
+		t.Fatalf("transcript plan exit = %d: %s", code, out.String())
+	}
+	var plan git.SerializedPlan
+	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if invoked {
+		t.Fatal("transcript was sent without external-diff consent")
+	}
+	if plan.Intent != "" || plan.IntentSource != "" || len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "not sent") {
+		t.Fatalf("no-consent transcript plan = %+v", plan)
+	}
+}
+
+func TestRunSlicePlanTranscriptFailuresWarnWithoutIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		factoryErr error
+		promptErr  error
+	}{
+		{name: "adapter unavailable", factoryErr: errors.New("adapter unavailable")},
+		{name: "summary failed", promptErr: errors.New("summary failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareRepoForPlan(t)
+			writeDiffRequest(t, true)
+			for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+				if err := exec.Command("git", args...).Run(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := consent.GrantExternalDiff("."); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			previous := newAgentAdapterForMessage
+			newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) {
+				return &adapterSlicePlanFake{promptErr: tc.promptErr}, tc.factoryErr
+			}
+			t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+			var out bytes.Buffer
+			if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt"}); code != 0 {
+				t.Fatalf("transcript plan exit = %d: %s", code, out.String())
+			}
+			var plan git.SerializedPlan
+			if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+				t.Fatal(err)
+			}
+			if plan.Intent != "" || plan.IntentSource != "" {
+				t.Fatalf("failed summary retained intent = %+v", plan)
+			}
+			if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "no intent") {
+				t.Fatalf("failure warnings = %v", plan.Warnings)
+			}
+		})
+	}
+}
+
+func TestRunSlicePlanRejectsTranscriptUsageErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "missing file", args: []string{"--intent-transcript", "missing.txt"}},
+		{name: "empty file", args: []string{"--intent-transcript", "empty.txt"}},
+		{name: "exclusive flags", args: []string{"--intent", "protect", "--intent-transcript", "transcript.txt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareRepoForPlan(t)
+			if tc.name == "empty file" {
+				if err := os.WriteFile("empty.txt", nil, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.name == "exclusive flags" {
+				if err := os.WriteFile("transcript.txt", []byte("transcript"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out bytes.Buffer
+			if code := runSlicePlan(&out, tc.args); code != 1 {
+				t.Fatalf("exit = %d, want usage error 1: %s", code, out.String())
+			}
+		})
+	}
+}
+
+func intentTranscriptMarkerForTest() string {
+	return intent.TranscriptBeginMarker
 }
 
 func prepareRepoForPlan(t *testing.T) {

@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // Answers accepted for a pending plan decision. There is no default value:
@@ -57,6 +59,9 @@ type SerializedBatch struct {
 type SerializedPlan struct {
 	PlanID             string              `json:"plan_id"`
 	WorktreeState      string              `json:"worktree_state"`
+	Intent             string              `json:"intent,omitempty"`
+	IntentSource       intent.Source       `json:"intent_source,omitempty"`
+	Warnings           []string            `json:"warnings,omitempty"`
 	Batches            []SerializedBatch   `json:"batches"`
 	Changes            []PlannedChange     `json:"changes,omitempty"`
 	PendingDecisions   []PendingDecision   `json:"pending_decisions"`
@@ -123,6 +128,13 @@ func BuildPlanForAgentWithAdapter(adapter CommitMessageGenerator) (*SerializedPl
 // BuildPlanForAgentWithOptions exposes validated ticket boundaries and
 // optional proposal input without changing the non-committing contract.
 func BuildPlanForAgentWithOptions(adapter CommitMessageGenerator, options SemanticSliceOptions) (*SerializedPlan, error) {
+	normalizedIntent, err := intent.Normalize(options.Intent, options.IntentSource)
+	if err != nil {
+		return nil, invalidPlan("plan intent: %v", err)
+	}
+	options.Intent = normalizedIntent.Text
+	options.IntentSource = normalizedIntent.Source
+
 	changes, err := CaptureDraftChanges()
 	if err != nil {
 		return nil, err
@@ -140,6 +152,8 @@ func BuildPlanForAgentWithOptions(adapter CommitMessageGenerator, options Semant
 	}
 	plan.Changes = changes
 	serialized := serializePlanWithAutomatics(plan, recorder.pending, recorder.automatics, "")
+	serialized.Intent = options.Intent
+	serialized.IntentSource = options.IntentSource
 	serialized.WorktreeState = hashPlannedChangesState(changes)
 	if err := RecalculatePlanID(serialized); err != nil {
 		return nil, err

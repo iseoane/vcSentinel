@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // preparePlanWithGiant leaves the repo with one normal file and one giant
@@ -143,6 +145,11 @@ func TestApplyApprovedPlanHappyPath(t *testing.T) {
 		if result.Message != plan.Batches[i].Message {
 			t.Errorf("commit %d: message %q, expected %q", i, result.Message, plan.Batches[i].Message)
 		}
+		if got, err := CommitIntent(result.Hash); err != nil {
+			t.Fatalf("CommitIntent(%s) error = %v", result.Hash, err)
+		} else if got != (intent.Intent{}) {
+			t.Fatalf("no-intent apply wrote trailer %+v", got)
+		}
 	}
 	clean, err := WorktreeClean()
 	if err != nil {
@@ -150,5 +157,55 @@ func TestApplyApprovedPlanHappyPath(t *testing.T) {
 	}
 	if !clean {
 		t.Error("pending changes remained after applying the full plan")
+	}
+}
+
+func TestApplyApprovedPlanRoundTripsIntentTrailers(t *testing.T) {
+	for _, source := range []string{intent.SourceDeclared, intent.SourceConversation} {
+		t.Run(source, func(t *testing.T) {
+			plan := preparePlanWithGiant(t)
+			plan.Intent = "protect the release"
+			plan.IntentSource = source
+			if err := RecalculatePlanID(plan); err != nil {
+				t.Fatalf("RecalculatePlanID() error = %v", err)
+			}
+
+			results, err := ApplyApprovedPlan(plan, bypassAnswers(plan))
+			if err != nil {
+				t.Fatalf("ApplyApprovedPlan() error = %v", err)
+			}
+			for _, result := range results {
+				got, err := CommitIntent(result.Hash)
+				if err != nil {
+					t.Fatalf("CommitIntent(%s) error = %v", result.Hash, err)
+				}
+				want := intent.Intent{Text: "protect the release", Source: source}
+				if got != want {
+					t.Fatalf("CommitIntent(%s) = %+v, want %+v", result.Hash, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateApplicationRejectsMalformedIntentPair(t *testing.T) {
+	cases := []struct {
+		name   string
+		intent string
+		source string
+	}{
+		{name: "invalid source", intent: "protect the release", source: "unknown"},
+		{name: "text only", intent: "protect the release"},
+		{name: "source only", source: intent.SourceDeclared},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := preparePlanWithGiant(t)
+			plan.Intent = tt.intent
+			plan.IntentSource = tt.source
+			if err := ValidateApplication(plan, PlanAnswers{PlanID: plan.PlanID, Answers: map[string]string{}}); !errors.Is(err, ErrInvalidPlan) {
+				t.Fatalf("ValidateApplication() error = %v, want ErrInvalidPlan", err)
+			}
+		})
 	}
 }

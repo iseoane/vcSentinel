@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // prepareRepoWithCommits creates a test repo with an initial state
@@ -24,6 +26,31 @@ func prepareRepoWithCommits(t *testing.T) string {
 	runGitInDir(t, dir, "add", "b.go")
 	runGitInDir(t, dir, "commit", "-m", "feat(b): second commit")
 	return dir
+}
+
+func TestCommitIntentReadsFullMessageTrailers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real git repository integration in short mode")
+	}
+	dir := prepareRepoWithCommits(t)
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "intent.txt"), []byte("intent\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGitInDir(t, dir, "add", "intent.txt")
+	runGitInDir(t, dir, "commit", "-m", "feat: intent", "-m", intent.Render(intent.Intent{Text: "protect the release", Source: intent.SourceDeclared}))
+	head, err := SHAHead()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := CommitIntent(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := intent.Intent{Text: "protect the release", Source: intent.SourceDeclared}
+	if got != want {
+		t.Fatalf("CommitIntent() = %+v, want %+v", got, want)
+	}
 }
 
 func TestCommitMessage(t *testing.T) {
