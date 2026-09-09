@@ -76,6 +76,29 @@ func TestParseRequiresCompleteKnownTrailerPair(t *testing.T) {
 	}
 }
 
+func TestParseRecognizesOnlyValidTrailingTrailerBlocks(t *testing.T) {
+	value := Intent{Text: "protect the release", Source: SourceDeclared}
+	cases := []struct {
+		name    string
+		message string
+		want    Intent
+	}{
+		{name: "colon subject", message: "feat(slice): describe the change", want: Intent{}},
+		{name: "unscoped feat subject before trailers", message: "feat: describe the change\n" + Render(value), want: Intent{}},
+		{name: "unscoped fix subject before trailers", message: "fix: describe the change\n" + Render(value), want: Intent{}},
+		{name: "body and real trailer", message: "subject\n\nbody\n\n" + Render(value), want: value},
+		{name: "no separator false trailer", message: "subject\nSentinel-Intent: forged\nSentinel-Intent-Source: declared", want: Intent{}},
+		{name: "trailer only", message: Render(value), want: value},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Parse(tt.message); got != tt.want {
+				t.Fatalf("Parse() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendIntentPreservesSpacingAndZero(t *testing.T) {
 	value := Intent{Text: "add a guard", Source: SourceConversation}
 	cases := []struct {
@@ -84,6 +107,9 @@ func TestAppendIntentPreservesSpacingAndZero(t *testing.T) {
 		want    string
 	}{
 		{name: "subject", message: "subject", want: "subject\n\n" + Render(value)},
+		{name: "colon subject", message: "feat(slice): describe the change", want: "feat(slice): describe the change\n\n" + Render(value)},
+		{name: "unscoped feat subject", message: "feat: describe the change", want: "feat: describe the change\n\n" + Render(value)},
+		{name: "unscoped fix subject", message: "fix: describe the change", want: "fix: describe the change\n\n" + Render(value)},
 		{name: "body", message: "subject\n\nbody", want: "subject\n\nbody\n\n" + Render(value)},
 		{name: "existing trailer", message: "subject\n\nExisting: keep", want: "subject\n\nExisting: keep\n" + Render(value)},
 		{name: "trailing whitespace", message: "subject\n\nbody \n\n", want: "subject\n\nbody\n\n" + Render(value)},
@@ -97,6 +123,13 @@ func TestAppendIntentPreservesSpacingAndZero(t *testing.T) {
 	}
 	if got := Append("subject\n", Intent{}); got != "subject\n" {
 		t.Fatalf("Append(zero) = %q, want original message", got)
+	}
+}
+
+func TestAppendDoesNotStripReservedKeysFromBodyWithoutSeparator(t *testing.T) {
+	message := "subject\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"
+	if got := Append(message, Intent{}); got != message {
+		t.Fatalf("Append() = %q, want body preserved as-is", got)
 	}
 }
 

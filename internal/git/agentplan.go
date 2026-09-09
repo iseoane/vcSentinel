@@ -135,7 +135,7 @@ func BuildPlanForAgentWithOptions(adapter CommitMessageGenerator, options Semant
 	options.Intent = normalizedIntent.Text
 	options.IntentSource = normalizedIntent.Source
 
-	changes, err := CaptureDraftChanges()
+	changes, err := CaptureDraftChangesExcluding(options.ExcludedPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +150,7 @@ func BuildPlanForAgentWithOptions(adapter CommitMessageGenerator, options Semant
 	if adapter != nil {
 		GenerateBatchMessages(plan, adapter)
 	}
+	finalizeBatchMessages(plan, normalizedIntent)
 	plan.Changes = changes
 	serialized := serializePlanWithAutomatics(plan, recorder.pending, recorder.automatics, "")
 	serialized.Intent = options.Intent
@@ -159,6 +160,17 @@ func BuildPlanForAgentWithOptions(adapter CommitMessageGenerator, options Semant
 		return nil, err
 	}
 	return serialized, nil
+}
+
+func finalizeBatchMessages(plan *FragmentationPlan, value intent.Intent) {
+	for index := range plan.Batches {
+		batch := &plan.Batches[index]
+		message := batch.Message
+		if strings.TrimSpace(message) == "" {
+			message = batch.AutoMessage
+		}
+		batch.Message = intent.Append(message, value)
+	}
 }
 
 func filesForPlan(changes []PlannedChange) []ModifiedFile {

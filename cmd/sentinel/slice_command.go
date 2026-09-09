@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -73,25 +74,20 @@ func runSlicePlan(out io.Writer, args []string) int {
 		}
 	}
 
-	transcript := ""
-	if hasTranscript {
-		content, readErr := os.ReadFile(transcriptPath)
-		if readErr != nil {
-			fmt.Fprintf(out, "❌ Could not read --intent-transcript: %v\n", readErr)
-			return 1
-		}
-		transcript = string(content)
-		if strings.TrimSpace(transcript) == "" {
-			fmt.Fprintln(out, "❌ --intent-transcript must refer to a non-empty file.")
-			return 1
-		}
-	}
-
 	root, err := git.GetWorktreeRoot()
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return 1
 	}
+	resolvedTranscriptPath, excludedTranscriptPath := resolveTranscriptPath(root, transcriptPath)
+	if hasTranscript {
+		if err := validateTranscriptPath(resolvedTranscriptPath); err != nil {
+			fmt.Fprintf(out, "❌ Could not read --intent-transcript: %v\n", err)
+			return 1
+		}
+	}
+
+	transcript := ""
 	var adapter agentadapter.AgentAdapter
 	warnings := []string{}
 	planIntent := declaredIntent
@@ -104,6 +100,13 @@ func runSlicePlan(out io.Writer, args []string) int {
 		fmt.Fprintln(out, "Acknowledge this repository's external-diff consent explicitly before sending the transcript.")
 		fmt.Fprintln(out, transcriptRepeatCommand(asJSON, transcriptPath))
 		return 1
+	}
+	if hasTranscript && consented {
+		transcript, err = readTranscript(resolvedTranscriptPath)
+		if err != nil {
+			fmt.Fprintf(out, "❌ Could not read --intent-transcript: %v\n", err)
+			return 1
+		}
 	}
 	if consented {
 		adapter, err = newAgentAdapterForMessage(root)
@@ -135,10 +138,14 @@ func runSlicePlan(out io.Writer, args []string) int {
 		adapter = nil
 	}
 
-	plan, err := buildSlicePlan(adapter, git.SemanticSliceOptions{
+	options := git.SemanticSliceOptions{
 		Intent:       planIntent.Text,
 		IntentSource: planIntent.Source,
-	})
+	}
+	if excludedTranscriptPath != "" {
+		options.ExcludedPaths = []string{excludedTranscriptPath}
+	}
+	plan, err := buildSlicePlan(adapter, options)
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return 1
@@ -160,6 +167,59 @@ func runSlicePlan(out io.Writer, args []string) int {
 		return pendingDecisionsExitCode
 	}
 	return 0
+}
+
+func resolveTranscriptPath(root, input string) (string, string) {
+	candidate := filepath.FromSlash(input)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(root, candidate)
+	}
+	candidate = filepath.Clean(candidate)
+	relative, err := filepath.Rel(filepath.Clean(root), candidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || filepath.IsAbs(relative) {
+		return candidate, ""
+	}
+	return candidate, filepath.ToSlash(relative)
+}
+
+func validateTranscriptPath(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("path is not a regular file")
+	}
+	if info.Size() > int64(intent.MaxTranscriptBytes) {
+		return fmt.Errorf("file exceeds the %d-byte limit", intent.MaxTranscriptBytes)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("file is empty")
+	}
+	return nil
+}
+
+func readTranscript(path string) (string, error) {
+	if err := validateTranscriptPath(path); err != nil {
+		return "", err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, int64(intent.MaxTranscriptBytes)+1))
+	if err != nil {
+		return "", err
+	}
+	if len(content) > intent.MaxTranscriptBytes {
+		return "", fmt.Errorf("file exceeds the %d-byte limit", intent.MaxTranscriptBytes)
+	}
+	transcript := string(content)
+	if strings.TrimSpace(transcript) == "" {
+		return "", fmt.Errorf("file is empty")
+	}
+	return transcript, nil
 }
 
 func hasPromptRunner(adapter agentadapter.AgentAdapter) bool {

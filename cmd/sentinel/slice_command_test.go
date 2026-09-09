@@ -20,6 +20,7 @@ import (
 type adapterSlicePlanFake struct {
 	baseCalls      int
 	diffCalls      int
+	diff           string
 	promptCalls    int
 	prompt         string
 	promptResponse string
@@ -31,8 +32,9 @@ func (a *adapterSlicePlanFake) GetCommitMessage([]string, string, int) (string, 
 	return "", errors.New("the base method must not run")
 }
 
-func (a *adapterSlicePlanFake) GetCommitMessageWithDiff([]string, string, int, string) (string, error) {
+func (a *adapterSlicePlanFake) GetCommitMessageWithDiff(_ []string, _ string, _ int, diff string) (string, error) {
 	a.diffCalls++
+	a.diff = diff
 	return "feat(slice): message from commit profile", nil
 }
 
@@ -294,6 +296,21 @@ func TestRunSlicePlanSummarizesTranscriptOnlyWithConsent(t *testing.T) {
 	if !strings.Contains(fake.prompt, intentTranscriptMarkerForTest()) {
 		t.Fatalf("adapter prompt did not contain transcript fences: %q", fake.prompt)
 	}
+	for _, change := range plan.Changes {
+		if change.Path == "transcript.txt" || change.OldPath == "transcript.txt" {
+			t.Fatalf("transcript remained in CLI plan changes: %+v", plan.Changes)
+		}
+	}
+	for _, batch := range plan.Batches {
+		for _, path := range batch.Paths {
+			if path == "transcript.txt" {
+				t.Fatalf("transcript remained in CLI batch: %+v", plan.Batches)
+			}
+		}
+	}
+	if strings.Contains(fake.diff, "transcript.txt") || strings.Contains(fake.diff, "human wanted a protected release") {
+		t.Fatalf("transcript reached the CLI adapter micro-diff: %q", fake.diff)
+	}
 }
 
 func TestRunSlicePlanDoesNotSendTranscriptWithoutConsent(t *testing.T) {
@@ -387,6 +404,165 @@ func TestRunSlicePlanTranscriptConsentMatrix(t *testing.T) {
 			}
 			if tc.grantExternal && tc.acknowledge && !strings.Contains(out.String(), "Transcript sent to auto under this repository's external-diff consent, acknowledged with --transcript-consent.") {
 				t.Fatalf("missing acknowledgement disclosure: %s", out.String())
+			}
+		})
+	}
+}
+
+func TestRunSlicePlanDoesNotReadTranscriptBeforeBothConsentGates(t *testing.T) {
+	prepareRepoForPlan(t)
+	grantExternalDiffForPlan(t)
+	fake := &adapterSlicePlanFake{promptResponse: "must not run"}
+	previous := newAgentAdapterForMessage
+	newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) {
+		return fake, nil
+	}
+	t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+	if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt"}); code != 1 {
+		t.Fatalf("exit = %d, want 1: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "would be sent") || strings.Contains(out.String(), "Could not read") {
+		t.Fatalf("transcript was read before acknowledgement gate: %s", out.String())
+	}
+	if fake.promptCalls != 0 {
+		t.Fatalf("summarizer calls = %d, want 0", fake.promptCalls)
+	}
+}
+
+func TestRunSlicePlanResolvesTranscriptFromRepositoryRoot(t *testing.T) {
+	prepareRepoForPlan(t)
+	grantExternalDiffForPlan(t)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir("nested", 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir("nested")
+
+	fake := &adapterSlicePlanFake{promptResponse: "Protect the release"}
+	previous := newAgentAdapterForMessage
+	newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) { return fake, nil }
+	t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+	var out bytes.Buffer
+	if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt", "--transcript-consent"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	var plan git.SerializedPlan
+	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Intent != "Protect the release" || fake.promptCalls != 1 {
+		t.Fatalf("root-relative transcript plan = %+v, prompt calls = %d", plan, fake.promptCalls)
+	}
+	for _, change := range plan.Changes {
+		if change.Path == "transcript.txt" || change.OldPath == "transcript.txt" {
+			t.Fatalf("root-relative transcript remained in plan: %+v", plan.Changes)
+		}
+	}
+}
+
+func TestRunSlicePlanLeavesInRepoTranscriptUncommittedAfterApply(t *testing.T) {
+	prepareRepoForPlan(t)
+	grantExternalDiffForPlan(t)
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &adapterSlicePlanFake{promptResponse: "Protect the release"}
+	previous := newAgentAdapterForMessage
+	newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) { return fake, nil }
+	t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+	var planOut bytes.Buffer
+	if code := runSlicePlan(&planOut, []string{"--json", "--intent-transcript", "transcript.txt", "--transcript-consent"}); code != 0 {
+		t.Fatalf("plan exit = %d: %s", code, planOut.String())
+	}
+	var plan git.SerializedPlan
+	if err := json.Unmarshal(planOut.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("plan.json", planOut.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	answers, err := json.Marshal(git.PlanAnswers{PlanID: plan.PlanID, Answers: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("answers.json", answers, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var applyOut bytes.Buffer
+	if code := runSliceApply(&applyOut, []string{"--plan", "plan.json", "--answers", "answers.json"}); code != 0 {
+		t.Fatalf("apply exit = %d: %s", code, applyOut.String())
+	}
+	latest, err := exec.Command("git", "show", "--format=", "--name-only", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(latest), "transcript.txt") {
+		t.Fatalf("applied commit included the transcript: %s", latest)
+	}
+	status, err := exec.Command("git", "status", "--porcelain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(status), "transcript.txt") {
+		t.Fatalf("transcript was not left in the worktree: %s", status)
+	}
+}
+
+func TestRunSlicePlanRejectsInvalidTranscriptInputsAfterConsent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func(t *testing.T)
+		path string
+	}{
+		{name: "missing", path: "missing.txt"},
+		{name: "non-regular", path: "directory.txt", make: func(t *testing.T) {
+			if err := os.Mkdir("directory.txt", 0755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "empty", path: "empty.txt", make: func(t *testing.T) {
+			if err := os.WriteFile("empty.txt", nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "oversized", path: "oversized.txt", make: func(t *testing.T) {
+			if err := os.WriteFile("oversized.txt", []byte(strings.Repeat("x", intent.MaxTranscriptBytes+1)), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareRepoForPlan(t)
+			grantExternalDiffForPlan(t)
+			if tc.make != nil {
+				tc.make(t)
+			}
+			fake := &adapterSlicePlanFake{promptResponse: "must not run"}
+			previous := newAgentAdapterForMessage
+			newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) { return fake, nil }
+			t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+			var out bytes.Buffer
+			if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", tc.path, "--transcript-consent"}); code != 1 {
+				t.Fatalf("exit = %d, want 1: %s", code, out.String())
+			}
+			if fake.promptCalls != 0 {
+				t.Fatalf("summarizer calls = %d, want 0", fake.promptCalls)
 			}
 		})
 	}
@@ -575,6 +751,19 @@ func writeDiffRequest(t *testing.T, allowed bool) {
 	}
 	content := fmt.Sprintf("request_external_agent_diff: %t\n", allowed)
 	if err := os.WriteFile(filepath.Join(".vas_sentinel", "vassentinel.yml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func grantExternalDiffForPlan(t *testing.T) {
+	t.Helper()
+	writeDiffRequest(t, true)
+	for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+		if err := exec.Command("git", args...).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := consent.GrantExternalDiff("."); err != nil {
 		t.Fatal(err)
 	}
 }

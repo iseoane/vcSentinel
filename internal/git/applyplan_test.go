@@ -146,6 +146,13 @@ func TestApplyApprovedPlanHappyPath(t *testing.T) {
 		if result.Message != plan.Batches[i].Message {
 			t.Errorf("commit %d: message %q, expected %q", i, result.Message, plan.Batches[i].Message)
 		}
+		actual, err := runGitOutput("show", "-s", "--format=%B", result.Hash)
+		if err != nil {
+			t.Fatalf("reading commit %s: %v", result.Hash, err)
+		}
+		if strings.TrimRight(actual, "\n") != plan.Batches[i].Message {
+			t.Errorf("commit %d message = %q, expected %q", i, strings.TrimRight(actual, "\n"), plan.Batches[i].Message)
+		}
 		if got, err := CommitIntent(result.Hash); err != nil {
 			t.Fatalf("CommitIntent(%s) error = %v", result.Hash, err)
 		} else if got != (intent.Intent{}) {
@@ -162,15 +169,23 @@ func TestApplyApprovedPlanHappyPath(t *testing.T) {
 }
 
 func TestApplyApprovedPlanRemovesForgedReservedTrailersWithoutIntent(t *testing.T) {
-	plan := preparePlanWithGiant(t)
-	plan.Batches[0].Message = "subject\n\nbody\n\nExisting: keep\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"
-	if err := RecalculatePlanID(plan); err != nil {
-		t.Fatalf("RecalculatePlanID() error = %v", err)
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &adapterPlanFake{message: "subject\n\nbody\n\nExisting: keep\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"}
+	plan, err := BuildPlanForAgentWithAdapter(adapter)
+	if err != nil {
+		t.Fatalf("BuildPlanForAgentWithAdapter() error: %v", err)
+	}
+	if strings.Contains(plan.Batches[0].Message, intent.IntentKey) || strings.Contains(plan.Batches[0].Message, intent.SourceKey) {
+		t.Fatalf("forged reserved trailers survived plan creation: %q", plan.Batches[0].Message)
 	}
 
-	results, err := ApplyApprovedPlan(plan, bypassAnswers(plan))
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID, Answers: map[string]string{}})
 	if err != nil {
-		t.Fatalf("ApplyApprovedPlan() error = %v", err)
+		t.Fatalf("ApplyApprovedPlan() error: %v", err)
 	}
 	for _, result := range results {
 		message, err := runGitOutput("show", "-s", "--format=%B", result.Hash)
@@ -189,14 +204,20 @@ func TestApplyApprovedPlanRemovesForgedReservedTrailersWithoutIntent(t *testing.
 func TestApplyApprovedPlanRoundTripsIntentTrailers(t *testing.T) {
 	for _, source := range []string{intent.SourceDeclared, intent.SourceConversation} {
 		t.Run(source, func(t *testing.T) {
-			plan := preparePlanWithGiant(t)
-			plan.Intent = "protect the release"
-			plan.IntentSource = source
-			if err := RecalculatePlanID(plan); err != nil {
-				t.Fatalf("RecalculatePlanID() error = %v", err)
+			prepareTempRepo(t)
+			commitInRepo(t, "base.txt", "base\n")
+			if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+				Intent:       "protect the release",
+				IntentSource: source,
+			})
+			if err != nil {
+				t.Fatalf("BuildPlanForAgentWithOptions() error = %v", err)
 			}
 
-			results, err := ApplyApprovedPlan(plan, bypassAnswers(plan))
+			results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID, Answers: map[string]string{}})
 			if err != nil {
 				t.Fatalf("ApplyApprovedPlan() error = %v", err)
 			}

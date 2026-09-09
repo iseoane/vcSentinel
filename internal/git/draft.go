@@ -22,12 +22,24 @@ type gitChangeRecord struct {
 // staging, writing the index, or creating history. It includes untracked files
 // and preserves both sides of a detected rename.
 func CaptureDraftChanges() ([]PlannedChange, error) {
+	return CaptureDraftChangesExcluding(nil)
+}
+
+// CaptureDraftChangesExcluding captures the draft after removing records whose
+// current or previous path is excluded. Filtering records before inspection is
+// important: an excluded transcript must not be hashed, diffed, or parsed as a
+// candidate change, including when Git reports it as a rename or copy.
+func CaptureDraftChangesExcluding(excludedPaths []string) ([]PlannedChange, error) {
 	records, err := captureGitChangeRecords()
 	if err != nil {
 		return nil, err
 	}
+	excluded := normalizedExcludedPaths(excludedPaths)
 	changes := make([]PlannedChange, 0, len(records))
 	for _, record := range records {
+		if excluded[normalizeGitPath(record.Path)] || (record.OldPath != "" && excluded[normalizeGitPath(record.OldPath)]) {
+			continue
+		}
 		change, err := inspectGitChange(record)
 		if err != nil {
 			return nil, err
@@ -38,6 +50,17 @@ func CaptureDraftChanges() ([]PlannedChange, error) {
 		return changeKey(changes[i].Path, changes[i].OldPath) < changeKey(changes[j].Path, changes[j].OldPath)
 	})
 	return changes, nil
+}
+
+func normalizedExcludedPaths(paths []string) map[string]bool {
+	excluded := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		excluded[normalizeGitPath(path)] = true
+	}
+	return excluded
 }
 
 // HashDraftState returns a deterministic fingerprint of every pending change,

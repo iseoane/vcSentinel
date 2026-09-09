@@ -309,6 +309,21 @@ func TestSlicePlanRepresentsRequestedGitChangeKinds(t *testing.T) {
 	}
 }
 
+func TestCaptureDraftChangesExcludingFiltersBothRenamePaths(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "transcript.txt", "conversation\n")
+	if _, err := runGitOutput("mv", "transcript.txt", "renamed.txt"); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := CaptureDraftChangesExcluding([]string{"transcript.txt"})
+	if err != nil {
+		t.Fatalf("CaptureDraftChangesExcluding() error = %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("excluded rename remained in capture: %+v", changes)
+	}
+}
+
 func TestSlicePlanRejectsHunkSelectionForRenames(t *testing.T) {
 	prepareTempRepo(t)
 	commitInRepo(t, "old.go", "rename me\n")

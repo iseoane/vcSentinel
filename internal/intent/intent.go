@@ -14,6 +14,7 @@ const (
 	IntentKey          = "Sentinel-Intent"
 	SourceKey          = "Sentinel-Intent-Source"
 	MaxLength          = 300
+	MaxTranscriptBytes = 64 * 1024
 	SourceDeclared     = "declared"
 	SourceConversation = "conversation"
 )
@@ -119,17 +120,14 @@ func Append(message string, value Intent) string {
 
 func stripReservedTrailingTrailers(message string) (string, bool) {
 	lines := strings.Split(message, "\n")
-	start := len(lines)
-	for start > 0 && isTrailerLine(lines[start-1]) {
-		start--
-	}
-	if start == len(lines) {
+	start, end, ok := trailingTrailerBlock(lines)
+	if !ok {
 		return message, false
 	}
 
 	kept := append([]string(nil), lines[:start]...)
 	removed := false
-	for _, line := range lines[start:] {
+	for _, line := range lines[start:end] {
 		if isReservedTrailerLine(line) {
 			removed = true
 			continue
@@ -165,21 +163,14 @@ func Parse(message string) Intent {
 		return Intent{}
 	}
 	lines := strings.Split(message, "\n")
-	start := len(lines)
-	for start > 0 {
-		line := strings.TrimSuffix(lines[start-1], "\r")
-		if !isTrailerLine(line) {
-			break
-		}
-		start--
-	}
-	if start == len(lines) {
+	start, end, ok := trailingTrailerBlock(lines)
+	if !ok {
 		return Intent{}
 	}
 
 	text, source := "", ""
 	seenText, seenSource := false, false
-	for _, line := range lines[start:] {
+	for _, line := range lines[start:end] {
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
@@ -203,12 +194,26 @@ func Parse(message string) Intent {
 }
 
 func hasTrailingTrailerBlock(message string) bool {
-	lines := strings.Split(message, "\n")
-	start := len(lines)
+	_, _, ok := trailingTrailerBlock(strings.Split(message, "\n"))
+	return ok
+}
+
+func trailingTrailerBlock(lines []string) (start, end int, ok bool) {
+	end = len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	start = end
 	for start > 0 && isTrailerLine(lines[start-1]) {
 		start--
 	}
-	return start < len(lines)
+	if start == end {
+		return 0, 0, false
+	}
+	if start > 0 && strings.TrimSpace(lines[start-1]) != "" {
+		return 0, 0, false
+	}
+	return start, end, true
 }
 
 func isTrailerLine(line string) bool {
@@ -217,5 +222,35 @@ func isTrailerLine(line string) bool {
 		return false
 	}
 	key, _, ok := strings.Cut(line, ":")
-	return ok && strings.TrimSpace(key) != ""
+	return ok && isTrailerKey(strings.TrimSpace(key)) && !isUnscopedConventionalCommitSubject(line)
+}
+
+func isUnscopedConventionalCommitSubject(line string) bool {
+	key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok || strings.TrimSpace(value) == "" {
+		return false
+	}
+
+	switch strings.TrimSpace(key) {
+	case "build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTrailerKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for index, character := range []byte(key) {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') {
+			continue
+		}
+		if character == '-' && index > 0 && index < len(key)-1 {
+			continue
+		}
+		return false
+	}
+	return true
 }

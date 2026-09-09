@@ -129,6 +129,77 @@ func TestBuildPlanForAgentGeneratesMessagesWithStableFallback(t *testing.T) {
 	}
 }
 
+func TestBuildPlanForAgentExcludesTranscriptFromChangesBatchesAndMicroDiff(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("transcript.txt", []byte("human conversation\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := &adapterPlanFake{message: "feat(slice): app"}
+	plan, err := BuildPlanForAgentWithOptions(adapter, SemanticSliceOptions{
+		ExcludedPaths: []string{"transcript.txt"},
+	})
+	if err != nil {
+		t.Fatalf("BuildPlanForAgentWithOptions() error = %v", err)
+	}
+	for _, change := range plan.Changes {
+		if change.Path == "transcript.txt" || change.OldPath == "transcript.txt" {
+			t.Fatalf("transcript remained in plan changes: %+v", plan.Changes)
+		}
+	}
+	for _, path := range PlanPaths(plan) {
+		if path == "transcript.txt" {
+			t.Fatalf("transcript remained in plan paths: %v", PlanPaths(plan))
+		}
+	}
+	if strings.Contains(adapter.diff, "transcript.txt") || strings.Contains(adapter.diff, "human conversation") {
+		t.Fatalf("transcript reached the adapter micro-diff: %q", adapter.diff)
+	}
+
+	changes, err := CaptureDraftChangesExcluding([]string{"transcript.txt"})
+	if err != nil {
+		t.Fatalf("CaptureDraftChangesExcluding() error = %v", err)
+	}
+	for _, change := range changes {
+		if change.Path == "transcript.txt" || change.OldPath == "transcript.txt" {
+			t.Fatalf("transcript remained in direct capture: %+v", changes)
+		}
+	}
+}
+
+func TestBuildPlanForAgentSerializesFinalSanitizedMessages(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &adapterPlanFake{message: "feat(slice): subject\n\nbody\n\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"}
+	plan, err := BuildPlanForAgentWithOptions(adapter, SemanticSliceOptions{
+		Intent:       "protect the release",
+		IntentSource: intent.SourceDeclared,
+	})
+	if err != nil {
+		t.Fatalf("BuildPlanForAgentWithOptions() error = %v", err)
+	}
+	want := intent.Append(adapter.message, intent.Intent{Text: "protect the release", Source: intent.SourceDeclared})
+	if plan.Batches[0].Message != want {
+		t.Fatalf("serialized message = %q, want %q", plan.Batches[0].Message, want)
+	}
+
+	zeroAdapter := &adapterPlanFake{message: "subject\n\nbody\n\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"}
+	zeroPlan, err := BuildPlanForAgentWithAdapter(zeroAdapter)
+	if err != nil {
+		t.Fatalf("zero-intent plan error = %v", err)
+	}
+	if strings.Contains(zeroPlan.Batches[0].Message, intent.IntentKey) || strings.Contains(zeroPlan.Batches[0].Message, intent.SourceKey) {
+		t.Fatalf("zero-intent plan retained forged reserved trailers: %q", zeroPlan.Batches[0].Message)
+	}
+}
+
 // TestWorktreeStateChangesWithContent protects the binding to the tree that
 // T0.10 will use to refuse to apply a plan computed over a different state.
 func TestWorktreeStateChangesWithContent(t *testing.T) {
