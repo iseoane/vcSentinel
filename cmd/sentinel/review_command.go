@@ -228,12 +228,9 @@ func runReview(worktree string, args []string) {
 		if len(flags.dims) > 0 {
 			coverage = review.CoverageSupplementary
 		}
-		// Fixed is a claim that this audit CLEARED a previous block, so only an
-		// authoritative run may make it (RULE 1 in internal/review/coverage.go).
-		// A narrowed run coming out ok on the one dimension it looked at has not
-		// cleared anything, and must neither set the flag nor print the notice.
-		fixed := coverage == review.CoverageAuthoritative &&
-			review.RevisionFixesPriorBlock(ledger, sha, result.Verdict)
+		// RULE 1 applies to the Fixed claim too, and internal/review owns it:
+		// coverage is passed in rather than pre-applied here.
+		fixed := review.RevisionFixesPriorBlock(ledger, sha, result.Verdict, coverage)
 		revision := review.Revision{
 			At:                 time.Now(),
 			Result:             result.Verdict,

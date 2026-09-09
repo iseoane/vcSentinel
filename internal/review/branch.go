@@ -386,7 +386,7 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 	revision := Revision{
 		At:                 time.Now(),
 		Result:             result.Verdict,
-		Fixed:              RevisionFixesPriorBlock(ledger, sha, result.Verdict),
+		Fixed:              RevisionFixesPriorBlock(ledger, sha, result.Verdict, CoverageAuthoritative),
 		Coverage:           CoverageAuthoritative, // pr branch audits derive their plan from the change
 		Dims:               DimensionResultsForRecord(result.Dims),
 		AggregatedFindings: result.Findings,
@@ -647,11 +647,23 @@ func shortBranchSHA(sha string) string {
 
 // RevisionFixesPriorBlock reports whether this audit (without block) fixes a
 // previous revision of the same SHA that was in block. It follows RULE 1 in
-// coverage.go: only the record's current AUTHORITATIVE verdict counts, so a
+// coverage.go on both sides.
+//
+// Reading: only the record's current AUTHORITATIVE verdict counts, so a
 // supplementary alarm on an otherwise OK record is not "a previous revision in
 // block" and a fresh OK audit is not flagged as correcting one.
-func RevisionFixesPriorBlock(ledger *Ledger, sha, verdict string) bool {
+//
+// Writing: claiming to have cleared a block IS a verdict claim, so only an
+// authoritative audit may make it. A narrowed run coming out ok on the one
+// dimension it looked at has cleared nothing. The coverage of the audit being
+// recorded is therefore a parameter and not the caller's business to apply:
+// keeping it here is what stops each writer from re-deriving the rule, and
+// getting it wrong, on its own.
+func RevisionFixesPriorBlock(ledger *Ledger, sha, verdict string, coverage RevisionCoverage) bool {
 	if verdict == VerdictBlock {
+		return false
+	}
+	if coverage != CoverageAuthoritative {
 		return false
 	}
 	record, err := ledger.ReadRecord(sha)

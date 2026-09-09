@@ -199,7 +199,7 @@ func TestRevisionCorrectsPreviousBlock(t *testing.T) {
 	ledger := review.NewLedger(dir)
 
 	// No previous record: no correction.
-	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK) {
+	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK, review.CoverageAuthoritative) {
 		t.Error("without a previous record it should not mark a correction")
 	}
 
@@ -208,10 +208,10 @@ func TestRevisionCorrectsPreviousBlock(t *testing.T) {
 	if err := ledger.SaveRevision("abc123", "msg", "backend", "m", rev); err != nil {
 		t.Fatal(err)
 	}
-	if !review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK) {
+	if !review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK, review.CoverageAuthoritative) {
 		t.Error("previous in block and new ok should mark a correction")
 	}
-	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictBlock) {
+	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictBlock, review.CoverageAuthoritative) {
 		t.Error("a new one in block corrects nothing")
 	}
 }
@@ -1176,7 +1176,7 @@ func TestRevisionCorrectsSupplementaryAlarmNotAVerdictBlock(t *testing.T) {
 	if err := ledger.SaveRevision("abc123", "msg", "backend", "m", suppBlock); err != nil {
 		t.Fatal(err)
 	}
-	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK) {
+	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK, review.CoverageAuthoritative) {
 		t.Error("a supplementary alarm is not an authoritative verdict block; a fresh OK must not be flagged as correcting a block")
 	}
 	// A record whose authoritative verdict is block still corrects.
@@ -1184,7 +1184,7 @@ func TestRevisionCorrectsSupplementaryAlarmNotAVerdictBlock(t *testing.T) {
 	if err := ledger.SaveRevision("def456", "msg", "backend", "m", onlyBlock); err != nil {
 		t.Fatal(err)
 	}
-	if !review.RevisionFixesPriorBlock(ledger, "def456", review.VerdictOK) {
+	if !review.RevisionFixesPriorBlock(ledger, "def456", review.VerdictOK, review.CoverageAuthoritative) {
 		t.Error("an authoritative block must still be corrected by a fresh OK")
 	}
 }
@@ -1235,15 +1235,13 @@ func TestRecordFixesMarksSupplementaryAlarmRecord(t *testing.T) {
 	}
 }
 
-// TestNarrowedReviewNeverClaimsItFixedAPriorBlock covers RULE 1 at the writer:
-// Fixed asserts that this audit cleared a previous block, and a supplementary
-// (--dims) run has cleared nothing however clean the one dimension it looked
-// at came out. Before this, Fixed was computed before coverage was decided, so
-// a narrowed run stamped the flag and printed "previous revision in block
-// corrected by this review" — a narrow look giving the all-clear.
-func TestNarrowedReviewNeverClaimsItFixedAPriorBlock(t *testing.T) {
-	dir := t.TempDir()
-	ledger := review.NewLedger(dir)
+// TestNarrowedAuditNeverClaimsItFixedAPriorBlock covers RULE 1 on the writing
+// side, in the function that owns it. Fixed asserts that this audit cleared a
+// previous block, which is a verdict claim, so a supplementary (--dims) run
+// has cleared nothing however clean the one dimension it looked at came out.
+// Before the rule moved here, each writer applied it (or forgot to) on its own.
+func TestNarrowedAuditNeverClaimsItFixedAPriorBlock(t *testing.T) {
+	ledger := review.NewLedger(t.TempDir())
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if err := ledger.SaveRevision(sha, "blocked", "", "default", review.Revision{
 		Result:   review.VerdictBlock,
@@ -1252,27 +1250,13 @@ func TestNarrowedReviewNeverClaimsItFixedAPriorBlock(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// The precondition the writer consults is unchanged: the record's current
-	// authoritative verdict IS a block, so an authoritative ok would fix it.
-	if !review.RevisionFixesPriorBlock(ledger, sha, review.VerdictOK) {
-		t.Fatal("precondition: an authoritative ok must read as fixing the prior block")
+	if !review.RevisionFixesPriorBlock(ledger, sha, review.VerdictOK, review.CoverageAuthoritative) {
+		t.Fatal("an authoritative ok over a blocked record must read as fixing it")
 	}
-
-	// The rule the writer must apply on top of it.
-	for _, tc := range []struct {
-		name     string
-		coverage review.RevisionCoverage
-		want     bool
-	}{
-		{"authoritative may claim the fix", review.CoverageAuthoritative, true},
-		{"supplementary may not", review.CoverageSupplementary, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixed := tc.coverage == review.CoverageAuthoritative &&
-				review.RevisionFixesPriorBlock(ledger, sha, review.VerdictOK)
-			if fixed != tc.want {
-				t.Fatalf("fixed = %v, want %v", fixed, tc.want)
-			}
-		})
+	if review.RevisionFixesPriorBlock(ledger, sha, review.VerdictOK, review.CoverageSupplementary) {
+		t.Fatal("a supplementary ok must never claim it cleared the block")
+	}
+	if review.RevisionFixesPriorBlock(ledger, sha, review.VerdictOK, "") {
+		t.Fatal("an unrecognised coverage must fail closed, not claim the fix")
 	}
 }
