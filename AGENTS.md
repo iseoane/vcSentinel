@@ -60,7 +60,7 @@ Code and scripts MUST behave the same on Windows and Debian:
 - `internal/git` owns volume thresholds, measurement, change slicing, non-interactive `plan`/`apply`, and file classification.
 - `internal/review` runs dimension-based audits, builds prompts, persists the legacy append-only review ledger, analyzes branches, and supports content-stable review findings. `review`, `status` and `pr` anchor that ledger on `<git-common-dir>/vas-sentinel` through `sharedReviewLedger`, so a review run in a linked worktree is not destroyed by `git worktree remove`. Fichas written under a per-checkout ledger before that are not migrated; `runs prune`, `status --prune` and `review --prune` still enumerate every per-checkout ledger, and nothing else reads them.
 - `internal/store` persists units, runs, findings, commit indexes, decisions, and blob indexes in `<git-common-dir>/vas-sentinel`. Blob indexes preserve review coverage across rebases when file content is unchanged.
-- `internal/gate` runs deterministic validation followed by semantic review of `HEAD`; it reports validation, review, or infrastructure status.
+- `internal/gate` runs the deterministic validation profile and reports pass, validation failure, or infrastructure status. It does NOT audit code quality: `sentinel review` owns per-commit verdicts and is their only writer.
 - `internal/change`, `internal/risk`, and `internal/graph` profile a change, calculate cohesion and risk, and optionally enrich review context from CodeGraph metadata tied to the audited commit.
 - `internal/consent` records local consent for externally supplied diffs.
 - `internal/ops` records, rotates, purges, and reads events from the repository common directory.
@@ -89,7 +89,7 @@ Reference documents: [`docs/design/replanteamiento-objetivo.md`](docs/design/rep
 | `refute` | Record an evidence-bound human refutation of one reviewed finding (clears only its block). Usage: `refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
 | `accept` | Record a human acceptance of one reviewed finding (documents judgement, never clears the block). Usage: `accept --sha SHA --fingerprint FP --reason TEXT`. |
 | `reopen` | Record an evidence-bound human reopen of one cleared finding (blocks again). Usage: `reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
-| `gate` | Validate then semantically review `HEAD`; requires `--stage pre-commit|pre-push|pr` and accepts `--profile`. |
+| `gate` | Run the deterministic validation profile; requires `--stage pre-commit|pre-push|pr` and accepts `--profile`. No agent, no semantic verdict. |
 | `lint` | Run configured `lint_commands`. |
 | `rebase` | Fetch and rebase against upstream after confirmation. |
 | `status` | Show volume, audit records, and recent events. Supports `--json` and `--prune`. |
@@ -113,7 +113,7 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - Slice commits use `--no-verify`. The slice flow is the guardian's controlled exemption: approved selections are limited to 400 authored lines unless the user explicitly approves a massive-file bypass.
 - `review`: audits `logic`, `style`, `design`, `tests`, `security`, and `spec` independently. Records append-only revisions and the effective responding agent, rather than only the requested profile.
 - Findings v2 use stable fingerprints and content blobs. The store can recognize content already reviewed under a different commit SHA after a rebase.
-- `gate`: loads project configuration strictly, validates the selected `validation.profiles` profile, then audits `HEAD`. `--stage` identifies lifecycle context; `--profile` selects validation, not review, configuration.
+- `gate`: loads project configuration strictly and validates the selected `validation.profiles` profile. `--stage` identifies lifecycle context; `--profile` selects the validation profile. It refuses `--timeout`, which only ever widened the semantic review budget it no longer has.
 - `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
 - `pr review`: chooses single versus chained review using `review.DecisionChainLimit`, which equals the guardian limit of 400 lines. Configured lint, test, and build commands run deterministically without consulting an agent.
 - `tui`: renders the global registry snapshot (`~/.vas_sentinel/repositories.json`) live at a 2-second interval through `internal/tui/control` and the approved art layout. When no daemon is live for the current repository it spawns one detached child and owns it for the session; foreign daemons are never stopped. The activity pane renders repository and durable-run state, supports filtered repository/worktree/run navigation, and dispatches abort/retry only for the visible session-repository run. It shows up to 20 worktree children and 10 recent runs per repository.

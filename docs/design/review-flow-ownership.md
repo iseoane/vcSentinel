@@ -208,6 +208,35 @@ review job in the durable plan, and the code that resolves review children.
 
 ---
 
+### Implemented — decisions taken while doing it
+
+Piece 3 is done. What the list above left open, and what was chosen:
+
+- **The infrastructure outcome** is now `INFRASTRUCTURE_ERROR`, keeping exit
+  code 4. It was never review-only: it also carries configuration, `HEAD`
+  reading, planning, store and admission failures.
+- **Exit code 2 is retired.** It carried `NEEDS_USER_REVIEW`, which only a
+  semantic audit can produce. Nothing deterministic can reach it, so the gate
+  stops emitting a code that can never occur. `TestExitCode` pins it as
+  unreachable rather than silently mapped.
+- **The coverage declaration** is a notice printed on every green gate, stating
+  that the green covers deterministic validation only. It is the cheapest
+  honest way to keep a historical PASS and a current one apart for a person
+  reading output; both still carry the same policy and run identity family.
+- **Run identities do not change**, verified rather than assumed: the root
+  derives from candidate SHA, the stage/profile prompt and the ordered command
+  list, and the review job was appended after that derivation. No migration.
+- **The credential scan needed no new owner.** It was already invoked in
+  `runGate` outside the semantic phase, advisory, on every path. It stays
+  exactly where it was.
+- **`--timeout` is refused**, not accepted and ignored. It only ever widened
+  the semantic review budget. A flag that is silently a no-op tells a script
+  its request was honoured when it was not; the refusal names
+  `sentinel review --timeout` as the place the budget still exists.
+- **A guarantee moved rather than disappeared:** the gate no longer fails
+  closed on a corrupt human-disposition log, because it no longer reads one.
+  `sentinel review` does, and already pins that behaviour in its own test.
+
 ## Piece 4 — `pr review` judges the whole, against the intent
 
 **Change:** the branch-level audit receives a real intent, with its provenance,
