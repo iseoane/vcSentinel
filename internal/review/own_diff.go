@@ -118,11 +118,7 @@ func inheritedFindings(ledger *Ledger, rng *OwnRange) ([]InheritedFinding, error
 		if record == nil || !isPending(*record) {
 			continue
 		}
-		last, ok := lastRevision(*record)
-		if !ok {
-			continue
-		}
-		for _, finding := range last.EffectiveFindings() {
+		for _, finding := range CurrentFindings(*record) {
 			inherited = append(inherited, InheritedFinding{SHA: sha, Finding: finding})
 		}
 	}

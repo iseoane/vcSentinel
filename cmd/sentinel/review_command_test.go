@@ -1151,3 +1151,86 @@ func TestRunReviewJSONKeepsSpinnerOffStdout(t *testing.T) {
 		t.Errorf("stderr misses the dimension spinner:\n%s", stderr)
 	}
 }
+
+// Piece 2 (surface findings, never clear): RevisionFixesPriorBlock reports
+// whether the previous state of a record was a VERDICT block (the authoritative
+// rule). A supplementary alarm on an otherwise OK authoritative record is not a
+// verdict block, so a fresh OK audit does not claim to have corrected a block.
+func TestRevisionCorrectsSupplementaryAlarmNotAVerdictBlock(t *testing.T) {
+	dir := t.TempDir()
+	ledger := review.NewLedger(dir)
+
+	authOK := review.Revision{At: time.Now().UTC(), Result: review.VerdictOK,
+		Dims: []review.DimensionResult{{Dim: review.DimSecurity, Verdict: review.VerdictOK}}}
+	suppBlock := review.Revision{At: time.Now().UTC(), Result: review.VerdictBlock,
+		Coverage: review.CoverageSupplementary,
+		AggregatedFindings: []review.Finding{{
+			Dimension: review.DimSecurity, Severity: review.SevCritical, Status: review.StatusConfirmed,
+			Fingerprint: "fp-alarm", Description: "alarm",
+			Location: review.Location{File: "a.go", LineStart: 1},
+		}},
+	}
+	if err := ledger.SaveRevision("abc123", "msg", "backend", "m", authOK); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.SaveRevision("abc123", "msg", "backend", "m", suppBlock); err != nil {
+		t.Fatal(err)
+	}
+	if review.RevisionFixesPriorBlock(ledger, "abc123", review.VerdictOK) {
+		t.Error("a supplementary alarm is not an authoritative verdict block; a fresh OK must not be flagged as correcting a block")
+	}
+	// A record whose authoritative verdict is block still corrects.
+	onlyBlock := review.Revision{At: time.Now().UTC(), Result: review.VerdictBlock}
+	if err := ledger.SaveRevision("def456", "msg", "backend", "m", onlyBlock); err != nil {
+		t.Fatal(err)
+	}
+	if !review.RevisionFixesPriorBlock(ledger, "def456", review.VerdictOK) {
+		t.Error("an authoritative block must still be corrected by a fresh OK")
+	}
+}
+
+// Piece 2 (surface findings, never clear): a fix commit resolves a real
+// CRITICAL even when the only blocking evidence on the record is a
+// supplementary alarm; without this, a narrow alarm would linger forever after
+// the code is actually fixed.
+func TestRecordFixesMarksSupplementaryAlarmRecord(t *testing.T) {
+	repo, commit := repoWithRealCommits(t)
+	gitDir, err := git.GetGitDirFrom(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := review.NewLedger(gitDir)
+
+	alarmed := commit("internal/a.go", "package a\n", "feat(x): with issue")
+	authOK := review.Revision{At: time.Now().UTC(), Result: review.VerdictOK,
+		Dims: []review.DimensionResult{{Dim: review.DimSecurity, Verdict: review.VerdictOK}}}
+	suppBlock := review.Revision{At: time.Now().UTC(), Result: review.VerdictBlock,
+		Coverage: review.CoverageSupplementary,
+		AggregatedFindings: []review.Finding{{
+			Dimension: review.DimSecurity, Severity: review.SevCritical, Status: review.StatusConfirmed,
+			Fingerprint: "fp-alarm", Description: "alarm",
+			Location: review.Location{File: "internal/a.go", LineStart: 1},
+		}},
+	}
+	if err := ledger.SaveRevision(alarmed, "feat(x): with issue", "backend", "m", authOK); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.SaveRevision(alarmed, "feat(x): with issue", "backend", "m", suppBlock); err != nil {
+		t.Fatal(err)
+	}
+
+	fix := commit("internal/a.go", "package a // fixed\n", "fix(x): fixes")
+	recordFixes(ledger, gitDir, fix, []string{"internal/a.go"}, "fix(x): fixes", 0, repo)
+
+	record, err := ledger.ReadRecord(alarmed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record == nil || record.FixedIn != fix {
+		got := ""
+		if record != nil {
+			got = record.FixedIn
+		}
+		t.Errorf("FixedIn = %q, want %q (a fix must retire a real narrow alarm)", got, fix)
+	}
+}

@@ -36,6 +36,8 @@ func TestHelperProcess(t *testing.T) {
 		runReview(worktree, []string{"HEAD"})
 	case "runReviewJSON":
 		runReview(worktree, []string{"--json", "--dims", "logic", "HEAD"})
+	case "runReviewSupplementary":
+		runReview(worktree, []string{"--dims", "logic", "HEAD"})
 	case "runPrReview":
 		runPrReview(worktree, nil)
 	}
@@ -859,4 +861,84 @@ func repoWithFirstLedgerUnbreakable(t *testing.T) (worktree, mainGitDir string) 
 		t.Fatal(err)
 	}
 	return worktree, mainGitDir
+}
+
+// Piece 2: `status` reports the commit's current verdict, which is the result
+// of the last AUTHORITATIVE revision. A supplementary (operator-narrowed) run
+// can never set, clear or downgrade it, and a supplementary-only record is
+// "not reviewed" — it was never enough to call the commit reviewed.
+func TestStatusVerdictLabelFollowsAuthoritativeRevision(t *testing.T) {
+	cases := []struct {
+		name   string
+		record *review.Record
+		want   string
+	}{
+		{"no record", nil, "not reviewed"},
+		{"empty revisions", &review.Record{SHA: "x"}, "not reviewed"},
+		{"supplementary-only", &review.Record{SHA: "x", Revisions: []review.Revision{
+			{Result: review.VerdictBlock, Coverage: review.CoverageSupplementary},
+		}}, "not reviewed"},
+		{"authoritative block, supplementary ok after", &review.Record{SHA: "x", Revisions: []review.Revision{
+			{Result: review.VerdictBlock},
+			{Result: review.VerdictOK, Coverage: review.CoverageSupplementary},
+		}}, "block"},
+		{"authoritative ok, supplementary block after", &review.Record{SHA: "x", Revisions: []review.Revision{
+			{Result: review.VerdictOK},
+			{Result: review.VerdictBlock, Coverage: review.CoverageSupplementary},
+		}}, "ok"},
+		{"legacy record", &review.Record{SHA: "x", Revisions: []review.Revision{
+			{Result: review.VerdictWarn},
+		}}, "warn"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statusVerdictLabel(tc.record); got != tc.want {
+				t.Errorf("statusVerdictLabel = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Piece 2 (coverage contract): a review revision records the coverage it
+// actually had. A run whose plan derives from the change (no --dims) is
+// AUTHORITATIVE; a run the operator narrowed with --dims is SUPPLEMENTARY.
+// This drives the real `sentinel review` command twice against the same commit
+// and reads the persisted record to prove both stamps.
+func TestReviewRecordsAuthoritativeThenSupplementary(t *testing.T) {
+	worktree := cutoverRepository(t)
+	home := t.TempDir()
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	t.Chdir(worktree)
+	fakeBin := t.TempDir()
+	for _, name := range []string{"claude", "opencode"} {
+		script := "#!/bin/sh\ncat > /dev/null\necho stub-agent-answer\n"
+		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := "PATH=" + fakeBin + string(os.PathListSeparator) + os.Getenv("PATH")
+
+	// First: a derived-plan review (no --dims) records an authoritative revision.
+	runAsSubprocessSplit(t, "runReview", worktree, home, env)
+	// Second: an operator-narrowed review (--dims logic) records supplementary.
+	runAsSubprocessSplit(t, "runReviewSupplementary", worktree, home, env)
+
+	sha, err := git.ResolveSHA("HEAD")
+	if err != nil {
+		t.Fatalf("resolve HEAD: %v", err)
+	}
+	commonDir, err := git.GetGitCommonDir(worktree)
+	if err != nil {
+		t.Fatalf("common dir: %v", err)
+	}
+	record, err := review.NewLedger(commonDir).ReadRecord(sha)
+	if err != nil || record == nil || len(record.Revisions) != 2 {
+		t.Fatalf("record = %+v (%v), want two revisions (authoritative then supplementary)", record, err)
+	}
+	if got := record.Revisions[0].Coverage; got != review.CoverageAuthoritative {
+		t.Errorf("first revision coverage = %q, want %q (derived plan)", got, review.CoverageAuthoritative)
+	}
+	if got := record.Revisions[1].Coverage; got != review.CoverageSupplementary {
+		t.Errorf("second revision coverage = %q, want %q (explicit --dims)", got, review.CoverageSupplementary)
+	}
 }

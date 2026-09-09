@@ -247,3 +247,36 @@ func TestRunAcceptancePreservesCompletedAppendAfterLockCleanupFailure(t *testing
 		t.Fatalf("dispositions = %+v, want one completed append", records)
 	}
 }
+
+// Piece 2 (surface findings, never clear): a human acceptance may acknowledge
+// the CRITICAL finding a narrow run raised, even though the commit's
+// authoritative verdict is OK. Acceptance documents judgement; the block (the
+// alarm) stands until refuted or fixed.
+func TestRunAcceptanceAcceptsSupplementaryAlarm(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	seedSupplementaryAlarmRecord(t, ledger)
+
+	outcome, err := runAcceptance(deps, acceptValidOptions())
+	if err != nil {
+		t.Fatalf("accepting a supplementary alarm failed: %v", err)
+	}
+	if outcome.disposition == nil || outcome.disposition.Status != review.StatusAcceptedByUser {
+		t.Fatalf("disposition = %+v, want the human acceptance", outcome.disposition)
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Fingerprint != "fp-target" {
+		t.Fatalf("dispositions = %+v, want the single acceptance", records)
+	}
+
+	// Acceptance never clears the alarm: it still blocks the branch gate.
+	record, err := ledger.ReadRecord("abc12345")
+	if err != nil || record == nil {
+		t.Fatalf("read record: %+v / %v", record, err)
+	}
+	if blockers := review.BranchBlockersWithDispositions([]review.Record{*record}, records); len(blockers) != 1 {
+		t.Fatalf("blockers after acceptance = %+v, want the alarm to keep blocking", blockers)
+	}
+}

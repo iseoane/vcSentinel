@@ -387,6 +387,7 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 		At:                 time.Now(),
 		Result:             result.Verdict,
 		Fixed:              RevisionFixesPriorBlock(ledger, sha, result.Verdict),
+		Coverage:           CoverageAuthoritative, // pr branch audits derive their plan from the change
 		Dims:               DimensionResultsForRecord(result.Dims),
 		AggregatedFindings: result.Findings,
 	}
@@ -645,7 +646,10 @@ func shortBranchSHA(sha string) string {
 }
 
 // RevisionFixesPriorBlock reports whether this audit (without block) fixes a
-// previous revision of the same SHA that was in block.
+// previous revision of the same SHA that was in block. It follows RULE 1 in
+// coverage.go: only the record's current AUTHORITATIVE verdict counts, so a
+// supplementary alarm on an otherwise OK record is not "a previous revision in
+// block" and a fresh OK audit is not flagged as correcting one.
 func RevisionFixesPriorBlock(ledger *Ledger, sha, verdict string) bool {
 	if verdict == VerdictBlock {
 		return false
@@ -654,7 +658,8 @@ func RevisionFixesPriorBlock(ledger *Ledger, sha, verdict string) bool {
 	if err != nil || record == nil || len(record.Revisions) == 0 {
 		return false
 	}
-	return record.Revisions[len(record.Revisions)-1].Result == VerdictBlock
+	current, _, ok := LastAuthoritativeRevision(*record)
+	return ok && current.Result == VerdictBlock
 }
 
 // DimensionResultsForRecord copies the dimension outcomes into the shape

@@ -132,11 +132,7 @@ func runNetReview(o *NetReviewOptions, opts BranchOptions, from, to string, revi
 	}
 	var history []HistoricalFinding
 	for _, record := range revisions {
-		last, ok := lastRevision(record)
-		if !ok {
-			continue
-		}
-		for _, finding := range last.EffectiveFindings() {
+		for _, finding := range CurrentFindings(record) {
 			entry := HistoricalFinding{SHA: record.SHA, Finding: finding}
 			reason, cerr := classify(finding, record.SHA)
 			if cerr != nil {

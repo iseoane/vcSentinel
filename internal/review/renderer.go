@@ -14,7 +14,7 @@ func columnOrder() []string {
 }
 
 // verdictEmoji maps a dimension verdict (or a revision result) to its table
-// icon. The latest revision of each record decides.
+// icon. The current (last authoritative) revision of each record decides.
 func verdictEmoji(verdict string) string {
 	switch verdict {
 	case VerdictOK:
@@ -31,35 +31,30 @@ func verdictEmoji(verdict string) string {
 	return "❔"
 }
 
-// lastRevision returns the record's latest revision and whether one exists.
-// The displayed verdict is always the latest one's.
-func lastRevision(record Record) (Revision, bool) {
-	if len(record.Revisions) == 0 {
-		return Revision{}, false
-	}
-	return record.Revisions[len(record.Revisions)-1], true
-}
-
-// recoveredFromBlock reports whether the latest revision came out ok while
-// some earlier one was in block (re-audit after a fix).
+// recoveredFromBlock reports whether the record's current verdict came out ok
+// while some earlier AUTHORITATIVE revision was in block (re-audit after a
+// fix). Only authoritative revisions carry the commit's verdict, so a
+// supplementary block never counts and a supplementary OK never clears one.
 func recoveredFromBlock(record Record) bool {
-	last, ok := lastRevision(record)
-	if !ok || last.Result != VerdictOK || len(record.Revisions) < 2 {
+	last, idx, ok := LastAuthoritativeRevision(record)
+	if !ok || last.Result != VerdictOK {
 		return false
 	}
-	for _, rev := range record.Revisions[:len(record.Revisions)-1] {
-		if rev.Result == VerdictBlock {
+	for i := 0; i < idx; i++ {
+		rev := record.Revisions[i]
+		if rev.IsAuthoritative() && rev.Result == VerdictBlock {
 			return true
 		}
 	}
 	return false
 }
 
-// matrixCell builds a dimension's cell for the latest revision: the verdict
-// emoji and, when the revision cleared a previous block, the guide marker
-// "spec ✅ (rev N — CRITICAL cleared)".
+// matrixCell builds a dimension's cell for the current verdict revision: the
+// verdict emoji and, when that revision cleared a previous authoritative block,
+// the guide marker "spec ✅ (rev N — CRITICAL cleared)". A supplementary-only
+// record has no authoritative verdict, so every cell renders "—".
 func matrixCell(record Record, dim string) string {
-	last, ok := lastRevision(record)
+	last, idx, ok := LastAuthoritativeRevision(record)
 	if !ok {
 		return "—"
 	}
@@ -68,7 +63,7 @@ func matrixCell(record Record, dim string) string {
 			continue
 		}
 		if dr.Verdict == VerdictOK && recoveredFromBlock(record) {
-			return fmt.Sprintf("✅ (rev %d — CRITICAL cleared)", len(record.Revisions))
+			return fmt.Sprintf("✅ (rev %d — CRITICAL cleared)", idx+1)
 		}
 		return verdictEmoji(dr.Verdict)
 	}
@@ -137,13 +132,15 @@ func RenderMatrix(records []Record) string {
 	return b.String()
 }
 
-// verdictCounts counts the records by the global result of their latest
-// revision and returns the summary line, including question/unavailable
-// only when present.
+// verdictCounts counts the records by the result of their current verdict
+// revision (RULE 1: the last authoritative revision) and returns the summary
+// line, including question/unavailable only when present. Records without an
+// authoritative revision (supplementary-only) are not counted: they were never
+// enough to review the commit.
 func verdictCounts(records []Record) string {
 	counts := map[string]int{}
 	for _, record := range records {
-		last, ok := lastRevision(record)
+		last, _, ok := LastAuthoritativeRevision(record)
 		if !ok {
 			continue
 		}
@@ -206,9 +203,10 @@ func isPending(record Record) bool {
 	return record.FixedIn == ""
 }
 
-// pendingRisks collects the CRITICAL and WARNING findings of the latest
-// revision of each pending record (ADVISORY ones are information, not
-// risks). Fixed records (FixedIn) contribute no pending risks.
+// pendingRisks collects the CRITICAL and WARNING findings of each pending
+// record's CURRENT findings (RULE 2 in coverage.go), not of its raw latest
+// revision (ADVISORY ones are information, not risks). Fixed records
+// (FixedIn) contribute no pending risks.
 //
 // T6.5: reads last.EffectiveFindings() (ledger.go) — the single selection
 // point BranchBlockers further down also consumes — instead of forking
@@ -245,18 +243,17 @@ type branchFinding struct {
 // effectiveBranchFindings is the one branch-level projection for consumers
 // that need an individual finding rather than only its legacy v1 rendering.
 // It keeps SHA-scoped disposition overlaying and pending-record selection
-// out of renderer and gate call sites.
+// out of renderer and gate call sites. It reads the record's CURRENT findings
+// (RULE 2 in coverage.go): the authoritative revision's findings plus any
+// surfaced supplementary alarms, so a narrow run's CRITICAL still reaches the
+// risks and blockers.
 func effectiveBranchFindings(records []Record, dispositions []FindingDisposition) []branchFinding {
 	var out []branchFinding
 	for _, record := range records {
 		if !isPending(record) {
 			continue
 		}
-		last, ok := lastRevision(record)
-		if !ok {
-			continue
-		}
-		for _, h := range ApplyDispositions(last.FindingsWithDispositions(), FilterDispositionsForSHA(dispositions, record.SHA)) {
+		for _, h := range ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA)) {
 			out = append(out, branchFinding{sha: record.SHA, finding: h})
 		}
 	}
@@ -388,7 +385,7 @@ func RenderSummary(records []Record) string {
 	b.WriteString("| Commit | Result | Model | Revs | Fixed |\n")
 	b.WriteString("|---|---|---|---|---|\n")
 	for _, record := range records {
-		last, ok := lastRevision(record)
+		last, _, ok := LastAuthoritativeRevision(record)
 		if !ok {
 			continue
 		}
@@ -492,7 +489,7 @@ func VerdictDeBranch(records []Record) string {
 			// Fixed: it no longer contributes to the branch verdict.
 			continue
 		}
-		last, ok := lastRevision(record)
+		last, _, ok := LastAuthoritativeRevision(record)
 		if !ok {
 			continue
 		}

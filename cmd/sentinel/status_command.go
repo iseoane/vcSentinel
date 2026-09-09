@@ -433,6 +433,22 @@ func reportPrune(gitDir string, removed []string, jsonOut bool, worktree string)
 	}
 }
 
+// statusVerdictLabel returns a record's current verdict label for `status`:
+// the Result of its last AUTHORITATIVE revision (RULE 1 in coverage.go), or
+// "not reviewed" when there is none. A supplementary (operator-narrowed) run
+// can never set, clear or downgrade the verdict, and a supplementary-only
+// record was never enough to review the commit.
+func statusVerdictLabel(record *review.Record) string {
+	if record == nil {
+		return "not reviewed"
+	}
+	current, _, ok := review.LastAuthoritativeRevision(*record)
+	if !ok {
+		return "not reviewed"
+	}
+	return current.Result
+}
+
 // runStatus summarizes the guardian's state: pending volume, audit records
 // and latest events. With --json it emits the same information as JSON.
 func runStatus(worktree string, args []string) {
@@ -492,11 +508,9 @@ func runStatus(worktree string, args []string) {
 	records := []map[string]any{}
 	orphanCount := 0
 	for _, sha := range shas {
-		verdict := "not reviewed"
 		fixedIn := ""
 		record, err := ledger.ReadRecord(sha)
-		if err == nil && record != nil && len(record.Revisions) > 0 {
-			verdict = record.Revisions[len(record.Revisions)-1].Result
+		if err == nil && record != nil {
 			fixedIn = record.FixedIn
 		}
 		isOrphan := !git.ContentInSomeRef(sha)
@@ -505,7 +519,7 @@ func runStatus(worktree string, args []string) {
 		}
 		records = append(records, map[string]any{
 			"sha":     sha,
-			"verdict": verdict,
+			"verdict": statusVerdictLabel(record),
 			"fixedIn": fixedIn,
 			"orphan":  isOrphan,
 		})

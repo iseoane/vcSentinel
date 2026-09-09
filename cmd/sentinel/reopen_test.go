@@ -305,3 +305,34 @@ func TestRunReopenRejectsBadArgs(t *testing.T) {
 		t.Fatalf("code = %d, want 1 for bad args", code)
 	}
 }
+
+// Piece 2 (surface findings, never clear): a refuted supplementary alarm can be
+// reopened by a human, exactly like an authoritative one — the finding life
+// cycle is the recovery mechanism for a narrow run that re-raised something.
+func TestRunReopenReopensSupplementaryAlarm(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	seedSupplementaryAlarmRecord(t, ledger)
+
+	// Refute the alarm first so there is a cleared state to reopen.
+	if _, err := runRefutation(deps, refuteValidOptions()); err != nil {
+		t.Fatalf("seed refutation: %v", err)
+	}
+	outcome, err := recordReopen(deps, reopenValidOptions())
+	if err != nil {
+		t.Fatalf("reopening a refuted supplementary alarm failed: %v", err)
+	}
+	if outcome.disposition == nil || outcome.disposition.Status != review.StatusReopened {
+		t.Fatalf("disposition = %+v, want the reopen", outcome.disposition)
+	}
+	records, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := ledger.ReadRecord("abc12345")
+	if err != nil || record == nil {
+		t.Fatalf("read record: %+v / %v", record, err)
+	}
+	if blockers := review.BranchBlockersWithDispositions([]review.Record{*record}, records); len(blockers) != 1 {
+		t.Fatalf("blockers after reopen = %+v, want the alarm to block again", blockers)
+	}
+}

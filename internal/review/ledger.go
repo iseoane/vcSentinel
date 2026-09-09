@@ -30,6 +30,18 @@ type Revision struct {
 	Model  string            `json:"model,omitempty"`
 	Effort string            `json:"effort,omitempty"`
 	Dims   []DimensionResult `json:"dims"`
+	// Coverage records the coverage this revision actually had: how its
+	// dimension plan was chosen (piece 2, docs/design/review-flow-ownership.md).
+	// A revision whose plan was derived from the change is CoverageAuthoritative;
+	// a revision explicitly narrowed by the operator (sentinel review --dims) is
+	// CoverageSupplementary. It is decided at write time by every writer that
+	// persists a revision: derive-from-change ⇒ authoritative, explicit-operator
+	// dims ⇒ supplementary. Absent (legacy, pre-piece-2 records) is classified
+	// as authoritative by IsAuthoritative: there is no way to tell which legacy
+	// runs were narrowed, and flipping them all to non-authoritative would erase
+	// every historical verdict — the conservative choice keeps the old
+	// guarantee intact.
+	Coverage RevisionCoverage `json:"coverage,omitempty"`
 	// AggregatedFindings is the deduplicated, cross-dimension merged, and
 	// supersede-applied result review.AuditCommit already computes
 	// (AuditResult.Findings, T6.1+T6.2). It is persisted here, separate

@@ -91,7 +91,7 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 	if record == nil || len(record.Revisions) == 0 {
 		return refuteOutcome{}, fmt.Errorf("accept: no review record for SHA %q", sha)
 	}
-	target, err := review.ResolveDispositionTarget(record.Revisions[len(record.Revisions)-1], fingerprint)
+	target, err := review.ResolveRecordDispositionTarget(*record, fingerprint)
 	if err != nil {
 		return refuteOutcome{}, fmt.Errorf("accept: %w", err)
 	}
@@ -143,9 +143,8 @@ func runAcceptance(deps *refuteDeps, opts acceptOptions) (refuteOutcome, error) 
 		if err != nil {
 			return fmt.Errorf("accept: reading dispositions before append: %w", err)
 		}
-		currentRevision := current.Revisions[len(current.Revisions)-1]
-		effectiveTarget, err := review.ResolveDispositionTargetWithDispositions(
-			currentRevision, fingerprint, review.FilterDispositionsForSHA(dispositions, sha))
+		effectiveTarget, err := review.ResolveRecordDispositionTargetWithDispositions(
+			*current, fingerprint, review.FilterDispositionsForSHA(dispositions, sha))
 		if err != nil {
 			return fmt.Errorf("accept: %w", err)
 		}

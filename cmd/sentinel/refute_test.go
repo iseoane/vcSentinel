@@ -642,3 +642,61 @@ func TestRunRefutationRejectsLockErrorBeforeAppend(t *testing.T) {
 		t.Fatalf("dispositions = %+v, want zero persisted dispositions", records)
 	}
 }
+
+// supplementaryAlarmRecord seeds a record whose ONLY current blocking evidence
+// is a CRITICAL finding from a supplementary (operator-narrowed, --dims) run:
+// the authoritative revision is OK, the narrow run raises an alarm. Piece 2
+// ("surface findings, never clear"): such a finding must be addressable by the
+// disposition commands, because a real CRITICAL is recoverable by design.
+func seedSupplementaryAlarmRecord(t *testing.T, ledger *review.Ledger) {
+	t.Helper()
+	auth := review.Revision{
+		At: time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC), Result: review.VerdictOK,
+		Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictOK}},
+	}
+	supp := review.Revision{
+		At: time.Date(2026, 9, 4, 11, 0, 0, 0, time.UTC), Result: review.VerdictBlock,
+		Coverage: review.CoverageSupplementary,
+		AggregatedFindings: []review.Finding{{
+			Dimension: review.DimLogic, Severity: review.SevCritical, Status: review.StatusConfirmed,
+			Description: "bug", Fingerprint: "fp-target",
+			Location: review.Location{File: "a.go", LineStart: 2},
+		}},
+	}
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", auth); err != nil {
+		t.Fatalf("save authoritative revision: %v", err)
+	}
+	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", supp); err != nil {
+		t.Fatalf("save supplementary revision: %v", err)
+	}
+}
+
+// Piece 2 (surface findings, never clear): a human refutation must be able to
+// address the CRITICAL finding a narrow run raised, even though the commit's
+// authoritative verdict is OK. After the refutation the finding no longer
+// blocks the branch.
+func TestRunRefutationResolvesSupplementaryAlarm(t *testing.T) {
+	deps, ledger, st := refuteTestDeps(t, nil)
+	seedSupplementaryAlarmRecord(t, ledger)
+
+	outcome, err := runRefutation(deps, refuteValidOptions())
+	if err != nil {
+		t.Fatalf("refuting a supplementary alarm failed: %v", err)
+	}
+	if outcome.disposition == nil || outcome.disposition.Fingerprint != "fp-target" ||
+		outcome.disposition.Status != review.StatusRefuted {
+		t.Fatalf("disposition = %+v, want the alarm refuted", outcome.disposition)
+	}
+
+	record, err := ledger.ReadRecord("abc12345")
+	if err != nil || record == nil {
+		t.Fatalf("read record: %+v / %v", record, err)
+	}
+	dispositions, err := st.ReadDispositions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockers := review.BranchBlockersWithDispositions([]review.Record{*record}, dispositions); len(blockers) != 0 {
+		t.Fatalf("blockers after the refutation = %+v, want none (a disposed alarm does not block)", blockers)
+	}
+}

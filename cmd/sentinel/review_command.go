@@ -222,10 +222,18 @@ func runReview(worktree string, args []string) {
 		}
 		fixed := review.RevisionFixesPriorBlock(ledger, sha, result.Verdict)
 		effective := authorship.consolidate()
+		// Coverage records how this revision's plan was chosen (piece 2): a run
+		// with no --dims derives its plan from the change and is authoritative;
+		// a run the operator narrowed with --dims is supplementary.
+		coverage := review.CoverageAuthoritative
+		if len(flags.dims) > 0 {
+			coverage = review.CoverageSupplementary
+		}
 		revision := review.Revision{
 			At:                 time.Now(),
 			Result:             result.Verdict,
 			Fixed:              fixed,
+			Coverage:           coverage,
 			Agent:              effective.Binary,
 			Model:              effective.Model,
 			Effort:             effective.Effort,
@@ -696,11 +704,15 @@ func recordFixes(ledger *review.Ledger, gitDir, sha string, files []string, mess
 		if err != nil || record == nil || len(record.Revisions) == 0 || record.FixedIn != "" {
 			continue
 		}
-		latest := record.Revisions[len(record.Revisions)-1]
-		if latest.Result != review.VerdictBlock {
+		// The record currently blocks (RULE 2 in coverage.go): an active
+		// supplementary alarm is a real CRITICAL that a genuine fix must be
+		// able to retire, exactly like an authoritative block. Without this, a
+		// narrow alarm would linger in every later branch report after the
+		// code was actually fixed.
+		if !review.RecordHasActiveBlock(*record) {
 			continue
 		}
-		if !fixTouchesFindings(fixFiles, latest.Dims) {
+		if !fixTouchesFindings(fixFiles, review.CurrentFindings(*record)) {
 			continue
 		}
 		// The audited commit must be an ancestor of the fix, in that order: a
@@ -740,13 +752,11 @@ func shortSHA(sha string) string {
 }
 
 // fixTouchesFindings reports whether the fix commit touches any file cited in
-// the findings of the previous dimensions.
-func fixTouchesFindings(fixFiles map[string]bool, dims []review.DimensionResult) bool {
-	for _, dim := range dims {
-		for _, finding := range dim.Findings {
-			if fixFiles[finding.File] {
-				return true
-			}
+// the record's current findings.
+func fixTouchesFindings(fixFiles map[string]bool, findings []review.Finding) bool {
+	for _, finding := range findings {
+		if fixFiles[finding.Location.File] {
+			return true
 		}
 	}
 	return false

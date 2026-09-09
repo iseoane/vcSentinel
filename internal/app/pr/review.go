@@ -69,7 +69,10 @@ func reviewerFailureDetails(cards []review.Record) []ops.EventDetail {
 		if len(card.Revisions) == 0 {
 			continue
 		}
-		latest := card.Revisions[len(card.Revisions)-1]
+		latest, _, ok := review.LastAuthoritativeRevision(card)
+		if !ok {
+			continue
+		}
 		for _, dimension := range latest.Dims {
 			if dimension.Verdict != review.VerdictUnavailable || strings.TrimSpace(dimension.Reason) == "" {
 				continue
