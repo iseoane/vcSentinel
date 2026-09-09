@@ -3,6 +3,8 @@ package git
 import (
 	"errors"
 	"fmt"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
 )
 
 // Rejection reasons of `slice apply`. They are sentinel errors so the CLI
@@ -123,7 +125,8 @@ func rejectLegacyRouteOnlyRenames(plan *SerializedPlan) error {
 }
 
 // deserializePlan rebuilds the executable plan from its projection. The
-// message is already approved, so it is fixed as final.
+// message is already approved, so it is fixed as final. Re-appending the plan
+// intent also restores plans serialized before intent trailers were finalized.
 func deserializePlan(plan *SerializedPlan) *FragmentationPlan {
 	executable := &FragmentationPlan{Batches: make([]PlannedBatch, 0, len(plan.Batches))}
 	for _, batch := range plan.Batches {
@@ -131,7 +134,10 @@ func deserializePlan(plan *SerializedPlan) *FragmentationPlan {
 		if len(selectors) == 0 {
 			selectors = wholeFileSelectors(batch.Paths)
 		}
-		message := batch.Message
+		message := intent.Append(batch.Message, intent.Intent{
+			Text:   plan.Intent,
+			Source: plan.IntentSource,
+		})
 		executable.Batches = append(executable.Batches, PlannedBatch{
 			Layer:       batch.Layer,
 			Number:      batch.Number,

@@ -235,6 +235,56 @@ func TestApplyApprovedPlanRoundTripsIntentTrailers(t *testing.T) {
 	}
 }
 
+func TestApplyApprovedPlanRestoresIntentForLegacySerializedPlan(t *testing.T) {
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{
+		Intent:       "protect the release",
+		IntentSource: intent.SourceConversation,
+	})
+	if err != nil {
+		t.Fatalf("BuildPlanForAgentWithOptions() error = %v", err)
+	}
+	legacyMessage := "feat: legacy serialized plan"
+	for i := range plan.Batches {
+		plan.Batches[i].Message = legacyMessage
+		if got := intent.Parse(plan.Batches[i].Message); got != (intent.Intent{}) {
+			t.Fatalf("legacy batch %d unexpectedly has intent: %+v", i, got)
+		}
+	}
+	plan.PlanID = calculatePlanID(plan)
+
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID, Answers: map[string]string{}})
+	if err != nil {
+		t.Fatalf("ApplyApprovedPlan() error = %v", err)
+	}
+	wantIntent := intent.Intent{Text: plan.Intent, Source: plan.IntentSource}
+	wantMessage := intent.Append(legacyMessage, wantIntent)
+	for i, result := range results {
+		if result.Message != wantMessage {
+			t.Errorf("commit %d message = %q, want %q", i, result.Message, wantMessage)
+		}
+		actual, err := runGitOutput("show", "-s", "--format=%B", result.Hash)
+		if err != nil {
+			t.Fatalf("reading commit %s: %v", result.Hash, err)
+		}
+		if strings.TrimRight(actual, "\n") != wantMessage {
+			t.Errorf("commit %d message = %q, want %q", i, strings.TrimRight(actual, "\n"), wantMessage)
+		}
+		got, err := CommitIntent(result.Hash)
+		if err != nil {
+			t.Fatalf("CommitIntent(%s) error = %v", result.Hash, err)
+		}
+		if got != wantIntent {
+			t.Errorf("CommitIntent(%s) = %+v, want %+v", result.Hash, got, wantIntent)
+		}
+	}
+}
+
 func TestValidateApplicationRejectsMalformedIntentPair(t *testing.T) {
 	cases := []struct {
 		name   string
