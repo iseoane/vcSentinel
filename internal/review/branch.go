@@ -120,8 +120,10 @@ type BranchOptions struct {
 // OverviewResult is the response of the branch-level Spec call: coherence of
 // the whole set and the rationale for the PR template.
 type OverviewResult struct {
-	Coherent  bool   `json:"coherent"`
-	Rationale string `json:"rationale"`
+	Coherent  bool     `json:"coherent"`
+	Rationale string   `json:"rationale"`
+	Changed   []string `json:"changed"`
+	Risk      string   `json:"risk"`
 }
 
 // UnauditedCommit pairs a commit that carries no review record, at the end
@@ -679,7 +681,7 @@ func BuildOverviewPrompt(branch string, records []Record) string {
 	}
 	b.WriteString("\nDo these commits form a single coherent change for the branch (one PR) or independent units with seams that deserve separate chained PRs?\n")
 	b.WriteString("Return ONLY one JSON line with this exact shape:\n")
-	b.WriteString(`{"coherent": true|false, "rationale": "<3 to 5 line explanation in English>"}` + "\n")
+	b.WriteString(`{"coherent": true|false, "rationale": "<3 to 5 line explanation in English>", "changed": ["<3 to 6 behavior bullets in English>"], "risk": "<one justified risk sentence in English>"}` + "\n")
 	return b.String()
 }
 
