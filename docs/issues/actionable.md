@@ -11,7 +11,8 @@ which allocates one question to each command and orders the work as five
 pieces. Two are done: piece 2 (`review` is the only per-commit authority,
 commit 89cab36) and piece 3 (`gate` stops auditing, commit 144c9c8). The three
 that remain map onto this file as **item 12 (piece 1), then item 10 (piece 4),
-then item 11 (piece 5)**; item 4 is closed by dissolution. The paragraph below
+then item 11 (piece 5)**; item 4 is closed by dissolution. All three now have a
+written implementation plan under `docs/design/`, linked from each item. The paragraph below
 is the ordering that preceded that design and is kept because the items still
 carry its numbering.
 
@@ -490,7 +491,11 @@ platform.
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
 which is the governing text.** It depends on piece 1 (item 12 below), which
 decides where the intent comes from; this item is only about consuming it.
-What follows is the evidence that the problem is real, and it still holds.
+**The implementation plan is
+[`docs/design/piece-4-pr-review-authors.md`](../design/piece-4-pr-review-authors.md),
+written 2026-09-09. It is the specification: where it disagrees with the text
+below, the plan wins.** What follows is the evidence that the problem is real,
+and it still holds.
 
 Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
 
@@ -576,6 +581,10 @@ Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
 which is the governing text.** It is last because it needs both the coverage
 contract (piece 2, done) and the intent (pieces 1 and 4). Found 2026-09-09.
+**The implementation plan is
+[`docs/design/piece-5-pr-create-composes.md`](../design/piece-5-pr-create-composes.md),
+written 2026-09-09. It is the specification: where it disagrees with the text
+below, the plan wins.**
 
 - The subject of the report, stated first because it constrains everything
   below and because getting it wrong is the failure this item exists to
@@ -630,7 +639,10 @@ contract (piece 2, done) and the intent (pieces 1 and 4). Found 2026-09-09.
 
 **This is PIECE 1 of
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
-which is the governing text.** Opened 2026-09-09; it had no item in this file
+which is the governing text. The implementation plan is
+[`docs/design/piece-1-slice-intent.md`](../design/piece-1-slice-intent.md),
+written 2026-09-09; it answers the three questions this item left open and is
+the specification.** Opened 2026-09-09; it had no item in this file
 because it was proposed after items 4, 10 and 11 were written, and it is what
 unblocks item 10.
 
