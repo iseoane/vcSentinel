@@ -208,8 +208,9 @@ func isPending(record Record) bool {
 // revision (ADVISORY ones are information, not risks). Fixed records
 // (FixedIn) contribute no pending risks.
 //
-// T6.5: reads last.EffectiveFindings() (ledger.go) — the single selection
-// point BranchBlockers further down also consumes — instead of forking
+// T6.5: reads the record's current findings through CurrentFindings
+// (coverage.go) — the single selection point BranchBlockers further down
+// also consumes — instead of forking
 // between AggregatedFindings and Dims right here. That avoids the T6.5
 // design bug (a semantic finding already superseded by T6.2 only
 // disappeared from pendingRisks(), never from BranchBlockers) and the

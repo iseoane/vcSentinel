@@ -220,7 +220,6 @@ func runReview(worktree string, args []string) {
 		if model == "" {
 			model = "default"
 		}
-		fixed := review.RevisionFixesPriorBlock(ledger, sha, result.Verdict)
 		effective := authorship.consolidate()
 		// Coverage records how this revision's plan was chosen (piece 2): a run
 		// with no --dims derives its plan from the change and is authoritative;
@@ -229,6 +228,12 @@ func runReview(worktree string, args []string) {
 		if len(flags.dims) > 0 {
 			coverage = review.CoverageSupplementary
 		}
+		// Fixed is a claim that this audit CLEARED a previous block, so only an
+		// authoritative run may make it (RULE 1 in internal/review/coverage.go).
+		// A narrowed run coming out ok on the one dimension it looked at has not
+		// cleared anything, and must neither set the flag nor print the notice.
+		fixed := coverage == review.CoverageAuthoritative &&
+			review.RevisionFixesPriorBlock(ledger, sha, result.Verdict)
 		revision := review.Revision{
 			At:                 time.Now(),
 			Result:             result.Verdict,
