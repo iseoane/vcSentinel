@@ -2,24 +2,29 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestPRReviewKeyIncludesBranchSlugAndHeadSHA(t *testing.T) {
-	if got, want := PRReviewKey("feature/persisted review", "abc123"), "feature-persisted-review-abc123"; got != want {
-		t.Fatalf("PRReviewKey() = %q, want %q", got, want)
-	}
-	if PRReviewKey("feature/persisted review", "abc123") == PRReviewKey("feature/persisted review", "def456") {
-		t.Fatal("different heads must produce different PR review keys")
+func TestPRReviewKeyPreservesExactBranchIdentity(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	keys := map[string]bool{}
+	for _, branch := range []string{"feature/review", "Feature/review", "feature-review"} {
+		key := PRReviewKey(branch, head)
+		if !strings.HasPrefix(key, "feature-review-") {
+			t.Fatalf("PRReviewKey(%q) = %q, want readable slug prefix", branch, key)
+		}
+		if keys[key] { t.Fatalf("PRReviewKey collision for %q", branch) }
+		keys[key] = true
 	}
 }
 
 func TestSavePRReviewReplacesPreviousHeadForTheSameBranch(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)
-	first := &PRReviewEntry{Branch: "feature/review", HeadSHA: "head-a", Body: "first", At: time.Now().UTC()}
-	second := &PRReviewEntry{Branch: "feature/review", HeadSHA: "head-b", Body: "second", At: time.Now().UTC()}
+	first := &PRReviewEntry{Branch: "feature/review", HeadSHA: strings.Repeat("a", 40), Body: "first", At: time.Now().UTC()}
+	second := &PRReviewEntry{Branch: "feature/review", HeadSHA: strings.Repeat("b", 40), Body: "second", At: time.Now().UTC()}
 
 	if err := store.SavePRReview(first); err != nil {
 		t.Fatalf("SavePRReview(first) error = %v", err)
@@ -32,7 +37,7 @@ func TestSavePRReviewReplacesPreviousHeadForTheSameBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadPRReview() error = %v", err)
 	}
-	if got == nil || got.Body != "second" || got.HeadSHA != "head-b" {
+	if got == nil || got.Body != "second" || got.HeadSHA != strings.Repeat("b", 40) {
 		t.Fatalf("ReadPRReview() = %#v, want the latest entry for the branch", got)
 	}
 	matches, err := filepath.Glob(filepath.Join(root, "vas-sentinel", "pr-reviews", "*.json"))

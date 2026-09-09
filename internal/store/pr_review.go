@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,21 +33,22 @@ type PRReviewEntry struct {
 // PRReviewKey binds one entry to both a human-readable branch slug and the
 // exact head snapshot, preventing a stale branch judgement from being reused.
 func PRReviewKey(branch, headSHA string) string {
-	return branchSlug(branch) + "-" + strings.TrimSpace(headSHA)
+	identity := sha256.Sum256([]byte(branch))
+	return branchSlug(branch) + "-" + hex.EncodeToString(identity[:8]) + "-" + strings.TrimSpace(headSHA)
 }
 
 // SavePRReview atomically saves entry and removes every older entry for the
 // same branch slug. A branch therefore retains one review entry, not one file
 // per historical head.
 func (s *Store) SavePRReview(entry *PRReviewEntry) error {
-	if entry == nil || strings.TrimSpace(entry.Branch) == "" || strings.TrimSpace(entry.HeadSHA) == "" {
-		return errors.New("store: pr review entry requires branch and head sha")
+	if entry == nil || strings.TrimSpace(entry.Branch) == "" || !validGitObjectID(entry.HeadSHA) {
+		return errors.New("store: pr review entry requires branch and canonical head sha")
 	}
 	key := PRReviewKey(entry.Branch, entry.HeadSHA)
 	if err := s.writeJSON(subdirPRReviews, key, entry); err != nil {
 		return err
 	}
-	return s.removeOlderPRReviews(branchSlug(entry.Branch), key)
+	return s.removeOlderPRReviews(entry.Branch, key)
 }
 
 // ReadPRReview returns the one current entry for branch's slug, whatever head
@@ -61,7 +64,6 @@ func (s *Store) ReadPRReview(branch string) (*PRReviewEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	slug := branchSlug(branch)
 	var found *PRReviewEntry
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
@@ -75,18 +77,18 @@ func (s *Store) ReadPRReview(branch string) (*PRReviewEntry, error) {
 		if err := json.Unmarshal(data, &stored); err != nil {
 			return nil, fmt.Errorf("store: read pr review entry %q: %w", entry.Name(), err)
 		}
-		if branchSlug(stored.Branch) != slug {
+		if stored.Branch != branch {
 			continue
 		}
 		if found != nil {
-			return nil, fmt.Errorf("store: multiple pr review entries for branch slug %q", slug)
+			return nil, fmt.Errorf("store: multiple pr review entries for branch %q", branch)
 		}
 		found = &stored
 	}
 	return found, nil
 }
 
-func (s *Store) removeOlderPRReviews(slug, keepKey string) error {
+func (s *Store) removeOlderPRReviews(branch, keepKey string) error {
 	dir := filepath.Join(s.dir, subdirPRReviews)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -108,7 +110,7 @@ func (s *Store) removeOlderPRReviews(slug, keepKey string) error {
 		if err := json.Unmarshal(data, &stored); err != nil {
 			return fmt.Errorf("store: read pr review entry %q: %w", entry.Name(), err)
 		}
-		if branchSlug(stored.Branch) != slug {
+		if stored.Branch != branch {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
@@ -116,6 +118,13 @@ func (s *Store) removeOlderPRReviews(slug, keepKey string) error {
 		}
 	}
 	return nil
+}
+
+func validGitObjectID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 40 && len(value) != 64 { return false }
+	for _, r := range value { if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) { return false } }
+	return true
 }
 
 func branchSlug(branch string) string {
