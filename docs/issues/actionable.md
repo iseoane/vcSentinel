@@ -45,6 +45,39 @@ and is the only writer of per-commit verdicts; `gate` owns "does this work
 right now" and stops auditing entirely. Everywhere below that assigns a
 per-commit audit to `gate`, read `review`.
 
+## 0. Let a real fix retire a block even when it is not called `fix(`
+
+Found on 2026-09-09 by exercising the flow on `feat/review-coverage-contract`,
+where it produced three live blocks describing code that no longer existed.
+
+- Wrong: `recordFixes` (`cmd/sentinel/review_command.go`) returns immediately
+  unless the reviewed commit's message starts with `fix(`. Everything after that
+  guard — the active-block check, the file overlap, the ancestry check, and
+  `MarkFixed` — is unreachable for a correcting commit named anything else.
+- Evidence: on that branch, `60e420c` and `6c3a2ac` each recorded CRITICAL
+  findings that `e2f4b23` (`refactor(review):`) and `d8462e6` (`docs(issues):`)
+  genuinely corrected. Neither retirement fired. Three blocks stayed live over
+  code that had been rewritten, and the only lever left was `refute`.
+- Why the workaround is not the answer: `refute` records "this finding does not
+  describe the code", which is true here, but the reason field then has to carry
+  "and it was fixed in <sha>" as prose. The link between the block and the
+  commit that resolved it — which `MarkFixed` stores structurally — is lost, and
+  metrics counting fixes cannot see it. The three refutations recorded on that
+  branch all say so explicitly.
+- Why the guard exists, and what NOT to break: the prefix is one of four
+  independent narrowings, alongside a clean exit, file overlap, and an ancestry
+  check added by FU-17 after a `fix(` on one branch cleared a block recorded on
+  an unrelated one. The ancestry check is the one doing the real work. The
+  prefix is a proxy for intent, and a weak one: it accepts a `fix(` that
+  corrects something else entirely, and refuses a `refactor(` that corrects
+  exactly the finding.
+- Not obvious, and worth deciding rather than assuming: whether ANY Conventional
+  Commit type may retire a block, or only a named set. Widening it to every type
+  makes a `chore(` that happens to touch the file retire a block it never
+  addressed — the ancestry and overlap checks do not test intent. The narrower
+  reading is that the retirement should not be inferred from the message at all,
+  and should be an explicit claim.
+
 ## 1. Bound what the review flow costs the machine that runs it
 
 Sits first: unblocked, and it is the only item that has stopped work outright
