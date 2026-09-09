@@ -20,6 +20,7 @@ import (
 type adapterSlicePlanFake struct {
 	baseCalls      int
 	diffCalls      int
+	promptCalls    int
 	prompt         string
 	promptResponse string
 	promptErr      error
@@ -36,6 +37,7 @@ func (a *adapterSlicePlanFake) GetCommitMessageWithDiff([]string, string, int, s
 }
 
 func (a *adapterSlicePlanFake) RunPrompt(prompt string) (string, error) {
+	a.promptCalls++
 	a.prompt = prompt
 	return a.promptResponse, a.promptErr
 }
@@ -273,7 +275,7 @@ func TestRunSlicePlanSummarizesTranscriptOnlyWithConsent(t *testing.T) {
 	t.Cleanup(func() { newAgentAdapterForMessage = previous })
 
 	var out bytes.Buffer
-	if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt"}); code != 0 {
+	if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt", "--transcript-consent"}); code != 0 {
 		t.Fatalf("transcript plan exit = %d: %s", code, out.String())
 	}
 	var plan git.SerializedPlan
@@ -283,8 +285,11 @@ func TestRunSlicePlanSummarizesTranscriptOnlyWithConsent(t *testing.T) {
 	if plan.Intent != "Protect the release" || plan.IntentSource != "conversation" {
 		t.Fatalf("transcript intent = %+v", plan)
 	}
-	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "consent") {
+	if len(plan.Warnings) != 1 || plan.Warnings[0] != "Transcript sent to auto under this repository's external-diff consent, acknowledged with --transcript-consent." {
 		t.Fatalf("transcript warnings = %v", plan.Warnings)
+	}
+	if !strings.Contains(out.String(), "Transcript sent to auto under this repository's external-diff consent, acknowledged with --transcript-consent.") {
+		t.Fatalf("transcript disclosure missing: %s", out.String())
 	}
 	if !strings.Contains(fake.prompt, intentTranscriptMarkerForTest()) {
 		t.Fatalf("adapter prompt did not contain transcript fences: %q", fake.prompt)
@@ -323,6 +328,128 @@ func TestRunSlicePlanDoesNotSendTranscriptWithoutConsent(t *testing.T) {
 	}
 }
 
+func TestRunSlicePlanTranscriptConsentMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		grantExternal  bool
+		acknowledge    bool
+		wantExit       int
+		wantPromptCall int
+	}{
+		{name: "without external consent", wantExit: 0},
+		{name: "without external consent but acknowledged", acknowledge: true, wantExit: 0},
+		{name: "with external consent without acknowledgement", grantExternal: true, wantExit: 1},
+		{name: "with both consent conditions", grantExternal: true, acknowledge: true, wantPromptCall: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareRepoForPlan(t)
+			if tc.grantExternal {
+				writeDiffRequest(t, true)
+				for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+					if err := exec.Command("git", args...).Run(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := consent.GrantExternalDiff("."); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			fake := &adapterSlicePlanFake{promptResponse: "Protect the release"}
+			previous := newAgentAdapterForMessage
+			newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) { return fake, nil }
+			t.Cleanup(func() { newAgentAdapterForMessage = previous })
+
+			args := []string{"--json", "--intent-transcript", "transcript.txt"}
+			if tc.acknowledge {
+				args = append(args, "--transcript-consent")
+			}
+			var out bytes.Buffer
+			if code := runSlicePlan(&out, args); code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d: %s", code, tc.wantExit, out.String())
+			}
+			if fake.promptCalls != tc.wantPromptCall {
+				t.Fatalf("summarizer calls = %d, want %d", fake.promptCalls, tc.wantPromptCall)
+			}
+			if tc.grantExternal && !tc.acknowledge {
+				wantCommand := "sentinel slice plan --json --intent-transcript transcript.txt --transcript-consent"
+				if !strings.HasSuffix(strings.TrimSpace(out.String()), wantCommand) {
+					t.Fatalf("missing exact repeat command in output: %s", out.String())
+				}
+				if !strings.Contains(out.String(), "transcript.txt") || !strings.Contains(out.String(), "auto") {
+					t.Fatalf("missing transcript disclosure target: %s", out.String())
+				}
+			}
+			if tc.grantExternal && tc.acknowledge && !strings.Contains(out.String(), "Transcript sent to auto under this repository's external-diff consent, acknowledged with --transcript-consent.") {
+				t.Fatalf("missing acknowledgement disclosure: %s", out.String())
+			}
+		})
+	}
+}
+
+func TestRunSlicePlanTranscriptFailuresPreserveDecisionExitCode(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		pending  bool
+		wantExit int
+	}{
+		{name: "normal plan", wantExit: 0},
+		{name: "pending decisions", pending: true, wantExit: pendingDecisionsExitCode},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareRepoForPlan(t)
+			writeDiffRequest(t, true)
+			for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+				if err := exec.Command("git", args...).Run(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := consent.GrantExternalDiff("."); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("transcript.txt", []byte("human wanted a protected release"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			fake := &adapterSlicePlanFake{promptErr: errors.New("summary failed")}
+			previousAdapter := newAgentAdapterForMessage
+			newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) { return fake, nil }
+			t.Cleanup(func() { newAgentAdapterForMessage = previousAdapter })
+			previousBuilder := buildSlicePlan
+			buildSlicePlan = func(_ git.CommitMessageGenerator, _ git.SemanticSliceOptions) (*git.SerializedPlan, error) {
+				plan := &git.SerializedPlan{PlanID: "plan-id", WorktreeState: "worktree-state"}
+				if tc.pending {
+					plan.PendingDecisions = []git.PendingDecision{{ID: "decision", File: "app.go", Options: []string{git.AnswerBypass, git.AnswerAbort}}}
+				}
+				return plan, nil
+			}
+			t.Cleanup(func() { buildSlicePlan = previousBuilder })
+
+			var out bytes.Buffer
+			if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt", "--transcript-consent"}); code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d: %s", code, tc.wantExit, out.String())
+			}
+			if fake.promptCalls != 1 {
+				t.Fatalf("summarizer calls = %d, want 1", fake.promptCalls)
+			}
+			var plan git.SerializedPlan
+			if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+				t.Fatal(err)
+			}
+			if plan.Intent != "" || plan.IntentSource != "" {
+				t.Fatalf("failed summary retained intent = %+v", plan)
+			}
+		})
+	}
+}
+
 func TestRunSlicePlanTranscriptFailuresWarnWithoutIntent(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -356,7 +483,7 @@ func TestRunSlicePlanTranscriptFailuresWarnWithoutIntent(t *testing.T) {
 			t.Cleanup(func() { newAgentAdapterForMessage = previous })
 
 			var out bytes.Buffer
-			if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt"}); code != 0 {
+			if code := runSlicePlan(&out, []string{"--json", "--intent-transcript", "transcript.txt", "--transcript-consent"}); code != 0 {
 				t.Fatalf("transcript plan exit = %d: %s", code, out.String())
 			}
 			var plan git.SerializedPlan
@@ -379,11 +506,18 @@ func TestRunSlicePlanRejectsTranscriptUsageErrors(t *testing.T) {
 		args []string
 	}{
 		{name: "missing file", args: []string{"--intent-transcript", "missing.txt"}},
+		{name: "unreadable file", args: []string{"--intent-transcript", "unreadable.txt"}},
 		{name: "empty file", args: []string{"--intent-transcript", "empty.txt"}},
 		{name: "exclusive flags", args: []string{"--intent", "protect", "--intent-transcript", "transcript.txt"}},
+		{name: "acknowledgement without transcript", args: []string{"--transcript-consent"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prepareRepoForPlan(t)
+			if tc.name == "unreadable file" {
+				if err := os.Mkdir("unreadable.txt", 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.name == "empty file" {
 				if err := os.WriteFile("empty.txt", nil, 0644); err != nil {
 					t.Fatal(err)

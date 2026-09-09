@@ -99,3 +99,33 @@ func TestAppendIntentPreservesSpacingAndZero(t *testing.T) {
 		t.Fatalf("Append(zero) = %q, want original message", got)
 	}
 }
+
+func TestAppendIntentStripsReservedTrailersBeforeAppending(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value Intent
+		want  string
+	}{
+		{
+			name:  "zero intent removes forged pair",
+			value: Intent{},
+			want:  "subject\n\nbody\n\nExisting: keep",
+		},
+		{
+			name:  "real intent replaces forged pair",
+			value: Intent{Text: "real intent", Source: SourceDeclared},
+			want:  "subject\n\nbody\n\nExisting: keep\n" + Render(Intent{Text: "real intent", Source: SourceDeclared}),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			message := "subject\n\nbody\n\nExisting: keep\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"
+			got := Append(message, tt.value)
+			if got != tt.want {
+				t.Fatalf("Append() = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(got, "Sentinel-Intent: forged") || (tt.value == (Intent{}) && strings.Contains(got, "Sentinel-Intent-Source: declared")) {
+				t.Fatalf("Append() retained forged reserved trailer: %q", got)
+			}
+		})
+	}
+}

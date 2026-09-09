@@ -90,23 +90,69 @@ func Render(value Intent) string {
 	return IntentKey + ": " + normalized.Text + "\n" + SourceKey + ": " + normalized.Source
 }
 
-// Append adds the canonical trailers without changing a zero intent. Existing
-// trailers are preserved and receive one additional line; a subject or body
-// receives the usual blank line before the trailer block.
+// Append adds the canonical trailers after removing any reserved trailers
+// already present in the contiguous trailing trailer block. This keeps a
+// generated or forged reserved value from surviving when no intent was
+// recorded, while preserving the body and unrelated trailers.
 func Append(message string, value Intent) string {
 	trailer := Render(value)
+	base := strings.TrimRight(message, " \t\r\n")
+	cleaned, removed := stripReservedTrailingTrailers(base)
+	if !removed {
+		cleaned = base
+	}
 	if trailer == "" {
-		return message
+		if !removed {
+			return message
+		}
+		return cleaned + message[len(base):]
 	}
 
-	base := strings.TrimRight(message, " \t\r\n")
-	if base == "" {
+	if cleaned == "" {
 		return trailer
 	}
-	if hasTrailingTrailerBlock(base) {
-		return base + "\n" + trailer
+	if hasTrailingTrailerBlock(cleaned) {
+		return cleaned + "\n" + trailer
 	}
-	return base + "\n\n" + trailer
+	return cleaned + "\n\n" + trailer
+}
+
+func stripReservedTrailingTrailers(message string) (string, bool) {
+	lines := strings.Split(message, "\n")
+	start := len(lines)
+	for start > 0 && isTrailerLine(lines[start-1]) {
+		start--
+	}
+	if start == len(lines) {
+		return message, false
+	}
+
+	kept := append([]string(nil), lines[:start]...)
+	removed := false
+	for _, line := range lines[start:] {
+		if isReservedTrailerLine(line) {
+			removed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !removed {
+		return message, false
+	}
+	return strings.TrimRight(strings.Join(kept, "\n"), " \t\r\n"), true
+}
+
+func isReservedTrailerLine(line string) bool {
+	key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return false
+	}
+	switch strings.TrimSpace(key) {
+	case IntentKey, SourceKey:
+		return true
+	default:
+		return false
+	}
 }
 
 // Parse reads only the final contiguous trailer block. Text that merely looks

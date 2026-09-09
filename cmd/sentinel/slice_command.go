@@ -20,6 +20,7 @@ import (
 const pendingDecisionsExitCode = 3
 
 var newAgentAdapterForMessage = agentadapter.NewAgentAdapterForMessage
+var buildSlicePlan = git.BuildPlanForAgentWithOptions
 
 // runSlicePlan emits the fragmentation plan without committing anything and
 // returns the exit code: 0 when no decisions are pending, 3 when some are.
@@ -29,6 +30,7 @@ func runSlicePlan(out io.Writer, args []string) int {
 	asJSON := false
 	declaredText, transcriptPath := "", ""
 	hasDeclared, hasTranscript := false, false
+	transcriptConsent := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
@@ -49,10 +51,16 @@ func runSlicePlan(out io.Writer, args []string) int {
 			hasTranscript = true
 			transcriptPath = args[i+1]
 			i++
+		case "--transcript-consent":
+			transcriptConsent = true
 		default:
 			fmt.Fprintf(out, "❌ Unknown option for 'slice plan': %s\n", args[i])
 			return 1
 		}
+	}
+	if transcriptConsent && !hasTranscript {
+		fmt.Fprintln(out, "❌ --transcript-consent requires --intent-transcript.")
+		return 1
 	}
 
 	declaredIntent := intent.Intent{}
@@ -91,6 +99,12 @@ func runSlicePlan(out io.Writer, args []string) int {
 	// The micro-diff and transcript contain source or conversation data: both
 	// use the existing commit-profile adapter only after the repository request
 	// and local external-diff consent are present.
+	if hasTranscript && consented && !transcriptConsent {
+		fmt.Fprintf(out, "❌ The contents of %q would be sent to configured agent %q for transcript summarization.\n", transcriptPath, configuredTranscriptAgent(root))
+		fmt.Fprintln(out, "Acknowledge this repository's external-diff consent explicitly before sending the transcript.")
+		fmt.Fprintln(out, transcriptRepeatCommand(asJSON, transcriptPath))
+		return 1
+	}
 	if consented {
 		adapter, err = newAgentAdapterForMessage(root)
 		if err != nil {
@@ -110,7 +124,7 @@ func runSlicePlan(out io.Writer, args []string) int {
 					warnings = append(warnings, fmt.Sprintf("Transcript summary failed: %v; no intent was recorded.", summaryErr))
 				} else {
 					planIntent = summary
-					warnings = append(warnings, "Transcript was sent to the commit-profile adapter under existing external-diff consent.")
+					warnings = append(warnings, fmt.Sprintf("Transcript sent to %s under this repository's external-diff consent, acknowledged with --transcript-consent.", transcriptAgentName(root, adapter)))
 				}
 			}
 		}
@@ -121,7 +135,7 @@ func runSlicePlan(out io.Writer, args []string) int {
 		adapter = nil
 	}
 
-	plan, err := git.BuildPlanForAgentWithOptions(adapter, git.SemanticSliceOptions{
+	plan, err := buildSlicePlan(adapter, git.SemanticSliceOptions{
 		Intent:       planIntent.Text,
 		IntentSource: planIntent.Source,
 	})
@@ -151,6 +165,32 @@ func runSlicePlan(out io.Writer, args []string) int {
 func hasPromptRunner(adapter agentadapter.AgentAdapter) bool {
 	_, ok := adapter.(agentadapter.PromptAdapter)
 	return ok
+}
+
+func configuredTranscriptAgent(root string) string {
+	cfg := config.LoadLocalConfig(root)
+	if cfg.ActiveAgent != "" {
+		return cfg.ActiveAgent
+	}
+	return "auto"
+}
+
+func transcriptAgentName(root string, adapter agentadapter.AgentAdapter) string {
+	if reporter, ok := adapter.(agentadapter.ReportsEffectiveAgent); ok {
+		if effective, reported := reporter.EffectiveAgent(); reported && effective.Binary != "" {
+			return effective.Binary
+		}
+	}
+	return configuredTranscriptAgent(root)
+}
+
+func transcriptRepeatCommand(asJSON bool, path string) string {
+	parts := []string{"sentinel", "slice", "plan"}
+	if asJSON {
+		parts = append(parts, "--json")
+	}
+	parts = append(parts, "--intent-transcript", path, "--transcript-consent")
+	return strings.Join(parts, " ")
 }
 
 func allowsExternalAgentDiff(root string) bool {
@@ -227,7 +267,7 @@ func printSerializedPlan(out io.Writer, plan *git.SerializedPlan) {
 	}
 	for _, warning := range plan.Warnings {
 		prefix := "⚠️"
-		if strings.HasPrefix(warning, "Transcript was sent") {
+		if strings.HasPrefix(warning, "Transcript sent to") {
 			prefix = "ℹ️"
 		}
 		fmt.Fprintf(out, "%s %s\n", prefix, warning)

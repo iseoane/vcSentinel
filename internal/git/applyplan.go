@@ -133,10 +133,7 @@ func deserializePlan(plan *SerializedPlan) *FragmentationPlan {
 		if len(selectors) == 0 {
 			selectors = wholeFileSelectors(batch.Paths)
 		}
-		message := batch.Message
-		if plan.Intent != "" || plan.IntentSource != "" {
-			message = intent.Append(message, intent.Intent{Text: plan.Intent, Source: plan.IntentSource})
-		}
+		message := intent.Append(batch.Message, intent.Intent{Text: plan.Intent, Source: plan.IntentSource})
 		executable.Batches = append(executable.Batches, PlannedBatch{
 			Layer:       batch.Layer,
 			Number:      batch.Number,

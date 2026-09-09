@@ -3,6 +3,7 @@ package git
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
@@ -157,6 +158,31 @@ func TestApplyApprovedPlanHappyPath(t *testing.T) {
 	}
 	if !clean {
 		t.Error("pending changes remained after applying the full plan")
+	}
+}
+
+func TestApplyApprovedPlanRemovesForgedReservedTrailersWithoutIntent(t *testing.T) {
+	plan := preparePlanWithGiant(t)
+	plan.Batches[0].Message = "subject\n\nbody\n\nExisting: keep\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"
+	if err := RecalculatePlanID(plan); err != nil {
+		t.Fatalf("RecalculatePlanID() error = %v", err)
+	}
+
+	results, err := ApplyApprovedPlan(plan, bypassAnswers(plan))
+	if err != nil {
+		t.Fatalf("ApplyApprovedPlan() error = %v", err)
+	}
+	for _, result := range results {
+		message, err := runGitOutput("show", "-s", "--format=%B", result.Hash)
+		if err != nil {
+			t.Fatalf("reading commit message: %v", err)
+		}
+		if strings.Contains(message, intent.IntentKey) || strings.Contains(message, intent.SourceKey) {
+			t.Fatalf("forged reserved trailers survived no-intent apply: %q", message)
+		}
+		if !strings.Contains(message, "Existing: keep") || !strings.Contains(message, "body") {
+			t.Fatalf("apply did not preserve body and other trailers: %q", message)
+		}
 	}
 }
 

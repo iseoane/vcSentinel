@@ -53,6 +53,74 @@ func TestCommitIntentReadsFullMessageTrailers(t *testing.T) {
 	}
 }
 
+func TestIntentSurvivesMultiCommitApplyAndRebase(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real git repository integration in short mode")
+	}
+	prepareTempRepo(t)
+	commitInRepo(t, "base.txt", "base\n")
+	runGitCommand(t, "checkout", "-q", "-b", "feature/intent")
+	if err := os.MkdirAll("web", 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"backend.go":  "package backend\n\nfunc Changed() {}\n",
+		"web/app.tsx": "export const changed = true;\n",
+		"config.yaml": "changed: true\n",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(filepath.FromSlash(path), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	want := intent.Intent{Text: "protect the release", Source: intent.SourceDeclared}
+	plan, err := BuildPlanForAgentWithOptions(nil, SemanticSliceOptions{Intent: want.Text, IntentSource: want.Source})
+	if err != nil {
+		t.Fatalf("BuildPlanForAgentWithOptions() error = %v", err)
+	}
+	if len(plan.Batches) != 3 {
+		t.Fatalf("production plan batches = %d, want 3: %+v", len(plan.Batches), plan.Batches)
+	}
+	results, err := ApplyApprovedPlan(plan, PlanAnswers{PlanID: plan.PlanID})
+	if err != nil {
+		t.Fatalf("ApplyApprovedPlan() error = %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("created commits = %d, want 3", len(results))
+	}
+	for _, result := range results {
+		got, err := CommitIntent(result.Hash)
+		if err != nil {
+			t.Fatalf("CommitIntent(%s) error = %v", result.Hash, err)
+		}
+		if got != want {
+			t.Fatalf("CommitIntent(%s) = %+v, want %+v", result.Hash, got, want)
+		}
+	}
+
+	runGitCommand(t, "checkout", "-q", "main")
+	newBase := commitInRepo(t, "base-update.txt", "new base\n")
+	runGitCommand(t, "checkout", "-q", "feature/intent")
+	runGitCommand(t, "rebase", "main")
+	rewritten, err := RangeSHAs(newBase, "HEAD")
+	if err != nil {
+		t.Fatalf("RangeSHAs() after rebase error = %v", err)
+	}
+	if len(rewritten) != 3 {
+		t.Fatalf("rewritten commits = %d, want 3", len(rewritten))
+	}
+	for _, sha := range rewritten {
+		got, err := CommitIntent(sha)
+		if err != nil {
+			t.Fatalf("CommitIntent(%s) after rebase error = %v", sha, err)
+		}
+		if got != want {
+			t.Fatalf("CommitIntent(%s) after rebase = %+v, want %+v", sha, got, want)
+		}
+	}
+}
+
 func TestCommitMessage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skips the real git repository integration in short mode")
