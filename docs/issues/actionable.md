@@ -13,9 +13,15 @@ previous one has not defined yet. Numbering is left alone so existing
 references from `future.md` and from within this file keep pointing at what
 they name.
 
-The contract those three items serve, stated by the repository owner on
-2026-09-09 and governing all of them, because each was drifting away from it
-independently:
+**Superseded later the same day. Read
+[`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md)
+first: it is the governing design, and where it disagrees with anything below,
+it wins.** What follows is kept because it records how the problem was
+understood when these items were written, and the evidence in each item is
+still valid.
+
+The contract those three items originally served, stated by the repository
+owner on 2026-09-09, because each item was drifting away from it independently:
 
 - `gate` — "this commit is well made". It looks at one piece.
 - `pr review` — "the pieces together tell a coherent and complete story". It
@@ -26,10 +32,18 @@ independently:
   If no report exists, it asks for one first.
 
 Read that as an allocation of ownership, not a description of today's code.
-Two consequences it settles that the items below kept re-opening: the per-commit
-audit belongs to `gate` alone and has no place in the PR report, and the
-judgement published by `pr create` is authored by `pr review`, never by
-`pr create` itself.
+One consequence it settles and that still holds: the judgement published by
+`pr create` is authored by `pr review`, never by `pr create` itself.
+
+**What the superseding design changed, and why the two texts disagree.** The
+first line above gave `gate` the per-commit audit. Working through the whole
+flow showed why that is wrong: "compiles and passes its checks" is a property
+of the tree at one moment, not of a commit in isolation — split one piece of
+work across seven commits and the third usually does not build alone. So the
+two questions cannot share an owner. `review` owns "is this piece well made"
+and is the only writer of per-commit verdicts; `gate` owns "does this work
+right now" and stops auditing entirely. Everywhere below that assigns a
+per-commit audit to `gate`, read `review`.
 
 ## 1. Bound what the review flow costs the machine that runs it
 
