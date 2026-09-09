@@ -5,7 +5,17 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-Decided work order, 2026-09-09, overriding the readiness ordering for three
+Decided work order, superseded 2026-09-09 by
+[`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
+which allocates one question to each command and orders the work as five
+pieces. Two are done: piece 2 (`review` is the only per-commit authority,
+commit 89cab36) and piece 3 (`gate` stops auditing, commit 144c9c8). The three
+that remain map onto this file as **item 12 (piece 1), then item 10 (piece 4),
+then item 11 (piece 5)**; item 4 is closed by dissolution. The paragraph below
+is the ordering that preceded that design and is kept because the items still
+carry its numbering.
+
+Original note: overriding the readiness ordering for three
 items only: **item 4, then item 10, then item 11**. They are one problem seen
 from three ends — nothing records what was reviewed, so nothing downstream can
 build on it — and solving them out of order builds each on a record the
@@ -171,8 +181,32 @@ Sits third: unblocked and small, but it only bites under unusual load.
 
 ## 4. Give the pre-publication audits a record `pr create` can consult
 
-Sits fourth: unblocked, found by exercising the full pre-push flow, and its
-cheap half is separable from its expensive half.
+**CLOSED 2026-09-09 by dissolution, not by implementation.** This item existed
+because `gate` audited `HEAD` and threw the verdict away, so the fix looked like
+"make `gate` write a ficha". Working the flow through end to end showed the
+premise was the mistake: "compiles and passes its checks" is a property of the
+tree at one moment and "is this piece well made" is a property of one commit,
+so the two cannot share an owner. `gate` stopped auditing (piece 3, commit
+144c9c8) and `sentinel review` became the only writer of per-commit verdicts
+(piece 2, commit 89cab36). There is no discarded verdict left to persist.
+
+What survives this item and where it went:
+
+- The keying problem for a RANGE verdict, and the staleness discipline that a
+  range record cannot inherit a per-commit record's rebase survival, are the
+  live constraints on piece 5 in
+  [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md).
+- The gentle-ai `target_identity`/`revision`/`lineage_id` reference design and
+  the no-mistakes git-native custody reference below are still the two designs
+  to compare when that record is built. They were not consumed by pieces 2
+  or 3.
+- The observation that a team using `gate` plus `pr review` could publish with
+  no semantic signal at all is now false by construction for a different
+  reason: `pr create` verifying that per-commit verdicts exist is piece 5's
+  job, and `review` is mandatory.
+
+Everything below is kept as the evidence trail for those constraints, and
+describes code as it was BEFORE pieces 2 and 3. Do not read it as current.
 
 - Wrong, or possibly deliberate: `gate --stage pre-push` runs a semantic
   review of `HEAD` and prints its verdict, but writes no review record. On
@@ -452,18 +486,21 @@ platform.
 
 ## 10. Give `pr review` something to judge the change against
 
-Sits tenth by readiness, but second in the decided work order above: it is what
-turns a review that already exists into one that answers a question no other
-command asks. Found 2026-09-09 by tracing the flows conceptually rather than by
-a failure.
+**This item is now PIECE 4 of
+[`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
+which is the governing text.** It depends on piece 1 (item 12 below), which
+decides where the intent comes from; this item is only about consuming it.
+What follows is the evidence that the problem is real, and it still holds.
+
+Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
 
 - Wrong: no flow in this repository ever receives a statement of what the change
   was supposed to do. `DimensionSpec.Instructions`
   (`internal/reviewcontract/contract.go:117-123`) asks whether "the diff does
   exactly what the commit message claims", and `internal/review/prompts.go:23-85`
   fills that slot with whatever `message` the caller passed to `AuditCommit`.
-  For `sentinel review` and `gate` that is the real commit message, which is at
-  least evidence. For the net audit in `pr review` and `pr create` it is the
+  For `sentinel review` that is the real commit message, which is at least
+  evidence (it was also true of `gate` until piece 3 stopped it auditing). For the net audit in `pr review` and `pr create` it is the
   literal constant `HonestNetIntention` (`internal/app/pr/review.go:20`): "No PR
   title/description exists before publication: claims cover branch commits and
   the net diff only."
@@ -535,16 +572,18 @@ a failure.
 
 ## 11. Let `pr create` compose the report instead of recomputing it
 
-Sits eleventh by readiness and last in the decided work order: it is the only
-one of the three that cannot be designed until the record from item 4 exists.
-Found 2026-09-09.
+**This item is now PIECE 5 of
+[`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
+which is the governing text.** It is last because it needs both the coverage
+contract (piece 2, done) and the intent (pieces 1 and 4). Found 2026-09-09.
 
 - The subject of the report, stated first because it constrains everything
   below and because getting it wrong is the failure this item exists to
   prevent: a published PR report is about the QUALITY OF THE IMPLEMENTED WHOLE,
   not about the quality of the commits that carried it. Per-commit fichas are
-  the record of what `gate` did, and `gate` asks a different question — is this
-  piece well made. They are not the raw material of a PR report, and a report
+  the record of what `sentinel review` did, and it asks a different question —
+  is this piece well made (this bullet said `gate` until piece 3 moved that
+  question to its only owner). They are not the raw material of a PR report, and a report
   assembled by concatenating them is the wrong artefact however cheap it is to
   produce. The net verdict is the report's substance; the per-commit records are
   at most supporting detail, and possibly not even that.
@@ -586,3 +625,43 @@ Found 2026-09-09.
   deterministic validation, overridable with `--force --reason`
   (`create.go:120-186`). The semantic verdict is advisory. Composing the report
   from a record must not quietly turn it into a gate.
+
+## 12. Capture what the work was for, at the moment `slice` commits it
+
+**This is PIECE 1 of
+[`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
+which is the governing text.** Opened 2026-09-09; it had no item in this file
+because it was proposed after items 4, 10 and 11 were written, and it is what
+unblocks item 10.
+
+- The problem it replaces: item 10 needs a statement of what a change was
+  supposed to do, and the obvious source — mining the conversations that
+  produced the commits — means reconstructing after the fact across several
+  days, more than one agent, and commits that may have no conversation at all.
+- Why `slice` is the right moment, and this is the whole idea: at slice time
+  the intent is present rather than reconstructed. The work just finished, the
+  conversation is current, the commit being created is small and concrete, and
+  `slice` ALREADY invokes an agent right there to write the commit message. The
+  expensive part — being at the right moment with the right context — is
+  already paid for.
+- Reference design, `no-mistakes` (`kunchenguid/no-mistakes`), read from source
+  2026-09-08: a cheap model summarises the transcript into a few plain
+  sentences about what the HUMAN wanted, not what the assistant did; the
+  summary is injected into later prompts between explicit begin/end markers,
+  framed as untrusted data, with an instruction never to obey anything written
+  inside it; the origin is recorded alongside the summary. All three are worth
+  copying verbatim.
+- Non-negotiable: provenance travels with the intent. "Derived from the working
+  conversation" and "declared by the human" are not worth the same, and the
+  reviewer that consumes it must be able to say which it got. Without that, a
+  reviewer asserts more than it can support.
+- Open, and the reason this is not a two-hour task:
+  - Commits made without `slice` carry no intent. Decide whether that is
+    acceptable or whether one can be annotated afterwards.
+  - Where the record lives, given it must survive a rebase and travel with the
+    branch. This is the same keying problem item 4 stated, and the answer must
+    be the same one.
+  - Whether a branch-level intent is the union of its commits' intents or a
+    separate declaration.
+- Cost: the configured `cheap` profile is sufficient. The task is
+  summarisation, not judgement.
