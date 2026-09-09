@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -228,98 +227,9 @@ func TestGateEventPersistsOnlyOperationalMetadata(t *testing.T) {
 	}
 }
 
-// TestRunGateFailsClosedWithoutAttributes exercises the fail-closed path that
-// the review of ce8316d found untested, and it is the one that matters: the
-// repository attributes decide route classification and therefore whether the
-// security and concurrency bundles are scheduled at all, so a gate that
-// continued with empty evidence would succeed on an under-classified plan.
-//
-// git.Attributes already returns "" with no error when the tree has no
-// .gitattributes, so reaching this branch always means a real read failure.
-func TestRunGateFailsClosedWithoutAttributes(t *testing.T) {
-	worktree := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = worktree
-		// Built from empty, not appended to os.Environ: appending keeps
-		// GIT_CONFIG_COUNT and the GIT_CONFIG_KEY_*/VALUE_* pairs, which
-		// override the neutralisation the other variables state, and keeps a
-		// global commit.gpgSign or hook that would break setup on some hosts.
-		cmd.Env = []string{
-			"PATH=" + os.Getenv("PATH"), "HOME=" + worktree,
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-			"GIT_CONFIG_NOSYSTEM=1",
-		}
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v (%s)", args, err, output)
-		}
-	}
-	run("init", "-q", "-b", "main")
-	run("config", "core.hooksPath", "")
-
-	// A configured validation profile and a real HEAD are both required: the
-	// gate stops before the attribute read without them, and a test that never
-	// reaches the branch it names proves nothing.
-	if err := os.MkdirAll(filepath.Join(worktree, ".vas_sentinel"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	configYaml := "validation:\n  capabilities:\n    format:\n      command: \"true\"\n  profiles:\n    standard: [format]\n"
-	if err := os.WriteFile(filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), []byte(configYaml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(worktree, "a.txt"), []byte("one\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "-A")
-	run("commit", "-qm", "first")
-
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(worktree); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chdir(previous) })
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	original := readAttributesGate
-	t.Cleanup(func() { readAttributesGate = original })
-	called := false
-	readAttributesGate = func(string) (string, error) {
-		called = true
-		return "", errors.New("simulated attribute read failure")
-	}
-
-	var output bytes.Buffer
-	exit := runGate(&output, worktree, []string{"--stage", "pre-commit"})
-
-	// The gate stops before this seam when configuration is missing, so a run
-	// that never reached it would prove nothing about the fail-closed branch.
-	if !called {
-		t.Fatalf("the gate never reached the attribute read, so this test proves nothing about the fail-closed branch; output: %q", output.String())
-	}
-	// The exact code matters: accepting any non-zero would pass if the attribute
-	// failure were misreported as a validation or review failure, which would
-	// send the operator looking in the wrong place.
-	want := gate.ExitCode(gate.StateInfrastructureError)
-	if exit != want {
-		t.Errorf("gate exited %d after an attribute read failure, want %d (review infrastructure error). Output: %q", exit, want, output.String())
-	}
-	if !strings.Contains(output.String(), "attributes") {
-		t.Errorf("the output must name the attribute failure, got: %q", output.String())
-	}
-}
-
-// The gate no longer fails closed on a corrupt human-disposition log,
-// because piece 3 removed the semantic phase that read it. The guarantee did
-// not disappear, it moved with its reader: see
-// TestRunReviewFailsClosedOnCorruptHumanDisposition in review_command_test.go,
-// which pins it on `sentinel review`, the command that now owns per-commit
-// verdicts and therefore owns the standing human answers.
+// TestRunGateFailsClosedWithoutAttributes is gone with piece 3. It pinned
+// that an unreadable .gitattributes stopped the gate, because the attributes
+// decided which review dimensions were scheduled. The gate schedules no
+// dimensions now, so computing them only to fail closed on them would refuse
+// to run for a reason that cannot affect the outcome. `sentinel review` still
+// reads them, for the audit that still uses them.

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/gate"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
@@ -65,32 +64,24 @@ func runGate(w io.Writer, worktree string, args []string) int {
 		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
 
-	sha, message, diff, files, err := headCommitData()
+	// HEAD still has to be readable: the candidate SHA identifies the durable
+	// run and the changed paths scope validation, so failing to read it is a
+	// real infrastructure failure.
+	//
+	// What is deliberately NOT read any more: the change profile and the
+	// gitattributes. They existed to classify the review route — which
+	// dimensions to schedule, whether the security bundle applied — and piece 3
+	// removed the phase that consumed them. Computing them anyway would keep
+	// two fail-closed branches that can refuse to run the gate for a reason
+	// that no longer affects anything it does, which is worse than no check at
+	// all: it blocks work and teaches operators the block is noise.
+	sha, _, diff, files, err := headCommitData()
 	if err != nil {
 		fmt.Fprintf(w, "❌ Could not read HEAD: %v\n", err)
 		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
-	changeProfile, err := change.ComputeCommitProfile(sha)
-	if err != nil {
-		fmt.Fprintf(w, "❌ Could not derive the change profile of HEAD: %v\n", err)
-		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
-	}
 
-	// Fail closed. git.Attributes already returns "" with no error when the
-	// tree has no .gitattributes, so an error here is a real read failure, and
-	// the attributes now decide route classification and therefore whether the
-	// security and concurrency bundles are scheduled at all. Continuing with
-	// empty evidence would let the gate succeed on an under-classified plan.
-	attributes, err := readAttributesGate(sha)
-	if err != nil {
-		fmt.Fprintf(w, "❌ Could not read the attributes of %s: %v\n", sha, err)
-		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
-	}
-
-	options := buildGateOptions(cfg, worktree, profile, GateEvidence{
-		SHA: sha, Message: message, Diff: diff, Gitattributes: attributes,
-		Profile: changeProfile, Files: files,
-	})
+	options := buildGateOptions(cfg, worktree, profile, GateEvidence{SHA: sha, Files: files})
 	applyDurableCutover(&options, worktree, stage, sha)
 
 	result := gate.RunGate(options)
@@ -113,17 +104,14 @@ func runGate(w io.Writer, worktree string, args []string) int {
 // reviewer seams, and the per-commit review transport (nil unless
 // review.durable_routes is on). Shared by runGate and the cutover tests,
 // so tests exercise the exact production construction.
-// GateEvidence groups what the gate derives from HEAD. It is a struct and not
-// a parameter list because those were six adjacent strings: a forgotten,
-// shifted or swapped argument compiled the same, and one of them decides
-// whether the security review is scheduled. The compiler no longer allows it.
+// GateEvidence groups what the gate derives from HEAD. It kept six fields
+// while the gate audited; piece 3 left two, because the rest fed the review
+// route classification. It stays a struct rather than collapsing back into
+// positional arguments: two adjacent values of different shape are still worth
+// naming at the call site.
 type GateEvidence struct {
-	SHA           string
-	Message       string
-	Diff          string
-	Gitattributes string
-	Profile       change.ChangeProfile
-	Files         []string
+	SHA   string
+	Files []string
 }
 
 func buildGateOptions(cfg config.Config, worktree, profile string, evidence GateEvidence) gate.Options {
@@ -160,11 +148,6 @@ func gateAuditorFactory(cfg config.Config, verifier *modelprobe.Verifier) review
 		return adapter, profile.Name, nil
 	}
 }
-
-// readAttributesGate is the gate's .gitattributes read seam: a variable so a
-// test can exercise the fail-closed branch, the one that decides whether the
-// gate continues with an under-classified plan.
-var readAttributesGate = git.Attributes
 
 // headCommitData resolves the SHA of HEAD and reads its message/diff/files:
 // the gate always audits HEAD (unlike 'review', which accepts an explicit
