@@ -20,15 +20,15 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 )
 
-// GateJobKind distinguishes the two logical-job layers under one gate root
-// run: deterministic validation commands and the semantic review phase.
-// Terminal classes remain distinct per layer downstream; this vocabulary only
-// names which layer a logical job belongs to.
+// GateJobKind names the layer a logical job belongs to under one gate root
+// run. Since piece 3 removed the semantic phase there is exactly one layer,
+// and the type is kept rather than collapsed because the plan, the settlement
+// and the reconstruction all read it, and a future deterministic layer would
+// reintroduce the distinction the type exists to carry.
 type GateJobKind string
 
 const (
 	GateJobValidation GateJobKind = "validation"
-	GateJobReview     GateJobKind = "review"
 )
 
 // Canonical prompt domains and capability names feeding agentrun identity
@@ -37,19 +37,17 @@ const (
 const (
 	promptDomainRoot       = "gate.root"
 	promptDomainValidation = "gate.validation"
-	promptDomainReview     = "gate.review"
 
 	capabilityNameCommands = "gate.validation.commands"
 	capabilityNameCommand  = "gate.validation.command"
-	capabilityNameReview   = "gate.review.phase"
 	// capabilityNameAttempt carries the gate execution ordinal and nothing
 	// else, so the command layerbilities keep meaning exactly "these commands".
 	capabilityNameAttempt = "gate.execution.attempt"
 )
 
-// GateJobPlan is one logical job descriptor under the gate root run. The
-// empty Command belongs to the review job; every validation job carries its
-// exact command string in deterministic profile order.
+// GateJobPlan is one logical job descriptor under the gate root run. Every
+// validation job carries its exact command string in deterministic profile
+// order.
 type GateJobPlan struct {
 	Kind    GateJobKind
 	Command string
@@ -89,16 +87,6 @@ func (p GateRunPlan) ValidationJobs() []GateJobPlan {
 		}
 	}
 	return jobs
-}
-
-// ReviewJob returns the single semantic-review logical-job descriptor.
-func (p GateRunPlan) ReviewJob() GateJobPlan {
-	for _, job := range p.Jobs {
-		if job.Kind == GateJobReview {
-			return job
-		}
-	}
-	return GateJobPlan{}
 }
 
 // GatePlanError rejects inputs that would produce an unexplainable plan:
@@ -156,7 +144,7 @@ func BuildGateRunPlanAttempt(stage, profile, candidateSHA string, commands []str
 		withAttempt([]agentrun.Capability{agentrun.NewCapability(capabilityNameCommands, commandAttributes(commands))}, attempt),
 	))
 
-	jobs := make([]GateJobPlan, 0, len(commands)+1)
+	jobs := make([]GateJobPlan, 0, len(commands))
 	for index, command := range commands {
 		position := strconv.Itoa(index)
 		jobs = append(jobs, GateJobPlan{
@@ -173,17 +161,6 @@ func BuildGateRunPlanAttempt(stage, profile, candidateSHA string, commands []str
 			)),
 		})
 	}
-	jobs = append(jobs, GateJobPlan{
-		Kind: GateJobReview,
-		Job: agentrun.NewLogicalJob(agentrun.NewRunRequest(
-			agentrun.Candidate(candidateSHA),
-			agentrun.Prompt(canonicalPrompt(promptDomainReview, stage, profile)),
-			withAttempt([]agentrun.Capability{agentrun.NewCapability(capabilityNameReview, map[string]string{
-				"profile": profile,
-			})}, attempt),
-		)),
-	})
-
 	return GateRunPlan{
 		Attempt:          attempt,
 		Stage:            stage,

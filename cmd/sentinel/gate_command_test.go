@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,9 +51,24 @@ func TestApplyTimeoutSeconds(t *testing.T) {
 
 // TestParseGateFlags covers the required --stage with fixed values and the
 // optional --profile with its default.
+//
+// Piece 3: --timeout is refused rather than accepted and ignored. It only ever
+// widened the semantic review budget, and gate is deterministic since it
+// stopped auditing, so honouring it would be a lie to whatever script passed
+// it.
 func TestParseGateFlags(t *testing.T) {
+	t.Run("timeout is refused and says where it went", func(t *testing.T) {
+		_, _, err := parseGateFlags([]string{"--stage", "pre-push", "--timeout", "1200"})
+		if err == nil {
+			t.Fatal("gate must refuse --timeout instead of silently ignoring it")
+		}
+		if !strings.Contains(err.Error(), "sentinel review") {
+			t.Fatalf("the refusal must point at the command that still honours it, got %v", err)
+		}
+	})
+
 	t.Run("valid stage without profile uses the default", func(t *testing.T) {
-		stage, profile, _, err := parseGateFlags([]string{"--stage", "pre-commit"})
+		stage, profile, err := parseGateFlags([]string{"--stage", "pre-commit"})
 		if err != nil {
 			t.Fatalf("did not expect an error: %v", err)
 		}
@@ -65,7 +78,7 @@ func TestParseGateFlags(t *testing.T) {
 	})
 
 	t.Run("explicit stage and profile", func(t *testing.T) {
-		stage, profile, _, err := parseGateFlags([]string{"--stage", "pr", "--profile", "custom"})
+		stage, profile, err := parseGateFlags([]string{"--stage", "pr", "--profile", "custom"})
 		if err != nil {
 			t.Fatalf("did not expect an error: %v", err)
 		}
@@ -75,67 +88,24 @@ func TestParseGateFlags(t *testing.T) {
 	})
 
 	t.Run("missing stage is an error", func(t *testing.T) {
-		if _, _, _, err := parseGateFlags([]string{}); err == nil {
+		if _, _, err := parseGateFlags([]string{}); err == nil {
 			t.Fatal("expected an error for the missing --stage")
-		}
-	})
-
-	t.Run("valid timeout overrides review.timeout only in this invocation", func(t *testing.T) {
-		_, _, timeout, err := parseGateFlags([]string{"--stage", "pre-push", "--timeout", "1200"})
-		if err != nil {
-			t.Fatalf("did not expect an error: %v", err)
-		}
-		if timeout != 1200 {
-			t.Errorf("timeout = %d, expected 1200", timeout)
-		}
-	})
-
-	t.Run("without timeout there is no override", func(t *testing.T) {
-		_, _, timeout, err := parseGateFlags([]string{"--stage", "pre-push"})
-		if err != nil {
-			t.Fatalf("did not expect an error: %v", err)
-		}
-		if timeout != 0 {
-			t.Errorf("timeout = %d, expected 0: without the flag the yml rules", timeout)
-		}
-	})
-
-	t.Run("unrepresentable timeout is an error", func(t *testing.T) {
-		// Above the maximum the value would overflow time.Duration and turn
-		// negative. On 32 bits it does not even get there, because strconv.Atoi
-		// rejects it first by range; both paths are an error and that is what
-		// is asserted here, without tying to the platform's int width.
-		_, _, _, err := parseGateFlags([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maxTimeoutSeconds+1, 10)})
-		if err == nil {
-			t.Fatal("expected an error for an unrepresentable timeout")
-		}
-
-		// The largest ACCEPTABLE value depends on the platform: where int is
-		// 32 bits, the duration bound falls out of reach and the real ceiling
-		// is the int's own. Pinning the 64-bit value would make the suite fail
-		// exactly on the targets the production fix protects.
-		maximum := maxTimeoutSeconds
-		if int64(math.MaxInt) < maximum {
-			maximum = int64(math.MaxInt)
-		}
-		if _, _, timeout, err := parseGateFlags([]string{"--stage", "pr", "--timeout", strconv.FormatInt(maximum, 10)}); err != nil || int64(timeout) != maximum {
-			t.Errorf("the largest acceptable value must be accepted, got timeout=%d err=%v", timeout, err)
 		}
 	})
 
 	t.Run("non-numeric or non-positive timeout is an error", func(t *testing.T) {
 		for _, value := range []string{"abc", "0", "-5"} {
-			if _, _, _, err := parseGateFlags([]string{"--stage", "pr", "--timeout", value}); err == nil {
+			if _, _, err := parseGateFlags([]string{"--stage", "pr", "--timeout", value}); err == nil {
 				t.Errorf("--timeout %q should be an error", value)
 			}
 		}
-		if _, _, _, err := parseGateFlags([]string{"--stage", "pr", "--timeout"}); err == nil {
+		if _, _, err := parseGateFlags([]string{"--stage", "pr", "--timeout"}); err == nil {
 			t.Error("--timeout without a value should be an error")
 		}
 	})
 
 	t.Run("unrecognized stage is a clear error", func(t *testing.T) {
-		_, _, _, err := parseGateFlags([]string{"--stage", "no-such-stage"})
+		_, _, err := parseGateFlags([]string{"--stage", "no-such-stage"})
 		if err == nil {
 			t.Fatal("expected an error for an unrecognized --stage")
 		}
@@ -145,7 +115,7 @@ func TestParseGateFlags(t *testing.T) {
 	})
 
 	t.Run("unrecognized flag is an error", func(t *testing.T) {
-		if _, _, _, err := parseGateFlags([]string{"--stage", "pr", "--other"}); err == nil {
+		if _, _, err := parseGateFlags([]string{"--stage", "pr", "--other"}); err == nil {
 			t.Fatal("expected an error for an unrecognized flag")
 		}
 	})
@@ -222,14 +192,9 @@ func TestGateEventPersistsOnlyOperationalMetadata(t *testing.T) {
 		&output,
 		worktree,
 		"pre-push",
-		gate.StateReviewInfrastructureError,
+		gate.StateInfrastructureError,
 		[]string{rawMessage},
 		"codegraph context skipped: dirty_worktree",
-		[]gate.ReviewerFailure{{
-			Bundle:    "correctness",
-			Dimension: "logic",
-			Reason:    "provider reported: ripgrep execution failed",
-		}},
 	)
 	if !strings.Contains(output.String(), rawMessage) {
 		t.Fatalf("console output = %q, want raw diagnostic", output.String())
@@ -255,16 +220,11 @@ func TestGateEventPersistsOnlyOperationalMetadata(t *testing.T) {
 	if detail["context_skip_reason"] != "codegraph context skipped: dirty_worktree" {
 		t.Errorf("context skip reason = %#v", detail["context_skip_reason"])
 	}
-	failures, ok := detail["reviewer_failures"].([]any)
-	if !ok || len(failures) != 1 {
-		t.Fatalf("reviewer failures = %#v, want one", detail["reviewer_failures"])
-	}
-	failure, ok := failures[0].(map[string]any)
-	if !ok {
-		t.Fatalf("reviewer failure = %#v, want object", failures[0])
-	}
-	if failure["bundle"] != "correctness" || failure["dimension"] != "logic" || failure["reason"] != "provider reported: ripgrep execution failed" {
-		t.Fatalf("reviewer failure = %#v", failure)
+	// Piece 3: the gate has no reviewers, so it persists no reviewer
+	// failures. What it still must persist is the operational metadata
+	// above, and what it still must NOT persist is the console message.
+	if _, exists := detail["reviewer_failures"]; exists {
+		t.Fatalf("a deterministic gate persisted reviewer failures: %#v", detail["reviewer_failures"])
 	}
 }
 
@@ -348,7 +308,7 @@ func TestRunGateFailsClosedWithoutAttributes(t *testing.T) {
 	// The exact code matters: accepting any non-zero would pass if the attribute
 	// failure were misreported as a validation or review failure, which would
 	// send the operator looking in the wrong place.
-	want := gate.ExitCode(gate.StateReviewInfrastructureError)
+	want := gate.ExitCode(gate.StateInfrastructureError)
 	if exit != want {
 		t.Errorf("gate exited %d after an attribute read failure, want %d (review infrastructure error). Output: %q", exit, want, output.String())
 	}
@@ -357,29 +317,9 @@ func TestRunGateFailsClosedWithoutAttributes(t *testing.T) {
 	}
 }
 
-// FU-6: the gate must surface corrupt human-answer history as review
-// infrastructure failure rather than running without the disposition overlay.
-func TestRunGateFailsClosedOnCorruptHumanDisposition(t *testing.T) {
-	worktree := worktreeWithCorruptHumanDisposition(t)
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(worktree); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chdir(previous) })
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	var output bytes.Buffer
-	exit := runGate(&output, worktree, []string{"--stage", "pre-commit"})
-	want := gate.ExitCode(gate.StateReviewInfrastructureError)
-	if exit != want {
-		t.Fatalf("gate exit = %d, want %d; output: %q", exit, want, output.String())
-	}
-	if !strings.Contains(output.String(), "reading human dispositions") {
-		t.Fatalf("gate did not report the disposition read failure: %q", output.String())
-	}
-}
+// The gate no longer fails closed on a corrupt human-disposition log,
+// because piece 3 removed the semantic phase that read it. The guarantee did
+// not disappear, it moved with its reader: see
+// TestRunReviewFailsClosedOnCorruptHumanDisposition in review_command_test.go,
+// which pins it on `sentinel review`, the command that now owns per-commit
+// verdicts and therefore owns the standing human answers.

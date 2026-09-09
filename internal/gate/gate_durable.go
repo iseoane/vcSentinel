@@ -54,7 +54,6 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
@@ -95,7 +94,7 @@ func RunGate(opts Options) Result {
 	plan, err := buildDurableGatePlan(opts)
 	if err != nil {
 		return Result{
-			State: StateReviewInfrastructureError,
+			State: StateInfrastructureError,
 			// A plan that cannot be built is infrastructure, not a code
 			// finding: same classification rule as legacy validation
 			// orchestration failures.
@@ -221,11 +220,11 @@ func BuildDurableGatePlanAttempt(opts Options, attempt int) (GateRunPlan, error)
 }
 
 // infraResult classifies a durable-infrastructure failure: never a code
-// finding, always StateReviewInfrastructureError with the typed Err set for
+// finding, always StateInfrastructureError with the typed Err set for
 // callers that need it (the CLI facade reads only State/Messages).
 func infraResult(err error) Result {
 	return Result{
-		State:    StateReviewInfrastructureError,
+		State:    StateInfrastructureError,
 		Messages: []string{err.Error()},
 		Err:      err,
 	}
@@ -249,7 +248,7 @@ func runDurableGatePhases(plan GateRunPlan, opts Options, rootRunID agentrun.Ide
 		// code finding: never invent a VALIDATION_FAILED for
 		// something that never executed.
 		return Result{
-			State:    StateReviewInfrastructureError,
+			State:    StateInfrastructureError,
 			Messages: []string{validationNotRunMessage(err)},
 			Err:      err,
 		}, rootSettlement{class: agentrun.OutcomeUnavailable, detail: layerInfrastructureDetail}
@@ -260,7 +259,7 @@ func runDurableGatePhases(plan GateRunPlan, opts Options, rootRunID agentrun.Ide
 	children, err := settleValidationJobs(plan.ValidationJobs(), runs, evidence, opts, rootRunID)
 	if err != nil {
 		return Result{
-			State:    StateReviewInfrastructureError,
+			State:    StateInfrastructureError,
 			Messages: []string{fmt.Sprintf("Could not record the durable validation: %v", err)},
 			Err:      err,
 		}, rootSettlement{class: agentrun.OutcomeUnavailable, detail: withChildren(layerInfrastructureDetail, children)}
@@ -271,37 +270,17 @@ func runDurableGatePhases(plan GateRunPlan, opts Options, rootRunID agentrun.Ide
 			rootSettlement{class: agentrun.OutcomeFailure, detail: withChildren(layerValidationDetail, children)}
 	}
 
-	opcionesRevision := opts.ReviewOptions
-	opcionesRevision.RefuterFactory = opts.RefuterFactory
-	if opts.DurableReviewTransportFactoryWithEvidence != nil {
-		opcionesRevision.ReviewTransport = nil
-		opcionesRevision.ReviewTransportWithEvidence, opcionesRevision.FinalizeMetrics =
-			opts.DurableReviewTransportFactoryWithEvidence(rootRunID)
-	} else if opts.DurableReviewTransportFactory != nil {
-		// The legacy gate factory still owns parent linkage; clear any
-		// standalone rich transport captured in ReviewOptions to avoid an
-		// unparented duplicate run.
-		opcionesRevision.ReviewTransportWithEvidence = nil
-		opcionesRevision.ReviewTransport = opts.DurableReviewTransportFactory(rootRunID)
-	}
-	result := translateVerdict(review.AuditCommit(opts.ReviewerFactory, opts.Parallel, opcionesRevision))
-	settlement := settlementForState(result.State)
-	if settlement.detail != "" {
-		if reviewChild, resolvable := resolvableReviewChild(opts.DurableStore, plan); resolvable {
-			children = append(children, reviewChild)
-		}
-		// Cutover follow-up resolved (ticket 11 slice 3): review candidate
-		// identities are process-salted inside the shared durable transport,
-		// so the orchestrator learns the actually-admitted review runs from
-		// the wiring-time observer sink instead of the plan. Consuming it
-		// here keeps the machine-parseable enumeration equal to the
-		// persisted ParentRunID scan on every failing layer.
-		if opts.DurableReviewChildren != nil {
-			children = append(children, opts.DurableReviewChildren()...)
-		}
-		settlement.detail = withChildren(settlement.detail, children)
-	}
-	return result, settlement
+	// Piece 3 of docs/design/review-flow-ownership.md: the gate no longer
+	// audits. "Compiles and passes its checks" is a property of the tree at one
+	// moment; "is this piece well made" is a property of one commit, and the two
+	// cannot share an owner. `sentinel review` owns the second and is the only
+	// writer of per-commit verdicts, so a green validation IS the whole gate
+	// verdict now, and reaching this point is that verdict.
+	return Result{
+			State:    StatePass,
+			Messages: []string{"✅ Validation green.", ValidationCoverageNotice},
+		},
+		rootSettlement{class: agentrun.OutcomeSuccess}
 }
 
 // settleValidationJobs settles every validation logical job through the
@@ -385,8 +364,6 @@ func settlementForState(state string) rootSettlement {
 		return rootSettlement{class: agentrun.OutcomeSuccess}
 	case StateValidationFailed:
 		return rootSettlement{class: agentrun.OutcomeFailure, detail: layerValidationDetail}
-	case StateCodeReviewFailed, StateNeedsUserReview:
-		return rootSettlement{class: agentrun.OutcomeFailure, detail: layerReviewDetail}
 	default:
 		return rootSettlement{class: agentrun.OutcomeUnavailable, detail: layerInfrastructureDetail}
 	}

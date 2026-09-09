@@ -137,8 +137,6 @@ func expectedTerminal(state string) (agentrun.LifecycleState, string) {
 		return agentrun.StateSucceeded, ""
 	case StateValidationFailed:
 		return agentrun.StateFailed, "validation"
-	case StateCodeReviewFailed, StateNeedsUserReview:
-		return agentrun.StateFailed, "review"
 	default:
 		return agentrun.StateUnavailable, "infrastructure"
 	}
@@ -169,25 +167,21 @@ func assertBoundEvidence(t *testing.T, evidence []ValidationEvidence, got []stri
 
 func TestGateDurableReconstructionFromStore(t *testing.T) {
 	t.Run("validation failure reconstructs layer outcome, children, and evidence", func(t *testing.T) {
-		transports := 0
 		base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(map[string]validation.ValidationRun{
 			"echo test": {Exit: 1, Output: "real output of the failed command"},
-		}), countingFactory(new(int), "", nil))
+		}))
 		var captured []validation.ValidationRun
 		base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 			runs, err := runProfileWithoutCandidate(profile, scope, o)
 			captured = runs
 			return runs, err
 		}
-		durableOpts := durableOptions(t, base, &transports)
+		durableOpts := durableOptions(t, base)
 
 		result := RunGate(durableOpts)
 
 		if result.State != StateValidationFailed {
 			t.Fatalf("state = %q, expected %q", result.State, StateValidationFailed)
-		}
-		if transports != 0 {
-			t.Fatalf("review started after a validation failure: factory invoked %d times", transports)
 		}
 
 		summary := reconstructFromStore(t, durableOpts.DurableStore)
@@ -212,24 +206,19 @@ func TestGateDurableReconstructionFromStore(t *testing.T) {
 	})
 
 	t.Run("green gate reconstructs success from the root record alone", func(t *testing.T) {
-		transports := 0
-		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
-			countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil))
 		var captured []validation.ValidationRun
 		base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 			runs, err := runProfileWithoutCandidate(profile, scope, o)
 			captured = runs
 			return runs, err
 		}
-		durableOpts := durableOptions(t, base, &transports)
+		durableOpts := durableOptions(t, base)
 
 		result := RunGate(durableOpts)
 
 		if result.State != StatePass {
 			t.Fatalf("state = %q, expected %q", result.State, StatePass)
-		}
-		if transports != 1 {
-			t.Fatalf("transport factory invoked %d times, expected exactly one review audit", transports)
 		}
 
 		summary := reconstructFromStore(t, durableOpts.DurableStore)

@@ -31,7 +31,7 @@ func TestDurableGateAdmitsLabeledRuns(t *testing.T) {
 	calls := 0
 	opts := baseOptions(t, cfg, func(string) (int, string, error) {
 		return 1, "real output of the failed command", nil
-	}, countingFactory(&calls, "", nil))
+	})
 	opts.RunValidation = runProfileWithoutCandidate
 
 	result := RunGate(opts)

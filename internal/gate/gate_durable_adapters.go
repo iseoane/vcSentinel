@@ -13,7 +13,7 @@
 //     RecordValidationEvidence serialization as adapter output.
 //   - executedValidationJob stamps the RESOLVED command onto the planned job
 //     capability attributes when it differs from the planned base command.
-//   - The failing-layer detail constants and withChildren/resolvableReviewChild
+//   - The failing-layer detail constants and withChildren
 //     build and resolve the machine-parseable settlement detail texts.
 package gate
 
@@ -24,7 +24,6 @@ import (
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
@@ -33,7 +32,6 @@ import (
 // though success/failure/unavailable classes are shared vocabulary.
 const (
 	layerValidationDetail     = "gate: failing layer: validation"
-	layerReviewDetail         = "gate: failing layer: review"
 	layerInfrastructureDetail = "gate: failing layer: infrastructure"
 )
 
@@ -50,23 +48,6 @@ func withChildren(detail string, children []agentrun.Identity) string {
 		ids = append(ids, string(child))
 	}
 	return detail + "|children=" + strings.Join(ids, ",")
-}
-
-// resolvableReviewChild reports the planned review-job run ID only when that
-// identity was actually admitted to the store. Review runs are constructed at
-// a different site (inside the injected transport factory), so under current
-// wiring nothing admits this identity and it stays excluded — the factory
-// receives the root run ID precisely so production wiring can thread the
-// parent linkage on its side.
-func resolvableReviewChild(durableStore *store.Store, plan GateRunPlan) (agentrun.Identity, bool) {
-	runID := plan.ReviewJob().Job.RunID()
-	if durableStore == nil || runID == "" {
-		return "", false
-	}
-	if _, err := durableStore.ReadExecutionRequest(string(runID)); err != nil {
-		return "", false
-	}
-	return runID, true
 }
 
 // resolvedCommandAttribute records, inside the same gate.validation.command

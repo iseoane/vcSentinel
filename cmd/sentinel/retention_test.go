@@ -257,14 +257,14 @@ func TestGateTriggersRetentionOnlyOnPrePush(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if code := finalizeGateWithDetails(&out, worktree, "pre-commit", "PASS", nil, "", nil); code != 0 {
+	if code := finalizeGateWithDetails(&out, worktree, "pre-commit", "PASS", nil, ""); code != 0 {
 		t.Fatalf("pre-commit gate exit = %d, want 0", code)
 	}
 	if !listed() {
 		t.Fatal("pre-commit gate collected execution detail: retention must trigger on pre-push only")
 	}
 	out.Reset()
-	if code := finalizeGateWithDetails(&out, worktree, "pre-push", "PASS", nil, "", nil); code != 0 {
+	if code := finalizeGateWithDetails(&out, worktree, "pre-push", "PASS", nil, ""); code != 0 {
 		t.Fatalf("pre-push gate exit = %d, want 0", code)
 	}
 	if listed() {
@@ -281,8 +281,8 @@ func TestGateTriggersRetentionOnlyOnPrePush(t *testing.T) {
 		t.Fatalf("SaveExecutionMetrics() error = %v", err)
 	}
 	out.Reset()
-	wantCode := gate.ExitCode(gate.StateCodeReviewFailed)
-	if code := finalizeGateWithDetails(&out, worktree, "pre-push", gate.StateCodeReviewFailed, nil, "", nil); code != wantCode {
+	wantCode := gate.ExitCode(gate.StateValidationFailed)
+	if code := finalizeGateWithDetails(&out, worktree, "pre-push", gate.StateValidationFailed, nil, ""); code != wantCode {
 		t.Fatalf("blocking pre-push gate exit = %d, want %d", code, wantCode)
 	}
 	stillListed := false

@@ -258,53 +258,23 @@ func newDurableReviewTransport(cfg config.Config, worktree, sha string, paths []
 // durable store unwired, so EjecutarGate fails honestly as infrastructure —
 // there is no legacy path to degrade to anymore. It returns the sink (nil
 // when wiring failed) for observability and tests.
-func applyDurableCutover(options *gate.Options, cfg config.Config, worktree, stage, sha string, files []string) *reviewChildSink {
+func applyDurableCutover(options *gate.Options, worktree, stage, sha string) {
 	gitCommonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vas-sentinel: gate durable runs unavailable for this execution, no git common dir: %v\n", err)
-		return nil
+		return
 	}
-	sink := &reviewChildSink{}
 	options.Stage = stage
 	options.CandidateSHA = sha
-	// One store directory for the root run, the validation-job settlements,
-	// and every routed review invocation (each transport holds its own
-	// stateless handle over it): root+children linkage stays inside one
-	// directory so reconstruction from store contents alone is possible.
-	durableStore := store.NewStore(gitCommonDir)
-	options.DurableStore = durableStore
-	options.DurableReviewChildren = sink.learned
-	options.DurableReviewTransportFactoryWithEvidence = func(rootRunID agentrun.Identity) (review.ReviewTransportWithEvidence, review.MetricsFinalizer) {
-		// Same honest minimum as the standalone root, but parent-linked to the
-		// gate run. The rich callback finalizes this exact child run.
-		policy := store.RunPolicy{ID: durableRunPolicyID, ParentRunID: string(rootRunID), Operation: "review", Commit: shortCommit(sha), Worktree: worktree}
-		transport := newDurableReviewTransport(cfg, worktree, sha, files, policy,
-			[]reviewexec.DurableTransportOption{reviewexec.WithRunObserver(sink.observe)})
-		if transport == nil {
-			return nil, nil
-		}
-		rich := reviewTransportClosureWithEvidence(transport)
-		finalize := func(runID, invocationID, failureClass, detail string) error {
-			var failures []store.ExecutionFailure
-			if failureClass != "" {
-				failures = []store.ExecutionFailure{{InvocationID: invocationID, Class: store.FailureClass(failureClass), Detail: detail}}
-			}
-			_, err := transport.FinalizeMetricsForDisposition(context.Background(), runID, failures)
-			return err
-		}
-		return rich, finalize
-	}
-	options.DurableReviewTransportFactory = func(rootRunID agentrun.Identity) review.ReviewTransport {
-		rich, _ := options.DurableReviewTransportFactoryWithEvidence(rootRunID)
-		if rich == nil {
-			return nil
-		}
-		return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, string, error) {
-			output, evidence, err := rich(bundleName, dimension, prompt, agent)
-			return output, evidence.InvocationID, err
-		}
-	}
-	return sink
+	// One store directory for the root run and the validation-job
+	// settlements: root+children linkage stays inside one directory so
+	// reconstruction from store contents alone is possible.
+	//
+	// Piece 3 removed the review transport this function also used to wire.
+	// The durable store itself is NOT review machinery — RunGate refuses to
+	// execute without it — so it stays, and only the review-side factories,
+	// the child sink and the parent-linked review policy are gone.
+	options.DurableStore = store.NewStore(gitCommonDir)
 }
 
 // shortCommit keeps the activity label compact without assuming callers pass a

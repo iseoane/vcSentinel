@@ -173,15 +173,23 @@ never mutated. A reopened finding blocks again under the shared rule.
 Example:
   sentinel reopen --sha abc12345 --fingerprint 1f4902c8 --reason "the guard is bypassed on this path" --line-start 2 --line-end 2
 `
-	gateHelp = `Purpose: run deterministic validation followed by semantic review of HEAD.
+	gateHelp = `Purpose: run the deterministic validation profile and report its outcome.
+
+The gate answers "does this work right now": lint, tests, build. It does not
+judge code quality and involves no agent. That is ` + "`sentinel review`" + `, which
+audits one commit and is the only writer of per-commit verdicts.
 
 Usage:
-  sentinel gate --stage pre-commit|pre-push|pr [--profile X] [--timeout N]
+  sentinel gate --stage pre-commit|pre-push|pr [--profile X]
 
 Flags:
   --stage    Lifecycle stage invoking the gate (required): pre-commit, pre-push, or pr.
-  --profile  Validation profile from validation.profiles (default standard). It selects validation configuration, never review configuration.
-  --timeout  Per-call agent timeout override in seconds, for this invocation only. Same meaning as in review: it replaces review.timeout without editing the yml.
+  --profile  Validation profile from validation.profiles (default standard).
+
+Exit codes:
+  0  PASS: every configured command passed.
+  1  VALIDATION_FAILED: a command reported a failure, with its own output as evidence.
+  4  INFRASTRUCTURE_ERROR: configuration, HEAD, planning, store or execution failed.
 
 Example:
   sentinel gate --stage pre-commit

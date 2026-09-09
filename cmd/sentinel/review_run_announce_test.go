@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -195,4 +196,19 @@ func TestSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 	if !strings.Contains(announcements, "vas-sentinel:") {
 		t.Errorf("announcement lacks the established vas-sentinel diagnostic prefix:\n%s", announcements)
 	}
+}
+
+// fixedReviewAgent is a reviewer that always answers the same output. It
+// lived in gate_cutover_test.go until piece 3 removed the gate's semantic
+// phase and with it that file's fixtures; it moved here, to its only
+// remaining user.
+type fixedReviewAgent struct{ output string }
+
+func (a *fixedReviewAgent) RunPrompt(string) (string, error) { return a.output, nil }
+func (a *fixedReviewAgent) RunReview(string, string, []string) (string, error) {
+	return a.output, nil
+}
+
+func (a *fixedReviewAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
+	return a.RunReview(prompt, sha, paths)
 }

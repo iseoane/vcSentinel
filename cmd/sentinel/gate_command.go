@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -46,7 +45,7 @@ const defaultGateProfile = "standard"
 // runSlicePlan/runSliceApply) so it can be tested without ending the
 // process.
 func runGate(w io.Writer, worktree string, args []string) int {
-	stage, profile, timeout, err := parseGateFlags(args)
+	stage, profile, err := parseGateFlags(args)
 	if err != nil {
 		fmt.Fprintf(w, "❌ %v\n", err)
 		return 1
@@ -58,27 +57,23 @@ func runGate(w io.Writer, worktree string, args []string) int {
 		// semantic review finding (requirement added by the orchestrator,
 		// outside the original text of T1.7).
 		fmt.Fprintf(w, "❌ Configuration error: %v\n", err)
-		return finalizeGate(w, worktree, stage, gate.StateReviewInfrastructureError, nil)
+		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
-
-	// The override arrives AFTER the strict load: --timeout cannot rescue an
-	// invalid yml, only widen the budget of this review.
-	cfg = applyTimeoutSeconds(cfg, timeout)
 
 	if _, ok := cfg.Validation.Profiles[profile]; !ok {
 		fmt.Fprintf(w, "❌ The validation profile %q is not configured. Define validation.profiles.%s in vassentinel.yml or pass --profile with an existing profile.\n", profile, profile)
-		return finalizeGate(w, worktree, stage, gate.StateReviewInfrastructureError, nil)
+		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
 
 	sha, message, diff, files, err := headCommitData()
 	if err != nil {
 		fmt.Fprintf(w, "❌ Could not read HEAD: %v\n", err)
-		return finalizeGate(w, worktree, stage, gate.StateReviewInfrastructureError, nil)
+		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
 	changeProfile, err := change.ComputeCommitProfile(sha)
 	if err != nil {
 		fmt.Fprintf(w, "❌ Could not derive the change profile of HEAD: %v\n", err)
-		return finalizeGate(w, worktree, stage, gate.StateReviewInfrastructureError, nil)
+		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
 
 	// Fail closed. git.Attributes already returns "" with no error when the
@@ -89,37 +84,28 @@ func runGate(w io.Writer, worktree string, args []string) int {
 	attributes, err := readAttributesGate(sha)
 	if err != nil {
 		fmt.Fprintf(w, "❌ Could not read the attributes of %s: %v\n", sha, err)
-		return finalizeGate(w, worktree, stage, gate.StateReviewInfrastructureError, nil)
+		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
 
-	verifier := newModelVerifier(worktree)
-	options := buildGateOptions(cfg, verifier, worktree, profile, GateEvidence{
+	options := buildGateOptions(cfg, worktree, profile, GateEvidence{
 		SHA: sha, Message: message, Diff: diff, Gitattributes: attributes,
 		Profile: changeProfile, Files: files,
 	})
-	// Standing human answers recorded against HEAD apply to the semantic
-	// review below. A corrupt dispositions log fails closed as
-	// infrastructure: gating as if no human ever answered would re-block on
-	// a refuted finding.
-	if dispositions, err := loadDispositionsForWorktree(worktree); err != nil {
-		fmt.Fprintf(w, "❌ %v\n", err)
-		return finalizeGate(w, worktree, stage, gate.StateReviewInfrastructureError, nil)
-	} else {
-		options.ReviewOptions.Dispositions = review.FilterDispositionsForSHA(dispositions, sha)
-	}
-	applyDurableCutover(&options, cfg, worktree, stage, sha, files)
+	applyDurableCutover(&options, worktree, stage, sha)
 
 	result := gate.RunGate(options)
 
 	fmt.Fprintf(w, "🚦 gate [%s] profile=%s → %s\n", stage, profile, result.State)
 	// FU-11: the credential incident surfaces next to the gate result on
-	// every path, including when validation short-circuits or the review
-	// plan schedules nothing. Advisory only: Estado and Mensajes untouched.
+	// every path, including when validation short-circuits. It is a
+	// deterministic scan and not a semantic dimension, so piece 3 leaves it
+	// exactly where it was: gate keeps reporting it, advisory only, with
+	// State and Messages untouched.
 	_, secretAdvisories := secret.SecretFindingsAndAdvisories(files, diff)
 	for _, advisory := range secretAdvisories {
 		fmt.Fprintln(w, advisory)
 	}
-	return finalizeGateWithDetails(w, worktree, stage, result.State, result.Messages, result.ContextSkipReason, result.ReviewerFailures)
+	return finalizeGateWithDetails(w, worktree, stage, result.State, result.Messages, result.ContextSkipReason)
 }
 
 // buildGateOptions assembles the gate.Options the command hands to
@@ -140,35 +126,16 @@ type GateEvidence struct {
 	Files         []string
 }
 
-func buildGateOptions(cfg config.Config, verifier *modelprobe.Verifier, worktree, profile string, evidence GateEvidence) gate.Options {
-	sha, message, diff, gitattributes := evidence.SHA, evidence.Message, evidence.Diff, evidence.Gitattributes
-	changeProfile, files := evidence.Profile, evidence.Files
-	reviewTransport, metricsFinalizer := durableReviewTransportWithMetrics(cfg, worktree, sha, files)
-	// FU-11: deterministic exposed-credential incidents ride along in the
-	// semantic review without scheduling any dimension and without touching
-	// the gate verdict. Console surfacing happens in runGate, which
-	// prints the advisory next to the gate result without changing it.
-	secretFindings, _ := secret.SecretFindingsAndAdvisories(files, diff)
+func buildGateOptions(cfg config.Config, worktree, profile string, evidence GateEvidence) gate.Options {
 	return gate.Options{
 		Profile:      profile,
-		ChangedPaths: files,
+		ChangedPaths: evidence.Files,
 		ValidationOptions: validation.RunOptions{
 			Worktree: worktree,
 			Cfg:      cfg,
 			ProviderGraph: func(snapshot, treeOID string) graph.GraphProvider {
 				return graph.NewNativeProvider(snapshot, treeOID)
 			},
-		},
-		ReviewerFactory: gateAuditorFactory(cfg, verifier),
-		RefuterFactory:  gateRefuterFactory(cfg, verifier),
-		Parallel:        cfg.Review.Parallel,
-		ReviewOptions: review.AuditOptions{
-			SHA: sha, Message: message, Diff: diff, Bundles: review.PlanForProfile(changeProfile, files, diff, gitattributes).Bundles,
-			ContextProvider: reviewContextProvider(cfg, worktree), ContextPaths: files,
-			ModelVerifier:               verifier,
-			DeterministicFindings:       secretFindings,
-			ReviewTransportWithEvidence: reviewTransport,
-			FinalizeMetrics:             metricsFinalizer,
 		},
 	}
 }
@@ -226,14 +193,14 @@ func headCommitData() (sha, message, diff string, files []string, err error) {
 // final state (mechanism that already exists in internal/ops, same pattern as
 // runReview) and returns the exact exit code of the record.
 func finalizeGate(w io.Writer, worktree, stage, state string, messages []string) int {
-	return finalizeGateWithDetails(w, worktree, stage, state, messages, "", nil)
+	return finalizeGateWithDetails(w, worktree, stage, state, messages, "")
 }
 
-func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, messages []string, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) int {
+func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, messages []string, contextSkipReason string) int {
 	for _, message := range messages {
 		fmt.Fprintln(w, message)
 	}
-	recordGateEventWithDetails(worktree, stage, state, contextSkipReason, reviewerFailures)
+	recordGateEventWithDetails(worktree, stage, state, contextSkipReason)
 	if stage == "pre-push" {
 		// T9.5 event-driven retention: a push is the moment published
 		// work stops being in-flight, so the pass runs after the gate
@@ -253,7 +220,7 @@ func finalizeGateWithDetails(w io.Writer, worktree, stage, state string, message
 // that owns worktree. An unresolved Git directory is intentionally ignored:
 // writing relative to the process directory could contaminate another
 // repository's event log.
-func recordGateEventWithDetails(worktree, stage, state, contextSkipReason string, reviewerFailures []gate.ReviewerFailure) {
+func recordGateEventWithDetails(worktree, stage, state, contextSkipReason string) {
 	gitDir, err := git.GetGitDirFrom(worktree)
 	if err != nil {
 		return
@@ -261,17 +228,6 @@ func recordGateEventWithDetails(worktree, stage, state, contextSkipReason string
 	detail := ops.EventDetail{"stage": stage, "state": state}
 	if contextSkipReason != "" {
 		detail["context_skip_reason"] = contextSkipReason
-	}
-	if len(reviewerFailures) > 0 {
-		failures := make([]ops.EventDetail, 0, len(reviewerFailures))
-		for _, failure := range reviewerFailures {
-			failures = append(failures, ops.EventDetail{
-				"bundle":    failure.Bundle,
-				"dimension": failure.Dimension,
-				"reason":    failure.Reason,
-			})
-		}
-		detail["reviewer_failures"] = failures
 	}
 	_ = ops.RecordEvent(gitDir, "gate", gate.ExitCode(state), nil, detail, worktree)
 }
@@ -297,44 +253,39 @@ const maxTimeoutSeconds int64 = math.MaxInt64 / int64(time.Second)
 // persistent change— for one particular large candidate. Widening the budget
 // weakens no gate: a review that was going to block still blocks, it just
 // gets to finish.
-func parseGateFlags(args []string) (stage, profile string, timeout int, err error) {
+func parseGateFlags(args []string) (stage, profile string, err error) {
 	profile = defaultGateProfile
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--stage":
 			i++
 			if i >= len(args) {
-				return "", "", 0, fmt.Errorf("--stage requires a value (pre-commit, pre-push, or pr)")
+				return "", "", fmt.Errorf("--stage requires a value (pre-commit, pre-push, or pr)")
 			}
 			stage = args[i]
 		case "--profile":
 			i++
 			if i >= len(args) {
-				return "", "", 0, fmt.Errorf("--profile requires a value")
+				return "", "", fmt.Errorf("--profile requires a value")
 			}
 			profile = args[i]
 		case "--timeout":
-			i++
-			if i >= len(args) {
-				return "", "", 0, fmt.Errorf("--timeout requires a value in seconds")
-			}
-			seconds, convErr := strconv.Atoi(args[i])
-			if convErr != nil || seconds <= 0 {
-				return "", "", 0, fmt.Errorf("--timeout %q is not a positive number of seconds", args[i])
-			}
-			if int64(seconds) > maxTimeoutSeconds {
-				return "", "", 0, fmt.Errorf("--timeout %q exceeds the representable maximum (%d seconds)", args[i], maxTimeoutSeconds)
-			}
-			timeout = seconds
+			// Piece 3 retired the semantic phase, and --timeout only ever
+			// widened its budget. There is nothing left for it to extend, so
+			// it is refused rather than accepted and ignored: a flag that is
+			// silently a no-op tells a script its request was honoured when
+			// it was not. Refusing is louder, and loud is the honest failure
+			// for a guardian.
+			return "", "", fmt.Errorf("--timeout no longer applies to gate: it extended the semantic review budget, and gate is deterministic since it stopped auditing. Use `sentinel review --timeout` for the per-commit audit")
 		default:
-			return "", "", 0, fmt.Errorf("unrecognized flag: %q (use --stage, --profile, and --timeout)", args[i])
+			return "", "", fmt.Errorf("unrecognized flag: %q (use --stage and --profile)", args[i])
 		}
 	}
 	if stage == "" {
-		return "", "", 0, fmt.Errorf("--stage is required (values: pre-commit, pre-push, pr)")
+		return "", "", fmt.Errorf("--stage is required (values: pre-commit, pre-push, pr)")
 	}
 	if !validGateStages[stage] {
-		return "", "", 0, fmt.Errorf("--stage %q is not valid (values: pre-commit, pre-push, pr)", stage)
+		return "", "", fmt.Errorf("--stage %q is not valid (values: pre-commit, pre-push, pr)", stage)
 	}
-	return stage, profile, timeout, nil
+	return stage, profile, nil
 }

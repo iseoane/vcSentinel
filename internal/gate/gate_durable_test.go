@@ -17,7 +17,6 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
@@ -72,26 +71,22 @@ func inspectRoot(t *testing.T, st *store.Store, opts Options) execution.Inspecti
 // job carries its own deterministic settlement in durable state — the FAILED
 // job included, whose AttemptOutcome keeps class=failure AND the non-empty
 // evidence OutputHash.
-func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
-	transports := 0
+func TestGateDurableValidationFailureSettlesFailed(t *testing.T) {
 	base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(map[string]validation.ValidationRun{
 		"echo test": {Exit: 3, Output: "deterministic failure of the test command"},
-	}), countingFactory(new(int), "", nil))
+	}))
 	var captured []validation.ValidationRun
 	base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 		runs, err := runProfileWithoutCandidate(profile, scope, o)
 		captured = runs
 		return runs, err
 	}
-	durableOpts := durableOptions(t, base, &transports)
+	durableOpts := durableOptions(t, base)
 
 	result := RunGate(durableOpts)
 
 	if result.State != StateValidationFailed {
 		t.Fatalf("state = %q, expected %q", result.State, StateValidationFailed)
-	}
-	if transports != 0 {
-		t.Fatalf("review transport factory was invoked %d times after a validation failure, expected 0", transports)
 	}
 
 	inspection := inspectRoot(t, durableOpts.DurableStore, durableOpts)
@@ -139,46 +134,42 @@ func TestGateDurableReviewNeverStartsOnValidationFailure(t *testing.T) {
 }
 
 // TestGateDurableRootLayerDistinction pins that the failing LAYER stays
-// distinct on the root run across all three terminal classes: review blockers
-// settle failed with the review marker, and infrastructure failures settle
-// unavailable with the infrastructure marker.
+// distinct on the root run across the two failing classes a deterministic
+// gate can reach: validation blockers settle failed with the validation
+// marker, and infrastructure failures settle unavailable with the
+// infrastructure marker. The review layer is gone with piece 3.
 func TestGateDurableRootLayerDistinction(t *testing.T) {
-	t.Run("review blocker names the review layer", func(t *testing.T) {
-		transports := 0
-		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
-			countingFactory(new(int), `{"dim":"logic","verdict":"block","findings":[{"dimension":"logic","file":"a.go","line":1,"severity":"CRITICAL","description":"riesgo"}]}`, nil))
+	t.Run("validation blocker names the validation layer", func(t *testing.T) {
+		base := baseOptions(t, cfgWithProfile("lint", "echo boom"),
+			func(string) (int, string, error) { return 1, "red", nil })
 		base.RunValidation = runProfileWithoutCandidate
-		base.RefuterFactory = func() (review.AgentReviewer, string, error) {
-			return &fakeReviewer{output: `{"refuted":false,"reason":"the risk remains"}`}, "cheap", nil
-		}
-		durableOpts := durableOptions(t, base, &transports)
+		durableOpts := durableOptions(t, base)
 
 		result := RunGate(durableOpts)
 
-		if result.State != StateCodeReviewFailed {
-			t.Fatalf("state = %q, expected %q", result.State, StateCodeReviewFailed)
+		if result.State != StateValidationFailed {
+			t.Fatalf("state = %q, expected %q", result.State, StateValidationFailed)
 		}
 		inspection := inspectRoot(t, durableOpts.DurableStore, durableOpts)
 		if inspection.Projection.State != agentrun.StateFailed {
 			t.Fatalf("root state = %q, expected failed", inspection.Projection.State)
 		}
-		if !rootNamesLayer(inspection, "review") {
-			t.Fatalf("root outcomes never named the review layer: %+v", inspection.Outcomes)
+		if !rootNamesLayer(inspection, "validation") {
+			t.Fatalf("root outcomes never named the validation layer: %+v", inspection.Outcomes)
 		}
 	})
 
 	t.Run("infrastructure failure settles the root unavailable", func(t *testing.T) {
-		transports := 0
-		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil, countingFactory(new(int), "", nil))
+		base := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil)
 		base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 			return nil, errAgentUnavailableTest
 		}
-		durableOpts := durableOptions(t, base, &transports)
+		durableOpts := durableOptions(t, base)
 
 		result := RunGate(durableOpts)
 
-		if result.State != StateReviewInfrastructureError {
-			t.Fatalf("state = %q, expected %q", result.State, StateReviewInfrastructureError)
+		if result.State != StateInfrastructureError {
+			t.Fatalf("state = %q, expected %q", result.State, StateInfrastructureError)
 		}
 		inspection := inspectRoot(t, durableOpts.DurableStore, durableOpts)
 		if inspection.Projection.State != agentrun.StateUnavailable {
@@ -196,10 +187,9 @@ func TestGateDurableRootLayerDistinction(t *testing.T) {
 // of a silent green gate.
 func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 	t.Run("settlement failure is honest infrastructure with a pinned prefix", func(t *testing.T) {
-		calls := 0
-		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil), countingFactory(&calls, "", nil))
+		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil))
 		opts.Stage = "pre-push"
-		opts.CandidateSHA = opts.ReviewOptions.SHA
+		opts.CandidateSHA = "0123456789abcdef"
 		commonDir := filepath.Join(t.TempDir(), "gate-common")
 		opts.DurableStore = store.NewStore(commonDir)
 		// The injected validation seam runs AFTER the root run is admitted
@@ -225,8 +215,8 @@ func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 
 		result := RunGate(opts)
 
-		if result.State != StateReviewInfrastructureError {
-			t.Fatalf("state = %q, expected %q", result.State, StateReviewInfrastructureError)
+		if result.State != StateInfrastructureError {
+			t.Fatalf("state = %q, expected %q", result.State, StateInfrastructureError)
 		}
 		if len(result.Messages) != 1 || !strings.HasPrefix(result.Messages[0], "Could not record the durable validation:") {
 			t.Fatalf("settlement-failure facade drifted: %q", result.Messages)
@@ -239,15 +229,14 @@ func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 // each passed validation job equals execution.HashAdapterOutput over the
 // RecordValidationEvidence serialization of that command's tuple.
 func TestGateDurableEvidenceDigestBinding(t *testing.T) {
-	transports := 0
-	base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(nil), countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base := baseOptions(t, cfgWithTwoCapabilities(), selectedExecutor(nil))
 	var captured []validation.ValidationRun
 	base.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 		runs, err := runProfileWithoutCandidate(profile, scope, o)
 		captured = runs
 		return runs, err
 	}
-	durableOpts := durableOptions(t, base, &transports)
+	durableOpts := durableOptions(t, base)
 
 	result := RunGate(durableOpts)
 
@@ -302,19 +291,17 @@ func planValidationJobsForTest(t *testing.T, opts Options) []GateJobPlan {
 // unrelated file changed mid-validation, and the retry on the same commit could
 // never be admitted again, leaving the guardian unable to re-certify it.
 func TestGateDurableRerunsTheSameCandidate(t *testing.T) {
-	transports := 0
-	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
-		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil))
 	base.RunValidation = runProfileWithoutCandidate
-	durableOpts := durableOptions(t, base, &transports)
+	durableOpts := durableOptions(t, base)
 
 	first := RunGate(durableOpts)
-	if first.State == StateReviewInfrastructureError {
+	if first.State == StateInfrastructureError {
 		t.Fatalf("first gate is infrastructure-broken before the case starts: %v", first.Messages)
 	}
 
 	second := RunGate(durableOpts)
-	if second.State == StateReviewInfrastructureError {
+	if second.State == StateInfrastructureError {
 		t.Fatalf("re-running the gate on the same candidate = %q %v; the guardian must be able to re-certify a commit it already gated", second.State, second.Messages)
 	}
 	if second.State != first.State {
@@ -357,14 +344,15 @@ func TestGateDurableRerunsTheSameCandidate(t *testing.T) {
 // probe treats every terminal class alike, so without this the abort-and-retry
 // path stays plausible rather than pinned.
 func TestGateDurableRerunsAfterAnUnavailableRoot(t *testing.T) {
-	transports := 0
-	// An empty auditor output settles the review as infrastructure-unavailable.
-	broken := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil), countingFactory(new(int), "", nil))
-	broken.RunValidation = runProfileWithoutCandidate
-	durableOpts := durableOptions(t, broken, &transports)
+	// A validation runner that cannot run settles the root unavailable.
+	broken := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil)
+	broken.RunValidation = func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
+		return nil, errAgentUnavailableTest
+	}
+	durableOpts := durableOptions(t, broken)
 
 	first := RunGate(durableOpts)
-	if first.State != StateReviewInfrastructureError {
+	if first.State != StateInfrastructureError {
 		t.Fatalf("first gate state = %q, expected the infrastructure failure this case is about", first.State)
 	}
 	attempt0, err := BuildDurableGatePlanAttempt(durableOpts, 0)
@@ -381,14 +369,12 @@ func TestGateDurableRerunsAfterAnUnavailableRoot(t *testing.T) {
 
 	// Same candidate, working reviewer this time: the guardian must be able to
 	// certify the commit its own infrastructure failure left uncertified.
-	healthy := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
-		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	healthy := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil))
 	healthy.RunValidation = runProfileWithoutCandidate
 	secondOpts := healthy
 	secondOpts.Stage = durableOpts.Stage
 	secondOpts.CandidateSHA = durableOpts.CandidateSHA
 	secondOpts.DurableStore = durableOpts.DurableStore
-	secondOpts.DurableReviewTransportFactory = durableOpts.DurableReviewTransportFactory
 
 	second := RunGate(secondOpts)
 	if second.State != StatePass {
@@ -404,17 +390,15 @@ func TestGateDurableRefusesAnExhaustedCandidate(t *testing.T) {
 	maxAttemptsGate = 1
 	t.Cleanup(func() { maxAttemptsGate = original })
 
-	transports := 0
-	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
-		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil))
 	base.RunValidation = runProfileWithoutCandidate
-	durableOpts := durableOptions(t, base, &transports)
+	durableOpts := durableOptions(t, base)
 
-	if first := RunGate(durableOpts); first.State == StateReviewInfrastructureError {
+	if first := RunGate(durableOpts); first.State == StateInfrastructureError {
 		t.Fatalf("first gate is broken before the case starts: %v", first.Messages)
 	}
 	second := RunGate(durableOpts)
-	if second.State != StateReviewInfrastructureError {
+	if second.State != StateInfrastructureError {
 		t.Fatalf("state = %q, expected the exhausted bound to refuse", second.State)
 	}
 	if message := strings.Join(second.Messages, "\n"); !strings.Contains(message, "settled gate executions") {
@@ -438,11 +422,9 @@ func (a blockingAdapter) Execute(_ context.Context, _ agentrun.LogicalJob, _ age
 // gate is racing the first over the same candidate, and refusing it stays
 // correct — with its own message, not the raw admission error.
 func TestGateDurableRefusesAConcurrentGateOnTheSameCandidate(t *testing.T) {
-	transports := 0
-	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil),
-		countingFactory(new(int), `{"dim":"logic","verdict":"ok","findings":[]}`, nil))
+	base := baseOptions(t, cfgWithProfile("lint", "echo ok"), selectedExecutor(nil))
 	base.RunValidation = runProfileWithoutCandidate
-	durableOpts := durableOptions(t, base, &transports)
+	durableOpts := durableOptions(t, base)
 
 	plan, err := buildDurableGatePlan(durableOpts)
 	if err != nil {
@@ -471,7 +453,7 @@ func TestGateDurableRefusesAConcurrentGateOnTheSameCandidate(t *testing.T) {
 
 	result := RunGate(durableOpts)
 
-	if result.State != StateReviewInfrastructureError {
+	if result.State != StateInfrastructureError {
 		t.Fatalf("state = %q, expected the concurrent gate to be refused", result.State)
 	}
 	message := strings.Join(result.Messages, "\n")

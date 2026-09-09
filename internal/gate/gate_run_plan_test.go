@@ -34,14 +34,14 @@ func TestGateRunPlanBuilder(t *testing.T) {
 		}
 	})
 
-	t.Run("one validation job per command in exact profile order plus one review job", func(t *testing.T) {
+	t.Run("one validation job per command in exact profile order, and nothing else", func(t *testing.T) {
 		commands := []string{"go vet ./...", "gofmt -l .", "go test ./internal/gate/"}
 		plan, err := BuildGateRunPlan("pr", "full", "deadbeef", commands)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(plan.Jobs) != len(commands)+1 {
-			t.Fatalf("job count = %d, expected %d validation jobs plus one review job", len(plan.Jobs), len(commands)+1)
+		if len(plan.Jobs) != len(commands) {
+			t.Fatalf("job count = %d, expected exactly %d validation jobs", len(plan.Jobs), len(commands))
 		}
 		for index, wantCommand := range commands {
 			job := plan.Jobs[index]
@@ -60,13 +60,17 @@ func TestGateRunPlanBuilder(t *testing.T) {
 				t.Fatalf("validation job %d does not carry its command as capability evidence", index)
 			}
 		}
-		reviewJob := plan.ReviewJob()
-		if reviewJob.Kind != GateJobReview || reviewJob.Command != "" {
-			t.Fatalf("last job must be the single review descriptor, got %+v", reviewJob)
+		// Piece 3: the plan carries validation jobs and nothing else. A job
+		// of any other kind means the semantic phase came back through the
+		// planner, which is exactly what the design removed.
+		for _, job := range plan.Jobs {
+			if job.Kind != GateJobValidation {
+				t.Fatalf("plan carries a non-validation job: %+v", job)
+			}
 		}
 	})
 
-	t.Run("empty profile still yields exactly one review job", func(t *testing.T) {
+	t.Run("empty profile yields no jobs at all", func(t *testing.T) {
 		plan, err := BuildGateRunPlan("pre-commit", "delegated", "cafe0000", nil)
 		if err != nil {
 			t.Fatalf("empty profile must build a valid plan, got %v", err)
@@ -74,9 +78,8 @@ func TestGateRunPlanBuilder(t *testing.T) {
 		if validations := plan.ValidationJobs(); len(validations) != 0 {
 			t.Fatalf("empty profile produced %d validation jobs", len(validations))
 		}
-		reviewJob := plan.ReviewJob()
-		if reviewJob.Kind != GateJobReview {
-			t.Fatalf("empty profile must keep the review job, got %+v", reviewJob)
+		if len(plan.Jobs) != 0 {
+			t.Fatalf("empty profile must produce no jobs, got %+v", plan.Jobs)
 		}
 	})
 
@@ -158,25 +161,21 @@ func TestGateDurableOrchestrationSeams(t *testing.T) {
 	cfgWithBrokenProfile.Validation.Profiles["broken"] = []string{"missing-capability"}
 
 	t.Run("without an injected store fails as infrastructure before any phase", func(t *testing.T) {
-		calls := 0
-		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil, countingFactory(&calls, "", nil))
+		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil)
 		opts.DurableStore = nil
 
 		result := RunGate(opts)
 
-		if result.State != StateReviewInfrastructureError || ExitCode(result.State) != 4 {
+		if result.State != StateInfrastructureError || ExitCode(result.State) != 4 {
 			t.Fatalf("missing durable store is infrastructure-class, got %q exit %d", result.State, ExitCode(result.State))
 		}
 		if result.Err == nil || !strings.Contains(result.Err.Error(), "injected store") {
 			t.Fatalf("expected an explicit missing-store failure, got %v", result.Err)
 		}
-		if calls != 0 {
-			t.Fatalf("review must never start without a durable store, got %d calls", calls)
-		}
 	})
 
 	t.Run("still validates the plan before admitting anything", func(t *testing.T) {
-		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil, nil)
+		opts := baseOptions(t, cfgWithProfile("lint", "echo ok"), nil)
 		opts.Stage = ""
 
 		result := RunGate(opts)
@@ -185,13 +184,13 @@ func TestGateDurableOrchestrationSeams(t *testing.T) {
 		if !errors.As(result.Err, &planErr) {
 			t.Fatalf("expected the plan-build failure to surface before execution, got %v", result.Err)
 		}
-		if result.State != StateReviewInfrastructureError {
+		if result.State != StateInfrastructureError {
 			t.Fatalf("a broken plan is infrastructure-class, got %q", result.State)
 		}
 	})
 
 	t.Run("rejects an unresolved capability reference during planning", func(t *testing.T) {
-		opts := baseOptions(t, cfgWithBrokenProfile, nil, nil)
+		opts := baseOptions(t, cfgWithBrokenProfile, nil)
 		opts.Profile = "broken"
 
 		result := RunGate(opts)
