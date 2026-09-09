@@ -48,11 +48,21 @@ Five sections, always present, always in this order:
 
 From piece 1, and **the provenance is rendered, never dropped**:
 
-- Every commit in the range carries a `Sentinel-Intent` trailer with the same
-  text ⇒ render that one line.
-- The trailers differ across commits ⇒ render each distinct line as a bullet,
-  in commit order, deduplicated. This is the branch intent: the union of its
-  commits' intents, as decided in piece 1.
+- **Deduplicate by the `(text, source)` pair, never by text alone.** Two
+  commits carrying the same sentence, one `declared` and one `conversation`,
+  are two different claims: one a human made and one a model inferred.
+  Collapsing them to a single line destroys exactly the distinction this
+  section exists to preserve. Render both, in commit order.
+- Every commit carries the same pair ⇒ render that one line.
+- The pairs differ across commits ⇒ render each distinct pair as a bullet, in
+  commit order. This is the branch intent: the union of its commits' intents,
+  as decided in piece 1.
+- **Some commits carry a trailer and others do not** — the normal case, because
+  piece 1 accepts commits made outside `slice`. Render the intents that exist,
+  then one line naming the gap:
+  `_<n> of <m> commits carry no recorded intent: <short shas>._`
+  Never omit it silently. The Risk Assessment is measured against the intent,
+  and a reader must know the intent covers only part of the branch.
 - No commit carries a trailer ⇒ render exactly:
   `_No intent recorded. These commits were not created through `sentinel slice`._`
   Do not summarise the diff to fill the gap. An invented intent is worse than
@@ -213,6 +223,18 @@ committed log is not.
   `pr review` prints that command verbatim. `pr create` refuses to publish when
   the entry references evidence files that are untracked at the head, with a
   message naming them and that commit (piece 5, §3).
+- **The loop must terminate, and saying so is part of the spec.** Committing
+  the evidence moves the head, which invalidates the entry, which forces a
+  second `pr review`, which writes the evidence again. That converges in
+  exactly two rounds only if the evidence is a deterministic function of the
+  reviewed work: the per-commit ledger records, and the lint/test/build exit
+  codes. Adding a commit that contains only evidence logs changes none of
+  those, so the second run writes byte-identical files, the tracked-and-
+  matching check passes, and no third commit is needed. Two things follow and
+  must be enforced: the evidence rendering must not embed a timestamp or any
+  other value that changes between runs, and a second run whose evidence bytes
+  differ from the tracked ones is a bug in that determinism — report it as an
+  error naming the file, do not ask for a third commit.
 - Consequence to accept: these logs are inside the worktree, so `sentinel check`
   measures them. They are not authored code, so they must classify as such —
   verify with a test that a large evidence log does not push `check --staged`
@@ -221,9 +243,18 @@ committed log is not.
 - The body links them by permalink at the head SHA, and also embeds the first
   `evidenceEmbedMaxBytes` of the log inline, so a reader with no link still
   sees something.
-- A link whose target is not committed would 404. Render the link only when
-  `git ls-files --error-unmatch <path>` succeeds at the head; otherwise embed
-  the excerpt with a note that the full log is untracked at `<path>`.
+- A link whose target is not committed would 404, and a link whose target
+  changed since the commit would resolve to different bytes. `git ls-files
+  --error-unmatch` proves neither: it succeeds for a staged-but-uncommitted
+  file and for a tracked file whose working copy has since been edited. The
+  check must be about the head blob, not the index:
+  1. `git rev-parse --verify HEAD:<path>` — the path exists at the head.
+  2. Compare that blob's OID against `git hash-object <path>` — the bytes on
+     disk are the bytes the permalink will serve.
+  Both must hold to render the link. Otherwise embed the excerpt with a note
+  saying whether the log is untracked at the head or differs from it. Test
+  both failure modes separately: they have different causes and different
+  remedies.
 
 ### 2.8 Truncation order
 
@@ -236,11 +267,19 @@ When the rendered body exceeds `PRBodyLimit`:
    it is last in the step order. `pr create` replaces that block in place
    (piece 5, §4.4), and the replacement is larger than the `⚪ not observed`
    placeholder it overwrites: a run URL, and possibly failed job names. So the
-   block must survive truncation AND carry slack. Reserve `ciStepReserveBytes
-   = 1024` for it: the truncation budget is `PRBodyLimit - ciStepReserveBytes`,
-   and the `ci` block is excluded from the drop order below. A body that
-   cannot fit sections 1–3 plus the reserved `ci` block is the §2.8.1 error
-   case.
+   block must survive truncation AND carry slack. A fixed reserve is only
+   sound if the replacement is bounded, so piece 5 must bound it and this
+   plan states the bound it relies on:
+   - the run URL is a GitHub Actions run URL, capped at 200 bytes;
+   - the failed job names are capped at **5 names of 60 bytes each**, and a
+     longer list renders `… and N more` instead of growing;
+   - the surrounding markup is fixed.
+   That yields `ciStepReserveBytes = 1024` as a bound, not a guess. The
+   truncation budget is `PRBodyLimit - ciStepReserveBytes`, and the `ci` block
+   is excluded from the drop order below. A body that cannot fit sections 1–3
+   plus the reserved `ci` block is the §2.8.1 error case. Test the bound
+   directly: a CI outcome with 40 failed jobs and a maximum-length URL must
+   render inside the reserve.
 2. Drop evidence `<details>` blocks from the **last** step backwards, replacing
    each with one line naming the step and its evidence file path.
 3. Append a single line stating how many were omitted:
@@ -270,11 +309,16 @@ without one.
   tree produce the same key, so a re-run corrects rather than accumulates; and
   a branch that moves forward leaves nothing behind. Without that deletion the
   common directory grows one file per head a branch ever had, forever.
-- This makes "an entry exists for this branch at a different head" impossible
-  to observe: there is at most one entry per branch, and if the head moved, it
-  was deleted. Piece 5 therefore has one failure mode, not two — no entry for
-  this head — and its message must say so. Test the deletion directly: write an
-  entry at head A, write one at head B, assert only B remains.
+- The deletion happens only when `pr review` writes, so a branch that moves
+  forward **without** another `pr review` run leaves its old entry in place.
+  That is the common case — you commit, then run `pr create`. So the entry at
+  a different head IS observable, and piece 5 must handle it: look the entry up
+  **by branch slug**, then compare its `HeadSHA` against the current head. That
+  distinguishes "you never reviewed this branch" from "you reviewed it, then
+  changed it", which need different messages. Do not look up by exact key.
+- Test the deletion directly: write an entry at head A, write one at head B,
+  assert only B remains. And test the lookup: an entry at head A with the
+  branch now at head B is found and reported as covering A.
 
 ```go
 // Entry is what pr review authored for one branch at one head. pr create
@@ -337,8 +381,20 @@ not change it.
   two different heads.
 - An entry is refused as stale when the head moved.
 - `--audit-pending` exits `1` with the retirement message and audits nothing.
-- Evidence linking: a tracked file renders a permalink, an untracked one
-  renders the excerpt plus the untracked note.
+- Evidence linking: a file present at the head with matching bytes renders a
+  permalink; one absent at the head renders the excerpt with the untracked
+  note; one present but with different bytes renders the excerpt with the
+  differs-from-head note. Three cases, three tests.
+- Evidence determinism: two consecutive `pr review` runs over the same records
+  and exit codes write byte-identical evidence files.
+- `What Changed`: bullets render in order; an empty `Changed` renders the
+  fallback and does not block.
+- `Testing`: the two origins render under their own headings with their real
+  exit codes, and a non-zero exit renders `❌`, never `✅`.
+- `Pipeline`: the eight steps render in the fixed order; a step with no data
+  renders `⚪` with its stated reason; the commit × dimension matrix appears
+  inside the `review` step's `<details>` and nowhere else; and a ledger chain
+  of block → fix → cleared renders all three SHAs.
 
 Verify every new test by mutation: break the rule it covers, confirm it fails,
 restore, confirm it passes. A test that re-evaluates the production expression

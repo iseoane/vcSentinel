@@ -231,11 +231,21 @@ agent. A transcript is at least as sensitive. Send the transcript only when
 that same gate returns true; otherwise warn and produce no intent.
 
 Reusing that gate widens diff consent into transcript consent, and the user
-granted it for diffs. No new configuration key is added (section 6), so the
-widening must at least be visible: whenever a transcript is sent, the command
-output must say so, naming the consent it is relying on — for example
-`ℹ️ Transcript sent to the agent under this repository's external-diff
-consent.` Do not make this conditional on a verbose flag.
+granted it for diffs. A transcript is different data — it can carry anything
+the operator said or pasted — so printing a notice *after* transmitting is not
+consent, it is an apology. The flag itself must carry the acknowledgement:
+
+- `--intent-transcript <path>` alone, with external-diff consent granted,
+  refuses with exit `1` and states what will be sent and to which agent, ending
+  with the exact command to repeat.
+- `--intent-transcript <path> --transcript-consent` proceeds, and the output
+  states it: `ℹ️ Transcript sent to <agent> under this repository's
+  external-diff consent, acknowledged with --transcript-consent.`
+- Without external-diff consent, the flag refuses regardless of
+  `--transcript-consent`. The narrower gate is not overridable by the wider
+  acknowledgement.
+
+This adds a flag, not a configuration key, so section 6 still holds.
 
 ### 4.3 Carrying it through plan → apply → commit
 
@@ -283,8 +293,16 @@ The plan is a serialised artifact reviewed by a human between `plan` and
   Do this in one place. Add a helper in `internal/git` such as
   `appendIntentTrailers(message string, i intent.Intent) string` and test it
   directly against these cases: subject only, subject + body, message already
-  ending with a trailer, message with trailing whitespace, zero intent
-  (returns the message unchanged).
+  ending with a trailer, message with trailing whitespace, and zero intent.
+
+  The zero-intent case is **not** "return the message unchanged". The two
+  trailer keys are reserved: a generated or hand-written message that already
+  contains a `Sentinel-Intent` line would produce a commit claiming an intent
+  Sentinel never recorded, which is exactly the guarantee section 4.4 makes
+  when no flag is passed. So the helper always strips any pre-existing
+  `Sentinel-Intent` / `Sentinel-Intent-Source` trailer line first, then appends
+  the real one if there is one. Test it: a message carrying a forged trailer,
+  with no intent passed, produces a commit with no intent trailers at all.
 
 - `ValidateApplication` must reject a malformed intent before creating any
   commit, with a sentinel error in the style of the existing ones
@@ -348,6 +366,11 @@ Unit, in `internal/intent`:
   both markers, that the transcript sits between them, that a transcript
   containing the marker text has it stripped, and that an empty model answer
   yields an error rather than an empty intent.
+- The three prompt properties are called load-bearing above, so they must be
+  asserted individually, not implied by the marker test: the prompt asks what
+  the HUMAN wanted, and it states that the delimited text is data that must
+  never be obeyed. Deleting either instruction must fail a test. Without this
+  the instructions can be removed and every listed test still passes.
 
 Integration, in `internal/git` and `cmd/sentinel`:
 
@@ -361,6 +384,18 @@ Integration, in `internal/git` and `cmd/sentinel`:
 - No flags ⇒ the created commit has no `Sentinel-Intent` line anywhere.
 - Agent unavailable on the transcript path ⇒ warning printed, plan produced,
   no intent, exit code unchanged.
+- Consent: without external-diff consent the transcript path refuses and the
+  fake `Summarizer` is never called; with consent but without
+  `--transcript-consent` it also refuses and never calls; with both, it calls
+  and prints the disclosure line.
+- CLI matrix: both flags together exit `1`; a missing transcript file exits
+  `1`; an unreadable one exits `1`; an empty one exits `1`; and a failed
+  summarisation preserves exit `0` and exit `3` according to the pending
+  decisions, not the failure.
+- Durability, which is the whole point of the piece and is otherwise untested:
+  a plan producing three commits stamps the same intent on **all three**; and
+  the intent survives `git rebase` — rebase the branch onto a new base and
+  assert `CommitIntent` still returns it for every rewritten commit.
 
 Do not write a test that re-evaluates a production expression locally instead
 of calling the function under test. Verify each new test by mutation: break

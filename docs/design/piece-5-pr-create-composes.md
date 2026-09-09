@@ -42,24 +42,38 @@ sentinel pr create
 ```
 
 1. Resolve branch and head SHA.
-2. Read the entry for `<branch-slug>-<head-sha>`.
-3. No entry ⇒ exit `1`:
-   `No pr review exists for this branch at <short-sha>. Run 'sentinel pr review' first: pr create publishes its judgement and never authors one.`
-4. There is at most one entry per branch (piece 4, §3, deletes prior ones), so
-   a moved head is indistinguishable from no review at all and takes the same
-   exit `1` as step 3. Do not write a separate "stale entry" path: it cannot be
-   reached.
+2. Read the entry **by branch slug**, not by exact key. Piece 4 §3 deletes
+   prior entries only when `pr review` writes, so a branch that moved forward
+   without a re-review still has its old entry, and that is the common case.
+3. No entry for this branch ⇒ exit `1`:
+   `No pr review exists for this branch. Run 'sentinel pr review' first: pr create publishes its judgement and never authors one.`
+4. An entry exists but its `HeadSHA` is not the current head ⇒ exit `1`, naming
+   both:
+   `The stored pr review covers <old-short>, but this branch is now at <new-short>. Re-run 'sentinel pr review'.`
+   This is a different failure from step 3 and must not share its message: one
+   means you never reviewed, the other means you reviewed and then changed it.
 5. The entry references evidence files that are untracked at the head ⇒ exit
    `1`, naming them and the commit that fixes it:
    `The pr review evidence is not committed: <paths>. Run 'git add .vas_sentinel/evidence && git commit -m "chore(evidence): record the pr review logs"' and re-run 'sentinel pr review'.`
    Re-running `pr review` is required, not optional: committing the evidence
    moves the head, and the entry is keyed by it.
-6. Entry verdict is a block ⇒ refuse by default, exit `1`, listing the
-   blockers. `--force` publishes anyway and the body says so, on its own line,
-   above the Risk Assessment: `⚠️ Published with --force over a blocking review.`
+6. Entry verdict is a block ⇒ **publish anyway.** This piece does not turn a
+   semantic verdict into a publication gate, and an earlier draft of this plan
+   that did was wrong. The existing contract is T1.8: red deterministic
+   validation is the only gate that blocks, `--force` overrides it, and
+   `--reason` is mandatory beside it (`internal/app/pr/create.go:26-27`,
+   `cmd/sentinel/pr_command.go:146`). Keep all of that unchanged. A blocking
+   semantic verdict is already the loudest thing in the body — `pr review`
+   rendered it into Risk Assessment — and does not need a second gate here.
 
-Do not add a flag that skips reading the entry. There is no legitimate case for
-publishing a judgement that does not exist.
+   This also removes a contradiction: a force notice inserted above Risk
+   Assessment would have been `pr create` authoring a section, which §4.4
+   forbids and its byte-equality test would have caught.
+
+The refusals in steps 3 to 5 are not semantic gates. They say there is nothing
+to publish, or that what there is does not describe this tree. Do not add a
+flag that skips reading the entry: there is no legitimate case for publishing
+a judgement that does not exist.
 
 ## 4. CI
 
@@ -105,6 +119,12 @@ green unless it is:
 | Concluded with a failure | `❌ ci — <workflow> failed` + run URL + the failed job names |
 | Still running when `wait_seconds` elapsed | `⏳ ci — still running after <n>s` + run URL |
 | Concluded, but the run's head SHA is not the branch head | `⚠️ ci — the last run covers <other-short>, not this head` + run URL |
+| No run found, or the run disappeared while polling | `⚠️ ci — <workflow> was triggered but no run is observable` |
+
+The last row is the one step 3 of the state machine can reach and the earlier
+draft of this plan had no rendering for: `gh` can accept a dispatch and expose
+no run, and a run can vanish mid-poll. It is not an error and does not stop
+publication; it is reported as what it is, which is an absence of evidence.
 
 The fourth row is the one that is easy to get wrong and the reason to be
 explicit: a green run over an older SHA is not evidence about this change.
@@ -131,6 +151,13 @@ leave a pushed branch and no PR.
 Do not re-render the whole body. Take `Entry.Body`, parse its attestation
 (`ParseAttestation`, piece 4), replace the `ci` step's `<details>` block and the
 `ci` entry inside the attestation JSON, and publish the result.
+
+The replacement must fit the reserve piece 4 §2.8.1b set aside for it, and
+that reserve is only sound because this section bounds the output: the run URL
+is capped at 200 bytes, and the failed job names at 5 names of 60 bytes, a
+longer list rendering `… and N more`. Enforce both here; a body that would
+exceed `PRBodyLimit` after replacement is a bug in these bounds, not a reason
+to truncate the published body.
 
 This must be a targeted replacement with a test proving that every other byte
 of the body is unchanged. Re-rendering here would put `pr create` back in the
@@ -168,10 +195,16 @@ authoring business through the side door.
 ## 7. Tests required
 
 - No entry ⇒ exit `1` with the message, nothing pushed, no `gh` call.
-- Entry present for the branch but the head moved ⇒ the entry is gone, so this
-  is the no-entry path; assert exit `1` and that nothing was pushed.
-- Blocking entry ⇒ exit `1`; with `--force`, publishes and the body carries the
-  force notice.
+- Entry present for the branch but the head moved ⇒ exit `1` with the
+  two-SHA message, distinct from the no-entry message, and nothing pushed.
+- A CI outcome with 40 failed job names and a maximum-length URL renders
+  inside `ciStepReserveBytes`.
+- A dispatch that yields no observable run renders the `⚠️` absence row and
+  still publishes.
+- Blocking entry ⇒ publishes, exit `0`, body unchanged from `Entry.Body`
+  except the `ci` step. This test must fail if a semantic gate is reintroduced.
+- The existing `--force` / `--reason` behaviour over red deterministic
+  validation is unchanged: `--force` without `--reason` still exits `1`.
 - Body composition: the published body differs from `Entry.Body` only in the
   `ci` step and the `ci` entry of the attestation. Assert byte equality of
   everything else.
@@ -184,7 +217,11 @@ authoring business through the side door.
 - A concluded-successful run whose head SHA differs from the branch head
   renders `⚠️`, never `✅`. This test must fail if the SHA comparison is
   removed.
-- Timeout publishes and exits `0`.
+- Timeout publishes and exits `0`. The polling loop takes its clock and its
+  sleep through an injectable seam so this test is deterministic and takes no
+  real time; a test that sleeps for `wait_seconds` is not acceptable.
+- A push failure aborts before any `gh` call.
+- SIGINT during the wait still publishes with the `⏳` row.
 - No `ci:` block ⇒ no push-triggered workflow, `⚪` row, PR still published.
 - `gh` absent ⇒ the file+clipboard fallback, with the pushed-branch state
   stated.
