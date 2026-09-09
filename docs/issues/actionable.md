@@ -5,6 +5,32 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
+Decided work order, 2026-09-09, overriding the readiness ordering for three
+items only: **item 4, then item 10, then item 11**. They are one problem seen
+from three ends — nothing records what was reviewed, so nothing downstream can
+build on it — and solving them out of order builds each on a record the
+previous one has not defined yet. Numbering is left alone so existing
+references from `future.md` and from within this file keep pointing at what
+they name.
+
+The contract those three items serve, stated by the repository owner on
+2026-09-09 and governing all of them, because each was drifting away from it
+independently:
+
+- `gate` — "this commit is well made". It looks at one piece.
+- `pr review` — "the pieces together tell a coherent and complete story". It
+  does NOT look at each piece again. It looks at what is only visible with all
+  of them together: whether something is missing, whether one piece undoes
+  another, whether the final result does what it promised.
+- `pr create` — reviews NOTHING. It takes `pr review`'s report and publishes.
+  If no report exists, it asks for one first.
+
+Read that as an allocation of ownership, not a description of today's code.
+Two consequences it settles that the items below kept re-opening: the per-commit
+audit belongs to `gate` alone and has no place in the PR report, and the
+judgement published by `pr create` is authored by `pr review`, never by
+`pr create` itself.
+
 ## 1. Bound what the review flow costs the machine that runs it
 
 Sits first: unblocked, and it is the only item that has stopped work outright
@@ -202,6 +228,41 @@ cheap half is separable from its expensive half.
   with the staleness discipline above. The first data point is available: 11
   net findings on `99138bb..19a5b2f` versus the per-commit fichas for
   `e408d42` and `19a5b2f`.
+- Confirmed in code 2026-09-09, which removes the "possibly deliberate" doubt
+  from the first bullet as a question of fact while leaving it open as a
+  question of intent: `internal/gate` contains no call to
+  `ledger.SaveRevision` anywhere. The gate writes durable RUN records through
+  agentrun/store, but no review ficha. So the gap is not a missed write path;
+  there is no write path at all, and adding one is a design decision rather
+  than a repair.
+- Shape proposed by the repository owner, 2026-09-09, and worth stating before
+  the cheap half is built because it constrains it: ONE record per change that
+  the gate opens, `pr review` complements, and `pr create` reads to compose the
+  published report — rather than three independent artefacts that later have to
+  be reconciled. This is the `lineage_id` idea from the gentle-ai reference
+  above, made concrete: the gate's per-commit verdict, the net-diff verdict,
+  and whatever intent is established (item 10) become entries threaded onto one
+  identity, so `pr create` composes a report instead of recomputing one
+  (item 11).
+- What that shape must NOT do, restating the staleness discipline for the
+  combined case: a single record spanning a per-commit verdict and a range
+  verdict inherits the range half's staleness. The per-commit entries survive a
+  rebase through their content blobs; the range entry does not. Any consumer
+  must be able to tell WHICH entries still describe the code in front of it,
+  which means each entry carries its own identity and is refused independently,
+  not the record as a whole. A record that goes stale atomically is worse than
+  two records, because it discards valid per-commit evidence along with the
+  invalid range evidence.
+- What the measurement above does NOT decide, corrected 2026-09-09 after the
+  repository owner rejected an earlier reading of this file: it does not decide
+  whether the range entry is built. That was a cost question posing as a design
+  question. Even at total overlap between per-commit and net findings, a PR
+  report assembled from per-commit fichas answers "how well is each piece made"
+  when the question a pull request asks is "what does this change do as a whole,
+  and is it well resolved". The range entry is the deliverable of item 11, not
+  an optimisation of it. What the measurement still decides is narrower and
+  purely about cost: whether the per-commit audit is worth running at all when
+  the net audit already covers the same ground.
 
 ## 5. Bound the provider's own temporary residue
 
@@ -341,3 +402,140 @@ platform.
   live probes.
 - Closing: a confirmation run on native Windows, or no action at all.
 - Starts only if: production runs on Windows.
+
+## 10. Give `pr review` something to judge the change against
+
+Sits tenth by readiness, but second in the decided work order above: it is what
+turns a review that already exists into one that answers a question no other
+command asks. Found 2026-09-09 by tracing the flows conceptually rather than by
+a failure.
+
+- Wrong: no flow in this repository ever receives a statement of what the change
+  was supposed to do. `DimensionSpec.Instructions`
+  (`internal/reviewcontract/contract.go:117-123`) asks whether "the diff does
+  exactly what the commit message claims", and `internal/review/prompts.go:23-85`
+  fills that slot with whatever `message` the caller passed to `AuditCommit`.
+  For `sentinel review` and `gate` that is the real commit message, which is at
+  least evidence. For the net audit in `pr review` and `pr create` it is the
+  literal constant `HonestNetIntention` (`internal/app/pr/review.go:20`): "No PR
+  title/description exists before publication: claims cover branch commits and
+  the net diff only."
+- Why that is worse than an empty field: the `netAxes` block
+  (`internal/review/net_pr.go:316-323`) asks the reviewer, among other things,
+  whether the PR delivers what its title and description promise — of a prompt
+  that has just told it no title or description exists. The reviewer is asked to
+  verify conformance to something it was explicitly told it does not have. The
+  `--answer` clarification channel is empty for both flows too
+  (`BranchOptions.Answers` is never set in `review.go:118-147` nor in
+  `create.go`), so `net_pr.go:210` forwards `""`.
+- What is NOT wrong, corrected 2026-09-09 against an earlier reading of this
+  file: `pr review` is not a per-commit audit repeated at branch scale. Its net
+  half is a genuinely distinct unit — one `AuditCommit` over the whole range
+  diff, planned from that diff's own aggregate risk, asking about integration
+  between commits, one commit undoing another, net regression, undeclared
+  contract breaks and net coverage. It also carries a DETERMINISTIC classifier
+  (`classify`, `net_pr.go:67-132`) that checks against git blobs whether a later
+  commit removed the code an earlier finding pointed at, rather than asking a
+  model to notice. The branch-level judgement is built. It is the input that is
+  missing.
+- Loose end the ownership contract exposes: `--audit-pending` makes `pr review`
+  audit each pending commit, which is `gate`'s question asked by the wrong
+  command. It is off by default, so nothing is broken today, but under the
+  contract it has no owner — either it is a convenience that should be named as
+  "run gate's audit for these commits" and routed accordingly, or it should go.
+  Decide it while item 4 is being built, since that is when the per-commit
+  record gains a writer.
+- Reference design, no-mistakes (`kunchenguid/no-mistakes`, Go), read from
+  source 2026-09-09. A dedicated pipeline step (`IntentStep`,
+  `internal/pipeline/steps/intent.go`) runs BEFORE review, with two paths. The
+  explicit path: the agent driving the run passes `--intent "..."`, persisted
+  with `Source == agent`. The inferred path, when none was passed:
+  `intent.Extract` (`internal/intent/intent.go`) discovers LOCAL transcripts of
+  the developer's own sessions with coding agents (Claude Code, Codex,
+  OpenCode, Rovo Dev, Pi, Copilot CLI — one reader per agent), filtered by
+  originating repository and by the time window between base and head; scores
+  each candidate session by what fraction of the diff's files it mentions
+  (`matcher.go`, `score()`), taking a decisive match outright and otherwise
+  routing to an LLM disambiguator; then summarises the winner with a dedicated
+  prompt (`summarizer.go`) constrained to 2-6 plain sentences under a forced
+  JSON schema, instructed to report what the DEVELOPER was trying to achieve,
+  not what the assistant did.
+- The part of that design that matters most here is not the extraction but the
+  PROVENANCE. `internal/pipeline/steps/intent_prompt.go` wraps the text in
+  `BEGIN/END USER INTENT` markers and changes the reviewer's obligation by
+  source: an explicit intent is framed as AUTHORITATIVE acceptance criteria and
+  activates an extra clause requiring a finding when the diff contradicts or
+  omits something marked required — even when the change is otherwise clean —
+  whereas an inferred intent is framed as "may be partial or wrong; treat as a
+  hint, not ground truth" and carries no such clause. Both are declared
+  untrusted DATA, never instructions. Absence never blocks: the section is
+  simply omitted and review proceeds on the diff alone.
+- Notable absence in that reference, since it contradicts the obvious guess:
+  no reader sources intent from an issue or a PR body. The source is always the
+  conversation that produced the change, or an explicit declaration by the agent
+  driving it.
+- Closing: decide where intent comes from for this project, then make the net
+  audit receive it with its provenance attached rather than a constant that
+  denies its existence. The provenance half is not optional — an inferred intent
+  treated as authoritative would manufacture findings against a goal nobody
+  stated, which is a worse failure than the current silence. If the answer is
+  that no source is available here, that is a determination worth recording,
+  and it should replace `HonestNetIntention` with an omitted section rather than
+  a sentence the reviewer is then asked to verify against.
+- Relates to item 4: whatever intent is established belongs on the same record,
+  so `pr create` (item 11) publishes the goal alongside the verdict instead of
+  restating a diff.
+
+## 11. Let `pr create` compose the report instead of recomputing it
+
+Sits eleventh by readiness and last in the decided work order: it is the only
+one of the three that cannot be designed until the record from item 4 exists.
+Found 2026-09-09.
+
+- The subject of the report, stated first because it constrains everything
+  below and because getting it wrong is the failure this item exists to
+  prevent: a published PR report is about the QUALITY OF THE IMPLEMENTED WHOLE,
+  not about the quality of the commits that carried it. Per-commit fichas are
+  the record of what `gate` did, and `gate` asks a different question — is this
+  piece well made. They are not the raw material of a PR report, and a report
+  assembled by concatenating them is the wrong artefact however cheap it is to
+  produce. The net verdict is the report's substance; the per-commit records are
+  at most supporting detail, and possibly not even that.
+- Wrong: `pr create` reuses nothing from `pr review`. `RunPrCreateWith`
+  (`internal/app/pr/create.go:222`) calls the same `review.AnalyzeBranch` that
+  `pr review` calls, from scratch, on every invocation — re-deriving the merge
+  base, re-reading the range diff, and re-running `runNetReview`'s
+  `AuditCommit` over the net diff from zero. The per-commit half does reuse
+  work, through `ledger.ReadRecord` and the blob-content lookup that survives
+  rebases; the net half, which is the part closest to an actual PR verdict, has
+  no record to consult and no cache, so it is paid for twice by any operator who
+  reviews before publishing.
+- One behavioural difference worth keeping in view while designing this:
+  `Overview: true` is hardcoded in `pr create` (`create.go:230`) but flag-gated
+  and off by default in `pr review`. With overview off, `AnalyzeBranch`
+  (`branch.go:299-308`) routes every branch over `DecisionChainLimit` (400
+  lines) to `chain` without ever asking whether the change is coherent. So the
+  two commands do not currently reach the same decision on the same branch, and
+  a naive "reuse the previous result" would silently change `pr create`'s
+  routing. Whichever behaviour is correct should be chosen deliberately rather
+  than inherited from whichever record happens to exist.
+- Closing, under the ownership contract at the head of this file: `pr create`
+  audits nothing. It reads the net entry from item 4's record and composes the
+  published report from it — what the change does as a whole, measured against
+  the intent from item 10. When no net entry exists, or when its identity no
+  longer matches the code being published, `pr create` does not audit its way
+  out: it requires a `pr review` and either invokes it or refuses to publish
+  until one exists. The distinction is not cosmetic — it keeps a single author
+  for the branch-level judgement, so a PR cannot be published carrying a verdict
+  nobody could reproduce by running `pr review` themselves. Until that record
+  exists, do not add a cache: a reused net verdict with no identity check is
+  exactly the stale-record failure item 4 already refuses.
+- What follows from the subject stated above, and is worth settling before any
+  code: whether per-commit findings appear in the published report at all, and
+  under what framing. Today's notice is derived from per-commit records
+  (`SemanticNoticeWithDispositions` -> `BranchBlockers`), which is the inversion
+  this item corrects.
+- Note on what this does not change: publication blocks only on a red
+  deterministic validation, overridable with `--force --reason`
+  (`create.go:120-186`). The semantic verdict is advisory. Composing the report
+  from a record must not quietly turn it into a gate.
