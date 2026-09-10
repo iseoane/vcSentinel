@@ -200,7 +200,20 @@ type TemplateVerification struct {
 // resolved in a later commit outside it. It is the package's only
 // definition of "pending".
 func isPending(record Record) bool {
-	return record.FixedIn == ""
+	if record.FixedIn == "" {
+		return true
+	}
+	// Legacy records have no timestamp and retain their historical retirement
+	// semantics. New evidence after the first fix is pending again.
+	if record.FixedAt.IsZero() {
+		return false
+	}
+	for _, revision := range record.Revisions {
+		if revision.At.After(record.FixedAt) {
+			return true
+		}
+	}
+	return false
 }
 
 // pendingRisks collects the CRITICAL and WARNING findings of each pending

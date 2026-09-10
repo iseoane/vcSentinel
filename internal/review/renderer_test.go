@@ -301,6 +301,24 @@ func TestBranchVerdictFixedDoesNotBlock(t *testing.T) {
 	}
 }
 
+func TestBranchVerdictReauditedAfterFixBlocksAgain(t *testing.T) {
+	fixedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	record := recordHelper("531f23e", "feat(a)", "m",
+		Revision{At: fixedAt.Add(-time.Hour), Result: VerdictBlock},
+		Revision{At: fixedAt.Add(time.Hour), Result: VerdictBlock,
+			Dims: []DimensionResult{{Dim: DimLogic, Verdict: VerdictBlock,
+				Findings: []ReviewFinding{{Dimension: DimLogic, Severity: SevCritical, Description: "new blocker"}}}}},
+	)
+	record.FixedIn = "de641dc"
+	record.FixedAt = fixedAt
+	if got := VerdictDeBranch([]Record{record}); got != VerdictBlock {
+		t.Fatalf("VerdictDeBranch = %q, want block after a later re-audit", got)
+	}
+	if got := len(BranchBlockers([]Record{record})); got != 1 {
+		t.Fatalf("BranchBlockers = %d, want the later critical finding", got)
+	}
+}
+
 func TestVerificationSection(t *testing.T) {
 	t.Run("deterministic with exit codes", func(t *testing.T) {
 		out := verificationSection(TemplateVerification{
