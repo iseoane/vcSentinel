@@ -148,7 +148,7 @@ stay together so nobody later simplifies them back into one:
   as risks and blockers are the current authoritative revision's findings
   **plus** the CRITICAL findings of supplementary revisions that a later
   authoritative audit of the same dimension did not supersede.
-  `BranchBlockers`, `pendingRisks`, the net/inherited context and the
+  `BranchBlockers`, the pending risks, the net/inherited context and the
   disposition commands use this rule.
 
 **The asymmetry is a recorded decision, not an accident.** An earlier draft made

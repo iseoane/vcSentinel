@@ -5,7 +5,7 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-**Read items 13 and 14 first**, both opened 2026-09-10 and both urgent. Opened 2026-09-10 and marked urgent: a rebase that
+**Read item 13 first**, opened 2026-09-10 and urgent: a rebase that
 changes no content still throws away every review record and pays for a full
 re-audit. It cost about thirty model calls in one night, and the machinery to
 avoid it is already written and simply not wired to the per-commit path.
@@ -106,42 +106,6 @@ distinguishing.
   compiler rather than asserted in a comment. That was the standing
   improvement when the feature was withdrawn, and it is the right shape for
   whatever replaces it.
-
-## 14. A retired block hides every finding a later re-audit discovers
-
-**URGENT.** Opened 2026-09-10, observed live on `41c644d` in this repository.
-
-- The rule: `isPending(record)` is `record.FixedIn == ""`
-  (`internal/review/renderer.go`), and `MarkFixed` never overwrites an existing
-  `FixedIn` — "the first fix wins" (`internal/review/ledger.go:514`). So once a
-  record is marked corrected, `effectiveBranchFindings` skips it forever and
-  never looks at its current revision again.
-- The failure, in order: commit A blocks on finding X; fix commit B retires it
-  and sets `A.FixedIn = B`, correctly; A is later re-audited — because its
-  coverage was incomplete, or a dimension came back `unavailable` — and the new
-  revision reports genuine CRITICAL findings Y and Z; `isPending(A)` is still
-  false, so `BranchBlockers` never sees Y or Z, and `pr review` reports a clean
-  branch. Publication proceeds over real blockers.
-- Observed, not reasoned: `41c644d` carries `fixed_in ec9be13` from its first
-  revision and four CRITICAL findings from its second, which was run precisely
-  because the first had two dimensions denied. The branch projection treats it
-  as retired.
-- Why `FixedIn` cannot simply be deleted: it is doing real work. Without it,
-  a record whose block was retired and never re-audited would keep reporting
-  the original findings, because `CurrentFindings` still returns them. The
-  flag is what stops a fixed block from blocking forever.
-- The rule it should encode: `FixedIn` retires the findings that existed WHEN
-  IT WAS SET, not the commit for the rest of time. A revision recorded after
-  that moment is new evidence and must count. That needs the moment recorded —
-  a `FixedAt` beside `FixedIn` is enough — and `isPending` becomes "no FixedIn,
-  or a revision newer than FixedAt".
-- Note `RecordHasActiveBlock` (`internal/review/coverage.go`) already reads the
-  current findings and gets this right. The two predicates disagree, and only
-  the branch-level one is wrong. Whatever the fix, they must end up answering
-  the same question.
-- Blast radius: `BranchBlockers`, `pendingRisks`, the PR body's Risks section,
-  and `pr create --force`. It is not blocking today only because pieces 4 and 5
-  are not in use yet.
 
 ## 13. Stop paying for a full re-audit when a rebase changed no content
 

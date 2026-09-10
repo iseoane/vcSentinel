@@ -28,7 +28,7 @@ Findings are absent from `sentinel status`, which reports verdicts only. Read th
 
 A plain `sentinel review` audits `HEAD` only. If a slice created several commits, name every commit lacking a record: `sentinel review <sha> [<sha>...]`. Do not use `--all`, which audits every recordless commit up to the target and can include unrelated history. Accept the dimensions Sentinel selects; use `--dims` only to re-run a dimension that returned `unavailable`, never to narrow coverage.
 
-A blocked ficha is marked `FixedIn` by `registrarCorrecciones` only when a later commit satisfies all three conditions: it has a review exit of `0`, its message starts with `fix(`, and it touches at least one file named in that ficha's findings. A `slice`-generated fix named `test(...)` or `chore(...)` will not clear the block. Read `plan.json`'s planned message before applying; make a manual `fix(` commit when needed.
+A blocked ficha is credited with a `FixedIn` only when a later commit has a review exit of `0`, a message starting with `fix(`, and touches at least one file named in that ficha's findings. That credit is provenance, not a release: the ficha keeps blocking while its current findings block, so a `fix(` commit clears nothing by itself. To clear a block, re-audit the blocked commit (`sentinel review <sha>`) so its current findings are recorded again, or record a human `refute` for the finding.
 
 `--timeout <seconds>` replaces `review.timeout` for one invocation on both `review` and `gate`. Use it for a large candidate and when reviewer search tools are unavailable and whole-file reading may exhaust the default `600s`. If a dimension dies on budget, its `reason` begins with the cause.
 

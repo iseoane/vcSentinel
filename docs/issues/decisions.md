@@ -8,6 +8,42 @@ nothing is re-dated. Sources live in git history.
 
 ## Closed follow-ups (from the former `follow-ups.md`)
 
+### A retired block no longer hides a later re-audit (item 14, closed 2026-09-10)
+
+`isPending(record)` was `record.FixedIn == ""`, and `MarkFixed` keeps the
+first fix, so a record credited with a fix was skipped by
+`effectiveBranchFindings` forever — even when a later revision recorded
+genuine CRITICAL findings. Observed live: `41c644d` carried `fixed_in
+ec9be13` from its first revision and four CRITICAL findings from its
+second, and the branch projection treated it as retired.
+`RecordHasActiveBlock` already read the current findings correctly, so the
+two predicates disagreed and only the branch-level one was wrong.
+
+Resolved by demoting `FixedIn` to provenance rather than by recording the
+moment of the fix: the `FixedAt` field the item proposed was written and
+then deliberately dropped (`8be639a`). `isPending` became the exported
+`RecordPending(record, dispositions)`, which answers over the record's
+CURRENT findings (RULE 2) overlaid with the standing human answers, so a
+partial fix cannot retire a record that still carries live CRITICAL
+findings and a re-retirement keeps the first fix's provenance. The branch
+blockers, the pending risks, the summary table, the inherited section of a
+stacked PR and the `sentinel status` listing all decide with it, and the
+human listing renders `fix credited to <sha>` rather than `fixed in <sha>`
+because the credit is no longer a claim that the block is gone.
+
+Two surfaces deliberately do not follow it, recorded so nobody reads the
+rule as universal: `sentinel status --json` still emits `fixedIn` raw,
+which is consistent with the field being provenance and had no reader in
+this repository; and `VerdictDeBranch` still contributes the raw `Result`
+of a record that counts (RULE 1, unchanged), so a refuted finding can leave
+the branch verdict at `block` while the risks and blockers of the same
+report are empty.
+
+Consequence for daily use: crediting a `fix(` commit retires nothing by
+itself. A block clears only by re-auditing the blocked SHA
+(`sentinel review <sha>`) or by a human `refute`. `recordFixes` and
+`MarkFixed` are untouched and still record the link for metrics.
+
 ### Exposed-credential detection is Sentinel's own job (decided 2026-09-02, landed 2026-09-05)
 
 A credential pasted into prose produced no signal because the class
