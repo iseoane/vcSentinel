@@ -78,9 +78,11 @@ func truncatePipeline(fixed string, steps []pipelineStep, maxBytes int) (string,
 	for {
 		rendered := renderPipelineSteps(working)
 		notice := truncationNotice(omitted)
-		// The ci step is measured at its reserved size, not its current one,
-		// because pr create will expand it in place after publication.
-		if len(fixed)+len(rendered)+len(notice)+ciStepReserveBytes <= maxBytes {
+		// The ci step is measured at its reserved size INSTEAD OF its current
+		// one, not on top of it: pr create replaces that one block, so the
+		// placeholder it overwrites does not survive into the published body.
+		// Counting both rejected bodies that fit perfectly well once expanded.
+		if publishedSize(fixed, rendered, notice, working) <= maxBytes {
 			return rendered + notice, omitted, nil
 		}
 		candidate := -1
@@ -96,6 +98,21 @@ func truncatePipeline(fixed string, steps []pipelineStep, maxBytes int) (string,
 		working[candidate] = working[candidate].omitted()
 		omitted++
 	}
+}
+
+// publishedSize is the size the body will have after pr create expands the ci
+// step: everything as rendered, minus the ci placeholder, plus the reserve
+// that bounds its replacement. It is the one place that arithmetic lives, so
+// the loop and the caller's final guard cannot disagree about it.
+func publishedSize(fixed, rendered, notice string, steps []pipelineStep) int {
+	size := len(fixed) + len(rendered) + len(notice) + ciStepReserveBytes
+	for _, step := range steps {
+		if step.CI {
+			size -= len(step.render())
+			break
+		}
+	}
+	return size
 }
 
 func truncationNotice(omitted int) string {

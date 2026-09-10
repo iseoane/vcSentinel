@@ -126,3 +126,41 @@ func TestTruncatePipelineRefusesWhenTheFixedSectionsDoNotFit(t *testing.T) {
 		t.Fatal("truncatePipeline() accepted a body whose fixed sections exceed the limit")
 	}
 }
+
+// pr create replaces the ci block, so the placeholder does not survive into
+// the published body. Counting both the placeholder and its reserve rejected
+// bodies that fit perfectly well once expanded.
+func TestTruncatePipelineCountsTheCIReserveInsteadOfThePlaceholder(t *testing.T) {
+	placeholder := strings.Repeat("p", 900)
+	steps := []pipelineStep{
+		{Icon: "✅", Step: "review", Summary: "reviewed", Evidence: strings.Repeat("r", 400)},
+		{Icon: "⚪", Step: "ci", Summary: "not observed", Evidence: placeholder, CI: true},
+	}
+	// Room for the fixed part, the review step and the reserve, but NOT for
+	// the reserve plus the placeholder on top of it.
+	limit := len(renderPipelineSteps(steps[:1])) + ciStepReserveBytes + 200
+	_, omitted, err := truncatePipeline("", steps, limit)
+	if err != nil {
+		t.Fatalf("truncatePipeline() error = %v", err)
+	}
+	if omitted != 0 {
+		t.Fatalf("omitted = %d, want 0: the body fits once the ci placeholder is replaced", omitted)
+	}
+}
+
+// A step's collapsed summary must not carry a second copy of its evidence:
+// omitted() replaces Evidence, so anything duplicated in Summary survives
+// truncation and can still push the body over the limit.
+func TestCommandPipelineStepKeepsItsSummaryShort(t *testing.T) {
+	commands := make([]VerifiedCommand, 0, 40)
+	for i := 0; i < 40; i++ {
+		commands = append(commands, VerifiedCommand{Comando: strings.Repeat("c", 60), Exit: 0})
+	}
+	step := commandPipelineStep("test", commands, "not configured")
+	if len(step.Summary) > 120 {
+		t.Fatalf("summary is %d bytes; it must stay a short collapsed line, not a copy of the evidence", len(step.Summary))
+	}
+	if strings.Contains(step.Summary, strings.Repeat("c", 60)) {
+		t.Fatal("summary duplicates the command list that lives in Evidence")
+	}
+}

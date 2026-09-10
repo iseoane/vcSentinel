@@ -44,16 +44,17 @@ func RenderPRReviewBody(res *BranchResult, intents []IntentLine, verification Te
 	b.WriteString("\n\n## Pipeline\n")
 	fixed := b.String()
 
-	pipeline, _, err := truncatePipeline(fixed, pipelineSteps(res, intents, verification, dispositions), PRBodyLimit)
+	steps := pipelineSteps(res, intents, verification, dispositions)
+	pipeline, _, err := truncatePipeline(fixed, steps, PRBodyLimit)
 	if err != nil {
 		return "", err
 	}
 	body := fixed + pipeline
-	// The reserve is what pr create will expand the ci step into, so the
-	// published body must still fit once it does. Checking the returned
-	// length here is the only place that can state it about the real result.
-	if len(body)+ciStepReserveBytes > PRBodyLimit {
-		return "", fmt.Errorf("%w: %d bytes plus the ci reserve exceeds %d", ErrPRReviewBodyTooLarge, len(body), PRBodyLimit)
+	// Restate the guarantee about the real returned bytes, using the same
+	// arithmetic the loop used: what must fit is the body pr create will
+	// publish, with the ci placeholder replaced by at most its reserve.
+	if size := publishedSize(fixed, pipeline, "", steps); size > PRBodyLimit {
+		return "", fmt.Errorf("%w: %d published bytes exceeds %d", ErrPRReviewBodyTooLarge, size, PRBodyLimit)
 	}
 	return body, nil
 }
@@ -222,19 +223,27 @@ func commandPipelineStep(step string, commands []VerifiedCommand, absent string)
 		return pipelineStep{Icon: "⚪", Step: step, Summary: absent}
 	}
 	failed := false
+	failedCount := 0
 	var evidence strings.Builder
 	for _, command := range commands {
 		icon := "✅"
 		if command.Exit != 0 {
 			icon, failed = "⚠️", true
+			failedCount++
 		}
 		fmt.Fprintf(&evidence, "- %s `%s` (exit %d)\n", icon, command.Comando, command.Exit)
 	}
 	icon := "✅"
+	summary := fmt.Sprintf("%d commands, all green", len(commands))
 	if failed {
 		icon = "⚠️"
+		summary = fmt.Sprintf("%d commands, %d failed", len(commands), failedCount)
 	}
-	return pipelineStep{Icon: icon, Step: step, Summary: strings.TrimSpace(evidence.String()), Evidence: evidence.String()}
+	// The summary is the collapsed line a reader sees without expanding, so it
+	// stays short. Putting the whole command list here as well left truncation
+	// nothing to remove: omitted() replaces Evidence, and an oversized copy in
+	// Summary would survive it and still push the body over the limit.
+	return pipelineStep{Icon: icon, Step: step, Summary: summary, Evidence: evidence.String()}
 }
 
 func pipelineDetails(icon, step, summary, evidence string) string {
