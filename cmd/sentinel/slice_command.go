@@ -72,8 +72,18 @@ func runSlicePlan(out io.Writer, args []string) int {
 	var adapter agentadapter.AgentAdapter
 	// The micro-diff contains source code: it requires the versioned request
 	// and the user's local consent for this repository.
+	//
+	// The error is not discarded. A constructor can return a non-nil adapter
+	// alongside an error — a chain that resolved some agents and failed on
+	// others does exactly that — and passing it on would send the diff to a
+	// half-built adapter. Failing closed here is what the withdrawn transcript
+	// path did explicitly, and dropping it with the rest was a regression.
 	if allowsExternalAgentDiff(root) {
-		adapter, _ = newAgentAdapterForMessage(root)
+		built, err := newAgentAdapterForMessage(root)
+		if err != nil {
+			built = nil
+		}
+		adapter = built
 	}
 
 	options := git.SemanticSliceOptions{

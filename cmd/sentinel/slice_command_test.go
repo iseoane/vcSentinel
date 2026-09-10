@@ -327,3 +327,30 @@ func TestRunSlicePlanRefusesTheWithdrawnTranscriptFlags(t *testing.T) {
 		}
 	}
 }
+
+// A constructor can return a non-nil adapter alongside an error — an agent
+// chain that resolved some entries and failed on others does — and the
+// micro-diff must not reach a half-built one. Withdrawing the transcript path
+// dropped this guard with the rest of the branch; `sentinel review` caught it.
+func TestRunSlicePlanFailsClosedWhenTheAdapterConstructorErrors(t *testing.T) {
+	prepareRepoForPlan(t)
+	grantExternalDiffForPlan(t)
+	if err := os.WriteFile("app.go", []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &adapterSlicePlanFake{}
+	previous := newAgentAdapterForMessage
+	t.Cleanup(func() { newAgentAdapterForMessage = previous })
+	newAgentAdapterForMessage = func(string) (agentadapter.AgentAdapter, error) {
+		return fake, errors.New("chain partially resolved")
+	}
+
+	var out bytes.Buffer
+	if code := runSlicePlan(&out, []string{"--json"}); code != 0 && code != pendingDecisionsExitCode {
+		t.Fatalf("runSlicePlan() = %d: %s", code, out.String())
+	}
+	if fake.diffCalls != 0 || fake.baseCalls != 0 {
+		t.Fatalf("the plan used an adapter whose constructor returned an error: diff=%d base=%d", fake.diffCalls, fake.baseCalls)
+	}
+}
