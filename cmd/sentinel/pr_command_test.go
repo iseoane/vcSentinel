@@ -79,16 +79,14 @@ func TestParsePrReviewFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsePrReviewFlags failed: %v", err)
 	}
-	if flags.base != "dev" || !flags.overview || !flags.jsonOut || flags.auditPending {
-		t.Errorf("flags = %+v, expected base=dev overview json, auditPending=false by default", flags)
+	if flags.base != "dev" || !flags.overview || !flags.jsonOut {
+		t.Errorf("flags = %+v, expected base=dev overview json", flags)
 	}
 
-	flags, err = parsePrReviewFlags([]string{"--audit-pending"})
-	if err != nil {
-		t.Fatalf("parsePrReviewFlags(--audit-pending) failed: %v", err)
-	}
-	if !flags.auditPending {
-		t.Errorf("flags = %+v, expected auditPending", flags)
+	if _, err := parsePrReviewFlags([]string{"--audit-pending"}); err == nil {
+		t.Fatal("--audit-pending must be rejected: it was retired")
+	} else if !strings.Contains(err.Error(), "sentinel review <sha>") {
+		t.Errorf("--audit-pending error must name the per-commit replacement: %v", err)
 	}
 
 	// --only-unaudited is retired (docs/issues/actionable.md item 2): it now
@@ -99,8 +97,8 @@ func TestParsePrReviewFlags(t *testing.T) {
 	// 'sentinel pr [gh arguments]' passthrough.
 	if _, err := parsePrReviewFlags([]string{"--only-unaudited"}); err == nil {
 		t.Error("--only-unaudited must be rejected: it was retired")
-	} else if !strings.Contains(err.Error(), "--audit-pending") {
-		t.Errorf("--only-unaudited error should point at --audit-pending: %v", err)
+	} else if !strings.Contains(err.Error(), "sentinel review <sha>") {
+		t.Errorf("--only-unaudited error should point at sentinel review: %v", err)
 	}
 
 	if _, err := parsePrReviewFlags([]string{"--nope"}); err == nil {
@@ -1990,11 +1988,6 @@ func TestBranchPrReviewOptionsDefaultsToNotAuditingPending(t *testing.T) {
 		t.Errorf("default pr review must not audit pending commits: OnlyPending = %v, want true", options.OnlyPending)
 	}
 
-	options, _ = pr.BranchPrReviewOptions(config.Config{}, modelprobe.NewVerifier(nil), t.TempDir(),
-		pr.FlagsPrReview{AuditPending: true}, nil, wiring, &bytes.Buffer{})
-	if options.OnlyPending {
-		t.Errorf("--audit-pending must restore auditing pending commits: OnlyPending = %v, want false", options.OnlyPending)
-	}
 }
 
 // TestBranchPrReviewOptionsProgressFollowsInjectedWriter covers the injected
