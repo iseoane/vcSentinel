@@ -149,6 +149,7 @@ func runReview(worktree string, args []string) {
 		}
 		reauditSpec := reuse.Reused() && reuse.ReauditSpec
 		var result review.AuditResult
+		var pending []review.AgentQuestion
 		var files []string
 		var secretAdvisories []string
 		var fixed bool
@@ -261,7 +262,7 @@ func runReview(worktree string, args []string) {
 			}
 			result = review.AuditCommit(factory, cfg.Review.Parallel, auditOptionsWithRefuter(options, cfg, modelVerifier))
 
-			result, pending, err := applyPendingQuestions(worktree, sha, factory, cfg, modelVerifier, options, result)
+			result, pending, err = applyPendingQuestions(worktree, sha, factory, cfg, modelVerifier, options, result)
 			if err != nil {
 				fmt.Printf("❌ %v\n", err)
 				os.Exit(1)

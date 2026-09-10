@@ -45,19 +45,6 @@ func (s *Store) ReadCommitIndex(sha string) (*CommitIndex, error) {
 	return &idx, nil
 }
 
-// RegisterCommitBlobs saves (or extends) the CommitIndex of sha with the
-// blobs of its files, preserving the Fingerprints it already had: without
-// this merge, a second call on the same sha (for example, retrying a branch
-// analysis) could overwrite already-registered findings. Intended for the
-// caller that audits a commit and only knows its blobs, not v2
-// fingerprints (T2.7: AnalyzeBranch keeps emitting v1 until F5).
-//
-// blobs is MERGED into idx.Blobs (file by file), not substituted: an
-// earlier call on the same sha with a different blob set (today
-// AnalyzeBranch only calls once with the complete set, but the contract
-// must be safe also if that changes) would, with a substitution of the
-// whole map, leave its entries orphaned in blobs/<blob>.json without
-// idx.Blobs pointing to them again.
 // CommitBlobs returns a copy of a registered commit's file→blob mapping.
 // A missing or legacy commit index has no reusable mapping and returns nil.
 func (s *Store) CommitBlobs(sha string) (map[string]string, error) {
@@ -72,6 +59,19 @@ func (s *Store) CommitBlobs(sha string) (map[string]string, error) {
 	return blobs, nil
 }
 
+// RegisterCommitBlobs saves (or extends) the CommitIndex of sha with the
+// blobs of its files, preserving the Fingerprints it already had: without
+// this merge, a second call on the same sha (for example, retrying a branch
+// analysis) could overwrite already-registered findings. Intended for the
+// caller that audits a commit and only knows its blobs, not v2
+// fingerprints (T2.7: AnalyzeBranch keeps emitting v1 until F5).
+//
+// blobs is MERGED into idx.Blobs (file by file), not substituted: an
+// earlier call on the same sha with a different blob set (today
+// AnalyzeBranch only calls once with the complete set, but the contract
+// must be safe also if that changes) would, with a substitution of the
+// whole map, leave its entries orphaned in blobs/<blob>.json without
+// idx.Blobs pointing to them again.
 func (s *Store) RegisterCommitBlobs(sha string, blobs map[string]string) error {
 	idx, err := s.ReadCommitIndex(sha)
 	if err != nil {

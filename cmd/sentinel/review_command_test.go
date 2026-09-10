@@ -1155,6 +1155,62 @@ func TestRunReviewJSONKeepsSpinnerOffStdout(t *testing.T) {
 	}
 }
 
+func TestRunReviewReusedSpecPrintsAndExitsFromMergedRevision(t *testing.T) {
+	worktree := cutoverRepository(t)
+	t.Chdir(worktree)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	sha := strings.TrimSpace(gitOutputForReviewCommand(t, worktree, "rev-parse", "HEAD"))
+	files, err := git.FilesOfCommit(sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commonDir, err := git.GetGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := sharedReviewLedger(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.SaveRevision("origin", "feat: prior message", "", "test", review.Revision{
+		Result: review.VerdictBlock,
+		Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictBlock,
+			Findings: []review.ReviewFinding{{Severity: review.SevCritical, File: "fixture.go", Description: "preserved blocker"}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blobs := make(map[string]string, len(files))
+	for _, file := range files {
+		blob, err := git.BlobFileAtCommit(sha, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blobs[file] = blob
+	}
+	if err := store.NewStore(commonDir).RegisterCommitBlobs("origin", blobs); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
+printf '%s\n' '{"type":"result","subtype":"success","stop_reason":"end_turn","result":"BEGIN_REVIEW\n{\"dim\":\"spec\",\"verdict\":\"ok\"}\nEND_REVIEW"}'
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, exit := runAsSubprocessSplit(t, "runReviewReusedSpec", worktree, t.TempDir(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if exit != 1 || !strings.Contains(stdout, "Review of "+shortSHA(sha)+": block") || !strings.Contains(stdout, "logic") || !strings.Contains(stdout, "spec") {
+		t.Fatalf("reused spec review exit=%d output:\n%s", exit, stdout)
+	}
+}
+
+func gitOutputForReviewCommand(t *testing.T, worktree string, args ...string) string {
+	t.Helper()
+	output, err := exec.Command("git", append([]string{"-C", worktree}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return string(output)
+}
+
 // Piece 2 (surface findings, never clear): RevisionFixesPriorBlock reports
 // whether the previous state of a record was a VERDICT block (the authoritative
 // rule). A supplementary alarm on an otherwise OK authoritative record is not a

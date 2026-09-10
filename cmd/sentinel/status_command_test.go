@@ -38,6 +38,8 @@ func TestHelperProcess(t *testing.T) {
 		runReview(worktree, []string{"--json", "--dims", "logic", "HEAD"})
 	case "runReviewSupplementary":
 		runReview(worktree, []string{"--dims", "logic", "HEAD"})
+	case "runReviewReusedSpec":
+		runReview(worktree, []string{"HEAD"})
 	case "runPrReview":
 		runPrReview(worktree, nil)
 	}
