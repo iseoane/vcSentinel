@@ -5,6 +5,11 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
+**Read item 13 first.** Opened 2026-09-10 and marked urgent: a rebase that
+changes no content still throws away every review record and pays for a full
+re-audit. It cost about thirty model calls in one night, and the machinery to
+avoid it is already written and simply not wired to the per-commit path.
+
 Decided work order, superseded 2026-09-09 by
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
 which allocates one question to each command and orders the work as five
@@ -55,6 +60,48 @@ two questions cannot share an owner. `review` owns "is this piece well made"
 and is the only writer of per-commit verdicts; `gate` owns "does this work
 right now" and stops auditing entirely. Everywhere below that assigns a
 per-commit audit to `gate`, read `review`.
+
+## 13. Stop paying for a full re-audit when a rebase changed no content
+
+**URGENT.** Opened 2026-09-10, measured on this repository the same night.
+
+- What happened, with numbers: renaming one commit message rewrote the SHAs of
+  the six commits above it, every review record was orphaned, and
+  `sentinel review` re-audited all six — about **thirty model calls**. Five of
+  the six had byte-identical content to the version already reviewed. Nothing
+  about the code had changed.
+- Why it happens: the ledger is keyed by commit SHA, while the coverage it
+  records is a property of the CONTENT. A rebase, an amend, or a cherry-pick
+  changes the first without touching the second, and every semantic verdict is
+  thrown away.
+- **The machinery to avoid this already exists and is not wired to this path.**
+  `store.AlreadyReviewed` (`internal/store/blob.go:84`) recognises that a blob
+  was already reviewed under a different SHA — exactly the rebase case, and the
+  reason the blob index was built (T2.7). Its only consumer is
+  `internal/review/branch.go`, the `pr review` path. `sentinel review <sha>`
+  never asks: in `cmd/sentinel/review_command.go` blobs are used only to carry
+  answers to pending questions across SHAs, never to skip an audit.
+- Proposed fix, and the smaller one is the one that matters: when every file
+  touched by the new SHA carries the same blob as a SHA that already has a
+  record, copy the record forward and note where it came from, instead of
+  auditing. That covers the whole of what happened here. A per-dimension
+  version — re-audit only the dimensions that read a changed file — is finer
+  and rarer; do not start there.
+- Two things this does NOT fix, stated so the item does not promise more than
+  it can deliver:
+  - The commit MESSAGE is real input to the audit: the `spec` dimension
+    compares what was promised against what was done. So a rename is not
+    content-neutral, and a carried-forward record must still re-evaluate
+    `spec`. Everything else can be reused.
+  - A record carried forward is still a record about content, not about the
+    branch. Rebasing without running `review` again leaves the ledger with
+    holes exactly as it does today.
+- Related: this is what made [item 0](#0-let-a-real-fix-retire-a-block-even-when-it-is-not-called-fix)
+  look worse than it is. Three "unlinked fix" cases seen on 2026-09-09 had
+  three different causes, and only one was the `fix(` prefix: one was a review
+  that came out `unavailable` (an `unavailable` verdict correctly retires
+  nothing), one was a fix commit that had no record at all, and one was a
+  rebase that orphaned the link. Read them apart.
 
 ## 0. Let a real fix retire a block even when it is not called `fix(`
 
