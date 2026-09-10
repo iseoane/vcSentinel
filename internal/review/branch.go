@@ -199,24 +199,24 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	}
 
 	var pending []string
+	reauditSpec := make(map[string]bool)
 	for _, sha := range shas {
 		if opts.Store != nil {
-			covered, originSHA, err := commitCoveredByBlobs(opts.Store, sha)
+			message, err := git.CommitMessage(sha)
 			if err != nil {
 				return nil, err
 			}
-			if covered {
-				// This commit's content was already reviewed under another
-				// SHA (typical rebase): no need to audit it again, but its
-				// record MUST be adopted under the new SHA. A plain
-				// continue would make ledger.ReadRecord(sha) return nil
-				// below and the old record's real findings (now orphaned)
-				// would vanish from res.Records — exactly what the F2 exit
-				// criterion forbids. A failure here propagates: there is no
-				// safe way to swallow it silently without losing the
-				// finding too.
-				if err := ledger.AdoptRecord(originSHA, sha); err != nil {
+			decision, err := DecideBlobReuse(ledger, opts.Store, sha, message)
+			if err != nil {
+				return nil, err
+			}
+			if decision.Reused() {
+				if err := ledger.AdoptRecordWithMessage(decision.OriginSHA, sha, message); err != nil {
 					return nil, err
+				}
+				if decision.ReauditSpec {
+					pending = append(pending, sha)
+					reauditSpec[sha] = true
 				}
 				continue
 			}
@@ -237,7 +237,7 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 			}
 			commitOptions := opts
 			commitOptions.DeterministicFindings = deterministicFindingsForValidatedSHA(sha, opts.DeterministicFindingsSHA, opts.DeterministicFindings)
-			if err := auditBranchCommit(ledger, sha, commitOptions); err != nil {
+			if err := auditBranchCommit(ledger, sha, commitOptions, reauditSpec[sha]); err != nil {
 				return nil, fmt.Errorf("could not audit %s: %v", sha, err)
 			}
 		}
@@ -338,7 +338,7 @@ func deterministicFindingsForCommit(opts BranchOptions, sha string, files []stri
 
 // auditBranchCommit audits one pending commit with the engine and persists
 // the revision in the ledger with bucket "pr" (origin: branch analysis).
-func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
+func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions, specOnly bool) error {
 	message, err := git.CommitMessage(sha)
 	if err != nil {
 		return err
@@ -364,11 +364,15 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 	if opts.ReviewTransportFactory != nil {
 		transport = opts.ReviewTransportFactory(sha, files)
 	}
+	bundles := PlanForProfile(profile, files, diff, attributes).Bundles
+	if specOnly {
+		bundles = []ReviewBundle{{Name: "reused_spec", Dimensions: []string{DimSpec}, Priority: PriorityRequired, Cost: 1}}
+	}
 	result := AuditCommit(opts.Factory, opts.Parallel, AuditOptions{
 		SHA:                   sha,
 		Message:               message,
 		Diff:                  diff,
-		Bundles:               PlanForProfile(profile, files, diff, attributes).Bundles,
+		Bundles:               bundles,
 		Answers:               opts.Answers,
 		ProfileOverride:       opts.ProfileOverride,
 		ContextPaths:          files,
@@ -391,7 +395,11 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 		Dims:               DimensionResultsForRecord(result.Dims),
 		AggregatedFindings: result.Findings,
 	}
-	if err := ledger.SaveRevision(sha, message, "pr", model, revision); err != nil {
+	if specOnly {
+		if err := ledger.SaveReusedSpecRevision(sha, revision); err != nil {
+			return err
+		}
+	} else if err := ledger.SaveRevision(sha, message, "pr", model, revision); err != nil {
 		return err
 	}
 
@@ -411,12 +419,7 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions) error {
 		// throw away a real, already-persisted result. It is reported on
 		// stderr instead of propagating the error, so the signal is neither
 		// lost silently nor made fatal.
-		blobs, err := commitBlobs(sha, files)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "vas-sentinel: could not resolve the blobs of %s, continuing without registering (future-reuse optimization, does not affect this audit): %v\n", sha, err)
-			return nil
-		}
-		if err := opts.Store.RegisterCommitBlobs(sha, blobs); err != nil {
+		if err := RegisterCommitBlobs(opts.Store, sha, files); err != nil {
 			fmt.Fprintf(os.Stderr, "vas-sentinel: could not register the blobs of %s in the store, continuing without registering (future-reuse optimization, does not affect this audit): %v\n", sha, err)
 		}
 	}
@@ -450,6 +453,17 @@ func unauditedCommitSubjects(shas []string) []UnauditedCommit {
 	return out
 }
 
+// RegisterCommitBlobs records a completed audit's immutable file blobs so a
+// later SHA can be considered by DecideBlobReuse. Both review entry points use
+// this helper; callers decide whether a registration failure is fatal.
+func RegisterCommitBlobs(store StoreBlobs, sha string, files []string) error {
+	blobs, err := commitBlobs(sha, files)
+	if err != nil || len(blobs) == 0 {
+		return err
+	}
+	return store.RegisterCommitBlobs(sha, blobs)
+}
+
 // commitBlobs resolves the blob of each file of a commit (file → blob), to
 // register it in the store or consult it before auditing (T2.7). A commit
 // with no files (degenerate case) returns a nil map, not an empty one: the
@@ -468,6 +482,37 @@ func commitBlobs(sha string, files []string) (map[string]string, error) {
 		blobs[file] = blob
 	}
 	return blobs, nil
+}
+
+// BlobReuseDecision is the shared reuse decision for every review entry point.
+// ReauditSpec is true only when identical content has a different commit message.
+type BlobReuseDecision struct {
+	OriginSHA   string
+	ReauditSpec bool
+}
+
+func (d BlobReuseDecision) Reused() bool {
+	return d.OriginSHA != ""
+}
+
+// DecideBlobReuse applies the exact blob-SHA intersection rule and then compares
+// the stored review message with the destination message. A self match is not
+// reuse: an explicit review of an already-indexed SHA must still audit it.
+func DecideBlobReuse(ledger *Ledger, store StoreBlobs, sha, message string) (BlobReuseDecision, error) {
+	covered, originSHA, err := commitCoveredByBlobs(store, sha)
+	if err != nil || !covered || originSHA == sha {
+		return BlobReuseDecision{}, err
+	}
+	source, err := ledger.ReadRecord(originSHA)
+	if err != nil {
+		return BlobReuseDecision{}, err
+	}
+	if source == nil {
+		// Blob coverage can outlive a pruned ledger record. It is an optimization,
+		// not an audit precondition: discard this stale candidate and audit normally.
+		return BlobReuseDecision{}, nil
+	}
+	return BlobReuseDecision{OriginSHA: originSHA, ReauditSpec: source.Message != message}, nil
 }
 
 // commitCoveredByBlobs reports whether sha's content matches EXACTLY the

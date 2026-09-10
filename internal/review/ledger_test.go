@@ -434,10 +434,69 @@ func TestLedgerAdoptRecord(t *testing.T) {
 	}
 }
 
-// TestLedgerAdoptRecordMissingSourceSHAIsError: unlike MarkFixed, adopting
-// from a SHA without a record is a real error, not a silent no-op — the
-// source SHA should always exist because commitCoveredByBlobs takes it
-// from the store, which only registers already audited commits.
+func TestMergeReusedSpecRevisionDoesNotAliasSpecSlices(t *testing.T) {
+	specDims := make([]DimensionResult, 1, 2)
+	specDims[0] = DimensionResult{Dim: DimSpec, Verdict: VerdictOK}
+	specFindings := make([]Finding, 1, 2)
+	specFindings[0] = Finding{Dimension: DimSpec, Title: "fresh spec finding"}
+	spec := Revision{Dims: specDims, AggregatedFindings: specFindings}
+	base := Revision{
+		Dims:               []DimensionResult{{Dim: DimLogic, Verdict: VerdictOK}},
+		AggregatedFindings: []Finding{{Dimension: DimLogic, Title: "reused logic finding"}},
+	}
+
+	merged, err := mergeReusedSpecRevision(base, spec)
+	if err != nil {
+		t.Fatalf("mergeReusedSpecRevision: %v", err)
+	}
+	if got := spec.Dims[:cap(spec.Dims)][1].Dim; got != "" {
+		t.Errorf("spec Dims spare capacity was modified to %q", got)
+	}
+	if got := spec.AggregatedFindings[:cap(spec.AggregatedFindings)][1].Dimension; got != "" {
+		t.Errorf("spec AggregatedFindings spare capacity was modified to %q", got)
+	}
+	if len(merged.Dims) != 2 || len(merged.AggregatedFindings) != 2 {
+		t.Errorf("merged revision = %+v, want fresh spec and reused logic entries", merged)
+	}
+}
+
+// TestLedgerAdoptRecordWithMessageRecordsOriginAndDestinationMessage verifies
+// that adoption preserves both the source provenance and the destination message.
+func TestLedgerAdoptRecordWithMessageRecordsOriginAndDestinationMessage(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+	if err := ledger.SaveRevision("sha-old", "feat(old): original", "pr", "model", Revision{At: time.Now(), Result: VerdictOK}); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten message"); err != nil {
+		t.Fatalf("AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	if adopted == nil {
+		t.Fatal("ReadRecord(sha-new) returned nil after adoption")
+	}
+	if adopted.Message != "feat(new): rewritten message" {
+		t.Errorf("Message = %q, want destination message", adopted.Message)
+	}
+	if adopted.OriginSHA != "sha-old" {
+		t.Errorf("OriginSHA = %q, want sha-old", adopted.OriginSHA)
+	}
+	origin, err := ledger.ReadRecord("sha-old")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-old): %v", err)
+	}
+	if origin.Message != "feat(old): original" || origin.OriginSHA != "" {
+		t.Errorf("origin changed during adoption: %+v", origin)
+	}
+}
+
+// TestLedgerAdoptRecordMissingSourceSHAIsError verifies that callers that bypass
+// DecideBlobReuse still receive an error for an absent adoption source.
 func TestLedgerAdoptRecordMissingSourceSHAIsError(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NewLedger(dir)

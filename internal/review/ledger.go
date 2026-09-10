@@ -270,6 +270,7 @@ type Record struct {
 	Message   string     `json:"message"`
 	Bucket    string     `json:"bucket"`
 	Model     string     `json:"model"`
+	OriginSHA string     `json:"origin_sha,omitempty"`
 	FixedIn   string     `json:"fixed_in,omitempty"`
 	Revisions []Revision `json:"revisions"`
 }
@@ -556,17 +557,28 @@ func (l *Ledger) MarkFixed(sha, fixedIn string) error {
 // branch) would disappear from res.Records. Adopting the record under the
 // new SHA is what keeps them recoverable.
 //
-// from should always exist whenever commitCoveredByBlobs calls it, because
-// it came out of the store, which only registers already-audited commits:
-// that is why, unlike MarkFixed (where "there is nothing to mark" is a
-// valid state resolved as a no-op), a from with no record here is a real
-// error, not something to ignore in silence.
+// from must exist when a caller asks this method to adopt: DecideBlobReuse
+// rejects stale blob-index candidates whose ledger record was pruned before
+// reaching this method. Unlike MarkFixed (where "there is nothing to mark" is
+// a valid state resolved as a no-op), a from with no record here is a real
+// caller error, not something to ignore in silence.
 //
 // Idempotent: calling it twice with the same arguments overwrites with the
 // same content, without duplicating anything. Revisions is copied to a new
 // slice (the origin record's underlying one is not shared) for aliasing
 // hygiene, not because Revision is mutated after being saved.
 func (l *Ledger) AdoptRecord(from, to string) error {
+	return l.adoptRecord(from, to, "", false)
+}
+
+// AdoptRecordWithMessage copies a reviewed record under a new SHA while retaining
+// the destination commit message and the source SHA as provenance. Reuse callers
+// must use this variant because spec review evaluates the destination message.
+func (l *Ledger) AdoptRecordWithMessage(from, to, message string) error {
+	return l.adoptRecord(from, to, message, true)
+}
+
+func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage bool) error {
 	// Locked on to, which is the record this writes. Locking from too would
 	// be a second lock in a fixed-order pair and buys nothing: the source is
 	// only read, and a concurrent append to it either lands in the copy or
@@ -580,18 +592,86 @@ func (l *Ledger) AdoptRecord(from, to string) error {
 		if source == nil {
 			return fmt.Errorf("ledger: no record at %s to adopt into %s", from, to)
 		}
+		if !useDestinationMessage {
+			message = source.Message
+		}
 		revisions := make([]Revision, len(source.Revisions))
 		copy(revisions, source.Revisions)
 		adopted := &Record{
 			SHA:       to,
-			Message:   source.Message,
+			Message:   message,
 			Bucket:    source.Bucket,
 			Model:     source.Model,
+			OriginSHA: from,
 			FixedIn:   source.FixedIn,
 			Revisions: revisions,
 		}
 		return l.saveRecord(adopted)
 	})
+}
+
+// SaveReusedSpecRevision appends an authoritative revision that retains the
+// adopted record's non-spec dimensions and replaces only spec with a fresh audit.
+// It never accepts another dimension: accepting one would silently overwrite a
+// content-derived verdict that reuse deliberately preserves.
+func (l *Ledger) SaveReusedSpecRevision(sha string, spec Revision) error {
+	return l.withRecordLock(sha, func() error {
+		record, err := l.ReadRecord(sha)
+		if err != nil {
+			return err
+		}
+		if record == nil || record.OriginSHA == "" {
+			return fmt.Errorf("ledger: no adopted record at %s for spec reuse", sha)
+		}
+		base, _, ok := LastAuthoritativeRevision(*record)
+		if !ok {
+			return fmt.Errorf("ledger: no authoritative revision at %s for spec reuse", sha)
+		}
+		merged, err := mergeReusedSpecRevision(base, spec)
+		if err != nil {
+			return err
+		}
+		record.Revisions = append(record.Revisions, merged)
+		return l.saveRecord(record)
+	})
+}
+
+func mergeReusedSpecRevision(base, spec Revision) (Revision, error) {
+	for _, result := range spec.Dims {
+		if result.Dim != DimSpec {
+			return Revision{}, fmt.Errorf("ledger: reused spec revision includes %q", result.Dim)
+		}
+	}
+	merged := spec
+	// Revision is passed by value but its slices still share backing arrays.
+	// Copy before appending so this merge cannot mutate the caller's spec input.
+	merged.Dims = append([]DimensionResult(nil), spec.Dims...)
+
+	// A caller may provide only raw dimension results, as records written before
+	// aggregated findings existed do. Preserve the revision's normal fallback so
+	// those fresh spec findings are not lost while merging the reused dimensions.
+	specFindings := spec.AggregatedFindings
+	if len(specFindings) == 0 {
+		specFindings = spec.EffectiveFindings()
+	}
+	merged.AggregatedFindings = append([]Finding(nil), specFindings...)
+	for _, result := range base.Dims {
+		if result.Dim != DimSpec {
+			merged.Dims = append(merged.Dims, result)
+		}
+	}
+	for _, finding := range base.EffectiveFindings() {
+		if finding.Dimension != DimSpec {
+			merged.AggregatedFindings = append(merged.AggregatedFindings, finding)
+		}
+	}
+	dimensions := make([]DimensionOutcome, 0, len(merged.Dims))
+	for i := range merged.Dims {
+		dimensions = append(dimensions, DimensionOutcome{Dim: merged.Dims[i].Dim, Result: &merged.Dims[i]})
+	}
+	merged.Result, _ = globalVerdict(dimensions)
+	merged.Coverage = CoverageAuthoritative
+	return merged, nil
 }
 
 // DeleteRecord deletes the record of a SHA. It returns no error when the

@@ -116,6 +116,12 @@ func runReview(worktree string, args []string) {
 		os.Exit(1)
 	}
 
+	gitCommonDir, err := git.GetGitCommonDir(worktree)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	reviewStore := store.NewStore(gitCommonDir)
 	modelVerifier := newModelVerifier(worktree)
 	finalExit := 0
 	// The ⏳ progress lines are human motion, not payload: with --json the
@@ -135,6 +141,39 @@ func runReview(worktree string, args []string) {
 		if err != nil {
 			fmt.Printf("⚠️ %s: could not read the message: %v\n", sha[:8], err)
 			continue
+		}
+		reuse, err := review.DecideBlobReuse(ledger, reviewStore, sha, message)
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
+		reauditSpec := reuse.Reused() && reuse.ReauditSpec
+		if reuse.Reused() {
+			if err := ledger.AdoptRecordWithMessage(reuse.OriginSHA, sha, message); err != nil {
+				fmt.Printf("❌ %v\n", err)
+				os.Exit(1)
+			}
+			if !reauditSpec {
+				record, err := ledger.ReadRecord(sha)
+				if err != nil {
+					fmt.Printf("❌ %v\n", err)
+					os.Exit(1)
+				}
+				if record == nil {
+					fmt.Printf("❌ adopted record for %s was not saved\n", sha[:8])
+					os.Exit(1)
+				}
+				latest, _, ok := review.LastAuthoritativeRevision(*record)
+				if !ok {
+					fmt.Printf("❌ adopted record for %s has no authoritative revision\n", sha[:8])
+					os.Exit(1)
+				}
+				fmt.Printf("♻️ Reused review of %s from %s\n", shortSHA(sha), shortSHA(reuse.OriginSHA))
+				if exit := verdictExitCode(latest.Result); exit > finalExit {
+					finalExit = exit
+				}
+				continue
+			}
 		}
 		diff, err := git.DiffCommit(sha)
 		if err != nil {
@@ -157,12 +196,19 @@ func runReview(worktree string, args []string) {
 			fmt.Printf("⚠️ %s: could not read the attributes: %v\n", sha[:8], err)
 			os.Exit(1)
 		}
+		if reauditSpec {
+			bundles = []review.ReviewBundle{{Name: "reused_spec", Dimensions: []string{review.DimSpec}, Priority: review.PriorityRequired, Cost: 1}}
+		}
 
 		// FU-11: deterministic exposed-credential incident, independent of
 		// security_sensitive and of the scheduled bundles. It lands in
 		// result.Findings through HallazgosDeterministas, so it is
 		// reported even when the plan schedules no dimension.
 		secretFindings, secretAdvisories := secret.SecretFindingsAndAdvisories(files, diff)
+		if reauditSpec {
+			secretFindings = nil
+			secretAdvisories = nil
+		}
 
 		// The collector records which agent attended each dimension so the
 		// record stores the real author, not the requested profile (H4/T0.2).
@@ -225,7 +271,7 @@ func runReview(worktree string, args []string) {
 		// with no --dims derives its plan from the change and is authoritative;
 		// a run the operator narrowed with --dims is supplementary.
 		coverage := review.CoverageAuthoritative
-		if len(flags.dims) > 0 {
+		if len(flags.dims) > 0 && !reauditSpec {
 			coverage = review.CoverageSupplementary
 		}
 		// RULE 1 applies to the Fixed claim too, and internal/review owns it:
@@ -242,8 +288,17 @@ func runReview(worktree string, args []string) {
 			Dims:               review.DimensionResultsForRecord(result.Dims),
 			AggregatedFindings: result.Findings,
 		}
-		if err := ledger.SaveRevision(sha, message, "", model, revision); err != nil {
+		if reauditSpec {
+			if err := ledger.SaveReusedSpecRevision(sha, revision); err != nil {
+				fmt.Printf("⚠️ %s: could not save the reused spec record: %v\n", sha[:8], err)
+			}
+		} else if err := ledger.SaveRevision(sha, message, "", model, revision); err != nil {
 			fmt.Printf("⚠️ %s: could not save the record: %v\n", sha[:8], err)
+		}
+		if !reauditSpec {
+			if err := review.RegisterCommitBlobs(reviewStore, sha, files); err != nil {
+				fmt.Printf("⚠️ %s: could not register blobs for future review reuse: %v\n", sha[:8], err)
+			}
 		}
 
 		fmt.Print(result.String())
