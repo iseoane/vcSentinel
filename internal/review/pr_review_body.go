@@ -42,15 +42,31 @@ func RenderPRReviewBody(res *BranchResult, intents []IntentLine, verification Te
 	b.WriteString("\n")
 	b.WriteString(comment)
 	b.WriteString("\n\n## Pipeline\n")
-	b.WriteString(renderPipeline(res, intents, verification, dispositions))
-	return TruncatePRReviewBody(b.String(), PRBodyLimit)
+	fixed := b.String()
+
+	pipeline, _, err := truncatePipeline(fixed, pipelineSteps(res, intents, verification, dispositions), PRBodyLimit)
+	if err != nil {
+		return "", err
+	}
+	body := fixed + pipeline
+	// The reserve is what pr create will expand the ci step into, so the
+	// published body must still fit once it does. Checking the returned
+	// length here is the only place that can state it about the real result.
+	if len(body)+ciStepReserveBytes > PRBodyLimit {
+		return "", fmt.Errorf("%w: %d bytes plus the ci reserve exceeds %d", ErrPRReviewBodyTooLarge, len(body), PRBodyLimit)
+	}
+	return body, nil
 }
 
 func validateAttestation(res *BranchResult, attestation Attestation) error {
 	verdict := VerdictDeBranch(res.Records)
 	head := ""
-	if len(res.SHAs) > 0 { head = res.SHAs[len(res.SHAs)-1] }
-	if res.Net != nil { verdict, head = res.Net.Audit.Verdict, res.Net.To }
+	if len(res.SHAs) > 0 {
+		head = res.SHAs[len(res.SHAs)-1]
+	}
+	if res.Net != nil {
+		verdict, head = res.Net.Audit.Verdict, res.Net.To
+	}
 	if attestation.Branch != res.Branch || attestation.HeadSHA != head || attestation.Verdict != verdict {
 		return errors.New("render pr review body: attestation does not match branch result")
 	}
@@ -152,26 +168,29 @@ func renderTesting(verification TemplateVerification) string {
 	return b.String()
 }
 
-func renderPipeline(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) string {
-	var b strings.Builder
-	if len(intents) == 0 {
-		b.WriteString(pipelineDetails("⚪", "slice", "not observed", "No Sentinel-Intent trailers were present."))
-	} else {
-		b.WriteString(pipelineDetails("✅", "slice", "intent trailers present", renderIntentLines(intents, res.SHAs)))
+// pipelineSteps builds the Pipeline as data, in its fixed order. Serialising
+// is a separate, later step (renderPipelineSteps): truncation happens on this
+// slice, which is what keeps it from ever reaching another section.
+func pipelineSteps(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) []pipelineStep {
+	slice := pipelineStep{Icon: "⚪", Step: "slice", Summary: "not observed", Evidence: "No Sentinel-Intent trailers were present."}
+	if len(intents) > 0 {
+		slice = pipelineStep{Icon: "✅", Step: "slice", Summary: "intent trailers present", Evidence: renderIntentLines(intents, res.SHAs)}
 	}
-	b.WriteString(renderReviewPipeline(res, dispositions))
-	b.WriteString(renderCommandPipeline("gate", verification.Validation, "not run"))
-	b.WriteString(renderCommandPipeline("lint", nil, "not configured"))
-	b.WriteString(renderCommandPipeline("test", verification.Comandos, "not configured"))
-	b.WriteString(renderCommandPipeline("build", nil, "not configured"))
-	b.WriteString(pipelineDetails("✅", "pr review", "body and attestation authored", "This persisted entry was authored for the reviewed branch head."))
-	b.WriteString(pipelineDetails("⚪", "ci", "not observed by Sentinel", "Filled by pr create when CI evidence is available."))
-	return b.String()
+	return []pipelineStep{
+		slice,
+		reviewPipelineStep(res, dispositions),
+		commandPipelineStep("gate", verification.Validation, "not run"),
+		commandPipelineStep("lint", nil, "not configured"),
+		commandPipelineStep("test", verification.Comandos, "not configured"),
+		commandPipelineStep("build", nil, "not configured"),
+		{Icon: "✅", Step: "pr review", Summary: "body and attestation authored", Evidence: "This persisted entry was authored for the reviewed branch head."},
+		{Icon: "⚪", Step: "ci", Summary: "not observed by Sentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
+	}
 }
 
-func renderReviewPipeline(res *BranchResult, dispositions []FindingDisposition) string {
+func reviewPipelineStep(res *BranchResult, dispositions []FindingDisposition) pipelineStep {
 	if len(res.Records) == 0 {
-		return pipelineDetails("⚪", "review", "no records", "No commit review records were found.")
+		return pipelineStep{Icon: "⚪", Step: "review", Summary: "no records", Evidence: "No commit review records were found."}
 	}
 	summary := fmt.Sprintf("%d commits audited", len(res.Records))
 	var evidence strings.Builder
@@ -195,12 +214,12 @@ func renderReviewPipeline(res *BranchResult, dispositions []FindingDisposition) 
 		summary += ", no pending blocks"
 	}
 	evidence.WriteString(RenderMatrix(res.Records))
-	return pipelineDetails(icon, "review", summary, evidence.String())
+	return pipelineStep{Icon: icon, Step: "review", Summary: summary, Evidence: evidence.String()}
 }
 
-func renderCommandPipeline(step string, commands []VerifiedCommand, absent string) string {
+func commandPipelineStep(step string, commands []VerifiedCommand, absent string) pipelineStep {
 	if len(commands) == 0 {
-		return pipelineDetails("⚪", step, absent, "")
+		return pipelineStep{Icon: "⚪", Step: step, Summary: absent}
 	}
 	failed := false
 	var evidence strings.Builder
@@ -215,7 +234,7 @@ func renderCommandPipeline(step string, commands []VerifiedCommand, absent strin
 	if failed {
 		icon = "⚠️"
 	}
-	return pipelineDetails(icon, step, strings.TrimSpace(evidence.String()), evidence.String())
+	return pipelineStep{Icon: icon, Step: step, Summary: strings.TrimSpace(evidence.String()), Evidence: evidence.String()}
 }
 
 func pipelineDetails(icon, step, summary, evidence string) string {

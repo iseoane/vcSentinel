@@ -6,83 +6,110 @@ import (
 	"strings"
 )
 
+// ciStepReserveBytes is the room kept for pr create to expand the ci step in
+// place (piece 5 replaces that one block and nothing else). The reserve is a
+// bound, not a guess: pr create caps the run URL at 200 bytes and the failed
+// job names at five names of sixty bytes, rendering "… and N more" beyond
+// that, and the surrounding markup is fixed.
 const ciStepReserveBytes = 1024
 
 var ErrPRReviewBodyTooLarge = errors.New("pr review body required sections exceed the size limit")
 
-// TruncatePRReviewBody drops complete non-CI Pipeline evidence blocks from the
-// end of the pipeline. It never cuts Markdown mid-block, preserves sections
-// 1–3, and reserves room for pr create to expand the ci placeholder in place.
-func TruncatePRReviewBody(body string, maxBytes int) (string, error) {
-	if maxBytes <= 0 {
-		return "", fmt.Errorf("%w: non-positive limit", ErrPRReviewBodyTooLarge)
+// pipelineStep is one Pipeline entry before it becomes Markdown. The Pipeline
+// is built as data and serialised once, at the end, which is what makes
+// truncation safe: dropping a step is dropping an element of a slice, so it
+// cannot reach another section, cannot stop at the wrong closing tag, and
+// cannot mistake a step for the ci one because its own text happens to
+// contain "<b>ci</b>". An earlier version truncated by re-parsing the
+// serialised body and had all three of those defects.
+type pipelineStep struct {
+	Icon     string
+	Step     string
+	Summary  string
+	Evidence string
+	CI       bool
+	// dropped marks a step whose evidence was already replaced by the
+	// pointer to the log on disk. Without it the truncation loop keeps
+	// choosing the same step forever, because the replacement text is
+	// itself non-empty evidence.
+	dropped bool
+}
+
+func (s pipelineStep) render() string {
+	return pipelineDetails(s.Icon, s.Step, s.Summary, s.Evidence)
+}
+
+// omitted returns the step with its evidence replaced by a pointer to the log
+// on disk. The step itself never disappears: a reader must still see that it
+// ran, and what its outcome was.
+func (s pipelineStep) omitted() pipelineStep {
+	s.Evidence = "_Evidence omitted for size; the full log is under .vas_sentinel/evidence/._\n"
+	s.dropped = true
+	return s
+}
+
+// renderPipelineSteps serialises the steps in order.
+func renderPipelineSteps(steps []pipelineStep) string {
+	var b strings.Builder
+	for _, step := range steps {
+		b.WriteString(step.render())
 	}
-	current := body
+	return b.String()
+}
+
+// truncatePipeline drops evidence from non-CI steps, last one first, until the
+// whole body fits. It returns the serialised Pipeline section and the number
+// of steps whose evidence was dropped.
+//
+// `fixed` is everything that precedes the Pipeline: sections 1 to 3, Testing,
+// and the attestation. Those are never touched — if they alone do not fit,
+// that is an error, not something to trim.
+func truncatePipeline(fixed string, steps []pipelineStep, maxBytes int) (string, int, error) {
+	if maxBytes <= 0 {
+		return "", 0, fmt.Errorf("%w: non-positive limit", ErrPRReviewBodyTooLarge)
+	}
+	if !hasCIStep(steps) {
+		return "", 0, fmt.Errorf("%w: missing ci Pipeline step", ErrPRReviewBodyTooLarge)
+	}
+
+	working := make([]pipelineStep, len(steps))
+	copy(working, steps)
 	omitted := 0
 	for {
-		ci, ok := pipelineCIBlock(current)
-		if !ok {
-			return "", fmt.Errorf("%w: missing ci Pipeline block", ErrPRReviewBodyTooLarge)
+		rendered := renderPipelineSteps(working)
+		notice := truncationNotice(omitted)
+		// The ci step is measured at its reserved size, not its current one,
+		// because pr create will expand it in place after publication.
+		if len(fixed)+len(rendered)+len(notice)+ciStepReserveBytes <= maxBytes {
+			return rendered + notice, omitted, nil
 		}
-		if len(current)-len(ci.text)+ciStepReserveBytes <= maxBytes {
-			return current, nil
-		}
-		blocks := pipelineBlocks(current)
 		candidate := -1
-		for i := len(blocks) - 1; i >= 0; i-- {
-			if !blocks[i].ci {
+		for i := len(working) - 1; i >= 0; i-- {
+			if !working[i].CI && !working[i].dropped && strings.TrimSpace(working[i].Evidence) != "" {
 				candidate = i
 				break
 			}
 		}
 		if candidate < 0 {
-			return "", ErrPRReviewBodyTooLarge
+			return "", 0, ErrPRReviewBodyTooLarge
 		}
-		block := blocks[candidate]
+		working[candidate] = working[candidate].omitted()
 		omitted++
-		replacement := fmt.Sprintf("_Evidence for %s omitted; see .vas_sentinel/evidence/._\n", block.step)
-		current = current[:block.start] + replacement + current[block.end:]
-		current = removeTruncationNotice(current)
-		ci, _ = pipelineCIBlock(current)
-		notice := fmt.Sprintf("_%d evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._\n", omitted)
-		current = current[:ci.start] + notice + current[ci.start:]
 	}
 }
 
-type pipelineBlock struct { start, end int; step, text string; ci bool }
-
-func pipelineCIBlock(body string) (pipelineBlock, bool) {
-	for _, block := range pipelineBlocks(body) {
-		if block.ci { return block, true }
+func truncationNotice(omitted int) string {
+	if omitted == 0 {
+		return ""
 	}
-	return pipelineBlock{}, false
+	return fmt.Sprintf("_%d evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._\n", omitted)
 }
 
-func removeTruncationNotice(body string) string {
-	const suffix = " evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._\n"
-	at := strings.Index(body, suffix)
-	if at < 0 {
-		return body
-	}
-	start := strings.LastIndex(body[:at], "\n") + 1
-	return body[:start] + body[at+len(suffix):]
-}
-
-func pipelineBlocks(body string) []pipelineBlock {
-	var out []pipelineBlock
-	for offset := 0; ; {
-		start := strings.Index(body[offset:], "<details><summary>")
-		if start < 0 { return out }
-		start += offset
-		endMarker := strings.Index(body[start:], "</details>")
-		if endMarker < 0 { return out }
-		end := start + endMarker + len("</details>")
-		text := body[start:end]
-		step := "pipeline step"
-		if label := strings.Index(text, "<b>"); label >= 0 {
-			if close := strings.Index(text[label+3:], "</b>"); close >= 0 { step = text[label+3 : label+3+close] }
+func hasCIStep(steps []pipelineStep) bool {
+	for _, step := range steps {
+		if step.CI {
+			return true
 		}
-		out = append(out, pipelineBlock{start: start, end: end, step: step, text: text, ci: strings.Contains(text, "<b>ci</b>")})
-		offset = end
 	}
+	return false
 }
