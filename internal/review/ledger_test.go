@@ -1288,3 +1288,60 @@ func TestLedgerAdoptRecordIsIdempotentOverAppendedRevisions(t *testing.T) {
 		t.Errorf("revisions[1].Result = %q, want the appended verdict preserved", adopted.Revisions[1].Result)
 	}
 }
+
+// TestLedgerAdoptRecordKeepsDistinctRevisionsSharingATimestamp locks the reason
+// adoption does not deduplicate. Revision.At is supplied by the caller —
+// SaveRevision appends the Revision it is handed and nothing assigns or
+// validates At — so two genuinely different revisions can carry the same
+// timestamp. Treating At as identity dropped one of them, and because the
+// source is merged first the loss fell on the destination's own verdict: a
+// blocking finding could disappear from the history that coverage and blocker
+// selection then read.
+func TestLedgerAdoptRecordKeepsDistinctRevisionsSharingATimestamp(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	collision := time.Now().Add(-time.Hour)
+	if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", Revision{
+		At:       collision,
+		Result:   VerdictOK,
+		Agent:    "source",
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-old): %v", err)
+	}
+	// The destination's own revision blocks and shares the exact timestamp.
+	if err := ledger.SaveRevision("sha-new", "feat(new): rewritten", "", "model", Revision{
+		At:       collision,
+		Result:   VerdictBlock,
+		Agent:    "destination",
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-new): %v", err)
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	if adopted == nil {
+		t.Fatal("ReadRecord(sha-new) returned nil after adoption")
+	}
+	if len(adopted.Revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2: a shared timestamp is not a shared identity", len(adopted.Revisions))
+	}
+	agents := make(map[string]string, 2)
+	for _, revision := range adopted.Revisions {
+		agents[revision.Agent] = revision.Result
+	}
+	if agents["destination"] != VerdictBlock {
+		t.Errorf("the destination's own blocking revision was lost: %+v", adopted.Revisions)
+	}
+	if agents["source"] != VerdictOK {
+		t.Errorf("the source revision was lost: %+v", adopted.Revisions)
+	}
+}

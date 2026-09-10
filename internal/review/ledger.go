@@ -608,6 +608,7 @@ func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage boo
 			// Metadata other than the revisions follows destination-wins-else-source:
 			// what the destination already recorded about itself is more specific
 			// than what the origin recorded about a different SHA.
+			adoptedFrom := destination.OriginSHA
 			if destination.OriginSHA == "" {
 				destination.OriginSHA = from
 			}
@@ -625,7 +626,16 @@ func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage boo
 			if destination.FixedIn == "" {
 				destination.FixedIn = source.FixedIn
 			}
-			destination.Revisions = mergeRevisions(source.Revisions, destination.Revisions)
+			// Whether the source revisions are already here is answered by the
+			// record's own provenance, not by comparing revisions: a destination
+			// this origin was already adopted into carries them, and re-importing
+			// would duplicate them. A destination with different or absent
+			// provenance was never given this source's coverage, so it gets it —
+			// that is the case where a supplementary-only destination would
+			// otherwise stay without any authoritative verdict.
+			if adoptedFrom != from {
+				destination.Revisions = mergeRevisions(source.Revisions, destination.Revisions)
+			}
 			return l.saveRecord(destination)
 		}
 		revisions := make([]Revision, len(source.Revisions))
@@ -733,18 +743,14 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 	return result
 }
 
-// mergeRevisions returns the union of two revision histories, keyed by At and
-// ordered chronologically. At is a time.Now() stamp taken when the revision is
-// written, so it identifies a revision without comparing its contents, and it
-// round-trips through JSON as RFC3339Nano.
-//
-// Two cases justify the union rather than picking one side. A repeated adoption
-// of the same origin sees a destination that already contains the source
-// revisions plus whatever was appended afterwards: the union leaves it
-// unchanged, which is the idempotence AdoptRecord documents. A destination that
-// carries only supplementary revisions (an operator ran review --dims on it)
-// needs the authoritative source revisions imported, or reuse would mark it
-// covered while no authoritative verdict exists.
+// mergeRevisions returns both revision histories in chronological order,
+// without discarding anything. It deliberately does NOT deduplicate: Revision.At
+// is supplied by the caller (SaveRevision appends the Revision it is given and
+// nothing assigns or validates At), so two distinct revisions can share a
+// timestamp and keying identity on it would silently drop one of them —
+// the source is merged first, so the loss would fall on the destination's own
+// verdict or alarm. Whether the source revisions are already present is decided
+// by the caller from the record's recorded provenance, not guessed here.
 //
 // Ordering by At keeps LastAuthoritativeRevision's backward walk honest: it
 // finds the newest authoritative revision whichever side contributed it, and a
@@ -752,17 +758,8 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 // CurrentFindings.
 func mergeRevisions(source, destination []Revision) []Revision {
 	merged := make([]Revision, 0, len(source)+len(destination))
-	seen := make(map[int64]bool, len(source)+len(destination))
-	for _, group := range [][]Revision{source, destination} {
-		for _, revision := range group {
-			key := revision.At.UnixNano()
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			merged = append(merged, revision)
-		}
-	}
+	merged = append(merged, source...)
+	merged = append(merged, destination...)
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].At.Before(merged[j].At)
 	})
