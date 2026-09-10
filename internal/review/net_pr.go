@@ -13,13 +13,6 @@ import (
 type NetReviewOptions struct {
 	Intention  string // PR title/description supplied by the caller
 	Validation string // supplied full-validation evidence, carried as structured net evidence
-	// Dispositions carries the append-only human answers recorded against
-	// the commits in range (FU-6 follow-up unit A). Only the net review
-	// carries them across SHAs, by exact fingerprint plus evidence
-	// revalidation at the head; per-commit audits stay SHA-bound and never
-	// read this field. Empty by default: callers without human answers
-	// behave exactly as before.
-	Dispositions []FindingDisposition
 }
 
 // HistoricalFinding: untrusted per-commit context — never merged into net Findings, never blocking; ArchiveReason non-empty = archived.
@@ -193,10 +186,7 @@ func runNetReview(o *NetReviewOptions, opts BranchOptions, from, to string, revi
 	// cloned to the head SHA for the engine input so the single SHA-bound
 	// overlay, aggregation, and verdict downgrade stay in one place. The
 	// clone is engine input only; the persisted log keeps the origin SHA.
-	var rangeDispositions []FindingDisposition
-	if o != nil {
-		rangeDispositions = o.Dispositions
-	}
+	rangeDispositions := opts.Dispositions
 	engineDispositions := mergeNetDispositionsForEngine(
 		FilterDispositionsForSHA(rangeDispositions, to),
 		carriedNetDispositions(rangeDispositions, revisions, to), to)

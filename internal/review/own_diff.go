@@ -103,8 +103,11 @@ func resolveOwnRange(opts *OwnDiffOptions, base string) (*OwnRange, error) {
 // inheritedFindings collects the effective findings that already-audited
 // context commits recorded in the ledger. It is strictly read-only: missing
 // records are skipped, nothing is audited, adopted, or persisted, so
-// reviewing a stacked PR never audits its parent's work.
-func inheritedFindings(ledger *Ledger, rng *OwnRange) ([]InheritedFinding, error) {
+// reviewing a stacked PR never audits its parent's work. It decides over the
+// same effective view as the branch blockers and the summary table: the
+// record's current findings overlaid with the standing human answers, so a
+// refuted finding is neither inherited nor keeps its record inherited.
+func inheritedFindings(ledger *Ledger, rng *OwnRange, dispositions []FindingDisposition) ([]InheritedFinding, error) {
 	shas, err := git.RangeSHAs(rng.ContextFrom, rng.Parent)
 	if err != nil {
 		return nil, fmt.Errorf("inherited context %s..%s: %w", rng.ContextFrom, rng.Parent, err)
@@ -115,10 +118,10 @@ func inheritedFindings(ledger *Ledger, rng *OwnRange) ([]InheritedFinding, error
 		if err != nil {
 			return nil, err
 		}
-		if record == nil || !RecordPending(*record, nil) {
+		if record == nil {
 			continue
 		}
-		for _, finding := range CurrentFindings(*record) {
+		for _, finding := range effectiveRecordFindings(*record, dispositions) {
 			inherited = append(inherited, InheritedFinding{SHA: sha, Finding: finding})
 		}
 	}

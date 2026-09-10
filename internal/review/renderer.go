@@ -226,12 +226,9 @@ func RecordPending(record Record, dispositions []FindingDisposition) bool {
 // also consumes — instead of forking
 // between AggregatedFindings and Dims right here. That avoids the T6.5
 // design bug (a semantic finding already superseded by T6.2 only
-// disappeared from pendingRisks(), never from BranchBlockers) and the
+// disappeared from the pending risks, never from BranchBlockers) and the
 // unconditional continue that could take over the record without checking
 // severity first.
-func pendingRisks(records []Record) []string {
-	return pendingRisksWithDispositions(records, nil)
-}
 
 func pendingRisksWithDispositions(records []Record, dispositions []FindingDisposition) []string {
 	var lines []string
@@ -264,10 +261,7 @@ type branchFinding struct {
 func effectiveBranchFindings(records []Record, dispositions []FindingDisposition) []branchFinding {
 	var out []branchFinding
 	for _, record := range records {
-		if !RecordPending(record, dispositions) {
-			continue
-		}
-		for _, h := range ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA)) {
+		for _, h := range effectiveRecordFindings(record, dispositions) {
 			out = append(out, branchFinding{sha: record.SHA, finding: h})
 		}
 	}
@@ -420,7 +414,7 @@ func RenderSummary(records []Record, dispositions []FindingDisposition) string {
 	}
 
 	b.WriteString("\n### Risks\n")
-	pending := pendingRisks(records)
+	pending := pendingRisksWithDispositions(records, dispositions)
 	if len(pending) == 0 {
 		b.WriteString("- None\n")
 	} else {
@@ -621,9 +615,10 @@ func validationSection(cmds []VerifiedCommand) string {
 // T6.5 review finding (design, the most important one): it used to read
 // only Dims, without the T6.2 supersede — a semantic finding already
 // discarded for being superseded by a deterministic one kept blocking here
-// even though pendingRisks() no longer showed it. It now consumes
+// even though the pending risks no longer showed it. It now consumes
 // last.EffectiveFindings() (ledger.go), the same selection point as
-// pendingRisks(), and projects the result back to []ReviewFinding to avoid
+// pendingRisksWithDispositions, and projects the result back to
+// []ReviewFinding to avoid
 // breaking the public contract: the only real caller (in
 // cmd/sentinel/comandos_pr.go) only uses Severity/File/Line/Description, so
 // changing the public signature was more invasive than what fixing the real

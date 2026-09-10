@@ -129,6 +129,20 @@ func CurrentFindings(record Record) []Finding {
 	return out
 }
 
+// effectiveRecordFindings is the single per-record projection every branch
+// reporting surface reads: nothing when the record no longer counts
+// (RecordPending), and otherwise its current findings (RULE 2) overlaid with
+// the standing human answers for that SHA. The branch blockers, the pending
+// risks and the inherited section of a stacked PR all consume it, so a
+// refuted finding cannot surface on one of them while another treats the
+// record as resolved.
+func effectiveRecordFindings(record Record, dispositions []FindingDisposition) []Finding {
+	if !RecordPending(record, dispositions) {
+		return nil
+	}
+	return ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
+}
+
 // alarmSuperseded reports whether a later authoritative audit of the same
 // dimension has re-verified it since a supplementary alarm was recorded. Only a
 // derived-plan audit that actually covers the dimension is authority enough to
