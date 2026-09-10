@@ -64,6 +64,16 @@ type BranchOptions struct {
 	Overview        bool   // --overview: 1 branch-level Spec call for coherence
 	ProfileOverride string
 	Answers         string // clarifications for the extra questions round
+	// Dispositions carries the append-only human answers recorded against
+	// the commits in range (FU-6 follow-up unit A). Branch-level reporting
+	// (the summary table, the pending risks, the blockers and the inherited
+	// section) and the net review decide with them; the net review is the
+	// only path that carries an answer across SHAs, by exact fingerprint
+	// plus evidence revalidation at the head, while per-commit audits stay
+	// SHA-bound through AuditOptions.Dispositions and never read this field.
+	// Empty by default: callers without human answers behave exactly as
+	// before.
+	Dispositions []FindingDisposition
 	// OnCommit reports right before each pending commit starts being
 	// audited (idx from 0, total = len(pending)): without it, OnDimension
 	// progress cannot tell which commit each starting dimension belongs to,
@@ -304,7 +314,7 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	}
 	res.Own = own
 	if own != nil {
-		inherited, err := inheritedFindings(ledger, own)
+		inherited, err := inheritedFindings(ledger, own, opts.Dispositions)
 		if err != nil {
 			return nil, err
 		}

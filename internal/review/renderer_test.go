@@ -125,7 +125,7 @@ func TestRenderSummaryRisks(t *testing.T) {
 	if !strings.Contains(out, "🟢 ok: 0 · 🟡 warn: 1 · 🚨 block: 1") {
 		t.Errorf("wrong global count:\n%s", out)
 	}
-	// Risks: CRITICAL and WARNING yes; ADVISORY no. Since T6.5 pendingRisks()
+	// Risks: CRITICAL and WARNING yes; ADVISORY no. Since T6.5 the pending risks
 	// reads EffectiveFindings() and always renders through renderMergedFinding;
 	// a v1 finding converted from Dims never had a real Source, so the
 	// "(source, confidence)" segment is omitted entirely instead of fabricating
@@ -366,10 +366,54 @@ func TestBranchPredicatesAgreeWithActiveBlock(t *testing.T) {
 		if got := BranchBlockersWithDispositions(records, dispositions); len(got) != 0 {
 			t.Errorf("BranchBlockersWithDispositions = %d, want none", len(got))
 		}
-		if got := RenderSummary(records, dispositions); !strings.Contains(got, "fix credited to `531f23e`") {
-			t.Errorf("RenderSummary omits the credit of a retired record:\n%s", got)
+		out := RenderSummary(records, dispositions)
+		if !strings.Contains(out, "fix credited to `531f23e`") {
+			t.Errorf("RenderSummary omits the credit of a retired record:\n%s", out)
+		}
+		if strings.Contains(out, "still unfixed") {
+			t.Errorf("the Risks section of the same output lists the refuted finding:\n%s", out)
 		}
 	})
+}
+
+// A record still counts while one of its criticals is live, and only the
+// refuted one drops out: the inherited section of a stacked PR and the
+// branch blockers read this same projection, so neither can show a finding
+// the human already answered.
+func TestEffectiveRecordFindingsOverlaysStandingAnswers(t *testing.T) {
+	record := recordHelper("370cb04", "feat(a)", "m",
+		revisionHelper(VerdictBlock, DimensionResult{Dim: DimLogic, Verdict: VerdictBlock,
+			Findings: []ReviewFinding{
+				{Dimension: DimLogic, File: "a.go", Severity: SevCritical, Description: "answered"},
+				{Dimension: DimLogic, File: "b.go", Severity: SevCritical, Description: "still live"},
+			}}))
+	record.FixedIn = "531f23e"
+
+	current := CurrentFindings(record)
+	if len(current) != 2 {
+		t.Fatalf("CurrentFindings = %d, want both criticals", len(current))
+	}
+	answer := func(h Finding) FindingDisposition {
+		return FindingDisposition{
+			SHA: record.SHA, Fingerprint: EffectiveFingerprint(h), Status: StatusRefuted,
+			Reason: "verified safe", Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		}
+	}
+
+	one := effectiveRecordFindings(record, []FindingDisposition{answer(current[0])})
+	if len(one) != 2 {
+		t.Fatalf("effectiveRecordFindings = %d findings, want the record still projected", len(one))
+	}
+	for _, h := range one {
+		if IsBlocking(h.Severity, h.Status) && h.Description == "answered" {
+			t.Error("the refuted finding still blocks after the standing answer")
+		}
+	}
+
+	both := effectiveRecordFindings(record, []FindingDisposition{answer(current[0]), answer(current[1])})
+	if len(both) != 0 {
+		t.Errorf("effectiveRecordFindings = %+v, want nothing once every critical is answered", both)
+	}
 }
 
 func TestVerificationSection(t *testing.T) {
@@ -709,9 +753,9 @@ func TestRisksMergedValidationSourceLabel(t *testing.T) {
 		},
 	})
 
-	lines := pendingRisks([]Record{record})
+	lines := pendingRisksWithDispositions([]Record{record}, nil)
 	if len(lines) != 1 {
-		t.Fatalf("pendingRisks() = %d lines, expected 1: %v", len(lines), lines)
+		t.Fatalf("pending risks = %d lines, expected 1: %v", len(lines), lines)
 	}
 	if !strings.Contains(lines[0], "validation") {
 		t.Errorf("merged finding sourced from validation must be labeled distinctly: %s", lines[0])
@@ -727,7 +771,7 @@ func TestRisksMergedValidationSourceLabel(t *testing.T) {
 // TestRisksFallBackToLegacyDimsWithoutAggregatedFindings: a Revision saved
 // before T6.5 (or by a caller that never propagated AggregatedFindings)
 // still surfaces its Dims-based findings — EffectiveFindings (T6.5 review
-// finding: design) converts them to Finding so pendingRisks() keeps working
+// finding: design) converts them to Finding so the pending risks keep working
 // unchanged from the caller's point of view.
 func TestRisksFallBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
 	record := recordHelper("aaaaaaa", "feat(a): legacy", "m",
@@ -736,7 +780,7 @@ func TestRisksFallBackToLegacyDimsWithoutAggregatedFindings(t *testing.T) {
 				Findings: []ReviewFinding{{Dimension: DimSecurity, File: "a.go", Line: 1, Severity: SevCritical, Description: "legacy finding"}}},
 		))
 
-	lines := pendingRisks([]Record{record})
+	lines := pendingRisksWithDispositions([]Record{record}, nil)
 	if len(lines) != 1 || !strings.Contains(lines[0], "legacy finding") {
 		t.Errorf("legacy Dims-based rendering must still work when AggregatedFindings is empty: %v", lines)
 	}
@@ -756,15 +800,15 @@ func TestRisksFilterAdvisoryFromAggregatedFindings(t *testing.T) {
 		},
 	})
 
-	lines := pendingRisks([]Record{record})
+	lines := pendingRisksWithDispositions([]Record{record}, nil)
 	if len(lines) != 1 {
-		t.Fatalf("pendingRisks() = %d lines, expected 1 (ADVISORY excluded): %v", len(lines), lines)
+		t.Fatalf("pending risks = %d lines, expected 1 (ADVISORY excluded): %v", len(lines), lines)
 	}
 	if !strings.Contains(lines[0], "critical one") {
 		t.Errorf("missing the CRITICAL finding: %v", lines)
 	}
 	if strings.Contains(lines[0], "advisory one") {
-		t.Errorf("ADVISORY must not appear in pendingRisks(): %v", lines)
+		t.Errorf("ADVISORY must not appear in the pending risks: %v", lines)
 	}
 }
 
@@ -963,7 +1007,7 @@ func TestRenderTemplateRisksSection(t *testing.T) {
 		revisionHelper("block",
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
 				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical,
-					Description: "exposed data", Status: StatusFixed}}},
+					Description: "exposed data", Status: StatusRefuted}}},
 		))
 	fixed.FixedIn = "a1b2c3d"
 	outFixed := RenderPRTemplate([]Record{fixed}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")

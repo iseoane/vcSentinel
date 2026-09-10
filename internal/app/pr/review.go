@@ -149,12 +149,13 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 	}), storeWarning
 }
 
-// ApplyPrReviewDispositions loads the standing human answers and sets
-// them on the net review input for the cross-SHA carry-over. A corrupt log
-// is an error: pr review must fail closed before spending review tokens
-// rather than audit as if no human answered. The loader is a seam so tests
-// drive this without git. A nil net review (no net audit requested) leaves
-// the options untouched and still reports a loader failure.
+// ApplyPrReviewDispositions loads the standing human answers and sets them
+// on the branch options, where the branch reporting surfaces and the net
+// review's cross-SHA carry-over both read them. A corrupt log is an error:
+// pr review must fail closed before spending review tokens rather than audit
+// as if no human answered. The loader is a seam so tests drive this without
+// git. It never invents a net review input and still reports a loader
+// failure when none was requested.
 // It also returns the loaded answers: the reporting surfaces below decide
 // what still blocks with them, and a net review is not always requested.
 func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, []review.FindingDisposition, error) {
@@ -162,9 +163,7 @@ func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, lo
 	if err != nil {
 		return options, nil, err
 	}
-	if options.NetReview != nil {
-		options.NetReview.Dispositions = dispositions
-	}
+	options.Dispositions = dispositions
 	return options, dispositions, nil
 }
 
