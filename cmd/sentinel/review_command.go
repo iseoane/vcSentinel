@@ -148,6 +148,10 @@ func runReview(worktree string, args []string) {
 			os.Exit(1)
 		}
 		reauditSpec := reuse.Reused() && reuse.ReauditSpec
+		if reuse.Reused() && len(flags.dims) > 0 {
+			fmt.Printf("❌ --dims cannot be combined with review reuse for %s\n", shortSHA(sha))
+			os.Exit(1)
+		}
 		var result review.AuditResult
 		var pending []review.AgentQuestion
 		var files []string
@@ -305,8 +309,10 @@ func runReview(worktree string, args []string) {
 				fmt.Printf("⚠️ %s: could not save the record: %v\n", sha[:8], err)
 			}
 			if !reauditSpec {
-				if err := review.RegisterCommitBlobs(reviewStore, sha, files); err != nil {
-					fmt.Printf("⚠️ %s: could not register blobs for future review reuse: %v\n", sha[:8], err)
+				if coverage == review.CoverageAuthoritative {
+					if err := review.RegisterCommitBlobs(reviewStore, sha, files); err != nil {
+						fmt.Printf("⚠️ %s: could not register blobs for future review reuse: %v\n", sha[:8], err)
+					}
 				}
 			} else {
 				record, err := ledger.ReadRecord(sha)

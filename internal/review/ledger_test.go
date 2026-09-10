@@ -527,6 +527,42 @@ func TestLedgerAdoptRecordWithMessageRecordsOriginAndDestinationMessage(t *testi
 	}
 }
 
+func TestLedgerAdoptRecordWithMessagePreservesDestinationRevisions(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+	sourceRevision := Revision{
+		At: time.Now().UTC(), Result: VerdictOK,
+		Dims: []DimensionResult{{Dim: DimLogic, Verdict: VerdictOK}},
+	}
+	if err := ledger.SaveRevision("sha-old", "feat(old): original", "pr", "model", sourceRevision); err != nil {
+		t.Fatalf("SaveRevision(source): %v", err)
+	}
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten message"); err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	appended := Revision{
+		At: time.Now().UTC(), Result: VerdictBlock,
+		Dims: []DimensionResult{{Dim: DimSpec, Verdict: VerdictBlock}},
+	}
+	if err := ledger.SaveRevision("sha-new", "feat(new): rewritten message", "", "model", appended); err != nil {
+		t.Fatalf("SaveRevision(destination): %v", err)
+	}
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten message"); err != nil {
+		t.Fatalf("repeated adoption: %v", err)
+	}
+
+	destination, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(destination): %v", err)
+	}
+	if destination == nil || len(destination.Revisions) != 2 {
+		t.Fatalf("destination revisions = %+v, want source and appended revisions preserved", destination)
+	}
+	if destination.Revisions[1].Result != VerdictBlock || destination.Message != "feat(new): rewritten message" || destination.OriginSHA != "sha-old" {
+		t.Fatalf("destination metadata/revisions = %+v, want appended revision, destination message, and source provenance", destination)
+	}
+}
+
 // TestLedgerAdoptRecordMissingSourceSHAIsError verifies that callers that bypass
 // DecideBlobReuse still receive an error for an absent adoption source.
 func TestLedgerAdoptRecordMissingSourceSHAIsError(t *testing.T) {
@@ -976,14 +1012,13 @@ func TestMarkFixedConcurrentWithSaveRevision(t *testing.T) {
 }
 
 // TestAdoptRecordConcurrentWithSaveRevision covers the destination side of
-// AdoptRecord's lock. Adoption REPLACES the record of the SHA it writes, so an
-// unserialized adoption racing an append to that same SHA discards the appended
-// revision — and the rebase path that calls it runs inside branch analysis,
+// AdoptRecord's lock. Adoption preserves an existing destination record, so an
+// adoption racing an append to that same SHA must retain both destination
+// revisions — and the rebase path that calls it runs inside branch analysis,
 // which is exactly where another commit's audit may be writing.
 //
-// Both orders are legal and both are accepted, because which one happens is a
-// race. What the lock guarantees is that ONE of the two whole states is
-// reached, never a record missing both writers' work.
+// Both orders are legal. What the lock guarantees is that both writers' work
+// survives, never a record missing one of the two revisions.
 func TestAdoptRecordConcurrentWithSaveRevision(t *testing.T) {
 	const source = "2222222222222222222222222222222222222222"
 	const destination = "3333333333333333333333333333333333333333"
@@ -1016,14 +1051,8 @@ func TestAdoptRecordConcurrentWithSaveRevision(t *testing.T) {
 		for _, rev := range record.Revisions {
 			authors = append(authors, rev.Agent)
 		}
-		// Adoption last copies the origin over the destination, so exactly the
-		// origin's revision remains. Adoption first is then appended to, leaving
-		// the origin's revision plus the late one. Anything else means one
-		// writer overwrote a record the other had already replaced.
-		adoptionLast := slices.Equal(authors, []string{"source"})
-		adoptionFirst := slices.Equal(authors, []string{"source", "late"})
-		if !adoptionLast && !adoptionFirst {
-			t.Fatalf("attempt %d: the destination record holds %v, want either [source] or [source late]: the adoption and the append overlapped instead of taking turns",
+		if !slices.Equal(authors, []string{"destination", "late"}) {
+			t.Fatalf("attempt %d: the destination record holds %v, want [destination late]: adoption discarded an existing destination revision or the concurrent append",
 				attempt, authors)
 		}
 	}

@@ -548,14 +548,14 @@ func (l *Ledger) MarkFixed(sha, fixedIn string) error {
 	})
 }
 
-// AdoptRecord copies the record at from under the SHA to. It is the T2.7
+// AdoptRecord carries the record at from under the SHA to. It is the T2.7
 // fix for commitCoveredByBlobs: when a rebase rewrites a commit without
 // touching its content, the commit is blob-covered under an earlier SHA,
 // but if AnalyzeBranch only did "continue" without writing anything under
 // the new SHA, ledger.ReadRecord(to) would return nil and the real findings
 // of the old record (an orphan, under a SHA that no longer exists in the
-// branch) would disappear from res.Records. Adopting the record under the
-// new SHA is what keeps them recoverable.
+// branch) would disappear from res.Records. Adoption copies the source when
+// the destination is absent and preserves destination revisions thereafter.
 //
 // from must exist when a caller asks this method to adopt: DecideBlobReuse
 // rejects stale blob-index candidates whose ledger record was pruned before
@@ -563,10 +563,10 @@ func (l *Ledger) MarkFixed(sha, fixedIn string) error {
 // a valid state resolved as a no-op), a from with no record here is a real
 // caller error, not something to ignore in silence.
 //
-// Idempotent: calling it twice with the same arguments overwrites with the
-// same content, without duplicating anything. Revisions is copied to a new
-// slice (the origin record's underlying one is not shared) for aliasing
-// hygiene, not because Revision is mutated after being saved.
+// Idempotent: calling it twice with the same arguments preserves any revisions
+// already present at the destination without duplicating or discarding them.
+// The first adoption copies the source revisions to a new slice (the origin
+// record's underlying one is not shared) for aliasing hygiene.
 func (l *Ledger) AdoptRecord(from, to string) error {
 	return l.adoptRecord(from, to, "", false)
 }
@@ -582,8 +582,8 @@ func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage boo
 	// Locked on to, which is the record this writes. Locking from too would
 	// be a second lock in a fixed-order pair and buys nothing: the source is
 	// only read, and a concurrent append to it either lands in the copy or
-	// does not, whereas an unserialized adoption can overwrite a revision
-	// another writer just appended to the destination.
+	// does not. The destination lock serializes adoption with appends so
+	// existing destination revisions are preserved.
 	return l.withRecordLock(to, func() error {
 		source, err := l.ReadRecord(from)
 		if err != nil {
@@ -594,6 +594,21 @@ func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage boo
 		}
 		if !useDestinationMessage {
 			message = source.Message
+		}
+		destination, err := l.ReadRecord(to)
+		if err != nil {
+			return err
+		}
+		if destination != nil {
+			if destination.OriginSHA == "" {
+				destination.OriginSHA = from
+			}
+			if useDestinationMessage {
+				destination.Message = message
+			} else if destination.Message == "" {
+				destination.Message = message
+			}
+			return l.saveRecord(destination)
 		}
 		revisions := make([]Revision, len(source.Revisions))
 		copy(revisions, source.Revisions)

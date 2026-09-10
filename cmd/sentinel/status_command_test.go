@@ -5,6 +5,7 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"io"
 	"os"
 	"os/exec"
@@ -40,6 +41,8 @@ func TestHelperProcess(t *testing.T) {
 		runReview(worktree, []string{"--dims", "logic", "HEAD"})
 	case "runReviewReusedSpec":
 		runReview(worktree, []string{"HEAD"})
+	case "runReviewReusedWithDims":
+		runReview(worktree, []string{"--dims", "logic", "HEAD"})
 	case "runPrReview":
 		runPrReview(worktree, nil)
 	}
@@ -906,6 +909,46 @@ func TestStatusVerdictLabelFollowsAuthoritativeRevision(t *testing.T) {
 // AUTHORITATIVE; a run the operator narrowed with --dims is SUPPLEMENTARY.
 // This drives the real `sentinel review` command twice against the same commit
 // and reads the persisted record to prove both stamps.
+func TestReviewSupplementaryDoesNotRegisterBlobs(t *testing.T) {
+	worktree := cutoverRepository(t)
+	home := t.TempDir()
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	t.Chdir(worktree)
+	fakeBin := t.TempDir()
+	for _, name := range []string{"claude", "opencode"} {
+		script := "#!/bin/sh\ncat > /dev/null\necho stub-agent-answer\n"
+		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := "PATH=" + fakeBin + string(os.PathListSeparator) + os.Getenv("PATH")
+	runAsSubprocessSplit(t, "runReviewSupplementary", worktree, home, env)
+
+	sha, err := git.ResolveSHA("HEAD")
+	if err != nil {
+		t.Fatalf("resolve HEAD: %v", err)
+	}
+	files, err := git.FilesOfCommit(sha)
+	if err != nil {
+		t.Fatalf("FilesOfCommit: %v", err)
+	}
+	blob, err := git.BlobFileAtCommit(sha, files[0])
+	if err != nil {
+		t.Fatalf("BlobFileAtCommit: %v", err)
+	}
+	commonDir, err := git.GetGitCommonDir(worktree)
+	if err != nil {
+		t.Fatalf("common dir: %v", err)
+	}
+	shas, err := store.NewStore(commonDir).BlobSHAs(blob)
+	if err != nil {
+		t.Fatalf("BlobSHAs: %v", err)
+	}
+	if len(shas) != 0 {
+		t.Fatalf("supplementary review registered blob %q for SHAs %v", blob, shas)
+	}
+}
+
 func TestReviewRecordsAuthoritativeThenSupplementary(t *testing.T) {
 	worktree := cutoverRepository(t)
 	home := t.TempDir()

@@ -272,6 +272,51 @@ func TestCommitCoveredByBlobsRequiresMatchingPathsAndRejectsSelf(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBranchDoesNotReuseSupplementaryOrigin(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	oldSHA := commitInBranch(t, "feat.txt", "content\n")
+	ledger := NewLedger(gitDir)
+	files, err := git.FilesOfCommit(oldSHA)
+	if err != nil {
+		t.Fatalf("FilesOfCommit: %v", err)
+	}
+	blobs, err := commitBlobs(oldSHA, files)
+	if err != nil {
+		t.Fatalf("commitBlobs: %v", err)
+	}
+	if err := ledger.SaveRevision(oldSHA, "feat(feat.txt): test content", "pr", "test", Revision{
+		Result:   VerdictOK,
+		Coverage: CoverageSupplementary,
+		Dims:     []DimensionResult{{Dim: DimSpec, Verdict: VerdictOK}},
+	}); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
+	}
+	store := &fakeStoreBlobs{
+		shasPerBlob:     make(map[string][]string),
+		registeredBlobs: map[string]map[string]string{oldSHA: blobs},
+	}
+	for _, blob := range blobs {
+		store.shasPerBlob[blob] = []string{oldSHA}
+	}
+
+	runGit(t, "commit", "--amend", "-m", "feat(feat.txt): rewritten message")
+	newSHA := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	stub := &auditorStub{auditOutput: auditOutputOK}
+	res, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, Store: store})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch: %v", err)
+	}
+	if stub.auditCalls == 0 {
+		t.Fatal("supplementary-only origin was reused instead of auditing the destination")
+	}
+	if len(res.Records) != 1 || res.Records[0].SHA != newSHA {
+		t.Fatalf("Records = %+v, want an audited destination record", res.Records)
+	}
+	if res.Records[0].OriginSHA != "" {
+		t.Errorf("OriginSHA = %q, want no reuse provenance from a supplementary origin", res.Records[0].OriginSHA)
+	}
+}
+
 func TestAnalyzeBranchAuditsWhenBlobOriginRecordIsMissing(t *testing.T) {
 	gitDir := prepareBranchRepo(t)
 	sha := commitInBranch(t, "feat.txt", "content\n")

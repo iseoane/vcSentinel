@@ -1202,6 +1202,47 @@ printf '%s\n' '{"type":"result","subtype":"success","stop_reason":"end_turn","re
 	}
 }
 
+func TestRunReviewRefusesDimsOnReusedCommit(t *testing.T) {
+	worktree := cutoverRepository(t)
+	t.Chdir(worktree)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	sha := strings.TrimSpace(gitOutputForReviewCommand(t, worktree, "rev-parse", "HEAD"))
+	files, err := git.FilesOfCommit(sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commonDir, err := git.GetGitCommonDir(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := sharedReviewLedger(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.SaveRevision("origin", "feat: gate cutover fixture", "", "test", review.Revision{Result: review.VerdictOK}); err != nil {
+		t.Fatal(err)
+	}
+	blobs := make(map[string]string, len(files))
+	for _, file := range files {
+		blob, err := git.BlobFileAtCommit(sha, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blobs[file] = blob
+	}
+	if err := store.NewStore(commonDir).RegisterCommitBlobs("origin", blobs); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, exit := runAsSubprocessSplit(t, "runReviewReusedWithDims", worktree, t.TempDir())
+	if exit != 1 || !strings.Contains(stdout, "--dims cannot be combined with review reuse") {
+		t.Fatalf("reused --dims review exit=%d output:\n%s", exit, stdout)
+	}
+	if record, err := ledger.ReadRecord(sha); err != nil || record != nil {
+		t.Fatalf("destination record after refused reuse = %+v (%v), want no mutation", record, err)
+	}
+}
+
 func gitOutputForReviewCommand(t *testing.T, worktree string, args ...string) string {
 	t.Helper()
 	output, err := exec.Command("git", append([]string{"-C", worktree}, args...)...).Output()

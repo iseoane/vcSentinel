@@ -523,6 +523,11 @@ func DecideBlobReuse(ledger *Ledger, store StoreBlobs, sha, message string) (Blo
 		// not an audit precondition: discard this stale candidate and audit normally.
 		return BlobReuseDecision{}, nil
 	}
+	if _, _, ok := LastAuthoritativeRevision(*source); !ok {
+		// A supplementary-only record proves only a narrowed dimension. Reusing it
+		// would silently turn partial coverage into a complete review.
+		return BlobReuseDecision{}, nil
+	}
 	return BlobReuseDecision{OriginSHA: originSHA, ReauditSpec: source.Message != message}, nil
 }
 

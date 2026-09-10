@@ -395,26 +395,13 @@ func AuditCommit(factory ReviewerFactory, parallel int, opts AuditOptions) Audit
 	started := clock()
 	cost := 0
 	scheduledBundles := make(map[string]bool)
-	scheduledDimensions := make(map[string]bool)
 	run := func(bundle ReviewBundle) bool {
 		if scheduledBundles[bundle.Name] || len(bundle.Dimensions) == 0 {
 			return false
 		}
 		scheduledBundles[bundle.Name] = true
-		dimensions := make([]string, 0, len(bundle.Dimensions))
-		for _, dim := range bundle.Dimensions {
-			if scheduledDimensions[dim] {
-				continue
-			}
-			scheduledDimensions[dim] = true
-			dimensions = append(dimensions, dim)
-		}
-		if len(dimensions) == 0 {
-			result.Skipped = append(result.Skipped, SkippedBundle{Name: bundle.Name, Reason: "duplicate_dimension"})
-			return true
-		}
 		cost += bundle.Cost
-		for _, dim := range dimensions {
+		for _, dim := range bundle.Dimensions {
 			wg.Add(1)
 			go func(bundle ReviewBundle, dimension string) {
 				defer wg.Done()
