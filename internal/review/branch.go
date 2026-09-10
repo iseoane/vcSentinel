@@ -220,7 +220,25 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 				if decision.ReauditSpec {
 					pending = append(pending, sha)
 					reauditSpec[sha] = true
+					continue
 				}
+				// Adoption is only coverage if the destination really ended up
+				// with an authoritative revision. The unaudited detection below
+				// only treats a nil record as pending, so skipping the audit on
+				// the strength of "a record exists" is what let a
+				// supplementary-only destination pass as reviewed. With the
+				// revision merge correct this never fires; it stays so the
+				// failure cannot recur silently.
+				adopted, err := ledger.ReadRecord(sha)
+				if err != nil {
+					return nil, err
+				}
+				if adopted != nil {
+					if _, _, ok := LastAuthoritativeRevision(*adopted); ok {
+						continue
+					}
+				}
+				pending = append(pending, sha)
 				continue
 			}
 		}

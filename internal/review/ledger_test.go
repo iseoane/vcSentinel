@@ -1051,8 +1051,14 @@ func TestAdoptRecordConcurrentWithSaveRevision(t *testing.T) {
 		for _, rev := range record.Revisions {
 			authors = append(authors, rev.Agent)
 		}
-		if !slices.Equal(authors, []string{"destination", "late"}) {
-			t.Fatalf("attempt %d: the destination record holds %v, want [destination late]: adoption discarded an existing destination revision or the concurrent append",
+		// Adoption merges the source revisions into the destination instead of
+		// replacing or ignoring them, so all three must survive the race, in
+		// their chronological order: the source was audited first, the
+		// destination existed before the adoption, and the concurrent append
+		// landed last. Losing any of them means adoption discarded an existing
+		// revision or the append.
+		if !slices.Equal(authors, []string{"source", "destination", "late"}) {
+			t.Fatalf("attempt %d: the destination record holds %v, want [source destination late]: adoption discarded a revision or the concurrent append",
 				attempt, authors)
 		}
 	}
@@ -1183,5 +1189,102 @@ func TestVanishedLockIsNotReportedAsSuccess(t *testing.T) {
 	if strings.Contains(ErrLockNotReleased.Error(), "written") {
 		t.Errorf("ErrLockNotReleased = %q; it is returned for deletions and no-ops, so it must not claim the record was written",
 			ErrLockNotReleased.Error())
+	}
+}
+
+// TestLedgerAdoptRecordImportsSourceRevisionsIntoSupplementaryDestination locks
+// the case that made adoption unsafe: a destination whose only revision was
+// written by a narrowed run. Preserving that destination without importing the
+// authoritative source revisions left it without an authoritative verdict while
+// AnalyzeBranch treated the non-nil record as reviewed and skipped its audit.
+func TestLedgerAdoptRecordImportsSourceRevisionsIntoSupplementaryDestination(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	audited := time.Now().Add(-2 * time.Hour)
+	if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", Revision{
+		At:       audited,
+		Result:   VerdictOK,
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-old): %v", err)
+	}
+	narrowed := time.Now().Add(-1 * time.Hour)
+	if err := ledger.SaveRevision("sha-new", "feat(new): rewritten", "", "model", Revision{
+		At:       narrowed,
+		Result:   VerdictOK,
+		Coverage: CoverageSupplementary,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-new): %v", err)
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	if adopted == nil {
+		t.Fatal("ReadRecord(sha-new) returned nil after adoption")
+	}
+	if len(adopted.Revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2 (authoritative source plus supplementary destination)", len(adopted.Revisions))
+	}
+	if !adopted.Revisions[0].At.Equal(audited) {
+		t.Errorf("revisions[0].At = %v, want the earlier source revision %v", adopted.Revisions[0].At, audited)
+	}
+	if !adopted.Revisions[1].At.Equal(narrowed) {
+		t.Errorf("revisions[1].At = %v, want the later destination revision %v", adopted.Revisions[1].At, narrowed)
+	}
+	if _, _, ok := LastAuthoritativeRevision(*adopted); !ok {
+		t.Error("adopted record has no authoritative revision: reuse would mark it covered without an authoritative verdict")
+	}
+}
+
+// TestLedgerAdoptRecordIsIdempotentOverAppendedRevisions locks the idempotence
+// AdoptRecord documents: a second adoption of the same origin must neither
+// duplicate the source revisions nor discard what was appended after the first.
+func TestLedgerAdoptRecordIsIdempotentOverAppendedRevisions(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	audited := time.Now().Add(-2 * time.Hour)
+	if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", Revision{
+		At:       audited,
+		Result:   VerdictOK,
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-old): %v", err)
+	}
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("first AdoptRecordWithMessage: %v", err)
+	}
+	appended := time.Now()
+	if err := ledger.SaveRevision("sha-new", "feat(new): rewritten", "", "model", Revision{
+		At:       appended,
+		Result:   VerdictWarn,
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-new): %v", err)
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("second AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	if len(adopted.Revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2: the source revision once plus the appended one", len(adopted.Revisions))
+	}
+	if !adopted.Revisions[1].At.Equal(appended) {
+		t.Errorf("revisions[1].At = %v, want the appended revision %v preserved", adopted.Revisions[1].At, appended)
+	}
+	if adopted.Revisions[1].Result != VerdictWarn {
+		t.Errorf("revisions[1].Result = %q, want the appended verdict preserved", adopted.Revisions[1].Result)
 	}
 }
