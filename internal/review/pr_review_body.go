@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -21,6 +22,9 @@ func RenderPRReviewBody(res *BranchResult, intents []IntentLine, verification Te
 	if res == nil {
 		return "", fmt.Errorf("render pr review body: missing branch result")
 	}
+	if err := validateAttestation(res, attestation); err != nil {
+		return "", err
+	}
 	comment, err := RenderAttestation(attestation)
 	if err != nil {
 		return "", err
@@ -38,8 +42,19 @@ func RenderPRReviewBody(res *BranchResult, intents []IntentLine, verification Te
 	b.WriteString("\n")
 	b.WriteString(comment)
 	b.WriteString("\n\n## Pipeline\n")
-	b.WriteString(renderPipeline(res, intents, verification))
+	b.WriteString(renderPipeline(res, intents, verification, dispositions))
 	return TruncatePRReviewBody(b.String(), PRBodyLimit)
+}
+
+func validateAttestation(res *BranchResult, attestation Attestation) error {
+	verdict := VerdictDeBranch(res.Records)
+	head := ""
+	if len(res.SHAs) > 0 { head = res.SHAs[len(res.SHAs)-1] }
+	if res.Net != nil { verdict, head = res.Net.Audit.Verdict, res.Net.To }
+	if attestation.Branch != res.Branch || attestation.HeadSHA != head || attestation.Verdict != verdict {
+		return errors.New("render pr review body: attestation does not match branch result")
+	}
+	return nil
 }
 
 func renderIntentLines(intents []IntentLine, shas []string) string {
@@ -137,14 +152,14 @@ func renderTesting(verification TemplateVerification) string {
 	return b.String()
 }
 
-func renderPipeline(res *BranchResult, intents []IntentLine, verification TemplateVerification) string {
+func renderPipeline(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) string {
 	var b strings.Builder
 	if len(intents) == 0 {
 		b.WriteString(pipelineDetails("⚪", "slice", "not observed", "No Sentinel-Intent trailers were present."))
 	} else {
 		b.WriteString(pipelineDetails("✅", "slice", "intent trailers present", renderIntentLines(intents, res.SHAs)))
 	}
-	b.WriteString(renderReviewPipeline(res))
+	b.WriteString(renderReviewPipeline(res, dispositions))
 	b.WriteString(renderCommandPipeline("gate", verification.Validation, "not run"))
 	b.WriteString(renderCommandPipeline("lint", nil, "not configured"))
 	b.WriteString(renderCommandPipeline("test", verification.Comandos, "not configured"))
@@ -154,7 +169,7 @@ func renderPipeline(res *BranchResult, intents []IntentLine, verification Templa
 	return b.String()
 }
 
-func renderReviewPipeline(res *BranchResult) string {
+func renderReviewPipeline(res *BranchResult, dispositions []FindingDisposition) string {
 	if len(res.Records) == 0 {
 		return pipelineDetails("⚪", "review", "no records", "No commit review records were found.")
 	}
@@ -167,7 +182,7 @@ func renderReviewPipeline(res *BranchResult) string {
 			fmt.Fprintf(&evidence, "- `%s` blocked → `%s` fix commit → re-audited\n", shortBranchSHA(record.SHA), shortBranchSHA(record.FixedIn))
 		}
 	}
-	pending := len(BranchBlockers(res.Records))
+	pending := len(BranchBlockersWithDispositions(res.Records, dispositions))
 	icon := "✅"
 	switch {
 	case pending > 0:

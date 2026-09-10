@@ -59,7 +59,7 @@ func TestRenderPRReviewBodyPreservesIntentProvenanceAndReportsMissingCommits(t *
 		{SHA: "aaaaaaaa", Text: "protect the release pipeline", Source: "declared"},
 		{SHA: "bbbbbbbb", Text: "protect the release pipeline", Source: "declared"},
 		{SHA: "cccccccc", Text: "protect the release pipeline", Source: "conversation"},
-	}, TemplateVerification{}, Attestation{}, nil)
+	}, TemplateVerification{}, Attestation{HeadSHA: "dddddddd", Verdict: VerdictOK}, nil)
 	if err != nil {
 		t.Fatalf("RenderPRReviewBody() error = %v", err)
 	}
