@@ -220,6 +220,17 @@ where it produced three live blocks describing code that no longer existed.
 
 ## 1. Bound what the review flow costs the machine that runs it
 
+**Measured 2026-09-10, and the number was missing until now: the ceiling is
+concurrent reviewers, not the model or the timeout.** On a 7.4 GiB WSL2 host
+already carrying two agent sessions and the CodeGraph indexer, `review.parallel:
+5` killed four consecutive review runs — every dimension spawns its own
+`opencode` process, and five at once does not fit. Lowering it to 2 still died.
+Only `parallel: 1` completed. Each kill also left the durable runs non-terminal,
+so they had to be retired by hand with `runs abort --orphaned`. The project
+configuration now ships `parallel: 1` for that reason. Whatever this item
+eventually bounds, it should be expressed in concurrent reviewers, and a kill
+should retire its own runs instead of leaving them for an operator.
+
 Sits first: unblocked, and it is the only item that has stopped work outright
 rather than degrading it. Six consecutive failures on 2026-09-08.
 
