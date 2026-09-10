@@ -156,15 +156,13 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 // as if no human answered. The loader is a seam so tests drive this without
 // git. It never invents a net review input and still reports a loader
 // failure when none was requested.
-// It also returns the loaded answers: the reporting surfaces below decide
-// what still blocks with them, and a net review is not always requested.
-func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, []review.FindingDisposition, error) {
+func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, error) {
 	dispositions, err := load(worktree)
 	if err != nil {
-		return options, nil, err
+		return options, err
 	}
 	options.Dispositions = dispositions
-	return options, dispositions, nil
+	return options, nil
 }
 
 // DepsPrReview carries the seams RunPrReviewWith needs to drive the whole
@@ -260,8 +258,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 	// Standing human answers carry into the net audit (FU-6 unit A). A
 	// corrupt log fails closed rather than auditing as if no human answered.
 	var loadErr error
-	var dispositions []review.FindingDisposition
-	options, dispositions, loadErr = ApplyPrReviewDispositions(options, worktree, wiring.LoadDispositions)
+	options, loadErr = ApplyPrReviewDispositions(options, worktree, wiring.LoadDispositions)
 	if loadErr != nil {
 		fmt.Fprintf(w, "? %v\n", loadErr)
 		return 1
@@ -293,13 +290,13 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 	}
 
 	if res.Net != nil { // T8.4/A: the authoritative verdict leads the report
-		fmt.Fprintln(w, review.VerdictLine(res, dispositions))
+		fmt.Fprintln(w, review.VerdictLine(res, options.Dispositions))
 	}
 	if len(res.Records) > 0 {
 		fmt.Fprintln(w, "OWN (per-commit audit)")
 		fmt.Fprintln(w, review.RenderMatrix(res.Records))
 		if res.Net == nil { // historical summary only without a net authority
-			fmt.Fprintln(w, review.RenderSummary(res.Records, dispositions))
+			fmt.Fprintln(w, review.RenderSummary(res.Records, options.Dispositions))
 		}
 	}
 	// Informational only, never a gate (the unaudited-commits decision in docs/issues/decisions.md):

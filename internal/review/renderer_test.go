@@ -619,7 +619,7 @@ func TestBranchBlockersFiltersCriticals(t *testing.T) {
 			name: "a resolved block does not block",
 			records: func() []Record {
 				resolved := critical
-				resolved.Status = StatusFixed
+				resolved.Status = StatusRefuted
 				fixed := recordHelper("f1", "feat(a)", "m",
 					revisionHelper("block",
 						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,

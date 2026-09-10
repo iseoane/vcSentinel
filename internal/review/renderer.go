@@ -199,11 +199,16 @@ type TemplateVerification struct {
 // verdict. Crediting a fix (FixedIn) is provenance, not proof: a record only
 // stops counting once its CURRENT findings no longer block, so a partial fix
 // cannot retire a record that still carries live CRITICAL findings. It is the
-// package's only definition of "pending", and every reporting surface — the
-// branch verdict, the risks, the blockers, the summary table and
-// sentinel status — decides with it over the same effective view: the
-// record's current findings (RULE 2 in coverage.go) overlaid with the
-// standing human answers, so a refuted finding retires the record here too.
+// package's only definition of "pending", and it decides over the record's
+// current findings (RULE 2 in coverage.go) overlaid with the standing human
+// answers, so a refuted finding retires the record here too.
+//
+// It answers whether a record counts, never what its verdict reads: a record
+// that still counts contributes the raw Result of its authoritative revision
+// to VerdictDeBranch, which no standing answer overlays. That is the
+// pre-existing verdict rule (RULE 1), unchanged here, so a refuted finding
+// can still leave the branch verdict at block while the risks and the
+// blockers of the same report are empty.
 func RecordPending(record Record, dispositions []FindingDisposition) bool {
 	if record.FixedIn == "" {
 		return true
