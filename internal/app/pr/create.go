@@ -271,7 +271,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 
 	// The net audit is the advisory authority when present.
 	if res.Net != nil {
-		fmt.Fprintln(w, review.VerdictLine(res))
+		fmt.Fprintln(w, review.VerdictLine(res, branchDispositions))
 	} else if warn, blockers := SemanticNoticeWithDispositions(res.Records, branchDispositions); warn {
 		fmt.Fprintln(w, "⚠️  NOTICE: semantic audit verdict = block (does not block publication, advisory).")
 		for _, h := range blockers {

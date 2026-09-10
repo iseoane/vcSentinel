@@ -488,7 +488,7 @@ func TestApplyPrReviewDispositionsCarriesAnswersToNet(t *testing.T) {
 		SHA: "abc1234", Fingerprint: "fp-carry", Status: review.StatusRefuted,
 		Reason: "verified safe", Actor: review.RefutationActorHuman, Source: review.DispositionSourceHuman,
 	}}
-	options, err := applyPrReviewDispositions(
+	options, loaded, err := applyPrReviewDispositions(
 		review.BranchOptions{NetReview: &review.NetReviewOptions{Intention: "x"}},
 		"worktree",
 		func(string) ([]review.FindingDisposition, error) { return dispositions, nil })
@@ -499,6 +499,9 @@ func TestApplyPrReviewDispositionsCarriesAnswersToNet(t *testing.T) {
 	if got == nil || len(got.Dispositions) != 1 {
 		t.Fatalf("net dispositions = %+v, want the standing answers", got)
 	}
+	if len(loaded) != 1 || loaded[0].Fingerprint != "fp-carry" {
+		t.Fatalf("returned answers = %+v, want the ones the reporting surfaces decide with", loaded)
+	}
 	d := got.Dispositions[0]
 	if d.Fingerprint != "fp-carry" || d.Status != review.StatusRefuted || d.Actor != review.RefutationActorHuman {
 		t.Fatalf("net disposition = %+v, want the recorded answer identity, not a count", d)
@@ -507,7 +510,7 @@ func TestApplyPrReviewDispositionsCarriesAnswersToNet(t *testing.T) {
 
 func TestApplyPrReviewDispositionsFailsWithCorruptLog(t *testing.T) {
 	intact := review.BranchOptions{NetReview: &review.NetReviewOptions{Intention: "x"}}
-	_, err := applyPrReviewDispositions(intact, "worktree",
+	_, _, err := applyPrReviewDispositions(intact, "worktree",
 		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("corrupt dispositions") })
 	if err == nil {
 		t.Fatal("corrupt log was swallowed: pr review would audit as if no human answered")
@@ -518,12 +521,12 @@ func TestApplyPrReviewDispositionsFailsWithCorruptLog(t *testing.T) {
 // still reports a loader failure: the helper never invents a net input and
 // never hides a corrupt log.
 func TestApplyPrReviewDispositionsWithoutNet(t *testing.T) {
-	options, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
+	options, _, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
 		func(string) ([]review.FindingDisposition, error) { return nil, nil })
 	if err != nil || options.NetReview != nil {
 		t.Fatalf("options = %+v, err = %v; want untouched options", options, err)
 	}
-	if _, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
+	if _, _, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
 		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("corrupt dispositions") }); err == nil {
 		t.Fatal("corrupt log was swallowed without a net review")
 	}

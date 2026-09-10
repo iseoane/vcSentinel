@@ -449,6 +449,21 @@ func statusVerdictLabel(record *review.Record) string {
 	return current.Result
 }
 
+// statusFixedNote renders the fix-credit note of a record for the human
+// listing. It decides with review.RecordPending over the same effective view
+// as the branch summary and the blockers, so status never labels a record as
+// credited while the PR body still reports it as a blocker. A record whose
+// findings still block renders no note even though FixedIn is set.
+func statusFixedNote(record *review.Record, dispositions []review.FindingDisposition) string {
+	if record == nil || record.FixedIn == "" {
+		return ""
+	}
+	if review.RecordPending(*record, dispositions) {
+		return ""
+	}
+	return fmt.Sprintf("  🔧 fix credited to %s", record.FixedIn)
+}
+
 // runStatus summarizes the guardian's state: pending volume, audit records
 // and latest events. With --json it emits the same information as JSON.
 func runStatus(worktree string, args []string) {
@@ -505,12 +520,27 @@ func runStatus(worktree string, args []string) {
 		fmt.Printf("⚠️ Could not list the records: %v\n", err)
 	}
 
+	// The standing human answers decide which records still block, exactly
+	// like the branch summary. A log this command cannot read leaves the
+	// answers empty, and the fix note then fails closed (it is omitted rather
+	// than possibly contradicting the PR body): status is advisory and
+	// read-only, so it warns and keeps reporting instead of exiting like
+	// refute and pr create, which must not spend tokens on a corrupt log.
+	dispositions, err := loadDispositionsForWorktree(worktree)
+	if err != nil {
+		fmt.Printf("⚠️ Could not read the human dispositions: %v\n", err)
+	}
+
 	records := []map[string]any{}
+	fixedNotes := []string{}
 	orphanCount := 0
 	for _, sha := range shas {
-		fixedIn := ""
 		record, err := ledger.ReadRecord(sha)
-		if err == nil && record != nil {
+		if err != nil {
+			record = nil
+		}
+		fixedIn := ""
+		if record != nil {
 			fixedIn = record.FixedIn
 		}
 		isOrphan := !git.ContentInSomeRef(sha)
@@ -523,6 +553,7 @@ func runStatus(worktree string, args []string) {
 			"fixedIn": fixedIn,
 			"orphan":  isOrphan,
 		})
+		fixedNotes = append(fixedNotes, statusFixedNote(record, dispositions))
 	}
 
 	events, err := ops.RecentEvents(gitDir, 5)
@@ -550,12 +581,8 @@ func runStatus(worktree string, args []string) {
 
 	fmt.Printf("📊 Modified lines in this Worktree: %d [%s]\n", lines, state)
 	fmt.Printf("🔎 Audit records: %d (orphans: %d)\n", len(records), orphanCount)
-	for _, record := range records {
-		fixedNote := ""
-		if record["fixedIn"] != "" {
-			fixedNote = fmt.Sprintf("  🔧 fixed in %s", record["fixedIn"])
-		}
-		fmt.Printf("  %s  %s%s\n", record["sha"], record["verdict"], fixedNote)
+	for i, record := range records {
+		fmt.Printf("  %s  %s%s\n", record["sha"], record["verdict"], fixedNotes[i])
 	}
 	if len(events) > 0 {
 		fmt.Printf("🕒 Latest events:\n")

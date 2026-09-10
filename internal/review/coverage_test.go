@@ -347,7 +347,7 @@ func TestRendererSummaryCountsAuthoritativeVerdicts(t *testing.T) {
 			supplementaryRevisionForTest(VerdictOK),
 		}},
 	}
-	out := RenderSummary(records)
+	out := RenderSummary(records, nil)
 	if !strings.Contains(out, "🟢 ok: 0 · 🟡 warn: 0 · 🚨 block: 1") {
 		t.Errorf("verdict counts must follow the authoritative verdicts only:\n%s", out)
 	}
@@ -388,7 +388,7 @@ func TestVerdictDeBranchIgnoresSupplementaryOnlyRecords(t *testing.T) {
 			authRevisionForTest(VerdictOK),
 		}},
 	}
-	if got := VerdictDeBranch(records); got != VerdictOK {
+	if got := VerdictDeBranch(records, nil); got != VerdictOK {
 		t.Fatalf("VerdictDeBranch = %q, want ok: the branch verdict reads authoritative results only", got)
 	}
 }

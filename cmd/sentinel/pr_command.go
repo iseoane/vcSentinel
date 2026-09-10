@@ -226,7 +226,7 @@ func detailPrReviewEvent(base string, res *review.BranchResult, ci bool) (ops.Ev
 	return pr.PrReviewEventDetail(base, res, ci)
 }
 
-func applyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, error) {
+func applyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, []review.FindingDisposition, error) {
 	return pr.ApplyPrReviewDispositions(options, worktree, load)
 }
 
