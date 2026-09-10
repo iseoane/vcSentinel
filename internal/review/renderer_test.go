@@ -119,7 +119,7 @@ func TestRenderSummaryRisks(t *testing.T) {
 			)),
 	}
 
-	out := RenderSummary(records)
+	out := RenderSummary(records, nil)
 
 	// Global count.
 	if !strings.Contains(out, "🟢 ok: 0 · 🟡 warn: 1 · 🚨 block: 1") {
@@ -148,8 +148,8 @@ func TestRenderSummaryFixed(t *testing.T) {
 	)
 	record.FixedIn = "a1b2c3d"
 
-	out := RenderSummary([]Record{record})
-	if !strings.Contains(out, "🔧 fixed in `a1b2c3d`") {
+	out := RenderSummary([]Record{record}, nil)
+	if !strings.Contains(out, "🔧 fix credited to `a1b2c3d`") {
 		t.Errorf("missing the fix mark:\n%s", out)
 	}
 }
@@ -210,7 +210,7 @@ func TestTruncateBodyNeverSplitsRunes(t *testing.T) {
 // TestRenderSummaryEmpty: with no records, the summary warns instead of
 // inventing.
 func TestRenderSummaryEmpty(t *testing.T) {
-	if out := RenderSummary(nil); !strings.Contains(out, "No audited commits") {
+	if out := RenderSummary(nil, nil); !strings.Contains(out, "No audited commits") {
 		t.Errorf("empty summary = %q, want the no-commits notice", out)
 	}
 }
@@ -225,7 +225,7 @@ func TestCountQuestionUnavailable(t *testing.T) {
 			revisionHelper(VerdictUnavailable, DimensionResult{Dim: DimSpec, Verdict: VerdictUnavailable})),
 	}
 
-	out := RenderSummary(records)
+	out := RenderSummary(records, nil)
 	if !strings.Contains(out, "❓ question: 1") || !strings.Contains(out, "⛔ unavailable: 1") {
 		t.Errorf("missing the question/unavailable counts:\n%s", out)
 	}
@@ -241,7 +241,7 @@ func TestRiskLine(t *testing.T) {
 		recordHelper("945b5b5", "feat(b)", "m",
 			revisionHelper("ok", DimensionResult{Dim: DimLogic, Verdict: VerdictOK})),
 	}
-	line := riskLine(records)
+	line := riskLine(records, nil)
 	if !strings.Contains(line, "warn") {
 		t.Errorf("risk line does not show the branch verdict: %s", line)
 	}
@@ -283,7 +283,7 @@ func TestBranchVerdictWeighted(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := VerdictDeBranch(c.records); got != c.expected {
+			if got := VerdictDeBranch(c.records, nil); got != c.expected {
 				t.Errorf("VerdictDeBranch = %q, want %q", got, c.expected)
 			}
 		})
@@ -296,7 +296,7 @@ func TestBranchVerdictFixedDoesNotBlock(t *testing.T) {
 	blocked := recordHelper("u1", "feat(a)", "m", revisionHelper("block"))
 	blocked.FixedIn = "a1b2c3d"
 	records := []Record{blocked, recordHelper("u2", "feat(b)", "m", revisionHelper("ok"))}
-	if got := VerdictDeBranch(records); got != VerdictOK {
+	if got := VerdictDeBranch(records, nil); got != VerdictOK {
 		t.Errorf("VerdictDeBranch = %q, want ok (fixed block)", got)
 	}
 }
@@ -316,29 +316,58 @@ func TestBranchPredicatesAgreeWithActiveBlock(t *testing.T) {
 
 	t.Run("a live critical still blocks the branch", func(t *testing.T) {
 		records := []Record{partiallyFixed()}
-		if got := VerdictDeBranch(records); got != VerdictBlock {
+		if got := VerdictDeBranch(records, nil); got != VerdictBlock {
 			t.Errorf("VerdictDeBranch = %q, want block while a critical is live", got)
 		}
 		if got := BranchBlockers(records); len(got) != 1 {
 			t.Errorf("BranchBlockers = %d, want the live critical", len(got))
 		}
-		if got := RenderSummary(records); strings.Contains(got, "fixed in") {
-			t.Errorf("RenderSummary labels a blocking record as fixed:\n%s", got)
+		if got := RenderSummary(records, nil); strings.Contains(got, "credited") {
+			t.Errorf("RenderSummary credits a fix on a blocking record:\n%s", got)
 		}
 	})
 
-	t.Run("a resolved record retires and renders as fixed", func(t *testing.T) {
+	t.Run("a resolved record retires and renders the credited fix", func(t *testing.T) {
 		record := partiallyFixed()
-		record.Revisions[0].Dims[0].Findings[0].Status = StatusFixed
+		record.Revisions[0].Dims[0].Findings[0].Status = StatusRefuted
 		records := []Record{record}
-		if got := VerdictDeBranch(records); got != VerdictOK {
+		if got := VerdictDeBranch(records, nil); got != VerdictOK {
 			t.Errorf("VerdictDeBranch = %q, want ok once no finding blocks", got)
 		}
 		if got := BranchBlockers(records); len(got) != 0 {
 			t.Errorf("BranchBlockers = %d, want none", len(got))
 		}
-		if got := RenderSummary(records); !strings.Contains(got, "fixed in `531f23e`") {
+		if got := RenderSummary(records, nil); !strings.Contains(got, "fix credited to `531f23e`") {
 			t.Errorf("RenderSummary omits the fix provenance:\n%s", got)
+		}
+	})
+
+	// A human answer recorded in the append-only dispositions log retires the
+	// record on every reporting surface, not only in the blockers: refuting
+	// the last live CRITICAL of a credited record used to leave the branch
+	// verdict at block and the summary without its credit.
+	t.Run("a standing refutation retires the record on every surface", func(t *testing.T) {
+		record := partiallyFixed()
+		records := []Record{record}
+		live := CurrentFindings(record)
+		if len(live) != 1 {
+			t.Fatalf("CurrentFindings = %d, want the single live critical", len(live))
+		}
+		dispositions := []FindingDisposition{{
+			SHA: record.SHA, Fingerprint: EffectiveFingerprint(live[0]), Status: StatusRefuted,
+			Reason: "verified safe", Actor: RefutationActorHuman, Source: DispositionSourceHuman,
+		}}
+		if RecordPending(record, dispositions) {
+			t.Error("RecordPending = true with the only live critical refuted")
+		}
+		if got := VerdictDeBranch(records, dispositions); got != VerdictOK {
+			t.Errorf("VerdictDeBranch = %q, want ok with the critical refuted", got)
+		}
+		if got := BranchBlockersWithDispositions(records, dispositions); len(got) != 0 {
+			t.Errorf("BranchBlockersWithDispositions = %d, want none", len(got))
+		}
+		if got := RenderSummary(records, dispositions); !strings.Contains(got, "fix credited to `531f23e`") {
+			t.Errorf("RenderSummary omits the credit of a retired record:\n%s", got)
 		}
 	})
 }

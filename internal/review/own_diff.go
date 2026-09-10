@@ -115,7 +115,7 @@ func inheritedFindings(ledger *Ledger, rng *OwnRange) ([]InheritedFinding, error
 		if err != nil {
 			return nil, err
 		}
-		if record == nil || !isPending(*record) {
+		if record == nil || !RecordPending(*record, nil) {
 			continue
 		}
 		for _, finding := range CurrentFindings(*record) {

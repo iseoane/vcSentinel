@@ -904,6 +904,42 @@ func TestStatusVerdictLabelFollowsAuthoritativeRevision(t *testing.T) {
 	}
 }
 
+// statusFixedNote must agree with the branch summary: a record credited to a
+// fix commit that still carries a live CRITICAL is a blocker in the PR body,
+// so status must not label it as fixed. Once the block is resolved — here by
+// the standing human answer the same log records — the credit is shown.
+func TestStatusFixedNoteAgreesWithTheBranchSummary(t *testing.T) {
+	blocking := &review.Record{
+		SHA: "370cb04", Message: "feat(a)", Model: "m", FixedIn: "531f23e",
+		Revisions: []review.Revision{{
+			At: time.Now().UTC(), Result: review.VerdictBlock,
+			Dims: []review.DimensionResult{{Dim: review.DimLogic, Verdict: review.VerdictBlock,
+				Findings: []review.ReviewFinding{{Dimension: review.DimLogic, File: "a.go",
+					Severity: review.SevCritical, Description: "still unfixed"}}}},
+		}},
+	}
+	if got := statusFixedNote(blocking, nil); got != "" {
+		t.Errorf("statusFixedNote = %q, want no credit while a critical is live", got)
+	}
+
+	live := review.CurrentFindings(*blocking)
+	if len(live) != 1 {
+		t.Fatalf("CurrentFindings = %d, want the single live critical", len(live))
+	}
+	answered := []review.FindingDisposition{{
+		SHA: blocking.SHA, Fingerprint: review.EffectiveFingerprint(live[0]),
+		Status: review.StatusRefuted, Reason: "verified safe",
+		Actor: review.RefutationActorHuman, Source: review.DispositionSourceHuman,
+	}}
+	if got := statusFixedNote(blocking, answered); !strings.Contains(got, "531f23e") {
+		t.Errorf("statusFixedNote = %q, want the credited fix once resolved", got)
+	}
+
+	if got := statusFixedNote(nil, nil); got != "" {
+		t.Errorf("statusFixedNote(nil) = %q, want empty", got)
+	}
+}
+
 // Piece 2 (coverage contract): a review revision records the coverage it
 // actually had. A run whose plan derives from the change (no --dims) is
 // AUTHORITATIVE; a run the operator narrowed with --dims is SUPPLEMENTARY.
