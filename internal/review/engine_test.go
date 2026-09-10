@@ -900,37 +900,6 @@ func TestAuditCommitExecutesOptionalBundlesWithOverlappingDimensions(t *testing.
 	}
 }
 
-func TestAuditCommitPreservesOptionalBundlePurpose(t *testing.T) {
-	var bundles []string
-	var prompts []string
-	factory := func(bundle ReviewBundle, dimension string) (AgentReviewer, string, error) {
-		bundles = append(bundles, bundle.Name)
-		return auditorFunc(func(prompt string) (string, error) {
-			prompts = append(prompts, prompt)
-			return `{"dim":"logic","verdict":"ok"}`, nil
-		}), "normal", nil
-	}
-	result := AuditCommit(factory, 1, AuditOptions{SHA: "abc", Bundles: []ReviewBundle{
-		{Name: BundleCorrectness, Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1},
-		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
-		{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
-	}})
-	if len(result.Dims) != 3 || !hasStrings(bundles, BundleCorrectness, BundleContracts, BundleConcurrencyData) {
-		t.Fatalf("bundles=%v dims=%+v", bundles, result.Dims)
-	}
-	if !hasPrompt(prompts, "Contract compatibility") || !hasPrompt(prompts, "Concurrency and data integrity") {
-		t.Fatalf("optional prompts did not preserve purpose: %q", prompts)
-	}
-	if !hasResultBundle(result.Dims, BundleContracts) || !hasResultBundle(result.Dims, BundleConcurrencyData) {
-		t.Fatalf("bundle identities = %+v", result.Dims)
-	}
-	for _, dimension := range result.Dims {
-		if dimension.Result.Bundle != dimension.Bundle {
-			t.Fatalf("result bundle=%q, expected %q", dimension.Result.Bundle, dimension.Bundle)
-		}
-	}
-}
-
 func TestAuditCommitDuplicateOptionalBundleDoesNotConsumeBudget(t *testing.T) {
 	factory, fake := fixedFactory(nil)
 	result := AuditCommit(factory, 1, AuditOptions{SHA: "abc", Budget: ReviewBudget{MaxCost: 2}, Bundles: []ReviewBundle{

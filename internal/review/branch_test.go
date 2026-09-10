@@ -120,8 +120,18 @@ func (f *fakeStoreBlobs) RegisterCommitBlobs(sha string, blobs map[string]string
 	if f.registeredBlobs == nil {
 		f.registeredBlobs = make(map[string]map[string]string)
 	}
+	if f.shasPerBlob == nil {
+		f.shasPerBlob = make(map[string][]string)
+	}
 	f.registeredBlobs[sha] = blobs
+	for _, blob := range blobs {
+		f.shasPerBlob[blob] = append(f.shasPerBlob[blob], sha)
+	}
 	return nil
+}
+
+func (f *fakeStoreBlobs) CommitBlobs(sha string) (map[string]string, error) {
+	return f.registeredBlobs[sha], nil
 }
 
 // prepareBranchRepo creates a temp repo with the current branch "feature"
@@ -163,6 +173,182 @@ func commitInBranch(t *testing.T, name, content string) string {
 
 // TestAnalyzeBranchAuditsPending: audits the branch commits without a
 // record, leaves the records in the ledger and decides single at low volume.
+func TestAnalyzeBranchReauditsOnlySpecWhenReusedMessageChanges(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	oldSHA := commitInBranch(t, "feat.txt", "content\n")
+	ledger := NewLedger(gitDir)
+	store := &fakeStoreBlobs{}
+	stub := &auditorStub{auditOutput: auditOutputOK}
+
+	if _, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, Store: store}); err != nil {
+		t.Fatalf("first AnalyzeBranch: %v", err)
+	}
+	callsBeforeAmend := stub.auditCalls
+	if callsBeforeAmend == 0 {
+		t.Fatal("first audit did not call the reviewer")
+	}
+
+	runGit(t, "commit", "--amend", "-m", "feat(feat): rewritten message")
+	newSHA := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	if newSHA == oldSHA {
+		t.Fatal("amending the message did not rewrite the SHA")
+	}
+
+	factoryCalls := 0
+	res, err := AnalyzeBranch(ledger, BranchOptions{
+		Factory: stubFactory(stub), Parallel: 1, Store: store,
+		DeterministicFindingsFactory: func(string, []string, string) []Finding {
+			factoryCalls++
+			return []Finding{{Dimension: DimSecurity, Title: "must not enter spec reuse"}}
+		},
+	})
+	if err != nil {
+		t.Fatalf("second AnalyzeBranch: %v", err)
+	}
+	if got := stub.auditCalls - callsBeforeAmend; got != 1 {
+		t.Errorf("reviewer calls after a message-only amend = %d, want 1 spec audit", got)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("DeterministicFindingsFactory calls = %d, want 0 for a spec-only reuse", factoryCalls)
+	}
+	if len(res.Records) != 1 {
+		t.Fatalf("Records = %d, want one adopted record", len(res.Records))
+	}
+	record := res.Records[0]
+	if record.SHA != newSHA || record.OriginSHA != oldSHA {
+		t.Errorf("record provenance = SHA %q OriginSHA %q, want %q from %q", record.SHA, record.OriginSHA, newSHA, oldSHA)
+	}
+	if record.Message != "feat(feat): rewritten message" {
+		t.Errorf("record Message = %q, want the amended message", record.Message)
+	}
+	latest, _, ok := LastAuthoritativeRevision(record)
+	if !ok {
+		t.Fatal("adopted record has no authoritative revision")
+	}
+	seen := map[string]bool{}
+	for _, dim := range latest.Dims {
+		seen[dim.Dim] = true
+	}
+	for _, dimension := range []string{DimLogic, DimSpec, DimTests} {
+		if !seen[dimension] {
+			t.Errorf("merged authoritative revision is missing reused or re-audited %q dimension: %+v", dimension, latest.Dims)
+		}
+	}
+}
+
+func TestCommitCoveredByBlobsRequiresMatchingPathsAndRejectsSelf(t *testing.T) {
+	prepareBranchRepo(t)
+	if err := os.MkdirAll(".github/workflows", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".github/workflows/deploy.yml", []byte("shared bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", ".github/workflows/deploy.yml")
+	runGit(t, "commit", "-m", "feat(ci): add workflow")
+	sha := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	files, err := git.FilesOfCommit(sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := commitBlobs(sha, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := blobs[".github/workflows/deploy.yml"]
+	fake := &fakeStoreBlobs{
+		shasPerBlob: map[string][]string{blob: {sha, "historical"}},
+		registeredBlobs: map[string]map[string]string{
+			sha:          {".github/workflows/deploy.yml": blob},
+			"historical": {"docs/deploy.md": blob},
+		},
+	}
+	covered, origin, err := commitCoveredByBlobs(fake, sha)
+	if err != nil {
+		t.Fatalf("commitCoveredByBlobs: %v", err)
+	}
+	if covered || origin != "" {
+		t.Fatalf("commitCoveredByBlobs = (%t, %q), want no reuse for a path mismatch or destination self-match", covered, origin)
+	}
+}
+
+func TestAnalyzeBranchDoesNotReuseSupplementaryOrigin(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	oldSHA := commitInBranch(t, "feat.txt", "content\n")
+	ledger := NewLedger(gitDir)
+	files, err := git.FilesOfCommit(oldSHA)
+	if err != nil {
+		t.Fatalf("FilesOfCommit: %v", err)
+	}
+	blobs, err := commitBlobs(oldSHA, files)
+	if err != nil {
+		t.Fatalf("commitBlobs: %v", err)
+	}
+	if err := ledger.SaveRevision(oldSHA, "feat(feat.txt): test content", "pr", "test", Revision{
+		Result:   VerdictOK,
+		Coverage: CoverageSupplementary,
+		Dims:     []DimensionResult{{Dim: DimSpec, Verdict: VerdictOK}},
+	}); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
+	}
+	store := &fakeStoreBlobs{
+		shasPerBlob:     make(map[string][]string),
+		registeredBlobs: map[string]map[string]string{oldSHA: blobs},
+	}
+	for _, blob := range blobs {
+		store.shasPerBlob[blob] = []string{oldSHA}
+	}
+
+	runGit(t, "commit", "--amend", "-m", "feat(feat.txt): rewritten message")
+	newSHA := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	stub := &auditorStub{auditOutput: auditOutputOK}
+	res, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, Store: store})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch: %v", err)
+	}
+	if stub.auditCalls == 0 {
+		t.Fatal("supplementary-only origin was reused instead of auditing the destination")
+	}
+	if len(res.Records) != 1 || res.Records[0].SHA != newSHA {
+		t.Fatalf("Records = %+v, want an audited destination record", res.Records)
+	}
+	if res.Records[0].OriginSHA != "" {
+		t.Errorf("OriginSHA = %q, want no reuse provenance from a supplementary origin", res.Records[0].OriginSHA)
+	}
+}
+
+func TestAnalyzeBranchAuditsWhenBlobOriginRecordIsMissing(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	sha := commitInBranch(t, "feat.txt", "content\n")
+	files, err := git.FilesOfCommit(sha)
+	if err != nil {
+		t.Fatalf("FilesOfCommit: %v", err)
+	}
+	blobs, err := commitBlobs(sha, files)
+	if err != nil {
+		t.Fatalf("commitBlobs: %v", err)
+	}
+	store := &fakeStoreBlobs{shasPerBlob: make(map[string][]string)}
+	for _, blob := range blobs {
+		store.shasPerBlob[blob] = []string{"purged-origin"}
+	}
+	stub := &auditorStub{auditOutput: auditOutputOK}
+
+	res, err := AnalyzeBranch(NewLedger(gitDir), BranchOptions{Factory: stubFactory(stub), Parallel: 1, Store: store})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch with a stale blob origin: %v", err)
+	}
+	if stub.auditCalls == 0 {
+		t.Fatal("AnalyzeBranch did not audit after the blob origin record was missing")
+	}
+	if len(res.Records) != 1 || res.Records[0].SHA != sha {
+		t.Fatalf("Records = %+v, want a newly audited record for %s", res.Records, sha)
+	}
+	if res.Records[0].OriginSHA != "" {
+		t.Errorf("OriginSHA = %q, want no reuse provenance after stale blob fallback", res.Records[0].OriginSHA)
+	}
+}
+
 func TestAnalyzeBranchAuditsPending(t *testing.T) {
 	gitDir := prepareBranchRepo(t)
 	sha := commitInBranch(t, "feat.txt", "1\n2\n3\n4\n5\n")
@@ -232,7 +418,7 @@ func TestAuditCommitBranchPassesImmutableCommitPathsToRestrictedReviewer(t *test
 			return stub, "stub", nil
 		},
 		Parallel: 1,
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("auditBranchCommit() error = %v", err)
 	}
@@ -560,7 +746,7 @@ func TestAuditCommitBranchContinuesWhenRecordBlobsFails(t *testing.T) {
 
 	err := auditBranchCommit(ledger, sha, BranchOptions{
 		Factory: stubFactory(stub), Parallel: 1, Store: fake,
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("auditBranchCommit should continue although RegisterCommitBlobs fails, returned: %v", err)
 	}
@@ -610,7 +796,7 @@ func TestAuditCommitBranchRoutesThroughPerCommitTransport(t *testing.T) {
 				return auditOutputOK, "", nil
 			}
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("auditBranchCommit() error = %v", err)
 	}

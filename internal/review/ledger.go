@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -270,6 +271,7 @@ type Record struct {
 	Message   string     `json:"message"`
 	Bucket    string     `json:"bucket"`
 	Model     string     `json:"model"`
+	OriginSHA string     `json:"origin_sha,omitempty"`
 	FixedIn   string     `json:"fixed_in,omitempty"`
 	Revisions []Revision `json:"revisions"`
 }
@@ -547,31 +549,42 @@ func (l *Ledger) MarkFixed(sha, fixedIn string) error {
 	})
 }
 
-// AdoptRecord copies the record at from under the SHA to. It is the T2.7
+// AdoptRecord carries the record at from under the SHA to. It is the T2.7
 // fix for commitCoveredByBlobs: when a rebase rewrites a commit without
 // touching its content, the commit is blob-covered under an earlier SHA,
 // but if AnalyzeBranch only did "continue" without writing anything under
 // the new SHA, ledger.ReadRecord(to) would return nil and the real findings
 // of the old record (an orphan, under a SHA that no longer exists in the
-// branch) would disappear from res.Records. Adopting the record under the
-// new SHA is what keeps them recoverable.
+// branch) would disappear from res.Records. Adoption copies the source when
+// the destination is absent and preserves destination revisions thereafter.
 //
-// from should always exist whenever commitCoveredByBlobs calls it, because
-// it came out of the store, which only registers already-audited commits:
-// that is why, unlike MarkFixed (where "there is nothing to mark" is a
-// valid state resolved as a no-op), a from with no record here is a real
-// error, not something to ignore in silence.
+// from must exist when a caller asks this method to adopt: DecideBlobReuse
+// rejects stale blob-index candidates whose ledger record was pruned before
+// reaching this method. Unlike MarkFixed (where "there is nothing to mark" is
+// a valid state resolved as a no-op), a from with no record here is a real
+// caller error, not something to ignore in silence.
 //
-// Idempotent: calling it twice with the same arguments overwrites with the
-// same content, without duplicating anything. Revisions is copied to a new
-// slice (the origin record's underlying one is not shared) for aliasing
-// hygiene, not because Revision is mutated after being saved.
+// Idempotent: calling it twice with the same arguments preserves any revisions
+// already present at the destination without duplicating or discarding them.
+// The first adoption copies the source revisions to a new slice (the origin
+// record's underlying one is not shared) for aliasing hygiene.
 func (l *Ledger) AdoptRecord(from, to string) error {
+	return l.adoptRecord(from, to, "", false)
+}
+
+// AdoptRecordWithMessage copies a reviewed record under a new SHA while retaining
+// the destination commit message and the source SHA as provenance. Reuse callers
+// must use this variant because spec review evaluates the destination message.
+func (l *Ledger) AdoptRecordWithMessage(from, to, message string) error {
+	return l.adoptRecord(from, to, message, true)
+}
+
+func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage bool) error {
 	// Locked on to, which is the record this writes. Locking from too would
 	// be a second lock in a fixed-order pair and buys nothing: the source is
 	// only read, and a concurrent append to it either lands in the copy or
-	// does not, whereas an unserialized adoption can overwrite a revision
-	// another writer just appended to the destination.
+	// does not. The destination lock serializes adoption with appends so
+	// existing destination revisions are preserved.
 	return l.withRecordLock(to, func() error {
 		source, err := l.ReadRecord(from)
 		if err != nil {
@@ -580,18 +593,219 @@ func (l *Ledger) AdoptRecord(from, to string) error {
 		if source == nil {
 			return fmt.Errorf("ledger: no record at %s to adopt into %s", from, to)
 		}
+		if !useDestinationMessage {
+			message = source.Message
+		}
+		destination, err := l.ReadRecord(to)
+		if err != nil {
+			return err
+		}
+		if destination != nil {
+			// Preserving the destination is not enough: dropping the source
+			// revisions would leave a destination that only ever had
+			// supplementary coverage without any authoritative verdict, while
+			// AnalyzeBranch treats any non-nil record as reviewed and never
+			// schedules the audit. Both sides are merged instead.
+			// Metadata other than the revisions follows destination-wins-else-source:
+			// what the destination already recorded about itself is more specific
+			// than what the origin recorded about a different SHA.
+			if destination.OriginSHA == "" {
+				destination.OriginSHA = from
+			}
+			if useDestinationMessage {
+				destination.Message = message
+			} else if destination.Message == "" {
+				destination.Message = message
+			}
+			if destination.Bucket == "" {
+				destination.Bucket = source.Bucket
+			}
+			if destination.Model == "" {
+				destination.Model = source.Model
+			}
+			if destination.FixedIn == "" {
+				destination.FixedIn = source.FixedIn
+			}
+			// Merged unconditionally: mergeRevisions drops what is already here
+			// and keeps everything else, so a repeated adoption is idempotent and
+			// a revision the origin appended since the last one still arrives.
+			destination.Revisions = mergeRevisions(source.Revisions, destination.Revisions)
+			return l.saveRecord(destination)
+		}
 		revisions := make([]Revision, len(source.Revisions))
 		copy(revisions, source.Revisions)
 		adopted := &Record{
 			SHA:       to,
-			Message:   source.Message,
+			Message:   message,
 			Bucket:    source.Bucket,
 			Model:     source.Model,
+			OriginSHA: from,
 			FixedIn:   source.FixedIn,
 			Revisions: revisions,
 		}
 		return l.saveRecord(adopted)
 	})
+}
+
+// SaveReusedSpecRevision appends an authoritative revision that retains the
+// adopted record's non-spec dimensions and replaces only spec with a fresh audit.
+// It never accepts another dimension: accepting one would silently overwrite a
+// content-derived verdict that reuse deliberately preserves.
+func (l *Ledger) SaveReusedSpecRevision(sha string, spec Revision) error {
+	return l.withRecordLock(sha, func() error {
+		record, err := l.ReadRecord(sha)
+		if err != nil {
+			return err
+		}
+		if record == nil || record.OriginSHA == "" {
+			return fmt.Errorf("ledger: no adopted record at %s for spec reuse", sha)
+		}
+		base, _, ok := LastAuthoritativeRevision(*record)
+		if !ok {
+			return fmt.Errorf("ledger: no authoritative revision at %s for spec reuse", sha)
+		}
+		merged, err := mergeReusedSpecRevision(base, spec)
+		if err != nil {
+			return err
+		}
+		record.Revisions = append(record.Revisions, merged)
+		return l.saveRecord(record)
+	})
+}
+
+func mergeReusedSpecRevision(base, spec Revision) (Revision, error) {
+	for _, result := range spec.Dims {
+		if result.Dim != DimSpec {
+			return Revision{}, fmt.Errorf("ledger: reused spec revision includes %q", result.Dim)
+		}
+	}
+	merged := spec
+	// Revision is passed by value but its slices still share backing arrays.
+	// Copy before appending so this merge cannot mutate the caller's spec input.
+	merged.Dims = append([]DimensionResult(nil), spec.Dims...)
+
+	// A caller may provide only raw dimension results, as records written before
+	// aggregated findings existed do. Preserve the revision's normal fallback so
+	// those fresh spec findings are not lost while merging the reused dimensions.
+	specFindings := spec.AggregatedFindings
+	if len(specFindings) == 0 {
+		specFindings = spec.EffectiveFindings()
+	}
+	merged.AggregatedFindings = nil
+	for _, finding := range specFindings {
+		if finding.Dimension == DimSpec {
+			merged.AggregatedFindings = append(merged.AggregatedFindings, finding)
+		}
+	}
+	for _, result := range base.Dims {
+		if result.Dim != DimSpec {
+			merged.Dims = append(merged.Dims, result)
+		}
+	}
+	for _, finding := range base.EffectiveFindings() {
+		if finding.Dimension != DimSpec {
+			merged.AggregatedFindings = append(merged.AggregatedFindings, finding)
+		}
+	}
+	dimensions := make([]DimensionOutcome, 0, len(merged.Dims))
+	for i := range merged.Dims {
+		dimensions = append(dimensions, DimensionOutcome{Dim: merged.Dims[i].Dim, Result: &merged.Dims[i]})
+	}
+	merged.Result, _ = globalVerdict(dimensions)
+	merged.Fixed = base.Result == VerdictBlock && merged.Result != VerdictBlock
+	merged.Coverage = CoverageAuthoritative
+	return merged, nil
+}
+
+// AuditResultFromRevision converts persisted authoritative evidence into the
+// result shape consumed by command-level reporting and gating. Reused reviews
+// therefore follow the same final pipeline as freshly audited reviews.
+func AuditResultFromRevision(sha string, revision Revision) AuditResult {
+	result := AuditResult{
+		SHA:      sha,
+		Verdict:  revision.Result,
+		Findings: append([]Finding(nil), revision.EffectiveFindings()...),
+	}
+	for _, dim := range revision.Dims {
+		dimension := dim
+		result.Dims = append(result.Dims, DimensionOutcome{
+			Bundle: dimension.Bundle,
+			Dim:    dimension.Dim,
+			Result: &dimension,
+		})
+	}
+	return result
+}
+
+// mergeRevisions combines two revision histories, keeping for each distinct
+// revision the highest number of times either history holds it, ordered by At.
+//
+// The multiplicity is the point. revisions[] is append-only: re-auditing a SHA
+// adds a revision and never overwrites one, and SaveRevision appends whatever
+// it is handed, so a history can legitimately hold the same revision twice.
+// Collapsing those to one — which a set-style union does — erases an audit
+// event the contract promises to keep. Taking the maximum instead means an
+// adoption never invents an entry and never drops one: the destination ends up
+// with at least what each side had.
+//
+// Identity is the whole revision, because no single field can carry it. At is
+// supplied by the caller and nothing validates it, so distinct revisions can
+// share a timestamp. Record provenance describes which origin was adopted, not
+// which of its revisions arrived, so it hid revisions appended to the source
+// after an earlier adoption. Two bit-identical revisions, in contrast, are
+// interchangeable by construction.
+//
+// Append order is preserved rather than reconstructed. Grouping the copies of
+// each distinct revision together placed them all at their first-seen position,
+// so a history like [A, B, A] whose revisions share a timestamp came back as
+// [A, A, B] and the newest verdict became B instead of the later A. The source
+// history is therefore emitted verbatim and only the destination's excess
+// occurrences are appended.
+//
+// The comparison is quadratic over the handful of revisions a commit
+// accumulates, which buys an honest predicate instead of an index on a field no
+// writer guarantees.
+//
+// DeepEqual compares At as a time.Time struct, so its monotonic reading and
+// *Location matter: a revision from time.Now() carries both, one deserialized
+// from JSON carries neither. Its only caller reads both histories through
+// ReadRecord, so both sides are JSON-sourced and symmetric. A caller that ever
+// passes an in-memory revision would make two logically identical revisions
+// compare unequal and duplicate; the fix then is comparing At with At.Equal
+// rather than field-by-field.
+//
+// Ordering by At keeps LastAuthoritativeRevision's backward walk honest: it
+// finds the newest authoritative revision whichever side contributed it, and a
+// supplementary revision written after it still surfaces its alarms through
+// CurrentFindings.
+func mergeRevisions(source, destination []Revision) []Revision {
+	// The source history is kept verbatim, so its append order survives. Only
+	// the occurrences the destination holds BEYOND what the source already
+	// contributed are added: that yields the higher multiplicity of the two
+	// without expanding grouped copies, which reordered a history whose
+	// revisions share a timestamp.
+	merged := make([]Revision, 0, len(source)+len(destination))
+	merged = append(merged, source...)
+	occurrences := func(history []Revision, upTo int, revision Revision) int {
+		count := 0
+		for i := 0; i < upTo; i++ {
+			if reflect.DeepEqual(history[i], revision) {
+				count++
+			}
+		}
+		return count
+	}
+	for i, revision := range destination {
+		inSource := occurrences(source, len(source), revision)
+		inDestination := occurrences(destination, i+1, revision)
+		if inDestination > inSource {
+			merged = append(merged, revision)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].At.Before(merged[j].At)
+	})
+	return merged
 }
 
 // DeleteRecord deletes the record of a SHA. It returns no error when the

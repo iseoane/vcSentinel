@@ -45,6 +45,20 @@ func (s *Store) ReadCommitIndex(sha string) (*CommitIndex, error) {
 	return &idx, nil
 }
 
+// CommitBlobs returns a copy of a registered commit's file→blob mapping.
+// A missing or legacy commit index has no reusable mapping and returns nil.
+func (s *Store) CommitBlobs(sha string) (map[string]string, error) {
+	idx, err := s.ReadCommitIndex(sha)
+	if err != nil || idx == nil || len(idx.Blobs) == 0 {
+		return nil, err
+	}
+	blobs := make(map[string]string, len(idx.Blobs))
+	for path, blob := range idx.Blobs {
+		blobs[path] = blob
+	}
+	return blobs, nil
+}
+
 // RegisterCommitBlobs saves (or extends) the CommitIndex of sha with the
 // blobs of its files, preserving the Fingerprints it already had: without
 // this merge, a second call on the same sha (for example, retrying a branch
