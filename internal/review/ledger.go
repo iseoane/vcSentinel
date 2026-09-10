@@ -264,17 +264,17 @@ func reviewFindingFromFinding(h Finding) ReviewFinding {
 }
 
 // Record is the complete audit record of a commit, saved as
-// <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the commit that
-// fixed the findings (filled in when a fix re-audits the files).
+// <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the first commit
+// credited with fixing the findings (filled in when a fix touches the files).
+// It is provenance only: whether the record still blocks is decided by its
+// current findings (RecordHasActiveBlock), not by this field.
 type Record struct {
-	SHA       string `json:"sha"`
-	Message   string `json:"message"`
-	Bucket    string `json:"bucket"`
-	Model     string `json:"model"`
-	OriginSHA string `json:"origin_sha,omitempty"`
-	FixedIn   string `json:"fixed_in,omitempty"`
-	// FixedAt records when FixedIn was set, so later re-audits are not retired.
-	FixedAt   time.Time  `json:"fixed_at,omitempty"`
+	SHA       string     `json:"sha"`
+	Message   string     `json:"message"`
+	Bucket    string     `json:"bucket"`
+	Model     string     `json:"model"`
+	OriginSHA string     `json:"origin_sha,omitempty"`
+	FixedIn   string     `json:"fixed_in,omitempty"`
 	Revisions []Revision `json:"revisions"`
 }
 
@@ -547,7 +547,6 @@ func (l *Ledger) MarkFixed(sha, fixedIn string) error {
 			return nil
 		}
 		record.FixedIn = fixedIn
-		record.FixedAt = time.Now().UTC()
 		return l.saveRecord(record)
 	})
 }
