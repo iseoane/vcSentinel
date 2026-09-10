@@ -267,12 +267,14 @@ func reviewFindingFromFinding(h Finding) ReviewFinding {
 // <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the commit that
 // fixed the findings (filled in when a fix re-audits the files).
 type Record struct {
-	SHA       string     `json:"sha"`
-	Message   string     `json:"message"`
-	Bucket    string     `json:"bucket"`
-	Model     string     `json:"model"`
-	OriginSHA string     `json:"origin_sha,omitempty"`
-	FixedIn   string     `json:"fixed_in,omitempty"`
+	SHA       string `json:"sha"`
+	Message   string `json:"message"`
+	Bucket    string `json:"bucket"`
+	Model     string `json:"model"`
+	OriginSHA string `json:"origin_sha,omitempty"`
+	FixedIn   string `json:"fixed_in,omitempty"`
+	// FixedAt records when FixedIn was set, so later re-audits are not retired.
+	FixedAt   time.Time  `json:"fixed_at,omitempty"`
 	Revisions []Revision `json:"revisions"`
 }
 
@@ -545,6 +547,7 @@ func (l *Ledger) MarkFixed(sha, fixedIn string) error {
 			return nil
 		}
 		record.FixedIn = fixedIn
+		record.FixedAt = time.Now().UTC()
 		return l.saveRecord(record)
 	})
 }
