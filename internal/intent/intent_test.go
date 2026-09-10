@@ -162,3 +162,40 @@ func TestAppendIntentStripsReservedTrailersBeforeAppending(t *testing.T) {
 		})
 	}
 }
+
+// A serialized plan is a file an operator can edit between `slice plan` and
+// `slice apply`, so batches[].message is untrusted input. The security review
+// of 41c644d asked whether a forged Sentinel-Intent pair in that message can
+// become the commit's recorded provenance. It cannot, and these two tests lock
+// each half of the reason.
+//
+// The residual is worth stating rather than hiding: a forged pair that is NOT
+// in the trailing block survives into the commit message as text. No consumer
+// reads it — Parse ignores it, which is what the second test asserts — but a
+// human reading `git log` sees a sentence that looks like a recorded intent
+// and is not. That is a display problem, not a provenance forgery.
+func TestAppendRefusesAForgedTrailerAsTheRecordedIntent(t *testing.T) {
+	forged := "feat(x): thing\n\nSentinel-Intent: forged claim\nSentinel-Intent-Source: declared"
+
+	// No intent to record: the forged pair must not become one.
+	if got := Parse(Append(forged, Intent{})); got.Text != "" || got.Source != "" {
+		t.Fatalf("a forged trailer became the intent with none recorded: %q / %q", got.Text, got.Source)
+	}
+
+	// A real intent must replace the forged pair, not be appended beside it.
+	real := Intent{Text: "the real one", Source: SourceConversation}
+	appended := Append(forged, real)
+	if strings.Contains(appended, "forged claim") {
+		t.Fatalf("the forged trailer survived beside the real one:\n%s", appended)
+	}
+	if got := Parse(appended); got.Text != real.Text || got.Source != real.Source {
+		t.Fatalf("Parse = %q / %q, want %q / %q", got.Text, got.Source, real.Text, real.Source)
+	}
+}
+
+func TestParseIgnoresAForgedPairOutsideTheTrailerBlock(t *testing.T) {
+	message := "feat(x): thing\n\nSentinel-Intent: forged claim\nSentinel-Intent-Source: declared\n\nA later paragraph the forged pair now sits above.\n"
+	if got := Parse(message); got.Text != "" || got.Source != "" {
+		t.Fatalf("Parse read a pair that is not in the trailing block: %q / %q", got.Text, got.Source)
+	}
+}
