@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,10 +49,12 @@ type StoreBlobs interface {
 	RegisterCommitBlobs(sha string, blobs map[string]string) error
 	// BlobSHAs returns the commit SHAs that registered blob, or nil if it
 	// was never registered (see store.Store.BlobSHAs). commitCoveredByBlobs
-	// uses it to compute the exact intersection of SHAs across all of a
-	// commit's blobs, not just whether "some" SHA covers each blob
-	// separately.
+	// uses it only to find possible complete candidates.
 	BlobSHAs(blob string) ([]string, error)
+	// CommitBlobs returns the file→blob mapping registered for a candidate
+	// commit. Reuse requires this mapping to match exactly, because a path can
+	// carry review meaning even when its content bytes do not.
+	CommitBlobs(sha string) (map[string]string, error)
 }
 
 // BranchOptions defines the analysis of a whole branch against its base.
@@ -368,6 +371,14 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions, specOnly 
 	if specOnly {
 		bundles = []ReviewBundle{{Name: "reused_spec", Dimensions: []string{DimSpec}, Priority: PriorityRequired, Cost: 1}}
 	}
+	var deterministicFindings []Finding
+	if !specOnly {
+		deterministicFindings = deterministicFindingsForCommit(opts, sha, files, diff)
+	} else {
+		// The adopted dimensions already retain their content-derived findings.
+		// A message-only re-audit must contribute spec evidence only.
+		deterministicFindings = nil
+	}
 	result := AuditCommit(opts.Factory, opts.Parallel, AuditOptions{
 		SHA:                   sha,
 		Message:               message,
@@ -378,7 +389,7 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions, specOnly 
 		ContextPaths:          files,
 		OnDimension:           opts.OnDimension,
 		RefuterFactory:        opts.RefuterFactory,
-		DeterministicFindings: deterministicFindingsForCommit(opts, sha, files, diff),
+		DeterministicFindings: deterministicFindings,
 		ModelVerifier:         opts.ModelVerifier,
 		ReviewTransport:       transport,
 	})
@@ -519,12 +530,10 @@ func DecideBlobReuse(ledger *Ledger, store StoreBlobs, sha, message string) (Blo
 // content of ONE single previous commit: it computes the intersection of the
 // SHAs that registered each of sha's blobs (BlobSHAs, not AlreadyReviewed —
 // AlreadyReviewed only says "some SHA covers this blob", losing sight of
-// whether it is the SAME SHA for all of them) and, if that intersection is
-// not empty, covered=true and originSHA is any one of those candidates:
-// all of them registered the complete set of sha's blobs, so adopting the
-// record of any one is equally safe (an arbitrary choice among valid
-// candidates, there is no "better" one). This is the typical rebase case:
-// the commit is rewritten without touching its content.
+// whether it is the SAME SHA for all of them). It then verifies every
+// candidate's complete file→blob mapping before selecting the lexicographically
+// first one. This is the typical rebase case: the commit is rewritten without
+// touching its content.
 //
 // If any blob has NO registered SHA, or the intersection becomes empty at
 // any point, sha is NOT considered covered: its files would come from a
@@ -545,9 +554,15 @@ func commitCoveredByBlobs(s StoreBlobs, sha string) (covered bool, originSHA str
 		return false, "", nil
 	}
 
+	paths := make([]string, 0, len(blobs))
+	for path := range blobs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
 	var candidates map[string]bool
-	for _, blob := range blobs {
-		shas, err := s.BlobSHAs(blob)
+	for _, path := range paths {
+		shas, err := s.BlobSHAs(blobs[path])
 		if err != nil {
 			return false, "", err
 		}
@@ -573,10 +588,38 @@ func commitCoveredByBlobs(s StoreBlobs, sha string) (covered bool, originSHA str
 			return false, "", nil
 		}
 	}
-	for blobSHA := range candidates {
-		return true, blobSHA, nil
+	// A destination already in the candidate set is an explicit re-review, not
+	// reuse. This guard applies to the whole set before any origin is selected.
+	if candidates[sha] {
+		return false, "", nil
+	}
+	candidateSHAs := make([]string, 0, len(candidates))
+	for candidateSHA := range candidates {
+		candidateSHAs = append(candidateSHAs, candidateSHA)
+	}
+	sort.Strings(candidateSHAs)
+	for _, candidateSHA := range candidateSHAs {
+		candidateBlobs, err := s.CommitBlobs(candidateSHA)
+		if err != nil {
+			return false, "", err
+		}
+		if sameBlobMapping(blobs, candidateBlobs) {
+			return true, candidateSHA, nil
+		}
 	}
 	return false, "", nil
+}
+
+func sameBlobMapping(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for path, blob := range left {
+		if right[path] != blob {
+			return false
+		}
+	}
+	return true
 }
 
 // branchOverview runs the branch-level Spec call (one single call, not one

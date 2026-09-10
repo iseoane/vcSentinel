@@ -462,6 +462,38 @@ func TestMergeReusedSpecRevisionDoesNotAliasSpecSlices(t *testing.T) {
 
 // TestLedgerAdoptRecordWithMessageRecordsOriginAndDestinationMessage verifies
 // that adoption preserves both the source provenance and the destination message.
+func TestMergeReusedSpecRevisionKeepsOnlySpecFindingsAndMergedFixedState(t *testing.T) {
+	base := Revision{
+		Result:             VerdictBlock,
+		Dims:               []DimensionResult{{Dim: DimLogic, Verdict: VerdictBlock}},
+		AggregatedFindings: []Finding{{Dimension: DimLogic, Title: "preserved blocker"}},
+	}
+	spec := Revision{
+		Result: VerdictOK,
+		Dims:   []DimensionResult{{Dim: DimSpec, Verdict: VerdictOK}},
+		AggregatedFindings: []Finding{
+			{Dimension: DimSpec, Title: "fresh spec finding"},
+			{Dimension: DimSecurity, Title: "must not enter spec reuse"},
+		},
+	}
+
+	merged, err := mergeReusedSpecRevision(base, spec)
+	if err != nil {
+		t.Fatalf("mergeReusedSpecRevision: %v", err)
+	}
+	if merged.Result != VerdictBlock {
+		t.Fatalf("merged Result = %q, want preserved blocking logic verdict", merged.Result)
+	}
+	if merged.Fixed {
+		t.Fatal("a still-blocking merged revision must not claim it fixed the prior block")
+	}
+	for _, finding := range merged.AggregatedFindings {
+		if finding.Title == "must not enter spec reuse" {
+			t.Fatalf("merged findings include a non-spec finding from the spec-only revision: %+v", merged.AggregatedFindings)
+		}
+	}
+}
+
 func TestLedgerAdoptRecordWithMessageRecordsOriginAndDestinationMessage(t *testing.T) {
 	dir := t.TempDir()
 	ledger := NewLedger(dir)

@@ -192,6 +192,9 @@ func TestHasCriticalFindings(t *testing.T) {
 	if hasCriticalFindings(review.AuditResult{}) {
 		t.Error("without findings there should be no criticals")
 	}
+	if !hasCriticalFindings(review.AuditResult{Findings: []review.Finding{{Severity: review.SevCritical, Status: review.StatusConfirmed}}}) {
+		t.Error("a reused aggregated CRITICAL should escalate the gate")
+	}
 }
 
 func TestRevisionCorrectsPreviousBlock(t *testing.T) {

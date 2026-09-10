@@ -888,19 +888,22 @@ func TestAuditCommitDurationBudgetIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestAuditCommitExecutesOptionalBundlesWithOverlappingDimensions(t *testing.T) {
+func TestAuditCommitDoesNotDuplicateOverlappingDimensions(t *testing.T) {
 	factory, fake := fixedFactory(nil)
 	result := AuditCommit(factory, 1, AuditOptions{SHA: "abc", Bundles: []ReviewBundle{
 		{Name: BundleCorrectness, Dimensions: []string{DimLogic, DimSpec}, Priority: PriorityRequired, Cost: 1},
 		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
 		{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
 	}})
-	if fake.calls != 4 || len(result.Dims) != 4 {
+	if fake.calls != 2 || len(result.Dims) != 2 {
 		t.Fatalf("calls=%d dims=%+v", fake.calls, result.Dims)
+	}
+	if len(result.Skipped) != 2 || result.Skipped[0].Reason != "duplicate_dimension" || result.Skipped[1].Reason != "duplicate_dimension" {
+		t.Fatalf("Skipped=%+v, want both overlapping bundles marked duplicate_dimension", result.Skipped)
 	}
 }
 
-func TestAuditCommitPreservesOptionalBundlePurpose(t *testing.T) {
+func TestAuditCommitSkipsOptionalBundlesWhoseDimensionsAlreadyRan(t *testing.T) {
 	var bundles []string
 	var prompts []string
 	factory := func(bundle ReviewBundle, dimension string) (AgentReviewer, string, error) {
@@ -915,14 +918,14 @@ func TestAuditCommitPreservesOptionalBundlePurpose(t *testing.T) {
 		{Name: BundleContracts, Dimensions: []string{DimSpec}, Priority: PriorityOptional, Cost: 1},
 		{Name: BundleConcurrencyData, Dimensions: []string{DimLogic}, Priority: PriorityOptional, Cost: 1},
 	}})
-	if len(result.Dims) != 3 || !hasStrings(bundles, BundleCorrectness, BundleContracts, BundleConcurrencyData) {
+	if len(result.Dims) != 2 || !hasStrings(bundles, BundleCorrectness, BundleContracts) {
 		t.Fatalf("bundles=%v dims=%+v", bundles, result.Dims)
 	}
-	if !hasPrompt(prompts, "Contract compatibility") || !hasPrompt(prompts, "Concurrency and data integrity") {
-		t.Fatalf("optional prompts did not preserve purpose: %q", prompts)
+	if !hasPrompt(prompts, "Contract compatibility") || hasPrompt(prompts, "Concurrency and data integrity") {
+		t.Fatalf("optional prompts = %q, want only the unique contract dimension", prompts)
 	}
-	if !hasResultBundle(result.Dims, BundleContracts) || !hasResultBundle(result.Dims, BundleConcurrencyData) {
-		t.Fatalf("bundle identities = %+v", result.Dims)
+	if !hasResultBundle(result.Dims, BundleContracts) || hasResultBundle(result.Dims, BundleConcurrencyData) {
+		t.Fatalf("bundle identities = %+v, want only the unique contract dimension", result.Dims)
 	}
 	for _, dimension := range result.Dims {
 		if dimension.Result.Bundle != dimension.Bundle {

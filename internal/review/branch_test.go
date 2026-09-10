@@ -130,6 +130,10 @@ func (f *fakeStoreBlobs) RegisterCommitBlobs(sha string, blobs map[string]string
 	return nil
 }
 
+func (f *fakeStoreBlobs) CommitBlobs(sha string) (map[string]string, error) {
+	return f.registeredBlobs[sha], nil
+}
+
 // prepareBranchRepo creates a temp repo with the current branch "feature"
 // created from the first commit of main, and returns the gitDir for the ledger.
 func prepareBranchRepo(t *testing.T) string {
@@ -190,12 +194,22 @@ func TestAnalyzeBranchReauditsOnlySpecWhenReusedMessageChanges(t *testing.T) {
 		t.Fatal("amending the message did not rewrite the SHA")
 	}
 
-	res, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, Store: store})
+	factoryCalls := 0
+	res, err := AnalyzeBranch(ledger, BranchOptions{
+		Factory: stubFactory(stub), Parallel: 1, Store: store,
+		DeterministicFindingsFactory: func(string, []string, string) []Finding {
+			factoryCalls++
+			return []Finding{{Dimension: DimSecurity, Title: "must not enter spec reuse"}}
+		},
+	})
 	if err != nil {
 		t.Fatalf("second AnalyzeBranch: %v", err)
 	}
 	if got := stub.auditCalls - callsBeforeAmend; got != 1 {
 		t.Errorf("reviewer calls after a message-only amend = %d, want 1 spec audit", got)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("DeterministicFindingsFactory calls = %d, want 0 for a spec-only reuse", factoryCalls)
 	}
 	if len(res.Records) != 1 {
 		t.Fatalf("Records = %d, want one adopted record", len(res.Records))
@@ -219,6 +233,42 @@ func TestAnalyzeBranchReauditsOnlySpecWhenReusedMessageChanges(t *testing.T) {
 		if !seen[dimension] {
 			t.Errorf("merged authoritative revision is missing reused or re-audited %q dimension: %+v", dimension, latest.Dims)
 		}
+	}
+}
+
+func TestCommitCoveredByBlobsRequiresMatchingPathsAndRejectsSelf(t *testing.T) {
+	prepareBranchRepo(t)
+	if err := os.MkdirAll(".github/workflows", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".github/workflows/deploy.yml", []byte("shared bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", ".github/workflows/deploy.yml")
+	runGit(t, "commit", "-m", "feat(ci): add workflow")
+	sha := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	files, err := git.FilesOfCommit(sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := commitBlobs(sha, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := blobs[".github/workflows/deploy.yml"]
+	fake := &fakeStoreBlobs{
+		shasPerBlob: map[string][]string{blob: {sha, "historical"}},
+		registeredBlobs: map[string]map[string]string{
+			sha:          {".github/workflows/deploy.yml": blob},
+			"historical": {"docs/deploy.md": blob},
+		},
+	}
+	covered, origin, err := commitCoveredByBlobs(fake, sha)
+	if err != nil {
+		t.Fatalf("commitCoveredByBlobs: %v", err)
+	}
+	if covered || origin != "" {
+		t.Fatalf("commitCoveredByBlobs = (%t, %q), want no reuse for a path mismatch or destination self-match", covered, origin)
 	}
 }
 

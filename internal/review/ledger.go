@@ -654,7 +654,12 @@ func mergeReusedSpecRevision(base, spec Revision) (Revision, error) {
 	if len(specFindings) == 0 {
 		specFindings = spec.EffectiveFindings()
 	}
-	merged.AggregatedFindings = append([]Finding(nil), specFindings...)
+	merged.AggregatedFindings = nil
+	for _, finding := range specFindings {
+		if finding.Dimension == DimSpec {
+			merged.AggregatedFindings = append(merged.AggregatedFindings, finding)
+		}
+	}
 	for _, result := range base.Dims {
 		if result.Dim != DimSpec {
 			merged.Dims = append(merged.Dims, result)
@@ -670,8 +675,29 @@ func mergeReusedSpecRevision(base, spec Revision) (Revision, error) {
 		dimensions = append(dimensions, DimensionOutcome{Dim: merged.Dims[i].Dim, Result: &merged.Dims[i]})
 	}
 	merged.Result, _ = globalVerdict(dimensions)
+	merged.Fixed = base.Result == VerdictBlock && merged.Result != VerdictBlock
 	merged.Coverage = CoverageAuthoritative
 	return merged, nil
+}
+
+// AuditResultFromRevision converts persisted authoritative evidence into the
+// result shape consumed by command-level reporting and gating. Reused reviews
+// therefore follow the same final pipeline as freshly audited reviews.
+func AuditResultFromRevision(sha string, revision Revision) AuditResult {
+	result := AuditResult{
+		SHA:      sha,
+		Verdict:  revision.Result,
+		Findings: append([]Finding(nil), revision.EffectiveFindings()...),
+	}
+	for _, dim := range revision.Dims {
+		dimension := dim
+		result.Dims = append(result.Dims, DimensionOutcome{
+			Bundle: dimension.Bundle,
+			Dim:    dimension.Dim,
+			Result: &dimension,
+		})
+	}
+	return result
 }
 
 // DeleteRecord deletes the record of a SHA. It returns no error when the

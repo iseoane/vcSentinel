@@ -148,6 +148,10 @@ func runReview(worktree string, args []string) {
 			os.Exit(1)
 		}
 		reauditSpec := reuse.Reused() && reuse.ReauditSpec
+		var result review.AuditResult
+		var files []string
+		var secretAdvisories []string
+		var fixed bool
 		if reuse.Reused() {
 			if err := ledger.AdoptRecordWithMessage(reuse.OriginSHA, sha, message); err != nil {
 				fmt.Printf("❌ %v\n", err)
@@ -168,139 +172,164 @@ func runReview(worktree string, args []string) {
 					fmt.Printf("❌ adopted record for %s has no authoritative revision\n", sha[:8])
 					os.Exit(1)
 				}
-				fmt.Printf("♻️ Reused review of %s from %s\n", shortSHA(sha), shortSHA(reuse.OriginSHA))
-				if exit := verdictExitCode(latest.Result); exit > finalExit {
-					finalExit = exit
+				files, err = git.FilesOfCommit(sha)
+				if err != nil {
+					fmt.Printf("⚠️ %s: could not read the files: %v\n", sha[:8], err)
+					continue
 				}
+				result = review.AuditResultFromRevision(sha, latest)
+				fixed = latest.Fixed
+			}
+		}
+		if !reuse.Reused() || reauditSpec {
+			diff, err := git.DiffCommit(sha)
+			if err != nil {
+				fmt.Printf("⚠️ %s: could not read the diff: %v\n", sha[:8], err)
 				continue
 			}
-		}
-		diff, err := git.DiffCommit(sha)
-		if err != nil {
-			fmt.Printf("⚠️ %s: could not read the diff: %v\n", sha[:8], err)
-			continue
-		}
-		files, err := git.FilesOfCommit(sha)
-		if err != nil {
-			fmt.Printf("⚠️ %s: could not read the files: %v\n", sha[:8], err)
-			continue
-		}
-
-		profile, err := change.ComputeCommitProfile(sha)
-		if err != nil {
-			fmt.Printf("⚠️ %s: could not derive the change profile: %v\n", sha[:8], err)
-			os.Exit(1)
-		}
-		bundles, err := reviewPlan(flags.dims, profile, files, diff, func() (string, error) { return git.Attributes(sha) })
-		if err != nil {
-			fmt.Printf("⚠️ %s: could not read the attributes: %v\n", sha[:8], err)
-			os.Exit(1)
-		}
-		if reauditSpec {
-			bundles = []review.ReviewBundle{{Name: "reused_spec", Dimensions: []string{review.DimSpec}, Priority: review.PriorityRequired, Cost: 1}}
-		}
-
-		// FU-11: deterministic exposed-credential incident, independent of
-		// security_sensitive and of the scheduled bundles. It lands in
-		// result.Findings through HallazgosDeterministas, so it is
-		// reported even when the plan schedules no dimension.
-		secretFindings, secretAdvisories := secret.SecretFindingsAndAdvisories(files, diff)
-		if reauditSpec {
-			secretFindings = nil
-			secretAdvisories = nil
-		}
-
-		// The collector records which agent attended each dimension so the
-		// record stores the real author, not the requested profile (H4/T0.2).
-		authorship := &authorshipCollector{}
-		factory := func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
-			profile := config.ResolveProfile(cfg, reviewcontract.DefaultProfile(dimension), flags.profile)
-			adapter, err := agentadapter.NewAdapterWithProfile(cfg, profile)
+			files, err = git.FilesOfCommit(sha)
 			if err != nil {
-				return nil, profile.Name, err
+				fmt.Printf("⚠️ %s: could not read the files: %v\n", sha[:8], err)
+				continue
 			}
-			modelVerifier.Verify(profile.Name, profile.Model, adapter)
-			return &observedAgent{AgentReviewer: adapter, authorship: authorship}, profile.Name, nil
-		}
-		reviewTransport, metricsFinalizer := announcedReviewTransportWithMetrics(cfg, worktree, sha, files, os.Stderr)
-		options := review.AuditOptions{
-			SHA:             sha,
-			Message:         message,
-			Diff:            diff,
-			Bundles:         bundles,
-			Answers:         flags.answer,
-			ProfileOverride: flags.profile,
-			ContextProvider: reviewContextProvider(cfg, worktree),
-			ContextPaths:    files,
-			// The announcer lives at this command boundary only: each durable
-			// review run is announced on stderr (the JSON-safe channel) the
-			// moment it is admitted, with its `runs attach --follow` command,
-			// so an operator can attach while the review is still executing.
-			ReviewTransportWithEvidence: reviewTransport,
-			FinalizeMetrics:             metricsFinalizer,
-			// Standing human answers recorded against this SHA win over a
-			// fresh agent verdict for the same fingerprint (FU-6).
-			Dispositions: review.FilterDispositionsForSHA(dispositions, sha),
-			// The prober already ran inside the auditor factory above;
-			// the engine consults it here without importing it.
-			ModelVerifier: modelVerifier,
-			OnDimension: func(dim string) {
-				fmt.Fprintf(progress, "  ⏳ %s …\n", dim)
-			},
-			// FU-11: deterministic credential incidents ride along without
-			// scheduling any dimension and without touching the verdict.
-			DeterministicFindings: secretFindings,
-		}
-		result := review.AuditCommit(factory, cfg.Review.Parallel, auditOptionsWithRefuter(options, cfg, modelVerifier))
 
-		result, pending, err := applyPendingQuestions(worktree, sha, factory, cfg, modelVerifier, options, result)
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			os.Exit(1)
-		}
-		if flags.jsonOut && result.Verdict == review.VerdictQuestion {
-			printPendingQuestionsJSON(sha, pending)
-		}
-
-		model := flags.profile
-		if model == "" {
-			model = "default"
-		}
-		effective := authorship.consolidate()
-		// Coverage records how this revision's plan was chosen (piece 2): a run
-		// with no --dims derives its plan from the change and is authoritative;
-		// a run the operator narrowed with --dims is supplementary.
-		coverage := review.CoverageAuthoritative
-		if len(flags.dims) > 0 && !reauditSpec {
-			coverage = review.CoverageSupplementary
-		}
-		// RULE 1 applies to the Fixed claim too, and internal/review owns it:
-		// coverage is passed in rather than pre-applied here.
-		fixed := review.RevisionFixesPriorBlock(ledger, sha, result.Verdict, coverage)
-		revision := review.Revision{
-			At:                 time.Now(),
-			Result:             result.Verdict,
-			Fixed:              fixed,
-			Coverage:           coverage,
-			Agent:              effective.Binary,
-			Model:              effective.Model,
-			Effort:             effective.Effort,
-			Dims:               review.DimensionResultsForRecord(result.Dims),
-			AggregatedFindings: result.Findings,
-		}
-		if reauditSpec {
-			if err := ledger.SaveReusedSpecRevision(sha, revision); err != nil {
-				fmt.Printf("⚠️ %s: could not save the reused spec record: %v\n", sha[:8], err)
+			profile, err := change.ComputeCommitProfile(sha)
+			if err != nil {
+				fmt.Printf("⚠️ %s: could not derive the change profile: %v\n", sha[:8], err)
+				os.Exit(1)
 			}
-		} else if err := ledger.SaveRevision(sha, message, "", model, revision); err != nil {
-			fmt.Printf("⚠️ %s: could not save the record: %v\n", sha[:8], err)
-		}
-		if !reauditSpec {
-			if err := review.RegisterCommitBlobs(reviewStore, sha, files); err != nil {
-				fmt.Printf("⚠️ %s: could not register blobs for future review reuse: %v\n", sha[:8], err)
+			bundles, err := reviewPlan(flags.dims, profile, files, diff, func() (string, error) { return git.Attributes(sha) })
+			if err != nil {
+				fmt.Printf("⚠️ %s: could not read the attributes: %v\n", sha[:8], err)
+				os.Exit(1)
+			}
+			if reauditSpec {
+				bundles = []review.ReviewBundle{{Name: "reused_spec", Dimensions: []string{review.DimSpec}, Priority: review.PriorityRequired, Cost: 1}}
+			}
+
+			// FU-11: deterministic exposed-credential incident, independent of
+			// security_sensitive and of the scheduled bundles. It lands in
+			// result.Findings through HallazgosDeterministas, so it is
+			// reported even when the plan schedules no dimension.
+			var secretFindings []review.Finding
+			secretFindings, secretAdvisories = secret.SecretFindingsAndAdvisories(files, diff)
+			if reauditSpec {
+				secretFindings = nil
+				secretAdvisories = nil
+			}
+
+			// The collector records which agent attended each dimension so the
+			// record stores the real author, not the requested profile (H4/T0.2).
+			authorship := &authorshipCollector{}
+			factory := func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
+				profile := config.ResolveProfile(cfg, reviewcontract.DefaultProfile(dimension), flags.profile)
+				adapter, err := agentadapter.NewAdapterWithProfile(cfg, profile)
+				if err != nil {
+					return nil, profile.Name, err
+				}
+				modelVerifier.Verify(profile.Name, profile.Model, adapter)
+				return &observedAgent{AgentReviewer: adapter, authorship: authorship}, profile.Name, nil
+			}
+			reviewTransport, metricsFinalizer := announcedReviewTransportWithMetrics(cfg, worktree, sha, files, os.Stderr)
+			options := review.AuditOptions{
+				SHA:             sha,
+				Message:         message,
+				Diff:            diff,
+				Bundles:         bundles,
+				Answers:         flags.answer,
+				ProfileOverride: flags.profile,
+				ContextProvider: reviewContextProvider(cfg, worktree),
+				ContextPaths:    files,
+				// The announcer lives at this command boundary only: each durable
+				// review run is announced on stderr (the JSON-safe channel) the
+				// moment it is admitted, with its `runs attach --follow` command,
+				// so an operator can attach while the review is still executing.
+				ReviewTransportWithEvidence: reviewTransport,
+				FinalizeMetrics:             metricsFinalizer,
+				// Standing human answers recorded against this SHA win over a
+				// fresh agent verdict for the same fingerprint (FU-6).
+				Dispositions: review.FilterDispositionsForSHA(dispositions, sha),
+				// The prober already ran inside the auditor factory above;
+				// the engine consults it here without importing it.
+				ModelVerifier: modelVerifier,
+				OnDimension: func(dim string) {
+					fmt.Fprintf(progress, "  ⏳ %s …\n", dim)
+				},
+				// FU-11: deterministic credential incidents ride along without
+				// scheduling any dimension and without touching the verdict.
+				DeterministicFindings: secretFindings,
+			}
+			result = review.AuditCommit(factory, cfg.Review.Parallel, auditOptionsWithRefuter(options, cfg, modelVerifier))
+
+			result, pending, err := applyPendingQuestions(worktree, sha, factory, cfg, modelVerifier, options, result)
+			if err != nil {
+				fmt.Printf("❌ %v\n", err)
+				os.Exit(1)
+			}
+			if flags.jsonOut && result.Verdict == review.VerdictQuestion {
+				printPendingQuestionsJSON(sha, pending)
+			}
+
+			model := flags.profile
+			if model == "" {
+				model = "default"
+			}
+			effective := authorship.consolidate()
+			// Coverage records how this revision's plan was chosen (piece 2): a run
+			// with no --dims derives its plan from the change and is authoritative;
+			// a run the operator narrowed with --dims is supplementary.
+			coverage := review.CoverageAuthoritative
+			if len(flags.dims) > 0 && !reauditSpec {
+				coverage = review.CoverageSupplementary
+			}
+			// RULE 1 applies to the Fixed claim too, and internal/review owns it:
+			// coverage is passed in rather than pre-applied here.
+			fixed = review.RevisionFixesPriorBlock(ledger, sha, result.Verdict, coverage)
+			revision := review.Revision{
+				At:                 time.Now(),
+				Result:             result.Verdict,
+				Fixed:              fixed,
+				Coverage:           coverage,
+				Agent:              effective.Binary,
+				Model:              effective.Model,
+				Effort:             effective.Effort,
+				Dims:               review.DimensionResultsForRecord(result.Dims),
+				AggregatedFindings: result.Findings,
+			}
+			if reauditSpec {
+				if err := ledger.SaveReusedSpecRevision(sha, revision); err != nil {
+					fmt.Printf("⚠️ %s: could not save the reused spec record: %v\n", sha[:8], err)
+				}
+			} else if err := ledger.SaveRevision(sha, message, "", model, revision); err != nil {
+				fmt.Printf("⚠️ %s: could not save the record: %v\n", sha[:8], err)
+			}
+			if !reauditSpec {
+				if err := review.RegisterCommitBlobs(reviewStore, sha, files); err != nil {
+					fmt.Printf("⚠️ %s: could not register blobs for future review reuse: %v\n", sha[:8], err)
+				}
+			} else {
+				record, err := ledger.ReadRecord(sha)
+				if err != nil {
+					fmt.Printf("❌ %v\n", err)
+					os.Exit(1)
+				}
+				if record == nil {
+					fmt.Printf("❌ reused spec record for %s was not saved\n", sha[:8])
+					os.Exit(1)
+				}
+				latest, _, ok := review.LastAuthoritativeRevision(*record)
+				if !ok {
+					fmt.Printf("❌ reused spec record for %s has no authoritative revision\n", sha[:8])
+					os.Exit(1)
+				}
+				result = review.AuditResultFromRevision(sha, latest)
+				fixed = latest.Fixed
 			}
 		}
 
+		if reuse.Reused() {
+			fmt.Fprintf(progress, "♻️ Reused review of %s from %s\n", shortSHA(sha), shortSHA(reuse.OriginSHA))
+		}
 		fmt.Print(result.String())
 		for _, advisory := range secretAdvisories {
 			fmt.Println(advisory)
@@ -902,14 +931,14 @@ func verdictExitCode(verdict string) int {
 // Decided by the shared IsBlocking rule (FU-6), like every other blocking
 // consumer: a refuted or fixed finding no longer escalates the --gate exit.
 func hasCriticalFindings(result review.AuditResult) bool {
+	for _, finding := range result.Findings {
+		if review.IsBlocking(finding.Severity, finding.Status) {
+			return true
+		}
+	}
 	for _, rd := range result.Dims {
 		if rd.Result == nil {
 			continue
-		}
-		for _, finding := range rd.Result.Findings {
-			if review.IsBlocking(finding.Severity, finding.Status) {
-				return true
-			}
 		}
 		for _, finding := range rd.Result.Findings {
 			if review.IsBlocking(finding.Severity, finding.Status) {

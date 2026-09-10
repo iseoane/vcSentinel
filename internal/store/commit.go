@@ -58,6 +58,20 @@ func (s *Store) ReadCommitIndex(sha string) (*CommitIndex, error) {
 // must be safe also if that changes) would, with a substitution of the
 // whole map, leave its entries orphaned in blobs/<blob>.json without
 // idx.Blobs pointing to them again.
+// CommitBlobs returns a copy of a registered commit's file→blob mapping.
+// A missing or legacy commit index has no reusable mapping and returns nil.
+func (s *Store) CommitBlobs(sha string) (map[string]string, error) {
+	idx, err := s.ReadCommitIndex(sha)
+	if err != nil || idx == nil || len(idx.Blobs) == 0 {
+		return nil, err
+	}
+	blobs := make(map[string]string, len(idx.Blobs))
+	for path, blob := range idx.Blobs {
+		blobs[path] = blob
+	}
+	return blobs, nil
+}
+
 func (s *Store) RegisterCommitBlobs(sha string, blobs map[string]string) error {
 	idx, err := s.ReadCommitIndex(sha)
 	if err != nil {
