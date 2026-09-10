@@ -301,22 +301,46 @@ func TestBranchVerdictFixedDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestBranchVerdictReauditedAfterFixBlocksAgain(t *testing.T) {
-	fixedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-	record := recordHelper("531f23e", "feat(a)", "m",
-		Revision{At: fixedAt.Add(-time.Hour), Result: VerdictBlock},
-		Revision{At: fixedAt.Add(time.Hour), Result: VerdictBlock,
-			Dims: []DimensionResult{{Dim: DimLogic, Verdict: VerdictBlock,
-				Findings: []ReviewFinding{{Dimension: DimLogic, Severity: SevCritical, Description: "new blocker"}}}}},
-	)
-	record.FixedIn = "de641dc"
-	record.FixedAt = fixedAt
-	if got := VerdictDeBranch([]Record{record}); got != VerdictBlock {
-		t.Fatalf("VerdictDeBranch = %q, want block after a later re-audit", got)
+// TestBranchPredicatesAgreeWithActiveBlock covers the Item 14 defect: a
+// partial fix credited on a record whose current findings still carry live
+// CRITICALs must not retire it from the branch predicates, and the summary
+// table must not label it as fixed while the same report blocks over it.
+func TestBranchPredicatesAgreeWithActiveBlock(t *testing.T) {
+	partiallyFixed := func() Record {
+		record := recordHelper("370cb04", "feat(a)", "m",
+			revisionHelper(VerdictBlock, DimensionResult{Dim: DimLogic, Verdict: VerdictBlock,
+				Findings: []ReviewFinding{{Dimension: DimLogic, Severity: SevCritical, Description: "still unfixed"}}}))
+		record.FixedIn = "531f23e"
+		return record
 	}
-	if got := len(BranchBlockers([]Record{record})); got != 1 {
-		t.Fatalf("BranchBlockers = %d, want the later critical finding", got)
-	}
+
+	t.Run("a live critical still blocks the branch", func(t *testing.T) {
+		records := []Record{partiallyFixed()}
+		if got := VerdictDeBranch(records); got != VerdictBlock {
+			t.Errorf("VerdictDeBranch = %q, want block while a critical is live", got)
+		}
+		if got := BranchBlockers(records); len(got) != 1 {
+			t.Errorf("BranchBlockers = %d, want the live critical", len(got))
+		}
+		if got := RenderSummary(records); strings.Contains(got, "fixed in") {
+			t.Errorf("RenderSummary labels a blocking record as fixed:\n%s", got)
+		}
+	})
+
+	t.Run("a resolved record retires and renders as fixed", func(t *testing.T) {
+		record := partiallyFixed()
+		record.Revisions[0].Dims[0].Findings[0].Status = StatusFixed
+		records := []Record{record}
+		if got := VerdictDeBranch(records); got != VerdictOK {
+			t.Errorf("VerdictDeBranch = %q, want ok once no finding blocks", got)
+		}
+		if got := BranchBlockers(records); len(got) != 0 {
+			t.Errorf("BranchBlockers = %d, want none", len(got))
+		}
+		if got := RenderSummary(records); !strings.Contains(got, "fixed in `531f23e`") {
+			t.Errorf("RenderSummary omits the fix provenance:\n%s", got)
+		}
+	})
 }
 
 func TestVerificationSection(t *testing.T) {
@@ -519,7 +543,21 @@ func TestBranchBlockersFiltersCriticals(t *testing.T) {
 			want: 0,
 		},
 		{
-			name: "fixed block does not block",
+			name: "a resolved block does not block",
+			records: func() []Record {
+				resolved := critical
+				resolved.Status = StatusFixed
+				fixed := recordHelper("f1", "feat(a)", "m",
+					revisionHelper("block",
+						DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
+							Findings: []ReviewFinding{resolved}}))
+				fixed.FixedIn = "a1b2c3d"
+				return []Record{fixed}
+			}(),
+			want: 0,
+		},
+		{
+			name: "a credited fix does not retire a live critical",
 			records: func() []Record {
 				fixed := recordHelper("f1", "feat(a)", "m",
 					revisionHelper("block",
@@ -528,7 +566,7 @@ func TestBranchBlockersFiltersCriticals(t *testing.T) {
 				fixed.FixedIn = "a1b2c3d"
 				return []Record{fixed}
 			}(),
-			want: 0,
+			want: 1,
 		},
 	}
 	for _, c := range cases {
@@ -891,11 +929,12 @@ func TestRenderTemplateRisksSection(t *testing.T) {
 		t.Errorf("with risks the placeholder must not be shown: %s", outWith)
 	}
 
-	// A fixed block (FixedIn) is not a pending risk.
+	// A resolved block is not a pending risk.
 	fixed := recordHelper("f1", "feat(a)", "m",
 		revisionHelper("block",
 			DimensionResult{Dim: DimSecurity, Verdict: VerdictBlock,
-				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical, Description: "exposed data"}}},
+				Findings: []ReviewFinding{{Dimension: DimSecurity, Severity: SevCritical,
+					Description: "exposed data", Status: StatusFixed}}},
 		))
 	fixed.FixedIn = "a1b2c3d"
 	outFixed := RenderPRTemplate([]Record{fixed}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")

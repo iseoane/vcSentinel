@@ -196,30 +196,19 @@ type TemplateVerification struct {
 }
 
 // isPending decides whether a record still contributes to the branch's
-// verdict. A fixed record (FixedIn) no longer counts: its block was
-// resolved in a later commit outside it. It is the package's only
-// definition of "pending".
+// verdict. Crediting a fix (FixedIn) is provenance, not proof: a record only
+// stops counting once its CURRENT findings no longer block, so a partial fix
+// cannot retire a record that still carries live CRITICAL findings. It is the
+// package's only definition of "pending", and it agrees with
+// RecordHasActiveBlock by construction.
 func isPending(record Record) bool {
-	if record.FixedIn == "" {
-		return true
-	}
-	// Legacy records have no timestamp and retain their historical retirement
-	// semantics. New evidence after the first fix is pending again.
-	if record.FixedAt.IsZero() {
-		return false
-	}
-	for _, revision := range record.Revisions {
-		if revision.At.After(record.FixedAt) {
-			return true
-		}
-	}
-	return false
+	return record.FixedIn == "" || RecordHasActiveBlock(record)
 }
 
 // pendingRisks collects the CRITICAL and WARNING findings of each pending
 // record's CURRENT findings (RULE 2 in coverage.go), not of its raw latest
-// revision (ADVISORY ones are information, not risks). Fixed records
-// (FixedIn) contribute no pending risks.
+// revision (ADVISORY ones are information, not risks). Records whose current
+// findings no longer block contribute no pending risks.
 //
 // T6.5: reads the record's current findings through CurrentFindings
 // (coverage.go) — the single selection point BranchBlockers further down
@@ -408,7 +397,7 @@ func RenderSummary(records []Record) string {
 			sha = sha[:7]
 		}
 		fixed := "—"
-		if record.FixedIn != "" {
+		if !isPending(record) {
 			fi := record.FixedIn
 			if len(fi) > 7 {
 				fi = fi[:7]
@@ -491,16 +480,16 @@ func TruncateBody(text string, maxBytes int) string {
 }
 
 // VerdictDeBranch summarizes the branch's worst global verdict: the one of
-// the commit with the most severe revision. It ignores already-fixed
-// records (FixedIn): their original block was resolved in a later commit,
-// and the gate cannot block publication over a fixed finding. With no
-// pending records it returns VerdictOK. The PR template and the pr create
+// the commit with the most severe revision. It ignores records that no longer
+// block (see isPending): their block was resolved, and the gate cannot block
+// publication over a resolved finding. With no pending records it returns
+// VerdictOK. The PR template and the pr create
 // block gate use it.
 func VerdictDeBranch(records []Record) string {
 	worst := VerdictOK
 	for _, record := range records {
 		if !isPending(record) {
-			// Fixed: it no longer contributes to the branch verdict.
+			// Resolved: it no longer contributes to the branch verdict.
 			continue
 		}
 		last, _, ok := LastAuthoritativeRevision(record)
@@ -614,9 +603,9 @@ func validationSection(cmds []VerifiedCommand) string {
 }
 
 // BranchBlockers returns the CRITICAL findings of the latest revision of
-// each record: they are the pr create gate's blockers (guide §12.4). Fixed
-// records (FixedIn) contribute no blockers: their block was already
-// resolved in a later commit.
+// each record: they are the pr create gate's blockers (guide §12.4). Records
+// that no longer block (see isPending) contribute no blockers: their block was
+// already resolved.
 //
 // T6.5 review finding (design, the most important one): it used to read
 // only Dims, without the T6.2 supersede — a semantic finding already
