@@ -1345,3 +1345,100 @@ func TestLedgerAdoptRecordKeepsDistinctRevisionsSharingATimestamp(t *testing.T) 
 		t.Errorf("the source revision was lost: %+v", adopted.Revisions)
 	}
 }
+
+// TestLedgerAdoptRecordImportsRevisionsAppendedToTheSourceAfterAdoption locks
+// what made record provenance the wrong answer to "are the source revisions
+// already here". OriginSHA says which origin was adopted, not which of its
+// revisions arrived. Skipping the merge on a provenance match therefore kept a
+// destination on an older passing verdict after the source had been re-audited
+// into a block, while AnalyzeBranch read that stale authoritative revision and
+// skipped the audit.
+func TestLedgerAdoptRecordImportsRevisionsAppendedToTheSourceAfterAdoption(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	first := time.Now().Add(-3 * time.Hour)
+	if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", Revision{
+		At:       first,
+		Result:   VerdictOK,
+		Agent:    "first",
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("SaveRevision(sha-old): %v", err)
+	}
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("first AdoptRecordWithMessage: %v", err)
+	}
+
+	// The origin is re-audited after the adoption and now blocks.
+	reaudit := time.Now().Add(-1 * time.Hour)
+	if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", Revision{
+		At:       reaudit,
+		Result:   VerdictBlock,
+		Agent:    "reaudit",
+		Coverage: CoverageAuthoritative,
+	}); err != nil {
+		t.Fatalf("re-audit SaveRevision(sha-old): %v", err)
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("second AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	if len(adopted.Revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2: the first revision once plus the re-audit", len(adopted.Revisions))
+	}
+	current, _, ok := LastAuthoritativeRevision(*adopted)
+	if !ok {
+		t.Fatal("adopted record has no authoritative revision")
+	}
+	if current.Result != VerdictBlock || current.Agent != "reaudit" {
+		t.Errorf("current authoritative revision = %q by %q, want the origin's re-audit block", current.Result, current.Agent)
+	}
+}
+
+// TestLedgerAdoptRecordDoesNotDuplicateWhenDestinationHasOtherProvenance covers
+// the second half of the same mistake: OriginSHA was only assigned when empty,
+// so a destination carrying a different origin took the merge branch on every
+// call and re-imported the source revisions each time.
+func TestLedgerAdoptRecordDoesNotDuplicateWhenDestinationHasOtherProvenance(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	for _, origin := range []string{"sha-a", "sha-b"} {
+		if err := ledger.SaveRevision(origin, "feat: "+origin, "pr", "model", Revision{
+			At:       time.Now().Add(-3 * time.Hour),
+			Result:   VerdictOK,
+			Agent:    origin,
+			Coverage: CoverageAuthoritative,
+		}); err != nil {
+			t.Fatalf("SaveRevision(%s): %v", origin, err)
+		}
+	}
+	// The destination is first adopted from sha-a, so its provenance is sha-a.
+	if err := ledger.AdoptRecordWithMessage("sha-a", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("AdoptRecordWithMessage(sha-a): %v", err)
+	}
+	// Adopting from sha-b twice must not duplicate sha-b's revisions.
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ledger.AdoptRecordWithMessage("sha-b", "sha-new", "feat(new): rewritten"); err != nil {
+			t.Fatalf("AdoptRecordWithMessage(sha-b) attempt %d: %v", attempt, err)
+		}
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	agents := make(map[string]int, 2)
+	for _, revision := range adopted.Revisions {
+		agents[revision.Agent]++
+	}
+	if agents["sha-a"] != 1 || agents["sha-b"] != 1 {
+		t.Errorf("revision counts = %v, want each origin's revision exactly once: %+v", agents, adopted.Revisions)
+	}
+}

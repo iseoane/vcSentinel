@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -608,7 +609,6 @@ func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage boo
 			// Metadata other than the revisions follows destination-wins-else-source:
 			// what the destination already recorded about itself is more specific
 			// than what the origin recorded about a different SHA.
-			adoptedFrom := destination.OriginSHA
 			if destination.OriginSHA == "" {
 				destination.OriginSHA = from
 			}
@@ -626,16 +626,10 @@ func (l *Ledger) adoptRecord(from, to, message string, useDestinationMessage boo
 			if destination.FixedIn == "" {
 				destination.FixedIn = source.FixedIn
 			}
-			// Whether the source revisions are already here is answered by the
-			// record's own provenance, not by comparing revisions: a destination
-			// this origin was already adopted into carries them, and re-importing
-			// would duplicate them. A destination with different or absent
-			// provenance was never given this source's coverage, so it gets it —
-			// that is the case where a supplementary-only destination would
-			// otherwise stay without any authoritative verdict.
-			if adoptedFrom != from {
-				destination.Revisions = mergeRevisions(source.Revisions, destination.Revisions)
-			}
+			// Merged unconditionally: mergeRevisions drops what is already here
+			// and keeps everything else, so a repeated adoption is idempotent and
+			// a revision the origin appended since the last one still arrives.
+			destination.Revisions = mergeRevisions(source.Revisions, destination.Revisions)
 			return l.saveRecord(destination)
 		}
 		revisions := make([]Revision, len(source.Revisions))
@@ -744,13 +738,21 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 }
 
 // mergeRevisions returns both revision histories in chronological order,
-// without discarding anything. It deliberately does NOT deduplicate: Revision.At
-// is supplied by the caller (SaveRevision appends the Revision it is given and
-// nothing assigns or validates At), so two distinct revisions can share a
-// timestamp and keying identity on it would silently drop one of them —
-// the source is merged first, so the loss would fall on the destination's own
-// verdict or alarm. Whether the source revisions are already present is decided
-// by the caller from the record's recorded provenance, not guessed here.
+// dropping only entries that are structurally identical to one already kept.
+//
+// Identity is the whole revision, not any single field. Revision.At cannot
+// serve: it is supplied by the caller (SaveRevision appends the Revision it is
+// handed and nothing assigns or validates At), so two distinct revisions can
+// share a timestamp and keying on it silently discarded one of them. Record
+// provenance cannot serve either: OriginSHA says which origin was adopted, not
+// which of its revisions arrived, so it hid revisions the origin appended after
+// the first adoption. Full structural equality answers the only question that
+// matters — whether keeping one of the two loses information — and two
+// bit-identical revisions are interchangeable by construction.
+//
+// The comparison is quadratic. A commit accumulates a handful of revisions, so
+// the honest predicate is worth more here than an index keyed on a field no
+// writer guarantees.
 //
 // Ordering by At keeps LastAuthoritativeRevision's backward walk honest: it
 // finds the newest authoritative revision whichever side contributed it, and a
@@ -758,8 +760,20 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 // CurrentFindings.
 func mergeRevisions(source, destination []Revision) []Revision {
 	merged := make([]Revision, 0, len(source)+len(destination))
-	merged = append(merged, source...)
-	merged = append(merged, destination...)
+	for _, group := range [][]Revision{source, destination} {
+		for _, revision := range group {
+			duplicate := false
+			for i := range merged {
+				if reflect.DeepEqual(merged[i], revision) {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				merged = append(merged, revision)
+			}
+		}
+	}
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].At.Before(merged[j].At)
 	})
