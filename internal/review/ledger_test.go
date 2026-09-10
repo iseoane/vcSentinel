@@ -1442,3 +1442,51 @@ func TestLedgerAdoptRecordDoesNotDuplicateWhenDestinationHasOtherProvenance(t *t
 		t.Errorf("revision counts = %v, want each origin's revision exactly once: %+v", agents, adopted.Revisions)
 	}
 }
+
+// TestLedgerAdoptRecordPreservesRepeatedIdenticalRevisions locks why the merge
+// takes the maximum multiplicity rather than collapsing to a set. revisions[]
+// is append-only — re-auditing a SHA adds a revision and never overwrites one,
+// and SaveRevision appends whatever it is handed — so a history can hold the
+// same revision twice. A set-style union erased one of them, discarding an
+// audit event the contract promises to keep.
+func TestLedgerAdoptRecordPreservesRepeatedIdenticalRevisions(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	// Two structurally identical revisions in the source history: same
+	// timestamp, same verdict, appended twice.
+	repeated := Revision{
+		At:       time.Now().Add(-2 * time.Hour),
+		Result:   VerdictOK,
+		Agent:    "repeated",
+		Coverage: CoverageAuthoritative,
+	}
+	for i := 0; i < 2; i++ {
+		if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", repeated); err != nil {
+			t.Fatalf("SaveRevision(sha-old) %d: %v", i, err)
+		}
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("first AdoptRecordWithMessage: %v", err)
+	}
+	// A second adoption must not shrink the history it already carries.
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("second AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	if len(adopted.Revisions) != 2 {
+		t.Fatalf("revisions = %d, want 2: an append-only history holding the same revision twice keeps both", len(adopted.Revisions))
+	}
+	origin, err := ledger.ReadRecord("sha-old")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-old): %v", err)
+	}
+	if len(origin.Revisions) != 2 {
+		t.Errorf("origin revisions = %d, want 2: adoption must not alter the source", len(origin.Revisions))
+	}
+}

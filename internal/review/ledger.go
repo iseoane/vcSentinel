@@ -737,41 +737,68 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 	return result
 }
 
-// mergeRevisions returns both revision histories in chronological order,
-// dropping only entries that are structurally identical to one already kept.
+// mergeRevisions combines two revision histories, keeping for each distinct
+// revision the highest number of times either history holds it, ordered by At.
 //
-// Identity is the whole revision, not any single field. Revision.At cannot
-// serve: it is supplied by the caller (SaveRevision appends the Revision it is
-// handed and nothing assigns or validates At), so two distinct revisions can
-// share a timestamp and keying on it silently discarded one of them. Record
-// provenance cannot serve either: OriginSHA says which origin was adopted, not
-// which of its revisions arrived, so it hid revisions the origin appended after
-// the first adoption. Full structural equality answers the only question that
-// matters — whether keeping one of the two loses information — and two
-// bit-identical revisions are interchangeable by construction.
+// The multiplicity is the point. revisions[] is append-only: re-auditing a SHA
+// adds a revision and never overwrites one, and SaveRevision appends whatever
+// it is handed, so a history can legitimately hold the same revision twice.
+// Collapsing those to one — which a set-style union does — erases an audit
+// event the contract promises to keep. Taking the maximum instead means an
+// adoption never invents an entry and never drops one: the destination ends up
+// with at least what each side had.
 //
-// The comparison is quadratic. A commit accumulates a handful of revisions, so
-// the honest predicate is worth more here than an index keyed on a field no
+// Identity is the whole revision, because no single field can carry it. At is
+// supplied by the caller and nothing validates it, so distinct revisions can
+// share a timestamp. Record provenance describes which origin was adopted, not
+// which of its revisions arrived, so it hid revisions appended to the source
+// after an earlier adoption. Two bit-identical revisions, in contrast, are
+// interchangeable by construction.
+//
+// The comparison is quadratic over the handful of revisions a commit
+// accumulates, which buys an honest predicate instead of an index on a field no
 // writer guarantees.
+//
+// DeepEqual compares At as a time.Time struct, so its monotonic reading and
+// *Location matter: a revision from time.Now() carries both, one deserialized
+// from JSON carries neither. Its only caller reads both histories through
+// ReadRecord, so both sides are JSON-sourced and symmetric. A caller that ever
+// passes an in-memory revision would make two logically identical revisions
+// compare unequal and duplicate; the fix then is comparing At with At.Equal
+// rather than field-by-field.
 //
 // Ordering by At keeps LastAuthoritativeRevision's backward walk honest: it
 // finds the newest authoritative revision whichever side contributed it, and a
 // supplementary revision written after it still surfaces its alarms through
 // CurrentFindings.
 func mergeRevisions(source, destination []Revision) []Revision {
-	merged := make([]Revision, 0, len(source)+len(destination))
+	distinct := make([]Revision, 0, len(source)+len(destination))
+	multiplicity := make([]int, 0, len(source)+len(destination))
+	indexOf := func(revision Revision) int {
+		for i := range distinct {
+			if reflect.DeepEqual(distinct[i], revision) {
+				return i
+			}
+		}
+		distinct = append(distinct, revision)
+		multiplicity = append(multiplicity, 0)
+		return len(distinct) - 1
+	}
 	for _, group := range [][]Revision{source, destination} {
+		counts := make(map[int]int, len(group))
 		for _, revision := range group {
-			duplicate := false
-			for i := range merged {
-				if reflect.DeepEqual(merged[i], revision) {
-					duplicate = true
-					break
-				}
+			counts[indexOf(revision)]++
+		}
+		for i, count := range counts {
+			if count > multiplicity[i] {
+				multiplicity[i] = count
 			}
-			if !duplicate {
-				merged = append(merged, revision)
-			}
+		}
+	}
+	merged := make([]Revision, 0, len(source)+len(destination))
+	for i := range distinct {
+		for n := 0; n < multiplicity[i]; n++ {
+			merged = append(merged, distinct[i])
 		}
 	}
 	sort.SliceStable(merged, func(i, j int) bool {
