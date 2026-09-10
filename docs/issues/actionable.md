@@ -61,6 +61,52 @@ and is the only writer of per-commit verdicts; `gate` owns "does this work
 right now" and stops auditing entirely. Everywhere below that assigns a
 per-commit audit to `gate`, read `review`.
 
+## 15. Derive the intent from a conversation, as its own change
+
+Withdrawn from piece 1 on 2026-09-10 and parked here. It is NOT abandoned: the
+reasoning in [item 12](#12-capture-what-the-work-was-for-at-the-moment-slice-commits-it)
+for why `slice` is the right moment still holds, and provenance is still worth
+distinguishing.
+
+- Why it was withdrawn, with the count: `--intent-transcript` produced seven
+  defects over three rounds of fixes in one night — shell injection through
+  path metacharacters; `%VAR%` expansion by cmd.exe inside double quotes;
+  input redirection through the `<path>` placeholder that replaced the
+  interpolated path; a transcript symlinked to a tracked file, whose target
+  was then captured and sent in the micro-diff; a symlinked directory that
+  bypassed the exclusion; exclusion keys relative to the repository root
+  compared against `git status` paths relative to the working directory; and
+  the widening of external-diff consent to cover transcript data. Every fix
+  was correct and every one exposed the next defect. The declared path,
+  `--intent "<text>"`, produced none.
+- What they have in common, which is the design lesson: none of them are about
+  the intent. They come from accepting an operator-supplied PATH, reading it,
+  excluding it from the draft, and sending its contents to an agent. That is
+  four separate trust boundaries for an optional convenience.
+- What was removed: both flags (refused by name, not reported as unknown),
+  `internal/intent/summarize.go`, the exclusion mechanism in
+  `internal/git/draft.go` — `CaptureDraftChangesExcluding`,
+  `normalizedExcludedPaths`, `SemanticSliceOptions.ExcludedPaths` — and the
+  inventory entry for the summarizer. The exclusion mechanism had no other
+  caller and carried three of the seven defects.
+- What survives and is worth reusing when this is picked up: everything in
+  `internal/intent` except the summarizer — the trailer contract, `Normalize`,
+  `Parse`, the provenance values, the asymmetry between rejecting an
+  over-length declared intent and truncating a summarized one. The
+  `conversation` source is still declared and still meaningful; nothing
+  produces it today.
+- Where to start when it returns, and this is the part the failed attempt
+  earns: do not take a path. Read the transcript from stdin, or have the
+  caller pass the text. That removes the path resolution, the symlink cases,
+  the exclusion mechanism and the draft interaction in one move — four of the
+  seven defects cannot exist. The two that remain are the consent boundary and
+  the prompt injection framing, and both were already solved.
+- Consent: `SummarizeTranscript` should take a value that cannot be
+  constructed without checking consent, so the guarantee is enforced by the
+  compiler rather than asserted in a comment. That was the standing
+  improvement when the feature was withdrawn, and it is the right shape for
+  whatever replaces it.
+
 ## 14. A retired block hides every finding a later re-audit discovers
 
 **URGENT.** Opened 2026-09-10, observed live on `41c644d` in this repository.
@@ -760,3 +806,10 @@ unblocks item 10.
     separate declaration.
 - Cost: the configured `cheap` profile is sufficient. The task is
   summarisation, not judgement.
+
+**Status, 2026-09-10: the declared half shipped and the transcript half was
+withdrawn.** `slice plan --intent "<text>"` records the intent with
+`declared` provenance and is what unblocks item 10. Deriving the intent from a
+conversation is now [item 15](#15-derive-the-intent-from-a-conversation-as-its-own-change),
+withdrawn after seven defects in three rounds of fixes, none of which came from
+the intent itself.

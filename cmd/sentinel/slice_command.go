@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -29,39 +28,30 @@ var buildSlicePlan = git.BuildPlanForAgentWithOptions
 // path, not a replacement.
 func runSlicePlan(out io.Writer, args []string) int {
 	asJSON := false
-	declaredText, transcriptPath := "", ""
-	hasDeclared, hasTranscript := false, false
-	transcriptConsent := false
+	declaredText := ""
+	hasDeclared := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
 			asJSON = true
 		case "--intent":
-			if hasDeclared || hasTranscript || i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "--") {
-				fmt.Fprintln(out, "❌ 'slice plan' accepts exactly one of --intent or --intent-transcript with a non-empty value.")
+			if hasDeclared || i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "--") {
+				fmt.Fprintln(out, "❌ 'slice plan' accepts a single --intent with a non-empty value.")
 				return 1
 			}
 			hasDeclared = true
 			declaredText = args[i+1]
 			i++
-		case "--intent-transcript":
-			if hasDeclared || hasTranscript || i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "--") {
-				fmt.Fprintln(out, "❌ 'slice plan' accepts exactly one of --intent or --intent-transcript with a non-empty value.")
-				return 1
-			}
-			hasTranscript = true
-			transcriptPath = args[i+1]
-			i++
-		case "--transcript-consent":
-			transcriptConsent = true
+		case "--intent-transcript", "--transcript-consent":
+			// Withdrawn from piece 1 on 2026-09-10, see docs/issues/actionable.md
+			// item 15. Refused by name rather than reported as unknown, so an
+			// operator or script that used it learns what happened.
+			fmt.Fprintf(out, "❌ %s was withdrawn: deriving the intent from a transcript is not part of this command today. Use --intent \"<what the work was for>\".\n", args[i])
+			return 1
 		default:
 			fmt.Fprintf(out, "❌ Unknown option for 'slice plan': %s\n", args[i])
 			return 1
 		}
-	}
-	if transcriptConsent && !hasTranscript {
-		fmt.Fprintln(out, "❌ --transcript-consent requires --intent-transcript.")
-		return 1
 	}
 
 	declaredIntent := intent.Intent{}
@@ -79,79 +69,22 @@ func runSlicePlan(out io.Writer, args []string) int {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return 1
 	}
-	resolvedTranscriptPath, excludedTranscriptPath := resolveTranscriptPath(root, transcriptPath)
-	if hasTranscript {
-		if err := validateTranscriptPath(resolvedTranscriptPath); err != nil {
-			fmt.Fprintf(out, "❌ Could not read --intent-transcript: %v\n", err)
-			return 1
-		}
-	}
-
-	transcript := ""
 	var adapter agentadapter.AgentAdapter
-	warnings := []string{}
-	planIntent := declaredIntent
-	consented := allowsExternalAgentDiff(root)
-	// The micro-diff and transcript contain source or conversation data: both
-	// use the existing commit-profile adapter only after the repository request
-	// and local external-diff consent are present.
-	if hasTranscript && consented && !transcriptConsent {
-		fmt.Fprintf(out, "❌ The contents of %q would be sent to configured agent %q for transcript summarization.\n", transcriptPath, configuredTranscriptAgent(root))
-		fmt.Fprintln(out, "Acknowledge this repository's external-diff consent explicitly before sending the transcript.")
-		fmt.Fprintf(out, "Transcript: %s\n", transcriptPath)
-		fmt.Fprintln(out, transcriptRepeatCommand(asJSON))
-		return 1
-	}
-	if hasTranscript && consented {
-		transcript, err = readTranscript(resolvedTranscriptPath)
-		if err != nil {
-			fmt.Fprintf(out, "❌ Could not read --intent-transcript: %v\n", err)
-			return 1
-		}
-	}
-	if consented {
-		adapter, err = newAgentAdapterForMessage(root)
-		if err != nil {
-			adapter = nil
-		}
-		if hasTranscript {
-			switch {
-			case err != nil:
-				warnings = append(warnings, fmt.Sprintf("Transcript summary unavailable: commit-profile adapter is unavailable (%v); no intent was recorded.", err))
-			case adapter == nil:
-				warnings = append(warnings, "Transcript summary unavailable: commit-profile adapter is unavailable; no intent was recorded.")
-			case !hasPromptRunner(adapter):
-				warnings = append(warnings, "Transcript summary unavailable: commit-profile adapter cannot summarize transcripts; no intent was recorded.")
-			default:
-				summary, summaryErr := intent.SummarizeTranscript(adapter.(agentadapter.PromptAdapter), transcript)
-				if summaryErr != nil {
-					warnings = append(warnings, fmt.Sprintf("Transcript summary failed: %v; no intent was recorded.", summaryErr))
-				} else {
-					planIntent = summary
-					warnings = append(warnings, fmt.Sprintf("Transcript sent to %s under this repository's external-diff consent, acknowledged with --transcript-consent.", transcriptAgentName(root, adapter)))
-				}
-			}
-		}
-	} else if hasTranscript {
-		warnings = append(warnings, "Transcript was not sent: external-diff consent is required; no intent was recorded.")
-	}
-	if err != nil && !hasTranscript {
-		adapter = nil
+	// The micro-diff contains source code: it requires the versioned request
+	// and the user's local consent for this repository.
+	if allowsExternalAgentDiff(root) {
+		adapter, _ = newAgentAdapterForMessage(root)
 	}
 
 	options := git.SemanticSliceOptions{
-		Intent:       planIntent.Text,
-		IntentSource: planIntent.Source,
-	}
-	if excludedTranscriptPath != "" {
-		options.ExcludedPaths = []string{excludedTranscriptPath}
+		Intent:       declaredIntent.Text,
+		IntentSource: declaredIntent.Source,
 	}
 	plan, err := buildSlicePlan(adapter, options)
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return 1
 	}
-	plan.Warnings = warnings
 
 	if asJSON {
 		encoder := json.NewEncoder(out)
@@ -168,90 +101,6 @@ func runSlicePlan(out io.Writer, args []string) int {
 		return pendingDecisionsExitCode
 	}
 	return 0
-}
-
-func resolveTranscriptPath(root, input string) (string, string) {
-	candidate := filepath.FromSlash(input)
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(root, candidate)
-	}
-	candidate = filepath.Clean(candidate)
-	relative, err := filepath.Rel(filepath.Clean(root), candidate)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || filepath.IsAbs(relative) {
-		return candidate, ""
-	}
-	return candidate, filepath.ToSlash(relative)
-}
-
-func validateTranscriptPath(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("path is not a regular file")
-	}
-	if info.Size() > int64(intent.MaxTranscriptBytes) {
-		return fmt.Errorf("file exceeds the %d-byte limit", intent.MaxTranscriptBytes)
-	}
-	if info.Size() == 0 {
-		return fmt.Errorf("file is empty")
-	}
-	return nil
-}
-
-func readTranscript(path string) (string, error) {
-	if err := validateTranscriptPath(path); err != nil {
-		return "", err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, int64(intent.MaxTranscriptBytes)+1))
-	if err != nil {
-		return "", err
-	}
-	if len(content) > intent.MaxTranscriptBytes {
-		return "", fmt.Errorf("file exceeds the %d-byte limit", intent.MaxTranscriptBytes)
-	}
-	transcript := string(content)
-	if strings.TrimSpace(transcript) == "" {
-		return "", fmt.Errorf("file is empty")
-	}
-	return transcript, nil
-}
-
-func hasPromptRunner(adapter agentadapter.AgentAdapter) bool {
-	_, ok := adapter.(agentadapter.PromptAdapter)
-	return ok
-}
-
-func configuredTranscriptAgent(root string) string {
-	cfg := config.LoadLocalConfig(root)
-	if cfg.ActiveAgent != "" {
-		return cfg.ActiveAgent
-	}
-	return "auto"
-}
-
-func transcriptAgentName(root string, adapter agentadapter.AgentAdapter) string {
-	if reporter, ok := adapter.(agentadapter.ReportsEffectiveAgent); ok {
-		if effective, reported := reporter.EffectiveAgent(); reported && effective.Binary != "" {
-			return effective.Binary
-		}
-	}
-	return configuredTranscriptAgent(root)
-}
-
-func transcriptRepeatCommand(asJSON bool) string {
-	parts := []string{"sentinel", "slice", "plan"}
-	if asJSON {
-		parts = append(parts, "--json")
-	}
-	parts = append(parts, "--intent-transcript", "TRANSCRIPT_PATH", "--transcript-consent")
-	return strings.Join(parts, " ")
 }
 
 func allowsExternalAgentDiff(root string) bool {

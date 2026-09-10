@@ -6,6 +6,14 @@ Governing text: [`docs/design/review-flow-ownership.md`](review-flow-ownership.m
 This document is the specification. Where it disagrees with item 12, this
 document wins: item 12 left three questions open and this plan answers them.
 
+> **Withdrawn in part, 2026-09-10.** Everything below about the DECLARED
+> intent shipped and is current. The transcript half — `--intent-transcript`,
+> `--transcript-consent`, `SummarizeTranscript`, and the exclusion of the
+> transcript from the draft — was implemented, produced seven defects over
+> three rounds of fixes, and was removed. It is parked as item 15 of
+> `docs/issues/actionable.md`, which records what to do differently. Read the
+> sections on summarisation and consent below as history, not as the contract.
+
 ## 1. What this piece delivers
 
 `sentinel slice` records, on every commit it creates, one line stating what

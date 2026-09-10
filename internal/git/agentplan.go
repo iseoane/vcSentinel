@@ -135,7 +135,7 @@ func BuildPlanForAgentWithOptions(adapter CommitMessageGenerator, options Semant
 	options.Intent = normalizedIntent.Text
 	options.IntentSource = normalizedIntent.Source
 
-	changes, err := CaptureDraftChangesExcluding(options.ExcludedPaths)
+	changes, err := CaptureDraftChanges()
 	if err != nil {
 		return nil, err
 	}

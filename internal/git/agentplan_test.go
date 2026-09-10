@@ -129,48 +129,6 @@ func TestBuildPlanForAgentGeneratesMessagesWithStableFallback(t *testing.T) {
 	}
 }
 
-func TestBuildPlanForAgentExcludesTranscriptFromChangesBatchesAndMicroDiff(t *testing.T) {
-	prepareTempRepo(t)
-	commitInRepo(t, "base.txt", "base\n")
-	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("transcript.txt", []byte("human conversation\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	adapter := &adapterPlanFake{message: "feat(slice): app"}
-	plan, err := BuildPlanForAgentWithOptions(adapter, SemanticSliceOptions{
-		ExcludedPaths: []string{"transcript.txt"},
-	})
-	if err != nil {
-		t.Fatalf("BuildPlanForAgentWithOptions() error = %v", err)
-	}
-	for _, change := range plan.Changes {
-		if change.Path == "transcript.txt" || change.OldPath == "transcript.txt" {
-			t.Fatalf("transcript remained in plan changes: %+v", plan.Changes)
-		}
-	}
-	for _, path := range PlanPaths(plan) {
-		if path == "transcript.txt" {
-			t.Fatalf("transcript remained in plan paths: %v", PlanPaths(plan))
-		}
-	}
-	if strings.Contains(adapter.diff, "transcript.txt") || strings.Contains(adapter.diff, "human conversation") {
-		t.Fatalf("transcript reached the adapter micro-diff: %q", adapter.diff)
-	}
-
-	changes, err := CaptureDraftChangesExcluding([]string{"transcript.txt"})
-	if err != nil {
-		t.Fatalf("CaptureDraftChangesExcluding() error = %v", err)
-	}
-	for _, change := range changes {
-		if change.Path == "transcript.txt" || change.OldPath == "transcript.txt" {
-			t.Fatalf("transcript remained in direct capture: %+v", changes)
-		}
-	}
-}
-
 func TestBuildPlanForAgentSerializesFinalSanitizedMessages(t *testing.T) {
 	prepareTempRepo(t)
 	commitInRepo(t, "base.txt", "base\n")

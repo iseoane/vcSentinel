@@ -34,7 +34,6 @@ type SemanticSliceOptions struct {
 	Consent          bool
 	Intent           string
 	IntentSource     intent.Source
-	ExcludedPaths    []string
 	ConfirmOversized func(SemanticOversizedUnit) (bool, error)
 }
 

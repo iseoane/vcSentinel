@@ -14,7 +14,6 @@ const (
 	IntentKey          = "Sentinel-Intent"
 	SourceKey          = "Sentinel-Intent-Source"
 	MaxLength          = 300
-	MaxTranscriptBytes = 64 * 1024
 	SourceDeclared     = "declared"
 	SourceConversation = "conversation"
 )

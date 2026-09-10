@@ -232,8 +232,6 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Shared read-only review snapshot discipline (git ls-tree/show plumbing) relocated in ticket 16 slice 3 so both adapter families run the exact same committed-content materialization; never invokes a provider agent. Now context-bound so a caller cancellation aborts materialization instead of letting it run to completion."},
 
 		// --- advisory/narrative helpers --------------------------------------
-		{Path: "internal/intent/summarize.go", Symbol: "SummarizeTranscript", Anchor: "response, err := runner.RunPrompt(BuildTranscriptPrompt(transcript))", Marker: "RunPrompt(",
-			Class: ClassHelper, Reason: "Transcript summary produces optional commit-intent text for slice plan; external-diff consent gates transcript transmission, and failure degrades to no intent. It cannot influence a review verdict or gate."},
 		{Path: "internal/modelprobe/verifier.go", Symbol: "Verifier.Verify", Anchor: "actual, err := agent.RunPrompt(promptModel)", Marker: "RunPrompt(",
 			Class: ClassHelper, Reason: "One-shot model identity probe; records a mismatch in the profile store and explicitly never affects the caller's review request."},
 		{Path: "internal/ops/verify.go", Symbol: "verifyInternal delegated mode", Anchor: "output, err := opts.Agent.RunPrompt(verificationPrompt())", Marker: "RunPrompt(",
