@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
@@ -99,7 +98,8 @@ func runSlicePlan(out io.Writer, args []string) int {
 	if hasTranscript && consented && !transcriptConsent {
 		fmt.Fprintf(out, "❌ The contents of %q would be sent to configured agent %q for transcript summarization.\n", transcriptPath, configuredTranscriptAgent(root))
 		fmt.Fprintln(out, "Acknowledge this repository's external-diff consent explicitly before sending the transcript.")
-		fmt.Fprintln(out, transcriptRepeatCommand(asJSON, transcriptPath))
+		fmt.Fprintf(out, "Transcript: %s\n", transcriptPath)
+		fmt.Fprintln(out, transcriptRepeatCommand(asJSON))
 		return 1
 	}
 	if hasTranscript && consented {
@@ -245,43 +245,13 @@ func transcriptAgentName(root string, adapter agentadapter.AgentAdapter) string 
 	return configuredTranscriptAgent(root)
 }
 
-func transcriptRepeatCommand(asJSON bool, path string) string {
+func transcriptRepeatCommand(asJSON bool) string {
 	parts := []string{"sentinel", "slice", "plan"}
 	if asJSON {
 		parts = append(parts, "--json")
 	}
-	parts = append(parts, "--intent-transcript", quoteCommandArgument(path), "--transcript-consent")
+	parts = append(parts, "--intent-transcript", "<path>", "--transcript-consent")
 	return strings.Join(parts, " ")
-}
-
-func quoteCommandArgument(value string) string {
-	if runtime.GOOS == "windows" {
-		return quoteWindowsCommandArgument(value)
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
-func quoteWindowsCommandArgument(value string) string {
-	var quoted strings.Builder
-	quoted.WriteByte('"')
-	backslashes := 0
-	for _, char := range value {
-		switch char {
-		case '\\':
-			backslashes++
-		case '"':
-			quoted.WriteString(strings.Repeat(`\`, 2*backslashes+1))
-			quoted.WriteByte('"')
-			backslashes = 0
-		default:
-			quoted.WriteString(strings.Repeat(`\`, backslashes))
-			quoted.WriteRune(char)
-			backslashes = 0
-		}
-	}
-	quoted.WriteString(strings.Repeat(`\`, 2*backslashes))
-	quoted.WriteByte('"')
-	return quoted.String()
 }
 
 func allowsExternalAgentDiff(root string) bool {
