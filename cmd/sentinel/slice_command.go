@@ -250,7 +250,7 @@ func transcriptRepeatCommand(asJSON bool) string {
 	if asJSON {
 		parts = append(parts, "--json")
 	}
-	parts = append(parts, "--intent-transcript", "<path>", "--transcript-consent")
+	parts = append(parts, "--intent-transcript", "TRANSCRIPT_PATH", "--transcript-consent")
 	return strings.Join(parts, " ")
 }
 

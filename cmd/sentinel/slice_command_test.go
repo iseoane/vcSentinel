@@ -394,7 +394,7 @@ func TestRunSlicePlanTranscriptConsentMatrix(t *testing.T) {
 				t.Fatalf("summarizer calls = %d, want %d", fake.promptCalls, tc.wantPromptCall)
 			}
 			if tc.grantExternal && !tc.acknowledge {
-				wantCommand := "sentinel slice plan --json --intent-transcript <path> --transcript-consent"
+				wantCommand := "sentinel slice plan --json --intent-transcript TRANSCRIPT_PATH --transcript-consent"
 				if !strings.HasSuffix(strings.TrimSpace(out.String()), wantCommand) {
 					t.Fatalf("missing exact repeat command in output: %s", out.String())
 				}
@@ -774,7 +774,10 @@ func TestTranscriptRepeatCommandDoesNotInterpolatePath(t *testing.T) {
 	if strings.Contains(command, path) {
 		t.Fatalf("retry command interpolates transcript path: %q", command)
 	}
-	if want := "sentinel slice plan --json --intent-transcript <path> --transcript-consent"; command != want {
+	if want := "sentinel slice plan --json --intent-transcript TRANSCRIPT_PATH --transcript-consent"; command != want {
 		t.Fatalf("retry command = %q, want %q", command, want)
+	}
+	if strings.ContainsAny(command, "<>|&;$`\"'") {
+		t.Fatalf("retry command contains shell syntax: %q", command)
 	}
 }
