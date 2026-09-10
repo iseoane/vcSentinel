@@ -1490,3 +1490,52 @@ func TestLedgerAdoptRecordPreservesRepeatedIdenticalRevisions(t *testing.T) {
 		t.Errorf("origin revisions = %d, want 2: adoption must not alter the source", len(origin.Revisions))
 	}
 }
+
+// TestLedgerAdoptRecordPreservesAppendOrderWhenRevisionsShareATimestamp locks
+// why the merge emits the source verbatim instead of expanding grouped copies.
+// Grouping placed every copy of a distinct revision at its first-seen position,
+// so a source history of [A, B, A] whose revisions carry the same timestamp
+// came back as [A, A, B]. The stable sort cannot separate them, so the newest
+// authoritative revision — what the verdict is read from — became B rather than
+// the later A.
+func TestLedgerAdoptRecordPreservesAppendOrderWhenRevisionsShareATimestamp(t *testing.T) {
+	dir := t.TempDir()
+	ledger := NewLedger(dir)
+
+	shared := time.Now().Add(-time.Hour)
+	first := Revision{At: shared, Result: VerdictOK, Agent: "A", Coverage: CoverageAuthoritative}
+	middle := Revision{At: shared, Result: VerdictBlock, Agent: "B", Coverage: CoverageAuthoritative}
+	// Appended in this order: A, B, then A again. The last audit is A, so the
+	// current authoritative verdict must be A's.
+	for _, revision := range []Revision{first, middle, first} {
+		if err := ledger.SaveRevision("sha-old", "feat(old): audited", "pr", "model", revision); err != nil {
+			t.Fatalf("SaveRevision(sha-old): %v", err)
+		}
+	}
+	if err := ledger.SaveRevision("sha-new", "feat(new): rewritten", "", "model", first); err != nil {
+		t.Fatalf("SaveRevision(sha-new): %v", err)
+	}
+
+	if err := ledger.AdoptRecordWithMessage("sha-old", "sha-new", "feat(new): rewritten"); err != nil {
+		t.Fatalf("AdoptRecordWithMessage: %v", err)
+	}
+
+	adopted, err := ledger.ReadRecord("sha-new")
+	if err != nil {
+		t.Fatalf("ReadRecord(sha-new): %v", err)
+	}
+	agents := make([]string, 0, len(adopted.Revisions))
+	for _, revision := range adopted.Revisions {
+		agents = append(agents, revision.Agent)
+	}
+	if len(agents) != 3 || agents[0] != "A" || agents[1] != "B" || agents[2] != "A" {
+		t.Fatalf("revision order = %v, want [A B A]: the source's append order must survive", agents)
+	}
+	current, _, ok := LastAuthoritativeRevision(*adopted)
+	if !ok {
+		t.Fatal("adopted record has no authoritative revision")
+	}
+	if current.Agent != "A" || current.Result != VerdictOK {
+		t.Errorf("current authoritative revision = %q by %q, want A's ok: the last append wins", current.Result, current.Agent)
+	}
+}

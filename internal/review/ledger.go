@@ -755,6 +755,13 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 // after an earlier adoption. Two bit-identical revisions, in contrast, are
 // interchangeable by construction.
 //
+// Append order is preserved rather than reconstructed. Grouping the copies of
+// each distinct revision together placed them all at their first-seen position,
+// so a history like [A, B, A] whose revisions share a timestamp came back as
+// [A, A, B] and the newest verdict became B instead of the later A. The source
+// history is therefore emitted verbatim and only the destination's excess
+// occurrences are appended.
+//
 // The comparison is quadratic over the handful of revisions a commit
 // accumulates, which buys an honest predicate instead of an index on a field no
 // writer guarantees.
@@ -772,33 +779,27 @@ func AuditResultFromRevision(sha string, revision Revision) AuditResult {
 // supplementary revision written after it still surfaces its alarms through
 // CurrentFindings.
 func mergeRevisions(source, destination []Revision) []Revision {
-	distinct := make([]Revision, 0, len(source)+len(destination))
-	multiplicity := make([]int, 0, len(source)+len(destination))
-	indexOf := func(revision Revision) int {
-		for i := range distinct {
-			if reflect.DeepEqual(distinct[i], revision) {
-				return i
-			}
-		}
-		distinct = append(distinct, revision)
-		multiplicity = append(multiplicity, 0)
-		return len(distinct) - 1
-	}
-	for _, group := range [][]Revision{source, destination} {
-		counts := make(map[int]int, len(group))
-		for _, revision := range group {
-			counts[indexOf(revision)]++
-		}
-		for i, count := range counts {
-			if count > multiplicity[i] {
-				multiplicity[i] = count
-			}
-		}
-	}
+	// The source history is kept verbatim, so its append order survives. Only
+	// the occurrences the destination holds BEYOND what the source already
+	// contributed are added: that yields the higher multiplicity of the two
+	// without expanding grouped copies, which reordered a history whose
+	// revisions share a timestamp.
 	merged := make([]Revision, 0, len(source)+len(destination))
-	for i := range distinct {
-		for n := 0; n < multiplicity[i]; n++ {
-			merged = append(merged, distinct[i])
+	merged = append(merged, source...)
+	occurrences := func(history []Revision, upTo int, revision Revision) int {
+		count := 0
+		for i := 0; i < upTo; i++ {
+			if reflect.DeepEqual(history[i], revision) {
+				count++
+			}
+		}
+		return count
+	}
+	for i, revision := range destination {
+		inSource := occurrences(source, len(source), revision)
+		inDestination := occurrences(destination, i+1, revision)
+		if inDestination > inSource {
+			merged = append(merged, revision)
 		}
 	}
 	sort.SliceStable(merged, func(i, j int) bool {
