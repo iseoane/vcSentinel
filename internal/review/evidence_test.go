@@ -153,3 +153,24 @@ func runEvidenceGit(t *testing.T, worktree string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, output)
 	}
 }
+
+// The endpoint check alone was not enough: MkdirAll follows a symlinked
+// ancestor, and afterwards the endpoint is a real directory at the attacker's
+// target. The confinement has to hold at every component of the path.
+func TestWriteEvidenceRefusesASymlinkedAncestor(t *testing.T) {
+	worktree := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(worktree, ".vas_sentinel")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := WriteEvidence(worktree, "feature/x", []EvidenceLog{{Step: "review", Content: "hijacked\n"}}); err == nil {
+		t.Fatal("WriteEvidence() wrote through a symlinked ancestor instead of refusing")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("the directory outside the worktree received %d entries", len(entries))
+	}
+}

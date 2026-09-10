@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -30,10 +31,26 @@ func evidenceDirName(branch string) string {
 // WriteEvidence writes stable, repository-relative evidence logs. It never
 // adds timestamps or run-local metadata: a commit-then-re-review loop must
 // converge when the reviewed evidence did not change.
+//
+// Every path operation goes through os.Root, which confines it to the
+// worktree. That is the whole defence and it has to be, because the evidence
+// directory lives inside the tree under review: a repository can ship a
+// symlink at `.vas_sentinel`, at `.vas_sentinel/evidence`, or at the log file
+// itself. Checking only the endpoints with Lstat does not help — MkdirAll
+// follows a symlinked ancestor first, and by the time the endpoint is
+// inspected it is a real directory at the attacker's target. os.Root refuses
+// traversal that escapes the root at every component, and resolves each one
+// under the same handle, so there is also no window between the check and the
+// write.
 func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error) {
+	root, err := os.OpenRoot(worktree)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
 	dir := evidenceDirName(branch)
-	relativeRoot := filepath.Join(".vas_sentinel", "evidence", dir)
-	root := filepath.Join(worktree, relativeRoot)
+	relativeRoot := path.Join(".vas_sentinel", "evidence", dir)
 	paths := make([]string, 0, len(logs))
 	seen := make(map[string]struct{}, len(logs))
 	for _, log := range logs {
@@ -45,34 +62,28 @@ func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error
 			return nil, fmt.Errorf("duplicate evidence step %q", log.Step)
 		}
 		seen[step] = struct{}{}
-		if err := os.MkdirAll(root, 0755); err != nil {
+		if err := root.MkdirAll(relativeRoot, 0755); err != nil {
 			return nil, err
 		}
-		if err := refuseSymlink(root); err != nil {
+		relativePath := path.Join(relativeRoot, step+".log")
+		if err := refuseSymlink(root, relativePath); err != nil {
 			return nil, err
 		}
-		path := filepath.Join(root, step+".log")
-		if err := refuseSymlink(path); err != nil {
+		if err := writeEvidenceFile(root, relativePath, log.Content); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(path, []byte(log.Content), 0644); err != nil {
-			return nil, err
-		}
-		paths = append(paths, filepath.ToSlash(filepath.Join(relativeRoot, step+".log")))
+		paths = append(paths, relativePath)
 	}
 	return paths, nil
 }
 
-// refuseSymlink rejects a destination that is a symbolic link, instead of
-// following it. The evidence directory lives inside the reviewed worktree, so
-// its contents are attacker-controlled in the only threat model that matters
-// here: a repository can ship a symlink at the evidence directory or at
-// <step>.log and make the review process create or truncate a file anywhere
-// the reviewing user can write. Lstat does not follow the link, so this sees
-// the link itself. A path that does not exist yet is fine — that is the
-// ordinary case.
-func refuseSymlink(path string) error {
-	info, err := os.Lstat(path)
+// refuseSymlink rejects a log path that already exists as a symbolic link.
+// os.Root already stops a link that escapes the worktree; this stops one that
+// stays inside it, which would otherwise let the reviewed tree choose which of
+// its own files the review truncates. A path that does not exist yet is the
+// ordinary case and is fine.
+func refuseSymlink(root *os.Root, relativePath string) error {
+	info, err := root.Lstat(relativePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -80,9 +91,21 @@ func refuseSymlink(path string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to write evidence through the symbolic link %s", path)
+		return fmt.Errorf("refusing to write evidence through the symbolic link %s", relativePath)
 	}
 	return nil
+}
+
+func writeEvidenceFile(root *os.Root, relativePath, content string) error {
+	file, err := root.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(content); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // EvidenceAtHEAD reports whether path is present at HEAD and its working-tree
