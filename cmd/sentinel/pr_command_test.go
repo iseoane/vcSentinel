@@ -270,7 +270,7 @@ func TestSemanticAdvisoryNoBlockNoAdvisory(t *testing.T) {
 		createRecordFixture("abc1234", review.VerdictOK,
 			review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK}),
 	}
-	warn, blockers := semanticAdvisory(records)
+	warn, blockers := semanticAdvisory(records, nil)
 	if warn {
 		t.Fatal("without block there is nothing to warn about")
 	}
@@ -292,7 +292,7 @@ func TestSemanticAdvisoryWithBlockWarnsAndListsCriticals(t *testing.T) {
 				Findings: []review.ReviewFinding{criticalFinding()},
 			}),
 	}
-	warn, blockers := semanticAdvisory(records)
+	warn, blockers := semanticAdvisory(records, nil)
 	if !warn {
 		t.Fatal("block must trigger the highlighted warning")
 	}
@@ -308,7 +308,7 @@ func TestSemanticAdvisoryWithBlockWarnsAndListsCriticals(t *testing.T) {
 // FU-6: the static revision verdict can remain block after a human answer,
 // but the advisory warning must follow the effective blockers rather than
 // printing an empty critical warning.
-func TestSemanticAdvisoryWithDispositionsSkipsFullyRefutedBlock(t *testing.T) {
+func TestSemanticAdvisorySkipsFullyRefutedBlock(t *testing.T) {
 	records := []review.Record{{
 		SHA: "abc1234",
 		Revisions: []review.Revision{{
@@ -325,7 +325,7 @@ func TestSemanticAdvisoryWithDispositionsSkipsFullyRefutedBlock(t *testing.T) {
 		SHA: "abc1234", Fingerprint: "fp-critical", Status: review.StatusRefuted,
 	}}
 
-	warn, blockers := semanticAdvisoryWithDispositions(records, dispositions)
+	warn, blockers := semanticAdvisory(records, dispositions)
 	if warn || len(blockers) != 0 {
 		t.Fatalf("effective refutation = warn %t, blockers %+v; want no advisory", warn, blockers)
 	}

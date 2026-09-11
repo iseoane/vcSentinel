@@ -696,7 +696,7 @@ func TestRunRefutationResolvesSupplementaryAlarm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blockers := review.BranchBlockersWithDispositions([]review.Record{*record}, dispositions); len(blockers) != 0 {
+	if blockers := review.BranchBlockers([]review.Record{*record}, dispositions); len(blockers) != 0 {
 		t.Fatalf("blockers after the refutation = %+v, want none (a disposed alarm does not block)", blockers)
 	}
 }

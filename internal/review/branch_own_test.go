@@ -141,7 +141,7 @@ func TestStackedBranchInheritedFindingDoesNotBlock(t *testing.T) {
 			t.Errorf("wrong inherited finding: %+v", h)
 		}
 	}
-	if blockers := BranchBlockers(res.Records); len(blockers) != 0 {
+	if blockers := BranchBlockers(res.Records, nil); len(blockers) != 0 {
 		t.Errorf("B is blocking with %d own critical findings: A's finding is inherited", len(blockers))
 	}
 	if len(res.Records) != 1 || res.Records[0].SHA != stack.shaB {
@@ -214,7 +214,7 @@ func TestStackedBranchOwnFindingBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AnalyzeBranch failed: %v", err)
 	}
-	if blockers := BranchBlockers(res.Records); len(blockers) == 0 {
+	if blockers := BranchBlockers(res.Records, nil); len(blockers) == 0 {
 		t.Fatal("0 blockers: an own finding must block")
 	}
 	if len(res.Inherited) != 0 {

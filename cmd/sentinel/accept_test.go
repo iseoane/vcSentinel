@@ -276,7 +276,7 @@ func TestRunAcceptanceAcceptsSupplementaryAlarm(t *testing.T) {
 	if err != nil || record == nil {
 		t.Fatalf("read record: %+v / %v", record, err)
 	}
-	if blockers := review.BranchBlockersWithDispositions([]review.Record{*record}, records); len(blockers) != 1 {
+	if blockers := review.BranchBlockers([]review.Record{*record}, records); len(blockers) != 1 {
 		t.Fatalf("blockers after acceptance = %+v, want the alarm to keep blocking", blockers)
 	}
 }

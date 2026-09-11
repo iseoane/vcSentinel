@@ -319,7 +319,7 @@ func TestBranchPredicatesAgreeWithActiveBlock(t *testing.T) {
 		if got := VerdictDeBranch(records, nil); got != VerdictBlock {
 			t.Errorf("VerdictDeBranch = %q, want block while a critical is live", got)
 		}
-		if got := BranchBlockers(records); len(got) != 1 {
+		if got := BranchBlockers(records, nil); len(got) != 1 {
 			t.Errorf("BranchBlockers = %d, want the live critical", len(got))
 		}
 		if got := RenderSummary(records, nil); strings.Contains(got, "credited") {
@@ -334,7 +334,7 @@ func TestBranchPredicatesAgreeWithActiveBlock(t *testing.T) {
 		if got := VerdictDeBranch(records, nil); got != VerdictOK {
 			t.Errorf("VerdictDeBranch = %q, want ok once no finding blocks", got)
 		}
-		if got := BranchBlockers(records); len(got) != 0 {
+		if got := BranchBlockers(records, nil); len(got) != 0 {
 			t.Errorf("BranchBlockers = %d, want none", len(got))
 		}
 		if got := RenderSummary(records, nil); !strings.Contains(got, "fix credited to `531f23e`") {
@@ -363,8 +363,8 @@ func TestBranchPredicatesAgreeWithActiveBlock(t *testing.T) {
 		if got := VerdictDeBranch(records, dispositions); got != VerdictOK {
 			t.Errorf("VerdictDeBranch = %q, want ok with the critical refuted", got)
 		}
-		if got := BranchBlockersWithDispositions(records, dispositions); len(got) != 0 {
-			t.Errorf("BranchBlockersWithDispositions = %d, want none", len(got))
+		if got := BranchBlockers(records, dispositions); len(got) != 0 {
+			t.Errorf("BranchBlockers = %d, want none", len(got))
 		}
 		out := RenderSummary(records, dispositions)
 		if !strings.Contains(out, "fix credited to `531f23e`") {
@@ -493,7 +493,7 @@ func TestRenderPRTemplateSeparatesValidationAndVerification(t *testing.T) {
 		Comandos:   []VerifiedCommand{{Comando: "go test ./... (post-hoc)", Exit: 0}},
 		Validation: []VerifiedCommand{{Comando: "go build ./... (validacion previa)", Exit: 1}},
 	}
-	out := RenderPRTemplate(records, nil, verification, "0.2.0")
+	out := RenderPRTemplate(records, nil, verification, "0.2.0", nil)
 	if !strings.Contains(out, "## Validation") {
 		t.Fatalf("missing the pre-validation section: %s", out)
 	}
@@ -523,7 +523,7 @@ func TestRenderPRTemplate(t *testing.T) {
 		},
 	}
 
-	out := RenderPRTemplate(records, overview, verification, "0.2.0")
+	out := RenderPRTemplate(records, overview, verification, "0.2.0", nil)
 	if !strings.Contains(out, "Audit verdict") {
 		t.Errorf("missing the risk line: %s", out)
 	}
@@ -551,7 +551,7 @@ func TestRenderTemplateNoOverviewHonest(t *testing.T) {
 	records := []Record{
 		recordHelper("u1", "feat(a)", "m", revisionHelper("ok")),
 	}
-	out := RenderPRTemplate(records, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	out := RenderPRTemplate(records, nil, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
 	if !strings.Contains(out, "No overview") {
 		t.Errorf("with no overview it must be said, not silently omitted: %s", out)
 	}
@@ -644,7 +644,7 @@ func TestBranchBlockersFiltersCriticals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := BranchBlockers(c.records)
+			got := BranchBlockers(c.records, nil)
 			if len(got) != c.want {
 				t.Errorf("BranchBlockers() = %d findings, expected %d: %+v",
 					len(got), c.want, got)
@@ -678,7 +678,7 @@ func TestBranchBlockersMapsAggregatedFindingsFields(t *testing.T) {
 		},
 	})
 
-	got := BranchBlockers([]Record{record})
+	got := BranchBlockers([]Record{record}, nil)
 	if len(got) != 1 {
 		t.Fatalf("BranchBlockers() = %d findings, expected 1: %+v", len(got), got)
 	}
@@ -720,7 +720,7 @@ func TestRisksRenderMergedFindingWithSourceAndEvidence(t *testing.T) {
 		},
 	})
 
-	out := RenderPRTemplate([]Record{record}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	out := RenderPRTemplate([]Record{record}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
 
 	if !strings.Contains(out, "review") {
 		t.Errorf("merged finding must show its distinguished Source (review): %s", out)
@@ -814,7 +814,7 @@ func TestRisksFilterAdvisoryFromAggregatedFindings(t *testing.T) {
 
 // FU-6: PR risk rendering uses the same effective disposition projection as
 // branch blocking, so a human-refuted CRITICAL cannot remain in the template.
-func TestRenderBranchPRTemplateWithDispositionsHidesRefutedCritical(t *testing.T) {
+func TestRenderBranchPRTemplateHidesRefutedCritical(t *testing.T) {
 	record := recordHelper("abc12345", "fix(auth): explain false positive", "m", Revision{
 		At:     time.Now().UTC(),
 		Result: VerdictBlock,
@@ -829,7 +829,7 @@ func TestRenderBranchPRTemplateWithDispositionsHidesRefutedCritical(t *testing.T
 		SHA: "abc12345", Fingerprint: "fp-critical", Status: StatusRefuted,
 	}}
 
-	body := RenderBranchPRTemplateWithDispositions(res, TemplateVerification{Mode: "omitido"}, "0.2.0", dispositions)
+	body := RenderBranchPRTemplate(res, TemplateVerification{Mode: "omitido"}, "0.2.0", dispositions)
 	if strings.Contains(body, "refuted critical") {
 		t.Fatalf("PR template still renders the refuted critical:\n%s", body)
 	}
@@ -845,7 +845,7 @@ func TestRenderBranchPRTemplateReportsUnauditedCommits(t *testing.T) {
 		Unaudited: []UnauditedCommit{{SHA: "cafe1234cafe1234cafe1234cafe1234cafe1234", Subject: "feat(x): x"}},
 		Net:       &NetReview{Audit: AuditResult{Verdict: VerdictOK}},
 	}
-	body := RenderBranchPRTemplateWithDispositions(res, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
+	body := RenderBranchPRTemplate(res, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
 	for _, want := range []string{"no review record", "cafe123", "feat(x): x", "sentinel review cafe1234cafe1234cafe1234cafe1234cafe1234"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("PR body missing %q:\n%s", want, body)
@@ -970,7 +970,7 @@ func TestSanitizeEvidenceCollapsesNewlinesAndEscapesBackticks(t *testing.T) {
 // are pending CRITICAL/WARNING findings (ADVISORY ones are not listed).
 func TestRenderTemplateRisksSection(t *testing.T) {
 	recordsWithoutRisks := []Record{recordHelper("u1", "feat(a)", "m", revisionHelper("ok"))}
-	outEmpty := RenderPRTemplate(recordsWithoutRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	outEmpty := RenderPRTemplate(recordsWithoutRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
 	if !strings.Contains(outEmpty, "## Risks") {
 		t.Fatalf("missing the Risks section: %s", outEmpty)
 	}
@@ -988,7 +988,7 @@ func TestRenderTemplateRisksSection(t *testing.T) {
 						Severity: SevAdvisory, Description: "broad scope"},
 				}},
 		))}
-	outWith := RenderPRTemplate(recordsWithRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	outWith := RenderPRTemplate(recordsWithRisks, nil, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
 	if !strings.Contains(outWith, "exposed data") {
 		t.Errorf("the CRITICAL must be listed under Risks: %s", outWith)
 	}
@@ -1010,7 +1010,7 @@ func TestRenderTemplateRisksSection(t *testing.T) {
 					Description: "exposed data", Status: StatusRefuted}}},
 		))
 	fixed.FixedIn = "a1b2c3d"
-	outFixed := RenderPRTemplate([]Record{fixed}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0")
+	outFixed := RenderPRTemplate([]Record{fixed}, nil, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
 	if strings.Contains(outFixed, "exposed data") {
 		t.Errorf("the findings of a corrected record are not pending risks: %s", outFixed)
 	}
