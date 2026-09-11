@@ -14,6 +14,8 @@ import (
 // for every commit audited with it.
 const auditOutputCritical = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"block\",\"findings\":[{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":1,\"severity\":\"CRITICAL\",\"description\":\"injected defect\",\"evidence\":\"defect\",\"confidence\":\"high\"}]}\nEND_REVIEW\n"
 
+const auditOutputInheritedFindings = "BEGIN_REVIEW\n{\"dim\":\"logic\",\"verdict\":\"block\",\"findings\":[{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":1,\"severity\":\"CRITICAL\",\"description\":\"answered defect\",\"evidence\":\"answered\",\"confidence\":\"high\"},{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":2,\"severity\":\"CRITICAL\",\"description\":\"live defect\",\"evidence\":\"live\",\"confidence\":\"high\"},{\"dimension\":\"logic\",\"file\":\"x.go\",\"line\":3,\"severity\":\"WARNING\",\"description\":\"context warning\",\"evidence\":\"warning\",\"confidence\":\"high\"}]}\nEND_REVIEW\n"
+
 // stackRepo is a temporary repository holding the stack main -> feature-a ->
 // feature-b (current branch: feature-b), plus the SHAs needed by assertions.
 type stackRepo struct {
@@ -144,6 +146,57 @@ func TestStackedBranchInheritedFindingDoesNotBlock(t *testing.T) {
 	}
 	if len(res.Records) != 1 || res.Records[0].SHA != stack.shaB {
 		t.Errorf("Records = %v, expected only B's own record", recordSHAs(res.Records))
+	}
+}
+
+func TestStackedBranchInheritedFindingsExcludeRefutedFindings(t *testing.T) {
+	stack := prepareStackRepo(t)
+	ledger := NewLedger(stack.gitDir)
+	swapParentResolver(t, fixedResolver("feature-a"))
+
+	runGit(t, "checkout", "feature-a")
+	if _, err := AnalyzeBranch(ledger, BranchOptions{
+		Factory:  stubFactory(&auditorStub{auditOutput: auditOutputInheritedFindings}),
+		Parallel: 1,
+	}); err != nil {
+		t.Fatalf("audit of A failed: %v", err)
+	}
+	record, err := ledger.ReadRecord(stack.shaA)
+	if err != nil {
+		t.Fatalf("ReadRecord(A) failed: %v", err)
+	}
+	findings := CurrentFindings(*record)
+	if len(findings) != 15 {
+		t.Fatalf("CurrentFindings(A) = %d, want 15", len(findings))
+	}
+	dispositions := make([]FindingDisposition, 0, len(findings)/2)
+	for _, finding := range findings {
+		if finding.Description != "answered defect" {
+			continue
+		}
+		dispositions = append(dispositions, FindingDisposition{
+			SHA: stack.shaA, Fingerprint: EffectiveFingerprint(finding), Status: StatusRefuted,
+			TargetSeverity: finding.Severity,
+		})
+	}
+	runGit(t, "checkout", "feature-b")
+
+	res, err := AnalyzeBranch(ledger, BranchOptions{
+		Factory:      stubFactory(&auditorStub{auditOutput: auditOutputOK}),
+		Parallel:     1,
+		OwnDiff:      &OwnDiffOptions{ResolveParent: true},
+		Dispositions: dispositions,
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch failed: %v", err)
+	}
+	if len(res.Inherited) != 10 {
+		t.Fatalf("Inherited = %+v, want the live criticals and warnings", res.Inherited)
+	}
+	for _, finding := range res.Inherited {
+		if finding.SHA != stack.shaA || (finding.Finding.Description != "live defect" && finding.Finding.Description != "context warning") {
+			t.Errorf("Inherited finding = %+v, want A's live critical or warning", finding)
+		}
 	}
 }
 

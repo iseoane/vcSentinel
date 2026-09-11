@@ -122,6 +122,10 @@ func inheritedFindings(ledger *Ledger, rng *OwnRange, dispositions []FindingDisp
 			continue
 		}
 		for _, finding := range effectiveRecordFindings(*record, dispositions) {
+			switch NormalizeStatus(finding.Status) {
+			case StatusRefuted, StatusFixed:
+				continue
+			}
 			inherited = append(inherited, InheritedFinding{SHA: sha, Finding: finding})
 		}
 	}
