@@ -60,7 +60,7 @@ func RenderPRReviewBody(res *BranchResult, intents []IntentLine, verification Te
 }
 
 func validateAttestation(res *BranchResult, attestation Attestation) error {
-	verdict := VerdictDeBranch(res.Records)
+	verdict := VerdictDeBranch(res.Records, nil)
 	head := ""
 	if len(res.SHAs) > 0 {
 		head = res.SHAs[len(res.SHAs)-1]
@@ -136,11 +136,11 @@ func renderChanged(overview *OverviewResult) string {
 }
 
 func renderRiskAssessment(res *BranchResult, dispositions []FindingDisposition) string {
-	verdict := VerdictDeBranch(res.Records)
-	line := riskLine(res.Records)
+	verdict := VerdictDeBranch(res.Records, dispositions)
+	line := riskLine(res.Records, dispositions)
 	if res.Net != nil {
 		verdict = res.Net.Audit.Verdict
-		line = VerdictLine(res)
+		line = VerdictLine(res, dispositions)
 	}
 	reason := "No overview risk sentence was available."
 	if res.Overview != nil && strings.TrimSpace(res.Overview.Risk) != "" {
@@ -149,7 +149,7 @@ func renderRiskAssessment(res *BranchResult, dispositions []FindingDisposition) 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — %s\n", line, reason)
 	if verdict == VerdictBlock {
-		for _, finding := range BranchBlockersWithDispositions(res.Records, dispositions) {
+		for _, finding := range BranchBlockers(res.Records, dispositions) {
 			b.WriteString(renderMergedFinding("branch", findingFromReviewFinding(finding.Dimension, finding)) + "\n")
 		}
 	}
@@ -202,7 +202,7 @@ func reviewPipelineStep(res *BranchResult, dispositions []FindingDisposition) pi
 			fmt.Fprintf(&evidence, "- `%s` blocked → `%s` fix commit → re-audited\n", shortBranchSHA(record.SHA), shortBranchSHA(record.FixedIn))
 		}
 	}
-	pending := len(BranchBlockersWithDispositions(res.Records, dispositions))
+	pending := len(BranchBlockers(res.Records, dispositions))
 	icon := "✅"
 	switch {
 	case pending > 0:

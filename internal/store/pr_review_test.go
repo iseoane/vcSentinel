@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +17,9 @@ func TestPRReviewKeyPreservesExactBranchIdentity(t *testing.T) {
 		if !strings.HasPrefix(key, "feature-review-") {
 			t.Fatalf("PRReviewKey(%q) = %q, want readable slug prefix", branch, key)
 		}
-		if keys[key] { t.Fatalf("PRReviewKey collision for %q", branch) }
+		if keys[key] {
+			t.Fatalf("PRReviewKey collision for %q", branch)
+		}
 		keys[key] = true
 	}
 }
@@ -54,6 +58,49 @@ func TestSavePRReviewRejectsIncompleteIdentity(t *testing.T) {
 	for _, entry := range []*PRReviewEntry{{}, {Branch: "feature/review"}, {HeadSHA: "head"}} {
 		if err := store.SavePRReview(entry); err == nil {
 			t.Fatalf("SavePRReview(%#v) succeeded, want identity error", entry)
+		}
+	}
+}
+
+func TestSavePRReviewDoesNotMixStateWhenExistingEntryCannotBeCleaned(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	old := &PRReviewEntry{Branch: "feature/review", HeadSHA: strings.Repeat("a", 40), Body: "old"}
+	if err := store.SavePRReview(old); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "vas-sentinel", "pr-reviews", PRReviewKey(old.Branch, old.HeadSHA)+".json")
+	if err := os.WriteFile(path, []byte("{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newEntry := &PRReviewEntry{Branch: old.Branch, HeadSHA: strings.Repeat("b", 40), Body: "new"}
+	if err := store.SavePRReview(newEntry); err == nil {
+		t.Fatal("SavePRReview succeeded with an unreadable old entry")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if json.Unmarshal(data, &decoded) == nil {
+		t.Fatal("failed save unexpectedly replaced the old state")
+	}
+	if _, err := store.ReadPRReview(old.Branch); err == nil {
+		t.Fatal("ReadPRReview unexpectedly accepted the preserved corrupt state")
+	}
+}
+
+func TestSavePRReviewKeepsDistinctBranchesReadable(t *testing.T) {
+	store := NewStore(t.TempDir())
+	for _, branch := range []string{"feature/review", "feature-review"} {
+		if err := store.SavePRReview(&PRReviewEntry{Branch: branch, HeadSHA: strings.Repeat("c", 40), Body: branch}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, branch := range []string{"feature/review", "feature-review"} {
+		got, err := store.ReadPRReview(branch)
+		if err != nil || got == nil || got.Body != branch {
+			t.Fatalf("ReadPRReview(%q) = %#v, %v", branch, got, err)
 		}
 	}
 }

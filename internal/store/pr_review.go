@@ -44,11 +44,72 @@ func (s *Store) SavePRReview(entry *PRReviewEntry) error {
 	if entry == nil || strings.TrimSpace(entry.Branch) == "" || !validGitObjectID(entry.HeadSHA) {
 		return errors.New("store: pr review entry requires branch and canonical head sha")
 	}
-	key := PRReviewKey(entry.Branch, entry.HeadSHA)
-	if err := s.writeJSON(subdirPRReviews, key, entry); err != nil {
+
+	dir := filepath.Join(s.dir, subdirPRReviews)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		entries = nil
+	} else if err != nil {
 		return err
 	}
-	return s.removeOlderPRReviews(entry.Branch, key)
+
+	// Read and validate the complete old state before mutating anything. The
+	// replacement is then assembled in a sibling directory and swapped in as
+	// one filesystem operation, so cleanup cannot expose a mixed generation.
+	preserved := make(map[string][]byte)
+	for _, existing := range entries {
+		if existing.IsDir() || filepath.Ext(existing.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, existing.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var stored PRReviewEntry
+		if err := json.Unmarshal(data, &stored); err != nil {
+			return fmt.Errorf("store: read pr review entry %q: %w", existing.Name(), err)
+		}
+		if stored.Branch != entry.Branch {
+			preserved[existing.Name()] = data
+		}
+	}
+
+	parent := filepath.Dir(dir)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return err
+	}
+	staged, err := os.MkdirTemp(parent, "pr-reviews-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staged)
+	for name, data := range preserved {
+		if err := os.WriteFile(filepath.Join(staged, name), data, 0644); err != nil {
+			return err
+		}
+	}
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return err
+	}
+	key := PRReviewKey(entry.Branch, entry.HeadSHA)
+	if err := os.WriteFile(filepath.Join(staged, key+".json"), data, 0644); err != nil {
+		return err
+	}
+
+	backup := filepath.Join(parent, ".pr-reviews-backup")
+	_ = os.RemoveAll(backup)
+	if err := os.Rename(dir, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(staged, dir); err != nil {
+		if restoreErr := os.Rename(backup, dir); restoreErr != nil {
+			return fmt.Errorf("store: replace pr review entries: %w (restore failed: %v)", err, restoreErr)
+		}
+		return err
+	}
+	return os.RemoveAll(backup)
 }
 
 // ReadPRReview returns the one current entry for branch's slug, whatever head
@@ -122,8 +183,14 @@ func (s *Store) removeOlderPRReviews(branch, keepKey string) error {
 
 func validGitObjectID(value string) bool {
 	value = strings.TrimSpace(value)
-	if len(value) != 40 && len(value) != 64 { return false }
-	for _, r := range value { if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) { return false } }
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
 	return true
 }
 
