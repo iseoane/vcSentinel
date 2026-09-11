@@ -24,11 +24,6 @@ const HonestNetIntention = "No PR title/description exists before publication: c
 // it); this struct is its counterpart here, so the fields are exported.
 type FlagsPrReview struct {
 	Base string
-	// AuditPending (--audit-pending) restores auditing every commit on the
-	// branch that carries no review record; by default pr review only
-	// reports that gap (the unaudited-commits decision in docs/issues/decisions.md), it never audits
-	// it and never blocks on it — the net audit is unaffected either way.
-	AuditPending bool
 	Overview     bool // --overview
 	JsonOut      bool // --json
 	Parent       string
@@ -126,9 +121,9 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 	blobStore, storeWarning := ResolveBlobStore(worktree)
 	return wiring.BranchOptionsWithRefuter(cfg, verifier, review.BranchOptions{
 		Base: base,
-		// the unaudited-commits decision in docs/issues/decisions.md: pr review no longer audits every
-		// unaudited commit by default. --audit-pending restores that.
-		OnlyPending:            !flags.AuditPending,
+		// pr review reports record gaps but never audits commits on the
+		// operator's behalf; sentinel review owns per-commit verdicts.
+		OnlyPending:            true,
 		Overview:               flags.Overview,
 		Factory:                factory,
 		Parallel:               cfg.Review.Parallel,
