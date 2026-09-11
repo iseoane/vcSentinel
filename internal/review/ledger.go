@@ -57,7 +57,7 @@ type Revision struct {
 // deduplicated, cross-dimension merged and supersede-applied result
 // (AggregatedFindings, T6.1+T6.2) when the caller propagated it, or every
 // raw per-dimension v1 ReviewFinding from Dims converted to the v2 Finding
-// shape otherwise. It is the single selection point pendingRisks() and
+// shape otherwise. It is the single selection point the pending risks and
 // BranchBlockers (internal/review/renderer.go) both consume (T6.5 review
 // finding: before this method existed, BranchBlockers read only Dims and
 // could still block on a semantic finding T6.2 had already superseded by a
@@ -86,7 +86,7 @@ func (r Revision) EffectiveFindings() []Finding {
 // a disposition-free ledger (FU-7).
 //
 // It is deliberately NOT what EffectiveFindings returns, and never replaces
-// it: that method is the single selection point pendingRisks() and
+// it: that method is the single selection point the pending risks and
 // BranchBlockers consume, so changing what it returns would change branch
 // blocking and pr create --force. This one is for observation only. Like the
 // findingFromReviewFinding/reviewFindingFromFinding pair it lives beside,
@@ -264,8 +264,10 @@ func reviewFindingFromFinding(h Finding) ReviewFinding {
 }
 
 // Record is the complete audit record of a commit, saved as
-// <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the commit that
-// fixed the findings (filled in when a fix re-audits the files).
+// <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the first commit
+// credited with fixing the findings (filled in when a fix touches the files).
+// It is provenance only: whether the record still blocks is decided by its
+// current findings (RecordHasActiveBlock), not by this field.
 type Record struct {
 	SHA       string     `json:"sha"`
 	Message   string     `json:"message"`

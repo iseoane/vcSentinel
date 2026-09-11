@@ -453,8 +453,11 @@ func TestRunPrCreateWith_PassesDispositionsToBranch(t *testing.T) {
 	if code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, deps); code != 0 {
 		t.Fatalf("code = %d, expected 0: %s", code, output.String())
 	}
-	if got.NetReview == nil || len(got.NetReview.Dispositions) != 1 || got.NetReview.Dispositions[0].Fingerprint != "fp-carry" {
-		t.Fatalf("options.NetReview.Dispositions = %+v, want the standing answers for the net carry", got.NetReview)
+	if got.NetReview == nil {
+		t.Fatal("options.NetReview = nil, want the net review input pr create requests")
+	}
+	if len(got.Dispositions) != 1 || got.Dispositions[0].Fingerprint != "fp-carry" {
+		t.Fatalf("options.Dispositions = %+v, want the standing answers the branch surfaces and the net carry decide with", got.Dispositions)
 	}
 }
 
@@ -495,13 +498,15 @@ func TestApplyPrReviewDispositionsCarriesAnswersToNet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loader error: %v", err)
 	}
-	got := options.NetReview
-	if got == nil || len(got.Dispositions) != 1 {
-		t.Fatalf("net dispositions = %+v, want the standing answers", got)
+	if options.NetReview == nil {
+		t.Fatal("options.NetReview = nil, want the requested net review input")
 	}
-	d := got.Dispositions[0]
+	if len(options.Dispositions) != 1 {
+		t.Fatalf("options.Dispositions = %+v, want the standing answers", options.Dispositions)
+	}
+	d := options.Dispositions[0]
 	if d.Fingerprint != "fp-carry" || d.Status != review.StatusRefuted || d.Actor != review.RefutationActorHuman {
-		t.Fatalf("net disposition = %+v, want the recorded answer identity, not a count", d)
+		t.Fatalf("carried disposition = %+v, want the recorded answer identity, not a count", d)
 	}
 }
 
@@ -514,14 +519,21 @@ func TestApplyPrReviewDispositionsFailsWithCorruptLog(t *testing.T) {
 	}
 }
 
-// A nil net review (no net audit requested) leaves the options untouched and
-// still reports a loader failure: the helper never invents a net input and
-// never hides a corrupt log.
+// A nil net review (no net audit requested) still receives the answers on the
+// branch options and still reports a loader failure: the helper never invents
+// a net input and never hides a corrupt log.
 func TestApplyPrReviewDispositionsWithoutNet(t *testing.T) {
+	answered := []review.FindingDisposition{{
+		SHA: "abc1234", Fingerprint: "fp-no-net", Status: review.StatusRefuted,
+		Reason: "verified safe", Actor: review.RefutationActorHuman, Source: review.DispositionSourceHuman,
+	}}
 	options, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
-		func(string) ([]review.FindingDisposition, error) { return nil, nil })
+		func(string) ([]review.FindingDisposition, error) { return answered, nil })
 	if err != nil || options.NetReview != nil {
-		t.Fatalf("options = %+v, err = %v; want untouched options", options, err)
+		t.Fatalf("options = %+v, err = %v; want no invented net input", options, err)
+	}
+	if len(options.Dispositions) != 1 || options.Dispositions[0].Fingerprint != "fp-no-net" {
+		t.Fatalf("options.Dispositions = %+v, want the answers the branch surfaces decide with without a net review", options.Dispositions)
 	}
 	if _, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
 		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("corrupt dispositions") }); err == nil {

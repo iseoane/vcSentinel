@@ -5,7 +5,7 @@ scoped work ships before work waiting on a missing measurement, and work
 that undermines verification trust outranks work that only costs tokens.
 One line per item states why it sits where it does.
 
-**Read items 13 and 14 first**, both opened 2026-09-10 and both urgent. Opened 2026-09-10 and marked urgent: a rebase that
+**Read item 13 first**, opened 2026-09-10 and urgent: a rebase that
 changes no content still throws away every review record and pays for a full
 re-audit. It cost about thirty model calls in one night, and the machinery to
 avoid it is already written and simply not wired to the per-commit path.
@@ -107,42 +107,6 @@ distinguishing.
   improvement when the feature was withdrawn, and it is the right shape for
   whatever replaces it.
 
-## 14. A retired block hides every finding a later re-audit discovers
-
-**URGENT.** Opened 2026-09-10, observed live on `41c644d` in this repository.
-
-- The rule: `isPending(record)` is `record.FixedIn == ""`
-  (`internal/review/renderer.go`), and `MarkFixed` never overwrites an existing
-  `FixedIn` — "the first fix wins" (`internal/review/ledger.go:514`). So once a
-  record is marked corrected, `effectiveBranchFindings` skips it forever and
-  never looks at its current revision again.
-- The failure, in order: commit A blocks on finding X; fix commit B retires it
-  and sets `A.FixedIn = B`, correctly; A is later re-audited — because its
-  coverage was incomplete, or a dimension came back `unavailable` — and the new
-  revision reports genuine CRITICAL findings Y and Z; `isPending(A)` is still
-  false, so `BranchBlockers` never sees Y or Z, and `pr review` reports a clean
-  branch. Publication proceeds over real blockers.
-- Observed, not reasoned: `41c644d` carries `fixed_in ec9be13` from its first
-  revision and four CRITICAL findings from its second, which was run precisely
-  because the first had two dimensions denied. The branch projection treats it
-  as retired.
-- Why `FixedIn` cannot simply be deleted: it is doing real work. Without it,
-  a record whose block was retired and never re-audited would keep reporting
-  the original findings, because `CurrentFindings` still returns them. The
-  flag is what stops a fixed block from blocking forever.
-- The rule it should encode: `FixedIn` retires the findings that existed WHEN
-  IT WAS SET, not the commit for the rest of time. A revision recorded after
-  that moment is new evidence and must count. That needs the moment recorded —
-  a `FixedAt` beside `FixedIn` is enough — and `isPending` becomes "no FixedIn,
-  or a revision newer than FixedAt".
-- Note `RecordHasActiveBlock` (`internal/review/coverage.go`) already reads the
-  current findings and gets this right. The two predicates disagree, and only
-  the branch-level one is wrong. Whatever the fix, they must end up answering
-  the same question.
-- Blast radius: `BranchBlockers`, `pendingRisks`, the PR body's Risks section,
-  and `pr create --force`. It is not blocking today only because pieces 4 and 5
-  are not in use yet.
-
 ## 13. Stop paying for a full re-audit when a rebase changed no content
 
 **URGENT.** Opened 2026-09-10, measured on this repository the same night.
@@ -185,38 +149,29 @@ distinguishing.
   nothing), one was a fix commit that had no record at all, and one was a
   rebase that orphaned the link. Read them apart.
 
-## 0. Let a real fix retire a block even when it is not called `fix(`
+## 0. Capture a real fix's provenance beyond `fix(`
 
-Found on 2026-09-09 by exercising the flow on `feat/review-coverage-contract`,
-where it produced three live blocks describing code that no longer existed.
+Found on 2026-09-09 by exercising the flow on `feat/review-coverage-contract`.
 
-- Wrong: `recordFixes` (`cmd/sentinel/review_command.go`) returns immediately
-  unless the reviewed commit's message starts with `fix(`. Everything after that
-  guard — the active-block check, the file overlap, the ancestry check, and
-  `MarkFixed` — is unreachable for a correcting commit named anything else.
-- Evidence: on that branch, `60e420c` and `6c3a2ac` each recorded CRITICAL
-  findings that `e2f4b23` (`refactor(review):`) and `d8462e6` (`docs(issues):`)
-  genuinely corrected. Neither retirement fired. Three blocks stayed live over
-  code that had been rewritten, and the only lever left was `refute`.
-- Why the workaround is not the answer: `refute` records "this finding does not
-  describe the code", which is true here, but the reason field then has to carry
-  "and it was fixed in <sha>" as prose. The link between the block and the
-  commit that resolved it — which `MarkFixed` stores structurally — is lost, and
-  metrics counting fixes cannot see it. The three refutations recorded on that
-  branch all say so explicitly.
-- Why the guard exists, and what NOT to break: the prefix is one of four
-  independent narrowings, alongside a clean exit, file overlap, and an ancestry
-  check added by FU-17 after a `fix(` on one branch cleared a block recorded on
-  an unrelated one. The ancestry check is the one doing the real work. The
-  prefix is a proxy for intent, and a weak one: it accepts a `fix(` that
-  corrects something else entirely, and refuses a `refactor(` that corrects
-  exactly the finding.
-- Not obvious, and worth deciding rather than assuming: whether ANY Conventional
-  Commit type may retire a block, or only a named set. Widening it to every type
-  makes a `chore(` that happens to touch the file retire a block it never
-  addressed — the ancestry and overlap checks do not test intent. The narrower
-  reading is that the retirement should not be inferred from the message at all,
-  and should be an explicit claim.
+- Current limitation: `recordFixes` (`cmd/sentinel/review_command.go`) returns
+  before recording `FixedIn` unless the reviewed commit's message starts with
+  `fix(`. A correcting `refactor(` or `docs(` commit can therefore lack the
+  structural link that records which later commit was credited with the fix.
+- Evidence: on that branch, `60e420c` and `6c3a2ac` had findings corrected by
+  `e2f4b23` (`refactor(review):`) and `d8462e6` (`docs(issues):`), respectively.
+  Neither commit received a `FixedIn` provenance link.
+- Item 14 changed the boundary: `FixedIn` is provenance only. `RecordPending`
+  decides whether a record blocks from its current findings and standing human
+  answers, so recording or widening a provenance link must never retire a
+  block. Re-auditing the blocked SHA or a human `refute` remains the only way
+  to clear it.
+- Goal: decide whether a non-`fix(` correction can make an explicit provenance
+  claim, then preserve the clean review, file-overlap, and ancestry checks when
+  recording it. This is a metrics and documentation improvement, not a change
+  to branch blocking.
+- Do not widen every Conventional Commit type by default: a `chore(` that
+  merely touches the same file is not evidence of a correction. Prefer an
+  explicit claim or a narrowly justified type policy.
 
 ## 1. Bound what the review flow costs the machine that runs it
 

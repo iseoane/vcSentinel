@@ -149,20 +149,19 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 	}), storeWarning
 }
 
-// ApplyPrReviewDispositions loads the standing human answers and sets
-// them on the net review input for the cross-SHA carry-over. A corrupt log
-// is an error: pr review must fail closed before spending review tokens
-// rather than audit as if no human answered. The loader is a seam so tests
-// drive this without git. A nil net review (no net audit requested) leaves
-// the options untouched and still reports a loader failure.
+// ApplyPrReviewDispositions loads the standing human answers and sets them
+// on the branch options, where the branch reporting surfaces and the net
+// review's cross-SHA carry-over both read them. A corrupt log is an error:
+// pr review must fail closed before spending review tokens rather than audit
+// as if no human answered. The loader is a seam so tests drive this without
+// git. It never invents a net review input and still reports a loader
+// failure when none was requested.
 func ApplyPrReviewDispositions(options review.BranchOptions, worktree string, load func(string) ([]review.FindingDisposition, error)) (review.BranchOptions, error) {
 	dispositions, err := load(worktree)
 	if err != nil {
 		return options, err
 	}
-	if options.NetReview != nil {
-		options.NetReview.Dispositions = dispositions
-	}
+	options.Dispositions = dispositions
 	return options, nil
 }
 
@@ -291,13 +290,13 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 	}
 
 	if res.Net != nil { // T8.4/A: the authoritative verdict leads the report
-		fmt.Fprintln(w, review.VerdictLine(res))
+		fmt.Fprintln(w, review.VerdictLine(res, options.Dispositions))
 	}
 	if len(res.Records) > 0 {
 		fmt.Fprintln(w, "OWN (per-commit audit)")
 		fmt.Fprintln(w, review.RenderMatrix(res.Records))
 		if res.Net == nil { // historical summary only without a net authority
-			fmt.Fprintln(w, review.RenderSummary(res.Records))
+			fmt.Fprintln(w, review.RenderSummary(res.Records, options.Dispositions))
 		}
 	}
 	// Informational only, never a gate (the unaudited-commits decision in docs/issues/decisions.md):

@@ -195,30 +195,45 @@ type TemplateVerification struct {
 	Validation []VerifiedCommand
 }
 
-// isPending decides whether a record still contributes to the branch's
-// verdict. A fixed record (FixedIn) no longer counts: its block was
-// resolved in a later commit outside it. It is the package's only
-// definition of "pending".
-func isPending(record Record) bool {
-	return record.FixedIn == ""
+// RecordPending decides whether a record still contributes to the branch's
+// verdict. Crediting a fix (FixedIn) is provenance, not proof: a record only
+// stops counting once its CURRENT findings no longer block, so a partial fix
+// cannot retire a record that still carries live CRITICAL findings. It is the
+// package's only definition of "pending", and it decides over the record's
+// current findings (RULE 2 in coverage.go) overlaid with the standing human
+// answers, so a refuted finding retires the record here too.
+//
+// It answers whether a record counts, never what its verdict reads: a record
+// that still counts contributes the raw Result of its authoritative revision
+// to VerdictDeBranch, which no standing answer overlays. That is the
+// pre-existing verdict rule (RULE 1), unchanged here, so a refuted finding
+// can still leave the branch verdict at block while the risks and the
+// blockers of the same report are empty.
+func RecordPending(record Record, dispositions []FindingDisposition) bool {
+	if record.FixedIn == "" {
+		return true
+	}
+	for _, h := range ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA)) {
+		if IsBlocking(h.Severity, h.Status) {
+			return true
+		}
+	}
+	return false
 }
 
 // pendingRisks collects the CRITICAL and WARNING findings of each pending
 // record's CURRENT findings (RULE 2 in coverage.go), not of its raw latest
-// revision (ADVISORY ones are information, not risks). Fixed records
-// (FixedIn) contribute no pending risks.
+// revision (ADVISORY ones are information, not risks). Records whose current
+// findings no longer block contribute no pending risks.
 //
 // T6.5: reads the record's current findings through CurrentFindings
 // (coverage.go) — the single selection point BranchBlockers further down
 // also consumes — instead of forking
 // between AggregatedFindings and Dims right here. That avoids the T6.5
 // design bug (a semantic finding already superseded by T6.2 only
-// disappeared from pendingRisks(), never from BranchBlockers) and the
+// disappeared from the pending risks, never from BranchBlockers) and the
 // unconditional continue that could take over the record without checking
 // severity first.
-func pendingRisks(records []Record) []string {
-	return pendingRisksWithDispositions(records, nil)
-}
 
 func pendingRisksWithDispositions(records []Record, dispositions []FindingDisposition) []string {
 	var lines []string
@@ -251,10 +266,7 @@ type branchFinding struct {
 func effectiveBranchFindings(records []Record, dispositions []FindingDisposition) []branchFinding {
 	var out []branchFinding
 	for _, record := range records {
-		if !isPending(record) {
-			continue
-		}
-		for _, h := range ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA)) {
+		for _, h := range effectiveRecordFindings(record, dispositions) {
 			out = append(out, branchFinding{sha: record.SHA, finding: h})
 		}
 	}
@@ -375,7 +387,7 @@ func renderMergedFinding(sha string, h Finding) string {
 // RenderSummary builds the branch's verdict and risk summary: the global
 // count, one row per commit (result, model, revisions and fix) and the
 // pending CRITICAL/WARNING risks.
-func RenderSummary(records []Record) string {
+func RenderSummary(records []Record, dispositions []FindingDisposition) string {
 	if len(records) == 0 {
 		return "_No audited commits._"
 	}
@@ -395,19 +407,19 @@ func RenderSummary(records []Record) string {
 			sha = sha[:7]
 		}
 		fixed := "—"
-		if record.FixedIn != "" {
+		if !RecordPending(record, dispositions) {
 			fi := record.FixedIn
 			if len(fi) > 7 {
 				fi = fi[:7]
 			}
-			fixed = fmt.Sprintf("🔧 fixed in `%s`", fi)
+			fixed = fmt.Sprintf("🔧 fix credited to `%s`", fi)
 		}
 		b.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %d | %s |\n",
 			sha, verdictEmoji(last.Result), last.Result, record.Model, len(record.Revisions), fixed))
 	}
 
 	b.WriteString("\n### Risks\n")
-	pending := pendingRisks(records)
+	pending := pendingRisksWithDispositions(records, dispositions)
 	if len(pending) == 0 {
 		b.WriteString("- None\n")
 	} else {
@@ -478,16 +490,16 @@ func TruncateBody(text string, maxBytes int) string {
 }
 
 // VerdictDeBranch summarizes the branch's worst global verdict: the one of
-// the commit with the most severe revision. It ignores already-fixed
-// records (FixedIn): their original block was resolved in a later commit,
-// and the gate cannot block publication over a fixed finding. With no
-// pending records it returns VerdictOK. The PR template and the pr create
+// the commit with the most severe revision. It ignores records that no longer
+// block (see RecordPending): their block was resolved, and the gate cannot block
+// publication over a resolved finding. With no pending records it returns
+// VerdictOK. The PR template and the pr create
 // block gate use it.
-func VerdictDeBranch(records []Record) string {
+func VerdictDeBranch(records []Record, dispositions []FindingDisposition) string {
 	worst := VerdictOK
 	for _, record := range records {
-		if !isPending(record) {
-			// Fixed: it no longer contributes to the branch verdict.
+		if !RecordPending(record, dispositions) {
+			// Resolved: it no longer contributes to the branch verdict.
 			continue
 		}
 		last, _, ok := LastAuthoritativeRevision(record)
@@ -521,15 +533,15 @@ func verdictRank(verdict string) int {
 
 // riskLine is the template's first line: the audit verdict emoji (NOT the
 // CI status, guide §12.4) plus the global count.
-func riskLine(records []Record) string {
-	vd := VerdictDeBranch(records)
+func riskLine(records []Record, dispositions []FindingDisposition) string {
+	vd := VerdictDeBranch(records, dispositions)
 	return fmt.Sprintf("%s **Audit verdict: %s** — %s",
 		verdictEmoji(vd), vd, verdictCounts(records))
 }
 
-func VerdictLine(res *BranchResult) string {
+func VerdictLine(res *BranchResult, dispositions []FindingDisposition) string {
 	if res.Net == nil {
-		return riskLine(res.Records)
+		return riskLine(res.Records, dispositions)
 	}
 	vd := res.Net.Audit.Verdict
 	return fmt.Sprintf("%s **Net audit verdict: %s** — %d finding(s) on net diff %.7s..%.7s",
@@ -601,16 +613,17 @@ func validationSection(cmds []VerifiedCommand) string {
 }
 
 // BranchBlockers returns the CRITICAL findings of the latest revision of
-// each record: they are the pr create gate's blockers (guide §12.4). Fixed
-// records (FixedIn) contribute no blockers: their block was already
-// resolved in a later commit.
+// each record: they are the pr create gate's blockers (guide §12.4). Records
+// that no longer block (see RecordPending) contribute no blockers: their block was
+// already resolved.
 //
 // T6.5 review finding (design, the most important one): it used to read
 // only Dims, without the T6.2 supersede — a semantic finding already
 // discarded for being superseded by a deterministic one kept blocking here
-// even though pendingRisks() no longer showed it. It now consumes
+// even though the pending risks no longer showed it. It now consumes
 // last.EffectiveFindings() (ledger.go), the same selection point as
-// pendingRisks(), and projects the result back to []ReviewFinding to avoid
+// pendingRisksWithDispositions, and projects the result back to
+// []ReviewFinding to avoid
 // breaking the public contract: the only real caller (in
 // cmd/sentinel/comandos_pr.go) only uses Severity/File/Line/Description, so
 // changing the public signature was more invasive than what fixing the real
@@ -650,7 +663,7 @@ func RenderBranchPRTemplate(res *BranchResult, verification TemplateVerification
 // same effective finding projection used by the branch blockers.
 func RenderBranchPRTemplateWithDispositions(res *BranchResult, verification TemplateVerification, version string, dispositions []FindingDisposition) string {
 	var b strings.Builder
-	b.WriteString(VerdictLine(res) + "\n\n")
+	b.WriteString(VerdictLine(res, dispositions) + "\n\n")
 
 	// Pre-audit validation (T1.8): what ran BEFORE auditing, in its own
 	// section — never mixed with the post-hoc verification below.

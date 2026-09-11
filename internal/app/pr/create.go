@@ -245,7 +245,8 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		// commit through the per-commit deterministic channel.
 		DeterministicFindingsFactory: SecretFindingsFactory(),
 		ModelVerifier:                modelVerifier,
-		NetReview:                    &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(validationCommands(runs)), Dispositions: branchDispositions},
+		NetReview:                    &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(validationCommands(runs))},
+		Dispositions:                 branchDispositions,
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditing %s\n", idx+1, total, wiring.ShortSHA(sha))
 		},
@@ -271,7 +272,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 
 	// The net audit is the advisory authority when present.
 	if res.Net != nil {
-		fmt.Fprintln(w, review.VerdictLine(res))
+		fmt.Fprintln(w, review.VerdictLine(res, branchDispositions))
 	} else if warn, blockers := SemanticNoticeWithDispositions(res.Records, branchDispositions); warn {
 		fmt.Fprintln(w, "⚠️  NOTICE: semantic audit verdict = block (does not block publication, advisory).")
 		for _, h := range blockers {

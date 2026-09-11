@@ -93,7 +93,7 @@ func TestRunNetReviewCarriesStandingRefutation(t *testing.T) {
 		dispositions = append(dispositions, mkDisposition(shaA, fp, StatusRefuted))
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
-	carried, err := runNetReview(&NetReviewOptions{Intention: "carry e2e", Dispositions: dispositions}, BranchOptions{Factory: stubFactory(stubCarried), Parallel: 1}, from, to, revisions)
+	carried, err := runNetReview(&NetReviewOptions{Intention: "carry e2e"}, BranchOptions{Factory: stubFactory(stubCarried), Parallel: 1, Dispositions: dispositions}, from, to, revisions)
 	if err != nil {
 		t.Fatalf("net review with dispositions: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestRunNetReviewCarriesIntermediateRefutation(t *testing.T) {
 		dispositions = append(dispositions, mkDisposition(shaA, fp, StatusRefuted))
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
-	carried, err := runNetReview(&NetReviewOptions{Intention: "carry intermediate", Dispositions: dispositions}, BranchOptions{Factory: stubFactory(stubCarried), Parallel: 1}, from, to, revisions)
+	carried, err := runNetReview(&NetReviewOptions{Intention: "carry intermediate"}, BranchOptions{Factory: stubFactory(stubCarried), Parallel: 1, Dispositions: dispositions}, from, to, revisions)
 	if err != nil {
 		t.Fatalf("net review with dispositions: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestRunNetReviewHeadAnswerWinsOverCarried(t *testing.T) {
 			mkDisposition(head, fp, StatusReopened))
 	}
 	stubCarried := &answeringStub{marker: "Pull request intention:", output: netBlock}
-	carried, err := runNetReview(&NetReviewOptions{Intention: "precedence", Dispositions: dispositions}, BranchOptions{Factory: stubFactory(stubCarried), Parallel: 1}, from, to, revisions)
+	carried, err := runNetReview(&NetReviewOptions{Intention: "precedence"}, BranchOptions{Factory: stubFactory(stubCarried), Parallel: 1, Dispositions: dispositions}, from, to, revisions)
 	if err != nil {
 		t.Fatalf("net review with dispositions: %v", err)
 	}
