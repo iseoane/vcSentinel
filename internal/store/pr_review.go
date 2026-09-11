@@ -149,38 +149,6 @@ func (s *Store) ReadPRReview(branch string) (*PRReviewEntry, error) {
 	return found, nil
 }
 
-func (s *Store) removeOlderPRReviews(branch, keepKey string) error {
-	dir := filepath.Join(s.dir, subdirPRReviews)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		key := strings.TrimSuffix(entry.Name(), ".json")
-		if key == keepKey {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			return err
-		}
-		var stored PRReviewEntry
-		if err := json.Unmarshal(data, &stored); err != nil {
-			return fmt.Errorf("store: read pr review entry %q: %w", entry.Name(), err)
-		}
-		if stored.Branch != branch {
-			continue
-		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func validGitObjectID(value string) bool {
 	value = strings.TrimSpace(value)
 	if len(value) != 40 && len(value) != 64 {

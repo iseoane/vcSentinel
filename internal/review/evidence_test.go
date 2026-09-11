@@ -84,9 +84,35 @@ func TestWriteEvidenceRefusesToFollowASymlink(t *testing.T) {
 	}
 }
 
-// "This path is not in HEAD" is an answer about the repository. "git could not
-// run" is an operational failure. Reporting the second as the first states a
-// fact that was never established.
+func TestWriteEvidenceRefusesAnInternalSymlinkedAncestor(t *testing.T) {
+	worktree := t.TempDir()
+	target := filepath.Join(worktree, "target")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(target, "review.log")
+	if err := os.WriteFile(logPath, []byte("untouched\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(worktree, ".vas_sentinel", "evidence", evidenceDirName("feature/x"))
+	if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "..", "..", "target"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := WriteEvidence(worktree, "feature/x", []EvidenceLog{{Step: "review", Content: "hijacked\n"}}); err == nil {
+		t.Fatal("WriteEvidence() followed an internal symlinked ancestor")
+	}
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "untouched\n" {
+		t.Fatalf("the symlink target was written: %q", content)
+	}
+}
+
 func TestEvidenceAtHEADSeparatesAbsenceFromFailure(t *testing.T) {
 	notARepository := t.TempDir()
 	if _, _, err := EvidenceAtHEAD(notARepository, "any.log"); err == nil {

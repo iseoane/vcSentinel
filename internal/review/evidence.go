@@ -31,17 +31,6 @@ func evidenceDirName(branch string) string {
 // WriteEvidence writes stable, repository-relative evidence logs. It never
 // adds timestamps or run-local metadata: a commit-then-re-review loop must
 // converge when the reviewed evidence did not change.
-//
-// Every path operation goes through os.Root, which confines it to the
-// worktree. That is the whole defence and it has to be, because the evidence
-// directory lives inside the tree under review: a repository can ship a
-// symlink at `.vas_sentinel`, at `.vas_sentinel/evidence`, or at the log file
-// itself. Checking only the endpoints with Lstat does not help — MkdirAll
-// follows a symlinked ancestor first, and by the time the endpoint is
-// inspected it is a real directory at the attacker's target. os.Root refuses
-// traversal that escapes the root at every component, and resolves each one
-// under the same handle, so there is also no window between the check and the
-// write.
 func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error) {
 	root, err := os.OpenRoot(worktree)
 	if err != nil {
@@ -50,7 +39,12 @@ func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error
 	defer root.Close()
 
 	dir := evidenceDirName(branch)
-	relativeRoot := path.Join(".vas_sentinel", "evidence", dir)
+	evidenceRoot, err := openEvidenceRoot(root, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer evidenceRoot.Close()
+
 	paths := make([]string, 0, len(logs))
 	seen := make(map[string]struct{}, len(logs))
 	for _, log := range logs {
@@ -62,19 +56,61 @@ func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error
 			return nil, fmt.Errorf("duplicate evidence step %q", log.Step)
 		}
 		seen[step] = struct{}{}
-		if err := root.MkdirAll(relativeRoot, 0755); err != nil {
+		if err := refuseSymlink(evidenceRoot, step+".log"); err != nil {
 			return nil, err
 		}
-		relativePath := path.Join(relativeRoot, step+".log")
-		if err := refuseSymlink(root, relativePath); err != nil {
+		if err := writeEvidenceFile(evidenceRoot, step+".log", log.Content); err != nil {
 			return nil, err
 		}
-		if err := writeEvidenceFile(root, relativePath, log.Content); err != nil {
-			return nil, err
-		}
-		paths = append(paths, relativePath)
+		paths = append(paths, path.Join(".vas_sentinel", "evidence", dir, step+".log"))
 	}
 	return paths, nil
+}
+
+func openEvidenceRoot(root *os.Root, dir string) (*os.Root, error) {
+	current := root
+	closeCurrent := false
+	for _, component := range []string{".vas_sentinel", "evidence", dir} {
+		if err := ensureDirectory(current, component); err != nil {
+			if closeCurrent {
+				current.Close()
+			}
+			return nil, err
+		}
+		next, err := current.OpenRoot(component)
+		if err != nil {
+			if closeCurrent {
+				current.Close()
+			}
+			return nil, err
+		}
+		if closeCurrent {
+			current.Close()
+		}
+		current = next
+		closeCurrent = true
+	}
+	return current, nil
+}
+
+func ensureDirectory(root *os.Root, name string) error {
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := root.Mkdir(name, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err = root.Lstat(name)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write evidence through the symbolic link %s", name)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("evidence directory component %s is not a directory", name)
+	}
+	return nil
 }
 
 // refuseSymlink rejects a log path that already exists as a symbolic link.
