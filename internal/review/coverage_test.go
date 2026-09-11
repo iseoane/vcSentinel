@@ -363,7 +363,7 @@ func TestBranchBlockersSurfaceNarrowAlarmAndHonourRefutation(t *testing.T) {
 			alarmFinding(DimSecurity, SevCritical, StatusConfirmed, "exposed token", "fp-alarm")),
 	}}
 
-	blockers := BranchBlockers([]Record{record})
+	blockers := BranchBlockers([]Record{record}, nil)
 	if len(blockers) != 1 || len(blockers[0].Description) == 0 || blockers[0].Description != "exposed token" {
 		t.Fatalf("BranchBlockers = %+v, want the narrow CRITICAL blocking pr create", blockers)
 	}
@@ -372,7 +372,7 @@ func TestBranchBlockersSurfaceNarrowAlarmAndHonourRefutation(t *testing.T) {
 		SHA: "aaaa1111", Fingerprint: "fp-alarm", Status: StatusRefuted,
 		Actor: RefutationActorHuman, Source: DispositionSourceHuman,
 	}}
-	after := BranchBlockersWithDispositions([]Record{record}, dispositions)
+	after := BranchBlockers([]Record{record}, dispositions)
 	if len(after) != 0 {
 		t.Fatalf("BranchBlockers after a human refutation = %+v, want none", after)
 	}

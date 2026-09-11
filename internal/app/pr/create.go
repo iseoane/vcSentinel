@@ -273,7 +273,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	// The net audit is the advisory authority when present.
 	if res.Net != nil {
 		fmt.Fprintln(w, review.VerdictLine(res, branchDispositions))
-	} else if warn, blockers := SemanticNoticeWithDispositions(res.Records, branchDispositions); warn {
+	} else if warn, blockers := SemanticNotice(res.Records, branchDispositions); warn {
 		fmt.Fprintln(w, "⚠️  NOTICE: semantic audit verdict = block (does not block publication, advisory).")
 		for _, h := range blockers {
 			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
@@ -303,7 +303,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		publishBase = res.Own.PublicationBranch
 	}
 
-	body := review.RenderBranchPRTemplateWithDispositions(res, verification, wiring.Version, branchDispositions)
+	body := review.RenderBranchPRTemplate(res, verification, wiring.Version, branchDispositions)
 	writeTemplate := deps.WriteTemplate
 	if writeTemplate == nil {
 		writeTemplate = WritePRTemplate
@@ -343,23 +343,15 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 // prominent advisory in the publication (T1.8): the verdict-blocking gate
 // became advisory, like internal/gate since T1.7 — validation (below) is now
 // the only gate that can prevent publishing. SemanticNotice NEVER decides
-// whether to publish, only whether to warn. It returns the structured
-// CRITICAL findings: formatting remains the CLI's responsibility.
+// whether to publish, only whether to warn. It overlays the supplied standing
+// human dispositions and returns the structured CRITICAL findings; formatting
+// remains the CLI's responsibility.
 //
 // It used to be called gateBlock and returned "allowed"; it is renamed
 // because a function that no longer blocks cannot keep being called
 // "gate...Block" without lying about what it does.
-func SemanticNotice(records []review.Record) (warn bool, blockers []review.ReviewFinding) {
-	blockers = review.BranchBlockers(records)
-	return len(blockers) > 0, blockers
-}
-
-// SemanticNoticeWithDispositions is SemanticNotice overlaid with the
-// standing human answers (FU-6): a valid human refutation clears its
-// finding from the branch blockers shown here exactly as in the engine and
-// the gate.
-func SemanticNoticeWithDispositions(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {
-	blockers = review.BranchBlockersWithDispositions(records, dispositions)
+func SemanticNotice(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {
+	blockers = review.BranchBlockers(records, dispositions)
 	return len(blockers) > 0, blockers
 }
 

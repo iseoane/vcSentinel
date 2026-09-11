@@ -265,12 +265,8 @@ func runPrReview(worktree string, args []string) {
 	pr.RunPrReview(os.Stdout, progress, worktree, flagsPrReviewToPr(flags), wiringPr())
 }
 
-func semanticAdvisory(records []review.Record) (warn bool, blockers []review.ReviewFinding) {
-	return pr.SemanticNotice(records)
-}
-
-func semanticAdvisoryWithDispositions(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {
-	return pr.SemanticNoticeWithDispositions(records, dispositions)
+func semanticAdvisory(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {
+	return pr.SemanticNotice(records, dispositions)
 }
 
 func detailPrCreateEvent(prURL string, fallback, chain, force bool, reason string, unaudited int) (ops.EventDetail, error) {

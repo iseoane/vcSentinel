@@ -624,7 +624,7 @@ func TestBranchBlockersSeesTheSameEffectiveDisposition(t *testing.T) {
 	}
 	ficha := Record{SHA: "abc123", Revisions: []Revision{revision}}
 
-	bloqueantes := BranchBlockers([]Record{ficha})
+	bloqueantes := BranchBlockers([]Record{ficha}, nil)
 	files := map[string]bool{}
 	for _, h := range bloqueantes {
 		files[h.File] = true
@@ -668,7 +668,7 @@ func TestBranchBlockersSeesTheSameEffectiveDisposition(t *testing.T) {
 		TargetDimension: DimLogic, TargetLine: 5, TargetDescription: "unanswered",
 	}}
 	overlayRecord := Record{SHA: "abc123", Revisions: []Revision{overlayRevision}}
-	cleared := BranchBlockersWithDispositions([]Record{overlayRecord}, overlay)
+	cleared := BranchBlockers([]Record{overlayRecord}, overlay)
 	if len(cleared) != 1 || cleared[0].File != "other.go" {
 		t.Fatalf("cleared = %+v, want exactly the unrelated finding blocking", cleared)
 	}
