@@ -94,25 +94,11 @@ func (s *Store) CreateRun(job agentrun.LogicalJob, policy RunPolicy) error {
 	requestPath := filepath.Join(directory, "request.json")
 	policyPath := filepath.Join(directory, "policy.json")
 
-	// Ticket 14 prune admission window: admission takes the same
-	// cross-process execution event lock PruneExecutions holds while it
-	// re-verifies and removes a record, so an admission serializes against
-	// every removal critical section. Without this, a run admitted while a
-	// crash-interrupted-remnant cleanup held the lock could have its fresh
-	// records wiped by that cleanup's unconditional child clearing. With
-	// it, exactly two honest outcomes exist for an admission racing a
-	// removal of the same directory: the removal completes first and the
-	// admission recreates the record cleanly, or the admission lands first
-	// and the locked cleanup refuses because real content appeared (see
-	// removeExecutionRemnant). A record is never deleted out from under a
-	// successful admission verdict.
-	//
-	// Deadlock audit against appendEventLocked ordering: nothing may call
-	// CreateRun while already holding this directory's event lock. The only
-	// production caller (Controller.Start) invokes CreateRun sequentially
-	// before any AppendEvent/AppendTerminalEvent of the same run, and this
-	// closure nests no further lock acquisition on the same directory.
-	admit := func() error {
+	// Creation and removal share a stable lifecycle lock outside the
+	// execution directory. The event lock remains inside that directory for
+	// event writers, but its pathname may be removed after a deletion; it
+	// therefore cannot serialize the lifecycle itself.
+	return s.withExecutionLifecycleLock(runID, func() error {
 		return withExecutionLock(directory, func() error {
 			if err := checkImmutableRecord(requestPath, requestData); err != nil {
 				return err
@@ -131,16 +117,7 @@ func (s *Store) CreateRun(job agentrun.LogicalJob, policy RunPolicy) error {
 			}
 			return ensureEventLog(directory)
 		})
-	}
-	err = admit()
-	if errors.Is(err, os.ErrNotExist) {
-		// The racing removal deleted the whole directory in the instant
-		// between this admission's MkdirAll and its lock-file open. That
-		// removal is complete and final; recreate the directory and admit
-		// once more instead of reporting a transient miss as a refusal.
-		err = admit()
-	}
-	return err
+	})
 }
 
 func (s *Store) executionDir(runID string) (string, error) {

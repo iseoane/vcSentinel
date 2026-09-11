@@ -869,3 +869,22 @@ func withExecutionLock(directory string, action func() error) error {
 	defer lock.Close()
 	return action()
 }
+
+// withExecutionLifecycleLock serializes creation and deletion of one execution
+// directory. Its lock is outside the directory it protects, so removal cannot
+// unlink the pathname another caller needs to join the same lifecycle.
+func (s *Store) withExecutionLifecycleLock(runID string, action func() error) error {
+	if !validRunID(runID) {
+		return fmt.Errorf("store: invalid run id %q", runID)
+	}
+	lockDirectory := filepath.Join(s.dir, ".execution-locks")
+	if err := os.MkdirAll(lockDirectory, 0700); err != nil {
+		return err
+	}
+	lock, err := acquireExecutionLock(filepath.Join(lockDirectory, runID+".lock"), eventLockWait)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return action()
+}
