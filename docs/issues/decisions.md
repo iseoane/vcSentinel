@@ -224,18 +224,19 @@ and ended by exhausting the machine's memory.
 Decided: a pull request names the commits with no record and points at
 `sentinel review <sha>`; it never audits them on the operator's behalf,
 and it never blocks on their absence. The net verdict stays the only
-gate. `--audit-pending` restores the old behavior for callers that want
-it in one pass. `--only-unaudited` was retired rather than kept as a
-silent no-op: it had come to describe the default, and its help text
-("restrict the analysis to commits without a review record") never
+gate. `sentinel pr create --audit-pending` restores the old behavior for
+callers that want it in one pass. `sentinel pr review` rejects both
+`--audit-pending` and `--only-unaudited`; the latter was retired rather than
+kept as a silent no-op because it had come to describe the default, and its
+help text ("restrict the analysis to commits without a review record") never
 matched what it did (skip auditing entirely).
 
 Two consequences were handled with it. `pr create` refused to publish on
 an empty per-commit history, which is now a legitimate state, so the
-refusal requires a missing net verdict too. And the `--json` report and
-both event details now carry the unaudited commits, because an unaudited
-commit and an audited one with no findings were indistinguishable to a
-machine consumer.
+refusal requires a missing net verdict too. The `--json` report and both
+event details now carry the unaudited commits, because an unaudited commit
+and an audited one with no findings were indistinguishable to a machine
+consumer.
 
 Kept deliberately: per-commit records still attribute a finding to one
 commit, are what `refute` and `accept` operate on, and survive rebases

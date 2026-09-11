@@ -31,10 +31,10 @@ const honestNetIntention = pr.HonestNetIntention
 
 // flagsPrReview are the options of pr review.
 type flagsPrReview struct {
-	base string
-	overview     bool // --overview
-	jsonOut      bool // --json
-	parent       string
+	base     string
+	overview bool // --overview
+	jsonOut  bool // --json
+	parent   string
 }
 
 func parseParentFlagValue(args []string, at int) (string, error) {

@@ -42,9 +42,9 @@ sentinel pr create
 ```
 
 1. Resolve branch and head SHA.
-2. Read the entry **by branch slug**, not by exact key. Piece 4 §3 deletes
-   prior entries only when `pr review` writes, so a branch that moved forward
-   without a re-review still has its old entry, and that is the common case.
+2. Read the entry **by exact branch name**, as specified by Piece 4 §3, not by
+   exact key. A branch that moved forward without a re-review still has its old
+   entry, and that is the common case.
 3. No entry for this branch ⇒ exit `1`:
    `No pr review exists for this branch. Run 'sentinel pr review' first: pr create publishes its judgement and never authors one.`
 4. An entry exists but its `HeadSHA` is not the current head ⇒ exit `1`, naming

@@ -23,10 +23,10 @@ const HonestNetIntention = "No PR title/description exists before publication: c
 // boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
 // it); this struct is its counterpart here, so the fields are exported.
 type FlagsPrReview struct {
-	Base string
-	Overview     bool // --overview
-	JsonOut      bool // --json
-	Parent       string
+	Base     string
+	Overview bool // --overview
+	JsonOut  bool // --json
+	Parent   string
 }
 
 // PrReviewEventDetail constructs the structured detail for the pr-review event

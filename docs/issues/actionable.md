@@ -623,13 +623,10 @@ Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
   commit removed the code an earlier finding pointed at, rather than asking a
   model to notice. The branch-level judgement is built. It is the input that is
   missing.
-- Loose end the ownership contract exposes: `--audit-pending` makes `pr review`
-  audit each pending commit, which is `gate`'s question asked by the wrong
-  command. It is off by default, so nothing is broken today, but under the
-  contract it has no owner — either it is a convenience that should be named as
-  "run gate's audit for these commits" and routed accordingly, or it should go.
-  Decide it while item 4 is being built, since that is when the per-commit
-  record gains a writer.
+- Resolved in Piece 4: `pr review` rejects `--audit-pending` instead of
+  auditing pending commits. `pr create --audit-pending` remains the explicit
+  opt-in for the old per-commit behavior; `pr review` reports the gap and
+  points the operator to `sentinel review <sha>`.
 - Reference design, no-mistakes (`kunchenguid/no-mistakes`, Go), read from
   source 2026-09-09. A dedicated pipeline step (`IntentStep`,
   `internal/pipeline/steps/intent.go`) runs BEFORE review, with two paths. The

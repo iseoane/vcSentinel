@@ -38,7 +38,7 @@ func PRReviewKey(branch, headSHA string) string {
 }
 
 // SavePRReview atomically saves entry and removes every older entry for the
-// same branch slug. A branch therefore retains one review entry, not one file
+// same exact branch. A branch therefore retains one review entry, not one file
 // per historical head.
 func (s *Store) SavePRReview(entry *PRReviewEntry) error {
 	if entry == nil || strings.TrimSpace(entry.Branch) == "" || !validGitObjectID(entry.HeadSHA) {
@@ -112,10 +112,10 @@ func (s *Store) SavePRReview(entry *PRReviewEntry) error {
 	return os.RemoveAll(backup)
 }
 
-// ReadPRReview returns the one current entry for branch's slug, whatever head
-// it records. A caller compares HeadSHA with its current tree: returning the
-// older entry is what lets pr create distinguish "never reviewed" from
-// "reviewed, then changed".
+// ReadPRReview returns the one current entry for the exact branch name,
+// whatever head it records. A caller compares HeadSHA with its current tree:
+// returning the older entry is what lets pr create distinguish "never reviewed"
+// from "reviewed, then changed".
 func (s *Store) ReadPRReview(branch string) (*PRReviewEntry, error) {
 	dir := filepath.Join(s.dir, subdirPRReviews)
 	entries, err := os.ReadDir(dir)

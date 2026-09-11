@@ -60,7 +60,7 @@ type StoreBlobs interface {
 // BranchOptions defines the analysis of a whole branch against its base.
 type BranchOptions struct {
 	Base            string // comparison branch; empty = "main"
-	OnlyPending     bool   // --only-unaudited: do not audit, just list records
+	OnlyPending     bool   // skip per-commit audits and list missing records
 	Overview        bool   // --overview: 1 branch-level Spec call for coherence
 	ProfileOverride string
 	Answers         string // clarifications for the extra questions round
@@ -160,8 +160,8 @@ type BranchResult struct {
 	// record once this call is done — recomputed AFTER the audit loop, so it
 	// is what a report or a machine consumer should read to mean "this
 	// commit was never audited" (the unaudited-commits decision in docs/issues/decisions.md). With
-	// the default OnlyPending == true it equals Pending; with the
-	// --audit-pending opt-in it is empty once auditing succeeds.
+	// the default OnlyPending == true it equals Pending; a caller that audits
+	// pending commits can leave it empty once auditing succeeds.
 	Unaudited     []UnauditedCommit
 	Records       []Record
 	Volume        int

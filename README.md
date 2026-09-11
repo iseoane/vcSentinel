@@ -28,8 +28,8 @@ A deterministic local guardian in Go that prevents massive change accumulation i
 | `sentinel status` | Guardian summary: volume, audit records, and recent events. With `--json` it emits JSON; with `--prune` it deletes orphaned records. |
 | `sentinel metrics` | Prints deterministic local aggregates from the durable store (duration, success and failure). Reads only the local Git common directory. Unknown measurements render as `null`, never as zero, and unreadable evidence is an error rather than an empty store. Cost, tokens and scope stay unknown until an adapter reports them. Flag: `--json`. |
 | `sentinel doctor` | Preflight the local environment a review depends on (agents, search binary, codegraph gates, hook). Advisory, exits 0 like `check`. Flag: `--check-updates`. |
-| `sentinel pr` | Creates a pull request with `gh`; first it cleans up orphaned audit records. Passes the arguments to `gh pr create`. |
-| `sentinel pr review` | Analyzes the branch without publishing: record matrix and single/chain decision. Flags: `--base X` `--only-unaudited` `--overview` `--json`. |
+| `sentinel pr` | Pull-request operations: `sentinel pr review` analyzes an unpublished branch, while `sentinel pr create` publishes through `gh`. The legacy `sentinel pr [gh arguments]` passthrough is removed. |
+| `sentinel pr review` | Analyzes the unpublished branch: net audit, existing record matrix, unaudited-commit report, and single/chain decision. Flags: `--base X` `--parent X` `--overview` `--json`. |
 | `sentinel explain` | Explain the change profile, detected characteristics, risk, and cohesion of a commit range. Usage: `[<base>..<head>] [--json]`. |
 | `sentinel consent-diff` | Manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent). Usage: `grant\|revoke\|status`. |
 | `sentinel tui` | Open the full-screen control center over the repository registry snapshot, refreshed live while the session is open. |

@@ -213,7 +213,9 @@ Long evidence is committed to the repository and linked, not only pasted. The
 body is truncated at `PRBodyLimit` (`internal/review/renderer.go:424`); a
 committed log is not.
 
-- Location: `.vas_sentinel/evidence/<branch-slug>/<step>.log`.
+- Location: `.vas_sentinel/evidence/<branch-slug>-<branch-identity-hash>/<step>.log`,
+  where the identity hash is derived from the exact branch name to distinguish
+  branches with the same slug.
 - Written by `pr review`, in the working tree, as ordinary files. It does not
   commit them: creating a commit is not this command's job.
 - **Who commits them is part of the flow, not an afterthought.** An untracked
@@ -299,14 +301,15 @@ without one.
   `internal/store`, alongside the review ledger. Anchoring on the common
   directory matters for the same reason it did for the ledger: a review run in
   a linked worktree must not die with `git worktree remove`.
-- Key: `<branch-slug>-<head-sha>`. Both parts are load-bearing. The branch alone
-  would let a stale entry from an earlier head authorise publication; the SHA
-  alone would not tell a human which branch it belonged to.
+- Key: `<branch-slug>-<branch-identity-hash>-<head-sha>`. The readable slug is
+  intentionally not identity: the identity hash is derived from the exact branch
+  name to distinguish branches such as `feature/review` and `feature-review`.
+  The head SHA prevents a stale entry from being reused.
 - Content: the rendered body, the attestation struct, the verdict, the head
   SHA, the branch, and the time.
 - It is **replaceable, and single per branch**: re-running `pr review` on the
   same head overwrites its entry, and writing an entry for a branch **deletes
-  every prior entry carrying the same branch slug**. Two runs over the same
+  every prior entry carrying that exact branch name**. Two runs over the same
   tree produce the same key, so a re-run corrects rather than accumulates; and
   a branch that moves forward leaves nothing behind. Without that deletion the
   common directory grows one file per head a branch ever had, forever.
@@ -314,9 +317,9 @@ without one.
   forward **without** another `pr review` run leaves its old entry in place.
   That is the common case — you commit, then run `pr create`. So the entry at
   a different head IS observable, and piece 5 must handle it: look the entry up
-  **by branch slug**, then compare its `HeadSHA` against the current head. That
-  distinguishes "you never reviewed this branch" from "you reviewed it, then
-  changed it", which need different messages. Do not look up by exact key.
+  **by exact branch name**, then compare its `HeadSHA` against the current head.
+  That distinguishes "you never reviewed this branch" from "you reviewed it,
+  then changed it", which need different messages. Do not look up by exact key.
 - Test the deletion directly: write an entry at head A, write one at head B,
   assert only B remains. And test the lookup: an entry at head A with the
   branch now at head B is found and reported as covering A.
@@ -378,8 +381,8 @@ not change it.
 - Truncation: a body over the limit keeps sections 1–3 intact, drops evidence
   blocks from the last step backwards, and states the omitted count; no
   `<details>` is ever cut mid-block.
-- The entry key is identical for two runs over the same head, and different for
-  two different heads.
+- The entry key is identical for two runs over the same branch and head, and
+  different for distinct heads or branches whose readable slugs collide.
 - An entry is refused as stale when the head moved.
 - `--audit-pending` exits `1` with the retirement message and audits nothing.
 - Evidence linking: a file present at the head with matching bytes renders a
