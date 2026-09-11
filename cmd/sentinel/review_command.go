@@ -798,10 +798,9 @@ func recordFixes(ledger *review.Ledger, gitDir, sha string, files []string, mess
 			continue
 		}
 		// The record currently blocks (RULE 2 in coverage.go): an active
-		// supplementary alarm is a real CRITICAL that a genuine fix must be
-		// able to retire, exactly like an authoritative block. Without this, a
-		// narrow alarm would linger in every later branch report after the
-		// code was actually fixed.
+		// supplementary alarm is enough to make a genuine fix eligible for
+		// provenance credit, exactly like an authoritative block. FixedIn never
+		// retires the record; it only records the first credited fix.
 		if !review.RecordHasActiveBlock(*record) {
 			continue
 		}
@@ -815,10 +814,10 @@ func recordFixes(ledger *review.Ledger, gitDir, sha string, files []string, mess
 		// because both happened to touch the same file (FU-17).
 		//
 		// A query that cannot be answered attributes nothing. That is the safe
-		// direction here — the record keeps its block and a later fix can still
-		// clear it — and it matches the rest of this function, which is
-		// best-effort and already returns silently when the ledger cannot be
-		// listed.
+		// direction here — the record's blocking state is unchanged and a later
+		// fix can still receive provenance credit — and it matches the rest of
+		// this function, which is best-effort and already returns silently when
+		// the ledger cannot be listed.
 		sameHistory, err := git.IsAncestorOf(worktree, prevSHA, sha)
 		if err != nil || !sameHistory {
 			continue
