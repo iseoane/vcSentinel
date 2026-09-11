@@ -325,7 +325,8 @@ describes code as it was BEFORE pieces 2 and 3. Do not read it as current.
 - The same hole seen from the publishing end: `pr create` does not audit at
   all. `internal/app/pr/create.go` reads the shared ledger through
   `review.AnalyzeBranch` and derives its notice from those records via
-  `SemanticNoticeWithDispositions` -> `review.BranchBlockers`; the only gate
+  `SemanticNotice` -> `review.BranchBlockers`, both given the standing
+  dispositions; the only gate
   that blocks is a red deterministic validation, overridable with `--force
   --reason`. So the semantic signal that reaches a published PR comes ONLY
   from `sentinel review` fichas. A team using gate plus `pr review` — the two
@@ -723,8 +724,8 @@ below, the plan wins.**
 - What follows from the subject stated above, and is worth settling before any
   code: whether per-commit findings appear in the published report at all, and
   under what framing. Today's notice is derived from per-commit records
-  (`SemanticNoticeWithDispositions` -> `BranchBlockers`), which is the inversion
-  this item corrects.
+  (`SemanticNotice` -> `BranchBlockers`, both given the standing dispositions),
+  which is the inversion this item corrects.
 - Note on what this does not change: publication blocks only on a red
   deterministic validation, overridable with `--force --reason`
   (`create.go:120-186`). The semantic verdict is advisory. Composing the report

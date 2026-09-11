@@ -343,8 +343,9 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 // prominent advisory in the publication (T1.8): the verdict-blocking gate
 // became advisory, like internal/gate since T1.7 — validation (below) is now
 // the only gate that can prevent publishing. SemanticNotice NEVER decides
-// whether to publish, only whether to warn. It returns the structured
-// CRITICAL findings: formatting remains the CLI's responsibility.
+// whether to publish, only whether to warn. It overlays the supplied standing
+// human dispositions and returns the structured CRITICAL findings; formatting
+// remains the CLI's responsibility.
 //
 // It used to be called gateBlock and returned "allowed"; it is renamed
 // because a function that no longer blocks cannot keep being called

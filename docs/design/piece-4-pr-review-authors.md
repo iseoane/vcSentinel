@@ -118,7 +118,8 @@ was retired by a later commit that was re-audited.
 ```
 
 The verdict comes from `BranchResult` and the existing blocker projection
-(`BranchBlockersWithDispositions`), which already applies human dispositions.
+(`BranchBlockers` with the standing human dispositions), which already applies
+those dispositions.
 The justification sentence is `OverviewResult.Risk`, authored in the same
 call as 2.2, and it is untrusted model output like any other: pass it through
 `sanitizeText` before interpolating it. It is rendered on the same line as the
