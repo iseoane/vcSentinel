@@ -351,7 +351,7 @@ means refuse. Do not publish a judgement about a different tree.
 
 Retire it. Its behaviour — `pr review` auditing commits that carry no record —
 is exactly the boundary this design moved to `sentinel review`. Follow the
-precedent already set for `--only-unaudited` (`cmd/sentinel/pr_command.go:79`):
+precedent already set for `--only-unaudited` (`cmd/sentinel/pr_command.go:67`):
 refuse the flag with a message naming the replacement, rather than removing it
 silently.
 
