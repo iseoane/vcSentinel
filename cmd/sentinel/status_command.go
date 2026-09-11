@@ -259,11 +259,10 @@ func applyTimeoutSeconds(cfg config.Config, seconds int) config.Config {
 // purgeOrphans deletes the records of commits that no longer exist in the
 // repo and returns the removed SHAs. Useful after rebase/amend/squash.
 //
-// It purges ALL the ledgers of the repository, not just the current
-// checkout's. The v1 ledger is anchored on the gitDir, so a review made from
-// a linked worktree writes to <gitCommonDir>/worktrees/<name>/vas-sentinel,
-// and delegating to a writer with a dedicated worktree is the usual flow
-// here. Purging only our own left all those records orphaned.
+// It purges the common ledger and every legacy per-checkout ledger, not just
+// the current checkout's. Current reviews write to <gitCommonDir>/vas-sentinel;
+// linked-worktree paths remain only for legacy records. Purging only the common
+// ledger would leave those legacy records orphaned.
 //
 // This matters beyond hygiene: T9.5 builds its retention cascade on this
 // primitive and on collectProvenanceReferences, which already enumerates
