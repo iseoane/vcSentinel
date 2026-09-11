@@ -313,6 +313,10 @@ without one.
   tree produce the same key, so a re-run corrects rather than accumulates; and
   a branch that moves forward leaves nothing behind. Without that deletion the
   common directory grows one file per head a branch ever had, forever.
+- Replacement is generation-based: validate the complete old directory, stage
+  the complete next directory beside it, then publish it as one generation. A
+  failed replacement restores the old generation; it must never leave a mixed
+  set of old and new entries that `pr create` cannot read.
 - The deletion happens only when `pr review` writes, so a branch that moves
   forward **without** another `pr review` run leaves its old entry in place.
   That is the common case — you commit, then run `pr create`. So the entry at
