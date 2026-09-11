@@ -286,6 +286,7 @@ func TestRunsAbortDoesNotClaimSuccessOnALiveHead(t *testing.T) {
 // for.
 func TestRunsAbortOrphanedSettlesAnOwnerlessRun(t *testing.T) {
 	worktree := t.TempDir()
+	replaceRunsAgent(t, &fakeRunsAgent{})
 	initGitRepo(t, worktree)
 	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
@@ -428,6 +429,7 @@ func TestRunsAbortOrphanedRequiresAReason(t *testing.T) {
 // only reachable by reading the source.
 func TestRunsAbortRefusalNamesTheOrphanedExit(t *testing.T) {
 	worktree := t.TempDir()
+	replaceRunsAgent(t, &fakeRunsAgent{})
 	initGitRepo(t, worktree)
 	commonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
