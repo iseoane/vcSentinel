@@ -350,8 +350,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 // because a function that no longer blocks cannot keep being called
 // "gate...Block" without lying about what it does.
 func SemanticNotice(records []review.Record) (warn bool, blockers []review.ReviewFinding) {
-	blockers = review.BranchBlockers(records)
-	return len(blockers) > 0, blockers
+	return SemanticNoticeWithDispositions(records, nil)
 }
 
 // SemanticNoticeWithDispositions is SemanticNotice overlaid with the

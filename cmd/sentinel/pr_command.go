@@ -266,7 +266,7 @@ func runPrReview(worktree string, args []string) {
 }
 
 func semanticAdvisory(records []review.Record) (warn bool, blockers []review.ReviewFinding) {
-	return pr.SemanticNotice(records)
+	return semanticAdvisoryWithDispositions(records, nil)
 }
 
 func semanticAdvisoryWithDispositions(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {

@@ -711,5 +711,11 @@ func RenderBranchPRTemplateWithDispositions(res *BranchResult, verification Temp
 	return TruncateBody(b.String(), PRBodyLimit)
 }
 func RenderPRTemplate(records []Record, overview *OverviewResult, verification TemplateVerification, version string) string {
-	return RenderBranchPRTemplate(&BranchResult{Records: records, Overview: overview}, verification, version)
+	return RenderPRTemplateWithDispositions(records, overview, verification, version, nil)
+}
+
+// RenderPRTemplateWithDispositions renders a PR template using the effective
+// findings after applying the standing human dispositions.
+func RenderPRTemplateWithDispositions(records []Record, overview *OverviewResult, verification TemplateVerification, version string, dispositions []FindingDisposition) string {
+	return RenderBranchPRTemplateWithDispositions(&BranchResult{Records: records, Overview: overview}, verification, version, dispositions)
 }
