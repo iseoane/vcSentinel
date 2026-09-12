@@ -441,6 +441,16 @@ func TestVerificationSection(t *testing.T) {
 			t.Errorf("missing the tested contract: %s", out)
 		}
 	})
+	t.Run("delegated sanitizes command evidence", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{
+			Mode:   "delegado",
+			Tested: []string{"go test `</details><details>`"},
+		})
+		const want = "- 🤖 agent: `go test '</details><details>'`\n"
+		if out != want {
+			t.Errorf("delegated verification = %q, want %q", out, want)
+		}
+	})
 	t.Run("omitted stays honest", func(t *testing.T) {
 		out := verificationSection(TemplateVerification{Mode: "omitido", Reason: "no_configurado"})
 		if !strings.Contains(out, "no_configurado") {
