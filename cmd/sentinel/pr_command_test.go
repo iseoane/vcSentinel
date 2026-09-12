@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -23,6 +24,8 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
+
+const validPrReviewSHA = "abc1234abcd00000000000000000000000000000"
 
 // TestRunPrReview_UnknownKeyInYml_Exit1WithLine covers Fix 1 (F1, orchestrator
 // finding): runPrReview used LoadLocalConfig (no error). With a
@@ -2064,13 +2067,14 @@ func TestPrReviewJSONStdoutStartsAtJSON(t *testing.T) {
 			}
 			return &review.BranchResult{
 				Branch:   "feat/json-contract",
-				SHAs:     []string{"abc1234abcd"},
+				SHAs:     []string{validPrReviewSHA},
 				Decision: "single",
 				Records:  []review.Record{},
 			}, nil
 		},
-		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		EventDetail: pr.PrReviewEventDetail,
+		CommitMessage: func(string) (string, error) { return "feat: test review", nil },
+		RecordEvent:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail:   pr.PrReviewEventDetail,
 	}
 	stdout, stderr := captureStreams(t, func() {
 		if code := pr.RunPrReviewWith(os.Stdout, os.Stderr, worktree, pr.FlagsPrReview{Base: "main", JsonOut: true}, wiring, deps); code != 0 {
@@ -2125,11 +2129,16 @@ func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
 		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
 			return &review.BranchResult{
 				Branch:   "feat/warning-routing",
-				SHAs:     []string{"abc1234abcd"},
+				SHAs:     []string{validPrReviewSHA},
 				Decision: "single",
 				Records:  []review.Record{},
 			}, nil
 		},
+		CommitMessage: func(string) (string, error) { return "feat: test review", nil },
+		WriteEvidence: func(string, string, []review.EvidenceLog) ([]string, error) {
+			return nil, nil
+		},
+		SavePRReview: func(string, *store.PRReviewEntry) error { return nil },
 		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
 			return errors.New("event store locked")
 		},
@@ -2181,12 +2190,13 @@ func TestPrReviewJSONRoutesEventDetailWarningOffStdout(t *testing.T) {
 		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
 			return &review.BranchResult{
 				Branch:   "feat/event-detail-routing",
-				SHAs:     []string{"abc1234abcd"},
+				SHAs:     []string{validPrReviewSHA},
 				Decision: "single",
 				Records:  []review.Record{},
 			}, nil
 		},
-		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		CommitMessage: func(string) (string, error) { return "feat: test review", nil },
+		RecordEvent:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		EventDetail: func(string, *review.BranchResult, bool) (ops.EventDetail, error) {
 			return nil, errors.New("detail schema rejected")
 		},
@@ -2239,11 +2249,12 @@ func TestPrReviewNonJSONRoutesProgressThroughPayloadWriter(t *testing.T) {
 			}
 			return &review.BranchResult{
 				Branch:   "feat/non-json-routing",
-				SHAs:     []string{"abc1234abcd"},
+				SHAs:     []string{validPrReviewSHA},
 				Decision: "single",
 				Records:  []review.Record{},
 			}, nil
 		},
+		CommitMessage: func(string) (string, error) { return "feat: test review", nil },
 		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
 			return errors.New("event store locked")
 		},
@@ -2294,14 +2305,15 @@ func TestRunPrReviewReportsUnauditedCommitsWithoutBlocking(t *testing.T) {
 		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
 			return &review.BranchResult{
 				Branch:    "feat/unaudited",
-				SHAs:      []string{"abc1234abcd"},
+				SHAs:      []string{validPrReviewSHA},
 				Decision:  "single",
 				Records:   nil,
-				Unaudited: []review.UnauditedCommit{{SHA: "abc1234abcd", Subject: "feat(x): x"}},
+				Unaudited: []review.UnauditedCommit{{SHA: validPrReviewSHA, Subject: "feat(x): x"}},
 			}, nil
 		},
-		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		EventDetail: pr.PrReviewEventDetail,
+		CommitMessage: func(string) (string, error) { return "feat: test review", nil },
+		RecordEvent:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail:   pr.PrReviewEventDetail,
 	}
 	stdout, _ := captureStreams(t, func() {
 		if code := pr.RunPrReviewWith(os.Stdout, os.Stdout, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
@@ -2403,6 +2415,126 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	}
 	if saved != nil {
 		t.Fatalf("saved review despite title lookup failure: %+v", saved)
+	}
+}
+
+func TestRunPrReviewRejectsMalformedHeadBeforeSideEffects(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+
+	calls := make(map[string]int)
+	mark := func(name string) { calls[name]++ }
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+	}
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
+			return &review.BranchResult{Branch: "feature/malformed-head", SHAs: []string{"not-a-git-object-id"}}, nil
+		},
+		CommitMessage: func(string) (string, error) {
+			mark("title")
+			return "feat: should not be looked up", nil
+		},
+		WriteEvidence: func(string, string, []review.EvidenceLog) ([]string, error) {
+			mark("evidence")
+			return []string{"evidence/pr-review.md"}, nil
+		},
+		SavePRReview: func(string, *store.PRReviewEntry) error {
+			mark("persistence")
+			return nil
+		},
+		EventDetail: func(string, *review.BranchResult, bool) (ops.EventDetail, error) {
+			mark("event detail")
+			return nil, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
+			mark("event")
+			return nil
+		},
+	}
+
+	var output bytes.Buffer
+	if code := pr.RunPrReviewWith(&output, &output, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 1 {
+		t.Fatalf("RunPrReviewWith() = %d, want 1; output:\n%s", code, output.String())
+	}
+	if !strings.Contains(output.String(), "invalid branch head") {
+		t.Fatalf("output does not explain the malformed head:\n%s", output.String())
+	}
+	for _, name := range []string{"title", "evidence", "persistence", "event detail", "event"} {
+		if calls[name] != 0 {
+			t.Errorf("%s calls = %d, want 0", name, calls[name])
+		}
+	}
+}
+
+func TestRunPrReviewAcceptsSHA1AndSHA256Heads(t *testing.T) {
+	for _, sha := range []string{strings.Repeat("a", 40), strings.Repeat("b", 64)} {
+		t.Run(fmt.Sprintf("sha-%d", len(sha)), func(t *testing.T) {
+			worktree := tempGitRepo(t)
+			writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+
+			calls := make(map[string]int)
+			mark := func(name string) { calls[name]++ }
+			wiring := pr.Wiring{
+				NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+				SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+				LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+				TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+					return func(string, []string) review.ReviewTransport { return nil }
+				},
+				BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+					return opts
+				},
+				ShortSHA: func(value string) string { return value },
+			}
+			deps := pr.DepsPrReview{
+				AnalyzeBranch: func(_ *review.Ledger, _ review.BranchOptions) (*review.BranchResult, error) {
+					return &review.BranchResult{Branch: "feature/valid-head", SHAs: []string{sha}}, nil
+				},
+				CommitMessage: func(value string) (string, error) {
+					if value != sha {
+						t.Fatalf("title SHA = %s, want %s", value, sha)
+					}
+					mark("title")
+					return "feat: persist valid head", nil
+				},
+				WriteEvidence: func(string, string, []review.EvidenceLog) ([]string, error) {
+					mark("evidence")
+					return []string{"evidence/pr-review.md"}, nil
+				},
+				SavePRReview: func(string, *store.PRReviewEntry) error {
+					mark("persistence")
+					return nil
+				},
+				EventDetail: func(string, *review.BranchResult, bool) (ops.EventDetail, error) {
+					mark("event detail")
+					return nil, nil
+				},
+				RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error {
+					mark("event")
+					return nil
+				},
+			}
+
+			var output bytes.Buffer
+			if code := pr.RunPrReviewWith(&output, &output, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
+				t.Fatalf("RunPrReviewWith() = %d, want 0; output:\n%s", code, output.String())
+			}
+			for _, name := range []string{"title", "evidence", "persistence", "event detail", "event"} {
+				if calls[name] != 1 {
+					t.Errorf("%s calls = %d, want 1", name, calls[name])
+				}
+			}
+		})
 	}
 }
 

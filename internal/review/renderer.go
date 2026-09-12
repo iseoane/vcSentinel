@@ -572,7 +572,7 @@ func verificationSection(v TemplateVerification) string {
 			if c.Exit != 0 {
 				icon = "❌"
 			}
-			b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, c.Comando, c.Exit))
+			b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, sanitizeText(c.Comando), c.Exit))
 		}
 	case "delegado":
 		for _, tested := range v.Tested {
@@ -607,7 +607,7 @@ func validationSection(cmds []VerifiedCommand) string {
 		if c.Exit != 0 {
 			icon = "❌"
 		}
-		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, c.Comando, c.Exit))
+		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, sanitizeText(c.Comando), c.Exit))
 	}
 	return b.String()
 }

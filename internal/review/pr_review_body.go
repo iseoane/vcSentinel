@@ -244,7 +244,7 @@ func commandPipelineStep(step string, commands []VerifiedCommand, absent string)
 			icon, failed = "⚠️", true
 			failedCount++
 		}
-		fmt.Fprintf(&evidence, "- %s `%s` (exit %d)\n", icon, command.Comando, command.Exit)
+		fmt.Fprintf(&evidence, "- %s `%s` (exit %d)\n", icon, sanitizeText(command.Comando), command.Exit)
 	}
 	icon := "✅"
 	summary := fmt.Sprintf("%d commands, all green", len(commands))

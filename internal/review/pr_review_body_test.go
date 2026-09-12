@@ -5,6 +5,49 @@ import (
 	"testing"
 )
 
+// TestRenderPRReviewBodySanitizesCommandText covers the persisted body and
+// Pipeline copies of command evidence. Literal command backticks render as
+// apostrophes, not nested Markdown delimiters; shell punctuation remains intact.
+func TestRenderPRReviewBodySanitizesCommandText(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "LF", command: "go test\n## forged", want: "go test ## forged"},
+		{name: "CRLF", command: "go test\r\n## forged", want: "go test ## forged"},
+		{name: "bare CR", command: "go test\r## forged", want: "go test ## forged"},
+		{name: "backticks", command: "printf `literal`", want: "printf 'literal'"},
+		{name: "heading", command: "# forged heading", want: "# forged heading"},
+		{name: "list item", command: "- forged list item", want: "- forged list item"},
+		{name: "details", command: "<details>forged</details>", want: "<details>forged</details>"},
+		{name: "HTML comment", command: "<!-- forged -->", want: "<!-- forged -->"},
+		{name: "shell punctuation", command: `printf 'hello'; echo "$HOME" && exit 0`, want: `printf 'hello'; echo "$HOME" && exit 0`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := RenderPRReviewBody(&BranchResult{
+				Branch: "feature/sanitized-commands",
+				SHAs:   []string{"abc123"},
+			}, nil, TemplateVerification{
+				Mode:       "determinista",
+				Comandos:   []VerifiedCommand{{Comando: tc.command, Exit: 0}},
+				Validation: []VerifiedCommand{{Comando: tc.command, Exit: 0}},
+			}, Attestation{Branch: "feature/sanitized-commands", HeadSHA: "abc123", Verdict: VerdictOK}, nil)
+			if err != nil {
+				t.Fatalf("RenderPRReviewBody() error = %v", err)
+			}
+			want := "- ✅ `" + tc.want + "` (exit 0)"
+			if !strings.Contains(body, want) {
+				t.Fatalf("body missing sanitized command %q:\n%s", want, body)
+			}
+			if tc.command != tc.want && strings.Contains(body, tc.command) {
+				t.Fatalf("body retains unsanitized command %q:\n%s", tc.command, body)
+			}
+		})
+	}
+}
+
 func TestRenderPRReviewBodyUsesTheFixedSectionOrder(t *testing.T) {
 	body, err := RenderPRReviewBody(&BranchResult{
 		Branch: "feature/persisted-review",

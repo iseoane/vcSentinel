@@ -458,6 +458,54 @@ func TestVerificationSection(t *testing.T) {
 	})
 }
 
+// TestCommandTextSanitizesMarkdownControlText protects every direct command
+// sink in the PR template. Literal command backticks render as apostrophes
+// inside the surrounding inline-code span, while ordinary shell punctuation is
+// preserved unchanged.
+func TestCommandTextSanitizesMarkdownControlText(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "LF", command: "go test\n## forged", want: "go test ## forged"},
+		{name: "CRLF", command: "go test\r\n## forged", want: "go test ## forged"},
+		{name: "bare CR", command: "go test\r## forged", want: "go test ## forged"},
+		{name: "backticks", command: "printf `literal`", want: "printf 'literal'"},
+		{name: "heading", command: "# forged heading", want: "# forged heading"},
+		{name: "list item", command: "- forged list item", want: "- forged list item"},
+		{name: "details", command: "<details>forged</details>", want: "<details>forged</details>"},
+		{name: "HTML comment", command: "<!-- forged -->", want: "<!-- forged -->"},
+		{name: "shell punctuation", command: `printf 'hello'; echo "$HOME" && exit 0`, want: `printf 'hello'; echo "$HOME" && exit 0`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			command := VerifiedCommand{Comando: tc.command, Exit: 0}
+			outputs := []struct {
+				name string
+				body string
+			}{
+				{name: "verification", body: verificationSection(TemplateVerification{
+					Mode:     "determinista",
+					Comandos: []VerifiedCommand{command},
+				})},
+				{name: "validation", body: validationSection([]VerifiedCommand{command})},
+			}
+			for _, output := range outputs {
+				t.Run(output.name, func(t *testing.T) {
+					want := "- ✅ `" + tc.want + "` (exit 0)"
+					if !strings.Contains(output.body, want) {
+						t.Fatalf("output missing sanitized command %q:\n%s", want, output.body)
+					}
+					if tc.command != tc.want && strings.Contains(output.body, tc.command) {
+						t.Fatalf("output retains unsanitized command %q:\n%s", tc.command, output.body)
+					}
+				})
+			}
+		})
+	}
+}
+
 // TestValidationSection: real exit codes from internal/validation (T1.8),
 // distinct from verificationSection — with no commands it never invents a
 // PASS.
