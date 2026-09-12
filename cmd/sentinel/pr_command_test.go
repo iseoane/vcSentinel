@@ -2347,6 +2347,12 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 		},
 		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
 		EventDetail: pr.PrReviewEventDetail,
+		CommitMessage: func(got string) (string, error) {
+			if got != sha {
+				t.Fatalf("title SHA = %s, want %s", got, sha)
+			}
+			return "feat: persist the review title", nil
+		},
 		ReadIntents: func(got []string) ([]review.IntentLine, error) {
 			if !reflect.DeepEqual(got, []string{sha}) {
 				t.Fatalf("trailer range = %v, want [%s]", got, sha)
@@ -2368,6 +2374,9 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	if saved == nil || !strings.Contains(saved.Body, "Protect the release pipeline.") {
 		t.Fatalf("saved review body omits trailer intent: %+v", saved)
 	}
+	if got, want := saved.Title, "feat: persist the review title"; got != want {
+		t.Fatalf("saved review title = %q, want %q", got, want)
+	}
 	deps.ReadIntents = func([]string) ([]review.IntentLine, error) { return nil, nil }
 	deps.AnalyzeBranch = func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
 		if err := opts.PrepareNetReview([]string{sha}); err != nil {
@@ -2385,6 +2394,15 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	}
 	if saved == nil || !strings.Contains(saved.Body, "_No intent recorded.") {
 		t.Fatalf("saved review body must report the missing trailer intent: %+v", saved)
+	}
+	deps.CommitMessage = func(string) (string, error) { return "", errors.New("first commit unavailable") }
+	saved = nil
+	output.Reset()
+	if code := pr.RunPrReviewWith(&output, &output, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 1 {
+		t.Fatalf("RunPrReviewWith() with missing title = %d, want 1", code)
+	}
+	if saved != nil {
+		t.Fatalf("saved review despite title lookup failure: %+v", saved)
 	}
 }
 

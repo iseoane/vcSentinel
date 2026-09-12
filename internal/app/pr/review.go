@@ -175,6 +175,7 @@ type DepsPrReview struct {
 	WriteEvidence func(worktree, branch string, logs []review.EvidenceLog) ([]string, error)
 	SavePRReview  func(worktree string, entry *store.PRReviewEntry) error
 	ReadIntents   func(shas []string) ([]review.IntentLine, error)
+	CommitMessage func(sha string) (string, error)
 }
 
 func realPrReviewDeps() DepsPrReview {
@@ -182,6 +183,7 @@ func realPrReviewDeps() DepsPrReview {
 		AnalyzeBranch: review.AnalyzeBranch,
 		RecordEvent:   ops.RecordEvent,
 		EventDetail:   PrReviewEventDetail,
+		CommitMessage: git.CommitMessage,
 		ReadIntents: func(shas []string) ([]review.IntentLine, error) {
 			lines := make([]review.IntentLine, 0, len(shas))
 			for _, sha := range shas {
@@ -314,6 +316,22 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		return 1
 	}
 	head := res.SHAs[len(res.SHAs)-1]
+	title := ""
+	if len(head) == 40 {
+		if deps.CommitMessage == nil {
+			fmt.Fprintln(w, "? pr review title reader is unavailable")
+			return 1
+		}
+		title, err = deps.CommitMessage(res.SHAs[0])
+		if err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
+		if strings.TrimSpace(title) == "" {
+			fmt.Fprintln(w, "? review produced no PR title")
+			return 1
+		}
+	}
 	verdict := review.VerdictDeBranch(res.Records, options.Dispositions)
 	if res.Net != nil {
 		verdict = res.Net.Audit.Verdict
@@ -335,7 +353,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		return 1
 	}
 	if len(head) == 40 {
-		if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
+		if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
 			fmt.Fprintf(w, "? %v\n", err)
 			return 1
 		}
