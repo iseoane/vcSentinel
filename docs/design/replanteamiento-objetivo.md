@@ -1071,23 +1071,26 @@ La PR **no** es la suma de sus commits. Se revisa como unidad propia:
 unidad_pr = diff(merge_base(base, head) … head)
 ```
 
-Entrada del revisor:
-- el diff neto de la PR (no la secuencia de commits);
-- el historial de findings por commit del Review Store, como *contexto*, no como
-  veredicto;
-- resultados de validación `full`;
-- perfil de cambio y riesgo agregados de la PR.
+Reviewer input:
+- the PR's net diff, not its commit sequence;
+- per-commit findings from the Review Store as context, not a verdict;
+- the recorded range intent from Piece 1 trailers, or an explicit no-intent value;
+- the PR's aggregate change profile and risk.
 
-Se evalúan explícitamente cosas que la revisión por commit no puede ver:
+`pr review` does not run deterministic validation. `gate` owns validation, and
+[Piece 4](piece-4-pr-review-authors.md) owns the current PR-review authoring,
+evidence, and persistence contract.
 
-| Eje | Pregunta |
+The net review evaluates concerns that a per-commit audit cannot see:
+
+| Axis | Question |
 |---|---|
-| Intención | ¿La PR hace lo que su título/descripción promete? |
-| Integración | ¿Las piezas de los distintos commits encajan? |
-| Interacción entre commits | ¿Un commit deshace o contradice a otro? |
-| Regresión neta | ¿El estado final rompe algo que el estado inicial hacía? |
-| Contratos | ¿Hay breaking changes no declarados? |
-| Cobertura | ¿Los tests cubren el comportamiento neto, no cada paso? |
+| Intent | Does the PR deliver its recorded intent when one exists? |
+| Integration | Do the pieces from different commits fit together? |
+| Cross-commit interaction | Does one commit undo or contradict another? |
+| Net regression | Does the final state break something the initial state did not? |
+| Contracts | Are there undeclared breaking changes? |
+| Coverage | Do tests cover the net behaviour, not each individual step? |
 
 Regla explícita: **findings de commits intermedios sobre código que ya no existe
 en el diff neto se archivan, no se reportan**. Es la segunda mitad del arreglo

@@ -132,26 +132,11 @@ model output for Markdown (`sanitizeEvidence`, `sanitizeText`).
 
 ### 2.4 Testing
 
-Prose summary, then the deterministic evidence Sentinel actually has:
-`lint_commands`, `test_commands`, `build_commands` with their real exit codes.
-
-`TemplateVerification` (`internal/review/renderer.go:180`) already carries
-exactly this and already refuses to invent a PASS. Keep that type. What
-changes is only the rendering: today `Validation` and `Verification` are two
-sections with near-identical names and identical formatting that a reader
-cannot tell apart. Merge them into `## Testing` with their origin stated on
-each group:
-
-```
-Before the review:
-- ✅ `go vet ./...` (exit 0)
-After the review:
-- ✅ `go test ./...` (exit 0)
-```
-
-Do **not** copy the reference's live-vs-deterministic scenario table. It
-presupposes a classification Sentinel does not have and would be a claim
-without evidence behind it.
+Piece 4 does not run deterministic validation, lint, tests, or builds. It
+passes an empty `TemplateVerification`, so the rendered Testing section states
+that no validation commands were configured and that tests were not run. This
+keeps the persisted judgement honest: command evidence belongs to the command
+that actually collected it, not to `pr review`.
 
 ### 2.5 Pipeline
 
@@ -161,10 +146,10 @@ The audit trail: which steps ran, and what each found. Steps, fixed order:
 |---|---|---|
 | `slice` | intent trailers present on the range | ⚪ not observed |
 | `review` | the ledger records for each SHA | ⚪ no records |
-| `gate` | the deterministic validation exit codes | ⚪ not run |
-| `lint` | `lint_commands` exit codes | ⚪ not configured |
-| `test` | `test_commands` exit codes | ⚪ not configured |
-| `build` | `build_commands` exit codes | ⚪ not configured |
+| `gate` | no validation evidence is collected by this flow | ⚪ not run |
+| `lint` | no lint evidence is collected by this flow | ⚪ not configured |
+| `test` | no test evidence is collected by this flow | ⚪ not configured |
+| `build` | no build evidence is collected by this flow | ⚪ not configured |
 | `pr review` | this run | always ✅ by construction |
 | `ci` | filled by `pr create` (piece 5) | ⚪ not observed by Sentinel |
 
@@ -237,21 +222,11 @@ body is truncated at `PRBodyLimit` (`internal/review/pr_review_body.go` and
   verify with a test that a large evidence log does not push `check --staged`
   over the 400-line budget. If it does, the classification is the bug, not the
   budget.
-- The body links them by permalink at the head SHA, and also embeds the first
-  `evidenceEmbedMaxBytes` of the log inline, so a reader with no link still
-  sees something.
-- A link whose target is not committed would 404, and a link whose target
-  changed since the commit would resolve to different bytes. `git ls-files
-  --error-unmatch` proves neither: it succeeds for a staged-but-uncommitted
-  file and for a tracked file whose working copy has since been edited. The
-  check must be about the head blob, not the index:
-  1. `git rev-parse --verify HEAD:<path>` — the path exists at the head.
-  2. Compare that blob's OID against `git hash-object <path>` — the bytes on
-     disk are the bytes the permalink will serve.
-  Both must hold to render the link. Otherwise embed the excerpt with a note
-  saying whether the log is untracked at the head or differs from it. Test
-  both failure modes separately: they have different causes and different
-  remedies.
+- The body is rendered **before** evidence is written. Piece 4 then writes a
+  `pr-review` log containing that rendered body and records its repository-relative
+  path in the persisted entry. The current body neither links nor embeds evidence.
+  Committed-link validation and body embedding remain Piece 5 work, when the
+  persisted entry is consumed for publication.
 
 ### 2.8 Truncation order
 
@@ -277,10 +252,9 @@ When the rendered body exceeds `PRBodyLimit`:
    plus the reserved `ci` block is the §2.8.1 error case. Test the bound
    directly: a CI outcome with 40 failed jobs and a maximum-length URL must
    render inside the reserve.
-2. Drop evidence `<details>` blocks from the **last** step backwards, replacing
-   each with one line naming the step and its evidence file path.
-3. Append a single line stating how many were omitted:
-   `_N evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._`
+2. Drop Pipeline-step evidence from the **last non-CI** step backwards. Evidence
+   logs are not part of the body at this stage, so truncation never links,
+   embeds, or drops an evidence file.
 
 Never truncate mid-block and never rely on `TruncateBody`'s blind byte cut for
 this section: that cut may land inside a `<details>` and break the Markdown of
@@ -333,7 +307,7 @@ type Entry struct {
     Verdict     string
     Body        string
     Attestation Attestation
-    Evidence    []string // repo-relative paths of the evidence logs this body links
+    Evidence    []string // repo-relative paths of the evidence logs written after rendering
     At          time.Time
 }
 ```
@@ -431,8 +405,8 @@ Report the observed result of each command.
    `<details>` shapes, the matrix moved inside the review step.
 4. `feat(review): seal a machine attestation into the body` — the comment, the
    parser, its tests.
-5. `feat(review): write the evidence files and link them` — evidence writing,
-   tracked/untracked link rule.
+5. `feat(review): write the evidence files` — write the rendered body as the
+   `pr-review` log and persist its path; body links remain Piece 5 work.
 6. `feat(review): persist the net entry for Piece 5 consumption` — the store
    entry, the key, and the staleness rule.
 7. `feat(pr): retire --audit-pending` — the refusal and its message.
