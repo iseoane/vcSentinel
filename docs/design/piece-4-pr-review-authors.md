@@ -358,16 +358,14 @@ not change it.
   different for distinct heads or branches whose readable slugs collide.
 - An entry is refused as stale when the head moved.
 - `--audit-pending` exits `1` with the retirement message and audits nothing.
-- Evidence linking: a file present at the head with matching bytes renders a
-  permalink; one absent at the head renders the excerpt with the untracked
-  note; one present but with different bytes renders the excerpt with the
-  differs-from-head note. Three cases, three tests.
-- Evidence determinism: two consecutive `pr review` runs over the same records
-  and exit codes write byte-identical evidence files.
+- Evidence writing: `pr review` writes the rendered body as its `pr-review`
+  log and persists the repository-relative path; two runs over the same records
+  write byte-identical evidence files. Evidence linking and HEAD validation are
+  Piece 5 tests.
 - `What Changed`: bullets render in order; an empty `Changed` renders the
   fallback and does not block.
-- `Testing`: the two origins render under their own headings with their real
-  exit codes, and a non-zero exit renders `❌`, never `✅`.
+- `Testing`: with Piece 4's empty verification input, the section reports that
+  no validation commands were configured and no tests were run.
 - `Pipeline`: the eight steps render in the fixed order; a step with no data
   renders `⚪` with its stated reason; the commit × dimension matrix appears
   inside the `review` step's `<details>` and nowhere else; and a ledger chain

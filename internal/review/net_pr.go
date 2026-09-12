@@ -300,7 +300,7 @@ func dispositionEvidenceHoldsAtHead(disp FindingDisposition, head string) bool {
 }
 
 const netAxes = `Evaluate explicitly beyond any per-commit review:
-- Intention: does the PR deliver what its title/description promise?
+- Intention: when a recorded range intent exists, does the PR deliver it? Otherwise, judge internal coherence without inventing a target.
 - Integration: do the pieces from different commits fit together?
 - Interaction between commits: does one commit undo or contradict another?
 - Net regression: does the final state break something the initial state did?
