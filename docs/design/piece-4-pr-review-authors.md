@@ -22,8 +22,8 @@ Two changes of substance, and everything else in this plan serves them:
 
 1. It stops guessing the intent. It reads what piece 1 recorded.
 2. It stops being a report printed to a terminal and becomes a **persisted
-   entry** that `pr create` consumes. Today `pr create` re-derives its own view;
-   after this piece it composes from what `pr review` wrote and authors nothing.
+   entry**. Piece 5 will make `pr create` compose from what `pr review` wrote;
+   until then, `pr create` continues to derive its own view.
 
 ## 2. The PR body this produces
 
@@ -42,7 +42,7 @@ Five sections, always present, always in this order:
 ```
 
 `pr review` authors sections 1 to 4 and seals the Pipeline attestation.
-`pr create` renders them and adds nothing (piece 5).
+Piece 5 will make `pr create` render that persisted body and add nothing else.
 
 ### 2.1 Intent
 
@@ -77,14 +77,12 @@ Each rendered line carries its source, in this shape:
 
 Mixed sources on one branch are normal and must render correctly.
 
-`HonestNetIntention` (`internal/app/pr/review.go:20`) is deleted. It exists
-because nothing recorded the intent; piece 1 records it. Remove the constant,
-its alias `honestNetIntention` (`cmd/sentinel/pr_command.go:30`), and both call
-sites (`internal/app/pr/review.go:148`, `internal/app/pr/create.go:248`).
-`NetReviewOptions.Intention` now carries the real intent text, or the empty
-string when none was recorded — and an empty `Intention` must reach the
-reviewer prompt as an explicit "no intent was recorded", never as an absent
-field the model fills in.
+`HonestNetIntention` was deleted when Piece 4 was connected: piece 1 records
+the intent, so `pr review` now passes the real range text to
+`NetReviewOptions.Intention`. When no trailer is recorded, it passes the
+explicit `NoRecordedIntentForPRRange` value rather than leaving the reviewer to
+infer an absent field. `pr create` uses the same explicit no-intent value until
+Piece 5 removes its independent net audit.
 
 ### 2.2 What Changed
 
@@ -134,26 +132,11 @@ model output for Markdown (`sanitizeEvidence`, `sanitizeText`).
 
 ### 2.4 Testing
 
-Prose summary, then the deterministic evidence Sentinel actually has:
-`lint_commands`, `test_commands`, `build_commands` with their real exit codes.
-
-`TemplateVerification` (`internal/review/renderer.go:180`) already carries
-exactly this and already refuses to invent a PASS. Keep that type. What
-changes is only the rendering: today `Validation` and `Verification` are two
-sections with near-identical names and identical formatting that a reader
-cannot tell apart. Merge them into `## Testing` with their origin stated on
-each group:
-
-```
-Before the review:
-- ✅ `go vet ./...` (exit 0)
-After the review:
-- ✅ `go test ./...` (exit 0)
-```
-
-Do **not** copy the reference's live-vs-deterministic scenario table. It
-presupposes a classification Sentinel does not have and would be a claim
-without evidence behind it.
+Piece 4 does not run deterministic validation, lint, tests, or builds. It
+passes an empty `TemplateVerification`, so the rendered Testing section states
+that no validation commands were configured and that tests were not run. This
+keeps the persisted judgement honest: command evidence belongs to the command
+that actually collected it, not to `pr review`.
 
 ### 2.5 Pipeline
 
@@ -163,10 +146,10 @@ The audit trail: which steps ran, and what each found. Steps, fixed order:
 |---|---|---|
 | `slice` | intent trailers present on the range | ⚪ not observed |
 | `review` | the ledger records for each SHA | ⚪ no records |
-| `gate` | the deterministic validation exit codes | ⚪ not run |
-| `lint` | `lint_commands` exit codes | ⚪ not configured |
-| `test` | `test_commands` exit codes | ⚪ not configured |
-| `build` | `build_commands` exit codes | ⚪ not configured |
+| `gate` | no validation evidence is collected by this flow | ⚪ not run |
+| `lint` | no lint evidence is collected by this flow | ⚪ not configured |
+| `test` | no test evidence is collected by this flow | ⚪ not configured |
+| `build` | no build evidence is collected by this flow | ⚪ not configured |
 | `pr review` | this run | always ✅ by construction |
 | `ci` | filled by `pr create` (piece 5) | ⚪ not observed by Sentinel |
 
@@ -199,33 +182,29 @@ section:
 ```
 
 `v1` in the marker is the schema version and is mandatory: a later reader must
-be able to refuse a shape it does not know. `pr create` reads it to fill in the
+be able to refuse a shape it does not know. Piece 5 will read it to fill in the
 `ci` step without re-deriving anything else.
 
-Add a parser beside the renderer: `ParseAttestation(body string) (Attestation,
-error)`. It must reject a body carrying more than one attestation comment
-rather than taking the first, and must return a typed "absent" for a body with
-none.
+`ParseAttestation(body string) (Attestation, error)` is implemented beside the
+renderer. It rejects a body carrying more than one attestation comment rather
+than taking the first, and returns a typed "absent" for a body with none.
 
 ### 2.7 Evidence files
 
-Long evidence is committed to the repository and linked, not only pasted. The
-body is truncated at `PRBodyLimit` (`internal/review/renderer.go:424`); a
-committed log is not.
+Long evidence is written to the repository working tree, not only pasted. The
+body is truncated at `PRBodyLimit` (`internal/review/pr_review_body.go` and
+`internal/review/pr_review_truncation.go`); an evidence log is not.
 
 - Location: `.vas_sentinel/evidence/<branch-slug>-<branch-identity-hash>/<step>.log`,
   where the identity hash is derived from the exact branch name to distinguish
   branches with the same slug.
 - Written by `pr review`, in the working tree, as ordinary files. It does not
   commit them: creating a commit is not this command's job.
-- **Who commits them is part of the flow, not an afterthought.** An untracked
-  log is a log the permalink cannot reach, so the evidence would degrade to an
-  excerpt in exactly the path it was designed for. The required step is
-  explicit: after `pr review` and before `pr create`, the operator commits the
-  evidence, normally as `chore(evidence): record the pr review logs`.
-  `pr review` prints that command verbatim. `pr create` refuses to publish when
-  the entry references evidence files that are untracked at the head, with a
-  message naming them and that commit (piece 5, §3).
+- **Committing and enforcing evidence belongs to Piece 5.** Piece 4 writes the
+  deterministic logs but does not print a commit command, and the current
+  `pr create` path does not inspect them. The required commit/re-review loop and
+  the refusal for evidence absent from `HEAD` are specified in
+  [Piece 5 §3](piece-5-pr-create-composes.md#3-the-entry-is-mandatory).
 - **The loop must terminate, and saying so is part of the spec.** Committing
   the evidence moves the head, which invalidates the entry, which forces a
   second `pr review`, which writes the evidence again. That converges in
@@ -243,21 +222,11 @@ committed log is not.
   verify with a test that a large evidence log does not push `check --staged`
   over the 400-line budget. If it does, the classification is the bug, not the
   budget.
-- The body links them by permalink at the head SHA, and also embeds the first
-  `evidenceEmbedMaxBytes` of the log inline, so a reader with no link still
-  sees something.
-- A link whose target is not committed would 404, and a link whose target
-  changed since the commit would resolve to different bytes. `git ls-files
-  --error-unmatch` proves neither: it succeeds for a staged-but-uncommitted
-  file and for a tracked file whose working copy has since been edited. The
-  check must be about the head blob, not the index:
-  1. `git rev-parse --verify HEAD:<path>` — the path exists at the head.
-  2. Compare that blob's OID against `git hash-object <path>` — the bytes on
-     disk are the bytes the permalink will serve.
-  Both must hold to render the link. Otherwise embed the excerpt with a note
-  saying whether the log is untracked at the head or differs from it. Test
-  both failure modes separately: they have different causes and different
-  remedies.
+- The body is rendered **before** evidence is written. Piece 4 then writes a
+  `pr-review` log containing that rendered body and records its repository-relative
+  path in the persisted entry. The current body neither links nor embeds evidence.
+  Committed-link validation and body embedding remain Piece 5 work, when the
+  persisted entry is consumed for publication.
 
 ### 2.8 Truncation order
 
@@ -283,10 +252,9 @@ When the rendered body exceeds `PRBodyLimit`:
    plus the reserved `ci` block is the §2.8.1 error case. Test the bound
    directly: a CI outcome with 40 failed jobs and a maximum-length URL must
    render inside the reserve.
-2. Drop evidence `<details>` blocks from the **last** step backwards, replacing
-   each with one line naming the step and its evidence file path.
-3. Append a single line stating how many were omitted:
-   `_N evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._`
+2. Drop Pipeline-step evidence from the **last non-CI** step backwards. Evidence
+   logs are not part of the body at this stage, so truncation never links,
+   embeds, or drops an evidence file.
 
 Never truncate mid-block and never rely on `TruncateBody`'s blind byte cut for
 this section: that cut may land inside a `<details>` and break the Markdown of
@@ -294,8 +262,8 @@ everything after it. `TruncateBody` stays as the last-resort backstop only.
 
 ## 3. Persistence: the net entry
 
-`pr review` writes one entry. `pr create` reads it and refuses to publish
-without one.
+`pr review` writes one entry. Piece 5 will make `pr create` read it and refuse
+to publish without one.
 
 - Location: `<git-common-dir>/vas-sentinel/pr-reviews/<key>.json`, through
   `internal/store`, alongside the review ledger. Anchoring on the common
@@ -311,8 +279,9 @@ without one.
   same head overwrites its entry, and writing an entry for a branch **deletes
   every prior entry carrying that exact branch name**. Two runs over the same
   tree produce the same key, so a re-run corrects rather than accumulates; and
-  a branch that moves forward leaves nothing behind. Without that deletion the
-  common directory grows one file per head a branch ever had, forever.
+  re-reviewing a branch after it moves forward removes the old entry. Without
+  that deletion the common directory grows one file per head a branch ever had,
+  forever.
 - Replacement is generation-based: validate the complete old directory, stage
   the complete next directory beside it, then publish it as one generation. A
   failed replacement restores the old generation; it must never leave a mixed
@@ -338,14 +307,14 @@ type Entry struct {
     Verdict     string
     Body        string
     Attestation Attestation
-    Evidence    []string // repo-relative paths of the evidence logs this body links
+    Evidence    []string // repo-relative paths of the evidence logs written after rendering
     At          time.Time
 }
 ```
 
-`pr create` matching rule, specified here because this piece owns the contract:
-an entry whose `HeadSHA` differs from the current head is **stale**, and stale
-means refuse. Do not publish a judgement about a different tree.
+Piece 5's matching rule consumes this contract: an entry whose `HeadSHA` differs
+from the current head is **stale**, and stale means refuse. Do not publish a
+judgement about a different tree.
 
 ## 4. `--audit-pending`
 
@@ -389,16 +358,14 @@ not change it.
   different for distinct heads or branches whose readable slugs collide.
 - An entry is refused as stale when the head moved.
 - `--audit-pending` exits `1` with the retirement message and audits nothing.
-- Evidence linking: a file present at the head with matching bytes renders a
-  permalink; one absent at the head renders the excerpt with the untracked
-  note; one present but with different bytes renders the excerpt with the
-  differs-from-head note. Three cases, three tests.
-- Evidence determinism: two consecutive `pr review` runs over the same records
-  and exit codes write byte-identical evidence files.
+- Evidence writing: `pr review` writes the rendered body as its `pr-review`
+  log and persists the repository-relative path; two runs over the same records
+  write byte-identical evidence files. Evidence linking and HEAD validation are
+  Piece 5 tests.
 - `What Changed`: bullets render in order; an empty `Changed` renders the
   fallback and does not block.
-- `Testing`: the two origins render under their own headings with their real
-  exit codes, and a non-zero exit renders `❌`, never `✅`.
+- `Testing`: with Piece 4's empty verification input, the section reports that
+  no validation commands were configured and no tests were run.
 - `Pipeline`: the eight steps render in the fixed order; a step with no data
   renders `⚪` with its stated reason; the commit × dimension matrix appears
   inside the `review` step's `<details>` and nowhere else; and a ledger chain
@@ -436,10 +403,10 @@ Report the observed result of each command.
    `<details>` shapes, the matrix moved inside the review step.
 4. `feat(review): seal a machine attestation into the body` — the comment, the
    parser, its tests.
-5. `feat(review): write the evidence files and link them` — evidence writing,
-   tracked/untracked link rule.
-6. `feat(review): persist the net entry pr create consumes` — the store entry,
-   the key, the staleness rule.
+5. `feat(review): write the evidence files` — write the rendered body as the
+   `pr-review` log and persist its path; body links remain Piece 5 work.
+6. `feat(review): persist the net entry for Piece 5 consumption` — the store
+   entry, the key, and the staleness rule.
 7. `feat(pr): retire --audit-pending` — the refusal and its message.
 
 Each one must build, pass its tests, and pass `sentinel review` on its own.

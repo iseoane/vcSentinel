@@ -15,9 +15,8 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
-
-const HonestNetIntention = "No PR title/description exists before publication: claims cover branch commits and the net diff only."
 
 // FlagsPrReview carries the parsed `pr review` options across the dispatch
 // boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
@@ -140,7 +139,7 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 			fmt.Fprintf(progress, "  ⏳ %s …\n", dim)
 		},
 		OwnDiff:   stackOwnDiff(flags.Parent, false),
-		NetReview: &review.NetReviewOptions{Intention: HonestNetIntention, Validation: "pr review performs no deterministic validation"},
+		NetReview: &review.NetReviewOptions{Validation: "pr review performs no deterministic validation"},
 	}), storeWarning
 }
 
@@ -173,6 +172,10 @@ type DepsPrReview struct {
 	AnalyzeBranch func(ledger *review.Ledger, options review.BranchOptions) (*review.BranchResult, error)
 	RecordEvent   func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	EventDetail   func(base string, res *review.BranchResult, ci bool) (ops.EventDetail, error)
+	WriteEvidence func(worktree, branch string, logs []review.EvidenceLog) ([]string, error)
+	SavePRReview  func(worktree string, entry *store.PRReviewEntry) error
+	ReadIntents   func(shas []string) ([]review.IntentLine, error)
+	CommitMessage func(sha string) (string, error)
 }
 
 func realPrReviewDeps() DepsPrReview {
@@ -180,15 +183,29 @@ func realPrReviewDeps() DepsPrReview {
 		AnalyzeBranch: review.AnalyzeBranch,
 		RecordEvent:   ops.RecordEvent,
 		EventDetail:   PrReviewEventDetail,
+		CommitMessage: git.CommitMessage,
+		ReadIntents: func(shas []string) ([]review.IntentLine, error) {
+			lines := make([]review.IntentLine, 0, len(shas))
+			for _, sha := range shas {
+				value, err := git.CommitIntent(sha)
+				if err != nil {
+					return nil, err
+				}
+				if value.Text != "" {
+					lines = append(lines, review.IntentLine{SHA: sha, Text: value.Text, Source: value.Source})
+				}
+			}
+			return lines, nil
+		},
 	}
 }
 
-// RunPrReview analyzes the branch against the base and shows the audit
-// matrix, the summary and the single/chain decision. It is dry-run: nothing
-// is published. It records the pr-review event when done. cmd/sentinel parses
-// the flags and exits on a parse error before dispatching here, and it owns
-// the JSON-safe routing: it passes the payload writer for both channels
-// normally, and stderr for the human motion in --json mode.
+// RunPrReview analyzes the branch against the base, then authors and persists
+// its local judgement and evidence. It does not publish a pull request. It
+// records the pr-review event when done. cmd/sentinel parses the flags and exits
+// on a parse error before dispatching here, and it owns the JSON-safe routing:
+// it passes the payload writer for both channels normally, and stderr for the
+// human motion in --json mode.
 func RunPrReview(w, progress io.Writer, worktree string, flags FlagsPrReview, wiring Wiring) {
 	os.Exit(RunPrReviewWith(w, progress, worktree, flags, wiring, realPrReviewDeps()))
 }
@@ -259,10 +276,88 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		return 1
 	}
 	base := options.Base
+	var intents []review.IntentLine
+	if options.NetReview != nil {
+		netReview := options.NetReview
+		options.PrepareNetReview = func(shas []string) error {
+			if deps.ReadIntents != nil {
+				var err error
+				intents, err = deps.ReadIntents(shas)
+				if err != nil {
+					return err
+				}
+			}
+			netReview.Intention = review.IntentText(intents)
+			if netReview.Intention == "" {
+				netReview.Intention = review.NoRecordedIntentForPRRange
+			}
+			return nil
+		}
+	}
 	res, err := deps.AnalyzeBranch(ledger, options)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
+	}
+	if deps.WriteEvidence == nil {
+		deps.WriteEvidence = review.WriteEvidence
+	}
+	if deps.SavePRReview == nil {
+		deps.SavePRReview = func(root string, entry *store.PRReviewEntry) error {
+			common, err := git.GetGitCommonDir(root)
+			if err != nil {
+				return err
+			}
+			return store.NewStore(common).SavePRReview(entry)
+		}
+	}
+	if len(res.SHAs) == 0 {
+		fmt.Fprintln(w, "? review produced no branch head")
+		return 1
+	}
+	head := res.SHAs[len(res.SHAs)-1]
+	validHead := store.IsValidGitObjectID(head)
+	title := ""
+	if validHead {
+		if deps.CommitMessage == nil {
+			fmt.Fprintln(w, "? pr review title reader is unavailable")
+			return 1
+		}
+		title, err = deps.CommitMessage(res.SHAs[0])
+		if err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
+		if strings.TrimSpace(title) == "" {
+			fmt.Fprintln(w, "? review produced no PR title")
+			return 1
+		}
+	}
+	verdict := review.VerdictDeBranch(res.Records, options.Dispositions)
+	if res.Net != nil {
+		verdict = res.Net.Audit.Verdict
+	}
+	attestation := review.Attestation{Branch: res.Branch, HeadSHA: head, Verdict: verdict, Steps: []review.AttestationStep{{Step: "pr review", Status: "authored"}}}
+	body, err := review.RenderPRReviewBody(res, intents, review.TemplateVerification{}, attestation, options.Dispositions)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	evidence, err := deps.WriteEvidence(worktree, res.Branch, []review.EvidenceLog{{Step: "pr-review", Content: body}})
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	attestationJSON, err := json.Marshal(attestation)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	if validHead {
+		if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
 	}
 
 	detail, err := deps.EventDetail(base, res, git.DetectCI(worktree))

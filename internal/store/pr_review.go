@@ -16,9 +16,9 @@ import (
 const subdirPRReviews = "pr-reviews"
 
 // PRReviewEntry is the persisted judgement authored by pr review for one
-// branch head. pr create consumes this entry and must not derive a second
-// branch judgement. Attestation remains raw JSON here to avoid coupling the
-// storage layer to the renderer package that already depends on Store.
+// branch head. Piece 5 will make pr create consume this entry rather than derive
+// a second branch judgement. Attestation remains raw JSON here to avoid coupling
+// the storage layer to the renderer package that already depends on Store.
 type PRReviewEntry struct {
 	Branch      string          `json:"branch"`
 	HeadSHA     string          `json:"head_sha"`
@@ -41,7 +41,7 @@ func PRReviewKey(branch, headSHA string) string {
 // same exact branch. A branch therefore retains one review entry, not one file
 // per historical head.
 func (s *Store) SavePRReview(entry *PRReviewEntry) error {
-	if entry == nil || strings.TrimSpace(entry.Branch) == "" || !validGitObjectID(entry.HeadSHA) {
+	if entry == nil || strings.TrimSpace(entry.Branch) == "" || !IsValidGitObjectID(entry.HeadSHA) {
 		return errors.New("store: pr review entry requires branch and canonical head sha")
 	}
 
@@ -149,7 +149,7 @@ func (s *Store) ReadPRReview(branch string) (*PRReviewEntry, error) {
 	return found, nil
 }
 
-func validGitObjectID(value string) bool {
+func IsValidGitObjectID(value string) bool {
 	value = strings.TrimSpace(value)
 	if len(value) != 40 && len(value) != 64 {
 		return false

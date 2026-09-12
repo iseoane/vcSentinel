@@ -26,9 +26,6 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
-// honestNetIntention aliases the intent string that now lives with the flows.
-const honestNetIntention = pr.HonestNetIntention
-
 // flagsPrReview are the options of pr review.
 type flagsPrReview struct {
 	base     string
@@ -139,7 +136,7 @@ func parsePrCreateFlags(args []string) (flagsPrCreate, error) {
 }
 
 func retiredPassthroughDisposition() (string, int) {
-	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr create' to publish a reviewed pull request or 'sentinel pr review' for a dry-run analysis.", 1
+	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr review' to author and persist a local judgement and evidence, or 'sentinel pr create' to publish a reviewed pull request.", 1
 }
 
 func prVerb(args []string) string {
@@ -234,12 +231,12 @@ func branchReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, workt
 	return pr.BranchPrReviewOptions(cfg, verifier, worktree, flagsPrReviewToPr(flags), factory, wiringPr(), progress)
 }
 
-// runPrReview analyzes the branch against the base and prints the audit
-// matrix, the summary and the single/chain decision. It is a dry-run: nothing
-// is published. It records the pr-review event when done; the flow lives in
-// internal/app/pr. It owns the JSON-safe routing here: the payload writer
-// carries the human motion (⏳ spinners, warnings) normally, and stderr
-// carries it in --json mode so byte 0 of stdout stays '{'.
+// runPrReview analyzes the branch against the base, then authors and persists
+// its local judgement and evidence. It does not publish a pull request. It
+// records the pr-review event when done; the flow lives in internal/app/pr. It
+// owns the JSON-safe routing here: the payload writer carries the human motion
+// (⏳ spinners, warnings) normally, and stderr carries it in --json mode so byte
+// 0 of stdout stays '{'.
 func runPrReview(worktree string, args []string) {
 	flags, err := parsePrReviewFlags(args)
 	if err != nil {
