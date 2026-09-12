@@ -282,10 +282,17 @@ to publish without one.
   re-reviewing a branch after it moves forward removes the old entry. Without
   that deletion the common directory grows one file per head a branch ever had,
   forever.
-- Replacement is generation-based: validate the complete old directory, stage
-  the complete next directory beside it, then publish it as one generation. A
-  failed replacement restores the old generation; it must never leave a mixed
-  set of old and new entries that `pr create` cannot read.
+- Replacement is generation-based and cross-process serialized: a retained
+  per-store advisory lock covers recovery, the complete old-directory read,
+  staging, publication, and backup cleanup. No two writers can prepare a
+  generation from the same old state, and readers share that lock so they never
+  observe the directory gap between the two renames.
+- A replacement stages the complete next directory beside the live generation,
+  moves the old generation to a backup, then publishes the staged generation.
+  If publication fails, it restores the old generation. On the next locked read
+  or write, a backup without a live directory is restored, while a backup beside
+  a live directory is discarded as completed-replacement residue. It must never
+  leave a mixed set of old and new entries that `pr create` cannot read.
 - The deletion happens only when `pr review` writes, so a branch that moves
   forward **without** another `pr review` run leaves its old entry in place.
   That is the common case — you commit, then run `pr create`. So the entry at
@@ -357,6 +364,10 @@ not change it.
 - The entry key is identical for two runs over the same branch and head, and
   different for distinct heads or branches whose readable slugs collide.
 - An entry is refused as stale when the head moved.
+- Concurrent processes that replace different branch entries retain both
+  entries; the waiting writer cannot read the old generation until its
+  predecessor completes. Interrupted replacement states recover the backup-only
+  generation and remove completed-replacement backup residue.
 - `--audit-pending` exits `1` with the retirement message and audits nothing.
 - Evidence writing: `pr review` writes the rendered body as its `pr-review`
   log and persists the repository-relative path; two runs over the same records

@@ -37,14 +37,99 @@ func PRReviewKey(branch, headSHA string) string {
 	return branchSlug(branch) + "-" + hex.EncodeToString(identity[:8]) + "-" + strings.TrimSpace(headSHA)
 }
 
+// prReviewLockWait bounds how long a writer waits for another process that is
+// replacing the complete PR-review generation. The lock file is intentionally
+// retained after release: deleting it while another process still has the file
+// open would let a new process create a different inode and bypass the lock.
+var prReviewLockWait = 15 * time.Second
+
+// prReviewSaveAfterReadHook is a test seam for coordinating a cross-process
+// replacement race. Production code never sets it.
+var prReviewSaveAfterReadHook func()
+
+// withPRReviewLock serializes every PR-review read and write for this store
+// root. executionLock uses an OS advisory lock, so the kernel releases it when
+// a writer exits unexpectedly; a stale lock file therefore needs no guessing
+// or unsafe timeout-based stealing.
+func (s *Store) withPRReviewLock(action func() error) (err error) {
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return err
+	}
+	lock, err := acquireExecutionLock(filepath.Join(s.dir, ".pr-reviews.lock"), prReviewLockWait)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := lock.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	return action()
+}
+
+// recoverPRReviewGeneration repairs the only two states a writer can leave
+// behind while holding the lock: an old generation in the backup with no live
+// directory, or a new live generation with an old backup left by a crash during
+// cleanup. It never removes a backup until a live generation is present.
+func (s *Store) recoverPRReviewGeneration() error {
+	dir := filepath.Join(s.dir, subdirPRReviews)
+	backup := filepath.Join(s.dir, ".pr-reviews-backup")
+
+	dirInfo, dirErr := os.Stat(dir)
+	if dirErr != nil && !errors.Is(dirErr, os.ErrNotExist) {
+		return dirErr
+	}
+	backupInfo, backupErr := os.Stat(backup)
+	if backupErr != nil && !errors.Is(backupErr, os.ErrNotExist) {
+		return backupErr
+	}
+
+	if errors.Is(dirErr, os.ErrNotExist) {
+		if errors.Is(backupErr, os.ErrNotExist) {
+			return nil
+		}
+		if !backupInfo.IsDir() {
+			return fmt.Errorf("store: PR-review backup is not a directory")
+		}
+		if err := os.Rename(backup, dir); err != nil {
+			return fmt.Errorf("store: recover PR-review generation: %w", err)
+		}
+		return nil
+	}
+	if !dirInfo.IsDir() {
+		return fmt.Errorf("store: PR-review entries path is not a directory")
+	}
+	if errors.Is(backupErr, os.ErrNotExist) {
+		return nil
+	}
+	if !backupInfo.IsDir() {
+		return fmt.Errorf("store: PR-review backup is not a directory")
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("store: remove recovered PR-review backup: %w", err)
+	}
+	return nil
+}
+
 // SavePRReview atomically saves entry and removes every older entry for the
 // same exact branch. A branch therefore retains one review entry, not one file
-// per historical head.
+// per historical head. The lock covers recovery, the complete old-state read,
+// staging, replacement, and backup cleanup so concurrent processes cannot
+// publish generations based on the same old state.
 func (s *Store) SavePRReview(entry *PRReviewEntry) error {
 	if entry == nil || strings.TrimSpace(entry.Branch) == "" || !IsValidGitObjectID(entry.HeadSHA) {
 		return errors.New("store: pr review entry requires branch and canonical head sha")
 	}
 
+	return s.withPRReviewLock(func() error {
+		if err := s.recoverPRReviewGeneration(); err != nil {
+			return err
+		}
+		return s.savePRReviewLocked(entry)
+	})
+}
+
+func (s *Store) savePRReviewLocked(entry *PRReviewEntry) error {
 	dir := filepath.Join(s.dir, subdirPRReviews)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -74,11 +159,11 @@ func (s *Store) SavePRReview(entry *PRReviewEntry) error {
 			preserved[existing.Name()] = data
 		}
 	}
+	if prReviewSaveAfterReadHook != nil {
+		prReviewSaveAfterReadHook()
+	}
 
 	parent := filepath.Dir(dir)
-	if err := os.MkdirAll(parent, 0755); err != nil {
-		return err
-	}
 	staged, err := os.MkdirTemp(parent, "pr-reviews-*")
 	if err != nil {
 		return err
@@ -99,24 +184,53 @@ func (s *Store) SavePRReview(entry *PRReviewEntry) error {
 	}
 
 	backup := filepath.Join(parent, ".pr-reviews-backup")
-	_ = os.RemoveAll(backup)
-	if err := os.Rename(dir, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	movedOld := false
+	if err := os.Rename(dir, backup); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else {
+		movedOld = true
 	}
 	if err := os.Rename(staged, dir); err != nil {
-		if restoreErr := os.Rename(backup, dir); restoreErr != nil {
-			return fmt.Errorf("store: replace pr review entries: %w (restore failed: %v)", err, restoreErr)
+		if movedOld {
+			if restoreErr := os.Rename(backup, dir); restoreErr != nil {
+				return fmt.Errorf("store: replace pr review entries: %w (restore failed: %v)", err, restoreErr)
+			}
 		}
 		return err
 	}
-	return os.RemoveAll(backup)
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("store: remove PR-review backup: %w", err)
+	}
+	return nil
 }
 
 // ReadPRReview returns the one current entry for the exact branch name,
 // whatever head it records. A caller compares HeadSHA with its current tree:
 // returning the older entry is what lets pr create distinguish "never reviewed"
-// from "reviewed, then changed".
+// from "reviewed, then changed". Reads share the writer lock so callers never
+// observe the brief path gap between the two directory renames.
 func (s *Store) ReadPRReview(branch string) (*PRReviewEntry, error) {
+	if _, err := os.Stat(s.dir); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	var found *PRReviewEntry
+	err := s.withPRReviewLock(func() error {
+		if err := s.recoverPRReviewGeneration(); err != nil {
+			return err
+		}
+		var err error
+		found, err = s.readPRReviewLocked(branch)
+		return err
+	})
+	return found, err
+}
+
+func (s *Store) readPRReviewLocked(branch string) (*PRReviewEntry, error) {
 	dir := filepath.Join(s.dir, subdirPRReviews)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
