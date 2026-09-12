@@ -661,12 +661,11 @@ Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
   conversation that produced the change, or an explicit declaration by the agent
   driving it.
 - Closed by Piece 4: recorded trailer-backed intent now reaches the net audit
-  with its provenance attached, rather than a constant that denies its
-  existence. The provenance half is not optional — an inferred intent treated as
-  authoritative would manufacture findings against a goal nobody stated, which
-  is worse than the former silence. When no source is available, `pr review`
-  sends the explicit no-recorded-intent value instead of leaving the reviewer to
-  infer an absent field.
+  rather than a constant that denies its existence. Its persisted branch
+  judgement retains provenance for readers; see the Piece 4 plan for the current
+  contract. When no source is available, `pr review` sends the explicit
+  no-recorded-intent value instead of leaving the reviewer to infer an absent
+  field.
 - Relates to item 4: whatever intent is established belongs on the same record,
   so `pr create` (item 11) publishes the goal alongside the verdict instead of
   restating a diff.

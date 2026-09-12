@@ -136,7 +136,7 @@ func parsePrCreateFlags(args []string) (flagsPrCreate, error) {
 }
 
 func retiredPassthroughDisposition() (string, int) {
-	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr create' to publish a reviewed pull request or 'sentinel pr review' for a dry-run analysis.", 1
+	return "The legacy 'sentinel pr [gh arguments]' passthrough was removed because it bypassed the guardian's review flow. Use 'sentinel pr review' to author and persist a local judgement and evidence, or 'sentinel pr create' to publish a reviewed pull request.", 1
 }
 
 func prVerb(args []string) string {

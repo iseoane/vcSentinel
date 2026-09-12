@@ -11,7 +11,7 @@ import (
 )
 
 type NetReviewOptions struct {
-	Intention  string // PR title/description supplied by the caller
+	Intention  string // recorded branch intent or explicit no-intent value supplied by the caller
 	Validation string // supplied full-validation evidence, carried as structured net evidence
 }
 

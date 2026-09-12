@@ -17,9 +17,9 @@ document wins: item 12 left three questions open and this plan answers them.
 ## 1. What this piece delivers
 
 `sentinel slice` records, on every commit it creates, one line stating what
-the work was for, together with the provenance of that line. Nothing consumes
-it yet. Piece 4 (`pr review`, item 10) is the consumer and is out of scope
-here.
+the work was for, together with the provenance of that line. Piece 4 (`pr
+review`, item 10) now consumes the recorded range intent; that consumption was
+out of scope for this piece.
 
 The deliverable is: the intent is written, it survives a rebase, it travels
 with the branch, and its provenance is never lost or upgraded.

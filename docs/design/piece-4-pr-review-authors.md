@@ -305,8 +305,9 @@ to publish without one.
   same head overwrites its entry, and writing an entry for a branch **deletes
   every prior entry carrying that exact branch name**. Two runs over the same
   tree produce the same key, so a re-run corrects rather than accumulates; and
-  a branch that moves forward leaves nothing behind. Without that deletion the
-  common directory grows one file per head a branch ever had, forever.
+  re-reviewing a branch after it moves forward removes the old entry. Without
+  that deletion the common directory grows one file per head a branch ever had,
+  forever.
 - Replacement is generation-based: validate the complete old directory, stage
   the complete next directory beside it, then publish it as one generation. A
   failed replacement restores the old generation; it must never leave a mixed

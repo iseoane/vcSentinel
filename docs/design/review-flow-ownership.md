@@ -241,8 +241,9 @@ Piece 3 is done. What the list above left open, and what was chosen:
 
 ## Piece 4 — `pr review` judges the whole, against the intent
 
-**Change:** the branch-level audit receives a real intent, with its provenance,
-in place of today's placeholder constant.
+**Change:** the branch-level audit receives the recorded range intent in place
+of the placeholder constant. The persisted branch judgement retains each
+intent's provenance for readers.
 
 Today the placeholder states that no intent exists, while the same prompt asks
 the reviewer to verify the change delivers what it promised. That is worse than
