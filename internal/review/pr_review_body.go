@@ -15,6 +15,8 @@ type IntentLine struct {
 	Source string
 }
 
+const NoRecordedIntentForPRRange = "No intent recorded for this PR range."
+
 // IntentText combines recorded intent claims for the net reviewer prompt.
 func IntentText(intents []IntentLine) string {
 	claims := make([]string, 0, len(intents))

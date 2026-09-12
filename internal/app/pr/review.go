@@ -289,7 +289,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 			}
 			netReview.Intention = review.IntentText(intents)
 			if netReview.Intention == "" {
-				netReview.Intention = "No intent recorded for this PR range."
+				netReview.Intention = review.NoRecordedIntentForPRRange
 			}
 			return nil
 		}
@@ -316,8 +316,9 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		return 1
 	}
 	head := res.SHAs[len(res.SHAs)-1]
+	validHead := store.IsValidGitObjectID(head)
 	title := ""
-	if len(head) == 40 {
+	if validHead {
 		if deps.CommitMessage == nil {
 			fmt.Fprintln(w, "? pr review title reader is unavailable")
 			return 1
@@ -352,7 +353,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	if len(head) == 40 {
+	if validHead {
 		if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
 			fmt.Fprintf(w, "? %v\n", err)
 			return 1

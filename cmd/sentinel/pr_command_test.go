@@ -1681,7 +1681,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	res.Own = &review.OwnRange{Parent: "layer-a", PublicationBranch: "layer-a"}
 	code := runPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
 	if code != 0 || pubBase != "layer-a" || *opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
-		opts.NetReview == nil || opts.NetReview.Intention != "" {
+		opts.NetReview == nil || opts.NetReview.Intention != review.NoRecordedIntentForPRRange {
 		t.Errorf("stacked: exitCode=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
 	}
 	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee", "no review record", "beefcafe", "feat(unaudited): skipped commit", "sentinel review beefcafe1234"} {
@@ -2318,7 +2318,7 @@ func TestRunPrReviewReportsUnauditedCommitsWithoutBlocking(t *testing.T) {
 func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	worktree := tempGitRepo(t)
 	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
-	sha := strings.Repeat("a", 40)
+	sha := strings.Repeat("a", 64)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
 		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
@@ -2371,8 +2371,8 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	if code := pr.RunPrReviewWith(&output, &output, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
 		t.Fatalf("RunPrReviewWith() = %d, output:\n%s", code, output.String())
 	}
-	if saved == nil || !strings.Contains(saved.Body, "Protect the release pipeline.") {
-		t.Fatalf("saved review body omits trailer intent: %+v", saved)
+	if saved == nil || saved.HeadSHA != sha || !strings.Contains(saved.Body, "Protect the release pipeline.") {
+		t.Fatalf("saved review entry omits the SHA-256 head or trailer intent: %+v", saved)
 	}
 	if got, want := saved.Title, "feat: persist the review title"; got != want {
 		t.Fatalf("saved review title = %q, want %q", got, want)
