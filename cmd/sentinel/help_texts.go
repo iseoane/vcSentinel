@@ -294,7 +294,7 @@ Flags:
 Example:
   sentinel pr create --base main
 `
-	prReviewHelp = `Purpose: dry-run analysis of the unpublished branch: audit matrix, summary, and the single-versus-chained PR decision. Publishes nothing.
+	prReviewHelp = `Purpose: analyze the unpublished branch, author and persist its local judgement and evidence, and publish no pull request.
 
 Usage:
   sentinel pr review [--base X] [--parent X] [--overview] [--json]

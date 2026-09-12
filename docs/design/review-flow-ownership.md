@@ -12,12 +12,12 @@ judgement. Piece 5 remains pending: `pr create` does not yet consume that entry.
 
 ## The problem this design closes
 
-Four commands run a semantic audit today, and three of them ask overlapping
-questions about the same code. `gate` audits `HEAD` and discards the result.
-`sentinel review` audits a commit and records it. `pr review` audits the net
-diff. `pr create` audits the net diff again on every invocation and derives its
-published notice from per-commit records. Nothing relates any of it, so the
-work is paid for repeatedly and the conclusions do not compose.
+Before this design, four commands ran a semantic audit and three asked
+overlapping questions about the same code. `gate` audited `HEAD` and discarded
+the result. `sentinel review` audited a commit and recorded it. `pr review`
+audited the net diff. `pr create` audited the net diff again on every invocation
+and derived its published notice from per-commit records. Nothing related any of
+it, so the work was paid for repeatedly and the conclusions did not compose.
 
 ## The rule
 

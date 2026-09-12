@@ -595,16 +595,19 @@ problem that Piece 4 resolved.
 
 Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
 
-- Wrong: no flow in this repository ever receives a statement of what the change
-  was supposed to do. `DimensionSpec.Instructions`
+- Before Piece 4, no flow in this repository received a statement of what the
+  change was supposed to do. `DimensionSpec.Instructions`
   (`internal/reviewcontract/contract.go:117-123`) asks whether "the diff does
   exactly what the commit message claims", and `internal/review/prompts.go:23-85`
   fills that slot with whatever `message` the caller passed to `AuditCommit`.
   For `sentinel review` that is the real commit message, which is at least
-  evidence (it was also true of `gate` until piece 3 stopped it auditing). For the net audit in `pr review` and `pr create` it is the
-  literal constant `HonestNetIntention` (`internal/app/pr/review.go:20`): "No PR
-  title/description exists before publication: claims cover branch commits and
-  the net diff only."
+  evidence (it was also true of `gate` until piece 3 stopped it auditing). The
+  `pr review` and `pr create` net audits instead received the literal
+  `HonestNetIntention` constant: "No PR title/description exists before
+  publication: claims cover branch commits and the net diff only." Piece 4
+  removed that constant: `pr review` now reads the recorded range intent, while
+  `pr create` uses an explicit no-recorded-intent value until Piece 5 consumes the
+  persisted judgement.
 - Why that is worse than an empty field: the `netAxes` block
   (`internal/review/net_pr.go:316-323`) asks the reviewer, among other things,
   whether the PR delivers what its title and description promise — of a prompt
@@ -621,8 +624,9 @@ Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
   contract breaks and net coverage. It also carries a DETERMINISTIC classifier
   (`classify`, `net_pr.go:67-132`) that checks against git blobs whether a later
   commit removed the code an earlier finding pointed at, rather than asking a
-  model to notice. The branch-level judgement is built. It is the input that is
-  missing.
+  model to notice. Before Piece 4, the branch-level judgement was built but its
+  input was missing; `pr review` now reads the recorded range intent and persists
+  that judgement.
 - Resolved in Piece 4: `pr review` rejects `--audit-pending` instead of
   auditing pending commits. `pr create --audit-pending` remains the explicit
   opt-in for the old per-commit behavior; `pr review` reports the gap and
@@ -656,14 +660,13 @@ Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
   no reader sources intent from an issue or a PR body. The source is always the
   conversation that produced the change, or an explicit declaration by the agent
   driving it.
-- Closing: decide where intent comes from for this project, then make the net
-  audit receive it with its provenance attached rather than a constant that
-  denies its existence. The provenance half is not optional — an inferred intent
-  treated as authoritative would manufacture findings against a goal nobody
-  stated, which is a worse failure than the current silence. If the answer is
-  that no source is available here, that is a determination worth recording,
-  and it should replace `HonestNetIntention` with an omitted section rather than
-  a sentence the reviewer is then asked to verify against.
+- Closed by Piece 4: recorded trailer-backed intent now reaches the net audit
+  with its provenance attached, rather than a constant that denies its
+  existence. The provenance half is not optional — an inferred intent treated as
+  authoritative would manufacture findings against a goal nobody stated, which
+  is worse than the former silence. When no source is available, `pr review`
+  sends the explicit no-recorded-intent value instead of leaving the reviewer to
+  infer an absent field.
 - Relates to item 4: whatever intent is established belongs on the same record,
   so `pr create` (item 11) publishes the goal alongside the verdict instead of
   restating a diff.
