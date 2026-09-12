@@ -1681,7 +1681,7 @@ func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
 	res.Own = &review.OwnRange{Parent: "layer-a", PublicationBranch: "layer-a"}
 	code := runPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
 	if code != 0 || pubBase != "layer-a" || *opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
-		opts.NetReview == nil || opts.NetReview.Intention != honestNetIntention {
+		opts.NetReview == nil || opts.NetReview.Intention != "" {
 		t.Errorf("stacked: exitCode=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
 	}
 	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee", "no review record", "beefcafe", "feat(unaudited): skipped commit", "sentinel review beefcafe1234"} {

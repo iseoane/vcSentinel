@@ -15,6 +15,17 @@ type IntentLine struct {
 	Source string
 }
 
+// IntentText combines recorded intent claims for the net reviewer prompt.
+func IntentText(intents []IntentLine) string {
+	claims := make([]string, 0, len(intents))
+	for _, intent := range intents {
+		if strings.TrimSpace(intent.Text) != "" {
+			claims = append(claims, strings.TrimSpace(intent.Text))
+		}
+	}
+	return strings.Join(claims, "\n")
+}
+
 // RenderPRReviewBody authors the persisted PR judgement. It owns the five
 // fixed reader-facing sections and the machine attestation immediately before
 // Pipeline; publication deliberately remains outside this function.

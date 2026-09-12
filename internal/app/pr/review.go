@@ -15,9 +15,8 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 )
-
-const HonestNetIntention = "No PR title/description exists before publication: claims cover branch commits and the net diff only."
 
 // FlagsPrReview carries the parsed `pr review` options across the dispatch
 // boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
@@ -140,7 +139,7 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 			fmt.Fprintf(progress, "  ⏳ %s …\n", dim)
 		},
 		OwnDiff:   stackOwnDiff(flags.Parent, false),
-		NetReview: &review.NetReviewOptions{Intention: HonestNetIntention, Validation: "pr review performs no deterministic validation"},
+		NetReview: &review.NetReviewOptions{Validation: "pr review performs no deterministic validation"},
 	}), storeWarning
 }
 
@@ -173,6 +172,9 @@ type DepsPrReview struct {
 	AnalyzeBranch func(ledger *review.Ledger, options review.BranchOptions) (*review.BranchResult, error)
 	RecordEvent   func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	EventDetail   func(base string, res *review.BranchResult, ci bool) (ops.EventDetail, error)
+	WriteEvidence func(worktree, branch string, logs []review.EvidenceLog) ([]string, error)
+	SavePRReview  func(worktree string, entry *store.PRReviewEntry) error
+	ReadIntents   func(shas []string) ([]review.IntentLine, error)
 }
 
 func realPrReviewDeps() DepsPrReview {
@@ -180,6 +182,19 @@ func realPrReviewDeps() DepsPrReview {
 		AnalyzeBranch: review.AnalyzeBranch,
 		RecordEvent:   ops.RecordEvent,
 		EventDetail:   PrReviewEventDetail,
+		ReadIntents: func(shas []string) ([]review.IntentLine, error) {
+			lines := make([]review.IntentLine, 0, len(shas))
+			for _, sha := range shas {
+				value, err := git.CommitIntent(sha)
+				if err != nil {
+					return nil, err
+				}
+				if value.Text != "" {
+					lines = append(lines, review.IntentLine{SHA: sha, Text: value.Text, Source: value.Source})
+				}
+			}
+			return lines, nil
+		},
 	}
 }
 
@@ -259,10 +274,61 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		return 1
 	}
 	base := options.Base
+	var intents []review.IntentLine
 	res, err := deps.AnalyzeBranch(ledger, options)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
+	}
+	if len(res.SHAs) > 0 && len(res.SHAs[len(res.SHAs)-1]) == 40 && deps.ReadIntents != nil {
+		intents, err = deps.ReadIntents(res.SHAs)
+		if err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
+	}
+	if deps.WriteEvidence == nil {
+		deps.WriteEvidence = review.WriteEvidence
+	}
+	if deps.SavePRReview == nil {
+		deps.SavePRReview = func(root string, entry *store.PRReviewEntry) error {
+			common, err := git.GetGitCommonDir(root)
+			if err != nil {
+				return err
+			}
+			return store.NewStore(common).SavePRReview(entry)
+		}
+	}
+	if len(res.SHAs) == 0 {
+		fmt.Fprintln(w, "? review produced no branch head")
+		return 1
+	}
+	head := res.SHAs[len(res.SHAs)-1]
+	verdict := review.VerdictDeBranch(res.Records, options.Dispositions)
+	if res.Net != nil {
+		verdict = res.Net.Audit.Verdict
+	}
+	attestation := review.Attestation{Branch: res.Branch, HeadSHA: head, Verdict: verdict, Steps: []review.AttestationStep{{Step: "pr review", Status: "authored"}}}
+	body, err := review.RenderPRReviewBody(res, intents, review.TemplateVerification{}, attestation, options.Dispositions)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	evidence, err := deps.WriteEvidence(worktree, res.Branch, []review.EvidenceLog{{Step: "pr-review", Content: body}})
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	attestationJSON, err := json.Marshal(attestation)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	if len(head) == 40 {
+		if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
 	}
 
 	detail, err := deps.EventDetail(base, res, git.DetectCI(worktree))

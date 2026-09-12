@@ -245,7 +245,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		// commit through the per-commit deterministic channel.
 		DeterministicFindingsFactory: SecretFindingsFactory(),
 		ModelVerifier:                modelVerifier,
-		NetReview:                    &review.NetReviewOptions{Intention: HonestNetIntention, Validation: fmt.Sprint(validationCommands(runs))},
+		NetReview:                    &review.NetReviewOptions{Validation: fmt.Sprint(validationCommands(runs))},
 		Dispositions:                 branchDispositions,
 		OnCommit: func(idx, total int, sha string) {
 			fmt.Fprintf(w, "⏳ [%d/%d] Auditing %s\n", idx+1, total, wiring.ShortSHA(sha))

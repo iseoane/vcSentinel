@@ -26,9 +26,6 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
-// honestNetIntention aliases the intent string that now lives with the flows.
-const honestNetIntention = pr.HonestNetIntention
-
 // flagsPrReview are the options of pr review.
 type flagsPrReview struct {
 	base     string
