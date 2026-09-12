@@ -13,13 +13,13 @@ avoid it is already written and simply not wired to the per-commit path.
 Decided work order, superseded 2026-09-09 by
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
 which allocates one question to each command and orders the work as five
-pieces. Two are done: piece 2 (`review` is the only per-commit authority,
-commit 89cab36) and piece 3 (`gate` stops auditing, commit 144c9c8). The three
-that remain map onto this file as **item 12 (piece 1), then item 10 (piece 4),
-then item 11 (piece 5)**; item 4 is closed by dissolution. All three now have a
-written implementation plan under `docs/design/`, linked from each item. The paragraph below
-is the ordering that preceded that design and is kept because the items still
-carry its numbering.
+pieces. Pieces 1 (trailer-backed intent), 2 (`review` is the only per-commit
+authority, commit 89cab36), 3 (`gate` stops auditing, commit 144c9c8), and 4
+(`pr review` authors and persists the branch judgement) are done. The remaining
+work is **item 11 (piece 5)**: make `pr create` consume that judgement; item 4
+is closed by dissolution. The implementation plans live under `docs/design/`,
+linked from each item. The paragraph below is the ordering that preceded that
+design and is kept because the items still carry its numbering.
 
 Original note: overriding the readiness ordering for three
 items only: **item 4, then item 10, then item 11**. They are one problem seen
@@ -590,8 +590,8 @@ decides where the intent comes from; this item is only about consuming it.
 **The implementation plan is
 [`docs/design/piece-4-pr-review-authors.md`](../design/piece-4-pr-review-authors.md),
 written 2026-09-09. It is the specification: where it disagrees with the text
-below, the plan wins.** What follows is the evidence that the problem is real,
-and it still holds.
+below, the plan wins.** What follows is the historical evidence for the
+problem that Piece 4 resolved.
 
 Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
 

@@ -22,8 +22,8 @@ Two changes of substance, and everything else in this plan serves them:
 
 1. It stops guessing the intent. It reads what piece 1 recorded.
 2. It stops being a report printed to a terminal and becomes a **persisted
-   entry** that `pr create` consumes. Today `pr create` re-derives its own view;
-   after this piece it composes from what `pr review` wrote and authors nothing.
+   entry**. Piece 5 will make `pr create` compose from what `pr review` wrote;
+   until then, `pr create` continues to derive its own view.
 
 ## 2. The PR body this produces
 
@@ -42,7 +42,7 @@ Five sections, always present, always in this order:
 ```
 
 `pr review` authors sections 1 to 4 and seals the Pipeline attestation.
-`pr create` renders them and adds nothing (piece 5).
+Piece 5 will make `pr create` render that persisted body and add nothing else.
 
 ### 2.1 Intent
 
@@ -77,14 +77,12 @@ Each rendered line carries its source, in this shape:
 
 Mixed sources on one branch are normal and must render correctly.
 
-`HonestNetIntention` (`internal/app/pr/review.go:20`) is deleted. It exists
-because nothing recorded the intent; piece 1 records it. Remove the constant,
-its alias `honestNetIntention` (`cmd/sentinel/pr_command.go:30`), and both call
-sites (`internal/app/pr/review.go:148`, `internal/app/pr/create.go:248`).
-`NetReviewOptions.Intention` now carries the real intent text, or the empty
-string when none was recorded — and an empty `Intention` must reach the
-reviewer prompt as an explicit "no intent was recorded", never as an absent
-field the model fills in.
+`HonestNetIntention` was deleted when Piece 4 was connected: piece 1 records
+the intent, so `pr review` now passes the real range text to
+`NetReviewOptions.Intention`. When no trailer is recorded, it passes the
+explicit `NoRecordedIntentForPRRange` value rather than leaving the reviewer to
+infer an absent field. `pr create` uses the same explicit no-intent value until
+Piece 5 removes its independent net audit.
 
 ### 2.2 What Changed
 
@@ -199,33 +197,29 @@ section:
 ```
 
 `v1` in the marker is the schema version and is mandatory: a later reader must
-be able to refuse a shape it does not know. `pr create` reads it to fill in the
+be able to refuse a shape it does not know. Piece 5 will read it to fill in the
 `ci` step without re-deriving anything else.
 
-Add a parser beside the renderer: `ParseAttestation(body string) (Attestation,
-error)`. It must reject a body carrying more than one attestation comment
-rather than taking the first, and must return a typed "absent" for a body with
-none.
+`ParseAttestation(body string) (Attestation, error)` is implemented beside the
+renderer. It rejects a body carrying more than one attestation comment rather
+than taking the first, and returns a typed "absent" for a body with none.
 
 ### 2.7 Evidence files
 
-Long evidence is committed to the repository and linked, not only pasted. The
-body is truncated at `PRBodyLimit` (`internal/review/renderer.go:424`); a
-committed log is not.
+Long evidence is written to the repository working tree, not only pasted. The
+body is truncated at `PRBodyLimit` (`internal/review/pr_review_body.go` and
+`internal/review/pr_review_truncation.go`); an evidence log is not.
 
 - Location: `.vas_sentinel/evidence/<branch-slug>-<branch-identity-hash>/<step>.log`,
   where the identity hash is derived from the exact branch name to distinguish
   branches with the same slug.
 - Written by `pr review`, in the working tree, as ordinary files. It does not
   commit them: creating a commit is not this command's job.
-- **Who commits them is part of the flow, not an afterthought.** An untracked
-  log is a log the permalink cannot reach, so the evidence would degrade to an
-  excerpt in exactly the path it was designed for. The required step is
-  explicit: after `pr review` and before `pr create`, the operator commits the
-  evidence, normally as `chore(evidence): record the pr review logs`.
-  `pr review` prints that command verbatim. `pr create` refuses to publish when
-  the entry references evidence files that are untracked at the head, with a
-  message naming them and that commit (piece 5, §3).
+- **Committing and enforcing evidence belongs to Piece 5.** Piece 4 writes the
+  deterministic logs but does not print a commit command, and the current
+  `pr create` path does not inspect them. The required commit/re-review loop and
+  the refusal for evidence absent from `HEAD` are specified in
+  [Piece 5 §3](piece-5-pr-create-composes.md#3-the-entry-is-mandatory).
 - **The loop must terminate, and saying so is part of the spec.** Committing
   the evidence moves the head, which invalidates the entry, which forces a
   second `pr review`, which writes the evidence again. That converges in
@@ -294,8 +288,8 @@ everything after it. `TruncateBody` stays as the last-resort backstop only.
 
 ## 3. Persistence: the net entry
 
-`pr review` writes one entry. `pr create` reads it and refuses to publish
-without one.
+`pr review` writes one entry. Piece 5 will make `pr create` read it and refuse
+to publish without one.
 
 - Location: `<git-common-dir>/vas-sentinel/pr-reviews/<key>.json`, through
   `internal/store`, alongside the review ledger. Anchoring on the common
@@ -343,9 +337,9 @@ type Entry struct {
 }
 ```
 
-`pr create` matching rule, specified here because this piece owns the contract:
-an entry whose `HeadSHA` differs from the current head is **stale**, and stale
-means refuse. Do not publish a judgement about a different tree.
+Piece 5's matching rule consumes this contract: an entry whose `HeadSHA` differs
+from the current head is **stale**, and stale means refuse. Do not publish a
+judgement about a different tree.
 
 ## 4. `--audit-pending`
 
@@ -438,8 +432,8 @@ Report the observed result of each command.
    parser, its tests.
 5. `feat(review): write the evidence files and link them` — evidence writing,
    tracked/untracked link rule.
-6. `feat(review): persist the net entry pr create consumes` — the store entry,
-   the key, the staleness rule.
+6. `feat(review): persist the net entry for Piece 5 consumption` — the store
+   entry, the key, and the staleness rule.
 7. `feat(pr): retire --audit-pending` — the refusal and its message.
 
 Each one must build, pass its tests, and pass `sentinel review` on its own.

@@ -5,10 +5,10 @@ review of an earlier draft. It supersedes the working assumptions in items 4,
 10 and 11 of [`docs/issues/actionable.md`](../issues/actionable.md) where they
 disagree; those items remain the record of WHY each problem exists.
 
-Piece 2 (the coverage contract and the shared authoritative-revision selector) is
-implemented and recorded below. Piece 4 phase A has implemented only its
-persistence primitives; `pr review` is not yet wired to author or consume those
-entries. Pieces 1, 3, 5, and the remainder of piece 4 are not implemented yet.
+Pieces 1 through 4 are implemented: `slice` records trailer-backed intent,
+`review` owns per-commit authority, `gate` no longer audits, and `pr review`
+reads the range intent before auditing and persists the resulting branch
+judgement. Piece 5 remains pending: `pr create` does not yet consume that entry.
 
 ## The problem this design closes
 

@@ -26,9 +26,9 @@ var (
 	ErrMultipleAttestations = errors.New("multiple vas-sentinel attestations")
 )
 
-// Attestation is the machine-readable summary authored by pr review and later
-// consumed by pr create. Its schema version lives in the HTML marker, not in
-// this payload, so a reader can reject an unknown shape before decoding it.
+// Attestation is the machine-readable summary authored by pr review. Piece 5
+// will make pr create consume it. Its schema version lives in the HTML marker,
+// not in this payload, so a reader can reject an unknown shape before decoding it.
 type Attestation struct {
 	HeadSHA string            `json:"head_sha"`
 	Branch  string            `json:"branch"`

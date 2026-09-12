@@ -200,12 +200,12 @@ func realPrReviewDeps() DepsPrReview {
 	}
 }
 
-// RunPrReview analyzes the branch against the base and shows the audit
-// matrix, the summary and the single/chain decision. It is dry-run: nothing
-// is published. It records the pr-review event when done. cmd/sentinel parses
-// the flags and exits on a parse error before dispatching here, and it owns
-// the JSON-safe routing: it passes the payload writer for both channels
-// normally, and stderr for the human motion in --json mode.
+// RunPrReview analyzes the branch against the base, then authors and persists
+// its local judgement and evidence. It does not publish a pull request. It
+// records the pr-review event when done. cmd/sentinel parses the flags and exits
+// on a parse error before dispatching here, and it owns the JSON-safe routing:
+// it passes the payload writer for both channels normally, and stderr for the
+// human motion in --json mode.
 func RunPrReview(w, progress io.Writer, worktree string, flags FlagsPrReview, wiring Wiring) {
 	os.Exit(RunPrReviewWith(w, progress, worktree, flags, wiring, realPrReviewDeps()))
 }

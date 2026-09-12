@@ -16,9 +16,9 @@ import (
 const subdirPRReviews = "pr-reviews"
 
 // PRReviewEntry is the persisted judgement authored by pr review for one
-// branch head. pr create consumes this entry and must not derive a second
-// branch judgement. Attestation remains raw JSON here to avoid coupling the
-// storage layer to the renderer package that already depends on Store.
+// branch head. Piece 5 will make pr create consume this entry rather than derive
+// a second branch judgement. Attestation remains raw JSON here to avoid coupling
+// the storage layer to the renderer package that already depends on Store.
 type PRReviewEntry struct {
 	Branch      string          `json:"branch"`
 	HeadSHA     string          `json:"head_sha"`

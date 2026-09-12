@@ -231,12 +231,12 @@ func branchReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, workt
 	return pr.BranchPrReviewOptions(cfg, verifier, worktree, flagsPrReviewToPr(flags), factory, wiringPr(), progress)
 }
 
-// runPrReview analyzes the branch against the base and prints the audit
-// matrix, the summary and the single/chain decision. It is a dry-run: nothing
-// is published. It records the pr-review event when done; the flow lives in
-// internal/app/pr. It owns the JSON-safe routing here: the payload writer
-// carries the human motion (⏳ spinners, warnings) normally, and stderr
-// carries it in --json mode so byte 0 of stdout stays '{'.
+// runPrReview analyzes the branch against the base, then authors and persists
+// its local judgement and evidence. It does not publish a pull request. It
+// records the pr-review event when done; the flow lives in internal/app/pr. It
+// owns the JSON-safe routing here: the payload writer carries the human motion
+// (⏳ spinners, warnings) normally, and stderr carries it in --json mode so byte
+// 0 of stdout stays '{'.
 func runPrReview(worktree string, args []string) {
 	flags, err := parsePrReviewFlags(args)
 	if err != nil {
