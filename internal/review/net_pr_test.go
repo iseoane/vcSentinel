@@ -62,6 +62,32 @@ func addDefectCommits(t *testing.T, fix bool) (shaDefect string) {
 	}
 	return shaDefect
 }
+func TestAnalyzeBranchPreparesNetIntentionBeforeNetAudit(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	sha := commitInBranch(t, "x.go", "package x\n")
+	stub := &answeringStub{auditorStub: auditorStub{auditOutput: auditOutputOK}, marker: "Pull request intention:"}
+	net := &NetReviewOptions{}
+	prepared := false
+	res, err := AnalyzeBranch(NewLedger(gitDir), BranchOptions{
+		Factory: stubFactory(stub), Parallel: 1, NetReview: net,
+		PrepareNetReview: func(shas []string) error {
+			prepared = true
+			if !slices.Equal(shas, []string{sha}) {
+				t.Fatalf("prepared range = %v, want [%s]", shas, sha)
+			}
+			net.Intention = "Preserve the published API."
+			return nil
+		},
+	})
+	if err != nil || res.Net == nil || !prepared {
+		t.Fatalf("AnalyzeBranch() = %v, net = %+v, prepared = %v", err, res.Net, prepared)
+	}
+	prompt := stub.prompts[len(stub.prompts)-1]
+	if !strings.Contains(prompt, "Pull request intention:\nPreserve the published API.") {
+		t.Errorf("net prompt omits prepared intention:\n%s", prompt)
+	}
+}
+
 func TestNetReviewIndependentOfHistoricalFindings(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

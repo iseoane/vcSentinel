@@ -2315,6 +2315,79 @@ func TestRunPrReviewReportsUnauditedCommitsWithoutBlocking(t *testing.T) {
 	}
 }
 
+func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
+	worktree := tempGitRepo(t)
+	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	sha := strings.Repeat("a", 40)
+	wiring := pr.Wiring{
+		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
+		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
+		LoadDispositions:   func(string) ([]review.FindingDisposition, error) { return nil, nil },
+		TransportFactory: func(config.Config, string) func(string, []string) review.ReviewTransport {
+			return func(string, []string) review.ReviewTransport { return nil }
+		},
+		BranchOptionsWithRefuter: func(_ config.Config, _ *modelprobe.Verifier, opts review.BranchOptions) review.BranchOptions {
+			return opts
+		},
+		ShortSHA: func(sha string) string { return sha },
+	}
+	var saved *store.PRReviewEntry
+	deps := pr.DepsPrReview{
+		AnalyzeBranch: func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+			if opts.NetReview == nil || opts.PrepareNetReview == nil {
+				t.Fatal("pr review must prepare net review intentions")
+			}
+			if err := opts.PrepareNetReview([]string{sha}); err != nil {
+				t.Fatalf("PrepareNetReview() error = %v", err)
+			}
+			if got, want := opts.NetReview.Intention, "Protect the release pipeline."; got != want {
+				t.Fatalf("net intention = %q, want %q", got, want)
+			}
+			return &review.BranchResult{Branch: "feat/trailers", SHAs: []string{sha}, Decision: "single"}, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: pr.PrReviewEventDetail,
+		ReadIntents: func(got []string) ([]review.IntentLine, error) {
+			if !reflect.DeepEqual(got, []string{sha}) {
+				t.Fatalf("trailer range = %v, want [%s]", got, sha)
+			}
+			return []review.IntentLine{{SHA: sha, Text: "Protect the release pipeline.", Source: "declared"}}, nil
+		},
+		WriteEvidence: func(string, string, []review.EvidenceLog) ([]string, error) {
+			return []string{"evidence/pr-review.md"}, nil
+		},
+		SavePRReview: func(_ string, entry *store.PRReviewEntry) error {
+			saved = entry
+			return nil
+		},
+	}
+	var output bytes.Buffer
+	if code := pr.RunPrReviewWith(&output, &output, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
+		t.Fatalf("RunPrReviewWith() = %d, output:\n%s", code, output.String())
+	}
+	if saved == nil || !strings.Contains(saved.Body, "Protect the release pipeline.") {
+		t.Fatalf("saved review body omits trailer intent: %+v", saved)
+	}
+	deps.ReadIntents = func([]string) ([]review.IntentLine, error) { return nil, nil }
+	deps.AnalyzeBranch = func(_ *review.Ledger, opts review.BranchOptions) (*review.BranchResult, error) {
+		if err := opts.PrepareNetReview([]string{sha}); err != nil {
+			t.Fatalf("PrepareNetReview() error = %v", err)
+		}
+		if got, want := opts.NetReview.Intention, "No intent recorded for this PR range."; got != want {
+			t.Fatalf("net intention = %q, want %q", got, want)
+		}
+		return &review.BranchResult{Branch: "feat/no-trailers", SHAs: []string{sha}, Decision: "single"}, nil
+	}
+	saved = nil
+	output.Reset()
+	if code := pr.RunPrReviewWith(&output, &output, worktree, pr.FlagsPrReview{Base: "main"}, wiring, deps); code != 0 {
+		t.Fatalf("RunPrReviewWith() without trailers = %d, output:\n%s", code, output.String())
+	}
+	if saved == nil || !strings.Contains(saved.Body, "_No intent recorded.") {
+		t.Fatalf("saved review body must report the missing trailer intent: %+v", saved)
+	}
+}
+
 // firstBytes reports the first bytes of s for failure messages, tolerating
 // empty output.
 func firstBytes(s string) string {

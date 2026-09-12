@@ -117,7 +117,8 @@ type BranchOptions struct {
 	// only merge_base(parent, HEAD)..HEAD is reviewed and findings from
 	// already-audited context commits come back as read-only inherited
 	// results. Nil keeps the legacy whole-range analysis against Base.
-	OwnDiff *OwnDiffOptions
+	OwnDiff          *OwnDiffOptions
+	PrepareNetReview func(shas []string) error
 	// NetReview (T8.3, internal opt-in; CLI: T8.4) audits the net range via the engine seams.
 	NetReview *NetReviewOptions
 	// ModelVerifier answers whether a profile's model was verified by its
@@ -306,6 +307,11 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 		Records: records, Volume: volume,
 	}
 	if opts.NetReview != nil { // T8.3: mergeBase already is merge_base(base_or_resolved_parent, HEAD)
+		if opts.PrepareNetReview != nil {
+			if err := opts.PrepareNetReview(shas); err != nil {
+				return nil, err
+			}
+		}
 		head := mergeBase
 		if len(shas) > 0 {
 			head = shas[len(shas)-1]

@@ -275,17 +275,27 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 	}
 	base := options.Base
 	var intents []review.IntentLine
+	if options.NetReview != nil {
+		netReview := options.NetReview
+		options.PrepareNetReview = func(shas []string) error {
+			if deps.ReadIntents != nil {
+				var err error
+				intents, err = deps.ReadIntents(shas)
+				if err != nil {
+					return err
+				}
+			}
+			netReview.Intention = review.IntentText(intents)
+			if netReview.Intention == "" {
+				netReview.Intention = "No intent recorded for this PR range."
+			}
+			return nil
+		}
+	}
 	res, err := deps.AnalyzeBranch(ledger, options)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
-	}
-	if len(res.SHAs) > 0 && len(res.SHAs[len(res.SHAs)-1]) == 40 && deps.ReadIntents != nil {
-		intents, err = deps.ReadIntents(res.SHAs)
-		if err != nil {
-			fmt.Fprintf(w, "? %v\n", err)
-			return 1
-		}
 	}
 	if deps.WriteEvidence == nil {
 		deps.WriteEvidence = review.WriteEvidence
