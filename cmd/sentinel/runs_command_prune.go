@@ -100,17 +100,13 @@ func collectProvenanceReferences(worktree string, backing *store.Store) (map[str
 	return references, nil
 }
 
-// ledgerV1Directories enumerates every gitDir whose v1 review ledger belongs to
-// this repository: the common directory, plus one per linked worktree.
-//
-// review.NewLedger anchors on the checkout's gitDir, so the main checkout
-// writes to <gitCommonDir>/vas-sentinel only because its two paths coincide,
-// while a linked worktree writes to <gitCommonDir>/worktrees/<name>/vas-sentinel.
-// Reading the common directory alone made a record written from a worktree
-// absent rather than unreadable, so the fail-closed guard above never fired and
-// a prune could destroy the very streams it protects. Delegating to a writer in
-// a dedicated worktree is the mandated workflow here, so that was the normal
-// path (FU-12).
+// ledgerV1Directories enumerates every legacy per-checkout review ledger that
+// belongs to this repository: the common directory, plus one per linked worktree.
+// Current review, status, and pr records use the common directory; the linked
+// worktree paths remain only for legacy pruning. Reading only the common
+// directory made a legacy record written from a worktree absent rather than
+// unreadable, so the fail-closed guard above never fired and a prune could
+// destroy the very streams it protects.
 //
 // Enumerated with os.ReadDir and NOT with filepath.Glob. filepath.Glob
 // reports only ErrBadPattern and silently swallows the I/O errors it hits

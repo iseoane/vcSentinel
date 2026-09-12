@@ -8,11 +8,11 @@ import (
 )
 
 // GetGitDir returns the absolute path of the active repository's Git
-// common-dir (`git rev-parse --absolute-git-dir`). In linked worktrees it
-// returns the worktree's private directory (`.git/worktrees/<name>`),
-// which isolates VAS Sentinel state per worktree for free. The literal
-// `.git` path is never assumed: on Windows and in linked worktrees the
-// directory may be represented by a gitfile.
+// directory (`git rev-parse --absolute-git-dir`). In linked worktrees it
+// returns the worktree's private directory (`.git/worktrees/<name>`).
+// Repository-wide VAS Sentinel persistence uses GetGitCommonDir instead.
+// The literal `.git` path is never assumed: on Windows and in linked
+// worktrees the directory may be represented by a gitfile.
 func GetGitDir() (string, error) {
 	out, err := runGitOutput("rev-parse", "--absolute-git-dir")
 	if err != nil {

@@ -1709,22 +1709,32 @@ everything ends, one way or another, inside the main repository's `.git`. The
 only real decision is whether it goes at the shared root or in the private
 `worktrees/<name>/` subdirectory.
 
-**Correction derived to guide §4.** Today the ledger uses `ObtenerGitDir`
-(`gitdir.go:17`, `--absolute-git-dir`), i.e. the **private** directory of each
-worktree; the guide justified it as "free per-worktree isolation".
+**Nota histórica.** La disposición por worktree descrita en esta comparación
+es heredada. La persistencia actual de los juicios de `pr review` usa
+`<git-common-dir>/vas-sentinel/pr-reviews/<key>.json`; las evidencias largas
+siguen siendo ficheros del worktree bajo `.vas_sentinel/evidence/`. El contrato
+operativo de ambas ubicaciones pertenece a las secciones 2.7 y 3 de
+[`piece-4-pr-review-authors.md`](piece-4-pr-review-authors.md).
 
-| | Today | Target |
+**Corrección histórica que motivó §4.** En ese momento el ledger usaba
+`ObtenerGitDir` (`gitdir.go:17`, `--absolute-git-dir`), es decir, el directorio
+**privado** de cada worktree; la guía lo justificaba como «aislamiento gratuito
+por worktree».
+
+| | Disposición heredada | Estado actual |
 |---|---|---|
 | Function | `ObtenerGitDir` (`gitdir.go:17`) | `ObtenerGitCommonDir` (`gitdir.go:31`) |
 | Path from a linked worktree | `.git/worktrees/<name>/vas-sentinel/` | `.git/vas-sentinel/` |
 | Effect | Each worktree has its own ledger: auditing in A and switching to B forces **re-auditing everything** | Shared: work done in A is valid in B |
 
-Isolation made sense with a SHA key (each branch, its history). With a
-content key it stops making sense: a finding about a blob is valid in any
-worktree of the same repository. **Store, snapshots and graph move to the
-shared common-dir.**
+El aislamiento tenía sentido con una clave SHA (cada rama, su historial). Con
+una clave de contenido deja de tenerlo: un hallazgo sobre un blob es válido en
+cualquier worktree del mismo repositorio. **Store, snapshots and graph move to
+the shared common-dir.**
 
-Two operational details of the move:
+Los dos detalles operativos siguientes pertenecen a la propuesta histórica y no
+describen el comportamiento actual:
+
 
 1. **Migration**: existing private ledgers would become invisible. On first
    startup, if `.git/worktrees/<n>/vas-sentinel/` contains records, they are

@@ -578,8 +578,8 @@ func TestDecisionOverview(t *testing.T) {
 		coherent string
 		want     string
 	}{
-		{"coherent → single", `{"coherent":true,"rationale":"A single change: the commits share the same goal and files."}`, "single"},
-		{"incoherent → chain", `{"coherent":false,"rationale":"Independent units with seams between them."}`, "chain"},
+		{"coherent → single", `{"coherent":true,"rationale":"A single change: the commits share the same goal and files.","changed":["Keeps one coherent goal."],"risk":"The change is limited to one coherent unit."}`, "single"},
+		{"incoherent → chain", `{"coherent":false,"rationale":"Independent units with seams between them.","changed":["Contains independent units."],"risk":"The seams require separate review."}`, "chain"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -610,7 +610,7 @@ func TestDecisionOverview(t *testing.T) {
 // TestParseOverview: parses the agent's JSON and rejects invalid outputs.
 func TestParseOverview(t *testing.T) {
 	ok, err := ParseOverview(`text before
-{"coherent":true,"rationale":"First line.\nSecond line."}
+{"coherent":true,"rationale":"First line.\nSecond line.","changed":["Adds the summary."],"risk":"Risk is bounded."}
 text after`)
 	if err != nil {
 		t.Fatalf("ParseOverview on valid JSON failed: %v", err)
@@ -636,7 +636,7 @@ text after`)
 	// JSON preamble before the coherence object: it must take the object
 	// containing "coherent", not the first { with the last }.
 	withPreamble, err := ParseOverview(`{"metadata":1}
-{"coherent":false,"rationale":"Two units with seams."}`)
+{"coherent":false,"rationale":"Two units with seams.","changed":["Splits units."],"risk":"Seams require review."}`)
 	if err != nil {
 		t.Fatalf("ParseOverview did not tolerate a JSON preamble: %v", err)
 	}

@@ -297,12 +297,11 @@ Example:
 	prReviewHelp = `Purpose: dry-run analysis of the unpublished branch: audit matrix, summary, and the single-versus-chained PR decision. Publishes nothing.
 
 Usage:
-  sentinel pr review [--base X] [--parent X] [--audit-pending] [--overview] [--json]
+  sentinel pr review [--base X] [--parent X] [--overview] [--json]
 
 Flags:
   --base            Comparison branch (default main).
   --parent          Explicit stacked parent branch: reviews only the own diff against it; inherited findings render separately (non-blocking).
-  --audit-pending   Audit every branch commit without a review record instead of only reporting the gap (the net audit already covers the whole picture; this is the more expensive opt-in).
   --overview        Include the PR overview in the analysis.
   --json            Emit machine-readable JSON.
 

@@ -6,7 +6,9 @@ review of an earlier draft. It supersedes the working assumptions in items 4,
 disagree; those items remain the record of WHY each problem exists.
 
 Piece 2 (the coverage contract and the shared authoritative-revision selector) is
-implemented and recorded below; pieces 1, 3, 4 and 5 are not implemented yet.
+implemented and recorded below. Piece 4 phase A has implemented only its
+persistence primitives; `pr review` is not yet wired to author or consume those
+entries. Pieces 1, 3, 5, and the remainder of piece 4 are not implemented yet.
 
 ## The problem this design closes
 

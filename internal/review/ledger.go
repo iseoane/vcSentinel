@@ -264,7 +264,7 @@ func reviewFindingFromFinding(h Finding) ReviewFinding {
 }
 
 // Record is the complete audit record of a commit, saved as
-// <git-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the first commit
+// <git-common-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the first commit
 // credited with fixing the findings (filled in when a fix touches the files).
 // It is provenance only: whether the record still blocks is decided by its
 // current findings (RecordHasActiveBlock), not by this field.

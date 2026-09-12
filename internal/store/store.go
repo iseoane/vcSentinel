@@ -1,7 +1,8 @@
 // Package store implements VAS Sentinel's persistent storage for T2.5
-// (F2): units, runs, findings, commits and decisions, anchored in the
-// repository's git common dir (shared across linked worktrees from day
-// one). It coexists with internal/review.Ledger without replacing it:
+// (F2): units, runs, findings, commits, decisions, and PR-review entries,
+// anchored in the repository's git common dir (shared across linked
+// worktrees from day one). It coexists with internal/review.Ledger without
+// replacing it:
 // migrating existing data is T2.6's job; this package starts empty.
 package store
 

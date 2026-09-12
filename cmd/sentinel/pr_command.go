@@ -31,15 +31,10 @@ const honestNetIntention = pr.HonestNetIntention
 
 // flagsPrReview are the options of pr review.
 type flagsPrReview struct {
-	base string
-	// auditPending (--audit-pending) restores auditing every commit on the
-	// branch that carries no review record; by default pr review only
-	// reports that gap (the unaudited-commits decision in docs/issues/decisions.md), it never audits
-	// it, and never blocks on it.
-	auditPending bool
-	overview     bool // --overview
-	jsonOut      bool // --json
-	parent       string
+	base     string
+	overview bool // --overview
+	jsonOut  bool // --json
+	parent   string
 }
 
 func parseParentFlagValue(args []string, at int) (string, error) {
@@ -70,15 +65,9 @@ func parsePrReviewFlags(args []string) (flagsPrReview, error) {
 			}
 			flags.parent = val
 		case "--only-unaudited":
-			// Retired (the unaudited-commits decision in docs/issues/decisions.md): pr review no longer
-			// audits pending commits by default, so this flag now describes
-			// the default rather than restricting scope — keeping it as a
-			// silent no-op would mislead a caller who still expects it to
-			// change behavior. Same clean-break precedent as the removed
-			// 'sentinel pr [gh arguments]' passthrough.
-			return flags, fmt.Errorf("--only-unaudited was retired: pr review no longer audits pending commits by default; use --audit-pending to restore the old behavior of auditing every commit without a review record")
+			return flags, fmt.Errorf("--only-unaudited was retired: pr review no longer audits commits; run `sentinel review <sha>` for each unaudited commit")
 		case "--audit-pending":
-			flags.auditPending = true
+			return flags, fmt.Errorf("--audit-pending was retired: pr review no longer audits commits, and never audits them on your behalf. Run `sentinel review <sha>` for each unaudited commit; `sentinel pr review` reports which ones they are.")
 		case "--overview":
 			flags.overview = true
 		case "--json":
@@ -184,11 +173,10 @@ func runPr(worktree string, args []string) {
 
 func flagsPrReviewToPr(f flagsPrReview) pr.FlagsPrReview {
 	return pr.FlagsPrReview{
-		Base:         f.base,
-		AuditPending: f.auditPending,
-		Overview:     f.overview,
-		JsonOut:      f.jsonOut,
-		Parent:       f.parent,
+		Base:     f.base,
+		Overview: f.overview,
+		JsonOut:  f.jsonOut,
+		Parent:   f.parent,
 	}
 }
 

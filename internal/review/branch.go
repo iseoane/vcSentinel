@@ -60,7 +60,7 @@ type StoreBlobs interface {
 // BranchOptions defines the analysis of a whole branch against its base.
 type BranchOptions struct {
 	Base            string // comparison branch; empty = "main"
-	OnlyPending     bool   // --only-unaudited: do not audit, just list records
+	OnlyPending     bool   // skip per-commit audits and list missing records
 	Overview        bool   // --overview: 1 branch-level Spec call for coherence
 	ProfileOverride string
 	Answers         string // clarifications for the extra questions round
@@ -130,8 +130,10 @@ type BranchOptions struct {
 // OverviewResult is the response of the branch-level Spec call: coherence of
 // the whole set and the rationale for the PR template.
 type OverviewResult struct {
-	Coherent  bool   `json:"coherent"`
-	Rationale string `json:"rationale"`
+	Coherent  bool     `json:"coherent"`
+	Rationale string   `json:"rationale"`
+	Changed   []string `json:"changed"`
+	Risk      string   `json:"risk"`
 }
 
 // UnauditedCommit pairs a commit that carries no review record, at the end
@@ -158,8 +160,8 @@ type BranchResult struct {
 	// record once this call is done — recomputed AFTER the audit loop, so it
 	// is what a report or a machine consumer should read to mean "this
 	// commit was never audited" (the unaudited-commits decision in docs/issues/decisions.md). With
-	// the default OnlyPending == true it equals Pending; with the
-	// --audit-pending opt-in it is empty once auditing succeeds.
+	// the default OnlyPending == true it equals Pending; a caller that audits
+	// pending commits can leave it empty once auditing succeeds.
 	Unaudited     []UnauditedCommit
 	Records       []Record
 	Volume        int
@@ -689,7 +691,7 @@ func BuildOverviewPrompt(branch string, records []Record) string {
 	}
 	b.WriteString("\nDo these commits form a single coherent change for the branch (one PR) or independent units with seams that deserve separate chained PRs?\n")
 	b.WriteString("Return ONLY one JSON line with this exact shape:\n")
-	b.WriteString(`{"coherent": true|false, "rationale": "<3 to 5 line explanation in English>"}` + "\n")
+	b.WriteString(`{"coherent": true|false, "rationale": "<3 to 5 line explanation in English>", "changed": ["<3 to 6 behavior bullets in English>"], "risk": "<one justified risk sentence in English>"}` + "\n")
 	return b.String()
 }
 
@@ -711,9 +713,28 @@ func ParseOverview(output string) (*OverviewResult, error) {
 		}
 		candidate := output[start : end+1]
 		if strings.Contains(candidate, "coherent") {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(candidate), &fields); err != nil {
+				return nil, fmt.Errorf("invalid coherence JSON: %v", err)
+			}
+			for _, field := range []string{"coherent", "rationale", "changed", "risk"} {
+				if _, ok := fields[field]; !ok {
+					return nil, fmt.Errorf("invalid coherence JSON: missing %q", field)
+				}
+			}
 			var overview OverviewResult
 			if err := json.Unmarshal([]byte(candidate), &overview); err != nil {
 				return nil, fmt.Errorf("invalid coherence JSON: %v", err)
+			}
+			changed := overview.Changed[:0]
+			for _, item := range overview.Changed {
+				if item = strings.TrimSpace(item); item != "" {
+					changed = append(changed, item)
+				}
+			}
+			overview.Changed = changed
+			if strings.TrimSpace(overview.Rationale) == "" || len(overview.Changed) == 0 || strings.TrimSpace(overview.Risk) == "" {
+				return nil, errors.New("invalid coherence JSON: rationale, changed, and risk must be non-empty")
 			}
 			return &overview, nil
 		}

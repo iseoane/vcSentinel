@@ -379,31 +379,33 @@ func isRemovalRemnant(directory string) bool {
 // incomplete-admission guard: the next prune classifies the record from its
 // actual evidence like any other. Pure lock-only remnants still self-heal.
 func (s *Store) removeExecutionRemnant(runID string) error {
-	directory, err := s.executionDir(runID)
-	if err != nil {
-		return err
-	}
-	lockPath := filepath.Join(directory, ".events.lock")
-	err = withExecutionLock(directory, func() error {
-		entries, readErr := os.ReadDir(directory)
-		if readErr != nil {
-			return readErr
+	return s.withExecutionLifecycleLock(runID, func() error {
+		directory, err := s.executionDir(runID)
+		if err != nil {
+			return err
 		}
-		for _, entry := range entries {
-			if entry.Name() == ".events.lock" {
-				continue
+		lockPath := filepath.Join(directory, ".events.lock")
+		err = withExecutionLock(directory, func() error {
+			entries, readErr := os.ReadDir(directory)
+			if readErr != nil {
+				return readErr
 			}
-			return pruneInLockRefusal{reason: PruneReasonIncompleteAdmission}
+			for _, entry := range entries {
+				if entry.Name() == ".events.lock" {
+					continue
+				}
+				return pruneInLockRefusal{reason: PruneReasonIncompleteAdmission}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return nil
+		if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return os.Remove(directory)
 	})
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return os.Remove(directory)
 }
 
 // removeExecutionDirectory deletes one whole execution record under its
@@ -418,77 +420,79 @@ func (s *Store) removeExecutionRemnant(runID string) error {
 // delete paths under an open handle. A failure anywhere leaves whatever was
 // not yet deleted in place and reports the error.
 func (s *Store) removeExecutionDirectory(runID string, referencedInvocations map[string]bool) error {
-	directory, err := s.executionDir(runID)
-	if err != nil {
-		return err
-	}
-	// Never recreate a record another pass already removed.
-	if _, statErr := os.Stat(directory); errors.Is(statErr, os.ErrNotExist) {
-		return fmt.Errorf("store: execution record vanished before removal: %s", runID)
-	}
-	lockPath := filepath.Join(directory, ".events.lock")
-	err = withExecutionLock(directory, func() error {
-		log, scanErr := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
-		if scanErr != nil {
-			return scanErr
+	return s.withExecutionLifecycleLock(runID, func() error {
+		directory, err := s.executionDir(runID)
+		if err != nil {
+			return err
 		}
-		if log.tail != nil {
-			return IncompleteEventTailError{RunID: runID}
+		// Never recreate a record another pass already removed.
+		if _, statErr := os.Stat(directory); errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("store: execution record vanished before removal: %s", runID)
 		}
-		projection := reconcileProjection(runID, log.frames)
-		if projection.Terminal == agentrun.TerminalNone {
-			return fmt.Errorf("store: run %s left its terminal state before pruning", runID)
-		}
-		for _, frame := range log.frames {
-			if referencedInvocations[frame.InvocationID] {
-				return pruneInLockRefusal{
-					reason: fmt.Sprintf(PruneReasonProvenanceFmt, frame.InvocationID),
+		lockPath := filepath.Join(directory, ".events.lock")
+		err = withExecutionLock(directory, func() error {
+			log, scanErr := scanEventLog(runID, filepath.Join(directory, "events.jsonl"))
+			if scanErr != nil {
+				return scanErr
+			}
+			if log.tail != nil {
+				return IncompleteEventTailError{RunID: runID}
+			}
+			projection := reconcileProjection(runID, log.frames)
+			if projection.Terminal == agentrun.TerminalNone {
+				return fmt.Errorf("store: run %s left its terminal state before pruning", runID)
+			}
+			for _, frame := range log.frames {
+				if referencedInvocations[frame.InvocationID] {
+					return pruneInLockRefusal{
+						reason: fmt.Sprintf(PruneReasonProvenanceFmt, frame.InvocationID),
+					}
 				}
 			}
-		}
-		if child := s.findLateChildUnderLock(runID); child != "" {
-			return pruneInLockRefusal{
-				reason: fmt.Sprintf(PruneReasonParentOfSurvivorFmt, child),
+			if child := s.findLateChildUnderLock(runID); child != "" {
+				return pruneInLockRefusal{
+					reason: fmt.Sprintf(PruneReasonParentOfSurvivorFmt, child),
+				}
 			}
-		}
-		// The classify→delete window can also complete a retry: a run
-		// classified as single-attempt may settle a second attempt after
-		// classification, and the terminal re-check above goes green again
-		// once it does. Re-derive the attempt count from the same
-		// reconciled outcomes the classifier used and refuse on growth.
-		// The snapshot needs no re-check: snapshots are write-once
-		// immutable with no deletion path, so classify-time presence is
-		// stable across this window, while attempts can still appear.
-		lockedOutcomes, lockedOutcomesErr := s.ReadAttemptOutcomes(runID)
-		if lockedOutcomesErr != nil {
-			return pruneInLockRefusal{
-				reason: fmt.Sprintf(PruneReasonUnreadableFmt, lockedOutcomesErr),
+			// The classify→delete window can also complete a retry: a run
+			// classified as single-attempt may settle a second attempt after
+			// classification, and the terminal re-check above goes green again
+			// once it does. Re-derive the attempt count from the same
+			// reconciled outcomes the classifier used and refuse on growth.
+			// The snapshot needs no re-check: snapshots are write-once
+			// immutable with no deletion path, so classify-time presence is
+			// stable across this window, while attempts can still appear.
+			lockedOutcomes, lockedOutcomesErr := s.ReadAttemptOutcomes(runID)
+			if lockedOutcomesErr != nil {
+				return pruneInLockRefusal{
+					reason: fmt.Sprintf(PruneReasonUnreadableFmt, lockedOutcomesErr),
+				}
 			}
-		}
-		if attemptCount(lockedOutcomes) > 1 {
-			return pruneInLockRefusal{reason: PruneReasonMultiAttempt}
-		}
-		entries, readErr := os.ReadDir(directory)
-		if readErr != nil {
-			return readErr
-		}
-		for _, entry := range entries {
-			if entry.Name() == ".events.lock" {
-				continue
+			if attemptCount(lockedOutcomes) > 1 {
+				return pruneInLockRefusal{reason: PruneReasonMultiAttempt}
 			}
-			if err := os.RemoveAll(filepath.Join(directory, entry.Name())); err != nil {
-				return err
+			entries, readErr := os.ReadDir(directory)
+			if readErr != nil {
+				return readErr
 			}
+			for _, entry := range entries {
+				if entry.Name() == ".events.lock" {
+					continue
+				}
+				if err := os.RemoveAll(filepath.Join(directory, entry.Name())); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return nil
+		if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return os.Remove(directory)
 	})
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return os.Remove(directory)
 }
 
 // findLateChildUnderLock re-scans the execution listing under the event lock
