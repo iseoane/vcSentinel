@@ -30,7 +30,11 @@ func startTestServerForRemote(t *testing.T, controller *execution.Controller) En
 	}
 	srv := NewServer(controller, testFingerprint())
 	go func() { _ = srv.Serve(listener) }()
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		if err := srv.Shutdown(); err != nil {
+			srv.Close()
+		}
+	})
 	t.Cleanup(func() { _ = listener.Close() })
 	if ep.Network == "tcp" {
 		ep.Address = listener.Addr().String()
@@ -148,7 +152,11 @@ func TestRemoteClientRoundTripOverEveryTransport(t *testing.T) {
 		defer close(release)
 		srv := NewServer(newTestController(t, blockingAdapter(release)), testFingerprint())
 		go func() { _ = srv.Serve(listener) }()
-		t.Cleanup(srv.Close)
+		t.Cleanup(func() {
+			if err := srv.Shutdown(); err != nil {
+				srv.Close()
+			}
+		})
 		t.Cleanup(func() { _ = listener.Close() })
 
 		ep := Endpoint{Network: "tcp", Address: listener.Addr().String(), TokenFile: listenEp.TokenFile}

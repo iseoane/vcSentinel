@@ -53,7 +53,11 @@ func startGracedServer(t *testing.T, adapter execution.Adapter, grace time.Durat
 		}
 		time.Sleep(pollInterval)
 	}
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		if err := server.Shutdown(); err != nil {
+			server.Close()
+		}
+	})
 	t.Cleanup(func() { _ = listener.Close() })
 	return server, controller, st, ep, serveErr
 }

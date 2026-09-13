@@ -2394,6 +2394,40 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	if saved == nil || saved.HeadSHA != sha || !strings.Contains(saved.Body, "Protect the release pipeline.") {
 		t.Fatalf("saved review entry omits the SHA-256 head or trailer intent: %+v", saved)
 	}
+	var persisted review.Attestation
+	if err := json.Unmarshal(saved.Attestation, &persisted); err != nil {
+		t.Fatalf("persisted attestation is not valid JSON: %v", err)
+	}
+	bodyAttestation, err := review.ParseAttestation(saved.Body)
+	if err != nil {
+		t.Fatalf("body attestation is not parseable: %v", err)
+	}
+	if !reflect.DeepEqual(persisted, bodyAttestation) {
+		t.Fatalf("persisted and body attestations differ:\npersisted: %+v\nbody: %+v", persisted, bodyAttestation)
+	}
+	wantSteps := []review.AttestationStep{
+		{Step: "slice", Status: "passed"},
+		{Step: "review", Status: "not_observed"},
+		{Step: "gate", Status: "not_run"},
+		{Step: "lint", Status: "not_configured"},
+		{Step: "test", Status: "not_configured"},
+		{Step: "build", Status: "not_configured"},
+		{Step: "pr review", Status: "authored"},
+		{Step: "ci", Status: "not_observed"},
+	}
+	if !reflect.DeepEqual(persisted.Steps, wantSteps) {
+		t.Fatalf("persisted attestation steps = %+v, want %+v", persisted.Steps, wantSteps)
+	}
+	seenSteps := make(map[string]bool, len(persisted.Steps))
+	for _, step := range persisted.Steps {
+		if seenSteps[step.Step] {
+			t.Fatalf("persisted attestation contains duplicate step %q", step.Step)
+		}
+		seenSteps[step.Step] = true
+	}
+	if saved.At.IsZero() || saved.At.Location() != time.UTC {
+		t.Fatalf("saved review timestamp = %v, want a non-zero UTC timestamp", saved.At)
+	}
 	if got, want := saved.Title, "feat: persist the review title"; got != want {
 		t.Fatalf("saved review title = %q, want %q", got, want)
 	}

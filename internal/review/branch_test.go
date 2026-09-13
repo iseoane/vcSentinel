@@ -618,8 +618,8 @@ func TestDecisionOverview(t *testing.T) {
 		coherent string
 		want     string
 	}{
-		{"coherent → single", `{"coherent":true,"rationale":"A single change: the commits share the same goal and files.","changed":["Keeps one coherent goal."],"risk":"The change is limited to one coherent unit."}`, "single"},
-		{"incoherent → chain", `{"coherent":false,"rationale":"Independent units with seams between them.","changed":["Contains independent units."],"risk":"The seams require separate review."}`, "chain"},
+		{"coherent → single", `{"coherent":true,"rationale":"A single change: the commits share the same goal and files.","changed":["Keeps one coherent goal.","Preserves the branch boundary.","Supports one review."],"risk":"The change is limited to one coherent unit."}`, "single"},
+		{"incoherent → chain", `{"coherent":false,"rationale":"Independent units with seams between them.","changed":["Contains independent units.","Separates unrelated behavior.","Requires distinct review paths."],"risk":"The seams require separate review."}`, "chain"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -650,7 +650,7 @@ func TestDecisionOverview(t *testing.T) {
 // TestParseOverview: parses the agent's JSON and rejects invalid outputs.
 func TestParseOverview(t *testing.T) {
 	ok, err := ParseOverview(`text before
-{"coherent":true,"rationale":"First line.\nSecond line.","changed":["Adds the summary."],"risk":"Risk is bounded."}
+{"coherent":true,"rationale":"First line.\nSecond line.","changed":["Adds the summary.","Preserves the contract.","Keeps the output reviewable."],"risk":"Risk is bounded."}
 text after`)
 	if err != nil {
 		t.Fatalf("ParseOverview on valid JSON failed: %v", err)
@@ -676,12 +676,61 @@ text after`)
 	// JSON preamble before the coherence object: it must take the object
 	// containing "coherent", not the first { with the last }.
 	withPreamble, err := ParseOverview(`{"metadata":1}
-{"coherent":false,"rationale":"Two units with seams.","changed":["Splits units."],"risk":"Seams require review."}`)
+{"coherent":false,"rationale":"Two units with seams.","changed":["Splits units.","Names the seam.","Preserves independent review."],"risk":"Seams require review."}`)
 	if err != nil {
 		t.Fatalf("ParseOverview did not tolerate a JSON preamble: %v", err)
 	}
 	if withPreamble.Coherent {
 		t.Errorf("ParseOverview = %+v, want coherent=false", withPreamble)
+	}
+}
+
+func TestParseOverviewChangedCardinality(t *testing.T) {
+	cases := []struct {
+		name        string
+		changed     string
+		wantChanged []string
+		wantErr     bool
+	}{
+		{
+			name:    "two non-empty bullets",
+			changed: `["first", "", " second ", "  "]`,
+			wantErr: true,
+		},
+		{
+			name:        "three non-empty bullets after trimming",
+			changed:     `[" first ", "", "\tsecond\n", "third", " "]`,
+			wantChanged: []string{"first", "second", "third"},
+		},
+		{
+			name: "six non-empty bullets after trimming",
+			changed: `[" first ", "second", "third", "", "fourth", " fifth ",
+				"sixth", "\t"]`,
+			wantChanged: []string{"first", "second", "third", "fourth", "fifth", "sixth"},
+		},
+		{
+			name:    "seven non-empty bullets",
+			changed: `["first", "second", "third", "fourth", "fifth", "sixth", "seventh", " "]`,
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := fmt.Sprintf(`{"coherent":true,"rationale":"A complete rationale.","changed":%s,"risk":"Risk is bounded."}`, tc.changed)
+			got, err := ParseOverview(output)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "3 to 6") {
+					t.Fatalf("ParseOverview() error = %v, want an explicit 3 to 6 cardinality error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseOverview() error = %v", err)
+			}
+			if !reflect.DeepEqual(got.Changed, tc.wantChanged) {
+				t.Fatalf("ParseOverview().Changed = %#v, want %#v", got.Changed, tc.wantChanged)
+			}
+		})
 	}
 }
 
