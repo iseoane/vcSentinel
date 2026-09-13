@@ -139,10 +139,13 @@ keeps the persisted judgement honest: command evidence belongs to the command
 that actually collected it, not to `pr review`.
 
 When a caller supplies validation, deterministic, or delegated command evidence,
-it is untrusted presentation input. Before Markdown rendering, collapse CR/LF
-to spaces and replace literal backticks with apostrophes; this prevents evidence
-from closing its surrounding inline-code span or creating a new Markdown
-structure. This display-only normalization never changes the command that ran.
+or an omitted-verification reason, it is untrusted presentation input. Before
+Markdown rendering, collapse CR/LF to spaces and replace literal backticks with
+apostrophes; this prevents evidence from closing its surrounding inline-code span
+or creating a new Markdown structure. Omitted-verification reasons use the same
+normalization and render inside one inline-code span, so any Markdown or raw HTML
+control text remains literal. This display-only normalization never changes the
+command that ran or the recorded reason.
 
 ### 2.5 Pipeline
 
@@ -281,10 +284,15 @@ to publish without one.
   The head SHA prevents a stale entry from being reused.
 - Content: the rendered body, the attestation struct, the verdict, the head
   SHA, the branch, and the time.
+- `AnalyzeBranch` validates every SHA in the resolved range before reading any
+  per-commit metadata or consulting blob reuse. A malformed SHA anywhere in the
+  range fails closed before it can adopt a record into the ledger; no evidence,
+  persisted entry, or event follows.
 - Before looking up the title or writing evidence, the entry, or an event,
-  `pr review` validates its resolved branch head as a 40-character SHA-1 or
-  64-character SHA-256 hexadecimal object ID. A missing or malformed head fails
-  closed and leaves no evidence, persisted entry, or event behind.
+  `pr review` validates its resolved branch head as a canonical lower-case
+  40-character SHA-1 or 64-character SHA-256 hexadecimal object ID. Surrounding
+  whitespace is rejected rather than normalized. A missing or malformed head
+  fails closed and leaves no evidence, persisted entry, or event behind.
 - It is **replaceable, and single per branch**: re-running `pr review` on the
   same head overwrites its entry, and writing an entry for a branch **deletes
   every prior entry carrying that exact branch name**. Two runs over the same
