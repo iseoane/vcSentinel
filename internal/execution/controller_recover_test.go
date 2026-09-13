@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
@@ -123,6 +124,11 @@ func TestRecoverRefusesUnrecoverableEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			if busy := first.WaitForActiveRuns(2 * time.Second); busy != 0 {
+				t.Errorf("WaitForActiveRuns = %d, want 0 before test cleanup", busy)
+			}
+		})
 		waitForState(t, first, handle.RunID, agentrun.StateAwaitingDecision)
 
 		fresh := NewControllerWithClock(backingStore, nil, fixedClock())
