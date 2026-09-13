@@ -178,29 +178,24 @@ func ComposePRBody(entry store.PRReviewEntry, outcome CIOutcome) (string, error)
 }
 
 func renderCIBlock(outcome CIOutcome) (string, error) {
-	workflow := sanitizeDisplay(outcome.Workflow)
-	summary := sanitizeDisplay(outcome.Summary)
+	summary := sanitizeAndBound(outcome.Summary, 280)
 	if summary == "" {
 		return "", errors.New("compose pr body: missing CI summary")
 	}
-	icon := outcome.Icon
+	icon := sanitizeAndBound(outcome.Icon, 24)
 	if icon == "" {
 		return "", errors.New("compose pr body: missing CI icon")
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "<details><summary>%s <b>ci</b> — %s</summary>\n\n", icon, summary)
 	if outcome.URL != "" {
-		url := boundedUTF8(outcome.URL, 200)
-		fmt.Fprintf(&b, "Run: %s\n", sanitizeDisplay(url))
+		fmt.Fprintf(&b, "Run: %s\n", sanitizeAndBound(outcome.URL, 200))
 	}
 	jobs := boundedJobs(outcome.FailedJobs)
 	if len(jobs) > 0 {
 		b.WriteString("Failed jobs: ")
 		b.WriteString(strings.Join(jobs, ", "))
 		b.WriteByte('\n')
-	}
-	if workflow != "" && outcome.Status == "not_observed" && outcome.Summary == "" {
-		fmt.Fprintf(&b, "Workflow: %s\n", workflow)
 	}
 	b.WriteString("</details>\n\n")
 	return b.String(), nil
@@ -210,7 +205,7 @@ func boundedJobs(jobs []string) []string {
 	const maxJobs = 5
 	bounded := make([]string, 0, minInt(len(jobs), maxJobs))
 	for _, job := range jobs {
-		name := sanitizeDisplay(boundedUTF8(job, 60))
+		name := sanitizeAndBound(job, 70)
 		if name != "" {
 			bounded = append(bounded, name)
 		}
@@ -239,6 +234,10 @@ func sanitizeDisplay(value string) string {
 	value = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(value)
 	value = strings.ReplaceAll(value, "`", "'")
 	return html.EscapeString(value)
+}
+
+func sanitizeAndBound(value string, maxBytes int) string {
+	return boundedUTF8(sanitizeDisplay(value), maxBytes)
 }
 
 type textRange struct{ start, end int }

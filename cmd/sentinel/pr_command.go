@@ -322,8 +322,8 @@ type publishPROptions struct {
 	copy        func(string) error
 }
 
-func publishPRStored(worktree, title, templatePath, base string, pushed bool) (string, bool, error) {
-	return publishPRStoredWith(worktree, title, templatePath, base, pushed, publishPROptions{
+func publishPRStored(worktree, title, templatePath, base string) (string, bool, error) {
+	return publishPRStoredWith(worktree, title, templatePath, base, publishPROptions{
 		ghAvailable: func(name string) bool { _, err := exec.LookPath(name); return err == nil },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			cmd := exec.Command("gh", args...)
@@ -342,14 +342,13 @@ func publishPRStored(worktree, title, templatePath, base string, pushed bool) (s
 }
 
 // publishPRWith is retained for package-main compatibility tests. New create
-// calls use publishPRStoredWith so the persisted title and pushed state are
-// explicit.
+// calls use publishPRStoredWith so the persisted title is explicit.
 func publishPRWith(worktree, templatePath, base string, options publishPROptions) (string, bool, error) {
-	return publishPRStoredWith(worktree, "", templatePath, base, false, options)
+	return publishPRStoredWith(worktree, "", templatePath, base, options)
 }
 
-func publishPRStoredWith(worktree, title, templatePath, base string, pushed bool, options publishPROptions) (string, bool, error) {
-	return pr.PublishPRWithTitle(worktree, title, templatePath, base, pushed, options.ghAvailable, options.runGh, options.copy)
+func publishPRStoredWith(worktree, title, templatePath, base string, options publishPROptions) (string, bool, error) {
+	return pr.PublishPRWithTitle(worktree, title, templatePath, base, options.ghAvailable, options.runGh, options.copy)
 }
 
 func resolveBlobStore(worktree string) (review.StoreBlobs, error) {
@@ -372,7 +371,7 @@ type depsPrCreate struct {
 	evidenceAtHEAD func(worktree, evidencePath string) (bool, string, error)
 	runCI          func(context.Context, io.Writer, string, string, string, config.CIConfig) (pr.CIOutcome, error)
 	composeBody    func(store.PRReviewEntry, pr.CIOutcome) (string, error)
-	publishStored  func(worktree, title, templatePath, base string, pushed bool) (string, bool, error)
+	publishStored  func(worktree, title, templatePath, base string) (string, bool, error)
 	recordEvent    func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	// getGitCommonDir and recordDecision cover T7.5 (M3 report): the --force
 	// that overrides a red validation stops being an untraceable exception.

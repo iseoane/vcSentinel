@@ -65,7 +65,7 @@ type DepsPrCreate struct {
 	RunValidation   func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
 	RunCI           func(context.Context, io.Writer, string, string, string, config.CIConfig) (CIOutcome, error)
 	ComposeBody     func(store.PRReviewEntry, CIOutcome) (string, error)
-	PublishStored   func(worktree, title, templatePath, base string, pushed bool) (string, bool, error)
+	PublishStored   func(worktree, title, templatePath, base string) (string, bool, error)
 	WriteTemplate   func(string) (string, error)
 	RecordEvent     func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	RecordDecision  func(commonDir string, d *store.Decision) error
@@ -136,7 +136,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	if err := validateStoredEvidence(w, worktree, entry, deps.EvidenceAtHEAD); err != nil {
+	if err := validateStoredEvidence(worktree, entry, deps.EvidenceAtHEAD); err != nil {
 		fmt.Fprintf(w, "%v\n", err)
 		return 1
 	}
@@ -158,6 +158,10 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	}
 	if deps.RunValidation == nil {
 		fmt.Fprintln(w, "? pr create is not wired to deterministic validation")
+		return 1
+	}
+	if err := verifyStoredSnapshot(worktree, branch, head, entry, deps); err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
 	runs, err := deps.RunValidation(wiring.DefaultGateProfile, nil, validation.RunOptions{Worktree: worktree, Cfg: cfg})
@@ -194,8 +198,12 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		}
 	}
 
+	if err := verifyStoredSnapshot(worktree, branch, head, entry, deps); err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+
 	outcome := DefaultCIOutcome()
-	pushed := false
 	if strings.TrimSpace(cfg.CI.Workflow) != "" {
 		if deps.RunCI == nil {
 			fmt.Fprintln(w, "? CI is configured but pr create has no CI runner")
@@ -208,7 +216,6 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 			fmt.Fprintf(w, "? %v\n", err)
 			return 1
 		}
-		pushed = true
 	}
 
 	compose := deps.ComposeBody
@@ -236,16 +243,21 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	if flags.Parent != "" {
 		base = flags.Parent
 	}
+	if err := verifyStoredSnapshot(worktree, branch, head, entry, deps); err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
 	if deps.PublishStored == nil {
 		fmt.Fprintln(w, "? pr create is not wired to publication")
 		return 1
 	}
-	prURL, fallback, err := deps.PublishStored(worktree, entry.Title, templatePath, base, pushed)
+	prURL, fallback, err := deps.PublishStored(worktree, entry.Title, templatePath, base)
 	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
 	if fallback {
-		if pushed {
+		if strings.TrimSpace(cfg.CI.Workflow) != "" {
 			fmt.Fprintln(w, "? Branch pushed, but no PR was created; the composed body is on the clipboard and in the template file.")
 		} else {
 			fmt.Fprintln(w, "? Template on the clipboard: create the PR manually with that content.")
@@ -294,7 +306,35 @@ func shortObjectID(value string) string {
 	return value
 }
 
-func validateStoredEvidence(w io.Writer, worktree string, entry *store.PRReviewEntry, check func(string, string) (bool, string, error)) error {
+func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEntry, deps DepsPrCreate) error {
+	currentBranch, err := deps.CurrentBranch(worktree)
+	if err != nil {
+		return fmt.Errorf("could not re-check the current branch: %w", err)
+	}
+	if currentBranch != branch {
+		return fmt.Errorf("current branch changed from %q to %q; re-run sentinel pr review", branch, currentBranch)
+	}
+	getHead := deps.GetHeadSHAAt
+	if getHead == nil && deps.GetHeadSHA != nil {
+		getHead = func(string) (string, error) { return deps.GetHeadSHA() }
+	}
+	if getHead == nil {
+		return errors.New("could not re-check the current HEAD")
+	}
+	currentHead, err := getHead(worktree)
+	if err != nil {
+		return fmt.Errorf("could not re-check the current HEAD: %w", err)
+	}
+	if currentHead != head {
+		return fmt.Errorf("current HEAD changed from %s to %s; re-run sentinel pr review", shortObjectID(head), shortObjectID(currentHead))
+	}
+	if _, err := ValidatePRReviewEntry(entry, branch, head); err != nil {
+		return err
+	}
+	return validateStoredEvidence(worktree, entry, deps.EvidenceAtHEAD)
+}
+
+func validateStoredEvidence(worktree string, entry *store.PRReviewEntry, check func(string, string) (bool, string, error)) error {
 	if len(entry.Evidence) == 0 {
 		return fmt.Errorf("? %v: no evidence paths", errStoredReviewInvalid)
 	}

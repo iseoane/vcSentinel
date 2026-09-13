@@ -450,7 +450,7 @@ func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	}
 	var seenWorktree string
 	var seenArgs []string
-	url, fallback, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", true, publishPROptions{
+	url, fallback, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			seenWorktree = worktree

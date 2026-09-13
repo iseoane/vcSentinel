@@ -63,7 +63,7 @@ func CopyToClipboardWith(text string, available func(string) bool, run func(stri
 // travels through a file. If gh is present but publication fails, the existing
 // clipboard fallback is still attempted so a successful push does not strand
 // the operator without the authored body.
-func PublishPRWithTitle(worktree, title, templatePath, base string, pushed bool,
+func PublishPRWithTitle(worktree, title, templatePath, base string,
 	ghAvailable func(string) bool,
 	runGh func(worktree string, args ...string) ([]byte, error),
 	copy func(string) error) (string, bool, error) {

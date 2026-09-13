@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -67,7 +66,7 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 	if err := client.Push(ctx, worktree, remoteName, branch); err != nil {
 		return CIOutcome{}, fmt.Errorf("push failed before CI dispatch: %w", err)
 	}
-	if err := client.Dispatch(ctx, worktree, cfg.Workflow, head); err != nil {
+	if err := client.Dispatch(ctx, worktree, cfg.Workflow, branch); err != nil {
 		return CIOutcome{}, fmt.Errorf("could not dispatch workflow %q: %w", cfg.Workflow, err)
 	}
 
@@ -77,6 +76,13 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 			return pendingCIOutcome(cfg.Workflow, "", cfg.WaitSeconds), nil
 		}
 		run, err := client.FindRun(ctx, worktree, cfg.Workflow, branch)
+		if ctx.Err() != nil {
+			url := ""
+			if run != nil {
+				url = run.URL
+			}
+			return pendingCIOutcome(cfg.Workflow, url, cfg.WaitSeconds), nil
+		}
 		if errors.Is(err, ErrCIRunDisappeared) {
 			return noObservableCIOutcome(cfg.Workflow), nil
 		}
@@ -215,7 +221,7 @@ func (c CommandCIClient) FindRun(ctx context.Context, worktree, workflow, branch
 	}
 	view, err := c.RunGH(ctx, worktree, "run", "view", fmt.Sprint(run.ID), "--json", "databaseId,url,headSha,status,conclusion,jobs")
 	if err != nil {
-		return nil, ErrCIRunDisappeared
+		return nil, err
 	}
 	var detailed struct {
 		ID         int64  `json:"databaseId"`
@@ -233,23 +239,18 @@ func (c CommandCIClient) FindRun(ctx context.Context, worktree, workflow, branch
 	}
 	run.ID, run.URL, run.HeadSHA, run.Status, run.Conclusion = detailed.ID, detailed.URL, detailed.HeadSHA, detailed.Status, detailed.Conclusion
 	for _, job := range detailed.Jobs {
-		if !strings.EqualFold(job.Conclusion, "success") && strings.TrimSpace(job.Name) != "" {
+		if isFailingJobConclusion(job.Conclusion) && strings.TrimSpace(job.Name) != "" {
 			run.FailedJobs = append(run.FailedJobs, job.Name)
 		}
 	}
 	return run, nil
 }
 
-func newCommandCIClient() CommandCIClient {
-	return CommandCIClient{
-		RunGit: func(ctx context.Context, worktree string, args ...string) ([]byte, error) {
-			command := exec.CommandContext(ctx, "git", append([]string{"-C", worktree}, args...)...)
-			return command.Output()
-		},
-		RunGH: func(ctx context.Context, worktree string, args ...string) ([]byte, error) {
-			command := exec.CommandContext(ctx, "gh", args...)
-			command.Dir = worktree
-			return command.Output()
-		},
+func isFailingJobConclusion(conclusion string) bool {
+	switch strings.ToLower(strings.TrimSpace(conclusion)) {
+	case "failure", "timed_out":
+		return true
+	default:
+		return false
 	}
 }

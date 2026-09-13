@@ -113,14 +113,14 @@ func TestComposePRBodyBoundsCIEvidence(t *testing.T) {
 	entry := piece5Entry(t, review.VerdictOK)
 	jobs := make([]string, 40)
 	for i := range jobs {
-		jobs[i] = strings.Repeat("j", 60)
+		jobs[i] = strings.Repeat("&", 60)
 	}
 	got, err := ComposePRBody(entry, CIOutcome{
 		Workflow:   "verify.yml",
 		Status:     "failed",
 		Icon:       "❌",
-		Summary:    "verify.yml failed",
-		URL:        "https://" + strings.Repeat("u", 192),
+		Summary:    strings.Repeat("&", 500),
+		URL:        "https://" + strings.Repeat("&", 192),
 		FailedJobs: jobs,
 	})
 	if err != nil {
@@ -149,6 +149,8 @@ type fakeCIClient struct {
 	pushErr     error
 	dispatchErr error
 	dispatchRef string
+	findErr     error
+	onFind      func()
 	runs        []*CIRun
 }
 
@@ -165,6 +167,12 @@ func (f *fakeCIClient) Dispatch(_ context.Context, _ string, _ string, ref strin
 
 func (f *fakeCIClient) FindRun(context.Context, string, string, string) (*CIRun, error) {
 	f.events = append(f.events, "poll")
+	if f.onFind != nil {
+		f.onFind()
+	}
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
 	if len(f.runs) == 0 {
 		return nil, nil
 	}
@@ -200,10 +208,38 @@ func TestRunConfiguredCIOrdersPushDispatchPollAndReportsOutcomes(t *testing.T) {
 			if !strings.Contains(output.String(), "Pushing feature/piece5 to origin") {
 				t.Fatal("push announcement missing")
 			}
-			if client.dispatchRef != piece5Head {
-				t.Fatalf("dispatch ref=%q, want reviewed head %q", client.dispatchRef, piece5Head)
+			if client.dispatchRef != "feature/piece5" {
+				t.Fatalf("dispatch ref=%q, want pushed branch", client.dispatchRef)
 			}
 		})
+	}
+}
+
+func TestCommandCIClientPreservesObservationErrorsAndFiltersFailedJobs(t *testing.T) {
+	viewErr := errors.New("GitHub API unavailable")
+	calls := 0
+	client := CommandCIClient{RunGH: func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return []byte(`[{"databaseId":42,"url":"https://run","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"failure"}]`), nil
+		}
+		return nil, viewErr
+	}}
+	if _, err := client.FindRun(context.Background(), "worktree", "verify.yml", "feature/piece5"); !errors.Is(err, viewErr) {
+		t.Fatalf("view error=%v, want %v", err, viewErr)
+	}
+
+	calls = 0
+	client.RunGH = func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return []byte(`[{"databaseId":42,"url":"https://run","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"failure"}]`), nil
+		}
+		return []byte(`{"databaseId":42,"url":"https://run","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"failure","jobs":[{"name":"failed","conclusion":"failure"},{"name":"timed out","conclusion":"timed_out"},{"name":"skipped","conclusion":"skipped"},{"name":"cancelled","conclusion":"cancelled"}]}`), nil
+	}
+	run, err := client.FindRun(context.Background(), "worktree", "verify.yml", "feature/piece5")
+	if err != nil || !reflect.DeepEqual(run.FailedJobs, []string{"failed", "timed out"}) {
+		t.Fatalf("run=%+v err=%v", run, err)
 	}
 }
 
@@ -227,10 +263,10 @@ func TestRunConfiguredCITimeoutAndInterruptionArePublishableOutcomes(t *testing.
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	client = &fakeCIClient{runs: []*CIRun{{URL: "https://run", HeadSHA: piece5Head, Status: "in_progress"}}}
-	got, err = RunConfiguredCI(ctx, io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 900, PollSeconds: 1}, client, func(string, string) string { return "origin" }, time.Now, func(context.Context, time.Duration) error { cancel(); return context.Canceled })
-	if err != nil || got.Status != "pending" {
-		t.Fatalf("interrupted outcome=%+v err=%v", got, err)
+	client = &fakeCIClient{onFind: cancel, findErr: context.Canceled}
+	got, err = RunConfiguredCI(ctx, io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 900, PollSeconds: 1}, client, func(string, string) string { return "origin" }, time.Now, nil)
+	if err != nil || got.Status != "pending" || !reflect.DeepEqual(client.events, []string{"push", "dispatch", "poll"}) {
+		t.Fatalf("interrupted outcome=%+v err=%v events=%v", got, err, client.events)
 	}
 }
 
@@ -260,7 +296,7 @@ func TestRunPrCreatePreflightRejectsBeforeValidationOrPublication(t *testing.T) 
 			events = append(events, "validation")
 			return nil, nil
 		},
-		PublishStored: func(string, string, string, string, bool) (string, bool, error) {
+		PublishStored: func(string, string, string, string) (string, bool, error) {
 			events = append(events, "publish")
 			return "", false, nil
 		},
@@ -288,8 +324,8 @@ func TestRunPrCreatePublishesSemanticBlockWithoutCallingSemanticReview(t *testin
 		RunValidation:   func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
 		ComposeBody:     func(got store.PRReviewEntry, outcome CIOutcome) (string, error) { return got.Body, nil },
 		WriteTemplate:   func(string) (string, error) { return "template", nil },
-		PublishStored: func(_ string, title, path, base string, pushed bool) (string, bool, error) {
-			published = title == entry.Title && path == "template" && base == "main" && !pushed
+		PublishStored: func(_ string, title, path, base string) (string, bool, error) {
+			published = title == entry.Title && path == "template" && base == "main"
 			return "https://github.com/example/repo/pull/5", false, nil
 		},
 	}
@@ -448,8 +484,8 @@ func TestRunPrCreatePublishesWhenCIHasNoObservableRun(t *testing.T) {
 			return body, err
 		},
 		WriteTemplate: func(string) (string, error) { return "template", nil },
-		PublishStored: func(_ string, title, templatePath, base string, pushed bool) (string, bool, error) {
-			published = title == entry.Title && templatePath == "template" && base == "main" && pushed
+		PublishStored: func(_ string, title, templatePath, base string) (string, bool, error) {
+			published = title == entry.Title && templatePath == "template" && base == "main"
 			return "https://github.com/example/repo/pull/5", false, nil
 		},
 	}
@@ -480,7 +516,7 @@ func TestRunPrCreateForceRequiresReasonAndPublishesRedValidation(t *testing.T) {
 			},
 			ComposeBody:   func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
 			WriteTemplate: func(string) (string, error) { return "template", nil },
-			PublishStored: func(string, string, string, string, bool) (string, bool, error) { return "url", false, nil },
+			PublishStored: func(string, string, string, string) (string, bool, error) { return "url", false, nil },
 		}
 	}
 	var output bytes.Buffer
