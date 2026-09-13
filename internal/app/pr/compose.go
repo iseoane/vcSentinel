@@ -23,7 +23,6 @@ var requiredPipelineSteps = []string{"slice", "review", "gate", "lint", "test", 
 // CIOutcome is the deterministic result collected by pr create. It contains
 // only bounded, reader-facing data; no semantic review text is authored here.
 type CIOutcome struct {
-	Workflow   string
 	Status     string
 	Icon       string
 	Summary    string

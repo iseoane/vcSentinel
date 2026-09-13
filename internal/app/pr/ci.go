@@ -76,6 +76,7 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 		if ctx.Err() != nil {
 			return pendingCIOutcome(cfg.Workflow, "", cfg.WaitSeconds), nil
 		}
+		fmt.Fprintf(out, "⏳ Waiting for %s.\n", cfg.Workflow)
 		run, err := client.FindRun(ctx, worktree, cfg.Workflow, branch)
 		if ctx.Err() != nil {
 			url := ""
@@ -96,24 +97,21 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 		if strings.EqualFold(run.Status, "completed") {
 			if run.HeadSHA != head {
 				return CIOutcome{
-					Workflow: cfg.Workflow,
-					Status:   "warning",
-					Icon:     "⚠️",
-					Summary:  fmt.Sprintf("the last run covers %s, not this head", shortSHA(run.HeadSHA)),
-					URL:      run.URL,
+					Status:  "warning",
+					Icon:    "⚠️",
+					Summary: fmt.Sprintf("the last run covers %s, not this head", shortSHA(run.HeadSHA)),
+					URL:     run.URL,
 				}, nil
 			}
 			if strings.EqualFold(run.Conclusion, "success") {
 				return CIOutcome{
-					Workflow: cfg.Workflow,
-					Status:   "passed",
-					Icon:     "✅",
-					Summary:  fmt.Sprintf("%s succeeded", cfg.Workflow),
-					URL:      run.URL,
+					Status:  "passed",
+					Icon:    "✅",
+					Summary: fmt.Sprintf("%s succeeded", cfg.Workflow),
+					URL:     run.URL,
 				}, nil
 			}
 			return CIOutcome{
-				Workflow:   cfg.Workflow,
 				Status:     "failed",
 				Icon:       "❌",
 				Summary:    fmt.Sprintf("%s failed", cfg.Workflow),
@@ -136,20 +134,18 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 
 func pendingCIOutcome(workflow, url string, seconds int) CIOutcome {
 	return CIOutcome{
-		Workflow: workflow,
-		Status:   "pending",
-		Icon:     "⏳",
-		Summary:  fmt.Sprintf("still running after %ds", seconds),
-		URL:      url,
+		Status:  "pending",
+		Icon:    "⏳",
+		Summary: fmt.Sprintf("still running after %ds", seconds),
+		URL:     url,
 	}
 }
 
 func noObservableCIOutcome(workflow string) CIOutcome {
 	return CIOutcome{
-		Workflow: workflow,
-		Status:   "not_observed",
-		Icon:     "⚠️",
-		Summary:  fmt.Sprintf("%s was triggered but no run is observable", workflow),
+		Status:  "not_observed",
+		Icon:    "⚠️",
+		Summary: fmt.Sprintf("%s was triggered but no run is observable", workflow),
 	}
 }
 

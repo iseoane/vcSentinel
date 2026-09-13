@@ -129,7 +129,7 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		return 1
 	}
 	if entry.HeadSHA != head {
-		fmt.Fprintf(w, "The stored pr review covers %s, but this branch is now at %s. Re-run 'sentinel pr review'.\n", shortObjectID(entry.HeadSHA), shortObjectID(head))
+		fmt.Fprintf(w, "The stored pr review covers %s, but this branch is now at %s. Re-run 'sentinel pr review'.\n", shortSHA(entry.HeadSHA), shortSHA(head))
 		return 1
 	}
 	if _, err := ValidatePRReviewEntry(entry, branch, head); err != nil {
@@ -298,14 +298,6 @@ func resolveGitDir(worktree string, deps DepsPrCreate) (string, error) {
 	return "", errors.New("pr create is not wired to the Git directory")
 }
 
-func shortObjectID(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 8 {
-		return value[:8]
-	}
-	return value
-}
-
 func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEntry, deps DepsPrCreate) error {
 	currentBranch, err := deps.CurrentBranch(worktree)
 	if err != nil {
@@ -326,7 +318,7 @@ func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEn
 		return fmt.Errorf("could not re-check the current HEAD: %w", err)
 	}
 	if currentHead != head {
-		return fmt.Errorf("current HEAD changed from %s to %s; re-run sentinel pr review", shortObjectID(head), shortObjectID(currentHead))
+		return fmt.Errorf("current HEAD changed from %s to %s; re-run sentinel pr review", shortSHA(head), shortSHA(currentHead))
 	}
 	if _, err := ValidatePRReviewEntry(entry, branch, head); err != nil {
 		return err

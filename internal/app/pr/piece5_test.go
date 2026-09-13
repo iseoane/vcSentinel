@@ -71,7 +71,7 @@ func statusForVerdict(verdict string) string {
 func TestComposePRBodyPreservesNonCIPayload(t *testing.T) {
 	entry := piece5Entry(t, review.VerdictBlock)
 	oldBody := entry.Body
-	outcome := CIOutcome{Workflow: "verify.yml", Status: "passed", Icon: "✅", Summary: "verify.yml succeeded", URL: "https://github.com/example/repo/actions/runs/42"}
+	outcome := CIOutcome{Status: "passed", Icon: "✅", Summary: "verify.yml succeeded", URL: "https://github.com/example/repo/actions/runs/42"}
 	got, err := ComposePRBody(entry, outcome)
 	if err != nil {
 		t.Fatalf("ComposePRBody: %v", err)
@@ -117,7 +117,6 @@ func TestComposePRBodyBoundsCIEvidence(t *testing.T) {
 		jobs[i] = strings.Repeat("&", 60)
 	}
 	got, err := ComposePRBody(entry, CIOutcome{
-		Workflow:   "verify.yml",
 		Status:     "failed",
 		Icon:       "❌",
 		Summary:    strings.Repeat("&", 500),
@@ -218,6 +217,21 @@ func TestRunConfiguredCIOrdersPushDispatchPollAndReportsOutcomes(t *testing.T) {
 				t.Fatalf("push ref=%q, want reviewed head %q", client.pushRef, piece5Head)
 			}
 		})
+	}
+}
+
+func TestRunConfiguredCIReportsOneProgressLinePerPoll(t *testing.T) {
+	client := &fakeCIClient{runs: []*CIRun{
+		{URL: "https://run", HeadSHA: piece5Head, Status: "in_progress"},
+		{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "success"},
+	}}
+	var output bytes.Buffer
+	_, err := RunConfiguredCI(context.Background(), &output, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 10, PollSeconds: 1}, client, func(string, string) string { return "origin" }, nil, func(context.Context, time.Duration) error { return nil })
+	if err != nil {
+		t.Fatalf("RunConfiguredCI: %v", err)
+	}
+	if got := strings.Count(output.String(), "Waiting for verify.yml.\n"); got != 2 {
+		t.Fatalf("progress lines=%d, want one for each of two polls; output=%q", got, output.String())
 	}
 }
 
@@ -416,7 +430,6 @@ func TestComposePRBodyChangesOnlyCIStepAndAttestation(t *testing.T) {
 	entry := piece5Entry(t, review.VerdictWarn)
 	oldBody := entry.Body
 	outcome := CIOutcome{
-		Workflow:   "verify.yml",
 		Status:     "failed",
 		Icon:       "❌",
 		Summary:    "verify.yml failed",
@@ -484,10 +497,9 @@ func TestComposePRBodyAtLimitReplacesReservedCIBlock(t *testing.T) {
 		t.Fatalf("fixture body len=%d, want %d", len(entry.Body), review.PRBodyLimit)
 	}
 	got, err := ComposePRBody(entry, CIOutcome{
-		Workflow: "verify.yml",
-		Status:   "passed",
-		Icon:     "✅",
-		Summary:  "verify.yml succeeded",
+		Status:  "passed",
+		Icon:    "✅",
+		Summary: "verify.yml succeeded",
 	})
 	if err != nil {
 		t.Fatalf("reserved body should compose: %v", err)
