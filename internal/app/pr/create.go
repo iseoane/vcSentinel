@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -70,6 +71,7 @@ type DepsPrCreate struct {
 	RecordEvent     func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	RecordDecision  func(commonDir string, d *store.Decision) error
 	ResolveActor    func(worktree string) string
+	ResolveParent   func(git.ParentResolutionOptions) (git.ParentResolution, error)
 }
 
 // RunPrCreateWith validates and publishes exactly one stored Piece 4 review.
@@ -202,6 +204,11 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
+	base, err := resolvePublicationBase(worktree, flags, deps)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
 
 	outcome := DefaultCIOutcome()
 	if strings.TrimSpace(cfg.CI.Workflow) != "" {
@@ -235,13 +242,6 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
-	}
-	base := flags.Base
-	if base == "" {
-		base = "main"
-	}
-	if flags.Parent != "" {
-		base = flags.Parent
 	}
 	if err := verifyStoredSnapshot(worktree, branch, head, entry, deps); err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
@@ -296,6 +296,27 @@ func resolveGitDir(worktree string, deps DepsPrCreate) (string, error) {
 		return deps.GetGitDir()
 	}
 	return "", errors.New("pr create is not wired to the Git directory")
+}
+
+func resolvePublicationBase(worktree string, flags FlagsPrCreate, deps DepsPrCreate) (string, error) {
+	base := flags.Base
+	if base == "" {
+		base = "main"
+	}
+	if flags.Parent == "" && !flags.ChainPR {
+		return base, nil
+	}
+	if deps.ResolveParent == nil {
+		return "", errors.New("pr create is not wired to resolve the stacked PR parent")
+	}
+	resolved, err := deps.ResolveParent(git.ParentResolutionOptions{Worktree: worktree, ExplicitParent: flags.Parent})
+	if err != nil {
+		return "", fmt.Errorf("could not resolve stacked PR parent: %w", err)
+	}
+	if strings.TrimSpace(resolved.PublicationBranch) == "" {
+		return "", errors.New("stacked PR parent has no publishable branch")
+	}
+	return resolved.PublicationBranch, nil
 }
 
 func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEntry, deps DepsPrCreate) error {

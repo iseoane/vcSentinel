@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -386,6 +387,50 @@ func TestRunPrCreatePublishesSemanticBlockWithoutCallingSemanticReview(t *testin
 	}
 	if !published {
 		t.Fatal("the persisted blocking review should still publish")
+	}
+}
+
+func TestRunPrCreatePublishesStackedPRAgainstResolvedParent(t *testing.T) {
+	entry := piece5Entry(t, review.VerdictOK)
+	for _, tc := range []struct {
+		name       string
+		flags      FlagsPrCreate
+		wantParent string
+		wantBase   string
+	}{
+		{name: "explicit remote parent", flags: FlagsPrCreate{Parent: "origin/feature-a"}, wantParent: "origin/feature-a", wantBase: "feature-a"},
+		{name: "inferred parent", flags: FlagsPrCreate{ChainPR: true}, wantBase: "feature-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var resolved git.ParentResolutionOptions
+			var publishedBase string
+			deps := DepsPrCreate{
+				CurrentBranch:   func(string) (string, error) { return entry.Branch, nil },
+				GetHeadSHAAt:    func(string) (string, error) { return entry.HeadSHA, nil },
+				GetGitCommonDir: func(string) (string, error) { return "common", nil },
+				ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+				EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
+				LoadConfig:      func(string) (config.Config, error) { return config.Config{}, nil },
+				GetGitDirAt:     func(string) (string, error) { return "gitdir", nil },
+				RunValidation:   func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
+				ResolveParent: func(options git.ParentResolutionOptions) (git.ParentResolution, error) {
+					resolved = options
+					return git.ParentResolution{Reference: "origin/feature-a", PublicationBranch: "feature-a"}, nil
+				},
+				ComposeBody:   func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+				WriteTemplate: func(string) (string, error) { return "template", nil },
+				PublishStored: func(_ string, _ string, _ string, base string) (string, bool, error) {
+					publishedBase = base
+					return "https://github.com/example/repo/pull/5", false, nil
+				},
+			}
+			if code := RunPrCreateWith(io.Discard, "worktree", tc.flags, deps, Wiring{}); code != 0 {
+				t.Fatalf("exit=%d", code)
+			}
+			if resolved.Worktree != "worktree" || resolved.ExplicitParent != tc.wantParent || publishedBase != tc.wantBase {
+				t.Fatalf("resolved=%+v published base=%q", resolved, publishedBase)
+			}
+		})
 	}
 }
 

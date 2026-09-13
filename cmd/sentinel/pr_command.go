@@ -193,6 +193,7 @@ func depsPrCreateToPr(d depsPrCreate) pr.DepsPrCreate {
 		GetGitCommonDir: d.getGitCommonDir,
 		RecordDecision:  d.recordDecision,
 		ResolveActor:    d.resolveActor,
+		ResolveParent:   d.resolveParent,
 		WriteTemplate:   d.writeTemplate,
 		GetGitDirAt:     d.getGitDirAt,
 		GetHeadSHAAt:    d.getHeadSHAAt,
@@ -385,7 +386,8 @@ type depsPrCreate struct {
 	// runPrCreateCon would call resolveActor(worktree) directly, which shells
 	// out to a real `git config user.name`, breaking depsPrCreate's promise
 	// of testing "without real git, agents or gh" (comment above).
-	resolveActor func(worktree string) string
+	resolveActor  func(worktree string) string
+	resolveParent func(git.ParentResolutionOptions) (git.ParentResolution, error)
 	// writeTemplate allows tests to observe whether the PR template was
 	// created. When nil, runPrCreateCon uses pr.WritePRTemplate.
 	writeTemplate func(string) (string, error)
@@ -431,6 +433,7 @@ func realPrCreateDeps() depsPrCreate {
 			return store.NewStore(commonDir).RecordDecision(d)
 		},
 		resolveActor:  resolveActor,
+		resolveParent: git.ResolveParentBranch,
 		writeTemplate: pr.WritePRTemplate,
 	}
 }
