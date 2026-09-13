@@ -25,6 +25,7 @@ var ErrPRReviewBodyTooLarge = errors.New("pr review body required sections excee
 type pipelineStep struct {
 	Icon     string
 	Step     string
+	Status   string
 	Summary  string
 	Evidence string
 	CI       bool

@@ -156,7 +156,7 @@ func TestCommandPipelineStepKeepsItsSummaryShort(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		commands = append(commands, VerifiedCommand{Comando: strings.Repeat("c", 60), Exit: 0})
 	}
-	step := commandPipelineStep("test", commands, "not configured")
+	step := commandPipelineStep("test", commands, "not_configured", "not configured")
 	if len(step.Summary) > 120 {
 		t.Fatalf("summary is %d bytes; it must stay a short collapsed line, not a copy of the evidence", len(step.Summary))
 	}

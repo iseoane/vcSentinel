@@ -759,8 +759,11 @@ func ParseOverview(output string) (*OverviewResult, error) {
 				}
 			}
 			overview.Changed = changed
-			if strings.TrimSpace(overview.Rationale) == "" || len(overview.Changed) == 0 || strings.TrimSpace(overview.Risk) == "" {
-				return nil, errors.New("invalid coherence JSON: rationale, changed, and risk must be non-empty")
+			if strings.TrimSpace(overview.Rationale) == "" || strings.TrimSpace(overview.Risk) == "" {
+				return nil, errors.New("invalid coherence JSON: rationale and risk must be non-empty")
+			}
+			if len(overview.Changed) < 3 || len(overview.Changed) > 6 {
+				return nil, fmt.Errorf("invalid coherence JSON: changed must contain 3 to 6 non-empty behavior bullets (got %d)", len(overview.Changed))
 			}
 			return &overview, nil
 		}

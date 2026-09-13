@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
@@ -338,7 +339,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 	if res.Net != nil {
 		verdict = res.Net.Audit.Verdict
 	}
-	attestation := review.Attestation{Branch: res.Branch, HeadSHA: head, Verdict: verdict, Steps: []review.AttestationStep{{Step: "pr review", Status: "authored"}}}
+	attestation := review.BuildPRReviewAttestation(res, intents, review.TemplateVerification{}, options.Dispositions)
 	body, err := review.RenderPRReviewBody(res, intents, review.TemplateVerification{}, attestation, options.Dispositions)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
@@ -354,7 +355,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
+	if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence, At: time.Now().UTC()}); err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
