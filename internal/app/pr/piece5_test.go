@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -149,13 +150,15 @@ type fakeCIClient struct {
 	pushErr     error
 	dispatchErr error
 	dispatchRef string
+	pushRef     string
 	findErr     error
 	onFind      func()
 	runs        []*CIRun
 }
 
-func (f *fakeCIClient) Push(context.Context, string, string, string) error {
+func (f *fakeCIClient) Push(_ context.Context, _ string, _ string, _ string, head string) error {
 	f.events = append(f.events, "push")
+	f.pushRef = head
 	return f.pushErr
 }
 
@@ -211,6 +214,9 @@ func TestRunConfiguredCIOrdersPushDispatchPollAndReportsOutcomes(t *testing.T) {
 			if client.dispatchRef != "feature/piece5" {
 				t.Fatalf("dispatch ref=%q, want pushed branch", client.dispatchRef)
 			}
+			if client.pushRef != piece5Head {
+				t.Fatalf("push ref=%q, want reviewed head %q", client.pushRef, piece5Head)
+			}
 		})
 	}
 }
@@ -230,6 +236,19 @@ func TestCommandCIClientPreservesObservationErrorsAndFiltersFailedJobs(t *testin
 	}
 
 	calls = 0
+	notFound := &exec.ExitError{Stderr: []byte("HTTP 404: Not Found")}
+	client.RunGH = func(context.Context, string, ...string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return []byte(`[{"databaseId":42,"url":"https://run","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"failure"}]`), nil
+		}
+		return nil, notFound
+	}
+	if _, err := client.FindRun(context.Background(), "worktree", "verify.yml", "feature/piece5"); !errors.Is(err, ErrCIRunDisappeared) {
+		t.Fatalf("not-found error=%v, want disappeared run", err)
+	}
+
+	calls = 0
 	client.RunGH = func(context.Context, string, ...string) ([]byte, error) {
 		calls++
 		if calls == 1 {
@@ -240,6 +259,18 @@ func TestCommandCIClientPreservesObservationErrorsAndFiltersFailedJobs(t *testin
 	run, err := client.FindRun(context.Background(), "worktree", "verify.yml", "feature/piece5")
 	if err != nil || !reflect.DeepEqual(run.FailedJobs, []string{"failed", "timed out"}) {
 		t.Fatalf("run=%+v err=%v", run, err)
+	}
+
+	var pushArgs []string
+	client.RunGit = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		pushArgs = args
+		return nil, nil
+	}
+	if err := client.Push(context.Background(), "worktree", "origin", "feature/piece5", piece5Head); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if want := []string{"push", "origin", piece5Head + ":refs/heads/feature/piece5"}; !reflect.DeepEqual(pushArgs, want) {
+		t.Fatalf("push args=%v, want %v", pushArgs, want)
 	}
 }
 
@@ -281,6 +312,12 @@ func TestRunConfiguredCIMissingRunAndDisabledDoNotPush(t *testing.T) {
 	got, err = RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml"}, client, func(string, string) string { return "origin" }, nil, nil)
 	if err != nil || got.Status != "not_observed" || !strings.Contains(got.Summary, "no run is observable") {
 		t.Fatalf("missing-run outcome=%+v err=%v", got, err)
+	}
+
+	client = &fakeCIClient{findErr: ErrCIRunDisappeared}
+	got, err = RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml"}, client, func(string, string) string { return "origin" }, nil, nil)
+	if err != nil || got.Status != "not_observed" || !strings.Contains(got.Summary, "no run is observable") {
+		t.Fatalf("disappeared-run outcome=%+v err=%v", got, err)
 	}
 }
 

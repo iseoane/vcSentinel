@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -28,7 +29,7 @@ type CIRun struct {
 // CIClient is the only remote boundary owned by the CI state machine. Tests can
 // replace it to prove push, dispatch, polling, timeout, and interruption order.
 type CIClient interface {
-	Push(context.Context, string, string, string) error
+	Push(context.Context, string, string, string, string) error
 	Dispatch(context.Context, string, string, string) error
 	FindRun(context.Context, string, string, string) (*CIRun, error)
 }
@@ -63,7 +64,7 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 		return CIOutcome{}, fmt.Errorf("cannot collect CI: branch %q has no configured remote", branch)
 	}
 	fmt.Fprintf(out, "⬆️ Pushing %s to %s.\n", branch, remoteName)
-	if err := client.Push(ctx, worktree, remoteName, branch); err != nil {
+	if err := client.Push(ctx, worktree, remoteName, branch, head); err != nil {
 		return CIOutcome{}, fmt.Errorf("push failed before CI dispatch: %w", err)
 	}
 	if err := client.Dispatch(ctx, worktree, cfg.Workflow, branch); err != nil {
@@ -178,11 +179,11 @@ type CommandCIClient struct {
 	RunGH  func(context.Context, string, ...string) ([]byte, error)
 }
 
-func (c CommandCIClient) Push(ctx context.Context, worktree, remote, branch string) error {
+func (c CommandCIClient) Push(ctx context.Context, worktree, remote, branch, head string) error {
 	if c.RunGit == nil {
 		return errors.New("git command runner is unavailable")
 	}
-	_, err := c.RunGit(ctx, worktree, "push", remote, "HEAD:refs/heads/"+branch)
+	_, err := c.RunGit(ctx, worktree, "push", remote, head+":refs/heads/"+branch)
 	return err
 }
 
@@ -221,6 +222,9 @@ func (c CommandCIClient) FindRun(ctx context.Context, worktree, workflow, branch
 	}
 	view, err := c.RunGH(ctx, worktree, "run", "view", fmt.Sprint(run.ID), "--json", "databaseId,url,headSha,status,conclusion,jobs")
 	if err != nil {
+		if errors.Is(err, ErrCIRunDisappeared) || isCIRunDisappearance(err) {
+			return nil, ErrCIRunDisappeared
+		}
 		return nil, err
 	}
 	var detailed struct {
@@ -244,6 +248,15 @@ func (c CommandCIClient) FindRun(ctx context.Context, worktree, workflow, branch
 		}
 	}
 	return run, nil
+}
+
+func isCIRunDisappearance(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	response := strings.ToLower(string(exitErr.Stderr))
+	return strings.Contains(response, "http 404") && strings.Contains(response, "not found")
 }
 
 func isFailingJobConclusion(conclusion string) bool {
