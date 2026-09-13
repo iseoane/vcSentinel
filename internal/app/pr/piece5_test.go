@@ -263,6 +263,21 @@ func TestRunConfiguredCIReportsOneProgressLinePerPoll(t *testing.T) {
 	}
 }
 
+func TestRunConfiguredCIWaitsForAnAsynchronouslyCreatedRun(t *testing.T) {
+	clock := time.Unix(100, 0)
+	client := &fakeCIClient{runs: []*CIRun{
+		nil,
+		{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "success"},
+	}}
+	got, err := RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 2, PollSeconds: 1}, client, func(string, string) string { return "origin" }, func() time.Time { return clock }, func(context.Context, time.Duration) error {
+		clock = clock.Add(time.Second)
+		return nil
+	})
+	if err != nil || got.Status != "passed" || !reflect.DeepEqual(client.events, []string{"remote", "push", "dispatch", "poll", "poll"}) {
+		t.Fatalf("outcome=%+v err=%v events=%v", got, err, client.events)
+	}
+}
+
 func TestCommandCIClientPreservesObservationErrorsAndFiltersFailedJobs(t *testing.T) {
 	viewErr := errors.New("GitHub API unavailable")
 	calls := 0
@@ -380,7 +395,11 @@ func TestRunConfiguredCIMissingRunAndDisabledDoNotPush(t *testing.T) {
 	}
 
 	client = &fakeCIClient{}
-	got, err = RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml"}, client, func(string, string) string { return "origin" }, nil, nil)
+	clock := time.Unix(100, 0)
+	got, err = RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 1, PollSeconds: 1}, client, func(string, string) string { return "origin" }, func() time.Time { return clock }, func(context.Context, time.Duration) error {
+		clock = clock.Add(time.Second)
+		return nil
+	})
 	if err != nil || got.Status != "not_observed" || !strings.Contains(got.Summary, "no run is observable") {
 		t.Fatalf("missing-run outcome=%+v err=%v", got, err)
 	}

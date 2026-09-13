@@ -100,41 +100,45 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 		if err != nil {
 			return CIOutcome{}, fmt.Errorf("could not observe workflow %q: %w", cfg.Workflow, err)
 		}
-		if run == nil {
-			return noObservableCIOutcome(cfg.Workflow), nil
-		}
-		if strings.EqualFold(run.Status, "completed") {
-			if run.HeadSHA != head {
+		runURL := ""
+		if run != nil {
+			runURL = run.URL
+			if strings.EqualFold(run.Status, "completed") {
+				if run.HeadSHA != head {
+					return CIOutcome{
+						Status:  "warning",
+						Icon:    "⚠️",
+						Summary: fmt.Sprintf("the last run covers %s, not this head", shortSHA(run.HeadSHA)),
+						URL:     run.URL,
+					}, nil
+				}
+				if strings.EqualFold(run.Conclusion, "success") {
+					return CIOutcome{
+						Status:  "passed",
+						Icon:    "✅",
+						Summary: fmt.Sprintf("%s succeeded", cfg.Workflow),
+						URL:     run.URL,
+					}, nil
+				}
 				return CIOutcome{
-					Status:  "warning",
-					Icon:    "⚠️",
-					Summary: fmt.Sprintf("the last run covers %s, not this head", shortSHA(run.HeadSHA)),
-					URL:     run.URL,
+					Status:     "failed",
+					Icon:       "❌",
+					Summary:    fmt.Sprintf("%s failed", cfg.Workflow),
+					URL:        run.URL,
+					FailedJobs: run.FailedJobs,
 				}, nil
 			}
-			if strings.EqualFold(run.Conclusion, "success") {
-				return CIOutcome{
-					Status:  "passed",
-					Icon:    "✅",
-					Summary: fmt.Sprintf("%s succeeded", cfg.Workflow),
-					URL:     run.URL,
-				}, nil
-			}
-			return CIOutcome{
-				Status:     "failed",
-				Icon:       "❌",
-				Summary:    fmt.Sprintf("%s failed", cfg.Workflow),
-				URL:        run.URL,
-				FailedJobs: run.FailedJobs,
-			}, nil
 		}
 
 		if elapsed := now().Sub(started); elapsed >= time.Duration(cfg.WaitSeconds)*time.Second {
-			return pendingCIOutcome(cfg.Workflow, run.URL, cfg.WaitSeconds), nil
+			if run == nil {
+				return noObservableCIOutcome(cfg.Workflow), nil
+			}
+			return pendingCIOutcome(cfg.Workflow, runURL, cfg.WaitSeconds), nil
 		}
 		if err := sleep(ctx, time.Duration(cfg.PollSeconds)*time.Second); err != nil {
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return pendingCIOutcome(cfg.Workflow, run.URL, cfg.WaitSeconds), nil
+				return pendingCIOutcome(cfg.Workflow, runURL, cfg.WaitSeconds), nil
 			}
 			return CIOutcome{}, fmt.Errorf("could not wait for workflow %q: %w", cfg.Workflow, err)
 		}
