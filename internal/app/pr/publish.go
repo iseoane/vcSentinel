@@ -58,46 +58,50 @@ func CopyToClipboardWith(text string, available func(string) bool, run func(stri
 	return errors.New("no clipboard tool found (clip/wl-copy/xclip)")
 }
 
-// PublishPRWith is the injectable version of publishPR (test seam). The
-// three callbacks are the fields of the publishPROptions struct that
-// cmd/sentinel builds: ghAvailable decides whether gh is on the PATH, runGh
-// launches gh and returns its output (full args, including the worktree as
-// cwd), copy is used only in the fallback (clipboard).
-func PublishPRWith(worktree, templatePath, base string,
+// PublishPRWithTitle is the injectable publication boundary for pr create.
+// The title is supplied by the persisted Piece 4 entry and the body always
+// travels through a file. If gh is present but publication fails, the existing
+// clipboard fallback is still attempted so a successful push does not strand
+// the operator without the authored body.
+func PublishPRWithTitle(worktree, title, templatePath, base string, pushed bool,
 	ghAvailable func(string) bool,
 	runGh func(worktree string, args ...string) ([]byte, error),
 	copy func(string) error) (string, bool, error) {
 	if ghAvailable("gh") {
-		// --fill-first supplies the TITLE from the branch's first commit, which
-		// gh otherwise prompts for: without it `gh pr create` fails outside a
-		// TTY with "must provide --title and --body", so this command could
-		// never publish from a script or an agent — the callers it exists for.
-		// It does not displace the template: gh takes the title from the commit
-		// and the body from -F, verified with `gh pr create --dry-run`, which
-		// echoed the template's own first line as the body.
-		args := []string{"pr", "create", "--draft", "--fill-first"}
+		args := []string{"pr", "create", "--draft", "--title", title}
 		if base != "" {
-			// The PR must target the SAME base that was audited: without an
-			// explicit --base, the review and the PR could diverge silently.
 			args = append(args, "--base", base)
 		}
-		args = append(args, "-F", templatePath)
+		args = append(args, "--body-file", templatePath)
 		output, err := runGh(worktree, args...)
-		if err != nil {
-			return "", false, err
+		if err == nil {
+			return strings.TrimSpace(string(output)), false, nil
 		}
-		return strings.TrimSpace(string(output)), false, nil
+		fallbackErr := copyTemplateToClipboard(templatePath, copy)
+		if fallbackErr != nil {
+			return "", true, fmt.Errorf("gh pr create failed: %v; clipboard fallback failed: %w", err, fallbackErr)
+		}
+		return "", true, nil
 	}
 
-	body, err := os.ReadFile(templatePath)
-	if err != nil {
-		return "", true, fmt.Errorf("could not re-read the template for the clipboard: %w", err)
-	}
-	fmt.Printf("? gh is not on the PATH: the template was left at %s and is copied to the clipboard.\n", templatePath)
-	if err := copy(string(body)); err != nil {
+	if err := copyTemplateToClipboard(templatePath, copy); err != nil {
 		return "", true, err
 	}
 	return "", true, nil
+}
+
+func copyTemplateToClipboard(templatePath string, copy func(string) error) error {
+	body, err := os.ReadFile(templatePath)
+	if err != nil {
+		return fmt.Errorf("could not re-read the template for the clipboard: %w", err)
+	}
+	if copy == nil {
+		return errors.New("clipboard copier is unavailable")
+	}
+	if err := copy(string(body)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // VerifyForTemplateWith is the injectable version of verifyForTemplate:

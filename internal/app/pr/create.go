@@ -1,46 +1,40 @@
+// Package pr contains the local PR review authoring flow and the persisted-review
+// publisher. CI polling is deterministic evidence collection, not semantic review.
 package pr
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"path"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
 // FlagsPrCreate carries the parsed `pr create` options across the dispatch
-// boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
-// it); this struct is its counterpart here, so the fields are exported.
+// boundary. pr create publishes a previously authored branch judgement; it does
+// not own semantic review flags.
 type FlagsPrCreate struct {
 	Base    string
-	ChainPR bool   // --chain-pr: publish the whole branch even if it is oversized
-	Force   bool   // --force: override a red validation (T1.8: the only gate that blocks)
-	Reason  string // --reason: explicit and mandatory motive next to --force
+	ChainPR bool
+	Force   bool
+	Reason  string
 	Parent  string
-	// AuditPending (--audit-pending) restores the old default: audit every
-	// commit on the branch that carries no review record instead of only
-	// reporting the gap (the unaudited-commits decision in docs/issues/decisions.md). The net audit
-	// below is unconditional either way and is what actually gates.
-	AuditPending bool
 }
 
-// PrCreateEventDetail builds the detail of the pr-create event (guide §13):
-// the publication record with pr_url, fallback and chain_pr. Extends T1.8:
-// force records whether the red validation was overridden, and reason (only
-// with force) leaves an explicit trace of why — the exception is never
-// silent. unaudited (the unaudited-commits decision in docs/issues/decisions.md) records how many
-// branch commits carried no review record in this pass, so an operator
-// reconstructing what happened from the event stream can tell an audited
-// pass apart from a skipped one, not just the --json report.
+// PrCreateEventDetail builds the detail of the pr-create event. The historical
+// unaudited field remains in the event schema for compatibility, but Piece 5
+// does not re-analyse the branch and therefore records zero for it.
 func PrCreateEventDetail(prURL string, fallback, chain, force bool, reason string, unaudited int) (ops.EventDetail, error) {
 	detail := ops.EventDetail{
 		"pr_url":    prURL,
@@ -55,255 +49,177 @@ func PrCreateEventDetail(prURL string, fallback, chain, force bool, reason strin
 	return detail, nil
 }
 
-// DepsPrCreate groups the injectable seams of the pr create pipeline (T1.8):
-// it lets tests exercise the ORDER (validation before auditing, zero tokens
-// if it fails) without real git, agents or gh. In production the package-main
-// wiring in cmd/sentinel resolves them, building the twin struct with the
-// unexported fields the package-main tests construct; this is its exported
-// equivalent inside the flow.
+// DepsPrCreate is the injectable boundary for the publisher. Semantic review
+// collaborators are intentionally absent: this command only consumes the
+// persisted entry and deterministic CI/validation evidence.
 type DepsPrCreate struct {
-	LoadConfig    func(worktree string) (config.Config, error)
-	GetGitDir     func() (string, error)
-	GetHeadSHA    func() (string, error)
-	RunValidation func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
-	// AnalyzeBranch receives the WORKTREE, not a gitDir: where the review
-	// ledger is anchored is a production decision that lives in
-	// sharedReviewLedger, not something the caller picks per invocation.
-	AnalyzeBranch func(worktree string, opts review.BranchOptions) (*review.BranchResult, error)
-	Verify        func(worktree, gitDir string, cfg config.Config, modelVerifier *modelprobe.Verifier) review.TemplateVerification
-	Publish       func(worktree, templatePath, base string) (string, bool, error)
-	RecordEvent   func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
-	// GetGitCommonDir and RecordDecision cover T7.5 (M3 report): the
-	// --force that overrides a red validation stops being an untraceable
-	// exception. store.NewStore requires the git common dir (shared across
-	// linked worktrees), NEVER the per-worktree gitDir that RecordEvent
-	// above already uses: they are two directories with two distinct
-	// contracts (see the doc comment of store.NewStore).
+	LoadConfig      func(worktree string) (config.Config, error)
+	GetGitDir       func() (string, error)
+	GetGitDirAt     func(worktree string) (string, error)
+	GetHeadSHA      func() (string, error)
+	GetHeadSHAAt    func(worktree string) (string, error)
+	CurrentBranch   func(worktree string) (string, error)
 	GetGitCommonDir func(worktree string) (string, error)
+	ReadPRReview    func(commonDir, branch string) (*store.PRReviewEntry, error)
+	EvidenceAtHEAD  func(worktree, evidencePath string) (bool, string, error)
+	RunValidation   func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
+	RunCI           func(context.Context, io.Writer, string, string, string, config.CIConfig) (CIOutcome, error)
+	ComposeBody     func(store.PRReviewEntry, CIOutcome) (string, error)
+	PublishStored   func(worktree, title, templatePath, base string, pushed bool) (string, bool, error)
+	WriteTemplate   func(string) (string, error)
+	RecordEvent     func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	RecordDecision  func(commonDir string, d *store.Decision) error
-	// ResolveActor is one more seam of this same effort: without it,
-	// RunPrCreateWith would call resolveActor(worktree) directly, which
-	// shells out to a real `git config user.name`, breaking DepsPrCreate's
-	// promise of testing "without real git, agents or gh" (comment above).
-	ResolveActor func(worktree string) string
-	// WriteTemplate allows tests to observe whether the PR template was
-	// created. When nil, RunPrCreateWith uses WritePRTemplate.
-	WriteTemplate func(string) (string, error)
-	// BlobStore builds the content-addressed store that lets AnalyzeBranch
-	// reuse reviews after a rebase (F8 criterion 2). It is a seam because
-	// ResolveBlobStore shells out to git, which DepsPrCreate exists to avoid;
-	// nil means no reuse, the behaviour before this wiring.
-	BlobStore func(worktree string) (review.StoreBlobs, error)
-	// ReadDispositions reads the standing human answers for the advisory
-	// overlay. It is a seam because loadDispositionsForWorktree resolves
-	// the real git common dir, which DepsPrCreate exists to avoid; nil
-	// means no standing answers, the fixture every older test builds.
-	ReadDispositions func(worktree string) ([]review.FindingDisposition, error)
+	ResolveActor    func(worktree string) string
 }
 
-// RunPrCreateWith is the injectable version of pr create (test seam): it
-// returns the exit code without ending the process, same pattern as the
-// gate flow. cmd/sentinel parses the flags (error → "? %v" and exit 1)
-// before dispatching here; wiring carries the package-main collaborators this
-// flow shares with the review and gate commands (see Wiring).
+// RunPrCreateWith validates and publishes exactly one stored Piece 4 review.
+// The preflight is intentionally before deterministic validation and every
+// remote/publication action: a missing or mismatched judgement cannot cause a
+// push, a CI request, or a PR side effect.
 func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps DepsPrCreate, wiring Wiring) int {
-	cfg, err := deps.LoadConfig(worktree)
-	if err != nil {
-		fmt.Fprintf(w, "? %v\n", err)
+	if flags.Force && strings.TrimSpace(flags.Reason) == "" {
+		fmt.Fprintln(w, "--force requires --reason with the explicit motive of why the validation is being overridden")
 		return 1
 	}
-	gitDir, err := deps.GetGitDir()
-	if err != nil {
+	if deps.CurrentBranch == nil {
+		fmt.Fprintln(w, "? could not resolve the current branch")
+		return 1
+	}
+	branch, err := deps.CurrentBranch(worktree)
+	if err != nil || strings.TrimSpace(branch) == "" {
+		if err == nil {
+			err = errors.New("current branch is empty")
+		}
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
 
-	// Validation FIRST (T1.8): it reuses internal/validation (the same piece
-	// internal/gate uses, see the gate commands), not the full gate
-	// orchestrator, because AnalyzeBranch audits the WHOLE branch, not a
-	// single commit as AuditCommit does. If it fails without --force,
-	// AnalyzeBranch is NEVER invoked: zero tokens spent.
-	runs, err := deps.RunValidation(wiring.DefaultGateProfile, nil, validation.RunOptions{
-		Worktree: worktree,
-		Cfg:      cfg,
-	})
+	getHead := deps.GetHeadSHAAt
+	if getHead == nil && deps.GetHeadSHA != nil {
+		getHead = func(string) (string, error) { return deps.GetHeadSHA() }
+	}
+	if getHead == nil {
+		fmt.Fprintln(w, "? could not resolve the current HEAD")
+		return 1
+	}
+	head, err := getHead(worktree)
+	if err != nil || !store.IsValidGitObjectID(head) {
+		if err == nil {
+			err = fmt.Errorf("current HEAD %q is not a canonical Git object ID", head)
+		}
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	commonDir, err := resolveCommonDir(worktree, deps)
+	if err != nil {
+		fmt.Fprintf(w, "? could not resolve the git-common-dir: %v\n", err)
+		return 1
+	}
+	if deps.ReadPRReview == nil {
+		fmt.Fprintln(w, "? pr create is not wired to the persisted pr review store")
+		return 1
+	}
+	entry, err := deps.ReadPRReview(commonDir, branch)
+	if err != nil {
+		fmt.Fprintf(w, "? could not read the stored pr review: %v\n", err)
+		return 1
+	}
+	if entry == nil {
+		fmt.Fprintln(w, "No pr review exists for this branch. Run 'sentinel pr review' first: pr create publishes its judgement and never authors one.")
+		return 1
+	}
+	if entry.HeadSHA != head {
+		fmt.Fprintf(w, "The stored pr review covers %s, but this branch is now at %s. Re-run 'sentinel pr review'.\n", shortObjectID(entry.HeadSHA), shortObjectID(head))
+		return 1
+	}
+	if _, err := ValidatePRReviewEntry(entry, branch, head); err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	if err := validateStoredEvidence(w, worktree, entry, deps.EvidenceAtHEAD); err != nil {
+		fmt.Fprintf(w, "%v\n", err)
+		return 1
+	}
+
+	loadConfig := deps.LoadConfig
+	if loadConfig == nil {
+		fmt.Fprintln(w, "? pr create is not wired to configuration")
+		return 1
+	}
+	cfg, err := loadConfig(worktree)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	gitDir, err := resolveGitDir(worktree, deps)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	if deps.RunValidation == nil {
+		fmt.Fprintln(w, "? pr create is not wired to deterministic validation")
+		return 1
+	}
+	runs, err := deps.RunValidation(wiring.DefaultGateProfile, nil, validation.RunOptions{Worktree: worktree, Cfg: cfg})
 	if err != nil {
 		fmt.Fprintf(w, "? Could not run the validation: %v\n", err)
 		return 1
 	}
 	findings := validation.Findings(runs, cfg.Validation.Capabilities)
-	// forcedRedValidation distinguishes the PRESENCE of the --force flag from
-	// its real EFFECT (an orchestrator finding, Fix 2): it is only true when
-	// there actually were red findings that --force had to override. If
-	// --force was passed but the validation was already green, the flag
-	// exercised no effect and the event must not record an exception that
-	// never happened.
-	var forcedRedValidation bool
-	if len(findings) > 0 {
-		if !flags.Force {
-			fmt.Fprintln(w, "🚨 Red validation: the PR is not published. Commands:")
-			for _, h := range findings {
-				fmt.Fprintf(w, "  - ✖ %s (%s):\n%s\n", h.Capability, h.Command, strings.TrimSpace(h.Evidence))
+	forcedRedValidation := len(findings) > 0 && flags.Force
+	if len(findings) > 0 && !flags.Force {
+		fmt.Fprintln(w, "🚨 Red validation: the PR is not published. Commands:")
+		for _, finding := range findings {
+			fmt.Fprintf(w, "  - ✖ %s (%s):\n%s\n", finding.Capability, finding.Command, strings.TrimSpace(finding.Evidence))
+		}
+		fmt.Fprintln(w, "Fix the red commands or repeat with --force --reason \"reason\" to publish anyway.")
+		return 1
+	}
+	if forcedRedValidation {
+		fmt.Fprintf(w, "⚠️  Red validation overridden with --force (reason: %s).\n", flags.Reason)
+		if deps.RecordDecision != nil {
+			actor := "unknown"
+			if deps.ResolveActor != nil {
+				actor = deps.ResolveActor(worktree)
 			}
-			fmt.Fprintln(w, "Fix the red commands or repeat with --force --reason \"reason\" to publish anyway.")
+			if err := deps.RecordDecision(commonDir, &store.Decision{
+				Decision: store.DecisionForceBypass,
+				Actor:    actor,
+				At:       time.Now().UTC(),
+				Reason:   flags.Reason,
+				Scope:    store.ScopePrCreate,
+			}); err != nil {
+				fmt.Fprintf(w, "⚠️  Warning: could not write the --force decision to decisions.jsonl (%v).\n", err)
+			}
+		}
+	}
+
+	outcome := DefaultCIOutcome()
+	pushed := false
+	if strings.TrimSpace(cfg.CI.Workflow) != "" {
+		if deps.RunCI == nil {
+			fmt.Fprintln(w, "? CI is configured but pr create has no CI runner")
 			return 1
 		}
-		forcedRedValidation = true
-		fmt.Fprintf(w, "⚠️  Red validation overridden with --force (reason: %s).\n", flags.Reason)
-		// T7.5 (M3 report): --force stops being an untraceable exception.
-		// It does not abort on failure (--force already decided to continue
-		// despite the red validation, like the GetHeadSHA warning below):
-		// it warns and continues.
-		if commonDir, err := deps.GetGitCommonDir(worktree); err != nil {
-			fmt.Fprintf(w, "⚠️  Warning: could not resolve the git-common-dir, the --force decision is left unrecorded (%v).\n", err)
-		} else if err := deps.RecordDecision(commonDir, &store.Decision{
-			Decision: store.DecisionForceBypass,
-			Actor:    deps.ResolveActor(worktree),
-			At:       time.Now().UTC(),
-			Reason:   flags.Reason,
-			Scope:    store.ScopePrCreate,
-		}); err != nil {
-			fmt.Fprintf(w, "⚠️  Warning: could not write the --force decision to decisions.jsonl (%v).\n", err)
-		}
-	}
-	// With --force, the semantic review DOES run despite the red validation
-	// (unlike sentinel gate, which short-circuits to save tokens): both
-	// sources coexist in the same report, so the deterministic finding must
-	// be able to supersede the equivalent semantic one (T6.2) instead of
-	// duplicating the same signal twice. The validated SHA is resolved
-	// explicitly (never inferred by branch position): without it,
-	// AnalyzeBranch cannot attach the findings to any commit (fail-safe).
-	var deterministicFindings []review.Finding
-	var validatedSHA string
-	if forcedRedValidation {
-		deterministicFindings = wiring.ProjectFindings(findings)
-		sha, err := deps.GetHeadSHA()
-		if err != nil {
-			// It does not abort the publication (--force already decided to
-			// continue despite the red validation): but without the SHA there
-			// is no commit to attach the deterministic findings to, so the
-			// T6.2 supersede does not apply in this run. It warns explicitly
-			// instead of discarding it silently.
-			fmt.Fprintf(w, "⚠️  Warning: could not resolve the validated commit (%v); the deterministic findings will not supersede the equivalent semantic finding in this report.\n", err)
-		} else {
-			validatedSHA = sha
-		}
-	}
-
-	modelVerifier := wiring.NewModelVerifier(worktree)
-	factory := func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
-		profile := config.ResolveProfile(cfg, reviewcontract.DefaultProfile(dimension), "")
-		adapter, err := agentadapter.NewAdapterWithProfile(cfg, profile)
-		if err != nil {
-			return nil, profile.Name, err
-		}
-		modelVerifier.Verify(profile.Name, profile.Model, adapter)
-		return adapter, profile.Name, nil
-	}
-
-	base := flags.Base
-	if base == "" {
-		base = "main"
-	}
-	var blobStore review.StoreBlobs
-	if deps.BlobStore != nil {
-		var err error
-		if blobStore, err = deps.BlobStore(worktree); err != nil {
-			fmt.Fprintf(w, "⚠️  Warning: could not resolve the git-common-dir; revisions will not be reused by content after a rebase (%v).\n", err)
-		}
-	}
-	// Standing human answers drive every rendered and advisory finding, and
-	// carry into the net audit (FU-6 unit A). A corrupt log fails closed
-	// before spending review tokens rather than auditing as if no human
-	// answered. A nil seam means no standing answers, the fixture older
-	// tests build; production always wires the real loader.
-	var branchDispositions []review.FindingDisposition
-	if deps.ReadDispositions != nil {
-		var err error
-		branchDispositions, err = deps.ReadDispositions(worktree)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		outcome, err = deps.RunCI(ctx, w, worktree, branch, head, cfg.CI)
+		stop()
 		if err != nil {
 			fmt.Fprintf(w, "? %v\n", err)
 			return 1
 		}
+		pushed = true
 	}
-	res, err := deps.AnalyzeBranch(worktree, wiring.BranchOptionsWithRefuter(cfg, modelVerifier, review.BranchOptions{
-		Base: base,
-		// the unaudited-commits decision in docs/issues/decisions.md: pr create no longer audits every
-		// unaudited commit by default — the net audit below already plans
-		// from the net diff's own aggregate risk, so paying for both was the
-		// largest single cost in a review. --audit-pending restores the old
-		// behavior explicitly.
-		OnlyPending:              !flags.AuditPending,
-		Overview:                 true,
-		DeterministicFindings:    deterministicFindings,
-		DeterministicFindingsSHA: validatedSHA,
-		Factory:                  factory,
-		Parallel:                 cfg.Review.Parallel,
-		Store:                    blobStore,
-		ReviewTransportFactory:   wiring.TransportFactory(cfg, worktree),
-		// FU-11 residual: exposed-credential incidents ride every audited
-		// commit through the per-commit deterministic channel.
-		DeterministicFindingsFactory: SecretFindingsFactory(),
-		ModelVerifier:                modelVerifier,
-		NetReview:                    &review.NetReviewOptions{Intention: review.NoRecordedIntentForPRRange, Validation: fmt.Sprint(validationCommands(runs))},
-		Dispositions:                 branchDispositions,
-		OnCommit: func(idx, total int, sha string) {
-			fmt.Fprintf(w, "⏳ [%d/%d] Auditing %s\n", idx+1, total, wiring.ShortSHA(sha))
-		},
-		OnDimension: func(dim string) {
-			fmt.Fprintf(w, "  ⏳ %s …\n", dim)
-		},
-		OwnDiff: stackOwnDiff(flags.Parent, flags.ChainPR),
-	}))
+
+	compose := deps.ComposeBody
+	if compose == nil {
+		compose = ComposePRBody
+	}
+	body, err := compose(*entry, outcome)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-
-	// Records can legitimately be empty now that pr create no longer audits
-	// pending commits by default (the unaudited-commits decision in docs/issues/decisions.md): the net
-	// audit below already plans from the net diff's own aggregate risk, so an
-	// empty per-commit history is only a real dead end when there is no net
-	// verdict either.
-	if len(res.Records) == 0 && res.Net == nil {
-		fmt.Fprintln(w, "_No audited commits on the branch._")
-		return 1
-	}
-
-	// The net audit is the advisory authority when present.
-	if res.Net != nil {
-		fmt.Fprintln(w, review.VerdictLine(res, branchDispositions))
-	} else if warn, blockers := SemanticNotice(res.Records, branchDispositions); warn {
-		fmt.Fprintln(w, "⚠️  NOTICE: semantic audit verdict = block (does not block publication, advisory).")
-		for _, h := range blockers {
-			fmt.Fprintf(w, "  - [%s] %s (%s:%d)\n", h.Severity, h.Description, h.File, h.Line)
-		}
-	}
-	// Informational only, never a gate (the unaudited-commits decision in docs/issues/decisions.md):
-	// the net verdict above is what decides, this only points at the gap.
-	fmt.Fprint(w, review.RenderUnauditedNotice(res.Unaudited))
-
-	// Oversized branch without --chain-pr: the chain is proposed, no giant PR
-	// is published (guide §12.4).
-	if res.Decision == "chain" && !flags.ChainPR {
-		fmt.Fprintln(w, "🚨 Oversized branch: it exceeds the volume threshold without demonstrated coherence.")
-		fmt.Fprintln(w, "It is proposed to split it into chained PRs (--chain-pr) instead of one giant PR.")
-		return 1
-	}
-
-	verification := deps.Verify(worktree, gitDir, cfg, modelVerifier)
-	verification.Validation = validationCommands(runs)
-
-	publishBase := base
-	if res.Own != nil {
-		if res.Own.PublicationBranch == "" {
-			fmt.Fprintln(w, "? Refusing to publish: the stacked parent has no verified publication branch.")
-			return 1
-		}
-		publishBase = res.Own.PublicationBranch
-	}
-
-	body := review.RenderBranchPRTemplate(res, verification, wiring.Version, branchDispositions)
 	writeTemplate := deps.WriteTemplate
 	if writeTemplate == nil {
 		writeTemplate = WritePRTemplate
@@ -313,57 +229,107 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	prURL, fallback, err := deps.Publish(worktree, templatePath, publishBase)
+	base := flags.Base
+	if base == "" {
+		base = "main"
+	}
+	if flags.Parent != "" {
+		base = flags.Parent
+	}
+	if deps.PublishStored == nil {
+		fmt.Fprintln(w, "? pr create is not wired to publication")
+		return 1
+	}
+	prURL, fallback, err := deps.PublishStored(worktree, entry.Title, templatePath, base, pushed)
 	if err != nil {
-		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
 	if fallback {
-		// The file is the deliverable artifact of the fallback: it is kept.
-		fmt.Fprintln(w, "? Template on the clipboard: create the PR manually with that content.")
+		if pushed {
+			fmt.Fprintln(w, "? Branch pushed, but no PR was created; the composed body is on the clipboard and in the template file.")
+		} else {
+			fmt.Fprintln(w, "? Template on the clipboard: create the PR manually with that content.")
+		}
 	} else {
 		fmt.Fprintf(w, "? PR created: %s\n", prURL)
-		// The body already lives in the PR: the ephemeral temp file is cleaned.
 		if err := os.Remove(templatePath); err != nil {
 			fmt.Fprintf(w, "? Warning: could not clean up the temporary file (%v).\n", err)
 		}
 	}
 
-	detail, err := PrCreateEventDetail(prURL, fallback, flags.ChainPR, forcedRedValidation, flags.Reason, len(res.Unaudited))
+	detail, err := PrCreateEventDetail(prURL, fallback, flags.ChainPR, forcedRedValidation, flags.Reason, 0)
 	if err != nil {
 		fmt.Fprintf(w, "? Warning: could not build the event detail: %v\n", err)
 	}
-	if err := deps.RecordEvent(gitDir, "pr-create", 0, res.SHAs, detail, worktree); err != nil {
-		fmt.Fprintf(w, "? Warning: could not record the event: %v\n", err)
+	if deps.RecordEvent != nil {
+		if err := deps.RecordEvent(gitDir, "pr-create", 0, []string{head}, detail, worktree); err != nil {
+			fmt.Fprintf(w, "? Warning: could not record the event: %v\n", err)
+		}
 	}
 	return 0
 }
 
-// SemanticNotice decides whether the branch's semantic verdict deserves a
-// prominent advisory in the publication (T1.8): the verdict-blocking gate
-// became advisory, like internal/gate since T1.7 — validation (below) is now
-// the only gate that can prevent publishing. SemanticNotice NEVER decides
-// whether to publish, only whether to warn. It overlays the supplied standing
-// human dispositions and returns the structured CRITICAL findings; formatting
-// remains the CLI's responsibility.
-//
-// It used to be called gateBlock and returned "allowed"; it is renamed
-// because a function that no longer blocks cannot keep being called
-// "gate...Block" without lying about what it does.
-func SemanticNotice(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {
-	blockers = review.BranchBlockers(records, dispositions)
-	return len(blockers) > 0, blockers
+func resolveCommonDir(worktree string, deps DepsPrCreate) (string, error) {
+	if deps.GetGitCommonDir == nil {
+		return "", errors.New("pr create is not wired to the git-common-dir")
+	}
+	return deps.GetGitCommonDir(worktree)
 }
 
-// validationCommands translates the ValidationRun values of
-// internal/validation into VerifiedCommand for the template: same evidence
-// shape (command + real exit code), which is why the type is reused instead
-// of duplicated — what changes is the origin (pre-validation, not the
-// post-hoc verification of ops.Verify), hence its own field/section.
-func validationCommands(runs []validation.ValidationRun) []review.VerifiedCommand {
-	cmds := make([]review.VerifiedCommand, 0, len(runs))
-	for _, r := range runs {
-		cmds = append(cmds, review.VerifiedCommand{Comando: r.Command, Exit: r.Exit})
+func resolveGitDir(worktree string, deps DepsPrCreate) (string, error) {
+	if deps.GetGitDirAt != nil {
+		return deps.GetGitDirAt(worktree)
 	}
-	return cmds
+	if deps.GetGitDir != nil {
+		return deps.GetGitDir()
+	}
+	return "", errors.New("pr create is not wired to the Git directory")
+}
+
+func shortObjectID(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 8 {
+		return value[:8]
+	}
+	return value
+}
+
+func validateStoredEvidence(w io.Writer, worktree string, entry *store.PRReviewEntry, check func(string, string) (bool, string, error)) error {
+	if len(entry.Evidence) == 0 {
+		return fmt.Errorf("? %v: no evidence paths", errStoredReviewInvalid)
+	}
+	if check == nil {
+		return errors.New("? could not validate the pr review evidence: evidence checker is unavailable")
+	}
+	var missing []string
+	for _, evidencePath := range entry.Evidence {
+		if err := validateEvidencePath(evidencePath); err != nil {
+			return fmt.Errorf("? could not validate the pr review evidence: %v", err)
+		}
+		ok, reason, err := check(worktree, evidencePath)
+		if err != nil {
+			return fmt.Errorf("? could not validate the pr review evidence %q: %v", evidencePath, err)
+		}
+		if !ok {
+			missing = append(missing, evidencePath)
+			if reason != "" {
+				continue
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("The pr review evidence is not committed: %s. Run 'git add .vas_sentinel/evidence && git commit -m \"chore(evidence): record the pr review logs\"' and re-run 'sentinel pr review'.", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func validateEvidencePath(value string) error {
+	if value == "" || strings.ContainsRune(value, 0) || strings.Contains(value, "\\") || strings.HasPrefix(value, "/") || filepath.VolumeName(value) != "" {
+		return fmt.Errorf("unsafe evidence path %q", value)
+	}
+	clean := path.Clean(value)
+	if clean != value || !strings.HasPrefix(value, ".vas_sentinel/evidence/") {
+		return fmt.Errorf("unsafe evidence path %q", value)
+	}
+	return nil
 }

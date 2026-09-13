@@ -11,7 +11,12 @@ import (
 // bound, not a guess: pr create caps the run URL at 200 bytes and the failed
 // job names at five names of sixty bytes, rendering "… and N more" beyond
 // that, and the surrounding markup is fixed.
-const ciStepReserveBytes = 1024
+const (
+	// CIStepReserveBytes is the maximum space reserved for pr create to replace
+	// the persisted CI placeholder with bounded remote evidence.
+	CIStepReserveBytes = 1024
+	ciStepReserveBytes = CIStepReserveBytes
+)
 
 var ErrPRReviewBodyTooLarge = errors.New("pr review body required sections exceed the size limit")
 

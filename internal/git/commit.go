@@ -89,9 +89,21 @@ func RangeDiff(base, head string) (string, error) {
 	return strings.TrimRight(out, "\n"), nil
 }
 
-// SHAHead returns the full SHA of the HEAD commit.
+// SHAHead returns the full SHA of the HEAD commit in the process repository.
+// Call SHAHeadFrom when the caller owns an explicit worktree.
 func SHAHead() (string, error) {
 	out, err := runGitOutput("rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// SHAHeadFrom returns the full SHA of HEAD for the supplied worktree. Using an
+// explicit path is important for commands that can operate on linked or foreign
+// worktrees: ambient Git state must never select another repository.
+func SHAHeadFrom(worktree string) (string, error) {
+	out, err := GitInIsolated(worktree, "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -135,9 +147,19 @@ func UpToSHAs(expression string) ([]string, error) {
 	return shas, nil
 }
 
-// CurrentBranch returns the (short) name of the current branch.
+// CurrentBranch returns the (short) name of the current branch in the process
+// repository. Call CurrentBranchFrom when the caller owns an explicit worktree.
 func CurrentBranch() (string, error) {
 	out, err := runGitOutput("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// CurrentBranchFrom returns the exact branch name for the supplied worktree.
+func CurrentBranchFrom(worktree string) (string, error) {
+	out, err := GitInIsolated(worktree, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -413,6 +435,15 @@ func UpstreamOrMain() (string, error) {
 // (branch.<branch>.remote) or empty if the branch has no remote.
 func BranchRemote(branch string) string {
 	out, err := runGitOutput("config", "--get", "branch."+branch+".remote")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// BranchRemoteFrom returns the configured remote for a branch in worktree.
+func BranchRemoteFrom(worktree, branch string) string {
+	out, err := GitInIsolated(worktree, "config", "--get", "branch."+branch+".remote")
 	if err != nil {
 		return ""
 	}
