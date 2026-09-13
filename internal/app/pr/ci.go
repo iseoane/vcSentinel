@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type CIRun struct {
 // CIClient is the only remote boundary owned by the CI state machine. Tests can
 // replace it to prove push, dispatch, polling, timeout, and interruption order.
 type CIClient interface {
+	RemoteURL(context.Context, string, string) (string, error)
 	Push(context.Context, string, string, string, string) error
 	Dispatch(context.Context, string, string, string) error
 	FindRun(context.Context, string, string, string) (*CIRun, error)
@@ -62,6 +64,13 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 	remoteName := strings.TrimSpace(remote(worktree, branch))
 	if remoteName == "" {
 		return CIOutcome{}, fmt.Errorf("cannot collect CI: branch %q has no configured remote", branch)
+	}
+	remoteURL, err := client.RemoteURL(ctx, worktree, remoteName)
+	if err != nil {
+		return CIOutcome{}, fmt.Errorf("cannot collect CI: could not resolve remote %q: %w", remoteName, err)
+	}
+	if !isGitHubActionsRemote(remoteURL) {
+		return CIOutcome{}, fmt.Errorf("cannot collect CI: remote %q is not hosted on github.com, which is required for GitHub Actions", remoteName)
 	}
 	fmt.Fprintf(out, "⬆️ Pushing %s to %s.\n", branch, remoteName)
 	if err := client.Push(ctx, worktree, remoteName, branch, head); err != nil {
@@ -173,6 +182,32 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 type CommandCIClient struct {
 	RunGit func(context.Context, string, ...string) ([]byte, error)
 	RunGH  func(context.Context, string, ...string) ([]byte, error)
+}
+
+func (c CommandCIClient) RemoteURL(ctx context.Context, worktree, remote string) (string, error) {
+	if c.RunGit == nil {
+		return "", errors.New("git command runner is unavailable")
+	}
+	output, err := c.RunGit(ctx, worktree, "remote", "get-url", remote)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func isGitHubActionsRemote(remote string) bool {
+	remote = strings.TrimSpace(remote)
+	if !strings.Contains(remote, "://") {
+		host, _, found := strings.Cut(remote, ":")
+		if found {
+			if _, candidate, hasUser := strings.Cut(host, "@"); hasUser {
+				host = candidate
+			}
+			return strings.EqualFold(host, "github.com")
+		}
+	}
+	parsed, err := url.Parse(remote)
+	return err == nil && strings.EqualFold(parsed.Hostname(), "github.com")
 }
 
 func (c CommandCIClient) Push(ctx context.Context, worktree, remote, branch, head string) error {

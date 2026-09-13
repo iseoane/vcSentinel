@@ -147,6 +147,8 @@ func TestValidatePRReviewEntryRejectsNonTerminalAndDivergence(t *testing.T) {
 
 type fakeCIClient struct {
 	events      []string
+	remoteURL   string
+	remoteErr   error
 	pushErr     error
 	dispatchErr error
 	dispatchRef string
@@ -154,6 +156,17 @@ type fakeCIClient struct {
 	findErr     error
 	onFind      func()
 	runs        []*CIRun
+}
+
+func (f *fakeCIClient) RemoteURL(_ context.Context, _ string, _ string) (string, error) {
+	f.events = append(f.events, "remote")
+	if f.remoteErr != nil {
+		return "", f.remoteErr
+	}
+	if f.remoteURL == "" {
+		return "https://github.com/example/repo.git", nil
+	}
+	return f.remoteURL, nil
 }
 
 func (f *fakeCIClient) Push(_ context.Context, _ string, _ string, _ string, head string) error {
@@ -205,8 +218,8 @@ func TestRunConfiguredCIOrdersPushDispatchPollAndReportsOutcomes(t *testing.T) {
 			if err != nil || got.Status != tc.wantStatus || got.Icon != tc.wantIcon {
 				t.Fatalf("outcome=%+v err=%v", got, err)
 			}
-			if !reflect.DeepEqual(client.events, []string{"push", "dispatch", "poll"}) {
-				t.Fatalf("events=%v, want push dispatch poll", client.events)
+			if !reflect.DeepEqual(client.events, []string{"remote", "push", "dispatch", "poll"}) {
+				t.Fatalf("events=%v, want remote push dispatch poll", client.events)
 			}
 			if !strings.Contains(output.String(), "Pushing feature/piece5 to origin") {
 				t.Fatal("push announcement missing")
@@ -279,6 +292,9 @@ func TestCommandCIClientPreservesObservationErrorsAndFiltersFailedJobs(t *testin
 	var pushArgs []string
 	client.RunGit = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		pushArgs = args
+		if reflect.DeepEqual(args, []string{"remote", "get-url", "origin"}) {
+			return []byte("https://github.com/example/repo.git\n"), nil
+		}
 		return nil, nil
 	}
 	if err := client.Push(context.Background(), "worktree", "origin", "feature/piece5", piece5Head); err != nil {
@@ -286,6 +302,32 @@ func TestCommandCIClientPreservesObservationErrorsAndFiltersFailedJobs(t *testin
 	}
 	if want := []string{"push", "origin", piece5Head + ":refs/heads/feature/piece5"}; !reflect.DeepEqual(pushArgs, want) {
 		t.Fatalf("push args=%v, want %v", pushArgs, want)
+	}
+	remoteURL, err := client.RemoteURL(context.Background(), "worktree", "origin")
+	if err != nil || remoteURL != "https://github.com/example/repo.git" || !reflect.DeepEqual(pushArgs, []string{"remote", "get-url", "origin"}) {
+		t.Fatalf("remote URL=%q err=%v args=%v", remoteURL, err, pushArgs)
+	}
+}
+
+func TestRunConfiguredCIRefusesNonGitHubRemoteBeforePush(t *testing.T) {
+	client := &fakeCIClient{remoteURL: "https://gitlab.com/example/repo.git"}
+	_, err := RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml"}, client, func(string, string) string { return "origin" }, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "github.com") {
+		t.Fatalf("err=%v", err)
+	}
+	if !reflect.DeepEqual(client.events, []string{"remote"}) {
+		t.Fatalf("events=%v, want remote only", client.events)
+	}
+}
+
+func TestRunConfiguredCIAcceptsGitHubSSHRemote(t *testing.T) {
+	client := &fakeCIClient{remoteURL: "git@github.com:example/repo.git", runs: []*CIRun{{HeadSHA: piece5Head, Status: "completed", Conclusion: "success"}}}
+	got, err := RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml"}, client, func(string, string) string { return "origin" }, nil, nil)
+	if err != nil || got.Status != "passed" {
+		t.Fatalf("outcome=%+v err=%v", got, err)
+	}
+	if !reflect.DeepEqual(client.events, []string{"remote", "push", "dispatch", "poll"}) {
+		t.Fatalf("events=%v", client.events)
 	}
 }
 
@@ -295,8 +337,8 @@ func TestRunConfiguredCIFailureStopsBeforeDispatch(t *testing.T) {
 	if err == nil || got.Status != "" {
 		t.Fatalf("push error outcome=%+v err=%v", got, err)
 	}
-	if !reflect.DeepEqual(client.events, []string{"push"}) {
-		t.Fatalf("events=%v, want push only", client.events)
+	if !reflect.DeepEqual(client.events, []string{"remote", "push"}) {
+		t.Fatalf("events=%v, want remote then push only", client.events)
 	}
 }
 
@@ -311,7 +353,7 @@ func TestRunConfiguredCITimeoutAndInterruptionArePublishableOutcomes(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	client = &fakeCIClient{onFind: cancel, findErr: context.Canceled}
 	got, err = RunConfiguredCI(ctx, io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 900, PollSeconds: 1}, client, func(string, string) string { return "origin" }, time.Now, nil)
-	if err != nil || got.Status != "pending" || !reflect.DeepEqual(client.events, []string{"push", "dispatch", "poll"}) {
+	if err != nil || got.Status != "pending" || !reflect.DeepEqual(client.events, []string{"remote", "push", "dispatch", "poll"}) {
 		t.Fatalf("interrupted outcome=%+v err=%v events=%v", got, err, client.events)
 	}
 }
