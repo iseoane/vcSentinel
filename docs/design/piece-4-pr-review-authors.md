@@ -103,8 +103,10 @@ type OverviewResult struct {
 }
 ```
 
-Empty `Changed` renders `_Not summarised: the overview was unavailable._` and
-does not block. The existing `OverviewError` path already covers why.
+A parsed overview must contain three to six non-empty `Changed` bullets after
+trimming; otherwise `pr review` rejects the response and records its cause in
+`OverviewError`. The `_Not summarised: the overview was unavailable._` fallback
+is only for an unavailable overview, never an accepted empty `Changed` value.
 
 ### 2.3 Risk Assessment
 
@@ -151,19 +153,20 @@ command that ran or the recorded reason.
 
 The audit trail: which steps ran, and what each found. Steps, fixed order:
 
-| Step | Source of truth | Status when it did not run |
+| Step | Source of truth | Attestation status |
 |---|---|---|
-| `slice` | intent trailers present on the range | ⚪ not observed |
-| `review` | the ledger records for each SHA | ⚪ no records |
-| `gate` | no validation evidence is collected by this flow | ⚪ not run |
-| `lint` | no lint evidence is collected by this flow | ⚪ not configured |
-| `test` | no test evidence is collected by this flow | ⚪ not configured |
-| `build` | no build evidence is collected by this flow | ⚪ not configured |
-| `pr review` | this run | always ✅ by construction |
-| `ci` | filled by `pr create` (piece 5) | ⚪ not observed by Sentinel |
+| `slice` | intent trailers present on the range | `passed` or `not_observed` |
+| `review` | the ledger records for each SHA | `passed`, `warning`, `blocked`, `question`, `unavailable`, or `not_observed` |
+| `gate` | no validation evidence is collected by this flow | `passed`, `failed`, or `not_run` |
+| `lint` | no lint evidence is collected by this flow | `not_configured` |
+| `test` | no test evidence is collected by this flow | `passed`, `failed`, or `not_configured` |
+| `build` | no build evidence is collected by this flow | `not_configured` |
+| `pr review` | this run | `authored` |
+| `ci` | filled by `pr create` (piece 5) | `not_observed` |
 
-Each step renders as a collapsed `<details>` whose summary line encodes the
-outcome, so seven states read without expanding anything:
+The status is machine-readable; its visual icon and summary remain reader-facing.
+Each of the eight fixed steps renders as a collapsed `<details>` whose summary
+line encodes the outcome:
 
 ```
 <details><summary>✅ <b>review</b> — 4 commits audited, no pending blocks</summary>
@@ -187,12 +190,14 @@ One HTML comment, invisible to the reader, immediately before the Pipeline
 section:
 
 ```
-<!-- vas-sentinel-attestation:v1 {"head_sha":"...","branch":"...","verdict":"...","steps":[{"step":"review","status":"passed"},...]} -->
+<!-- vas-sentinel-attestation:v1 {"head_sha":"...","branch":"...","verdict":"...","steps":[{"step":"slice","status":"passed"},{"step":"review","status":"passed"},{"step":"gate","status":"not_run"},{"step":"lint","status":"not_configured"},{"step":"test","status":"not_configured"},{"step":"build","status":"not_configured"},{"step":"pr review","status":"authored"},{"step":"ci","status":"not_observed"}]} -->
 ```
 
 `v1` in the marker is the schema version and is mandatory: a later reader must
-be able to refuse a shape it does not know. Piece 5 will read it to fill in the
-`ci` step without re-deriving anything else.
+be able to refuse a shape it does not know. The `steps` array always persists
+all eight Pipeline steps in the table's order, with the same statuses used to
+render the body. Piece 5 will read it to fill in the `ci` step without
+re-deriving anything else.
 
 `ParseAttestation(body string) (Attestation, error)` is implemented beside the
 renderer. It rejects a body carrying more than one attestation comment rather
@@ -283,7 +288,8 @@ to publish without one.
   name to distinguish branches such as `feature/review` and `feature-review`.
   The head SHA prevents a stale entry from being reused.
 - Content: the rendered body, the attestation struct, the verdict, the head
-  SHA, the branch, and the time.
+  SHA, the branch, and `at`. `pr review` records `at` as its UTC authoring time;
+  JSON persists the `time.Time` value in RFC 3339 format.
 - `AnalyzeBranch` validates every SHA in the resolved range before reading any
   per-commit metadata or consulting blob reuse. A malformed SHA anywhere in the
   range fails closed before it can adopt a record into the ledger; no evidence,
@@ -391,8 +397,9 @@ not change it.
   log and persists the repository-relative path; two runs over the same records
   write byte-identical evidence files. Evidence linking and HEAD validation are
   Piece 5 tests.
-- `What Changed`: bullets render in order; an empty `Changed` renders the
-  fallback and does not block.
+- `What Changed`: bullets render in order; parsing rejects fewer than three or
+  more than six non-empty `Changed` bullets after trimming, while an unavailable
+  overview renders the fallback.
 - `Testing`: with Piece 4's empty verification input, the section reports that
   no validation commands were configured and no tests were run.
 - `Pipeline`: the eight steps render in the fixed order; a step with no data
