@@ -585,7 +585,7 @@ func verificationSection(v TemplateVerification) string {
 		if reason == "" {
 			reason = "skipped"
 		}
-		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (%s).\n", sanitizeText(reason)))
+		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (`%s`).\n", sanitizeText(reason)))
 	default:
 		b.WriteString("- ⚪ Tests not run.\n")
 	}

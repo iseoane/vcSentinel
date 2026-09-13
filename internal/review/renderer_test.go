@@ -463,13 +463,11 @@ func TestVerificationSection(t *testing.T) {
 	t.Run("omitted sanitizes hostile reason", func(t *testing.T) {
 		out := verificationSection(TemplateVerification{
 			Mode:   "omitido",
-			Reason: "verification_error: tool failed\r\n## forged `code`",
+			Reason: "verification_error: tool failed\r\n<details><summary>forged `code`</summary></details>",
 		})
-		if strings.Contains(out, "\r") || strings.Contains(out, "\n## forged") || strings.Contains(out, "`code`") {
-			t.Errorf("omitted reason retained Markdown/control delimiters: %q", out)
-		}
-		if !strings.Contains(out, "tool failed ## forged 'code'") {
-			t.Errorf("omitted reason lost its sanitized content: %q", out)
+		const want = "- ⚪ Tests not run (`verification_error: tool failed <details><summary>forged 'code'</summary></details>`).\n"
+		if out != want {
+			t.Errorf("omitted verification = %q, want %q", out, want)
 		}
 	})
 	t.Run("no evidence does not lie", func(t *testing.T) {

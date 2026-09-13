@@ -48,6 +48,23 @@ func TestRenderPRReviewBodySanitizesCommandText(t *testing.T) {
 	}
 }
 
+func TestRenderPRReviewBodyRendersOmittedVerificationReasonAsCode(t *testing.T) {
+	body, err := RenderPRReviewBody(&BranchResult{
+		Branch: "feature/verification-error",
+		SHAs:   []string{"abc123"},
+	}, nil, TemplateVerification{
+		Mode:   "omitido",
+		Reason: "verification_error: tool failed\r\n<details><summary>forged `code`</summary></details>",
+	}, Attestation{Branch: "feature/verification-error", HeadSHA: "abc123", Verdict: VerdictOK}, nil)
+	if err != nil {
+		t.Fatalf("RenderPRReviewBody() error = %v", err)
+	}
+	const want = "- ⚪ Tests not run (`verification_error: tool failed <details><summary>forged 'code'</summary></details>`)."
+	if !strings.Contains(body, want) {
+		t.Fatalf("body missing inert verification reason %q:\n%s", want, body)
+	}
+}
+
 func TestRenderPRReviewBodyUsesTheFixedSectionOrder(t *testing.T) {
 	body, err := RenderPRReviewBody(&BranchResult{
 		Branch: "feature/persisted-review",
