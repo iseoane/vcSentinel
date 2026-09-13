@@ -576,7 +576,7 @@ func verificationSection(v TemplateVerification) string {
 		}
 	case "delegado":
 		for _, tested := range v.Tested {
-			b.WriteString(fmt.Sprintf("- 🤖 agent: `%s`\n", tested))
+			b.WriteString(fmt.Sprintf("- 🤖 agent: `%s`\n", sanitizeText(tested)))
 		}
 	case "configurar":
 		b.WriteString("- ⏸️  Verification not run: stopped to configure `vassentinel.yml`.\n")
@@ -585,7 +585,7 @@ func verificationSection(v TemplateVerification) string {
 		if reason == "" {
 			reason = "skipped"
 		}
-		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (%s).\n", reason))
+		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (%s).\n", sanitizeText(reason)))
 	default:
 		b.WriteString("- ⚪ Tests not run.\n")
 	}

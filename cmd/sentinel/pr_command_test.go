@@ -601,14 +601,22 @@ func TestCopyToClipboardFailurePropagates(t *testing.T) {
 func TestVerifyForTemplateErrorNeverSilent(t *testing.T) {
 	template := verifyForTemplateWith("worktree", "gitdir", config.Config{}, nil,
 		func(ops.VerifyOptions) (ops.VerificationResult, error) {
-			return ops.VerificationResult{}, errors.New("broken build")
+			return ops.VerificationResult{}, errors.New("tool failed\r\n## forged `code`")
 		})
 	if template.Mode != ops.ModeSkipped {
 		t.Errorf("with an error the mode must be omitted, got %q", template.Mode)
 	}
 	if !strings.Contains(template.Reason, "verification_error") ||
-		!strings.Contains(template.Reason, "broken build") {
+		!strings.Contains(template.Reason, "tool failed") {
 		t.Errorf("the reason must reflect the real error, got %q", template.Reason)
+	}
+
+	body := review.RenderPRTemplate(nil, nil, template, "test", nil)
+	if strings.Contains(body, "\r") || strings.Contains(body, "\n## forged") || strings.Contains(body, "`code`") {
+		t.Fatalf("production verification-error rendering retained hostile Markdown/control text:\n%s", body)
+	}
+	if !strings.Contains(body, "tool failed ## forged 'code'") {
+		t.Fatalf("production verification-error rendering lost the sanitized reason:\n%s", body)
 	}
 }
 

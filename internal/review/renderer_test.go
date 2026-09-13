@@ -450,12 +450,49 @@ func TestVerificationSection(t *testing.T) {
 			t.Errorf("an omitted mode must never inject PASS: %s", out)
 		}
 	})
+	t.Run("omitted sanitizes hostile reason", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{
+			Mode:   "omitido",
+			Reason: "verification_error: tool failed\r\n## forged `code`",
+		})
+		if strings.Contains(out, "\r") || strings.Contains(out, "\n## forged") || strings.Contains(out, "`code`") {
+			t.Errorf("omitted reason retained Markdown/control delimiters: %q", out)
+		}
+		if !strings.Contains(out, "tool failed ## forged 'code'") {
+			t.Errorf("omitted reason lost its sanitized content: %q", out)
+		}
+	})
 	t.Run("no evidence does not lie", func(t *testing.T) {
 		out := verificationSection(TemplateVerification{})
 		if !strings.Contains(out, "Tests not run.") {
 			t.Errorf("without evidence it must declare tests not run: %s", out)
 		}
 	})
+}
+
+func TestDelegatedTestedTextSanitizesMarkdownControlText(t *testing.T) {
+	cases := []struct {
+		name   string
+		tested string
+		want   string
+	}{
+		{name: "LF", tested: "go test\n## forged", want: "go test ## forged"},
+		{name: "CRLF", tested: "go test\r\n## forged", want: "go test ## forged"},
+		{name: "bare CR", tested: "go test\r## forged", want: "go test ## forged"},
+		{name: "backticks", tested: "printf `literal`", want: "printf 'literal'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := verificationSection(TemplateVerification{Mode: "delegado", Tested: []string{tc.tested}})
+			want := "- 🤖 agent: `" + tc.want + "`"
+			if !strings.Contains(out, want) {
+				t.Fatalf("output missing sanitized delegated text %q:\n%s", want, out)
+			}
+			if strings.Contains(out, tc.tested) {
+				t.Fatalf("output retains unsanitized delegated text %q:\n%s", tc.tested, out)
+			}
+		})
+	}
 }
 
 // TestCommandTextSanitizesMarkdownControlText protects every direct command
