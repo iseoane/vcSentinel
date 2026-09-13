@@ -96,6 +96,20 @@ func TestComposePRBodyPreservesNonCIPayload(t *testing.T) {
 	}
 }
 
+func TestComposePRBodyIgnoresCILiteralsOutsideTheCIHeader(t *testing.T) {
+	entry := piece5Entry(t, review.VerdictOK)
+	const reviewBlock = "<details><summary>✅ <b>review</b> — complete</summary>\n\n</details>"
+	const reviewWithSubject = "<details><summary>✅ <b>review</b> — complete</summary>\n\nfix: <b>ci</b>\n</details>"
+	entry.Body = strings.Replace(entry.Body, reviewBlock, reviewWithSubject, 1)
+	got, err := ComposePRBody(entry, CIOutcome{Status: "passed", Icon: "✅", Summary: "verify.yml succeeded"})
+	if err != nil {
+		t.Fatalf("ComposePRBody: %v", err)
+	}
+	if !strings.Contains(got, reviewWithSubject) || !strings.Contains(got, "✅ <b>ci</b> — verify.yml succeeded") {
+		t.Fatalf("CI composition changed the review block or missed the CI block:\n%s", got)
+	}
+}
+
 func reflectStepsExceptCI(left, right []review.AttestationStep) bool {
 	if len(left) != len(right) {
 		return false
@@ -579,7 +593,7 @@ func TestComposePRBodyAtLimitReplacesReservedCIBlock(t *testing.T) {
 	entry := piece5Entry(t, review.VerdictOK)
 	oldCI := detailsBlock(t, entry.Body, "<b>ci</b>")
 	padding := strings.Repeat("x", review.PRBodyLimit-len(entry.Body))
-	entry.Body = strings.Replace(entry.Body, oldCI, oldCI[:len(oldCI)-len("</details>\\n\\n")]+padding+"</details>\\n\\n", 1)
+	entry.Body = strings.Replace(entry.Body, oldCI, oldCI[:len(oldCI)-len("</details>")]+padding+"</details>", 1)
 	if len(entry.Body) != review.PRBodyLimit {
 		t.Fatalf("fixture body len=%d, want %d", len(entry.Body), review.PRBodyLimit)
 	}

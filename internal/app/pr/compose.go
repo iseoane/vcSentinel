@@ -263,7 +263,7 @@ func replaceCIDetails(body, replacement string) (string, error) {
 			end += 2
 		}
 		block := section[start:end]
-		if strings.Contains(block, "<b>ci</b>") {
+		if isCIDetailsBlock(block) {
 			ranges = append(ranges, textRange{start: pipelineStart + start, end: pipelineStart + end})
 		}
 		offset = end
@@ -273,6 +273,20 @@ func replaceCIDetails(body, replacement string) (string, error) {
 	}
 	r := ranges[0]
 	return body[:r.start] + replacement + body[r.end:], nil
+}
+
+func isCIDetailsBlock(block string) bool {
+	const prefix = "<details><summary>"
+	if !strings.HasPrefix(block, prefix) {
+		return false
+	}
+	headerEnd := strings.Index(block[len(prefix):], "</summary>")
+	if headerEnd < 0 {
+		return false
+	}
+	header := block[len(prefix) : len(prefix)+headerEnd]
+	firstStep := strings.Index(header, "<b>")
+	return firstStep >= 0 && strings.HasPrefix(header[firstStep:], "<b>ci</b> —")
 }
 
 func replaceAttestationMarker(body, replacement string) (string, error) {
