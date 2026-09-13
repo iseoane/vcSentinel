@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
 )
 
 const subdirPRReviews = "pr-reviews"
@@ -263,17 +265,10 @@ func (s *Store) readPRReviewLocked(branch string) (*PRReviewEntry, error) {
 	return found, nil
 }
 
+// IsValidGitObjectID keeps the store's public validator compatible while the
+// canonical object-ID rule lives with the Git identity helpers.
 func IsValidGitObjectID(value string) bool {
-	value = strings.TrimSpace(value)
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	for _, r := range value {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
-			return false
-		}
-	}
-	return true
+	return git.IsValidGitObjectID(value)
 }
 
 func branchSlug(branch string) string {

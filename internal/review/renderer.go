@@ -572,11 +572,11 @@ func verificationSection(v TemplateVerification) string {
 			if c.Exit != 0 {
 				icon = "❌"
 			}
-			b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, c.Comando, c.Exit))
+			b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, sanitizeText(c.Comando), c.Exit))
 		}
 	case "delegado":
 		for _, tested := range v.Tested {
-			b.WriteString(fmt.Sprintf("- 🤖 agent: `%s`\n", tested))
+			b.WriteString(fmt.Sprintf("- 🤖 agent: `%s`\n", sanitizeText(tested)))
 		}
 	case "configurar":
 		b.WriteString("- ⏸️  Verification not run: stopped to configure `vassentinel.yml`.\n")
@@ -585,7 +585,7 @@ func verificationSection(v TemplateVerification) string {
 		if reason == "" {
 			reason = "skipped"
 		}
-		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (%s).\n", reason))
+		b.WriteString(fmt.Sprintf("- ⚪ Tests not run (`%s`).\n", sanitizeText(reason)))
 	default:
 		b.WriteString("- ⚪ Tests not run.\n")
 	}
@@ -607,7 +607,7 @@ func validationSection(cmds []VerifiedCommand) string {
 		if c.Exit != 0 {
 			icon = "❌"
 		}
-		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, c.Comando, c.Exit))
+		b.WriteString(fmt.Sprintf("- %s `%s` (exit %d)\n", icon, sanitizeText(c.Comando), c.Exit))
 	}
 	return b.String()
 }

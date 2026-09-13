@@ -236,6 +236,46 @@ func TestAnalyzeBranchReauditsOnlySpecWhenReusedMessageChanges(t *testing.T) {
 	}
 }
 
+// TestAnalyzeBranchValidatesEveryRangeSHA before adoption uses a real ledger and
+// a real Git history. The malformed later SHA must prevent the earlier reusable
+// destination from being adopted into the ledger.
+func TestAnalyzeBranchValidatesEveryRangeSHABeforeAdoption(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	originSHA := commitInBranch(t, "feat.txt", "content\n")
+	ledger := NewLedger(gitDir)
+	store := &fakeStoreBlobs{}
+	stub := &auditorStub{auditOutput: auditOutputOK}
+
+	if _, err := AnalyzeBranch(ledger, BranchOptions{Factory: stubFactory(stub), Parallel: 1, Store: store}); err != nil {
+		t.Fatalf("initial AnalyzeBranch: %v", err)
+	}
+	runGit(t, "commit", "--amend", "-m", "feat(feat.txt): rewritten message")
+	destinationSHA := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	if destinationSHA == originSHA {
+		t.Fatal("amending the message did not create a reusable destination SHA")
+	}
+
+	previousRangeSHAs := branchRangeSHAs
+	branchRangeSHAs = func(string, string) ([]string, error) {
+		return []string{destinationSHA, strings.Repeat("a", 39) + "g"}, nil
+	}
+	t.Cleanup(func() { branchRangeSHAs = previousRangeSHAs })
+
+	if _, err := AnalyzeBranch(ledger, BranchOptions{OnlyPending: true, Store: store}); err == nil {
+		t.Fatal("AnalyzeBranch accepted a malformed later range SHA")
+	}
+	adopted, err := ledger.ReadRecord(destinationSHA)
+	if err != nil {
+		t.Fatalf("ReadRecord(destination): %v", err)
+	}
+	if adopted != nil {
+		t.Fatalf("malformed range caused a ledger adoption before validation: %+v", adopted)
+	}
+	if source, err := ledger.ReadRecord(originSHA); err != nil || source == nil {
+		t.Fatalf("the seeded source record disappeared: record=%+v error=%v", source, err)
+	}
+}
+
 func TestCommitCoveredByBlobsRequiresMatchingPathsAndRejectsSelf(t *testing.T) {
 	prepareBranchRepo(t)
 	if err := os.MkdirAll(".github/workflows", 0o755); err != nil {

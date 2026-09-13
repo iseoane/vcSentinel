@@ -316,22 +316,23 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		return 1
 	}
 	head := res.SHAs[len(res.SHAs)-1]
-	validHead := store.IsValidGitObjectID(head)
+	if !store.IsValidGitObjectID(head) {
+		fmt.Fprintln(w, "? review produced invalid branch head")
+		return 1
+	}
 	title := ""
-	if validHead {
-		if deps.CommitMessage == nil {
-			fmt.Fprintln(w, "? pr review title reader is unavailable")
-			return 1
-		}
-		title, err = deps.CommitMessage(res.SHAs[0])
-		if err != nil {
-			fmt.Fprintf(w, "? %v\n", err)
-			return 1
-		}
-		if strings.TrimSpace(title) == "" {
-			fmt.Fprintln(w, "? review produced no PR title")
-			return 1
-		}
+	if deps.CommitMessage == nil {
+		fmt.Fprintln(w, "? pr review title reader is unavailable")
+		return 1
+	}
+	title, err = deps.CommitMessage(res.SHAs[0])
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	if strings.TrimSpace(title) == "" {
+		fmt.Fprintln(w, "? review produced no PR title")
+		return 1
 	}
 	verdict := review.VerdictDeBranch(res.Records, options.Dispositions)
 	if res.Net != nil {
@@ -353,11 +354,9 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	if validHead {
-		if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
-			fmt.Fprintf(w, "? %v\n", err)
-			return 1
-		}
+	if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence}); err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
 	}
 
 	detail, err := deps.EventDetail(base, res, git.DetectCI(worktree))

@@ -55,6 +55,33 @@ func TestSavePRReviewReplacesPreviousHeadForTheSameBranch(t *testing.T) {
 	}
 }
 
+func TestIsValidGitObjectIDRejectsSurroundingWhitespace(t *testing.T) {
+	for _, head := range []string{
+		strings.Repeat("a", 40),
+		strings.Repeat("b", 64),
+		" " + strings.Repeat("a", 40),
+		strings.Repeat("a", 40) + "\t",
+	} {
+		want := !strings.ContainsAny(head, " \t")
+		if got := IsValidGitObjectID(head); got != want {
+			t.Errorf("IsValidGitObjectID(%q) = %v, want %v", head, got, want)
+		}
+	}
+}
+
+func TestSavePRReviewRejectsNonCanonicalHead(t *testing.T) {
+	store := NewStore(t.TempDir())
+	for _, head := range []string{
+		" " + strings.Repeat("a", 40),
+		strings.Repeat("a", 40) + "\n",
+		"\t" + strings.Repeat("b", 64),
+	} {
+		if err := store.SavePRReview(&PRReviewEntry{Branch: "feature/review", HeadSHA: head}); err == nil {
+			t.Fatalf("SavePRReview with head %q succeeded, want canonical identity error", head)
+		}
+	}
+}
+
 func TestSavePRReviewRejectsIncompleteIdentity(t *testing.T) {
 	store := NewStore(t.TempDir())
 	for _, entry := range []*PRReviewEntry{{}, {Branch: "feature/review"}, {HeadSHA: "head"}} {

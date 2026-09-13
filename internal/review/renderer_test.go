@@ -441,6 +441,16 @@ func TestVerificationSection(t *testing.T) {
 			t.Errorf("missing the tested contract: %s", out)
 		}
 	})
+	t.Run("delegated sanitizes command evidence", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{
+			Mode:   "delegado",
+			Tested: []string{"go test `</details><details>`"},
+		})
+		const want = "- 🤖 agent: `go test '</details><details>'`\n"
+		if out != want {
+			t.Errorf("delegated verification = %q, want %q", out, want)
+		}
+	})
 	t.Run("omitted stays honest", func(t *testing.T) {
 		out := verificationSection(TemplateVerification{Mode: "omitido", Reason: "no_configurado"})
 		if !strings.Contains(out, "no_configurado") {
@@ -450,12 +460,95 @@ func TestVerificationSection(t *testing.T) {
 			t.Errorf("an omitted mode must never inject PASS: %s", out)
 		}
 	})
+	t.Run("omitted sanitizes hostile reason", func(t *testing.T) {
+		out := verificationSection(TemplateVerification{
+			Mode:   "omitido",
+			Reason: "verification_error: tool failed\r\n<details><summary>forged `code`</summary></details>",
+		})
+		const want = "- ⚪ Tests not run (`verification_error: tool failed <details><summary>forged 'code'</summary></details>`).\n"
+		if out != want {
+			t.Errorf("omitted verification = %q, want %q", out, want)
+		}
+	})
 	t.Run("no evidence does not lie", func(t *testing.T) {
 		out := verificationSection(TemplateVerification{})
 		if !strings.Contains(out, "Tests not run.") {
 			t.Errorf("without evidence it must declare tests not run: %s", out)
 		}
 	})
+}
+
+func TestDelegatedTestedTextSanitizesMarkdownControlText(t *testing.T) {
+	cases := []struct {
+		name   string
+		tested string
+		want   string
+	}{
+		{name: "LF", tested: "go test\n## forged", want: "go test ## forged"},
+		{name: "CRLF", tested: "go test\r\n## forged", want: "go test ## forged"},
+		{name: "bare CR", tested: "go test\r## forged", want: "go test ## forged"},
+		{name: "backticks", tested: "printf `literal`", want: "printf 'literal'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := verificationSection(TemplateVerification{Mode: "delegado", Tested: []string{tc.tested}})
+			want := "- 🤖 agent: `" + tc.want + "`"
+			if !strings.Contains(out, want) {
+				t.Fatalf("output missing sanitized delegated text %q:\n%s", want, out)
+			}
+			if strings.Contains(out, tc.tested) {
+				t.Fatalf("output retains unsanitized delegated text %q:\n%s", tc.tested, out)
+			}
+		})
+	}
+}
+
+// TestCommandTextSanitizesMarkdownControlText protects every direct command
+// sink in the PR template. Literal command backticks render as apostrophes
+// inside the surrounding inline-code span, while ordinary shell punctuation is
+// preserved unchanged.
+func TestCommandTextSanitizesMarkdownControlText(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "LF", command: "go test\n## forged", want: "go test ## forged"},
+		{name: "CRLF", command: "go test\r\n## forged", want: "go test ## forged"},
+		{name: "bare CR", command: "go test\r## forged", want: "go test ## forged"},
+		{name: "backticks", command: "printf `literal`", want: "printf 'literal'"},
+		{name: "heading", command: "# forged heading", want: "# forged heading"},
+		{name: "list item", command: "- forged list item", want: "- forged list item"},
+		{name: "details", command: "<details>forged</details>", want: "<details>forged</details>"},
+		{name: "HTML comment", command: "<!-- forged -->", want: "<!-- forged -->"},
+		{name: "shell punctuation", command: `printf 'hello'; echo "$HOME" && exit 0`, want: `printf 'hello'; echo "$HOME" && exit 0`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			command := VerifiedCommand{Comando: tc.command, Exit: 0}
+			outputs := []struct {
+				name string
+				body string
+			}{
+				{name: "verification", body: verificationSection(TemplateVerification{
+					Mode:     "determinista",
+					Comandos: []VerifiedCommand{command},
+				})},
+				{name: "validation", body: validationSection([]VerifiedCommand{command})},
+			}
+			for _, output := range outputs {
+				t.Run(output.name, func(t *testing.T) {
+					want := "- ✅ `" + tc.want + "` (exit 0)"
+					if !strings.Contains(output.body, want) {
+						t.Fatalf("output missing sanitized command %q:\n%s", want, output.body)
+					}
+					if tc.command != tc.want && strings.Contains(output.body, tc.command) {
+						t.Fatalf("output retains unsanitized command %q:\n%s", tc.command, output.body)
+					}
+				})
+			}
+		})
+	}
 }
 
 // TestValidationSection: real exit codes from internal/validation (T1.8),

@@ -18,6 +18,11 @@ import (
 // it with errors.Is.
 var ErrNoReviewerFactory = errors.New("no reviewer factory configured")
 
+// branchRangeSHAs is the production range resolver. Tests replace it to
+// exercise malformed provider output without replacing the real Git repository
+// or its ledger.
+var branchRangeSHAs = git.RangeSHAs
+
 // DecisionChainLimit is the volume threshold (added+deleted lines) beyond
 // which a branch proposes a chain of PRs unless coherence is demonstrated.
 //
@@ -209,8 +214,14 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	shas, err := git.RangeSHAs(mergeBase, "HEAD")
+	shas, err := branchRangeSHAs(mergeBase, "HEAD")
 	if err != nil {
+		return nil, err
+	}
+	// Validate the complete range before reading commit metadata or consulting
+	// the blob store. Blob reuse can adopt a record into the destination ledger,
+	// so any later malformed SHA must fail before the first ledger mutation.
+	if err := validateBranchSHAs(shas); err != nil {
 		return nil, err
 	}
 
@@ -346,6 +357,15 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 		res.Decision = "single"
 	}
 	return res, nil
+}
+
+func validateBranchSHAs(shas []string) error {
+	for index, sha := range shas {
+		if !git.IsValidGitObjectID(sha) {
+			return fmt.Errorf("review produced invalid branch SHA at position %d", index+1)
+		}
+	}
+	return nil
 }
 
 // deterministicFindingsForValidatedSHA returns the findings as-is only when
