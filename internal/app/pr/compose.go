@@ -202,7 +202,7 @@ func renderCIBlock(outcome CIOutcome) (string, error) {
 
 func boundedJobs(jobs []string) []string {
 	const maxJobs = 5
-	bounded := make([]string, 0, minInt(len(jobs), maxJobs))
+	bounded := make([]string, 0, min(len(jobs), maxJobs))
 	for _, job := range jobs {
 		name := sanitizeAndBound(job, 70)
 		if name != "" {
@@ -301,11 +301,4 @@ func replaceAttestationMarker(body, replacement string) (string, error) {
 	}
 	end += start + len(" -->")
 	return body[:start] + replacement + body[end:], nil
-}
-
-func minInt(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }

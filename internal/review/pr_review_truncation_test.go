@@ -22,7 +22,7 @@ func TestTruncatePipelineKeepsEveryStepAndDropsEvidenceFromTheEnd(t *testing.T) 
 	if omitted == 0 {
 		t.Fatal("truncatePipeline() omitted nothing on an oversized body")
 	}
-	if len(fixed)+len(pipeline)+ciStepReserveBytes > 2500 {
+	if len(fixed)+len(pipeline)+CIStepReserveBytes > 2500 {
 		t.Fatalf("result is %d bytes plus the reserve, over the 2500 limit", len(fixed)+len(pipeline))
 	}
 	for _, step := range []string{"<b>review</b>", "<b>test</b>", "<b>ci</b>"} {
@@ -138,7 +138,7 @@ func TestTruncatePipelineCountsTheCIReserveInsteadOfThePlaceholder(t *testing.T)
 	}
 	// Room for the fixed part, the review step and the reserve, but NOT for
 	// the reserve plus the placeholder on top of it.
-	limit := len(renderPipelineSteps(steps[:1])) + ciStepReserveBytes + 200
+	limit := len(renderPipelineSteps(steps[:1])) + CIStepReserveBytes + 200
 	_, omitted, err := truncatePipeline("", steps, limit)
 	if err != nil {
 		t.Fatalf("truncatePipeline() error = %v", err)

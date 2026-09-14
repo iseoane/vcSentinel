@@ -6,17 +6,12 @@ import (
 	"strings"
 )
 
-// ciStepReserveBytes is the room kept for pr create to expand the ci step in
+// CIStepReserveBytes is the room kept for pr create to expand the ci step in
 // place (piece 5 replaces that one block and nothing else). The reserve is a
 // bound, not a guess: pr create caps the run URL at 200 bytes and the failed
 // job names at five names of sixty bytes, rendering "… and N more" beyond
 // that, and the surrounding markup is fixed.
-const (
-	// CIStepReserveBytes is the maximum space reserved for pr create to replace
-	// the persisted CI placeholder with bounded remote evidence.
-	CIStepReserveBytes = 1024
-	ciStepReserveBytes = CIStepReserveBytes
-)
+const CIStepReserveBytes = 1024
 
 var ErrPRReviewBodyTooLarge = errors.New("pr review body required sections exceed the size limit")
 
@@ -111,7 +106,7 @@ func truncatePipeline(fixed string, steps []pipelineStep, maxBytes int) (string,
 // that bounds its replacement. It is the one place that arithmetic lives, so
 // the loop and the caller's final guard cannot disagree about it.
 func publishedSize(fixed, rendered, notice string, steps []pipelineStep) int {
-	size := len(fixed) + len(rendered) + len(notice) + ciStepReserveBytes
+	size := len(fixed) + len(rendered) + len(notice) + CIStepReserveBytes
 	for _, step := range steps {
 		if step.CI {
 			size -= len(step.render())
