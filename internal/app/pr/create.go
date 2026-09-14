@@ -55,9 +55,7 @@ func PrCreateEventDetail(prURL string, fallback, chain, force bool, reason strin
 // persisted entry and deterministic CI/validation evidence.
 type DepsPrCreate struct {
 	LoadConfig       func(worktree string) (config.Config, error)
-	GetGitDir        func() (string, error)
 	GetGitDirAt      func(worktree string) (string, error)
-	GetHeadSHA       func() (string, error)
 	GetHeadSHAAt     func(worktree string) (string, error)
 	CurrentBranch    func(worktree string) (string, error)
 	GetGitCommonDir  func(worktree string) (string, error)

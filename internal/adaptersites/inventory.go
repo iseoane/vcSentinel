@@ -228,8 +228,6 @@ func Sites() []Site {
 			Class: ClassHelper, Reason: "Branch-overview coherence prompt for the ADVISORY `pr review` report. It shapes operator-facing narrative only: overview failure degrades to the safe decision-chain fallback and can never flip a gate outcome or a commit-blocking verdict. Recorded as a follow-up candidate should pr review ever become enforcement."},
 		{Path: "internal/review/evidence.go", Symbol: "EvidenceAtHEAD/revParseBlob", Anchor: "command := exec.Command(\"git\", \"-C\", worktree, \"rev-parse\", \"--verify\", \"--quiet\", revision)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing verifying whether an evidence log is present at HEAD with matching bytes. Read-only rev-parse and hash-object; never invokes a provider agent and cannot influence a verdict."},
-		{Path: "internal/app/pr/ci.go", Symbol: "CommandCIClient Push/Dispatch/FindRun", Anchor: "command := exec.CommandContext(ctx, \"git\", append([]string{\"-C\", worktree}, args...)...)", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "GitHub Actions CI collection plumbing: pushes the reviewed branch and invokes gh for workflow dispatch/run observation. It collects deterministic CI evidence and never invokes a provider agent."},
 		{Path: "internal/review/snapshot.go", Symbol: "snapshot reader", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing feeding reviewer context snapshots."},
 		{Path: "internal/reviewsnapshot/snapshot.go", Symbol: "reviewsnapshot.Create/gitTreeEntry", Anchor: "cmd := exec.CommandContext(ctx, \"git\", \"-C\", worktree, \"ls-tree\", \"-z\", sha, \"--\", filePath)", Marker: "exec.Command",

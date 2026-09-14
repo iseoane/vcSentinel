@@ -81,9 +81,10 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 	}
 
 	started := now()
+	elapsedSeconds := func() int { return int(now().Sub(started).Seconds()) }
 	for {
 		if ctx.Err() != nil {
-			return pendingCIOutcome(cfg.Workflow, "", cfg.WaitSeconds), nil
+			return pendingCIOutcome(cfg.Workflow, "", elapsedSeconds()), nil
 		}
 		fmt.Fprintf(out, "⏳ Waiting for %s.\n", cfg.Workflow)
 		run, err := client.FindRun(ctx, worktree, cfg.Workflow, branch)
@@ -92,7 +93,7 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 			if run != nil {
 				url = run.URL
 			}
-			return pendingCIOutcome(cfg.Workflow, url, cfg.WaitSeconds), nil
+			return pendingCIOutcome(cfg.Workflow, url, elapsedSeconds()), nil
 		}
 		if errors.Is(err, ErrCIRunDisappeared) {
 			return noObservableCIOutcome(cfg.Workflow), nil
@@ -124,11 +125,11 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 			if run == nil {
 				return noObservableCIOutcome(cfg.Workflow), nil
 			}
-			return pendingCIOutcome(cfg.Workflow, runURL, cfg.WaitSeconds), nil
+			return pendingCIOutcome(cfg.Workflow, runURL, elapsedSeconds()), nil
 		}
 		if err := sleep(ctx, time.Duration(cfg.PollSeconds)*time.Second); err != nil {
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return pendingCIOutcome(cfg.Workflow, runURL, cfg.WaitSeconds), nil
+				return pendingCIOutcome(cfg.Workflow, runURL, elapsedSeconds()), nil
 			}
 			return CIOutcome{}, fmt.Errorf("could not wait for workflow %q: %w", cfg.Workflow, err)
 		}

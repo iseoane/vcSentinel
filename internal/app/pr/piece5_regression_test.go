@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
@@ -207,5 +208,28 @@ func TestRunPrCreateRecordsTheForceBypassDecisionOnlyWhenValidationIsRed(t *test
 	code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{Force: true, Reason: "approved exception"}, baseDeps(redRun), Wiring{})
 	if code != 0 || len(recorded) != 1 || !strings.Contains(output.String(), "disk full") {
 		t.Fatalf("record failure: code=%d decisions=%+v output=%q", code, recorded, output.String())
+	}
+}
+
+func TestRunConfiguredCIPendingSummaryReportsTheObservedElapsedTime(t *testing.T) {
+	clock := time.Unix(100, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &fakeCIClient{onFind: func() {
+		clock = clock.Add(3 * time.Second)
+		cancel()
+	}, findErr: context.Canceled}
+	got, err := RunConfiguredCI(ctx, io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 900, PollSeconds: 1}, client, func(string, string) string { return "origin" }, func() time.Time { return clock }, nil)
+	if err != nil || got.Status != "pending" || got.Summary != "still running after 3s" {
+		t.Fatalf("interrupted outcome=%+v err=%v", got, err)
+	}
+
+	clock = time.Unix(100, 0)
+	client = &fakeCIClient{runs: []*CIRun{{URL: "https://run", HeadSHA: piece5Head, Status: "in_progress"}}}
+	got, err = RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 2, PollSeconds: 1}, client, func(string, string) string { return "origin" }, func() time.Time { return clock }, func(context.Context, time.Duration) error {
+		clock = clock.Add(time.Second)
+		return nil
+	})
+	if err != nil || got.Status != "pending" || got.Summary != "still running after 2s" {
+		t.Fatalf("expiry outcome=%+v err=%v", got, err)
 	}
 }
