@@ -477,8 +477,9 @@ func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	}
 }
 
-// TestPublishPRWithGhFailureFallsBack: a failed gh publication still uses
-// the clipboard fallback so a pushed branch is not stranded without its body.
+// TestPublishPRWithGhFailurePropagates: a failed gh publication still uses the
+// clipboard fallback so a pushed branch is not stranded without its body, and
+// still reports the gh diagnostic because no PR was created.
 func TestPublishPRWithGhFailurePropagates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "template.md")
 	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
@@ -490,8 +491,8 @@ func TestPublishPRWithGhFailurePropagates(t *testing.T) {
 		runGh:       func(string, ...string) ([]byte, error) { return nil, errors.New("gh: repo not configured") },
 		copy:        func(body string) error { copied = body; return nil },
 	})
-	if err != nil {
-		t.Fatalf("gh failure fallback should succeed: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "gh: repo not configured") {
+		t.Fatalf("gh failure must surface its diagnostic, got %v", err)
 	}
 	if !fallback || copied != "body" {
 		t.Fatalf("fallback = (%v, %q), want true and the body", fallback, copied)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
@@ -231,5 +232,38 @@ func TestRunConfiguredCIPendingSummaryReportsTheObservedElapsedTime(t *testing.T
 	})
 	if err != nil || got.Status != "pending" || got.Summary != "still running after 2s" {
 		t.Fatalf("expiry outcome=%+v err=%v", got, err)
+	}
+}
+
+func TestRunPrCreateExitsNonZeroWhenGhPublicationFailsDespiteTheClipboardFallback(t *testing.T) {
+	entry := piece5Entry(t, review.VerdictOK)
+	recordedExit := -1
+	deps := DepsPrCreate{
+		CurrentBranch:    func(string) (string, error) { return entry.Branch, nil },
+		GetHeadSHAAt:     func(string) (string, error) { return entry.HeadSHA, nil },
+		GetGitCommonDir:  func(string) (string, error) { return "common", nil },
+		ReadPRReview:     func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+		EvidenceAtHEAD:   func(string, string) (bool, string, error) { return true, "", nil },
+		LoadConfig:       func(string) (config.Config, error) { return config.Config{}, nil },
+		GetGitDirAt:      func(string) (string, error) { return "gitdir", nil },
+		RunValidation:    func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
+		ComposeBody:      func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+		WriteTemplate:    func(string) (string, error) { return "template", nil },
+		RemoteBranchHead: func(string, string) (string, error) { return "", nil },
+		PublishStored: func(string, string, string, string) (string, bool, error) {
+			return "", true, errors.New("gh pr create failed: a pull request already exists")
+		},
+		RecordEvent: func(_, _ string, exit int, _ []string, _ ops.EventDetail, _ string) error {
+			recordedExit = exit
+			return nil
+		},
+	}
+	var output bytes.Buffer
+	code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{})
+	if code != 1 || !strings.Contains(output.String(), "a pull request already exists") {
+		t.Fatalf("code=%d output=%q", code, output.String())
+	}
+	if recordedExit != -1 {
+		t.Fatalf("a failed publication must not record a pr-create success event, got exit %d", recordedExit)
 	}
 }

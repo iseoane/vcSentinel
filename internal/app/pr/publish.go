@@ -62,7 +62,8 @@ func CopyToClipboardWith(text string, available func(string) bool, run func(stri
 // The title is supplied by the persisted Piece 4 entry and the body always
 // travels through a file. If gh is present but publication fails, the existing
 // clipboard fallback is still attempted so a successful push does not strand
-// the operator without the authored body.
+// the operator without the authored body, and the gh diagnostic is still
+// returned: no PR was created.
 func PublishPRWithTitle(worktree, title, templatePath, base string,
 	ghAvailable func(string) bool,
 	runGh func(worktree string, args ...string) ([]byte, error),
@@ -77,11 +78,10 @@ func PublishPRWithTitle(worktree, title, templatePath, base string,
 		if err == nil {
 			return strings.TrimSpace(string(output)), false, nil
 		}
-		fallbackErr := copyTemplateToClipboard(templatePath, copy)
-		if fallbackErr != nil {
+		if fallbackErr := copyTemplateToClipboard(templatePath, copy); fallbackErr != nil {
 			return "", true, fmt.Errorf("gh pr create failed: %v; clipboard fallback failed: %w", err, fallbackErr)
 		}
-		return "", true, nil
+		return "", true, fmt.Errorf("gh pr create failed: %w; the composed body is on the clipboard and in the template file", err)
 	}
 
 	if err := copyTemplateToClipboard(templatePath, copy); err != nil {
