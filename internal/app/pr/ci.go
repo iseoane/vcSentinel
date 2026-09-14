@@ -277,7 +277,7 @@ func (c CommandCIClient) FindRun(ctx context.Context, worktree, workflow, branch
 	}
 	view, err := c.RunGH(ctx, worktree, "run", "view", fmt.Sprint(run.ID), "--json", "databaseId,url,headSha,status,conclusion,jobs")
 	if err != nil {
-		if errors.Is(err, ErrCIRunDisappeared) || isCIRunDisappearance(err) {
+		if isCIRunDisappearance(err) {
 			return nil, ErrCIRunDisappeared
 		}
 		return nil, err

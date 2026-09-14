@@ -146,3 +146,66 @@ func TestRemoteBranchHeadWithParsesLsRemoteAndSkipsAnAbsentRef(t *testing.T) {
 		t.Fatalf("no remote: head=%q err=%v", head, err)
 	}
 }
+
+func TestRunPrCreateRecordsTheForceBypassDecisionOnlyWhenValidationIsRed(t *testing.T) {
+	entry := piece5Entry(t, review.VerdictOK)
+	redRun := []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1, Output: "FAIL"}}
+	var recorded []store.Decision
+	var recordedCommonDir string
+	recordErr := error(nil)
+	baseDeps := func(runs []validation.ValidationRun) DepsPrCreate {
+		return DepsPrCreate{
+			CurrentBranch:   func(string) (string, error) { return entry.Branch, nil },
+			GetHeadSHAAt:    func(string) (string, error) { return entry.HeadSHA, nil },
+			GetGitCommonDir: func(string) (string, error) { return "common", nil },
+			ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+			EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
+			LoadConfig: func(string) (config.Config, error) {
+				return config.Config{Validation: config.ValidationConfig{Capabilities: map[string]config.CapabilityConfig{"test": {Command: "go test ./..."}}}}, nil
+			},
+			GetGitDirAt: func(string) (string, error) { return "gitdir", nil },
+			RunValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
+				return runs, nil
+			},
+			ResolveActor: func(string) string { return "captain" },
+			RecordDecision: func(commonDir string, d *store.Decision) error {
+				recordedCommonDir = commonDir
+				recorded = append(recorded, *d)
+				return recordErr
+			},
+			ComposeBody:      func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+			WriteTemplate:    func(string) (string, error) { return "template", nil },
+			RemoteBranchHead: func(string, string) (string, error) { return "", nil },
+			PublishStored:    func(string, string, string, string) (string, bool, error) { return "url", false, nil },
+		}
+	}
+
+	var output bytes.Buffer
+	if code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{Force: true, Reason: "approved exception"}, baseDeps(redRun), Wiring{}); code != 0 {
+		t.Fatalf("red + force: code=%d output=%q", code, output.String())
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("decisions=%+v, want exactly one force bypass", recorded)
+	}
+	got := recorded[0]
+	if got.Decision != store.DecisionForceBypass || got.Scope != store.ScopePrCreate || got.Reason != "approved exception" || got.Actor != "captain" {
+		t.Fatalf("decision=%+v", got)
+	}
+	if recordedCommonDir != "common" {
+		t.Fatalf("decision written to %q, want the git common dir", recordedCommonDir)
+	}
+
+	recorded = nil
+	output.Reset()
+	if code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{Force: true, Reason: "approved exception"}, baseDeps(nil), Wiring{}); code != 0 || len(recorded) != 0 {
+		t.Fatalf("green + force: code=%d decisions=%+v output=%q", code, recorded, output.String())
+	}
+
+	recorded = nil
+	recordErr = errors.New("disk full")
+	output.Reset()
+	code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{Force: true, Reason: "approved exception"}, baseDeps(redRun), Wiring{})
+	if code != 0 || len(recorded) != 1 || !strings.Contains(output.String(), "disk full") {
+		t.Fatalf("record failure: code=%d decisions=%+v output=%q", code, recorded, output.String())
+	}
+}
