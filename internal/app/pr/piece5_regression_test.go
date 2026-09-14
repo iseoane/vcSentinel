@@ -24,7 +24,7 @@ func TestRunPrCreateRejectsSnapshotDriftBeforeCI(t *testing.T) {
 		CurrentBranch: func(string) (string, error) { return entry.Branch, nil },
 		GetHeadSHAAt: func(string) (string, error) {
 			headCalls++
-			if headCalls <= 2 {
+			if headCalls <= 1 {
 				return entry.HeadSHA, nil
 			}
 			return changedHead, nil
@@ -74,22 +74,31 @@ func TestRunPrCreateReportsPublicationFallbackFailure(t *testing.T) {
 	}
 }
 
-func TestRunPrCreateRefusesWhenTheRemoteBranchMovedOffTheReviewedHead(t *testing.T) {
+func TestRunPrCreateComparesTheRemoteBranchOnlyForThePushedCandidate(t *testing.T) {
 	entry := piece5Entry(t, review.VerdictOK)
 	foreignHead := strings.Repeat("c", 40)
 	published := false
+	compared := false
 	deps := DepsPrCreate{
-		CurrentBranch:    func(string) (string, error) { return entry.Branch, nil },
-		GetHeadSHAAt:     func(string) (string, error) { return entry.HeadSHA, nil },
-		GetGitCommonDir:  func(string) (string, error) { return "common", nil },
-		ReadPRReview:     func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
-		EvidenceAtHEAD:   func(string, string) (bool, string, error) { return true, "", nil },
-		LoadConfig:       func(string) (config.Config, error) { return config.Config{}, nil },
-		GetGitDirAt:      func(string) (string, error) { return "gitdir", nil },
-		RunValidation:    func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
-		ComposeBody:      func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
-		WriteTemplate:    func(string) (string, error) { return "template", nil },
-		RemoteBranchHead: func(string, string) (string, error) { return foreignHead, nil },
+		CurrentBranch:   func(string) (string, error) { return entry.Branch, nil },
+		GetHeadSHAAt:    func(string) (string, error) { return entry.HeadSHA, nil },
+		GetGitCommonDir: func(string) (string, error) { return "common", nil },
+		ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+		EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
+		LoadConfig: func(string) (config.Config, error) {
+			return config.Config{CI: config.CIConfig{Workflow: "verify.yml"}}, nil
+		},
+		GetGitDirAt:   func(string) (string, error) { return "gitdir", nil },
+		RunValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
+		RunCI: func(context.Context, io.Writer, string, string, string, config.CIConfig) (CIOutcome, error) {
+			return DefaultCIOutcome(), nil
+		},
+		ComposeBody:   func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+		WriteTemplate: func(string) (string, error) { return "template", nil },
+		RemoteBranchHead: func(string, string) (string, error) {
+			compared = true
+			return foreignHead, nil
+		},
 		PublishStored: func(string, string, string, string) (string, bool, error) {
 			published = true
 			return "url", false, nil
@@ -97,14 +106,14 @@ func TestRunPrCreateRefusesWhenTheRemoteBranchMovedOffTheReviewedHead(t *testing
 	}
 	var output bytes.Buffer
 	if code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{}); code != 1 || published || !strings.Contains(output.String(), "not the reviewed") {
-		t.Fatalf("code=%d published=%v output=%q", code, published, output.String())
+		t.Fatalf("pushed candidate: code=%d published=%v output=%q", code, published, output.String())
 	}
 
-	published = false
-	deps.RemoteBranchHead = func(string, string) (string, error) { return entry.HeadSHA, nil }
+	published, compared = false, false
+	deps.LoadConfig = func(string) (config.Config, error) { return config.Config{}, nil }
 	output.Reset()
-	if code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{}); code != 0 || !published {
-		t.Fatalf("matching remote head: code=%d published=%v output=%q", code, published, output.String())
+	if code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{}); code != 0 || !published || compared {
+		t.Fatalf("unpushed candidate: code=%d published=%v compared=%v output=%q", code, published, compared, output.String())
 	}
 }
 

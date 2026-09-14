@@ -97,15 +97,11 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		return 1
 	}
 
-	getHead := deps.GetHeadSHAAt
-	if getHead == nil && deps.GetHeadSHA != nil {
-		getHead = func(string) (string, error) { return deps.GetHeadSHA() }
-	}
-	if getHead == nil {
+	if deps.GetHeadSHAAt == nil {
 		fmt.Fprintln(w, "? could not resolve the current HEAD")
 		return 1
 	}
-	head, err := getHead(worktree)
+	head, err := deps.GetHeadSHAAt(worktree)
 	if err != nil || !store.IsValidGitObjectID(head) {
 		if err == nil {
 			err = fmt.Errorf("current HEAD %q is not a canonical Git object ID", head)
@@ -161,10 +157,6 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 	}
 	if deps.RunValidation == nil {
 		fmt.Fprintln(w, "? pr create is not wired to deterministic validation")
-		return 1
-	}
-	if err := verifyStoredSnapshot(worktree, branch, head, entry, deps); err != nil {
-		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
 	runs, err := deps.RunValidation(wiring.DefaultGateProfile, nil, validation.RunOptions{Worktree: worktree, Cfg: cfg})
@@ -252,9 +244,11 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		fmt.Fprintln(w, "? pr create is not wired to publication")
 		return 1
 	}
-	if err := verifyRemoteBranch(worktree, branch, head, deps); err != nil {
-		fmt.Fprintf(w, "? %v\n", err)
-		return 1
+	if strings.TrimSpace(cfg.CI.Workflow) != "" {
+		if err := verifyRemoteBranch(worktree, branch, head, deps); err != nil {
+			fmt.Fprintf(w, "? %v\n", err)
+			return 1
+		}
 	}
 	prURL, fallback, err := deps.PublishStored(worktree, entry.Title, templatePath, base)
 	if err != nil {
@@ -294,13 +288,10 @@ func resolveCommonDir(worktree string, deps DepsPrCreate) (string, error) {
 }
 
 func resolveGitDir(worktree string, deps DepsPrCreate) (string, error) {
-	if deps.GetGitDirAt != nil {
-		return deps.GetGitDirAt(worktree)
+	if deps.GetGitDirAt == nil {
+		return "", errors.New("pr create is not wired to the Git directory")
 	}
-	if deps.GetGitDir != nil {
-		return deps.GetGitDir()
-	}
-	return "", errors.New("pr create is not wired to the Git directory")
+	return deps.GetGitDirAt(worktree)
 }
 
 func resolvePublicationBase(worktree string, flags FlagsPrCreate, deps DepsPrCreate) (string, error) {
@@ -324,9 +315,10 @@ func resolvePublicationBase(worktree string, flags FlagsPrCreate, deps DepsPrCre
 	return resolved.PublicationBranch, nil
 }
 
-// verifyRemoteBranch refuses publication when the remote branch already carries
-// a head other than the reviewed one. The local snapshot cannot see another
-// actor pushing over the branch while CI is observed.
+// verifyRemoteBranch refuses publication when the branch Sentinel pushed no
+// longer carries the reviewed head. It applies only to that pushed candidate:
+// the local snapshot cannot see another actor pushing over the branch while CI
+// is observed.
 func verifyRemoteBranch(worktree, branch, head string, deps DepsPrCreate) error {
 	if deps.RemoteBranchHead == nil {
 		return errors.New("pr create is not wired to compare the remote branch")
@@ -350,14 +342,10 @@ func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEn
 	if currentBranch != branch {
 		return fmt.Errorf("current branch changed from %q to %q; re-run sentinel pr review", branch, currentBranch)
 	}
-	getHead := deps.GetHeadSHAAt
-	if getHead == nil && deps.GetHeadSHA != nil {
-		getHead = func(string) (string, error) { return deps.GetHeadSHA() }
-	}
-	if getHead == nil {
+	if deps.GetHeadSHAAt == nil {
 		return errors.New("could not re-check the current HEAD")
 	}
-	currentHead, err := getHead(worktree)
+	currentHead, err := deps.GetHeadSHAAt(worktree)
 	if err != nil {
 		return fmt.Errorf("could not re-check the current HEAD: %w", err)
 	}

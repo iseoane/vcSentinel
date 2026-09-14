@@ -186,8 +186,6 @@ func flagsPrCreateToPr(f flagsPrCreate) pr.FlagsPrCreate {
 func depsPrCreateToPr(d depsPrCreate) pr.DepsPrCreate {
 	return pr.DepsPrCreate{
 		LoadConfig:       d.loadConfig,
-		GetGitDir:        d.getGitDir,
-		GetHeadSHA:       d.getHeadSHA,
 		RunValidation:    d.runValidation,
 		RecordEvent:      d.recordEvent,
 		GetGitCommonDir:  d.getGitCommonDir,
@@ -364,8 +362,6 @@ func resolveBlobStore(worktree string) (review.StoreBlobs, error) {
 // the real functions.
 type depsPrCreate struct {
 	loadConfig     func(worktree string) (config.Config, error)
-	getGitDir      func() (string, error)
-	getHeadSHA     func() (string, error)
 	runValidation  func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
 	getGitDirAt    func(worktree string) (string, error)
 	getHeadSHAAt   func(worktree string) (string, error)
@@ -407,9 +403,7 @@ func realPrCreateDeps() depsPrCreate {
 		// must fail loudly just like gate/pr review/status, never continue
 		// silently with the default config.
 		loadConfig:    config.LoadStrictLocalConfig,
-		getGitDir:     git.GetGitDir,
 		getGitDirAt:   git.GetGitDirFrom,
-		getHeadSHA:    git.SHAHead,
 		getHeadSHAAt:  git.SHAHeadFrom,
 		currentBranch: git.CurrentBranchFrom,
 		readPRReview: func(commonDir, branch string) (*store.PRReviewEntry, error) {
