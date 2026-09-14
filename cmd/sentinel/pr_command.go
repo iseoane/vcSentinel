@@ -185,24 +185,25 @@ func flagsPrCreateToPr(f flagsPrCreate) pr.FlagsPrCreate {
 
 func depsPrCreateToPr(d depsPrCreate) pr.DepsPrCreate {
 	return pr.DepsPrCreate{
-		LoadConfig:      d.loadConfig,
-		GetGitDir:       d.getGitDir,
-		GetHeadSHA:      d.getHeadSHA,
-		RunValidation:   d.runValidation,
-		RecordEvent:     d.recordEvent,
-		GetGitCommonDir: d.getGitCommonDir,
-		RecordDecision:  d.recordDecision,
-		ResolveActor:    d.resolveActor,
-		ResolveParent:   d.resolveParent,
-		WriteTemplate:   d.writeTemplate,
-		GetGitDirAt:     d.getGitDirAt,
-		GetHeadSHAAt:    d.getHeadSHAAt,
-		CurrentBranch:   d.currentBranch,
-		ReadPRReview:    d.readPRReview,
-		EvidenceAtHEAD:  d.evidenceAtHEAD,
-		RunCI:           d.runCI,
-		ComposeBody:     d.composeBody,
-		PublishStored:   d.publishStored,
+		LoadConfig:       d.loadConfig,
+		GetGitDir:        d.getGitDir,
+		GetHeadSHA:       d.getHeadSHA,
+		RunValidation:    d.runValidation,
+		RecordEvent:      d.recordEvent,
+		GetGitCommonDir:  d.getGitCommonDir,
+		RecordDecision:   d.recordDecision,
+		ResolveActor:     d.resolveActor,
+		ResolveParent:    d.resolveParent,
+		WriteTemplate:    d.writeTemplate,
+		GetGitDirAt:      d.getGitDirAt,
+		GetHeadSHAAt:     d.getHeadSHAAt,
+		CurrentBranch:    d.currentBranch,
+		ReadPRReview:     d.readPRReview,
+		EvidenceAtHEAD:   d.evidenceAtHEAD,
+		RunCI:            d.runCI,
+		ComposeBody:      d.composeBody,
+		PublishStored:    d.publishStored,
+		RemoteBranchHead: d.remoteBranchHead,
 	}
 }
 
@@ -313,7 +314,7 @@ func copyToClipboardWith(text string, available func(string) bool, run func(stri
 	return pr.CopyToClipboardWith(text, available, run)
 }
 
-// publishPROptions groups the injectable dependencies of publishPRWith:
+// publishPROptions groups the injectable dependencies of publishPRStoredWith:
 // ghAvailable decides whether gh is on the PATH, runGh launches gh and returns
 // its output (full args, including the worktree as cwd), copy is used only in
 // the fallback (clipboard).
@@ -342,14 +343,15 @@ func publishPRStored(worktree, title, templatePath, base string) (string, bool, 
 	})
 }
 
-// publishPRWith is retained for package-main compatibility tests. New create
-// calls use publishPRStoredWith so the persisted title is explicit.
-func publishPRWith(worktree, templatePath, base string, options publishPROptions) (string, bool, error) {
-	return publishPRStoredWith(worktree, "", templatePath, base, options)
-}
-
 func publishPRStoredWith(worktree, title, templatePath, base string, options publishPROptions) (string, bool, error) {
 	return pr.PublishPRWithTitle(worktree, title, templatePath, base, options.ghAvailable, options.runGh, options.copy)
+}
+
+func remoteBranchHead(worktree, branch string) (string, error) {
+	return pr.RemoteBranchHeadWith(context.Background(), worktree, branch, git.BranchRemoteFrom,
+		func(ctx context.Context, worktree string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, "git", append([]string{"-C", worktree}, args...)...).Output()
+		})
 }
 
 func resolveBlobStore(worktree string) (review.StoreBlobs, error) {
@@ -373,7 +375,10 @@ type depsPrCreate struct {
 	runCI          func(context.Context, io.Writer, string, string, string, config.CIConfig) (pr.CIOutcome, error)
 	composeBody    func(store.PRReviewEntry, pr.CIOutcome) (string, error)
 	publishStored  func(worktree, title, templatePath, base string) (string, bool, error)
-	recordEvent    func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
+	// remoteBranchHead reads the SHA the remote branch points at so publication
+	// refuses when another actor pushed over the reviewed head.
+	remoteBranchHead func(worktree, branch string) (string, error)
+	recordEvent      func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	// getGitCommonDir and recordDecision cover T7.5 (M3 report): the --force
 	// that overrides a red validation stops being an untraceable exception.
 	// store.NewStore requires the git common dir (shared across linked
@@ -425,10 +430,11 @@ func realPrCreateDeps() depsPrCreate {
 				},
 			}, git.BranchRemoteFrom, nil, nil)
 		},
-		composeBody:     pr.ComposePRBody,
-		publishStored:   publishPRStored,
-		recordEvent:     ops.RecordEvent,
-		getGitCommonDir: git.GetGitCommonDir,
+		composeBody:      pr.ComposePRBody,
+		publishStored:    publishPRStored,
+		remoteBranchHead: remoteBranchHead,
+		recordEvent:      ops.RecordEvent,
+		getGitCommonDir:  git.GetGitCommonDir,
 		recordDecision: func(commonDir string, d *store.Decision) error {
 			return store.NewStore(commonDir).RecordDecision(d)
 		},

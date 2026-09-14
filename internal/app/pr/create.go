@@ -54,24 +54,25 @@ func PrCreateEventDetail(prURL string, fallback, chain, force bool, reason strin
 // collaborators are intentionally absent: this command only consumes the
 // persisted entry and deterministic CI/validation evidence.
 type DepsPrCreate struct {
-	LoadConfig      func(worktree string) (config.Config, error)
-	GetGitDir       func() (string, error)
-	GetGitDirAt     func(worktree string) (string, error)
-	GetHeadSHA      func() (string, error)
-	GetHeadSHAAt    func(worktree string) (string, error)
-	CurrentBranch   func(worktree string) (string, error)
-	GetGitCommonDir func(worktree string) (string, error)
-	ReadPRReview    func(commonDir, branch string) (*store.PRReviewEntry, error)
-	EvidenceAtHEAD  func(worktree, evidencePath string) (bool, string, error)
-	RunValidation   func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
-	RunCI           func(context.Context, io.Writer, string, string, string, config.CIConfig) (CIOutcome, error)
-	ComposeBody     func(store.PRReviewEntry, CIOutcome) (string, error)
-	PublishStored   func(worktree, title, templatePath, base string) (string, bool, error)
-	WriteTemplate   func(string) (string, error)
-	RecordEvent     func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
-	RecordDecision  func(commonDir string, d *store.Decision) error
-	ResolveActor    func(worktree string) string
-	ResolveParent   func(git.ParentResolutionOptions) (git.ParentResolution, error)
+	LoadConfig       func(worktree string) (config.Config, error)
+	GetGitDir        func() (string, error)
+	GetGitDirAt      func(worktree string) (string, error)
+	GetHeadSHA       func() (string, error)
+	GetHeadSHAAt     func(worktree string) (string, error)
+	CurrentBranch    func(worktree string) (string, error)
+	GetGitCommonDir  func(worktree string) (string, error)
+	ReadPRReview     func(commonDir, branch string) (*store.PRReviewEntry, error)
+	EvidenceAtHEAD   func(worktree, evidencePath string) (bool, string, error)
+	RunValidation    func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
+	RunCI            func(context.Context, io.Writer, string, string, string, config.CIConfig) (CIOutcome, error)
+	ComposeBody      func(store.PRReviewEntry, CIOutcome) (string, error)
+	RemoteBranchHead func(worktree, branch string) (string, error)
+	PublishStored    func(worktree, title, templatePath, base string) (string, bool, error)
+	WriteTemplate    func(string) (string, error)
+	RecordEvent      func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
+	RecordDecision   func(commonDir string, d *store.Decision) error
+	ResolveActor     func(worktree string) string
+	ResolveParent    func(git.ParentResolutionOptions) (git.ParentResolution, error)
 }
 
 // RunPrCreateWith validates and publishes exactly one stored Piece 4 review.
@@ -251,6 +252,10 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		fmt.Fprintln(w, "? pr create is not wired to publication")
 		return 1
 	}
+	if err := verifyRemoteBranch(worktree, branch, head, deps); err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
 	prURL, fallback, err := deps.PublishStored(worktree, entry.Title, templatePath, base)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
@@ -317,6 +322,24 @@ func resolvePublicationBase(worktree string, flags FlagsPrCreate, deps DepsPrCre
 		return "", errors.New("stacked PR parent has no publishable branch")
 	}
 	return resolved.PublicationBranch, nil
+}
+
+// verifyRemoteBranch refuses publication when the remote branch already carries
+// a head other than the reviewed one. The local snapshot cannot see another
+// actor pushing over the branch while CI is observed.
+func verifyRemoteBranch(worktree, branch, head string, deps DepsPrCreate) error {
+	if deps.RemoteBranchHead == nil {
+		return errors.New("pr create is not wired to compare the remote branch")
+	}
+	remoteHead, err := deps.RemoteBranchHead(worktree, branch)
+	if err != nil {
+		return fmt.Errorf("could not compare the remote branch %q: %w", branch, err)
+	}
+	remoteHead = strings.TrimSpace(remoteHead)
+	if remoteHead == "" || remoteHead == head {
+		return nil
+	}
+	return fmt.Errorf("remote branch %q now points at %s, not the reviewed %s; re-run sentinel pr review", branch, shortSHA(remoteHead), shortSHA(head))
 }
 
 func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEntry, deps DepsPrCreate) error {

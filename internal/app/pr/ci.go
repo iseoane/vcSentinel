@@ -101,36 +101,26 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 			return CIOutcome{}, fmt.Errorf("could not observe workflow %q: %w", cfg.Workflow, err)
 		}
 		runURL := ""
+		staleHead := ""
 		if run != nil {
 			runURL = run.URL
 			if strings.EqualFold(run.Status, "completed") {
-				if run.HeadSHA != head {
-					return CIOutcome{
-						Status:  "warning",
-						Icon:    "⚠️",
-						Summary: fmt.Sprintf("the last run covers %s, not this head", shortSHA(run.HeadSHA)),
-						URL:     run.URL,
-					}, nil
+				if run.HeadSHA == head {
+					return completedCIOutcome(cfg.Workflow, run), nil
 				}
-				if strings.EqualFold(run.Conclusion, "success") {
-					return CIOutcome{
-						Status:  "passed",
-						Icon:    "✅",
-						Summary: fmt.Sprintf("%s succeeded", cfg.Workflow),
-						URL:     run.URL,
-					}, nil
-				}
-				return CIOutcome{
-					Status:     "failed",
-					Icon:       "❌",
-					Summary:    fmt.Sprintf("%s failed", cfg.Workflow),
-					URL:        run.URL,
-					FailedJobs: run.FailedJobs,
-				}, nil
+				staleHead = run.HeadSHA
 			}
 		}
 
 		if elapsed := now().Sub(started); elapsed >= time.Duration(cfg.WaitSeconds)*time.Second {
+			if staleHead != "" {
+				return CIOutcome{
+					Status:  "warning",
+					Icon:    "⚠️",
+					Summary: fmt.Sprintf("the last run covers %s, not this head", shortSHA(staleHead)),
+					URL:     runURL,
+				}, nil
+			}
 			if run == nil {
 				return noObservableCIOutcome(cfg.Workflow), nil
 			}
@@ -141,6 +131,36 @@ func RunConfiguredCI(ctx context.Context, out io.Writer, worktree, branch, head 
 				return pendingCIOutcome(cfg.Workflow, runURL, cfg.WaitSeconds), nil
 			}
 			return CIOutcome{}, fmt.Errorf("could not wait for workflow %q: %w", cfg.Workflow, err)
+		}
+	}
+}
+
+// completedCIOutcome renders a terminal run for this head. GitHub Actions
+// concludes runs that never failed as cancelled, skipped, or neutral; those are
+// reported as warnings rather than as a CI failure.
+func completedCIOutcome(workflow string, run *CIRun) CIOutcome {
+	switch strings.ToLower(strings.TrimSpace(run.Conclusion)) {
+	case "success":
+		return CIOutcome{
+			Status:  "passed",
+			Icon:    "✅",
+			Summary: fmt.Sprintf("%s succeeded", workflow),
+			URL:     run.URL,
+		}
+	case "cancelled", "skipped", "neutral":
+		return CIOutcome{
+			Status:  "warning",
+			Icon:    "⚠️",
+			Summary: fmt.Sprintf("%s concluded as %s", workflow, strings.ToLower(strings.TrimSpace(run.Conclusion))),
+			URL:     run.URL,
+		}
+	default:
+		return CIOutcome{
+			Status:     "failed",
+			Icon:       "❌",
+			Summary:    fmt.Sprintf("%s failed", workflow),
+			URL:        run.URL,
+			FailedJobs: run.FailedJobs,
 		}
 	}
 }
@@ -301,4 +321,30 @@ func isFailingJobConclusion(conclusion string) bool {
 	default:
 		return false
 	}
+}
+
+// RemoteBranchHeadWith resolves the SHA the remote branch currently points at,
+// using the same remote resolution as the CI push. An empty result means the
+// remote does not carry that branch yet.
+func RemoteBranchHeadWith(ctx context.Context, worktree, branch string, remote func(string, string) string, runGit func(context.Context, string, ...string) ([]byte, error)) (string, error) {
+	if remote == nil {
+		remote = git.BranchRemoteFrom
+	}
+	if runGit == nil {
+		return "", errors.New("git command runner is unavailable")
+	}
+	remoteName := strings.TrimSpace(remote(worktree, branch))
+	if remoteName == "" {
+		return "", nil
+	}
+	output, err := runGit(ctx, worktree, "ls-remote", remoteName, "refs/heads/"+branch)
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(string(output))
+	if line == "" {
+		return "", nil
+	}
+	sha, _, _ := strings.Cut(line, "\t")
+	return strings.TrimSpace(sha), nil
 }

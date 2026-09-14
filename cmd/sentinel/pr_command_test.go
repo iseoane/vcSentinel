@@ -405,7 +405,7 @@ func TestPublishPRFallbackReReadsTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var copied string
-	url, fallback, err := publishPRWith("worktree", path, "", publishPROptions{
+	url, fallback, err := publishPRStoredWith("worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return false },
 		copy:        func(text string) error { copied = text; return nil },
 	})
@@ -427,7 +427,7 @@ func TestPublishPRFallbackReReadsTheFile(t *testing.T) {
 // write and the re-read, the error is explicit and the fallback is marked.
 func TestPublishPRFallbackUnreadableFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ghost.md")
-	_, fallback, err := publishPRWith("worktree", path, "", publishPROptions{
+	_, fallback, err := publishPRStoredWith("worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return false },
 		copy:        func(string) error { t.Fatal("without content it must not copy anything"); return nil },
 	})
@@ -485,7 +485,7 @@ func TestPublishPRWithGhFailurePropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	var copied string
-	_, fallback, err := publishPRWith("the-worktree", path, "", publishPROptions{
+	_, fallback, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh:       func(string, ...string) ([]byte, error) { return nil, errors.New("gh: repo not configured") },
 		copy:        func(body string) error { copied = body; return nil },
@@ -506,7 +506,7 @@ func TestPublishPRWithExplicitBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seenArgs []string
-	_, _, err := publishPRWith("the-worktree", path, "develop", publishPROptions{
+	_, _, err := publishPRStoredWith("the-worktree", "Stored review title", path, "develop", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			seenArgs = args
@@ -517,7 +517,7 @@ func TestPublishPRWithExplicitBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fake gh should not fail: %v", err)
 	}
-	expected := []string{"pr", "create", "--draft", "--title", "", "--base", "develop", "--body-file", path}
+	expected := []string{"pr", "create", "--draft", "--title", "Stored review title", "--base", "develop", "--body-file", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("with --base the gh arguments = %v, expected %v", seenArgs, expected)
 	}
@@ -531,7 +531,7 @@ func TestPublishPRWithEmptyBaseAddsNoFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seenArgs []string
-	_, _, err := publishPRWith("the-worktree", path, "", publishPROptions{
+	_, _, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			seenArgs = args
@@ -542,7 +542,7 @@ func TestPublishPRWithEmptyBaseAddsNoFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fake gh should not fail: %v", err)
 	}
-	expected := []string{"pr", "create", "--draft", "--title", "", "--body-file", path}
+	expected := []string{"pr", "create", "--draft", "--title", "Stored review title", "--body-file", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("without --base the gh arguments = %v, expected %v", seenArgs, expected)
 	}

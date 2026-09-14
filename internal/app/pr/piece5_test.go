@@ -222,7 +222,9 @@ func TestRunConfiguredCIOrdersPushDispatchPollAndReportsOutcomes(t *testing.T) {
 	}{
 		{"success", &CIRun{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "success"}, "passed", "✅"},
 		{"failure", &CIRun{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "failure", FailedJobs: []string{"unit"}}, "failed", "❌"},
-		{"wrong head", &CIRun{URL: "https://run", HeadSHA: strings.Repeat("b", 40), Status: "completed", Conclusion: "success"}, "warning", "⚠️"},
+		{"cancelled", &CIRun{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "cancelled"}, "warning", "⚠️"},
+		{"skipped", &CIRun{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "skipped"}, "warning", "⚠️"},
+		{"neutral", &CIRun{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "neutral"}, "warning", "⚠️"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -245,6 +247,32 @@ func TestRunConfiguredCIOrdersPushDispatchPollAndReportsOutcomes(t *testing.T) {
 				t.Fatalf("push ref=%q, want reviewed head %q", client.pushRef, piece5Head)
 			}
 		})
+	}
+}
+
+func TestRunConfiguredCIKeepsPollingPastAStaleCompletedRun(t *testing.T) {
+	staleHead := strings.Repeat("b", 40)
+	clock := time.Unix(100, 0)
+	client := &fakeCIClient{runs: []*CIRun{
+		{URL: "https://stale", HeadSHA: staleHead, Status: "completed", Conclusion: "success"},
+		{URL: "https://run", HeadSHA: piece5Head, Status: "completed", Conclusion: "success"},
+	}}
+	got, err := RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 3, PollSeconds: 1}, client, func(string, string) string { return "origin" }, func() time.Time { return clock }, func(context.Context, time.Duration) error {
+		clock = clock.Add(time.Second)
+		return nil
+	})
+	if err != nil || got.Status != "passed" || got.URL != "https://run" {
+		t.Fatalf("outcome=%+v err=%v", got, err)
+	}
+
+	clock = time.Unix(100, 0)
+	client = &fakeCIClient{runs: []*CIRun{{URL: "https://stale", HeadSHA: staleHead, Status: "completed", Conclusion: "success"}}}
+	got, err = RunConfiguredCI(context.Background(), io.Discard, "worktree", "feature/piece5", piece5Head, config.CIConfig{Workflow: "verify.yml", WaitSeconds: 2, PollSeconds: 1}, client, func(string, string) string { return "origin" }, func() time.Time { return clock }, func(context.Context, time.Duration) error {
+		clock = clock.Add(time.Second)
+		return nil
+	})
+	if err != nil || got.Status != "warning" || got.URL != "https://stale" || !strings.Contains(got.Summary, "not this head") {
+		t.Fatalf("stale outcome=%+v err=%v", got, err)
 	}
 }
 
@@ -423,6 +451,7 @@ func TestRunPrCreatePreflightRejectsBeforeValidationOrPublication(t *testing.T) 
 			events = append(events, "validation")
 			return nil, nil
 		},
+		RemoteBranchHead: func(string, string) (string, error) { return "", nil },
 		PublishStored: func(string, string, string, string) (string, bool, error) {
 			events = append(events, "publish")
 			return "", false, nil
@@ -441,16 +470,17 @@ func TestRunPrCreatePublishesSemanticBlockWithoutCallingSemanticReview(t *testin
 	entry := piece5Entry(t, review.VerdictBlock)
 	var published bool
 	deps := DepsPrCreate{
-		CurrentBranch:   func(string) (string, error) { return entry.Branch, nil },
-		GetHeadSHAAt:    func(string) (string, error) { return entry.HeadSHA, nil },
-		GetGitCommonDir: func(string) (string, error) { return "common", nil },
-		ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
-		EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
-		LoadConfig:      func(string) (config.Config, error) { return config.Config{}, nil },
-		GetGitDirAt:     func(string) (string, error) { return "gitdir", nil },
-		RunValidation:   func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
-		ComposeBody:     func(got store.PRReviewEntry, outcome CIOutcome) (string, error) { return got.Body, nil },
-		WriteTemplate:   func(string) (string, error) { return "template", nil },
+		CurrentBranch:    func(string) (string, error) { return entry.Branch, nil },
+		GetHeadSHAAt:     func(string) (string, error) { return entry.HeadSHA, nil },
+		GetGitCommonDir:  func(string) (string, error) { return "common", nil },
+		ReadPRReview:     func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+		EvidenceAtHEAD:   func(string, string) (bool, string, error) { return true, "", nil },
+		LoadConfig:       func(string) (config.Config, error) { return config.Config{}, nil },
+		GetGitDirAt:      func(string) (string, error) { return "gitdir", nil },
+		RunValidation:    func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) { return nil, nil },
+		ComposeBody:      func(got store.PRReviewEntry, outcome CIOutcome) (string, error) { return got.Body, nil },
+		WriteTemplate:    func(string) (string, error) { return "template", nil },
+		RemoteBranchHead: func(string, string) (string, error) { return "", nil },
 		PublishStored: func(_ string, title, path, base string) (string, bool, error) {
 			published = title == entry.Title && path == "template" && base == "main"
 			return "https://github.com/example/repo/pull/5", false, nil
@@ -492,8 +522,9 @@ func TestRunPrCreatePublishesStackedPRAgainstResolvedParent(t *testing.T) {
 					resolved = options
 					return git.ParentResolution{Reference: "origin/feature-a", PublicationBranch: "feature-a"}, nil
 				},
-				ComposeBody:   func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
-				WriteTemplate: func(string) (string, error) { return "template", nil },
+				ComposeBody:      func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+				WriteTemplate:    func(string) (string, error) { return "template", nil },
+				RemoteBranchHead: func(string, string) (string, error) { return "", nil },
 				PublishStored: func(_ string, _ string, _ string, base string) (string, bool, error) {
 					publishedBase = base
 					return "https://github.com/example/repo/pull/5", false, nil
@@ -652,7 +683,8 @@ func TestRunPrCreatePublishesWhenCIHasNoObservableRun(t *testing.T) {
 			gotBody = body
 			return body, err
 		},
-		WriteTemplate: func(string) (string, error) { return "template", nil },
+		WriteTemplate:    func(string) (string, error) { return "template", nil },
+		RemoteBranchHead: func(string, string) (string, error) { return "", nil },
 		PublishStored: func(_ string, title, templatePath, base string) (string, bool, error) {
 			published = title == entry.Title && templatePath == "template" && base == "main"
 			return "https://github.com/example/repo/pull/5", false, nil
@@ -683,9 +715,10 @@ func TestRunPrCreateForceRequiresReasonAndPublishesRedValidation(t *testing.T) {
 			RunValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
 				return []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1, Output: "FAIL"}}, nil
 			},
-			ComposeBody:   func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
-			WriteTemplate: func(string) (string, error) { return "template", nil },
-			PublishStored: func(string, string, string, string) (string, bool, error) { return "url", false, nil },
+			ComposeBody:      func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+			WriteTemplate:    func(string) (string, error) { return "template", nil },
+			RemoteBranchHead: func(string, string) (string, error) { return "", nil },
+			PublishStored:    func(string, string, string, string) (string, bool, error) { return "url", false, nil },
 		}
 	}
 	var output bytes.Buffer
