@@ -267,3 +267,65 @@ func TestRunPrCreateExitsNonZeroWhenGhPublicationFailsDespiteTheClipboardFallbac
 		t.Fatalf("a failed publication must not record a pr-create success event, got exit %d", recordedExit)
 	}
 }
+
+func TestRunPrCreateBlocksPublicationOnRedValidationWithoutForce(t *testing.T) {
+	entry := piece5Entry(t, review.VerdictOK)
+	redRuns := []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1, Output: "FAIL internal/app/pr"}}
+	var published, recordedDecision bool
+	deps := DepsPrCreate{
+		CurrentBranch:   func(string) (string, error) { return entry.Branch, nil },
+		GetHeadSHAAt:    func(string) (string, error) { return entry.HeadSHA, nil },
+		GetGitCommonDir: func(string) (string, error) { return "common", nil },
+		ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+		EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
+		LoadConfig: func(string) (config.Config, error) {
+			return config.Config{Validation: config.ValidationConfig{Capabilities: map[string]config.CapabilityConfig{"test": {Command: "go test ./..."}}}}, nil
+		},
+		GetGitDirAt: func(string) (string, error) { return "gitdir", nil },
+		RunValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
+			return redRuns, nil
+		},
+		RecordDecision: func(string, *store.Decision) error { recordedDecision = true; return nil },
+		ComposeBody:    func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+		WriteTemplate:  func(string) (string, error) { return "template", nil },
+		PublishStored:  func(string, string, string, string) (string, bool, error) { published = true; return "url", false, nil },
+	}
+	var output bytes.Buffer
+	code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{})
+	if code != 1 || published || recordedDecision {
+		t.Fatalf("code=%d published=%v decision=%v output=%q", code, published, recordedDecision, output.String())
+	}
+	for _, want := range []string{"Red validation", "test", "go test ./...", "FAIL internal/app/pr", "--force"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("output %q misses %q", output.String(), want)
+		}
+	}
+}
+
+func TestRunPrCreateExitsOnConfigLoadErrorWithoutValidatingOrPublishing(t *testing.T) {
+	entry := piece5Entry(t, review.VerdictOK)
+	var validated, published bool
+	deps := DepsPrCreate{
+		CurrentBranch:   func(string) (string, error) { return entry.Branch, nil },
+		GetHeadSHAAt:    func(string) (string, error) { return entry.HeadSHA, nil },
+		GetGitCommonDir: func(string) (string, error) { return "common", nil },
+		ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
+		EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
+		LoadConfig: func(string) (config.Config, error) {
+			return config.Config{}, errors.New("vassentinel.yml: unknown key")
+		},
+		GetGitDirAt: func(string) (string, error) { return "gitdir", nil },
+		RunValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
+			validated = true
+			return nil, nil
+		},
+		ComposeBody:   func(store.PRReviewEntry, CIOutcome) (string, error) { return entry.Body, nil },
+		WriteTemplate: func(string) (string, error) { return "template", nil },
+		PublishStored: func(string, string, string, string) (string, bool, error) { published = true; return "url", false, nil },
+	}
+	var output bytes.Buffer
+	code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{})
+	if code != 1 || validated || published || !strings.Contains(output.String(), "vassentinel.yml: unknown key") {
+		t.Fatalf("code=%d validated=%v published=%v output=%q", code, validated, published, output.String())
+	}
+}
