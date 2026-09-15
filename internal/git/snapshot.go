@@ -73,6 +73,9 @@ func snapshotsDir() (string, error) {
 // (no branch, no ref referencing it) with "git commit-tree": that commit
 // adds no history, it only serves as a valid entry point for the checkout.
 func CreateSnapshot(treeOID string) (string, error) {
+	if !treeOIDIsValid(treeOID) {
+		return "", fmt.Errorf("invalid snapshot tree object id %q", treeOID)
+	}
 	// See snapshotMu: concurrent creation inside one process raced the git
 	// worktree administrative area and made repair fail intermittently.
 	snapshotMu.Lock()

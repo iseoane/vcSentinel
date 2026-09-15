@@ -62,6 +62,27 @@ func TestPurgeKeepsFreshSnapshotsWithoutHolders(t *testing.T) {
 	}
 }
 
+func TestCreateSnapshotRejectsMalformedTreeOID(t *testing.T) {
+	_, _ = snapshotTestTree(t)
+	snapshots := snapshotDirectoryForTest(t)
+	root := filepath.Dir(snapshots)
+	before, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed := "../" + strings.Repeat("a", 40)
+	if _, err := CreateSnapshot(malformed); err == nil || !strings.Contains(err.Error(), "invalid snapshot tree object id") {
+		t.Fatalf("CreateSnapshot(%q) error = %v, expected invalid tree OID", malformed, err)
+	}
+	after, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("malformed tree OID changed the snapshot layout: before=%d after=%d", len(before), len(after))
+	}
+}
+
 func TestPurgeKeepsSnapshotWithLiveHolder(t *testing.T) {
 	_, tree := snapshotTestTree(t)
 	path, release, err := AcquireSnapshot(tree)
@@ -99,27 +120,53 @@ func TestPurgeKeepsPrimarySnapshotLockFile(t *testing.T) {
 }
 
 func TestPurgeDoesNotRemoveAgedTemporaryWithPublicationLock(t *testing.T) {
+	requireRealGit(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := buildGitShim(t)
 	dir, tree := snapshotTestTree(t)
 	readyPath := filepath.Join(t.TempDir(), "ready")
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotPublicationLockHelper$")
+	releasePath := filepath.Join(t.TempDir(), "release")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCreateSnapshotPublicationHelper$")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		"VAS_SENTINEL_SNAPSHOT_PUBLICATION_HELPER=1",
-		"VAS_SENTINEL_SNAPSHOT_PUBLICATION_TREE="+tree,
-		"VAS_SENTINEL_SNAPSHOT_PUBLICATION_READY="+readyPath,
+		"VAS_SENTINEL_CREATE_SNAPSHOT_HELPER=1",
+		"VAS_SENTINEL_CREATE_SNAPSHOT_TREE="+tree,
+		"VAS_SENTINEL_REAL_GIT="+realGit,
+		"VAS_SENTINEL_GIT_SHIM_BLOCK_ADD=1",
+		"VAS_SENTINEL_GIT_SHIM_READY="+readyPath,
+		"VAS_SENTINEL_GIT_SHIM_RELEASE="+releasePath,
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	waited := false
 	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
 	}()
 	waitForFile(t, readyPath)
 
-	path := filepath.Join(snapshotDirectoryForTest(t), fmt.Sprintf(".%s.tmp-%d-%d", tree, cmd.Process.Pid, time.Now().UnixNano()))
-	if err := os.MkdirAll(path, 0755); err != nil {
+	snapshots := snapshotDirectoryForTest(t)
+	prefix := fmt.Sprintf(".%s.tmp-%d-", tree, cmd.Process.Pid)
+	entries, err := os.ReadDir(snapshots)
+	if err != nil {
 		t.Fatal(err)
+	}
+	var path string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			path = filepath.Join(snapshots, entry.Name())
+			break
+		}
+	}
+	if path == "" {
+		t.Fatalf("CreateSnapshot helper did not publish a temporary worktree")
 	}
 	old := time.Now().Add(-SnapshotRetention - time.Hour)
 	if err := os.Chtimes(path, old, old); err != nil {
@@ -130,32 +177,22 @@ func TestPurgeDoesNotRemoveAgedTemporaryWithPublicationLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("an aged temporary being published under the snapshot lock must survive: %v", err)
+		t.Fatalf("an aged temporary being published by CreateSnapshot must survive: %v", err)
 	}
+	if err := os.WriteFile(releasePath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("CreateSnapshot helper failed after release: %v", err)
+	}
+	waited = true
 }
 
-func TestSnapshotPublicationLockHelper(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_SNAPSHOT_PUBLICATION_HELPER") != "1" {
-		return
-	}
-	snapshots, err := snapshotsDir()
-	if err != nil {
-		os.Exit(2)
-	}
-	lockPath, err := snapshotLockPath(snapshots, os.Getenv("VAS_SENTINEL_SNAPSHOT_PUBLICATION_TREE"))
-	if err != nil {
-		os.Exit(3)
-	}
-	lock, acquired, err := lockSnapshot(lockPath, false, true)
-	if err != nil || !acquired {
-		os.Exit(4)
-	}
-	defer lock.Close()
-	if err := os.WriteFile(os.Getenv("VAS_SENTINEL_SNAPSHOT_PUBLICATION_READY"), nil, 0600); err != nil {
-		os.Exit(5)
-	}
-	for {
-		time.Sleep(time.Second)
+func TestCreateSnapshotPublicationHelper(t *testing.T) {
+	if os.Getenv("VAS_SENTINEL_CREATE_SNAPSHOT_HELPER") == "1" {
+		if _, err := CreateSnapshot(os.Getenv("VAS_SENTINEL_CREATE_SNAPSHOT_TREE")); err != nil {
+			os.Exit(2)
+		}
 	}
 }
 
@@ -266,6 +303,7 @@ func TestPurgeCleansSidecarsWhenPruneFails(t *testing.T) {
 		}
 	}
 	t.Setenv("VAS_SENTINEL_REAL_GIT", realGit)
+	t.Setenv("VAS_SENTINEL_GIT_SHIM_FAIL", "1")
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	if err := PurgeSnapshots(SnapshotRetention); err == nil {
@@ -290,11 +328,12 @@ func buildGitShim(t *testing.T) string {
 import (
 	"os"
 	"os/exec"
+	"time"
 )
 
 func main() {
 	args := os.Args[1:]
-	if len(args) >= 2 && args[0] == "worktree" && (args[1] == "repair" || args[1] == "prune") {
+	if os.Getenv("VAS_SENTINEL_GIT_SHIM_FAIL") == "1" && len(args) >= 2 && args[0] == "worktree" && (args[1] == "repair" || args[1] == "prune") {
 		os.Exit(42)
 	}
 	cmd := exec.Command(os.Getenv("VAS_SENTINEL_REAL_GIT"), args...)
@@ -304,6 +343,17 @@ func main() {
 			os.Exit(exitErr.ExitCode())
 		}
 		os.Exit(1)
+	}
+	if os.Getenv("VAS_SENTINEL_GIT_SHIM_BLOCK_ADD") == "1" && len(args) >= 2 && args[0] == "worktree" && args[1] == "add" {
+		if err := os.WriteFile(os.Getenv("VAS_SENTINEL_GIT_SHIM_READY"), nil, 0600); err != nil {
+			os.Exit(3)
+		}
+		for {
+			if _, err := os.Stat(os.Getenv("VAS_SENTINEL_GIT_SHIM_RELEASE")); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
 `
