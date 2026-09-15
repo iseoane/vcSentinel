@@ -13,11 +13,11 @@ avoid it is already written and simply not wired to the per-commit path.
 Decided work order, superseded 2026-09-09 by
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),
 which allocates one question to each command and orders the work as five
-pieces. Pieces 1 (trailer-backed intent), 2 (`review` is the only per-commit
-authority, commit 89cab36), 3 (`gate` stops auditing, commit 144c9c8), and 4
-(`pr review` authors and persists the branch judgement) are done. The remaining
-work is **item 11 (piece 5)**: make `pr create` consume that judgement; item 4
-is closed by dissolution. The implementation plans live under `docs/design/`,
+pieces. All five are done: 1 (trailer-backed intent), 2 (`review` is the only
+per-commit authority, commit 89cab36), 3 (`gate` stops auditing, commit
+144c9c8), 4 (`pr review` authors and persists the branch judgement) and 5
+(item 11 — `pr create` consumes that judgement and publishes it); item 4 is
+closed by dissolution. The implementation plans live under `docs/design/`,
 linked from each item. The paragraph below is the ordering that preceded that
 design and is kept because the items still carry its numbering.
 
@@ -671,6 +671,11 @@ Found 2026-09-09 by tracing the flows conceptually rather than by a failure.
   restating a diff.
 
 ## 11. Let `pr create` compose the report instead of recomputing it
+
+**Closed: piece 5 is implemented.** `pr create` reads the persisted `pr review`
+entry, replaces only the `ci` step and publishes the stored title and body. The
+text below is kept as the record of why the item existed and describes the code
+as it was before that change.
 
 **This item is now PIECE 5 of
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md),

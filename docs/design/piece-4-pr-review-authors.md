@@ -22,8 +22,8 @@ Two changes of substance, and everything else in this plan serves them:
 
 1. It stops guessing the intent. It reads what piece 1 recorded.
 2. It stops being a report printed to a terminal and becomes a **persisted
-   entry**. Piece 5 will make `pr create` compose from what `pr review` wrote;
-   until then, `pr create` continues to derive its own view.
+   entry**. Piece 5 made `pr create` compose from what `pr review` wrote
+   instead of deriving its own view.
 
 ## 2. The PR body this produces
 

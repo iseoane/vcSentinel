@@ -9,7 +9,7 @@ import (
 // CIStepReserveBytes is the room kept for pr create to expand the ci step in
 // place (piece 5 replaces that one block and nothing else). The reserve is a
 // bound, not a guess: pr create caps the run URL at 200 bytes and the failed
-// job names at five names of sixty bytes, rendering "… and N more" beyond
+// job names at five names of seventy bytes, rendering "… and N more" beyond
 // that, and the surrounding markup is fixed.
 const CIStepReserveBytes = 1024
 
