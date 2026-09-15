@@ -233,3 +233,36 @@ func TestEveryProducibleStatusIsPublishable(t *testing.T) {
 		}
 	}
 }
+
+// TestPipelineStepsMatchTheDeclaredSteps enforces what the refactor claimed but
+// could not remove: pipelineSteps builds each step with its own icon, summary
+// and evidence, so it cannot loop over attestationSteps, and its ORDER is
+// therefore a second, implicit declaration. Publication validates the stored
+// steps positionally against AttestationSteps(), so the two agreeing is the
+// contract — asserted here rather than left to whoever edits one of them.
+func TestPipelineStepsMatchTheDeclaredSteps(t *testing.T) {
+	var emitted []string
+	for _, step := range pipelineSteps(&BranchResult{}, nil, TemplateVerification{}, nil) {
+		emitted = append(emitted, step.Step)
+	}
+	declared := AttestationSteps()
+	if len(emitted) != len(declared) {
+		t.Fatalf("pipelineSteps emits %d steps, AttestationSteps declares %d: %v vs %v", len(emitted), len(declared), emitted, declared)
+	}
+	for i := range declared {
+		if emitted[i] != declared[i] {
+			t.Fatalf("step %d is %q but the declaration says %q: publication validates positionally", i, emitted[i], declared[i])
+		}
+	}
+}
+
+// TestAttestationStepsCannotBeMutatedByCallers pins the reason the vocabulary
+// is reached through functions: a caller holding the slice must not be able to
+// alter what publication validates against.
+func TestAttestationStepsCannotBeMutatedByCallers(t *testing.T) {
+	taken := AttestationSteps()
+	taken[0] = "tampered"
+	if AttestationSteps()[0] == "tampered" {
+		t.Fatal("a caller rewrote the declared steps")
+	}
+}
