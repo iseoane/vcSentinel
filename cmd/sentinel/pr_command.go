@@ -10,6 +10,7 @@ package main
 // the orchestration out of this file orphans nothing.
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -83,11 +84,6 @@ type flagsPrCreate struct {
 	force   bool   // --force: override a red validation (T1.8: the only gate that blocks)
 	reason  string // --reason: explicit and mandatory motive next to --force
 	parent  string
-	// auditPending (--audit-pending) restores auditing every commit on the
-	// branch that carries no review record; by default pr create only
-	// reports that gap (the unaudited-commits decision in docs/issues/decisions.md). The net audit is
-	// unconditional and is what actually gates publication.
-	auditPending bool
 }
 
 // parsePrCreateFlags parses the pr create options with the same simple
@@ -116,7 +112,7 @@ func parsePrCreateFlags(args []string) (flagsPrCreate, error) {
 		case "--chain-pr":
 			flags.chainPR = true
 		case "--audit-pending":
-			flags.auditPending = true
+			return flags, fmt.Errorf("--audit-pending was retired: pr review no longer audits commits, and never audits them on your behalf. Run `sentinel review <sha>` for each unaudited commit; `sentinel pr review` reports which ones they are.")
 		case "--force":
 			flags.force = true
 		case "--reason":
@@ -179,31 +175,33 @@ func flagsPrReviewToPr(f flagsPrReview) pr.FlagsPrReview {
 
 func flagsPrCreateToPr(f flagsPrCreate) pr.FlagsPrCreate {
 	return pr.FlagsPrCreate{
-		Base:         f.base,
-		ChainPR:      f.chainPR,
-		Force:        f.force,
-		Reason:       f.reason,
-		Parent:       f.parent,
-		AuditPending: f.auditPending,
+		Base:    f.base,
+		ChainPR: f.chainPR,
+		Force:   f.force,
+		Reason:  f.reason,
+		Parent:  f.parent,
 	}
 }
 
 func depsPrCreateToPr(d depsPrCreate) pr.DepsPrCreate {
 	return pr.DepsPrCreate{
 		LoadConfig:       d.loadConfig,
-		GetGitDir:        d.getGitDir,
-		GetHeadSHA:       d.getHeadSHA,
 		RunValidation:    d.runValidation,
-		AnalyzeBranch:    d.analyzeBranch,
-		Verify:           d.verify,
-		Publish:          d.publish,
 		RecordEvent:      d.recordEvent,
 		GetGitCommonDir:  d.getGitCommonDir,
 		RecordDecision:   d.recordDecision,
 		ResolveActor:     d.resolveActor,
+		ResolveParent:    d.resolveParent,
 		WriteTemplate:    d.writeTemplate,
-		BlobStore:        d.blobStore,
-		ReadDispositions: d.loadDispositions,
+		GetGitDirAt:      d.getGitDirAt,
+		GetHeadSHAAt:     d.getHeadSHAAt,
+		CurrentBranch:    d.currentBranch,
+		ReadPRReview:     d.readPRReview,
+		EvidenceAtHEAD:   d.evidenceAtHEAD,
+		RunCI:            d.runCI,
+		ComposeBody:      d.composeBody,
+		PublishStored:    d.publishStored,
+		RemoteBranchHead: d.remoteBranchHead,
 	}
 }
 
@@ -248,10 +246,6 @@ func runPrReview(worktree string, args []string) {
 		progress = os.Stderr
 	}
 	pr.RunPrReview(os.Stdout, progress, worktree, flagsPrReviewToPr(flags), wiringPr())
-}
-
-func semanticAdvisory(records []review.Record, dispositions []review.FindingDisposition) (warn bool, blockers []review.ReviewFinding) {
-	return pr.SemanticNotice(records, dispositions)
 }
 
 func detailPrCreateEvent(prURL string, fallback, chain, force bool, reason string, unaudited int) (ops.EventDetail, error) {
@@ -318,7 +312,7 @@ func copyToClipboardWith(text string, available func(string) bool, run func(stri
 	return pr.CopyToClipboardWith(text, available, run)
 }
 
-// publishPROptions groups the injectable dependencies of publishPRWith:
+// publishPROptions groups the injectable dependencies of publishPRStoredWith:
 // ghAvailable decides whether gh is on the PATH, runGh launches gh and returns
 // its output (full args, including the worktree as cwd), copy is used only in
 // the fallback (clipboard).
@@ -328,14 +322,8 @@ type publishPROptions struct {
 	copy        func(string) error
 }
 
-// publishPR publishes the PR with gh pr create --draft -F template. If gh is
-// not on the PATH, fall back to file + clipboard (guide §12.4): the body is
-// re-read from the freshly written file. It returns the PR URL (empty in the
-// fallback) and whether the fallback was used. It stays in package main
-// because the production runGh closure reports gh's exit code through
-// exitCodeFromError, which the status command shares.
-func publishPR(worktree, templatePath, base string) (string, bool, error) {
-	return publishPRWith(worktree, templatePath, base, publishPROptions{
+func publishPRStored(worktree, title, templatePath, base string) (string, bool, error) {
+	return publishPRStoredWith(worktree, title, templatePath, base, publishPROptions{
 		ghAvailable: func(name string) bool { _, err := exec.LookPath(name); return err == nil },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			cmd := exec.Command("gh", args...)
@@ -353,30 +341,40 @@ func publishPR(worktree, templatePath, base string) (string, bool, error) {
 	})
 }
 
-func publishPRWith(worktree, templatePath, base string, options publishPROptions) (string, bool, error) {
-	return pr.PublishPRWith(worktree, templatePath, base, options.ghAvailable, options.runGh, options.copy)
+func publishPRStoredWith(worktree, title, templatePath, base string, options publishPROptions) (string, bool, error) {
+	return pr.PublishPRWithTitle(worktree, title, templatePath, base, options.ghAvailable, options.runGh, options.copy)
+}
+
+func remoteBranchHead(worktree, branch string) (string, error) {
+	return pr.RemoteBranchHeadWith(context.Background(), worktree, branch, git.BranchRemoteFrom,
+		func(ctx context.Context, worktree string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, "git", append([]string{"-C", worktree}, args...)...).Output()
+		})
 }
 
 func resolveBlobStore(worktree string) (review.StoreBlobs, error) {
 	return pr.ResolveBlobStore(worktree)
 }
 
-// depsPrCreate groups the injectable seams of the pr create pipeline (T1.8):
-// it lets tests exercise the ORDER (validation before auditing, zero tokens
-// if it fails) without real git, agents or gh. In production, runPrCreate
-// resolves them to the real functions.
+// depsPrCreate groups the injectable seams of the persisted-review publisher;
+// tests can exercise preflight, deterministic validation, CI, and publication
+// without real git, agents, or gh. In production, runPrCreate resolves them to
+// the real functions.
 type depsPrCreate struct {
-	loadConfig    func(worktree string) (config.Config, error)
-	getGitDir     func() (string, error)
-	getHeadSHA    func() (string, error)
-	runValidation func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
-	// analyzeBranch receives the WORKTREE, not a gitDir: where the review
-	// ledger is anchored is a production decision that lives in
-	// sharedReviewLedger, not something the caller picks per invocation.
-	analyzeBranch func(worktree string, opts review.BranchOptions) (*review.BranchResult, error)
-	verify        func(worktree, gitDir string, cfg config.Config, modelVerifier *modelprobe.Verifier) review.TemplateVerification
-	publish       func(worktree, templatePath, base string) (string, bool, error)
-	recordEvent   func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
+	loadConfig     func(worktree string) (config.Config, error)
+	runValidation  func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
+	getGitDirAt    func(worktree string) (string, error)
+	getHeadSHAAt   func(worktree string) (string, error)
+	currentBranch  func(worktree string) (string, error)
+	readPRReview   func(commonDir, branch string) (*store.PRReviewEntry, error)
+	evidenceAtHEAD func(worktree, evidencePath string) (bool, string, error)
+	runCI          func(context.Context, io.Writer, string, string, string, config.CIConfig) (pr.CIOutcome, error)
+	composeBody    func(store.PRReviewEntry, pr.CIOutcome) (string, error)
+	publishStored  func(worktree, title, templatePath, base string) (string, bool, error)
+	// remoteBranchHead reads the SHA the remote branch points at so publication
+	// refuses when another actor pushed over the reviewed head.
+	remoteBranchHead func(worktree, branch string) (string, error)
+	recordEvent      func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error
 	// getGitCommonDir and recordDecision cover T7.5 (M3 report): the --force
 	// that overrides a red validation stops being an untraceable exception.
 	// store.NewStore requires the git common dir (shared across linked
@@ -389,26 +387,15 @@ type depsPrCreate struct {
 	// runPrCreateCon would call resolveActor(worktree) directly, which shells
 	// out to a real `git config user.name`, breaking depsPrCreate's promise
 	// of testing "without real git, agents or gh" (comment above).
-	resolveActor func(worktree string) string
+	resolveActor  func(worktree string) string
+	resolveParent func(git.ParentResolutionOptions) (git.ParentResolution, error)
 	// writeTemplate allows tests to observe whether the PR template was
 	// created. When nil, runPrCreateCon uses pr.WritePRTemplate.
 	writeTemplate func(string) (string, error)
-	// blobStore builds the content-addressed store that lets AnalyzeBranch
-	// reuse reviews after a rebase (F8 criterion 2). It is a seam because
-	// resolveBlobStore shells out to git, which depsPrCreate exists to avoid;
-	// nil means no reuse, the behaviour before this wiring.
-	blobStore func(worktree string) (review.StoreBlobs, error)
-	// loadDispositions reads the standing human answers for the advisory
-	// overlay. It is a seam because loadDispositionsForWorktree resolves
-	// the real git common dir, which depsPrCreate exists to avoid; nil
-	// means no standing answers, the fixture every older test builds.
-	loadDispositions func(worktree string) ([]review.FindingDisposition, error)
 }
 
 // realPrCreateDeps resolves the production seams of pr create. Extracted from
-// runPrCreate for the same reason as branchReviewOptions: runPrCreate calls
-// os.Exit, so a seam silently losing its production wiring — the blob store of
-// F8 criterion 2 among them — would fail no test.
+// runPrCreate because the command exits after dispatching the application flow.
 func realPrCreateDeps() depsPrCreate {
 	return depsPrCreate{
 		// STRICT config (orchestrator finding, F1): pr create is exactly the
@@ -416,36 +403,44 @@ func realPrCreateDeps() depsPrCreate {
 		// must fail loudly just like gate/pr review/status, never continue
 		// silently with the default config.
 		loadConfig:    config.LoadStrictLocalConfig,
-		getGitDir:     git.GetGitDir,
-		getHeadSHA:    git.SHAHead,
-		runValidation: validation.RunProfileOnCandidate,
-		analyzeBranch: func(worktree string, opts review.BranchOptions) (*review.BranchResult, error) {
-			ledger, err := sharedReviewLedger(worktree)
-			if err != nil {
-				return nil, err
-			}
-			return review.AnalyzeBranch(ledger, opts)
+		getGitDirAt:   git.GetGitDirFrom,
+		getHeadSHAAt:  git.SHAHeadFrom,
+		currentBranch: git.CurrentBranchFrom,
+		readPRReview: func(commonDir, branch string) (*store.PRReviewEntry, error) {
+			return store.NewStore(commonDir).ReadPRReview(branch)
 		},
-		verify: func(worktree, gitDir string, cfg config.Config, modelVerifier *modelprobe.Verifier) review.TemplateVerification {
-			return verifyForTemplateWith(worktree, gitDir, cfg, modelVerifier, ops.Verify)
+		evidenceAtHEAD: review.EvidenceAtHEAD,
+		runValidation:  validation.RunProfileOnCandidate,
+		runCI: func(ctx context.Context, out io.Writer, worktree, branch, head string, cfg config.CIConfig) (pr.CIOutcome, error) {
+			return pr.RunConfiguredCI(ctx, out, worktree, branch, head, cfg, pr.CommandCIClient{
+				RunGit: func(ctx context.Context, worktree string, args ...string) ([]byte, error) {
+					cmd := exec.CommandContext(ctx, "git", append([]string{"-C", worktree}, args...)...)
+					return cmd.Output()
+				},
+				RunGH: func(ctx context.Context, worktree string, args ...string) ([]byte, error) {
+					cmd := exec.CommandContext(ctx, "gh", args...)
+					cmd.Dir = worktree
+					return cmd.Output()
+				},
+			}, git.BranchRemoteFrom, nil, nil)
 		},
-		publish:         publishPR,
-		recordEvent:     ops.RecordEvent,
-		getGitCommonDir: git.GetGitCommonDir,
+		composeBody:      pr.ComposePRBody,
+		publishStored:    publishPRStored,
+		remoteBranchHead: remoteBranchHead,
+		recordEvent:      ops.RecordEvent,
+		getGitCommonDir:  git.GetGitCommonDir,
 		recordDecision: func(commonDir string, d *store.Decision) error {
 			return store.NewStore(commonDir).RecordDecision(d)
 		},
-		resolveActor:     resolveActor,
-		writeTemplate:    pr.WritePRTemplate,
-		blobStore:        resolveBlobStore,
-		loadDispositions: loadDispositionsForWorktree,
+		resolveActor:  resolveActor,
+		resolveParent: git.ResolveParentBranch,
+		writeTemplate: pr.WritePRTemplate,
 	}
 }
 
-// runPrCreate implements pr create (T1.8): it validates BEFORE auditing (if
-// it fails without --force, AnalyzeBranch is not even called: zero tokens),
-// advisory notice of the semantic verdict, honest template with the two
-// natures of evidence, and publication with gh or the clipboard fallback.
+// runPrCreate implements pr create: it validates the persisted branch review,
+// runs configured CI, composes deterministic evidence, and publishes the stored
+// title/body with gh or the clipboard fallback.
 func runPrCreate(worktree string, args []string) {
 	os.Exit(runPrCreateCon(os.Stdout, worktree, args, realPrCreateDeps()))
 }

@@ -55,7 +55,7 @@ Code and scripts MUST behave the same on Windows and Debian:
 ## Architecture
 
 - `cmd/sentinel` is the CLI entry point and dispatches commands. Command handlers cover review, status, PRs, the validation gate, risk explanation, and external-diff consent.
-- `internal/config` parses `vassentinel.yml`: agents, nested profiles, `commit_language`, review profiles, validation profiles, and lint/test/build commands. Precedence is defaults, global (`~/.vas_sentinel/vassentinel.yml`), then project (`.vas_sentinel/vassentinel.yml`).
+- `internal/config` parses `vassentinel.yml`: agents, nested profiles, `commit_language`, review profiles, validation profiles, the optional `ci` block, and lint/test/build commands. Precedence is defaults, global (`~/.vas_sentinel/vassentinel.yml`), then project (`.vas_sentinel/vassentinel.yml`).
 - `internal/agentadapter` provides `AgentAdapter`, CLI adapters, and `CadenaAdaptador` fallback. It records the effective binary, model, and reasoning effort for each successful request.
 - `internal/git` owns volume thresholds, measurement, change slicing, non-interactive `plan`/`apply`, and file classification.
 - `internal/review` runs dimension-based audits, builds prompts, persists the legacy append-only review ledger, analyzes branches, and supports content-stable review findings. `review`, `status` and `pr` anchor that ledger on `<git-common-dir>/vas-sentinel` through `sharedReviewLedger`, so a review run in a linked worktree is not destroyed by `git worktree remove`. Fichas written under a per-checkout ledger before that are not migrated; `runs prune`, `status --prune` and `review --prune` still enumerate every per-checkout ledger, and nothing else reads them.
@@ -99,7 +99,7 @@ Reference documents: [`docs/design/replanteamiento-objetivo.md`](docs/design/rep
 | `consent-diff` | Grant, revoke, or show local consent for external diffs. |
 |`runs`|Operate durable runs: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, `prune`. Exit codes are contract, not convention: `1` usage, `2` run not found, `3` stale revision, `4` invalid state, `5` infrastructure failure. See `docs/design/runs-cli.md`.|
 | `tui` | Open the full-screen control center over the repository registry; starts and owns this repository's daemon for the session and stops it gracefully on exit. |
-| `pr` | Create a pull request through `gh`; `pr review` authors and persists a local branch judgement without publishing. |
+| `pr` | Create a pull request through `gh`; `pr review` authors and persists a local branch judgement without publishing, and `pr create` publishes that persisted judgement. |
 | `install` / `upgrade` / `uninstall` | Manage the installed binary. |
 
 Commands that accept no flags reject extra arguments with exit code `1`.
@@ -116,6 +116,7 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `gate`: loads project configuration strictly and validates the selected `validation.profiles` profile. `--stage` identifies lifecycle context; `--profile` selects the validation profile. It refuses `--timeout`, which only ever widened the semantic review budget it no longer has.
 - `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
 - `pr review`: chooses single versus chained review using `review.DecisionChainLimit`, which equals the guardian limit of 400 lines. It authors and persists a local branch judgement and evidence without publishing or running deterministic validation.
+- `pr create`: audits nothing. It requires a persisted `pr review` entry for the branch whose head matches the current head and whose evidence is committed, otherwise it exits `1` naming what is missing; it then replaces only the `ci` step of the stored body and publishes the stored title and body through `gh`. A red deterministic validation is still the only publication gate, overridable with `--force --reason`. See [`docs/design/piece-5-pr-create-composes.md`](docs/design/piece-5-pr-create-composes.md).
 - `tui`: renders the global registry snapshot (`~/.vas_sentinel/repositories.json`) live at a 2-second interval through `internal/tui/control` and the approved art layout. When no daemon is live for the current repository it spawns one detached child and owns it for the session; foreign daemons are never stopped. The activity pane renders repository and durable-run state, supports filtered repository/worktree/run navigation, and dispatches abort/retry only for the visible session-repository run. It shows up to 20 worktree children and 10 recent runs per repository.
 - `doctor`: reports the review-environment preflight and exits `0` like `check`. It never gates anything and never installs — warnings print the command to run instead. Binaries resolve with `exec.LookPath`, never a shell probe. Each configured agent must resolve and answer a minimal real prompt within 60s; version comparison against the published release stays behind `--check-updates`. A condition whose prober did not run renders as UNKNOWN with no remedy, never as a failure.
 - `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook that enforces staged volume.
@@ -126,6 +127,7 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `commit_language` controls messages generated by `slice`. Set it to `en` for new and migrated configurations.
 - `review` sets timeout, parallelism, and dimension profiles. `lint_commands`, `test_commands`, and `build_commands` configure deterministic verification for the flow that runs it; `pr review` does not run those commands.
 - `validation.profiles` defines gate validation profiles. `gate --profile` defaults to `standard` and fails explicitly if it is absent.
+- `ci` configures the optional GitHub Actions evidence of `pr create`: `workflow` (empty or absent disables CI entirely), `wait_seconds` (default 900) and `poll_seconds` (default 15), both rejected unless they are positive integers.
 - `internal/git/thresholds.go` is the sole threshold source: `ReviewableLinesLimit` is 400 and governs the guardian, slicing, and `review.DecisionChainLimit`; `GiantCodeLimit` is 500.
 - `MY_SUB_AGENT` remains an optional override, not the primary configuration path.
 

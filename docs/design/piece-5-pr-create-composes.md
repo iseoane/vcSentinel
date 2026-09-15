@@ -110,13 +110,14 @@ Order of operations, and it matters: push first, then trigger. A
 3. Poll until it reaches a conclusion, `wait_seconds` elapses, or the run
    disappears.
 
-Four outcomes, each with its own rendering, and none of them may be reported as
+The outcomes, each with its own rendering, and none of them may be reported as
 green unless it is:
 
 | Outcome | `ci` step renders |
 |---|---|
 | Concluded successfully at the head SHA | `✅ ci — <workflow> succeeded` + run URL |
 | Concluded with a failure | `❌ ci — <workflow> failed` + run URL + the failed job names |
+| Concluded as cancelled, skipped or neutral | `⚠️ ci — <workflow> concluded as <conclusion>` + run URL |
 | Still running when `wait_seconds` elapsed | `⏳ ci — still running after <n>s` + run URL |
 | Concluded, but the run's head SHA is not the branch head | `⚠️ ci — the last run covers <other-short>, not this head` + run URL |
 | No run found, or the run disappeared while polling | `⚠️ ci — <workflow> was triggered but no run is observable` |

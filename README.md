@@ -30,6 +30,7 @@ A deterministic local guardian in Go that prevents massive change accumulation i
 | `sentinel doctor` | Preflight the local environment a review depends on (agents, search binary, codegraph gates, hook). Advisory, exits 0 like `check`. Flag: `--check-updates`. |
 | `sentinel pr` | Pull-request operations: `sentinel pr review` analyzes an unpublished branch, while `sentinel pr create` publishes through `gh`. The legacy `sentinel pr [gh arguments]` passthrough is removed. |
 | `sentinel pr review` | Analyzes the unpublished branch, then authors and saves its local judgement and evidence; it never publishes a PR. Flags: `--base X` `--parent X` `--overview` `--json`. |
+| `sentinel pr create` | Publishes the judgement `sentinel pr review` already authored: it audits nothing and requires a stored review for this branch whose head matches the current one, otherwise it exits 1 telling you to run `sentinel pr review`. It publishes the stored title and body, replacing only the `ci` step with the current CI outcome (see `ci:` in the configuration). Flags: `--base X` `--parent X` `--chain-pr` `--force --reason "..."`. |
 | `sentinel explain` | Explain the change profile, detected characteristics, risk, and cohesion of a commit range. Usage: `[<base>..<head>] [--json]`. |
 | `sentinel consent-diff` | Manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent). Usage: `grant\|revoke\|status`. |
 | `sentinel tui` | Open the full-screen control center over the repository registry snapshot, refreshed live while the session is open. |
@@ -227,6 +228,14 @@ review:
     logic: "opencode.normal"
     design: "deep"
     security: "deep"
+# Optional GitHub Actions evidence for `sentinel pr create`. Without a
+# workflow the block is treated as absent: nothing is pushed or triggered and
+# the `ci` step of the published body renders "not observed by Sentinel".
+# Sentinel never guesses a workflow from .github/workflows.
+ci:
+  workflow: "verify.yml"   # required to enable CI; empty or absent disables it
+  wait_seconds: 900        # optional; bound of the non-interactive wait
+  poll_seconds: 15         # optional; interval between polls
 ```
 
 Note: the `gate.durable_runs` and `review.durable_runs` keys were removed

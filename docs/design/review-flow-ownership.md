@@ -5,10 +5,11 @@ review of an earlier draft. It supersedes the working assumptions in items 4,
 10 and 11 of [`docs/issues/actionable.md`](../issues/actionable.md) where they
 disagree; those items remain the record of WHY each problem exists.
 
-Pieces 1 through 4 are implemented: `slice` records trailer-backed intent,
-`review` owns per-commit authority, `gate` no longer audits, and `pr review`
+All five pieces are implemented: `slice` records trailer-backed intent,
+`review` owns per-commit authority, `gate` no longer audits, `pr review`
 reads the range intent before auditing and persists the resulting branch
-judgement. Piece 5 remains pending: `pr create` does not yet consume that entry.
+judgement, and `pr create` consumes that entry, adds only the `ci` step and
+publishes the stored title and body.
 
 ## The problem this design closes
 

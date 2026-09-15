@@ -22,7 +22,6 @@ import (
 	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
 	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
 )
 
 const validPrReviewSHA = "abc1234abcd00000000000000000000000000000"
@@ -238,255 +237,6 @@ func TestDecisionTextPrReview(t *testing.T) {
 	}
 }
 
-// createRecordFixture builds a record for the pr create tests.
-func createRecordFixture(sha, result string, dims ...review.DimensionResult) review.Record {
-	return review.Record{
-		SHA:     sha,
-		Message: "feat(x): change",
-		Model:   "test",
-		Revisions: []review.Revision{{
-			At:     time.Now().UTC(),
-			Result: result,
-			Dims:   dims,
-		}},
-	}
-}
-
-// criticalFinding is a minimal CRITICAL finding for the gate.
-func criticalFinding() review.ReviewFinding {
-	return review.ReviewFinding{
-		Dimension:   review.DimSecurity,
-		File:        "internal/x/x.go",
-		Line:        42,
-		Severity:    review.SevCritical,
-		Description: "secret in the log",
-	}
-}
-
-// TestSemanticAdvisoryNoBlockNoAdvisory: without a block verdict there is
-// nothing to warn about (before, gateBlock returned allowed=true; now it does
-// not even decide whether to publish, T1.8 left that out of that path).
-func TestSemanticAdvisoryNoBlockNoAdvisory(t *testing.T) {
-	records := []review.Record{
-		createRecordFixture("abc1234", review.VerdictOK,
-			review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK}),
-	}
-	warn, blockers := semanticAdvisory(records, nil)
-	if warn {
-		t.Fatal("without block there is nothing to warn about")
-	}
-	if len(blockers) != 0 {
-		t.Fatalf("without blockers, list = %v", blockers)
-	}
-}
-
-// TestSemanticAdvisoryWithBlockWarnsAndListsCriticals: the block verdict no
-// longer prevents publishing (T1.8 makes it advisory); semanticAdvisory only
-// signals the highlighted warning and returns the structured CRITICALs for the
-// CLI to display.
-func TestSemanticAdvisoryWithBlockWarnsAndListsCriticals(t *testing.T) {
-	records := []review.Record{
-		createRecordFixture("abc1234", review.VerdictBlock,
-			review.DimensionResult{
-				Dim:      review.DimSecurity,
-				Verdict:  review.VerdictBlock,
-				Findings: []review.ReviewFinding{criticalFinding()},
-			}),
-	}
-	warn, blockers := semanticAdvisory(records, nil)
-	if !warn {
-		t.Fatal("block must trigger the highlighted warning")
-	}
-	if len(blockers) != 1 {
-		t.Fatalf("must list the CRITICAL, list = %v", blockers)
-	}
-	h := blockers[0]
-	if h.Severity != review.SevCritical || h.Description != "secret in the log" {
-		t.Errorf("the blocker must keep severity and description: %+v", h)
-	}
-}
-
-// FU-6: the static revision verdict can remain block after a human answer,
-// but the advisory warning must follow the effective blockers rather than
-// printing an empty critical warning.
-func TestSemanticAdvisorySkipsFullyRefutedBlock(t *testing.T) {
-	records := []review.Record{{
-		SHA: "abc1234",
-		Revisions: []review.Revision{{
-			Result: review.VerdictBlock,
-			AggregatedFindings: []review.Finding{{
-				Dimension: review.DimSecurity, Severity: review.SevCritical,
-				Status: review.StatusConfirmed, Fingerprint: "fp-critical",
-				Description: "refuted critical",
-				Location:    review.Location{File: "a.go", LineStart: 2},
-			}},
-		}},
-	}}
-	dispositions := []review.FindingDisposition{{
-		SHA: "abc1234", Fingerprint: "fp-critical", Status: review.StatusRefuted,
-	}}
-
-	warn, blockers := semanticAdvisory(records, dispositions)
-	if warn || len(blockers) != 0 {
-		t.Fatalf("effective refutation = warn %t, blockers %+v; want no advisory", warn, blockers)
-	}
-}
-
-// blockingRecordFp1 builds a single block record whose only critical carries
-// fingerprint fp-1: the shared fixture for the FU-6 advisory-overlay tests.
-func blockingRecordFp1(status string) review.Record {
-	return review.Record{SHA: "abc1234", Revisions: []review.Revision{{
-		Result: review.VerdictBlock,
-		AggregatedFindings: []review.Finding{{
-			Dimension: review.DimSecurity, Severity: review.SevCritical,
-			Status: status, Fingerprint: "fp-1",
-			Description: "critical fp-1",
-			Location:    review.Location{File: "a.go", LineStart: 2},
-		}},
-	}}}
-}
-
-// depsPrCreateGreenBranch builds a green-validation single-record fixture;
-// load carries the standing human answers (nil means none recorded).
-func depsPrCreateGreenBranch(record review.Record, load func(string) ([]review.FindingDisposition, error)) depsPrCreate {
-	return depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{record}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:          func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		recordEvent:      func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		loadDispositions: load,
-	}
-}
-
-// FU-6: runPrCreateCon must read standing human answers through the
-// loadDispositions seam, never through the real git common dir: these
-// fixtures run with a fake worktree, so a direct production call would
-// fail and turn every publish green-path red.
-func TestRunPrCreateWith_ReadsDispositionsFromTheSeam(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"},
-		depsPrCreateGreenBranch(recordOK, func(worktree string) ([]review.FindingDisposition, error) {
-			if worktree != "worktree" {
-				t.Errorf("loadDispositions worktree = %q, expected %q", worktree, "worktree")
-			}
-			return nil, errors.New("corrupt dispositions")
-		}))
-	if code != 1 {
-		t.Fatalf("code = %d, expected 1 (the corrupt log fails closed)", code)
-	}
-	// The injected message must reach the output: later failure paths
-	// (template write, publish) also exit 1, so the code alone cannot
-	// tell the corrupt-log refusal apart from a downstream failure.
-	if !strings.Contains(output.String(), "corrupt dispositions") {
-		t.Errorf("the output must show the injected seam error, got %q", output.String())
-	}
-}
-
-// FU-6: injected standing answers must drive the advisory overlay: a block
-// record whose only critical is human-refuted publishes without the
-// semantic warning.
-func TestRunPrCreateWith_InjectedDispositionSuppressesAdvisory(t *testing.T) {
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"},
-		depsPrCreateGreenBranch(blockingRecordFp1(review.StatusConfirmed),
-			func(string) ([]review.FindingDisposition, error) {
-				return []review.FindingDisposition{{
-					SHA: "abc1234", Fingerprint: "fp-1", Status: review.StatusRefuted,
-				}}, nil
-			}))
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (the refuted blocker neither warns nor blocks): %s", code, output.String())
-	}
-	if strings.Contains(output.String(), "NOTICE") {
-		t.Errorf("the refuted blocker must not warn: %s", output.String())
-	}
-}
-
-// FU-6: the production deps must wire the real disposition loader, or pr
-// create would publish as if no human ever answered.
-func TestRealPrCreateDeps_WiresDispositionLoader(t *testing.T) {
-	load := realPrCreateDeps().loadDispositions
-	if load == nil {
-		t.Fatal("realPrCreateDeps must wire loadDispositions")
-	}
-	// Identity, not just presence: the wired loader resolves the real git
-	// common dir, so a bogus worktree must fail rather than report no
-	// standing answers.
-	if _, err := load(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
-		t.Error("the wired loader must fail with a nonexistent worktree, not return empty")
-	}
-}
-
-// Unit A: standing answers must reach the branch analysis so the net audit
-// can carry them across SHAs, not only drive the advisory overlay after it.
-func TestRunPrCreateWith_PassesDispositionsToBranch(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	dispositions := []review.FindingDisposition{{
-		SHA: "abc1234", Fingerprint: "fp-carry", Status: review.StatusRefuted,
-		Reason: "verified safe", Actor: review.RefutationActorHuman, Source: review.DispositionSourceHuman,
-	}}
-	var got review.BranchOptions
-	deps := depsPrCreateGreenBranch(recordOK, func(string) ([]review.FindingDisposition, error) {
-		return dispositions, nil
-	})
-	deps.analyzeBranch = func(string, review.BranchOptions) (*review.BranchResult, error) {
-		return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-	}
-	// Capture the options the command hands to the analysis.
-	orig := deps.analyzeBranch
-	deps.analyzeBranch = func(worktree string, o review.BranchOptions) (*review.BranchResult, error) {
-		got = o
-		return orig(worktree, o)
-	}
-	var output bytes.Buffer
-	if code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, deps); code != 0 {
-		t.Fatalf("code = %d, expected 0: %s", code, output.String())
-	}
-	if got.NetReview == nil {
-		t.Fatal("options.NetReview = nil, want the net review input pr create requests")
-	}
-	if len(got.Dispositions) != 1 || got.Dispositions[0].Fingerprint != "fp-carry" {
-		t.Fatalf("options.Dispositions = %+v, want the standing answers the branch surfaces and the net carry decide with", got.Dispositions)
-	}
-}
-
-// Unit A: a corrupt dispositions log must fail before the branch analysis
-// spends review tokens, not after it.
-func TestRunPrCreateWith_CorruptLogDoesNotAuditBranch(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	analyzed := false
-	deps := depsPrCreateGreenBranch(recordOK, func(string) ([]review.FindingDisposition, error) {
-		return nil, errors.New("corrupt dispositions")
-	})
-	deps.analyzeBranch = func(string, review.BranchOptions) (*review.BranchResult, error) {
-		analyzed = true
-		return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-	}
-	var output bytes.Buffer
-	if code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, deps); code != 1 {
-		t.Fatalf("code = %d, expected 1 (corrupt log fails closed)", code)
-	}
-	if analyzed {
-		t.Fatal("the branch must not be audited with the corrupt log: zero tokens")
-	}
-}
-
-// Unit A: the pr-review dispositions wiring reaches the net input so the
-// cross-SHA carry-over observes standing answers, and a corrupt log aborts
-// before the branch analysis spends review tokens.
 func TestApplyPrReviewDispositionsCarriesAnswersToNet(t *testing.T) {
 	dispositions := []review.FindingDisposition{{
 		SHA: "abc1234", Fingerprint: "fp-carry", Status: review.StatusRefuted,
@@ -539,23 +289,6 @@ func TestApplyPrReviewDispositionsWithoutNet(t *testing.T) {
 	if _, err := applyPrReviewDispositions(review.BranchOptions{}, "worktree",
 		func(string) ([]review.FindingDisposition, error) { return nil, errors.New("corrupt dispositions") }); err == nil {
 		t.Fatal("corrupt log was swallowed without a net review")
-	}
-}
-
-// FU-6: positive anchor for the suppression test above: an unrefuted block
-// must render the semantic warning with the NOTICE token (frozen
-// internal/app/pr wording), so a change that drops the token fails here
-// instead of silently vacating the negative assertion.
-func TestRunPrCreateWith_SemanticAdvisoryMentionsNOTICE(t *testing.T) {
-	blockRecord := blockingRecordFp1(review.StatusConfirmed)
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"},
-		depsPrCreateGreenBranch(blockRecord, nil))
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (the advisory warns but does not block): %s", code, output.String())
-	}
-	if !strings.Contains(output.String(), "NOTICE") {
-		t.Errorf("the semantic advisory must mention NOTICE, got %q", output.String())
 	}
 }
 
@@ -672,7 +405,7 @@ func TestPublishPRFallbackReReadsTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var copied string
-	url, fallback, err := publishPRWith("worktree", path, "", publishPROptions{
+	url, fallback, err := publishPRStoredWith("worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return false },
 		copy:        func(text string) error { copied = text; return nil },
 	})
@@ -694,7 +427,7 @@ func TestPublishPRFallbackReReadsTheFile(t *testing.T) {
 // write and the re-read, the error is explicit and the fallback is marked.
 func TestPublishPRFallbackUnreadableFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ghost.md")
-	_, fallback, err := publishPRWith("worktree", path, "", publishPROptions{
+	_, fallback, err := publishPRStoredWith("worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return false },
 		copy:        func(string) error { t.Fatal("without content it must not copy anything"); return nil },
 	})
@@ -707,13 +440,9 @@ func TestPublishPRFallbackUnreadableFile(t *testing.T) {
 }
 
 // TestPublishPRWithUsesGhWithExactArguments: with gh available, gh is used
-// with the contract arguments (pr create --draft -F) and the worktree as cwd;
-// the URL comes from gh's output, no clipboard.
-// --fill-first is part of the exact argument list on purpose: gh prompts for
-// the title when none is given, so without it `gh pr create` fails outside a
-// TTY with "must provide `--title` and `--body`" and this command cannot
-// publish from a script or an agent. gh takes only the title from the first
-// commit; the body still comes from -F, so the template is not displaced.
+// with explicit title/body-file arguments and the worktree as cwd; the URL
+// comes from gh's output, no clipboard. The title is supplied by the persisted
+// review rather than derived with --fill-first.
 func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "template.md")
 	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
@@ -721,7 +450,7 @@ func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	}
 	var seenWorktree string
 	var seenArgs []string
-	url, fallback, err := publishPRWith("the-worktree", path, "", publishPROptions{
+	url, fallback, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			seenWorktree = worktree
@@ -742,29 +471,31 @@ func TestPublishPRWithUsesGhWithExactArguments(t *testing.T) {
 	if seenWorktree != "the-worktree" {
 		t.Errorf("gh must run with the worktree as cwd, got %q", seenWorktree)
 	}
-	expected := []string{"pr", "create", "--draft", "--fill-first", "-F", path}
+	expected := []string{"pr", "create", "--draft", "--title", "Stored review title", "--body-file", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("gh arguments = %v, expected %v", seenArgs, expected)
 	}
 }
 
-// TestPublishPRWithGhFailurePropagates: if gh ends with an error, its stderr
-// propagates in the message and it does not fall back to the clipboard.
+// TestPublishPRWithGhFailurePropagates: a failed gh publication still uses the
+// clipboard fallback so a pushed branch is not stranded without its body, and
+// still reports the gh diagnostic because no PR was created.
 func TestPublishPRWithGhFailurePropagates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "template.md")
 	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, fallback, err := publishPRWith("the-worktree", path, "", publishPROptions{
+	var copied string
+	_, fallback, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh:       func(string, ...string) ([]byte, error) { return nil, errors.New("gh: repo not configured") },
-		copy:        func(string) error { t.Fatal("with a failed gh it must not copy"); return nil },
+		copy:        func(body string) error { copied = body; return nil },
 	})
 	if err == nil || !strings.Contains(err.Error(), "gh: repo not configured") {
-		t.Fatalf("the gh error must propagate: %v", err)
+		t.Fatalf("gh failure must surface its diagnostic, got %v", err)
 	}
-	if fallback {
-		t.Fatal("a gh failure is not a fallback (the fallback only applies without gh)")
+	if !fallback || copied != "body" {
+		t.Fatalf("fallback = (%v, %q), want true and the body", fallback, copied)
 	}
 }
 
@@ -776,7 +507,7 @@ func TestPublishPRWithExplicitBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seenArgs []string
-	_, _, err := publishPRWith("the-worktree", path, "develop", publishPROptions{
+	_, _, err := publishPRStoredWith("the-worktree", "Stored review title", path, "develop", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			seenArgs = args
@@ -787,7 +518,7 @@ func TestPublishPRWithExplicitBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fake gh should not fail: %v", err)
 	}
-	expected := []string{"pr", "create", "--draft", "--fill-first", "--base", "develop", "-F", path}
+	expected := []string{"pr", "create", "--draft", "--title", "Stored review title", "--base", "develop", "--body-file", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("with --base the gh arguments = %v, expected %v", seenArgs, expected)
 	}
@@ -801,7 +532,7 @@ func TestPublishPRWithEmptyBaseAddsNoFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seenArgs []string
-	_, _, err := publishPRWith("the-worktree", path, "", publishPROptions{
+	_, _, err := publishPRStoredWith("the-worktree", "Stored review title", path, "", publishPROptions{
 		ghAvailable: func(string) bool { return true },
 		runGh: func(worktree string, args ...string) ([]byte, error) {
 			seenArgs = args
@@ -812,7 +543,7 @@ func TestPublishPRWithEmptyBaseAddsNoFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the fake gh should not fail: %v", err)
 	}
-	expected := []string{"pr", "create", "--draft", "--fill-first", "-F", path}
+	expected := []string{"pr", "create", "--draft", "--title", "Stored review title", "--body-file", path}
 	if !reflect.DeepEqual(seenArgs, expected) {
 		t.Errorf("without --base the gh arguments = %v, expected %v", seenArgs, expected)
 	}
@@ -912,16 +643,12 @@ func TestParsePrCreateFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing should not fail: %v", err)
 	}
-	if flags.base != "develop" || !flags.chainPR || !flags.force || flags.reason != "real reason" || flags.auditPending {
+	if flags.base != "develop" || !flags.chainPR || !flags.force || flags.reason != "real reason" {
 		t.Errorf("flags = %+v", flags)
 	}
 
-	flags, err = parsePrCreateFlags([]string{"--audit-pending"})
-	if err != nil {
-		t.Fatalf("parsePrCreateFlags(--audit-pending) failed: %v", err)
-	}
-	if !flags.auditPending {
-		t.Errorf("flags = %+v, expected auditPending", flags)
+	if _, err := parsePrCreateFlags([]string{"--audit-pending"}); err == nil || !strings.Contains(err.Error(), "sentinel review <sha>") {
+		t.Fatalf("--audit-pending must be explicitly retired: %v", err)
 	}
 }
 
@@ -962,79 +689,6 @@ func TestParsePrCreateFlagsReasonWithoutValue(t *testing.T) {
 // the central rule of T1.8: if the validation fails without --force, nothing
 // is published and not one token is spent on the semantic review (AnalyzeBranch
 // is never called).
-func TestRunPrCreateWith_RedValidationWithoutForce_NoPublishNoBranchAudit(t *testing.T) {
-	var analyzeBranchCalled, publishCalled bool
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", nil, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1, Output: "FAIL"}}, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			analyzeBranchCalled = true
-			return nil, nil
-		},
-		publish: func(string, string, string) (string, bool, error) {
-			publishCalled = true
-			return "", false, nil
-		},
-	})
-	if code != 1 {
-		t.Fatalf("code = %d, expected 1", code)
-	}
-	if analyzeBranchCalled {
-		t.Fatal("the red validation without --force must not call AnalyzeBranch: zero tokens")
-	}
-	if publishCalled {
-		t.Fatal("the red validation without --force must not publish")
-	}
-	if !strings.Contains(output.String(), "go test ./...") || !strings.Contains(output.String(), "FAIL") {
-		t.Errorf("it must list the red command with its real output: %s", output.String())
-	}
-}
-
-func TestRunPrCreateWith_SharesTheModelVerifierWithTheTemplate(t *testing.T) {
-	previous := newModelVerifier
-	t.Cleanup(func() { newModelVerifier = previous })
-	var constructions int
-	newModelVerifier = func(string) *modelprobe.Verifier {
-		constructions++
-		return modelprobe.NewVerifier(nil)
-	}
-
-	var output bytes.Buffer
-	// verify delegates to verifyForTemplateWith with verify=nil, which in turn
-	// falls into the real ops.Verify path: that road really calls
-	// ops.RecordEvent(gitDir, "pr-verify", ...). A literal "gitdir" here
-	// would write outside a temporary directory, into <cwd>/gitdir/vas-sentinel
-	// (cwd = the package during `go test`), polluting the repository tree on
-	// every run. t.TempDir() keeps the real write this test needs to cover the
-	// path, without touching the repository.
-	gitDir := t.TempDir()
-	code := runPrCreateCon(&output, "worktree", nil, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return gitDir, nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{createRecordFixture("abc1234", review.VerdictOK)}, SHAs: []string{"abc1234"}}, nil
-		},
-		verify: func(worktree, gitDir string, cfg config.Config, modelVerifier *modelprobe.Verifier) review.TemplateVerification {
-			return verifyForTemplateWith(worktree, gitDir, cfg, modelVerifier, nil)
-		},
-		publish:     func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
-		recordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0: %s", code, output.String())
-	}
-	if constructions != 1 {
-		t.Fatalf("verifier constructions = %d, expected 1 per pr create invocation", constructions)
-	}
-}
-
 func TestRefuterFactoryResolvesCheapProfile(t *testing.T) {
 	cfg := configWithCheapProfile()
 	agent, profile, err := refuterFactory(cfg, modelprobe.NewVerifier(nil))()
@@ -1081,38 +735,6 @@ func TestBranchOptionsWithRefuterCarriesCheapProfile(t *testing.T) {
 	}
 }
 
-func TestRunPrCreateWithPassesCheapRefuterFactory(t *testing.T) {
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", nil, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return configWithCheapProfile(), nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analyzeBranch: func(_ string, opts review.BranchOptions) (*review.BranchResult, error) {
-			if opts.RefuterFactory == nil {
-				t.Fatal("BranchOptions must carry a refuter factory")
-			}
-			_, profile, err := opts.RefuterFactory()
-			if err != nil {
-				t.Fatalf("RefuterFactory() error = %v", err)
-			}
-			if profile != "cheap" {
-				t.Fatalf("refuter profile = %q, want cheap", profile)
-			}
-			return &review.BranchResult{Records: []review.Record{createRecordFixture("abc1234", review.VerdictOK)}, SHAs: []string{"abc1234"}}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:     func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/1", false, nil },
-		recordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, want 0: %s", code, output.String())
-	}
-}
-
 func configWithCheapProfile() config.Config {
 	return config.Config{
 		ActiveAgent: "stub",
@@ -1148,428 +770,6 @@ func TestRunPrCreateWith_ForceWithoutReason_ErrorsWithoutTouchingAnything(t *tes
 // TestRunPrCreateWith_ForceWithReason_PublishesAndRecordsException covers the
 // third acceptance scenario: with --force --reason, the red validation is
 // overridden, it publishes anyway and the event records force+reason.
-func TestRunPrCreateWith_ForceWithReason_PublishesAndRecordsException(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var recordedDetail any
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "real reason"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		getHeadSHA: func() (string, error) { return "abc1234", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1}}, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/9", false, nil },
-		recordEvent: func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error {
-			recordedDetail = detail
-			return nil
-		},
-		getGitCommonDir: func(string) (string, error) { return "commondir", nil },
-		recordDecision:  func(string, *store.Decision) error { return nil },
-		resolveActor:    func(string) string { return "test-actor" },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (--force publishes anyway)", code)
-	}
-	var raw map[string]any
-	data, err := json.Marshal(recordedDetail)
-	if err != nil {
-		t.Fatalf("the event detail must be valid JSON: %v", err)
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("the event detail must be valid JSON: %v\n%s", err, data)
-	}
-	if raw["force"] != true || raw["motivo"] != "real reason" {
-		t.Errorf("the event must record force and reason, got %+v", raw)
-	}
-}
-
-// TestRunPrCreateWith_ForceWithRedValidation_PropagatesDeterministicFindings
-// covers the wiring that activates T6.2 in production: with --force and a
-// red validation, the deterministic findings projected from that validation
-// must reach review.AnalyzeBranch via BranchOptions.DeterministicFindings, so
-// AuditCommit can supersede the equivalent semantic finding.
-func TestRunPrCreateWith_ForceWithRedValidation_PropagatesDeterministicFindings(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var receivedOptions review.BranchOptions
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "real reason"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		getHeadSHA: func() (string, error) { return "abc1234", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "lint", Command: "go vet ./...", Exit: 1}}, nil
-		},
-		analyzeBranch: func(_ string, opts review.BranchOptions) (*review.BranchResult, error) {
-			receivedOptions = opts
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/12", false, nil },
-		recordEvent: func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error {
-			return nil
-		},
-		getGitCommonDir: func(string) (string, error) { return "commondir", nil },
-		recordDecision:  func(string, *store.Decision) error { return nil },
-		resolveActor:    func(string) string { return "test-actor" },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (--force publishes anyway)", code)
-	}
-	if receivedOptions.DeterministicFindingsSHA != "abc1234" {
-		t.Errorf("DeterministicFindingsSHA = %q, expected the validated HEAD sha", receivedOptions.DeterministicFindingsSHA)
-	}
-	if len(receivedOptions.DeterministicFindings) != 1 {
-		t.Fatalf("DeterministicFindings = %#v, expected 1 projected finding", receivedOptions.DeterministicFindings)
-	}
-	got := receivedOptions.DeterministicFindings[0]
-	if got.Source != review.SourceValidation {
-		t.Errorf("Source = %q, expected %q", got.Source, review.SourceValidation)
-	}
-	if got.Dimension != review.DimStyle {
-		t.Errorf("Dimension = %q, expected %q for capability 'lint'", got.Dimension, review.DimStyle)
-	}
-}
-
-// TestRunPrCreateWith_ForceWithRedValidation_UnresolvableHeadWarnsAndContinues
-// is a regression test: when getHeadSHA fails, the command must not
-// silently drop the deterministic findings without a trace. It still
-// publishes (this failure is unrelated to --force's own decision to
-// continue), but it must print an explicit warning and must not
-// bind the projected findings to any commit (DeterministicFindingsSHA
-// stays empty, so AnalyzeBranch can never mismatch them to the wrong SHA).
-func TestRunPrCreateWith_ForceWithRedValidation_UnresolvableHeadWarnsAndContinues(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var receivedOptions review.BranchOptions
-	var published bool
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "real reason"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		getHeadSHA: func() (string, error) { return "", errors.New("unresolvable HEAD") },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "lint", Command: "go vet ./...", Exit: 1}}, nil
-		},
-		analyzeBranch: func(_ string, opts review.BranchOptions) (*review.BranchResult, error) {
-			receivedOptions = opts
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish: func(string, string, string) (string, bool, error) {
-			published = true
-			return "https://github.com/x/pr/14", false, nil
-		},
-		recordEvent: func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error {
-			return nil
-		},
-		getGitCommonDir: func(string) (string, error) { return "commondir", nil },
-		recordDecision:  func(string, *store.Decision) error { return nil },
-		resolveActor:    func(string) string { return "test-actor" },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (the HEAD failure does not block --force)", code)
-	}
-	if !published {
-		t.Error("the PR was expected to publish despite the HEAD failure")
-	}
-	// The warning text is internal/app/pr output.
-	if !strings.Contains(output.String(), "could not resolve the validated commit") {
-		t.Errorf("an explicit warning of the HEAD failure was expected, got: %s", output.String())
-	}
-	if receivedOptions.DeterministicFindingsSHA != "" {
-		t.Errorf("DeterministicFindingsSHA = %q, expected empty when HEAD couldn't be resolved", receivedOptions.DeterministicFindingsSHA)
-	}
-	if len(receivedOptions.DeterministicFindings) != 1 {
-		t.Fatalf("DeterministicFindings = %#v, expected the projected finding to be preserved even without a bound SHA", receivedOptions.DeterministicFindings)
-	}
-	if got := receivedOptions.DeterministicFindings[0]; got.Source != review.SourceValidation || got.Dimension != review.DimStyle {
-		t.Errorf("preserved finding = %#v, expected Source=%q Dimension=%q (projected from the 'lint' capability)", got, review.SourceValidation, review.DimStyle)
-	}
-}
-
-// TestRunPrCreateWith_ForceWithGreenValidation_PropagatesNoDeterministicFindings
-// is the complement: with no red validation to force through, there is
-// nothing deterministic to supersede with, so the collection must stay
-// empty rather than accidentally leaking stale state.
-func TestRunPrCreateWith_ForceWithGreenValidation_PropagatesNoDeterministicFindings(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var receivedOptions review.BranchOptions
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "real reason"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil // green validation: no runs, no findings
-		},
-		analyzeBranch: func(_ string, opts review.BranchOptions) (*review.BranchResult, error) {
-			receivedOptions = opts
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/13", false, nil },
-		recordEvent: func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error {
-			return nil
-		},
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0", code)
-	}
-	if len(receivedOptions.DeterministicFindings) != 0 {
-		t.Errorf("DeterministicFindings = %#v, expected empty without a forced red validation", receivedOptions.DeterministicFindings)
-	}
-}
-
-// TestRunPrCreateWith_ForceWithGreenValidation_DoesNotRecordAnExceptionThatNeverHappened
-// covers Fix 2 (orchestrator finding): --force --reason with the validation
-// ALREADY green (no findings) has no real effect to override, so it must not
-// warn about an "overridden validation" that never happened, and the event
-// must record force:false without a reason — the flag existed in the
-// invocation but exercised no effect.
-func TestRunPrCreateWith_ForceWithGreenValidation_DoesNotRecordAnExceptionThatNeverHappened(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var recordedDetail any
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "real reason"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil // green validation: no runs, no findings
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish: func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/11", false, nil },
-		recordEvent: func(gitDir, kind string, exit int, shas []string, detail ops.EventDetail, worktree string) error {
-			recordedDetail = detail
-			return nil
-		},
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (no findings, publishes anyway)", code)
-	}
-	// "overridden" is internal/app/pr output.
-	if strings.Contains(output.String(), "overridden") {
-		t.Errorf("with no findings to override it must not warn about an overridden validation: %s", output.String())
-	}
-	var raw map[string]any
-	data, err := json.Marshal(recordedDetail)
-	if err != nil {
-		t.Fatalf("the event detail must be valid JSON: %v", err)
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("the event detail must be valid JSON: %v\n%s", err, data)
-	}
-	if raw["force"] != false {
-		t.Errorf("force must record false: there was nothing to force, got %+v", raw)
-	}
-	if _, present := raw["motivo"]; present {
-		t.Errorf("without a real --force effect no reason may remain in the event: %v", raw)
-	}
-}
-
-// TestRunPrCreateWith_ForceWithRedValidation_RecordsForceBypassDecision covers
-// T7.5 (M3 report): --force that really overrides a red validation must record
-// a store.Decision with Decision="force_bypass" and Reason=the --reason,
-// exactly once.
-func TestRunPrCreateWith_ForceWithRedValidation_RecordsForceBypassDecision(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var calls int
-	var recordedDecision *store.Decision
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		getHeadSHA: func() (string, error) { return "abc1234", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1}}, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:     func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/20", false, nil },
-		recordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		getGitCommonDir: func(worktree string) (string, error) {
-			if worktree != "worktree" {
-				t.Errorf("getGitCommonDir worktree = %q, expected %q", worktree, "worktree")
-			}
-			return "commondir", nil
-		},
-		recordDecision: func(commonDir string, d *store.Decision) error {
-			calls++
-			if commonDir != "commondir" {
-				t.Errorf("commonDir = %q, expected %q", commonDir, "commondir")
-			}
-			recordedDecision = d
-			return nil
-		},
-		resolveActor: func(string) string { return "test-actor" },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (--force publishes anyway)", code)
-	}
-	if calls != 1 {
-		t.Fatalf("recordDecision was called %d times, expected exactly 1", calls)
-	}
-	if recordedDecision == nil {
-		t.Fatal("no decision was recorded")
-	}
-	if recordedDecision.Decision != "force_bypass" {
-		t.Errorf("Decision = %q, expected %q", recordedDecision.Decision, "force_bypass")
-	}
-	if recordedDecision.Reason != "x" {
-		t.Errorf("Reason = %q, expected %q", recordedDecision.Reason, "x")
-	}
-	if recordedDecision.Actor != "test-actor" {
-		t.Errorf("Actor = %q, expected %q (it must come from deps.resolveActor, not from a real git)", recordedDecision.Actor, "test-actor")
-	}
-}
-
-// TestRunPrCreateWith_ForceWithGreenValidation_RecordsNoDecision covers the
-// complement: --force present but WITHOUT real effect (validation already
-// green, same as the red-validation distinction above) must not record any
-// bypass decision, because there was no bypass to record.
-func TestRunPrCreateWith_ForceWithGreenValidation_RecordsNoDecision(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var recordDecisionCalled bool
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil // green validation: --force has nothing to override
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:     func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/21", false, nil },
-		recordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		getGitCommonDir: func(string) (string, error) {
-			t.Fatal("getGitCommonDir must not be called: --force had no real effect to record")
-			return "", nil
-		},
-		recordDecision: func(string, *store.Decision) error {
-			recordDecisionCalled = true
-			return nil
-		},
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0", code)
-	}
-	if recordDecisionCalled {
-		t.Error("recordDecision must not be called: the validation was already green, --force exercised no effect")
-	}
-}
-
-// TestRunPrCreateWith_ForceWithRedValidation_GitCommonDirFailureWarnsAndContinues
-// covers warn-and-continue when getGitCommonDir fails: --force already decided
-// to continue despite the red validation, so a failure resolving where to
-// record the decision must not abort the publication, only warn.
-func TestRunPrCreateWith_ForceWithRedValidation_GitCommonDirFailureWarnsAndContinues(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		getHeadSHA: func() (string, error) { return "abc1234", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1}}, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:     func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/22", false, nil },
-		recordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		getGitCommonDir: func(string) (string, error) {
-			return "", errors.New("boom")
-		},
-		recordDecision: func(string, *store.Decision) error {
-			t.Fatal("recordDecision must not be called: the commonDir could not be resolved")
-			return nil
-		},
-		resolveActor: func(string) string { return "test-actor" },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (the commonDir resolution failure does not block --force)", code)
-	}
-	// The warning text is internal/app/pr output.
-	if !strings.Contains(output.String(), "could not resolve the git-common-dir") {
-		t.Errorf("the output must warn about the commonDir resolution failure, got: %s", output.String())
-	}
-}
-
-// TestRunPrCreateWith_ForceWithRedValidation_RecordDecisionFailureWarnsAndContinues
-// covers warn-and-continue when recordDecision fails (e.g. it could not write
-// decisions.jsonl): same criterion, it does not abort the publication.
-func TestRunPrCreateWith_ForceWithRedValidation_RecordDecisionFailureWarnsAndContinues(t *testing.T) {
-	recordOK := createRecordFixture("abc1234", review.VerdictOK,
-		review.DimensionResult{Dim: review.DimLogic, Verdict: review.VerdictOK})
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", []string{"--force", "--reason", "x"}, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gitdir", nil },
-		getHeadSHA: func() (string, error) { return "abc1234", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return []validation.ValidationRun{{Capability: "test", Command: "go test ./...", Exit: 1}}, nil
-		},
-		analyzeBranch: func(string, review.BranchOptions) (*review.BranchResult, error) {
-			return &review.BranchResult{Records: []review.Record{recordOK}, SHAs: []string{"abc1234"}, Decision: "single"}, nil
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:         func(string, string, string) (string, bool, error) { return "https://github.com/x/pr/23", false, nil },
-		recordEvent:     func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		getGitCommonDir: func(string) (string, error) { return "commondir", nil },
-		recordDecision: func(string, *store.Decision) error {
-			return errors.New("boom")
-		},
-		resolveActor: func(string) string { return "test-actor" },
-	})
-	if code != 0 {
-		t.Fatalf("code = %d, expected 0 (the decision write failure does not block --force)", code)
-	}
-	// The warning text is internal/app/pr output.
-	if !strings.Contains(output.String(), "could not write the --force decision") {
-		t.Errorf("the output must warn about the decision write failure, got: %s", output.String())
-	}
-}
-
-// TestResolveActor_UsesWorktreeLocalGitConfig confirms that resolveActor uses
-// cmd.Dir=worktree (not the cwd of the process running the test): a local
-// user.name of the worktree must win, even though the test process runs in
-// another directory (this very repository).
 func TestResolveActor_UsesWorktreeLocalGitConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("isolating HOME/GIT_CONFIG_NOSYSTEM deterministically on Windows needs more than this helper")
@@ -1628,165 +828,6 @@ func TestResolveActor_WithoutGitFallsBackToUserThenUsername(t *testing.T) {
 // (config.LoadStrictLocalConfig in production, see runPrCreate).
 // With a broken yml, it must cut right here with exit 1 and the error
 // visible, without reaching the validation or publishing anything.
-func TestRunPrCreateWith_ConfigLoadError_Exit1WithoutValidatingOrPublishing(t *testing.T) {
-	var validationCalled, publishCalled bool
-	var output bytes.Buffer
-	code := runPrCreateCon(&output, "worktree", nil, depsPrCreate{
-		loadConfig: func(string) (config.Config, error) {
-			return config.Config{}, errors.New("vassentinel.yml: line 2: field missing_key not found in type config.Config")
-		},
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			validationCalled = true
-			return nil, nil
-		},
-		publish: func(string, string, string) (string, bool, error) {
-			publishCalled = true
-			return "", false, nil
-		},
-	})
-	if code != 1 {
-		t.Fatalf("code = %d, expected 1", code)
-	}
-	if !strings.Contains(output.String(), "line") {
-		t.Errorf("the broken yml error must stay visible in the output, got: %s", output.String())
-	}
-	if validationCalled {
-		t.Fatal("with the broken yml it must not reach the validation")
-	}
-	if publishCalled {
-		t.Fatal("with the broken yml it must not publish anything")
-	}
-}
-
-func TestExecutePrCreateWith_StackAndNetAuthority(t *testing.T) {
-	res := &review.BranchResult{
-		Records: []review.Record{createRecordFixture("abc1234", review.VerdictOK)}, SHAs: []string{"abc1234"}, Decision: "single",
-		Net: &review.NetReview{Audit: review.AuditResult{Verdict: review.VerdictBlock,
-			Findings: []review.Finding{{Dimension: review.DimSecurity, Severity: review.SevCritical, Description: "secret logged"}}}},
-		Inherited: []review.InheritedFinding{{SHA: "deadbeefcafe", Finding: review.Finding{Dimension: review.DimLogic, Severity: review.SevCritical}}},
-		// docs/issues/actionable.md item 2: the published PR body must report
-		// a commit with no review record without gating on it.
-		Unaudited: []review.UnauditedCommit{{SHA: "beefcafe1234", Subject: "feat(unaudited): skipped commit"}},
-	}
-	var opts review.BranchOptions
-	pubBase, body := "", ""
-	output := &bytes.Buffer{}
-	deps := depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gd", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analyzeBranch: func(_ string, o review.BranchOptions) (*review.BranchResult, error) { opts = o; return res, nil },
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish: func(_, path, base string) (string, bool, error) {
-			pubBase = base
-			data, _ := os.ReadFile(path)
-			body = string(data)
-			return "https://x/pr/1", false, nil
-		},
-		recordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-	}
-	res.Own = &review.OwnRange{Parent: "layer-a", PublicationBranch: "layer-a"}
-	code := runPrCreateCon(output, "wt", []string{"--parent", "layer-a", "--chain-pr"}, deps)
-	if code != 0 || pubBase != "layer-a" || *opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
-		opts.NetReview == nil || opts.NetReview.Intention != review.NoRecordedIntentForPRRange {
-		t.Errorf("stacked: exitCode=%d base=%q own=%v net=%v", code, pubBase, opts.OwnDiff, opts.NetReview)
-	}
-	for _, want := range []string{"Net audit verdict: block", "secret logged", "OWN (per-commit audit)", "INHERITED (non-blocking)", "deadbee", "no review record", "beefcafe", "feat(unaudited): skipped commit", "sentinel review beefcafe1234"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("published body lacks %q: %s", want, body)
-		}
-	}
-	if strings.Contains(body, "No pending risks") {
-		t.Errorf("a net BLOCK must not claim a risk-free body: %s", body)
-	}
-	pubBase, output = "", new(bytes.Buffer)
-	code = runPrCreateCon(output, "wt", []string{"--chain-pr"}, deps)
-	if code != 0 ||
-		pubBase != "layer-a" ||
-		opts.OwnDiff == nil ||
-		*opts.OwnDiff != (review.OwnDiffOptions{ResolveParent: true}) {
-		t.Errorf("chain-only: base=%q own=%v", pubBase, opts.OwnDiff)
-	}
-	res.Own = &review.OwnRange{Parent: "layer-a"}
-	pubBase, output = "", new(bytes.Buffer)
-	templateCreated, publishCalled := false, false
-	deps.writeTemplate = func(string) (string, error) { templateCreated = true; return "/tmp/sentinel_pr_fake.md", nil }
-	originalPublish := deps.publish
-	deps.publish = func(wt, path, base string) (string, bool, error) {
-		publishCalled = true
-		return originalPublish(wt, path, base)
-	}
-	code = runPrCreateCon(output, "wt", []string{"--parent", "layer-a"}, deps)
-	if code != 1 ||
-		pubBase != "" ||
-		opts.OwnDiff == nil ||
-		*opts.OwnDiff != (review.OwnDiffOptions{Parent: "layer-a"}) ||
-		templateCreated ||
-		publishCalled {
-		t.Errorf("missing publication branch: base=%q own=%v templateCreated=%v publishCalled=%v output=%q", pubBase, opts.OwnDiff, templateCreated, publishCalled, output.String())
-	}
-	deps.writeTemplate = nil
-	deps.publish = originalPublish
-	res.Net.Audit.Verdict = review.VerdictOK
-	res.Net.Audit.Findings, res.Records, res.Own = nil, []review.Record{createRecordFixture("abc1234", review.VerdictBlock)}, nil
-	pubBase, output = "", new(bytes.Buffer)
-	code = runPrCreateCon(output, "wt", nil, deps)
-	if code != 0 || strings.Contains(output.String(), "NOTICE") || !strings.Contains(body, "Net audit verdict: ok") {
-		t.Errorf("net OK over historical BLOCK must not warn: %s / %s", output.String(), body)
-	}
-	res.Own, res.Net, res.Inherited = nil, nil, nil
-	pubBase = ""
-	code = runPrCreateCon(output, "wt", nil, deps)
-	if code != 0 || pubBase != "main" {
-		t.Errorf("legacy: exitCode=%d base=%q, want 0/main", code, pubBase)
-	}
-}
-
-// TestRunPrCreateDefaultsToNotAuditingPending covers docs/issues/actionable.md
-// item 2 at the pr create boundary: OnlyPending must default to true (no
-// per-commit auditing) and --audit-pending must be the only way back to the
-// old behavior. The net audit stays unconditional regardless.
-func TestRunPrCreateDefaultsToNotAuditingPending(t *testing.T) {
-	var opts review.BranchOptions
-	res := &review.BranchResult{Net: &review.NetReview{Audit: review.AuditResult{Verdict: review.VerdictOK}}}
-	deps := depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gd", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		analyzeBranch: func(_ string, o review.BranchOptions) (*review.BranchResult, error) { opts = o; return res, nil },
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		publish:       func(_, path, base string) (string, bool, error) { return "https://x/pr/1", false, nil },
-		recordEvent:   func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		writeTemplate: func(string) (string, error) { return "/tmp/sentinel_pr_fake.md", nil },
-	}
-
-	if code := runPrCreateCon(new(bytes.Buffer), "wt", nil, deps); code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !opts.OnlyPending {
-		t.Errorf("pr create default: opts.OnlyPending = %v, want true (do not audit pending commits)", opts.OnlyPending)
-	}
-
-	if code := runPrCreateCon(new(bytes.Buffer), "wt", []string{"--audit-pending"}, deps); code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if opts.OnlyPending {
-		t.Errorf("--audit-pending: opts.OnlyPending = %v, want false (restore auditing pending commits)", opts.OnlyPending)
-	}
-}
-
-// TestResolveBlobStoreResolvesTheCommonDir covers the F8 criterion 2 wiring at its
-// only nil-able point: blob reuse in AnalyzeBranch is gated on Store != nil, so
-// a helper that silently returned nil inside a real repository would make the
-// criterion unreachable from the PR commands without any test noticing.
 func TestResolveBlobStoreResolvesTheCommonDir(t *testing.T) {
 	repo := tempGitRepo(t)
 	mainStore, err := resolveBlobStore(repo)
@@ -1824,36 +865,6 @@ func TestResolveBlobStoreResolvesTheCommonDir(t *testing.T) {
 // TestExecutePrCreateWiresTheBlobStore is the pr create half of F8 criterion 2:
 // the command must hand AnalyzeBranch the shared blob store, otherwise rebasing
 // the stack base re-audits every commit.
-func TestExecutePrCreateWiresTheBlobStore(t *testing.T) {
-	var opts review.BranchOptions
-	deps := depsPrCreate{
-		loadConfig: func(string) (config.Config, error) { return config.Config{}, nil },
-		getGitDir:  func() (string, error) { return "gd", nil },
-		runValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
-			return nil, nil
-		},
-		blobStore: func(string) (review.StoreBlobs, error) {
-			return store.NewStore(t.TempDir()), nil
-		},
-		analyzeBranch: func(_ string, o review.BranchOptions) (*review.BranchResult, error) {
-			opts = o
-			return nil, errors.New("cut the flow right after AnalyzeBranch: this test only observes its options")
-		},
-		verify: func(string, string, config.Config, *modelprobe.Verifier) review.TemplateVerification {
-			return review.TemplateVerification{Mode: "omitido"}
-		},
-		recordEvent:  func(string, string, int, []string, ops.EventDetail, string) error { return nil },
-		resolveActor: func(string) string { return "actor" },
-	}
-	runPrCreateCon(&bytes.Buffer{}, "wt", nil, deps)
-	if opts.Store == nil {
-		t.Error("BranchOptions.Store is nil: pr create never reaches blob reuse, so a base rebase re-audits the whole stack")
-	}
-}
-
-// tempGitRepo creates a throwaway repository with one commit. The
-// blob-store wiring tests need a real one because resolveBlobStore shells out
-// to git rev-parse for the common dir.
 func tempGitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -1925,45 +936,6 @@ func TestBranchReviewOptionsWiresTheBlobStore(t *testing.T) {
 // TestRealPrCreateDepsWiresTheBlobStore covers the production wiring of the
 // pr create seam. TestExecutePrCreateWiresTheBlobStore substitutes the seam, so
 // on its own it cannot notice the production assignment disappearing.
-func TestRealPrCreateDepsWiresTheBlobStore(t *testing.T) {
-	deps := realPrCreateDeps()
-	// Sweep every seam, not just the blob store: realPrCreateDeps exists so
-	// that a production wiring silently disappearing fails a test, and that
-	// promise is only worth what the sweep covers.
-	seams := map[string]bool{
-		"loadConfig": deps.loadConfig == nil, "getGitDir": deps.getGitDir == nil,
-		"getHeadSHA": deps.getHeadSHA == nil, "runValidation": deps.runValidation == nil,
-		"analyzeBranch": deps.analyzeBranch == nil, "verify": deps.verify == nil,
-		"publish": deps.publish == nil, "recordEvent": deps.recordEvent == nil,
-		"getGitCommonDir": deps.getGitCommonDir == nil, "recordDecision": deps.recordDecision == nil,
-		"resolveActor": deps.resolveActor == nil, "writeTemplate": deps.writeTemplate == nil,
-		"blobStore": deps.blobStore == nil,
-	}
-	for name, missing := range seams {
-		if missing {
-			t.Errorf("depsPrCreate.%s is nil in production: pr create would panic or silently lose that step", name)
-		}
-	}
-	if deps.blobStore == nil {
-		t.Fatal("depsPrCreate.blobStore is nil in production: pr create never reaches blob reuse")
-	}
-	repo := tempGitRepo(t)
-	fromDeps, err := deps.blobStore(repo)
-	if err != nil {
-		t.Fatalf("deps.blobStore inside a real repository: %v", err)
-	}
-	direct, err := resolveBlobStore(repo)
-	if err != nil {
-		t.Fatalf("resolveBlobStore: %v", err)
-	}
-	if !reflect.DeepEqual(fromDeps, direct) {
-		t.Errorf("deps.blobStore resolved %v while resolveBlobStore resolved %v: the production seam is not wired to resolveBlobStore", fromDeps, direct)
-	}
-}
-
-// captureStreams redirects os.Stdout and os.Stderr during f and returns what
-// each stream received. The restorations go in t.Cleanup: a t.Fatalf/panic
-// inside f must not leave the process writing into closed pipes.
 func captureStreams(t *testing.T, f func()) (stdout, stderr string) {
 	t.Helper()
 	originalOut, originalErr := os.Stdout, os.Stderr

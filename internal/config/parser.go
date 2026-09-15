@@ -122,6 +122,15 @@ type ValidationConfig struct {
 
 // Config is the complete configuration of VAS Sentinel with precedence
 // defaults -> global -> per-project.
+// CIConfig controls the optional GitHub Actions evidence collected by
+// `sentinel pr create`. An empty Workflow deliberately disables CI; the
+// command never guesses a workflow from detected CI files.
+type CIConfig struct {
+	Workflow    string
+	WaitSeconds int
+	PollSeconds int
+}
+
 type Config struct {
 	ActiveAgent string
 	Agents      map[string]AgentConfig
@@ -130,6 +139,7 @@ type Config struct {
 	AgentOrder []string
 	Profiles   map[string]ProfileConfig
 	Review     ReviewConfig
+	CI         CIConfig
 	Validation ValidationConfig
 	// Change holds the change.classes rules (T3.1) consumed by
 	// change.ClassifyByPath: the order IS the precedence. No wrapper
@@ -186,6 +196,10 @@ func defaultConfig() Config {
 			// rollback seam is setting it to false, which restricts every
 			// kill to the direct child.
 			CancellationEscalation: true,
+		},
+		CI: CIConfig{
+			WaitSeconds: 900,
+			PollSeconds: 15,
 		},
 		Validation: ValidationConfig{
 			Capabilities: map[string]CapabilityConfig{},
@@ -311,6 +325,12 @@ type reviewYAML struct {
 	CancellationEscalation *bool     `yaml:"cancellation_escalation"`
 }
 
+type ciYAML struct {
+	Workflow    *string   `yaml:"workflow"`
+	WaitSeconds yaml.Node `yaml:"wait_seconds"`
+	PollSeconds yaml.Node `yaml:"poll_seconds"`
+}
+
 // capabilityYAML is an entry of validation.capabilities.<name> (T1.2).
 // The capability name is a free label chosen by the user (not a closed
 // enum in Go); the only fixed thing is this shape. Command is required in
@@ -363,6 +383,7 @@ type configYAML struct {
 	Agents                   map[string]agentYAML         `yaml:"agents"`
 	Profiles                 map[string]globalProfileYAML `yaml:"profiles"`
 	Review                   *reviewYAML                  `yaml:"review"`
+	CI                       *ciYAML                      `yaml:"ci"`
 	Validation               *validationYAML              `yaml:"validation"`
 	CommitLanguage           *string                      `yaml:"commit_language"`
 	RequestExternalAgentDiff *bool                        `yaml:"request_external_agent_diff"`
@@ -493,6 +514,25 @@ func applyYAMLValues(cfg *Config, raw *configYAML) error {
 		}
 		if raw.Review.CancellationEscalation != nil {
 			cfg.Review.CancellationEscalation = *raw.Review.CancellationEscalation
+		}
+	}
+	if raw.CI != nil {
+		if raw.CI.Workflow != nil {
+			cfg.CI.Workflow = strings.TrimSpace(*raw.CI.Workflow)
+		}
+		if raw.CI.WaitSeconds.Kind != 0 {
+			seconds, err := decodeRequiredPositiveInt(&raw.CI.WaitSeconds, "ci.wait_seconds")
+			if err != nil {
+				return err
+			}
+			cfg.CI.WaitSeconds = seconds
+		}
+		if raw.CI.PollSeconds.Kind != 0 {
+			seconds, err := decodeRequiredPositiveInt(&raw.CI.PollSeconds, "ci.poll_seconds")
+			if err != nil {
+				return err
+			}
+			cfg.CI.PollSeconds = seconds
 		}
 	}
 	cfg.LintCommands = append(cfg.LintCommands, raw.LintCommands...)
@@ -630,6 +670,17 @@ func decodePositiveInt(node *yaml.Node) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+func decodeRequiredPositiveInt(node *yaml.Node, field string) (int, error) {
+	var n int
+	if err := node.Decode(&n); err != nil {
+		return 0, fmt.Errorf("%s must be a positive integer: %w", field, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %d", field, n)
+	}
+	return n, nil
 }
 
 // keysInOrder returns the keys of a yaml.Node of mapping type in the
