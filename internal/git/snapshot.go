@@ -288,16 +288,36 @@ func temporarySnapshotPID(name string) (int, bool) {
 	return pid, true
 }
 
-func removeSnapshotLockFiles(lockPath string) {
-	_ = os.Remove(lockPath)
+func removeSnapshotSidecars(lockPath string) {
+	// The primary lock is never unlinked: it is a stable rendezvous point for
+	// every process, so removing it could let a new process lock a new inode.
 	_ = os.Remove(snapshotHoldersPath(lockPath))
 	_ = os.Remove(snapshotHoldersLockPath(lockPath))
 }
 
 func removeSnapshotWorktree(path string) error {
-	if _, err := runGitOutput("worktree", "remove", filepath.ToSlash(path)); err != nil {
-		if _, forcedErr := runGitOutput("worktree", "remove", "--force", filepath.ToSlash(path)); forcedErr != nil {
+	toSlash := filepath.ToSlash(path)
+	if _, err := runGitOutput("worktree", "remove", toSlash); err == nil {
+		return nil
+	} else if _, forcedErr := runGitOutput("worktree", "remove", "--force", toSlash); forcedErr == nil {
+		return nil
+	} else {
+		if _, repairErr := runGitOutput("worktree", "repair", toSlash); repairErr == nil {
+			if _, retryErr := runGitOutput("worktree", "remove", toSlash); retryErr == nil {
+				return nil
+			}
+			if _, retryErr := runGitOutput("worktree", "remove", "--force", toSlash); retryErr == nil {
+				return nil
+			}
+		}
+		if _, statErr := os.Stat(filepath.Join(path, ".git")); statErr != nil {
 			return fmt.Errorf("could not remove snapshot %s: %w", path, forcedErr)
+		}
+		if removeErr := os.RemoveAll(path); removeErr != nil {
+			return fmt.Errorf("could not remove snapshot %s: %w", path, removeErr)
+		}
+		if _, pruneErr := runGitOutput("worktree", "prune"); pruneErr != nil {
+			return fmt.Errorf("could not prune snapshot %s: %w", path, pruneErr)
 		}
 	}
 	return nil
@@ -365,7 +385,7 @@ func purgeSnapshotsLocked(age time.Duration) error {
 		path := filepath.Join(snapshots, entry.Name())
 		if strings.HasPrefix(entry.Name(), ".") && strings.Contains(entry.Name(), ".tmp-") {
 			if pid, ok := temporarySnapshotPID(entry.Name()); ok {
-				if processAlive(pid) {
+				if processAlive(pid) && info.ModTime().After(cutoff) {
 					continue
 				}
 				_, _ = runGitOutput("worktree", "remove", "--force", filepath.ToSlash(path))
@@ -405,12 +425,7 @@ func purgeSnapshotsLocked(age time.Duration) error {
 			_ = lock.Close()
 			continue
 		}
-		if len(holders) > 0 {
-			if !holdersHaveDeadPID(holders) {
-				_ = lock.Close()
-				continue
-			}
-		} else if info.ModTime().After(cutoff) {
+		if !(len(holders) > 0 && holdersHaveDeadPID(holders)) && info.ModTime().After(cutoff) {
 			_ = lock.Close()
 			continue
 		}
@@ -419,8 +434,8 @@ func purgeSnapshotsLocked(age time.Duration) error {
 			_ = lock.Close()
 			continue
 		}
+		removeSnapshotSidecars(lockPath)
 		_ = lock.Close()
-		removeSnapshotLockFiles(lockPath)
 		removedAny = true
 	}
 

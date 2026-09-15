@@ -25,10 +25,13 @@ func TestPurgeReclaimsDeadHolderFreshSnapshot(t *testing.T) {
 		t.Fatalf("fresh snapshot with a dead holder should be reclaimed, err=%v", err)
 	}
 	lockPath := snapshotLockPathForTest(t, tree)
-	for _, path := range []string{lockPath, snapshotHoldersPath(lockPath), snapshotHoldersLockPath(lockPath)} {
+	for _, path := range []string{snapshotHoldersPath(lockPath), snapshotHoldersLockPath(lockPath)} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("reclaim should remove %s, err=%v", path, err)
 		}
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Errorf("reclaim should retain the primary lock file, err=%v", err)
 	}
 }
 
@@ -64,6 +67,42 @@ func TestPurgeKeepsSnapshotWithLiveHolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeSnapshotHolders(t, tree, os.Getpid())
+
+	if err := PurgeSnapshots(SnapshotRetention); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("fresh snapshot with a live holder should survive: %v", err)
+	}
+}
+
+func TestPurgeKeepsPrimarySnapshotLockFile(t *testing.T) {
+	_, tree := snapshotTestTree(t)
+	path, err := CreateSnapshot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-SnapshotRetention - time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := snapshotLockPathForTest(t, tree)
+
+	if err := PurgeSnapshots(SnapshotRetention); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("the primary snapshot lock file must remain as a stable rendezvous point: %v", err)
+	}
+}
+
+func TestPurgeReclaimsAgedSnapshotWithLiveHolder(t *testing.T) {
+	_, tree := snapshotTestTree(t)
+	path, err := CreateSnapshot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	old := time.Now().Add(-SnapshotRetention - time.Hour)
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
@@ -73,20 +112,63 @@ func TestPurgeKeepsSnapshotWithLiveHolder(t *testing.T) {
 	if err := PurgeSnapshots(SnapshotRetention); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("snapshot with a live holder should survive: %v", err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("an aged snapshot must be reclaimable despite a live recorded PID, err=%v", err)
+	}
+}
+
+func TestPurgeReclaimsAgedLiveTemporarySnapshot(t *testing.T) {
+	_, tree := snapshotTestTree(t)
+	path := filepath.Join(snapshotDirectoryForTest(t), fmt.Sprintf(".%s.tmp-%d-%d", tree, os.Getpid(), time.Now().UnixNano()))
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-SnapshotRetention - time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PurgeSnapshots(SnapshotRetention); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("an aged temporary snapshot must be reclaimable despite a live recorded PID, err=%v", err)
+	}
+}
+
+func TestPurgeRepairsInterruptedSnapshotPublication(t *testing.T) {
+	dir, tree := snapshotTestTree(t)
+	snapshots := snapshotDirectoryForTest(t)
+	temp := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", tree, os.Getpid(), time.Now().UnixNano()))
+	path := filepath.Join(snapshots, tree)
+	runGitInDir(t, dir, "worktree", "add", "--detach", filepath.ToSlash(temp), "HEAD")
+	if err := os.Rename(temp, path); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-SnapshotRetention - time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PurgeSnapshots(SnapshotRetention); err != nil {
+		t.Fatalf("interrupted publication should be repaired and reclaimed: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("interrupted snapshot directory should be removed, err=%v", err)
+	}
+	listing := runGitInDir(t, dir, "worktree", "list")
+	if strings.Contains(listing, filepath.ToSlash(temp)) || strings.Contains(listing, filepath.ToSlash(path)) {
+		t.Fatalf("interrupted snapshot administrative record remains:\n%s", listing)
 	}
 }
 
 func TestPurgeRemovesDeadAndKeepsLiveTemporarySnapshots(t *testing.T) {
-	_, tree := snapshotTestTree(t)
+	dir, tree := snapshotTestTree(t)
 	snapshots := snapshotDirectoryForTest(t)
 	deadPath := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", tree, processThatExited(t), time.Now().UnixNano()))
 	livePath := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", tree, os.Getpid(), time.Now().UnixNano()))
 	for _, path := range []string{deadPath, livePath} {
-		if err := os.MkdirAll(path, 0755); err != nil {
-			t.Fatal(err)
-		}
+		runGitInDir(t, dir, "worktree", "add", "--detach", filepath.ToSlash(path), "HEAD")
 	}
 
 	if err := PurgeSnapshots(SnapshotRetention); err != nil {
@@ -97,6 +179,40 @@ func TestPurgeRemovesDeadAndKeepsLiveTemporarySnapshots(t *testing.T) {
 	}
 	if _, err := os.Stat(livePath); err != nil {
 		t.Errorf("temporary snapshot with a live PID should survive, err=%v", err)
+	}
+	listing := runGitInDir(t, dir, "worktree", "list")
+	if strings.Contains(listing, filepath.Base(deadPath)) {
+		t.Errorf("removed temporary snapshot administrative record remains:\n%s", listing)
+	}
+	if !strings.Contains(listing, filepath.Base(livePath)) {
+		t.Errorf("live temporary snapshot administrative record disappeared:\n%s", listing)
+	}
+}
+
+func TestAcquireSnapshotRecordsAndReleasesHolder(t *testing.T) {
+	_, tree := snapshotTestTree(t)
+	_, release, err := AcquireSnapshot(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := snapshotLockPathForTest(t, tree)
+	holdersPath := snapshotHoldersPath(lockPath)
+	data, err := os.ReadFile(holdersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != fmt.Sprint(os.Getpid()) {
+		t.Fatalf("holders file = %q, expected current PID %d", data, os.Getpid())
+	}
+
+	release()
+	release()
+	data, err = os.ReadFile(holdersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != "" {
+		t.Fatalf("released PID remains in holders file: %q", data)
 	}
 }
 
