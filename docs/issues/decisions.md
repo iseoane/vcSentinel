@@ -6,6 +6,126 @@ where it landed. Dates are exactly as recorded in the former registers
 (`follow-ups.md`, `docs/reingenieria/f0-deuda.md`, phase fichas F0-F9);
 nothing is re-dated. Sources live in git history.
 
+### Orphaned runs are surfaced, not settled automatically (2026-09-15)
+
+Item 1 asks that "a kill should retire its own runs instead of leaving them
+for an operator". That was attempted and abandoned, and the reasoning is worth
+keeping because the attempt looked reasonable.
+
+The settlement already existed: `OrphanActiveRuns` handles cross-process
+residue with its honesty rules intact, and only a graceful daemon shutdown
+invoked it. What was missing was the ability to decide that an owner is gone,
+so the attempt recorded `OwnerPID` in `RunPolicy` and claimed it atomically.
+Review returned ten CRITICAL findings, and four were the same design fault
+seen from different sides: policy.json is the IMMUTABLE admission record, so
+putting ownership there broke `Start`'s idempotency with
+`ErrImmutableConflict`; `UpdateRunCommit` and `UpdateRunWorktree` rewrite that
+file without the execution lock, so a stale write could restore a dead PID
+over a live owner and let reconciliation cancel active work; ownership was
+never released at terminal state, so a `Retry` from another live process was
+rejected; and a PID alone cannot survive reuse between the liveness check and
+the append.
+
+Doing it properly means a separate lease record outside the immutable
+comparison, holding a process GENERATION (PID plus start time) rather than a
+PID, written under the execution lock with compare-and-swap, released at
+settlement, and fenced at every append. Estimated at five slices and roughly
+650-700 lines in `store` and `controller`, both contract-bearing.
+
+Rejected in favour of the cheaper answer, ~120 lines and no new races: `runs
+status` now runs the same read-only classifier `runs recover` renders and says
+how many runs were left unsettled, naming the command that inspects them. The
+human still decides.
+
+The deciding argument: `runs abort --orphaned` deliberately refuses to settle
+without an operator's stated reason because the CLI cannot prove a process is
+dead. The automatic design is an attempt to prove exactly that, and the ten
+findings are what proving it costs. The pain item 1 actually records is that
+the operator never learned the residue existed — three accumulated unnoticed
+in one session — and that is what was fixed.
+
+Landed in `e09a8bc`..`07167af`. Revisit only if runs ever execute unattended,
+with no operator to notify; then the lease design above is the right one and
+should be built completely rather than patched onto the policy record.
+
+### A killed process no longer keeps its snapshot for a day (2026-09-15)
+
+`internal/validation` defers `PurgeSnapshots`, so a process killed
+mid-validation never runs it, and the next purge skipped the leftover because
+`info.ModTime().After(cutoff)` was true — the orphan was too RECENT for the
+24-hour retention. It survived at least a day, registered in `git worktree
+list`; three accumulated in one session. The flock was never the obstacle: the
+OS releases a dead process's lock.
+
+Reclaiming every unlocked snapshot was rejected: snapshots are a deliberate
+per-tree reuse cache, purge runs after every `CreateSnapshot`, and an unlocked
+snapshot is indistinguishable from a warm one. What distinguishes them is now
+recorded rather than guessed — `AcquireSnapshot` writes its PID to a holders
+file beside the lock and the release removes it, so a holder that is no longer
+alive proves abandonment and the entry is reclaimed regardless of age, while
+an entry with no holder keeps the ordinary age rule and the cache survives.
+PID reuse can only produce a false ALIVE, which defers the orphan to the age
+ceiling; it can never produce a false DEAD, because dead requires that no
+process holds that PID. That asymmetry is why no process start time is
+compared.
+
+Three defects found in review and fixed before merge, each worth keeping:
+unlinking the primary lock file after releasing it let one process hold an
+unlinked inode while another locked a fresh one at the same path, so the
+primary lock is now never removed; a live PID originally skipped the age
+cutoff entirely, so a reused PID could protect an orphan forever — the age is
+now the ceiling in every case, which is what the code's own comment already
+claimed; and a process killed between the publication rename and `git worktree
+repair` left a checkout whose metadata pointed at the temporary path, which
+neither removal attempt could reclaim, so purge now repairs and retries before
+falling back to filesystem removal and a prune.
+
+Landed in `f35f294`..`495892f`. Remaining accepted cost: primary `.lock` files
+are never removed, so one empty file accumulates per distinct tree ever purged.
+A parent-lock scheme to collect them was judged more complexity than an empty
+file per tree is worth.
+
+### A finding fixed inside a branch no longer blocks its PR (2026-09-15)
+
+`pr review` reported a four-commit branch as blocked by five findings, every
+one of them already fixed by a later commit of that same branch; the net audit
+of the delivered diff contributed none of them. The PR was judged on how the
+branch reached its state rather than on what it delivers. Rebasing did not
+clear it — verified twice — because blob indexes preserve coverage by content.
+
+Item 14 had made this deliberate, and for a real reason: a `FixedIn` credit
+once hid four later CRITICAL findings on `41c644d`. That protection is kept.
+What item 14 could not distinguish is a partial fix from a complete one that
+landed later in the same branch; what it actually measured was whether the old
+SHA's findings had been recomputed, which for an immutable commit never
+happens, so the documented escape hatch (re-audit the blocked SHA) is
+structurally unreachable for the commit-plus-correction-rounds shape.
+
+It is now measured: a finding contributes to the branch projection only while
+its recorded evidence still exists at the head. A partial fix leaves that
+evidence and keeps blocking by construction; a complete one removes it and
+stops. The check is the one carried dispositions already used, split so a
+completed negative is distinguishable from an unverifiable one — branch
+blockers fail closed and keep blocking whenever the evidence cannot be read.
+`FixedIn` semantics are untouched and still claim no more than provenance:
+`RenderSummary` renders a fix credit only with a non-empty `FixedIn`, so a
+record retired by evidence alone claims none.
+
+Absence is established over the paths that changed between the finding's
+commit and the head, not over its original file alone: a later commit that
+MOVES the offending code elsewhere must land it in one of those paths. Two
+CRITICAL findings arguing this was still insufficient were refuted by the
+repository owner with evidence (`a36097e`, lines 314-333): a file unchanged
+across that range already held the fragment when the finding was recorded, so
+it is pre-existing rather than candidate-caused, and this project's contract
+makes base-only findings follow-ups rather than blockers.
+
+Landed in `3fbdf4a`..`668d0cd`. The branch projection reads `HEAD` rather than
+an explicit head parameter; threading one would have changed exported
+signatures, so the determination is recorded at the seam naming every call
+site and the symptom if it stops holding: a report retiring or retaining
+findings against an unrelated checkout's tree.
+
 ## Closed follow-ups (from the former `follow-ups.md`)
 
 ### A retired block no longer hides a later re-audit (item 14, closed 2026-09-10)
@@ -576,3 +696,228 @@ extracted into `internal/git`: their lease and reaper semantics differ from
 the existing Git snapshot locks. Metadata validation detects accidental
 corruption and incomplete publication; it is not a same-UID security
 boundary, so per-lease content hashing was not added.
+
+**Amended: the store is now bounded on both axes (item 3, landed as `6b781d5`,
+PR 1).** Retention alone was not a ceiling. `sentinel review HEAD --all` on this
+repository audits 871 commits, needs about 5.0 GB against a 3.8 GB tmpfs, and
+filled `/tmp` to 100% on 2026-09-08; the remaining dimensions failed with
+`no space left on device`. The wrong flag was the immediate cause, but a store
+with no ceiling on a tmpfs is one bad invocation away from filling the disk.
+
+Both halves landed, because either alone leaves the other axis unbounded:
+
+- A total-size ceiling. `storeCapacityLimit` derives the bound from the
+  filesystem through `statfs` rather than from a magic number, at one tenth of
+  capacity, on the stated grounds that free space includes unrelated data and
+  evicting this store cannot repair another's overrun.
+  `reapSharedStoreCapacity` evicts the least recently leased unleased published
+  tree first, each under its own lock, so a candidate that cannot be taken never
+  blocks the others.
+- `staleSnapshotAge` lowered from 24 hours to one. The window in which retention
+  buys anything is minutes — one review's five dimensions — and at most an hour
+  for format retries and chained reviews of the same commit. Twenty-four hours
+  bought almost no extra reuse while multiplying the worst-case residue by every
+  commit touched in a day. Measured that afternoon: 50 published trees and
+  446 MB, none older than an hour, so the reaper correctly refused to remove any
+  of it while /tmp sat at 94%. The value is pinned by an exact-equality test
+  (`snapshot_test.go`), so lowering it again is a decision, not a drift.
+
+What the item predicted and got wrong, recorded so the reasoning is not
+reused: it expected retention to be worthless until the PR verification notice
+(item 2) landed. That was a misattribution. What made retention earn anything
+was moving provider state out of the evidence snapshot (see that entry above),
+after which the tree count falls to one per audited commit. Item 2 is
+unrelated and still open.
+
+The provider's own residue beside this store — roughly 14 MB per reviewer
+invocation from the Bun runtime OpenCode ships — is NOT bounded by this
+ceiling and remains item 5 in `actionable.md`.
+
+
+## Closed actionable items (from `actionable.md`)
+
+### A rebase that changed no content no longer pays for a re-audit (item 13, landed as `61bb46a`)
+
+Opened 2026-09-10 and measured on this repository the same night: renaming one
+commit message rewrote the SHAs of the six commits above it, every review record
+was orphaned, and `sentinel review` re-audited all six — about **thirty model
+calls**. Five of the six had byte-identical content to the version already
+reviewed. Nothing about the code had changed. The cause was that the ledger is
+keyed by commit SHA while the coverage it records is a property of the CONTENT,
+so a rebase, an amend or a cherry-pick throws away every semantic verdict.
+
+The machinery already existed and was simply not wired to this path:
+`store.AlreadyReviewed` recognised a blob reviewed under a different SHA, and its
+only consumer was `internal/review/branch.go`, the `pr review` path.
+`sentinel review <sha>` never asked.
+
+Decided and landed in two tiers, because the commit message is real input to the
+audit: identical blobs with an identical message reuse every dimension; identical
+blobs with a different message reuse everything except `spec`, which is
+re-audited because it compares what was promised against what was delivered. An
+adopted record carries the destination commit message and records its origin SHA
+as provenance, so a reused verdict is never indistinguishable from a fresh audit.
+
+The reuse predicate carries the preconditions each review round exposed, and they
+are the part a future reader would otherwise re-derive: the file-to-blob mapping
+must match exactly rather than the set of hashes, the origin must be a single
+deterministically selected commit, its record must exist and be authoritative
+rather than supplementary, and the destination must not be among the candidates.
+Adoption merges both revision histories instead of replacing either, keeping the
+append-only contract. Blob coverage that outlives a pruned ledger record is
+discarded rather than treated as fatal: losing the reuse beats being unable to
+audit.
+
+Two things this deliberately does not fix. A record carried forward is still a
+record about content, not about the branch, so rebasing without running `review`
+again leaves the ledger with holes exactly as before. And the per-dimension
+version — re-audit only the dimensions that read a changed file — was judged
+finer and rarer and was not built.
+
+Consequence for item 0, which stays open: this removed one of the three causes
+that made "unlinked fix" look like a `fix(` prefix problem. The three cases seen
+on 2026-09-09 had three different causes — a review that came out `unavailable`
+(which correctly retires nothing), a fix commit with no record at all, and a
+rebase that orphaned the link. Only the first is item 0's subject.
+
+### The review flow's five pieces, and where each question ended up (items 12, 4, 10, 11 — closed 2026-09-15)
+
+[`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md)
+allocated one question to each command and ordered the work as five pieces. All
+five are done, so that design is now history rather than a work order. What
+survives is the allocation itself, stated by the repository owner on 2026-09-09,
+because every item was drifting away from it independently:
+
+- `review` — "is this piece well made". It looks at one commit, and it is the
+  only writer of per-commit verdicts.
+- `gate` — "does this work right now". It audits nothing.
+- `pr review` — "the pieces together tell a coherent and complete story". It does
+  NOT look at each piece again; it looks at what is only visible with all of them
+  together.
+- `pr create` — reviews NOTHING. It takes `pr review`'s report and publishes it.
+  If no report exists, it refuses.
+
+The one correction made along the way, and the reason two texts in the register
+disagree: the contract first gave `gate` the per-commit audit. Working the flow
+through end to end showed why that is wrong — "compiles and passes its checks" is
+a property of the tree at one moment, not of a commit in isolation; split one
+piece of work across seven commits and the third usually does not build alone. So
+the two questions cannot share an owner.
+
+**Item 12 (piece 1): the intent is captured when `slice` commits the work.** The
+problem it replaced was that item 10 needed a statement of what a change was
+supposed to do, and the obvious source — mining the conversations that produced
+the commits — means reconstructing after the fact across several days, more than
+one agent, and commits that may have no conversation at all. `slice` is the right
+moment because the intent is present rather than reconstructed: the work just
+finished, the conversation is current, the commit is small and concrete, and
+`slice` already invokes an agent right there to write the commit message.
+`slice plan --intent "<text>"` records it with `declared` provenance. Provenance
+is non-negotiable and travels with the intent: "derived from the working
+conversation" and "declared by the human" are not worth the same, and a reviewer
+that cannot say which it got asserts more than it can support. The transcript
+half was withdrawn and is [item 15](actionable.md) in `actionable.md`.
+
+**Item 4 (closed by dissolution, 2026-09-09): there is no discarded verdict to
+persist.** The item existed because `gate` audited `HEAD` and threw the verdict
+away, so the fix looked like "make `gate` write a ficha". The premise was the
+mistake — see the correction above — and `gate` stopped auditing (piece 3,
+`144c9c8`) while `sentinel review` became the only writer of per-commit verdicts
+(piece 2, `89cab36`).
+
+Two constraints from that item are live and outlived it, and they are why the
+entry is here rather than deleted:
+
+- **A range record cannot inherit a per-commit record's rebase survival.** A
+  per-commit ficha survives a rebase through its content blobs; a record keyed by
+  `base..head` or by a hash of the net diff goes stale the moment the branch
+  moves. A STALE range record is worse than none, because publication would then
+  assert a verdict that does not describe the code being published, whereas
+  "these commits have no record" is at least true. Any such record must be bound
+  to an exact identity and refused when it does not match.
+- **Each entry carries its own identity and is refused independently.** A single
+  record spanning a per-commit verdict and a range verdict would inherit the
+  range half's staleness and go stale atomically, discarding valid per-commit
+  evidence along with the invalid range evidence.
+
+Two reference designs were compared and neither was copied wholesale; they are
+recorded because the comparison is the reusable part. gentle-ai answers the
+KEYING question: its review-context records carry `target_identity` and
+`revision` as `sha256:` digests rather than commit SHAs, plus a `lineage_id` that
+threads the operations performed on one candidate — so hashing the candidate
+makes a range, a net diff or any arbitrary candidate addressable, and the
+obstacle was never that a range has no key but that the ledger indexed by commit.
+Only the on-disk shape of two records and the documented contract were inspected;
+whether it supports per-finding human disposition comparable to
+`refute`/`accept`/`reopen` is UNVERIFIED. no-mistakes answers durability and
+shareability instead: it anchors evidence in git itself through a create-only
+compare-and-swap ref and publishes a run's evidence to an orphan branch on the
+same remote, bounded at 500 files / 256 MB / 64 MB per file because evidence is
+agent-produced and a runaway recording must fail the publish closed. The
+trade-off to state before copying it: that evidence is PUSHED, hence visible to
+anyone who can read the repository, whereas this project's ledger is deliberately
+machine-local under the git common directory. Choosing one is choosing who the
+audit trail is for.
+
+**Item 10 (piece 4): `pr review` authors and persists the branch judgement.**
+Before it, no flow received a statement of what the change was supposed to do.
+The per-commit path at least passed the real commit message; the `pr review` and
+`pr create` net audits instead received a literal `HonestNetIntention` constant
+reading "No PR title/description exists before publication", while the `netAxes`
+block went on to ask the reviewer whether the PR delivers what its title and
+description promise. The reviewer was asked to verify conformance to something
+it had just been told did not exist — worse than an empty field. That constant is
+gone: `pr review` reads the recorded range intent, and when none is available it
+sends an explicit no-recorded-intent value rather than leaving the reviewer to
+infer an absent field.
+
+What was corrected against an earlier reading of the item, and is worth keeping:
+`pr review` is not a per-commit audit repeated at branch scale. Its net half is a
+distinct unit — one `AuditCommit` over the whole range diff, planned from that
+diff's own aggregate risk, asking about integration between commits, one commit
+undoing another, net regression, undeclared contract breaks and net coverage —
+and it carries a deterministic classifier that checks against git blobs whether a
+later commit removed the code an earlier finding pointed at, rather than asking a
+model to notice. `pr review` also rejects `--audit-pending`: it reports the gap
+and points the operator at `sentinel review <sha>`.
+
+Landed across PRs 7, 9, 10, 11 and 12 (`34b4f45`, `6d5fe1e`, `00b9c29`,
+`a9b1881`, `e62e7e8`).
+
+**Item 11 (piece 5): `pr create` publishes the stored judgement instead of
+recomputing it.** Landed as `b1c53be` (PR 13). Before it, `RunPrCreateWith`
+called the same `review.AnalyzeBranch` that `pr review` calls, from scratch, on
+every invocation — re-deriving the merge base, re-reading the range diff and
+re-running the net audit from zero, so an operator who reviewed before publishing
+paid for it twice.
+
+The subject of the report is the constraint that shaped the result, and getting
+it wrong was the failure the item existed to prevent: a published PR report is
+about the QUALITY OF THE IMPLEMENTED WHOLE, not about the quality of the commits
+that carried it. Per-commit fichas answer a different question and are not the
+raw material of a PR report, however cheap concatenating them would be.
+
+`pr create` now audits nothing. It requires a persisted `pr review` entry for the
+branch whose head matches the current head and whose evidence is committed,
+validates that attestation before any validation, push or publication, and exits
+`1` naming what is missing rather than auditing its way out. It then replaces
+only the `ci` details block and its attestation step in the stored body — every
+other byte kept verbatim — and publishes the stored title through `--title` and
+the composed body through `--body-file`. That boundary keeps a single author for
+the branch-level judgement, so a PR cannot be published carrying a verdict nobody
+could reproduce by running `pr review` themselves.
+
+Deliberately unchanged: publication still blocks only on a red deterministic
+validation, overridable with `--force --reason`. The semantic verdict stays
+advisory, and composing the report from a record did not quietly turn it into a
+gate.
+
+One measurement the items called for was never run and is recorded as not owed:
+comparing net-diff findings against the union of per-commit findings for the same
+commits. It was a cost question posing as a design question. Even at total
+overlap, a report assembled from per-commit fichas answers "how well is each
+piece made" when a pull request asks "what does this change do as a whole, and is
+it well resolved". The range entry was piece 5's deliverable, not an optimisation
+of it. What the measurement would still decide is narrower: whether the
+per-commit audit is worth running at all when the net audit covers the same
+ground.
