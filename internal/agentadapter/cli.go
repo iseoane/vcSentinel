@@ -392,6 +392,10 @@ func (c *CLIAdapter) reviewCommand(request ReviewRequest) ([]string, map[string]
 		// reject ordinary expressions while contributing no snapshot containment.
 		"grep": map[string]string{"*": "allow"},
 		"glob": map[string]string{"*": "allow"},
+		// TodoWrite is the agent's own task-list tool. It neither reads nor writes
+		// the repository or filesystem, so granting it removes the turn-killing
+		// rejection without widening snapshot containment.
+		"todowrite": map[string]string{"*": "allow"},
 	}
 	// The agent-level fallback is "ask", not "deny": live probing (OpenCode
 	// 1.18.23) showed deny dominance — once any matching rule denies, later

@@ -116,6 +116,9 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	if got := reviewer.Permission["*"]; got != "ask" {
 		t.Errorf("default permission = %v, expected ask (non-interactive auto-reject)", got)
 	}
+	if got := reviewer.Permission["todowrite"].(map[string]any)["*"]; got != "allow" {
+		t.Errorf("todowrite permission = %v, expected allow", got)
+	}
 	for _, tool := range []string{"bash", "edit", "write"} {
 		if got := reviewer.Permission[tool].(map[string]any)["*"]; got != "deny" {
 			t.Errorf("%s permission = %v, expected deny", tool, got)
