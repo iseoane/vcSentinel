@@ -68,6 +68,10 @@ type VerifyOptions struct {
 	Cfg    config.Config
 	// Run (nil = real shell) returns the exit code of a command.
 	Run func(command string) (int, error)
+	// Profile selects the validation.profiles profile whose capabilities are
+	// run when the legacy command lists are empty. Empty means
+	// defaultVerificationProfile, matching what `gate --profile` defaults to.
+	Profile string
 	// Agent is the delegation path (tested contract); nil = cannot delegate.
 	Agent agentadapter.PromptAdapter
 	// Questionr asks the notice with a choice; nil = non-interactive → skip.
@@ -103,11 +107,50 @@ func Verify(opts VerifyOptions) (VerificationResult, error) {
 	return result, nil
 }
 
+// defaultVerificationProfile mirrors the gate's defaultGateProfile. It is
+// duplicated rather than imported because internal/ops must not depend on
+// cmd/sentinel; if the gate's default ever changes, this is the other place
+// that decides which commands a PR claims to have run.
+const defaultVerificationProfile = "standard"
+
+// profileCommands resolves the commands a declared validation profile runs, in
+// the order the profile declares them. It exists because this repository — and
+// any configuration written after the capability format landed — declares
+// verification under validation.capabilities, while the legacy lint/test/build
+// lists stay empty: translateLegacyCommandsToCapabilities only ever converts
+// the old keys INTO capabilities and returns early when capabilities are
+// already present, so nothing filled those lists back in. The result was a PR
+// body announcing that no verification was configured, minutes after the gate
+// had run exactly these commands and reported PASS. A capability with no
+// command contributes nothing rather than an empty shell invocation.
+func profileCommands(validation config.ValidationConfig, profile string) []string {
+	if profile == "" {
+		profile = defaultVerificationProfile
+	}
+	names, ok := validation.Profiles[profile]
+	if !ok {
+		return nil
+	}
+	commands := make([]string, 0, len(names))
+	for _, name := range names {
+		if command := strings.TrimSpace(validation.Capabilities[name].Command); command != "" {
+			commands = append(commands, command)
+		}
+	}
+	return commands
+}
+
 // verifyInternal computes the result without side effects (no event).
 func verifyInternal(opts VerifyOptions) (VerificationResult, error) {
 	commands := append([]string{}, opts.Cfg.LintCommands...)
 	commands = append(commands, opts.Cfg.TestCommands...)
 	commands = append(commands, opts.Cfg.BuildCommands...)
+	// The legacy lists win when present, so a configuration that still uses
+	// them keeps its exact behaviour and ordering; the profile is consulted
+	// only when they leave nothing to run.
+	if len(commands) == 0 {
+		commands = profileCommands(opts.Cfg.Validation, opts.Profile)
+	}
 
 	if len(commands) > 0 {
 		run := opts.Run

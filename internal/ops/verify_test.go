@@ -260,3 +260,101 @@ func TestVerificationNoticeText(t *testing.T) {
 		t.Errorf("notice with CI does not mention it: %q", withCI)
 	}
 }
+
+// TestVerifyReadsTheValidationProfileThisProjectDeclares is item 2: this
+// repository configures verification under validation.capabilities, not under
+// the legacy lint/test/build lists, and translation only ever runs from the
+// legacy keys INTO capabilities. The command list therefore came out empty and
+// the PR body announced that no verification was configured — minutes after
+// the gate had run those very commands and reported PASS.
+func TestVerifyReadsTheValidationProfileThisProjectDeclares(t *testing.T) {
+	executed := []string{}
+	result, err := Verify(VerifyOptions{
+		Cfg: config.Config{
+			Validation: config.ValidationConfig{
+				Capabilities: map[string]config.CapabilityConfig{
+					"format":    {Command: "gofmt -l ."},
+					"lint":      {Command: "go vet ./..."},
+					"build":     {Command: "go build ./..."},
+					"unit_test": {Command: "go test ./..."},
+				},
+				Profiles: map[string][]string{"standard": {"format", "lint", "build", "unit_test"}},
+			},
+		},
+		Run: func(command string) (int, error) {
+			executed = append(executed, command)
+			return 0, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+	if result.Mode != ModeDeterministic {
+		t.Fatalf("Mode = %q, expected %q: a declared profile is configured verification", result.Mode, ModeDeterministic)
+	}
+	if len(executed) != 4 {
+		t.Fatalf("%d commands ran, expected the profile's 4: %v", len(executed), executed)
+	}
+}
+
+// TestVerifyKeepsLegacyCommandListsAuthoritative guards the compatibility
+// direction: a configuration that still declares the legacy lists must run
+// exactly those, in that order, and must not gain the profile's commands.
+func TestVerifyKeepsLegacyCommandListsAuthoritative(t *testing.T) {
+	executed := []string{}
+	_, err := Verify(VerifyOptions{
+		Cfg: config.Config{
+			LintCommands: []string{"legacy lint"},
+			Validation: config.ValidationConfig{
+				Capabilities: map[string]config.CapabilityConfig{"lint": {Command: "profile lint"}},
+				Profiles:     map[string][]string{"standard": {"lint"}},
+			},
+		},
+		Run: func(command string) (int, error) {
+			executed = append(executed, command)
+			return 0, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+	if len(executed) != 1 || executed[0] != "legacy lint" {
+		t.Fatalf("executed = %v, expected only the legacy list", executed)
+	}
+}
+
+// TestVerifyInventsNothingWithoutADeclaredProfile keeps the fallback honest: an
+// absent profile, or capabilities carrying no command, must leave verification
+// unconfigured rather than report commands nobody declared.
+func TestVerifyInventsNothingWithoutADeclaredProfile(t *testing.T) {
+	for name, validation := range map[string]config.ValidationConfig{
+		"no profile at all": {},
+		"profile naming an undeclared capability": {
+			Profiles: map[string][]string{"standard": {"missing"}},
+		},
+		"capability with an empty command": {
+			Capabilities: map[string]config.CapabilityConfig{"lint": {}},
+			Profiles:     map[string][]string{"standard": {"lint"}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			executed := []string{}
+			result, err := Verify(VerifyOptions{
+				Cfg: config.Config{Validation: validation},
+				Run: func(command string) (int, error) {
+					executed = append(executed, command)
+					return 0, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("Verify failed: %v", err)
+			}
+			if len(executed) != 0 {
+				t.Fatalf("executed %v, expected nothing to run", executed)
+			}
+			if result.Mode == ModeDeterministic {
+				t.Fatalf("Mode = %q: verification must not claim to be configured", result.Mode)
+			}
+		})
+	}
+}
