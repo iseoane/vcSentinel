@@ -157,12 +157,22 @@ The audit trail: which steps ran, and what each found. Steps, fixed order:
 |---|---|---|
 | `slice` | intent trailers present on the range | `passed` or `not_observed` |
 | `review` | the ledger records for each SHA | `passed`, `warning`, `blocked`, `question`, `unavailable`, or `not_observed` |
-| `gate` | no validation evidence is collected by this flow | `passed`, `failed`, or `not_run` |
-| `lint` | no lint evidence is collected by this flow | `not_configured` |
-| `test` | no test evidence is collected by this flow | `passed`, `failed`, or `not_configured` |
-| `build` | no build evidence is collected by this flow | `not_configured` |
+| `gate` | no validation evidence is collected by this flow | `not_attempted` |
+| `lint` | no lint evidence is collected by this flow | `not_attempted` |
+| `test` | no test evidence is collected by this flow | `not_attempted` |
+| `build` | no build evidence is collected by this flow | `not_attempted` |
 | `pr review` | this run | `authored` |
 | `ci` | filled by `pr create` (piece 5) | `not_observed` |
+
+Corrected 2026-09-15: these four steps previously recorded `not_run` and
+`not_configured`. Both state that the step was looked at and found absent, which
+a consumer reads as a fact about the repository; this flow collects no such
+evidence, as the middle column says, so it never looked. One published body
+stated that this repository had no validation commands minutes after `gate` had
+run four of them. `not_attempted` is that distinction, and `validStepStatus` in
+`internal/app/pr/compose.go` — which `pr create` applies to what this flow
+persisted — must accept every status this table names, or publication rejects
+every entry written here.
 
 The status is machine-readable; its visual icon and summary remain reader-facing.
 Each of the eight fixed steps renders as a collapsed `<details>` whose summary
@@ -190,7 +200,7 @@ One HTML comment, invisible to the reader, immediately before the Pipeline
 section:
 
 ```
-<!-- vas-sentinel-attestation:v1 {"head_sha":"...","branch":"...","verdict":"...","steps":[{"step":"slice","status":"passed"},{"step":"review","status":"passed"},{"step":"gate","status":"not_run"},{"step":"lint","status":"not_configured"},{"step":"test","status":"not_configured"},{"step":"build","status":"not_configured"},{"step":"pr review","status":"authored"},{"step":"ci","status":"not_observed"}]} -->
+<!-- vas-sentinel-attestation:v1 {"head_sha":"...","branch":"...","verdict":"...","steps":[{"step":"slice","status":"passed"},{"step":"review","status":"passed"},{"step":"gate","status":"not_attempted"},{"step":"lint","status":"not_attempted"},{"step":"test","status":"not_attempted"},{"step":"build","status":"not_attempted"},{"step":"pr review","status":"authored"},{"step":"ci","status":"not_observed"}]} -->
 ```
 
 `v1` in the marker is the schema version and is mandatory: a later reader must

@@ -731,13 +731,19 @@ func TestRunPrCreateForceRequiresReasonAndPublishesRedValidation(t *testing.T) {
 	}
 }
 
-// TestPrReviewAuthoredEntryValidatesForPrCreate closes the gap that let a
-// renderer change break publication silently: pr review writes the attestation
-// and pr create validates it with validStepStatus, and nothing exercised that
-// round trip. When the pipeline statuses gained "not_attempted" — pr review
-// runs none of those steps, so calling them not_configured stated a fact about
-// the repository rather than about this command — every package test still
-// passed while pr create would have rejected every entry pr review wrote.
+// TestPrReviewAuthoredEntryValidatesForPrCreate covers the ATTESTATION half of
+// the pr review -> pr create round trip: pr review builds the attestation and
+// pr create validates its statuses with validStepStatus, and nothing exercised
+// that. When the pipeline statuses gained "not_attempted" — pr review runs none
+// of those steps, so calling them not_configured stated a fact about the
+// repository rather than about this command — every package test still passed
+// while pr create would have rejected every entry pr review wrote.
+//
+// It does NOT cover the body half: the fixture's Body carries only the intent
+// heading and the attestation marker, with no `## Pipeline` section, so a
+// renderer change that breaks what ComposePRBody needs from the body would
+// still pass here. That half remains uncovered; do not read this test as
+// proving the whole round trip.
 func TestPrReviewAuthoredEntryValidatesForPrCreate(t *testing.T) {
 	attestation := review.BuildPRReviewAttestation(&review.BranchResult{}, nil, review.TemplateVerification{NotAttempted: true}, nil)
 	attestation.Branch = "feat/example"
