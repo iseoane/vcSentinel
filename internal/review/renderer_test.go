@@ -1,6 +1,7 @@
 package review
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,88 @@ func recordHelper(sha, message, model string, revs ...Revision) Record {
 // revisionHelper builds a revision with the given verdict and findings.
 func revisionHelper(result string, dims ...DimensionResult) Revision {
 	return Revision{At: time.Now().UTC(), Result: result, Dims: dims}
+}
+
+func TestBranchBlockersRetireIntermediateFindingWhenEvidenceIsGoneAtHead(t *testing.T) {
+	prepareBranchRepo(t)
+	sha := commitInBranch(t, "x.go", "package x\n// defect evidence\n")
+	if err := os.WriteFile("x.go", []byte("package x\n// fixed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "x.go")
+	runGit(t, "commit", "-qm", "fix: remove defect")
+
+	record := Record{SHA: sha, Revisions: []Revision{{
+		Result: VerdictBlock,
+		AggregatedFindings: []Finding{{
+			Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+			Description: "defect", Evidence: "// defect evidence",
+			Location: Location{File: "x.go", LineStart: 2, LineEnd: 2},
+		}},
+	}}}
+	if got := BranchBlockers([]Record{record}, nil); len(got) != 0 {
+		t.Fatalf("BranchBlockers = %d, want no blocker after the evidence was removed at HEAD", len(got))
+	}
+	if got := VerdictDeBranch([]Record{record}, nil); got != VerdictOK {
+		t.Fatalf("VerdictDeBranch = %q, want ok after the evidence was removed at HEAD", got)
+	}
+}
+
+func TestBranchBlockersKeepEvidencePresentAndUnverifiableFindings(t *testing.T) {
+	newRecord := func(sha, evidence string) Record {
+		return Record{SHA: sha, FixedIn: "fix123", Revisions: []Revision{{
+			Result: VerdictBlock,
+			AggregatedFindings: []Finding{{
+				Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+				Description: "defect", Evidence: evidence,
+				Location: Location{File: "x.go", LineStart: 2, LineEnd: 2},
+			}},
+		}}}
+	}
+
+	t.Run("evidence still present protects item 14", func(t *testing.T) {
+		prepareBranchRepo(t)
+		sha := commitInBranch(t, "x.go", "package x\n// defect evidence\n")
+		if got := BranchBlockers([]Record{newRecord(sha, "// defect evidence")}, nil); len(got) != 1 {
+			t.Fatalf("BranchBlockers = %d, want the still-present critical", len(got))
+		}
+		if got := VerdictDeBranch([]Record{newRecord(sha, "// defect evidence")}, nil); got != VerdictBlock {
+			t.Fatalf("VerdictDeBranch = %q, want block while evidence remains", got)
+		}
+	})
+
+	t.Run("empty evidence fails closed", func(t *testing.T) {
+		prepareBranchRepo(t)
+		sha := commitInBranch(t, "x.go", "package x\n// fixed\n")
+		if got := BranchBlockers([]Record{newRecord(sha, "")}, nil); len(got) != 1 {
+			t.Fatalf("BranchBlockers = %d, want the unverifiable critical", len(got))
+		}
+	})
+
+	t.Run("missing file fails closed", func(t *testing.T) {
+		prepareBranchRepo(t)
+		sha := commitInBranch(t, "x.go", "package x\n// defect evidence\n")
+		runGit(t, "rm", "-q", "x.go")
+		runGit(t, "commit", "-qm", "fix: remove file")
+		if got := BranchBlockers([]Record{newRecord(sha, "// defect evidence")}, nil); len(got) != 1 {
+			t.Fatalf("BranchBlockers = %d, want the unverifiable critical", len(got))
+		}
+	})
+}
+
+func TestStatusRecordPendingDoesNotUseBranchHeadEvidence(t *testing.T) {
+	prepareBranchRepo(t)
+	sha := commitInBranch(t, "x.go", "package x\n// fixed\n")
+	record := Record{SHA: sha, FixedIn: "fix123", Revisions: []Revision{{
+		Result: VerdictBlock,
+		AggregatedFindings: []Finding{{
+			Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+			Evidence: "// gone", Location: Location{File: "x.go", LineStart: 2},
+		}},
+	}}}
+	if !RecordPending(record, nil) {
+		t.Fatal("RecordPending = false, want plain record listing to remain unchanged")
+	}
 }
 
 func TestRenderMatrixBasic(t *testing.T) {

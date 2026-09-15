@@ -284,19 +284,27 @@ func carriedNetDispositions(dispositions []FindingDisposition, revisions []Recor
 // head. A moved line still carries because the search spans the whole file;
 // removed evidence, a deleted file, or an unreadable snapshot does not.
 func dispositionEvidenceHoldsAtHead(disp FindingDisposition, head string) bool {
+	holds, complete := dispositionEvidenceStateAtHead(disp, head)
+	return complete && holds
+}
+
+// dispositionEvidenceStateAtHead distinguishes a completed negative check from
+// an unverifiable one. Carried answers discard both kinds of non-match, while
+// branch blockers must fail closed when the evidence cannot be checked.
+func dispositionEvidenceStateAtHead(disp FindingDisposition, head string) (holds, complete bool) {
 	path := strings.TrimSpace(disp.Path)
 	evidence := strings.TrimSpace(disp.Evidence)
 	if path == "" || evidence == "" {
-		return false
+		return false, false
 	}
 	if len(SafeReviewPaths([]string{path})) != 1 {
-		return false
+		return false, false
 	}
 	content, present, err := git.ReadPathAtRevision(head, path)
 	if err != nil || !present {
-		return false
+		return false, false
 	}
-	return containsNormalizedEvidence(content, evidence)
+	return containsNormalizedEvidence(content, evidence), true
 }
 
 const netAxes = `Evaluate explicitly beyond any per-commit review:

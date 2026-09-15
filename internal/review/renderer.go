@@ -407,7 +407,7 @@ func RenderSummary(records []Record, dispositions []FindingDisposition) string {
 			sha = sha[:7]
 		}
 		fixed := "—"
-		if !RecordPending(record, dispositions) {
+		if !branchRecordPending(record, dispositions) {
 			fi := record.FixedIn
 			if len(fi) > 7 {
 				fi = fi[:7]
@@ -498,7 +498,7 @@ func TruncateBody(text string, maxBytes int) string {
 func VerdictDeBranch(records []Record, dispositions []FindingDisposition) string {
 	worst := VerdictOK
 	for _, record := range records {
-		if !RecordPending(record, dispositions) {
+		if !branchRecordPending(record, dispositions) {
 			// Resolved: it no longer contributes to the branch verdict.
 			continue
 		}

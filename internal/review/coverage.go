@@ -136,8 +136,36 @@ func CurrentFindings(record Record) []Finding {
 // risks and the inherited section of a stacked PR all consume it, so a
 // refuted finding cannot surface on one of them while another treats the
 // record as resolved.
-func effectiveRecordFindings(record Record, dispositions []FindingDisposition) []Finding {
+func branchRecordPending(record Record, dispositions []FindingDisposition) bool {
 	if !RecordPending(record, dispositions) {
+		return false
+	}
+	findings := ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
+	hadBlocking := false
+	for _, finding := range findings {
+		if !IsBlocking(finding.Severity, finding.Status) {
+			continue
+		}
+		hadBlocking = true
+		holds, complete := dispositionEvidenceStateAtHead(FindingDisposition{
+			Path: finding.Location.File, Evidence: finding.Evidence,
+		}, "HEAD")
+		if !complete || holds {
+			return true
+		}
+	}
+	if !hadBlocking {
+		return true
+	}
+	// Branch-only projection: the plain RecordPending/status listing remains
+	// unchanged because it has no branch head. Here, a complete evidence check
+	// proves that every blocking finding from this intermediate record vanished
+	// from HEAD, so the record no longer contributes to branch blockers or verdict.
+	return false
+}
+
+func effectiveRecordFindings(record Record, dispositions []FindingDisposition) []Finding {
+	if !branchRecordPending(record, dispositions) {
 		return nil
 	}
 	return ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
