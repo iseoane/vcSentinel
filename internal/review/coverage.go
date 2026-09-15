@@ -136,10 +136,14 @@ func CurrentFindings(record Record) []Finding {
 // risks and the inherited section of a stacked PR all consume it, so a
 // refuted finding cannot surface on one of them while another treats the
 // record as resolved.
-// branchEffectiveFindings is used only by branch reporting projections. Those
-// projections have no explicit head parameter in their stable API and are
-// invoked for the current checkout, so HEAD is the deliberate branch snapshot;
-// plain status uses RecordPending and never enters this path.
+// branchEffectiveFindings is used by pendingRisksWithDispositions (via
+// effectiveBranchFindings), BranchBlockers (via effectiveBranchFindings), and
+// effectiveRecordFindings for the stacked inherited projection. VerdictDeBranch
+// and RenderSummary use the same branchRecordPending decision directly. These
+// stable branch APIs have no explicit head parameter, so each is invoked for
+// the current checkout and HEAD is the deliberate branch snapshot; plain status
+// uses RecordPending and never enters this path. If that invariant changes, a
+// report can retire or retain findings using an unrelated checkout's tree.
 func branchEffectiveFindings(record Record, dispositions []FindingDisposition) []Finding {
 	findings := ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
 	out := make([]Finding, 0, len(findings))

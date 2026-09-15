@@ -68,8 +68,8 @@ func TestRenderSummaryDoesNotClaimUnbackedFixCredit(t *testing.T) {
 
 func TestBranchRisksRetainSurvivingWarningsAfterCriticalRetirement(t *testing.T) {
 	prepareBranchRepo(t)
-	sha := commitInBranch(t, "x.go", "package x\n// critical evidence\n// surviving critical\n// warning evidence\n")
-	if err := os.WriteFile("x.go", []byte("package x\n// fixed\n// surviving critical\n// warning evidence\n"), 0644); err != nil {
+	sha := commitInBranch(t, "x.go", "package x\n// critical evidence\n// warning evidence\n")
+	if err := os.WriteFile("x.go", []byte("package x\n// fixed\n// warning evidence\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, "add", "x.go")
@@ -79,13 +79,15 @@ func TestBranchRisksRetainSurvivingWarningsAfterCriticalRetirement(t *testing.T)
 		Result: VerdictBlock,
 		AggregatedFindings: []Finding{
 			{Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed, Description: "critical", Evidence: "// critical evidence", Location: Location{File: "x.go", LineStart: 2}},
-			{Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed, Description: "surviving critical", Evidence: "// surviving critical", Location: Location{File: "x.go", LineStart: 3}},
-			{Dimension: DimLogic, Severity: SevWarning, Status: StatusConfirmed, Description: "warning survives", Evidence: "// warning evidence", Location: Location{File: "x.go", LineStart: 4}},
+			{Dimension: DimLogic, Severity: SevWarning, Status: StatusConfirmed, Description: "warning survives", Evidence: "// warning evidence", Location: Location{File: "x.go", LineStart: 3}},
 		},
 	}}}
 	out := RenderSummary([]Record{record}, nil)
 	if !strings.Contains(out, "warning survives") {
 		t.Fatalf("RenderSummary omitted surviving warning:\n%s", out)
+	}
+	if blockers := BranchBlockers([]Record{record}, nil); len(blockers) != 0 {
+		t.Fatalf("BranchBlockers = %d, want no blocker after every critical retired", len(blockers))
 	}
 }
 
