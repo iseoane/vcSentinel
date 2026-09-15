@@ -116,7 +116,7 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	if got := reviewer.Permission["*"]; got != "ask" {
 		t.Errorf("default permission = %v, expected ask (non-interactive auto-reject)", got)
 	}
-	if got := reviewer.Permission["todowrite"].(map[string]any)["*"]; got != "allow" {
+	if got := reviewer.Permission["todowrite"]; got != "allow" {
 		t.Errorf("todowrite permission = %v, expected allow", got)
 	}
 	for _, tool := range []string{"bash", "edit", "write"} {
@@ -146,6 +146,30 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 		if !reflect.DeepEqual(permissions, map[string]any{"*": "allow"}) {
 			t.Errorf("%s permissions = %v, expected ordinary search expressions to remain allowed", tool, permissions)
 		}
+	}
+}
+
+// TestOpenCodeReviewerTodowritePermissionUsesScalarAction guards the provider
+// configuration shape: todowrite takes a bare action because it has no path or
+// expression to match, unlike path- and expression-based permission maps.
+func TestOpenCodeReviewerTodowritePermissionUsesScalarAction(t *testing.T) {
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	adapter := CLIAdapter{BinaryName: "opencode"}
+	_, env, err := adapter.reviewCommand(ReviewRequest{Prompt: "audit", SnapshotDir: snapshot})
+	if err != nil {
+		t.Fatalf("reviewCommand() error = %v", err)
+	}
+
+	var configuration struct {
+		Agent map[string]struct {
+			Permission map[string]json.RawMessage `json:"permission"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(env["OPENCODE_CONFIG_CONTENT"]), &configuration); err != nil {
+		t.Fatalf("review configuration is invalid JSON: %v", err)
+	}
+	if got := string(configuration.Agent["reviewer"].Permission["todowrite"]); got != `"allow"` {
+		t.Fatalf("serialized todowrite permission = %s, expected scalar %q", got, `"allow"`)
 	}
 }
 
