@@ -199,3 +199,33 @@ func TestPipelineStepsDoNotClaimNotConfiguredWhenNothingWasAttempted(t *testing.
 		}
 	}
 }
+
+// TestEveryProducibleStatusIsPublishable is the safety net the near-miss of
+// 2026-09-15 needed: the statuses this package emits and the set pr create
+// validates were declared independently, so adding one here and not there
+// rejected every entry pr review wrote — and every package test still passed.
+//
+// It enumerates the reachable inputs rather than a fixture: both NotAttempted
+// states, present and absent commands, and every declared verdict. It passes
+// today; its value is failing the moment the two sides drift.
+func TestEveryProducibleStatusIsPublishable(t *testing.T) {
+	commands := []VerifiedCommand{{Comando: "go test ./...", Exit: 0}, {Comando: "go vet ./...", Exit: 1}}
+	for _, notAttempted := range []bool{false, true} {
+		for _, verdict := range []string{VerdictOK, VerdictWarn, VerdictBlock, VerdictQuestion, VerdictUnavailable} {
+			for _, cmds := range [][]VerifiedCommand{nil, commands} {
+				result := &BranchResult{Records: []Record{{SHA: "a", Revisions: []Revision{{Result: verdict}}}}}
+				verification := TemplateVerification{NotAttempted: notAttempted, Comandos: cmds, Validation: cmds}
+				for _, step := range pipelineSteps(result, nil, verification, nil) {
+					allowed, ok := AllowedAttestationStatuses[step.Step]
+					if !ok {
+						t.Fatalf("step %q has no declared status vocabulary", step.Step)
+					}
+					if !allowed[step.Status] {
+						t.Fatalf("step %q emits %q, which publication does not accept (verdict=%s notAttempted=%v)",
+							step.Step, step.Status, verdict, notAttempted)
+					}
+				}
+			}
+		}
+	}
+}

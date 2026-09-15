@@ -189,6 +189,38 @@ func renderRiskAssessment(res *BranchResult, dispositions []FindingDisposition) 
 	return b.String()
 }
 
+// AllowedAttestationStatuses is the single declaration of which status each
+// Pipeline step may carry. It lives beside the code that PRODUCES those
+// statuses, and internal/app/pr's publication validator consumes it rather
+// than restating the set.
+//
+// The two were declared independently until 2026-09-15, when adding
+// "not_attempted" here and not there would have made pr create reject every
+// entry pr review writes, with every package test still green: pr review
+// authors the attestation and pr create validates it, and nothing exercised
+// the round trip. One declaration removes the class rather than the instance.
+//
+// The "ci" step is filled by pr create after this package has rendered, so its
+// vocabulary is wider than what this package emits.
+var AllowedAttestationStatuses = map[string]map[string]bool{
+	"slice":     {statusPassed: true, statusNotObserved: true},
+	"review":    {statusPassed: true, "warning": true, "blocked": true, VerdictQuestion: true, VerdictUnavailable: true, statusNotObserved: true},
+	"gate":      {statusPassed: true, statusFailed: true, "not_run": true, statusNotAttempted: true},
+	"lint":      {statusPassed: true, statusFailed: true, statusNotConfigured: true, statusNotAttempted: true},
+	"test":      {statusPassed: true, statusFailed: true, statusNotConfigured: true, statusNotAttempted: true},
+	"build":     {statusPassed: true, statusFailed: true, statusNotConfigured: true, statusNotAttempted: true},
+	"pr review": {"authored": true},
+	"ci":        {statusPassed: true, statusFailed: true, "warning": true, "pending": true, statusNotObserved: true},
+}
+
+const (
+	statusPassed        = "passed"
+	statusFailed        = "failed"
+	statusNotObserved   = "not_observed"
+	statusNotConfigured = "not_configured"
+	statusNotAttempted  = "not_attempted"
+)
+
 func renderTesting(verification TemplateVerification) string {
 	var b strings.Builder
 	// Stated once, plainly, instead of rendering two lines that read as
@@ -213,15 +245,15 @@ func renderTesting(verification TemplateVerification) string {
 // is a separate, later step (renderPipelineSteps): truncation happens on this
 // slice, which is what keeps it from ever reaching another section.
 func pipelineSteps(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) []pipelineStep {
-	absentStatus, absentSummary := "not_configured", "not configured"
+	absentStatus, absentSummary := statusNotConfigured, "not configured"
 	gateStatus, gateSummary := "not_run", "not run"
 	if verification.NotAttempted {
-		absentStatus, absentSummary = "not_attempted", "not attempted by this command"
+		absentStatus, absentSummary = statusNotAttempted, "not attempted by this command"
 		gateStatus, gateSummary = absentStatus, absentSummary
 	}
-	slice := pipelineStep{Icon: "⚪", Step: "slice", Status: "not_observed", Summary: "not observed", Evidence: "No Sentinel-Intent trailers were present."}
+	slice := pipelineStep{Icon: "⚪", Step: "slice", Status: statusNotObserved, Summary: "not observed", Evidence: "No Sentinel-Intent trailers were present."}
 	if len(intents) > 0 {
-		slice = pipelineStep{Icon: "✅", Step: "slice", Status: "passed", Summary: "intent trailers present", Evidence: renderIntentLines(intents, res.SHAs)}
+		slice = pipelineStep{Icon: "✅", Step: "slice", Status: statusPassed, Summary: "intent trailers present", Evidence: renderIntentLines(intents, res.SHAs)}
 	}
 	return []pipelineStep{
 		slice,
@@ -235,13 +267,13 @@ func pipelineSteps(res *BranchResult, intents []IntentLine, verification Templat
 		commandPipelineStep("test", verification.Comandos, absentStatus, absentSummary),
 		commandPipelineStep("build", nil, absentStatus, absentSummary),
 		{Icon: "✅", Step: "pr review", Status: "authored", Summary: "body and attestation authored", Evidence: "This persisted entry was authored for the reviewed branch head."},
-		{Icon: "⚪", Step: "ci", Status: "not_observed", Summary: "not observed by Sentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
+		{Icon: "⚪", Step: "ci", Status: statusNotObserved, Summary: "not observed by Sentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
 	}
 }
 
 func reviewPipelineStep(res *BranchResult, dispositions []FindingDisposition) pipelineStep {
 	if len(res.Records) == 0 {
-		return pipelineStep{Icon: "⚪", Step: "review", Status: "not_observed", Summary: "no records", Evidence: "No commit review records were found."}
+		return pipelineStep{Icon: "⚪", Step: "review", Status: statusNotObserved, Summary: "no records", Evidence: "No commit review records were found."}
 	}
 	summary := fmt.Sprintf("%d commits audited", len(res.Records))
 	var evidence strings.Builder
@@ -271,7 +303,7 @@ func reviewPipelineStep(res *BranchResult, dispositions []FindingDisposition) pi
 func attestationStatusForVerdict(verdict string) string {
 	switch verdict {
 	case VerdictOK:
-		return "passed"
+		return statusPassed
 	case VerdictWarn:
 		return "warning"
 	case VerdictBlock:
@@ -306,9 +338,9 @@ func commandPipelineStep(step string, commands []VerifiedCommand, absentStatus, 
 	// stays short. Putting the whole command list here as well left truncation
 	// nothing to remove: omitted() replaces Evidence, and an oversized copy in
 	// Summary would survive it and still push the body over the limit.
-	status := "passed"
+	status := statusPassed
 	if failed {
-		status = "failed"
+		status = statusFailed
 	}
 	return pipelineStep{Icon: icon, Step: step, Status: status, Summary: summary, Evidence: evidence.String()}
 }

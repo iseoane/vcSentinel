@@ -116,25 +116,14 @@ func validatePipelineSteps(steps []review.AttestationStep) error {
 	return nil
 }
 
+// validStepStatus consumes the producer's own declaration in internal/review
+// instead of restating it. The two were independent until 2026-09-15, when a
+// status added on the producing side alone would have made this validator
+// reject every entry pr review writes — with every package test green, since
+// nothing exercised the round trip. Reading the single declaration makes that
+// drift impossible rather than caught by review.
 func validStepStatus(step, status string) bool {
-	allowed := map[string]map[string]bool{
-		"slice":  {"passed": true, "not_observed": true},
-		"review": {"passed": true, "warning": true, "blocked": true, "question": true, "unavailable": true, "not_observed": true},
-		// not_attempted is what a surface records for a step it never runs
-		// by contract, as pr review does for all four. It is distinct from
-		// not_run and not_configured, which state that the step was looked
-		// at and found absent: a consumer reads those as facts about the
-		// repository. Accepting it here is required, not cosmetic — pr
-		// create validates exactly what pr review persisted, so refusing
-		// it would reject every entry pr review writes.
-		"gate":      {"passed": true, "failed": true, "not_run": true, "not_attempted": true},
-		"lint":      {"passed": true, "failed": true, "not_configured": true, "not_attempted": true},
-		"test":      {"passed": true, "failed": true, "not_configured": true, "not_attempted": true},
-		"build":     {"passed": true, "failed": true, "not_configured": true, "not_attempted": true},
-		"pr review": {"authored": true},
-		"ci":        {"passed": true, "failed": true, "warning": true, "pending": true, "not_observed": true},
-	}
-	return allowed[step][status]
+	return review.AllowedAttestationStatuses[step][status]
 }
 
 // ComposePRBody replaces exactly the persisted CI details block and its
