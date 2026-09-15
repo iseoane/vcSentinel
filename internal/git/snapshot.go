@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,7 +99,7 @@ func CreateSnapshot(treeOID string) (string, error) {
 	// without needing explicit locks, and only one wins the atomic rename;
 	// the other discards its temp worktree without error.
 	temp := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", treeOID, os.Getpid(), time.Now().UnixNano()))
-	if _, err := runGitOutput("worktree", "add", "--detach", temp, anchorCommit); err != nil {
+	if _, err := runGitOutput("worktree", "add", "--detach", filepath.ToSlash(temp), anchorCommit); err != nil {
 		return "", fmt.Errorf("could not create snapshot worktree %s: %w", treeOID, err)
 	}
 
@@ -107,10 +108,10 @@ func CreateSnapshot(treeOID string) (string, error) {
 			// Another call won the race: the destination already exists. Our
 			// own temp worktree is cleaned up (at its original path, still
 			// consistent) and the other call's result is reused.
-			_, _ = runGitOutput("worktree", "remove", "--force", temp)
+			_, _ = runGitOutput("worktree", "remove", "--force", filepath.ToSlash(temp))
 			return refreshSnapshot(destination)
 		}
-		_, _ = runGitOutput("worktree", "remove", "--force", temp)
+		_, _ = runGitOutput("worktree", "remove", "--force", filepath.ToSlash(temp))
 		return "", fmt.Errorf("could not publish snapshot %s: %w", treeOID, err)
 	}
 
@@ -118,7 +119,7 @@ func CreateSnapshot(treeOID string) (string, error) {
 	// directory stale (it points at the temp path, which no longer
 	// exists): without this "repair", "git worktree list"/"remove" do not
 	// recognize the final path. Verified empirically with git 2.47.3.
-	if _, err := runGitOutput("worktree", "repair", destination); err != nil {
+	if _, err := runGitOutput("worktree", "repair", filepath.ToSlash(destination)); err != nil {
 		return "", fmt.Errorf("could not repair snapshot worktree metadata %s: %w", treeOID, err)
 	}
 
@@ -158,9 +159,11 @@ func AcquireSnapshot(treeOID string) (string, func(), error) {
 		_ = lock.Close()
 		return "", nil, err
 	}
+	_ = addSnapshotHolder(lockPath, os.Getpid())
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
+			_ = removeSnapshotHolder(lockPath, os.Getpid())
 			_ = lock.Close()
 		})
 	}
@@ -173,6 +176,131 @@ func snapshotLockPath(snapshots, treeOID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, treeOID+".lock"), nil
+}
+
+func snapshotHoldersPath(lockPath string) string {
+	return strings.TrimSuffix(lockPath, ".lock") + ".holders"
+}
+
+func snapshotHoldersLockPath(lockPath string) string {
+	return snapshotHoldersPath(lockPath) + ".lock"
+}
+
+func addSnapshotHolder(lockPath string, pid int) error {
+	holdersLock, acquired, err := lockSnapshot(snapshotHoldersLockPath(lockPath), true, true)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return errors.New("snapshot holders lock was not acquired")
+	}
+	defer holdersLock.Close()
+
+	file, err := os.OpenFile(snapshotHoldersPath(lockPath), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = fmt.Fprintf(file, "%d\n", pid)
+	return err
+}
+
+func removeSnapshotHolder(lockPath string, pid int) error {
+	holdersLock, acquired, err := lockSnapshot(snapshotHoldersLockPath(lockPath), true, true)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return errors.New("snapshot holders lock was not acquired")
+	}
+	defer holdersLock.Close()
+
+	path := snapshotHoldersPath(lockPath)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	kept := lines[:0]
+	removed := false
+	for _, line := range lines {
+		value, parseErr := strconv.Atoi(strings.TrimSpace(line))
+		if !removed && parseErr == nil && value == pid {
+			removed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !removed {
+		return nil
+	}
+	return os.WriteFile(path, []byte(strings.Join(kept, "\n")), 0600)
+}
+
+func snapshotHolders(lockPath string) ([]int, error) {
+	data, err := os.ReadFile(snapshotHoldersPath(lockPath))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var holders []int
+	for _, line := range strings.Split(string(data), "\n") {
+		pid, err := strconv.Atoi(strings.TrimSpace(line))
+		if err == nil && pid > 0 {
+			holders = append(holders, pid)
+		}
+	}
+	return holders, nil
+}
+
+func holdersHaveDeadPID(holders []int) bool {
+	for _, pid := range holders {
+		if !processAlive(pid) {
+			return true
+		}
+	}
+	return false
+}
+
+func temporarySnapshotPID(name string) (int, bool) {
+	marker := ".tmp-"
+	markerIndex := strings.Index(name, marker)
+	if markerIndex <= 1 || !strings.HasPrefix(name, ".") ||
+		!treeOIDIsValid(name[1:markerIndex]) {
+		return 0, false
+	}
+	parts := strings.Split(name[markerIndex+len(marker):], "-")
+	if len(parts) != 2 {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(parts[0])
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	if _, err := strconv.ParseInt(parts[1], 10, 64); err != nil {
+		return 0, false
+	}
+	return pid, true
+}
+
+func removeSnapshotLockFiles(lockPath string) {
+	_ = os.Remove(lockPath)
+	_ = os.Remove(snapshotHoldersPath(lockPath))
+	_ = os.Remove(snapshotHoldersLockPath(lockPath))
+}
+
+func removeSnapshotWorktree(path string) error {
+	if _, err := runGitOutput("worktree", "remove", filepath.ToSlash(path)); err != nil {
+		if _, forcedErr := runGitOutput("worktree", "remove", "--force", filepath.ToSlash(path)); forcedErr != nil {
+			return fmt.Errorf("could not remove snapshot %s: %w", path, forcedErr)
+		}
+	}
+	return nil
 }
 
 // refreshSnapshot marks a snapshot as actively acquired. Purge uses the
@@ -234,7 +362,28 @@ func purgeSnapshotsLocked(age time.Duration) error {
 		if err != nil {
 			continue
 		}
-		if info.ModTime().After(cutoff) {
+		path := filepath.Join(snapshots, entry.Name())
+		if strings.HasPrefix(entry.Name(), ".") && strings.Contains(entry.Name(), ".tmp-") {
+			if pid, ok := temporarySnapshotPID(entry.Name()); ok {
+				if processAlive(pid) {
+					continue
+				}
+				_, _ = runGitOutput("worktree", "remove", "--force", filepath.ToSlash(path))
+				if err := os.RemoveAll(path); err != nil {
+					errs = append(errs, fmt.Errorf("could not remove temporary snapshot %s: %w", path, err))
+					continue
+				}
+				removedAny = true
+				continue
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+			if err := removeSnapshotWorktree(path); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			removedAny = true
 			continue
 		}
 		lockPath, err := snapshotLockPath(snapshots, entry.Name())
@@ -250,22 +399,28 @@ func purgeSnapshotsLocked(age time.Duration) error {
 		if !acquired {
 			continue
 		}
-		path := filepath.Join(snapshots, entry.Name())
-		if _, err := runGitOutput("worktree", "remove", path); err != nil {
-			if _, forcedErr := runGitOutput("worktree", "remove", "--force", path); forcedErr != nil {
-				// Neither the normal path nor --force could clean this
-				// snapshot (B15): the error accumulates instead of
-				// returning nil, which would make the caller believe the
-				// disk came out clean while the broken directory is still
-				// there. The rest of the loop continues: this is
-				// per-snapshot best-effort cleaning, one isolated failure
-				// must not keep the others from being purged.
-				errs = append(errs, fmt.Errorf("could not remove snapshot %s: %w", path, forcedErr))
+		holders, err := snapshotHolders(lockPath)
+		if err != nil {
+			errs = append(errs, err)
+			_ = lock.Close()
+			continue
+		}
+		if len(holders) > 0 {
+			if !holdersHaveDeadPID(holders) {
 				_ = lock.Close()
 				continue
 			}
+		} else if info.ModTime().After(cutoff) {
+			_ = lock.Close()
+			continue
+		}
+		if err := removeSnapshotWorktree(path); err != nil {
+			errs = append(errs, err)
+			_ = lock.Close()
+			continue
 		}
 		_ = lock.Close()
+		removeSnapshotLockFiles(lockPath)
 		removedAny = true
 	}
 
