@@ -6,6 +6,51 @@ where it landed. Dates are exactly as recorded in the former registers
 (`follow-ups.md`, `docs/reingenieria/f0-deuda.md`, phase fichas F0-F9);
 nothing is re-dated. Sources live in git history.
 
+### The PR surfaces say what they ran, and only that (item 2, closed 2026-09-15)
+
+Two different defects produced the same untrue sentence, and separating them
+is the part worth keeping.
+
+`verifyInternal` built its command list from `lint_commands`, `test_commands`
+and `build_commands` only. This repository declares verification under
+`validation.capabilities`, and `translateLegacyCommandsToCapabilities` converts
+the legacy keys INTO capabilities and returns early when capabilities already
+exist, so nothing ever filled those lists back in. The list came out empty and
+`pr create`'s notice announced that no verification was configured. It now
+resolves the declared validation profile when the legacy lists leave nothing to
+run; those lists still win when present, so an older configuration keeps its
+exact commands and ordering, and a profile that is absent or whose capabilities
+carry no command leaves verification unconfigured rather than inventing
+commands nobody declared.
+
+The second defect is not about reading configuration at all. `pr review` runs
+neither validation nor verification — that is its contract — but it passed an
+unmarked empty verification, which renders identically to a run that looked and
+found nothing. Its body stated "No validation commands configured" and its
+attestation recorded lint, test and build as `not_configured`, minutes after
+the gate had run four of those commands. Both read as facts about the
+repository. `TemplateVerification.NotAttempted` now distinguishes "never
+looked" from "looked and found nothing", and the attestation records
+`not_attempted`.
+
+That status change nearly broke publication, which is the lesson: `pr create`
+validates what `pr review` persisted through `validStepStatus`, so emitting a
+status that validator did not accept would have rejected every entry `pr
+review` writes. Every package test still passed, because `pr review` authors
+the attestation and `pr create` validates it with nothing exercising the round
+trip. That test now exists and fails with `pr create rejects what pr review
+authored`; it covers the attestation half only, and says so rather than
+implying more.
+
+The design doc for piece 4 documented the old statuses as correct, table and
+worked example both, with a stated invariant that the two agree. Updating one
+without the other would have left it contradicting itself while claiming to be
+fixed; the review caught exactly that.
+
+Landed in `52b4588`..`2bb410c`. Still open: the status vocabulary is declared
+independently in `validStepStatus` and in `pipelineSteps`, which is the
+coupling that nearly broke publication here.
+
 ### Orphaned runs are surfaced, not settled automatically (2026-09-15)
 
 Item 1 asks that "a kill should retire its own runs instead of leaving them

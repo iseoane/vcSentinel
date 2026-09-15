@@ -6,8 +6,8 @@ record incomplete, then work waiting on a measurement or on a platform
 decision. One line per item states why it sits where it does.
 
 Numbering is historical and deliberately not renumbered, so references from
-`future.md` and from `decisions.md` keep pointing at what they name. Items 3,
-4, 10, 11, 12 and 13 closed and moved to
+`future.md` and from `decisions.md` keep pointing at what they name. Items 2,
+3, 4, 10, 11, 12 and 13 closed and moved to
 [`decisions.md`](decisions.md); with them the five pieces of
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md)
 are all done, so that design is now history rather than a work order.
@@ -179,39 +179,32 @@ future break expensive to diagnose.
   durable store is the only intended diagnostic surface, with the exact
   command to reach it printed alongside the `unavailable` verdict.
 
-## 2. Make the PR verification notice read the configuration this project uses
+## 18. Let `doctor` report the refusal the agent already printed
 
-Sits third: unblocked and small, and it is the only remaining item that makes
-a published claim untrue.
+Opened 2026-09-15. Sits with item 17: neither breaks a run, both make a real
+break expensive to diagnose, and this one actively misdirects.
 
-- Wrong: `verifyInternal` (`internal/ops/verify.go:107-109`) builds its command
-  list from `Cfg.LintCommands`, `Cfg.TestCommands` and `Cfg.BuildCommands`
-  only. This project configures verification under `validation.capabilities`
-  instead — `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test ./...` —
-  and `translateLegacyCommandsToCapabilities` (`internal/config/parser.go:595`)
-  converts legacy keys INTO capabilities, never the reverse, and returns early
-  when capabilities are already present. So the list is empty and
-  `verificationNoticeText` announces "No verification commands are configured
-  (lint_commands/test_commands/build_commands in vassentinel.yml)" followed by
-  "No CI was detected: this PR will not have any automatic verification".
-- Evidence: on 2026-09-08 `pr create` printed exactly that, minutes after
-  `gate --stage pre-push` had run all four of those commands and reported PASS.
-  The template it wrote contradicts its own console notice: the template's
-  Validation section lists the four commands at exit 0. The two read different
-  places, and the template is the one telling the truth.
-- Reproduced 2026-09-15, now inside the published artifact rather than only
-  the console: the body `pr review` persisted for `feat/u1-snapshot-reclaim`
-  reads "No validation commands configured" and "Tests not run", written
-  minutes after `gate --stage pre-push` returned PASS having run `gofmt`,
-  `go vet`, `go build` and `go test`, and after `go test -count=1 ./...`
-  exited `0`. The attestation records `lint`, `test` and `build` as
-  `not_configured`. This is what `pr create` would publish.
-- It also blocks scripted use: the notice ends by asking the operator to reply
-  `configure`, `skip` or `delegate` on stdin, so a non-interactive run answers
-  by EOF and proceeds on a default nobody chose.
-- Closing: read the capability profile the project actually declares, so the
-  notice and the template agree, and decide the interactive question's
-  non-interactive answer explicitly instead of by EOF.
+- Wrong: when an agent refuses, `doctor` reports a timeout and denies that a
+  refusal happened. Observed verbatim: `WARN opencode answers: opencode did
+  not answer the probe prompt within 1m0s (the probe's own budget, not a
+  provider refusal)`, with the remedy `check whether the agent process is
+  wedged`. Invoking the same binary directly, in the same worktree, seconds
+  later: `Error: The usage limit has been reached`.
+- Every part of the report was wrong: the provider DID refuse, it said so on
+  its own output, and no process was wedged — none was even running.
+- Cost, measured the day it was written: an hour spent looking for a hung
+  process that did not exist, after a correct quota hypothesis was DISCARDED
+  because `doctor` denied it. Diagnosing the review environment is this
+  command's entire purpose, so a confidently wrong answer here is worse than
+  no answer.
+- The 60s probe bound is not the defect. The defect is discarding what the
+  agent wrote and asserting a cause the probe cannot know: a probe that times
+  out knows only that no answer arrived.
+- Closing: surface the agent's own output when a probe fails, and stop
+  asserting "not a provider refusal" — a timed-out probe cannot distinguish
+  a refusal from a hang, and should say so rather than pick one. If capturing
+  the output is not possible for some adapter, say the cause is unknown and
+  name the command the operator can run by hand.
 
 ## 0. Capture a real fix's provenance beyond `fix(`
 
