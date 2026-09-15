@@ -71,12 +71,23 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 	// and that refusal stands. All this does is say the residue is there and
 	// name the command that inspects it.
 	attention, attentionErr := store.ScanRecoveries(backing)
+	// Resolved before branching on the output format: a failed scan that
+	// reaches only one of the two surfaces is worse than no notice at all,
+	// because the other one then renders a listing that checked nothing and
+	// says nothing about it. The count and the failure travel together from
+	// here on.
+	scanFailure := ""
+	if attentionErr != nil {
+		scanFailure = attentionErr.Error()
+		attention = nil
+	}
 
 	if asJSON {
 		if encodeErr := encodeStableJSON(out, struct {
 			Runs             []runsListEntry `json:"runs"`
 			NeedingAttention int             `json:"needing_attention,omitempty"`
-		}{Runs: entries, NeedingAttention: len(attention)}); encodeErr != nil {
+			AttentionScanErr string          `json:"attention_scan_error,omitempty"`
+		}{Runs: entries, NeedingAttention: len(attention), AttentionScanErr: scanFailure}); encodeErr != nil {
 			fmt.Fprintf(out, "❌ Could not serialize the listing: %v\n", encodeErr)
 			return runExitInfrastructure
 		}
@@ -84,6 +95,7 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 	}
 	if len(entries) == 0 {
 		fmt.Fprintln(out, "📭 No durable runs are recorded.")
+		reportUnsettledRuns(out, len(attention), scanFailure)
 		return runExitSuccess
 	}
 	for _, entry := range entries {
@@ -101,12 +113,21 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 	// scan: this notice is advisory, and the exit code stays the observation
 	// contract's success regardless. An unreadable scan says so rather than
 	// rendering a clean listing that quietly checked nothing.
-	if attentionErr != nil {
-		fmt.Fprintf(out, "⚠️ Could not check for unsettled runs: %v\n", attentionErr)
-	} else if len(attention) > 0 {
-		fmt.Fprintf(out, "⚠️ %d run(s) were left unsettled and nothing is driving them; inspect with `sentinel runs recover`\n", len(attention))
-	}
+	reportUnsettledRuns(out, len(attention), scanFailure)
 	return runExitSuccess
+}
+
+// reportUnsettledRuns renders the advisory notice for the human surface. It is
+// reached from both the populated and the empty listing so a failed scan is
+// never swallowed by whichever branch happened to return first.
+func reportUnsettledRuns(out io.Writer, pending int, scanFailure string) {
+	if scanFailure != "" {
+		fmt.Fprintf(out, "⚠️ Could not check for unsettled runs: %s\n", scanFailure)
+		return
+	}
+	if pending > 0 {
+		fmt.Fprintf(out, "⚠️ %d run(s) were left unsettled and nothing is driving them; inspect with `sentinel runs recover`\n", pending)
+	}
 }
 
 func inspectExecution(out io.Writer, host execution.RepositoryHost, backing *store.Store, runID agentrun.Identity, principal string, asJSON bool) int {

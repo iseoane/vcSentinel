@@ -186,8 +186,65 @@ func TestRunsStatusListingSurfacesRunsNeedingAttention(t *testing.T) {
 		t.Fatalf("listExecutions exit = %d, want %d: observation must not change its contract", code, runExitSuccess)
 	}
 	rendered := out.String()
-	if !strings.Contains(rendered, "runs recover") {
-		t.Fatalf("listing does not name the command that inspects unsettled runs:\n%s", rendered)
+	for _, want := range []string{"1 run(s) were left unsettled", "nothing is driving them", "sentinel runs recover"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("listing notice is missing %q, so it does not tell the operator what happened or what to run:\n%s", want, rendered)
+		}
+	}
+}
+
+// TestReportUnsettledRunsAlwaysNamesAFailedScan covers the regression the
+// review caught: the failure was reported on the human path only, so a JSON
+// caller saw an omitted needing_attention and could not tell a clean scan
+// from one that never ran.
+//
+// It is tested at this seam rather than end to end because a store corrupt
+// enough to fail store.ScanRecoveries also fails the listing's own
+// enumeration, which returns first with exit 2; no fixture was found where
+// the scan fails and the listing survives. The two surfaces are kept honest
+// by construction instead: listExecutions resolves the scan into one
+// scanFailure value BEFORE branching on the output format, and both branches
+// carry that same value.
+func TestReportUnsettledRunsAlwaysNamesAFailedScan(t *testing.T) {
+	var failed bytes.Buffer
+	reportUnsettledRuns(&failed, 0, "events.jsonl is unreadable")
+	if !strings.Contains(failed.String(), "Could not check for unsettled runs") {
+		t.Fatalf("a failed scan rendered as a clean listing:\n%s", failed.String())
+	}
+
+	var pending bytes.Buffer
+	reportUnsettledRuns(&pending, 2, "")
+	for _, want := range []string{"2 run(s) were left unsettled", "sentinel runs recover"} {
+		if !strings.Contains(pending.String(), want) {
+			t.Fatalf("notice is missing %q:\n%s", want, pending.String())
+		}
+	}
+
+	var quiet bytes.Buffer
+	reportUnsettledRuns(&quiet, 0, "")
+	if quiet.String() != "" {
+		t.Fatalf("a clean scan produced noise: %q", quiet.String())
+	}
+}
+
+// TestRunsStatusListingOmitsAttentionFieldsWhenClean pins the omitempty
+// contract on the serialized surface, not only on the human one.
+func TestRunsStatusListingOmitsAttentionFieldsWhenClean(t *testing.T) {
+	backing := store.NewStore(t.TempDir())
+	appendReconciledFixtureStream(t, backing, "candidate:clean-json", []struct {
+		from     agentrun.LifecycleState
+		to       agentrun.LifecycleState
+		decision agentrun.Decision
+	}{{agentrun.StateRunning, agentrun.StateSucceeded, agentrun.DecisionComplete}})
+
+	var out bytes.Buffer
+	if code := listExecutions(&out, backing, true); code != runExitSuccess {
+		t.Fatalf("listExecutions exit = %d, want %d", code, runExitSuccess)
+	}
+	for _, unwanted := range []string{"needing_attention", "attention_scan_error"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Fatalf("clean listing emitted %q: %s", unwanted, out.String())
+		}
 	}
 }
 
