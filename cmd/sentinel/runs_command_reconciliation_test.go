@@ -170,3 +170,79 @@ func TestRunsObservationSurfacesReconcileOwnerDeathDuringCancellation(t *testing
 			settledSummary.State, settledSummary.Sequence, settledSummary.Revision, raw.State, raw.Sequence, raw.Revision)
 	}
 }
+
+// TestRunsStatusListingSurfacesRunsNeedingAttention pins option B of the
+// orphan problem: the operator's own observation surface must say that runs
+// were left unsettled and name the command that inspects them. Before this,
+// the listing rendered a run stuck in `running` exactly like a healthy one,
+// so residue from a killed process was discoverable only by knowing the
+// execution store exists.
+func TestRunsStatusListingSurfacesRunsNeedingAttention(t *testing.T) {
+	backing := store.NewStore(t.TempDir())
+	appendReconciledFixtureStream(t, backing, "candidate-attention", nil)
+
+	var out bytes.Buffer
+	if code := listExecutions(&out, backing, false); code != runExitSuccess {
+		t.Fatalf("listExecutions exit = %d, want %d: observation must not change its contract", code, runExitSuccess)
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "runs recover") {
+		t.Fatalf("listing does not name the command that inspects unsettled runs:\n%s", rendered)
+	}
+}
+
+// TestRunsStatusListingStaysQuietWithoutUnsettledRuns keeps the notice from
+// becoming noise: an operator who sees it on every listing stops reading it,
+// which would undo the point of adding it.
+func TestRunsStatusListingStaysQuietWithoutUnsettledRuns(t *testing.T) {
+	backing := store.NewStore(t.TempDir())
+	settled := appendReconciledFixtureStream(t, backing, "candidate:quiet", []struct {
+		from     agentrun.LifecycleState
+		to       agentrun.LifecycleState
+		decision agentrun.Decision
+	}{{agentrun.StateRunning, agentrun.StateSucceeded, agentrun.DecisionComplete}})
+	_ = settled
+
+	var out bytes.Buffer
+	if code := listExecutions(&out, backing, false); code != runExitSuccess {
+		t.Fatalf("listExecutions exit = %d, want %d", code, runExitSuccess)
+	}
+	if rendered := out.String(); strings.Contains(rendered, "unsettled") {
+		t.Fatalf("listing warned about unsettled runs when every run is terminal:\n%s", rendered)
+	}
+}
+
+// TestRunsStatusListingKeepsItsExitContract pins that surfacing the residue is
+// observation, not a gate. `runs recover` is the surface that exits 4 for a
+// run needing an operator decision; changing this one's exit code would be a
+// contract change, not a notice.
+func TestRunsStatusListingKeepsItsExitContract(t *testing.T) {
+	backing := store.NewStore(t.TempDir())
+	appendReconciledFixtureStream(t, backing, "candidate:contract", nil)
+
+	var out bytes.Buffer
+	if code := listExecutions(&out, backing, false); code != runExitSuccess {
+		t.Fatalf("listExecutions exit = %d, want %d even with unsettled runs", code, runExitSuccess)
+	}
+}
+
+// TestRunsStatusListingReportsAttentionInJSON keeps scripted use in parity with
+// the human surface; the field is additive and omitted when nothing is pending.
+func TestRunsStatusListingReportsAttentionInJSON(t *testing.T) {
+	backing := store.NewStore(t.TempDir())
+	appendReconciledFixtureStream(t, backing, "candidate:json", nil)
+
+	var out bytes.Buffer
+	if code := listExecutions(&out, backing, true); code != runExitSuccess {
+		t.Fatalf("listExecutions exit = %d, want %d", code, runExitSuccess)
+	}
+	var decoded struct {
+		NeedingAttention int `json:"needing_attention"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("listing JSON is invalid: %v", err)
+	}
+	if decoded.NeedingAttention != 1 {
+		t.Fatalf("needing_attention = %d, want 1", decoded.NeedingAttention)
+	}
+}

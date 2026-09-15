@@ -57,10 +57,26 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 			OrphanedCancellation: projection.OrphanedCancellation,
 		})
 	}
+	// A process killed mid-run leaves its stream non-terminal, and the rows
+	// below render it exactly like a healthy one: `state=running` with no
+	// hint that nothing is driving it any more. The residue was therefore
+	// discoverable only by already knowing the execution store exists, which
+	// is how three of them accumulated unnoticed in one session.
+	//
+	// The scan is store.ScanRecoveries, the same read-only classifier `runs
+	// recover` renders, and it already returns only non-terminal runs that
+	// need attention. This surface neither settles anything nor decides that
+	// an owner is gone: proving a process dead is what `runs abort
+	// --orphaned` deliberately refuses to do without an operator's reason,
+	// and that refusal stands. All this does is say the residue is there and
+	// name the command that inspects it.
+	attention, attentionErr := store.ScanRecoveries(backing)
+
 	if asJSON {
 		if encodeErr := encodeStableJSON(out, struct {
-			Runs []runsListEntry `json:"runs"`
-		}{Runs: entries}); encodeErr != nil {
+			Runs             []runsListEntry `json:"runs"`
+			NeedingAttention int             `json:"needing_attention,omitempty"`
+		}{Runs: entries, NeedingAttention: len(attention)}); encodeErr != nil {
 			fmt.Fprintf(out, "❌ Could not serialize the listing: %v\n", encodeErr)
 			return runExitInfrastructure
 		}
@@ -80,6 +96,15 @@ func listExecutions(out io.Writer, backing *store.Store, asJSON bool) int {
 			line += " (orphaned-canceled)"
 		}
 		fmt.Fprintln(out, line)
+	}
+	// Reported after the rows so the listing is never withheld by a failing
+	// scan: this notice is advisory, and the exit code stays the observation
+	// contract's success regardless. An unreadable scan says so rather than
+	// rendering a clean listing that quietly checked nothing.
+	if attentionErr != nil {
+		fmt.Fprintf(out, "⚠️ Could not check for unsettled runs: %v\n", attentionErr)
+	} else if len(attention) > 0 {
+		fmt.Fprintf(out, "⚠️ %d run(s) were left unsettled and nothing is driving them; inspect with `sentinel runs recover`\n", len(attention))
 	}
 	return runExitSuccess
 }
