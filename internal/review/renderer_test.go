@@ -18,6 +18,77 @@ func revisionHelper(result string, dims ...DimensionResult) Revision {
 	return Revision{At: time.Now().UTC(), Result: result, Dims: dims}
 }
 
+func TestBranchBlockersKeepRelocatedEvidenceBlocking(t *testing.T) {
+	prepareBranchRepo(t)
+	sha := commitInBranch(t, "x.go", "package x\n// defect evidence\n")
+	if err := os.WriteFile("x.go", []byte("package x\n// moved away\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("y.go", []byte("package y\n// defect evidence\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "x.go", "y.go")
+	runGit(t, "commit", "-qm", "fix: move defect")
+
+	record := Record{SHA: sha, Revisions: []Revision{{
+		Result: VerdictBlock,
+		AggregatedFindings: []Finding{{
+			Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+			Description: "defect", Evidence: "// defect evidence",
+			Location: Location{File: "x.go", LineStart: 2, LineEnd: 2},
+		}},
+	}}}
+	if got := BranchBlockers([]Record{record}, nil); len(got) != 1 {
+		t.Fatalf("BranchBlockers = %d, want relocated evidence to keep blocking", len(got))
+	}
+}
+
+func TestRenderSummaryDoesNotClaimUnbackedFixCredit(t *testing.T) {
+	prepareBranchRepo(t)
+	sha := commitInBranch(t, "x.go", "package x\n// defect evidence\n")
+	if err := os.WriteFile("x.go", []byte("package x\n// fixed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "x.go")
+	runGit(t, "commit", "-qm", "fix: remove defect")
+
+	record := Record{SHA: sha, Revisions: []Revision{{
+		Result: VerdictBlock,
+		AggregatedFindings: []Finding{{
+			Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed,
+			Description: "defect", Evidence: "// defect evidence",
+			Location: Location{File: "x.go", LineStart: 2, LineEnd: 2},
+		}},
+	}}}
+	out := RenderSummary([]Record{record}, nil)
+	if strings.Contains(out, "fix credited") || !strings.Contains(out, "| — |") {
+		t.Fatalf("RenderSummary = %s, want resolved record without fix credit", out)
+	}
+}
+
+func TestBranchRisksRetainSurvivingWarningsAfterCriticalRetirement(t *testing.T) {
+	prepareBranchRepo(t)
+	sha := commitInBranch(t, "x.go", "package x\n// critical evidence\n// surviving critical\n// warning evidence\n")
+	if err := os.WriteFile("x.go", []byte("package x\n// fixed\n// surviving critical\n// warning evidence\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, "add", "x.go")
+	runGit(t, "commit", "-qm", "fix: remove critical")
+
+	record := Record{SHA: sha, Revisions: []Revision{{
+		Result: VerdictBlock,
+		AggregatedFindings: []Finding{
+			{Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed, Description: "critical", Evidence: "// critical evidence", Location: Location{File: "x.go", LineStart: 2}},
+			{Dimension: DimLogic, Severity: SevCritical, Status: StatusConfirmed, Description: "surviving critical", Evidence: "// surviving critical", Location: Location{File: "x.go", LineStart: 3}},
+			{Dimension: DimLogic, Severity: SevWarning, Status: StatusConfirmed, Description: "warning survives", Evidence: "// warning evidence", Location: Location{File: "x.go", LineStart: 4}},
+		},
+	}}}
+	out := RenderSummary([]Record{record}, nil)
+	if !strings.Contains(out, "warning survives") {
+		t.Fatalf("RenderSummary omitted surviving warning:\n%s", out)
+	}
+}
+
 func TestBranchBlockersRetireIntermediateFindingWhenEvidenceIsGoneAtHead(t *testing.T) {
 	prepareBranchRepo(t)
 	sha := commitInBranch(t, "x.go", "package x\n// defect evidence\n")

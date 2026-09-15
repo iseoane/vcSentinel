@@ -407,7 +407,7 @@ func RenderSummary(records []Record, dispositions []FindingDisposition) string {
 			sha = sha[:7]
 		}
 		fixed := "—"
-		if !branchRecordPending(record, dispositions) {
+		if !branchRecordPending(record, dispositions) && record.FixedIn != "" {
 			fi := record.FixedIn
 			if len(fi) > 7 {
 				fi = fi[:7]

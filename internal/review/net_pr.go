@@ -307,6 +307,35 @@ func dispositionEvidenceStateAtHead(disp FindingDisposition, head string) (holds
 	return containsNormalizedEvidence(content, evidence), true
 }
 
+// findingEvidenceStateAtBranchHead searches changed head paths after the
+// original file no longer contains the evidence. This guarantees that a moved
+// finding is not retired merely because its original path changed; an
+// incomplete Git/path check stays blocking.
+func findingEvidenceStateAtBranchHead(finding Finding, origin, head string) (holds, complete bool) {
+	disp := FindingDisposition{Path: finding.Location.File, Evidence: finding.Evidence}
+	holds, complete = dispositionEvidenceStateAtHead(disp, head)
+	if !complete || holds {
+		return holds, complete
+	}
+	_, paths, err := git.RangeEvidence(origin, head)
+	if err != nil {
+		return false, false
+	}
+	for _, path := range paths {
+		if len(SafeReviewPaths([]string{path})) != 1 {
+			return false, false
+		}
+		content, present, err := git.ReadPathAtRevision(head, filepath.ToSlash(path))
+		if err != nil {
+			return false, false
+		}
+		if present && containsNormalizedEvidence(content, finding.Evidence) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
 const netAxes = `Evaluate explicitly beyond any per-commit review:
 - Intention: when a recorded range intent exists, does the PR deliver it? Otherwise, judge internal coherence without inventing a target.
 - Integration: do the pieces from different commits fit together?

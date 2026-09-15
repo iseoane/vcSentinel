@@ -136,6 +136,22 @@ func CurrentFindings(record Record) []Finding {
 // risks and the inherited section of a stacked PR all consume it, so a
 // refuted finding cannot surface on one of them while another treats the
 // record as resolved.
+// branchEffectiveFindings is used only by branch reporting projections. Those
+// projections have no explicit head parameter in their stable API and are
+// invoked for the current checkout, so HEAD is the deliberate branch snapshot;
+// plain status uses RecordPending and never enters this path.
+func branchEffectiveFindings(record Record, dispositions []FindingDisposition) []Finding {
+	findings := ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
+	out := make([]Finding, 0, len(findings))
+	for _, finding := range findings {
+		holds, complete := findingEvidenceStateAtBranchHead(finding, record.SHA, "HEAD")
+		if !complete || holds {
+			out = append(out, finding)
+		}
+	}
+	return out
+}
+
 func branchRecordPending(record Record, dispositions []FindingDisposition) bool {
 	if !RecordPending(record, dispositions) {
 		return false
@@ -143,32 +159,28 @@ func branchRecordPending(record Record, dispositions []FindingDisposition) bool 
 	findings := ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
 	hadBlocking := false
 	for _, finding := range findings {
-		if !IsBlocking(finding.Severity, finding.Status) {
-			continue
-		}
-		hadBlocking = true
-		holds, complete := dispositionEvidenceStateAtHead(FindingDisposition{
-			Path: finding.Location.File, Evidence: finding.Evidence,
-		}, "HEAD")
-		if !complete || holds {
-			return true
+		if IsBlocking(finding.Severity, finding.Status) {
+			hadBlocking = true
+			break
 		}
 	}
 	if !hadBlocking {
 		return true
 	}
-	// Branch-only projection: the plain RecordPending/status listing remains
-	// unchanged because it has no branch head. Here, a complete evidence check
-	// proves that every blocking finding from this intermediate record vanished
-	// from HEAD, so the record no longer contributes to branch blockers or verdict.
+	for _, finding := range branchEffectiveFindings(record, dispositions) {
+		if IsBlocking(finding.Severity, finding.Status) {
+			return true
+		}
+	}
+	// Every original blocking finding was proven absent from the branch head.
 	return false
 }
 
 func effectiveRecordFindings(record Record, dispositions []FindingDisposition) []Finding {
-	if !branchRecordPending(record, dispositions) {
+	if !RecordPending(record, dispositions) {
 		return nil
 	}
-	return ApplyDispositions(CurrentFindings(record), FilterDispositionsForSHA(dispositions, record.SHA))
+	return branchEffectiveFindings(record, dispositions)
 }
 
 // alarmSuperseded reports whether a later authoritative audit of the same
