@@ -82,6 +82,22 @@ func CreateSnapshot(treeOID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	lockPath, err := snapshotLockPath(snapshots, treeOID)
+	if err != nil {
+		return "", err
+	}
+	// The shared per-snapshot lock spans reuse and publication. Purge takes
+	// its exclusive counterpart, so even exported CreateSnapshot callers
+	// cannot be removed while their publication is active.
+	publicationLock, acquired, err := lockSnapshot(lockPath, false, true)
+	if err != nil {
+		return "", err
+	}
+	if !acquired {
+		return "", errors.New("snapshot shared lock was not acquired")
+	}
+	defer publicationLock.Close()
+
 	destination := filepath.Join(snapshots, treeOID)
 	if info, err := os.Stat(destination); err == nil && info.IsDir() {
 		return refreshSnapshot(destination)
@@ -267,25 +283,25 @@ func holdersHaveDeadPID(holders []int) bool {
 	return false
 }
 
-func temporarySnapshotPID(name string) (int, bool) {
+func temporarySnapshotInfo(name string) (string, int, bool) {
 	marker := ".tmp-"
 	markerIndex := strings.Index(name, marker)
 	if markerIndex <= 1 || !strings.HasPrefix(name, ".") ||
 		!treeOIDIsValid(name[1:markerIndex]) {
-		return 0, false
+		return "", 0, false
 	}
 	parts := strings.Split(name[markerIndex+len(marker):], "-")
 	if len(parts) != 2 {
-		return 0, false
+		return "", 0, false
 	}
 	pid, err := strconv.Atoi(parts[0])
 	if err != nil || pid <= 0 {
-		return 0, false
+		return "", 0, false
 	}
 	if _, err := strconv.ParseInt(parts[1], 10, 64); err != nil {
-		return 0, false
+		return "", 0, false
 	}
-	return pid, true
+	return name[1:markerIndex], pid, true
 }
 
 func removeSnapshotSidecars(lockPath string) {
@@ -295,32 +311,32 @@ func removeSnapshotSidecars(lockPath string) {
 	_ = os.Remove(snapshotHoldersLockPath(lockPath))
 }
 
-func removeSnapshotWorktree(path string) error {
+func removeSnapshotWorktree(path string) (bool, error) {
 	toSlash := filepath.ToSlash(path)
 	if _, err := runGitOutput("worktree", "remove", toSlash); err == nil {
-		return nil
+		return true, nil
 	} else if _, forcedErr := runGitOutput("worktree", "remove", "--force", toSlash); forcedErr == nil {
-		return nil
+		return true, nil
 	} else {
 		if _, repairErr := runGitOutput("worktree", "repair", toSlash); repairErr == nil {
 			if _, retryErr := runGitOutput("worktree", "remove", toSlash); retryErr == nil {
-				return nil
+				return true, nil
 			}
 			if _, retryErr := runGitOutput("worktree", "remove", "--force", toSlash); retryErr == nil {
-				return nil
+				return true, nil
 			}
 		}
 		if _, statErr := os.Stat(filepath.Join(path, ".git")); statErr != nil {
-			return fmt.Errorf("could not remove snapshot %s: %w", path, forcedErr)
+			return false, fmt.Errorf("could not remove snapshot %s: %w", path, forcedErr)
 		}
 		if removeErr := os.RemoveAll(path); removeErr != nil {
-			return fmt.Errorf("could not remove snapshot %s: %w", path, removeErr)
+			return false, fmt.Errorf("could not remove snapshot %s: %w", path, removeErr)
 		}
 		if _, pruneErr := runGitOutput("worktree", "prune"); pruneErr != nil {
-			return fmt.Errorf("could not prune snapshot %s: %w", path, pruneErr)
+			return true, fmt.Errorf("could not prune snapshot %s: %w", path, pruneErr)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // refreshSnapshot marks a snapshot as actively acquired. Purge uses the
@@ -384,26 +400,48 @@ func purgeSnapshotsLocked(age time.Duration) error {
 		}
 		path := filepath.Join(snapshots, entry.Name())
 		if strings.HasPrefix(entry.Name(), ".") && strings.Contains(entry.Name(), ".tmp-") {
-			if pid, ok := temporarySnapshotPID(entry.Name()); ok {
+			if treeOID, pid, ok := temporarySnapshotInfo(entry.Name()); ok {
+				// The same per-snapshot lock coordinates this temp path with
+				// CreateSnapshot; an active publisher keeps the exclusive lock
+				// unavailable until the path is safe to inspect or remove.
+				lockPath, err := snapshotLockPath(snapshots, treeOID)
+				if err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				lock, acquired, err := lockSnapshot(lockPath, true, false)
+				if err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				if !acquired {
+					continue
+				}
 				if processAlive(pid) && info.ModTime().After(cutoff) {
+					_ = lock.Close()
 					continue
 				}
 				_, _ = runGitOutput("worktree", "remove", "--force", filepath.ToSlash(path))
 				if err := os.RemoveAll(path); err != nil {
 					errs = append(errs, fmt.Errorf("could not remove temporary snapshot %s: %w", path, err))
+					_ = lock.Close()
 					continue
 				}
+				removeSnapshotSidecars(lockPath)
+				_ = lock.Close()
 				removedAny = true
 				continue
 			}
 			if info.ModTime().After(cutoff) {
 				continue
 			}
-			if err := removeSnapshotWorktree(path); err != nil {
-				errs = append(errs, err)
-				continue
+			removed, removeErr := removeSnapshotWorktree(path)
+			if removed {
+				removedAny = true
 			}
-			removedAny = true
+			if removeErr != nil {
+				errs = append(errs, removeErr)
+			}
 			continue
 		}
 		lockPath, err := snapshotLockPath(snapshots, entry.Name())
@@ -429,14 +467,17 @@ func purgeSnapshotsLocked(age time.Duration) error {
 			_ = lock.Close()
 			continue
 		}
-		if err := removeSnapshotWorktree(path); err != nil {
-			errs = append(errs, err)
+		removed, removeErr := removeSnapshotWorktree(path)
+		if removed {
+			removeSnapshotSidecars(lockPath)
+			removedAny = true
+		}
+		if removeErr != nil {
+			errs = append(errs, removeErr)
 			_ = lock.Close()
 			continue
 		}
-		removeSnapshotSidecars(lockPath)
 		_ = lock.Close()
-		removedAny = true
 	}
 
 	if removedAny {

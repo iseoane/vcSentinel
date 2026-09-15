@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -63,11 +64,11 @@ func TestPurgeKeepsFreshSnapshotsWithoutHolders(t *testing.T) {
 
 func TestPurgeKeepsSnapshotWithLiveHolder(t *testing.T) {
 	_, tree := snapshotTestTree(t)
-	path, err := CreateSnapshot(tree)
+	path, release, err := AcquireSnapshot(tree)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeSnapshotHolders(t, tree, os.Getpid())
+	defer release()
 
 	if err := PurgeSnapshots(SnapshotRetention); err != nil {
 		t.Fatal(err)
@@ -97,6 +98,81 @@ func TestPurgeKeepsPrimarySnapshotLockFile(t *testing.T) {
 	}
 }
 
+func TestPurgeDoesNotRemoveAgedTemporaryWithPublicationLock(t *testing.T) {
+	dir, tree := snapshotTestTree(t)
+	readyPath := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotPublicationLockHelper$")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"VAS_SENTINEL_SNAPSHOT_PUBLICATION_HELPER=1",
+		"VAS_SENTINEL_SNAPSHOT_PUBLICATION_TREE="+tree,
+		"VAS_SENTINEL_SNAPSHOT_PUBLICATION_READY="+readyPath,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	waitForFile(t, readyPath)
+
+	path := filepath.Join(snapshotDirectoryForTest(t), fmt.Sprintf(".%s.tmp-%d-%d", tree, cmd.Process.Pid, time.Now().UnixNano()))
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-SnapshotRetention - time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PurgeSnapshots(SnapshotRetention); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("an aged temporary being published under the snapshot lock must survive: %v", err)
+	}
+}
+
+func TestSnapshotPublicationLockHelper(t *testing.T) {
+	if os.Getenv("VAS_SENTINEL_SNAPSHOT_PUBLICATION_HELPER") != "1" {
+		return
+	}
+	snapshots, err := snapshotsDir()
+	if err != nil {
+		os.Exit(2)
+	}
+	lockPath, err := snapshotLockPath(snapshots, os.Getenv("VAS_SENTINEL_SNAPSHOT_PUBLICATION_TREE"))
+	if err != nil {
+		os.Exit(3)
+	}
+	lock, acquired, err := lockSnapshot(lockPath, false, true)
+	if err != nil || !acquired {
+		os.Exit(4)
+	}
+	defer lock.Close()
+	if err := os.WriteFile(os.Getenv("VAS_SENTINEL_SNAPSHOT_PUBLICATION_READY"), nil, 0600); err != nil {
+		os.Exit(5)
+	}
+	for {
+		time.Sleep(time.Second)
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("helper did not signal readiness: %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestPurgeReclaimsAgedSnapshotWithLiveHolder(t *testing.T) {
 	_, tree := snapshotTestTree(t)
 	path, err := CreateSnapshot(tree)
@@ -118,11 +194,9 @@ func TestPurgeReclaimsAgedSnapshotWithLiveHolder(t *testing.T) {
 }
 
 func TestPurgeReclaimsAgedLiveTemporarySnapshot(t *testing.T) {
-	_, tree := snapshotTestTree(t)
+	dir, tree := snapshotTestTree(t)
 	path := filepath.Join(snapshotDirectoryForTest(t), fmt.Sprintf(".%s.tmp-%d-%d", tree, os.Getpid(), time.Now().UnixNano()))
-	if err := os.MkdirAll(path, 0755); err != nil {
-		t.Fatal(err)
-	}
+	runGitInDir(t, dir, "worktree", "add", "--detach", filepath.ToSlash(path), "HEAD")
 	old := time.Now().Add(-SnapshotRetention - time.Hour)
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
@@ -133,6 +207,10 @@ func TestPurgeReclaimsAgedLiveTemporarySnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("an aged temporary snapshot must be reclaimable despite a live recorded PID, err=%v", err)
+	}
+	listing := runGitInDir(t, dir, "worktree", "list")
+	if strings.Contains(listing, filepath.Base(path)) {
+		t.Fatalf("aged temporary snapshot administrative record remains:\n%s", listing)
 	}
 }
 
@@ -160,6 +238,88 @@ func TestPurgeRepairsInterruptedSnapshotPublication(t *testing.T) {
 	if strings.Contains(listing, filepath.ToSlash(temp)) || strings.Contains(listing, filepath.ToSlash(path)) {
 		t.Fatalf("interrupted snapshot administrative record remains:\n%s", listing)
 	}
+}
+
+func TestPurgeCleansSidecarsWhenPruneFails(t *testing.T) {
+	requireRealGit(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := buildGitShim(t)
+	dir, tree := snapshotTestTree(t)
+	snapshots := snapshotDirectoryForTest(t)
+	temp := filepath.Join(snapshots, fmt.Sprintf(".%s.tmp-%d-%d", tree, os.Getpid(), time.Now().UnixNano()))
+	path := filepath.Join(snapshots, tree)
+	runGitInDir(t, dir, "worktree", "add", "--detach", filepath.ToSlash(temp), "HEAD")
+	if err := os.Rename(temp, path); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-SnapshotRetention - time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := snapshotLockPathForTest(t, tree)
+	for _, sidecar := range []string{snapshotHoldersPath(lockPath), snapshotHoldersLockPath(lockPath)} {
+		if err := os.WriteFile(sidecar, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("VAS_SENTINEL_REAL_GIT", realGit)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := PurgeSnapshots(SnapshotRetention); err == nil {
+		t.Fatal("a failed prune must remain visible to the caller")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("snapshot directory should be removed despite the prune failure, err=%v", err)
+	}
+	for _, sidecar := range []string{snapshotHoldersPath(lockPath), snapshotHoldersLockPath(lockPath)} {
+		if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+			t.Errorf("removed snapshot sidecar remains: %s: %v", sidecar, err)
+		}
+	}
+}
+
+func buildGitShim(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "git-shim.go")
+	const program = `package main
+
+import (
+	"os"
+	"os/exec"
+)
+
+func main() {
+	args := os.Args[1:]
+	if len(args) >= 2 && args[0] == "worktree" && (args[1] == "repair" || args[1] == "prune") {
+		os.Exit(42)
+	}
+	cmd := exec.Command(os.Getenv("VAS_SENTINEL_REAL_GIT"), args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
+}
+`
+	if err := os.WriteFile(source, []byte(program), 0600); err != nil {
+		t.Fatal(err)
+	}
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	path := filepath.Join(dir, name)
+	command := exec.Command("go", "build", "-o", path, source)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("could not build git shim: %v\n%s", err, output)
+	}
+	return dir
 }
 
 func TestPurgeRemovesDeadAndKeepsLiveTemporarySnapshots(t *testing.T) {
