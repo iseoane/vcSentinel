@@ -118,12 +118,19 @@ func validatePipelineSteps(steps []review.AttestationStep) error {
 
 func validStepStatus(step, status string) bool {
 	allowed := map[string]map[string]bool{
-		"slice":     {"passed": true, "not_observed": true},
-		"review":    {"passed": true, "warning": true, "blocked": true, "question": true, "unavailable": true, "not_observed": true},
-		"gate":      {"passed": true, "failed": true, "not_run": true},
-		"lint":      {"passed": true, "failed": true, "not_configured": true},
-		"test":      {"passed": true, "failed": true, "not_configured": true},
-		"build":     {"passed": true, "failed": true, "not_configured": true},
+		"slice":  {"passed": true, "not_observed": true},
+		"review": {"passed": true, "warning": true, "blocked": true, "question": true, "unavailable": true, "not_observed": true},
+		// not_attempted is what a surface records for a step it never runs
+		// by contract, as pr review does for all four. It is distinct from
+		// not_run and not_configured, which state that the step was looked
+		// at and found absent: a consumer reads those as facts about the
+		// repository. Accepting it here is required, not cosmetic — pr
+		// create validates exactly what pr review persisted, so refusing
+		// it would reject every entry pr review writes.
+		"gate":      {"passed": true, "failed": true, "not_run": true, "not_attempted": true},
+		"lint":      {"passed": true, "failed": true, "not_configured": true, "not_attempted": true},
+		"test":      {"passed": true, "failed": true, "not_configured": true, "not_attempted": true},
+		"build":     {"passed": true, "failed": true, "not_configured": true, "not_attempted": true},
 		"pr review": {"authored": true},
 		"ci":        {"passed": true, "failed": true, "warning": true, "pending": true, "not_observed": true},
 	}

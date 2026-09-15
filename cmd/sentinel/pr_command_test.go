@@ -1380,10 +1380,13 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	wantSteps := []review.AttestationStep{
 		{Step: "slice", Status: "passed"},
 		{Step: "review", Status: "not_observed"},
-		{Step: "gate", Status: "not_run"},
-		{Step: "lint", Status: "not_configured"},
-		{Step: "test", Status: "not_configured"},
-		{Step: "build", Status: "not_configured"},
+		// pr review runs none of these by contract, so they record
+		// not_attempted: not_run and not_configured are claims about the
+		// repository, and this command never looked.
+		{Step: "gate", Status: "not_attempted"},
+		{Step: "lint", Status: "not_attempted"},
+		{Step: "test", Status: "not_attempted"},
+		{Step: "build", Status: "not_attempted"},
 		{Step: "pr review", Status: "authored"},
 		{Step: "ci", Status: "not_observed"},
 	}

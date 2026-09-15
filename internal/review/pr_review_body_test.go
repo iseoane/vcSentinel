@@ -155,3 +155,47 @@ func TestRenderPRReviewBodyKeepsComputedBlockVerdictWhenRiskIsReassuring(t *test
 		t.Fatalf("untrusted risk forged a section:\n%s", body)
 	}
 }
+
+// TestRenderTestingDoesNotClaimNothingIsConfiguredWhenItNeverLooked is the
+// second half of item 2. `pr review` deliberately runs neither validation nor
+// verification — that is its contract — but it passed an empty
+// TemplateVerification, which renders exactly like a run that looked and found
+// nothing configured. The published body therefore stated that this repository
+// has no validation commands, minutes after the gate had run four of them.
+func TestRenderTestingDoesNotClaimNothingIsConfiguredWhenItNeverLooked(t *testing.T) {
+	rendered := renderTesting(TemplateVerification{NotAttempted: true})
+	for _, forbidden := range []string{"No validation commands configured", "Tests not run"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("body claims %q although nothing was attempted:\n%s", forbidden, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "does not run") {
+		t.Fatalf("body does not say that this command attempts no verification:\n%s", rendered)
+	}
+}
+
+// TestRenderTestingStillReportsAnEmptyRunHonestly keeps the distinction in both
+// directions: a surface that DID attempt verification and found nothing
+// configured must still say so, which is the pre-existing golden rule.
+func TestRenderTestingStillReportsAnEmptyRunHonestly(t *testing.T) {
+	rendered := renderTesting(TemplateVerification{})
+	if !strings.Contains(rendered, "No validation commands configured") {
+		t.Fatalf("an attempted run that found nothing must still say so:\n%s", rendered)
+	}
+}
+
+// TestPipelineStepsDoNotClaimNotConfiguredWhenNothingWasAttempted covers the
+// machine-readable half of the same claim: the attestation recorded lint, test
+// and build as not_configured, which a consumer reads as a fact about the
+// repository rather than about what this command chose not to do.
+func TestPipelineStepsDoNotClaimNotConfiguredWhenNothingWasAttempted(t *testing.T) {
+	steps := pipelineSteps(&BranchResult{}, nil, TemplateVerification{NotAttempted: true}, nil)
+	for _, step := range steps {
+		switch step.Step {
+		case "gate", "lint", "test", "build":
+			if step.Status == "not_configured" || step.Status == "not_run" {
+				t.Fatalf("step %q reports %q although this command attempts none of them", step.Step, step.Status)
+			}
+		}
+	}
+}

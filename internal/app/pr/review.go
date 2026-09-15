@@ -339,8 +339,12 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 	if res.Net != nil {
 		verdict = res.Net.Audit.Verdict
 	}
-	attestation := review.BuildPRReviewAttestation(res, intents, review.TemplateVerification{}, options.Dispositions)
-	body, err := review.RenderPRReviewBody(res, intents, review.TemplateVerification{}, attestation, options.Dispositions)
+	// pr review runs neither validation nor verification by contract; saying
+	// so is not the same claim as "nothing is configured", which is what an
+	// unmarked empty verification rendered.
+	unattempted := review.TemplateVerification{NotAttempted: true}
+	attestation := review.BuildPRReviewAttestation(res, intents, unattempted, options.Dispositions)
+	body, err := review.RenderPRReviewBody(res, intents, unattempted, attestation, options.Dispositions)
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1

@@ -730,3 +730,36 @@ func TestRunPrCreateForceRequiresReasonAndPublishesRedValidation(t *testing.T) {
 		t.Fatalf("forced red validation: code=%d output=%q", code, output.String())
 	}
 }
+
+// TestPrReviewAuthoredEntryValidatesForPrCreate closes the gap that let a
+// renderer change break publication silently: pr review writes the attestation
+// and pr create validates it with validStepStatus, and nothing exercised that
+// round trip. When the pipeline statuses gained "not_attempted" — pr review
+// runs none of those steps, so calling them not_configured stated a fact about
+// the repository rather than about this command — every package test still
+// passed while pr create would have rejected every entry pr review wrote.
+func TestPrReviewAuthoredEntryValidatesForPrCreate(t *testing.T) {
+	attestation := review.BuildPRReviewAttestation(&review.BranchResult{}, nil, review.TemplateVerification{NotAttempted: true}, nil)
+	attestation.Branch = "feat/example"
+	attestation.HeadSHA = strings.Repeat("a", 40)
+	attestation.Verdict = "ok"
+	marker, err := review.RenderAttestation(attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := store.PRReviewEntry{
+		Branch:      attestation.Branch,
+		HeadSHA:     attestation.HeadSHA,
+		Title:       "feat: example",
+		Verdict:     attestation.Verdict,
+		Body:        "## Intent\n" + marker + "\n",
+		Attestation: raw,
+	}
+	if _, err := ValidatePRReviewEntry(&entry, entry.Branch, entry.HeadSHA); err != nil {
+		t.Fatalf("pr create rejects what pr review authored: %v", err)
+	}
+}

@@ -193,6 +193,14 @@ type TemplateVerification struct {
 	// the type), but a different ORIGIN — hence its own field and its own
 	// section in the template, never mixed with Comandos.
 	Validation []VerifiedCommand
+
+	// NotAttempted marks a surface that runs neither validation nor
+	// verification by contract, so its empty Comandos and Validation mean
+	// "never looked" rather than "looked and found nothing configured".
+	// Without it the two are indistinguishable, and `pr review` — which
+	// deliberately runs neither — published that this repository has no
+	// validation commands minutes after the gate had run four of them.
+	NotAttempted bool
 }
 
 // RecordPending decides whether a record still contributes to the branch's

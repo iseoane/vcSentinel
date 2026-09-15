@@ -191,6 +191,13 @@ func renderRiskAssessment(res *BranchResult, dispositions []FindingDisposition) 
 
 func renderTesting(verification TemplateVerification) string {
 	var b strings.Builder
+	// Stated once, plainly, instead of rendering two lines that read as
+	// findings about the repository's configuration. What this command did
+	// not do is not evidence about what is configured.
+	if verification.NotAttempted {
+		b.WriteString("- ⚪ This command does not run validation or verification; see `gate` and the commit reviews for that evidence.\n")
+		return b.String()
+	}
 	b.WriteString("Before the review:\n")
 	if len(verification.Validation) == 0 {
 		b.WriteString("- ⚪ No validation commands configured.\n")
@@ -206,6 +213,12 @@ func renderTesting(verification TemplateVerification) string {
 // is a separate, later step (renderPipelineSteps): truncation happens on this
 // slice, which is what keeps it from ever reaching another section.
 func pipelineSteps(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) []pipelineStep {
+	absentStatus, absentSummary := "not_configured", "not configured"
+	gateStatus, gateSummary := "not_run", "not run"
+	if verification.NotAttempted {
+		absentStatus, absentSummary = "not_attempted", "not attempted by this command"
+		gateStatus, gateSummary = absentStatus, absentSummary
+	}
 	slice := pipelineStep{Icon: "⚪", Step: "slice", Status: "not_observed", Summary: "not observed", Evidence: "No Sentinel-Intent trailers were present."}
 	if len(intents) > 0 {
 		slice = pipelineStep{Icon: "✅", Step: "slice", Status: "passed", Summary: "intent trailers present", Evidence: renderIntentLines(intents, res.SHAs)}
@@ -213,10 +226,14 @@ func pipelineSteps(res *BranchResult, intents []IntentLine, verification Templat
 	return []pipelineStep{
 		slice,
 		reviewPipelineStep(res, dispositions),
-		commandPipelineStep("gate", verification.Validation, "not_run", "not run"),
-		commandPipelineStep("lint", nil, "not_configured", "not configured"),
-		commandPipelineStep("test", verification.Comandos, "not_configured", "not configured"),
-		commandPipelineStep("build", nil, "not_configured", "not configured"),
+		// A surface that attempts none of these must not report them as
+		// not configured or not run: both read as facts about the
+		// repository, and a consumer of the attestation cannot tell them
+		// apart from a real absence.
+		commandPipelineStep("gate", verification.Validation, gateStatus, gateSummary),
+		commandPipelineStep("lint", nil, absentStatus, absentSummary),
+		commandPipelineStep("test", verification.Comandos, absentStatus, absentSummary),
+		commandPipelineStep("build", nil, absentStatus, absentSummary),
 		{Icon: "✅", Step: "pr review", Status: "authored", Summary: "body and attestation authored", Evidence: "This persisted entry was authored for the reviewed branch head."},
 		{Icon: "⚪", Step: "ci", Status: "not_observed", Summary: "not observed by Sentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
 	}
