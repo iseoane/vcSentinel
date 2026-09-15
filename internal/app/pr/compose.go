@@ -18,7 +18,12 @@ var (
 	errStoredReviewInvalid = errors.New("stored pr review is semantically invalid")
 )
 
-var requiredPipelineSteps = []string{"slice", "review", "gate", "lint", "test", "build", "pr review", "ci"}
+// requiredPipelineSteps reads the producer's declaration rather than restating
+// the eight names and their order. Splitting status values from step identity
+// would have left half the drift open: this validator checks the steps
+// positionally, so a rename or reorder on the producing side alone is the same
+// class of failure the status vocabulary just closed.
+var requiredPipelineSteps = review.AttestationSteps()
 
 // CIOutcome is the deterministic result collected by pr create. It contains
 // only bounded, reader-facing data; no semantic review text is authored here.
@@ -123,7 +128,7 @@ func validatePipelineSteps(steps []review.AttestationStep) error {
 // nothing exercised the round trip. Reading the single declaration makes that
 // drift impossible rather than caught by review.
 func validStepStatus(step, status string) bool {
-	return review.AllowedAttestationStatuses[step][status]
+	return review.AttestationStatusAllowed(step, status)
 }
 
 // ComposePRBody replaces exactly the persisted CI details block and its

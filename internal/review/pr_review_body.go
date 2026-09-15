@@ -189,34 +189,53 @@ func renderRiskAssessment(res *BranchResult, dispositions []FindingDisposition) 
 	return b.String()
 }
 
-// AllowedAttestationStatuses is the single declaration of which status each
-// Pipeline step may carry. It lives beside the code that PRODUCES those
-// statuses, and internal/app/pr's publication validator consumes it rather
-// than restating the set.
+// AttestationSteps is the single declaration of the Pipeline steps: their
+// identity and their order. internal/app/pr validates a stored attestation
+// against it positionally rather than restating the list.
 //
-// The two were declared independently until 2026-09-15, when adding
-// "not_attempted" here and not there would have made pr create reject every
-// entry pr review writes, with every package test still green: pr review
-// authors the attestation and pr create validates it, and nothing exercised
-// the round trip. One declaration removes the class rather than the instance.
+// AttestationStatusAllowed answers whether a step may carry a status. Both the
+// steps and their vocabularies were declared independently from the publication
+// validator until 2026-09-15, when adding "not_attempted" on the producing side
+// alone would have made pr create reject every entry pr review writes — with
+// every package test green, since pr review authors the attestation and pr
+// create validates it and nothing exercised the round trip.
+//
+// The vocabulary is reached through a function rather than an exported map: a
+// map is a mutable reference, so exporting one would let any importing package
+// rewrite the sole guardian of what publication accepts. That is a worse
+// failure than the duplication this replaced.
 //
 // The "ci" step is filled by pr create after this package has rendered, so its
 // vocabulary is wider than what this package emits.
-var AllowedAttestationStatuses = map[string]map[string]bool{
+func AttestationSteps() []string {
+	return append([]string(nil), attestationSteps...)
+}
+
+func AttestationStatusAllowed(step, status string) bool {
+	return allowedAttestationStatuses[step][status]
+}
+
+var attestationSteps = []string{"slice", "review", "gate", "lint", "test", "build", "pr review", "ci"}
+
+var allowedAttestationStatuses = map[string]map[string]bool{
 	"slice":     {statusPassed: true, statusNotObserved: true},
-	"review":    {statusPassed: true, "warning": true, "blocked": true, VerdictQuestion: true, VerdictUnavailable: true, statusNotObserved: true},
-	"gate":      {statusPassed: true, statusFailed: true, "not_run": true, statusNotAttempted: true},
+	"review":    {statusPassed: true, statusWarning: true, statusBlocked: true, VerdictQuestion: true, VerdictUnavailable: true, statusNotObserved: true},
+	"gate":      {statusPassed: true, statusFailed: true, statusNotRun: true, statusNotAttempted: true},
 	"lint":      {statusPassed: true, statusFailed: true, statusNotConfigured: true, statusNotAttempted: true},
 	"test":      {statusPassed: true, statusFailed: true, statusNotConfigured: true, statusNotAttempted: true},
 	"build":     {statusPassed: true, statusFailed: true, statusNotConfigured: true, statusNotAttempted: true},
-	"pr review": {"authored": true},
-	"ci":        {statusPassed: true, statusFailed: true, "warning": true, "pending": true, statusNotObserved: true},
+	"pr review": {statusAuthored: true},
+	"ci":        {statusPassed: true, statusFailed: true, statusWarning: true, "pending": true, statusNotObserved: true},
 }
 
 const (
 	statusPassed        = "passed"
 	statusFailed        = "failed"
+	statusWarning       = "warning"
+	statusBlocked       = "blocked"
+	statusAuthored      = "authored"
 	statusNotObserved   = "not_observed"
+	statusNotRun        = "not_run"
 	statusNotConfigured = "not_configured"
 	statusNotAttempted  = "not_attempted"
 )
@@ -246,7 +265,7 @@ func renderTesting(verification TemplateVerification) string {
 // slice, which is what keeps it from ever reaching another section.
 func pipelineSteps(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) []pipelineStep {
 	absentStatus, absentSummary := statusNotConfigured, "not configured"
-	gateStatus, gateSummary := "not_run", "not run"
+	gateStatus, gateSummary := statusNotRun, "not run"
 	if verification.NotAttempted {
 		absentStatus, absentSummary = statusNotAttempted, "not attempted by this command"
 		gateStatus, gateSummary = absentStatus, absentSummary
@@ -266,7 +285,7 @@ func pipelineSteps(res *BranchResult, intents []IntentLine, verification Templat
 		commandPipelineStep("lint", nil, absentStatus, absentSummary),
 		commandPipelineStep("test", verification.Comandos, absentStatus, absentSummary),
 		commandPipelineStep("build", nil, absentStatus, absentSummary),
-		{Icon: "✅", Step: "pr review", Status: "authored", Summary: "body and attestation authored", Evidence: "This persisted entry was authored for the reviewed branch head."},
+		{Icon: "✅", Step: "pr review", Status: statusAuthored, Summary: "body and attestation authored", Evidence: "This persisted entry was authored for the reviewed branch head."},
 		{Icon: "⚪", Step: "ci", Status: statusNotObserved, Summary: "not observed by Sentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
 	}
 }
@@ -305,9 +324,9 @@ func attestationStatusForVerdict(verdict string) string {
 	case VerdictOK:
 		return statusPassed
 	case VerdictWarn:
-		return "warning"
+		return statusWarning
 	case VerdictBlock:
-		return "blocked"
+		return statusBlocked
 	default:
 		return verdict
 	}
