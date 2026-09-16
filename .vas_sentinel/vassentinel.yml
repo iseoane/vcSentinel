@@ -1,5 +1,5 @@
 version: "2.0"
-active_agent: "opencode"
+active_agent: "claude"
 commit_language: "en"
 # Solicita generación semántica externa; no representa consentimiento personal.
 request_external_agent_diff: true
@@ -69,3 +69,11 @@ validation:
   profiles:
     standard: [format, lint, build, unit_test]
   mode: worktree
+# CI evidence for `pr create`: it polls this workflow and embeds the outcome in
+# the published body. Without this block CI is disabled entirely and the `ci`
+# step stays not_observed, which reads as "no CI" even though GitHub runs
+# .github/workflows/ci.yml on every pull request.
+ci:
+  workflow: "CI"
+  wait_seconds: 900
+  poll_seconds: 15
