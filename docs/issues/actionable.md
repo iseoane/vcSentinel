@@ -7,7 +7,7 @@ decision. One line per item states why it sits where it does.
 
 Numbering is historical and deliberately not renumbered, so references from
 `future.md` and from `decisions.md` keep pointing at what they name. Items 2,
-3, 4, 10, 11, 12 and 13 closed and moved to
+3, 4, 5, 10, 11, 12, 13 and 16 closed and moved to
 [`decisions.md`](decisions.md); with them the five pieces of
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md)
 are all done, so that design is now history rather than a work order.
@@ -63,7 +63,8 @@ degrading it. Six consecutive failures on 2026-09-08.
   memory. `/tmp` is tmpfs, so its contents ARE memory: it stood at 735 MB, of
   which 486 MB were three `vas-sentinel-review-provider-*` directories of
   162 MB each, left by the killed reviews themselves, plus 107 MB of Bun `.so`
-  residue (item 5). Removing them took `/tmp` to 144 MB and the reviews then
+  residue (item 5, closed 2026-09-17). Removing them took `/tmp` to 144 MB and
+  the reviews then
   completed. The loop is the point: each killed review leaves 162 MB of memory
   occupied, which makes the next one likelier to die.
 - Evidence, 2026-09-08: `pr create` was killed by the OOM reaper six times
@@ -81,80 +82,41 @@ degrading it. Six consecutive failures on 2026-09-08.
   mostly the provider's Bun residue.
 - One half is closed, 2026-09-15: collection of validation worktrees left by a
   killed run landed in `f35f294`..`495892f` (see `decisions.md`). The killed
-  run's own durable runs and the provider residue (item 16) are separate.
+  run's own durable runs and the provider residue (item 16, closed 2026-09-17)
+  are separate.
 - Closing, and PARKED as of 2026-09-15 pending a decision by the repository
   owner: a ceiling derived from what the machine actually has, the way
   `storeCapacityLimit` derives from `statfs` rather than a magic number,
   applied to reviewer concurrency. Or a recorded determination that Sentinel
   targets machines where this does not arise, which would be a real decision
   given it runs on the same machine as the agents that drive it.
-- Why it is parked rather than ready: the number that killed the runs is not
-  derivable from total memory. It depended on two agent sessions and a
-  CodeGraph indexer sharing the host, and on 486 MB of tmpfs residue that
-  items 5 and 16 remove. A ceiling derived today would still be a chosen
-  number with more code behind it — the same mistake item 6 records for the
-  turn budget, where a value was raised without measurement and the premise
-  turned out to be false. Close items 5 and 16 first and re-measure; the
-  ceiling may not be needed at all.
+- Why it was parked: the number that killed the runs is not derivable from
+  total memory. It depended on two agent sessions and a CodeGraph indexer
+  sharing the host, and on 486 MB of tmpfs residue that items 5 and 16 remove.
+  A ceiling derived then would still have been a chosen number with more code
+  behind it — the same mistake item 6 records for the turn budget, where a
+  value was raised without measurement and the premise turned out to be false.
+- **The precondition is now met, 2026-09-17: items 5 and 16 are closed** (see
+  `decisions.md`). The residue that made the host look smaller than it is no
+  longer accumulates: orphaned provider context goes on the next `Create`
+  instead of an hour later, that context now counts against the store ceiling,
+  and the Bun residue is collected at all. What this item still needs is the
+  re-measurement those closures were supposed to enable — run the flow that
+  died and record what it costs on a host that is no longer carrying the
+  residue. Do NOT derive a ceiling before that number exists; the whole reason
+  this was parked was to avoid choosing one and calling it derived.
+- Note recorded 2026-09-17 while closing items 5 and 16, because it bears on
+  what the re-measurement will find: with no killed reviews in the session the
+  store held zero orphaned provider directories, which matches item 16's
+  observation that a review which COMPLETES leaves none. The residue is a
+  consequence of the kill. A re-measurement therefore has to reproduce the
+  kill, not just run a healthy review.
 - There is also no resource sensing anywhere in the codebase: `NumCPU`,
   `MemTotal`, `Sysinfo` and `GOMAXPROCS` return nothing. `storeCapacityLimit`
   is a DISK ceiling from `statfs`; the reference above is a structural
   analogy, not reusable code. A memory-derived ceiling means new
   `*_linux.go`/`*_windows.go` files, since AGENTS.md requires identical
   behaviour on both platforms.
-
-## 5. Bound the provider's own temporary residue
-
-Sits second: it is the other half of item 1's failure — the disk it fills is
-the same tmpfs — and it is unblocked and mechanical. The residue is the
-provider's, not this repository's, so the fix can only be to clean it, not to
-prevent it.
-
-- Wrong: each restricted reviewer invocation leaves a roughly 14 MB
-  `/tmp/.<hex>-00000000.so` file behind, written by the Bun runtime OpenCode
-  ships, and nothing ever removes them. Measured on 2026-09-08: 540 files
-  totalling 2,945 MB, accumulated since 2026-09-06, none held by any process.
-  Deleting the unheld ones took `/tmp` from 92% to 16% used.
-- Why it matters more than its size suggests: the snapshot-store ceiling (item
-  3, now in `decisions.md`) bounds THIS package's store, which was 191 MB at
-  that moment — fifteen times less than the
-  provider residue sitting beside it. No ceiling of ours touches it. On the
-  3.8 GB tmpfs this machine uses, a day of heavy reviewing fills the disk from
-  this alone, and the symptom is `no space left on device` inside a review,
-  which invites blaming the snapshot store. That misdiagnosis already happened
-  once during this work.
-- Closing: the reaper that already runs at every snapshot creation also
-  collects unheld, stale provider temporary files, or a recorded determination
-  that cleaning another tool's residue is out of scope and the operator owns
-  it. Do not simply widen the existing prefix match without checking that a
-  live invocation's file is never removed.
-
-## 16. Collect the provider context a killed review leaves behind
-
-Opened 2026-09-15. Sits with items 1 and 5 because it is the same disk that is
-memory, but it is a distinct leak with a distinct owner: this one is ours.
-
-- Wrong: a review killed mid-run leaves its provider context directory,
-  `/tmp/vas-sentinel-snapshots-<uid>/vas-sentinel-review-provider-<id>/`, and
-  nothing collects it. Measured: 162 MB each, three of them (486 MB) after
-  three killed reviews in one session. A review that COMPLETES leaves none, so
-  this is a consequence of the kill, not of ordinary operation.
-- Why it matters more than its size: `/tmp` is tmpfs here, so those 486 MB are
-  resident memory. A review killed for memory pressure therefore makes the next
-  review likelier to be killed, and the reusable `sha-*` snapshots beside it are
-  7 MB each — twenty times smaller than the residue.
-- Related but not the same as item 1's validation worktrees: those are Git
-  worktrees left by `internal/validation`, and R1 (2026-09-15) reclaims them.
-  These are provider context directories under `internal/reviewsnapshot`, which
-  that work does not touch.
-- Worth checking while closing it: `storeCapacityLimit` is `capacity/10`, i.e.
-  380 MB on this 3.8 GB tmpfs, yet the store measured 500 MB. The orphaned
-  provider directories are the difference, so the hypothesis to verify is that
-  the ceiling counts only entries the package considers its own.
-- Closing: the reaper that already runs at snapshot creation also collects
-  provider context whose owning process is gone — the same liveness question
-  R1 answers for snapshots — or a recorded determination that an operator owns
-  it.
 
 ## 17. Record why a review dimension was unavailable
 

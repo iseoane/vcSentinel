@@ -966,3 +966,92 @@ it well resolved". The range entry was piece 5's deliverable, not an optimisatio
 of it. What the measurement would still decide is narrower: whether the
 per-commit audit is worth running at all when the net audit covers the same
 ground.
+
+### The tmpfs that is memory: bounded, owned, and swept (items 16 and 5, landed 2026-09-17)
+
+Three reviews were killed in one session on 2026-09-15 while `free` reported
+5.2 GB available and the summed RSS of every process was under 1.1 GB. It was
+not a shortage of anonymous memory. `/tmp` is tmpfs on this host, so its
+contents ARE memory: it held 486 MB of orphaned provider context and 107 MB of
+Bun residue. Removing them let the reviews complete. That measurement is what
+parked item 1 — the ceiling it wanted may not be needed once the residue stops
+accumulating — and these three commits are the precondition it named.
+
+**Item 16's stated premise was wrong, and correcting it is half of what was
+learned.** The item said nothing collected provider context directories.
+`reapSharedStore` did collect them, by age, and had all along. Reading the code
+before believing the issue turned one vague complaint into two specific defects.
+
+**Defect one: the ceiling could not see the residue.** `storeCapacityLimit` is
+one tenth of the filesystem, about 380 MB here, and it was compared against
+`sharedStoreSnapshotBytes`, whose filter kept only `sha-` prefixed entries. So a
+store measured at 500 MB reported only its published trees, and the residue that
+actually fills the disk was invisible to the reaper that exists to bound it. The
+item had flagged this as a hypothesis worth checking; it held.
+
+Counting now includes provider state. Eviction deliberately does not: a provider
+directory can belong to a live review, so it counts toward capacity but must
+never be evicted for space. The two filters were byte-identical, so both sites
+now say why they differ — otherwise the next reader unifies them and silently
+introduces a way to delete a running review's state. Landed as `39db2c5`.
+
+**Defect two: collection was late, and lateness was the whole problem.** Age
+alone answers the wrong question — an orphaned directory is not old, it is
+ownerless — and the sweep only ran on whatever `Create` happened next. A review
+killed for memory pressure therefore left 162 MB resident through exactly the
+window in which the next review ran, making each kill more likely to cause the
+following one.
+
+The owning PID now travels in the directory name, so the reaper decides from a
+`ReadDir` alone. A sidecar file was rejected: it adds a write that a killed
+process can skip, which is precisely the case this has to survive.
+`ProviderStatePattern` and `ProviderStatePID` hold that format in one place and
+`internal/agentadapter` builds the name through them. Landed as `0016c1f`.
+
+`processAlive` is COPIED into `internal/reviewsnapshot` rather than shared with
+`internal/git`, which owns the original from R1. This is not a style preference:
+`internal/git` already imports `internal/reviewsnapshot`, so importing it back
+closes an import cycle and does not compile. The copy keeps R1's fail-open
+asymmetry verbatim — uncertain means alive — so PID reuse can only defer a
+collection, never cause a false one. Verify the invariant with
+`go list -deps ./internal/reviewsnapshot | grep -c internal/git`, which must
+stay `0`.
+
+Age remains the backstop rather than a rule that was replaced. A name carrying
+no parseable owner is collected exactly as before, and a live owner is still
+collected once it passes the age ceiling.
+
+**Item 5: the residue next door was never ours and was fifteen times larger.**
+Each restricted reviewer invocation leaves a roughly 14 MB `.<hex>-00000000.so`
+file written by the Bun runtime OpenCode ships. Measured at 540 files and
+2,945 MB on one occasion, and at 8 files and 82 MB while this work was being
+written. No ceiling of ours touched it, and the symptom surfaces inside an
+unrelated review as `no space left on device`, which invites blaming the
+snapshot store — a misdiagnosis that already cost an afternoon once.
+
+The existing temporary-directory sweep gained a separate case rather than a
+wider prefix, because the directory is shared with other programs.
+`isBunResidueName` requires the whole shape and the caller requires a regular
+file. Age is the only signal and that is a property of the problem, not a
+shortcut: the file belongs to the Bun runtime, so there is no owner to ask.
+`staleSnapshotAge` is reused rather than joined by a second threshold, and a
+fresh matching file is kept, because a live invocation's file must never be
+removed. The near misses are pinned as tests — no leading dot, a non-hex digit,
+a wrong suffix — since a laxer pattern would delete other programs' files.
+Landed as `3c0891e`.
+
+**How the absence of regressions was established, because it is the part worth
+copying.** Each commit's tests were run against the previous code with the
+production change reverted, and in every case exactly the intended case failed
+while the rest passed: one of two byte counts, one of six liveness cases, one of
+two entries in the residue sweep. "Nothing that was collected before stopped
+being collected" is therefore a measurement rather than a claim.
+
+**What this does NOT close.** Item 1 keeps its ceiling question and is still
+parked. Its precondition is now met, but the re-measurement it asked for has not
+been run, and a ceiling derived before that number exists would repeat the
+mistake item 6 records for the turn budget. One observation for whoever runs it:
+with no killed reviews in a session the store holds zero orphaned provider
+directories, which matches item 16's note that a review which completes leaves
+none. The re-measurement has to reproduce the kill, not merely run a healthy
+review.
