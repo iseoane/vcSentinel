@@ -96,6 +96,17 @@ degrading it. Six consecutive failures on 2026-09-08.
   A ceiling derived then would still have been a chosen number with more code
   behind it — the same mistake item 6 records for the turn budget, where a
   value was raised without measurement and the premise turned out to be false.
+- **Healthy-run baseline measured 2026-09-17, which this item never had.** A
+  five-dimension audit of `35927d8` at `parallel: 2` on this 7.4 GiB host,
+  while a Claude Code session was also running: baseline 3524 MB used / 4074 MB
+  available / `/tmp` at 339 MB; peak 6125 MB used / **1473 MB available**; end
+  4047 MB used / 3550 MB available / `/tmp` at 326 MB. 11m34s, no kill, zero
+  unavailable dimensions. Two things follow. `/tmp` stayed FLAT for the whole
+  run, which confirms the note below: a review that COMPLETES leaves no
+  provider residue. And the margin is thin — `parallel: 2` came within 1473 MB
+  of exhaustion on a host carrying one agent session, not the two that were
+  present when the kills were recorded. This is the comparison baseline, NOT
+  the kill reproduction the item still needs.
 - **The precondition is now met, 2026-09-17: items 5 and 16 are closed** (see
   `decisions.md`). The residue that made the host look smaller than it is no
   longer accumulates: orphaned provider context goes on the next `Create`
@@ -258,13 +269,34 @@ design can be selected with real numbers instead of guesses.
   across `cheap`/`normal`/`deep`); a stable cache key from the audited SHA if
   OpenCode exposes it.` Nothing about caching was implemented — only the
   ordering that makes it possible.
-- Measure cached-token reads, latency and review-equivalence before
-  selecting that design. Input-token cache ELIGIBILITY is now measured; the
-  other three are not, and the durable store held zero measured runs when the
-  envelope landed, so there were no cached-token reads to consult. The
-  measurement needs a live multi-dimension audit, which is the same run item 1
-  needs — pay for one run and keep both results. Do not cache model outputs or
-  reduce dimension coverage.
+- **BLOCKED on a missing measurement, established 2026-09-17 by running it.**
+  A live audit of `35927d8` (five dimensions, `parallel: 2`, `active_agent:
+  claude`) plus a one-dimension probe on a cold store produced 3065189 cached
+  input tokens against 322 fresh ones over six invocations. That number cannot
+  answer this item. The COLD probe alone — zero prior invocations — already
+  reported 126705 cached reads, so cached reads are dominated by
+  intra-invocation multi-turn re-reads and Claude Code's own system-prompt
+  cache, not by one dimension reusing another's.
+- The blocker is named and verified in code: `claudeUsageProbe`
+  (`internal/agentadapter/claude_review.go`) maps `input_tokens`,
+  `output_tokens`, `cache_read_input_tokens` and `thinking_tokens`, and its own
+  comment records that `cache_creation_input_tokens` "is observed on the wire
+  but intentionally unmapped: acpadapter.Usage has no destination for it". The
+  persisted observation confirms it, and the raw usage member is never written
+  to the store. Without cache CREATION there is no way to tell a dimension that
+  READ a previous dimension's cache from one that WROTE its own — which is
+  exactly the distinction this item turns on. Giving `acpadapter.Usage` a
+  destination for cache creation, and persisting it, is now the prerequisite
+  unit; it is small and it is not a design choice.
+- Premise mismatch to resolve when that lands: this item is written about
+  `opencode run --pure`, its snapshot and its cache key, but the configured
+  `active_agent` is `claude`, so the run above measured a different provider
+  path. Either re-measure on OpenCode or restate the item for the path the
+  repository actually runs.
+- Latency measured on the way, as a planning reference rather than a closing
+  condition: 6m22s for one dimension alone, 11m34s for five at `parallel: 2`.
+- Review-equivalence remains unmeasured. Do not cache model outputs or reduce
+  dimension coverage.
 - Checked and not a blocker: `opencode run --pure` means "run without external
   plugins" and says nothing about sessions or caching.
 
