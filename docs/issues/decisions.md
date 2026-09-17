@@ -1415,3 +1415,41 @@ Not closed with it, and moved out as its own unit: the `glob` call denied on
 boundary, not to the budget, and the determination in `cli.go` that it
 contradicts rests on an audit of 31 invocations reporting zero denials. One
 counterexample against that audit is worth reconciling on its own terms.
+
+### The failure-output fix paid for itself on its first real failure (2026-09-17)
+
+The re-measurement run right after `0fb8bb7` landed hit a real provider limit,
+and instead of six identical `exit status 1` lines it printed:
+
+    ↳ reason="run restricted reviewer: exit status 1: claude reported
+      (subtype \"success\"): You've hit your session limit · resets 9pm
+      (Europe/Madrid)" class=infrastructure
+
+That is the whole point of items 18, 17 and this fix: the agent had said
+exactly what was wrong, and the record used to throw it away. It also makes the
+earlier transient failure — six dimensions dead in 2.3 seconds each with no
+detail — almost certainly the same session limit, which could not be
+established at the time precisely because the message was discarded.
+
+Worth noting for whoever reads the wire next: Claude Code reported
+`subtype: "success"` on a run that exited 1 and carried a limit message. The
+subtype is not a reliable success signal; the exit status and the message are.
+
+### Cross-invocation caching: the negative result reconfirmed (item 7)
+
+The same run measured three dimensions before the session limit stopped it:
+
+    14:49:13  write=30331  read=89078   out=11153
+    14:49:18  write=29971  read=273332  out=9916
+    14:52:58  write=21382  read=180011  out=7964
+
+The first two started five seconds apart and ran concurrently under
+`parallel: 2` on the same audit, with the same commit message, diff and
+permitted paths. The second wrote its own ~30000 tokens rather than reading the
+first's. The third, three and a half minutes later, wrote 21382 more. No
+dimension skips writing, which is what cross-dimension reuse would look like.
+
+This is a second independent run agreeing with the controlled two-identical-
+prompts test and with the six-dimension audit before it. The conclusion stands:
+there is no cross-invocation prompt cache to hit on the Claude path, so the
+envelope reorder does not pay here.
