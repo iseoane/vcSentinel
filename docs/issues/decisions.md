@@ -1285,3 +1285,57 @@ tokens with no cache member leave the field nil and it renders as `null`, never
 `0`; and a record persisted before this change still decodes with the field
 nil. Verified by reverting only the two adapters, which failed exactly those
 tests with `CacheWriteInputTokens = nil`.
+
+### Cross-invocation prompt caching does not happen on the Claude path (item 7, measured 2026-09-17)
+
+The controlled test is two identical prompts sent back to back through
+`claude -p --output-format json`:
+
+    call 1: fresh=2 write=52909 read=11717
+    call 2: fresh=2 write=52905 read=11717
+
+The ~52907-token prompt body is WRITTEN to the cache both times and read
+neither time. The 11717 that is read is identical in both calls and is Claude
+Code's own internal preamble, not our content. Separate `claude -p`
+invocations do not share a prefix cache for the prompt body, even seconds
+apart with byte-identical input.
+
+The real audit agrees. A six-dimension review of `e647010` (15m40s, zero
+unavailable) writes 13944 to 67796 tokens per dimension — none writes ~0 —
+while reads range from 5685 to 2121361 and track OUTPUT tokens rather than
+prompt sharing: 25422 output against 2121361 read, 3504 output against 5685
+read. That is intra-invocation multi-turn accumulation. Cross-dimension reuse
+would look like the opposite: later dimensions writing nothing and reading the
+first one's prompt.
+
+So the envelope reorder does not pay on this path, and saying otherwise would
+have been the error this item was written to avoid. It remains correct and
+harmless — the shared prefix went from 68 to 7881 bytes and the rendered line
+set is unchanged — and it is the precondition for any provider that does share
+a cache across invocations. What it is not is a measured saving.
+
+This is only possible to state because the cache-write half of the number now
+exists. With reads alone, 3065189 cached tokens looked like a large saving; it
+was the same content being re-read inside each invocation.
+
+### A third site discards the agent's own failure output (found 2026-09-17, NOT fixed)
+
+While running the measurement, a transient failure made all six dimensions
+report `reason="exit status 1" class=infrastructure` within 2.3 seconds each,
+with nothing else to go on. Ruled out by testing rather than by reasoning: the
+exact invocation, same flags and `--effort xhigh`, succeeds standalone with
+exit 0; the post-merge binary audits a single dimension fine, so neither the
+cache-write change nor the flags caused it; and it did not reproduce on retry.
+
+`internal/agentadapter/cli_review_context.go:314` does capture stderr into
+`detail`, so a bare exit status means the agent wrote nothing THERE. But the
+adapter invokes with `--output-format json`, and in that mode Claude Code
+reports `is_error` and its message on STDOUT. On the failure branch, line 336
+returns `waitErr` alone and `spawn.stdout` is discarded unread. The diagnostic
+is in the buffer and is thrown away — the same shape as item 18 in `doctor`
+and item 17 in `pr review`, at a third site neither of them touched.
+
+The fix shape is small: on a non-zero exit, parse `spawn.stdout` as a Claude
+result object and use its `result` and `subtype` as the detail, falling back to
+the current behaviour when it is not parseable. Recorded here rather than done
+because it is new work, not part of what was being measured.

@@ -293,12 +293,19 @@ design can be selected with real numbers instead of guesses.
   on acpx, whose captured wire reports no such member. Plumbing only — no
   ratio and no cache-hit rate, because what to compute from the two numbers is
   this item's decision.
-- **What remains is one more live audit**, now that both halves of the number
-  exist: re-run a multi-dimension review and read cache WRITE against cache
-  READ per invocation. If later dimensions read without writing, cross-
-  dimension reuse is real and the envelope reorder pays; if every dimension
-  writes its own, it is not, and the remaining closing condition needs
-  rethinking rather than implementing.
+- **That audit was run on 2026-09-17 and the answer is NO for the Claude path**
+  (see `decisions.md`). Two byte-identical prompts back to back both WRITE the
+  ~52907-token body and read none of it; the 11717 they both read is Claude
+  Code's own preamble. The six-dimension audit agrees: every dimension writes
+  13944-67796 tokens and none writes ~0, while reads track OUTPUT tokens rather
+  than prompt sharing. There is no cross-invocation cache to hit, so the
+  envelope reorder does not pay here — it stays correct, harmless, and the
+  precondition for a path that does share one.
+- What is left is therefore a decision, not an implementation: re-measure the
+  same way on `opencode run --pure`, which is the path this item was actually
+  written about, or record a determination that provider cache reuse is not
+  available to Sentinel and close the item on that. Do not implement a cache
+  key against a cache that was measured not to exist.
 - Premise mismatch to resolve when that lands: this item is written about
   `opencode run --pure`, its snapshot and its cache key, but the configured
   `active_agent` is `claude`, so the run above measured a different provider
