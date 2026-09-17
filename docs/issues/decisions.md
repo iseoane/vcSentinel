@@ -975,25 +975,53 @@ not a shortage of anonymous memory. `/tmp` is tmpfs on this host, so its
 contents ARE memory: it held 486 MB of orphaned provider context and 107 MB of
 Bun residue. Removing them let the reviews complete. That measurement is what
 parked item 1 — the ceiling it wanted may not be needed once the residue stops
-accumulating — and these three commits are the precondition it named.
+accumulating — and these commits are the precondition it named.
 
 **Item 16's stated premise was wrong, and correcting it is half of what was
 learned.** The item said nothing collected provider context directories.
 `reapSharedStore` did collect them, by age, and had all along. Reading the code
-before believing the issue turned one vague complaint into two specific defects.
+before believing the issue is what found that, and the same discipline applied
+one step later would have avoided the reverted commit below: the other thing the
+item suspected turned out to be deliberate, and the file said so.
 
-**Defect one: the ceiling could not see the residue.** `storeCapacityLimit` is
-one tenth of the filesystem, about 380 MB here, and it was compared against
-`sharedStoreSnapshotBytes`, whose filter kept only `sha-` prefixed entries. So a
-store measured at 500 MB reported only its published trees, and the residue that
-actually fills the disk was invisible to the reaper that exists to bound it. The
-item had flagged this as a hypothesis worth checking; it held.
+**What looked like defect one was the design, and a code review caught it
+before merge.** `storeCapacityLimit` is one tenth of the filesystem, about
+380 MB here, and it was compared against `sharedStoreSnapshotBytes`, whose
+filter keeps only `sha-` prefixed entries. The store measured 500 MB. Item 16
+flagged that gap as a hypothesis worth checking, and the numbers matched, so it
+was committed as a fix — counting provider state toward the ceiling (`39db2c5`).
 
-Counting now includes provider state. Eviction deliberately does not: a provider
-directory can belong to a live review, so it counts toward capacity but must
-never be evicted for space. The two filters were byte-identical, so both sites
-now say why they differ — otherwise the next reader unifies them and silently
-introduces a way to delete a running review's state. Landed as `39db2c5`.
+That was wrong, and the reason was written in the file being edited. The doc
+comment on `storeCapacityLimit` already stated the intent: measuring only
+entries this package can remove is what "keeps reusable snapshots on an
+otherwise-full filesystem". Eviction can only remove published trees. Counting
+an unevictable floor turns the ceiling into a shredder: once provider state
+alone exceeds the limit, the eviction loop exhausts every candidate, drops every
+reusable tree, is still over the limit, and does it again on the next `Create`.
+
+It was reachable by design rather than by accident. `newReviewEnvironment` runs
+per OpenCode invocation, so per dimension: `review.parallel: 2` means two live
+provider roots, the configuration item 1 documents used five, and item 16
+measured these directories at 162 MB each. Three live roots exceed the 380 MB
+ceiling with no orphan involved.
+
+So `39db2c5` was reverted rather than repaired. A floor-subtraction — evict only
+down to `limit - providerBytes`, skip when that is not positive — is coherent
+and was rejected: it invents a second policy to make a regression survivable
+instead of removing it. The rule that stands is the original one, now written
+down at the measuring site rather than only at the limit: a ceiling measures
+what its lever can move.
+
+The observation behind item 16's hypothesis was still true; only the diagnosis
+was wrong. The 500 MB was measured with orphaned provider directories present,
+and what bounds those is collecting them at the source, which is the next two
+commits rather than the accounting.
+
+Two tests survive the revert and one is new. `TestCapacityReaperNeverSelectsProviderState` pins that eviction never touches provider state, which held
+before and after. `TestCapacityReaperIgnoresProviderStatePressure` pins the
+regression itself: provider state dwarfing the ceiling while the published tree
+fits under it must evict nothing. Reintroducing the counting makes it fail with
+one tree evicted, which is the shredder in miniature.
 
 **Defect two: collection was late, and lateness was the whole problem.** Age
 alone answers the wrong question — an orphaned directory is not old, it is
@@ -1043,9 +1071,16 @@ Landed as `3c0891e`.
 **How the absence of regressions was established, because it is the part worth
 copying.** Each commit's tests were run against the previous code with the
 production change reverted, and in every case exactly the intended case failed
-while the rest passed: one of two byte counts, one of six liveness cases, one of
-two entries in the residue sweep. "Nothing that was collected before stopped
-being collected" is therefore a measurement rather than a claim.
+while the rest passed: one of six liveness cases, one of two entries in the
+residue sweep. "Nothing that was collected before stopped being collected" is
+therefore a measurement rather than a claim.
+
+**And the limit of that method, which this work also demonstrates.** Every one
+of those checks passed for the reverted commit too. Proving a change does what
+it intends says nothing about whether it should; the counting change was
+correct code for a goal that was wrong, and only a reviewer reading the
+surrounding design caught it. A green RED-to-GREEN transition is evidence about
+mechanism, never about premise.
 
 **What this does NOT close.** Item 1 keeps its ceiling question and is still
 parked. Its precondition is now met, but the re-measurement it asked for has not

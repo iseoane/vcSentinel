@@ -664,8 +664,8 @@ func reapSharedStoreCapacity(root string) int {
 	}
 	candidates := make([]candidate, 0, len(entries))
 	sizingFailed := false
-	// Counted and evictable sets deliberately differ: provider state counts
-	// toward capacity, but only published trees can be safely evicted here.
+	// Only published trees are candidates, and only published trees are
+	// measured. The two sets match on purpose: see sharedStoreSnapshotBytes.
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), publishedPrefix) || strings.HasSuffix(entry.Name(), readySuffix) || strings.HasSuffix(entry.Name(), manifestSuffix) {
 			continue
@@ -719,9 +719,17 @@ func reapSharedStoreCapacity(root string) int {
 }
 
 // sharedStoreSnapshotBytes reports the logical footprint of published snapshot
-// trees, their readiness artifacts, and provider state directories. Persistent
-// lock files are deliberately excluded: removing them would break the lock
-// namespace, and they contain no snapshot evidence.
+// trees and their readiness artifacts. Persistent lock files are deliberately
+// excluded: removing them would break the lock namespace, and they contain no
+// snapshot evidence.
+//
+// Provider state is excluded for a stronger reason, recorded here because
+// counting it looks like an obvious improvement and was tried: eviction can
+// only remove published trees, so measuring anything it cannot remove turns
+// this ceiling into a shredder. Once an unevictable floor exceeds the limit,
+// the caller's loop drops every reusable tree and is still over it, on every
+// Create. A ceiling measures what its lever can move. Provider state is bounded
+// at its source instead - collected when its owner dies, or by age.
 func sharedStoreSnapshotBytes(root string) (uint64, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -729,16 +737,6 @@ func sharedStoreSnapshotBytes(root string) (uint64, error) {
 	}
 	var total uint64
 	for _, entry := range entries {
-		// Counted and evictable sets deliberately differ: provider state counts
-		// toward capacity but may belong to a live review and cannot be evicted.
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), ProviderStatePrefix) {
-			size, err := storeEntrySize(filepath.Join(root, entry.Name()))
-			if err != nil {
-				return 0, err
-			}
-			total += size
-			continue
-		}
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), publishedPrefix) || strings.HasSuffix(entry.Name(), readySuffix) || strings.HasSuffix(entry.Name(), manifestSuffix) {
 			continue
 		}

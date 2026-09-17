@@ -884,33 +884,43 @@ func TestProviderStateReaperUsesOwnerLivenessAndAge(t *testing.T) {
 	}
 }
 
-func TestSharedStoreSnapshotBytesIncludesProviderState(t *testing.T) {
+// TestCapacityReaperIgnoresProviderStatePressure pins the reason provider state
+// is not measured, which a code review caught after it had been counted for one
+// commit. Eviction can only remove published trees. If an unevictable floor
+// counted toward the ceiling and exceeded it, the reaper would drop every
+// reusable tree, still sit over the limit, and do it again on the next Create -
+// a shredder rather than a ceiling. Here provider state dwarfs the limit while
+// the published tree fits under it, and nothing is evicted.
+func TestCapacityReaperIgnoresProviderStatePressure(t *testing.T) {
 	root := t.TempDir()
-	sha := strings.Repeat("a", 40)
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("b", 40)
 	writeCapacityStoreEntry(t, root, sha)
-	provider, err := os.MkdirTemp(root, ProviderStatePrefix)
+	provider, err := os.MkdirTemp(root, ProviderStatePattern(os.Getpid()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte("provider context for a live review\n")
-	if err := os.WriteFile(filepath.Join(provider, "context.txt"), payload, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(provider, "context.bin"), []byte(strings.Repeat("p", 1<<20)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	publishedBytes, err := snapshotEntrySize(root, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	providerInfo, err := os.Stat(provider)
-	if err != nil {
-		t.Fatal(err)
+	// A ceiling the published tree fits under, and the provider state does not.
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{capacity: (publishedBytes + 1) * 10}, nil
 	}
-	want := publishedBytes + uint64(providerInfo.Size()) + uint64(len(payload))
-	got, err := sharedStoreSnapshotBytes(root)
-	if err != nil {
-		t.Fatalf("sharedStoreSnapshotBytes: %v", err)
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+
+	if removed := reapSharedStoreCapacity(root); removed != 0 {
+		t.Fatalf("reapSharedStoreCapacity removed %d entries, want 0: provider state must not force eviction it cannot relieve", removed)
 	}
-	if got != want {
-		t.Fatalf("sharedStoreSnapshotBytes = %d, want published snapshot and provider state total %d", got, want)
+	if _, err := os.Stat(publishedPath(root, sha)); err != nil {
+		t.Fatalf("reusable snapshot was evicted under pressure eviction cannot relieve: %v", err)
 	}
 }
 
@@ -938,9 +948,13 @@ func TestCapacityReaperNeverSelectsProviderState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The published tree alone must exceed the ceiling, so eviction runs for a
+	// reason this test controls. Provider state is not measured at all - see
+	// sharedStoreSnapshotBytes - and this pins the other half of that rule:
+	// it is not evictable either, however much pressure the store is under.
 	originalSpace := storeFilesystemSpace
 	storeFilesystemSpace = func(string) (filesystemSpace, error) {
-		return filesystemSpace{capacity: publishedBytes * 10}, nil
+		return filesystemSpace{capacity: (publishedBytes - 1) * 10}, nil
 	}
 	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
 	originalRemove := removeUnleasedStoreEntryAtMtime
