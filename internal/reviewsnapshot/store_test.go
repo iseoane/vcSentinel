@@ -828,6 +828,99 @@ func TestCapacityReaperKeepsSmallStoreOnOtherwiseFullFilesystem(t *testing.T) {
 	}
 }
 
+func TestSharedStoreSnapshotBytesIncludesProviderState(t *testing.T) {
+	root := t.TempDir()
+	sha := strings.Repeat("a", 40)
+	writeCapacityStoreEntry(t, root, sha)
+	provider, err := os.MkdirTemp(root, ProviderStatePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("provider context for a live review\n")
+	if err := os.WriteFile(filepath.Join(provider, "context.txt"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	publishedBytes, err := snapshotEntrySize(root, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerInfo, err := os.Stat(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := publishedBytes + uint64(providerInfo.Size()) + uint64(len(payload))
+	got, err := sharedStoreSnapshotBytes(root)
+	if err != nil {
+		t.Fatalf("sharedStoreSnapshotBytes: %v", err)
+	}
+	if got != want {
+		t.Fatalf("sharedStoreSnapshotBytes = %d, want published snapshot and provider state total %d", got, want)
+	}
+}
+
+func TestCapacityReaperNeverSelectsProviderState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("a", 40)
+	writeCapacityStoreEntry(t, root, sha)
+	provider, err := os.MkdirTemp(root, ProviderStatePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("p", 16<<10)
+	providerFile := filepath.Join(provider, "context.txt")
+	if err := os.WriteFile(providerFile, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	older := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(provider, older, older); err != nil {
+		t.Fatal(err)
+	}
+	publishedBytes, err := snapshotEntrySize(root, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSpace := storeFilesystemSpace
+	storeFilesystemSpace = func(string) (filesystemSpace, error) {
+		return filesystemSpace{capacity: publishedBytes * 10}, nil
+	}
+	t.Cleanup(func() { storeFilesystemSpace = originalSpace })
+	originalRemove := removeUnleasedStoreEntryAtMtime
+	attempts := 0
+	removeUnleasedStoreEntryAtMtime = func(root, selectedSHA string, modTime time.Time, targets ...string) bool {
+		attempts++
+		if selectedSHA != sha {
+			t.Fatalf("capacity eviction selected %q, want only snapshot %q", selectedSHA, sha)
+		}
+		for _, target := range targets {
+			if target == provider {
+				t.Fatal("capacity eviction selected provider state")
+			}
+		}
+		return originalRemove(root, selectedSHA, modTime, targets...)
+	}
+	t.Cleanup(func() { removeUnleasedStoreEntryAtMtime = originalRemove })
+
+	if removed := reapSharedStoreCapacity(root); removed != 1 {
+		t.Fatalf("reapSharedStoreCapacity removed %d entries, want only the published snapshot", removed)
+	}
+	if attempts != 1 {
+		t.Fatalf("capacity eviction attempts = %d, want 1", attempts)
+	}
+	if _, err := os.Stat(publishedPath(root, sha)); !os.IsNotExist(err) {
+		t.Fatalf("published snapshot survived capacity eviction: %v", err)
+	}
+	got, err := os.ReadFile(providerFile)
+	if err != nil {
+		t.Fatalf("provider state did not survive capacity eviction: %v", err)
+	}
+	if string(got) != payload {
+		t.Fatal("provider state changed during capacity eviction")
+	}
+}
+
 // TestSnapshotEntrySizeIncludesReadinessArtifacts pins every byte class the
 // capacity policy owns: omitting a marker or manifest must change the measured
 // footprint and therefore fail this test.
