@@ -7,7 +7,7 @@ decision. One line per item states why it sits where it does.
 
 Numbering is historical and deliberately not renumbered, so references from
 `future.md` and from `decisions.md` keep pointing at what they name. Items 2,
-3, 4, 5, 10, 11, 12, 13, 16, 17 and 18 closed and moved to
+3, 4, 5, 6, 10, 11, 12, 13, 16, 17 and 18 closed and moved to
 [`decisions.md`](decisions.md); with them the five pieces of
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md)
 are all done, so that design is now history rather than a work order.
@@ -157,90 +157,37 @@ Found on 2026-09-09 by exercising the flow on `feat/review-coverage-contract`.
   merely touches the same file is not evidence of a correction. Prefer an
   explicit claim or a narrowly justified type policy.
 
-## 6. Recalibrate or retire the OpenCode reviewer turn budget
+## 19. Reconcile the `glob` denial against the zero-denial audit
 
-Sits third: unblocked but low value. Its original premise was disproven, and
-the truncation it was created to explain was removed by the whole-tree
-snapshot; what is left is choosing a value or recording a determination.
+Sits third: it costs a whole review dimension when it happens, but it has been
+observed once and the evidence needed to reproduce it is not persisted.
 
-- Wrong: `defaultReviewToolCalls` (`internal/agentadapter/cli.go`) is the
-  OpenCode `Steps` value — the number of model turns the restricted reviewer
-  may spend. It was `8`, chosen without measurement, and was raised to a
-  PROVISIONAL `16` that is equally unmeasured. The budget is
-  provider-conditional: the Claude branch intentionally ignores it (no
-  confirmed flag caps turns there).
-- Disproven premise: the raise was made believing budget exhaustion caused the
-  truncated reviews. It did not. A denied tool call kills the turn. Captured
-  raw NDJSON from one review on 2026-09-07 showed 11 invocations: the 3 that
-  recorded a permission rejection all ended `tool-calls` (truncated at 4 and 5
-  turns out of 16), and the 8 with no rejection all ended `stop`. The
-  correlation was exact, and the budget was never approached.
-- Evidence for the original 21% figure, now explained by denials rather than
-  by the budget: of the 90 durable outcomes recording a stop reason (capture
-  landed 2026-09-06), 19 ended `tool-calls`.
-- First measurement, 2026-09-08, now that the count persists: completing
-  reviews consumed 3, 4, 5 and 6 turns against a budget of 16, and the two
-  truncated dimensions of that same review both died at 1 turn. The budget is
-  roughly three times what a completing review needs and was never
-  approached, in either direction.
-- CLOSED for `todowrite`, 2026-09-15 (`305814d`, corrected by `ef68642`): the
-  reviewer's permission map now grants `todowrite`, so the rejection that
-  killed a dimension at turn 1 no longer happens. Measured before and after on
-  the same branch: `pr review`'s net audit went from `unavailable` (one
-  dimension of four dead, zero coverage) to a verdict it actually computed.
-  The deep fix — a rejection that does not end the turn — was ruled out with
-  evidence: OpenCode ends the session itself and reports `stop reason:
-  tool-calls`; `cli_review_context.go:130` only observes that and discards the
-  incomplete answer. We can avoid the question, never make the rejection
-  harmless.
-  The first attempt shipped the grant as a pattern map, copying the shape
-  `grep` and `glob` use, and OpenCode rejected the WHOLE configuration
-  (`Expected PermissionActionConfig | undefined`), killing all four dimensions
-  instead of one. `todowrite` takes a bare action because it matches no path or
-  expression. The unit test that passed through that regression asserted the
-  in-memory map; only a test parsing the serialized `OPENCODE_CONFIG_CONTENT`
-  observes what the provider validates.
-- STILL OPEN in the same boundary: a `glob` call was denied once
-  (2026-09-08) despite its explicit `{"*": "allow"}`. That is not the relative-
-  path case the determination in `cli.go` discusses, and it is not fixed by
-  listing more tools, because `glob` was already listed. The determination
-  there rests on an audit of 31 invocations with "zero denials"; this is a
-  counterexample worth reconciling before trusting it.
-- The truncation cause is now named on the wire: `denied tool call —
-  todowrite: The user rejected permission to use this specific tool call`.
-  The reviewer reaches for `todowrite`, which is absent from the read/search
-  set, and the agent-level `"*": "ask"` rule auto-rejects it in a
-  non-interactive run, ending the turn at once. That `ask` fallback is
-  deliberate — an agent-level `deny` would shadow every admitted read through
-  deny dominance — but its side effect is that any tool outside the allowed
-  set kills the whole dimension on its first turn. Fixing that boundary would
-  remove the truncations this item was created to explain; choosing a
-  different budget value would remove none of them.
-- Closing: given the measurement above, a recorded determination that the
-  turn budget is not a useful control and the constant should hold a
-  documented provider default. Selecting a value from the distribution
-  remains admissible but is now the weaker option, and neither closes the
-  denial boundary, which deserves its own unit.
-- No longer blocked on persistence, as of 2026-09-08: the consumed turn count
-  now reaches the durable store as `AttemptObservation.Turns`, a `*int` that
-  stays nil for every provider that reports no comparable count, so an
-  unobserved count never renders as a real zero. Records written before that
-  date carry no count and cannot be backfilled, because only the concatenated
-  answer text was kept, not the event stream.
-- Waiting on sample only: filter on completing reviews, whose mapped stop
-  reason is `end_turn` (raw `stop`). Truncated runs are right-censored at
-  their denial point and would bias the value down. Pre-2026-09-07 records are
-  not comparable either way, because the truncations were caused by denied
-  tool calls and the whole-tree snapshot removed that cause. Measured rate:
-  144 completing invocations in the two days after that change, so tens of
-  samples accumulate within a day of ordinary use.
-- Remaining limitation, which does not block the closing condition: the
-  denial evidence is still unpersisted. `TruncatedTurnError.ToolCallErrors`
+Opened 2026-09-17, carved out of item 6 when that item closed by determination
+(see [`decisions.md`](decisions.md)). It belongs to the permission boundary,
+not to the turn budget, and nothing about the budget's closure resolves it.
+
+- Wrong: a `glob` call was denied once on 2026-09-08 despite its explicit
+  `{"*": "allow"}` in the reviewer permission map. That is not the
+  relative-path case the determination in `internal/agentadapter/cli.go`
+  discusses, and it is not fixed by listing more tools, because `glob` was
+  already listed.
+- Why it matters: that determination rests on an audit of 31 invocations
+  reporting "zero denials". This is a counterexample to the evidence the
+  determination is built on, so the determination cannot be trusted until it
+  is reconciled.
+- It costs a whole dimension when it happens. A denied tool call ends the turn
+  at once: OpenCode closes the session itself and reports `stop reason:
+  tool-calls`, and `cli_review_context.go:130` only observes that and discards
+  the incomplete answer. A rejection cannot be made harmless; it can only be
+  avoided.
+- Blocked on evidence that is not persisted: `TruncatedTurnError.ToolCallErrors`
   carries the observed `DeniedToolCalls`, but nothing writes it to the store,
   so a truncated run's event stream holds no record of a rejected permission
-  and the store cannot attribute any truncation to a denial. Selecting the
-  turn value does not need that attribution; re-testing the disproven premise
-  above would.
+  and the store cannot attribute any truncation to a denial. Reproducing this
+  one needs that attribution.
+- Closing: a reproduction that names why an explicitly allowed `glob` was
+  denied, or a corrected determination in `cli.go` that accounts for the
+  counterexample instead of resting on the zero-denial audit alone.
 
 ## 7. Cache shared audit evidence across review dimensions
 

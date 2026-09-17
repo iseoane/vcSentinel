@@ -60,17 +60,24 @@ type ReviewRequest struct {
 // defaultReviewToolCalls is the OpenCode agent-configuration "Steps" turn
 // budget applied to a restricted review when the caller supplies none.
 //
-// It is PROVISIONAL and unmeasured. It was raised from 8 to 16 believing that
-// budget exhaustion caused the truncated reviews; captured provider streams
-// then DISPROVED that. A denied tool call kills the turn: across 11
-// invocations of one review, the 3 that recorded a permission rejection all
-// ended "tool-calls" — at 4 and 5 turns out of 16, nowhere near the budget —
-// and the 8 without a rejection all ended "stop". The real fix is that the
-// snapshot now carries the whole committed tree so the reviewer is not denied
-// the context it needs; this value merely stopped being the suspect.
+// It is a SAFETY BOUND, not a control, and that is a recorded determination
+// rather than a pending choice (docs/issues/decisions.md, 2026-09-17).
+// Measured consumption: completing reviews spent 3, 4, 5 and 6 turns against
+// this 16, and the truncated dimensions of that same review died at 1 turn —
+// the budget was never approached from either direction. Truncation came from
+// denied tool calls, which end the turn at once: across 11 invocations of one
+// review, the 3 recording a permission rejection all ended "tool-calls" and
+// the 8 without one all ended "stop". Tuning this number would have removed
+// none of them.
 //
-// docs/issues/actionable.md, "Recalibrate or retire the OpenCode
-// reviewer turn budget", tracks replacing this guess with a measurement.
+// Do NOT replace it with "the provider default": OpenCode publishes none. Its
+// schema (opencode.ai/config.json, $defs.AgentConfig.properties.steps,
+// checked 2026-09-17) declares the type and a description but no default
+// member, so omitting the field would trade a declared bound for an
+// undocumented one. 16 is kept because it is roughly three times the measured
+// need and stops a runaway session, and changing it needs a reason this
+// measurement does not supply.
+//
 // The Claude branch of reviewCommand intentionally ignores this value: its
 // own comment there explains there is no confirmed flag to cap Claude Code's
 // turn count.

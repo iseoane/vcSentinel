@@ -1379,3 +1379,39 @@ flags nor the cache-write change that had just landed caused it.
 
 Verified by reverting only the production change: the tests fail with the
 literal `exit status 1` this item reports.
+
+### The OpenCode reviewer turn budget is a safety bound, not a control (item 6, closed 2026-09-17)
+
+Closed by determination, which the item itself named as the stronger of its two
+exits. `defaultReviewToolCalls` stays at 16 and its comment now records why
+rather than apologising for being provisional.
+
+The measurement that decides it was already in hand. Completing reviews spent
+3, 4, 5 and 6 turns against a budget of 16, and the two truncated dimensions of
+that same review died at 1 turn. The budget was never approached from either
+direction, so no value drawn from that distribution would change any outcome.
+The truncations came from denied tool calls, which end the turn at once: of 11
+invocations of one review, the 3 that recorded a permission rejection all ended
+`tool-calls` and the 8 without one all ended `stop`. The correlation was exact.
+Choosing a different number would have removed none of them.
+
+One part of the item's own closing condition turned out to be unachievable, and
+that is worth recording rather than quietly dropping. It asked that the
+constant "hold a documented provider default". OpenCode publishes no default:
+its schema at `opencode.ai/config.json`,
+`$defs.AgentConfig.properties.steps`, checked 2026-09-17, declares
+`exclusiveMinimum`, `type`, `maximum` and a description, and no `default`
+member. Omitting the field would therefore trade a declared bound for an
+undocumented one, which is not an improvement. 16 is kept because it is roughly
+three times the measured need and bounds a runaway session, and the comment now
+says that is what it is.
+
+The sample the item was waiting on is not needed for this exit. It was needed
+only for the weaker one — selecting a value from the distribution — and that
+option is now closed rather than pending.
+
+Not closed with it, and moved out as its own unit: the `glob` call denied on
+2026-09-08 despite an explicit `{"*": "allow"}`. It belongs to the permission
+boundary, not to the budget, and the determination in `cli.go` that it
+contradicts rests on an audit of 31 invocations reporting zero denials. One
+counterexample against that audit is worth reconciling on its own terms.
