@@ -3,6 +3,7 @@ package reviewsnapshot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -825,6 +826,61 @@ func TestCapacityReaperKeepsSmallStoreOnOtherwiseFullFilesystem(t *testing.T) {
 	}
 	if _, err := os.Stat(candidate); err != nil {
 		t.Fatalf("small reusable tree was evicted because of unrelated disk use: %v", err)
+	}
+}
+
+func TestProviderStateReaperUsesOwnerLivenessAndAge(t *testing.T) {
+	child := exec.Command(os.Args[0], "-test.run=^$")
+	if err := child.Run(); err != nil {
+		t.Fatalf("run short-lived owner: %v", err)
+	}
+	deadPID := child.ProcessState.Pid()
+	now := time.Now()
+	for _, tt := range []struct {
+		name    string
+		entry   string
+		age     time.Duration
+		removed int
+	}{
+		{"dead owner is collected immediately", fmt.Sprintf("%s%d-fixture", ProviderStatePrefix, deadPID), time.Minute, 1},
+		{"current owner survives", fmt.Sprintf("%s%d-fixture", ProviderStatePrefix, os.Getpid()), time.Minute, 0},
+		{"legacy name is collected by age", fmt.Sprintf("%s123456", ProviderStatePrefix), 2 * staleSnapshotAge, 1},
+		{"legacy name survives while fresh", fmt.Sprintf("%s123456", ProviderStatePrefix), time.Minute, 0},
+		{"malformed owner is collected by age", fmt.Sprintf("%sunknown-fixture", ProviderStatePrefix), 2 * staleSnapshotAge, 1},
+		{"current owner still has age backstop", fmt.Sprintf("%s%d-fixture", ProviderStatePrefix, os.Getpid()), 2 * staleSnapshotAge, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Chmod(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			provider := filepath.Join(root, tt.entry)
+			if err := os.Mkdir(provider, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte("provider context\n")
+			path := filepath.Join(provider, "context.txt")
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mtime := now.Add(-tt.age)
+			if err := os.Chtimes(provider, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+			if got := reapSharedStore(root, now, staleSnapshotAge); got != tt.removed {
+				t.Fatalf("reapSharedStore removed %d entries, want %d", got, tt.removed)
+			}
+			if tt.removed == 1 {
+				if _, err := os.Stat(provider); !os.IsNotExist(err) {
+					t.Fatalf("provider directory survived collection: %v", err)
+				}
+				return
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != string(payload) {
+				t.Fatalf("provider context was not preserved: %q, %v", got, err)
+			}
+		})
 	}
 }
 

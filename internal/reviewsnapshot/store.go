@@ -44,6 +44,37 @@ const (
 	ProviderStatePrefix = "vas-sentinel-review-provider-"
 )
 
+// ProviderStatePattern builds the os.MkdirTemp pattern for a provider state
+// directory owned by pid. The owner travels in the directory NAME because that
+// is the only thing the reaper can read from a ReadDir alone: a sidecar file
+// would add a write that a killed process can skip, which is exactly the case
+// this name exists to survive. It is the contract between the creator in
+// internal/agentadapter and ProviderStatePID below; changing one changes both.
+func ProviderStatePattern(pid int) string {
+	return fmt.Sprintf("%s%d-", ProviderStatePrefix, pid)
+}
+
+// ProviderStatePID reports the owning process recorded in a provider state
+// directory name, and whether one is recorded at all. A false result is a real
+// answer rather than a failure: a directory created before this format, or by
+// anything else, carries no owner and the caller falls back to the age
+// ceiling, so nothing that was collected before stops being collected.
+func ProviderStatePID(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, ProviderStatePrefix)
+	if !ok {
+		return 0, false
+	}
+	owner, suffix, ok := strings.Cut(rest, "-")
+	if !ok || suffix == "" {
+		return 0, false
+	}
+	pid, err := strconv.ParseUint(owner, 10, 31)
+	if err != nil || pid == 0 {
+		return 0, false
+	}
+	return int(pid), true
+}
+
 func publishedPath(root, sha string) string {
 	return filepath.Join(root, publishedPrefix+sha)
 }
@@ -566,7 +597,8 @@ func reapSharedStore(root string, now time.Time, maxAge time.Duration) int {
 		name := entry.Name()
 		switch {
 		case entry.IsDir() && strings.HasPrefix(name, ProviderStatePrefix):
-			if !isStaleStoreEntry(entry, now, maxAge) {
+			pid, hasOwner := ProviderStatePID(name)
+			if !isStaleStoreEntry(entry, now, maxAge) && (!hasOwner || processAlive(pid)) {
 				continue
 			}
 			if removeReadOnlyStoreEntry(filepath.Join(root, name)) == nil {

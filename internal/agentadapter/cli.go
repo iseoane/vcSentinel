@@ -567,7 +567,7 @@ func newReviewEnvironment(configuration, model, snapshot string) ([]string, func
 		}
 		parent = filepath.Dir(resolvedSnapshot)
 	}
-	isolationRoot, err := os.MkdirTemp(parent, reviewsnapshot.ProviderStatePrefix)
+	isolationRoot, err := os.MkdirTemp(parent, reviewsnapshot.ProviderStatePattern(os.Getpid()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create provider isolation root: %w", err)
 	}
