@@ -91,12 +91,30 @@ func main() {
 	if temprano := os.Getenv("VAS_SENTINEL_TEST_STDERR_EARLY"); temprano != "" {
 		fmt.Fprint(os.Stderr, temprano)
 	}
+	// VAS_SENTINEL_TEST_STDOUT_FAIL prints text to stdout BEFORE the sleep,
+	// so both a fast failure (no sleep, exit 1 with the agent's own output
+	// on stdout) and a timed-out run (killed during the sleep, stdout
+	// captured so far) carry that output. It exits 1 after the sleep.
+	// VAS_SENTINEL_TEST_EXIT_ONE exits 1 with no output at all, for the
+	// empty-stdout case. Both keep stderr empty unless a STDERR/FAIL
+	// variable is also set.
+	stdoutFail := os.Getenv("VAS_SENTINEL_TEST_STDOUT_FAIL")
+	if stdoutFail != "" {
+		fmt.Print(stdoutFail)
+	}
 	time.Sleep(time.Duration(segundos) * time.Second)
 	// VAS_SENTINEL_TEST_FAIL simulates an agent that fails with an error
 	// message on stderr, to check that the adapter captures and propagates
-	// that detail instead of discarding it.
+	// that detail instead of discarding it. It runs before the silent and
+	// stdout exits below so a combined setup carries both streams.
 	if fallo := os.Getenv("VAS_SENTINEL_TEST_FAIL"); fallo != "" {
 		fmt.Fprint(os.Stderr, fallo)
+		os.Exit(1)
+	}
+	if os.Getenv("VAS_SENTINEL_TEST_EXIT_ONE") == "1" {
+		os.Exit(1)
+	}
+	if stdoutFail != "" {
 		os.Exit(1)
 	}
 	if salida := os.Getenv("VAS_SENTINEL_TEST_OUTPUT"); salida != "" {

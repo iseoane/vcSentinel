@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
 )
@@ -70,6 +71,58 @@ type claudeUsageProbe struct {
 	Details      struct {
 		ThinkingTokens *int64 `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
+}
+
+// maxReviewFailureDetail bounds a failure detail taken from the agent's own
+// stdout. Raw provider output is untrusted and unbounded — a provider that
+// prints hundreds of lines must not flood the record. The shape follows
+// internal/review's truncateCause (bound by runes, ellipsis marks the cut)
+// rather than inventing a second rule; this package cannot reuse that
+// function directly because internal/review already depends on it.
+const maxReviewFailureDetail = 200
+
+// truncateReviewFailureDetail bounds by runes, not bytes: a cut in the middle
+// of a multibyte character would produce invalid text right at the first
+// thing the operator reads.
+func truncateReviewFailureDetail(detail string) string {
+	runes := []rune(detail)
+	if len(runes) <= maxReviewFailureDetail {
+		return detail
+	}
+	return string(runes[:maxReviewFailureDetail]) + "…"
+}
+
+// claudeFailureDetail falls back to the agent's own stdout when a review
+// invocation exits non-zero with an empty stderr. The Claude branch of
+// reviewCommand invokes with --output-format json, in which mode Claude Code
+// reports a failure as a result object on stdout carrying is_error, subtype
+// and result — so the diagnostic sits in the captured stdout, discarded
+// unread, unless it is read here. It reuses claudeResultProbe and reports
+// only what the agent said, never a cause it cannot know.
+//
+// The second return value is false when stdout is empty, not JSON, or
+// carries no message: the caller then keeps the bare exit status, because a
+// fallback that invents a detail is worse than none. A stdout that is not a
+// Claude result object (the other CLI branches do not use --output-format
+// json the same way) falls through the same way, unchanged.
+func claudeFailureDetail(stdout string) (string, bool) {
+	trimmed := strings.TrimSpace(stdout)
+	if trimmed == "" {
+		return "", false
+	}
+	var probe claudeResultProbe
+	if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+		return "", false
+	}
+	message := strings.TrimSpace(probe.Result)
+	if message == "" {
+		return "", false
+	}
+	message = truncateReviewFailureDetail(message)
+	if probe.Subtype != "" {
+		return fmt.Sprintf("claude reported (subtype %q): %s", probe.Subtype, message), true
+	}
+	return fmt.Sprintf("claude reported: %s", message), true
 }
 
 // scanClaudeReview parses one Claude Code --output-format json review result:

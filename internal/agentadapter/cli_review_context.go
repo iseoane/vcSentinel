@@ -313,6 +313,16 @@ func (c *CLIAdapter) runBoundedReview(parent context.Context, request ReviewRequ
 	spawn.tree.Release()
 	if waitErr != nil {
 		detail := strings.TrimSpace(spawn.stderr.String())
+		if detail == "" {
+			// stderr yielded nothing, but the Claude branch reports a
+			// failure as a result object on stdout (see
+			// claudeFailureDetail): read that fallback before returning a
+			// bare exit status. An empty, non-JSON, or message-free stdout
+			// keeps the current behaviour exactly.
+			if fallback, ok := claudeFailureDetail(spawn.stdout.String()); ok {
+				detail = fallback
+			}
+		}
 		// This function owns the deadline, so it is the ONLY place that can
 		// tell a provider crash from a provider that ran out of time. When the
 		// deadline fires, the containment watchdog SIGTERMs the process group
