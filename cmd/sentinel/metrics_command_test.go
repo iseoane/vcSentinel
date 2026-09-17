@@ -197,6 +197,7 @@ func TestMetricsWarningCoversEveryEvidenceGroup(t *testing.T) {
 			r.Remediation.ByDimension = []metrics.RemediationDimensionAggregate{{SuccessRate: partialMetricsRatio()}}
 		}},
 		{"measurement", func(r *metrics.Report) { r.Executions.Duration = partialMetricsMeasurement() }},
+		{"cache-write measurement", func(r *metrics.Report) { r.Executions.CacheWriteInputTokens = partialMetricsMeasurement() }},
 		{"cost coverage", func(r *metrics.Report) { r.Executions.CostCoverage = partialMetricsCoverage() }},
 		{"identity coverage", func(r *metrics.Report) { r.Executions.IdentityCoverage = partialMetricsCoverage() }},
 		{"reuse ratio", func(r *metrics.Report) { r.Executions.Reuse.Rate = partialMetricsRatio() }},
@@ -418,7 +419,7 @@ func completeMetricsReport() metrics.Report {
 		Executions: metrics.ExecutionAggregate{
 			LogicalRuns: 1, SuccessRate: ratio,
 			Duration: measurement, InputTokens: measurement, OutputTokens: measurement,
-			TotalTokens: measurement, CachedInputTokens: measurement, ReasoningTokens: measurement,
+			TotalTokens: measurement, CachedInputTokens: measurement, CacheWriteInputTokens: measurement, ReasoningTokens: measurement,
 			CostCoverage: coverage, IdentityCoverage: coverage,
 			Reuse: metrics.ReuseAggregate{Rate: ratio}, Scope: metrics.ScopeAggregate{Coverage: coverage},
 		},
@@ -433,7 +434,7 @@ func metricsInputForOrdering() metrics.Input {
 			Version: store.ExecutionMetricsSchemaVersion, RunID: run,
 			Identities: []store.ObservedExecutionIdentity{{Agent: agent, Model: model}},
 			Timing:     &store.ExecutionTiming{TotalDurationNanos: duration},
-			Usage:      &store.ExecutionTokenUsage{InputTokens: &one, OutputTokens: &one, TotalTokens: &one, CachedInputTokens: &one, ReasoningTokens: &one},
+			Usage:      &store.ExecutionTokenUsage{InputTokens: &one, OutputTokens: &one, TotalTokens: &one, CachedInputTokens: &one, CacheWriteInputTokens: &one, ReasoningTokens: &one},
 			Cost:       &store.ExecutionCost{AmountMicros: 1, Currency: currency}, Scope: &store.ExecutionScope{Kind: store.ScopeFull},
 			Reuse: &store.ExecutionReuse{ReusedCapabilityIDs: []string{"reuse"}},
 		}

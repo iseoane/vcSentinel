@@ -159,23 +159,24 @@ type RemediationDimensionAggregate struct {
 }
 
 type ExecutionAggregate struct {
-	LogicalRuns       int64
-	MeasuredRuns      int64
-	SuccessfulRuns    int64
-	FailedRuns        int64
-	RetriedRuns       int64
-	SuccessRate       Ratio
-	Duration          Measurement
-	InputTokens       Measurement
-	OutputTokens      Measurement
-	TotalTokens       Measurement
-	CachedInputTokens Measurement
-	ReasoningTokens   Measurement
-	CostCoverage      Coverage
-	IdentityCoverage  Coverage
-	Reuse             ReuseAggregate
-	Scope             ScopeAggregate
-	Failures          []FailureAggregate
+	LogicalRuns           int64
+	MeasuredRuns          int64
+	SuccessfulRuns        int64
+	FailedRuns            int64
+	RetriedRuns           int64
+	SuccessRate           Ratio
+	Duration              Measurement
+	InputTokens           Measurement
+	OutputTokens          Measurement
+	TotalTokens           Measurement
+	CachedInputTokens     Measurement
+	CacheWriteInputTokens Measurement
+	ReasoningTokens       Measurement
+	CostCoverage          Coverage
+	IdentityCoverage      Coverage
+	Reuse                 ReuseAggregate
+	Scope                 ScopeAggregate
+	Failures              []FailureAggregate
 }
 
 type Measurement struct {
@@ -310,7 +311,7 @@ func (r Report) HasIncompleteEvidence() bool {
 			return true
 		}
 	}
-	for _, v := range []Measurement{e.Duration, e.InputTokens, e.OutputTokens, e.TotalTokens, e.CachedInputTokens, e.ReasoningTokens} {
+	for _, v := range []Measurement{e.Duration, e.InputTokens, e.OutputTokens, e.TotalTokens, e.CachedInputTokens, e.CacheWriteInputTokens, e.ReasoningTokens} {
 		if !v.Known() {
 			return true
 		}

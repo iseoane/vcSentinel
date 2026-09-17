@@ -76,12 +76,13 @@ type AgentTiming struct {
 // ExecutionTokenUsage keeps every optional token count as a pointer, so a
 // reported zero is not conflated with usage that no provider exposed.
 type ExecutionTokenUsage struct {
-	InputTokens       *int64            `json:"input_tokens,omitempty"`
-	OutputTokens      *int64            `json:"output_tokens,omitempty"`
-	TotalTokens       *int64            `json:"total_tokens,omitempty"`
-	CachedInputTokens *int64            `json:"cached_input_tokens,omitempty"`
-	ReasoningTokens   *int64            `json:"reasoning_tokens,omitempty"`
-	Source            ObservationSource `json:"source"`
+	InputTokens           *int64            `json:"input_tokens,omitempty"`
+	OutputTokens          *int64            `json:"output_tokens,omitempty"`
+	TotalTokens           *int64            `json:"total_tokens,omitempty"`
+	CachedInputTokens     *int64            `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens *int64            `json:"cache_write_input_tokens,omitempty"`
+	ReasoningTokens       *int64            `json:"reasoning_tokens,omitempty"`
+	Source                ObservationSource `json:"source"`
 }
 
 // CostSource identifies how a cost was obtained. Values remain extensible so
@@ -340,7 +341,7 @@ func validateExecutionTokenUsage(usage ExecutionTokenUsage) error {
 	if usage.Source == "" {
 		return fmt.Errorf("%w: usage source is empty", ErrExecutionMetricsCorrupt)
 	}
-	values := []*int64{usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.CachedInputTokens, usage.ReasoningTokens}
+	values := []*int64{usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.CachedInputTokens, usage.CacheWriteInputTokens, usage.ReasoningTokens}
 	for _, value := range values {
 		if value != nil && *value < 0 {
 			return fmt.Errorf("%w: token count is negative", ErrExecutionMetricsCorrupt)

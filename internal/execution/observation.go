@@ -23,12 +23,13 @@ func storeObservation(observation *AdapterObservation) *store.AttemptObservation
 	}
 	if observation.Usage != nil {
 		mapped.Usage = &store.ExecutionTokenUsage{
-			InputTokens:       cloneInt64(observation.Usage.InputTokens),
-			OutputTokens:      cloneInt64(observation.Usage.OutputTokens),
-			TotalTokens:       cloneInt64(observation.Usage.TotalTokens),
-			CachedInputTokens: cloneInt64(observation.Usage.CachedInputTokens),
-			ReasoningTokens:   cloneInt64(observation.Usage.ReasoningTokens),
-			Source:            store.ObservationSourceAdapter,
+			InputTokens:           cloneInt64(observation.Usage.InputTokens),
+			OutputTokens:          cloneInt64(observation.Usage.OutputTokens),
+			TotalTokens:           cloneInt64(observation.Usage.TotalTokens),
+			CachedInputTokens:     cloneInt64(observation.Usage.CachedInputTokens),
+			CacheWriteInputTokens: cloneInt64(observation.Usage.CacheWriteInputTokens),
+			ReasoningTokens:       cloneInt64(observation.Usage.ReasoningTokens),
+			Source:                store.ObservationSourceAdapter,
 		}
 	}
 	return mapped

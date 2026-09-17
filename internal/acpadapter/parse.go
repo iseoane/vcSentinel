@@ -13,12 +13,16 @@ const DefaultMaxLineBytes = 1 << 20
 
 // Usage contains only token fields with the ACP terminal payload's recognized
 // numeric shape. Pointer fields preserve an observed zero from an absent value.
+// CacheWriteInputTokens stays nil for acpx-sourced usage: the captured wire
+// (fixtures end-turn.jsonl and cancelled.jsonl, plus the helper-process
+// transcripts) reports no cache-write member, so no key is mapped here.
 type Usage struct {
-	InputTokens       *int64
-	OutputTokens      *int64
-	TotalTokens       *int64
-	CachedInputTokens *int64
-	ReasoningTokens   *int64
+	InputTokens           *int64
+	OutputTokens          *int64
+	TotalTokens           *int64
+	CachedInputTokens     *int64
+	CacheWriteInputTokens *int64
+	ReasoningTokens       *int64
 }
 
 // StreamSummary carries everything the strict scan extracted from one acpx

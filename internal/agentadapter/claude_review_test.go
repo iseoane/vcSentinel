@@ -26,15 +26,16 @@ const claudeUsageJSON = `{"input_tokens":2,"cache_creation_input_tokens":0,"cach
 
 // claudeUsage is the probe fixture's token report mapped onto
 // acpadapter.Usage: Input from input_tokens, Output from output_tokens,
-// Cached from cache_read_input_tokens only (cache_creation_input_tokens is
-// observed but unmapped, like cost), Reasoning from
+// Cached from cache_read_input_tokens, CacheWrite from
+// cache_creation_input_tokens, Reasoning from
 // output_tokens_details.thinking_tokens. TotalTokens stays nil: the wire
 // carries no total_tokens member and computing one would fabricate evidence.
 var claudeUsage = &acpadapter.Usage{
-	InputTokens:       new(int64(2)),
-	OutputTokens:      new(int64(4)),
-	CachedInputTokens: new(int64(6465)),
-	ReasoningTokens:   new(int64(0)),
+	InputTokens:           new(int64(2)),
+	OutputTokens:          new(int64(4)),
+	CachedInputTokens:     new(int64(6465)),
+	CacheWriteInputTokens: new(int64(0)),
+	ReasoningTokens:       new(int64(0)),
 }
 
 func loadClaudeProbeFixture(t *testing.T) string {

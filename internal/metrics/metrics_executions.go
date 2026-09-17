@@ -120,6 +120,7 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 		result.OutputTokens.Total++
 		result.TotalTokens.Total++
 		result.CachedInputTokens.Total++
+		result.CacheWriteInputTokens.Total++
 		result.ReasoningTokens.Total++
 		if metricsSnapshot.Timing != nil {
 			if metricsSnapshot.Timing.TotalDurationNanos != nil && *metricsSnapshot.Timing.TotalDurationNanos >= 0 {
@@ -144,6 +145,10 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 			if metricsSnapshot.Usage.CachedInputTokens != nil && *metricsSnapshot.Usage.CachedInputTokens >= 0 {
 				result.CachedInputTokens.Observed++
 				addMeasurementValue(&result.CachedInputTokens, *metricsSnapshot.Usage.CachedInputTokens)
+			}
+			if metricsSnapshot.Usage.CacheWriteInputTokens != nil && *metricsSnapshot.Usage.CacheWriteInputTokens >= 0 {
+				result.CacheWriteInputTokens.Observed++
+				addMeasurementValue(&result.CacheWriteInputTokens, *metricsSnapshot.Usage.CacheWriteInputTokens)
 			}
 			if metricsSnapshot.Usage.ReasoningTokens != nil && *metricsSnapshot.Usage.ReasoningTokens >= 0 {
 				result.ReasoningTokens.Observed++
@@ -212,6 +217,7 @@ func aggregateExecutions(observations []ExecutionObservation, suppliedStages []S
 	result.IdentityCoverage = coverage(identityKnownRuns, identityObservedRuns)
 	result.TotalTokens.Coverage = coverage(result.TotalTokens.Observed, result.TotalTokens.Total)
 	result.CachedInputTokens.Coverage = coverage(result.CachedInputTokens.Observed, result.CachedInputTokens.Total)
+	result.CacheWriteInputTokens.Coverage = coverage(result.CacheWriteInputTokens.Observed, result.CacheWriteInputTokens.Total)
 	result.ReasoningTokens.Coverage = coverage(result.ReasoningTokens.Observed, result.ReasoningTokens.Total)
 	result.Scope.Coverage = coverage(result.Scope.Full+result.Scope.Affected, result.MeasuredRuns)
 	// FU-8: every failure row carries its source population and the evidence
@@ -534,6 +540,7 @@ func mergeUsage(left, right *store.ExecutionTokenUsage) *store.ExecutionTokenUsa
 	result.OutputTokens = maxIntPointer(left.OutputTokens, right.OutputTokens)
 	result.TotalTokens = maxIntPointer(left.TotalTokens, right.TotalTokens)
 	result.CachedInputTokens = maxIntPointer(left.CachedInputTokens, right.CachedInputTokens)
+	result.CacheWriteInputTokens = maxIntPointer(left.CacheWriteInputTokens, right.CacheWriteInputTokens)
 	result.ReasoningTokens = maxIntPointer(left.ReasoningTokens, right.ReasoningTokens)
 	if right.Source > result.Source {
 		result.Source = right.Source

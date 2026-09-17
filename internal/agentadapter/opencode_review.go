@@ -120,9 +120,9 @@ type opencodeUsageTokens struct {
 		Read  *int64 `json:"read"`
 		Write *int64 `json:"write"`
 	} `json:"cache"`
-	// Cache.Write and the step_finish cost member are observed on the wire
-	// but intentionally unmapped: acpadapter.Usage has no destination for
-	// them, and inventing one is a store-schema change outside this slice.
+	// The step_finish cost member is observed on the wire but intentionally
+	// unmapped: acpadapter.Usage has no destination for it, and inventing one
+	// is a store-schema change outside this slice.
 }
 
 // opencodeFieldSum accumulates one usage member while tracking whether the
@@ -150,12 +150,13 @@ func (f opencodeFieldSum) pointer() *int64 {
 // opencodeUsageSum accumulates the usage members OpenCode reports per
 // step_finish event.
 type opencodeUsageSum struct {
-	seen      bool
-	input     opencodeFieldSum
-	output    opencodeFieldSum
-	reasoning opencodeFieldSum
-	total     opencodeFieldSum
-	cacheRead opencodeFieldSum
+	seen       bool
+	input      opencodeFieldSum
+	output     opencodeFieldSum
+	reasoning  opencodeFieldSum
+	total      opencodeFieldSum
+	cacheRead  opencodeFieldSum
+	cacheWrite opencodeFieldSum
 }
 
 func (s *opencodeUsageSum) add(tokens opencodeUsageTokens) {
@@ -165,6 +166,7 @@ func (s *opencodeUsageSum) add(tokens opencodeUsageTokens) {
 	s.reasoning.observe(tokens.Reasoning)
 	s.total.observe(tokens.Total)
 	s.cacheRead.observe(tokens.Cache.Read)
+	s.cacheWrite.observe(tokens.Cache.Write)
 }
 
 // usage renders the accumulated sums; nil when the stream never reported a
@@ -174,11 +176,12 @@ func (s opencodeUsageSum) usage() *acpadapter.Usage {
 		return nil
 	}
 	return &acpadapter.Usage{
-		InputTokens:       s.input.pointer(),
-		OutputTokens:      s.output.pointer(),
-		TotalTokens:       s.total.pointer(),
-		CachedInputTokens: s.cacheRead.pointer(),
-		ReasoningTokens:   s.reasoning.pointer(),
+		InputTokens:           s.input.pointer(),
+		OutputTokens:          s.output.pointer(),
+		TotalTokens:           s.total.pointer(),
+		CachedInputTokens:     s.cacheRead.pointer(),
+		CacheWriteInputTokens: s.cacheWrite.pointer(),
+		ReasoningTokens:       s.reasoning.pointer(),
 	}
 }
 

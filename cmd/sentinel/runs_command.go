@@ -393,11 +393,12 @@ func executionObservationFromACP(result acpadapter.Result) *execution.AdapterObs
 	}
 	if observation.Usage != nil {
 		adapted.Usage = &execution.AdapterUsage{
-			InputTokens:       clonePromptMetric(observation.Usage.InputTokens),
-			OutputTokens:      clonePromptMetric(observation.Usage.OutputTokens),
-			TotalTokens:       clonePromptMetric(observation.Usage.TotalTokens),
-			CachedInputTokens: clonePromptMetric(observation.Usage.CachedInputTokens),
-			ReasoningTokens:   clonePromptMetric(observation.Usage.ReasoningTokens),
+			InputTokens:           clonePromptMetric(observation.Usage.InputTokens),
+			OutputTokens:          clonePromptMetric(observation.Usage.OutputTokens),
+			TotalTokens:           clonePromptMetric(observation.Usage.TotalTokens),
+			CachedInputTokens:     clonePromptMetric(observation.Usage.CachedInputTokens),
+			CacheWriteInputTokens: clonePromptMetric(observation.Usage.CacheWriteInputTokens),
+			ReasoningTokens:       clonePromptMetric(observation.Usage.ReasoningTokens),
 		}
 	}
 	return adapted

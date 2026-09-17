@@ -46,11 +46,12 @@ func cloneAttemptObservation(observation *AttemptObservation) *AttemptObservatio
 	if observation.Usage != nil {
 		usage := *observation.Usage
 		for source, target := range map[**int64]**int64{
-			&observation.Usage.InputTokens:       &usage.InputTokens,
-			&observation.Usage.OutputTokens:      &usage.OutputTokens,
-			&observation.Usage.TotalTokens:       &usage.TotalTokens,
-			&observation.Usage.CachedInputTokens: &usage.CachedInputTokens,
-			&observation.Usage.ReasoningTokens:   &usage.ReasoningTokens,
+			&observation.Usage.InputTokens:           &usage.InputTokens,
+			&observation.Usage.OutputTokens:          &usage.OutputTokens,
+			&observation.Usage.TotalTokens:           &usage.TotalTokens,
+			&observation.Usage.CachedInputTokens:     &usage.CachedInputTokens,
+			&observation.Usage.CacheWriteInputTokens: &usage.CacheWriteInputTokens,
+			&observation.Usage.ReasoningTokens:       &usage.ReasoningTokens,
 		} {
 			if *source != nil {
 				value := **source

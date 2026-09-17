@@ -224,11 +224,12 @@ func observationFromResult(result acpadapter.Result) *execution.AdapterObservati
 	}
 	if provider.Usage != nil {
 		observation.Usage = &execution.AdapterUsage{
-			InputTokens:       cloneInt64(provider.Usage.InputTokens),
-			OutputTokens:      cloneInt64(provider.Usage.OutputTokens),
-			TotalTokens:       cloneInt64(provider.Usage.TotalTokens),
-			CachedInputTokens: cloneInt64(provider.Usage.CachedInputTokens),
-			ReasoningTokens:   cloneInt64(provider.Usage.ReasoningTokens),
+			InputTokens:           cloneInt64(provider.Usage.InputTokens),
+			OutputTokens:          cloneInt64(provider.Usage.OutputTokens),
+			TotalTokens:           cloneInt64(provider.Usage.TotalTokens),
+			CachedInputTokens:     cloneInt64(provider.Usage.CachedInputTokens),
+			CacheWriteInputTokens: cloneInt64(provider.Usage.CacheWriteInputTokens),
+			ReasoningTokens:       cloneInt64(provider.Usage.ReasoningTokens),
 		}
 	}
 	return observation

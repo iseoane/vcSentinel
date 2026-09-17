@@ -40,15 +40,16 @@ const probeUsageJSON = `{"total":5721,"input":5621,"output":49,"reasoning":51,"c
 	`{"total":7217,"input":466,"output":272,"reasoning":911,"cache":{"write":0,"read":5568}}`
 
 // probeUsage is the sum over EVERY step_finish event of the probe fixture.
-// Cached counts cache.read only; cache.write and the per-step cost member
-// stay observed-but-unmapped because acpadapter.Usage has no destination for
-// them.
+// Cached counts cache.read, CacheWrite counts cache.write; only the per-step
+// cost member stays observed-but-unmapped because acpadapter.Usage has no
+// destination for it.
 var probeUsage = &acpadapter.Usage{
-	InputTokens:       new(int64(6087)),  // 5621 + 466
-	OutputTokens:      new(int64(321)),   // 49 + 272
-	TotalTokens:       new(int64(12938)), // 5721 + 7217
-	CachedInputTokens: new(int64(5568)),  // 0 + 5568
-	ReasoningTokens:   new(int64(962)),   // 51 + 911
+	InputTokens:           new(int64(6087)),  // 5621 + 466
+	OutputTokens:          new(int64(321)),   // 49 + 272
+	TotalTokens:           new(int64(12938)), // 5721 + 7217
+	CachedInputTokens:     new(int64(5568)),  // 0 + 5568
+	CacheWriteInputTokens: new(int64(0)),     // 0 + 0
+	ReasoningTokens:       new(int64(962)),   // 51 + 911
 }
 
 func loadOpenCodeProbeFixture(t *testing.T) string {
@@ -116,11 +117,12 @@ func TestOpenCodeReviewUsage(t *testing.T) {
 				"{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\",\"tokens\":{\"total\":0,\"input\":0,\"output\":0,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}}}}\n",
 			wantText: "empty",
 			wantUsage: &acpadapter.Usage{
-				InputTokens:       new(int64(0)),
-				OutputTokens:      new(int64(0)),
-				TotalTokens:       new(int64(0)),
-				CachedInputTokens: new(int64(0)),
-				ReasoningTokens:   new(int64(0)),
+				InputTokens:           new(int64(0)),
+				OutputTokens:          new(int64(0)),
+				TotalTokens:           new(int64(0)),
+				CachedInputTokens:     new(int64(0)),
+				CacheWriteInputTokens: new(int64(0)),
+				ReasoningTokens:       new(int64(0)),
 			},
 			wantUsageJSON: `{"total":0,"input":0,"output":0,"reasoning":0,"cache":{"write":0,"read":0}}`,
 			wantStop:      "end_turn",

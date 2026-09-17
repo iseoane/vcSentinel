@@ -39,11 +39,12 @@ type Adapter interface {
 // AdapterUsage contains only token fields whose provider payload was
 // recognized. Pointer fields preserve an observed zero from an absent value.
 type AdapterUsage struct {
-	InputTokens       *int64
-	OutputTokens      *int64
-	TotalTokens       *int64
-	CachedInputTokens *int64
-	ReasoningTokens   *int64
+	InputTokens           *int64
+	OutputTokens          *int64
+	TotalTokens           *int64
+	CachedInputTokens     *int64
+	CacheWriteInputTokens *int64
+	ReasoningTokens       *int64
 }
 
 // AdapterObservation is provider-neutral evidence from one physical

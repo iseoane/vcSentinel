@@ -60,14 +60,13 @@ type claudeResultProbe struct {
 
 // claudeUsageProbe mirrors the recognized members of Claude Code's usage
 // report. Pointer fields preserve an observed zero from an absent value,
-// matching acpadapter.Usage's convention. cache_creation_input_tokens is
-// observed on the wire but intentionally unmapped: acpadapter.Usage has no
-// destination for it (Cached counts cache reads only), exactly like the
-// total_cost_usd member.
+// matching acpadapter.Usage's convention. Cache creation tokens map onto
+// CacheWriteInputTokens; only the total_cost_usd member stays unmapped.
 type claudeUsageProbe struct {
 	InputTokens  *int64 `json:"input_tokens"`
 	OutputTokens *int64 `json:"output_tokens"`
 	CacheRead    *int64 `json:"cache_read_input_tokens"`
+	CacheWrite   *int64 `json:"cache_creation_input_tokens"`
 	Details      struct {
 		ThinkingTokens *int64 `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
@@ -105,10 +104,11 @@ func scanClaudeReview(stream io.Reader) (claudeReviewScan, error) {
 			return claudeReviewScan{}, fmt.Errorf("invalid claude JSON output: usage member: %w", err)
 		}
 		scan.Usage = &acpadapter.Usage{
-			InputTokens:       usage.InputTokens,
-			OutputTokens:      usage.OutputTokens,
-			CachedInputTokens: usage.CacheRead,
-			ReasoningTokens:   usage.Details.ThinkingTokens,
+			InputTokens:           usage.InputTokens,
+			OutputTokens:          usage.OutputTokens,
+			CachedInputTokens:     usage.CacheRead,
+			CacheWriteInputTokens: usage.CacheWrite,
+			ReasoningTokens:       usage.Details.ThinkingTokens,
 		}
 	}
 	return scan, nil

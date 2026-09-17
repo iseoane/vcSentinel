@@ -170,11 +170,11 @@ func foldTiming(observations []store.AttemptObservation) *store.ExecutionTiming 
 }
 
 func foldUsage(observations []store.AttemptObservation) *store.ExecutionTokenUsage {
-	allInput, allOutput, allTotal, allCached, allReasoning := true, true, true, true, true
-	var input, output, total, cached, reasoning int64
+	allInput, allOutput, allTotal, allCached, allCacheWrite, allReasoning := true, true, true, true, true, true
+	var input, output, total, cached, cacheWrite, reasoning int64
 	for _, observation := range observations {
 		if observation.Usage == nil {
-			allInput, allOutput, allTotal, allCached, allReasoning = false, false, false, false, false
+			allInput, allOutput, allTotal, allCached, allCacheWrite, allReasoning = false, false, false, false, false, false
 			continue
 		}
 		if observation.Usage.InputTokens == nil {
@@ -197,6 +197,11 @@ func foldUsage(observations []store.AttemptObservation) *store.ExecutionTokenUsa
 		} else {
 			cached += *observation.Usage.CachedInputTokens
 		}
+		if observation.Usage.CacheWriteInputTokens == nil {
+			allCacheWrite = false
+		} else {
+			cacheWrite += *observation.Usage.CacheWriteInputTokens
+		}
 		if observation.Usage.ReasoningTokens == nil {
 			allReasoning = false
 		} else {
@@ -216,10 +221,13 @@ func foldUsage(observations []store.AttemptObservation) *store.ExecutionTokenUsa
 	if allCached {
 		usage.CachedInputTokens = &cached
 	}
+	if allCacheWrite {
+		usage.CacheWriteInputTokens = &cacheWrite
+	}
 	if allReasoning {
 		usage.ReasoningTokens = &reasoning
 	}
-	if usage.InputTokens == nil && usage.OutputTokens == nil && usage.TotalTokens == nil && usage.CachedInputTokens == nil && usage.ReasoningTokens == nil {
+	if usage.InputTokens == nil && usage.OutputTokens == nil && usage.TotalTokens == nil && usage.CachedInputTokens == nil && usage.CacheWriteInputTokens == nil && usage.ReasoningTokens == nil {
 		return nil
 	}
 	return usage
