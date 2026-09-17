@@ -297,6 +297,42 @@ func validateCommitMessage(output string) (string, error) {
 	return message, nil
 }
 
+// CommandFailure is the typed failure of one agent invocation. Output keeps
+// whatever the agent had written to stdout and stderr when the call failed,
+// so a refusal printed before a hang still reaches the caller instead of
+// collapsing to a bare exit status. TimedOut reports whether the failure is
+// a budget kill (the command's context reached its deadline) as opposed to
+// a fast provider refusal.
+type CommandFailure struct {
+	Output   string
+	TimedOut bool
+	Err      error
+}
+
+func (e *CommandFailure) Error() string {
+	if e == nil {
+		return "agent command failed"
+	}
+	if e.Err == nil {
+		if e.Output != "" {
+			return e.Output
+		}
+		return "agent command failed"
+	}
+	if e.Output != "" {
+		return fmt.Sprintf("%v: %s", e.Err, e.Output)
+	}
+	return e.Err.Error()
+}
+
+// Unwrap exposes the underlying process error for errors.Is/As callers.
+func (e *CommandFailure) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // runCommandWithTimeout is the parameterized variant of runCommand;
 // it lets tests shorten the wait without touching the production constant.
 func (c *CLIAdapter) runCommandWithTimeout(prompt string, timeout time.Duration) (string, error) {
@@ -316,8 +352,9 @@ func (c *CLIAdapter) runCommandWithTimeout(prompt string, timeout time.Duration)
 	}
 	cmd.Env = env
 
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 	// opencode and claude read the prompt from stdin; the other binaries
 	// receive it as an argument. Passing the prompt via stdin avoids the
 	// 32,767-character limit of the Windows command line.
@@ -325,7 +362,20 @@ func (c *CLIAdapter) runCommandWithTimeout(prompt string, timeout time.Duration)
 		cmd.Stdin = strings.NewReader(prompt)
 	}
 	if err := cmd.Run(); err != nil {
-		return "", err
+		// Keep both streams: a refusal often lands on stderr seconds
+		// before the budget kill, and that text is the only evidence the
+		// caller (notably doctor) can report.
+		var combined strings.Builder
+		if s := strings.TrimSpace(out.String()); s != "" {
+			combined.WriteString(s)
+		}
+		if s := strings.TrimSpace(stderr.String()); s != "" {
+			if combined.Len() > 0 {
+				combined.WriteString("\n")
+			}
+			combined.WriteString(s)
+		}
+		return "", &CommandFailure{Output: combined.String(), TimedOut: ctx.Err() == context.DeadlineExceeded, Err: err}
 	}
 
 	return strings.TrimSpace(out.String()), nil

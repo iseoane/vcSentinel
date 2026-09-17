@@ -3,6 +3,7 @@ package agentadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -450,6 +451,32 @@ func TestRunCommandKillsOnTimeout(t *testing.T) {
 	}
 	if elapsed < 100*time.Millisecond {
 		t.Errorf("the error arrived too early (%v), it looks like a pre-timeout failure", elapsed)
+	}
+}
+
+func TestRunCommandTimeoutCarriesEarlyStderr(t *testing.T) {
+	sleeper := compileSleeper(t)
+	adapter := CLIAdapter{BinaryName: sleeper}
+
+	// The helper writes the refusal to stderr BEFORE sleeping past the
+	// budget: a timed-out probe must keep the agent's own words instead of
+	// collapsing to a bare "signal: killed".
+	t.Setenv("VAS_SENTINEL_TEST_STDERR_EARLY", "Error: The usage limit has been reached")
+	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
+
+	_, err := adapter.runCommandWithTimeout("probe", 300*time.Millisecond)
+	if err == nil {
+		t.Fatal("a timeout error was expected, none was returned")
+	}
+	if !strings.Contains(err.Error(), "The usage limit has been reached") {
+		t.Fatalf("error = %q, want it to carry the agent's early stderr", err)
+	}
+	var cmdFail *CommandFailure
+	if !errors.As(err, &cmdFail) {
+		t.Fatalf("error = %T (%v), want *CommandFailure", err, err)
+	}
+	if !cmdFail.TimedOut {
+		t.Errorf("TimedOut = false, want true for a budget kill")
 	}
 }
 

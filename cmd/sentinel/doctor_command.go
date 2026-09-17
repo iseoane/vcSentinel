@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -14,6 +15,14 @@ import (
 // to answer one word, short enough to fail fast instead of burning the
 // ten-minute review budget the command exists to protect.
 const doctorProbeBudget = 60 * time.Second
+
+// doctorProbeGrace is the outer select's margin over the adapter's own
+// budget. The adapter kills the probe at doctorProbeBudget and reports its
+// deadline error with the agent's captured output, so the adapter branch wins
+// for every ordinary kill. Only a call the adapter itself cannot end — an
+// unkillable process — outlives the margin and reaches the outer branch,
+// which is the only honest "wedged" case.
+const doctorProbeGrace = 5 * time.Second
 
 // parseDoctorArgs accepts only --check-updates. Any other argument is a
 // rejection so a mistyped flag never looks accepted.
@@ -55,11 +64,12 @@ func runDoctorWith(w io.Writer, worktreePath, currentVersion string, checkUpdate
 }
 
 // productionDoctorEnv wires the live probe: each configured agent answers
-// the minimal prompt through the adapter built for its kind. A call still
-// running when the budget expires is a ProbeTimeout, not the adapter's error:
-// provider refusals arrive fast, so anything slower than the bound means the
-// agent is slow or wedged. The late answer is discarded; the adapter's own
-// internal budget bounds the abandoned call.
+// the minimal prompt through the adapter built for its kind. The adapter owns
+// the budget: its deadline error carries the agent's captured output into a
+// ProbeTimeout whose cause renders as indeterminate. The outer select waits
+// one grace margin longer, so only a call the adapter itself cannot end — an
+// unkillable process — becomes a ProbeTimeout with no output. The late
+// answer is discarded.
 func productionDoctorEnv(worktreePath string) doctor.Env {
 	return doctor.Env{
 		Probe: func(agent, prompt string) (string, error) {
@@ -79,8 +89,12 @@ func productionDoctorEnv(worktreePath string) doctor.Env {
 			}()
 			select {
 			case r := <-done:
+				var cmdFail *agentadapter.CommandFailure
+				if errors.As(r.err, &cmdFail) && cmdFail.TimedOut {
+					return "", &doctor.ProbeTimeout{Agent: agent, Budget: doctorProbeBudget, Output: cmdFail.Output}
+				}
 				return r.answer, r.err
-			case <-time.After(doctorProbeBudget):
+			case <-time.After(doctorProbeBudget + doctorProbeGrace):
 				return "", &doctor.ProbeTimeout{Agent: agent, Budget: doctorProbeBudget}
 			}
 		},

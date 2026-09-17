@@ -234,9 +234,10 @@ Binaries resolve with exec.LookPath, never a shell probe. Each configured
 agent must resolve and answer a minimal real prompt; the reviewer's search
 binary, the codegraph binary, index, and six context gates, and the
 pre-commit hook target are checked the same way. A condition whose prober did
-not run renders as UNKNOWN with no remedy — never as a failure. A probe still
-running when the 60s budget expires reports a timeout (the agent is slow or
-wedged), never a provider failure.
+not run renders as UNKNOWN with no remedy — never as a failure. A probe
+failure surfaces the agent's own output; a timeout with output has an
+indeterminate cause (a timed-out probe cannot distinguish a refusal from a
+hang), and a timeout with no output names the command to run by hand.
 
 Example:
   sentinel doctor

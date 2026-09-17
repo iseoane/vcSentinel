@@ -84,6 +84,13 @@ func main() {
 		}{Args: os.Args[1:], Dir: dir, Stdin: prompt, Home: home, OpenCodeAuth: os.Getenv("OPENCODE_AUTH_CONTENT"), ProviderState: providerState})
 		_ = os.WriteFile(ruta, datos, 0600)
 	}
+	// VAS_SENTINEL_TEST_STDERR_EARLY writes text to stderr BEFORE the sleep,
+	// so tests can prove a probe killed by its budget still keeps what the
+	// agent already wrote. VAS_SENTINEL_TEST_FAIL writes after the sleep, so
+	// a killed process never reaches it and cannot exercise this path.
+	if temprano := os.Getenv("VAS_SENTINEL_TEST_STDERR_EARLY"); temprano != "" {
+		fmt.Fprint(os.Stderr, temprano)
+	}
 	time.Sleep(time.Duration(segundos) * time.Second)
 	// VAS_SENTINEL_TEST_FAIL simulates an agent that fails with an error
 	// message on stderr, to check that the adapter captures and propagates

@@ -175,7 +175,28 @@ func TestNeedsExternalSearch(t *testing.T) {
 	}
 }
 
-func TestProbeTimeoutIsNotAProviderFailure(t *testing.T) {
+func TestProbeTimeoutSurfacesAgentOutput(t *testing.T) {
+	isolateHome(t)
+	worktree := t.TempDir()
+	writeProjectYML(t, worktree, twoAgentYML)
+	common := t.TempDir()
+	writeHook(t, common, "/usr/local/bin/sentinel")
+	stageBinaries(t, "claude", "opencode", "rg")
+	env := stubEnv(t, common, map[string]string{"claude": "ok"},
+		map[string]error{"opencode": &ProbeTimeout{Agent: "opencode", Budget: probeBudgetForTest, Output: "Error: The usage limit has been reached"}})
+	rep := Run(worktree, Options{Env: env})
+	if got := findCheck(t, rep, "agents", "opencode answers"); got.OK {
+		t.Errorf("opencode answers OK on a probe timeout")
+	} else if !strings.Contains(got.Detail, "The usage limit has been reached") {
+		t.Errorf("answers detail = %q, want the agent's own refusal text", got.Detail)
+	} else if strings.Contains(got.Detail, "not a provider refusal") {
+		t.Errorf("answers detail = %q, must not deny a refusal the probe cannot rule out", got.Detail)
+	} else if got.Unknown {
+		t.Errorf("timeout renders as a warning, not UNKNOWN")
+	}
+}
+
+func TestProbeTimeoutWithoutOutputNamesManualCommand(t *testing.T) {
 	isolateHome(t)
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
@@ -189,9 +210,11 @@ func TestProbeTimeoutIsNotAProviderFailure(t *testing.T) {
 		t.Errorf("opencode answers OK on a probe timeout")
 	} else if !strings.Contains(got.Detail, "within") {
 		t.Errorf("answers detail = %q, want the timeout bound", got.Detail)
-	} else if strings.Contains(got.Remedy, "authentication") {
-		t.Errorf("timeout remedy = %q, must not send the operator to credentials", got.Remedy)
-	} else if !strings.Contains(got.Remedy, "wedged") {
-		t.Errorf("timeout remedy = %q, want the wedged-agent guidance", got.Remedy)
+	} else if !strings.Contains(got.Detail, "unknown") {
+		t.Errorf("answers detail = %q, want the unknown cause (nothing captured)", got.Detail)
+	} else if !strings.Contains(got.Remedy, "by hand") {
+		t.Errorf("timeout remedy = %q, want the exact command the operator can run by hand", got.Remedy)
+	} else if got.Unknown {
+		t.Errorf("timeout renders as a warning, not UNKNOWN")
 	}
 }

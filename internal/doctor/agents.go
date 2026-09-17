@@ -18,17 +18,22 @@ import (
 const probePrompt = "Reply with exactly: ok"
 
 // ProbeTimeout reports that the agent did not answer the probe prompt within
-// the probe's own budget. It is not a provider refusal: authentication,
-// network, and model errors arrive as ordinary errors through the adapter,
-// usually fast. A call still running when the budget expires means the agent
-// is slow or wedged, and the remedy must say that instead of sending the
-// operator to check credentials.
+// the probe's own budget. Its cause is indeterminate: a timed-out probe
+// cannot distinguish a provider refusal from a hang, so it must say so
+// instead of picking one. Output carries the agent's own captured output
+// when the adapter kept it (a refusal printed before the budget kill); it is
+// empty when the probe captured nothing, and then the remedy names the exact
+// command the operator can run by hand.
 type ProbeTimeout struct {
 	Agent  string
 	Budget time.Duration
+	Output string
 }
 
 func (e *ProbeTimeout) Error() string {
+	if out := strings.TrimSpace(e.Output); out != "" {
+		return fmt.Sprintf("%s did not answer the probe prompt within %s: %s", e.Agent, e.Budget, out)
+	}
 	return fmt.Sprintf("%s did not answer the probe prompt within %s", e.Agent, e.Budget)
 }
 
@@ -68,7 +73,11 @@ func checkOneAgent(name string, agent config.AgentConfig, opts Options, add func
 	if err != nil {
 		var timeout *ProbeTimeout
 		if errors.As(err, &timeout) {
-			add("agents", name+" answers", false, fmt.Sprintf("%s did not answer the probe prompt within %s (the probe's own budget, not a provider refusal)", name, timeout.Budget), fmt.Sprintf("raise the probe bound if %s is slow, or check whether the agent process is wedged; doctor never changes credentials", name))
+			if out := strings.TrimSpace(timeout.Output); out != "" {
+				add("agents", name+" answers", false, fmt.Sprintf("%s did not answer the probe prompt within %s; cause indeterminate (a timed-out probe cannot distinguish a refusal from a hang): %s", name, timeout.Budget, out), fmt.Sprintf("resolve what the agent's own output reports for %s (quota, authentication, network), or raise the probe bound if it is slow; doctor never changes credentials", name))
+				return
+			}
+			add("agents", name+" answers", false, fmt.Sprintf("%s did not answer the probe prompt within %s; cause unknown (the probe captured no output)", name, timeout.Budget), fmt.Sprintf("run %q by hand with the probe prompt %q to see what it prints; doctor never changes credentials", name, probePrompt))
 			return
 		}
 		add("agents", name+" answers", false, fmt.Sprintf("%s does not answer the probe prompt: %v", name, err), fmt.Sprintf("resolve the provider-reported failure for %s (authentication, network, or model access); doctor never changes credentials", name))
