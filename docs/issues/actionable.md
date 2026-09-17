@@ -7,7 +7,7 @@ decision. One line per item states why it sits where it does.
 
 Numbering is historical and deliberately not renumbered, so references from
 `future.md` and from `decisions.md` keep pointing at what they name. Items 2,
-3, 4, 5, 10, 11, 12, 13, 16 and 18 closed and moved to
+3, 4, 5, 10, 11, 12, 13, 16, 17 and 18 closed and moved to
 [`decisions.md`](decisions.md); with them the five pieces of
 [`docs/design/review-flow-ownership.md`](../design/review-flow-ownership.md)
 are all done, so that design is now history rather than a work order.
@@ -118,32 +118,9 @@ degrading it. Six consecutive failures on 2026-09-08.
   `*_linux.go`/`*_windows.go` files, since AGENTS.md requires identical
   behaviour on both platforms.
 
-## 17. Record why a review dimension was unavailable
-
-Opened 2026-09-15. Sits here because it does not break a run, it makes every
-future break expensive to diagnose.
-
-- Wrong: when a dimension returns `unavailable`, nothing consultable says why.
-  `sentinel pr review` printed `Net audit verdict: unavailable` with exit `0`
-  and an EMPTY stderr; the persisted `pr review` entry stored the verdict and
-  no reason; the net audit leaves no ficha at all, so there is no
-  per-dimension `reason` to read either.
-- Evidence: diagnosing one such verdict on 2026-09-15 took several rounds of
-  spelunking through `.git/vas-sentinel/executions/v1/` before the cause
-  surfaced in a durable run's outcome text — a denied `todowrite` tool call
-  killing one dimension of four. The information existed; nothing pointed at
-  it. An operator who does not know the execution store exists cannot find it.
-- It also misleads: `unavailable` reads as "the provider was flaky" when the
-  actual cause was a deterministic, reproducible permission rejection that
-  recurred on every run.
-- Closing: the verdict names its cause where the verdict is read — the console
-  line, the persisted entry, or both — or a recorded determination that the
-  durable store is the only intended diagnostic surface, with the exact
-  command to reach it printed alongside the `unavailable` verdict.
-
 ## 0. Capture a real fix's provenance beyond `fix(`
 
-Sits fourth: it leaves the record incomplete rather than wrong, and item 13
+Sits second: it leaves the record incomplete rather than wrong, and item 13
 (now in `decisions.md`) already removed the rebase cause that made it look
 worse than it is.
 
@@ -171,7 +148,7 @@ Found on 2026-09-09 by exercising the flow on `feat/review-coverage-contract`.
 
 ## 6. Recalibrate or retire the OpenCode reviewer turn budget
 
-Sits fifth: unblocked but low value. Its original premise was disproven, and
+Sits third: unblocked but low value. Its original premise was disproven, and
 the truncation it was created to explain was removed by the whole-tree
 snapshot; what is left is choosing a value or recording a determination.
 
@@ -256,7 +233,7 @@ snapshot; what is left is choosing a value or recording a determination.
 
 ## 7. Cache shared audit evidence across review dimensions
 
-Sits sixth: unblocked and cost-only. The token measurement now exists on all
+Sits fourth: unblocked and cost-only. The token measurement now exists on all
 three adapter paths (see the 2026-09-06 entry in `decisions.md`), so the
 design can be selected with real numbers instead of guesses.
 
@@ -280,7 +257,7 @@ design can be selected with real numbers instead of guesses.
 
 ## 15. Derive the intent from a conversation, as its own change
 
-Sits seventh: not a defect and not blocked — a parked feature that needs a
+Sits fifth: not a defect and not blocked — a parked feature that needs a
 redesign before it returns.
 
 Withdrawn from piece 1 on 2026-09-10 and parked here. It is NOT abandoned: the
@@ -329,7 +306,7 @@ distinguishing.
 
 ## 8. Give cost, scope and reuse a producer (FU-3)
 
-Sits eighth: blocked. Tokens now have producers on every adapter path, but
+Sits sixth: blocked. Tokens now have producers on every adapter path, but
 cost, scope and reuse still have no observable source.
 
 - Wrong: the metrics schema declares `ExecutionCost`, `ExecutionScope`

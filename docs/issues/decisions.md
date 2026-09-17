@@ -1154,3 +1154,45 @@ and `CombinedOutput`, never by `Run`, and this path always used `Run`, so
 setting `cmd.Stderr` regressed nothing. And `ProbeAdapterFor` passes the probe
 budget explicitly rather than reading `review.timeout`, so the adapter and outer
 budgets match by construction for both the CLI and acpx families.
+
+### `pr review` stopped printing `unavailable` with no cause (item 17, landed as `35927d8`)
+
+The evidence was never missing. `internal/review/engine.go` builds every
+unavailable dimension as `DimensionResult{Verdict: unavailable, Reason:
+err.Error(), InvocationID: …}`, and `Reason` always carries the provider's real
+error text — not a fixed token. Those results reach
+`res.Net.Audit.Dims[i].Result` intact. `AuditResult.String()` even renders
+`↳ reason=%q class=%s` per unavailable dimension. It is printed by exactly one
+caller, `cmd/sentinel/review_command.go:340`, which is `sentinel review`. The
+`pr review` net path never calls it, and `VerdictLine` renders only the verdict
+and a finding count. So the reason existed in memory, three frames from the
+console, and was dropped at the last one.
+
+The scope decision that shaped the fix: `RenderPRReviewBody` produces the string
+stored as `store.PRReviewEntry.Body`, and `pr create` publishes that same stored
+body through `gh`. The persisted entry and the published PR description are one
+string, so they cannot be separated by picking a different render seam. A denied
+`todowrite` permission is internal diagnostics and does not belong in a public PR
+description. The cause therefore goes to the console
+(`internal/app/pr/review.go`), to a new `PRReviewEntry.UnavailableCauses` field
+(`omitempty`, so existing entries still decode), and to
+`PrReviewJSONOutput["net_unavailable_causes"]` so a machine consumer sees it too.
+`VerdictLine`, `RenderPRReviewBody` and `RenderBranchPRTemplate` were left
+untouched, and a test asserts the denial text does not appear in the persisted
+body.
+
+Two branches, the same shape item 18 settled on for `ProbeTimeout`: a recorded
+reason is named with its class, and an absent one says the cause is unrecorded
+and prints the invocation id plus `sentinel runs logs --run <run-id>`. The
+admission-vs-infrastructure classification reuses
+`reviewexec.IsAdmissionReason`, so no second rule exists. Nothing here changes a
+verdict; it follows the `ContextSkipReason` precedent of observational-only
+metadata.
+
+Verification: reverting only the console loop made both new tests fail with the
+literal reported symptom — `⛔ **Net audit verdict: unavailable** — 0 finding(s)
+on net diff 89abcde..0123456` and nothing else.
+
+Left alone deliberately: `engine.go:1209` still carries its own `"admission: "`
+string literal rather than the shared `reviewexec.AdmissionReasonPrefix`. It
+predates this change and duplicating the constant is not what item 17 reports.
