@@ -1196,3 +1196,54 @@ on net diff 89abcde..0123456` and nothing else.
 Left alone deliberately: `engine.go:1209` still carries its own `"admission: "`
 string literal rather than the shared `reviewexec.AdmissionReasonPrefix`. It
 predates this change and duplicating the constant is not what item 17 reports.
+
+### The audit prompt now renders its shared evidence first (item 7, partial, landed as `4c6fa11`)
+
+Measured before touching anything, and the number is the point. On commit
+`a6da249` (14.6 KB diff), a six-dimension audit sent 98104 bytes. The longest
+common prefix across those six prompts was **68 bytes — 0.42% of everything
+sent**. The cause was ordering, not volume: `buildPromptWithContext` opened with
+`Audit ONE <unit> against the "<dim>" dimension`, so all six prompts diverged at
+byte 68, before the commit message, the diff, the CodeGraph context and the
+permitted paths — which are byte-identical across every dimension of one audit.
+The ~14.6 KB of shared evidence was re-sent six times with zero provider
+prefix-cache eligibility.
+
+The shared evidence envelope now renders first and the dimension contract plus
+output schema render as a suffix, which is item 7's own closing condition. On
+the test's fixture the shared prefix went from 68 bytes to 7881, from under 1%
+to 85% of the shortest prompt. Verified as a pure reordering: the rendered
+prompt's set of lines is identical before and after, so no instruction was
+dropped, added or reworded. The anti-injection rule moved with it and now
+appears BEFORE the first untrusted block rather than after, which it has to,
+since those blocks are now earlier.
+
+Nothing else changed. No cache mechanism, no cache key, no provider flag, no
+change to tool policy, evidence policy, dimension coverage or severity rules.
+`Fingerprint` was verified not to take prompt text as an input — it hashes only
+Dimension, symbol/path, Evidence and Title — so a reorder cannot move a
+fingerprint.
+
+A latent defect was fixed on the way, found while verifying the diff rather
+than reported by the writer. `answersSection` used to be concatenated INTO the
+`fmt.Sprintf` format string, so a `--answer` containing a verb consumed
+positional arguments. An answer of `the threshold is 100%d and %s of cases`
+rendered as `100%!d(string=BEGIN_REVIEW) and END_REVIEW of cases` followed by
+`%!s(MISSING)`: the output-schema delimiters were eaten and the reviewer
+received a broken output contract, which can only have produced an unparseable
+answer and therefore an `unavailable` verdict. Passing the section as an
+argument makes it inert, and
+`TestBuildAuditPromptAnswersWithFormatVerbsAreLiteral` locks that in.
+
+**Item 7 stays OPEN, deliberately.** Its closing condition names four
+measurements — input tokens, cached-token reads, latency and
+review-equivalence — and only the first has a number. The 0.42%→85% figure is
+cache ELIGIBILITY computed from the rendered bytes; it is not evidence that the
+provider grants a prefix cache on the `opencode run --pure` path, not a latency
+measurement, and not proof that reordering preserves verdicts. The durable
+store held zero measured runs when this landed, so no cached-token reads were
+available to consult. What remains of item 7 is that live measurement plus the
+provider cache-key question, and neither should be answered by argument.
+
+`--pure` was checked and does not foreclose it: it means "run without external
+plugins" and says nothing about sessions or caching.

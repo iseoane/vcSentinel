@@ -233,7 +233,7 @@ snapshot; what is left is choosing a value or recording a determination.
 
 ## 7. Cache shared audit evidence across review dimensions
 
-Sits fourth: unblocked and cost-only. The token measurement now exists on all
+Sits fourth: partly landed and cost-only. The token measurement now exists on all
 three adapter paths (see the 2026-09-06 entry in `decisions.md`), so the
 design can be selected with real numbers instead of guesses.
 
@@ -245,15 +245,28 @@ design can be selected with real numbers instead of guesses.
   FU-6 review-token investigation, 2026-09-04. The measurement prerequisite
   landed 2026-09-06 (token producers on ACP/acpx plus direct OpenCode and
   Claude).
-- Closing: one immutable snapshot per audit; a stable evidence envelope
-  (anti-injection rules, commit message, diff, permitted paths, CodeGraph
-  context) rendered first with the dimension contract and output schema as
-  suffix; provider cache reuse only within a group sharing model,
-  reasoning effort and tool definitions (never across `cheap`/`normal`/
-  `deep`); a stable cache key from the audited SHA if OpenCode exposes it.
-- Measure input tokens, cached-token reads, latency and
-  review-equivalence before selecting the design. Do not cache model
-  outputs or reduce dimension coverage.
+- **The envelope half landed 2026-09-17 as `4c6fa11`** (see `decisions.md`).
+  The ordering was measured first: on `a6da249` a six-dimension audit sent
+  98104 bytes sharing a 68-byte prefix, 0.42%, because every prompt diverged
+  at the dimension name before any shared evidence. The shared envelope now
+  renders first with the dimension contract and output schema as suffix, taking
+  the shared prefix to 85% of the shortest prompt on the test fixture. It was
+  verified to be a pure reordering: the rendered prompt's line set is
+  unchanged.
+- Still open, and this is the whole remainder: `provider cache reuse only
+  within a group sharing model, reasoning effort and tool definitions (never
+  across `cheap`/`normal`/`deep`); a stable cache key from the audited SHA if
+  OpenCode exposes it.` Nothing about caching was implemented — only the
+  ordering that makes it possible.
+- Measure cached-token reads, latency and review-equivalence before
+  selecting that design. Input-token cache ELIGIBILITY is now measured; the
+  other three are not, and the durable store held zero measured runs when the
+  envelope landed, so there were no cached-token reads to consult. The
+  measurement needs a live multi-dimension audit, which is the same run item 1
+  needs — pay for one run and keep both results. Do not cache model outputs or
+  reduce dimension coverage.
+- Checked and not a blocker: `opencode run --pure` means "run without external
+  plugins" and says nothing about sessions or caching.
 
 ## 15. Derive the intent from a conversation, as its own change
 
