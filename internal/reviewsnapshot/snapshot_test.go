@@ -504,6 +504,84 @@ func TestStaleSnapshotAgeReapsOneHourOldResidue(t *testing.T) {
 	}
 }
 
+// writeBunResidueFixture creates one Bun runtime residue fixture. The runtime
+// names these files ".<hex>-00000000.so": a leading dot, then hex digits, then
+// the literal "-00000000.so" suffix. The fixture returns the resolved path so
+// tests can assert on it.
+func writeBunResidueFixture(t *testing.T, root, name string) string {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.WriteFile(path, []byte("bun runtime residue\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestReapAbandonedSnapshotsCollectsBunResidue pins the Bun residue sweep: the
+// restricted reviewer's Bun runtime leaves ".<hex>-00000000.so" files in the
+// temporary directory, nothing removes them, and /tmp is tmpfs here, so this
+// residue IS resident memory. The sweep matches the exact shape — leading dot,
+// hex digits, literal "-00000000.so" suffix, regular file — applies the SAME
+// one-hour staleness decision as every other residue class (age is the only
+// signal; the file belongs to the Bun runtime, not to us), and touches nothing
+// that does not match in full. A fresh matching file is kept: a live
+// invocation's file must never be removed.
+func TestReapAbandonedSnapshotsCollectsBunResidue(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", root)
+	now := time.Now()
+	stale := now.Add(-2 * staleSnapshotAge)
+	fresh := now.Add(-time.Minute)
+
+	staleBun := writeBunResidueFixture(t, root, ".0f1e2d3c-00000000.so")
+	freshBun := writeBunResidueFixture(t, root, ".9a8b7c6d-00000000.so")
+	nearMisses := []string{
+		filepath.Join(root, "0f1e2d3c-00000000.so"),  // no leading dot
+		filepath.Join(root, ".0f1e2d3g-00000000.so"), // non-hex
+		filepath.Join(root, ".0f1e2d3c-00000001.so"), // wrong suffix
+	}
+	for _, path := range nearMisses {
+		writeBunResidueFixture(t, root, filepath.Base(path))
+	}
+	if err := os.Chtimes(staleBun, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(freshBun, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range nearMisses {
+		if err := os.Chtimes(path, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	legacy := filepath.Join(root, snapshotPrefix+"still-collected")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(legacy, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	if reaped := reapAbandonedSnapshots(now, staleSnapshotAge); reaped != 2 {
+		t.Fatalf("reapAbandonedSnapshots reaped %d entries, want the stale Bun residue and the legacy snapshot", reaped)
+	}
+	if _, err := os.Stat(staleBun); !os.IsNotExist(err) {
+		t.Fatalf("stale Bun residue survived: %v", err)
+	}
+	if _, err := os.Stat(freshBun); err != nil {
+		t.Fatalf("fresh Bun residue was reaped: a live invocation's file must never be removed: %v", err)
+	}
+	for _, path := range nearMisses {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("near-miss %q was reaped: only the exact residue shape is ours to touch: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy snapshot stopped being collected: %v", err)
+	}
+}
+
 func TestCreateReapsAbandonedSnapshots(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)

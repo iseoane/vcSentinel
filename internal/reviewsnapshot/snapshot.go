@@ -192,6 +192,22 @@ func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 	}
 	recolectados := 0
 	for _, entrada := range entradas {
+		// Bun runtime residue is a separate exact-shape case, not a widening
+		// of the legacy prefix match below: a leading dot, hex digits, and
+		// the literal "-00000000.so" suffix on a regular file. Age is the
+		// only liveness signal — the file belongs to the Bun runtime, not
+		// to us — so the same maxAge decision applies. A fresh matching
+		// file is kept: a live invocation's file must never be removed.
+		if !entrada.IsDir() && isBunResidueName(entrada.Name()) {
+			info, err := entrada.Info()
+			if err != nil || now.Sub(info.ModTime()) < maxAge {
+				continue
+			}
+			if removeReadOnlyStoreEntry(filepath.Join(raiz, entrada.Name())) == nil {
+				recolectados++
+			}
+			continue
+		}
 		if !entrada.IsDir() || !strings.HasPrefix(entrada.Name(), snapshotPrefix) {
 			continue
 		}
@@ -212,6 +228,37 @@ func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 // reusable now — but the reaper keeps cleaning them so machines upgraded
 // mid-flight do not accumulate residue forever.
 const snapshotPrefix = "vas-sentinel-review-"
+
+// bunResidueSuffix is the literal tail of the Bun runtime's residue files. The
+// restricted reviewer's Bun runtime writes ".<hex>-00000000.so" files into the
+// temporary directory and nothing removes them, so the reaper collects them by
+// exact shape plus age.
+const bunResidueSuffix = "-00000000.so"
+
+// isBunResidueName reports whether name has exactly the Bun runtime residue
+// shape: a leading dot, one or more hex digits, then the literal
+// "-00000000.so" suffix. It matches the name only, never the entry kind: the
+// caller requires a regular file separately, because residue files are files
+// and the legacy sweep around them is directory-oriented.
+func isBunResidueName(name string) bool {
+	if len(name) < len("."+"0"+bunResidueSuffix) {
+		return false
+	}
+	if name[0] != '.' {
+		return false
+	}
+	if !strings.HasSuffix(name, bunResidueSuffix) {
+		return false
+	}
+	digits := name[1 : len(name)-len(bunResidueSuffix)]
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
 
 // Create materializes the read-only review snapshot for sha. It writes every
 // committed regular file of the audited commit's tree into the snapshot, not
