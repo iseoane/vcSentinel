@@ -286,8 +286,19 @@ design can be selected with real numbers instead of guesses.
   to the store. Without cache CREATION there is no way to tell a dimension that
   READ a previous dimension's cache from one that WROTE its own — which is
   exactly the distinction this item turns on. Giving `acpadapter.Usage` a
-  destination for cache creation, and persisting it, is now the prerequisite
-  unit; it is small and it is not a design choice.
+  destination for cache creation, and persisting it, was the prerequisite unit.
+  **It landed 2026-09-17 as `e647010`..`bb4ce77`** (see `decisions.md`):
+  `acpadapter.Usage.CacheWriteInputTokens` now reaches the store and both
+  `sentinel metrics` surfaces on the Claude and OpenCode paths, and stays nil
+  on acpx, whose captured wire reports no such member. Plumbing only — no
+  ratio and no cache-hit rate, because what to compute from the two numbers is
+  this item's decision.
+- **What remains is one more live audit**, now that both halves of the number
+  exist: re-run a multi-dimension review and read cache WRITE against cache
+  READ per invocation. If later dimensions read without writing, cross-
+  dimension reuse is real and the envelope reorder pays; if every dimension
+  writes its own, it is not, and the remaining closing condition needs
+  rethinking rather than implementing.
 - Premise mismatch to resolve when that lands: this item is written about
   `opencode run --pure`, its snapshot and its cache key, but the configured
   `active_agent` is `claude`, so the run above measured a different provider

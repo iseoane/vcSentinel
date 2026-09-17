@@ -1247,3 +1247,41 @@ provider cache-key question, and neither should be answered by argument.
 
 `--pure` was checked and does not foreclose it: it means "run without external
 plugins" and says nothing about sessions or caching.
+
+### Cache-write tokens got a destination (item 7 prerequisite, landed as `e647010`..`bb4ce77`)
+
+The live audit of 2026-09-17 produced 3065189 cached input tokens against 322
+fresh ones and could not be interpreted. The cold one-dimension probe — zero
+prior invocations — already reported 126705 cached READS on its own, so reads
+are dominated by intra-invocation multi-turn re-reads and the provider's own
+system-prompt cache, not by one dimension reusing another's. Item 7 turns on
+exactly that distinction, and the number that draws it was being discarded.
+
+Both adapters already observed it and dropped it for the same stated reason.
+`claudeUsageProbe` recorded that `cache_creation_input_tokens` "is observed on
+the wire but intentionally unmapped: acpadapter.Usage has no destination for
+it", and `opencodeUsageTokens` said the same of `cache.write`, adding that
+"inventing one is a store-schema change outside this slice". This was that
+change: `acpadapter.Usage` gained `CacheWriteInputTokens`, threaded to every
+surface that already carried `CachedInputTokens` — the adapters, the execution
+observation and its clone, the store record and its validation list, the
+metrics aggregate and `mergeUsage`, and `sentinel metrics` in both text and
+JSON.
+
+acpx was checked rather than assumed: its captured wire (`end-turn.jsonl`,
+`cancelled.jsonl` and the helper-process transcripts) reports no cache-write
+member, so the field stays nil there and the comment records why. No key was
+invented.
+
+Plumbing only, deliberately. No ratio, no cache-hit rate, no derived metric.
+What to compute from the two numbers is item 7's decision, and it should be
+made against a measurement rather than ahead of one.
+
+The four properties that needed pinning are pinned: the Claude adapter surfaces
+cache creation from a probe-shaped usage member and keeps an observed zero as a
+non-nil pointer; the OpenCode adapter SUMS `cache.write` across step_finish
+events (5 + 7 = 12, non-zero on both steps, so the sum is genuinely exercised);
+tokens with no cache member leave the field nil and it renders as `null`, never
+`0`; and a record persisted before this change still decodes with the field
+nil. Verified by reverting only the two adapters, which failed exactly those
+tests with `CacheWriteInputTokens = nil`.
