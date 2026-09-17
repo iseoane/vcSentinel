@@ -88,6 +88,84 @@ func TestBuildPromptWithContextListsPlannedPaths(t *testing.T) {
 	}
 }
 
+func TestBuildAuditPromptSharedEvidenceEnvelopeFirst(t *testing.T) {
+	// Item 7: the shared evidence envelope (anti-injection rule, commit
+	// message, diff) must render first so every dimension prompt shares a
+	// large byte prefix. The diff below is sized like a real audit (several
+	// KB) so the envelope dominates the dimension-specific suffix, as in
+	// production. The reordered implementation shares ~7881 of ~9246 bytes
+	// (~85%); threshold 50% of the shortest prompt locks the envelope-first
+	// property with headroom, without pinning an exact byte count. The
+	// pre-reorder implementation shares only ~68 bytes (<1%), so 50%
+	// fails RED before the reorder and passes GREEN after it.
+	message := "fix: preserve contract"
+	diff := strings.Repeat("diff --git a/a.go\n+new line\n-old line\n", 200)
+	contracts := reviewcontract.All()
+	if len(contracts) == 0 {
+		t.Fatal("reviewcontract.All() returned no contracts")
+	}
+	prompts := make([]string, 0, len(contracts))
+	for _, contract := range contracts {
+		prompt := BuildAuditPrompt(contract.Name, message, diff, "")
+		if prompt == "" {
+			t.Fatalf("empty prompt for dimension %q", contract.Name)
+		}
+		prompts = append(prompts, prompt)
+	}
+	prefix := prompts[0]
+	for _, prompt := range prompts[1:] {
+		prefix = commonPrefixBytes(prefix, prompt)
+	}
+	t.Logf("shared prefix bytes: %d", len(prefix))
+	shortest := len(prompts[0])
+	total := 0
+	for _, prompt := range prompts {
+		total += len(prompt)
+		if len(prompt) < shortest {
+			shortest = len(prompt)
+		}
+	}
+	t.Logf("total bytes: %d shortest prompt bytes: %d share: %.2f%%", total, shortest, 100*float64(len(prefix))/float64(shortest))
+	if !strings.Contains(prefix, message) {
+		t.Errorf("shared prefix does not contain the commit message; prefix bytes: %d", len(prefix))
+	}
+	if !strings.Contains(prefix, diff) {
+		t.Errorf("shared prefix does not contain the diff; prefix bytes: %d", len(prefix))
+	}
+	if float64(len(prefix)) < 0.5*float64(shortest) {
+		t.Errorf("shared prefix %d bytes is less than 50%% of shortest prompt %d bytes", len(prefix), shortest)
+	}
+}
+
+func TestBuildAuditPromptAnswersWithFormatVerbsAreLiteral(t *testing.T) {
+	// Answers arrive via --answer as untrusted user input and must never be
+	// part of the fmt.Sprintf format string: a verb such as %d or %s inside
+	// an answer would otherwise consume positional arguments, corrupt the
+	// output-schema delimiters ("%!d(string=...)", "%!s(MISSING)") and hand
+	// the reviewer a broken output contract. The answers section must be
+	// passed as a format argument so it renders literally.
+	answers := "the threshold is 100%d and %s of cases"
+	prompt := BuildAuditPrompt(DimLogic, "message", "diff", answers)
+	if !strings.Contains(prompt, answers) {
+		t.Errorf("prompt does not contain the answers text literally:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "%!") {
+		t.Errorf("prompt contains a formatting-error marker, answers leaked into the format string:\n%s", prompt)
+	}
+}
+
+func commonPrefixBytes(a, b string) string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return a[:i]
+}
+
 func TestBuildPromptDelimitsSupplementalContextAsDataOnly(t *testing.T) {
 	contract, err := reviewcontract.Lookup(DimLogic)
 	if err != nil {
