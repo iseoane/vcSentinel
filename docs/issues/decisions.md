@@ -1090,3 +1090,67 @@ with no killed reviews in a session the store holds zero orphaned provider
 directories, which matches item 16's note that a review which completes leaves
 none. The re-measurement has to reproduce the kill, not merely run a healthy
 review.
+
+### `doctor` stopped denying the refusal the agent had already printed (item 18, landed as `a6da249`)
+
+Opened 2026-09-15 from a measured hour lost. `sentinel doctor` reported
+`opencode did not answer the probe prompt within 1m0s (the probe's own budget,
+not a provider refusal)` and told the operator to check for a wedged process.
+Running the same binary seconds later printed `Error: The usage limit has been
+reached`. Every clause was false: the provider had refused, it said so, and no
+process was running at all.
+
+The message was the symptom. The defect was three linked causes.
+
+The primary one made the adapter's error **unreachable**, not merely unlucky.
+`productionDoctorEnv` handed `ProbeAdapterFor` a 60s budget and then raced it
+against `time.After` on the same 60s. The adapter's context fires at T=60s,
+*then* `cmd.Run` returns, *then* the error is built and sent. That ordering is
+fixed, so whenever the child outlived the budget the outer branch won
+deterministically and the provider's own words could never arrive. The fix is
+not to delete the outer bound — it plausibly guards a process `exec` cannot
+kill, where a grandchild holds the pipe open and `Wait` blocks past the
+context kill. Instead the two branches were made to mean different things: the
+adapter keeps the 60s budget and the outer bound waits one 5s grace longer, so
+the adapter wins every ordinary deadline kill and the outer branch fires only
+for a call the adapter itself cannot end. That is the one case where "wedged"
+is honest.
+
+Second, `runCommandWithTimeout` never set `cmd.Stderr` and returned the bare
+process error, so the refusal was discarded at the source. It now captures both
+streams into an exported `CommandFailure{Output, TimedOut, Err}`. The precedent
+was already in the same file: `runCommitMessageCommand` had been wrapping
+stderr all along.
+
+Third, the false premise was asserted in **five** places, not one: the
+`ProbeTimeout` doc comment, its `Error`, the rendered detail, the
+`productionDoctorEnv` doc comment, and the `doctor` help text. The fourth is the
+one that mattered most, because it stated the wrong invariant as design
+rationale — "provider refusals arrive fast, so anything slower than the bound
+means the agent is slow or wedged" — and would have had the next reader
+re-derive the bug. A comment recording a falsehood is more expensive than the
+code it describes.
+
+What `doctor` says now: with captured output it prints the agent's own text and
+calls the cause **indeterminate**, because a timed-out probe genuinely cannot
+distinguish a refusal from a hang and should say so rather than pick one.
+Without captured output it says the cause is unknown and names the command the
+operator can run by hand. It never again asserts the negative. `AcpxBridge` was
+left alone; item 18 pre-authorized that fallback, and the acpx path already
+surfaces the provider error through the ordinary branch.
+
+`WaitDelay` was evaluated and deliberately not adopted: it turns a successful
+call with a lingering grandchild into an error, and would still need the grace
+bound.
+
+Verification worth reusing: revert only the production change and confirm
+exactly the intended case fails. Dropping `cmd.Stderr` alone made the new test
+fail with `error = "signal: killed"` — the literal symptom this item reports,
+and proof that a fix limited to the fast-exit path would have left it intact.
+
+Two review notes were raised against this change and both premises were
+disproven in the code. `exec.ExitError.Stderr` is populated only by `Output`
+and `CombinedOutput`, never by `Run`, and this path always used `Run`, so
+setting `cmd.Stderr` regressed nothing. And `ProbeAdapterFor` passes the probe
+budget explicitly rather than reading `review.timeout`, so the adapter and outer
+budgets match by construction for both the CLI and acpx families.
