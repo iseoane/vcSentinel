@@ -1339,3 +1339,43 @@ The fix shape is small: on a non-zero exit, parse `spawn.stdout` as a Claude
 result object and use its `result` and `subtype` as the detail, falling back to
 the current behaviour when it is not parseable. Recorded here rather than done
 because it is new work, not part of what was being measured.
+
+### The review path stopped discarding the agent's own failure output (landed as `0fb8bb7`)
+
+Found on 2026-09-17 while measuring item 7, not by reading code: a transient
+failure made all six dimensions of one audit report `reason="exit status 1"
+class=infrastructure` within 2.3 seconds each, with nothing else to go on.
+
+`cli_review_context.go` did capture stderr into `detail`, so a bare exit status
+genuinely meant the agent wrote nothing THERE. But the Claude branch of
+`reviewCommand` invokes with `--output-format json`, and in that mode Claude
+Code reports a failure as a result object on STDOUT carrying `is_error`,
+`subtype` and `result`. The failure branch returned `waitErr` alone and
+`spawn.stdout` was discarded unread — the diagnostic was in the captured
+buffer, one line away, and thrown out. Third site of the same family as item 18
+in `doctor` and item 17 in `pr review`, at a point neither of them touched.
+
+The fallback sits before the deadline branch, so a timed-out probe gains the
+same detail while `errors.Is(err, context.DeadlineExceeded)` stays true end to
+end — `reviewexec`'s classifier depends on that to record a timeout rather than
+a failure. stderr remains the first source; stdout is consulted only when
+stderr yields nothing; and an empty, non-JSON or message-free stdout keeps the
+bare exit status unchanged, because a fallback that invents a detail is worse
+than none. The other CLI branches do not emit a Claude result object and fall
+through untouched.
+
+The detail is bounded at 200 runes with an ellipsis, following
+`internal/review`'s `truncateCause`. It could not reuse that function:
+`internal/review/engine.go` imports `internal/agentadapter`, so the dependency
+only runs one way. Runes rather than bytes, because a cut through a multibyte
+character would corrupt the first thing the operator reads.
+
+What this does NOT do: it makes the failure diagnosable, it does not make it
+stop happening. The original failure was transient and did not reproduce on
+retry. Ruled out by testing rather than reasoning — the exact invocation with
+the same flags and `--effort xhigh` succeeds standalone with exit 0, and a
+single-dimension audit on the same binary and commit succeeds — so neither the
+flags nor the cache-write change that had just landed caused it.
+
+Verified by reverting only the production change: the tests fail with the
+literal `exit status 1` this item reports.
