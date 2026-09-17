@@ -17,6 +17,18 @@ import (
 
 const subdirPRReviews = "pr-reviews"
 
+// UnavailableDimensionCause records why one net-audit dimension was
+// unavailable. It is observational only and never changes the verdict,
+// following the AuditResult.ContextSkipReason precedent: the class is
+// "admission" when the reason carries the admission prefix, "infrastructure"
+// otherwise, and "unrecorded" when no cause was recorded at all.
+type UnavailableDimensionCause struct {
+	Dimension    string `json:"dimension"`
+	Class        string `json:"class"`
+	Reason       string `json:"reason,omitempty"`
+	InvocationID string `json:"invocation_id,omitempty"`
+}
+
 // PRReviewEntry is the persisted judgement authored by pr review for one
 // branch head. Piece 5 will make pr create consume this entry rather than derive
 // a second branch judgement. Attestation remains raw JSON here to avoid coupling
@@ -29,7 +41,13 @@ type PRReviewEntry struct {
 	Body        string          `json:"body"`
 	Attestation json.RawMessage `json:"attestation"`
 	Evidence    []string        `json:"evidence,omitempty"`
-	At          time.Time       `json:"at"`
+	// UnavailableCauses carries the per-dimension net-audit causes for the
+	// console and machine surfaces only. It never feeds the published body:
+	// internal diagnostics such as denied-permission reasons must not end up
+	// in the PR description. omitempty keeps existing persisted entries
+	// decoding unchanged.
+	UnavailableCauses []UnavailableDimensionCause `json:"unavailable_causes,omitempty"`
+	At                time.Time                   `json:"at"`
 }
 
 // PRReviewKey binds one entry to both a human-readable branch slug and the

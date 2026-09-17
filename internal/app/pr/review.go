@@ -359,7 +359,7 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence, At: time.Now().UTC()}); err != nil {
+	if err := deps.SavePRReview(worktree, &store.PRReviewEntry{Branch: res.Branch, HeadSHA: head, Title: title, Verdict: verdict, Body: body, Attestation: attestationJSON, Evidence: evidence, UnavailableCauses: NetUnavailableCauses(res), At: time.Now().UTC()}); err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
@@ -385,6 +385,14 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 
 	if res.Net != nil { // T8.4/A: the authoritative verdict leads the report
 		fmt.Fprintln(w, review.VerdictLine(res, options.Dispositions))
+		// Item 17: an unavailable net verdict alone says nothing about why.
+		// The per-dimension reasons live in memory but never reached this
+		// console path, so name each unavailable dimension and its cause
+		// here. This is console-only diagnostics: nothing here feeds the
+		// persisted published body.
+		for _, line := range RenderNetUnavailableLines(res) {
+			fmt.Fprintln(w, line)
+		}
 	}
 	if len(res.Records) > 0 {
 		fmt.Fprintln(w, "OWN (per-commit audit)")
@@ -443,6 +451,7 @@ func PrReviewJSONOutput(base string, res *review.BranchResult) map[string]any {
 	}
 	if res.Net != nil {
 		output["net"] = res.Net
+		output["net_unavailable_causes"] = NetUnavailableCauses(res)
 	}
 	// the unaudited-commits decision in docs/issues/decisions.md: "pendientes" alone leaves a machine
 	// consumer unable to tell "no review record" apart from "audited, no
@@ -475,4 +484,79 @@ func unavailableCount(records []review.Record) (admission, infrastructure int) {
 		}
 	}
 	return admission, infrastructure
+}
+
+// NetUnavailableCauses extracts one observational cause per unavailable net
+// dimension. It mirrors the classification rule in AuditResult.String
+// (admission when the reason carries the admission prefix, infrastructure
+// otherwise) through the same IsAdmissionReason source of truth, so no second
+// rule exists. A DimensionOutcome with a nil Result but a non-nil Error is
+// treated as unavailable, exactly as AuditResult.String treats it. The result
+// never changes the verdict: it only records why a dimension never audited.
+func NetUnavailableCauses(res *review.BranchResult) []store.UnavailableDimensionCause {
+	causes := []store.UnavailableDimensionCause{}
+	if res == nil || res.Net == nil {
+		return causes
+	}
+	for _, rd := range res.Net.Audit.Dims {
+		reason := ""
+		invocation := ""
+		name := rd.Dim
+		if rd.Result != nil {
+			reason = rd.Result.Reason
+			invocation = rd.Result.InvocationID
+			if name == "" {
+				name = rd.Result.Dim
+			}
+		}
+		if reason == "" && rd.Error != nil {
+			reason = rd.Error.Error()
+		}
+		unavailable := rd.Result != nil && rd.Result.Verdict == review.VerdictUnavailable
+		if rd.Result == nil && rd.Error != nil {
+			unavailable = true
+		}
+		if !unavailable {
+			continue
+		}
+		if name == "" {
+			name = "?"
+		}
+		cause := store.UnavailableDimensionCause{Dimension: name}
+		if strings.TrimSpace(reason) == "" {
+			cause.Class = "unrecorded"
+			cause.InvocationID = invocation
+			causes = append(causes, cause)
+			continue
+		}
+		cause.Class = "infrastructure"
+		if reviewexec.IsAdmissionReason(reason) {
+			cause.Class = "admission"
+		}
+		cause.Reason = reason
+		cause.InvocationID = invocation
+		causes = append(causes, cause)
+	}
+	return causes
+}
+
+// RenderNetUnavailableLines renders the console diagnostics for every
+// unavailable net dimension: the dimension name with its cause and class when
+// a reason was recorded, or the unrecorded-cause fallback naming the
+// invocation id and the manual command that reads it. Only these lines reach
+// the terminal; the published body is untouched.
+func RenderNetUnavailableLines(res *review.BranchResult) []string {
+	var lines []string
+	for _, cause := range NetUnavailableCauses(res) {
+		if cause.Class != "unrecorded" {
+			lines = append(lines, fmt.Sprintf("? net dimension %q unavailable (%s): %s", cause.Dimension, cause.Class, cause.Reason))
+			continue
+		}
+		if cause.InvocationID != "" {
+			lines = append(lines, fmt.Sprintf("? net dimension %q unavailable: cause unrecorded (invocation %s); inspect the owning run with `sentinel runs logs --run <run-id>` (locate it with `sentinel runs status`).", cause.Dimension, cause.InvocationID))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("? net dimension %q unavailable: cause unrecorded (no invocation recorded); inspect with `sentinel runs status`.", cause.Dimension))
+	}
+	return lines
 }
