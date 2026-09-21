@@ -202,13 +202,13 @@ func TestRunReviewRunsInRetainedSnapshotCwd(t *testing.T) {
 	// --cwd is the published shared snapshot FOR THE AUDITED SHA, not the
 	// live repository: its name is the SHA storage key and it lives directly
 	// under the shared snapshot store root, whose directory name carries the
-	// vas-sentinel-snapshots prefix on every supported platform (per-UID
+	// vcsentinel-snapshots prefix on every supported platform (per-UID
 	// suffixed on Linux, plain under the user's temp location on Windows).
 	if base := filepath.Base(snapshotDir); base != "sha-"+auditedSha {
 		t.Errorf("--cwd %q is not the published snapshot for the audited SHA %s", snapshotDir, auditedSha)
 	}
 	storeRoot := filepath.Dir(snapshotDir)
-	if parent := filepath.Dir(storeRoot); parent != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(storeRoot), "vas-sentinel-snapshots") {
+	if parent := filepath.Dir(storeRoot); parent != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(storeRoot), "vcsentinel-snapshots") {
 		t.Errorf("--cwd %q is not under the shared snapshot store root", snapshotDir)
 	}
 	// Cleanup is an idempotent lease release, never a per-call deletion: the
@@ -443,7 +443,7 @@ func TestRunSpawnFailureConcurrentWithCallerCancelStaysProcessError(t *testing.T
 	// looked up ahead of time and would hit the ctx.Done() check first,
 	// defeating this test.
 	a := spawnHelperConfig(t, func(cfg *Config) {
-		cfg.Launcher = []string{"vas-sentinel-missing-acpx-launcher"}
+		cfg.Launcher = []string{"vcsentinel-missing-acpx-launcher"}
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -43,10 +43,10 @@ func main() {
 			posicionP = i + 1
 		}
 	}
-	// VAS_SENTINEL_TEST_SLEEP forces the wait when the adapter builds the
+	// VCSENTINEL_TEST_SLEEP forces the wait when the adapter builds the
 	// arguments and there is no slot for the numeric argument (review mode:
 	// the flags are set by reviewCommand).
-	if espera := os.Getenv("VAS_SENTINEL_TEST_SLEEP"); espera != "" {
+	if espera := os.Getenv("VCSENTINEL_TEST_SLEEP"); espera != "" {
 		if n, err := strconv.Atoi(espera); err == nil {
 			segundos = n
 		}
@@ -60,7 +60,7 @@ func main() {
 
 	home := os.Getenv("HOME")
 	providerState := ""
-	if os.Getenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE") != "" {
+	if os.Getenv("VCSENTINEL_TEST_WRITE_PROVIDER_STATE") != "" {
 		if home == "" {
 			fmt.Fprint(os.Stderr, "provider state home is empty")
 			os.Exit(1)
@@ -72,7 +72,7 @@ func main() {
 		}
 	}
 
-	if ruta := os.Getenv("VAS_SENTINEL_TEST_CAPTURE"); ruta != "" {
+	if ruta := os.Getenv("VCSENTINEL_TEST_CAPTURE"); ruta != "" {
 		dir, _ := os.Getwd()
 		datos, _ := json.Marshal(struct {
 			Args          []string `json:"args"`
@@ -84,40 +84,40 @@ func main() {
 		}{Args: os.Args[1:], Dir: dir, Stdin: prompt, Home: home, OpenCodeAuth: os.Getenv("OPENCODE_AUTH_CONTENT"), ProviderState: providerState})
 		_ = os.WriteFile(ruta, datos, 0600)
 	}
-	// VAS_SENTINEL_TEST_STDERR_EARLY writes text to stderr BEFORE the sleep,
+	// VCSENTINEL_TEST_STDERR_EARLY writes text to stderr BEFORE the sleep,
 	// so tests can prove a probe killed by its budget still keeps what the
-	// agent already wrote. VAS_SENTINEL_TEST_FAIL writes after the sleep, so
+	// agent already wrote. VCSENTINEL_TEST_FAIL writes after the sleep, so
 	// a killed process never reaches it and cannot exercise this path.
-	if temprano := os.Getenv("VAS_SENTINEL_TEST_STDERR_EARLY"); temprano != "" {
+	if temprano := os.Getenv("VCSENTINEL_TEST_STDERR_EARLY"); temprano != "" {
 		fmt.Fprint(os.Stderr, temprano)
 	}
-	// VAS_SENTINEL_TEST_STDOUT_FAIL prints text to stdout BEFORE the sleep,
+	// VCSENTINEL_TEST_STDOUT_FAIL prints text to stdout BEFORE the sleep,
 	// so both a fast failure (no sleep, exit 1 with the agent's own output
 	// on stdout) and a timed-out run (killed during the sleep, stdout
 	// captured so far) carry that output. It exits 1 after the sleep.
-	// VAS_SENTINEL_TEST_EXIT_ONE exits 1 with no output at all, for the
+	// VCSENTINEL_TEST_EXIT_ONE exits 1 with no output at all, for the
 	// empty-stdout case. Both keep stderr empty unless a STDERR/FAIL
 	// variable is also set.
-	stdoutFail := os.Getenv("VAS_SENTINEL_TEST_STDOUT_FAIL")
+	stdoutFail := os.Getenv("VCSENTINEL_TEST_STDOUT_FAIL")
 	if stdoutFail != "" {
 		fmt.Print(stdoutFail)
 	}
 	time.Sleep(time.Duration(segundos) * time.Second)
-	// VAS_SENTINEL_TEST_FAIL simulates an agent that fails with an error
+	// VCSENTINEL_TEST_FAIL simulates an agent that fails with an error
 	// message on stderr, to check that the adapter captures and propagates
 	// that detail instead of discarding it. It runs before the silent and
 	// stdout exits below so a combined setup carries both streams.
-	if fallo := os.Getenv("VAS_SENTINEL_TEST_FAIL"); fallo != "" {
+	if fallo := os.Getenv("VCSENTINEL_TEST_FAIL"); fallo != "" {
 		fmt.Fprint(os.Stderr, fallo)
 		os.Exit(1)
 	}
-	if os.Getenv("VAS_SENTINEL_TEST_EXIT_ONE") == "1" {
+	if os.Getenv("VCSENTINEL_TEST_EXIT_ONE") == "1" {
 		os.Exit(1)
 	}
 	if stdoutFail != "" {
 		os.Exit(1)
 	}
-	if salida := os.Getenv("VAS_SENTINEL_TEST_OUTPUT"); salida != "" {
+	if salida := os.Getenv("VCSENTINEL_TEST_OUTPUT"); salida != "" {
 		fmt.Print(salida)
 		return
 	}

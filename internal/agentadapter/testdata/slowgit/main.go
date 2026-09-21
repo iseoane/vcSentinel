@@ -10,8 +10,8 @@ package main
 // applies; completing its sleep and forwarding to real git successfully
 // means it does not.
 //
-// VAS_SENTINEL_TEST_REAL_GIT names the real git binary to forward to.
-// VAS_SENTINEL_TEST_GIT_SLEEP_MS sets the sleep duration in milliseconds
+// VCSENTINEL_TEST_REAL_GIT names the real git binary to forward to.
+// VCSENTINEL_TEST_GIT_SLEEP_MS sets the sleep duration in milliseconds
 // (0 if absent or invalid).
 import (
 	"os"
@@ -22,14 +22,14 @@ import (
 
 func main() {
 	sleepMS := 0
-	if raw := os.Getenv("VAS_SENTINEL_TEST_GIT_SLEEP_MS"); raw != "" {
+	if raw := os.Getenv("VCSENTINEL_TEST_GIT_SLEEP_MS"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
 			sleepMS = n
 		}
 	}
 	time.Sleep(time.Duration(sleepMS) * time.Millisecond)
 
-	realGit := os.Getenv("VAS_SENTINEL_TEST_REAL_GIT")
+	realGit := os.Getenv("VCSENTINEL_TEST_REAL_GIT")
 	if realGit == "" {
 		realGit = "git"
 	}
