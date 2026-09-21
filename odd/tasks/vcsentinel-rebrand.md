@@ -30,10 +30,10 @@ Rename the entire product from VAS Sentinel and its technical variants to vcSent
   - Route: delegated writer; multi-file write trigger.
   - Verification: focused intent/TUI/setup/review/git tests, `go test ./...`, `go build ./...`, `go vet ./...`, and golden regeneration passed; generated goldens have intentional alignment spaces excluded from generic diff-check.
   - Evidence: implementation verified; guardian commit pending.
-- [ ] T4 — Update active documentation, project instructions, skills, examples, and repository-facing metadata while preserving immutable historical evidence.
+- [x] T4 — Update active documentation, project instructions, skills, examples, and repository-facing metadata while preserving immutable historical evidence.
   - Route: delegated writer; multi-file write trigger.
-  - Verification: residual-reference audit and documentation checks.
-  - Evidence: pending.
+  - Verification: active-document residual audit, `git diff --check`, and `vcsentinel check` passed.
+  - Evidence: implementation verified; guardian commit pending.
 - [ ] T5 — Verify the complete repository and audit every remaining legacy-name match against an explicit allowlist.
   - Route: delegated verifier; verification trigger.
   - Verification: `go list ./...`, `go build ./...`, `go vet ./...`, `go test ./...`, `./build.sh`, and residual-reference searches.
