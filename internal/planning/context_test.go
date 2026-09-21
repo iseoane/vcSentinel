@@ -18,11 +18,11 @@ func TestBuildContextPreservesRequiredLayersAndTruncatesLowerPriorities(t *testi
 		Validation:     []ValidationResult{{Capability: "test", Exit: 1, Output: "--- FAIL: TestExample\n"}},
 		TouchedPaths:   []TouchedPath{{Path: "internal/example/example.go"}},
 		ChangedSymbols: []Symbol{{Name: "Current", Path: "internal/example/example.go"}},
-		DirectCallers:  []Symbol{{Name: "Run", Path: "cmd/sentinel/main.go"}},
+		DirectCallers:  []Symbol{{Name: "Run", Path: "cmd/vcsentinel/main.go"}},
 		PackageTests:   []string{"internal/example/example_test.go"},
 		Contracts:      []Symbol{{Name: "Runner", Path: "internal/example/example.go"}},
 		DiscoverablePaths: []string{
-			"cmd/sentinel/main.go",
+			"cmd/vcsentinel/main.go",
 			"internal/example/example.go",
 		},
 	}
