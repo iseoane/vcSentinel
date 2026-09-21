@@ -1,5 +1,5 @@
 @echo off
-REM VAS Sentinel - format and build script
+REM vcSentinel - format and build script
 setlocal
 
 cd /d "%~dp0"
@@ -22,11 +22,11 @@ if errorlevel 1 goto :fail
 
 echo === build ===
 if not exist "bin\%VERSION%" mkdir "bin\%VERSION%"
-go build -ldflags="-s -w -X main.version=%VERSION%" -o "bin\%VERSION%\sentinel.exe" ./cmd/sentinel
+go build -ldflags="-s -w -X main.version=%VERSION%" -o "bin\%VERSION%\vcsentinel.exe" ./cmd/vcsentinel
 if errorlevel 1 goto :fail
 
 echo.
-echo OK: bin\%VERSION%\sentinel.exe generated
+echo OK: bin\%VERSION%\vcsentinel.exe generated
 exit /b 0
 
 :fail

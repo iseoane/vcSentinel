@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# VAS Sentinel - format and build script (Linux/Debian)
+# vcSentinel - format and build script (Linux/Debian)
 set -e
 
 cd "$(dirname "$0")"
@@ -21,8 +21,8 @@ if [ $? -ne 0 ]; then exit 1; fi
 
 echo "=== build ==="
 mkdir -p "bin/$VERSION"
-go build -ldflags="-s -w -X main.version=$VERSION" -o "bin/$VERSION/sentinel" ./cmd/sentinel
+go build -ldflags="-s -w -X main.version=$VERSION" -o "bin/$VERSION/vcsentinel" ./cmd/vcsentinel
 if [ $? -ne 0 ]; then exit 1; fi
 
 echo
-echo "OK: bin/$VERSION/sentinel generated"
+echo "OK: bin/$VERSION/vcsentinel generated"
