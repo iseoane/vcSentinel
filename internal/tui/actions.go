@@ -11,8 +11,8 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/daemon"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 )
 
 // tuiActionSequence keeps TUI control-action identities unique within this

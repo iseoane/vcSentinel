@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 const probeBudgetForTest = 60 * time.Second

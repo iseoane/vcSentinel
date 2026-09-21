@@ -10,10 +10,10 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/tui/art"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/overview"
+	"github.com/ISeoane-Quental/vcSentinel/internal/presence"
+	"github.com/ISeoane-Quental/vcSentinel/internal/tui/art"
 )
 
 // Update-transition and View coverage pairing with control.go. The style

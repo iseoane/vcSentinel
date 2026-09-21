@@ -7,10 +7,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // Scenario g — recovery. An orphaned-canceled run (owner died during its own

@@ -3,8 +3,8 @@ package graph_test
 import (
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/graph"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 type contextProviderStub struct{}

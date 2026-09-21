@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewexec"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/modelprobe"
+	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewexec"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // FlagsPrReview carries the parsed `pr review` options across the dispatch

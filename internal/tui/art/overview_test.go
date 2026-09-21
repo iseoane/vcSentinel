@@ -12,12 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/inventory"
+	"github.com/ISeoane-Quental/vcSentinel/internal/overview"
+	"github.com/ISeoane-Quental/vcSentinel/internal/presence"
+	"github.com/ISeoane-Quental/vcSentinel/internal/registry"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // Fixtures build snapshot values directly (no git needed). colorPrefix

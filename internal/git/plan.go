@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	internalchange "github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
+	internalchange "github.com/ISeoane-Quental/vcSentinel/internal/change"
 )
 
 // PlannedBatch represents a batch proposed within the fragmentation plan.

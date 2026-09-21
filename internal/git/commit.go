@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
+	"github.com/ISeoane-Quental/vcSentinel/internal/intent"
 )
 
 // CommitMessage returns the first line of a commit's message.

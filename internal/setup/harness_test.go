@@ -159,9 +159,9 @@ func TestUpgradeReplacesBinaryPreservingConfig(t *testing.T) {
 // other one it is verified as far as Linux allows (pure path building), with
 // GOOS=windows build+vet providing the compile-time half.
 func TestGoBinaryNameBySystem(t *testing.T) {
-	want := "sentinel"
+	want := "vcsentinel"
 	if runtime.GOOS == "windows" {
-		want = "sentinel.exe"
+		want = "vcsentinel.exe"
 	}
 	if got := goBinaryName(); got != want {
 		t.Errorf("goBinaryName() = %q, expected %q", got, want)

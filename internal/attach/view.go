@@ -8,8 +8,8 @@ package attach
 import (
 	"sort"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // InvocationEvidence summarizes everything durably observable about one

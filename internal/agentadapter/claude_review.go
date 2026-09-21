@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
 )
 
 // This file is the dedicated Claude Code review-result parser. It decodes the

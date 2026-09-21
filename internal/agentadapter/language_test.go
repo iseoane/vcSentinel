@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 // TestPromptFixesDefaultLanguage covers T0.13: without stating the language,

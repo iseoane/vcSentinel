@@ -3,7 +3,7 @@ package execution
 import (
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 func storeObservation(observation *AdapterObservation) *store.AttemptObservation {

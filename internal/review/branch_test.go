@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 )
 
 // gitOutput runs git in the cwd and returns its standard output.

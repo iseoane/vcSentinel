@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
 )
 
 // This file is the dedicated OpenCode review-stream parser. It decodes the

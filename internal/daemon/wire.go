@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // MaxFrameSize bounds one frame body in both directions. 8 MiB sits far

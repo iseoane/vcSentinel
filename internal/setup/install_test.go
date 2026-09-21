@@ -238,11 +238,11 @@ func TestAddShellPathBlock(t *testing.T) {
 
 func TestBinaryPaths(t *testing.T) {
 	home := t.TempDir()
-	if path := windowsBinaryPath(home); path != filepath.Join(home, ".vas_sentinel", "bin", "sentinel.exe") {
-		t.Errorf("windowsBinaryPath = %q, want the path under .vas_sentinel/bin/sentinel.exe", path)
+	if path := windowsBinaryPath(home); path != filepath.Join(home, ".vas_sentinel", "bin", "vcsentinel.exe") {
+		t.Errorf("windowsBinaryPath = %q, want the path under .vas_sentinel/bin/vcsentinel.exe", path)
 	}
-	if path := linuxBinaryPath(); path != "/usr/local/bin/sentinel" {
-		t.Errorf("linuxBinaryPath = %q, want /usr/local/bin/sentinel", path)
+	if path := linuxBinaryPath(); path != "/usr/local/bin/vcsentinel" {
+		t.Errorf("linuxBinaryPath = %q, want /usr/local/bin/vcsentinel", path)
 	}
 }
 
@@ -279,18 +279,18 @@ func TestWindowsUserPath(t *testing.T) {
 // compile-time half.
 func TestInstallPlacesExecutableBinaryAndReportsVersion(t *testing.T) {
 	dir := t.TempDir()
-	download := filepath.Join(dir, "downloaded-sentinel")
+	download := filepath.Join(dir, "downloaded-vcsentinel")
 	destination := filepath.Join(dir, "installed", goBinaryName())
 	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	if runtime.GOOS == "windows" {
-		if err := os.WriteFile(download, []byte("@echo off\r\necho sentinel v3.2.1\r\n"), 0644); err != nil {
+		if err := os.WriteFile(download, []byte("@echo off\r\necho vcsentinel v3.2.1\r\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		if err := os.WriteFile(download, []byte("#!/bin/sh\necho sentinel v3.2.1\n"), 0644); err != nil {
+		if err := os.WriteFile(download, []byte("#!/bin/sh\necho vcsentinel v3.2.1\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}

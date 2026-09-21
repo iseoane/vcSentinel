@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 // fakeAgent implements agentadapter.PromptAdapter for the tests of delegation

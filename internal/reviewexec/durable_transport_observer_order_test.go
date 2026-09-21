@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // entryGatedReviewer waits for allowEntry BEFORE signaling entered, so the test

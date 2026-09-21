@@ -18,9 +18,9 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/attach"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/attach"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 )
 
 // PollInterval spaces automatic repolls of an attached run; slow enough to

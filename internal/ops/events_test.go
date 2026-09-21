@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 var _ func(string, string, int, []string, EventDetail, string) error = RecordEvent

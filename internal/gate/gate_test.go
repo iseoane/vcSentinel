@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
 )
 
 // fakeReviewer implements review.AgentReviewer returning a fixed output; a

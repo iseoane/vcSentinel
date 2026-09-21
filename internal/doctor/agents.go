@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 // probePrompt is the minimal real prompt each configured agent must answer.

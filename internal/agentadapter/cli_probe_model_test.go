@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 // Behavior tests for the model probe path (RunPrompt): the probe

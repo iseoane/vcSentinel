@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // Boot reconciliation (ticket 14 slice 3b) is seeded through the same store

@@ -3,7 +3,7 @@ package agentadapter
 import (
 	"context"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewsnapshot"
 )
 
 // createReviewSnapshot delegates to the shared snapshot discipline in

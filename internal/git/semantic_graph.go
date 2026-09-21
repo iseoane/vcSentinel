@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	internalchange "github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	internalchange "github.com/ISeoane-Quental/vcSentinel/internal/change"
 )
 
 func readSemanticFiles(changes []PlannedChange) ([]semanticFile, bool) {

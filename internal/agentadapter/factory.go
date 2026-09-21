@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 )
 
 // BuildAuditPrompt constructs the master prompt for auditing a commit against

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // dispositionsFile is the append-only log of human finding dispositions,

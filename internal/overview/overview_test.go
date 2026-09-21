@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/inventory"
+	"github.com/ISeoane-Quental/vcSentinel/internal/presence"
+	"github.com/ISeoane-Quental/vcSentinel/internal/registry"
 )
 
 // runGit runs git in dir and fails the test on any error (inventory style).

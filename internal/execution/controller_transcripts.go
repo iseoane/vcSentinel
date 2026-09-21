@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // TranscriptIdentity is the observed effective identity of the responder for

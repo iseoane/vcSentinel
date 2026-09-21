@@ -7,12 +7,12 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/process"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 )
 
 // RestrictedReviewer is the structural contract of the review engine's

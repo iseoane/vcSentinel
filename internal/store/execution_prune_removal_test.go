@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 )
 
 // Fixed instants make every age assertion deterministic: ancientTime always

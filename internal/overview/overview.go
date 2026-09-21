@@ -10,10 +10,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/registry"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/inventory"
+	"github.com/ISeoane-Quental/vcSentinel/internal/presence"
+	"github.com/ISeoane-Quental/vcSentinel/internal/registry"
 )
 
 // isInternalWorktree applies host-normalized paths to the snapshot area rule.

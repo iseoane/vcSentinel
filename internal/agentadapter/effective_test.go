@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 // stubAdapter simulates a chain child that always answers or always fails.

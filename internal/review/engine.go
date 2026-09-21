@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/process"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/risk"
 )
 
 // AgentReviewer is the interface the engine uses to talk to the agent.

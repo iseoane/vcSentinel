@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 const promptModel = "What model are you actually using? Reply with only the exact model identifier."

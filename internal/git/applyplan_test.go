@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
+	"github.com/ISeoane-Quental/vcSentinel/internal/intent"
 )
 
 // preparePlanWithGiant leaves the repo with one normal file and one giant
@@ -71,6 +71,10 @@ func TestApplyApprovedPlanRejectsChangedTree(t *testing.T) {
 	_, err := ApplyApprovedPlan(plan, bypassAnswers(plan))
 	if !errors.Is(err, ErrTreeChanged) {
 		t.Fatalf("error = %v, expected ErrTreeChanged", err)
+	}
+	const wantRecoveryError = "the worktree changed since the plan was computed: run 'vcsentinel slice plan' again"
+	if err.Error() != wantRecoveryError {
+		t.Fatalf("error = %q, want %q", err.Error(), wantRecoveryError)
 	}
 	if countCommits(t) != commitsBefore {
 		t.Error("commits were created despite the rejection")

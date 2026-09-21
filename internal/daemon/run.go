@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 )
 
 // Run executes the whole foreground daemon lifecycle for one repository:

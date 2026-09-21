@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 func TestNewAdapterWithProfileExplicit(t *testing.T) {

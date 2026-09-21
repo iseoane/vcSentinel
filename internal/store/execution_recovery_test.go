@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 )
 
 // Ticket 10 slice 1: recovery classification over synthetic but fully valid

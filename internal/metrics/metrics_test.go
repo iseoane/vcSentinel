@@ -2,10 +2,10 @@ package metrics
 
 import (
 	"encoding/json"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 	"math"
 	"os"
 	"path/filepath"

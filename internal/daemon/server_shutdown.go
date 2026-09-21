@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 )
 
 const (

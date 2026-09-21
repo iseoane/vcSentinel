@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
 )
 
 // FlagsPrCreate carries the parsed `pr create` options across the dispatch

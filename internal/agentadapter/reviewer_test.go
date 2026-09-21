@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewsnapshot"
 )
 
 // wantAnchoredReadPermissions builds the expected OpenCode read-permission

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
+	"github.com/ISeoane-Quental/vcSentinel/internal/process"
 )
 
 // TestRunCapturedCommandHelperChild is the child side of the real-subprocess

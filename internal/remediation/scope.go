@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // Editor is the minimal write capability the remediation agent may use to

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/inventory"
+	"github.com/ISeoane-Quental/vcSentinel/internal/overview"
+	"github.com/ISeoane-Quental/vcSentinel/internal/presence"
 )
 
 // timeNow is the clock seam for run ages: a package-level variable so tests

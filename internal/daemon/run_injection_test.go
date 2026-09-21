@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // recordingAdapter is a scripted adapter that records every prompt the

@@ -12,7 +12,7 @@ package metrics
 import (
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // TestAggregateCountsRetainedOnlySuccessSnapshot proves a collected

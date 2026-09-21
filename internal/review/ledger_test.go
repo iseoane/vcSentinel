@@ -3,7 +3,7 @@ package review
 import (
 	"errors"
 	"fmt"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
 	"os"
 	"os/exec"
 	"path/filepath"

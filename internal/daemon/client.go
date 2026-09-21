@@ -9,8 +9,8 @@ import (
 	"net"
 	"sync"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // HandshakeError reports a rejected or malformed opening handshake. Code is

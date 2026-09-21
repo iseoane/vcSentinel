@@ -3,7 +3,7 @@ package agentadapter
 import (
 	"fmt"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
 )
 
 // AcpxBridge presents an acpadapter.AcpxAdapter through the same structural

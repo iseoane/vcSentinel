@@ -8,7 +8,7 @@ package review
 import (
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 )
 
 // respuestaV2Invocacion carries one v2 finding (the "id" marker makes esV2

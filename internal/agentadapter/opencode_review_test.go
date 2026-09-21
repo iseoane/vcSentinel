@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 )
 
 // The redacted probe fixture reproduces OpenCode 1.18.29's `--format json`

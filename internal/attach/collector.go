@@ -1,6 +1,6 @@
 package attach
 
-import "github.com/ISeoane-Quental/vas.sentinel/internal/store"
+import "github.com/ISeoane-Quental/vcSentinel/internal/store"
 
 // ReplayCollector accumulates a run's event stream from paged Subscribe
 // deliveries under one exclusive cursor. ApplyPage appends only frames

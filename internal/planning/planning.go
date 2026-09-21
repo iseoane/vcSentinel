@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/risk"
 )
 
 // Stage identifies the lifecycle point for which a plan is built.

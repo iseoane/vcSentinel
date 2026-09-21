@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
+	"github.com/ISeoane-Quental/vcSentinel/internal/intent"
 )
 
 type adapterPlanFake struct {

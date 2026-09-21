@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 )
 
 // awaitingThenFinalAdapter awaits a decision on the first physical attempt

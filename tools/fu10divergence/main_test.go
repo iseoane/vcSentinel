@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/risk"
 )
 
 // TestCountKeepsDuplicateDimensions is the reason the cost unit is agent

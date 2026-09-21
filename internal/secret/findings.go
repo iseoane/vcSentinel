@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // ProjectSecretIncidents converts exposed-credential incidents into

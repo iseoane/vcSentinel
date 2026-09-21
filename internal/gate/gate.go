@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
 )
 
 // Terminal gate states: closed vocabulary from the T1.7 ticket.

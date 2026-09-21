@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // fakeEditor is a double that records every Read and Edit call so a

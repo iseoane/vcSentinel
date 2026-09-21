@@ -18,9 +18,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/risk"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/risk"
 )
 
 // sensitivePatternsExplain replicates the literal that comandos_explain.go

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 type fakeModelAgent struct {

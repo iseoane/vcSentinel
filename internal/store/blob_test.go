@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 func TestAlreadyReviewedBlobNeverSeen(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 )
 
 // Retention and purge policy for durable execution records (ticket 12,

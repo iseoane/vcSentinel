@@ -7,8 +7,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // DefaultDiffGuardMargin is the default N (in lines) used when a caller

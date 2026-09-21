@@ -11,7 +11,7 @@ func TestBuildSemanticSlicePlanKeepsDirectDependenciesTogether(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeSemanticFile(t, "internal/git/staged.go", "package git\nfunc MeasureStagedVolume() {}\n")
 	writeSemanticFile(t, "internal/git/staged_test.go", "package git\nfunc TestStaged() { MeasureStagedVolume() }\n")
-	writeSemanticFile(t, "cmd/sentinel/staged_check.go", "package main\nimport git \"github.com/ISeoane-Quental/vas.sentinel/internal/git\"\nfunc check() { git.MeasureStagedVolume() }\n")
+	writeSemanticFile(t, "cmd/sentinel/staged_check.go", "package main\nimport git \"github.com/ISeoane-Quental/vcSentinel/internal/git\"\nfunc check() { git.MeasureStagedVolume() }\n")
 	writeSemanticFile(t, "cmd/sentinel/staged_check_test.go", "package main\nfunc TestCheck() { check() }\n")
 
 	changes := []PlannedChange{

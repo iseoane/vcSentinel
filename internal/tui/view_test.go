@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/attach"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/attach"
 )
 
 // Help-footer gating coverage pairing with view.go: the footer advertises

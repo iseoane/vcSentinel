@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewsnapshot"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/process"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewsnapshot"
 )
 
 // RunPrompt runs one arbitrary prompt through acpx and returns the

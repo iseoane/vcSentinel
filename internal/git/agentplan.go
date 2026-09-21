@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
+	"github.com/ISeoane-Quental/vcSentinel/internal/intent"
 )
 
 // Answers accepted for a pending plan decision. There is no default value:

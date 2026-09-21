@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/daemon"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/daemon"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // TestPresenceDeadChild is the helper-process entry point used to obtain a

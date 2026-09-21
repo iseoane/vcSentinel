@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
 )
 
 // errOwnDiffWithoutParent signals that stacked own-diff semantics were requested

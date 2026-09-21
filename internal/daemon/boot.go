@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // ReconcileOnBoot runs the R8 recovery machinery exactly once before a

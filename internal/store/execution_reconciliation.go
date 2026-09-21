@@ -3,7 +3,7 @@ package store
 import (
 	"path/filepath"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 )
 
 // Restart reconciliation for owner death during cancellation (ticket 08

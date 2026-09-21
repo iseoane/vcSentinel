@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/process"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/reviewcontract"
+	"github.com/ISeoane-Quental/vcSentinel/internal/process"
+	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 )
 
 // completeAdapter is the internal interface AdapterChain demands from its

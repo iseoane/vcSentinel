@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 )
 
 // appendLegacySuccessStream writes a complete pre-R7 event stream using only

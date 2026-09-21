@@ -11,8 +11,8 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/attach"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/attach"
 )
 
 // Golden views pin the exact bytes of Model.View() for the states the ticket

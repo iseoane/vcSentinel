@@ -3,9 +3,9 @@ package metrics
 import (
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // Input is the storage-independent input to Aggregate. Readers may populate

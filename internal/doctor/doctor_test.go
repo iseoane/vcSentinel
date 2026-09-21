@@ -2,7 +2,7 @@ package doctor
 
 import (
 	"errors"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
+	"github.com/ISeoane-Quental/vcSentinel/internal/graph"
 	"os"
 	"path/filepath"
 	"strings"

@@ -18,8 +18,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/validation"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
 )
 
 // ValidationEvidence is the deterministic evidence frame content of one

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
 )
 
 type NetReviewOptions struct {

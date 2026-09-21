@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
 )
 
 // Agent adapter families an agent entry may declare through its kind key.

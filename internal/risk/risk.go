@@ -1,7 +1,7 @@
 // Package risk evaluates the explainable risk of a change profile.
 package risk
 
-import "github.com/ISeoane-Quental/vas.sentinel/internal/change"
+import "github.com/ISeoane-Quental/vcSentinel/internal/change"
 
 // Level is the stable vocabulary of the risk contract.
 type Level string

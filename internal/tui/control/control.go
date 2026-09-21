@@ -17,8 +17,8 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/tui/art"
+	"github.com/ISeoane-Quental/vcSentinel/internal/overview"
+	"github.com/ISeoane-Quental/vcSentinel/internal/tui/art"
 )
 
 const (

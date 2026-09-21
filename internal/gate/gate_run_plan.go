@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 )
 
 // GateJobKind names the layer a logical job belongs to under one gate root

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 func dispositionFixture(sha, fingerprint, status string) *review.FindingDisposition {

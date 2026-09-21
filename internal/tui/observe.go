@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentrun"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/attach"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
+	"github.com/ISeoane-Quental/vcSentinel/internal/attach"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 )
 
 // ObserveSnapshot rebuilds one full RunView: an Inspect snapshot for the

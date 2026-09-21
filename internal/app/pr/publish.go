@@ -6,11 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/modelprobe"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/ops"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/modelprobe"
+	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // exitOnError centralizes the CLI exit pattern: prints the error and

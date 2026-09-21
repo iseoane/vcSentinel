@@ -3,8 +3,8 @@ package pr
 import (
 	"fmt"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/secret"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/secret"
 )
 
 // SecretFindingsFactory scans every audited branch commit for exposed

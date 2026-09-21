@@ -3,8 +3,8 @@ package reviewexec
 import (
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/execution"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/store"
+	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
+	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 )
 
 // TestWithCancellationEscalationOptionArmsDisabledMode pins the option seam

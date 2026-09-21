@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/intent"
+	"github.com/ISeoane-Quental/vcSentinel/internal/intent"
 )
 
 // Rejection reasons of `slice apply`. They are sentinel errors so the CLI
@@ -71,7 +71,7 @@ func ValidateApplication(plan *SerializedPlan, answers PlanAnswers) error {
 		return err
 	}
 	if currentState != plan.WorktreeState {
-		return fmt.Errorf("%w: run 'sentinel slice plan' again", ErrTreeChanged)
+		return fmt.Errorf("%w: run 'vcsentinel slice plan' again", ErrTreeChanged)
 	}
 	if answers.PlanID != plan.PlanID {
 		return fmt.Errorf("%w: plan %q was approved and this one is %q", ErrPlanMismatch, answers.PlanID, plan.PlanID)

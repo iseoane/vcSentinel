@@ -1,6 +1,6 @@
 package store
 
-import "github.com/ISeoane-Quental/vas.sentinel/internal/review"
+import "github.com/ISeoane-Quental/vcSentinel/internal/review"
 
 // subdirBlobs is the blob→SHA inverted index (T2.7): without it, answering
 // "was this blob seen before?" would require scanning every commits/*.json

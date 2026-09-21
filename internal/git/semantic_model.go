@@ -1,6 +1,6 @@
 package git
 
-import "github.com/ISeoane-Quental/vas.sentinel/internal/intent"
+import "github.com/ISeoane-Quental/vcSentinel/internal/intent"
 
 const mechanicalSemanticFallback = "Mechanical fallback: production files stay with focused tests, direct compile dependencies stay in the same unit, structural cohesion is considered before file-class and line-count ordering, and no source or test content is compressed."
 

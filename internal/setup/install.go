@@ -114,7 +114,7 @@ func RunFullInstall() error {
 		return err
 	}
 
-	tmpFile, err := os.CreateTemp("", "sentinel-download-*")
+	tmpFile, err := os.CreateTemp("", "vcsentinel-download-*")
 	if err != nil {
 		return fmt.Errorf("could not create the temporary download file: %w", err)
 	}
@@ -186,10 +186,10 @@ func InstallViaGoInstall() error {
 func runGoInstall() ([]byte, error) {
 	PrepareGitHubToken()
 
-	output, err := goInstallPackage("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest")
+	output, err := goInstallPackage("github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@latest")
 	if err != nil && strings.Contains(string(output), "does not contain package") {
 		fmt.Println("⚠️ The latest release does not include the current package. Trying the main branch...")
-		output, err = goInstallPackage("github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@main")
+		output, err = goInstallPackage("github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@main")
 	}
 	return output, err
 }
@@ -247,13 +247,13 @@ func goEnvGOPATH() (string, error) {
 // goBinaryName returns the name of the binary produced by go install.
 func goBinaryName() string {
 	if runtime.GOOS == "windows" {
-		return "sentinel.exe"
+		return "vcsentinel.exe"
 	}
-	return "sentinel"
+	return "vcsentinel"
 }
 
 func windowsBinaryPath(homeDir string) string {
-	return filepath.Join(homeDir, ".vas_sentinel", "bin", "sentinel.exe")
+	return filepath.Join(homeDir, ".vas_sentinel", "bin", "vcsentinel.exe")
 }
 
 func installWindows(tmpPath string) (string, error) {
@@ -314,7 +314,7 @@ func windowsUserPath() (string, error) {
 }
 
 func linuxBinaryPath() string {
-	return "/usr/local/bin/sentinel"
+	return "/usr/local/bin/vcsentinel"
 }
 
 func installLinux(tmpPath string) (string, error) {

@@ -14,10 +14,10 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/inventory"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/overview"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/presence"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/tui/art"
+	"github.com/ISeoane-Quental/vcSentinel/internal/inventory"
+	"github.com/ISeoane-Quental/vcSentinel/internal/overview"
+	"github.com/ISeoane-Quental/vcSentinel/internal/presence"
+	"github.com/ISeoane-Quental/vcSentinel/internal/tui/art"
 )
 
 // spyActions records every hook invocation in dispatch order and answers with

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/agentadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
 )
 
 func TestClassifyLayer(t *testing.T) {

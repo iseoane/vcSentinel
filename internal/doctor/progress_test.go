@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
+	"github.com/ISeoane-Quental/vcSentinel/internal/graph"
 )
 
 // TestRunAnnouncesProgressBeforeLongSteps pins the visible-progress contract:

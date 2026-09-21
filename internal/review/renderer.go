@@ -101,7 +101,7 @@ func RenderUnauditedNotice(pending []UnauditedCommit) string {
 		fmt.Fprintf(&b, "  - `%s` %s\n", sha, shortenMessage(c.Subject))
 		shas = append(shas, c.SHA)
 	}
-	fmt.Fprintf(&b, "  Audit them with: sentinel review %s\n", strings.Join(shas, " "))
+	fmt.Fprintf(&b, "  Audit them with: vcsentinel review %s\n", strings.Join(shas, " "))
 	return b.String()
 }
 

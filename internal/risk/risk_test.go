@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/change"
+	"github.com/ISeoane-Quental/vcSentinel/internal/change"
 )
 
 func TestEvaluate(t *testing.T) {

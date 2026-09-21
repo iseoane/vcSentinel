@@ -22,10 +22,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/config"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/graph"
-	"github.com/ISeoane-Quental/vas.sentinel/internal/setup"
+	"github.com/ISeoane-Quental/vcSentinel/internal/config"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/graph"
+	"github.com/ISeoane-Quental/vcSentinel/internal/setup"
 )
 
 // Check is one preflight finding. OK checks carry no remedy, and unknown

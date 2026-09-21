@@ -25,35 +25,35 @@ func TestPickAssetForSystem(t *testing.T) {
 			name:   "windows amd64 finds its asset",
 			goos:   "windows",
 			goarch: "amd64",
-			assets: []ReleaseAsset{{Name: "sentinel-windows-amd64.exe", BrowserDownloadURL: "https://example/sentinel-windows-amd64.exe"}},
-			want:   "sentinel-windows-amd64.exe",
+			assets: []ReleaseAsset{{Name: "vcsentinel-windows-amd64.exe", BrowserDownloadURL: "https://example/vcsentinel-windows-amd64.exe"}},
+			want:   "vcsentinel-windows-amd64.exe",
 		},
 		{
 			name:   "windows amd64 is case-insensitive",
 			goos:   "windows",
 			goarch: "amd64",
-			assets: []ReleaseAsset{{Name: "SENTINEL-WINDOWS-AMD64.EXE"}},
-			want:   "SENTINEL-WINDOWS-AMD64.EXE",
+			assets: []ReleaseAsset{{Name: "VCSENTINEL-WINDOWS-AMD64.EXE"}},
+			want:   "VCSENTINEL-WINDOWS-AMD64.EXE",
 		},
 		{
 			name:   "linux amd64 finds its asset",
 			goos:   "linux",
 			goarch: "amd64",
-			assets: []ReleaseAsset{{Name: "sentinel-linux-amd64"}},
-			want:   "sentinel-linux-amd64",
+			assets: []ReleaseAsset{{Name: "vcsentinel-linux-amd64"}},
+			want:   "vcsentinel-linux-amd64",
 		},
 		{
 			name:   "linux arm64 finds its asset",
 			goos:   "linux",
 			goarch: "arm64",
-			assets: []ReleaseAsset{{Name: "sentinel-linux-arm64"}},
-			want:   "sentinel-linux-arm64",
+			assets: []ReleaseAsset{{Name: "vcsentinel-linux-arm64"}},
+			want:   "vcsentinel-linux-arm64",
 		},
 		{
 			name:      "windows without a windows asset fails with the expected pattern",
 			goos:      "windows",
 			goarch:    "amd64",
-			assets:    []ReleaseAsset{{Name: "sentinel-linux-amd64"}, {Name: "sentinel-linux-arm64"}},
+			assets:    []ReleaseAsset{{Name: "vcsentinel-linux-amd64"}, {Name: "vcsentinel-linux-arm64"}},
 			wantError: true,
 		},
 		{
@@ -72,7 +72,7 @@ func TestPickAssetForSystem(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got none")
 				}
-				if tt.goos == "windows" && !strings.Contains(err.Error(), "sentinel-windows-amd64.exe") {
+				if tt.goos == "windows" && !strings.Contains(err.Error(), "vcsentinel-windows-amd64.exe") {
 					t.Errorf("the error must include the expected pattern, got: %v", err)
 				}
 				return
@@ -97,7 +97,7 @@ func TestDownloadBinary(t *testing.T) {
 		}))
 		defer server.Close()
 
-		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		destination := filepath.Join(t.TempDir(), "vcsentinel.exe")
 		if err := downloadBinary(ReleaseAsset{BrowserDownloadURL: server.URL}, destination); err != nil {
 			t.Fatalf("downloadBinary returned error: %v", err)
 		}
@@ -122,7 +122,7 @@ func TestDownloadBinary(t *testing.T) {
 		}))
 		defer server.Close()
 
-		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		destination := filepath.Join(t.TempDir(), "vcsentinel.exe")
 		asset := ReleaseAsset{
 			BrowserDownloadURL: "https://github.com/unused-download",
 			URL:                server.URL + "/assets/123",
@@ -158,7 +158,7 @@ func TestDownloadBinary(t *testing.T) {
 		os.Setenv("GITHUB_TOKEN", wantToken)
 		defer os.Setenv("GITHUB_TOKEN", original)
 
-		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		destination := filepath.Join(t.TempDir(), "vcsentinel.exe")
 		if err := downloadBinary(ReleaseAsset{BrowserDownloadURL: server.URL}, destination); err != nil {
 			t.Fatalf("downloadBinary returned error: %v", err)
 		}
@@ -173,7 +173,7 @@ func TestDownloadBinary(t *testing.T) {
 		}))
 		defer server.Close()
 
-		destination := filepath.Join(t.TempDir(), "sentinel.exe")
+		destination := filepath.Join(t.TempDir(), "vcsentinel.exe")
 		err := downloadBinary(ReleaseAsset{BrowserDownloadURL: server.URL}, destination)
 		if err == nil {
 			t.Fatalf("expected error with HTTP 404")
@@ -219,7 +219,7 @@ func jsonResponse(t *testing.T, body string, status int) *http.Response {
 
 func TestFetchLatestRelease(t *testing.T) {
 	t.Run("valid release", func(t *testing.T) {
-		body := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-windows-amd64.exe","browser_download_url":"https://example/x"}]}`
+		body := `{"tag_name":"v1.2.3","assets":[{"name":"vcsentinel-windows-amd64.exe","browser_download_url":"https://example/x"}]}`
 		transport := &fakeTransport{response: jsonResponse(t, body, http.StatusOK)}
 		transport.checkRequest = func(r *http.Request) {
 			if r.Header.Get("User-Agent") == "" {
@@ -235,7 +235,7 @@ func TestFetchLatestRelease(t *testing.T) {
 		if release.TagName != "v1.2.3" {
 			t.Errorf("TagName = %q, want v1.2.3", release.TagName)
 		}
-		if len(release.Assets) != 1 || release.Assets[0].Name != "sentinel-windows-amd64.exe" {
+		if len(release.Assets) != 1 || release.Assets[0].Name != "vcsentinel-windows-amd64.exe" {
 			t.Errorf("unexpected assets: %+v", release.Assets)
 		}
 	})
@@ -405,7 +405,7 @@ func TestPromptForGitHubTokenReadsWithoutEcho(t *testing.T) {
 }
 
 func TestPickAssetForOS(t *testing.T) {
-	name := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
+	name := "vcsentinel-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -420,7 +420,7 @@ func TestPickAssetForOS(t *testing.T) {
 }
 
 func validReleaseWithAsset() string {
-	name := "sentinel-" + runtime.GOOS + "-" + runtime.GOARCH
+	name := "vcsentinel-" + runtime.GOOS + "-" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -450,7 +450,7 @@ func TestRunFullInstall(t *testing.T) {
 	})
 
 	t.Run("no asset for the system stops the installation", func(t *testing.T) {
-		body := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-plan9-amd64","browser_download_url":"https://example/x"}]}`
+		body := `{"tag_name":"v1.2.3","assets":[{"name":"vcsentinel-plan9-amd64","browser_download_url":"https://example/x"}]}`
 		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, body, http.StatusOK)})
 		err := RunFullInstall()
 		if err == nil {
@@ -488,7 +488,7 @@ func TestRunUpgradeFromGitHub(t *testing.T) {
 	})
 
 	t.Run("no asset for the system stops the upgrade", func(t *testing.T) {
-		body := `{"tag_name":"v1.2.3","assets":[{"name":"sentinel-plan9-amd64","browser_download_url":"https://example/x"}]}`
+		body := `{"tag_name":"v1.2.3","assets":[{"name":"vcsentinel-plan9-amd64","browser_download_url":"https://example/x"}]}`
 		setFakeHTTPClient(t, &fakeTransport{response: jsonResponse(t, body, http.StatusOK)})
 		err := RunUpgradeFromGitHub()
 		if err == nil {

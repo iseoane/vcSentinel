@@ -14,7 +14,7 @@ import (
 )
 
 const repoOwner = "ISeoane-Quental"
-const repoName = "vas.sentinel"
+const repoName = "vcSentinel"
 
 // fallbackGoInstall enables retrying with go install when the release
 // download fails. Tests disable it so error paths do not run real builds.
@@ -139,7 +139,7 @@ func fetchLatestRelease() (ReleaseInfo, error) {
 		return ReleaseInfo{}, fmt.Errorf("could not build the request to GitHub: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "vas-sentinel")
+	req.Header.Set("User-Agent", "vcsentinel")
 	if token := envGitHubToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -189,7 +189,7 @@ func pickAssetForOS(assets []ReleaseAsset) (ReleaseAsset, error) {
 }
 
 func pickAssetForSystem(goos string, goarch string, assets []ReleaseAsset) (ReleaseAsset, error) {
-	expectedName := "sentinel-" + goos + "-" + goarch
+	expectedName := "vcsentinel-" + goos + "-" + goarch
 	if goos == "windows" {
 		expectedName += ".exe"
 	}
@@ -221,7 +221,7 @@ func downloadBinary(asset ReleaseAsset, destPath string) error {
 		return fmt.Errorf("could not build the download request: %w", err)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
-	req.Header.Set("User-Agent", "vas-sentinel")
+	req.Header.Set("User-Agent", "vcsentinel")
 	if token := envGitHubToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

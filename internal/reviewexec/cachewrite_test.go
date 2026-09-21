@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/acpadapter"
+	"github.com/ISeoane-Quental/vcSentinel/internal/acpadapter"
 )
 
 // TestReviewAdapterCarriesCacheWriteTokens pins the mapping layer: a provider

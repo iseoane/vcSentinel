@@ -6,7 +6,7 @@ package remediation
 import (
 	"fmt"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/review"
+	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
 // Destination identifies where a finding's remediation flow continues after

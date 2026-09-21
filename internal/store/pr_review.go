@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
 )
 
 const subdirPRReviews = "pr-reviews"
